@@ -199,6 +199,11 @@ mod tests {
     }
 
     #[test]
+    fn stream_timeout_message_uses_configured_timeout() {
+        assert_eq!(stream_timeout_message(90), "Stream timeout after 90s");
+    }
+
+    #[test]
     fn generate_request_rejects_unknown_message_role() {
         let request = serde_json::json!({
             "messages": [
@@ -315,8 +320,11 @@ pub(crate) async fn handle_generate_stream(
     let request = body.to_llm_request(&trace_id);
     let registry = state.runtime.llm_registry().clone();
     let permit = state.inference_limiter.acquire().await?;
+    let stream_config = state.server_config.generate_stream;
 
-    let (tx, mut rx) = mpsc::channel::<Result<Event, std::convert::Infallible>>(128);
+    let (tx, mut rx) = mpsc::channel::<Result<Event, std::convert::Infallible>>(
+        stream_config.channel_capacity.max(1),
+    );
 
     tokio::spawn(async move {
         let _permit = permit;
@@ -326,8 +334,8 @@ pub(crate) async fn handle_generate_stream(
         let raw_stream = registry.generate_stream_with_fallback(&request);
         let mut pinned = std::pin::pin!(raw_stream);
 
-        // 60-second inactivity timeout
-        let timeout_dur = std::time::Duration::from_secs(stream_sse::TIMEOUT_SECS);
+        let inactivity_timeout_secs = stream_config.inactivity_timeout_secs.max(1);
+        let timeout_dur = std::time::Duration::from_secs(inactivity_timeout_secs);
 
         // Reusable encode buffer — one allocation per stream, cleared per chunk.
         let mut buf: Vec<u8> = Vec::with_capacity(512);
@@ -442,7 +450,7 @@ pub(crate) async fn handle_generate_stream(
                     let timeout_event = encode_error_event(
                         &mut buf,
                         seq_val,
-                        stream_sse::TIMEOUT_MESSAGE.to_string(),
+                        stream_timeout_message(inactivity_timeout_secs),
                     );
                     let _ = tx.send(Ok(timeout_event)).await;
                     break;
@@ -457,7 +465,20 @@ pub(crate) async fn handle_generate_stream(
         }
     };
 
-    Ok(Sse::new(output_stream).keep_alive(KeepAlive::default()))
+    Ok(
+        Sse::new(output_stream).keep_alive(KeepAlive::new().interval(
+            std::time::Duration::from_secs(stream_config.keep_alive_secs.max(1)),
+        )),
+    )
+}
+
+fn stream_timeout_message(timeout_secs: u64) -> String {
+    format!(
+        "{}{}{}",
+        stream_sse::TIMEOUT_MESSAGE_PREFIX,
+        timeout_secs,
+        stream_sse::TIMEOUT_MESSAGE_SUFFIX
+    )
 }
 
 /// `GET /v1/schema` — Event schema endpoint.

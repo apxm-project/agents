@@ -23,8 +23,35 @@ pub mod env {
     pub const APXM_NO_CACHE: &str = "APXM_NO_CACHE";
     /// Public base URL the APXM server advertises (e.g. http://host:18800).
     pub const APXM_PUBLIC_URL: &str = "APXM_PUBLIC_URL";
+    /// Stream channel capacity for `/v1/generate-stream`.
+    pub const APXM_GENERATE_STREAM_CHANNEL_CAPACITY: &str = "APXM_GENERATE_STREAM_CHANNEL_CAPACITY";
+    /// Inactivity timeout, in seconds, for `/v1/generate-stream`.
+    pub const APXM_GENERATE_STREAM_TIMEOUT_SECS: &str = "APXM_GENERATE_STREAM_TIMEOUT_SECS";
+    /// SSE keep-alive interval, in seconds, for `/v1/generate-stream`.
+    pub const APXM_GENERATE_STREAM_KEEP_ALIVE_SECS: &str = "APXM_GENERATE_STREAM_KEEP_ALIVE_SECS";
+    /// Stream channel capacity for runtime and skill execution SSE endpoints.
+    pub const APXM_EXECUTION_STREAM_CHANNEL_CAPACITY: &str =
+        "APXM_EXECUTION_STREAM_CHANNEL_CAPACITY";
+    /// SSE keep-alive interval, in seconds, for runtime and skill execution streams.
+    pub const APXM_EXECUTION_STREAM_KEEP_ALIVE_SECS: &str = "APXM_EXECUTION_STREAM_KEEP_ALIVE_SECS";
+    /// Broadcast buffer size for per-run event subscriptions.
+    pub const APXM_RUN_EVENT_STREAM_BUFFER: &str = "APXM_RUN_EVENT_STREAM_BUFFER";
+    /// Number of per-run events retained in memory for replay.
+    pub const APXM_RUN_EVENT_RETAINED_EVENTS: &str = "APXM_RUN_EVENT_RETAINED_EVENTS";
+    /// SSE keep-alive interval, in seconds, for run event subscriptions.
+    pub const APXM_RUN_EVENT_KEEP_ALIVE_SECS: &str = "APXM_RUN_EVENT_KEEP_ALIVE_SECS";
     /// Bind address for the APXM server (e.g. 127.0.0.1:18800).
     pub const APXM_SERVER_ADDR: &str = "APXM_SERVER_ADDR";
+    /// Maximum concurrent expensive inference work admitted by the server.
+    pub const APXM_SERVER_MAX_INFERENCE: &str = "APXM_SERVER_MAX_INFERENCE";
+    /// Maximum inference limiter wait before returning 429, in milliseconds.
+    pub const APXM_SERVER_INFERENCE_WAIT_MS: &str = "APXM_SERVER_INFERENCE_WAIT_MS";
+    /// Maximum scheduler concurrency for server-owned runtime work.
+    pub const APXM_RUNTIME_MAX_CONCURRENCY: &str = "APXM_RUNTIME_MAX_CONCURRENCY";
+    /// Maximum scheduler in-flight work for server-owned runtime work.
+    pub const APXM_RUNTIME_MAX_INFLIGHT: &str = "APXM_RUNTIME_MAX_INFLIGHT";
+    /// Maximum scheduler in-flight LLM work for server-owned runtime work.
+    pub const APXM_RUNTIME_LLM_INFLIGHT: &str = "APXM_RUNTIME_LLM_INFLIGHT";
     pub const LLVM_DIR: &str = "LLVM_DIR";
     pub const MLIR_DIR: &str = "MLIR_DIR";
     pub const PYTHONPATH: &str = "PYTHONPATH";

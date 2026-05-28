@@ -26,6 +26,7 @@ use apxm_core::events::payload::{
 };
 use apxm_core::events::{ApxmEvent, EventEmitter};
 use apxm_core::types::operations::AISOperationType;
+use apxm_driver::RunEventsConfig;
 use apxm_rollout::load_rollout;
 use axum::Json;
 use axum::body::Body;
@@ -51,12 +52,6 @@ const MAX_LIST_LIMIT: usize = 500;
 /// Default page size for the bulk events endpoint.
 const DEFAULT_EVENTS_LIMIT: usize = 500;
 const MAX_EVENTS_LIMIT: usize = 2_000;
-/// Cap on the broadcast channel buffer per run — events older than this
-/// are still in the on-disk ring but no longer streamed live.
-const STREAM_BUFFER: usize = 1024;
-/// Default number of events retained in memory per run. Rollout JSONL remains
-/// the durable source of truth for older/cold replay.
-const DEFAULT_RETAINED_EVENTS: usize = 4096;
 const MIN_RETAINED_EVENTS: usize = 128;
 const LAST_EVENT_ID_HEADER: &str = "Last-Event-ID";
 const LAST_EVENT_ID_HEADER_LOWER: &str = "last-event-id";
@@ -70,6 +65,7 @@ const SSE_ERROR_EVENT: &str = "error";
 pub(crate) struct RunEventBus {
     inner: Arc<DashMap<String, RunEventState>>,
     retained_events: usize,
+    stream_buffer: usize,
 }
 
 struct RunEventState {
@@ -79,8 +75,8 @@ struct RunEventState {
 }
 
 impl RunEventState {
-    fn new() -> Self {
-        let (tx, _rx) = broadcast::channel(STREAM_BUFFER);
+    fn new(stream_buffer: usize) -> Self {
+        let (tx, _rx) = broadcast::channel(stream_buffer.max(1));
         Self {
             events: VecDeque::new(),
             tx,
@@ -90,16 +86,16 @@ impl RunEventState {
 }
 
 impl RunEventBus {
+    #[cfg(test)]
     pub(crate) fn new() -> Self {
-        let retained_events = std::env::var("APXM_RUN_EVENT_RETAINED_EVENTS")
-            .ok()
-            .and_then(|value| value.parse::<usize>().ok())
-            .filter(|value| *value > 0)
-            .unwrap_or(DEFAULT_RETAINED_EVENTS)
-            .max(MIN_RETAINED_EVENTS);
+        Self::with_config(&RunEventsConfig::default())
+    }
+
+    pub(crate) fn with_config(config: &RunEventsConfig) -> Self {
         Self {
             inner: Arc::new(DashMap::new()),
-            retained_events,
+            retained_events: config.retained_events.max(MIN_RETAINED_EVENTS),
+            stream_buffer: config.stream_buffer.max(1),
         }
     }
 
@@ -110,7 +106,7 @@ impl RunEventBus {
         let mut entry = self
             .inner
             .entry(execution_id.to_string())
-            .or_insert_with(RunEventState::new);
+            .or_insert_with(|| RunEventState::new(self.stream_buffer));
         event.meta.seq = entry.next_seq;
         entry.next_seq = entry.next_seq.checked_add(1).unwrap_or_else(|| {
             tracing::warn!(execution_id, "run event sequence saturated");
@@ -140,7 +136,7 @@ impl RunEventBus {
         let entry = self
             .inner
             .entry(execution_id.to_string())
-            .or_insert_with(RunEventState::new);
+            .or_insert_with(|| RunEventState::new(self.stream_buffer));
         entry.tx.subscribe()
     }
 
@@ -628,7 +624,11 @@ pub(crate) async fn stream_run_events(
         Ok(event)
     });
 
-    Ok(Sse::new(stream).keep_alive(KeepAlive::new().interval(Duration::from_secs(15))))
+    Ok(
+        Sse::new(stream).keep_alive(KeepAlive::new().interval(Duration::from_secs(
+            state.server_config.run_events.keep_alive_secs.max(1),
+        ))),
+    )
 }
 
 // ────────────────────────────────────────────────────────────────────

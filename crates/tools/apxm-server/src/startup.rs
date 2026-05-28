@@ -2,7 +2,9 @@ use std::net::SocketAddr;
 use std::sync::Arc;
 use std::time::SystemTime;
 
+use apxm_core::constants::env as apxm_env;
 use apxm_core::paths::ApxmPaths;
+use apxm_driver::{ApXmConfig, ServerConfig};
 use apxm_rollout::{IndexDb, RolloutPaths};
 use apxm_runtime::{Runtime, RuntimeConfig, SchedulerConfig};
 use dashmap::DashMap;
@@ -44,15 +46,16 @@ pub(crate) fn execution_store_from_paths() -> ExecutionStore {
 // `run_server` with explicit CLI-derived configuration.
 #[allow(dead_code)]
 pub(crate) async fn build_server_runtime() -> Result<Runtime, apxm_core::error::RuntimeError> {
-    build_runtime_without_router(server_runtime_config()).await
+    build_runtime_without_router(server_runtime_config(&ServerConfig::default())).await
 }
 
 pub(crate) async fn run_server() -> anyhow::Result<()> {
     let args: Vec<String> = std::env::args().collect();
+    let server_config = server_config_from_layers()?;
     let skill_roots = prepend_builtin_skill_root(parse_skill_roots(&args));
     let skill_library = SkillLibrary::new(skill_roots);
 
-    let runtime = build_runtime_with_router(server_runtime_config()).await?;
+    let runtime = build_runtime_with_router(server_runtime_config(&server_config)).await?;
     let mut runtime = Arc::new(runtime);
     crate::call_skill::install(&mut runtime, skill_library.clone());
 
@@ -92,16 +95,17 @@ pub(crate) async fn run_server() -> anyhow::Result<()> {
         a2a_tasks: Arc::new(DashMap::new()),
         skill_library,
         execution_store: execution_store_from_paths(),
-        run_event_bus: RunEventBus::new(),
+        run_event_bus: RunEventBus::with_config(&server_config.run_events),
         webhook_dispatcher,
         rollout_paths,
         rollout_index,
         rollout_registry,
-        inference_limiter: InferenceLimiter::from_env(),
+        inference_limiter: InferenceLimiter::from_config(&server_config.inference),
+        server_config: server_config.clone(),
     };
 
     let app = build_app(state);
-    let addr = server_addr(&args);
+    let addr = server_addr(&args, &server_config)?;
     info!(%addr, "starting apxm-server");
     let listener = tokio::net::TcpListener::bind(addr).await?;
 
@@ -111,23 +115,80 @@ pub(crate) async fn run_server() -> anyhow::Result<()> {
     Ok(())
 }
 
-fn server_runtime_config() -> RuntimeConfig {
+fn server_config_from_layers() -> anyhow::Result<ServerConfig> {
+    let mut config = ApXmConfig::load_scoped()?.server;
+    apply_server_env_overrides(&mut config);
+    Ok(config)
+}
+
+fn apply_server_env_overrides(config: &mut ServerConfig) {
+    if let Some(value) = env_usize(apxm_env::APXM_RUNTIME_MAX_CONCURRENCY) {
+        config.runtime.max_concurrency = Some(value);
+    }
+    if let Some(value) = env_usize(apxm_env::APXM_RUNTIME_MAX_INFLIGHT) {
+        config.runtime.max_inflight = Some(value);
+    }
+    if let Some(value) = env_usize(apxm_env::APXM_RUNTIME_LLM_INFLIGHT) {
+        config.runtime.llm_inflight = value;
+    }
+    if let Some(value) = env_usize(apxm_env::APXM_SERVER_MAX_INFERENCE) {
+        config.inference.max_concurrent = value;
+    }
+    if let Some(value) = env_u64(apxm_env::APXM_SERVER_INFERENCE_WAIT_MS) {
+        config.inference.acquire_timeout_ms = value;
+    }
+    if let Some(value) = env_usize(apxm_env::APXM_GENERATE_STREAM_CHANNEL_CAPACITY) {
+        config.generate_stream.channel_capacity = value;
+    }
+    if let Some(value) = env_u64(apxm_env::APXM_GENERATE_STREAM_TIMEOUT_SECS) {
+        config.generate_stream.inactivity_timeout_secs = value;
+    }
+    if let Some(value) = env_u64(apxm_env::APXM_GENERATE_STREAM_KEEP_ALIVE_SECS) {
+        config.generate_stream.keep_alive_secs = value;
+    }
+    if let Some(value) = env_usize(apxm_env::APXM_EXECUTION_STREAM_CHANNEL_CAPACITY) {
+        config.execution_stream.channel_capacity = value;
+    }
+    if let Some(value) = env_u64(apxm_env::APXM_EXECUTION_STREAM_KEEP_ALIVE_SECS) {
+        config.execution_stream.keep_alive_secs = value;
+    }
+    if let Some(value) = env_usize(apxm_env::APXM_RUN_EVENT_STREAM_BUFFER) {
+        config.run_events.stream_buffer = value;
+    }
+    if let Some(value) = env_usize(apxm_env::APXM_RUN_EVENT_RETAINED_EVENTS) {
+        config.run_events.retained_events = value;
+    }
+    if let Some(value) = env_u64(apxm_env::APXM_RUN_EVENT_KEEP_ALIVE_SECS) {
+        config.run_events.keep_alive_secs = value;
+    }
+    if let Ok(value) = std::env::var(apxm_env::APXM_PUBLIC_URL) {
+        let trimmed = value.trim();
+        if !trimmed.is_empty() {
+            config.public_url = Some(trimmed.to_string());
+        }
+    }
+}
+
+fn server_runtime_config(server_config: &ServerConfig) -> RuntimeConfig {
     let mut config = RuntimeConfig::default();
     let cores = std::thread::available_parallelism()
         .map(|value| value.get())
         .unwrap_or(4);
     let default_compute = (cores / 2).max(2);
-    let default_llm = 4usize;
 
-    let max_concurrency = env_usize("APXM_RUNTIME_MAX_CONCURRENCY").unwrap_or(default_compute);
-    let max_inflight = env_usize("APXM_RUNTIME_MAX_INFLIGHT")
+    let max_concurrency = server_config
+        .runtime
+        .max_concurrency
+        .unwrap_or(default_compute);
+    let max_inflight = server_config
+        .runtime
+        .max_inflight
         .unwrap_or_else(|| max_concurrency.saturating_mul(2).max(1));
-    let llm_inflight = env_usize("APXM_RUNTIME_LLM_INFLIGHT").unwrap_or(default_llm);
 
     config.scheduler_config = SchedulerConfig::default()
         .with_max_concurrency(max_concurrency)
         .with_max_inflight(max_inflight)
-        .with_llm_inflight(llm_inflight);
+        .with_llm_inflight(server_config.runtime.llm_inflight);
     config
 }
 
@@ -138,7 +199,14 @@ fn env_usize(name: &str) -> Option<usize> {
         .filter(|value| *value > 0)
 }
 
-fn server_addr(args: &[String]) -> SocketAddr {
+fn env_u64(name: &str) -> Option<u64> {
+    std::env::var(name)
+        .ok()
+        .and_then(|value| value.parse::<u64>().ok())
+        .filter(|value| *value > 0)
+}
+
+fn server_addr(args: &[String], config: &ServerConfig) -> anyhow::Result<SocketAddr> {
     // Parse --port from CLI args (service-manager passes `--port <N>`)
     let cli_port = args
         .iter()
@@ -147,13 +215,27 @@ fn server_addr(args: &[String]) -> SocketAddr {
         .and_then(|value| value.parse::<u16>().ok());
 
     if let Some(port) = cli_port {
-        SocketAddr::from(([127, 0, 0, 1], port))
-    } else {
-        std::env::var("APXM_SERVER_ADDR")
-            .ok()
-            .and_then(|value| value.parse::<SocketAddr>().ok())
-            .unwrap_or_else(|| crate::DEFAULT_ADDR.parse().expect("valid default addr"))
+        return Ok(SocketAddr::from(([127, 0, 0, 1], port)));
     }
+
+    if let Ok(value) = std::env::var(apxm_env::APXM_SERVER_ADDR) {
+        let trimmed = value.trim();
+        if !trimmed.is_empty() {
+            return trimmed
+                .parse::<SocketAddr>()
+                .map_err(|error| anyhow::anyhow!("invalid APXM_SERVER_ADDR '{trimmed}': {error}"));
+        }
+    }
+
+    if let Some(value) = config.bind_addr.as_deref() {
+        return value
+            .parse::<SocketAddr>()
+            .map_err(|error| anyhow::anyhow!("invalid [server].bind_addr '{value}': {error}"));
+    }
+
+    crate::DEFAULT_ADDR
+        .parse()
+        .map_err(|error| anyhow::anyhow!("invalid built-in default address: {error}"))
 }
 
 async fn shutdown_signal() {

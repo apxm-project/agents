@@ -35,7 +35,11 @@ pub mod session_output;
 pub mod skill_resolver;
 
 // --- Config ---
-pub use config::{ApXmConfig, ChatConfig, ConfigError, HookConfig, HookEvent, ToolConfig};
+pub use config::{
+    ApXmConfig, ChatConfig, ConfigError, ExecutionStreamConfig, GenerateStreamConfig, HookConfig,
+    HookEvent, RunEventsConfig, ServerConfig, ServerInferenceConfig, ServerRuntimeConfig,
+    ToolConfig,
+};
 
 // --- Linker ---
 pub use linker::{LinkResult, Linker, LinkerConfig};
