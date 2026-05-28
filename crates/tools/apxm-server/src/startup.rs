@@ -70,7 +70,7 @@ pub(crate) async fn run_server_with_config(server_config: ServerConfig) -> anyho
     // Phase 14.8.D — bring up the OTEL exporter if env-configured.
     // Initialization failures are logged + ignored: the in-process
     // tracing-subscriber keeps working.
-    match observability::init() {
+    match observability::init(&server_config.observability) {
         Ok(_exporter) => {}
         Err(error) => warn_init_failure(&error),
     }
@@ -197,6 +197,12 @@ fn apply_server_env_overrides(config: &mut ServerConfig) {
     }
     if let Some(value) = env_usize(apxm_env::APXM_ROLLOUT_EVENT_BUFFER) {
         config.rollout.event_buffer = value;
+    }
+    if let Ok(value) = std::env::var(apxm_env::OTEL_EXPORTER_OTLP_ENDPOINT) {
+        let trimmed = value.trim();
+        if !trimmed.is_empty() {
+            config.observability.otlp_endpoint = Some(trimmed.to_string());
+        }
     }
     if let Ok(value) = std::env::var(apxm_env::APXM_PUBLIC_URL) {
         let trimmed = value.trim();

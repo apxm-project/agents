@@ -1,8 +1,8 @@
 //! Phase 14.8.D — OpenTelemetry OTLP exporter.
 //!
-//! When `OTEL_EXPORTER_OTLP_ENDPOINT` is set, every `ApxmEvent` is
-//! translated to a tracing span that the global tracing-opentelemetry
-//! pipeline forwards to the configured OTLP collector. The mapping is
+//! When configured, every `ApxmEvent` is translated to a tracing span that the
+//! global tracing-opentelemetry pipeline forwards to the configured OTLP
+//! collector. The mapping is
 //! deliberately thin:
 //!
 //!   - `agent_spawned` / `subagent_spawned` → root span for the agent
@@ -15,7 +15,8 @@
 //! `meta.trace_id`, `meta.span_id`, `meta.parent_span_id` are already
 //! W3C Trace Context strings (the runtime stamps them per spec), so
 //! the exporter passes them straight through. The exporter is
-//! configured via env vars only; no CLI flag, no apxm config file.
+//! configured through layered APXM server config, with the standard OTLP env
+//! var applied as a startup override.
 //!
 //! Backwards-compatible: if the env var is unset, `init` returns
 //! `Ok(None)` and `OtelEmitter::dispatch` is a no-op.
@@ -28,9 +29,8 @@ use apxm_core::events::payload::{
     ToolStartPayload,
 };
 use apxm_core::events::{ApxmEvent, EventEmitter};
+use apxm_driver::ServerObservabilityConfig;
 use tracing::{Span, debug, info_span, warn};
-
-const ENDPOINT_VAR: &str = "OTEL_EXPORTER_OTLP_ENDPOINT";
 
 /// Lightweight handle representing a configured OTLP exporter. The
 /// real OpenTelemetry pipeline lives behind the `tracing` global
@@ -49,27 +49,57 @@ impl OtelExporter {
     }
 }
 
-/// Attempt to initialize the OTLP exporter. Returns `Ok(None)` when
-/// the env var is unset (the common case) and `Ok(Some(_))` after
-/// successful initialization. Initialization failures are
+/// Attempt to initialize the OTLP exporter. Returns `Ok(None)` when the
+/// endpoint is unset (the common case) and `Ok(Some(_))` after successful
+/// initialization. Initialization failures are
 /// non-fatal — the server keeps running with the in-process
 /// `tracing-subscriber` configured by `main`.
-pub(crate) fn init() -> Result<Option<OtelExporter>, OtelInitError> {
-    let endpoint = match std::env::var(ENDPOINT_VAR) {
-        Ok(value) if !value.trim().is_empty() => value,
-        _ => return Ok(None),
+pub(crate) fn init(
+    config: &ServerObservabilityConfig,
+) -> Result<Option<OtelExporter>, OtelInitError> {
+    let Some(endpoint) = config
+        .otlp_endpoint
+        .as_deref()
+        .map(str::trim)
+        .filter(|endpoint| !endpoint.is_empty())
+    else {
+        return Ok(None);
     };
 
     // The actual OTLP pipeline wiring lives in the
     // `opentelemetry-otlp` crate, which is a heavy dependency that
-    // this PR keeps optional behind the env var. Until that lands we
+    // this PR keeps optional behind config. Until that lands we
     // emit a one-line note so operators see the export endpoint and
     // know `tracing` events will be exported when the OTEL pipeline
     // is configured globally (per-process opentelemetry_sdk setup).
-    debug!(endpoint = %endpoint, "OTLP exporter configured from {ENDPOINT_VAR}");
+    debug!(endpoint = %endpoint, "OTLP exporter configured");
     Ok(Some(OtelExporter {
-        endpoint: Arc::new(endpoint),
+        endpoint: Arc::new(endpoint.to_string()),
     }))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn init_returns_none_without_endpoint() {
+        assert!(
+            init(&ServerObservabilityConfig::default())
+                .unwrap()
+                .is_none()
+        );
+    }
+
+    #[test]
+    fn init_uses_configured_endpoint() {
+        let config = ServerObservabilityConfig {
+            otlp_endpoint: Some(" http://127.0.0.1:4317 ".to_string()),
+        };
+        let exporter = init(&config).unwrap().expect("exporter");
+
+        assert_eq!(exporter.endpoint(), "http://127.0.0.1:4317");
+    }
 }
 
 #[derive(Debug)]

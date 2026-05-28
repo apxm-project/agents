@@ -70,6 +70,7 @@ pub mod env {
     pub const APXM_TOKIO_WORKERS: &str = "APXM_TOKIO_WORKERS";
     pub const LLVM_DIR: &str = "LLVM_DIR";
     pub const MLIR_DIR: &str = "MLIR_DIR";
+    pub const OTEL_EXPORTER_OTLP_ENDPOINT: &str = "OTEL_EXPORTER_OTLP_ENDPOINT";
     pub const PYTHONPATH: &str = "PYTHONPATH";
     pub const RUST_LOG: &str = "RUST_LOG";
 
