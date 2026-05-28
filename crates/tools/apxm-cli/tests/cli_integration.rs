@@ -1115,6 +1115,7 @@ fn codegen_frontend_is_idempotent() {
     let first_json: serde_json::Value = serde_json::from_slice(&first.stdout).unwrap();
     assert_eq!(first_json["target"], "frontend");
     assert_eq!(first_json["output_dir"], output_dir_str);
+    assert_eq!(first_json["check"], false);
 
     let first_snapshot = read_generated_snapshot(&output_dir);
     assert_eq!(first_snapshot.len(), 7);
@@ -1142,6 +1143,23 @@ fn codegen_frontend_is_idempotent() {
 
     assert_eq!(first_json, second_json);
     assert_eq!(first_snapshot, second_snapshot);
+
+    let check = apxm()
+        .args([
+            "--json",
+            "codegen",
+            "frontend",
+            "--output-dir",
+            output_dir_str,
+            "--check",
+        ])
+        .output()
+        .unwrap();
+    assert!(check.status.success());
+    let check_json: serde_json::Value = serde_json::from_slice(&check.stdout).unwrap();
+    assert_eq!(check_json["target"], "frontend");
+    assert_eq!(check_json["output_dir"], output_dir_str);
+    assert_eq!(check_json["check"], true);
 }
 
 #[test]
@@ -1290,6 +1308,49 @@ fn codegen_typescript_check_fails_when_file_is_stale() {
 }
 
 #[test]
+fn codegen_frontend_check_fails_when_file_is_stale() {
+    let temp_dir = tempfile::tempdir().unwrap();
+    let output_dir = temp_dir.path().join("_generated");
+    let output_dir_str = output_dir.to_str().unwrap();
+
+    let generate = apxm()
+        .args([
+            "--json",
+            "codegen",
+            "frontend",
+            "--output-dir",
+            output_dir_str,
+        ])
+        .output()
+        .unwrap();
+    assert!(generate.status.success());
+
+    let constants_path = output_dir.join("constants.py");
+    let stale_content = "# stale generated frontend file\n";
+    std::fs::write(&constants_path, stale_content).unwrap();
+
+    let check = apxm()
+        .args([
+            "--json",
+            "codegen",
+            "frontend",
+            "--output-dir",
+            output_dir_str,
+            "--check",
+        ])
+        .output()
+        .unwrap();
+
+    assert!(!check.status.success());
+    let check_json: serde_json::Value = serde_json::from_slice(&check.stdout).unwrap();
+    assert!(check_json["error"].as_str().unwrap().contains("stale"));
+    assert_eq!(
+        std::fs::read_to_string(&constants_path).unwrap(),
+        stale_content
+    );
+}
+
+#[test]
 fn codegen_event_kinds_check_fails_when_file_is_stale() {
     let temp_dir = tempfile::tempdir().unwrap();
     let output_path = temp_dir.path().join("core-event-kinds.ts");
@@ -1320,6 +1381,16 @@ fn codegen_event_kinds_check_fails_when_file_is_stale() {
 
 #[test]
 fn codegen_default_generated_files_are_current() {
+    let frontend = apxm()
+        .args(["--json", "codegen", "frontend", "--check"])
+        .output()
+        .unwrap();
+    assert!(
+        frontend.status.success(),
+        "frontend codegen drift: {}",
+        String::from_utf8_lossy(&frontend.stderr)
+    );
+
     let typescript = apxm()
         .args(["--json", "codegen", "typescript", "--check"])
         .output()

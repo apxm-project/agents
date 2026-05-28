@@ -1,5 +1,6 @@
 //! Codegen command (regenerate frontend / typescript artifacts).
 
+use std::collections::BTreeSet;
 use std::fs;
 use std::path::{Path, PathBuf};
 
@@ -9,24 +10,32 @@ use super::cli::*;
 
 pub fn codegen_command(action: CodegenAction, json_output: bool) -> Result<()> {
     match action {
-        CodegenAction::Frontend { output_dir } => {
+        CodegenAction::Frontend { output_dir, check } => {
             let output_dir = output_dir.unwrap_or_else(default_frontend_codegen_dir);
             let rendered = crate::frontend::render_generated_python();
             let mut files: Vec<String> =
                 rendered.iter().map(|(name, _)| name.to_string()).collect();
             files.sort();
 
-            crate::frontend::codegen::write_generated_python(&output_dir)?;
+            if check {
+                check_generated_python_dir(&output_dir, &rendered)?;
+            } else {
+                crate::frontend::codegen::write_generated_python(&output_dir)?;
+            }
 
             if json_output {
                 let output = serde_json::json!({
                     "target": "frontend",
                     "output_dir": output_dir.display().to_string(),
                     "files": files,
+                    "check": check,
                 });
                 println!("{}", serde_json::to_string_pretty(&output)?);
             } else {
-                println!("Generated frontend bindings:");
+                println!(
+                    "{} frontend bindings:",
+                    if check { "Checked" } else { "Generated" }
+                );
                 println!("  target: frontend");
                 println!("  output: {}", output_dir.display());
                 for file in files {
@@ -102,6 +111,50 @@ fn check_generated_file(output_path: &Path, rendered: &str, target: &str) -> Res
             output_path.display()
         );
     }
+    Ok(())
+}
+
+fn check_generated_python_dir(
+    output_dir: &Path,
+    rendered: &[(&'static str, String)],
+) -> Result<()> {
+    let expected = rendered
+        .iter()
+        .map(|(name, _)| *name)
+        .collect::<BTreeSet<_>>();
+
+    for (filename, content) in rendered {
+        let output_path = output_dir.join(filename);
+        let current = fs::read_to_string(&output_path).map_err(|error| {
+            anyhow::anyhow!(
+                "frontend generated output is missing: rerun `apxm codegen frontend` for {} ({error})",
+                output_path.display()
+            )
+        })?;
+        if current != *content {
+            bail!(
+                "frontend generated output is stale: rerun `apxm codegen frontend` for {}",
+                output_path.display()
+            );
+        }
+    }
+
+    for entry in fs::read_dir(output_dir)? {
+        let entry = entry?;
+        if !entry.file_type()?.is_file() {
+            continue;
+        }
+        let Some(name) = entry.file_name().to_str().map(str::to_string) else {
+            continue;
+        };
+        if name.ends_with(".py") && !expected.contains(name.as_str()) {
+            bail!(
+                "frontend generated output has unexpected file: remove {} or rerun `apxm codegen frontend`",
+                entry.path().display()
+            );
+        }
+    }
+
     Ok(())
 }
 
