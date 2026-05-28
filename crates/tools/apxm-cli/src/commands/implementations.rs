@@ -118,9 +118,14 @@ pub(super) fn parse_duration(s: &str) -> Result<chrono::Duration> {
 #[cfg(feature = "driver")]
 pub(super) fn load_config(config: Option<PathBuf>) -> Result<ApXmConfig> {
     if let Some(path) = config {
-        return ApXmConfig::from_file(&path)
+        return ApXmConfig::load_scoped_with_explicit(Some(path.clone()))
             .map_err(|e| anyhow::anyhow!(e))
-            .with_context(|| format!("Failed to load config {}", path.display()));
+            .with_context(|| {
+                format!(
+                    "Failed to load config hierarchy with explicit layer {}",
+                    path.display()
+                )
+            });
     }
 
     match ApXmConfig::load_scoped() {

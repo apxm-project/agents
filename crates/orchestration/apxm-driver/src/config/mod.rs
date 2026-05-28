@@ -10,6 +10,7 @@ use std::path::{Path, PathBuf};
 
 use apxm_backends::llm::BackendConfig;
 use apxm_core::constants::env::APXM_CONFIG as APXM_CONFIG_ENV_VAR;
+use apxm_core::env::APXM_HOME;
 use dirs::home_dir;
 use serde::{Deserialize, Serialize};
 use std::env;
@@ -310,8 +311,15 @@ impl ApXmConfig {
         toml::from_str::<ApXmConfig>(&contents).map_err(ConfigError::Parse)
     }
 
-    /// Returns the default configuration path (`$HOME/.apxm/config.toml`).
+    /// Returns the global configuration path (`$APXM_HOME/config.toml` or
+    /// `$HOME/.apxm/config.toml`).
     pub fn default_path() -> Result<PathBuf> {
+        if let Ok(path) = env::var(APXM_HOME) {
+            let trimmed = path.trim();
+            if !trimmed.is_empty() {
+                return Ok(PathBuf::from(trimmed).join("config.toml"));
+            }
+        }
         let home = home_dir().ok_or(ConfigError::HomeDirMissing)?;
         Ok(home.join(".apxm").join("config.toml"))
     }
@@ -322,16 +330,63 @@ impl ApXmConfig {
         Self::from_file(path)
     }
 
-    /// Load configuration for the current working directory, falling back to the
-    /// global config when no project-level file exists.
+    /// Load configuration for the current working directory.
+    ///
+    /// Precedence is built-in defaults < global config < nearest project
+    /// `.apxm/config.toml` < explicit `APXM_CONFIG`. TOML tables are merged
+    /// before deserializing, so omitted project keys do not reset global keys
+    /// to struct defaults.
     pub fn load_scoped() -> Result<Self> {
-        if let Some(path) = explicit_config_path() {
-            return Self::from_file(path);
+        Self::load_scoped_with_explicit(explicit_config_path())
+    }
+
+    /// Load scoped configuration with an explicit highest-precedence layer.
+    pub fn load_scoped_with_explicit(explicit_path: Option<PathBuf>) -> Result<Self> {
+        let mut paths = Vec::new();
+        if let Some(path) = existing_global_config_path()? {
+            paths.push(path);
         }
         if let Some(path) = project_config_path() {
-            return Self::from_file(path);
+            paths.push(path);
         }
-        Self::load_default()
+        if let Some(path) = explicit_path {
+            paths.push(path);
+        }
+
+        Self::from_layered_files(paths)
+    }
+
+    /// Load and merge config files in ascending precedence order.
+    pub fn from_layered_files<I, P>(paths: I) -> Result<Self>
+    where
+        I: IntoIterator<Item = P>,
+        P: AsRef<Path>,
+    {
+        let mut merged = toml::Value::Table(toml::value::Table::new());
+        let mut loaded = false;
+
+        for path in paths {
+            let path = path.as_ref();
+            let contents = fs::read_to_string(path).map_err(ConfigError::Io)?;
+            let table: toml::value::Table =
+                toml::from_str(&contents).map_err(ConfigError::Parse)?;
+            merge_toml_value(&mut merged, toml::Value::Table(table));
+            loaded = true;
+        }
+
+        if !loaded {
+            return Ok(Self::default());
+        }
+
+        merged.try_into::<ApXmConfig>().map_err(ConfigError::Parse)
+    }
+
+    /// Load only the explicit config pointed to by `APXM_CONFIG`, when set.
+    pub fn load_explicit() -> Result<Option<Self>> {
+        if let Some(path) = explicit_config_path() {
+            return Self::from_file(path).map(Some);
+        }
+        Ok(None)
     }
 
     /// Write this config to the given path.
@@ -368,6 +423,14 @@ fn explicit_config_path() -> Option<PathBuf> {
     Some(PathBuf::from(trimmed))
 }
 
+fn existing_global_config_path() -> Result<Option<PathBuf>> {
+    match ApXmConfig::default_path() {
+        Ok(path) => Ok(path.exists().then_some(path)),
+        Err(ConfigError::HomeDirMissing) => Ok(None),
+        Err(error) => Err(error),
+    }
+}
+
 fn project_config_path() -> Option<PathBuf> {
     let cwd = env::current_dir().ok()?;
     for ancestor in cwd.ancestors() {
@@ -377,6 +440,24 @@ fn project_config_path() -> Option<PathBuf> {
         }
     }
     None
+}
+
+fn merge_toml_value(base: &mut toml::Value, overlay: toml::Value) {
+    match (base, overlay) {
+        (toml::Value::Table(base_table), toml::Value::Table(overlay_table)) => {
+            for (key, overlay_value) in overlay_table {
+                match base_table.get_mut(&key) {
+                    Some(base_value) => merge_toml_value(base_value, overlay_value),
+                    None => {
+                        base_table.insert(key, overlay_value);
+                    }
+                }
+            }
+        }
+        (base_value, overlay_value) => {
+            *base_value = overlay_value;
+        }
+    }
 }
 
 fn apply_enabled_override(
@@ -997,7 +1078,12 @@ mod tests {
     }
 
     #[test]
+    #[allow(unsafe_code)]
     fn default_path_respects_home() {
+        let original_apxm_home = env::var(APXM_HOME).ok();
+        unsafe {
+            env::remove_var(APXM_HOME);
+        }
         // Use HOME if set, otherwise skip gracefully (CI without home dir)
         let home = match env::var("HOME") {
             Ok(h) => h,
@@ -1006,12 +1092,139 @@ mod tests {
                 if let Some(h) = home_dir() {
                     h.to_string_lossy().into_owned()
                 } else {
+                    if let Some(value) = original_apxm_home {
+                        unsafe {
+                            env::set_var(APXM_HOME, value);
+                        }
+                    }
                     return; // skip test if no home dir available
                 }
             }
         };
         let expected = PathBuf::from(home).join(".apxm").join("config.toml");
         assert_eq!(ApXmConfig::default_path().unwrap(), expected);
+        if let Some(value) = original_apxm_home {
+            unsafe {
+                env::set_var(APXM_HOME, value);
+            }
+        } else {
+            unsafe {
+                env::remove_var(APXM_HOME);
+            }
+        }
+    }
+
+    #[test]
+    #[allow(unsafe_code)]
+    fn default_path_respects_apxm_home() {
+        let dir = tempfile::tempdir().expect("temp APXM_HOME");
+        let original = env::var(APXM_HOME).ok();
+        unsafe {
+            env::set_var(APXM_HOME, dir.path());
+        }
+
+        assert_eq!(
+            ApXmConfig::default_path().unwrap(),
+            dir.path().join("config.toml")
+        );
+
+        match original {
+            Some(value) => unsafe {
+                env::set_var(APXM_HOME, value);
+            },
+            None => unsafe {
+                env::remove_var(APXM_HOME);
+            },
+        }
+    }
+
+    #[test]
+    fn layered_config_merges_global_project_and_explicit_layers() {
+        let dir = tempfile::tempdir().expect("temp config layers");
+        let global = dir.path().join("global.toml");
+        let project = dir.path().join("project.toml");
+        let explicit = dir.path().join("explicit.toml");
+
+        std::fs::write(
+            &global,
+            format!(
+                r#"
+                [chat]
+                providers = ["{MOCK_PROVIDER_NAME}"]
+                default_backend = "{MOCK_PROVIDER_NAME}"
+                default_model = "{MOCK_MODEL_NAME}"
+
+                [chat.routing.operation_routes.plan]
+                backend = "{MOCK_PROVIDER_NAME}"
+                model = "{MOCK_MODEL_NAME}"
+
+                [tools.bash]
+                enabled = false
+                timeout_secs = 10
+                "#
+            ),
+        )
+        .expect("write global config");
+        std::fs::write(
+            &project,
+            format!(
+                r#"
+                [chat]
+                default_model = "{MOCK_MODEL_NAME_ALT}"
+                planning_model = "project-planner"
+
+                [tools.bash]
+                timeout_secs = 20
+                "#
+            ),
+        )
+        .expect("write project config");
+        std::fs::write(
+            &explicit,
+            format!(
+                r#"
+                [chat]
+                default_backend = "{MOCK_PROVIDER_NAME_ALT}"
+                "#
+            ),
+        )
+        .expect("write explicit config");
+
+        let config = ApXmConfig::from_layered_files([
+            global.as_path(),
+            project.as_path(),
+            explicit.as_path(),
+        ])
+        .expect("layered config");
+
+        assert_eq!(config.chat.providers, vec![MOCK_PROVIDER_NAME.to_string()]);
+        assert_eq!(
+            config.chat.default_backend.as_deref(),
+            Some(MOCK_PROVIDER_NAME_ALT)
+        );
+        assert_eq!(
+            config.chat.default_model.as_deref(),
+            Some(MOCK_MODEL_NAME_ALT)
+        );
+        assert_eq!(
+            config.chat.planning_model.as_deref(),
+            Some("project-planner")
+        );
+        assert_eq!(
+            config
+                .chat
+                .routing
+                .operation_routes
+                .get("plan")
+                .and_then(|route| route.backend.as_deref()),
+            Some(MOCK_PROVIDER_NAME)
+        );
+        let bash = config.tools.get("bash").expect("merged bash config");
+        assert!(
+            !bash.enabled,
+            "omitted project key should not reset enabled"
+        );
+        assert_eq!(bash.timeout_secs, Some(20));
     }
 
     #[test]
