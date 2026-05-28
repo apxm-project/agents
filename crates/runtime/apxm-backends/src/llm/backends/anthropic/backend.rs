@@ -5,6 +5,7 @@
 //! `list_models()` to include newer Claude model identifiers.
 
 use crate::llm::ProviderProtocol;
+use crate::llm::backends::http::llm_http_client;
 use crate::llm::backends::traits::StreamChunk;
 use crate::llm::backends::{ContentPart, LLMBackend, LLMRequest, LLMResponse, Role, ToolChoice};
 use crate::llm::catalog::{default_model_for_protocol, models_for_protocol};
@@ -108,7 +109,7 @@ impl AnthropicBackend {
             model,
             base_url,
             extra_headers,
-            client: reqwest::Client::new(),
+            client: llm_http_client(),
         })
     }
 

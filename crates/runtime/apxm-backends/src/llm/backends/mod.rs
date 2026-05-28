@@ -12,6 +12,7 @@ pub mod traits;
 
 pub mod anthropic;
 pub mod google;
+pub(crate) mod http;
 pub mod mock;
 pub mod ollama;
 pub mod openai;

@@ -1,11 +1,10 @@
 //! Ollama backend implementation (local models).
 
 use crate::llm::ProviderProtocol;
+use crate::llm::backends::http::llm_http_client;
 use crate::llm::backends::traits::StreamChunk;
-use crate::llm::backends::{LLMBackend, LLMRequest, LLMResponse, Message, Role};
-use crate::llm::wire::{
-    api_paths, config_keys, ollama as ollama_keys, response_metadata,
-};
+use crate::llm::backends::{LLMBackend, LLMRequest, LLMResponse, Role};
+use crate::llm::wire::{api_paths, config_keys, ollama as ollama_keys, response_metadata};
 use anyhow::{Context, Result};
 use apxm_core::constants::graph::attrs::{BASE_URL, MODEL};
 use apxm_core::types::{FinishReason, ModelCapabilities, ModelInfo, TokenUsage, ToolCall};
@@ -15,7 +14,6 @@ use serde::Deserialize;
 use serde_json::json;
 use std::collections::HashMap;
 use std::pin::Pin;
-use std::time::Duration;
 use tokio_stream::Stream;
 
 const DEFAULT_BASE_URL: &str = "http://localhost:11434";
@@ -134,7 +132,7 @@ impl OllamaBackend {
         Ok(OllamaBackend {
             model,
             base_url,
-            client: reqwest::Client::new(),
+            client: llm_http_client(),
             ollama_options,
             model_supports_thinking,
         })
@@ -300,11 +298,13 @@ impl LLMBackend for OllamaBackend {
 
         let mut response =
             LLMResponse::new(content, &model, usage, finish_reason).with_tool_calls(tool_calls);
-        if let Some(reasoning) = api_response.message.thinking.filter(|text| !text.is_empty()) {
-            response = response.with_metadata(
-                response_metadata::REASONING.to_string(),
-                json!(reasoning),
-            );
+        if let Some(reasoning) = api_response
+            .message
+            .thinking
+            .filter(|text| !text.is_empty())
+        {
+            response =
+                response.with_metadata(response_metadata::REASONING.to_string(), json!(reasoning));
         }
         Ok(response)
     }
@@ -551,6 +551,7 @@ struct OllamaModel {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::llm::backends::Message;
 
     #[test]
     fn parses_thinking_from_chat_response() {
@@ -576,16 +577,10 @@ mod tests {
             base_url: DEFAULT_BASE_URL.to_string(),
             client: reqwest::Client::new(),
             ollama_options: serde_json::Map::new(),
-            model_supports_thinking: HashMap::from([(
-                "gpt-oss:120b-cloud".to_string(),
-                true,
-            )]),
+            model_supports_thinking: HashMap::from([("gpt-oss:120b-cloud".to_string(), true)]),
         };
-        let request = LLMRequest::from_messages(vec![Message::text(
-            Role::User,
-            "hello",
-        )])
-        .with_model("gpt-oss:120b-cloud".to_string());
+        let request = LLMRequest::from_messages(vec![Message::text(Role::User, "hello")])
+            .with_model("gpt-oss:120b-cloud".to_string());
         assert!(backend.should_think(&request));
     }
 }

@@ -7,6 +7,7 @@
 //! surfaced by `list_models()` to reflect more recent model names.
 
 use crate::llm::ProviderProtocol;
+use crate::llm::backends::http::llm_http_client;
 use crate::llm::backends::traits::StreamChunk;
 use crate::llm::backends::{ContentPart, LLMBackend, LLMRequest, LLMResponse, Role, ToolChoice};
 use crate::llm::catalog::{default_model_for_protocol, models_for_protocol};
@@ -205,7 +206,7 @@ impl OpenAIBackend {
             extra_headers,
             fixed_temperature_models,
             structured_outputs_supported,
-            client: reqwest::Client::new(),
+            client: llm_http_client(),
         })
     }
 
