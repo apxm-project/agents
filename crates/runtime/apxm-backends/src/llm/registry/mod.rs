@@ -122,6 +122,64 @@ struct StreamingAttempt {
     estimated_cost: f64,
 }
 
+const STREAM_FAILURE_BACKEND_ERROR: &str = "backend_error";
+const STREAM_FAILURE_CHUNK_ERROR: &str = "chunk_error";
+const STREAM_FAILURE_MISSING_DONE: &str = "missing_done";
+const STREAM_ENDED_WITHOUT_DONE: &str = "stream ended without terminal Done chunk";
+
+/// Classifies failures that happen after a streaming backend has emitted data.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum StreamingFailureKind {
+    /// The backend stream returned an error item after commitment.
+    BackendError,
+    /// The backend emitted a `StreamChunk::Error` after commitment.
+    ChunkError,
+    /// The backend stream ended without a terminal `Done` chunk after commitment.
+    MissingDone,
+}
+
+impl std::fmt::Display for StreamingFailureKind {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let label = match self {
+            Self::BackendError => STREAM_FAILURE_BACKEND_ERROR,
+            Self::ChunkError => STREAM_FAILURE_CHUNK_ERROR,
+            Self::MissingDone => STREAM_FAILURE_MISSING_DONE,
+        };
+        f.write_str(label)
+    }
+}
+
+/// Error returned when a committed stream fails and the backend is known.
+#[derive(Debug, thiserror::Error)]
+#[error("Backend '{backend_name}' stream failed after commit ({kind}): {message}")]
+pub struct StreamingBackendError {
+    backend_name: String,
+    kind: StreamingFailureKind,
+    message: String,
+}
+
+impl StreamingBackendError {
+    pub fn new(
+        backend_name: impl Into<String>,
+        kind: StreamingFailureKind,
+        message: impl Into<String>,
+    ) -> Self {
+        Self {
+            backend_name: backend_name.into(),
+            kind,
+            message: message.into(),
+        }
+    }
+
+    pub fn backend_name(&self) -> &str {
+        &self.backend_name
+    }
+
+    pub fn kind(&self) -> StreamingFailureKind {
+        self.kind
+    }
+}
+
 impl LLMRegistry {
     /// Create a new empty registry with default routing.
     pub fn new() -> Self {
@@ -610,7 +668,11 @@ impl LLMRegistry {
                         Err(error) => {
                             self.finish_streaming_attempt(&attempt, started_at.elapsed(), None, false);
                             if committed {
-                                Err(error)?;
+                                Err(anyhow::Error::new(StreamingBackendError::new(
+                                    attempt.backend_name.as_str(),
+                                    StreamingFailureKind::BackendError,
+                                    error.to_string(),
+                                )))?;
                                 return;
                             }
                             last_error = Some(error);
@@ -627,7 +689,11 @@ impl LLMRegistry {
                         );
                         self.finish_streaming_attempt(&attempt, started_at.elapsed(), None, false);
                         if committed {
-                            Err(error)?;
+                            Err(anyhow::Error::new(StreamingBackendError::new(
+                                attempt.backend_name.as_str(),
+                                StreamingFailureKind::ChunkError,
+                                message.as_str(),
+                            )))?;
                             return;
                         }
                         last_error = Some(error);
@@ -679,10 +745,11 @@ impl LLMRegistry {
 
                 if committed {
                     self.finish_streaming_attempt(&attempt, started_at.elapsed(), None, false);
-                    Err(anyhow::anyhow!(
-                        "Backend '{}' stream ended without terminal Done chunk",
-                        attempt.backend_name
-                    ))?;
+                    Err(anyhow::Error::new(StreamingBackendError::new(
+                        attempt.backend_name.as_str(),
+                        StreamingFailureKind::MissingDone,
+                        STREAM_ENDED_WITHOUT_DONE,
+                    )))?;
                     return;
                 }
 
