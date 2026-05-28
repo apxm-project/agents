@@ -4,7 +4,7 @@ use std::time::SystemTime;
 
 use apxm_core::constants::env as apxm_env;
 use apxm_core::paths::ApxmPaths;
-use apxm_driver::{ApXmConfig, ServerConfig};
+use apxm_driver::{ApXmConfig, ServerConfig, ServerExecutionsConfig};
 use apxm_rollout::{IndexDb, RolloutPaths};
 use apxm_runtime::{Runtime, RuntimeConfig, SchedulerConfig};
 use dashmap::DashMap;
@@ -24,10 +24,13 @@ use crate::state::{AppState, InferenceLimiter};
 use crate::tasks::TaskQueueManager;
 use crate::webhook::WebhookDispatcher;
 
-pub(crate) fn execution_store_from_paths() -> ExecutionStore {
+pub(crate) fn execution_store_from_paths(config: &ServerExecutionsConfig) -> ExecutionStore {
     match ApxmPaths::discover() {
         Ok(paths) => {
-            let store = ExecutionStore::from_session_roots(paths.session_lookup_dirs());
+            let store = ExecutionStore::from_session_roots_with_index_max_entries(
+                paths.session_lookup_dirs(),
+                config.index_max_entries,
+            );
             let loaded = store.list().len();
             if loaded > 0 {
                 info!(count = loaded, "loaded persisted execution records");
@@ -36,7 +39,7 @@ pub(crate) fn execution_store_from_paths() -> ExecutionStore {
         }
         Err(error) => {
             warn!(%error, "failed to discover APXM paths for execution record reload");
-            ExecutionStore::new()
+            ExecutionStore::with_index_max_entries(config.index_max_entries)
         }
     }
 }
@@ -98,7 +101,7 @@ pub(crate) async fn run_server_with_config(server_config: ServerConfig) -> anyho
         start_time: SystemTime::now(),
         a2a_tasks: Arc::new(DashMap::new()),
         skill_library,
-        execution_store: execution_store_from_paths(),
+        execution_store: execution_store_from_paths(&server_config.executions),
         run_event_bus: RunEventBus::with_config(&server_config.run_events),
         webhook_dispatcher,
         rollout_paths,
@@ -164,6 +167,9 @@ fn apply_server_env_overrides(config: &mut ServerConfig) {
     }
     if let Some(value) = env_u64(apxm_env::APXM_EXECUTION_STREAM_KEEP_ALIVE_SECS) {
         config.execution_stream.keep_alive_secs = value;
+    }
+    if let Some(value) = env_usize(apxm_env::APXM_EXECUTION_INDEX_MAX_ENTRIES) {
+        config.executions.index_max_entries = value;
     }
     if let Some(value) = env_usize(apxm_env::APXM_RUN_EVENT_STREAM_BUFFER) {
         config.run_events.stream_buffer = value;
