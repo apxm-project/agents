@@ -149,6 +149,47 @@ fn populate_run(bus: &RunEventBus, execution_id: &str) {
     ));
 }
 
+#[tokio::test]
+async fn run_event_bus_assigns_monotonic_run_sequence() {
+    let bus = RunEventBus::new();
+    let first = bus.record(
+        RUN_EXECUTION_ID,
+        ApxmEvent::root(
+            OperationStartPayload {
+                node_id: 1,
+                op_type: AISOperationType::Ask,
+                context: None,
+            },
+            EventSource::Runtime,
+            RUN_EXECUTION_ID,
+        )
+        .with_seq(99),
+    );
+    let second = bus.record(
+        RUN_EXECUTION_ID,
+        ApxmEvent::root(
+            OperationEndPayload {
+                node_id: 1,
+                op_type: AISOperationType::Ask,
+                duration_ms: 1,
+                success: true,
+            },
+            EventSource::Runtime,
+            RUN_EXECUTION_ID,
+        )
+        .with_seq(99),
+    );
+
+    assert_eq!(first.meta.seq, 0);
+    assert_eq!(second.meta.seq, 1);
+    let seqs: Vec<u64> = bus
+        .snapshot(RUN_EXECUTION_ID)
+        .into_iter()
+        .map(|event| event.meta.seq)
+        .collect();
+    assert_eq!(seqs, vec![0, 1]);
+}
+
 async fn seed_run_record(state: &AppState, execution_id: &str) {
     // ExecutionStore.start_skill_execution requires a session dir; use
     // a tempdir so persistence doesn't pollute the home directory.
@@ -318,7 +359,7 @@ async fn events_stream_supports_last_event_id_reconnect() {
     populate_run(&state.run_event_bus, SECOND_EXECUTION_ID);
     let app = build_app(state.clone());
 
-    // Resume past seq=4, so the first frames we see should be seq=5+.
+    // Last-Event-ID is exclusive, so seq=5 must not replay.
     let req = Request::builder()
         .method("GET")
         .uri(&routes::run_events_stream_path(SECOND_EXECUTION_ID))
@@ -344,13 +385,18 @@ async fn events_stream_supports_last_event_id_reconnect() {
         }
     }
     let text = String::from_utf8_lossy(&buf);
-    // No event with id ≤ 4 should appear (since=5 cursor).
-    for forbidden in ["id: 0", "id: 1", "id: 2", "id: 3", "id: 4"] {
+    // No event with id <= 5 should appear.
+    for forbidden in 0..=5 {
+        let needle = format!("id: {forbidden}\n");
         assert!(
-            !text.contains(forbidden),
-            "Last-Event-ID resume must skip {forbidden} in: {text}"
+            !text.contains(&needle),
+            "Last-Event-ID resume must skip id {forbidden} in: {text}"
         );
     }
+    assert!(
+        text.contains("id: 6\n"),
+        "Last-Event-ID resume should continue after id 5: {text}"
+    );
 }
 
 #[tokio::test]
