@@ -58,9 +58,7 @@ use crate::mcp_protocol::{
     status as mcp_status, tool_result,
 };
 use crate::routes;
-use crate::skill_resources::{
-    prepend_builtin_skill_root, skill_uri as skill_resource_uri,
-};
+use crate::skill_resources::{prepend_builtin_skill_root, skill_uri as skill_resource_uri};
 use crate::skills::{SkillLibrary, parse_skill_roots};
 use crate::state::AppState;
 use crate::tasks::{QueuedTask, TaskQueueManager, TaskStatus};
@@ -414,6 +412,7 @@ async fn test_state_with_skill_roots_and_execution_store(
             apxm_rollout::IndexDb::open_in_memory().expect("rollout index"),
         )),
         rollout_registry: crate::rollout::RolloutRegistry::new(),
+        inference_limiter: crate::state::InferenceLimiter::unlimited_for_tests(),
     }
 }
 
@@ -445,6 +444,7 @@ async fn test_state_with_runtime_and_skill_roots(
             apxm_rollout::IndexDb::open_in_memory().expect("rollout index"),
         )),
         rollout_registry: crate::rollout::RolloutRegistry::new(),
+        inference_limiter: crate::state::InferenceLimiter::unlimited_for_tests(),
     }
 }
 

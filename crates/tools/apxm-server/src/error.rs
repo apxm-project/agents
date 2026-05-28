@@ -23,6 +23,13 @@ impl ApiError {
         }
     }
 
+    pub(crate) fn too_many_requests(message: impl Into<String>) -> Self {
+        Self {
+            status: axum::http::StatusCode::TOO_MANY_REQUESTS,
+            message: message.into(),
+        }
+    }
+
     pub(crate) fn runtime(error: RuntimeError) -> Self {
         error!(error = %error, "runtime error");
         Self {

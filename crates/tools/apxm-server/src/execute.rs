@@ -59,6 +59,7 @@ pub(crate) async fn execute(
     let (air, args, session_id, session_dir) = prepare_request(req)?;
     let artifact = air_to_artifact(&air)?;
     validate_raw_execute_admission(&artifact, &state)?;
+    let _permit = state.inference_limiter.acquire().await?;
     let execution = state
         .runtime
         .execute_artifact_with_session_and_emitter(
@@ -80,12 +81,14 @@ pub(crate) async fn execute_stream(
     let (air, args, session_id, session_dir) = prepare_request(req)?;
     let artifact = air_to_artifact(&air)?;
     validate_raw_execute_admission(&artifact, &state)?;
+    let permit = state.inference_limiter.acquire().await?;
     let (tx, mut rx) = mpsc::channel::<ApxmEvent>(128);
     let runtime = Arc::clone(&state.runtime);
     let trace_id = session_id
         .clone()
         .unwrap_or_else(|| uuid::Uuid::new_v4().to_string());
     tokio::spawn(async move {
+        let _permit = permit;
         let emitter = Arc::new(EmitterAdapter::new(
             Arc::new(TokioChannelEmitter(tx.clone())),
             EventSource::Runtime,
