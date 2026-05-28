@@ -320,6 +320,10 @@ pub struct RunEventsConfig {
     pub stream_buffer: usize,
     pub retained_events: usize,
     pub keep_alive_secs: u64,
+    pub default_list_limit: usize,
+    pub max_list_limit: usize,
+    pub default_events_limit: usize,
+    pub max_events_limit: usize,
 }
 
 impl Default for RunEventsConfig {
@@ -328,6 +332,10 @@ impl Default for RunEventsConfig {
             stream_buffer: 1024,
             retained_events: 4096,
             keep_alive_secs: 15,
+            default_list_limit: 200,
+            max_list_limit: 500,
+            default_events_limit: 500,
+            max_events_limit: 2_000,
         }
     }
 }
@@ -1003,6 +1011,10 @@ mod tests {
             stream_buffer = 2048
             retained_events = 8192
             keep_alive_secs = 20
+            default_list_limit = 100
+            max_list_limit = 300
+            default_events_limit = 250
+            max_events_limit = 750
 
             [server.webhook]
             url = "http://127.0.0.1:18802/hook"
@@ -1081,6 +1093,10 @@ mod tests {
         assert_eq!(config.server.run_events.stream_buffer, 2048);
         assert_eq!(config.server.run_events.retained_events, 8192);
         assert_eq!(config.server.run_events.keep_alive_secs, 20);
+        assert_eq!(config.server.run_events.default_list_limit, 100);
+        assert_eq!(config.server.run_events.max_list_limit, 300);
+        assert_eq!(config.server.run_events.default_events_limit, 250);
+        assert_eq!(config.server.run_events.max_events_limit, 750);
         assert_eq!(
             config.server.webhook.url.as_deref(),
             Some("http://127.0.0.1:18802/hook")

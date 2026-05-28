@@ -40,6 +40,14 @@ pub mod env {
     pub const APXM_RUN_EVENT_RETAINED_EVENTS: &str = "APXM_RUN_EVENT_RETAINED_EVENTS";
     /// SSE keep-alive interval, in seconds, for run event subscriptions.
     pub const APXM_RUN_EVENT_KEEP_ALIVE_SECS: &str = "APXM_RUN_EVENT_KEEP_ALIVE_SECS";
+    /// Default page size for `/v1/runs`.
+    pub const APXM_RUN_LIST_DEFAULT_LIMIT: &str = "APXM_RUN_LIST_DEFAULT_LIMIT";
+    /// Maximum page size for `/v1/runs`.
+    pub const APXM_RUN_LIST_MAX_LIMIT: &str = "APXM_RUN_LIST_MAX_LIMIT";
+    /// Default page size for `/v1/runs/{id}/events`.
+    pub const APXM_RUN_EVENT_DEFAULT_LIMIT: &str = "APXM_RUN_EVENT_DEFAULT_LIMIT";
+    /// Maximum page size for `/v1/runs/{id}/events`.
+    pub const APXM_RUN_EVENT_MAX_LIMIT: &str = "APXM_RUN_EVENT_MAX_LIMIT";
     /// Outbound lifecycle webhook URL for run events.
     pub const APXM_RUN_WEBHOOK_URL: &str = "APXM_RUN_WEBHOOK_URL";
     /// Outbound lifecycle webhook request timeout, in seconds.
