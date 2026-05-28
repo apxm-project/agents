@@ -51,10 +51,7 @@ impl CancellationToken {
             children: Mutex::new(Vec::new()),
             parent: Some(Arc::downgrade(&self.inner)),
         });
-        self.inner
-            .children
-            .lock()
-            .push(Arc::clone(&child_inner));
+        self.inner.children.lock().push(Arc::clone(&child_inner));
         Self { inner: child_inner }
     }
 
