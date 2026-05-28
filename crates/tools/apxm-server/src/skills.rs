@@ -30,7 +30,7 @@ use crate::error::ApiError;
 use crate::execute::{ExecuteResponse, to_execute_response};
 use crate::executions::ExecutionRecordingEmitter;
 use crate::rollout::{RolloutEmitter, session_meta_from_skill};
-use crate::runs::RunBusEmitter;
+use crate::runs::RunBusFanOutEmitter;
 use crate::skill_resources::{
     SkillResource, SkillResourceContent, SkillResourceError, list_skill_resources,
     parse_cli_skill_roots as parse_cli_skill_roots_impl,
@@ -391,12 +391,7 @@ async fn execute_compiled_skill(
         EventSource::Server,
         &prepared.execution_id,
     );
-    state
-        .run_event_bus
-        .record(&prepared.execution_id, started_event.clone());
-    if let Some(dispatcher) = &state.webhook_dispatcher {
-        dispatcher.dispatch(started_event);
-    }
+    emit_recorded_run_event(state, &prepared.execution_id, started_event);
 
     // Fan event sinks out to: execution-record persistence, the run
     // event bus (powering /v1/runs/... + SSE), and any
@@ -439,12 +434,7 @@ async fn execute_compiled_skill(
         EventSource::Server,
         &prepared.execution_id,
     );
-    state
-        .run_event_bus
-        .record(&prepared.execution_id, complete_event.clone());
-    if let Some(dispatcher) = &state.webhook_dispatcher {
-        dispatcher.dispatch(complete_event);
-    }
+    emit_recorded_run_event(state, &prepared.execution_id, complete_event);
     state.rollout_registry.close(&prepared.execution_id).await;
     Ok(SkillExecuteResponse {
         execution_id: prepared.execution_id,
@@ -538,12 +528,7 @@ fn emit_skill_started(state: &AppState, prepared: &PreparedPromptOnlyExecution) 
         EventSource::Server,
         &prepared.execution_id,
     );
-    state
-        .run_event_bus
-        .record(&prepared.execution_id, event.clone());
-    if let Some(dispatcher) = &state.webhook_dispatcher {
-        dispatcher.dispatch(event);
-    }
+    emit_recorded_run_event(state, &prepared.execution_id, event);
 }
 
 fn emit_skill_completed(state: &AppState, execution_id: &str, result: ExecuteResponse) {
@@ -555,10 +540,7 @@ fn emit_skill_completed(state: &AppState, execution_id: &str, result: ExecuteRes
         EventSource::Server,
         execution_id,
     );
-    state.run_event_bus.record(execution_id, event.clone());
-    if let Some(dispatcher) = &state.webhook_dispatcher {
-        dispatcher.dispatch(event);
-    }
+    emit_recorded_run_event(state, execution_id, event);
 }
 
 fn emit_skill_failed(state: &AppState, execution_id: &str, message: &str) {
@@ -571,10 +553,7 @@ fn emit_skill_failed(state: &AppState, execution_id: &str, message: &str) {
         EventSource::Server,
         execution_id,
     );
-    state.run_event_bus.record(execution_id, event.clone());
-    if let Some(dispatcher) = &state.webhook_dispatcher {
-        dispatcher.dispatch(event);
-    }
+    emit_recorded_run_event(state, execution_id, event);
 }
 
 fn build_prompt_only_request(
@@ -640,8 +619,36 @@ fn now_ms_u128() -> u128 {
     crate::helpers::now_ms() as u128
 }
 
-/// Build the EventEmitter fan-out used by skill execution: persistence
-/// sink → run event bus → optional webhook/OTEL → optional channel.
+fn record_run_event(state: &AppState, execution_id: &str, event: ApxmEvent) -> ApxmEvent {
+    let event = state.run_event_bus.record(execution_id, event);
+    state
+        .rollout_registry
+        .try_record(execution_id, event.clone());
+    event
+}
+
+fn emit_recorded_run_event(state: &AppState, execution_id: &str, event: ApxmEvent) {
+    let event = record_run_event(state, execution_id, event);
+    if let Some(dispatcher) = &state.webhook_dispatcher {
+        dispatcher.dispatch(event);
+    }
+}
+
+async fn send_recorded_run_event(
+    state: &AppState,
+    tx: &mpsc::Sender<ApxmEvent>,
+    execution_id: &str,
+    event: ApxmEvent,
+) {
+    let event = record_run_event(state, execution_id, event);
+    if let Some(dispatcher) = &state.webhook_dispatcher {
+        dispatcher.dispatch(event.clone());
+    }
+    let _ = tx.send(event).await;
+}
+
+/// Build the EventEmitter fan-out used by skill execution: execution-record
+/// sink → run event bus → rollout/webhook/channel with normalized run seq.
 ///
 /// Adding a sink is additive — every consumer sees the same event so
 /// the SSE stream, the persisted record, and the lifecycle webhook
@@ -652,15 +659,7 @@ pub(crate) fn build_skill_event_sinks(
     execution_id: &str,
     channel: Option<Arc<dyn apxm_core::events::EventEmitter>>,
 ) -> Vec<Arc<dyn apxm_core::events::EventEmitter>> {
-    let mut sinks: Vec<Arc<dyn apxm_core::events::EventEmitter>> = vec![
-        Arc::new(ExecutionRecordingEmitter::new(
-            state.execution_store.clone(),
-            execution_id.to_string(),
-        )),
-        Arc::new(RunBusEmitter::new(
-            state.run_event_bus.clone(),
-            execution_id.to_string(),
-        )),
+    let mut normalized_sinks: Vec<Arc<dyn apxm_core::events::EventEmitter>> = vec![
         // Phase 14.8.E — durable JSONL mirror. Failures are logged
         // inside the emitter, never propagated, so a write error
         // doesn't tear the run.
@@ -670,12 +669,22 @@ pub(crate) fn build_skill_event_sinks(
         )),
     ];
     if let Some(channel) = channel {
-        sinks.push(channel);
+        normalized_sinks.push(channel);
     }
     if let Some(dispatcher) = &state.webhook_dispatcher {
-        sinks.push(Arc::new(WebhookEmitter::new(dispatcher.clone())));
+        normalized_sinks.push(Arc::new(WebhookEmitter::new(dispatcher.clone())));
     }
-    sinks
+    vec![
+        Arc::new(ExecutionRecordingEmitter::new(
+            state.execution_store.clone(),
+            execution_id.to_string(),
+        )),
+        Arc::new(RunBusFanOutEmitter::new(
+            state.run_event_bus.clone(),
+            execution_id.to_string(),
+            normalized_sinks,
+        )),
+    ]
 }
 
 /// Open a rollout recorder for an execution if not already open. Idempotent.
@@ -754,8 +763,11 @@ pub(crate) async fn execute_skill_stream(
 
         tokio::spawn(async move {
             let _permit = permit;
-            let _ = tx
-                .send(ApxmEvent::root(
+            send_recorded_run_event(
+                &state,
+                &tx,
+                &prepared.execution_id,
+                ApxmEvent::root(
                     SkillExecuteStartedPayload {
                         execution_id: prepared.execution_id.clone(),
                         skill_id: prepared.skill_id.clone(),
@@ -764,8 +776,9 @@ pub(crate) async fn execute_skill_stream(
                     },
                     EventSource::Server,
                     &trace_id,
-                ))
-                .await;
+                ),
+            )
+            .await;
             let event_sinks = build_skill_event_sinks(
                 &state,
                 &prepared.execution_id,
@@ -794,8 +807,11 @@ pub(crate) async fn execute_skill_stream(
                     Err(_) => {
                         let message = "skill execution timed out".to_string();
                         execution_store.complete_failure(&prepared.execution_id, message.clone());
-                        let _ = tx
-                            .send(ApxmEvent::root(
+                        send_recorded_run_event(
+                            &state,
+                            &tx,
+                            &prepared.execution_id,
+                            ApxmEvent::root(
                                 ErrorPayload {
                                     message,
                                     status: None,
@@ -803,8 +819,9 @@ pub(crate) async fn execute_skill_stream(
                                 },
                                 EventSource::Server,
                                 &trace_id,
-                            ))
-                            .await;
+                            ),
+                        )
+                        .await;
                         return;
                     }
                 }
@@ -816,22 +833,29 @@ pub(crate) async fn execute_skill_stream(
                 Ok(result) => {
                     let response = to_execute_response(result, Some(prepared.session_dir));
                     execution_store.complete_success(&prepared.execution_id, response.clone());
-                    let _ = tx
-                        .send(ApxmEvent::root(
+                    send_recorded_run_event(
+                        &state,
+                        &tx,
+                        &prepared.execution_id,
+                        ApxmEvent::root(
                             SkillExecuteCompletePayload {
                                 execution_id: prepared.execution_id.clone(),
                                 result: response,
                             },
                             EventSource::Server,
                             &trace_id,
-                        ))
-                        .await;
+                        ),
+                    )
+                    .await;
                 }
                 Err(error) => {
                     let message = error.to_string();
                     execution_store.complete_failure(&prepared.execution_id, message.clone());
-                    let _ = tx
-                        .send(ApxmEvent::root(
+                    send_recorded_run_event(
+                        &state,
+                        &tx,
+                        &prepared.execution_id,
+                        ApxmEvent::root(
                             ErrorPayload {
                                 message,
                                 status: None,
@@ -839,8 +863,9 @@ pub(crate) async fn execute_skill_stream(
                             },
                             EventSource::Server,
                             &trace_id,
-                        ))
-                        .await;
+                        ),
+                    )
+                    .await;
                 }
             }
             state.rollout_registry.close(&prepared.execution_id).await;
@@ -879,8 +904,11 @@ fn spawn_prompt_only_stream_task(
             prepared.args.clone(),
         )
         .await;
-        let _ = tx
-            .send(ApxmEvent::root(
+        send_recorded_run_event(
+            &state,
+            &tx,
+            &prepared.execution_id,
+            ApxmEvent::root(
                 SkillExecuteStartedPayload {
                     execution_id: prepared.execution_id.clone(),
                     skill_id: prepared.skill_id.clone(),
@@ -889,8 +917,9 @@ fn spawn_prompt_only_stream_task(
                 },
                 EventSource::Server,
                 &trace_id,
-            ))
-            .await;
+            ),
+        )
+        .await;
 
         let request = build_prompt_only_request(&state, &prepared);
         let started_ms = now_ms_u128();
@@ -925,23 +954,30 @@ fn spawn_prompt_only_stream_task(
                 state
                     .execution_store
                     .complete_success(&prepared.execution_id, response.clone());
-                let _ = tx
-                    .send(ApxmEvent::root(
+                send_recorded_run_event(
+                    &state,
+                    &tx,
+                    &prepared.execution_id,
+                    ApxmEvent::root(
                         SkillExecuteCompletePayload {
                             execution_id: prepared.execution_id.clone(),
                             result: response,
                         },
                         EventSource::Server,
                         &trace_id,
-                    ))
-                    .await;
+                    ),
+                )
+                .await;
             }
             Err(message) => {
                 state
                     .execution_store
                     .complete_failure(&prepared.execution_id, message.clone());
-                let _ = tx
-                    .send(ApxmEvent::root(
+                send_recorded_run_event(
+                    &state,
+                    &tx,
+                    &prepared.execution_id,
+                    ApxmEvent::root(
                         ErrorPayload {
                             message,
                             status: None,
@@ -949,8 +985,9 @@ fn spawn_prompt_only_stream_task(
                         },
                         EventSource::Server,
                         &trace_id,
-                    ))
-                    .await;
+                    ),
+                )
+                .await;
             }
         }
         state.rollout_registry.close(&prepared.execution_id).await;

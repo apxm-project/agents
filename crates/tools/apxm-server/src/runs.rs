@@ -39,6 +39,7 @@ use futures::Stream;
 use serde::{Deserialize, Serialize};
 use tokio::sync::broadcast;
 use tokio_stream::wrappers::BroadcastStream;
+use tokio_stream::wrappers::errors::BroadcastStreamRecvError;
 
 use crate::error::ApiError;
 use crate::executions::{ExecutionRecord, ExecutionStatus};
@@ -57,6 +58,9 @@ const STREAM_BUFFER: usize = 1024;
 /// the durable source of truth for older/cold replay.
 const DEFAULT_RETAINED_EVENTS: usize = 4096;
 const MIN_RETAINED_EVENTS: usize = 128;
+const LAST_EVENT_ID_HEADER: &str = "Last-Event-ID";
+const LAST_EVENT_ID_HEADER_LOWER: &str = "last-event-id";
+const SSE_ERROR_EVENT: &str = "error";
 
 // ────────────────────────────────────────────────────────────────────
 // RunEventBus — owns retained events + live broadcast per execution.
@@ -71,6 +75,7 @@ pub(crate) struct RunEventBus {
 struct RunEventState {
     events: VecDeque<ApxmEvent>,
     tx: broadcast::Sender<ApxmEvent>,
+    next_seq: u64,
 }
 
 impl RunEventState {
@@ -79,6 +84,7 @@ impl RunEventState {
         Self {
             events: VecDeque::new(),
             tx,
+            next_seq: 0,
         }
     }
 }
@@ -98,19 +104,25 @@ impl RunEventBus {
     }
 
     /// Record an event into the per-execution ring and fan out to live
-    /// subscribers. The trace_id on the event meta is treated as the
-    /// execution id — that's how the runtime currently stamps events.
-    pub(crate) fn record(&self, execution_id: &str, event: ApxmEvent) {
+    /// subscribers. The returned event has the bus-owned per-run sequence
+    /// number applied and should be used by durable/live downstream sinks.
+    pub(crate) fn record(&self, execution_id: &str, mut event: ApxmEvent) -> ApxmEvent {
         let mut entry = self
             .inner
             .entry(execution_id.to_string())
             .or_insert_with(RunEventState::new);
+        event.meta.seq = entry.next_seq;
+        entry.next_seq = entry.next_seq.checked_add(1).unwrap_or_else(|| {
+            tracing::warn!(execution_id, "run event sequence saturated");
+            u64::MAX
+        });
         entry.events.push_back(event.clone());
         while entry.events.len() > self.retained_events {
             entry.events.pop_front();
         }
         // No-subscriber send errors are non-fatal — only live observers care.
         let _ = entry.tx.send(event);
+        entry.events.back().cloned().expect("recorded event")
     }
 
     /// All events recorded for `execution_id` so far, in arrival order.
@@ -119,18 +131,6 @@ impl RunEventBus {
             .get(execution_id)
             .map(|entry| entry.events.iter().cloned().collect())
             .unwrap_or_default()
-    }
-
-    pub(crate) fn is_empty(&self, execution_id: &str) -> bool {
-        self.inner
-            .get(execution_id)
-            .is_none_or(|entry| entry.events.is_empty())
-    }
-
-    pub(crate) fn first_seq(&self, execution_id: &str) -> Option<u64> {
-        self.inner
-            .get(execution_id)
-            .and_then(|entry| entry.events.front().map(|event| event.meta.seq))
     }
 
     /// Subscribe to live events for `execution_id`. Subscribers get
@@ -154,11 +154,13 @@ impl RunEventBus {
 
 /// EventEmitter that funnels every event into the run bus, keyed by
 /// the event's trace_id (which is the execution_id for runtime events).
+#[cfg(test)]
 pub(crate) struct RunBusEmitter {
     bus: RunEventBus,
     execution_id: String,
 }
 
+#[cfg(test)]
 impl RunBusEmitter {
     pub(crate) fn new(bus: RunEventBus, execution_id: impl Into<String>) -> Self {
         Self {
@@ -168,9 +170,41 @@ impl RunBusEmitter {
     }
 }
 
+#[cfg(test)]
 impl EventEmitter for RunBusEmitter {
     fn emit(&self, event: ApxmEvent) {
         self.bus.record(&self.execution_id, event);
+    }
+}
+
+/// Records to `RunEventBus`, then fans the normalized event to downstream
+/// sinks such as rollout, webhook, and streaming response channels.
+pub(crate) struct RunBusFanOutEmitter {
+    bus: RunEventBus,
+    execution_id: String,
+    downstream: Vec<Arc<dyn EventEmitter>>,
+}
+
+impl RunBusFanOutEmitter {
+    pub(crate) fn new(
+        bus: RunEventBus,
+        execution_id: impl Into<String>,
+        downstream: Vec<Arc<dyn EventEmitter>>,
+    ) -> Self {
+        Self {
+            bus,
+            execution_id: execution_id.into(),
+            downstream,
+        }
+    }
+}
+
+impl EventEmitter for RunBusFanOutEmitter {
+    fn emit(&self, event: ApxmEvent) {
+        let event = self.bus.record(&self.execution_id, event);
+        for emitter in &self.downstream {
+            emitter.emit(event.clone());
+        }
     }
 }
 
@@ -307,6 +341,43 @@ pub(crate) struct EventsBulkResponse {
     pub(crate) events: Vec<serde_json::Value>,
     pub(crate) next_seq: u64,
     pub(crate) done: bool,
+}
+
+#[derive(Debug, Clone, Copy)]
+enum EventReplayCursor {
+    FromSeq(u64),
+    AfterSeq(u64),
+}
+
+impl EventReplayCursor {
+    fn from_request(headers: &HeaderMap, query: &EventsQuery) -> Self {
+        headers
+            .get(LAST_EVENT_ID_HEADER)
+            .or_else(|| headers.get(LAST_EVENT_ID_HEADER_LOWER))
+            .and_then(|v| v.to_str().ok())
+            .and_then(|s| s.parse::<u64>().ok())
+            .map(Self::AfterSeq)
+            .unwrap_or_else(|| Self::FromSeq(query.since.unwrap_or(0)))
+    }
+
+    fn accepts(self, seq: u64) -> bool {
+        match self {
+            Self::FromSeq(since) => seq >= since,
+            Self::AfterSeq(last_event_id) => seq > last_event_id,
+        }
+    }
+
+    fn required_first_seq(self) -> Option<u64> {
+        match self {
+            Self::FromSeq(since) => Some(since),
+            Self::AfterSeq(last_event_id) => last_event_id.checked_add(1),
+        }
+    }
+}
+
+enum RunSseItem {
+    Event(ApxmEvent),
+    Lagged(u64),
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -473,22 +544,20 @@ pub(crate) async fn stream_run_events(
     headers: HeaderMap,
     Query(query): Query<EventsQuery>,
 ) -> Result<Sse<impl Stream<Item = Result<Event, Infallible>>>, ApiError> {
-    // Resolve the resume cursor: Last-Event-ID header wins (W3C SSE
-    // contract), falling back to the ?since= query, then 0.
-    let last_event_id = headers
-        .get("Last-Event-ID")
-        .or_else(|| headers.get("last-event-id"))
-        .and_then(|v| v.to_str().ok())
-        .and_then(|s| s.parse::<u64>().ok());
-    let since = last_event_id.or(query.since).unwrap_or(0);
+    let cursor = EventReplayCursor::from_request(&headers, &query);
+
+    // Subscribe before snapshotting so an event emitted during the replay setup
+    // is either in the snapshot or waiting in the broadcast receiver.
+    let rx = state.run_event_bus.subscribe(&execution_id);
+    let snapshot = state.run_event_bus.snapshot(&execution_id);
 
     // Fall back to the rollout when the in-memory bounded ring is empty or the
     // reconnect cursor predates the first retained in-memory event.
-    let bus_empty = state.run_event_bus.is_empty(&execution_id);
-    let ring_missed_cursor = state
-        .run_event_bus
-        .first_seq(&execution_id)
-        .is_some_and(|first_seq| since < first_seq);
+    let bus_empty = snapshot.is_empty();
+    let ring_missed_cursor = cursor
+        .required_first_seq()
+        .zip(snapshot.first().map(|event| event.meta.seq))
+        .is_some_and(|(required_first_seq, first_seq)| required_first_seq < first_seq);
     let disk_events = if bus_empty || ring_missed_cursor {
         events_from_disk(&state, &execution_id).await
     } else {
@@ -500,31 +569,63 @@ pub(crate) async fn stream_run_events(
         )));
     }
 
-    let snapshot = if disk_events.is_empty() {
-        state.run_event_bus.snapshot(&execution_id)
-    } else {
-        disk_events
-    };
-    let rx = state.run_event_bus.subscribe(&execution_id);
-
-    let replay = snapshot
-        .into_iter()
-        .filter(move |event| event.meta.seq >= since);
-
-    let live = BroadcastStream::new(rx).filter_map(|item| async move {
-        // RecvError::Lagged → keep streaming, just skip the missed slots.
-        item.ok()
-    });
     use futures::StreamExt as _;
-    let combined = futures::stream::iter(replay).chain(live);
 
-    let stream = combined.map(|event| {
-        let id = event.meta.seq.to_string();
-        let data = serde_json::to_string(&event).unwrap_or_else(|_| "{}".to_string());
-        Ok(Event::default()
-            .event(event.kind().name())
-            .id(id)
-            .data(data))
+    let mut seen = std::collections::HashSet::new();
+    let mut replay: Vec<ApxmEvent> = disk_events
+        .into_iter()
+        .chain(snapshot)
+        .filter(|event| cursor.accepts(event.meta.seq))
+        .filter(|event| seen.insert(event.meta.seq))
+        .collect();
+    replay.sort_by_key(|event| event.meta.seq);
+    let replay_high_water = replay.iter().map(|event| event.meta.seq).max();
+
+    let live = BroadcastStream::new(rx).filter_map(move |item| async move {
+        match item {
+            Ok(event)
+                if cursor.accepts(event.meta.seq)
+                    && replay_high_water.is_none_or(|seq| event.meta.seq > seq) =>
+            {
+                Some(RunSseItem::Event(event))
+            }
+            Ok(_) => None,
+            Err(BroadcastStreamRecvError::Lagged(missed)) => Some(RunSseItem::Lagged(missed)),
+        }
+    });
+    let combined = futures::stream::iter(replay.into_iter().map(RunSseItem::Event))
+        .chain(live)
+        .scan(false, |closed, item| {
+            let emit = if *closed {
+                None
+            } else {
+                if matches!(item, RunSseItem::Lagged(_)) {
+                    *closed = true;
+                }
+                Some(item)
+            };
+            async move { emit }
+        });
+
+    let stream = combined.map(|item| {
+        let event = match item {
+            RunSseItem::Event(event) => {
+                let id = event.meta.seq.to_string();
+                let data = serde_json::to_string(&event).unwrap_or_else(|_| "{}".to_string());
+                Event::default()
+                    .event(event.kind().name())
+                    .id(id)
+                    .data(data)
+            }
+            RunSseItem::Lagged(missed) => Event::default().event(SSE_ERROR_EVENT).data(
+                serde_json::json!({
+                    "message": "run event stream lagged; reconnect with Last-Event-ID to replay",
+                    "missed": missed,
+                })
+                .to_string(),
+            ),
+        };
+        Ok(event)
     });
 
     Ok(Sse::new(stream).keep_alive(KeepAlive::new().interval(Duration::from_secs(15))))

@@ -91,7 +91,7 @@ impl RolloutRegistry {
         }
     }
 
-    fn try_record(&self, execution_id: &str, event: ApxmEvent) {
+    pub(crate) fn try_record(&self, execution_id: &str, event: ApxmEvent) {
         let Some(writer) = self.inner.get(execution_id) else {
             return;
         };
