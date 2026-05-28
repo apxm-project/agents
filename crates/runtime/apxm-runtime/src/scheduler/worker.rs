@@ -66,9 +66,11 @@ pub async fn worker_loop(
         let steal_start = std::time::Instant::now();
         let stolen = state.work_stealing.steal_next(&local_queue, worker_id);
         let Some(node_id) = stolen else {
-            // No work available, yield
-            tracing::trace!(worker = worker_id, "No work found, yielding");
-            tokio::task::yield_now().await;
+            // Bounded sleep instead of yield_now: caps steal-retry rate at
+            // ~20K/sec/worker so an idle pool of 16 workers does not burn a
+            // CPU just polling the work-stealing queue.
+            tracing::trace!(worker = worker_id, "No work found, sleeping");
+            tokio::time::sleep(Duration::from_micros(50)).await;
             continue;
         };
 
