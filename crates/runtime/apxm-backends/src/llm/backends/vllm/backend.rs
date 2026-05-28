@@ -4,6 +4,7 @@
 //! hints to every request. It also provides methods to register, inspect, and
 //! release graphs on the server side for graph-aware scheduling state.
 
+use crate::llm::backends::http::llm_http_client;
 use crate::llm::backends::openai::OpenAIBackend;
 use crate::llm::backends::traits::StreamChunk;
 use crate::llm::backends::{LLMBackend, LLMRequest, LLMResponse};
@@ -222,7 +223,7 @@ impl GraphAwareVllmBackend {
         // Pass config to inner OpenAI backend (vLLM is OpenAI-compatible)
         let inner =
             OpenAIBackend::new(api_key, Some(serde_json::Value::Object(inner_config_map))).await?;
-        let client = reqwest::Client::new();
+        let client = llm_http_client();
 
         Ok(Self {
             inner,

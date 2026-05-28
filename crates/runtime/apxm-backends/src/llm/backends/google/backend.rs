@@ -3,6 +3,7 @@
 //! Implements the LLMBackend trait for Google's Gemini API.
 
 use crate::llm::ProviderProtocol;
+use crate::llm::backends::http::llm_http_client;
 use crate::llm::backends::traits::StreamChunk;
 use crate::llm::backends::{LLMBackend, LLMRequest, LLMResponse, Role};
 use crate::llm::catalog::{default_model_for_protocol, models_for_protocol};
@@ -55,7 +56,7 @@ impl GoogleBackend {
             api_key: api_key.to_string(),
             model,
             base_url,
-            client: reqwest::Client::new(),
+            client: llm_http_client(),
         })
     }
 
