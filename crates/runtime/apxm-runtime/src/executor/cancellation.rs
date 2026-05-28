@@ -4,8 +4,8 @@
 //! cancels all descendants.  Tokens are cheap to clone (interior `Arc`) and
 //! safe to share across tasks.
 
-use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, Weak};
 use std::time::Duration;
 
 use parking_lot::Mutex;
@@ -14,7 +14,7 @@ use parking_lot::Mutex;
 struct Inner {
     cancelled: AtomicBool,
     children: Mutex<Vec<Arc<Inner>>>,
-    parent: Option<Arc<Inner>>,
+    parent: Option<Weak<Inner>>,
 }
 
 /// A hierarchical cancellation token.
@@ -49,9 +49,12 @@ impl CancellationToken {
         let child_inner = Arc::new(Inner {
             cancelled: AtomicBool::new(false),
             children: Mutex::new(Vec::new()),
-            parent: Some(Arc::clone(&self.inner)),
+            parent: Some(Arc::downgrade(&self.inner)),
         });
-        self.inner.children.lock().push(Arc::clone(&child_inner));
+        self.inner
+            .children
+            .lock()
+            .push(Arc::clone(&child_inner));
         Self { inner: child_inner }
     }
 
@@ -98,9 +101,11 @@ fn cancel_recursive(inner: &Arc<Inner>) {
     if inner.cancelled.swap(true, Ordering::SeqCst) {
         return; // already cancelled
     }
-    let children = inner.children.lock();
-    for child in children.iter() {
-        cancel_recursive(child);
+
+    let children = inner.children.lock().clone();
+
+    for child in children {
+        cancel_recursive(&child);
     }
 }
 
@@ -108,8 +113,10 @@ fn is_cancelled_recursive(inner: &Arc<Inner>) -> bool {
     if inner.cancelled.load(Ordering::SeqCst) {
         return true;
     }
-    if let Some(parent) = &inner.parent {
-        return is_cancelled_recursive(parent);
+    if let Some(parent) = &inner.parent
+        && let Some(parent) = parent.upgrade()
+    {
+        return is_cancelled_recursive(&parent);
     }
     false
 }
@@ -151,6 +158,18 @@ mod tests {
         child.cancel();
         assert!(child.is_cancelled());
         assert!(!parent.is_cancelled());
+    }
+
+    #[test]
+    fn test_child_does_not_keep_parent_alive() {
+        let parent = CancellationToken::new();
+        let parent_weak = Arc::downgrade(&parent.inner);
+        let child = parent.child();
+
+        drop(parent);
+
+        assert!(parent_weak.upgrade().is_none());
+        assert!(!child.is_cancelled());
     }
 
     #[test]
