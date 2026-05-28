@@ -20,6 +20,7 @@ use crossbeam_deque::Worker;
 use crate::executor::ExecutionContext;
 use crate::executor::ExecutorEngine;
 use crate::executor::pipeline::is_pure_llm_op;
+use crate::observability::WorkerLocalMetrics;
 use crate::scheduler::internal_state::TokenState;
 use crate::scheduler::queue::Priority;
 use crate::scheduler::state::SchedulerState;
@@ -40,6 +41,10 @@ pub async fn worker_loop(
     base_ctx: ExecutionContext,
 ) {
     tracing::debug!(worker = worker_id, "Worker starting");
+
+    // Per-worker accumulator — flushed in batches via `maybe_flush()` and on
+    // Drop. Replaces per-op atomic CAS on `state.metrics` for additive counters.
+    let mut local_metrics = WorkerLocalMetrics::new(Arc::clone(&state.metrics));
 
     loop {
         // Check termination conditions
@@ -75,7 +80,7 @@ pub async fn worker_loop(
         };
 
         // Record work-stealing time only on successful steals
-        state.metrics.record_work_stealing(steal_start.elapsed());
+        local_metrics.record_work_stealing(steal_start.elapsed());
 
         // Get node up-front so we can pick the correct semaphore. If the node
         // is missing, fall through and skip without ever acquiring a permit.
@@ -116,7 +121,7 @@ pub async fn worker_loop(
         );
 
         // Collect inputs (must all be ready) - timed when metrics enabled
-        let collected = timed!(state.metrics, record_input_collection, {
+        let collected = timed!(local_metrics, record_input_collection, {
             collect_inputs(&state.tokens, &node)
         });
         let Some(inputs) = collected else {
@@ -140,8 +145,16 @@ pub async fn worker_loop(
         // Execute operation with retries
         let outputs = node.output_tokens.clone();
 
-        let outcome =
-            execute_with_retries(&state, &executor, &node, &inputs, &child_ctx, worker_id).await;
+        let outcome = execute_with_retries(
+            &state,
+            &executor,
+            &node,
+            &inputs,
+            &child_ctx,
+            worker_id,
+            &mut local_metrics,
+        )
+        .await;
 
         // Handle outcome
         match outcome {
@@ -159,7 +172,7 @@ pub async fn worker_loop(
                     start_time,
                 };
 
-                handle_success(&event, value, attempts).await;
+                handle_success(&event, value, attempts, &mut local_metrics).await;
             }
             ExecutionOutcome::Failed {
                 error,
@@ -185,6 +198,7 @@ pub async fn worker_loop(
         }
 
         drop(permit);
+        local_metrics.maybe_flush();
     }
 }
 
@@ -387,6 +401,7 @@ async fn execute_with_retries(
     inputs: &[Value],
     ctx: &ExecutionContext,
     worker_id: usize,
+    local_metrics: &mut WorkerLocalMetrics,
 ) -> ExecutionOutcome {
     let start_time = Instant::now();
 
@@ -424,8 +439,9 @@ async fn execute_with_retries(
             Ok(outcome) => {
                 #[cfg(feature = "metrics")]
                 {
-                    state.metrics.record_completion();
-                    state.metrics.record_execution_time(exec_duration);
+                    local_metrics.record_completion();
+                    state.metrics.release_in_flight();
+                    local_metrics.record_execution_time(exec_duration);
                 }
                 return ExecutionOutcome::Success {
                     value: outcome.value,
@@ -436,8 +452,9 @@ async fn execute_with_retries(
             Err(error) => {
                 #[cfg(feature = "metrics")]
                 {
-                    state.metrics.record_failure();
-                    state.metrics.record_execution_time(exec_duration);
+                    local_metrics.record_failure();
+                    state.metrics.release_in_flight();
+                    local_metrics.record_execution_time(exec_duration);
                 }
 
                 apxm_op!(debug,
@@ -498,7 +515,13 @@ struct WorkerEvent<'a> {
 }
 
 /// Handle successful operation execution.
-async fn handle_success(event: &WorkerEvent<'_>, value: Value, attempts: u32) {
+async fn handle_success(
+    event: &WorkerEvent<'_>,
+    value: Value,
+    attempts: u32,
+    #[cfg_attr(not(feature = "metrics"), allow(unused_variables))]
+    local_metrics: &mut WorkerLocalMetrics,
+) {
     let duration_ms = event.start_time.elapsed().as_millis();
 
     apxm_op!(debug,
@@ -521,10 +544,7 @@ async fn handle_success(event: &WorkerEvent<'_>, value: Value, attempts: u32) {
     publish_outputs(event.state, event.node_id, event.outputs, value.clone()).await;
 
     #[cfg(feature = "metrics")]
-    event
-        .state
-        .metrics
-        .record_token_routing(routing_start.elapsed());
+    local_metrics.record_token_routing(routing_start.elapsed());
 
     if let Some(emitter) = &event.ctx.event_emitter {
         emitter.emit_node_output(event.node_id, &value);

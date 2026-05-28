@@ -5,8 +5,14 @@
 #[cfg(feature = "metrics")]
 mod enabled {
     use parking_lot::Mutex;
+    use std::sync::Arc;
     use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
     use std::time::Duration;
+
+    // Flush the per-worker accumulators back to the shared collector every
+    // this many recorded ops. Bounds staleness while keeping the shared
+    // cache line cold during normal operation.
+    pub const WORKER_METRICS_FLUSH_OPS: u32 = 64;
 
     #[derive(Debug)]
     pub struct MetricsCollector {
@@ -133,10 +139,52 @@ mod enabled {
             self.operations_in_flight.fetch_sub(1, Ordering::Relaxed);
         }
 
+        /// Decrement in-flight only — paired with a deferred local count so
+        /// `max_concurrent_ops` stays live while executed/failed totals batch.
+        #[inline]
+        pub fn release_in_flight(&self) {
+            self.operations_in_flight.fetch_sub(1, Ordering::Relaxed);
+        }
+
         #[inline]
         pub fn record_execution_time(&self, duration: Duration) {
             self.total_execution_time_us
                 .fetch_add(duration.as_micros() as u64, Ordering::Relaxed);
+        }
+
+        /// Apply a worker's accumulated additive counters in one batch — five
+        /// `fetch_add`s per counter family instead of one per op, eliminating
+        /// the per-op CAS traffic on the shared cache line.
+        pub fn merge_from(&self, local: &WorkerLocalMetrics) {
+            if local.is_empty() {
+                return;
+            }
+            self.ready_set_update_ns
+                .fetch_add(local.ready_set_update_ns, Ordering::Relaxed);
+            self.work_stealing_ns
+                .fetch_add(local.work_stealing_ns, Ordering::Relaxed);
+            self.input_collection_ns
+                .fetch_add(local.input_collection_ns, Ordering::Relaxed);
+            self.operation_dispatch_ns
+                .fetch_add(local.operation_dispatch_ns, Ordering::Relaxed);
+            self.token_routing_ns
+                .fetch_add(local.token_routing_ns, Ordering::Relaxed);
+            self.total_execution_time_us
+                .fetch_add(local.total_execution_time_us, Ordering::Relaxed);
+            self.ready_set_update_count
+                .fetch_add(local.ready_set_update_count, Ordering::Relaxed);
+            self.work_stealing_count
+                .fetch_add(local.work_stealing_count, Ordering::Relaxed);
+            self.input_collection_count
+                .fetch_add(local.input_collection_count, Ordering::Relaxed);
+            self.operation_dispatch_count
+                .fetch_add(local.operation_dispatch_count, Ordering::Relaxed);
+            self.token_routing_count
+                .fetch_add(local.token_routing_count, Ordering::Relaxed);
+            self.operations_executed
+                .fetch_add(local.operations_executed, Ordering::Relaxed);
+            self.operations_failed
+                .fetch_add(local.operations_failed, Ordering::Relaxed);
         }
 
         pub fn get_executed(&self) -> usize {
@@ -204,6 +252,148 @@ mod enabled {
         pub operation_dispatch_us: f64,
         pub token_routing_us: f64,
     }
+
+    /// Per-worker, single-threaded accumulator that mirrors the additive
+    /// counters of `MetricsCollector`. Flushed into the shared collector on
+    /// a coarse cadence (every `WORKER_METRICS_FLUSH_OPS` ops) and on Drop,
+    /// so per-op recording stays in private cache lines.
+    #[derive(Debug)]
+    pub struct WorkerLocalMetrics {
+        shared: Arc<MetricsCollector>,
+        pending_ops: u32,
+
+        ready_set_update_ns: u64,
+        work_stealing_ns: u64,
+        input_collection_ns: u64,
+        operation_dispatch_ns: u64,
+        token_routing_ns: u64,
+        total_execution_time_us: u64,
+
+        ready_set_update_count: u64,
+        work_stealing_count: u64,
+        input_collection_count: u64,
+        operation_dispatch_count: u64,
+        token_routing_count: u64,
+
+        operations_executed: usize,
+        operations_failed: usize,
+    }
+
+    impl WorkerLocalMetrics {
+        pub fn new(shared: Arc<MetricsCollector>) -> Self {
+            Self {
+                shared,
+                pending_ops: 0,
+                ready_set_update_ns: 0,
+                work_stealing_ns: 0,
+                input_collection_ns: 0,
+                operation_dispatch_ns: 0,
+                token_routing_ns: 0,
+                total_execution_time_us: 0,
+                ready_set_update_count: 0,
+                work_stealing_count: 0,
+                input_collection_count: 0,
+                operation_dispatch_count: 0,
+                token_routing_count: 0,
+                operations_executed: 0,
+                operations_failed: 0,
+            }
+        }
+
+        #[inline]
+        fn is_empty(&self) -> bool {
+            self.pending_ops == 0
+        }
+
+        #[inline]
+        pub fn record_ready_set_update(&mut self, duration: Duration) {
+            self.ready_set_update_ns += duration.as_nanos() as u64;
+            self.ready_set_update_count += 1;
+            self.pending_ops += 1;
+        }
+
+        #[inline]
+        pub fn record_work_stealing(&mut self, duration: Duration) {
+            self.work_stealing_ns += duration.as_nanos() as u64;
+            self.work_stealing_count += 1;
+            self.pending_ops += 1;
+        }
+
+        #[inline]
+        pub fn record_input_collection(&mut self, duration: Duration) {
+            self.input_collection_ns += duration.as_nanos() as u64;
+            self.input_collection_count += 1;
+            self.pending_ops += 1;
+        }
+
+        #[inline]
+        pub fn record_operation_dispatch(&mut self, duration: Duration) {
+            self.operation_dispatch_ns += duration.as_nanos() as u64;
+            self.operation_dispatch_count += 1;
+            self.pending_ops += 1;
+        }
+
+        #[inline]
+        pub fn record_token_routing(&mut self, duration: Duration) {
+            self.token_routing_ns += duration.as_nanos() as u64;
+            self.token_routing_count += 1;
+            self.pending_ops += 1;
+        }
+
+        #[inline]
+        pub fn record_completion(&mut self) {
+            self.operations_executed += 1;
+            self.pending_ops += 1;
+        }
+
+        #[inline]
+        pub fn record_failure(&mut self) {
+            self.operations_failed += 1;
+            self.pending_ops += 1;
+        }
+
+        #[inline]
+        pub fn record_execution_time(&mut self, duration: Duration) {
+            self.total_execution_time_us += duration.as_micros() as u64;
+            self.pending_ops += 1;
+        }
+
+        /// Push accumulators to the shared collector and reset locals. Called
+        /// automatically on Drop, but workers can invoke it explicitly to
+        /// bound staleness during long-running loops.
+        pub fn flush(&mut self) {
+            let shared = Arc::clone(&self.shared);
+            shared.merge_from(self);
+            self.pending_ops = 0;
+            self.ready_set_update_ns = 0;
+            self.work_stealing_ns = 0;
+            self.input_collection_ns = 0;
+            self.operation_dispatch_ns = 0;
+            self.token_routing_ns = 0;
+            self.total_execution_time_us = 0;
+            self.ready_set_update_count = 0;
+            self.work_stealing_count = 0;
+            self.input_collection_count = 0;
+            self.operation_dispatch_count = 0;
+            self.token_routing_count = 0;
+            self.operations_executed = 0;
+            self.operations_failed = 0;
+        }
+
+        /// Flush when pending op count crosses the configured threshold.
+        #[inline]
+        pub fn maybe_flush(&mut self) {
+            if self.pending_ops >= WORKER_METRICS_FLUSH_OPS {
+                self.flush();
+            }
+        }
+    }
+
+    impl Drop for WorkerLocalMetrics {
+        fn drop(&mut self) {
+            self.flush();
+        }
+    }
 }
 
 #[cfg(not(feature = "metrics"))]
@@ -236,6 +426,8 @@ mod disabled {
         pub fn record_completion(&self) {}
         #[inline(always)]
         pub fn record_failure(&self) {}
+        #[inline(always)]
+        pub fn release_in_flight(&self) {}
 
         #[inline(always)]
         pub fn record_execution_time(&self, _: Duration) {}
@@ -262,13 +454,45 @@ mod disabled {
         pub operation_dispatch_us: f64,
         pub token_routing_us: f64,
     }
+
+    // Stays API-compatible with the enabled variant so worker code compiles
+    // without `cfg` guards around the local-metrics handle.
+    #[derive(Debug, Default, Clone, Copy)]
+    pub struct WorkerLocalMetrics;
+
+    impl WorkerLocalMetrics {
+        #[inline(always)]
+        pub fn new(_shared: std::sync::Arc<MetricsCollector>) -> Self {
+            Self
+        }
+        #[inline(always)]
+        pub fn record_ready_set_update(&mut self, _: Duration) {}
+        #[inline(always)]
+        pub fn record_work_stealing(&mut self, _: Duration) {}
+        #[inline(always)]
+        pub fn record_input_collection(&mut self, _: Duration) {}
+        #[inline(always)]
+        pub fn record_operation_dispatch(&mut self, _: Duration) {}
+        #[inline(always)]
+        pub fn record_token_routing(&mut self, _: Duration) {}
+        #[inline(always)]
+        pub fn record_completion(&mut self) {}
+        #[inline(always)]
+        pub fn record_failure(&mut self) {}
+        #[inline(always)]
+        pub fn record_execution_time(&mut self, _: Duration) {}
+        #[inline(always)]
+        pub fn flush(&mut self) {}
+        #[inline(always)]
+        pub fn maybe_flush(&mut self) {}
+    }
 }
 
 #[cfg(feature = "metrics")]
-pub use enabled::{MetricsCollector, OverheadBreakdown};
+pub use enabled::{MetricsCollector, OverheadBreakdown, WorkerLocalMetrics};
 
 #[cfg(not(feature = "metrics"))]
-pub use disabled::{MetricsCollector, OverheadBreakdown};
+pub use disabled::{MetricsCollector, OverheadBreakdown, WorkerLocalMetrics};
 
 /// Snapshot of scheduler metrics for inclusion in execution results.
 #[derive(Debug, Clone, Default, serde::Serialize, serde::Deserialize)]
