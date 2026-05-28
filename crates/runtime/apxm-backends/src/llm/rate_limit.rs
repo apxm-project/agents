@@ -57,6 +57,12 @@ pub struct RateLimitConfig {
     pub default_token_estimate: f64,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum RateLimitMode {
+    Requests,
+    Tokens,
+}
+
 fn default_token_estimate() -> f64 {
     1.0
 }
@@ -71,7 +77,22 @@ impl RateLimitConfig {
                 self.tokens_per_second,
             ));
         }
+        if self.token_based
+            && (!(self.default_token_estimate.is_finite()) || self.default_token_estimate <= 0.0)
+        {
+            return Err(RateLimitConfigError::InvalidDefaultTokenEstimate(
+                self.default_token_estimate,
+            ));
+        }
         Ok(())
+    }
+
+    fn mode(&self) -> RateLimitMode {
+        if self.token_based {
+            RateLimitMode::Tokens
+        } else {
+            RateLimitMode::Requests
+        }
     }
 }
 
@@ -82,6 +103,9 @@ pub enum RateLimitConfigError {
 
     #[error("tokens_per_second must be finite and > 0, got {0}")]
     InvalidTokensPerSecond(f64),
+
+    #[error("default_token_estimate must be finite and > 0 in token-based mode, got {0}")]
+    InvalidDefaultTokenEstimate(f64),
 }
 
 #[derive(Debug, Error, PartialEq)]
@@ -96,6 +120,32 @@ struct TokenBucket {
     tokens: f64,
     refill_rate_per_sec: f64,
     last_refill: Instant,
+}
+
+#[derive(Debug, Clone)]
+struct RateLimitState {
+    bucket: TokenBucket,
+    mode: RateLimitMode,
+    default_token_estimate: f64,
+}
+
+impl RateLimitState {
+    fn new(config: &RateLimitConfig, now: Instant) -> Self {
+        Self {
+            bucket: TokenBucket::new(config, now),
+            mode: config.mode(),
+            default_token_estimate: config.default_token_estimate,
+        }
+    }
+
+    fn request_cost(&self, estimated_tokens: Option<f64>) -> f64 {
+        match self.mode {
+            RateLimitMode::Requests => 1.0,
+            RateLimitMode::Tokens => estimated_tokens
+                .filter(|tokens| tokens.is_finite() && *tokens > 0.0)
+                .unwrap_or(self.default_token_estimate),
+        }
+    }
 }
 
 impl TokenBucket {
@@ -146,7 +196,7 @@ impl TokenBucket {
 #[derive(Debug)]
 pub struct RateLimiter<C: Clock> {
     clock: Arc<C>,
-    buckets: Mutex<HashMap<String, TokenBucket>>,
+    buckets: Mutex<HashMap<String, RateLimitState>>,
 }
 
 impl<C: Clock> RateLimiter<C> {
@@ -159,7 +209,7 @@ impl<C: Clock> RateLimiter<C> {
 
         for (backend, config) in configs {
             config.validate()?;
-            buckets.insert(backend, TokenBucket::new(&config, now));
+            buckets.insert(backend, RateLimitState::new(&config, now));
         }
 
         Ok(Self {
@@ -179,8 +229,8 @@ impl<C: Clock> RateLimiter<C> {
         let mut guard = self.buckets.lock().expect("rate limiter mutex poisoned");
 
         match guard.get_mut(backend) {
-            Some(bucket) => {
-                if bucket.try_consume(now, cost) {
+            Some(state) => {
+                if state.bucket.try_consume(now, cost) {
                     Ok(())
                 } else {
                     Err(RateLimitError::Limited {
@@ -189,6 +239,35 @@ impl<C: Clock> RateLimiter<C> {
                 }
             }
             None => Ok(()),
+        }
+    }
+
+    /// Enforce the configured request mode for a backend.
+    ///
+    /// Request-count limiters always consume one unit per request. Token-based
+    /// limiters consume the provided token estimate, falling back to the
+    /// backend's configured default estimate when no estimate is available.
+    /// Returns the cost that was admitted so the caller can reconcile later.
+    pub fn check_and_consume_request(
+        &self,
+        backend: &str,
+        estimated_tokens: Option<f64>,
+    ) -> Result<f64, RateLimitError> {
+        let now = self.clock.now();
+        let mut guard = self.buckets.lock().expect("rate limiter mutex poisoned");
+
+        match guard.get_mut(backend) {
+            Some(state) => {
+                let cost = state.request_cost(estimated_tokens);
+                if state.bucket.try_consume(now, cost) {
+                    Ok(cost)
+                } else {
+                    Err(RateLimitError::Limited {
+                        backend: backend.to_string(),
+                    })
+                }
+            }
+            None => Ok(1.0),
         }
     }
 
@@ -206,9 +285,28 @@ impl<C: Clock> RateLimiter<C> {
         let now = self.clock.now();
         let mut guard = self.buckets.lock().expect("rate limiter mutex poisoned");
 
-        if let Some(bucket) = guard.get_mut(backend) {
+        if let Some(state) = guard.get_mut(backend) {
             let delta = actual - estimated;
-            bucket.adjust(now, delta);
+            state.bucket.adjust(now, delta);
+        }
+    }
+
+    /// Reconcile actual token usage after a request completes.
+    ///
+    /// Per-request limiters intentionally do not reconcile because the admitted
+    /// cost is the request itself, not the resulting token count.
+    pub fn reconcile_request(&self, backend: &str, estimated: f64, actual_tokens: Option<f64>) {
+        let now = self.clock.now();
+        let mut guard = self.buckets.lock().expect("rate limiter mutex poisoned");
+
+        if let Some(state) = guard.get_mut(backend)
+            && state.mode == RateLimitMode::Tokens
+        {
+            let actual = actual_tokens
+                .filter(|tokens| tokens.is_finite() && *tokens > 0.0)
+                .unwrap_or(estimated);
+            let delta = actual - estimated;
+            state.bucket.adjust(now, delta);
         }
     }
 
@@ -216,7 +314,9 @@ impl<C: Clock> RateLimiter<C> {
     fn available_tokens(&self, backend: &str) -> Option<f64> {
         let now = self.clock.now();
         let guard = self.buckets.lock().expect("rate limiter mutex poisoned");
-        guard.get(backend).map(|b| b.available_tokens(now))
+        guard
+            .get(backend)
+            .map(|state| state.bucket.available_tokens(now))
     }
 }
 
@@ -284,6 +384,15 @@ mod tests {
             Err(RateLimitConfigError::InvalidTokensPerSecond(v)) => assert!(v.is_nan()),
             other => panic!("unexpected result: {:?}", other),
         }
+    }
+
+    #[test]
+    fn rejects_invalid_default_token_estimate_in_token_mode() {
+        let cfg = token_based_config(10, 1.0, 0.0);
+        assert_eq!(
+            cfg.validate(),
+            Err(RateLimitConfigError::InvalidDefaultTokenEstimate(0.0))
+        );
     }
 
     #[test]
@@ -534,5 +643,60 @@ mod tests {
         assert_eq!(limiter.check_and_consume("per-request", 1.0), Ok(()));
         assert_eq!(limiter.check_and_consume("per-request", 1.0), Ok(()));
         assert!(limiter.check_and_consume("per-request", 1.0).is_err());
+    }
+
+    #[test]
+    fn request_api_uses_one_unit_for_per_request_mode() {
+        let start = Instant::now();
+        let clock = Arc::new(ManualClock::new(start));
+        let mut configs = HashMap::new();
+        configs.insert("per-request".to_string(), config(2, 1.0));
+
+        let limiter = RateLimiter::new(configs, clock).unwrap();
+
+        assert_eq!(
+            limiter.check_and_consume_request("per-request", Some(500.0)),
+            Ok(1.0)
+        );
+        assert_eq!(
+            limiter.check_and_consume_request("per-request", Some(500.0)),
+            Ok(1.0)
+        );
+        assert!(
+            limiter
+                .check_and_consume_request("per-request", Some(500.0))
+                .is_err()
+        );
+
+        limiter.reconcile_request("per-request", 1.0, Some(500.0));
+        assert_eq!(limiter.available_tokens("per-request").unwrap(), 0.0);
+    }
+
+    #[test]
+    fn request_api_uses_estimates_and_reconciles_for_token_mode() {
+        let start = Instant::now();
+        let clock = Arc::new(ManualClock::new(start));
+        let mut configs = HashMap::new();
+        configs.insert(
+            "token-backend".to_string(),
+            token_based_config(100, 10.0, 25.0),
+        );
+
+        let limiter = RateLimiter::new(configs, clock).unwrap();
+
+        assert_eq!(
+            limiter.check_and_consume_request("token-backend", None),
+            Ok(25.0)
+        );
+        assert_eq!(limiter.available_tokens("token-backend").unwrap(), 75.0);
+
+        assert_eq!(
+            limiter.check_and_consume_request("token-backend", Some(50.0)),
+            Ok(50.0)
+        );
+        assert_eq!(limiter.available_tokens("token-backend").unwrap(), 25.0);
+
+        limiter.reconcile_request("token-backend", 50.0, Some(10.0));
+        assert_eq!(limiter.available_tokens("token-backend").unwrap(), 65.0);
     }
 }

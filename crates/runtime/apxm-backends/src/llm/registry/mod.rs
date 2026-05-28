@@ -487,12 +487,10 @@ impl LLMRegistry {
             anyhow::bail!("Backend '{}' is unhealthy", backend_name);
         }
 
-        // Estimate token cost from max_tokens (defaults to 1.0 for backward compatibility)
-        let estimated_cost = request.max_tokens.map(|t| t as f64).unwrap_or(1.0);
-
         // Check rate limit before dispatching to backend
-        self.rate_limiter
-            .check_and_consume(backend_name, estimated_cost)
+        let estimated_cost = self
+            .rate_limiter
+            .check_and_consume_request(backend_name, request.max_tokens.map(|tokens| tokens as f64))
             .map_err(|e| anyhow::anyhow!("{}", e))?;
 
         let start = Instant::now();
@@ -518,10 +516,11 @@ impl LLMRegistry {
 
         match result {
             Ok(response) => {
-                // Reconcile rate limit based on actual token usage
-                let actual_cost = response.usage.total_tokens as f64;
-                self.rate_limiter
-                    .reconcile(backend_name, estimated_cost, actual_cost);
+                self.rate_limiter.reconcile_request(
+                    backend_name,
+                    estimated_cost,
+                    Some(response.usage.total_tokens as f64),
+                );
 
                 // Record success
                 self.health_monitor.record_success(backend_name, latency);
@@ -710,12 +709,9 @@ impl LLMRegistry {
             anyhow::bail!("Backend '{}' is unhealthy", backend_name);
         }
 
-        let estimated_cost = request
-            .max_tokens
-            .map(|tokens| tokens as f64)
-            .unwrap_or(1.0);
-        self.rate_limiter
-            .check_and_consume(backend_name, estimated_cost)
+        let estimated_cost = self
+            .rate_limiter
+            .check_and_consume_request(backend_name, request.max_tokens.map(|tokens| tokens as f64))
             .map_err(|error| anyhow::anyhow!("{}", error))?;
 
         Ok(StreamingAttempt {
@@ -742,11 +738,11 @@ impl LLMRegistry {
         );
 
         if success {
-            let actual_cost = usage
-                .map(|usage| usage.total_tokens as f64)
-                .unwrap_or(attempt.estimated_cost);
-            self.rate_limiter
-                .reconcile(&attempt.backend_name, attempt.estimated_cost, actual_cost);
+            self.rate_limiter.reconcile_request(
+                &attempt.backend_name,
+                attempt.estimated_cost,
+                usage.map(|usage| usage.total_tokens as f64),
+            );
         }
     }
 
