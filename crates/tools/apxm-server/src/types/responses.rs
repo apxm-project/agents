@@ -112,9 +112,26 @@ pub(crate) struct McpInitializeResult {
     pub(crate) capabilities: McpInitializeCapabilities,
 }
 
+/// Lifecycle state of an A2A task.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub(crate) enum A2aTaskStatus {
+    Submitted,
+    Working,
+    Completed,
+    Failed,
+    Canceled,
+}
+
 #[derive(Debug, Serialize)]
 pub(crate) struct A2aTaskState {
-    pub(crate) state: String,
+    pub(crate) state: A2aTaskStatus,
+}
+
+impl A2aTaskState {
+    pub(crate) fn new(state: A2aTaskStatus) -> Self {
+        Self { state }
+    }
 }
 
 #[derive(Debug, Serialize)]
@@ -133,9 +150,7 @@ impl A2aTaskFailure {
     pub(crate) fn new(id: impl Into<String>, message: impl Into<String>) -> Self {
         Self {
             id: id.into(),
-            status: A2aTaskState {
-                state: "failed".to_string(),
-            },
+            status: A2aTaskState::new(A2aTaskStatus::Failed),
             error: A2aErrorBody {
                 message: message.into(),
             },
@@ -144,15 +159,27 @@ impl A2aTaskFailure {
 }
 
 #[derive(Debug, Serialize)]
+#[serde(rename_all = "lowercase")]
+pub(crate) enum A2aTextPartKind {
+    Text,
+}
+
+#[derive(Debug, Serialize)]
 pub(crate) struct A2aTextPart {
     #[serde(rename = "type")]
-    pub(crate) kind: &'static str,
+    pub(crate) kind: A2aTextPartKind,
     pub(crate) text: String,
 }
 
 #[derive(Debug, Serialize)]
+#[serde(rename_all = "lowercase")]
+pub(crate) enum A2aMessageRole {
+    Agent,
+}
+
+#[derive(Debug, Serialize)]
 pub(crate) struct A2aAgentMessage {
-    pub(crate) role: &'static str,
+    pub(crate) role: A2aMessageRole,
     pub(crate) parts: Vec<A2aTextPart>,
 }
 
@@ -172,14 +199,12 @@ impl A2aTaskSuccess {
     pub(crate) fn completed(id: impl Into<String>, text: impl Into<String>) -> Self {
         Self {
             id: id.into(),
-            status: A2aTaskState {
-                state: "completed".to_string(),
-            },
+            status: A2aTaskState::new(A2aTaskStatus::Completed),
             result: A2aResultMessage {
                 message: A2aAgentMessage {
-                    role: "agent",
+                    role: A2aMessageRole::Agent,
                     parts: vec![A2aTextPart {
-                        kind: "text",
+                        kind: A2aTextPartKind::Text,
                         text: text.into(),
                     }],
                 },

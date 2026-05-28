@@ -14,24 +14,13 @@ use crate::execute::{air_module_to_artifact, to_execute_response};
 use crate::helpers::{jsonrpc_err, jsonrpc_ok, now_ms};
 use crate::mcp::McpRequest;
 use crate::state::AppState;
-use crate::types::responses::{A2aTaskFailure, A2aTaskSuccess};
-
-/// Lifecycle state of an A2A task.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "lowercase")]
-pub(crate) enum A2aState {
-    Submitted,
-    Working,
-    Completed,
-    Failed,
-    Canceled,
-}
+use crate::types::responses::{A2aTaskFailure, A2aTaskStatus, A2aTaskSuccess};
 
 /// In-memory record for a running or completed A2A task.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub(crate) struct A2aTaskRecord {
     pub(crate) id: String,
-    pub(crate) state: A2aState,
+    pub(crate) state: A2aTaskStatus,
     #[serde(default)]
     pub(crate) output_text: Option<String>,
     #[serde(default)]
@@ -111,7 +100,7 @@ pub(crate) async fn a2a_jsonrpc(
                     serde_json::json!({
                         "id": task_id,
                         "factId": fact_id,
-                        "status": { "state": apxm_core::types::SessionStatus::Submitted },
+                        "status": { "state": A2aTaskStatus::Submitted },
                         "message": message,
                     }),
                 ),
@@ -126,7 +115,7 @@ pub(crate) async fn a2a_jsonrpc(
                     id,
                     serde_json::json!({
                         "id": task_id,
-                        "status": { "state": "completed" },
+                        "status": { "state": A2aTaskStatus::Completed },
                         "facts": serde_json::to_value(&facts).unwrap_or(JsonValue::Null),
                     }),
                 ),
@@ -159,7 +148,7 @@ pub(crate) async fn a2a_send_task(
         req.id.clone(),
         A2aTaskRecord {
             id: req.id.clone(),
-            state: A2aState::Working,
+            state: A2aTaskStatus::Working,
             output_text: None,
             error_message: None,
             created_at_ms: now,
@@ -181,7 +170,7 @@ pub(crate) async fn a2a_send_task(
 
     if user_text.is_empty() {
         if let Some(mut record) = state.a2a_tasks.get_mut(&req.id) {
-            record.state = A2aState::Failed;
+            record.state = A2aTaskStatus::Failed;
             record.error_message = Some("No text content in message".to_string());
             record.completed_at_ms = Some(now_ms());
         }
@@ -228,7 +217,7 @@ pub(crate) async fn a2a_send_task(
         Ok(a) => a,
         Err(e) => {
             if let Some(mut record) = state.a2a_tasks.get_mut(&req.id) {
-                record.state = A2aState::Failed;
+                record.state = A2aTaskStatus::Failed;
                 record.error_message = Some(e.message.clone());
                 record.completed_at_ms = Some(now_ms());
             }
@@ -263,7 +252,7 @@ pub(crate) async fn a2a_send_task(
                 .clone()
                 .unwrap_or_else(|| serde_json::to_string(&resp.results).unwrap_or_default());
             if let Some(mut record) = state.a2a_tasks.get_mut(&req.id) {
-                record.state = A2aState::Completed;
+                record.state = A2aTaskStatus::Completed;
                 record.output_text = Some(output.clone());
                 record.completed_at_ms = Some(now_ms());
             }
@@ -271,7 +260,7 @@ pub(crate) async fn a2a_send_task(
         }
         Err(e) => {
             if let Some(mut record) = state.a2a_tasks.get_mut(&req.id) {
-                record.state = A2aState::Failed;
+                record.state = A2aTaskStatus::Failed;
                 record.error_message = Some(e.to_string());
                 record.completed_at_ms = Some(now_ms());
             }
