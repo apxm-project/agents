@@ -2105,10 +2105,27 @@ mod tests {
         env!("CARGO_MANIFEST_DIR"),
         "/../../compiler/apxm-compiler/mlir/lib/Dialect/AIS/Conversion/Artifact/ArtifactEmitter.cpp"
     );
+    const AIS_OPS_TD: &str = concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/../../compiler/apxm-compiler/mlir/include/ais/Dialect/AIS/IR/AISOps.td"
+    );
 
     fn artifact_emitter_source() -> String {
         std::fs::read_to_string(ARTIFACT_EMITTER_CPP)
             .unwrap_or_else(|err| panic!("read {ARTIFACT_EMITTER_CPP}: {err}"))
+    }
+
+    fn ais_ops_td_source() -> String {
+        std::fs::read_to_string(AIS_OPS_TD).unwrap_or_else(|err| panic!("read {AIS_OPS_TD}: {err}"))
+    }
+
+    fn tablegen_mnemonics(source: &str) -> HashSet<String> {
+        source
+            .lines()
+            .filter_map(|line| line.split_once("AIS_Op<\""))
+            .filter_map(|(_, rest)| rest.split_once('"'))
+            .map(|(mnemonic, _)| mnemonic.to_string())
+            .collect()
     }
 
     #[test]
@@ -2268,6 +2285,21 @@ mod tests {
                 "ArtifactEmitter.cpp must consume generated artifact wire fragment {file_name}"
             );
         }
+    }
+
+    #[test]
+    fn mlir_tablegen_declares_all_rust_operations() {
+        let source = ais_ops_td_source();
+        let tablegen_ops = tablegen_mnemonics(&source);
+        let rust_ops: HashSet<String> = AISOperationType::all_operations()
+            .iter()
+            .map(|op| op.mlir_mnemonic().to_string())
+            .collect();
+
+        assert_eq!(
+            tablegen_ops, rust_ops,
+            "AISOps.td declarations must match AISOperationType::all_operations()"
+        );
     }
 
     #[test]
