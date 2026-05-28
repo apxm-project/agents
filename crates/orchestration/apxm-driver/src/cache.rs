@@ -1,18 +1,24 @@
 //! File-based artifact cache keyed by BLAKE3 hash of graph binary representation.
 //!
-//! Cache location: `~/.cache/apxm/artifacts/<hash>.apxmobj`
+//! Cache location follows [`apxm_core::paths::ApxmPaths`]: project-local
+//! `.apxm/cache/artifacts` first, then `$APXM_HOME/cache/artifacts` or
+//! `~/.apxm/cache/artifacts` as fallback.
 
-use std::env;
 use std::fs;
 use std::path::PathBuf;
 
 use apxm_compiler::AirModule;
+use apxm_core::constants::env as apxm_env;
+use apxm_core::paths::ApxmPaths;
 
 use crate::error::DriverError;
 
+const ARTIFACT_CACHE_COMPONENT: &str = "artifacts";
+const ARTIFACT_EXTENSION: &str = "apxmobj";
+
 /// Returns `true` when the cache is explicitly disabled via `APXM_NO_CACHE=1`.
 pub fn cache_disabled() -> bool {
-    env::var("APXM_NO_CACHE")
+    std::env::var(apxm_env::APXM_NO_CACHE)
         .map(|v| v == "1" || v.eq_ignore_ascii_case("true"))
         .unwrap_or(false)
 }
@@ -31,12 +37,11 @@ pub fn graph_hash(module: &AirModule) -> Result<String, DriverError> {
 
 /// Return the cache directory, creating it if necessary.
 fn cache_dir() -> Result<PathBuf, DriverError> {
-    let base = dirs::cache_dir()
-        .or_else(dirs::home_dir)
-        .ok_or_else(|| DriverError::Driver("cannot determine cache directory".into()))?;
-    let dir = base.join("apxm").join("artifacts");
-    fs::create_dir_all(&dir)?;
-    Ok(dir)
+    Ok(ApxmPaths::discover()?.cache_component_dir(ARTIFACT_CACHE_COMPONENT)?)
+}
+
+fn artifact_path(hash: &str) -> Result<PathBuf, DriverError> {
+    Ok(cache_dir()?.join(format!("{hash}.{ARTIFACT_EXTENSION}")))
 }
 
 /// Try to load a cached artifact by its hash.  Returns `None` on miss.
@@ -44,7 +49,7 @@ pub fn load_cached(hash: &str) -> Result<Option<Vec<u8>>, DriverError> {
     if cache_disabled() {
         return Ok(None);
     }
-    let path = cache_dir()?.join(format!("{hash}.apxmobj"));
+    let path = artifact_path(hash)?;
     if path.exists() {
         Ok(Some(fs::read(&path)?))
     } else {
@@ -57,7 +62,7 @@ pub fn store_cached(hash: &str, artifact_bytes: &[u8]) -> Result<(), DriverError
     if cache_disabled() {
         return Ok(());
     }
-    let path = cache_dir()?.join(format!("{hash}.apxmobj"));
+    let path = artifact_path(hash)?;
     fs::write(&path, artifact_bytes)?;
     Ok(())
 }
@@ -86,6 +91,6 @@ mod tests {
     #[test]
     fn cache_disabled_env() {
         // Default: not disabled
-        assert!(!cache_disabled() || env::var("APXM_NO_CACHE").is_ok());
+        assert!(!cache_disabled() || std::env::var(apxm_env::APXM_NO_CACHE).is_ok());
     }
 }
