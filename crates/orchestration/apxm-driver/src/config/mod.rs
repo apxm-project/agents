@@ -178,6 +178,9 @@ pub struct ServerConfig {
     /// Optional public URL advertised by clients and discovery endpoints.
     pub public_url: Option<String>,
 
+    /// Process-level defaults consumed before the async server starts.
+    pub process: ServerProcessConfig,
+
     /// Runtime scheduler limits used by the server process.
     pub runtime: ServerRuntimeConfig,
 
@@ -199,6 +202,7 @@ impl Default for ServerConfig {
         Self {
             bind_addr: None,
             public_url: None,
+            process: ServerProcessConfig::default(),
             runtime: ServerRuntimeConfig::default(),
             inference: ServerInferenceConfig::default(),
             generate_stream: GenerateStreamConfig::default(),
@@ -206,6 +210,27 @@ impl Default for ServerConfig {
             run_events: RunEventsConfig::default(),
         }
     }
+}
+
+/// APXM server process configuration.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(default)]
+pub struct ServerProcessConfig {
+    pub tokio_worker_threads: Option<usize>,
+    pub log_filter: String,
+}
+
+impl Default for ServerProcessConfig {
+    fn default() -> Self {
+        Self {
+            tokio_worker_threads: None,
+            log_filter: default_server_log_filter(),
+        }
+    }
+}
+
+fn default_server_log_filter() -> String {
+    "info,apxm_server=debug".to_string()
 }
 
 /// Server runtime scheduler limits.
@@ -914,6 +939,10 @@ mod tests {
             [server]
             bind_addr = "127.0.0.1:18801"
 
+            [server.process]
+            tokio_worker_threads = 6
+            log_filter = "warn,apxm_server=info"
+
             [server.runtime]
             max_concurrency = 8
             max_inflight = 16
@@ -992,6 +1021,8 @@ mod tests {
             Some(MOCK_MODEL_NAME_ALT)
         );
         assert_eq!(config.server.bind_addr.as_deref(), Some("127.0.0.1:18801"));
+        assert_eq!(config.server.process.tokio_worker_threads, Some(6));
+        assert_eq!(config.server.process.log_filter, "warn,apxm_server=info");
         assert_eq!(config.server.runtime.max_concurrency, Some(8));
         assert_eq!(config.server.runtime.max_inflight, Some(16));
         assert_eq!(config.server.runtime.llm_inflight, 3);
