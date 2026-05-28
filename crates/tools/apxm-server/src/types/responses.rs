@@ -327,12 +327,6 @@ pub(crate) struct StreamUsagePayload {
 }
 
 #[derive(Debug, Serialize)]
-pub(crate) struct StreamWarningPayload {
-    pub(crate) kind: &'static str,
-    pub(crate) message: String,
-}
-
-#[derive(Debug, Serialize)]
 pub(crate) struct StreamErrorBody {
     pub(crate) message: String,
 }

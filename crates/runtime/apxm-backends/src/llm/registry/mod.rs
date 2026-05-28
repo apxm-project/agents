@@ -114,6 +114,13 @@ impl Drop for PinPollHandle {
     }
 }
 
+struct StreamingAttempt {
+    backend_name: String,
+    backend_model: String,
+    backend: Arc<dyn LLMBackend>,
+    estimated_cost: f64,
+}
+
 impl LLMRegistry {
     /// Create a new empty registry with default routing.
     pub fn new() -> Self {
@@ -557,16 +564,18 @@ impl LLMRegistry {
 
     /// Generate streaming response with fallback on first-chunk error.
     ///
-    /// Tries primary backend stream. If the first chunk errors, drops the stream
-    /// and retries with the fallback backend. Once the first chunk succeeds,
-    /// commits to that backend (no mid-stream switching).
+    /// Uses the same health and rate-limit admission as non-streaming calls.
+    /// If a backend fails before emitting a real chunk, the registry tries the
+    /// configured fallback chain. Once a backend emits a non-error chunk, the
+    /// stream is committed to that backend; mid-stream errors and EOF before a
+    /// terminal `Done` chunk are failures.
     pub fn generate_stream_with_fallback<'a>(
         &'a self,
         request: &'a LLMRequest,
     ) -> Pin<Box<dyn Stream<Item = Result<StreamChunk>> + Send + 'a>> {
         Box::pin(async_stream::try_stream! {
             let prepared = self.prepare_request(request);
-            let backend_name = match self.resolve_backend(&prepared) {
+            let primary_backend = match self.resolve_backend(&prepared) {
                 Ok(name) => name,
                 Err(e) => {
                     Err(e)?;
@@ -574,84 +583,171 @@ impl LLMRegistry {
                 }
             };
 
-            let backend = {
-                let guard = self.backends.read();
-                guard.get(&backend_name).cloned()
-            };
-            let backend = match backend {
-                Some(b) => b,
-                None => {
-                    Err(anyhow::anyhow!("Backend '{}' not found", backend_name))?;
+            let mut backend_names = vec![primary_backend.clone()];
+            if let Some(fallback_chain) = self.fallback_chains.get(&primary_backend) {
+                backend_names.extend(fallback_chain.value().iter().cloned());
+            }
+
+            let mut last_error: Option<anyhow::Error> = None;
+            for (attempt_index, backend_name) in backend_names.iter().enumerate() {
+                let attempt = match self.begin_streaming_attempt(backend_name, &prepared) {
+                    Ok(attempt) => attempt,
+                    Err(error) => {
+                        last_error = Some(error);
+                        continue;
+                    }
+                };
+
+                let started_at = Instant::now();
+                let mut stream = attempt.backend.generate_stream(prepared.clone());
+                let mut committed = false;
+                let mut logged_fallback_commit = false;
+                let mut failed_before_commit = false;
+
+                while let Some(chunk_result) = stream.next().await {
+                    let chunk = match chunk_result {
+                        Ok(chunk) => chunk,
+                        Err(error) => {
+                            self.finish_streaming_attempt(&attempt, started_at.elapsed(), None, false);
+                            if committed {
+                                Err(error)?;
+                                return;
+                            }
+                            last_error = Some(error);
+                            failed_before_commit = true;
+                            break;
+                        }
+                    };
+
+                    if let StreamChunk::Error(message) = &chunk {
+                        let error = anyhow::anyhow!(
+                            "Backend '{}' streaming error: {}",
+                            attempt.backend_name,
+                            message
+                        );
+                        self.finish_streaming_attempt(&attempt, started_at.elapsed(), None, false);
+                        if committed {
+                            Err(error)?;
+                            return;
+                        }
+                        last_error = Some(error);
+                        failed_before_commit = true;
+                        break;
+                    }
+
+                    if attempt_index > 0 && !logged_fallback_commit {
+                        tracing::info!(
+                            primary_backend = %primary_backend,
+                            fallback_backend = %attempt.backend_name,
+                            "Streaming fallback committed"
+                        );
+                        logged_fallback_commit = true;
+                    }
+                    committed = true;
+
+                    if let StreamChunk::Done(response) = &chunk {
+                        self.finish_streaming_attempt(
+                            &attempt,
+                            started_at.elapsed(),
+                            Some(response.usage.clone()),
+                            true,
+                        );
+                        yield chunk;
+                        return;
+                    }
+
+                    yield chunk;
+                }
+
+                if committed {
+                    self.finish_streaming_attempt(&attempt, started_at.elapsed(), None, false);
+                    Err(anyhow::anyhow!(
+                        "Backend '{}' stream ended without terminal Done chunk",
+                        attempt.backend_name
+                    ))?;
                     return;
                 }
-            };
 
-            let mut stream = backend.generate_stream(prepared.clone());
-
-            match stream.next().await {
-                Some(Ok(first_chunk)) => {
-                    // First chunk succeeded, commit to this stream
-                    yield first_chunk;
-
-                    // Stream remaining chunks
-                    while let Some(chunk) = stream.next().await {
-                        yield chunk?;
-                    }
+                if !failed_before_commit {
+                    self.finish_streaming_attempt(&attempt, started_at.elapsed(), None, false);
+                    last_error = Some(anyhow::anyhow!(
+                        "Backend '{}' returned an empty stream",
+                        attempt.backend_name
+                    ));
                 }
-                Some(Err(e)) => {
-                    // First chunk failed, try fallback
-                    tracing::warn!("Primary backend '{}' streaming failed: {}. Attempting fallback.", backend_name, e);
-                    self.health_monitor.record_failure(&backend_name, std::time::Duration::from_secs(0));
 
-                    // Get fallback backends from fallback chain
-                    let mut fallback_succeeded = false;
-                    if let Some(fallback_chain) = self.fallback_chains.get(&backend_name) {
-                        for fallback_name in fallback_chain.value() {
-                            let fallback_backend = {
-                                let guard = self.backends.read();
-                                guard.get(fallback_name).cloned()
-                            };
-                            if let Some(fallback_backend) = fallback_backend {
-                                let health = self.health_monitor.status(fallback_name);
-                                if health == HealthStatus::Unhealthy {
-                                    continue;
-                                }
-
-                                tracing::info!("Retrying with fallback backend: {}", fallback_name);
-                                let mut fallback_stream = fallback_backend.generate_stream(prepared.clone());
-
-                                match fallback_stream.next().await {
-                                    Some(Ok(first_chunk)) => {
-                                        yield first_chunk;
-                                        while let Some(chunk) = fallback_stream.next().await {
-                                            yield chunk?;
-                                        }
-                                        fallback_succeeded = true;
-                                        break;
-                                    }
-                                    Some(Err(fe)) => {
-                                        tracing::warn!("Fallback backend '{}' also failed: {}", fallback_name, fe);
-                                        self.health_monitor.record_failure(fallback_name, std::time::Duration::from_secs(0));
-                                        continue;
-                                    }
-                                    None => {
-                                        tracing::warn!("Fallback backend '{}' returned empty stream", fallback_name);
-                                        continue;
-                                    }
-                                }
-                            }
-                        }
-                    }
-
-                    if !fallback_succeeded {
-                        Err(anyhow::anyhow!("All backends failed for streaming request: {}", e))?;
-                    }
-                }
-                None => {
-                    Err(anyhow::anyhow!("Backend '{}' returned empty stream", backend_name))?;
-                }
+                tracing::warn!(
+                    backend = %attempt.backend_name,
+                    error = ?last_error,
+                    "Streaming backend failed before first chunk; trying fallback"
+                );
             }
+
+            Err(anyhow::anyhow!(
+                "All streaming backends failed for request: {}",
+                last_error
+                    .map(|error| error.to_string())
+                    .unwrap_or_else(|| "no backends available".to_string())
+            ))?;
+            return;
         })
+    }
+
+    fn begin_streaming_attempt(
+        &self,
+        backend_name: &str,
+        request: &LLMRequest,
+    ) -> Result<StreamingAttempt> {
+        let backend = self
+            .backends
+            .read()
+            .get(backend_name)
+            .cloned()
+            .with_context(|| format!("Backend '{}' not found", backend_name))?;
+
+        let health = self.health_monitor.status(backend_name);
+        if health == HealthStatus::Unhealthy {
+            anyhow::bail!("Backend '{}' is unhealthy", backend_name);
+        }
+
+        let estimated_cost = request
+            .max_tokens
+            .map(|tokens| tokens as f64)
+            .unwrap_or(1.0);
+        self.rate_limiter
+            .check_and_consume(backend_name, estimated_cost)
+            .map_err(|error| anyhow::anyhow!("{}", error))?;
+
+        Ok(StreamingAttempt {
+            backend_name: backend_name.to_string(),
+            backend_model: backend.model().to_string(),
+            backend,
+            estimated_cost,
+        })
+    }
+
+    fn finish_streaming_attempt(
+        &self,
+        attempt: &StreamingAttempt,
+        latency: Duration,
+        usage: Option<TokenUsage>,
+        success: bool,
+    ) {
+        self.record_streaming_outcome(
+            &attempt.backend_name,
+            &attempt.backend_model,
+            latency,
+            usage.clone(),
+            success,
+        );
+
+        if success {
+            let actual_cost = usage
+                .map(|usage| usage.total_tokens as f64)
+                .unwrap_or(attempt.estimated_cost);
+            self.rate_limiter
+                .reconcile(&attempt.backend_name, attempt.estimated_cost, actual_cost);
+        }
     }
 
     /// Resolve the backend name that would handle this request after policy normalization.
