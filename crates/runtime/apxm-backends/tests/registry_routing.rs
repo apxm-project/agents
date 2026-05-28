@@ -3,6 +3,7 @@
 use apxm_backends::llm::backends::LLMRequest;
 use apxm_backends::llm::backends::mock::MockLLMBackend;
 use apxm_backends::llm::registry::{LLMRegistry, RoutingStrategy};
+use apxm_backends::llm::wire::response_metadata;
 use futures::StreamExt;
 
 #[tokio::test]
@@ -137,6 +138,24 @@ async fn test_streaming_fallback_primary_succeeds() {
             apxm_backends::llm::backends::StreamChunk::Token(t) => chunks.push(t),
             apxm_backends::llm::backends::StreamChunk::Done(resp) => {
                 assert_eq!(resp.content, "Primary response");
+                assert_eq!(
+                    resp.metadata
+                        .get(response_metadata::APXM_BACKEND_NAME)
+                        .and_then(serde_json::Value::as_str),
+                    Some("primary")
+                );
+                assert_eq!(
+                    resp.metadata
+                        .get(response_metadata::APXM_PRIMARY_BACKEND)
+                        .and_then(serde_json::Value::as_str),
+                    Some("primary")
+                );
+                assert_eq!(
+                    resp.metadata
+                        .get(response_metadata::APXM_FALLBACK_USED)
+                        .and_then(serde_json::Value::as_bool),
+                    Some(false)
+                );
                 break;
             }
             _ => {}
@@ -169,10 +188,21 @@ async fn test_streaming_fallback_primary_fails_first_chunk() {
 
     let mut chunks = Vec::new();
     let mut final_content = None;
+    let mut final_backend = None;
+    let mut fallback_used = None;
     while let Some(chunk) = stream.next().await {
         match chunk.unwrap() {
             apxm_backends::llm::backends::StreamChunk::Token(t) => chunks.push(t),
             apxm_backends::llm::backends::StreamChunk::Done(resp) => {
+                final_backend = resp
+                    .metadata
+                    .get(response_metadata::APXM_BACKEND_NAME)
+                    .and_then(serde_json::Value::as_str)
+                    .map(str::to_owned);
+                fallback_used = resp
+                    .metadata
+                    .get(response_metadata::APXM_FALLBACK_USED)
+                    .and_then(serde_json::Value::as_bool);
                 final_content = Some(resp.content);
                 break;
             }
@@ -182,6 +212,8 @@ async fn test_streaming_fallback_primary_fails_first_chunk() {
 
     // Should have fallen back to fallback backend
     assert_eq!(final_content, Some("Fallback response".to_string()));
+    assert_eq!(final_backend, Some("fallback".to_string()));
+    assert_eq!(fallback_used, Some(true));
     assert!(!chunks.is_empty());
 }
 
@@ -212,12 +244,8 @@ async fn test_streaming_fallback_all_backends_fail() {
     assert!(result.is_some());
     let chunk = result.unwrap();
     assert!(chunk.is_err());
-    assert!(
-        chunk
-            .unwrap_err()
-            .to_string()
-            .contains("All backends failed")
-    );
+    let error = chunk.unwrap_err().to_string();
+    assert!(error.contains("All streaming backends failed"), "{error}");
 }
 
 #[tokio::test]

@@ -9,6 +9,7 @@ use crate::llm::RequestMetrics;
 use crate::llm::backends::{LLMBackend, LLMRequest, LLMResponse, StreamChunk};
 use crate::llm::catalog::default_model_for_protocol;
 use crate::llm::rate_limit::{RateLimitConfig, RateLimiter, SystemClock};
+use crate::llm::wire::response_metadata;
 use anyhow::{Context as AnyhowContext, Result};
 use apxm_core::types::TokenUsage;
 use apxm_core::types::{AISOperationType, BackendGraphCapabilities};
@@ -644,18 +645,36 @@ impl LLMRegistry {
                     }
                     committed = true;
 
-                    if let StreamChunk::Done(response) = &chunk {
-                        self.finish_streaming_attempt(
-                            &attempt,
-                            started_at.elapsed(),
-                            Some(response.usage.clone()),
-                            true,
-                        );
-                        yield chunk;
-                        return;
+                    match chunk {
+                        StreamChunk::Done(mut response) => {
+                            self.finish_streaming_attempt(
+                                &attempt,
+                                started_at.elapsed(),
+                                Some(response.usage.clone()),
+                                true,
+                            );
+                            response = response
+                                .with_metadata(
+                                    response_metadata::APXM_BACKEND_NAME,
+                                    serde_json::json!(attempt.backend_name.as_str()),
+                                )
+                                .with_metadata(
+                                    response_metadata::APXM_BACKEND_MODEL,
+                                    serde_json::json!(attempt.backend_model.as_str()),
+                                )
+                                .with_metadata(
+                                    response_metadata::APXM_PRIMARY_BACKEND,
+                                    serde_json::json!(primary_backend.as_str()),
+                                )
+                                .with_metadata(
+                                    response_metadata::APXM_FALLBACK_USED,
+                                    serde_json::json!(attempt.backend_name != primary_backend),
+                                );
+                            yield StreamChunk::Done(response);
+                            return;
+                        }
+                        chunk => yield chunk,
                     }
-
-                    yield chunk;
                 }
 
                 if committed {

@@ -133,6 +133,10 @@ pub mod ollama {
 }
 
 pub mod response_metadata {
+    pub const APXM_BACKEND_NAME: &str = "apxm_backend_name";
+    pub const APXM_BACKEND_MODEL: &str = "apxm_backend_model";
+    pub const APXM_PRIMARY_BACKEND: &str = "apxm_primary_backend";
+    pub const APXM_FALLBACK_USED: &str = "apxm_fallback_used";
     pub const REASONING: &str = "reasoning";
 }
 
