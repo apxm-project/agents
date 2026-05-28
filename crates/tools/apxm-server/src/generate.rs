@@ -17,7 +17,7 @@ use crate::helpers::now_ms;
 use crate::state::AppState;
 use crate::types::responses::{
     SseEventMeta, StreamErrorBody, StreamLlmDonePayload, StreamTokenPayload, StreamToolCallPayload,
-    StreamUsage, StreamUsagePayload, StreamWarningPayload,
+    StreamUsage, StreamUsagePayload,
 };
 
 // ─── LLM Generate Types ──────────────────────────────────────────────────────
@@ -277,25 +277,18 @@ pub(crate) async fn handle_generate_stream(
 ) -> Result<Sse<impl Stream<Item = Result<Event, std::convert::Infallible>>>, ApiError> {
     let trace_id = extract_trace_id(&headers, &body);
     let request = body.to_llm_request(&trace_id);
-    let registry = state.runtime.llm_registry();
+    let registry = state.runtime.llm_registry().clone();
     let permit = state.inference_limiter.acquire().await?;
-
-    let prepared = registry.prepare_request(&request);
-    let backend = registry
-        .resolve_backend_for_streaming(&prepared)
-        .map_err(|e| ApiError::internal_message(e.to_string()))?;
 
     let (tx, mut rx) = mpsc::channel::<Result<Event, std::convert::Infallible>>(128);
 
-    // Move backend Arc + prepared request into the spawned task so
-    // generate_stream() borrows from the owned Arc inside the task.
     tokio::spawn(async move {
         let _permit = permit;
         use std::sync::atomic::{AtomicU64, Ordering};
         let seq = AtomicU64::new(1);
         let trace = trace_id;
 
-        let raw_stream = backend.generate_stream(prepared);
+        let raw_stream = registry.generate_stream_with_fallback(&request);
         let mut pinned = std::pin::pin!(raw_stream);
 
         // 60-second inactivity timeout
@@ -387,19 +380,22 @@ pub(crate) async fn handle_generate_stream(
                             },
                         )),
                         StreamChunk::Error(msg) => {
-                            tracing::warn!(error = %msg, "Non-fatal streaming error from backend");
-                            Some(encode_event(
-                                &mut buf,
-                                &meta,
-                                &StreamWarningPayload {
-                                    kind: "warning",
-                                    message: msg.clone(),
-                                },
-                            ))
+                            tracing::warn!(error = %msg, "Fatal streaming error from backend");
+                            Some(
+                                Event::default().event("error").data(
+                                    serde_json::to_string(&StreamErrorBody {
+                                        message: msg.clone(),
+                                    })
+                                    .unwrap_or_else(|_| "{}".to_string()),
+                                ),
+                            )
                         }
                     };
                     if let Some(event) = maybe_event {
                         if tx.send(Ok(event)).await.is_err() {
+                            break;
+                        }
+                        if matches!(chunk, StreamChunk::Error(_)) {
                             break;
                         }
                     }

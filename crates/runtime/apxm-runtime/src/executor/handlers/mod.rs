@@ -291,6 +291,7 @@ async fn execute_llm_request_streaming(
     use apxm_backends::StreamChunk;
     use tokio_stream::StreamExt;
 
+    #[cfg(feature = "metrics")]
     let start = std::time::Instant::now();
 
     // When a ModelRouter is present, let it choose backend/model first.
@@ -311,24 +312,9 @@ async fn execute_llm_request_streaming(
         (None, ctx.llm_registry.prepare_request(request))
     };
 
-    let backend = ctx
+    let mut stream = ctx
         .llm_registry
-        .resolve_backend_for_streaming(&prepared_request)
-        .map_err(|e| llm_error(ctx, phase, &prepared_request, e))?;
-
-    let resolved_backend_name = ctx
-        .llm_registry
-        .resolved_backend_name(&prepared_request)
-        .unwrap_or_else(|_| {
-            prepared_request
-                .backend
-                .clone()
-                .or_else(|| prepared_request.model.clone())
-                .unwrap_or_else(|| "auto".to_string())
-        });
-    let resolved_backend_model = backend.model().to_string();
-
-    let mut stream = backend.generate_stream(prepared_request.clone());
+        .generate_stream_with_fallback(&prepared_request);
 
     let mut final_response: Option<LLMResponse> = None;
     let mut emitted_text = false;
@@ -340,13 +326,11 @@ async fn execute_llm_request_streaming(
         let chunk = match chunk_result {
             Ok(chunk) => chunk,
             Err(e) => {
-                ctx.llm_registry.record_streaming_outcome(
-                    &resolved_backend_name,
-                    &resolved_backend_model,
-                    start.elapsed(),
-                    None,
-                    false,
-                );
+                if let Some(router) = &ctx.model_router
+                    && let Some(ref decision) = router_decision
+                {
+                    router.record_failure(&decision.backend);
+                }
                 return Err(llm_error(ctx, phase, &prepared_request, e));
             }
         };
@@ -400,8 +384,18 @@ async fn execute_llm_request_streaming(
                 // Incremental usage update — final usage comes in Done chunk
             }
             StreamChunk::Error(msg) => {
-                // Non-fatal stream error — log and continue
-                tracing::warn!(error = %msg, "Non-fatal stream error during {}", phase);
+                if let Some(router) = &ctx.model_router
+                    && let Some(ref decision) = router_decision
+                {
+                    router.record_failure(&decision.backend);
+                }
+                return Err(RuntimeError::LLM {
+                    message: format!("LLM stream error during {phase}: {msg}"),
+                    backend: prepared_request
+                        .backend
+                        .clone()
+                        .or_else(|| prepared_request.model.clone()),
+                });
             }
         }
     }
@@ -409,13 +403,11 @@ async fn execute_llm_request_streaming(
     let mut response = match final_response {
         Some(resp) => resp,
         None => {
-            ctx.llm_registry.record_streaming_outcome(
-                &resolved_backend_name,
-                &resolved_backend_model,
-                start.elapsed(),
-                None,
-                false,
-            );
+            if let Some(router) = &ctx.model_router
+                && let Some(ref decision) = router_decision
+            {
+                router.record_failure(&decision.backend);
+            }
             return Err(RuntimeError::LLM {
                 message: format!("LLM stream ended without a Done chunk during {phase}"),
                 backend: request.backend.clone().or_else(|| request.model.clone()),
@@ -437,18 +429,9 @@ async fn execute_llm_request_streaming(
         }
     }
 
-    let latency = start.elapsed();
-
-    ctx.llm_registry.record_streaming_outcome(
-        &resolved_backend_name,
-        &resolved_backend_model,
-        latency,
-        Some(response.usage.clone()),
-        true,
-    );
-
     #[cfg(feature = "metrics")]
     {
+        let latency = start.elapsed();
         record_llm_event(ctx, phase, request, &response, latency).await;
     }
 
@@ -855,7 +838,9 @@ mod tests {
             .push(AgentScope::new("crm", "span-crm", None, None));
 
         let node = ask_node();
-        let _ = OperationDispatcher::dispatch(&ctx, &node, vec![]).await.unwrap();
+        let _ = OperationDispatcher::dispatch(&ctx, &node, vec![])
+            .await
+            .unwrap();
 
         let begins = recorder.ask_begin.lock().unwrap();
         let ends = recorder.ask_end.lock().unwrap();
@@ -865,7 +850,10 @@ mod tests {
         assert_eq!(ends[0].0, "crm");
         assert_eq!(ends[0].1, "hello world".len());
         // Stack non-empty ⇒ this is a sub-agent, not the coordinator.
-        assert!(messages.is_empty(), "sub-agent ASK must not emit agent_message");
+        assert!(
+            messages.is_empty(),
+            "sub-agent ASK must not emit agent_message"
+        );
     }
 
     #[tokio::test]
@@ -878,13 +866,21 @@ mod tests {
         assert!(ctx.agent_scope_stack.is_empty());
 
         let node = ask_node();
-        let _ = OperationDispatcher::dispatch(&ctx, &node, vec![]).await.unwrap();
+        let _ = OperationDispatcher::dispatch(&ctx, &node, vec![])
+            .await
+            .unwrap();
 
         let begins = recorder.ask_begin.lock().unwrap();
         let ends = recorder.ask_end.lock().unwrap();
         let messages = recorder.agent_message.lock().unwrap();
-        assert!(begins.is_empty(), "top-level ASK must not emit subagent_llm_call_begin");
-        assert!(ends.is_empty(), "top-level ASK must not emit subagent_llm_call_end");
+        assert!(
+            begins.is_empty(),
+            "top-level ASK must not emit subagent_llm_call_begin"
+        );
+        assert!(
+            ends.is_empty(),
+            "top-level ASK must not emit subagent_llm_call_end"
+        );
         assert_eq!(*messages, vec!["hello world".to_string()]);
     }
 }
