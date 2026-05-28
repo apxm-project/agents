@@ -39,6 +39,7 @@ futures.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 toml.workspace = true
+mimalloc = { version = "0.1", default-features = false }
 tokio = { workspace = true, features = ["macros", "rt-multi-thread", "sync", "signal", "time"] }
 tokio-stream = { workspace = true, features = ["sync"] }
 tower = { version = "0.5", features = ["util"] }

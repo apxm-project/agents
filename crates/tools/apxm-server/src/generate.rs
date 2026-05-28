@@ -250,6 +250,24 @@ pub(crate) async fn handle_generate(
     }))
 }
 
+#[derive(Serialize)]
+struct Envelope<'a, T: Serialize> {
+    meta: &'a SseEventMeta,
+    payload: &'a T,
+}
+
+// Serializes meta+payload directly into a reusable buffer — avoids the per-chunk
+// json! HashMap allocation and the to_string() double-copy on the SSE hot path.
+fn encode_event<T: Serialize>(buf: &mut Vec<u8>, meta: &SseEventMeta, payload: &T) -> Event {
+    buf.clear();
+    let envelope = Envelope { meta, payload };
+    let data = match serde_json::to_writer(&mut *buf, &envelope) {
+        Ok(()) => String::from_utf8_lossy(buf).into_owned(),
+        Err(_) => "{}".to_string(),
+    };
+    Event::default().event("apxm").data(data)
+}
+
 /// `POST /v1/generate-stream` — Streaming LLM generation via SSE.
 pub(crate) async fn handle_generate_stream(
     State(state): State<AppState>,
@@ -280,18 +298,14 @@ pub(crate) async fn handle_generate_stream(
         // 60-second inactivity timeout
         let timeout_dur = std::time::Duration::from_secs(60);
 
+        // Reusable encode buffer — one allocation per stream, cleared per chunk.
+        let mut buf: Vec<u8> = Vec::with_capacity(512);
+
         let make_meta = |seq_val: u64, trace: &str| SseEventMeta {
             seq: seq_val,
             timestamp_ms: now_ms(),
             trace_id: trace.to_string(),
             source: "backend",
-        };
-        let to_event = |meta: SseEventMeta, payload: JsonValue| {
-            let envelope = serde_json::json!({
-                "meta": serde_json::to_value(&meta).unwrap_or(JsonValue::Null),
-                "payload": payload,
-            });
-            Event::default().event("apxm").data(envelope.to_string())
         };
 
         loop {
@@ -300,57 +314,51 @@ pub(crate) async fn handle_generate_stream(
                     let seq_val = seq.fetch_add(1, Ordering::Relaxed);
                     let meta = make_meta(seq_val, &trace);
                     let maybe_event = match &chunk {
-                        StreamChunk::Token(text) => {
-                            let payload = StreamTokenPayload {
+                        StreamChunk::Token(text) => Some(encode_event(
+                            &mut buf,
+                            &meta,
+                            &StreamTokenPayload {
                                 kind: "token",
                                 text: text.clone(),
-                            };
-                            Some(to_event(
-                                meta,
-                                serde_json::to_value(&payload).unwrap_or(JsonValue::Null),
-                            ))
-                        }
-                        StreamChunk::Thought(text) => {
-                            let payload = StreamTokenPayload {
+                            },
+                        )),
+                        StreamChunk::Thought(text) => Some(encode_event(
+                            &mut buf,
+                            &meta,
+                            &StreamTokenPayload {
                                 kind: "thought",
                                 text: text.clone(),
-                            };
-                            Some(to_event(
-                                meta,
-                                serde_json::to_value(&payload).unwrap_or(JsonValue::Null),
-                            ))
-                        }
-                        StreamChunk::ToolCallStart { id, name } => {
-                            let payload = StreamToolCallPayload {
+                            },
+                        )),
+                        StreamChunk::ToolCallStart { id, name } => Some(encode_event(
+                            &mut buf,
+                            &meta,
+                            &StreamToolCallPayload {
                                 kind: "tool_call",
                                 tool_call_id: id.clone(),
                                 name: Some(name.clone()),
                                 arguments_delta: None,
                                 phase: "start",
-                            };
-                            Some(to_event(
-                                meta,
-                                serde_json::to_value(&payload).unwrap_or(JsonValue::Null),
-                            ))
-                        }
+                            },
+                        )),
                         StreamChunk::ToolCallDelta {
                             id,
                             arguments_delta,
-                        } => {
-                            let payload = StreamToolCallPayload {
+                        } => Some(encode_event(
+                            &mut buf,
+                            &meta,
+                            &StreamToolCallPayload {
                                 kind: "tool_call",
                                 tool_call_id: id.clone(),
                                 name: None,
                                 arguments_delta: Some(arguments_delta.clone()),
                                 phase: "delta",
-                            };
-                            Some(to_event(
-                                meta,
-                                serde_json::to_value(&payload).unwrap_or(JsonValue::Null),
-                            ))
-                        }
-                        StreamChunk::Done(response) => {
-                            let payload = StreamLlmDonePayload {
+                            },
+                        )),
+                        StreamChunk::Done(response) => Some(encode_event(
+                            &mut buf,
+                            &meta,
+                            &StreamLlmDonePayload {
                                 kind: "llm_done",
                                 content: response.content.clone(),
                                 model: response.model.clone(),
@@ -360,36 +368,30 @@ pub(crate) async fn handle_generate_stream(
                                     output_tokens: response.usage.output_tokens,
                                     total_tokens: response.usage.total_tokens,
                                 },
-                                reasoning: reasoning_from_response(&response),
-                            };
-                            Some(to_event(
-                                meta,
-                                serde_json::to_value(&payload).unwrap_or(JsonValue::Null),
-                            ))
-                        }
-                        StreamChunk::Usage(usage) => {
-                            let payload = StreamUsagePayload {
+                                reasoning: reasoning_from_response(response),
+                            },
+                        )),
+                        StreamChunk::Usage(usage) => Some(encode_event(
+                            &mut buf,
+                            &meta,
+                            &StreamUsagePayload {
                                 kind: "usage",
                                 usage: StreamUsage {
                                     input_tokens: usage.input_tokens,
                                     output_tokens: usage.output_tokens,
                                     total_tokens: usage.total_tokens,
                                 },
-                            };
-                            Some(to_event(
-                                meta,
-                                serde_json::to_value(&payload).unwrap_or(JsonValue::Null),
-                            ))
-                        }
+                            },
+                        )),
                         StreamChunk::Error(msg) => {
                             tracing::warn!(error = %msg, "Non-fatal streaming error from backend");
-                            let payload = StreamWarningPayload {
-                                kind: "warning",
-                                message: msg.clone(),
-                            };
-                            Some(to_event(
-                                meta,
-                                serde_json::to_value(&payload).unwrap_or(JsonValue::Null),
+                            Some(encode_event(
+                                &mut buf,
+                                &meta,
+                                &StreamWarningPayload {
+                                    kind: "warning",
+                                    message: msg.clone(),
+                                },
                             ))
                         }
                     };
