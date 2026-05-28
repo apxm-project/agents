@@ -7,11 +7,16 @@
 //! The `tablegen` submodule generates MLIR TableGen files from these definitions,
 //! enabling Rust to be the single source of truth for operation metadata.
 
+mod artifact_wire;
 mod category;
 mod definitions;
 pub mod mlir_keywords;
 pub mod tablegen;
 
+pub use artifact_wire::{
+    ARTIFACT_OPERATION_KIND_CASES_FILE, ARTIFACT_OPERATION_KIND_ENTRIES_FILE,
+    generate_artifact_operation_kind_cases, generate_artifact_operation_kind_entries,
+};
 pub use category::OperationCategory;
 pub use definitions::{
     AIS_OPERATIONS, AISOperationType, ContextStyle, MlirEmissionSpec, MlirResultType,

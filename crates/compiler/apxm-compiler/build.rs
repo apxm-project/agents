@@ -6,13 +6,15 @@ use std::{
 };
 
 use apxm_ais::{
+    ARTIFACT_OPERATION_KIND_CASES_FILE, ARTIFACT_OPERATION_KIND_ENTRIES_FILE,
+    generate_artifact_operation_kind_cases, generate_artifact_operation_kind_entries,
     generate_pass_descriptors, generate_pass_dispatch, generate_passes_tablegen, generate_tablegen,
 };
+use apxm_core::toolchain_env;
 use apxm_core::utils::build::{
     LibraryConfig, LinkSpec, Platform, detect_llvm_version, emit_link_directives,
     find_versioned_mlir_library, get_target_dir, get_workspace_root, locate_library,
 };
-use apxm_core::toolchain_env;
 use apxm_core::{log_debug, log_info};
 
 /// Build configuration derived from environment variables
@@ -194,6 +196,53 @@ fn generate_pass_files(out_dir: &Path, build_dir: Option<&Path>) -> Result<()> {
         fs::create_dir_all(&cmake_include_dir)?;
 
         for file in ["PassDispatch.inc", "PassDescriptors.inc"] {
+            let src = out_dir.join(file);
+            let dst = cmake_include_dir.join(file);
+            fs::copy(&src, &dst)
+                .with_context(|| format!("Failed to copy {} to CMake build dir", file))?;
+            log_info!(
+                "apxm-compiler-build",
+                "Copied {} to {}",
+                file,
+                dst.display()
+            );
+        }
+    }
+
+    Ok(())
+}
+
+/// Generate native compiler artifact wire fragments from Rust definitions.
+fn generate_artifact_wire_files(out_dir: &Path, build_dir: Option<&Path>) -> Result<()> {
+    let generated_files = [
+        (
+            ARTIFACT_OPERATION_KIND_ENTRIES_FILE,
+            generate_artifact_operation_kind_entries(),
+        ),
+        (
+            ARTIFACT_OPERATION_KIND_CASES_FILE,
+            generate_artifact_operation_kind_cases(),
+        ),
+    ];
+
+    for (file, content) in &generated_files {
+        let path = out_dir.join(file);
+        fs::write(&path, content)
+            .with_context(|| format!("Failed to write {}: {}", file, path.display()))?;
+        log_info!(
+            "apxm-compiler-build",
+            "Generated {}: {} ({} bytes)",
+            file,
+            path.display(),
+            content.len()
+        );
+    }
+
+    if let Some(build_dir) = build_dir {
+        let cmake_include_dir = build_dir.join("include/ais/Dialect/AIS/Conversion/Artifact");
+        fs::create_dir_all(&cmake_include_dir)?;
+
+        for (file, _) in &generated_files {
             let src = out_dir.join(file);
             let dst = cmake_include_dir.join(file);
             fs::copy(&src, &dst)
@@ -479,19 +528,12 @@ fn clang_builtin_include_dirs(clang_roots: &[PathBuf]) -> Option<PathBuf> {
             let Some(name) = path.file_name().and_then(|n| n.to_str()) else {
                 continue;
             };
-            let Some(major) = name
-                .split('.')
-                .next()
-                .and_then(|s| s.parse::<u32>().ok())
-            else {
+            let Some(major) = name.split('.').next().and_then(|s| s.parse::<u32>().ok()) else {
                 continue;
             };
             let include = path.join("include");
             if include.join("stddef.h").is_file() {
-                let replace = best
-                    .as_ref()
-                    .map(|(v, _)| major > *v)
-                    .unwrap_or(true);
+                let replace = best.as_ref().map(|(v, _)| major > *v).unwrap_or(true);
                 if replace {
                     best = Some((major, include));
                 }
@@ -837,6 +879,13 @@ fn build() -> Result<()> {
         "Generating Pass files from Rust definitions..."
     );
     generate_pass_files(&config.out_dir, Some(&config.build_dir))?;
+
+    // ═══ STEP 1c: Generate artifact wire fragments from Rust (Single Source of Truth) ═══
+    log_info!(
+        "apxm-compiler-build",
+        "Generating artifact wire fragments from Rust definitions..."
+    );
+    generate_artifact_wire_files(&config.out_dir, Some(&config.build_dir))?;
 
     // ═══ STEP 2: Locate MLIR installation (optional) ═══
     let mlir_layout = match locate_mlir_layout() {

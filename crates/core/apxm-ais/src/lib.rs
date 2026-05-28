@@ -34,8 +34,10 @@ pub use aam::{AAM, Beliefs, Capabilities, Goal, GoalId, GoalStatus, Goals};
 pub use memory::MemoryTier;
 pub use operations::tablegen::generate_tablegen;
 pub use operations::{
-    AIS_OPERATIONS, AISOperationType, ContextStyle, MlirEmissionSpec, MlirResultType,
+    AIS_OPERATIONS, AISOperationType, ARTIFACT_OPERATION_KIND_CASES_FILE,
+    ARTIFACT_OPERATION_KIND_ENTRIES_FILE, ContextStyle, MlirEmissionSpec, MlirResultType,
     OperationCategory, OperationField, OperationLatency, OperationSpec, WIRE_INDEXED_OPERATIONS,
+    generate_artifact_operation_kind_cases, generate_artifact_operation_kind_entries,
     get_all_operations, get_operation_spec,
 };
 pub use types::Value;

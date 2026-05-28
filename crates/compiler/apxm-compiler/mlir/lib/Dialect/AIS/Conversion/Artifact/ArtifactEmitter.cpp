@@ -30,48 +30,7 @@ namespace {
 // Operation kinds for artifact serialization
 // LLM ops (Ask/Think/Reason) are markers for runtime config lookup
 enum class OperationKind : uint32_t {
-  InvTool = 0,
-  Ask = 1,     // LOW latency LLM op (was Rsn)
-  QMem = 2,
-  UMem = 3,
-  Plan = 4,
-  WaitAll = 5,
-  Merge = 6,
-  Fence = 7,
-  Exc = 8,
-  Communicate = 9,
-  Reflect = 10,
-  Verify = 11,
-  Err = 12,
-  Return = 13,
-  Jump = 14,
-  BranchOnValue = 15,
-  LoopStart = 16,
-  LoopEnd = 17,
-  TryCatch = 18,
-  ConstStr = 19,
-  Switch = 20,
-  FlowCall = 21,
-  Print = 22,
-  Think = 23,  // HIGH latency LLM op
-  Reason = 24, // MEDIUM latency LLM op
-  UpdateGoal = 25,
-  Guard = 26,
-  Claim = 27,
-  Pause = 28,
-  Resume = 29,
-  Delegate = 31,
-  Negotiate = 32,
-  Nop = 33,
-  Identity = 34,
-  SpawnAgent = 35,
-  RegisterCapability = 36,
-  Autonomous = 37,
-  Checkpoint = 38,
-  SpawnTeam = 39,
-  Handoff = 40,
-  WorkflowSpawn = 41,
-  CallSkill = 42,
+#include "ais/Dialect/AIS/Conversion/Artifact/OperationKind.generated.inc"
 };
 
 enum class DependencyKind : uint8_t {
@@ -354,49 +313,8 @@ private:
 
 std::optional<OperationKind> mapOperation(Operation *op) {
   return TypeSwitch<Operation *, std::optional<OperationKind>>(op)
-      .Case<ConstStrOp>([](auto) { return OperationKind::ConstStr; })
-      .Case<QMemOp>([](auto) { return OperationKind::QMem; })
-      .Case<UMemOp>([](auto) { return OperationKind::UMem; })
-      .Case<InvToolOp>([](auto) { return OperationKind::InvTool; })
-      .Case<AskOp>([](auto) { return OperationKind::Ask; })
-      .Case<ThinkOp>([](auto) { return OperationKind::Think; })
-      .Case<ReasonOp>([](auto) { return OperationKind::Reason; })
-      .Case<ReflectOp>([](auto) { return OperationKind::Reflect; })
-      .Case<VerifyOp>([](auto) { return OperationKind::Verify; })
-      .Case<PlanOp>([](auto) { return OperationKind::Plan; })
-      .Case<ExcOp>([](auto) { return OperationKind::Exc; })
-      .Case<PrintOp>([](auto) { return OperationKind::Print; })
-      .Case<WaitAllOp>([](auto) { return OperationKind::WaitAll; })
-      .Case<MergeOp>([](auto) { return OperationKind::Merge; })
-      .Case<FenceOp>([](auto) { return OperationKind::Fence; })
-      .Case<CommunicateOp>([](auto) { return OperationKind::Communicate; })
-      .Case<ErrOp>([](auto) { return OperationKind::Err; })
-      .Case<ReturnOp>([](auto) { return OperationKind::Return; })
       .Case<func::ReturnOp>([](auto) { return OperationKind::Return; })
-      .Case<JumpOp>([](auto) { return OperationKind::Jump; })
-      .Case<BranchOnValueOp>([](auto) { return OperationKind::BranchOnValue; })
-      .Case<LoopStartOp>([](auto) { return OperationKind::LoopStart; })
-      .Case<LoopEndOp>([](auto) { return OperationKind::LoopEnd; })
-      .Case<SwitchOp>([](auto) { return OperationKind::Switch; })
-      .Case<FlowCallOp>([](auto) { return OperationKind::FlowCall; })
-      .Case<TryCatchOp>([](auto) { return OperationKind::TryCatch; })
-      .Case<UpdateGoalOp>([](auto) { return OperationKind::UpdateGoal; })
-      .Case<GuardOp>([](auto) { return OperationKind::Guard; })
-      .Case<ClaimOp>([](auto) { return OperationKind::Claim; })
-      .Case<PauseOp>([](auto) { return OperationKind::Pause; })
-      .Case<ResumeOp>([](auto) { return OperationKind::Resume; })
-      .Case<SpawnAgentOp>([](auto) { return OperationKind::SpawnAgent; })
-      .Case<SpawnTeamOp>([](auto) { return OperationKind::SpawnTeam; })
-      .Case<RegisterCapabilityOp>([](auto) { return OperationKind::RegisterCapability; })
-      .Case<AutonomousOp>([](auto) { return OperationKind::Autonomous; })
-      .Case<DelegateOp>([](auto) { return OperationKind::Delegate; })
-      .Case<NegotiateOp>([](auto) { return OperationKind::Negotiate; })
-      .Case<NopOp>([](auto) { return OperationKind::Nop; })
-      .Case<IdentityOp>([](auto) { return OperationKind::Identity; })
-      .Case<CheckpointOp>([](auto) { return OperationKind::Checkpoint; })
-      .Case<HandoffOp>([](auto) { return OperationKind::Handoff; })
-      .Case<WorkflowSpawnOp>([](auto) { return OperationKind::WorkflowSpawn; })
-      .Case<CallSkillOp>([](auto) { return OperationKind::CallSkill; })
+#include "ais/Dialect/AIS/Conversion/Artifact/OperationKindCases.generated.inc"
       .Case<YieldOp>([](auto) {
         return std::nullopt;
       }) // Skip yield - it's a region terminator
