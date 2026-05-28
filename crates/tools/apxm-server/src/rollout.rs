@@ -11,6 +11,7 @@ use std::path::Path;
 use std::sync::{Arc, Mutex as StdMutex};
 
 use apxm_core::events::{ApxmEvent, EventEmitter};
+use apxm_driver::ServerRolloutConfig;
 use apxm_rollout::{
     IndexDb, PartialMeta, RolloutPaths, RolloutRecorder, RolloutRecorderConfig, SessionMetaPayload,
     ThreadIndexEntry, now_rfc3339,
@@ -21,10 +22,8 @@ use tokio::sync::{Mutex, mpsc};
 use tokio::task::JoinHandle;
 use tracing::warn;
 
-const DEFAULT_ROLLOUT_EVENT_BUFFER: usize = 2048;
 const MIN_ROLLOUT_EVENT_BUFFER: usize = 128;
 const MAX_ROLLOUT_EVENT_BUFFER: usize = 65_536;
-const ROLLOUT_EVENT_BUFFER_ENV: &str = "APXM_ROLLOUT_EVENT_BUFFER";
 
 /// Holds open recorders keyed by trace_id (which is the execution_id for
 /// runtime events). The map is small — one entry per in-flight run.
@@ -35,10 +34,17 @@ pub(crate) struct RolloutRegistry {
 }
 
 impl RolloutRegistry {
+    #[cfg(test)]
     pub(crate) fn new() -> Self {
+        Self::with_config(&ServerRolloutConfig::default())
+    }
+
+    pub(crate) fn with_config(config: &ServerRolloutConfig) -> Self {
         Self {
             inner: Arc::new(DashMap::new()),
-            event_buffer: rollout_event_buffer(),
+            event_buffer: config
+                .event_buffer
+                .clamp(MIN_ROLLOUT_EVENT_BUFFER, MAX_ROLLOUT_EVENT_BUFFER),
         }
     }
 
@@ -209,13 +215,27 @@ impl EventEmitter for RolloutEmitter {
     }
 }
 
-fn rollout_event_buffer() -> usize {
-    std::env::var(ROLLOUT_EVENT_BUFFER_ENV)
-        .ok()
-        .and_then(|value| value.parse::<usize>().ok())
-        .filter(|value| *value > 0)
-        .unwrap_or(DEFAULT_ROLLOUT_EVENT_BUFFER)
-        .clamp(MIN_ROLLOUT_EVENT_BUFFER, MAX_ROLLOUT_EVENT_BUFFER)
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn rollout_registry_uses_configured_event_buffer() {
+        let registry = RolloutRegistry::with_config(&ServerRolloutConfig { event_buffer: 4096 });
+
+        assert_eq!(registry.event_buffer, 4096);
+    }
+
+    #[test]
+    fn rollout_registry_clamps_event_buffer() {
+        let low = RolloutRegistry::with_config(&ServerRolloutConfig { event_buffer: 1 });
+        assert_eq!(low.event_buffer, MIN_ROLLOUT_EVENT_BUFFER);
+
+        let high = RolloutRegistry::with_config(&ServerRolloutConfig {
+            event_buffer: usize::MAX,
+        });
+        assert_eq!(high.event_buffer, MAX_ROLLOUT_EVENT_BUFFER);
+    }
 }
 
 /// Build a synthetic SessionMeta from skill execution context. Used by

@@ -63,9 +63,9 @@ pub(crate) async fn run_server_with_config(server_config: ServerConfig) -> anyho
     let mut runtime = Arc::new(runtime);
     crate::call_skill::install(&mut runtime, skill_library.clone());
 
-    // Phase 14.8.C — wire the outbound lifecycle webhook if
-    // `APXM_RUN_WEBHOOK_URL` is set. Optional + fire-and-forget.
-    let webhook_dispatcher = WebhookDispatcher::from_env();
+    // Phase 14.8.C — wire the outbound lifecycle webhook if configured.
+    // Optional + fire-and-forget.
+    let webhook_dispatcher = WebhookDispatcher::from_config(&server_config.webhook);
 
     // Phase 14.8.D — bring up the OTEL exporter if env-configured.
     // Initialization failures are logged + ignored: the in-process
@@ -88,7 +88,7 @@ pub(crate) async fn run_server_with_config(server_config: ServerConfig) -> anyho
             ))
         }
     };
-    let rollout_registry = RolloutRegistry::new();
+    let rollout_registry = RolloutRegistry::with_config(&server_config.rollout);
 
     let state = AppState {
         runtime,
@@ -173,6 +173,18 @@ fn apply_server_env_overrides(config: &mut ServerConfig) {
     }
     if let Some(value) = env_u64(apxm_env::APXM_RUN_EVENT_KEEP_ALIVE_SECS) {
         config.run_events.keep_alive_secs = value;
+    }
+    if let Ok(value) = std::env::var(apxm_env::APXM_RUN_WEBHOOK_URL) {
+        let trimmed = value.trim();
+        if !trimmed.is_empty() {
+            config.webhook.url = Some(trimmed.to_string());
+        }
+    }
+    if let Some(value) = env_u64(apxm_env::APXM_RUN_WEBHOOK_TIMEOUT_SECS) {
+        config.webhook.timeout_secs = value;
+    }
+    if let Some(value) = env_usize(apxm_env::APXM_ROLLOUT_EVENT_BUFFER) {
+        config.rollout.event_buffer = value;
     }
     if let Ok(value) = std::env::var(apxm_env::APXM_PUBLIC_URL) {
         let trimmed = value.trim();
