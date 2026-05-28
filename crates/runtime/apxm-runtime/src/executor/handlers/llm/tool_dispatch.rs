@@ -218,6 +218,45 @@ static TOOL_WRITE_LOCKS: once_cell::sync::Lazy<
     dashmap::DashMap<String, std::sync::Arc<tokio::sync::RwLock<()>>>,
 > = once_cell::sync::Lazy::new(dashmap::DashMap::new);
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ToolAccess {
+    ReadOnly,
+    Write,
+}
+
+fn resolve_tool_access(ctx: &ExecutionContext, name: &str) -> Option<ToolAccess> {
+    if let Some(metadata) = ctx.capability_system.get_metadata(name) {
+        return Some(if metadata.read_only {
+            ToolAccess::ReadOnly
+        } else {
+            ToolAccess::Write
+        });
+    }
+
+    if ctx
+        .python_tool_bridge
+        .as_ref()
+        .is_some_and(|bridge| bridge.has_tool(name))
+    {
+        return Some(ToolAccess::Write);
+    }
+
+    None
+}
+
+fn write_lock_for_tool(name: &str) -> std::sync::Arc<tokio::sync::RwLock<()>> {
+    TOOL_WRITE_LOCKS
+        .entry(name.to_string())
+        .or_insert_with(|| std::sync::Arc::new(tokio::sync::RwLock::new(())))
+        .clone()
+}
+
+fn release_write_lock_if_idle(name: &str, lock: &std::sync::Arc<tokio::sync::RwLock<()>>) {
+    TOOL_WRITE_LOCKS.remove_if(name, |_, current| {
+        std::sync::Arc::ptr_eq(current, lock) && std::sync::Arc::strong_count(current) == 2
+    });
+}
+
 /// Execute multiple tool calls concurrently, preserving result order.
 ///
 /// Read-only tools (according to `CapabilityMetadata::read_only`) run in full
@@ -257,17 +296,19 @@ async fn execute_tool_call_batch(
     let futures: Vec<_> = tool_calls
         .iter()
         .map(|tc| {
-            let is_read_only = ctx.capability_system.is_read_only(&tc.name);
+            let access = resolve_tool_access(ctx, &tc.name);
             async move {
-                if is_read_only {
-                    execute_tool_call(ctx, tc).await
-                } else {
-                    let lock = TOOL_WRITE_LOCKS
-                        .entry(tc.name.clone())
-                        .or_insert_with(|| std::sync::Arc::new(tokio::sync::RwLock::new(())))
-                        .clone();
-                    let _guard = lock.write().await;
-                    execute_tool_call(ctx, tc).await
+                match access {
+                    Some(ToolAccess::ReadOnly) | None => execute_tool_call(ctx, tc).await,
+                    Some(ToolAccess::Write) => {
+                        let lock = write_lock_for_tool(&tc.name);
+                        let result = {
+                            let _guard = lock.write().await;
+                            execute_tool_call(ctx, tc).await
+                        };
+                        release_write_lock_if_idle(&tc.name, &lock);
+                        result
+                    }
                 }
             }
         })
@@ -526,8 +567,8 @@ pub(super) async fn execute_ask_with_tools(
 mod tests {
     use super::*;
     use crate::aam::Aam;
-    use crate::capability::CapabilitySystem;
     use crate::capability::builtins::{ReadCapability, SearchWebCapability};
+    use crate::capability::{CapabilitySystem, executor::EchoCapability};
     use crate::memory::{MemoryConfig, MemorySystem};
     use apxm_core::types::operations::AISOperationType;
     use std::sync::Arc;
@@ -545,6 +586,25 @@ mod tests {
         capability_system
             .register(Arc::new(SearchWebCapability::new()))
             .expect("register web");
+
+        ExecutionContext::new(
+            memory,
+            Arc::new(apxm_backends::LLMRegistry::new()),
+            capability_system,
+            Aam::new(),
+        )
+    }
+
+    async fn ctx_with_echo_tool() -> ExecutionContext {
+        let memory = Arc::new(
+            MemorySystem::new(MemoryConfig::in_memory_ltm())
+                .await
+                .expect("memory"),
+        );
+        let capability_system = Arc::new(CapabilitySystem::new());
+        capability_system
+            .register(Arc::new(EchoCapability::new()))
+            .expect("register echo");
 
         ExecutionContext::new(
             memory,
@@ -647,5 +707,39 @@ mod tests {
             clamp_tool_call_parallelism(1000, usize::MAX),
             HARD_MAX_PARALLEL_TOOL_CALLS
         );
+    }
+
+    #[tokio::test]
+    async fn missing_tool_call_does_not_create_write_lock() {
+        let ctx = ctx_with_grouped_tools().await;
+        let tool_name = "missing_lock_test_tool";
+        let calls = vec![ToolCall::new(
+            "call_missing",
+            tool_name,
+            serde_json::json!({}),
+        )];
+
+        let results = execute_tool_call_batch(&ctx, &calls).await;
+
+        assert_eq!(results.len(), 1);
+        assert!(!results[0].success);
+        assert!(!TOOL_WRITE_LOCKS.contains_key(tool_name));
+    }
+
+    #[tokio::test]
+    async fn write_tool_lock_is_pruned_after_idle() {
+        let ctx = ctx_with_echo_tool().await;
+        let tool_name = "echo";
+        let calls = vec![ToolCall::new(
+            "call_echo",
+            tool_name,
+            serde_json::json!({"message": "hi"}),
+        )];
+
+        let results = execute_tool_call_batch(&ctx, &calls).await;
+
+        assert_eq!(results.len(), 1);
+        assert!(results[0].success);
+        assert!(!TOOL_WRITE_LOCKS.contains_key(tool_name));
     }
 }
