@@ -193,6 +193,9 @@ pub struct ServerConfig {
     /// Runtime and skill execution SSE transport controls.
     pub execution_stream: ExecutionStreamConfig,
 
+    /// Server-owned execution record/index controls.
+    pub executions: ServerExecutionsConfig,
+
     /// `/v1/runs/{id}/events/stream` replay/live transport controls.
     pub run_events: RunEventsConfig,
 
@@ -216,6 +219,7 @@ impl Default for ServerConfig {
             inference: ServerInferenceConfig::default(),
             generate_stream: GenerateStreamConfig::default(),
             execution_stream: ExecutionStreamConfig::default(),
+            executions: ServerExecutionsConfig::default(),
             run_events: RunEventsConfig::default(),
             webhook: ServerWebhookConfig::default(),
             rollout: ServerRolloutConfig::default(),
@@ -313,6 +317,21 @@ impl Default for ExecutionStreamConfig {
         Self {
             channel_capacity: 128,
             keep_alive_secs: 15,
+        }
+    }
+}
+
+/// Server execution record/index configuration.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(default)]
+pub struct ServerExecutionsConfig {
+    pub index_max_entries: usize,
+}
+
+impl Default for ServerExecutionsConfig {
+    fn default() -> Self {
+        Self {
+            index_max_entries: 10_000,
         }
     }
 }
@@ -1018,6 +1037,9 @@ mod tests {
             channel_capacity = 384
             keep_alive_secs = 12
 
+            [server.executions]
+            index_max_entries = 1234
+
             [server.run_events]
             stream_buffer = 2048
             retained_events = 8192
@@ -1104,6 +1126,7 @@ mod tests {
         assert_eq!(config.server.generate_stream.keep_alive_secs, 10);
         assert_eq!(config.server.execution_stream.channel_capacity, 384);
         assert_eq!(config.server.execution_stream.keep_alive_secs, 12);
+        assert_eq!(config.server.executions.index_max_entries, 1234);
         assert_eq!(config.server.run_events.stream_buffer, 2048);
         assert_eq!(config.server.run_events.retained_events, 8192);
         assert_eq!(config.server.run_events.keep_alive_secs, 20);

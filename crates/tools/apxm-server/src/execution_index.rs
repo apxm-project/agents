@@ -169,6 +169,14 @@ impl ExecutionIndex {
         }
     }
 
+    #[cfg(test)]
+    pub(crate) fn max_entries_for_tests(&self) -> usize {
+        self.inner
+            .lock()
+            .expect("execution index poisoned")
+            .max_entries
+    }
+
     /// Upsert an entry derived from a freshly-persisted execution record.
     /// Persists the sidecar for the affected directory eagerly.
     pub(crate) fn upsert_from_record(&self, record: &ExecutionRecord) {

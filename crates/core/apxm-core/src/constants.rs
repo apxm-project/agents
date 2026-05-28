@@ -34,6 +34,8 @@ pub mod env {
         "APXM_EXECUTION_STREAM_CHANNEL_CAPACITY";
     /// SSE keep-alive interval, in seconds, for runtime and skill execution streams.
     pub const APXM_EXECUTION_STREAM_KEEP_ALIVE_SECS: &str = "APXM_EXECUTION_STREAM_KEEP_ALIVE_SECS";
+    /// Maximum hot entries retained by the server execution index.
+    pub const APXM_EXECUTION_INDEX_MAX_ENTRIES: &str = "APXM_EXECUTION_INDEX_MAX_ENTRIES";
     /// Broadcast buffer size for per-run event subscriptions.
     pub const APXM_RUN_EVENT_STREAM_BUFFER: &str = "APXM_RUN_EVENT_STREAM_BUFFER";
     /// Number of per-run events retained in memory for replay.

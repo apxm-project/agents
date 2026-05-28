@@ -101,8 +101,13 @@ pub(crate) struct ExecutionStore {
 }
 
 impl ExecutionStore {
+    #[cfg(test)]
     pub(crate) fn new() -> Self {
         Self::with_index(ExecutionIndex::new())
+    }
+
+    pub(crate) fn with_index_max_entries(max_entries: usize) -> Self {
+        Self::with_index(ExecutionIndex::with_capacity(max_entries))
     }
 
     pub(crate) fn with_index(index: ExecutionIndex) -> Self {
@@ -112,12 +117,27 @@ impl ExecutionStore {
         }
     }
 
+    #[allow(dead_code)]
     pub(crate) fn from_session_roots<I, P>(session_roots: I) -> Self
     where
         I: IntoIterator<Item = P>,
         P: AsRef<FsPath>,
     {
-        let store = Self::new();
+        Self::from_session_roots_with_index_max_entries(
+            session_roots,
+            crate::execution_index::DEFAULT_MAX_ENTRIES,
+        )
+    }
+
+    pub(crate) fn from_session_roots_with_index_max_entries<I, P>(
+        session_roots: I,
+        index_max_entries: usize,
+    ) -> Self
+    where
+        I: IntoIterator<Item = P>,
+        P: AsRef<FsPath>,
+    {
+        let store = Self::with_index_max_entries(index_max_entries);
         store.reload_from_session_roots(session_roots);
         store
     }
@@ -596,6 +616,20 @@ mod tests {
     const TEST_NODE_ID: u64 = 7;
     const TEST_NODE_NAME: &str = "fetch_context";
     const TEST_NODE_OUTPUT: &str = "private context";
+
+    #[test]
+    fn execution_store_uses_configured_index_capacity() {
+        let store = ExecutionStore::with_index_max_entries(7);
+
+        assert_eq!(store.index.max_entries_for_tests(), 7);
+    }
+
+    #[test]
+    fn execution_store_clamps_zero_index_capacity() {
+        let store = ExecutionStore::with_index_max_entries(0);
+
+        assert_eq!(store.index.max_entries_for_tests(), 1);
+    }
 
     #[test]
     fn execution_recording_emitter_persists_node_names() {
