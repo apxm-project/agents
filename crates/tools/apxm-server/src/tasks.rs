@@ -6,7 +6,7 @@ use axum::extract::{Path, State};
 use dashmap::DashMap;
 use serde::{Deserialize, Serialize};
 use serde_json::Value as JsonValue;
-use tokio::sync::Mutex;
+use tokio::sync::{Mutex, Notify};
 use tracing::info;
 
 use crate::error::ApiError;
@@ -51,6 +51,7 @@ pub(crate) struct QueuedTask {
 #[derive(Clone)]
 pub(crate) struct TaskQueueManager {
     inner: Arc<DashMap<String, Arc<Mutex<VecDeque<QueuedTask>>>>>,
+    waiters: Arc<DashMap<String, Arc<Notify>>>,
     pub(crate) all_tasks: Arc<DashMap<String, QueuedTask>>,
 }
 
@@ -58,20 +59,35 @@ impl TaskQueueManager {
     pub(crate) fn new() -> Self {
         Self {
             inner: Arc::new(DashMap::new()),
+            waiters: Arc::new(DashMap::new()),
             all_tasks: Arc::new(DashMap::new()),
         }
     }
 
     pub(crate) async fn enqueue(&self, task: QueuedTask) {
+        let queue_name = task.queue.clone();
         let queue: Arc<Mutex<VecDeque<QueuedTask>>> = {
             let entry = self
                 .inner
-                .entry(task.queue.clone())
+                .entry(queue_name.clone())
                 .or_insert_with(|| Arc::new(Mutex::new(VecDeque::new())));
             entry.value().clone()
         };
         self.all_tasks.insert(task.id.clone(), task.clone());
         queue.lock().await.push_back(task);
+        self.notify_queue(&queue_name);
+    }
+
+    fn queue_notify(&self, queue_name: &str) -> Arc<Notify> {
+        self.waiters
+            .entry(queue_name.to_string())
+            .or_insert_with(|| Arc::new(Notify::new()))
+            .value()
+            .clone()
+    }
+
+    fn notify_queue(&self, queue_name: &str) {
+        self.queue_notify(queue_name).notify_waiters();
     }
 
     /// Atomically claim the next pending task from `queue_name`.
@@ -118,11 +134,46 @@ impl TaskQueueManager {
         Some(claimed)
     }
 
+    pub(crate) async fn claim_or_wait(
+        &self,
+        queue_name: &str,
+        agent_id: &str,
+        lease_ms: u64,
+        max_wait_ms: u64,
+    ) -> Option<QueuedTask> {
+        if max_wait_ms == 0 {
+            return self.claim(queue_name, agent_id, lease_ms).await;
+        }
+
+        let deadline = tokio::time::Instant::now() + std::time::Duration::from_millis(max_wait_ms);
+        loop {
+            let notify = self.queue_notify(queue_name);
+            let notified = notify.notified();
+            tokio::pin!(notified);
+
+            if let Some(task) = self.claim(queue_name, agent_id, lease_ms).await {
+                return Some(task);
+            }
+
+            let now = tokio::time::Instant::now();
+            if now >= deadline {
+                return None;
+            }
+            if tokio::time::timeout_at(deadline, notified.as_mut())
+                .await
+                .is_err()
+            {
+                return None;
+            }
+        }
+    }
+
     pub(crate) async fn complete(
         &self,
         task_id: &str,
         claim_token: &str,
         result: JsonValue,
+        success: bool,
     ) -> Result<(), String> {
         let mut task = self
             .all_tasks
@@ -136,7 +187,12 @@ impl TaskQueueManager {
         {
             return Err("lease_expired: Task lease has expired. Task may have been reclaimed by another worker.".to_string());
         }
-        task.status = TaskStatus::Completed;
+        let status = if success {
+            TaskStatus::Completed
+        } else {
+            TaskStatus::Failed
+        };
+        task.status = status.clone();
         task.result = Some(result.clone());
         task.completed_at_ms = Some(now_ms());
         let queue_name = task.queue.clone();
@@ -147,7 +203,7 @@ impl TaskQueueManager {
             drop(queue_ref);
             let mut guard = queue.lock().await;
             if let Some(t) = guard.iter_mut().find(|t| t.id == tid) {
-                t.status = TaskStatus::Completed;
+                t.status = status;
                 t.result = Some(result);
                 t.completed_at_ms = Some(now_ms());
             }
@@ -199,8 +255,12 @@ pub(crate) struct CompleteTaskRequest {
     claim_token: String,
     #[serde(default)]
     result: JsonValue,
-    #[serde(default)]
+    #[serde(default = "default_complete_success")]
     success: bool,
+}
+
+fn default_complete_success() -> bool {
+    true
 }
 
 pub(crate) async fn create_task(
@@ -246,30 +306,10 @@ pub(crate) async fn claim_task(
     Path(queue): Path<String>,
     Json(req): Json<ClaimTaskRequest>,
 ) -> Result<Json<TaskClaimResponse>, ApiError> {
-    let deadline_ms = now_ms() + req.max_wait_ms;
-    let mut task = state
+    let task = state
         .task_manager
-        .claim(&queue, &req.agent_id, req.lease_ms)
+        .claim_or_wait(&queue, &req.agent_id, req.lease_ms, req.max_wait_ms)
         .await;
-    if task.is_none() && req.max_wait_ms > 0 {
-        let mut wait_ms = 100u64;
-        loop {
-            let now = now_ms();
-            if now >= deadline_ms {
-                break;
-            }
-            let sleep_ms = wait_ms.min(deadline_ms - now);
-            tokio::time::sleep(std::time::Duration::from_millis(sleep_ms)).await;
-            task = state
-                .task_manager
-                .claim(&queue, &req.agent_id, req.lease_ms)
-                .await;
-            if task.is_some() {
-                break;
-            }
-            wait_ms = (wait_ms * 2).min(1000);
-        }
-    }
     match task {
         Some(t) => {
             info!(id = %t.id, queue = %queue, agent_id = %req.agent_id, "Task claimed");
@@ -295,7 +335,7 @@ pub(crate) async fn complete_task(
 ) -> Result<Json<OkAckId>, ApiError> {
     state
         .task_manager
-        .complete(&id, &req.claim_token, req.result)
+        .complete(&id, &req.claim_token, req.result, req.success)
         .await
         .map_err(|e| {
             let status = if e.starts_with("lease_expired:") {

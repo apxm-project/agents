@@ -176,6 +176,24 @@ async fn task_manager_claim_empty_queue_returns_none() {
 }
 
 #[tokio::test]
+async fn task_manager_claim_or_wait_wakes_on_enqueue() {
+    let mgr = TaskQueueManager::new();
+    let waiter = {
+        let mgr = mgr.clone();
+        tokio::spawn(async move { mgr.claim_or_wait("q", "agent", 60_000, 5_000).await })
+    };
+
+    mgr.enqueue(make_task("t1", "q")).await;
+
+    let claimed = tokio::time::timeout(std::time::Duration::from_secs(1), waiter)
+        .await
+        .expect("claim_or_wait should wake")
+        .expect("join")
+        .expect("claimed task");
+    assert_eq!(claimed.id, "t1");
+}
+
+#[tokio::test]
 async fn task_manager_claim_skips_already_claimed() {
     let mgr = TaskQueueManager::new();
     mgr.enqueue(make_task("t1", "q")).await;
@@ -202,7 +220,7 @@ async fn task_manager_complete_success() {
     let token = claimed.claim_token.unwrap();
 
     let result = mgr
-        .complete("t1", &token, serde_json::json!({"output": "done"}))
+        .complete("t1", &token, serde_json::json!({"output": "done"}), true)
         .await;
     assert!(result.is_ok());
 
@@ -214,13 +232,29 @@ async fn task_manager_complete_success() {
 }
 
 #[tokio::test]
+async fn task_manager_complete_can_mark_failure() {
+    let mgr = TaskQueueManager::new();
+    mgr.enqueue(make_task("t1", "q")).await;
+
+    let claimed = mgr.claim("q", "agent", 60_000).await.unwrap();
+    let token = claimed.claim_token.unwrap();
+
+    mgr.complete("t1", &token, serde_json::json!({"error": "failed"}), false)
+        .await
+        .expect("complete failure");
+
+    let stored = mgr.all_tasks.get("t1").unwrap();
+    assert_eq!(stored.status, TaskStatus::Failed);
+}
+
+#[tokio::test]
 async fn task_manager_complete_wrong_token_fails() {
     let mgr = TaskQueueManager::new();
     mgr.enqueue(make_task("t1", "q")).await;
     mgr.claim("q", "agent", 60_000).await;
 
     let result = mgr
-        .complete("t1", "wrong-token", serde_json::json!({}))
+        .complete("t1", "wrong-token", serde_json::json!({}), true)
         .await;
     assert!(result.is_err());
     assert!(result.unwrap_err().contains("Invalid claim token"));
@@ -230,7 +264,7 @@ async fn task_manager_complete_wrong_token_fails() {
 async fn task_manager_complete_missing_task_fails() {
     let mgr = TaskQueueManager::new();
     let result = mgr
-        .complete("nonexistent", "tok", serde_json::json!({}))
+        .complete("nonexistent", "tok", serde_json::json!({}), true)
         .await;
     assert!(result.is_err());
     assert!(result.unwrap_err().contains("not found"));
