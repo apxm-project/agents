@@ -14,6 +14,7 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{SystemTime, UNIX_EPOCH};
 
+use apxm_core::constants::env as apxm_env;
 use apxm_core::events::ApxmEvent;
 use chrono::{DateTime, Utc};
 use tokio::fs::{File, OpenOptions};
@@ -265,11 +266,16 @@ fn payload_kind_name(payload: &RolloutPayload) -> &'static str {
 }
 
 fn spill_threshold_from_env() -> Option<u64> {
-    match std::env::var("APXM_ROLLOUT_SPILL_THRESHOLD_BYTES") {
+    match std::env::var(apxm_env::APXM_ROLLOUT_SPILL_THRESHOLD_BYTES) {
         Ok(raw) => match raw.parse::<u64>() {
             Ok(value) => Some(value),
             Err(error) => {
-                warn!(%error, value = %raw, "ignoring invalid APXM_ROLLOUT_SPILL_THRESHOLD_BYTES");
+                warn!(
+                    %error,
+                    value = %raw,
+                    env = apxm_env::APXM_ROLLOUT_SPILL_THRESHOLD_BYTES,
+                    "ignoring invalid rollout spill threshold env var"
+                );
                 None
             }
         },
