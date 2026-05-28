@@ -48,7 +48,7 @@ pub mod workflow_spawn;
 use super::{ExecutionContext, Result};
 use anyhow::Error as AnyhowError;
 use apxm_backends::llm::wire::response_metadata;
-use apxm_backends::{LLMRequest, LLMResponse};
+use apxm_backends::{LLMRequest, LLMResponse, StreamingBackendError};
 use apxm_core::{
     constants::graph::attrs as graph_attrs,
     error::RuntimeError,
@@ -330,7 +330,8 @@ async fn execute_llm_request_streaming(
                 if let Some(router) = &ctx.model_router
                     && let Some(ref decision) = router_decision
                 {
-                    router.record_failure(&decision.backend);
+                    let backend = streaming_error_backend(&e, &decision.backend).to_string();
+                    router.record_failure(&backend);
                 }
                 return Err(llm_error(ctx, phase, &prepared_request, e));
             }
@@ -454,6 +455,13 @@ fn streamed_response_backend<'a>(response: &'a LLMResponse, fallback_backend: &'
         .unwrap_or(fallback_backend)
 }
 
+fn streaming_error_backend<'a>(error: &'a AnyhowError, fallback_backend: &'a str) -> &'a str {
+    error
+        .downcast_ref::<StreamingBackendError>()
+        .map(StreamingBackendError::backend_name)
+        .unwrap_or(fallback_backend)
+}
+
 #[cfg(feature = "metrics")]
 async fn record_llm_event(
     ctx: &ExecutionContext,
@@ -540,6 +548,7 @@ mod tests {
     use crate::capability::CapabilitySystem;
     use crate::executor::events::ExecutionEventEmitter;
     use crate::memory::{MemoryConfig, MemorySystem};
+    use apxm_backends::StreamingFailureKind;
     use apxm_backends::llm::backends::mock::MockLLMBackend;
     use apxm_core::types::{FinishReason, TokenUsage};
     use std::collections::HashMap;
@@ -561,6 +570,17 @@ mod tests {
         let response = LLMResponse::new("ok", "model", TokenUsage::new(1, 1), FinishReason::Stop);
 
         assert_eq!(streamed_response_backend(&response, "primary"), "primary");
+    }
+
+    #[test]
+    fn streaming_error_backend_prefers_typed_registry_error() {
+        let error = AnyhowError::new(StreamingBackendError::new(
+            "fallback",
+            StreamingFailureKind::BackendError,
+            "connection closed",
+        ));
+
+        assert_eq!(streaming_error_backend(&error, "primary"), "fallback");
     }
 
     #[test]

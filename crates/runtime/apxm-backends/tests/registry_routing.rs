@@ -1,10 +1,71 @@
 //! Tests for LLMRegistry routing strategies and streaming fallback.
 
-use apxm_backends::llm::backends::LLMRequest;
 use apxm_backends::llm::backends::mock::MockLLMBackend;
+use apxm_backends::llm::backends::{LLMBackend, LLMRequest, LLMResponse, StreamChunk, TokenUsage};
 use apxm_backends::llm::registry::{LLMRegistry, RoutingStrategy};
 use apxm_backends::llm::wire::response_metadata;
+use apxm_backends::{StreamingBackendError, StreamingFailureKind};
+use apxm_core::types::{FinishReason, ModelInfo};
 use futures::StreamExt;
+use std::pin::Pin;
+
+struct CommitThenFailBackend {
+    name: String,
+    model: String,
+}
+
+impl CommitThenFailBackend {
+    fn new(name: impl Into<String>) -> Self {
+        Self {
+            name: name.into(),
+            model: "mock-model".to_string(),
+        }
+    }
+}
+
+#[async_trait::async_trait]
+impl LLMBackend for CommitThenFailBackend {
+    async fn generate(&self, _request: LLMRequest) -> anyhow::Result<LLMResponse> {
+        Ok(LLMResponse::new(
+            "",
+            self.model.as_str(),
+            TokenUsage::new(0, 0),
+            FinishReason::Stop,
+        ))
+    }
+
+    fn generate_stream(
+        &self,
+        _request: LLMRequest,
+    ) -> Pin<Box<dyn tokio_stream::Stream<Item = anyhow::Result<StreamChunk>> + Send + '_>> {
+        Box::pin(tokio_stream::iter(vec![
+            Ok(StreamChunk::Token("partial ".to_string())),
+            Err(anyhow::anyhow!("connection closed")),
+        ]))
+    }
+
+    fn name(&self) -> &str {
+        &self.name
+    }
+
+    fn model(&self) -> &str {
+        &self.model
+    }
+
+    async fn health_check(&self) -> anyhow::Result<()> {
+        Ok(())
+    }
+
+    async fn list_models(&self) -> anyhow::Result<Vec<ModelInfo>> {
+        Ok(vec![ModelInfo {
+            id: self.model.clone(),
+            name: self.model.clone(),
+            context_window: 128_000,
+            supports_functions: true,
+            supports_vision: false,
+        }])
+    }
+}
 
 #[tokio::test]
 async fn test_round_robin_rotates_across_backends() {
@@ -359,4 +420,35 @@ async fn test_streaming_no_mid_stream_switching() {
 
     // Should use primary backend (not fallback)
     assert_eq!(final_content, Some("Primary complete response".to_string()));
+}
+
+#[tokio::test]
+async fn test_committed_stream_error_exposes_backend_name() {
+    let registry = LLMRegistry::new();
+
+    let primary = CommitThenFailBackend::new("primary");
+    let fallback = MockLLMBackend::static_response("Fallback response").named("fallback");
+
+    registry.register("primary", primary).unwrap();
+    registry.register("fallback", fallback).unwrap();
+    registry.set_default("primary").unwrap();
+    registry
+        .set_fallback("primary", vec!["fallback".to_string()])
+        .unwrap();
+
+    let request = LLMRequest::new("test");
+    let mut stream = registry.generate_stream_with_fallback(&request);
+
+    match stream.next().await.unwrap().unwrap() {
+        StreamChunk::Token(token) => assert_eq!(token, "partial "),
+        chunk => panic!("expected committed token before failure, got {chunk:?}"),
+    }
+
+    let error = stream.next().await.unwrap().unwrap_err();
+    let stream_error = error
+        .downcast_ref::<StreamingBackendError>()
+        .expect("committed stream errors should carry backend metadata");
+
+    assert_eq!(stream_error.backend_name(), "primary");
+    assert_eq!(stream_error.kind(), StreamingFailureKind::BackendError);
 }

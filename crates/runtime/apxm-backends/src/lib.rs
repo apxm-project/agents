@@ -87,8 +87,10 @@ pub use llm::{
     RetryConfig,
     RetryStrategy,
     Role,
-    // Streaming
     StreamChunk,
+    // Streaming
+    StreamingBackendError,
+    StreamingFailureKind,
     TokenUsage,
     // Tool types
     ToolChoice,

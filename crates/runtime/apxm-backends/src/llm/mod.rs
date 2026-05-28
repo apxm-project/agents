@@ -227,7 +227,9 @@ pub use registration::{
     BackendFallback, BackendRegistration, ModelAliasRegistration, ModelRegistration,
     OperationRoute, RegistryPolicy,
 };
-pub use registry::{HealthMonitor, HealthStatus, LLMRegistry};
+pub use registry::{
+    HealthMonitor, HealthStatus, LLMRegistry, StreamingBackendError, StreamingFailureKind,
+};
 pub use retry::{ErrorClass, RetryConfig, RetryStrategy};
 pub use schema::{JsonSchema, OutputParser};
 
