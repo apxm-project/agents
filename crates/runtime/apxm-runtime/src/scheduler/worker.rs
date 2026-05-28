@@ -409,8 +409,9 @@ async fn execute_with_retries(
 
     let mut attempt = 0;
     let mut last_error = None;
+    let max_retries = max_scheduler_retries_for_node(state.cfg.max_retries, node);
 
-    while attempt <= state.cfg.max_retries {
+    while attempt <= max_retries {
         // Record scheduling
         #[cfg(feature = "metrics")]
         state.metrics.record_schedule();
@@ -468,7 +469,7 @@ async fn execute_with_retries(
                 attempt += 1;
 
                 // Check if we should retry
-                if attempt > state.cfg.max_retries {
+                if attempt > max_retries {
                     break;
                 }
 
@@ -492,6 +493,14 @@ async fn execute_with_retries(
         }),
         attempts: attempt,
         start_time,
+    }
+}
+
+fn max_scheduler_retries_for_node(configured_max_retries: u32, node: &Node) -> u32 {
+    if is_pure_llm_op(&node.op_type) {
+        0
+    } else {
+        configured_max_retries
     }
 }
 
@@ -840,6 +849,17 @@ mod tests {
         }
     }
 
+    fn make_op_node(op_type: AISOperationType) -> Node {
+        Node {
+            id: 1,
+            op_type,
+            attributes: HashMap::new(),
+            input_tokens: vec![],
+            output_tokens: vec![1],
+            metadata: NodeMetadata::default(),
+        }
+    }
+
     fn build_state(nodes: Vec<Node>) -> (SchedulerState, Vec<Worker<NodeId>>) {
         let mut dag = ExecutionDag::new();
         for node in nodes {
@@ -872,6 +892,30 @@ mod tests {
             capability_system,
             crate::aam::Aam::new(),
         )
+    }
+
+    #[test]
+    fn scheduler_retries_are_disabled_for_pure_llm_ops() {
+        assert_eq!(
+            max_scheduler_retries_for_node(3, &make_op_node(AISOperationType::Ask)),
+            0
+        );
+        assert_eq!(
+            max_scheduler_retries_for_node(3, &make_op_node(AISOperationType::Think)),
+            0
+        );
+        assert_eq!(
+            max_scheduler_retries_for_node(3, &make_op_node(AISOperationType::Reason)),
+            0
+        );
+    }
+
+    #[test]
+    fn scheduler_retries_remain_for_non_llm_ops() {
+        assert_eq!(
+            max_scheduler_retries_for_node(3, &make_op_node(AISOperationType::InvTool)),
+            3
+        );
     }
 
     #[tokio::test]
