@@ -3,6 +3,7 @@ use std::time::{Duration, SystemTime};
 
 use apxm_core::events::{ApxmEvent, EventCategory, EventKind};
 use apxm_core::impl_event_payload;
+use apxm_driver::ServerConfig;
 use apxm_rollout::{IndexDb, RolloutPaths};
 use apxm_runtime::Runtime;
 use dashmap::DashMap;
@@ -49,6 +50,8 @@ pub(crate) struct AppState {
     pub(crate) rollout_registry: RolloutRegistry,
     /// Process-local cap for expensive inference/runtime work.
     pub(crate) inference_limiter: InferenceLimiter,
+    /// Layered server configuration used by streaming handlers.
+    pub(crate) server_config: ServerConfig,
 }
 
 #[derive(Clone)]
@@ -58,22 +61,11 @@ pub(crate) struct InferenceLimiter {
 }
 
 impl InferenceLimiter {
-    const DEFAULT_MAX_CONCURRENT: usize = 2;
-    const DEFAULT_ACQUIRE_TIMEOUT_MS: u64 = 250;
-
-    pub(crate) fn from_env() -> Self {
-        let max_concurrent = std::env::var("APXM_SERVER_MAX_INFERENCE")
-            .ok()
-            .and_then(|value| value.parse::<usize>().ok())
-            .filter(|value| *value > 0)
-            .unwrap_or(Self::DEFAULT_MAX_CONCURRENT);
-        let acquire_timeout = std::env::var("APXM_SERVER_INFERENCE_WAIT_MS")
-            .ok()
-            .and_then(|value| value.parse::<u64>().ok())
-            .map(Duration::from_millis)
-            .unwrap_or_else(|| Duration::from_millis(Self::DEFAULT_ACQUIRE_TIMEOUT_MS));
-
-        Self::with_limits(max_concurrent, acquire_timeout)
+    pub(crate) fn from_config(config: &apxm_driver::ServerInferenceConfig) -> Self {
+        Self::with_limits(
+            config.max_concurrent,
+            Duration::from_millis(config.acquire_timeout_ms),
+        )
     }
 
     fn with_limits(max_concurrent: usize, acquire_timeout: Duration) -> Self {
@@ -139,6 +131,17 @@ mod tests {
             limiter.semaphore.available_permits(),
             Semaphore::MAX_PERMITS
         );
+    }
+
+    #[test]
+    fn inference_limiter_uses_config_values() {
+        let limiter = InferenceLimiter::from_config(&apxm_driver::ServerInferenceConfig {
+            max_concurrent: 3,
+            acquire_timeout_ms: 750,
+        });
+
+        assert_eq!(limiter.semaphore.available_permits(), 3);
+        assert_eq!(limiter.acquire_timeout, Duration::from_millis(750));
     }
 }
 

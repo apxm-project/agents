@@ -728,7 +728,8 @@ pub(crate) async fn execute_skill_stream(
     AxumPath(id): AxumPath<String>,
     Json(req): Json<SkillExecuteRequest>,
 ) -> Result<Sse<impl Stream<Item = Result<Event, std::convert::Infallible>>>, ApiError> {
-    let (tx, mut rx) = mpsc::channel::<ApxmEvent>(128);
+    let stream_config = state.server_config.execution_stream;
+    let (tx, mut rx) = mpsc::channel::<ApxmEvent>(stream_config.channel_capacity.max(1));
     let prepared = prepare_skill_execution(&state, &id, req)?;
     let permit = state.inference_limiter.acquire().await?;
     let compiled = match prepared {
@@ -879,7 +880,9 @@ pub(crate) async fn execute_skill_stream(
             yield Ok(Event::default().data(data));
         }
     };
-    Ok(Sse::new(stream).keep_alive(KeepAlive::default()))
+    Ok(Sse::new(stream).keep_alive(
+        KeepAlive::new().interval(Duration::from_secs(stream_config.keep_alive_secs.max(1))),
+    ))
 }
 
 fn spawn_prompt_only_stream_task(
@@ -1980,6 +1983,7 @@ upstream = "https://github.com/obra/superpowers"
             )),
             rollout_registry: crate::rollout::RolloutRegistry::new(),
             inference_limiter: crate::state::InferenceLimiter::unlimited_for_tests(),
+            server_config: apxm_driver::ServerConfig::default(),
         }
     }
 

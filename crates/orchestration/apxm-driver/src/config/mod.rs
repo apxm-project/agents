@@ -106,6 +106,10 @@ pub struct ApXmConfig {
     /// Chat/runtime specific flags.
     pub chat: ChatConfig,
 
+    /// HTTP server and streaming operational controls.
+    #[serde(default)]
+    pub server: ServerConfig,
+
     /// Unified backend definitions.
     #[serde(default)]
     pub backends: Vec<BackendConfig>,
@@ -162,6 +166,137 @@ pub struct ChatConfig {
 
     /// System prompt for chat sessions.
     pub system_prompt: Option<String>,
+}
+
+/// APXM server operational configuration.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(default)]
+pub struct ServerConfig {
+    /// Optional bind address, overridden by `APXM_SERVER_ADDR` and CLI `--port`.
+    pub bind_addr: Option<String>,
+
+    /// Optional public URL advertised by clients and discovery endpoints.
+    pub public_url: Option<String>,
+
+    /// Runtime scheduler limits used by the server process.
+    pub runtime: ServerRuntimeConfig,
+
+    /// Process-local limiter for expensive inference work.
+    pub inference: ServerInferenceConfig,
+
+    /// `/v1/generate-stream` transport controls.
+    pub generate_stream: GenerateStreamConfig,
+
+    /// Runtime and skill execution SSE transport controls.
+    pub execution_stream: ExecutionStreamConfig,
+
+    /// `/v1/runs/{id}/events/stream` replay/live transport controls.
+    pub run_events: RunEventsConfig,
+}
+
+impl Default for ServerConfig {
+    fn default() -> Self {
+        Self {
+            bind_addr: None,
+            public_url: None,
+            runtime: ServerRuntimeConfig::default(),
+            inference: ServerInferenceConfig::default(),
+            generate_stream: GenerateStreamConfig::default(),
+            execution_stream: ExecutionStreamConfig::default(),
+            run_events: RunEventsConfig::default(),
+        }
+    }
+}
+
+/// Server runtime scheduler limits.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(default)]
+pub struct ServerRuntimeConfig {
+    pub max_concurrency: Option<usize>,
+    pub max_inflight: Option<usize>,
+    pub llm_inflight: usize,
+}
+
+impl Default for ServerRuntimeConfig {
+    fn default() -> Self {
+        Self {
+            max_concurrency: None,
+            max_inflight: None,
+            llm_inflight: 4,
+        }
+    }
+}
+
+/// Server-wide inference limiter configuration.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(default)]
+pub struct ServerInferenceConfig {
+    pub max_concurrent: usize,
+    pub acquire_timeout_ms: u64,
+}
+
+impl Default for ServerInferenceConfig {
+    fn default() -> Self {
+        Self {
+            max_concurrent: 2,
+            acquire_timeout_ms: 250,
+        }
+    }
+}
+
+/// Streaming LLM endpoint transport configuration.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(default)]
+pub struct GenerateStreamConfig {
+    pub channel_capacity: usize,
+    pub inactivity_timeout_secs: u64,
+    pub keep_alive_secs: u64,
+}
+
+impl Default for GenerateStreamConfig {
+    fn default() -> Self {
+        Self {
+            channel_capacity: 128,
+            inactivity_timeout_secs: 60,
+            keep_alive_secs: 15,
+        }
+    }
+}
+
+/// Runtime and skill execution SSE endpoint transport configuration.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(default)]
+pub struct ExecutionStreamConfig {
+    pub channel_capacity: usize,
+    pub keep_alive_secs: u64,
+}
+
+impl Default for ExecutionStreamConfig {
+    fn default() -> Self {
+        Self {
+            channel_capacity: 128,
+            keep_alive_secs: 15,
+        }
+    }
+}
+
+/// Run event bus and SSE transport configuration.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(default)]
+pub struct RunEventsConfig {
+    pub stream_buffer: usize,
+    pub retained_events: usize,
+    pub keep_alive_secs: u64,
+}
+
+impl Default for RunEventsConfig {
+    fn default() -> Self {
+        Self {
+            stream_buffer: 1024,
+            retained_events: 4096,
+            keep_alive_secs: 15,
+        }
+    }
 }
 
 /// Policy configuration layered over the dynamic registry.
@@ -776,6 +911,32 @@ mod tests {
             default_model = "{MOCK_MODEL_NAME}"
             planning_model = "{MOCK_MODEL_NAME_ALT}"
 
+            [server]
+            bind_addr = "127.0.0.1:18801"
+
+            [server.runtime]
+            max_concurrency = 8
+            max_inflight = 16
+            llm_inflight = 3
+
+            [server.inference]
+            max_concurrent = 4
+            acquire_timeout_ms = 500
+
+            [server.generate_stream]
+            channel_capacity = 256
+            inactivity_timeout_secs = 90
+            keep_alive_secs = 10
+
+            [server.execution_stream]
+            channel_capacity = 384
+            keep_alive_secs = 12
+
+            [server.run_events]
+            stream_buffer = 2048
+            retained_events = 8192
+            keep_alive_secs = 20
+
             [chat.routing.operation_routes.plan]
             backend = "{MOCK_PROVIDER_NAME}"
             model = "fast"
@@ -830,6 +991,20 @@ mod tests {
             config.chat.planning_model.as_deref(),
             Some(MOCK_MODEL_NAME_ALT)
         );
+        assert_eq!(config.server.bind_addr.as_deref(), Some("127.0.0.1:18801"));
+        assert_eq!(config.server.runtime.max_concurrency, Some(8));
+        assert_eq!(config.server.runtime.max_inflight, Some(16));
+        assert_eq!(config.server.runtime.llm_inflight, 3);
+        assert_eq!(config.server.inference.max_concurrent, 4);
+        assert_eq!(config.server.inference.acquire_timeout_ms, 500);
+        assert_eq!(config.server.generate_stream.channel_capacity, 256);
+        assert_eq!(config.server.generate_stream.inactivity_timeout_secs, 90);
+        assert_eq!(config.server.generate_stream.keep_alive_secs, 10);
+        assert_eq!(config.server.execution_stream.channel_capacity, 384);
+        assert_eq!(config.server.execution_stream.keep_alive_secs, 12);
+        assert_eq!(config.server.run_events.stream_buffer, 2048);
+        assert_eq!(config.server.run_events.retained_events, 8192);
+        assert_eq!(config.server.run_events.keep_alive_secs, 20);
         assert_eq!(
             config
                 .chat

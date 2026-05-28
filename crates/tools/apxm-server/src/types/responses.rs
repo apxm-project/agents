@@ -296,8 +296,8 @@ pub(crate) mod stream_sse {
     pub(crate) const EVENT_ERROR: &str = "error";
     pub(crate) const SOURCE_BACKEND: &str = "backend";
     pub(crate) const EMPTY_JSON_OBJECT: &str = "{}";
-    pub(crate) const TIMEOUT_MESSAGE: &str = "Stream timeout after 60s";
-    pub(crate) const TIMEOUT_SECS: u64 = 60;
+    pub(crate) const TIMEOUT_MESSAGE_PREFIX: &str = "Stream timeout after ";
+    pub(crate) const TIMEOUT_MESSAGE_SUFFIX: &str = "s";
 }
 
 pub(crate) mod stream_payload_kind {

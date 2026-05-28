@@ -82,7 +82,8 @@ pub(crate) async fn execute_stream(
     let artifact = air_to_artifact(&air)?;
     validate_raw_execute_admission(&artifact, &state)?;
     let permit = state.inference_limiter.acquire().await?;
-    let (tx, mut rx) = mpsc::channel::<ApxmEvent>(128);
+    let stream_config = state.server_config.execution_stream;
+    let (tx, mut rx) = mpsc::channel::<ApxmEvent>(stream_config.channel_capacity.max(1));
     let runtime = Arc::clone(&state.runtime);
     let trace_id = session_id
         .clone()
@@ -137,7 +138,11 @@ pub(crate) async fn execute_stream(
             yield Ok(Event::default().data(data));
         }
     };
-    Ok(Sse::new(stream).keep_alive(KeepAlive::default()))
+    Ok(
+        Sse::new(stream).keep_alive(KeepAlive::new().interval(std::time::Duration::from_secs(
+            stream_config.keep_alive_secs.max(1),
+        ))),
+    )
 }
 
 pub(crate) fn prepare_request(

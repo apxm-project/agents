@@ -413,6 +413,7 @@ async fn test_state_with_skill_roots_and_execution_store(
         )),
         rollout_registry: crate::rollout::RolloutRegistry::new(),
         inference_limiter: crate::state::InferenceLimiter::unlimited_for_tests(),
+        server_config: apxm_driver::ServerConfig::default(),
     }
 }
 
@@ -445,6 +446,7 @@ async fn test_state_with_runtime_and_skill_roots(
         )),
         rollout_registry: crate::rollout::RolloutRegistry::new(),
         inference_limiter: crate::state::InferenceLimiter::unlimited_for_tests(),
+        server_config: apxm_driver::ServerConfig::default(),
     }
 }
 
