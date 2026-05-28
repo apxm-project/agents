@@ -195,6 +195,12 @@ pub struct ServerConfig {
 
     /// `/v1/runs/{id}/events/stream` replay/live transport controls.
     pub run_events: RunEventsConfig,
+
+    /// Outbound lifecycle webhook transport controls.
+    pub webhook: ServerWebhookConfig,
+
+    /// Durable rollout writer controls.
+    pub rollout: ServerRolloutConfig,
 }
 
 impl Default for ServerConfig {
@@ -208,6 +214,8 @@ impl Default for ServerConfig {
             generate_stream: GenerateStreamConfig::default(),
             execution_stream: ExecutionStreamConfig::default(),
             run_events: RunEventsConfig::default(),
+            webhook: ServerWebhookConfig::default(),
+            rollout: ServerRolloutConfig::default(),
         }
     }
 }
@@ -321,6 +329,36 @@ impl Default for RunEventsConfig {
             retained_events: 4096,
             keep_alive_secs: 15,
         }
+    }
+}
+
+/// Outbound run lifecycle webhook configuration.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(default)]
+pub struct ServerWebhookConfig {
+    pub url: Option<String>,
+    pub timeout_secs: u64,
+}
+
+impl Default for ServerWebhookConfig {
+    fn default() -> Self {
+        Self {
+            url: None,
+            timeout_secs: 5,
+        }
+    }
+}
+
+/// Server-side rollout persistence configuration.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(default)]
+pub struct ServerRolloutConfig {
+    pub event_buffer: usize,
+}
+
+impl Default for ServerRolloutConfig {
+    fn default() -> Self {
+        Self { event_buffer: 2048 }
     }
 }
 
@@ -966,6 +1004,13 @@ mod tests {
             retained_events = 8192
             keep_alive_secs = 20
 
+            [server.webhook]
+            url = "http://127.0.0.1:18802/hook"
+            timeout_secs = 7
+
+            [server.rollout]
+            event_buffer = 4096
+
             [chat.routing.operation_routes.plan]
             backend = "{MOCK_PROVIDER_NAME}"
             model = "fast"
@@ -1036,6 +1081,12 @@ mod tests {
         assert_eq!(config.server.run_events.stream_buffer, 2048);
         assert_eq!(config.server.run_events.retained_events, 8192);
         assert_eq!(config.server.run_events.keep_alive_secs, 20);
+        assert_eq!(
+            config.server.webhook.url.as_deref(),
+            Some("http://127.0.0.1:18802/hook")
+        );
+        assert_eq!(config.server.webhook.timeout_secs, 7);
+        assert_eq!(config.server.rollout.event_buffer, 4096);
         assert_eq!(
             config
                 .chat

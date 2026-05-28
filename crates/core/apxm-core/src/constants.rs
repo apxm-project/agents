@@ -40,6 +40,12 @@ pub mod env {
     pub const APXM_RUN_EVENT_RETAINED_EVENTS: &str = "APXM_RUN_EVENT_RETAINED_EVENTS";
     /// SSE keep-alive interval, in seconds, for run event subscriptions.
     pub const APXM_RUN_EVENT_KEEP_ALIVE_SECS: &str = "APXM_RUN_EVENT_KEEP_ALIVE_SECS";
+    /// Outbound lifecycle webhook URL for run events.
+    pub const APXM_RUN_WEBHOOK_URL: &str = "APXM_RUN_WEBHOOK_URL";
+    /// Outbound lifecycle webhook request timeout, in seconds.
+    pub const APXM_RUN_WEBHOOK_TIMEOUT_SECS: &str = "APXM_RUN_WEBHOOK_TIMEOUT_SECS";
+    /// Server rollout writer event queue capacity.
+    pub const APXM_ROLLOUT_EVENT_BUFFER: &str = "APXM_ROLLOUT_EVENT_BUFFER";
     /// Bind address for the APXM server (e.g. 127.0.0.1:18800).
     pub const APXM_SERVER_ADDR: &str = "APXM_SERVER_ADDR";
     /// Maximum concurrent expensive inference work admitted by the server.

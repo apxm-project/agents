@@ -20,10 +20,9 @@ use std::time::Duration;
 
 use apxm_core::events::kind;
 use apxm_core::events::{ApxmEvent, EventEmitter};
+use apxm_driver::ServerWebhookConfig;
 use reqwest::Client;
 use tracing::warn;
-
-const WEBHOOK_TIMEOUT_SECS: u64 = 5;
 
 /// Configured destination URL plus the shared HTTP client used to
 /// POST events. Cloning is cheap — every field is already `Arc`-able.
@@ -34,19 +33,34 @@ pub(crate) struct WebhookDispatcher {
 }
 
 impl WebhookDispatcher {
-    /// Build a dispatcher from the `APXM_RUN_WEBHOOK_URL` env var.
-    /// Returns None when unset so AppState stays a None.
-    pub(crate) fn from_env() -> Option<Arc<Self>> {
-        std::env::var("APXM_RUN_WEBHOOK_URL")
-            .ok()
-            .filter(|url| !url.trim().is_empty())
-            .and_then(|url| Self::new(url).ok().map(Arc::new))
+    /// Build a dispatcher from layered server config. Returns None when unset
+    /// so AppState stays a None.
+    pub(crate) fn from_config(config: &ServerWebhookConfig) -> Option<Arc<Self>> {
+        config
+            .url
+            .as_deref()
+            .map(str::trim)
+            .filter(|url| !url.is_empty())
+            .and_then(|url| {
+                Self::with_timeout(
+                    url.to_string(),
+                    Duration::from_secs(config.timeout_secs.max(1)),
+                )
+                .ok()
+                .map(Arc::new)
+            })
     }
 
+    #[cfg(test)]
     pub(crate) fn new(url: impl Into<String>) -> Result<Self, reqwest::Error> {
-        let client = Client::builder()
-            .timeout(Duration::from_secs(WEBHOOK_TIMEOUT_SECS))
-            .build()?;
+        Self::with_timeout(
+            url,
+            Duration::from_secs(ServerWebhookConfig::default().timeout_secs),
+        )
+    }
+
+    fn with_timeout(url: impl Into<String>, timeout: Duration) -> Result<Self, reqwest::Error> {
+        let client = Client::builder().timeout(timeout).build()?;
         Ok(Self {
             client,
             url: Arc::new(url.into()),
@@ -126,5 +140,30 @@ impl WebhookEmitter {
 impl EventEmitter for WebhookEmitter {
     fn emit(&self, event: ApxmEvent) {
         self.dispatcher.dispatch(event);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn webhook_dispatcher_requires_nonempty_url() {
+        let config = ServerWebhookConfig {
+            url: Some(" ".to_string()),
+            timeout_secs: 5,
+        };
+
+        assert!(WebhookDispatcher::from_config(&config).is_none());
+    }
+
+    #[test]
+    fn webhook_dispatcher_builds_from_config() {
+        let config = ServerWebhookConfig {
+            url: Some("http://127.0.0.1:1/notify".to_string()),
+            timeout_secs: 0,
+        };
+
+        assert!(WebhookDispatcher::from_config(&config).is_some());
     }
 }
