@@ -80,6 +80,9 @@ pub struct RuntimeConfig {
     /// Warmup configuration for shared-prefix optimization.
     #[serde(default)]
     pub warmup_config: crate::executor::WarmupConfig,
+    /// Function-calling tool dispatch controls for LLM tool loops.
+    #[serde(default)]
+    pub llm_tool_dispatch: LlmToolDispatchConfig,
     /// Optimization target selected by the compiler/driver for this execution.
     ///
     /// Runtime side effects such as synthetic shared-prefix warmup are enabled
@@ -103,6 +106,7 @@ impl RuntimeConfig {
             token_budget: None,
             context_stack: None,
             warmup_config: crate::executor::WarmupConfig::default(),
+            llm_tool_dispatch: LlmToolDispatchConfig::default(),
             optimization_target: OptimizationTarget::Balanced,
             metrics_level: apxm_core::types::MetricsLevel::default(),
         }
@@ -118,6 +122,31 @@ impl RuntimeConfig {
     pub fn with_token_budget(mut self, budget: u64) -> Self {
         self.token_budget = Some(budget);
         self
+    }
+}
+
+/// Runtime-owned controls for LLM function-calling tool dispatch.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(default)]
+pub struct LlmToolDispatchConfig {
+    pub max_parallel_tool_calls: usize,
+}
+
+impl LlmToolDispatchConfig {
+    pub const DEFAULT_MAX_PARALLEL_TOOL_CALLS: usize = 8;
+    pub const HARD_MAX_PARALLEL_TOOL_CALLS: usize = 64;
+
+    pub fn sanitized_max_parallel_tool_calls(self) -> usize {
+        self.max_parallel_tool_calls
+            .clamp(1, Self::HARD_MAX_PARALLEL_TOOL_CALLS)
+    }
+}
+
+impl Default for LlmToolDispatchConfig {
+    fn default() -> Self {
+        Self {
+            max_parallel_tool_calls: Self::DEFAULT_MAX_PARALLEL_TOOL_CALLS,
+        }
     }
 }
 
@@ -237,6 +266,10 @@ impl Runtime {
         ctx.instruction_config = self.instruction_config.clone();
         ctx.token_budget = self.config.token_budget;
         ctx.warmup_config = self.config.warmup_config.clone();
+        ctx.max_parallel_tool_calls = self
+            .config
+            .llm_tool_dispatch
+            .sanitized_max_parallel_tool_calls();
         ctx.optimization_target = self.config.optimization_target;
         ctx.metrics_level = self.config.metrics_level;
         ctx.event_emitter = event_emitter;

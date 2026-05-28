@@ -260,6 +260,7 @@ pub struct ServerRuntimeConfig {
     pub max_concurrency: Option<usize>,
     pub max_inflight: Option<usize>,
     pub llm_inflight: usize,
+    pub max_parallel_tool_calls: usize,
 }
 
 impl Default for ServerRuntimeConfig {
@@ -268,6 +269,8 @@ impl Default for ServerRuntimeConfig {
             max_concurrency: None,
             max_inflight: None,
             llm_inflight: 4,
+            max_parallel_tool_calls:
+                apxm_runtime::LlmToolDispatchConfig::DEFAULT_MAX_PARALLEL_TOOL_CALLS,
         }
     }
 }
@@ -1068,6 +1071,7 @@ mod tests {
             max_concurrency = 8
             max_inflight = 16
             llm_inflight = 3
+            max_parallel_tool_calls = 12
 
             [server.inference]
             max_concurrent = 4
@@ -1179,6 +1183,7 @@ mod tests {
         assert_eq!(config.server.runtime.max_concurrency, Some(8));
         assert_eq!(config.server.runtime.max_inflight, Some(16));
         assert_eq!(config.server.runtime.llm_inflight, 3);
+        assert_eq!(config.server.runtime.max_parallel_tool_calls, 12);
         assert_eq!(config.server.inference.max_concurrent, 4);
         assert_eq!(config.server.inference.acquire_timeout_ms, 500);
         assert_eq!(config.server.generate_stream.channel_capacity, 256);

@@ -147,6 +147,9 @@ fn apply_server_env_overrides(config: &mut ServerConfig) {
     if let Some(value) = env_usize(apxm_env::APXM_RUNTIME_LLM_INFLIGHT) {
         config.runtime.llm_inflight = value;
     }
+    if let Some(value) = env_usize(apxm_env::APXM_RUNTIME_MAX_PARALLEL_TOOL_CALLS) {
+        config.runtime.max_parallel_tool_calls = value;
+    }
     if let Some(value) = env_usize(apxm_env::APXM_MCP_PLAN_MAX_TOKENS) {
         config.mcp.plan_max_tokens = value;
     }
@@ -277,6 +280,8 @@ fn server_runtime_config(server_config: &ServerConfig) -> RuntimeConfig {
         .with_max_concurrency(max_concurrency)
         .with_max_inflight(max_inflight)
         .with_llm_inflight(server_config.runtime.llm_inflight);
+    config.llm_tool_dispatch.max_parallel_tool_calls =
+        server_config.runtime.max_parallel_tool_calls;
     config
 }
 

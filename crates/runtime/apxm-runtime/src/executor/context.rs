@@ -31,11 +31,12 @@ use super::handlers::warmup::{WarmupConfig, WarmupMetrics};
 use super::inner_plan_linker::{InnerPlanLinker, NoOpLinker};
 use super::memoization::MemoCache;
 use super::middleware::OperationMiddleware;
+use super::skill_resolver::{NoOpSkillResolver, SkillResolver};
 use super::timing_tracker::TimingTracker;
 use super::token_accounting::TokenAccountant;
-use super::skill_resolver::{NoOpSkillResolver, SkillResolver};
 use super::workflow_spawner::{NoOpWorkflowSpawner, WorkflowSpawner};
 use crate::model_router::ModelRouter;
+use crate::runtime::LlmToolDispatchConfig;
 
 /// Execution context passed to all operation handlers.
 #[derive(Clone)]
@@ -87,6 +88,7 @@ pub struct ExecutionContext {
     pub token_accountant: Arc<TokenAccountant>,
     pub timing_tracker: Arc<TimingTracker>,
     pub response_cache: Arc<MemoCache>,
+    pub max_parallel_tool_calls: usize,
     /// Dispatcher-level middleware that wraps every node execution.
     pub middlewares: Vec<Arc<dyn OperationMiddleware>>,
     pub cancellation_token: CancellationToken,
@@ -193,6 +195,8 @@ impl ExecutionContext {
             token_accountant: Arc::new(TokenAccountant::new()),
             timing_tracker: Arc::new(TimingTracker::new()),
             response_cache,
+            max_parallel_tool_calls: LlmToolDispatchConfig::default()
+                .sanitized_max_parallel_tool_calls(),
             middlewares: Vec::new(),
             cancellation_token: CancellationToken::new(),
             sandbox_registry: Arc::new(SandboxRegistry::new()),
@@ -385,6 +389,7 @@ impl ExecutionContext {
             token_accountant: Arc::clone(&self.token_accountant),
             timing_tracker: Arc::clone(&self.timing_tracker),
             response_cache: Arc::clone(&self.response_cache),
+            max_parallel_tool_calls: self.max_parallel_tool_calls,
             middlewares: self.middlewares.clone(),
             cancellation_token: self.cancellation_token.child(),
             sandbox_registry: Arc::clone(&self.sandbox_registry),
