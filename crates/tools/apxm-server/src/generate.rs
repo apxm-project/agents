@@ -1,6 +1,6 @@
 use apxm_backends::{
-    llm::wire::response_metadata, LLMRequest, Message as LLMMessage, Role as LLMRole, StreamChunk,
-    ToolChoice, ToolDefinition,
+    LLMRequest, Message as LLMMessage, Role as LLMRole, StreamChunk, ToolChoice, ToolDefinition,
+    llm::wire::response_metadata,
 };
 use axum::Json;
 use axum::extract::State;
@@ -216,6 +216,7 @@ pub(crate) async fn handle_generate(
     let trace_id = extract_trace_id(&headers, &body);
     let request = body.to_llm_request(&trace_id);
     let registry = state.runtime.llm_registry();
+    let _permit = state.inference_limiter.acquire().await?;
 
     let response = registry
         .generate(request)
@@ -277,6 +278,7 @@ pub(crate) async fn handle_generate_stream(
     let trace_id = extract_trace_id(&headers, &body);
     let request = body.to_llm_request(&trace_id);
     let registry = state.runtime.llm_registry();
+    let permit = state.inference_limiter.acquire().await?;
 
     let prepared = registry.prepare_request(&request);
     let backend = registry
@@ -288,6 +290,7 @@ pub(crate) async fn handle_generate_stream(
     // Move backend Arc + prepared request into the spawned task so
     // generate_stream() borrows from the owned Arc inside the task.
     tokio::spawn(async move {
+        let _permit = permit;
         use std::sync::atomic::{AtomicU64, Ordering};
         let seq = AtomicU64::new(1);
         let trace = trace_id;

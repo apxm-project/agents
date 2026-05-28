@@ -240,6 +240,17 @@ pub(crate) async fn a2a_send_task(
         }
     };
 
+    let Ok(_permit) = state.inference_limiter.acquire().await else {
+        return (
+            axum::http::StatusCode::TOO_MANY_REQUESTS,
+            Json(A2aTaskFailure::new(
+                &req.id,
+                "server inference capacity is saturated",
+            )),
+        )
+            .into_response();
+    };
+
     match state
         .runtime
         .execute_artifact_with_session(artifact, vec![], None)

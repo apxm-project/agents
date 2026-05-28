@@ -4,7 +4,7 @@ use std::time::SystemTime;
 
 use apxm_core::paths::ApxmPaths;
 use apxm_rollout::{IndexDb, RolloutPaths};
-use apxm_runtime::{Runtime, RuntimeConfig};
+use apxm_runtime::{Runtime, RuntimeConfig, SchedulerConfig};
 use dashmap::DashMap;
 use tokio::sync::Mutex;
 use tracing::{info, warn};
@@ -18,7 +18,7 @@ use crate::runs::RunEventBus;
 use crate::runtime_setup::{build_runtime_with_router, build_runtime_without_router};
 use crate::skill_resources::prepend_builtin_skill_root;
 use crate::skills::{SkillLibrary, parse_skill_roots};
-use crate::state::AppState;
+use crate::state::{AppState, InferenceLimiter};
 use crate::tasks::TaskQueueManager;
 use crate::webhook::WebhookDispatcher;
 
@@ -44,7 +44,7 @@ pub(crate) fn execution_store_from_paths() -> ExecutionStore {
 // `run_server` with explicit CLI-derived configuration.
 #[allow(dead_code)]
 pub(crate) async fn build_server_runtime() -> Result<Runtime, apxm_core::error::RuntimeError> {
-    build_runtime_without_router(RuntimeConfig::default()).await
+    build_runtime_without_router(server_runtime_config()).await
 }
 
 pub(crate) async fn run_server() -> anyhow::Result<()> {
@@ -52,7 +52,7 @@ pub(crate) async fn run_server() -> anyhow::Result<()> {
     let skill_roots = prepend_builtin_skill_root(parse_skill_roots(&args));
     let skill_library = SkillLibrary::new(skill_roots);
 
-    let runtime = build_runtime_with_router(RuntimeConfig::default()).await?;
+    let runtime = build_runtime_with_router(server_runtime_config()).await?;
     let mut runtime = Arc::new(runtime);
     crate::call_skill::install(&mut runtime, skill_library.clone());
 
@@ -97,6 +97,7 @@ pub(crate) async fn run_server() -> anyhow::Result<()> {
         rollout_paths,
         rollout_index,
         rollout_registry,
+        inference_limiter: InferenceLimiter::from_env(),
     };
 
     let app = build_app(state);
@@ -108,6 +109,33 @@ pub(crate) async fn run_server() -> anyhow::Result<()> {
         .with_graceful_shutdown(shutdown_signal())
         .await?;
     Ok(())
+}
+
+fn server_runtime_config() -> RuntimeConfig {
+    let mut config = RuntimeConfig::default();
+    let cores = std::thread::available_parallelism()
+        .map(|value| value.get())
+        .unwrap_or(4);
+    let default_compute = (cores / 2).max(2);
+    let default_llm = 4usize;
+
+    let max_concurrency = env_usize("APXM_RUNTIME_MAX_CONCURRENCY").unwrap_or(default_compute);
+    let max_inflight = env_usize("APXM_RUNTIME_MAX_INFLIGHT")
+        .unwrap_or_else(|| max_concurrency.saturating_mul(2).max(1));
+    let llm_inflight = env_usize("APXM_RUNTIME_LLM_INFLIGHT").unwrap_or(default_llm);
+
+    config.scheduler_config = SchedulerConfig::default()
+        .with_max_concurrency(max_concurrency)
+        .with_max_inflight(max_inflight)
+        .with_llm_inflight(llm_inflight);
+    config
+}
+
+fn env_usize(name: &str) -> Option<usize> {
+    std::env::var(name)
+        .ok()
+        .and_then(|value| value.parse::<usize>().ok())
+        .filter(|value| *value > 0)
 }
 
 fn server_addr(args: &[String]) -> SocketAddr {
