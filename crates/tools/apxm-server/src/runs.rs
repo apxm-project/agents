@@ -24,7 +24,7 @@ use apxm_core::events::payload::{
     AgentSpawnedPayload, CommunicateDispatchedPayload, GraphEdgePayload, OperationEndPayload,
     OperationStartPayload, ToolEndPayload, ToolStartPayload,
 };
-use apxm_core::events::{ApxmEvent, EventEmitter};
+use apxm_core::events::{ApxmEvent, EventEmitter, kind as event_kind};
 use apxm_core::types::operations::AISOperationType;
 use apxm_driver::RunEventsConfig;
 use apxm_rollout::load_rollout;
@@ -49,7 +49,6 @@ use crate::state::AppState;
 const MIN_RETAINED_EVENTS: usize = 128;
 const LAST_EVENT_ID_HEADER: &str = "Last-Event-ID";
 const LAST_EVENT_ID_HEADER_LOWER: &str = "last-event-id";
-const SSE_ERROR_EVENT: &str = "error";
 
 // ────────────────────────────────────────────────────────────────────
 // RunEventBus — owns retained events + live broadcast per execution.
@@ -607,13 +606,15 @@ pub(crate) async fn stream_run_events(
                     .id(id)
                     .data(data)
             }
-            RunSseItem::Lagged(missed) => Event::default().event(SSE_ERROR_EVENT).data(
-                serde_json::json!({
-                    "message": "run event stream lagged; reconnect with Last-Event-ID to replay",
-                    "missed": missed,
-                })
-                .to_string(),
-            ),
+            RunSseItem::Lagged(missed) => Event::default()
+                .event(event_kind::ERROR.sse_event_type())
+                .data(
+                    serde_json::json!({
+                        "message": "run event stream lagged; reconnect with Last-Event-ID to replay",
+                        "missed": missed,
+                    })
+                    .to_string(),
+                ),
         };
         Ok(event)
     });
