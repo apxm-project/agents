@@ -8,7 +8,7 @@ pub mod metadata;
 pub use metadata::{
     AISOperationType, ContextStyle, MlirEmissionSpec, MlirResultType, OperationCategory,
     OperationField, OperationLatency, OperationSpec, ReferenceType, ValidationError,
-    get_all_operations, get_operation_spec, validate_operation,
+    WIRE_INDEXED_OPERATIONS, get_all_operations, get_operation_spec, validate_operation,
 };
 
 // Runtime-specific types

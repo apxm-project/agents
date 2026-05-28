@@ -71,6 +71,7 @@ enum class OperationKind : uint32_t {
   SpawnTeam = 39,
   Handoff = 40,
   WorkflowSpawn = 41,
+  CallSkill = 42,
 };
 
 enum class DependencyKind : uint8_t {
@@ -395,6 +396,7 @@ std::optional<OperationKind> mapOperation(Operation *op) {
       .Case<CheckpointOp>([](auto) { return OperationKind::Checkpoint; })
       .Case<HandoffOp>([](auto) { return OperationKind::Handoff; })
       .Case<WorkflowSpawnOp>([](auto) { return OperationKind::WorkflowSpawn; })
+      .Case<CallSkillOp>([](auto) { return OperationKind::CallSkill; })
       .Case<YieldOp>([](auto) {
         return std::nullopt;
       }) // Skip yield - it's a region terminator

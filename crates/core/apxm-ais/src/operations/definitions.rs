@@ -148,6 +148,55 @@ pub enum AISOperationType {
     Yield,
 }
 
+/// Canonical AIS artifact wire operation table.
+///
+/// This table is the single source of truth for operation-kind indexes in the
+/// artifact format. Index 30 is intentionally reserved.
+pub const WIRE_INDEXED_OPERATIONS: &[(u32, AISOperationType)] = &[
+    (0, AISOperationType::InvTool),
+    (1, AISOperationType::Ask),
+    (2, AISOperationType::QMem),
+    (3, AISOperationType::UMem),
+    (4, AISOperationType::Plan),
+    (5, AISOperationType::WaitAll),
+    (6, AISOperationType::Merge),
+    (7, AISOperationType::Fence),
+    (8, AISOperationType::Exc),
+    (9, AISOperationType::Communicate),
+    (10, AISOperationType::Reflect),
+    (11, AISOperationType::Verify),
+    (12, AISOperationType::Err),
+    (13, AISOperationType::Return),
+    (14, AISOperationType::Jump),
+    (15, AISOperationType::BranchOnValue),
+    (16, AISOperationType::LoopStart),
+    (17, AISOperationType::LoopEnd),
+    (18, AISOperationType::TryCatch),
+    (19, AISOperationType::ConstStr),
+    (20, AISOperationType::Switch),
+    (21, AISOperationType::FlowCall),
+    (22, AISOperationType::Print),
+    (23, AISOperationType::Think),
+    (24, AISOperationType::Reason),
+    (25, AISOperationType::UpdateGoal),
+    (26, AISOperationType::Guard),
+    (27, AISOperationType::Claim),
+    (28, AISOperationType::Pause),
+    (29, AISOperationType::Resume),
+    (31, AISOperationType::Delegate),
+    (32, AISOperationType::Negotiate),
+    (33, AISOperationType::Nop),
+    (34, AISOperationType::Identity),
+    (35, AISOperationType::SpawnAgent),
+    (36, AISOperationType::RegisterCapability),
+    (37, AISOperationType::Autonomous),
+    (38, AISOperationType::Checkpoint),
+    (39, AISOperationType::SpawnTeam),
+    (40, AISOperationType::Handoff),
+    (41, AISOperationType::WorkflowSpawn),
+    (42, AISOperationType::CallSkill),
+];
+
 impl fmt::Display for AISOperationType {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
@@ -326,106 +375,27 @@ impl AISOperationType {
     ///
     /// This is the **single source of truth** for the u32→AISOperationType mapping
     /// used by both the compiler artifact parser and the runtime sub-DAG parser.
-    /// Must stay in sync with the C++ `OperationKind` enum in `ArtifactEmitter.cpp`:
-    ///   Inv=0, Ask=1, QMem=2, ..., Print=22, Think=23, Reason=24
     pub fn from_wire_index(index: u32) -> Option<AISOperationType> {
-        // Wire-format operation kind table. Index = OperationKind from ArtifactEmitter.cpp.
-        // Indices 0-24: original ops. 25-30: reserved (unassigned).
-        // Indices 31-37: multi-agent coordination/identity/self-organization ops.
-        match index {
-            0 => Some(AISOperationType::InvTool),
-            1 => Some(AISOperationType::Ask),
-            2 => Some(AISOperationType::QMem),
-            3 => Some(AISOperationType::UMem),
-            4 => Some(AISOperationType::Plan),
-            5 => Some(AISOperationType::WaitAll),
-            6 => Some(AISOperationType::Merge),
-            7 => Some(AISOperationType::Fence),
-            8 => Some(AISOperationType::Exc),
-            9 => Some(AISOperationType::Communicate),
-            10 => Some(AISOperationType::Reflect),
-            11 => Some(AISOperationType::Verify),
-            12 => Some(AISOperationType::Err),
-            13 => Some(AISOperationType::Return),
-            14 => Some(AISOperationType::Jump),
-            15 => Some(AISOperationType::BranchOnValue),
-            16 => Some(AISOperationType::LoopStart),
-            17 => Some(AISOperationType::LoopEnd),
-            18 => Some(AISOperationType::TryCatch),
-            19 => Some(AISOperationType::ConstStr),
-            20 => Some(AISOperationType::Switch),
-            21 => Some(AISOperationType::FlowCall),
-            22 => Some(AISOperationType::Print),
-            23 => Some(AISOperationType::Think),
-            24 => Some(AISOperationType::Reason),
-            // 25-30: reserved (unassigned)
-            // 31-37: multi-agent coordination ops
-            31 => Some(AISOperationType::Delegate),
-            32 => Some(AISOperationType::Negotiate),
-            33 => Some(AISOperationType::Nop),
-            34 => Some(AISOperationType::Identity),
-            35 => Some(AISOperationType::SpawnAgent),
-            36 => Some(AISOperationType::RegisterCapability),
-            37 => Some(AISOperationType::Autonomous),
-            38 => Some(AISOperationType::Checkpoint),
-            39 => Some(AISOperationType::SpawnTeam),
-            40 => Some(AISOperationType::Handoff),
-            41 => Some(AISOperationType::WorkflowSpawn),
-            42 => Some(AISOperationType::CallSkill),
-            _ => None,
-        }
+        WIRE_INDEXED_OPERATIONS
+            .iter()
+            .find_map(|(wire_index, op)| (*wire_index == index).then_some(*op))
     }
 
     /// Convert an `AISOperationType` to its wire-format index.
     ///
     /// Returns `None` for operation types that do not have a wire-format index
-    /// (e.g., `Agent`, `UpdateGoal`, `Guard`, `Claim`, `Pause`, `Resume`, `Yield`).
-    /// `Checkpoint` has wire index 38.
+    /// (e.g., `Agent`, `Yield`).
     ///
     /// This is the inverse of [`from_wire_index`].
     pub fn to_wire_index(self) -> Option<u32> {
-        match self {
-            AISOperationType::InvTool => Some(0),
-            AISOperationType::Ask => Some(1),
-            AISOperationType::QMem => Some(2),
-            AISOperationType::UMem => Some(3),
-            AISOperationType::Plan => Some(4),
-            AISOperationType::WaitAll => Some(5),
-            AISOperationType::Merge => Some(6),
-            AISOperationType::Fence => Some(7),
-            AISOperationType::Exc => Some(8),
-            AISOperationType::Communicate => Some(9),
-            AISOperationType::Reflect => Some(10),
-            AISOperationType::Verify => Some(11),
-            AISOperationType::Err => Some(12),
-            AISOperationType::Return => Some(13),
-            AISOperationType::Jump => Some(14),
-            AISOperationType::BranchOnValue => Some(15),
-            AISOperationType::LoopStart => Some(16),
-            AISOperationType::LoopEnd => Some(17),
-            AISOperationType::TryCatch => Some(18),
-            AISOperationType::ConstStr => Some(19),
-            AISOperationType::Switch => Some(20),
-            AISOperationType::FlowCall => Some(21),
-            AISOperationType::Print => Some(22),
-            AISOperationType::Think => Some(23),
-            AISOperationType::Reason => Some(24),
-            // 25-30: reserved (unassigned)
-            AISOperationType::Delegate => Some(31),
-            AISOperationType::Negotiate => Some(32),
-            AISOperationType::Nop => Some(33),
-            AISOperationType::Identity => Some(34),
-            AISOperationType::SpawnAgent => Some(35),
-            AISOperationType::RegisterCapability => Some(36),
-            AISOperationType::Autonomous => Some(37),
-            AISOperationType::Checkpoint => Some(38),
-            AISOperationType::SpawnTeam => Some(39),
-            AISOperationType::Handoff => Some(40),
-            AISOperationType::WorkflowSpawn => Some(41),
-            AISOperationType::CallSkill => Some(42),
-            // Ops without wire indices
-            _ => None,
-        }
+        WIRE_INDEXED_OPERATIONS
+            .iter()
+            .find_map(|(wire_index, op)| (*op == self).then_some(*wire_index))
+    }
+
+    /// Return all artifact wire-indexed operations in stable wire order.
+    pub fn wire_indexed_operations() -> &'static [(u32, AISOperationType)] {
+        WIRE_INDEXED_OPERATIONS
     }
 
     /// Get all operation types (44 total).
@@ -2127,6 +2097,42 @@ pub fn get_all_operations() -> impl Iterator<Item = &'static OperationSpec> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::collections::{BTreeMap, HashSet};
+
+    const ARTIFACT_EMITTER_CPP: &str = concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/../../compiler/apxm-compiler/mlir/lib/Dialect/AIS/Conversion/Artifact/ArtifactEmitter.cpp"
+    );
+
+    fn artifact_emitter_source() -> String {
+        std::fs::read_to_string(ARTIFACT_EMITTER_CPP)
+            .unwrap_or_else(|err| panic!("read {ARTIFACT_EMITTER_CPP}: {err}"))
+    }
+
+    fn operation_kind_entries(source: &str) -> BTreeMap<String, u32> {
+        let enum_start = source
+            .find("enum class OperationKind")
+            .expect("ArtifactEmitter.cpp should define OperationKind");
+        let enum_body_start = source[enum_start..]
+            .find('{')
+            .map(|offset| enum_start + offset + 1)
+            .expect("OperationKind should have an enum body");
+        let enum_body_end = source[enum_body_start..]
+            .find("};")
+            .map(|offset| enum_body_start + offset)
+            .expect("OperationKind should terminate with `};`");
+
+        source[enum_body_start..enum_body_end]
+            .lines()
+            .filter_map(|line| {
+                let line = line.split("//").next()?.trim().trim_end_matches(',');
+                let (name, value) = line.split_once('=')?;
+                let name = name.trim();
+                let value = value.trim().parse::<u32>().ok()?;
+                Some((name.to_string(), value))
+            })
+            .collect()
+    }
 
     #[test]
     fn test_all_ops_have_specs() {
@@ -2183,14 +2189,20 @@ mod tests {
             AISOperationType::from_wire_index(24),
             Some(AISOperationType::Reason)
         );
-        // 25-30 reserved (unassigned)
-        for i in 25..=30 {
-            assert_eq!(
-                AISOperationType::from_wire_index(i),
-                None,
-                "Index {i} is unassigned and must return None"
-            );
-        }
+        assert_eq!(
+            AISOperationType::from_wire_index(25),
+            Some(AISOperationType::UpdateGoal)
+        );
+        assert_eq!(
+            AISOperationType::from_wire_index(29),
+            Some(AISOperationType::Resume)
+        );
+        // 30 is reserved (unassigned)
+        assert_eq!(
+            AISOperationType::from_wire_index(30),
+            None,
+            "Index 30 is unassigned and must return None"
+        );
         // Multi-agent coordination wire indices (31-37)
         assert_eq!(
             AISOperationType::from_wire_index(31),
@@ -2220,100 +2232,75 @@ mod tests {
             AISOperationType::from_wire_index(41),
             Some(AISOperationType::WorkflowSpawn)
         );
+        // Skill linkage
+        assert_eq!(
+            AISOperationType::from_wire_index(42),
+            Some(AISOperationType::CallSkill)
+        );
         // Out-of-range returns None
         assert_eq!(AISOperationType::from_wire_index(u32::MAX), None);
     }
 
     #[test]
     fn test_wire_index_round_trip_coverage() {
-        let mut seen = std::collections::HashSet::new();
-        // Original ops: 0-24
-        for i in 0u32..25 {
-            let op = AISOperationType::from_wire_index(i);
+        let mut seen_ops = HashSet::new();
+        let mut seen_indexes = HashSet::new();
+        for &(wire_index, expected_op) in AISOperationType::wire_indexed_operations() {
             assert!(
-                op.is_some(),
-                "from_wire_index({i}) returned None — gap in wire mapping"
+                seen_indexes.insert(wire_index),
+                "duplicate wire index {wire_index}"
             );
-            let op = op.unwrap();
+            let op = AISOperationType::from_wire_index(wire_index)
+                .unwrap_or_else(|| panic!("wire index {wire_index} should be {expected_op:?}"));
+            assert_eq!(op, expected_op);
             assert!(
-                seen.insert(op),
-                "from_wire_index({i}) returned duplicate {op:?}"
+                seen_ops.insert(op),
+                "from_wire_index({wire_index}) returned duplicate {op:?}"
             );
-        }
-        // Multi-agent coordination ops: 31-37
-        for i in 31u32..38 {
-            let op = AISOperationType::from_wire_index(i);
-            assert!(
-                op.is_some(),
-                "from_wire_index({i}) returned None — gap in wire mapping"
-            );
-            let op = op.unwrap();
-            assert!(
-                seen.insert(op),
-                "from_wire_index({i}) returned duplicate {op:?}"
-            );
-        }
-        // Durable execution: 38
-        {
-            let op =
-                AISOperationType::from_wire_index(38).expect("wire index 38 should be Checkpoint");
-            assert!(
-                seen.insert(op),
-                "from_wire_index(38) returned duplicate {op:?}"
-            );
-        }
-        // Team operations: 39
-        {
-            let op =
-                AISOperationType::from_wire_index(39).expect("wire index 39 should be SpawnTeam");
-            assert!(
-                seen.insert(op),
-                "from_wire_index(39) returned duplicate {op:?}"
-            );
-        }
-        // Handoff: 40
-        {
-            let op =
-                AISOperationType::from_wire_index(40).expect("wire index 40 should be Handoff");
-            assert!(
-                seen.insert(op),
-                "from_wire_index(40) returned duplicate {op:?}"
-            );
-        }
-        // Workflow spawn: 41
-        {
-            let op = AISOperationType::from_wire_index(41)
-                .expect("wire index 41 should be WorkflowSpawn");
-            assert!(
-                seen.insert(op),
-                "from_wire_index(41) returned duplicate {op:?}"
-            );
+            assert_eq!(op.to_wire_index(), Some(wire_index));
         }
         assert_eq!(
-            seen.len(),
-            36,
-            "Expected 36 distinct wire-indexed operations (25 original + 7 phase-2 + 1 durable + 1 team + 1 handoff + 1 workflow spawn)"
+            seen_ops.len(),
+            AISOperationType::wire_indexed_operations().len(),
+            "Every wire-indexed operation should map round-trip exactly once"
         );
     }
 
     #[test]
     fn test_wire_indexed_ops_subset_of_all_ops() {
-        let all_ops: std::collections::HashSet<AISOperationType> =
+        let all_ops: HashSet<AISOperationType> =
             AISOperationType::all_operations().iter().copied().collect();
-        // Original ops: 0-24
-        for i in 0u32..25 {
-            let op = AISOperationType::from_wire_index(i).unwrap();
+        for &(wire_index, op) in AISOperationType::wire_indexed_operations() {
             assert!(
                 all_ops.contains(&op),
-                "Wire-indexed op {op:?} (index {i}) is not in all_operations()"
+                "Wire-indexed op {op:?} (index {wire_index}) is not in all_operations()"
             );
         }
-        // Extended wire-indexed ops: 31-41
-        for i in 31u32..42 {
-            let op = AISOperationType::from_wire_index(i).unwrap();
+    }
+
+    #[test]
+    fn artifact_emitter_operation_kind_matches_wire_table() {
+        let source = artifact_emitter_source();
+        let cpp_entries = operation_kind_entries(&source);
+        let rust_entries: BTreeMap<String, u32> = AISOperationType::wire_indexed_operations()
+            .iter()
+            .map(|(wire_index, op)| (format!("{op:?}"), *wire_index))
+            .collect();
+
+        assert_eq!(
+            cpp_entries, rust_entries,
+            "ArtifactEmitter.cpp OperationKind must match AISOperationType::wire_indexed_operations()"
+        );
+    }
+
+    #[test]
+    fn artifact_emitter_maps_every_wire_indexed_mlir_op() {
+        let source = artifact_emitter_source();
+        for &(_, op) in AISOperationType::wire_indexed_operations() {
+            let case = format!(".Case<{op:?}Op>");
             assert!(
-                all_ops.contains(&op),
-                "Wire-indexed op {op:?} (index {i}) is not in all_operations()"
+                source.contains(&case),
+                "ArtifactEmitter.cpp mapOperation missing {case}"
             );
         }
     }
