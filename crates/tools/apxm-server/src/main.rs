@@ -37,6 +37,7 @@ use apxm_driver::ServerConfig;
 mod a2a;
 mod agent;
 mod app;
+mod auth;
 mod call_skill;
 mod capability;
 mod credentials;

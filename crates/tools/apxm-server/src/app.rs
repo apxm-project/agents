@@ -1,5 +1,6 @@
+use axum::http::{HeaderValue, Method, header};
 use axum::{Router, routing::get, routing::post};
-use tower_http::cors::CorsLayer;
+use tower_http::cors::{AllowOrigin, CorsLayer};
 use tower_http::request_id::{MakeRequestUuid, PropagateRequestIdLayer, SetRequestIdLayer};
 use tower_http::trace::TraceLayer;
 
@@ -110,12 +111,69 @@ pub(crate) fn build_app(state: AppState) -> Router {
         .route(ServerRoute::RunEventsStream.path(), get(stream_run_events))
         // Phase 14.8.E - rollout blob fetch
         .route(ServerRoute::RunBlob.path(), get(get_run_blob))
+        // F04: opt-in, fail-closed bearer auth on mutating routes. The layer
+        // is always installed but is a transparent pass-through unless
+        // `server_config.auth.require_auth` is enabled (default off), so tests
+        // and local dev are unaffected.
+        .layer(axum::middleware::from_fn_with_state(
+            state.server_config.auth.clone(),
+            crate::auth::require_bearer,
+        ))
         .with_state(state)
-        .layer(CorsLayer::permissive())
+        // F04: restrictive CORS — allow loopback origins only (keeps the
+        // studio proxy working on localhost) instead of the previous
+        // `CorsLayer::permissive()` wildcard.
+        .layer(loopback_cors_layer())
         .layer(TraceLayer::new_for_http())
         // Propagate X-Request-Id from clients; generate one when absent
         .layer(PropagateRequestIdLayer::new(req_id_header.clone()))
         .layer(SetRequestIdLayer::new(req_id_header, MakeRequestUuid))
+}
+
+/// CORS layer that permits only loopback (`127.0.0.1`, `[::1]`, `localhost`)
+/// origins on any port. This keeps the apxm-studio proxy and local tooling
+/// working over loopback while removing the wildcard `Access-Control-Allow-Origin`
+/// that `CorsLayer::permissive()` emitted.
+fn loopback_cors_layer() -> CorsLayer {
+    let predicate = |origin: &HeaderValue, _request_parts: &axum::http::request::Parts| {
+        origin
+            .to_str()
+            .map(is_loopback_origin)
+            .unwrap_or(false)
+    };
+    CorsLayer::new()
+        .allow_origin(AllowOrigin::predicate(predicate))
+        .allow_methods([
+            Method::GET,
+            Method::POST,
+            Method::PUT,
+            Method::DELETE,
+            Method::OPTIONS,
+        ])
+        .allow_headers([header::AUTHORIZATION, header::CONTENT_TYPE, header::ACCEPT])
+}
+
+/// Returns true when an `Origin` header value points at loopback on any port.
+fn is_loopback_origin(origin: &str) -> bool {
+    // Strip the scheme; accept http/https only.
+    let rest = origin
+        .strip_prefix("http://")
+        .or_else(|| origin.strip_prefix("https://"));
+    let Some(host_port) = rest else {
+        return false;
+    };
+    // Drop any path component defensively (Origin should not carry one).
+    let authority = host_port.split('/').next().unwrap_or(host_port);
+    // Split host and optional port. IPv6 literals are bracketed.
+    let host = if let Some(after_bracket) = authority.strip_prefix('[') {
+        match after_bracket.split_once(']') {
+            Some((inner, _port)) => inner,
+            None => return false,
+        }
+    } else {
+        authority.split(':').next().unwrap_or(authority)
+    };
+    matches!(host, "127.0.0.1" | "::1" | "localhost")
 }
 
 fn register_server_event_payloads() {
@@ -126,4 +184,28 @@ fn register_server_event_payloads() {
         }
     }
     register_skill_event_payloads();
+}
+
+#[cfg(test)]
+mod tests {
+    use super::is_loopback_origin;
+
+    #[test]
+    fn loopback_origins_are_allowed() {
+        assert!(is_loopback_origin("http://127.0.0.1:5173"));
+        assert!(is_loopback_origin("http://localhost:3000"));
+        assert!(is_loopback_origin("https://localhost"));
+        assert!(is_loopback_origin("http://[::1]:18800"));
+        assert!(is_loopback_origin("http://127.0.0.1"));
+    }
+
+    #[test]
+    fn non_loopback_origins_are_rejected() {
+        assert!(!is_loopback_origin("http://example.com"));
+        assert!(!is_loopback_origin("https://evil.example.com:443"));
+        assert!(!is_loopback_origin("http://127.0.0.1.evil.com"));
+        assert!(!is_loopback_origin("http://10.0.0.5:18800"));
+        assert!(!is_loopback_origin("ftp://localhost"));
+        assert!(!is_loopback_origin("localhost:3000"));
+    }
 }

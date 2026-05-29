@@ -239,8 +239,12 @@ class LoopGuardMiddlewareConfig:
 class ExecutionOptions:
     """Execution-time controls for APXM frontend runs.
 
-    `session_id`, `session_root`, `token_budget`, `output_schema`, and
-    `max_schema_retries` are supported over the HTTP server path today.
+    `session_id` and `session_root` are carried as top-level fields of the
+    HTTP `/v1/execute` request body. `token_budget`, `output_schema`, and
+    `max_schema_retries` are applied by baking them into the compiled AIR node
+    attributes (see ``_graph_with_execution_overrides``), so they travel inside
+    the ``air`` payload and are *not* sent as separate request-body fields —
+    the server's ``ExecuteRequest`` does not read them at the top level.
     Hooks and middlewares require local CLI execution.
     """
 
@@ -258,13 +262,15 @@ class ExecutionOptions:
         return bool(self.hooks or self.middlewares)
 
     def server_request_fields(self) -> dict[str, Any]:
+        # Only fields the server's ExecuteRequest actually reads at the top
+        # level belong here. token_budget / output_schema / max_schema_retries
+        # are encoded into the AIR node attributes by
+        # _graph_with_execution_overrides and travel inside the `air` payload;
+        # emitting them here too is silent drift the server ignores.
         return _drop_none(
             {
                 "session_id": self.session_id,
                 "session_root": os.fspath(self.session_root) if self.session_root is not None else None,
-                "token_budget": self.token_budget,
-                "output_schema": self.output_schema,
-                "max_schema_retries": self.max_schema_retries,
             }
         )
 

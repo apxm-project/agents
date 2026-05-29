@@ -207,9 +207,17 @@ def test_compiled_flow_build_request():
     assert request[ARGS] == list(args)
     assert request[session_id_field] == session_id
     assert request[SESSION_ROOT] == session_root
-    assert request[TOKEN_BUDGET] == 256
-    assert request[OUTPUT_SCHEMA] == output_schema
-    assert request[MAX_SCHEMA_RETRIES] == max_schema_retries
+    # token_budget / output_schema / max_schema_retries are NOT sent as
+    # top-level request-body fields: the server's ExecuteRequest ignores them
+    # there. They are instead baked into the compiled AIR node attributes by
+    # _graph_with_execution_overrides and travel inside the `air` payload.
+    assert TOKEN_BUDGET not in request
+    assert OUTPUT_SCHEMA not in request
+    assert MAX_SCHEMA_RETRIES not in request
+    air_payload = request[AIR_PAYLOAD]
+    assert TOKEN_BUDGET in air_payload
+    assert OUTPUT_SCHEMA in air_payload
+    assert MAX_SCHEMA_RETRIES in air_payload
 
 
 def test_compiled_flow_build_request_no_session():
