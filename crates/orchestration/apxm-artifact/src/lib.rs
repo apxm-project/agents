@@ -119,6 +119,13 @@ impl Artifact {
         &self.dags
     }
 
+    /// Mutable access to the DAGs — used by the server to inject
+    /// dispatch-time data (e.g. apxm-auth-resolved credential headers) into
+    /// `inv_tool` node attributes before execution.
+    pub fn dags_mut(&mut self) -> &mut [ExecutionDag] {
+        &mut self.dags
+    }
+
     /// Get the @entry DAG (first with is_entry=true)
     pub fn entry_dag(&self) -> Option<&ExecutionDag> {
         self.dags.iter().find(|d| d.metadata.is_entry)

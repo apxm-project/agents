@@ -6,7 +6,7 @@
 //! `Authorization: Bearer <token>`) is the live integration step; the resolver
 //! client itself lives here and is unit-tested.
 
-#![allow(dead_code)] // consumed by the capability dispatch path (live wiring step)
+// Live: consumed by `execute::inject_resolved_credentials` (F12/F13 wiring).
 
 use serde::Deserialize;
 
