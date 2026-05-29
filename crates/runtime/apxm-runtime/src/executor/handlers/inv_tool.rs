@@ -75,19 +75,12 @@ pub async fn execute(ctx: &ExecutionContext, node: &Node, inputs: Vec<Value>) ->
             && let Some(obj) = parsed.as_object()
         {
             for (k, v) in obj {
-                let value = match v {
-                    serde_json::Value::String(s) => Value::String(s.clone()),
-                    serde_json::Value::Number(n) => {
-                        if let Some(i) = n.as_i64() {
-                            Value::Number(apxm_core::types::values::Number::Integer(i))
-                        } else if let Some(f) = n.as_f64() {
-                            Value::Number(apxm_core::types::values::Number::Float(f))
-                        } else {
-                            continue;
-                        }
-                    }
-                    serde_json::Value::Bool(b) => Value::Bool(*b),
-                    _ => continue, // Skip complex nested values
+                // Pass ALL values through, including nested objects/arrays — e.g.
+                // an `http_get` `headers` object (and apxm-auth-injected
+                // `Authorization`) must reach the capability. Previously nested
+                // values were dropped, so structured args silently vanished.
+                let Ok(value) = Value::try_from(v.clone()) else {
+                    continue;
                 };
                 args.insert(k.clone(), value);
             }
