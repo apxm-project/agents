@@ -117,6 +117,15 @@ impl DataflowScheduler {
             &state,
         )));
 
+        // Register the completion waiter BEFORE spawning workers. A fast DAG
+        // can otherwise complete and call `notify_done.notify_waiters()` before
+        // this task first polls `notified()`, losing the wakeup (tokio `Notify`
+        // does not store `notify_waiters` permits) and hanging the execute
+        // future forever. `enable()` registers the waiter up front so the
+        // notification cannot be missed.
+        let mut done = std::pin::pin!(state.notify_done.notified());
+        done.as_mut().enable();
+
         // Spawn watchdog for deadlock detection
         spawn_watchdog(Arc::clone(&state));
 
@@ -129,8 +138,15 @@ impl DataflowScheduler {
             "All workers spawned, waiting for completion"
         );
 
-        // Wait for completion or failure
-        state.notify_done.notified().await;
+        // Wait for completion or failure (skip if already complete).
+        if state
+            .remaining
+            .load(std::sync::atomic::Ordering::SeqCst)
+            != 0
+            && !state.is_cancelled()
+        {
+            done.await;
+        }
 
         // Clean shutdown: wait for all workers to finish
         for handle in worker_handles {
