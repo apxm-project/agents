@@ -133,6 +133,167 @@ impl CapabilityExecutor for StaticCapability {
     }
 }
 
+/// One `[[tool]]` entry in a pack-root `tools.toml` — the declarative block
+/// spec the install-gated catalog renders and the kernel registers.
+#[derive(Debug, Deserialize)]
+struct PackToolDecl {
+    /// Capability id the inv_tool node lowers to (e.g. `slack.post`).
+    capability: String,
+    #[serde(default)]
+    name: Option<String>,
+    #[serde(default)]
+    description: Option<String>,
+    /// Backing kind: `provider` (default), `http`, `static`. `mcp` reserved.
+    #[serde(default)]
+    kind: Option<String>,
+    #[serde(default)]
+    endpoint_pattern: Option<String>,
+    #[serde(default)]
+    read_only: bool,
+    /// Optional typed input schema; defaults to the provider.call arg shape.
+    #[serde(default)]
+    schema: JsonValue,
+}
+
+#[derive(Debug, Deserialize)]
+struct PackToolsFile {
+    #[serde(default)]
+    tool: Vec<PackToolDecl>,
+}
+
+fn default_provider_schema() -> JsonValue {
+    serde_json::json!({
+        "type": "object",
+        "properties": {
+            "credential": { "type": "string" },
+            "method": { "type": "string" },
+            "url": { "type": "string" },
+            "headers": { "type": "object" },
+            "body": {}
+        },
+        "required": ["credential", "url"]
+    })
+}
+
+/// Auto-register the action blocks declared by every installed pack's pack-root
+/// `tools.toml`, so installing a connector pack makes its blocks real
+/// capabilities (listed in /v1/capabilities) with NO per-provider Rust. Each
+/// `[[tool]]` is registered by its capability id behind the declared backing
+/// kind (default `provider` → provider.call, REST via apxm-auth /proxy). This is
+/// the keystone that makes capabilities declarative the way skills already are.
+/// Build the capability executor for one declared tool (None if its kind is not
+/// registerable yet, e.g. `mcp`).
+fn capability_from_tool(t: &PackToolDecl) -> Option<Arc<dyn CapabilityExecutor>> {
+    let kind = t.kind.as_deref().unwrap_or("provider");
+    let schema = if t.schema.is_null() { default_provider_schema() } else { t.schema.clone() };
+    let mut metadata = CapabilityMetadata::new(
+        t.capability.clone(),
+        t.description.clone().or_else(|| t.name.clone()).unwrap_or_else(|| t.capability.clone()),
+        schema.clone(),
+    );
+    if t.read_only {
+        metadata = metadata.with_read_only();
+    }
+    match kind {
+        "provider" => Some(Arc::new(
+            apxm_runtime::capability::builtins::ProviderCallCapability::named(
+                t.capability.clone(),
+                metadata.description.clone(),
+                schema,
+            ),
+        )),
+        "http" => t.endpoint_pattern.clone().map(|endpoint| {
+            Arc::new(HttpCapability { metadata, endpoint, timeout_ms: 30_000, client: reqwest::Client::new() })
+                as Arc<dyn CapabilityExecutor>
+        }),
+        other => {
+            info!(capability = %t.capability, kind = %other, "skipping tools.toml entry (kind not registerable yet)");
+            None
+        }
+    }
+}
+
+/// Read a pack dir's pack-root `tools.toml` and build its capability executors.
+fn pack_tools_in_dir(pack_dir: &std::path::Path) -> Vec<Arc<dyn CapabilityExecutor>> {
+    let Ok(raw) = std::fs::read_to_string(pack_dir.join("tools.toml")) else { return Vec::new() };
+    let file: PackToolsFile = match toml::from_str(&raw) {
+        Ok(f) => f,
+        Err(e) => {
+            info!(dir = %pack_dir.display(), error = %e, "skipping malformed tools.toml");
+            return Vec::new();
+        }
+    };
+    file.tool.iter().filter_map(capability_from_tool).collect()
+}
+
+/// Auto-register the action blocks declared by every installed pack's pack-root
+/// `tools.toml`, so installing a connector pack makes its blocks real
+/// capabilities (listed in /v1/capabilities) with NO per-provider Rust. Each
+/// `[[tool]]` registers by its capability id behind the declared backing kind
+/// (default `provider` → provider.call, REST via apxm-auth /proxy). This is the
+/// keystone that makes capabilities declarative the way skills already are.
+pub(crate) fn register_pack_tools(runtime: &apxm_runtime::Runtime, roots: &[std::path::PathBuf]) {
+    let sys = runtime.capability_system();
+    let mut registered = 0u32;
+    for root in roots {
+        let Ok(entries) = std::fs::read_dir(root) else { continue };
+        for entry in entries.flatten() {
+            let pack_dir = entry.path();
+            if !pack_dir.is_dir() {
+                continue;
+            }
+            for cap in pack_tools_in_dir(&pack_dir) {
+                // register() errors if already present (builtin / re-scan) — fine.
+                if sys.register(cap).is_ok() {
+                    registered += 1;
+                }
+            }
+        }
+    }
+    if registered > 0 {
+        info!(count = registered, "registered pack tool capabilities from tools.toml");
+    }
+}
+
+#[cfg(test)]
+mod pack_tools_tests {
+    use super::*;
+
+    #[test]
+    fn derives_provider_block_from_tools_toml() {
+        let dir = std::env::temp_dir().join(format!("apxm-pack-tools-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(
+            dir.join("tools.toml"),
+            "[[tool]]\nname = \"Post message\"\ncapability = \"slack.post\"\nkind = \"provider\"\nread_only = false\n",
+        )
+        .unwrap();
+
+        let caps = pack_tools_in_dir(&dir);
+        assert_eq!(caps.len(), 1, "one tool registered");
+        let m = caps[0].metadata();
+        assert_eq!(m.name, "slack.post");
+        assert!(!m.read_only, "slack.post is write-class");
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn mcp_kind_is_skipped_for_now() {
+        let t = PackToolDecl {
+            capability: "x.tool".into(),
+            name: None,
+            description: None,
+            kind: Some("mcp".into()),
+            endpoint_pattern: None,
+            read_only: false,
+            schema: JsonValue::Null,
+        };
+        assert!(capability_from_tool(&t).is_none(), "mcp backing not registerable yet");
+    }
+}
+
 pub(crate) async fn list_capabilities(
     State(state): State<AppState>,
 ) -> Result<Json<Vec<CapabilityEntry>>, ApiError> {
