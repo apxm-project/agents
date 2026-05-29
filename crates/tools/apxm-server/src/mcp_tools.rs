@@ -4,6 +4,7 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::Instant;
 
+use apxm_ais::plan::{PlanDependencyKind, PlanGraph, PlanNode, PlanNodeOp};
 use apxm_artifact::Artifact;
 use apxm_backends::LLMRequest;
 use apxm_compiler::{
@@ -14,13 +15,12 @@ use apxm_core::constants::{memory as memory_const, session::files as session_fil
 use apxm_core::events::{EventEmitter, EventSource, SkillEventProvenance};
 use apxm_core::paths::ApxmPaths;
 use apxm_core::types::Value as RuntimeValue;
-use apxm_core::types::{AISOperationType, DependencyType, OptimizationLevel};
+use apxm_core::types::{AISOperationType, DependencyType, Number as RuntimeNumber, OptimizationLevel};
 use apxm_driver::ServerMcpConfig;
 use apxm_runtime::capability::CapabilitySandboxPreflight;
 use apxm_runtime::{
     EmitterAdapter, ExecutionEventEmitter, MemorySpace, Runtime, RuntimeExecutionResult,
 };
-use serde::Deserialize;
 use serde_json::{Map, Value as JsonValue, json};
 
 use crate::mcp_protocol::{
@@ -57,6 +57,7 @@ const PLAN_NODE_ALLOWED_FIELDS: &[&str] = &[
     plan_field::AGENT,
     plan_field::CAPABILITY,
     plan_field::ARGS,
+    plan_field::MAX_TOKENS,
     plan_field::DEPENDS_ON,
 ];
 const PLAN_NODE_NESTED_ATTRIBUTE_FIELDS: &[&str] = &[
@@ -124,89 +125,9 @@ impl PlanCandidateError {
     }
 }
 
-#[derive(Debug, Deserialize)]
-#[serde(deny_unknown_fields)]
-struct PlanGraph {
-    name: String,
-    entry: String,
-    #[serde(default)]
-    parameters: Vec<PlanParameter>,
-    nodes: Vec<PlanNode>,
-}
-
-#[derive(Debug, Deserialize)]
-#[serde(deny_unknown_fields)]
-struct PlanParameter {
-    name: String,
-    #[serde(rename = "type")]
-    type_name: String,
-    #[serde(default)]
-    required: bool,
-}
-
-#[derive(Debug, Deserialize)]
-#[serde(deny_unknown_fields)]
-struct PlanNode {
-    id: u64,
-    name: String,
-    op: PlanNodeOp,
-    #[serde(default)]
-    prompt: Option<String>,
-    #[serde(default)]
-    agent: Option<String>,
-    #[serde(default)]
-    capability: Option<String>,
-    #[serde(default)]
-    args: Option<JsonValue>,
-    #[serde(default)]
-    depends_on: Vec<PlanDependency>,
-}
-
-#[derive(Debug, Deserialize)]
-#[serde(deny_unknown_fields)]
-struct PlanDependency {
-    node: u64,
-    dependency: DependencyType,
-}
-
-#[derive(Debug, Clone, Copy, Deserialize)]
-#[serde(rename_all = "snake_case")]
-enum PlanNodeOp {
-    Agent,
-    Ask,
-    Think,
-    InvTool,
-    WaitAll,
-    Yield,
-}
-
-impl PlanNodeOp {
-    const fn as_str(self) -> &'static str {
-        match self {
-            Self::Agent => "agent",
-            Self::Ask => "ask",
-            Self::Think => "think",
-            Self::InvTool => "inv_tool",
-            Self::WaitAll => "wait_all",
-            Self::Yield => "yield",
-        }
-    }
-
-    const fn requires_prompt(self) -> bool {
-        matches!(self, Self::Agent | Self::Ask | Self::Think | Self::Yield)
-    }
-
-    fn ais(self) -> AISOperationType {
-        match self {
-            Self::Agent => AISOperationType::Agent,
-            Self::Ask => AISOperationType::Ask,
-            Self::Think => AISOperationType::Think,
-            Self::InvTool => AISOperationType::InvTool,
-            Self::WaitAll => AISOperationType::WaitAll,
-            Self::Yield => AISOperationType::Yield,
-        }
-    }
-}
+// Plan-graph wire DTO (`PlanGraph`/`PlanNode`/`PlanParameter`/`PlanDependency`/
+// `PlanNodeOp`/`PlanDependencyKind`) is defined once in `apxm_ais::plan` and
+// imported above — the single source of truth shared with authoring front-ends.
 
 #[allow(dead_code)]
 pub(crate) async fn plan_as_graph(runtime: &Runtime, args: JsonValue) -> Result<JsonValue, String> {
@@ -1210,7 +1131,7 @@ fn lower_plan_to_air_module(plan: &PlanGraph) -> Result<AirModule, String> {
             node.depends_on.iter().map(|dep| AirEdge {
                 from: dep.node,
                 to: node.id,
-                dependency: dep.dependency.clone(),
+                dependency: plan_dependency_to_runtime(dep.dependency),
             })
         })
         .collect::<Vec<_>>();
@@ -1219,7 +1140,7 @@ fn lower_plan_to_air_module(plan: &PlanGraph) -> Result<AirModule, String> {
         .iter()
         .map(|param| AirParam {
             name: param.name.clone(),
-            type_name: param.type_name.clone(),
+            type_name: param.type_name.as_str().to_string(),
         })
         .collect::<Vec<_>>();
     let module = AirModule {
@@ -1233,6 +1154,29 @@ fn lower_plan_to_air_module(plan: &PlanGraph) -> Result<AirModule, String> {
         .validate()
         .map_err(|error| format!("AIR graph validation failed: {error}"))?;
     Ok(module)
+}
+
+/// Map the wire dependency kind to the runtime edge type.
+const fn plan_dependency_to_runtime(kind: PlanDependencyKind) -> DependencyType {
+    match kind {
+        PlanDependencyKind::Data => DependencyType::Data,
+        PlanDependencyKind::Control => DependencyType::Control,
+        PlanDependencyKind::Effect => DependencyType::Effect,
+    }
+}
+
+/// Map the wire op to the runtime operation type. (`apxm-core` regenerates its
+/// own `AISOperationType` from the `apxm-ais` source, so the two are nominally
+/// distinct; this bridges them at the one place the runtime type is needed.)
+const fn plan_op_to_runtime(op: PlanNodeOp) -> AISOperationType {
+    match op {
+        PlanNodeOp::Agent => AISOperationType::Agent,
+        PlanNodeOp::Ask => AISOperationType::Ask,
+        PlanNodeOp::Think => AISOperationType::Think,
+        PlanNodeOp::InvTool => AISOperationType::InvTool,
+        PlanNodeOp::WaitAll => AISOperationType::WaitAll,
+        PlanNodeOp::Yield => AISOperationType::Yield,
+    }
 }
 
 fn lower_plan_node(
@@ -1264,11 +1208,19 @@ fn lower_plan_node(
             RuntimeValue::String(args.to_string()),
         );
     }
+    if let Some(max_tokens) = node.max_tokens {
+        attributes.insert(
+            graph_attrs::TOKEN_BUDGET.to_string(),
+            RuntimeValue::Number(RuntimeNumber::from(
+                i64::try_from(max_tokens).unwrap_or(i64::MAX),
+            )),
+        );
+    }
 
     let data_input_names = node
         .depends_on
         .iter()
-        .filter(|dep| matches!(dep.dependency, DependencyType::Data))
+        .filter(|dep| matches!(dep.dependency, PlanDependencyKind::Data))
         .filter_map(|dep| source_names.get(&dep.node).cloned())
         .map(RuntimeValue::String)
         .collect::<Vec<_>>();
@@ -1282,7 +1234,7 @@ fn lower_plan_node(
     Ok(AirNode {
         id: node.id,
         name: node.name.clone(),
-        op: node.op.ais(),
+        op: plan_op_to_runtime(node.op),
         attributes,
     })
 }
@@ -1298,7 +1250,7 @@ fn runtime_args_for_plan(
                 .get(&parameter.name)
                 .map(json_arg_to_string)
                 .or_else(|| {
-                    if parameter.required {
+                    if parameter.required.unwrap_or(false) {
                         Some(String::new())
                     } else {
                         None
