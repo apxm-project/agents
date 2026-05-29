@@ -307,14 +307,12 @@ pub mod jsonrpc {
 }
 
 pub mod capabilities {
-    pub const BASH: &str = "bash";
-    pub const READ: &str = "read";
-    pub const WRITE: &str = "write";
-    pub const SEARCH_WEB: &str = "search_web";
-    pub const HTTP_GET: &str = "http_get";
-    pub const HTTP_POST: &str = "http_post";
-
-    pub const BUILTINS: &[&str] = &[BASH, READ, WRITE, SEARCH_WEB, HTTP_GET, HTTP_POST];
+    //! Re-exported from `apxm-ais` (single source of truth). Do not redefine
+    //! these here; add new capability ids in `apxm_ais::capabilities`.
+    pub use apxm_ais::capabilities::{
+        BASH, BUILTINS, HTTP_GET, HTTP_POST, MEMORY_SEARCH_FACTS, MEMORY_STORE_FACT, READ,
+        SEARCH_WEB, WRITE,
+    };
 }
 
 pub mod llm {
@@ -705,7 +703,8 @@ pub mod mlir {
 }
 
 pub mod defaults {
-    pub const DEFAULT_SERVER_URL: &str = "http://127.0.0.1:18800";
+    // URLs / output budget re-exported from `apxm-ais` (single source of truth).
+    pub use apxm_ais::defaults::{DEFAULT_OS_URL, DEFAULT_OUTPUT_TOKEN_BUDGET, DEFAULT_SERVER_URL};
     pub const DEFAULT_TIMEOUT_MS: u64 = 30_000;
     pub const DEFAULT_LEASE_MS: u64 = 60_000;
     pub const DEFAULT_MAX_WAIT_MS: u64 = 5_000;

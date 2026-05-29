@@ -17,6 +17,7 @@ name = "apxm-mcp-server"
 path = "src/bin/apxm_mcp.rs"
 
 [dependencies]
+apxm-ais.workspace = true
 apxm-artifact.workspace = true
 apxm-compiler.workspace = true
 apxm-core.workspace = true

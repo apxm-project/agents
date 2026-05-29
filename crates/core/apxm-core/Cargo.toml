@@ -12,6 +12,7 @@ publish = false
 workspace = true
 
 [dependencies]
+apxm-ais.workspace = true
 anyhow.workspace = true
 blake3.workspace = true
 chrono.workspace = true
