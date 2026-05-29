@@ -23,7 +23,11 @@ Subcommands:
   pack <pack-dir>                      Build a release tarball + compute
                                        pack_hash (maintainer command).
   verify <pack-id>                     Recompute pack_hash and compare
-                                       against pack.toml [integrity].
+                                       against pack.toml [integrity]. An
+                                       empty/missing pack_hash only warns
+                                       (and falls back to per-skill
+                                       artifact_hash checks); pass --strict
+                                       to make it a hard failure.
   search <query>                       Substring-match pack id, display
                                        name, description across the
                                        current sibling clone.
@@ -396,11 +400,30 @@ def cmd_verify(args: argparse.Namespace) -> int:
     manifest = _load_manifest(target)
     if manifest is None:
         sys.exit(f"{args.pack} is not installed at {libs_root}")
-    if not manifest.pack_hash:
-        print(f"{args.pack}: no pack_hash declared (cannot verify)")
-        return 0
     if not HAVE_BLAKE3:
         sys.exit("blake3 required: pip install blake3")
+    strict = getattr(args, "strict", False)
+    if not manifest.pack_hash:
+        # An empty/missing pack_hash means the pack-compile workflow never
+        # sealed this pack (true for every dev-built pack today). It does
+        # NOT mean the bytes are trustworthy. Under --strict this is a hard
+        # failure; without it we still fall through to per-skill
+        # artifact_hash verification so tamper is caught when skills carry
+        # their own hash, and we say loudly that the tarball seal is absent.
+        if strict:
+            sys.exit(
+                f"FAIL: {args.pack}: pack_hash is empty/missing — refusing to "
+                f"verify under --strict (the pack tarball is unsealed; rebuild "
+                f"with `apxm libs build`/`pack` to populate "
+                f"pack.toml [integrity].pack_hash)"
+            )
+        print(
+            f"WARNING: {args.pack}: no pack_hash declared — tarball seal NOT "
+            f"verified (pass --strict to make this a hard failure). Falling "
+            f"back to per-skill artifact_hash verification."
+        )
+        _verify_skill_artifact_hashes(target, manifest.pack_id)
+        return 0
     _verify_install(target, manifest)
     return 0
 
@@ -725,6 +748,16 @@ def build_parser() -> argparse.ArgumentParser:
 
     p_verify = sub.add_parser("verify", help="verify an installed pack's hash")
     p_verify.add_argument("pack")
+    p_verify.add_argument(
+        "--strict",
+        action="store_true",
+        help=(
+            "Treat an empty/missing pack.toml [integrity].pack_hash as a hard "
+            "failure instead of skipping the tarball seal. Use in CI and "
+            "release gates; the default (non-strict) only warns and falls "
+            "back to per-skill artifact_hash verification."
+        ),
+    )
     p_verify.set_defaults(func=cmd_verify)
 
     p_search = sub.add_parser("search", help="substring match across sibling catalog")
