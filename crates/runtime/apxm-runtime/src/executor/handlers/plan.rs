@@ -642,7 +642,9 @@ Done."#;
             .as_ref()
             .and_then(|ip| ip.task_dag.as_ref())
             .expect("task_dag must parse");
-        let err = task_dag.validate().expect_err("dangling depends_on must reject");
+        let err = task_dag
+            .validate()
+            .expect_err("dangling depends_on must reject");
         let msg = format!("{err}");
         assert!(
             msg.contains("999"),

@@ -91,5 +91,4 @@ mod tests {
     fn memoizable_default_on_when_backend_unknown() {
         assert!(default_memoizable_for_backend(None));
     }
-
 }

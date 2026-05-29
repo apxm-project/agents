@@ -142,8 +142,7 @@ pub const ERROR: EventKind = EventKind::new("error", EventCategory::Error, true)
 // Multi-agent / topology event kinds (Phase 14.8.A — per-graph-node
 // enrichment). These are emitted in addition to OPERATION_START so
 // observers can reconstruct an agent/tool tree without rederiving it.
-pub const AGENT_SPAWNED: EventKind =
-    EventKind::new("agent_spawned", EventCategory::Agent, true);
+pub const AGENT_SPAWNED: EventKind = EventKind::new("agent_spawned", EventCategory::Agent, true);
 pub const COMMUNICATE_DISPATCHED: EventKind =
     EventKind::new("communicate_dispatched", EventCategory::Agent, true);
 pub const GRAPH_EDGE: EventKind = EventKind::new("graph_edge", EventCategory::Topology, true);
@@ -169,12 +168,10 @@ pub const TURN_BOUNDARY: EventKind =
 // `crates/runtime/apxm-runtime/src/executor/agent_scope.rs`). They are
 // snake_case and mirror CLIC's `ClicDispatchEventKind` so the relay
 // can stop translating.
-pub const TURN_STARTED: EventKind =
-    EventKind::new("turn_started", EventCategory::Lifecycle, false);
+pub const TURN_STARTED: EventKind = EventKind::new("turn_started", EventCategory::Lifecycle, false);
 pub const TURN_COMPLETE: EventKind =
     EventKind::new("turn_complete", EventCategory::Lifecycle, true);
-pub const TURN_ABORTED: EventKind =
-    EventKind::new("turn_aborted", EventCategory::Lifecycle, true);
+pub const TURN_ABORTED: EventKind = EventKind::new("turn_aborted", EventCategory::Lifecycle, true);
 pub const SUBAGENT_SPAWN_BEGIN: EventKind =
     EventKind::new("subagent_spawn_begin", EventCategory::Agent, false);
 pub const SUBAGENT_SPAWN_END: EventKind =
@@ -185,14 +182,11 @@ pub const SUBAGENT_LLM_CALL_END: EventKind =
     EventKind::new("subagent_llm_call_end", EventCategory::Agent, false);
 pub const TOOL_CALL_BEGIN: EventKind =
     EventKind::new("tool_call_begin", EventCategory::Agent, false);
-pub const TOOL_CALL_END: EventKind =
-    EventKind::new("tool_call_end", EventCategory::Agent, false);
-pub const SUBAGENT_DONE: EventKind =
-    EventKind::new("subagent_done", EventCategory::Agent, true);
+pub const TOOL_CALL_END: EventKind = EventKind::new("tool_call_end", EventCategory::Agent, false);
+pub const SUBAGENT_DONE: EventKind = EventKind::new("subagent_done", EventCategory::Agent, true);
 pub const SUBAGENT_FAILED: EventKind =
     EventKind::new("subagent_failed", EventCategory::Agent, true);
-pub const AGENT_MESSAGE: EventKind =
-    EventKind::new("agent_message", EventCategory::Agent, false);
+pub const AGENT_MESSAGE: EventKind = EventKind::new("agent_message", EventCategory::Agent, false);
 pub const APPROVAL_REQUEST: EventKind =
     EventKind::new("approval_request", EventCategory::Agent, false);
 pub const APPROVAL_RESOLVED: EventKind =

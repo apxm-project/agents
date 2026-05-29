@@ -22,7 +22,9 @@ use std::sync::{Arc, OnceLock, Weak};
 use apxm_artifact::Artifact;
 use apxm_core::error::RuntimeError;
 use apxm_core::types::values::Value;
-use apxm_runtime::{metadata_keys as metadata, CallSkillRequest, CallSkillResult, Runtime, SkillResolver};
+use apxm_runtime::{
+    CallSkillRequest, CallSkillResult, Runtime, SkillResolver, metadata_keys as metadata,
+};
 use apxm_skill::SkillManifest;
 use async_trait::async_trait;
 
@@ -77,10 +79,7 @@ impl SkillLibrarySkillResolver {
 
 #[async_trait]
 impl SkillResolver for SkillLibrarySkillResolver {
-    async fn call_skill(
-        &self,
-        request: CallSkillRequest,
-    ) -> Result<CallSkillResult, RuntimeError> {
+    async fn call_skill(&self, request: CallSkillRequest) -> Result<CallSkillResult, RuntimeError> {
         // Step 1: resolve the manifest identity through the library.
         let requested = match request.requested_version.as_deref() {
             Some(version) => format!("{}@{}", request.skill_id, version),
@@ -90,17 +89,18 @@ impl SkillResolver for SkillLibrarySkillResolver {
             .library
             .find_executable(&requested)
             .map_err(|error| skill_lookup_error(&request.skill_id, &requested, error))?;
-        let manifest = executable
-            .record
-            .manifest
-            .as_ref()
-            .ok_or_else(|| RuntimeError::Capability {
-                capability: format!("{CAPABILITY_TAG}:invalid_manifest:{}", request.skill_id),
-                message: format!(
-                    "resolved skill '{}' has no valid manifest",
-                    request.skill_id
-                ),
-            })?;
+        let manifest =
+            executable
+                .record
+                .manifest
+                .as_ref()
+                .ok_or_else(|| RuntimeError::Capability {
+                    capability: format!("{CAPABILITY_TAG}:invalid_manifest:{}", request.skill_id),
+                    message: format!(
+                        "resolved skill '{}' has no valid manifest",
+                        request.skill_id
+                    ),
+                })?;
         let artifact_hash = executable
             .record
             .hashes
@@ -146,9 +146,7 @@ impl SkillResolver for SkillLibrarySkillResolver {
             )
             .await
             .map_err(|error| RuntimeError::Capability {
-                capability: format!(
-                    "{CAPABILITY_TAG}:child_failed:{resolved_skill_id}"
-                ),
+                capability: format!("{CAPABILITY_TAG}:child_failed:{resolved_skill_id}"),
                 message: format!(
                     "child execution of '{resolved_skill_id}@{resolved_version}' failed: {error}"
                 ),
@@ -170,8 +168,8 @@ impl SkillResolver for SkillLibrarySkillResolver {
 
 /// Read, hash-verify, and parse the child's `.apxmobj`.
 fn load_child_artifact(executable: &ExecutableSkill) -> Result<Artifact, RuntimeError> {
-    let bytes = std::fs::read(&executable.artifact_path).map_err(|error| {
-        RuntimeError::Capability {
+    let bytes =
+        std::fs::read(&executable.artifact_path).map_err(|error| RuntimeError::Capability {
             capability: format!(
                 "{CAPABILITY_TAG}:artifact_read_failed:{}",
                 executable
@@ -184,8 +182,7 @@ fn load_child_artifact(executable: &ExecutableSkill) -> Result<Artifact, Runtime
                 "failed to read child artifact at {}: {error}",
                 executable.artifact_path.display()
             ),
-        }
-    })?;
+        })?;
 
     let declared_hash = executable
         .record
@@ -327,11 +324,7 @@ fn project_child_result(
 
 /// Translate a [`SkillLookupError`] into a typed runtime error preserving
 /// the spec-defined failure-mode tags (`not_found` vs `ambiguous`).
-fn skill_lookup_error(
-    skill_id: &str,
-    requested: &str,
-    error: SkillLookupError,
-) -> RuntimeError {
+fn skill_lookup_error(skill_id: &str, requested: &str, error: SkillLookupError) -> RuntimeError {
     match error {
         SkillLookupError::NotFound(_) => RuntimeError::Capability {
             capability: format!("{CAPABILITY_TAG}:not_found:{skill_id}"),
@@ -339,9 +332,7 @@ fn skill_lookup_error(
         },
         SkillLookupError::Ambiguous(_) => RuntimeError::Capability {
             capability: format!("{CAPABILITY_TAG}:ambiguous:{skill_id}"),
-            message: format!(
-                "skill id has multiple versions; request {requested}@<version>"
-            ),
+            message: format!("skill id has multiple versions; request {requested}@<version>"),
         },
     }
 }
@@ -363,10 +354,7 @@ fn admit_required_capabilities(manifest: &SkillManifest) -> Result<(), RuntimeEr
         .collect::<Vec<_>>()
         .join(",");
     Err(RuntimeError::Capability {
-        capability: format!(
-            "{CAPABILITY_TAG}:capability_widen:{}",
-            manifest.skill_id
-        ),
+        capability: format!("{CAPABILITY_TAG}:capability_widen:{}", manifest.skill_id),
         message: format!(
             "child skill '{}' declares required_capabilities=[{}] but parent capability \
              grant is not yet plumbed into CALL_SKILL; refusing widen by default",

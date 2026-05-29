@@ -33,8 +33,8 @@ pub struct WatchOptions {
 
 impl WatchOptions {
     pub fn new(thread_id: impl Into<String>) -> Self {
-        let server_base = std::env::var("APXM_SERVER_BASE")
-            .unwrap_or_else(|_| DEFAULT_SERVER_BASE.to_string());
+        let server_base =
+            std::env::var("APXM_SERVER_BASE").unwrap_or_else(|_| DEFAULT_SERVER_BASE.to_string());
         Self {
             thread_id: thread_id.into(),
             server_base,
@@ -324,8 +324,9 @@ mod tests {
             .timeout(Duration::from_secs(2))
             .build()
             .unwrap();
-        let detail =
-            fetch_node_detail(&client, &format!("http://{addr}"), "t-expand", 42).await.unwrap();
+        let detail = fetch_node_detail(&client, &format!("http://{addr}"), "t-expand", 42)
+            .await
+            .unwrap();
         let _ = server.await;
         assert_eq!(detail["node_id"], 42);
         assert_eq!(detail["execution_id"], "t-expand");
@@ -338,14 +339,13 @@ mod tests {
         // it into the snapshot, and return Ok.
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
         let addr: SocketAddr = listener.local_addr().unwrap();
-        let event_json = serde_json::to_string(&agent_spawned_event(1, 100, "module.knowledge"))
-            .unwrap();
+        let event_json =
+            serde_json::to_string(&agent_spawned_event(1, 100, "module.knowledge")).unwrap();
         let server = tokio::spawn(async move {
             let (mut socket, _) = listener.accept().await.unwrap();
             let mut buf = vec![0u8; 2048];
             let _ = socket.read(&mut buf).await.unwrap();
-            let body =
-                format!("event: agent_spawned\nid: 1\ndata: {event_json}\n\n");
+            let body = format!("event: agent_spawned\nid: 1\ndata: {event_json}\n\n");
             let head = "HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\nTransfer-Encoding: chunked\r\n\r\n";
             // One chunked frame + a zero-terminator so the client sees a
             // clean end of stream.
@@ -359,8 +359,7 @@ mod tests {
             server_base: format!("http://{addr}"),
             expand_node_id: None,
         };
-        let result =
-            tokio::time::timeout(Duration::from_secs(5), watch_with_options(opts)).await;
+        let result = tokio::time::timeout(Duration::from_secs(5), watch_with_options(opts)).await;
         let _ = server.await;
         assert!(result.is_ok(), "watch_with_options timed out");
         let inner = result.unwrap();

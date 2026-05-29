@@ -86,9 +86,7 @@ async fn rollout_writes_one_jsonl_per_thread_with_session_meta_first() {
         .write_line(
             RolloutPayload::ToolResult(ToolResultPayload {
                 tool_use_id: "tu_1".into(),
-                content: vec![ContentBlock::Text {
-                    text: "ok".into(),
-                }],
+                content: vec![ContentBlock::Text { text: "ok".into() }],
                 is_error: false,
                 latency_ms: 5,
             }),
@@ -106,10 +104,7 @@ async fn rollout_writes_one_jsonl_per_thread_with_session_meta_first() {
     assert_eq!(items.len(), 4, "expected SessionMeta + 3 lines");
     assert_eq!(stats.parse_errors, 0);
     assert_eq!(items[0].meta.seq, 0);
-    assert!(matches!(
-        items[0].payload,
-        RolloutPayload::SessionMeta(_)
-    ));
+    assert!(matches!(items[0].payload, RolloutPayload::SessionMeta(_)));
     assert_eq!(items[0].meta.schema_version, SCHEMA_VERSION);
 }
 
@@ -321,9 +316,7 @@ async fn reconstruct_history_walks_back_to_latest_compacted_then_forward_replays
         recorder
             .write_line(
                 RolloutPayload::UserMessage(UserMessagePayload {
-                    content: vec![ContentBlock::Text {
-                        text: tag.into(),
-                    }],
+                    content: vec![ContentBlock::Text { text: tag.into() }],
                 }),
                 PartialMeta::default(),
             )
@@ -351,9 +344,7 @@ async fn reconstruct_history_walks_back_to_latest_compacted_then_forward_replays
         recorder
             .write_line(
                 RolloutPayload::UserMessage(UserMessagePayload {
-                    content: vec![ContentBlock::Text {
-                        text: tag.into(),
-                    }],
+                    content: vec![ContentBlock::Text { text: tag.into() }],
                 }),
                 PartialMeta::default(),
             )
@@ -367,11 +358,7 @@ async fn reconstruct_history_walks_back_to_latest_compacted_then_forward_replays
         .unwrap();
     let tree = reconstruct_history(&items);
     assert_eq!(tree.baseline.len(), 1, "baseline holds compacted summary");
-    assert_eq!(
-        tree.suffix.len(),
-        2,
-        "suffix is post-compaction lines only"
-    );
+    assert_eq!(tree.suffix.len(), 2, "suffix is post-compaction lines only");
 }
 
 #[tokio::test]

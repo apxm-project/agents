@@ -70,8 +70,11 @@ impl BackendLatencyProfile {
             return;
         }
         let per_token_ms = duration_to_ms(latency) / f64::from(tokens);
-        self.decode_ms_per_token_ewma =
-            Some(merge(self.decode_ms_per_token_ewma, per_token_ms, self.alpha));
+        self.decode_ms_per_token_ewma = Some(merge(
+            self.decode_ms_per_token_ewma,
+            per_token_ms,
+            self.alpha,
+        ));
         self.decode_samples += 1;
     }
 
@@ -225,7 +228,9 @@ mod tests {
         let mut profile = BackendLatencyProfile::new();
         profile.record_prefill(Duration::from_millis(200));
         profile.record_decode(Duration::from_millis(50), 10);
-        let predicted = profile.predict_total_ms(20).expect("both components seeded");
+        let predicted = profile
+            .predict_total_ms(20)
+            .expect("both components seeded");
         // 200 + 5 * 20 = 300
         assert!((predicted - 300.0).abs() < 1e-9);
     }

@@ -319,12 +319,8 @@ mod tests {
         let recorder: Arc<Recorder> = Arc::new(Recorder::default());
         let emitter: Arc<dyn ExecutionEventEmitter> = recorder.clone();
         ctx.event_emitter = Some(emitter);
-        ctx.agent_scope_stack.push(AgentScope::new(
-            "crm",
-            "span-crm",
-            None,
-            None,
-        ));
+        ctx.agent_scope_stack
+            .push(AgentScope::new("crm", "span-crm", None, None));
 
         let mut node = Node {
             id: 7,
@@ -343,7 +339,9 @@ mod tests {
             Value::String(r#"{"message":"hi"}"#.to_string()),
         );
 
-        let _ = OperationDispatcher::dispatch(&ctx, &node, vec![]).await.unwrap();
+        let _ = OperationDispatcher::dispatch(&ctx, &node, vec![])
+            .await
+            .unwrap();
 
         let begins = recorder.tool_begin.lock().unwrap();
         let ends = recorder.tool_end.lock().unwrap();
@@ -415,7 +413,9 @@ mod tests {
             Value::String(r#"{"message":"hi"}"#.to_string()),
         );
 
-        let _ = OperationDispatcher::dispatch(&ctx, &node, vec![]).await.unwrap();
+        let _ = OperationDispatcher::dispatch(&ctx, &node, vec![])
+            .await
+            .unwrap();
 
         assert_eq!(*recorder.tool_begin.lock().unwrap(), 0);
         assert_eq!(*recorder.tool_end.lock().unwrap(), 0);

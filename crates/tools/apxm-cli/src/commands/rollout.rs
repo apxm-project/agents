@@ -11,8 +11,8 @@ use std::path::{Path, PathBuf};
 use anyhow::{Context, Result, anyhow};
 use apxm_core::events::ApxmEvent;
 use apxm_rollout::{
-    IndexDb, RolloutPaths, RolloutPayload, ThreadIndexEntry, load_rollout, reconstruct_history,
-    rebuild_index_from_disk,
+    IndexDb, RolloutPaths, RolloutPayload, ThreadIndexEntry, load_rollout, rebuild_index_from_disk,
+    reconstruct_history,
 };
 use flate2::Compression;
 use flate2::write::GzEncoder;
@@ -162,8 +162,8 @@ pub async fn rollout_archive_command(opts: RolloutArchiveOptions) -> Result<Path
         .output
         .clone()
         .unwrap_or_else(|| PathBuf::from(format!("apxm-rollout-{}.tar.gz", opts.thread_id)));
-    let tar_file = File::create(&output)
-        .with_context(|| format!("failed to create {}", output.display()))?;
+    let tar_file =
+        File::create(&output).with_context(|| format!("failed to create {}", output.display()))?;
     let encoder = GzEncoder::new(tar_file, Compression::default());
     let mut builder = tar::Builder::new(encoder);
     // 1) Always include the rollout JSONL as `rollout.jsonl` at the
@@ -200,12 +200,7 @@ pub async fn rollout_archive_command(opts: RolloutArchiveOptions) -> Result<Path
     // 3) Optional skill source (skill.toml / SKILL.md / skill.air) +
     //    any .apxmobj alongside. Required for byte-identical replay.
     if let Some(skill_dir) = opts.skill_dir {
-        for filename in [
-            "skill.toml",
-            "SKILL.md",
-            "skill.air",
-            "skill.apxmobj",
-        ] {
+        for filename in ["skill.toml", "SKILL.md", "skill.air", "skill.apxmobj"] {
             let path = skill_dir.join(filename);
             if path.is_file() {
                 append_file(&mut builder, &path, &format!("skill/{filename}"))?;
@@ -221,8 +216,8 @@ fn append_file<W: std::io::Write>(
     path: &Path,
     name: &str,
 ) -> Result<()> {
-    let mut file = File::open(path)
-        .with_context(|| format!("failed to open {}", path.display()))?;
+    let mut file =
+        File::open(path).with_context(|| format!("failed to open {}", path.display()))?;
     builder
         .append_file(name, &mut file)
         .with_context(|| format!("failed to append {} as {name}", path.display()))?;
@@ -418,6 +413,9 @@ mod tests {
             .iter()
             .filter(|l| matches!(l.payload, RolloutPayload::Event(_)))
             .count();
-        assert_eq!(event_count, 3, "expected 3 Event payloads, got {event_count}");
+        assert_eq!(
+            event_count, 3,
+            "expected 3 Event payloads, got {event_count}"
+        );
     }
 }

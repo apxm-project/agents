@@ -203,7 +203,10 @@ fn attach_cache_salt(mut request: LLMRequest, cache_salt: String) -> LLMRequest 
         extra = JsonValue::Object(Default::default());
     }
     if let JsonValue::Object(ref mut map) = extra {
-        map.insert(extra_body_keys::CACHE_SALT_KEY.to_string(), JsonValue::String(cache_salt));
+        map.insert(
+            extra_body_keys::CACHE_SALT_KEY.to_string(),
+            JsonValue::String(cache_salt),
+        );
     }
     request.extra_body = Some(extra);
     request
@@ -576,8 +579,9 @@ async fn execute_llm_once(
     // collector. The collector union'd snapshot lands in
     // `dispatch_ir_metrics.fields_honored` at execution end.
     if let Some(backend_name) = pre_call_backend.as_deref()
-        && let Some(serde_json::Value::Array(fields)) =
-            response.metadata.get(apxm_core::constants::llm::apxm::FIELDS_HONORED_RECORD_KEY)
+        && let Some(serde_json::Value::Array(fields)) = response
+            .metadata
+            .get(apxm_core::constants::llm::apxm::FIELDS_HONORED_RECORD_KEY)
     {
         let honored: Vec<String> = fields
             .iter()

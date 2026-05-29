@@ -127,11 +127,7 @@ impl ExecutorEngine {
             match &result {
                 Ok(exec_result) => {
                     let had_answer = !exec_result.results.is_empty();
-                    emitter.emit_turn_complete(
-                        &self.context.execution_id,
-                        duration_ms,
-                        had_answer,
-                    );
+                    emitter.emit_turn_complete(&self.context.execution_id, duration_ms, had_answer);
                 }
                 Err(err) => {
                     emitter.emit_turn_aborted(
@@ -264,9 +260,11 @@ impl ExecutorEngine {
                         // type so observers can color the graph without
                         // re-inspecting the DAG.
                         for output_token in &node.output_tokens {
-                            for downstream in dag.nodes.iter().filter(|n| {
-                                n.input_tokens.iter().any(|t| t == output_token)
-                            }) {
+                            for downstream in dag
+                                .nodes
+                                .iter()
+                                .filter(|n| n.input_tokens.iter().any(|t| t == output_token))
+                            {
                                 let kind = graph_edge_kind_for_consumer(downstream.op_type);
                                 emitter.emit_graph_edge(node.id, downstream.id, kind);
                             }
@@ -766,7 +764,10 @@ mod tests {
         let messages = recorder.messages.lock().unwrap();
         let subagent_ends = recorder.subagent_ends.lock().unwrap();
         assert_eq!(*messages, vec!["final answer".to_string()]);
-        assert_eq!(*subagent_ends, 0, "top-level ASK must not emit subagent_llm_call_end");
+        assert_eq!(
+            *subagent_ends, 0,
+            "top-level ASK must not emit subagent_llm_call_end"
+        );
     }
 
     #[tokio::test]
@@ -795,14 +796,12 @@ mod tests {
                 _turn_id: Option<&str>,
                 _coordinator_label: Option<&str>,
             ) {
-                self.turn_starts.lock().unwrap().push(execution_id.to_string());
+                self.turn_starts
+                    .lock()
+                    .unwrap()
+                    .push(execution_id.to_string());
             }
-            fn emit_turn_complete(
-                &self,
-                execution_id: &str,
-                _duration_ms: u64,
-                had_answer: bool,
-            ) {
+            fn emit_turn_complete(&self, execution_id: &str, _duration_ms: u64, had_answer: bool) {
                 self.turn_completes
                     .lock()
                     .unwrap()

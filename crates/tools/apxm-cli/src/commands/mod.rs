@@ -19,19 +19,19 @@ pub mod execute;
 pub mod gui;
 pub mod ops;
 pub mod process;
-pub mod replay;
 #[cfg(feature = "driver")]
 pub mod render;
+pub mod replay;
 #[cfg(feature = "driver")]
 pub mod rollout;
 pub mod session;
 pub mod system;
-#[cfg(feature = "driver")]
-pub mod watch;
 pub mod team;
 pub mod template;
 pub mod tokenize;
 pub mod tool;
+#[cfg(feature = "driver")]
+pub mod watch;
 pub mod workflow;
 
 // Re-export CLI types
@@ -60,12 +60,12 @@ pub use replay::*;
 // no glob-export needed here.
 pub use session::*;
 pub use system::*;
-#[cfg(feature = "driver")]
-pub use watch::*;
 pub use team::*;
 pub use template::*;
 pub use tokenize::*;
 pub use tool::*;
+#[cfg(feature = "driver")]
+pub use watch::*;
 pub use workflow::*;
 
 #[derive(Debug)]

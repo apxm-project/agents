@@ -42,10 +42,7 @@ fn adapter() -> (Arc<Collector>, EmitterAdapter) {
 }
 
 fn payload<T: EventPayload>(event: &ApxmEvent) -> &T {
-    event
-        .payload
-        .downcast_ref::<T>()
-        .expect("payload downcast")
+    event.payload.downcast_ref::<T>().expect("payload downcast")
 }
 
 #[test]
@@ -137,7 +134,10 @@ fn communicate_dispatched_payload_carries_protocol_and_excerpt() {
     let p = payload::<CommunicateDispatchedPayload>(&events[0]);
     assert_eq!(p.target_agent, "module.crm");
     assert_eq!(p.protocol, "http");
-    assert_eq!(p.message_excerpt.as_deref(), Some("please triage incoming leads"));
+    assert_eq!(
+        p.message_excerpt.as_deref(),
+        Some("please triage incoming leads")
+    );
 }
 
 #[test]

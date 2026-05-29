@@ -114,7 +114,13 @@ async fn execute_impl(ctx: &ExecutionContext, node: &Node, inputs: Vec<Value>) -
 
     // Step 7: record provenance evidence (resolved triple + child
     // execution id + namespaced outputs) on the parent AAM.
-    record_call_skill_outputs(ctx, node.id, &skill_id, requested_version.as_deref(), &result);
+    record_call_skill_outputs(
+        ctx,
+        node.id,
+        &skill_id,
+        requested_version.as_deref(),
+        &result,
+    );
 
     Ok(result.return_value)
 }
@@ -395,10 +401,7 @@ mod tests {
         let node = call_skill_node("../escape");
         let result = execute(&ctx, &node, vec![]).await;
         let err = result.expect_err("expected invalid skill_id");
-        assert!(
-            err.to_string().contains("invalid skill_id"),
-            "got: {err}"
-        );
+        assert!(err.to_string().contains("invalid skill_id"), "got: {err}");
     }
 
     #[tokio::test]
@@ -408,8 +411,7 @@ mod tests {
         let err = execute(&ctx, &node, vec![]).await.expect_err("no resolver");
         let message = err.to_string();
         assert!(
-            message.contains("no SkillResolver configured")
-                || message.contains("no_resolver"),
+            message.contains("no SkillResolver configured") || message.contains("no_resolver"),
             "got: {message}"
         );
     }

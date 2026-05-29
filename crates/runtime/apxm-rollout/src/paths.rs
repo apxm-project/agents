@@ -64,7 +64,9 @@ impl RolloutPaths {
 
     /// `<apxm_home>/sessions/rollouts/YYYY/MM/DD`
     pub fn rollouts_date_dir(&self, started_at: DateTime<Utc>) -> PathBuf {
-        self.sessions_root().join(ROLLOUTS_DIR).join(year_month_day(started_at))
+        self.sessions_root()
+            .join(ROLLOUTS_DIR)
+            .join(year_month_day(started_at))
     }
 
     /// Main thread rollout file path.
@@ -116,11 +118,7 @@ fn year_month_day(ts: DateTime<Utc>) -> String {
 
 /// Convenience wrapper for callers that don't want to instantiate a
 /// [`RolloutPaths`] just to resolve one file.
-pub fn rollout_path_for(
-    apxm_home: &Path,
-    thread_id: &str,
-    started_at: DateTime<Utc>,
-) -> PathBuf {
+pub fn rollout_path_for(apxm_home: &Path, thread_id: &str, started_at: DateTime<Utc>) -> PathBuf {
     RolloutPaths::new(apxm_home.to_path_buf()).rollout_path(thread_id, started_at)
 }
 

@@ -215,10 +215,7 @@ pub(crate) fn run_graph_path(execution_id: impl Display) -> String {
 }
 
 #[allow(dead_code)]
-pub(crate) fn run_node_detail_path(
-    execution_id: impl Display,
-    node_id: impl Display,
-) -> String {
+pub(crate) fn run_node_detail_path(execution_id: impl Display, node_id: impl Display) -> String {
     format!("{RUNS}/{execution_id}/nodes/{node_id}")
 }
 
@@ -233,9 +230,6 @@ pub(crate) fn run_events_stream_path(execution_id: impl Display) -> String {
 }
 
 #[allow(dead_code)]
-pub(crate) fn run_blob_path(
-    execution_id: impl Display,
-    blob_ref: impl Display,
-) -> String {
+pub(crate) fn run_blob_path(execution_id: impl Display, blob_ref: impl Display) -> String {
     format!("{RUNS}/{execution_id}/blobs/{blob_ref}")
 }
