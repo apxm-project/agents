@@ -89,16 +89,28 @@ pub struct ProviderSpec {
 }
 
 /// Normalize provider endpoints so versioned APIs store `/v1` exactly once.
+///
+/// The `/v1` version prefix is only auto-appended for a bare host
+/// (e.g. `https://api.openai.com` -> `https://api.openai.com/v1`). When the
+/// caller supplies an endpoint that already carries a path — such as a gateway
+/// base like `https://host/openai` (Azure APIM) — the path is trusted verbatim
+/// and no `/v1` is synthesized, since the gateway routes under that prefix and
+/// would 404 on `/openai/v1/...`.
 pub fn normalize_endpoint_for_protocol(protocol: ProviderProtocol, endpoint: &str) -> String {
     let trimmed = endpoint.trim_end_matches('/');
     let needs_v1 = matches!(
         protocol,
         ProviderProtocol::OpenAI | ProviderProtocol::Anthropic | ProviderProtocol::Vllm
     );
-    if needs_v1 && !trimmed.ends_with("/v1") {
-        format!("{trimmed}/v1")
-    } else {
+    if !needs_v1 || trimmed.ends_with("/v1") {
+        return trimmed.to_string();
+    }
+    // A path beyond the host means the caller pinned the API base explicitly.
+    let after_scheme = trimmed.split_once("://").map_or(trimmed, |(_, rest)| rest);
+    if after_scheme.contains('/') {
         trimmed.to_string()
+    } else {
+        format!("{trimmed}/v1")
     }
 }
 
@@ -129,6 +141,30 @@ mod tests {
         assert_eq!(
             normalize_endpoint_for_protocol(ProviderProtocol::Ollama, "http://localhost:11434/"),
             "http://localhost:11434"
+        );
+    }
+
+    #[test]
+    fn normalize_endpoint_trusts_explicit_gateway_path() {
+        // Gateway base under a path prefix must not gain a `/v1` segment.
+        assert_eq!(
+            normalize_endpoint_for_protocol(
+                ProviderProtocol::OpenAI,
+                "https://gateway.example.com/openai"
+            ),
+            "https://gateway.example.com/openai"
+        );
+        assert_eq!(
+            normalize_endpoint_for_protocol(
+                ProviderProtocol::OpenAI,
+                "https://gateway.example.com/openai/"
+            ),
+            "https://gateway.example.com/openai"
+        );
+        // Bare host still gets the version prefix.
+        assert_eq!(
+            normalize_endpoint_for_protocol(ProviderProtocol::OpenAI, "https://api.openai.com"),
+            "https://api.openai.com/v1"
         );
     }
 }

@@ -74,6 +74,7 @@
           "agent": { "type": "string" },
           "capability": { "type": "string" },
           "args": { "type": "object" },
+          "max_tokens": { "type": "integer", "minimum": 1 },
           "depends_on": {
             "type": "array",
             "items": {

@@ -23,9 +23,12 @@
 
 pub mod aam;
 pub mod attrs;
+pub mod capabilities;
+pub mod defaults;
 pub mod memory;
 pub mod operations;
 pub mod passes;
+pub mod plan;
 pub mod types;
 pub mod validation;
 

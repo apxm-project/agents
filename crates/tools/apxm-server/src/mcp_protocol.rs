@@ -168,6 +168,7 @@ pub(crate) mod plan_field {
     pub(crate) const ENTRY: &str = "entry";
     pub(crate) const GRAPH: &str = "graph";
     pub(crate) const ID: &str = "id";
+    pub(crate) const MAX_TOKENS: &str = "max_tokens";
     pub(crate) const NAME: &str = "name";
     pub(crate) const NODE: &str = "node";
     pub(crate) const NODES: &str = "nodes";
