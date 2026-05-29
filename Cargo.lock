@@ -283,6 +283,7 @@ name = "apxm-core"
 version = "0.0.1"
 dependencies = [
  "anyhow",
+ "apxm-ais",
  "blake3",
  "chrono",
  "colored",
@@ -396,6 +397,7 @@ name = "apxm-server"
 version = "0.0.1"
 dependencies = [
  "anyhow",
+ "apxm-ais",
  "apxm-artifact",
  "apxm-backends",
  "apxm-compiler",
