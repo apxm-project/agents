@@ -156,7 +156,12 @@ mod tests {
 
         assert!(output.contains("export type EventCategory ="));
         assert!(output.contains("| \"observability\""));
-        assert!(output.contains("| \"user_action\";"));
+        assert!(output.contains("| \"user_action\""));
+        // The union terminates with the last EventCategory variant (with `;`).
+        // Don't hard-code which is last — derive it from the registry so adding
+        // a category never breaks this test again.
+        let last = EventCategory::ALL.last().unwrap().as_str();
+        assert!(output.contains(&format!("| \"{last}\";")));
     }
 
     #[test]
