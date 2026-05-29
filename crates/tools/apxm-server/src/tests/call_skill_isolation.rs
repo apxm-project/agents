@@ -128,8 +128,10 @@ fn write_failing_child_skill(root: &std::path::Path) {
     // Intentionally omit graph_attrs::MESSAGE — the Err handler returns
     // a typed error when the message attribute is missing, which the
     // scheduler propagates as a node failure.
-    node.attributes
-        .insert(graph_attrs::VALUE.to_string(), Value::String("unused".to_string()));
+    node.attributes.insert(
+        graph_attrs::VALUE.to_string(),
+        Value::String("unused".to_string()),
+    );
     let dag = ExecutionDag {
         nodes: vec![node],
         edges: vec![],
@@ -173,7 +175,14 @@ async fn call_skill_resolver_rejects_path_shaped_ids_as_not_found() {
     write_executable_skill(temp.path());
     let resolver = build_resolver(temp.path());
 
-    for hostile in ["../escape", "foo/bar", "~/skill", "skill\x00null", " skill", "skill "] {
+    for hostile in [
+        "../escape",
+        "foo/bar",
+        "~/skill",
+        "skill\x00null",
+        " skill",
+        "skill ",
+    ] {
         let err = resolver
             .call_skill(request(hostile, None, 1))
             .await
@@ -223,7 +232,12 @@ async fn call_skill_resolver_rejects_missing_version() {
 async fn call_skill_resolver_rejects_capability_widening() {
     let temp = tempfile::tempdir().expect("tempdir");
     let artifact = skill_artifact_bytes(AISOperationType::ConstStr);
-    write_policy_skill_with_artifact(temp.path(), &artifact, FIXTURE_CAPABILITY, FIXTURE_CAPABILITY);
+    write_policy_skill_with_artifact(
+        temp.path(),
+        &artifact,
+        FIXTURE_CAPABILITY,
+        FIXTURE_CAPABILITY,
+    );
     let resolver = build_resolver(temp.path());
 
     let err = resolver
@@ -276,7 +290,10 @@ async fn call_skill_namespaces_child_outputs() {
         .await
         .expect("parent execution");
     assert_eq!(result.stats.failed_nodes, 0, "no parent nodes should fail");
-    assert_eq!(result.stats.executed_nodes, 2, "both call_skill nodes executed");
+    assert_eq!(
+        result.stats.executed_nodes, 2,
+        "both call_skill nodes executed"
+    );
 
     let beliefs = runtime.aam().beliefs();
     let key_10 = format!("{CALL_SKILL_OUTPUT_PREFIX}{FIXTURE_SKILL_ID}:10");
@@ -317,9 +334,12 @@ async fn call_skill_records_resolved_provenance() {
     // fixture actually wrote — the in-memory byte serialization can
     // differ from a fresh call (e.g. ordering, padding) so the only
     // sound oracle is the on-disk artifact.
-    let artifact_on_disk =
-        std::fs::read(temp.path().join(FIXTURE_PACKAGE_DIR).join(FILE_SKILL_ARTIFACT))
-            .expect("read fixture artifact bytes");
+    let artifact_on_disk = std::fs::read(
+        temp.path()
+            .join(FIXTURE_PACKAGE_DIR)
+            .join(FILE_SKILL_ARTIFACT),
+    )
+    .expect("read fixture artifact bytes");
     let expected_hash = tagged_blake3(&artifact_on_disk);
 
     let runtime = runtime_with_skill_root(temp.path()).await;
@@ -337,15 +357,15 @@ async fn call_skill_records_resolved_provenance() {
         .get(&key)
         .cloned()
         .expect("provenance belief");
-    assert_eq!(
-        belief_resolved_field(&belief, "skill_id"),
-        FIXTURE_SKILL_ID
-    );
+    assert_eq!(belief_resolved_field(&belief, "skill_id"), FIXTURE_SKILL_ID);
     assert_eq!(
         belief_resolved_field(&belief, "version"),
         FIXTURE_SKILL_VERSION
     );
-    assert_eq!(belief_resolved_field(&belief, "artifact_hash"), expected_hash);
+    assert_eq!(
+        belief_resolved_field(&belief, "artifact_hash"),
+        expected_hash
+    );
 }
 
 // ── Gate 7 ─────────────────────────────────────────────────────────────

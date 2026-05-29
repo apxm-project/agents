@@ -214,8 +214,8 @@ async fn run_cli(cli: Cli) -> Result<()> {
 #[cfg(feature = "driver")]
 async fn rollout_action(action: commands::RolloutAction) -> Result<()> {
     use commands::rollout::{
-        RolloutArchiveOptions, RolloutListOptions, RolloutReplayOptions,
-        rollout_archive_command, rollout_list_command, rollout_replay_command,
+        RolloutArchiveOptions, RolloutListOptions, RolloutReplayOptions, rollout_archive_command,
+        rollout_list_command, rollout_replay_command,
     };
     match action {
         commands::RolloutAction::List {

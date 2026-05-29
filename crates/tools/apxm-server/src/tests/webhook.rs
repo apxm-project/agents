@@ -72,8 +72,7 @@ fn make_agent_spawned_event(execution_id: &str) -> ApxmEvent {
 async fn webhook_fires_on_run_started_run_completed() {
     let sink = spawn_webhook_sink().await;
     let url = format!("http://{}/notify", sink.addr);
-    let dispatcher =
-        Arc::new(WebhookDispatcher::new(url).expect("webhook dispatcher"));
+    let dispatcher = Arc::new(WebhookDispatcher::new(url).expect("webhook dispatcher"));
 
     dispatcher.dispatch(make_agent_spawned_event("exec-1"));
 
@@ -94,8 +93,7 @@ async fn webhook_fires_on_run_started_run_completed() {
 async fn webhook_carries_same_envelope_as_sse() {
     let sink = spawn_webhook_sink().await;
     let url = format!("http://{}/notify", sink.addr);
-    let dispatcher =
-        Arc::new(WebhookDispatcher::new(url).expect("webhook dispatcher"));
+    let dispatcher = Arc::new(WebhookDispatcher::new(url).expect("webhook dispatcher"));
 
     let event = make_agent_spawned_event("exec-2");
     let expected = serde_json::to_value(&event).expect("serialize event");
@@ -119,9 +117,8 @@ async fn webhook_carries_same_envelope_as_sse() {
 async fn webhook_failure_does_not_block_execution() {
     // Point at a port nobody is listening on; the dispatch must
     // return immediately and surface no error to the caller.
-    let dispatcher = Arc::new(
-        WebhookDispatcher::new("http://127.0.0.1:1/notify").expect("dispatcher"),
-    );
+    let dispatcher =
+        Arc::new(WebhookDispatcher::new("http://127.0.0.1:1/notify").expect("dispatcher"));
 
     let started = std::time::Instant::now();
     dispatcher.dispatch(make_agent_spawned_event("exec-3"));
@@ -135,8 +132,7 @@ async fn webhook_failure_does_not_block_execution() {
 async fn webhook_skips_non_lifecycle_events() {
     let sink = spawn_webhook_sink().await;
     let url = format!("http://{}/notify", sink.addr);
-    let dispatcher =
-        Arc::new(WebhookDispatcher::new(url).expect("webhook dispatcher"));
+    let dispatcher = Arc::new(WebhookDispatcher::new(url).expect("webhook dispatcher"));
 
     // OperationStart is observability noise — the dispatcher must
     // filter it out so external sinks don't drown.

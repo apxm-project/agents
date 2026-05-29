@@ -167,9 +167,7 @@ fn select_by_strategy(
             round_robin_counter,
             model_filter,
         ),
-        RoutingStrategy::LowLatency => {
-            select_low_latency(candidates, health_monitor, model_filter)
-        }
+        RoutingStrategy::LowLatency => select_low_latency(candidates, health_monitor, model_filter),
     }
 }
 

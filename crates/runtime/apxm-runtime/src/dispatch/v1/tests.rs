@@ -276,13 +276,8 @@ mod gating {
         };
 
         let no_honored = HashMap::<String, Vec<String>>::new();
-        let json = dispatch_ir_accounting_json(
-            Some(&ir),
-            &backend_capabilities,
-            &[],
-            &[fb],
-            &no_honored,
-        );
+        let json =
+            dispatch_ir_accounting_json(Some(&ir), &backend_capabilities, &[], &[fb], &no_honored);
 
         assert_eq!(json["fallback_triggered"], true);
         assert_eq!(json["fallbacks"][0]["backend"], "openai-shim");
@@ -375,13 +370,8 @@ mod gating {
         let mut backend_capabilities = HashMap::new();
         backend_capabilities.insert("vllm".to_owned(), caps_full());
         let no_honored = HashMap::<String, Vec<String>>::new();
-        let json = dispatch_ir_accounting_json(
-            Some(&ir),
-            &backend_capabilities,
-            &[],
-            &[],
-            &no_honored,
-        );
+        let json =
+            dispatch_ir_accounting_json(Some(&ir), &backend_capabilities, &[], &[], &no_honored);
         assert_eq!(json["fallback_triggered"], false);
         assert!(json["fallbacks"].as_array().unwrap().is_empty());
     }

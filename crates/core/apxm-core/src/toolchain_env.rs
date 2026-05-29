@@ -40,20 +40,11 @@ pub const APXM_COMPILER_BUILD_RERUN_ENV_KEYS: &[&str] = &[
 pub const PREFIX_ENV_KEYS_LOOKUP_ORDER: &[&str] = &[MLIR_PREFIX, LLVM_PREFIX, CONDA_PREFIX];
 
 /// All prefix-related keys `build.rs` tools should watch for rebuild invalidation.
-pub const PREFIX_ENV_KEYS_FOR_RERUN: &[&str] = &[
-    MLIR_PREFIX,
-    LLVM_PREFIX,
-    CONDA_PREFIX,
-];
+pub const PREFIX_ENV_KEYS_FOR_RERUN: &[&str] = &[MLIR_PREFIX, LLVM_PREFIX, CONDA_PREFIX];
 
 /// Keys used when resolving LLVM/MLIR shared libraries beside CMake metadata.
-pub const MLIR_TOOLCHAIN_LIBRARY_ENV_KEYS: &[&str] = &[
-    MLIR_PREFIX,
-    CONDA_PREFIX,
-    LLVM_PREFIX,
-    MLIR_DIR,
-    LLVM_DIR,
-];
+pub const MLIR_TOOLCHAIN_LIBRARY_ENV_KEYS: &[&str] =
+    &[MLIR_PREFIX, CONDA_PREFIX, LLVM_PREFIX, MLIR_DIR, LLVM_DIR];
 
 /// User-facing hint when MLIR cannot be detected (drivers, diagnostics).
 #[must_use]

@@ -559,10 +559,8 @@ artifact_hash = "blake3:deadbeef"
 required_capabilities = ["plan_emission_v1"]
 "#;
         let stripped = strip_artifact_hash_for_embed(original).expect("strip");
-        let parsed = apxm_skill::parse_manifest(
-            std::str::from_utf8(&stripped).expect("utf8"),
-        )
-        .expect("re-parse stripped manifest");
+        let parsed = apxm_skill::parse_manifest(std::str::from_utf8(&stripped).expect("utf8"))
+            .expect("re-parse stripped manifest");
         assert_eq!(parsed.skill_id, "demo");
         assert_eq!(parsed.version, "0.1.0");
         assert_eq!(parsed.entry_flow, "main");
@@ -598,12 +596,10 @@ required_capabilities = ["plan_emission_v1"]
             .expect("embedded skill_manifest section");
         assert_eq!(section_bytes, stripped.as_slice());
 
-        let reparsed = apxm_skill::parse_manifest(
-            std::str::from_utf8(section_bytes).expect("utf8"),
-        )
-        .expect("re-parse embedded manifest");
-        let original =
-            apxm_skill::parse_manifest(manifest_toml).expect("parse original manifest");
+        let reparsed =
+            apxm_skill::parse_manifest(std::str::from_utf8(section_bytes).expect("utf8"))
+                .expect("re-parse embedded manifest");
+        let original = apxm_skill::parse_manifest(manifest_toml).expect("parse original manifest");
         // artifact_hash is intentionally stripped; every other declared field
         // matches the on-disk manifest field-for-field.
         let mut expected = original;

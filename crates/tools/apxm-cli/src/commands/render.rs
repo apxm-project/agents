@@ -101,13 +101,10 @@ impl RunSnapshot {
                 .map(str::to_string)
                 .or_else(|| self.node_to_agent.get(&payload.node_id).cloned());
             if let Some(code) = agent_code {
-                let entry = self
-                    .agents
-                    .entry(code.clone())
-                    .or_insert_with(|| AgentRow {
-                        agent_code: code.clone(),
-                        ..AgentRow::default()
-                    });
+                let entry = self.agents.entry(code.clone()).or_insert_with(|| AgentRow {
+                    agent_code: code.clone(),
+                    ..AgentRow::default()
+                });
                 entry.status = AgentStatus::Running;
             }
         }
@@ -126,13 +123,10 @@ impl RunSnapshot {
             // back to the most recently spawned agent so the counters still
             // attach to something visible.
             if let Some(code) = tool_agent_code(payload, &self.agents) {
-                let entry = self
-                    .agents
-                    .entry(code.clone())
-                    .or_insert_with(|| AgentRow {
-                        agent_code: code.clone(),
-                        ..AgentRow::default()
-                    });
+                let entry = self.agents.entry(code.clone()).or_insert_with(|| AgentRow {
+                    agent_code: code.clone(),
+                    ..AgentRow::default()
+                });
                 entry.tool_calls += 1;
                 entry.last_tool = Some(payload.name.clone());
                 if entry.status == AgentStatus::Pending {
@@ -161,7 +155,6 @@ impl RunSnapshot {
             .values()
             .any(|a| matches!(a.status, AgentStatus::Spawning | AgentStatus::Running))
     }
-
 }
 
 fn tool_agent_code(

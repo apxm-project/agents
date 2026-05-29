@@ -489,7 +489,10 @@ mod tests {
                 _autonomy_policy: Option<&str>,
                 _parent_span_id: Option<&str>,
             ) {
-                self.spawn_begins.lock().unwrap().push(agent_code.to_string());
+                self.spawn_begins
+                    .lock()
+                    .unwrap()
+                    .push(agent_code.to_string());
             }
             fn emit_subagent_spawn_end(&self, agent_code: &str) {
                 self.spawn_ends.lock().unwrap().push(agent_code.to_string());

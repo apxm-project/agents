@@ -1510,10 +1510,11 @@ async fn mcp_resources_list_builtin_wins_on_id_collision() {
         "expected versioned user URI on id collision: {uris:?}"
     );
     assert!(
-        uris.iter().any(|uri| uri.starts_with(&format!(
-            "skill://{BUILTIN_SKILL_ID}@"
-        )) && uri.ends_with(&format!("/{FILE_SKILL_SOURCE}"))
-            && uri != &user_versioned_uri),
+        uris.iter().any(
+            |uri| uri.starts_with(&format!("skill://{BUILTIN_SKILL_ID}@"))
+                && uri.ends_with(&format!("/{FILE_SKILL_SOURCE}"))
+                && uri != &user_versioned_uri
+        ),
         "expected builtin to appear as a separate versioned URI on collision: {uris:?}"
     );
     assert!(

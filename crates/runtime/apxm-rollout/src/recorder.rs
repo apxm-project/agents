@@ -87,7 +87,9 @@ impl RolloutRecorder {
     ) -> Result<Self, RolloutWriteError> {
         let file_path = match config.override_path.clone() {
             Some(path) => path,
-            None => config.paths.rollout_path(&config.thread_id, config.started_at),
+            None => config
+                .paths
+                .rollout_path(&config.thread_id, config.started_at),
         };
         if let Some(parent) = file_path.parent() {
             tokio::fs::create_dir_all(parent).await?;

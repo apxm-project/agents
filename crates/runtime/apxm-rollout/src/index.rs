@@ -116,10 +116,7 @@ impl IndexDb {
         Ok(rows)
     }
 
-    pub fn list_by_session(
-        &self,
-        session_id: &str,
-    ) -> Result<Vec<ThreadIndexEntry>, IndexError> {
+    pub fn list_by_session(&self, session_id: &str) -> Result<Vec<ThreadIndexEntry>, IndexError> {
         let mut stmt = self.conn.prepare(
             "SELECT thread_id, parent_thread_id, session_id, started_at, completed_at,
                     status, agent_role, agent_code, file_path, line_count, file_bytes
@@ -131,10 +128,7 @@ impl IndexDb {
         Ok(rows)
     }
 
-    pub fn children_of(
-        &self,
-        parent_thread_id: &str,
-    ) -> Result<Vec<ThreadIndexEntry>, IndexError> {
+    pub fn children_of(&self, parent_thread_id: &str) -> Result<Vec<ThreadIndexEntry>, IndexError> {
         let mut stmt = self.conn.prepare(
             "SELECT thread_id, parent_thread_id, session_id, started_at, completed_at,
                     status, agent_role, agent_code, file_path, line_count, file_bytes
@@ -147,9 +141,9 @@ impl IndexDb {
     }
 
     pub fn count(&self) -> Result<usize, IndexError> {
-        let count: i64 =
-            self.conn
-                .query_row("SELECT COUNT(*) FROM threads", [], |row| row.get(0))?;
+        let count: i64 = self
+            .conn
+            .query_row("SELECT COUNT(*) FROM threads", [], |row| row.get(0))?;
         Ok(count as usize)
     }
 }
@@ -226,9 +220,7 @@ pub async fn rebuild_index_from_disk(paths: &RolloutPaths) -> Result<usize, Inde
                 RolloutPayload::SessionMeta(m) => (**m).clone(),
                 _ => continue,
             };
-            let file_bytes = std::fs::metadata(path)
-                .map(|m| m.len() as i64)
-                .unwrap_or(0);
+            let file_bytes = std::fs::metadata(path).map(|m| m.len() as i64).unwrap_or(0);
             db.insert_or_update(&ThreadIndexEntry {
                 thread_id: session_meta.thread_id,
                 parent_thread_id: session_meta.parent_thread_id,
@@ -262,9 +254,7 @@ pub async fn index_entry_for_file(
             return Err(IndexError::Sqlite(rusqlite::Error::InvalidQuery));
         }
     };
-    let file_bytes = std::fs::metadata(path)
-        .map(|m| m.len() as i64)
-        .unwrap_or(0);
+    let file_bytes = std::fs::metadata(path).map(|m| m.len() as i64).unwrap_or(0);
     Ok(ThreadIndexEntry {
         thread_id: meta.thread_id,
         parent_thread_id: meta.parent_thread_id,

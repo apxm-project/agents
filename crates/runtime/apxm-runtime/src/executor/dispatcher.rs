@@ -85,8 +85,8 @@ fn operation_start_context(node: &Node) -> Option<serde_json::Value> {
             let mut ctx = serde_json::Map::new();
             // COMMUNICATE uses `recipient` (current) or `target` (legacy);
             // mirror handlers/communicate/mod.rs and accept both.
-            if let Some(target) = attr(node, graph_attrs::RECIPIENT)
-                .or_else(|| attr(node, graph_attrs::TARGET))
+            if let Some(target) =
+                attr(node, graph_attrs::RECIPIENT).or_else(|| attr(node, graph_attrs::TARGET))
             {
                 ctx.insert("target_agent".to_string(), target.into());
             }
@@ -232,55 +232,57 @@ impl OperationDispatcher {
         // begin so the end remains coherent even if a nested SPAWN_AGENT
         // mutates the stack mid-handler.
         let layer2_begin = if let Some(emitter) = &ctx.event_emitter {
-            ctx.agent_scope_stack.peek().and_then(|scope| match node.op_type {
-                AISOperationType::Ask | AISOperationType::Think | AISOperationType::Reason => {
-                    let model = node
-                        .attributes
-                        .get(graph_attrs::MODEL)
-                        .and_then(|v| v.as_string())
-                        .cloned()
-                        .unwrap_or_default();
-                    let backend = node
-                        .attributes
-                        .get(graph_attrs::BACKEND)
-                        .and_then(|v| v.as_string())
-                        .cloned()
-                        .unwrap_or_else(|| LAYER2_BACKEND_DEFAULT.to_string());
-                    let tool_manifest_count = node
-                        .attributes
-                        .get(graph_attrs::TOOLS)
-                        .and_then(|v| v.as_array())
-                        .map(|a| a.len())
-                        .unwrap_or(0);
-                    emitter.emit_subagent_llm_call_begin(
-                        &scope.agent_code,
-                        &model,
-                        &backend,
-                        tool_manifest_count,
-                    );
-                    Some(Layer2BeginContext {
-                        agent_code: scope.agent_code.clone(),
-                        tool_name: None,
-                        started_at: op_start,
-                    })
-                }
-                AISOperationType::InvTool => {
-                    let tool_name = node
-                        .attributes
-                        .get(graph_attrs::CAPABILITY)
-                        .and_then(|v| v.as_string())
-                        .cloned()
-                        .unwrap_or_default();
-                    let argument_keys = inv_tool_argument_keys(node);
-                    emitter.emit_tool_call_begin(&scope.agent_code, &tool_name, &argument_keys);
-                    Some(Layer2BeginContext {
-                        agent_code: scope.agent_code.clone(),
-                        tool_name: Some(tool_name),
-                        started_at: op_start,
-                    })
-                }
-                _ => None,
-            })
+            ctx.agent_scope_stack
+                .peek()
+                .and_then(|scope| match node.op_type {
+                    AISOperationType::Ask | AISOperationType::Think | AISOperationType::Reason => {
+                        let model = node
+                            .attributes
+                            .get(graph_attrs::MODEL)
+                            .and_then(|v| v.as_string())
+                            .cloned()
+                            .unwrap_or_default();
+                        let backend = node
+                            .attributes
+                            .get(graph_attrs::BACKEND)
+                            .and_then(|v| v.as_string())
+                            .cloned()
+                            .unwrap_or_else(|| LAYER2_BACKEND_DEFAULT.to_string());
+                        let tool_manifest_count = node
+                            .attributes
+                            .get(graph_attrs::TOOLS)
+                            .and_then(|v| v.as_array())
+                            .map(|a| a.len())
+                            .unwrap_or(0);
+                        emitter.emit_subagent_llm_call_begin(
+                            &scope.agent_code,
+                            &model,
+                            &backend,
+                            tool_manifest_count,
+                        );
+                        Some(Layer2BeginContext {
+                            agent_code: scope.agent_code.clone(),
+                            tool_name: None,
+                            started_at: op_start,
+                        })
+                    }
+                    AISOperationType::InvTool => {
+                        let tool_name = node
+                            .attributes
+                            .get(graph_attrs::CAPABILITY)
+                            .and_then(|v| v.as_string())
+                            .cloned()
+                            .unwrap_or_default();
+                        let argument_keys = inv_tool_argument_keys(node);
+                        emitter.emit_tool_call_begin(&scope.agent_code, &tool_name, &argument_keys);
+                        Some(Layer2BeginContext {
+                            agent_code: scope.agent_code.clone(),
+                            tool_name: Some(tool_name),
+                            started_at: op_start,
+                        })
+                    }
+                    _ => None,
+                })
         } else {
             None
         };
@@ -397,9 +399,7 @@ impl OperationDispatcher {
             if let Some(begin) = layer2_begin.as_ref() {
                 let latency_ms = begin.started_at.elapsed().as_millis() as u64;
                 match node.op_type {
-                    AISOperationType::Ask
-                    | AISOperationType::Think
-                    | AISOperationType::Reason => {
+                    AISOperationType::Ask | AISOperationType::Think | AISOperationType::Reason => {
                         let (input_tokens, output_tokens) = tokens
                             .as_ref()
                             .map(|t| (t.input_tokens, t.output_tokens))
@@ -449,14 +449,7 @@ impl OperationDispatcher {
                 }
             }
 
-            emitter.emit_operation_end(
-                node.id,
-                node.op_type,
-                op_duration,
-                success,
-                tokens,
-                timing,
-            );
+            emitter.emit_operation_end(node.id, node.op_type, op_duration, success, tokens, timing);
         }
 
         // Restore parent span after node execution completes.

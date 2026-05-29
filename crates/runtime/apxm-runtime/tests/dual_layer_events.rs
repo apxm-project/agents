@@ -9,16 +9,16 @@ use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
-use apxm_backends::llm::backends::mock::MockLLMBackend;
 use apxm_backends::LLMRegistry;
+use apxm_backends::llm::backends::mock::MockLLMBackend;
 use apxm_core::constants::graph::attrs as graph_attrs;
+use apxm_core::types::TimingBreakdown;
 use apxm_core::types::execution::{ExecutionDag, Node, NodeMetadata};
 use apxm_core::types::operations::AISOperationType;
 use apxm_core::types::values::Value;
-use apxm_core::types::TimingBreakdown;
 use apxm_runtime::aam::Aam;
-use apxm_runtime::capability::executor::EchoCapability;
 use apxm_runtime::capability::CapabilitySystem;
+use apxm_runtime::capability::executor::EchoCapability;
 use apxm_runtime::executor::{ExecutionContext, ExecutorEngine};
 use apxm_runtime::memory::{MemoryConfig, MemorySystem};
 use apxm_runtime::{ExecutionEventEmitter, TokenUsageSummary};
@@ -131,12 +131,7 @@ impl ExecutionEventEmitter for StreamRecorder {
     ) {
         self.push("subagent_llm_call_end");
     }
-    fn emit_tool_call_begin(
-        &self,
-        _agent_code: &str,
-        _tool_name: &str,
-        _argument_keys: &[String],
-    ) {
+    fn emit_tool_call_begin(&self, _agent_code: &str, _tool_name: &str, _argument_keys: &[String]) {
         self.push("tool_call_begin");
     }
     fn emit_tool_call_end(
@@ -276,9 +271,7 @@ async fn dual_layer_events_smoke_emits_paired_l1_l2_stream() {
     // Layer 1 + Layer 2 pairings must all be present.
     assert!(events.iter().any(|e| e == "turn_started"));
     assert!(events.iter().any(|e| e == "turn_complete"));
-    assert!(events
-        .iter()
-        .any(|e| e == "operation_start[SpawnAgent]"));
+    assert!(events.iter().any(|e| e == "operation_start[SpawnAgent]"));
     assert!(events.iter().any(|e| e == "agent_spawned"));
     assert!(events.iter().any(|e| e == "subagent_spawn_begin"));
     assert!(events.iter().any(|e| e == "subagent_spawn_end"));

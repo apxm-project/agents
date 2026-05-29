@@ -134,10 +134,7 @@ async fn last_event_id_reconnect_replays_from_disk() {
     let (items, _) = load_rollout(&file_path).await.unwrap();
     // Resume past seq=5 — caller filters by meta.seq >= since.
     let since: u64 = 5;
-    let replay: Vec<_> = items
-        .iter()
-        .filter(|l| l.meta.seq >= since)
-        .collect();
+    let replay: Vec<_> = items.iter().filter(|l| l.meta.seq >= since).collect();
     // 11 total (SessionMeta + 10), 6 lines from seq=5 .. seq=10 inclusive.
     assert_eq!(replay.len(), 6);
     assert_eq!(replay.first().unwrap().meta.seq, 5);

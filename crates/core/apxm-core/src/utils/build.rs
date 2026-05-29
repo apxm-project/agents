@@ -8,8 +8,8 @@ use std::{
     process::Command,
 };
 
-use crate::toolchain_env;
 use crate::log_debug;
+use crate::toolchain_env;
 
 /// Platform-specific library naming conventions
 #[derive(Debug, Clone, Copy)]
