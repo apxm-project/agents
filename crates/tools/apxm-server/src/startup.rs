@@ -60,9 +60,13 @@ pub(crate) async fn run_server() -> anyhow::Result<()> {
 pub(crate) async fn run_server_with_config(server_config: ServerConfig) -> anyhow::Result<()> {
     let args: Vec<String> = std::env::args().collect();
     let skill_roots = prepend_builtin_skill_root(parse_skill_roots(&args));
-    let skill_library = SkillLibrary::new(skill_roots);
+    let skill_library = SkillLibrary::new(skill_roots.clone());
 
     let runtime = build_runtime_with_router(server_runtime_config(&server_config)).await?;
+    // Keystone: register connector "action" blocks declared in installed packs'
+    // pack-root tools.toml (default backing = provider.call), so installing a
+    // pack makes its blocks real capabilities with no per-provider Rust.
+    crate::capability::register_pack_tools(&runtime, &skill_roots);
     let mut runtime = Arc::new(runtime);
     crate::call_skill::install(&mut runtime, skill_library.clone());
 
