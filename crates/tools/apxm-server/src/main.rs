@@ -39,6 +39,7 @@ mod agent;
 mod app;
 mod call_skill;
 mod capability;
+mod credentials;
 mod checkpoints;
 mod error;
 mod execute;
