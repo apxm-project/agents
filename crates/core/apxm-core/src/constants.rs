@@ -60,6 +60,10 @@ pub mod env {
     pub const APXM_ROLLOUT_SPILL_THRESHOLD_BYTES: &str = "APXM_ROLLOUT_SPILL_THRESHOLD_BYTES";
     /// Bind address for the APXM server (e.g. 127.0.0.1:18800).
     pub const APXM_SERVER_ADDR: &str = "APXM_SERVER_ADDR";
+    /// Opt-in: require a bearer token on mutating routes (fail-closed when set).
+    pub const APXM_SERVER_REQUIRE_AUTH: &str = "APXM_SERVER_REQUIRE_AUTH";
+    /// Explicit server bearer token (overrides the apxm-auth bearer file).
+    pub const APXM_SERVER_BEARER: &str = "APXM_SERVER_BEARER";
     /// Maximum concurrent expensive inference work admitted by the server.
     pub const APXM_SERVER_MAX_INFERENCE: &str = "APXM_SERVER_MAX_INFERENCE";
     /// Maximum inference limiter wait before returning 429, in milliseconds.
