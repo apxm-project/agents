@@ -108,6 +108,12 @@ pub(crate) struct RegisterCapabilityRequest {
     /// Fallback: return a fixed static value (used when `endpoint` is absent).
     #[serde(default)]
     static_response: JsonValue,
+    /// Explicit backing kind for the capability-id contract:
+    /// `provider` (REST via apxm-auth /proxy — the connector default),
+    /// `http` (forward to `endpoint`), `static`, or `mcp` (future bridge).
+    /// When unset, falls back to the legacy endpoint/static selection.
+    #[serde(default)]
+    kind: Option<String>,
 }
 
 #[derive(Clone)]
@@ -163,24 +169,55 @@ pub(crate) async fn register_capability(
         metadata = metadata.with_tags(req.tags.clone());
     }
 
-    let capability: Arc<dyn CapabilityExecutor> = if let Some(endpoint) = req.endpoint {
-        // HTTP capability — forwards invocations to external server
-        info!(name = %req.name, endpoint = %endpoint, "registering HTTP capability");
-        Arc::new(HttpCapability {
-            metadata,
-            endpoint,
-            timeout_ms: req.timeout_ms.unwrap_or(30_000),
-            client: reqwest::Client::new(),
-        })
-    } else {
-        // Static capability — always returns the same configured value.
-        let response_value = Value::try_from(req.static_response)
-            .map_err(|e| ApiError::bad_request(e.to_string()))?;
-        info!(name = %req.name, "registering static capability");
-        Arc::new(StaticCapability {
-            metadata,
-            static_response: response_value,
-        })
+    // Resolve the backing kind. Explicit `kind` wins; otherwise fall back to the
+    // legacy selection (endpoint => http, else static). This is the seam the
+    // pack loader uses (kind=provider for connector blocks) and where the future
+    // `mcp` bridge plugs in — the capability-id contract is unchanged either way.
+    let kind = req
+        .kind
+        .clone()
+        .unwrap_or_else(|| if req.endpoint.is_some() { "http".into() } else { "static".into() });
+
+    let capability: Arc<dyn CapabilityExecutor> = match kind.as_str() {
+        "provider" => {
+            // Connector default: backed by provider.call (REST via apxm-auth
+            // /proxy). The block carries url/method/body/credential in its args.
+            info!(name = %req.name, "registering provider capability (apxm-auth proxy)");
+            Arc::new(apxm_runtime::capability::builtins::ProviderCallCapability::named(
+                req.name.clone(),
+                req.description.clone(),
+                metadata.parameters_schema.clone(),
+            ))
+        }
+        "mcp" => {
+            // The MCP-client bridge backing is a separate, in-progress track.
+            return Err(ApiError::bad_request(
+                "kind=mcp (MCP-client bridge) is not yet available; use kind=provider or http".to_string(),
+            ));
+        }
+        "http" => {
+            let endpoint = req
+                .endpoint
+                .clone()
+                .ok_or_else(|| ApiError::bad_request("kind=http requires an endpoint".to_string()))?;
+            info!(name = %req.name, endpoint = %endpoint, "registering HTTP capability");
+            Arc::new(HttpCapability {
+                metadata,
+                endpoint,
+                timeout_ms: req.timeout_ms.unwrap_or(30_000),
+                client: reqwest::Client::new(),
+            })
+        }
+        _ => {
+            // Static capability — always returns the same configured value.
+            let response_value = Value::try_from(req.static_response)
+                .map_err(|e| ApiError::bad_request(e.to_string()))?;
+            info!(name = %req.name, "registering static capability");
+            Arc::new(StaticCapability {
+                metadata,
+                static_response: response_value,
+            })
+        }
     };
 
     state
