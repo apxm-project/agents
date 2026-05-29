@@ -186,6 +186,15 @@ fn apply_server_env_overrides(config: &mut ServerConfig) {
     if let Some(value) = env_u64(apxm_env::APXM_MCP_EVIDENCE_MAX_FILE_BYTES) {
         config.mcp.evidence_max_file_bytes = value;
     }
+    if let Some(value) = env_bool(apxm_env::APXM_SERVER_REQUIRE_AUTH) {
+        config.auth.require_auth = value;
+    }
+    if let Ok(value) = std::env::var(apxm_env::APXM_SERVER_BEARER) {
+        let trimmed = value.trim();
+        if !trimmed.is_empty() {
+            config.auth.bearer = Some(trimmed.to_string());
+        }
+    }
     if let Some(value) = env_usize(apxm_env::APXM_SERVER_MAX_INFERENCE) {
         config.inference.max_concurrent = value;
     }
@@ -297,6 +306,16 @@ fn env_u64(name: &str) -> Option<u64> {
         .ok()
         .and_then(|value| value.parse::<u64>().ok())
         .filter(|value| *value > 0)
+}
+
+fn env_bool(name: &str) -> Option<bool> {
+    let value = std::env::var(name).ok()?;
+    match value.trim().to_ascii_lowercase().as_str() {
+        "" => None,
+        "1" | "true" | "yes" | "on" => Some(true),
+        "0" | "false" | "no" | "off" => Some(false),
+        _ => None,
+    }
 }
 
 fn env_f64(name: &str) -> Option<f64> {

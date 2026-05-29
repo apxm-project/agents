@@ -187,6 +187,9 @@ pub struct ServerConfig {
     /// Process-local limiter for expensive inference work.
     pub inference: ServerInferenceConfig,
 
+    /// Opt-in, fail-closed bearer auth for mutating routes. Default off.
+    pub auth: ServerAuthConfig,
+
     /// `/v1/generate-stream` transport controls.
     pub generate_stream: GenerateStreamConfig,
 
@@ -220,6 +223,7 @@ impl Default for ServerConfig {
             process: ServerProcessConfig::default(),
             runtime: ServerRuntimeConfig::default(),
             inference: ServerInferenceConfig::default(),
+            auth: ServerAuthConfig::default(),
             generate_stream: GenerateStreamConfig::default(),
             execution_stream: ExecutionStreamConfig::default(),
             executions: ServerExecutionsConfig::default(),
@@ -290,6 +294,28 @@ impl Default for ServerInferenceConfig {
             acquire_timeout_ms: 250,
         }
     }
+}
+
+/// Opt-in, fail-closed bearer auth configuration for the server's mutating
+/// routes (`/v1/execute`, `/v1/execute/stream`, skill execute/execute-stream).
+///
+/// Default is **off** so existing tests and local development are unaffected.
+/// When `require_auth` is enabled, every request to a mutating route must
+/// present `Authorization: Bearer <token>` matching the bearer token resolved
+/// at request time (the token is re-read per request so apxm-auth rotation
+/// does not strand callers). Resolution order:
+///   1. `bearer` (explicit override, or `APXM_SERVER_BEARER`)
+///   2. `bearer_file` if set, else `$XDG_STATE_HOME/apxm/auth/auth.bearer`,
+///      falling back to `$HOME/.local/state/apxm/auth/auth.bearer`.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default)]
+#[serde(default)]
+pub struct ServerAuthConfig {
+    /// When true, mutating routes require a valid bearer token (fail-closed).
+    pub require_auth: bool,
+    /// Explicit bearer token override. Highest precedence when set.
+    pub bearer: Option<String>,
+    /// Override path to the apxm-auth per-run bearer file.
+    pub bearer_file: Option<String>,
 }
 
 /// Streaming LLM endpoint transport configuration.
