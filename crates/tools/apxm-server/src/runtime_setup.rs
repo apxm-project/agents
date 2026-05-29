@@ -28,7 +28,8 @@ pub(crate) async fn build_runtime_with_router(
 /// this the system starts empty and every tool node is rejected.
 fn register_builtin_capabilities(runtime: &Runtime) {
     use apxm_runtime::capability::builtins::{
-        BashCapability, HttpGetCapability, HttpPostCapability, ReadCapability, WriteCapability,
+        BashCapability, HttpGetCapability, HttpPostCapability, ProviderCallCapability,
+        ReadCapability, WriteCapability,
     };
     use apxm_runtime::capability::executor::CapabilityExecutor;
     use std::sync::Arc;
@@ -43,6 +44,9 @@ fn register_builtin_capabilities(runtime: &Runtime) {
         Arc::new(ReadCapability::new()),
         Arc::new(WriteCapability::new()),
         Arc::new(BashCapability::new()),
+        // The generic outbound connector block: forwards to a provider via
+        // apxm-auth /proxy (secret stays in apxm-auth). Backs every action block.
+        Arc::new(ProviderCallCapability::new()),
     ];
     let mut n = 0u32;
     for cap in caps {
