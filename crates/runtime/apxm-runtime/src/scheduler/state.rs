@@ -817,14 +817,19 @@ mod tests {
     fn test_new_two_node_dag_creates_tokens() {
         let dag = two_node_dag();
         let metrics = Arc::new(MetricsCollector::new());
+        // Worker pool size is `max(max_concurrency, llm_inflight)`; pin
+        // llm_inflight to max_concurrency so the count is deterministic. The
+        // default llm_inflight is 32, which this assertion predated (it asserted
+        // a node-count-based 2 and silently failed once worker sizing changed).
+        let cfg = test_config().with_llm_inflight(2);
         let (state, workers) =
-            SchedulerState::new(dag, test_config(), metrics, Instant::now(), vec![]).unwrap();
+            SchedulerState::new(dag, cfg, metrics, Instant::now(), vec![]).unwrap();
 
         // Token 10 (produced by node 1, consumed by node 2) should exist
         assert!(state.tokens.contains_key(&10));
         // Token 20 (produced by node 2, no consumer) should exist
         assert!(state.tokens.contains_key(&20));
-        // Workers should be created
+        // Workers should be sized to the configured concurrency.
         assert_eq!(workers.len(), 2);
     }
 
