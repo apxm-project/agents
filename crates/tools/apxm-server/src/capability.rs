@@ -110,10 +110,16 @@ pub(crate) struct RegisterCapabilityRequest {
     static_response: JsonValue,
     /// Explicit backing kind for the capability-id contract:
     /// `provider` (REST via apxm-auth /proxy — the connector default),
-    /// `http` (forward to `endpoint`), `static`, or `mcp` (future bridge).
+    /// `http` (forward to `endpoint`), `static`, or `mcp` (MCP-server bridge).
     /// When unset, falls back to the legacy endpoint/static selection.
     #[serde(default)]
     kind: Option<String>,
+    /// MCP server URL for `kind=mcp`.
+    #[serde(default)]
+    server_url: Option<String>,
+    /// MCP tool name for `kind=mcp` (defaults to `name`).
+    #[serde(default)]
+    mcp_tool: Option<String>,
 }
 
 #[derive(Clone)]
@@ -153,6 +159,12 @@ struct PackToolDecl {
     /// Optional typed input schema; defaults to the provider.call arg shape.
     #[serde(default)]
     schema: JsonValue,
+    /// MCP server URL for kind=mcp.
+    #[serde(default)]
+    server_url: Option<String>,
+    /// MCP tool name for kind=mcp (defaults to the capability id).
+    #[serde(default)]
+    mcp_tool: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -205,6 +217,15 @@ fn capability_from_tool(t: &PackToolDecl) -> Option<Arc<dyn CapabilityExecutor>>
         "http" => t.endpoint_pattern.clone().map(|endpoint| {
             Arc::new(HttpCapability { metadata, endpoint, timeout_ms: 30_000, client: reqwest::Client::new() })
                 as Arc<dyn CapabilityExecutor>
+        }),
+        "mcp" => t.server_url.clone().map(|server_url| {
+            let tool = t.mcp_tool.clone().unwrap_or_else(|| t.capability.clone());
+            Arc::new(apxm_runtime::capability::builtins::McpBridgeCapability::named(
+                t.capability.clone(),
+                metadata.description.clone(),
+                server_url,
+                tool,
+            )) as Arc<dyn CapabilityExecutor>
         }),
         other => {
             info!(capability = %t.capability, kind = %other, "skipping tools.toml entry (kind not registerable yet)");
@@ -351,10 +372,19 @@ pub(crate) async fn register_capability(
             ))
         }
         "mcp" => {
-            // The MCP-client bridge backing is a separate, in-progress track.
-            return Err(ApiError::bad_request(
-                "kind=mcp (MCP-client bridge) is not yet available; use kind=provider or http".to_string(),
-            ));
+            // MCP-client bridge: a per-tool block on an external MCP server.
+            let server_url = req
+                .server_url
+                .clone()
+                .ok_or_else(|| ApiError::bad_request("kind=mcp requires server_url".to_string()))?;
+            let tool = req.mcp_tool.clone().unwrap_or_else(|| req.name.clone());
+            info!(name = %req.name, server_url = %server_url, tool = %tool, "registering MCP-bridge capability");
+            Arc::new(apxm_runtime::capability::builtins::McpBridgeCapability::named(
+                req.name.clone(),
+                req.description.clone(),
+                server_url,
+                tool,
+            ))
         }
         "http" => {
             let endpoint = req
