@@ -59,6 +59,14 @@ pub struct PlanNode {
     /// provider/model default.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub max_tokens: Option<u64>,
+    /// For an `agent` node: the ACP agent profile to spawn as a real subprocess
+    /// (e.g. `claude`, `codex`). When set, lowering emits a `spawn_agent` plus a
+    /// `communicate` turn instead of a plain `ask`. `None` = ordinary sub-agent.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub profile: Option<String>,
+    /// Working directory for a spawned ACP agent subprocess.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cwd: Option<String>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub depends_on: Vec<PlanDependency>,
 }

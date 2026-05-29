@@ -22,7 +22,7 @@ mod inner_plan;
 use apxm_core::utils::build::MlirEnvReport;
 use apxm_runtime::NoOpLinker;
 use inner_plan::CompilerInnerPlanLinker;
-mod agents;
+pub mod agents;
 use agents::configure_agent_registry;
 mod workflow_spawn;
 use workflow_spawn::DriverWorkflowSpawner;
