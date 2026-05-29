@@ -1,4 +1,5 @@
 use apxm_backends::BackendRegistration;
+use apxm_driver::runtime::agents::configure_agent_registry;
 use apxm_driver::runtime::sandbox::configure_sandbox_registry;
 use apxm_runtime::{ModelRouterConfig, Runtime, RuntimeConfig};
 use tracing::{info, warn};
@@ -10,6 +11,14 @@ pub(crate) async fn build_runtime_with_router(
     runtime.set_sandbox_registry(configure_sandbox_registry());
     register_builtin_capabilities(&runtime);
     load_llm_backends(&runtime).await;
+    // Wire the ACP agent spawner so SPAWN_AGENT can launch real subprocess
+    // agents (claude, codex, …) through /v1/execute. Best-effort: a failure
+    // here only disables agent spawning, it must not abort server startup.
+    if let Err(e) =
+        configure_agent_registry(runtime.process_table(), runtime.capability_system_arc()).await
+    {
+        warn!(error = %e, "failed to configure ACP agent spawner; SPAWN_AGENT unavailable");
+    }
     runtime.init_model_router(ModelRouterConfig::default())?;
     Ok(runtime)
 }
