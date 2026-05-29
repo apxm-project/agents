@@ -78,6 +78,37 @@ fn url_allowed(url: &str) -> bool {
     false
 }
 
+/// Content pin of an MCP server's advertised `tools/list` (rug-pull defense).
+/// Canonicalizes each tool to `name\u{1f}inputSchema` and BLAKE3-hashes the
+/// sorted set, so a server silently adding/changing a tool (a "rug pull") yields
+/// a different pin and can be rejected / re-consented at load time.
+#[must_use]
+pub fn pin_tools(tools: &JsonValue) -> String {
+    let mut lines: Vec<String> = tools
+        .as_array()
+        .map(|arr| {
+            arr.iter()
+                .map(|t| {
+                    let name = t.get("name").and_then(|n| n.as_str()).unwrap_or_default();
+                    // Canonical JSON of the input schema (serde_json sorts object keys
+                    // deterministically via BTreeMap is not guaranteed; use compact form).
+                    let schema = t.get("inputSchema").map(std::string::ToString::to_string).unwrap_or_default();
+                    format!("{name}\u{1f}{schema}")
+                })
+                .collect()
+        })
+        .unwrap_or_default();
+    lines.sort();
+    let joined = lines.join("\u{1e}");
+    format!("blake3:{}", blake3::hash(joined.as_bytes()).to_hex())
+}
+
+/// True if the live `tools/list` still matches the pin recorded at install.
+#[must_use]
+pub fn verify_tool_pin(tools: &JsonValue, pinned: &str) -> bool {
+    pin_tools(tools) == pinned
+}
+
 pub struct McpBridgeCapability {
     metadata: CapabilityMetadata,
     /// apxm-auth base override (tests). None = APXM_AUTH_URL.
@@ -230,6 +261,36 @@ mod tests {
         assert!(url_allowed("http://127.0.0.1:9000/mcp"));
         assert!(!url_allowed("http://evil.example.com/")); // plaintext non-loopback
         assert!(!url_allowed("ftp://x"));
+    }
+
+    #[test]
+    fn tool_pin_detects_rug_pull() {
+        let v1 = json!([
+            { "name": "create_issue", "inputSchema": { "type": "object" } },
+            { "name": "list_issues", "inputSchema": { "type": "object" } }
+        ]);
+        // Order-independent: same tools in a different order pin identically.
+        let v1b = json!([
+            { "name": "list_issues", "inputSchema": { "type": "object" } },
+            { "name": "create_issue", "inputSchema": { "type": "object" } }
+        ]);
+        assert_eq!(pin_tools(&v1), pin_tools(&v1b));
+        assert!(verify_tool_pin(&v1b, &pin_tools(&v1)));
+
+        // A silently-added tool (rug pull) changes the pin.
+        let v2 = json!([
+            { "name": "create_issue", "inputSchema": { "type": "object" } },
+            { "name": "list_issues", "inputSchema": { "type": "object" } },
+            { "name": "exfiltrate", "inputSchema": { "type": "object" } }
+        ]);
+        assert!(!verify_tool_pin(&v2, &pin_tools(&v1)), "added tool must break the pin");
+
+        // A changed input schema (silent behavior change) also breaks the pin.
+        let v3 = json!([
+            { "name": "create_issue", "inputSchema": { "type": "object", "x": 1 } },
+            { "name": "list_issues", "inputSchema": { "type": "object" } }
+        ]);
+        assert!(!verify_tool_pin(&v3, &pin_tools(&v1)), "changed schema must break the pin");
     }
 
     #[test]
