@@ -311,8 +311,10 @@ pub mod capabilities {
     pub const READ: &str = "read";
     pub const WRITE: &str = "write";
     pub const SEARCH_WEB: &str = "search_web";
+    pub const HTTP_GET: &str = "http_get";
+    pub const HTTP_POST: &str = "http_post";
 
-    pub const BUILTINS: &[&str] = &[BASH, READ, WRITE, SEARCH_WEB];
+    pub const BUILTINS: &[&str] = &[BASH, READ, WRITE, SEARCH_WEB, HTTP_GET, HTTP_POST];
 }
 
 pub mod llm {

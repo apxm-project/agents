@@ -8,9 +8,42 @@ pub(crate) async fn build_runtime_with_router(
 ) -> Result<Runtime, apxm_core::error::RuntimeError> {
     let mut runtime = Runtime::new(config).await?;
     runtime.set_sandbox_registry(configure_sandbox_registry());
+    register_builtin_capabilities(&runtime);
     load_llm_backends(&runtime).await;
     runtime.init_model_router(ModelRouterConfig::default())?;
     Ok(runtime)
+}
+
+/// Register the runtime's builtin tool capabilities so `inv_tool` nodes are
+/// admitted by raw `/v1/execute` (which checks the capability system). Without
+/// this the system starts empty and every tool node is rejected.
+fn register_builtin_capabilities(runtime: &Runtime) {
+    use apxm_runtime::capability::builtins::{
+        BashCapability, HttpGetCapability, HttpPostCapability, ReadCapability, WriteCapability,
+    };
+    use apxm_runtime::capability::executor::CapabilityExecutor;
+    use std::sync::Arc;
+    let sys = runtime.capability_system();
+    // NB: capabilities must NOT build a reqwest client in their constructor —
+    // building one during runtime setup wedged the executor completion path.
+    // http_get/http_post use a lazily-initialized shared client. search_web is
+    // omitted here (eager client + needs an API key).
+    let caps: Vec<Arc<dyn CapabilityExecutor>> = vec![
+        Arc::new(HttpGetCapability::new()),
+        Arc::new(HttpPostCapability::new()),
+        Arc::new(ReadCapability::new()),
+        Arc::new(WriteCapability::new()),
+        Arc::new(BashCapability::new()),
+    ];
+    let mut n = 0u32;
+    for cap in caps {
+        let name = cap.metadata().name.clone();
+        match sys.register(cap) {
+            Ok(()) => n += 1,
+            Err(e) => warn!(capability = %name, error = %e, "failed to register builtin capability"),
+        }
+    }
+    info!(count = n, "registered builtin tool capabilities");
 }
 
 #[allow(dead_code)]

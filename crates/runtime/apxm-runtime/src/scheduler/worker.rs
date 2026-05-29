@@ -719,6 +719,10 @@ fn finish_one(state: &SchedulerState) {
     if prev == 1 {
         tracing::info!("Remaining hit 0, notifying done");
         state.notify_done.notify_waiters();
+        // Wake every parked worker so it re-checks the termination condition and
+        // exits. Without this the idle workers stay parked on `work_notify` and
+        // the scheduler's worker-join loop hangs forever.
+        state.work_notify.notify_waiters();
     }
 }
 

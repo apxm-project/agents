@@ -39,8 +39,9 @@ pub struct PythonToolManifestEntry {
 /// Pass name sentinel for pipeline ordering and diagnostics.
 pub const TOOL_BINDING_PASS_NAME: &str = "tool-binding-check";
 
-/// Known builtin capabilities provided by the Rust runtime.
-const BUILTIN_CAPABILITIES: &[&str] = &["bash", "read", "write", "search_web"];
+/// Known builtin capabilities provided by the Rust runtime. Sourced from the
+/// canonical list in apxm-core so the compiler and runtime never drift.
+const BUILTIN_CAPABILITIES: &[&str] = apxm_core::constants::capabilities::BUILTINS;
 
 /// Regex-equivalent validation for `sha256:<64 hex chars>`.
 fn is_valid_handler_id(s: &str) -> bool {

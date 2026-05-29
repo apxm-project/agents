@@ -4,11 +4,13 @@
 //! `SearchWebCapability` that agents can invoke during workflow execution.
 
 pub mod bash;
+pub mod http;
 pub mod read;
 pub mod web_search;
 pub mod write;
 
 pub use bash::{BashCapability, BashConfig};
+pub use http::{HttpGetCapability, HttpPostCapability};
 pub use read::{ReadCapability, ReadConfig};
 pub use web_search::{SearchDepth, SearchWebCapability, SearchWebConfig};
 pub use write::{WriteCapability, WriteConfig};
