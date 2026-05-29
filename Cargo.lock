@@ -366,6 +366,7 @@ dependencies = [
  "apxm-core",
  "async-trait",
  "base64 0.22.1",
+ "blake3",
  "bpe-openai",
  "chrono",
  "crossbeam-deque",

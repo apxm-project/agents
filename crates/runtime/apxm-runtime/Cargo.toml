@@ -42,6 +42,7 @@ tracing.workspace = true
 # HTTP
 reqwest.workspace = true
 base64 = "0.22"
+blake3 = { workspace = true }
 
 # Utilities
 once_cell.workspace = true
