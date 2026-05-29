@@ -164,10 +164,11 @@ fn default_frontend_codegen_dir() -> PathBuf {
 }
 
 fn default_typescript_codegen_path() -> PathBuf {
-    Path::new(env!("CARGO_MANIFEST_DIR")).join("../apxm-gui/frontend/src/types/generated.ts")
+    // apxm-gui is retired (merged into apxm-studio); generated TS lives in-repo
+    // so apxm is self-contained. Consumers (apxm-studio) vendor/import it.
+    Path::new(env!("CARGO_MANIFEST_DIR")).join("generated/typescript/generated.ts")
 }
 
 fn default_event_kinds_codegen_path() -> PathBuf {
-    Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("../apxm-gui/frontend/src/lib/generated/core-event-kinds.ts")
+    Path::new(env!("CARGO_MANIFEST_DIR")).join("generated/typescript/core-event-kinds.ts")
 }
