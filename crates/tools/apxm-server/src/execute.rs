@@ -57,8 +57,9 @@ pub(crate) async fn execute(
     Json(req): Json<ExecuteRequest>,
 ) -> Result<Json<ExecuteResponse>, ApiError> {
     let (air, args, session_id, session_dir) = prepare_request(req)?;
-    let artifact = air_to_artifact(&air)?;
+    let mut artifact = air_to_artifact(&air)?;
     validate_raw_execute_admission(&artifact, &state)?;
+    inject_resolved_credentials(&mut artifact).await?;
     let _permit = state.inference_limiter.acquire().await?;
     let execution = state
         .runtime
@@ -79,8 +80,9 @@ pub(crate) async fn execute_stream(
     Json(req): Json<ExecuteRequest>,
 ) -> Result<Sse<impl Stream<Item = Result<Event, std::convert::Infallible>>>, ApiError> {
     let (air, args, session_id, session_dir) = prepare_request(req)?;
-    let artifact = air_to_artifact(&air)?;
+    let mut artifact = air_to_artifact(&air)?;
     validate_raw_execute_admission(&artifact, &state)?;
+    inject_resolved_credentials(&mut artifact).await?;
     let permit = state.inference_limiter.acquire().await?;
     let stream_config = state.server_config.execution_stream;
     let (tx, mut rx) = mpsc::channel::<ApxmEvent>(stream_config.channel_capacity.max(1));
@@ -377,6 +379,68 @@ fn parse_string_array_attr(node: &Node, attr_name: &str) -> Option<Vec<String>> 
                 .filter_map(|value| value.as_string().map(ToString::to_string))
                 .collect()
         })
+}
+
+/// Dispatch-time credential resolution (apxm-auth M9, F12/F13). Opt-in via
+/// `APXM_RESOLVE_CREDENTIALS`: walk `inv_tool` nodes whose `params_json` carries
+/// a `credential` connection id, resolve it through apxm-auth, and inject
+/// `headers.Authorization = "Bearer <token>"` (dropping the bare id) so the
+/// dispatched HTTP capability authenticates. Off by default → a stack without
+/// apxm-auth is unaffected. The resolved token is never logged.
+async fn inject_resolved_credentials(artifact: &mut Artifact) -> Result<(), ApiError> {
+    let enabled = std::env::var("APXM_RESOLVE_CREDENTIALS")
+        .map(|v| !v.is_empty() && v != "0")
+        .unwrap_or(false);
+    if !enabled {
+        return Ok(());
+    }
+    let mut resolver: Option<crate::credentials::CredentialResolver> = None;
+    for dag in artifact.dags_mut() {
+        for node in &mut dag.nodes {
+            if node.op_type != AISOperationType::InvTool {
+                continue;
+            }
+            let Some(pj) = node
+                .attributes
+                .get(graph_attrs::PARAMS_JSON)
+                .and_then(|v| v.as_string())
+                .map(|s| s.to_string())
+            else {
+                continue;
+            };
+            let Ok(mut params) = serde_json::from_str::<JsonValue>(&pj) else {
+                continue;
+            };
+            let Some(conn_id) = params
+                .get("credential")
+                .and_then(JsonValue::as_str)
+                .map(|s| s.to_string())
+            else {
+                continue;
+            };
+            let r = resolver.get_or_insert_with(crate::credentials::CredentialResolver::from_env);
+            let token = r.resolve(&conn_id).await.map_err(|e| {
+                ApiError::internal_message(format!("credential resolve failed for `{conn_id}`: {e}"))
+            })?;
+            if let Some(obj) = params.as_object_mut() {
+                obj.remove("credential");
+                let headers = obj
+                    .entry("headers")
+                    .or_insert_with(|| JsonValue::Object(serde_json::Map::new()));
+                if let Some(h) = headers.as_object_mut() {
+                    h.insert(
+                        "Authorization".to_string(),
+                        JsonValue::String(format!("Bearer {token}")),
+                    );
+                }
+            }
+            node.set_attribute(
+                graph_attrs::PARAMS_JSON.to_string(),
+                RuntimeValue::String(params.to_string()),
+            );
+        }
+    }
+    Ok(())
 }
 
 fn inv_tool_static_args(node: &Node) -> Result<HashMap<String, RuntimeValue>, ApiError> {
