@@ -78,6 +78,19 @@ impl Default for ProviderCallCapability {
 }
 
 impl ProviderCallCapability {
+    /// A named provider-backed capability (e.g. `slack.post`) with the same
+    /// proxy-forwarding behaviour as `provider.call`. Used when a pack registers
+    /// a `kind = "provider"` tool so `/v1/capabilities` lists the block by name.
+    pub fn named(name: impl Into<String>, description: impl Into<String>, schema: serde_json::Value) -> Self {
+        Self {
+            base: None,
+            metadata: CapabilityMetadata::new(name, description, schema)
+                .with_returns("string")
+                .with_groups(vec!["provider".to_string(), "http".to_string()])
+                .with_latency(500),
+        }
+    }
+
     pub fn new() -> Self {
         Self {
             base: None,
