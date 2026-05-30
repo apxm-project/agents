@@ -67,6 +67,7 @@ run = { run = "apxm run", description = "Run a pre-compiled .apxmobj artifact", 
 decompile = { run = "apxm decompile", description = "Reverse-map artifact back to AIR", group = "Compilation" }
 doctor = { run = "apxm doctor", description = "Diagnose the real APXM compiler/runtime environment", group = "Configuration" }
 server = { run = "apxm-server", description = "Launch the APXM HTTP server", group = "Configuration" }
+build-server = { run = "python tools/scripts/cargo.py build -p apxm-server --release", description = "Build the apxm-server release binary (mirrors to target/release)", group = "Build & Test" }
 commit-lint = { run = "python tools/scripts/check_commit_message.py", description = "Lint a commit message file, --current (HEAD), or --range REV1..REV2", group = "Configuration" }
 install-hooks = { run = "python tools/scripts/install_git_hooks.py", description = "Install APXM git hooks (commit-msg + prepare-commit-msg); idempotent", group = "Configuration" }
 
