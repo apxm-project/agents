@@ -365,6 +365,126 @@ fn prepare_request_rejects_client_session_root() {
     );
 }
 
+#[tokio::test]
+async fn compile_lowers_and_executes_caller_supplied_graph() {
+    // A caller-supplied PlanGraph posted to /v1/compile lowers server-side and
+    // runs through the same runtime as /v1/execute — here a read-only inv_tool.
+    let state = test_state().await;
+    state
+        .runtime
+        .capability_system()
+        .register(Arc::new(FixtureReadCapability::new(FIXTURE_TOOL)))
+        .expect("register fixture capability");
+    let app = build_app(state);
+
+    let (status, body) = post_json(
+        app,
+        routes::COMPILE,
+        serde_json::json!({
+            "graph": inv_tool_plan_graph(FIXTURE_TOOL),
+        }),
+    )
+    .await;
+
+    assert_eq!(status, StatusCode::OK, "compile execute failed: {body}");
+    assert_eq!(body["content"], FIXTURE_OUTPUT);
+}
+
+#[tokio::test]
+async fn compile_applies_raw_execute_admission_gate() {
+    // The /v1/compile route must share /v1/execute's admission gate: a
+    // non-read-only (Direct) inv_tool without an admit grant is rejected even
+    // though the graph never went through the LLM emission path.
+    let state = test_state().await;
+    state
+        .runtime
+        .capability_system()
+        .register(Arc::new(FixtureSideEffectCapability::new(FIXTURE_TOOL)))
+        .expect("register side-effectful fixture capability");
+    let app = build_app(state);
+
+    let (status, body) = post_json(
+        app,
+        routes::COMPILE,
+        serde_json::json!({
+            "graph": inv_tool_plan_graph(FIXTURE_TOOL),
+        }),
+    )
+    .await;
+
+    assert_eq!(status, StatusCode::BAD_REQUEST, "expected 400: {body}");
+    assert!(
+        body["error"]
+            .as_str()
+            .unwrap_or_default()
+            .contains(ERROR_WRITE_NOT_GRANTED),
+        "compile must enforce the write-grant gate: {body}"
+    );
+}
+
+#[tokio::test]
+async fn compile_admits_granted_direct_capability() {
+    let state = test_state().await;
+    state
+        .runtime
+        .capability_system()
+        .register(Arc::new(FixtureSideEffectCapability::new(FIXTURE_TOOL)))
+        .expect("register side-effectful fixture capability");
+    let app = build_app(state);
+
+    let (status, body) = post_json(
+        app,
+        routes::COMPILE,
+        serde_json::json!({
+            "graph": inv_tool_plan_graph(FIXTURE_TOOL),
+            "admit_capabilities": [FIXTURE_TOOL],
+        }),
+    )
+    .await;
+
+    assert_eq!(status, StatusCode::OK, "granted compile failed: {body}");
+    assert_eq!(body["content"], FIXTURE_OUTPUT);
+}
+
+#[tokio::test]
+async fn compile_rejects_invalid_graph() {
+    let app = build_app(test_state().await);
+
+    let (status, body) = post_json(
+        app,
+        routes::COMPILE,
+        serde_json::json!({
+            "graph": { "name": "empty", "entry": "plan", "nodes": [] },
+        }),
+    )
+    .await;
+
+    assert_eq!(status, StatusCode::BAD_REQUEST, "expected 400: {body}");
+    assert!(
+        body["error"]
+            .as_str()
+            .unwrap_or_default()
+            .contains("plan graph lowering failed"),
+        "expected lowering failure: {body}"
+    );
+}
+
+fn inv_tool_plan_graph(capability: &str) -> serde_json::Value {
+    serde_json::json!({
+        "name": "compile_test_plan",
+        "entry": "plan",
+        "nodes": [
+            {
+                "id": 1,
+                "name": "call_tool",
+                "op": "inv_tool",
+                "capability": capability,
+                "args": {}
+            }
+        ]
+    })
+}
+
 struct FixtureGroupedSideEffectCapability {
     metadata: CapabilityMetadata,
 }

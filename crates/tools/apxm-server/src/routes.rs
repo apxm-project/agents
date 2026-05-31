@@ -4,6 +4,8 @@ pub(crate) const HEALTH: &str = "/health";
 pub(crate) const MODELS: &str = "/v1/models";
 pub(crate) const EXECUTE: &str = "/v1/execute";
 pub(crate) const EXECUTE_STREAM: &str = "/v1/execute/stream";
+pub(crate) const COMPILE: &str = "/v1/compile";
+pub(crate) const COMPILE_STREAM: &str = "/v1/compile/stream";
 pub(crate) const MEMORY_FACTS_STORE: &str = "/v1/memory/facts/store";
 pub(crate) const MEMORY_FACTS_SEARCH: &str = "/v1/memory/facts/search";
 pub(crate) const MEMORY_FACTS_DELETE: &str = "/v1/memory/facts/delete";
@@ -52,6 +54,8 @@ pub(crate) enum ServerRoute {
     Models,
     Execute,
     ExecuteStream,
+    Compile,
+    CompileStream,
     MemoryFactsStore,
     MemoryFactsSearch,
     MemoryFactsDelete,
@@ -100,6 +104,8 @@ impl ServerRoute {
             Self::Models => MODELS,
             Self::Execute => EXECUTE,
             Self::ExecuteStream => EXECUTE_STREAM,
+            Self::Compile => COMPILE,
+            Self::CompileStream => COMPILE_STREAM,
             Self::MemoryFactsStore => MEMORY_FACTS_STORE,
             Self::MemoryFactsSearch => MEMORY_FACTS_SEARCH,
             Self::MemoryFactsDelete => MEMORY_FACTS_DELETE,

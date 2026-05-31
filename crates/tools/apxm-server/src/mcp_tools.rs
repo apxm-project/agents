@@ -586,6 +586,27 @@ async fn repair_plan_candidate(
     Err(format!("{PLAN_REPAIRED_INVALID_PREFIX}: {last_error}"))
 }
 
+/// Lower a caller-supplied plan graph straight to AIR text, bypassing the
+/// LLM emission path (`emit_plan_candidate`/ModelRouter). Accepts the same
+/// envelope shapes `build_compiled_plan_graph` does (`{ nodes, ... }` or
+/// `{ graph: { ... } }`) and applies the identical normalize → parse →
+/// validate → lower pipeline, so an HTTP `{ graph }` request reaches the
+/// runtime exactly as an emitted plan would. The server then compiles this
+/// AIR through the shared raw-execute admission gate.
+//
+// Consumed by the `apxm-server` binary's `/v1/compile` handler; the sibling
+// `apxm-mcp-server` binary includes this module without the HTTP layer, so it
+// reads as dead there.
+#[allow(dead_code)]
+pub(crate) fn lower_plan_graph_to_air(value: JsonValue) -> Result<String, String> {
+    let plan_value = normalize_plan_value(decode_plan_graph(&value)?)?;
+    let (plan, _normalized_plan) = parse_plan_graph(plan_value)?;
+    let module = lower_plan_to_air_module(&plan)?;
+    module
+        .to_air()
+        .map_err(|error| format!("AIR emission failed: {error}"))
+}
+
 fn build_compiled_plan_graph(value: JsonValue) -> Result<CompiledPlanGraph, String> {
     let plan_value = normalize_plan_value(decode_plan_graph(&value)?)?;
     let (plan, normalized_plan) = parse_plan_graph(plan_value)?;
@@ -1948,5 +1969,46 @@ mod tests {
             bounded_usize_arg(&args, mcp_args::LIMIT, 6, 1, 30),
             Err("limit must be between 1 and 30".to_string())
         );
+    }
+
+    #[test]
+    fn lower_plan_graph_to_air_lowers_a_caller_supplied_graph() {
+        let graph = json!({
+            "name": "caller_plan",
+            "entry": "plan",
+            "nodes": [
+                { "id": 1, "name": "step", "op": "think", "prompt": "reflect" }
+            ]
+        });
+
+        let air = lower_plan_graph_to_air(graph).expect("graph lowers to AIR");
+        // The lowered module carries the plan name and the THINK op so the
+        // downstream compiler/admission path sees the same AIR an emitted plan
+        // would have produced.
+        assert!(air.contains("caller_plan"), "AIR should name the plan: {air}");
+        assert!(air.contains("think"), "AIR should contain the think op: {air}");
+    }
+
+    #[test]
+    fn lower_plan_graph_to_air_accepts_graph_wrapper_envelope() {
+        let graph = json!({
+            "graph": {
+                "name": "wrapped_plan",
+                "entry": "plan",
+                "nodes": [
+                    { "id": 1, "name": "step", "op": "think", "prompt": "reflect" }
+                ]
+            }
+        });
+
+        let air = lower_plan_graph_to_air(graph).expect("wrapped graph lowers to AIR");
+        assert!(air.contains("wrapped_plan"));
+    }
+
+    #[test]
+    fn lower_plan_graph_to_air_rejects_an_empty_graph() {
+        let graph = json!({ "name": "empty", "entry": "plan", "nodes": [] });
+
+        assert!(lower_plan_graph_to_air(graph).is_err());
     }
 }

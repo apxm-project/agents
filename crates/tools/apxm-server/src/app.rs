@@ -10,7 +10,7 @@ use crate::agent::{
 };
 use crate::capability::{list_capabilities, register_capability};
 use crate::checkpoints::{create_checkpoint, get_checkpoint, resume_checkpoint};
-use crate::execute::{execute, execute_stream};
+use crate::execute::{compile_graph, compile_graph_stream, execute, execute_stream};
 use crate::executions::{get_execution, get_execution_node, list_executions};
 use crate::generate::{handle_generate, handle_generate_stream, handle_schema};
 use crate::health::{health, list_models};
@@ -42,6 +42,10 @@ pub(crate) fn build_app(state: AppState) -> Router {
         // Execution
         .route(ServerRoute::Execute.path(), post(execute))
         .route(ServerRoute::ExecuteStream.path(), post(execute_stream))
+        // Caller-supplied PlanGraph: lower → execute, bypassing LLM emission
+        // but applying the same raw-execute admission gate.
+        .route(ServerRoute::Compile.path(), post(compile_graph))
+        .route(ServerRoute::CompileStream.path(), post(compile_graph_stream))
         // Memory
         .route(ServerRoute::MemoryFactsStore.path(), post(store_fact))
         .route(ServerRoute::MemoryFactsSearch.path(), post(search_facts))
