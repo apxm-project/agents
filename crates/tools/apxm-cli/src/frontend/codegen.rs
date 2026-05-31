@@ -515,6 +515,11 @@ fn render_emission_fn(buf: &mut String, spec: &FrontendEmissionSpec) {
 }
 
 fn render_inv_tool_emission_fn(buf: &mut String) {
+    // Context operands (data inputs) — required so a `{name}` placeholder in
+    // params_json resolves against an operand/input_names at runtime.
+    buf.push_str(
+        "    ctx = f\" [{', '.join(inputs)} : {', '.join(['!ais.token'] * len(inputs))}]\" if inputs else \"\"\n",
+    );
     buf.push_str(&format!(
         "    primary = f' {{_quote(str(attrs[{}]))}}' if {} in attrs else \"\"\n",
         py_string(graph_attrs::CAPABILITY),
@@ -526,9 +531,17 @@ fn render_inv_tool_emission_fn(buf: &mut String) {
     ));
     buf.push_str("    positional = f\" ({params_json})\"\n");
     buf.push_str("    syn_kw = \"\"\n");
-    buf.push_str("    kw_str = \"\"\n");
+    // Remaining attrs (notably input_names) form the `{...}` attribute dict, as
+    // the LLM emitters do; capability + params_json are already rendered.
+    buf.push_str("    kw_parts = []\n");
+    buf.push_str(&format!(
+        "    for key in sorted(attrs.keys()):\n        if key in {{{}, {}}} or attrs[key] is None:\n            continue\n        kw_parts.append(f'{{key}} = {{_format_attr_value(attrs[key])}}')\n",
+        py_string(graph_attrs::CAPABILITY),
+        py_string(graph_attrs::PARAMS_JSON)
+    ));
+    buf.push_str("    kw_str = f' {{{\", \".join(kw_parts)}}}' if kw_parts else \"\"\n");
     buf.push_str(
-        "    return f\"{ssa_name} = ais.inv_tool{primary}{positional}{syn_kw}{kw_str} : !ais.token\"\n\n\n",
+        "    return f\"{ssa_name} = ais.inv_tool{primary}{positional}{syn_kw}{ctx}{kw_str} : !ais.token\"\n\n\n",
     );
 }
 

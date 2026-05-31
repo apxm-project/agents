@@ -226,6 +226,7 @@ pub fn tool_binding_check(
 pub fn tool_binding_check_dag(
     dag: &ExecutionDag,
     manifest: Option<&[PythonToolManifestEntry]>,
+    known_caps: &HashSet<String>,
 ) -> Result<Vec<ToolBindingDiagnostic>> {
     let mut errors: Vec<ToolBindingDiagnostic> = Vec::new();
     let mut warnings: Vec<ToolBindingDiagnostic> = Vec::new();
@@ -258,8 +259,14 @@ pub fn tool_binding_check_dag(
             {
                 invoked.insert(cap.to_string());
 
-                // E712: capability must resolve to REGISTER_CAPABILITY or builtin.
-                if !registered.contains_key(cap) && !BUILTIN_CAPABILITIES.contains(&cap) {
+                // E712: capability must resolve to a REGISTER_CAPABILITY node, a
+                // known builtin, or a capability the caller declared available
+                // (e.g. provider/pack capabilities the server has registered at
+                // runtime — opaque to a standalone compile, declared by the host).
+                if !registered.contains_key(cap)
+                    && !BUILTIN_CAPABILITIES.contains(&cap)
+                    && !known_caps.contains(cap)
+                {
                     errors.push(ToolBindingDiagnostic {
                         code: ErrorCode::UnboundCapability,
                         message: format!(

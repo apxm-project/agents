@@ -390,12 +390,26 @@ class GraphRecorder:
         if capability is None:
             raise ValueError("invoke() missing required keyword argument: 'capability'")
         attrs: dict[str, Any] = {graph_keys.CAPABILITY: capability}
+        params_str: str | None = None
         if isinstance(params, dict):
-            attrs[graph_keys.PARAMS_JSON] = json.dumps(params)
+            params_str = json.dumps(params)
         elif params is not None:
-            attrs[graph_keys.PARAMS_JSON] = params
+            params_str = params
+        # Auto-wire `{name}` placeholders in the params JSON exactly like ask/think
+        # do for the prompt: each `{name}` bound to a NodeRef in scope becomes a
+        # Data operand + an `input_names` entry, so the runtime substitutes it.
+        # (JSON structural braces never match the placeholder regex.)
+        auto_pairs: list[tuple[str, NodeRef]] = []
+        if params_str is not None:
+            resolved, auto_pairs = self._resolve_template_refs(params_str)
+            attrs[graph_keys.PARAMS_JSON] = resolved
+            if auto_pairs:
+                attrs[graph_keys.INPUT_NAMES] = [n for n, _ in auto_pairs]
         attrs = self._apply_policy(attrs, attributes)
-        return self._add_node(name, graph_keys.OP_INV_TOOL, attrs)
+        node = self._add_node(name, graph_keys.OP_INV_TOOL, attrs)
+        for _name, ref in auto_pairs:
+            self.add_edge(ref, node)
+        return node
 
     def register_tool(self, tool: FunctionTool, name: str | None = None, **attributes: Any) -> NodeRef:
         """Register a Python @tool function as a runtime capability."""
