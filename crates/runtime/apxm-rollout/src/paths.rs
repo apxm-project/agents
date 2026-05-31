@@ -32,24 +32,18 @@ pub struct RolloutPaths {
 }
 
 impl RolloutPaths {
-    /// Build from `APXM_ROLLOUT_HOME` env var when set, otherwise from
-    /// `APXM_HOME` (matching the existing apxm convention), otherwise
-    /// `~/.apxm`. Failure to discover a home directory falls back to the
-    /// current working directory's `.apxm/`.
+    /// Build from `APXM_ROLLOUT_HOME` env var when set, otherwise from the
+    /// read-write state root ([`apxm_core::env::state_home`], i.e.
+    /// `APXM_STATE_HOME → APXM_HOME → ~/.apxm`). Rollouts are mutable per-run
+    /// state, so they follow the same state root as sessions and memory.
     pub fn from_env() -> Self {
         if let Ok(custom) = std::env::var("APXM_ROLLOUT_HOME") {
             return Self {
                 apxm_home: PathBuf::from(custom),
             };
         }
-        if let Ok(apxm_home) = std::env::var("APXM_HOME") {
-            return Self {
-                apxm_home: PathBuf::from(apxm_home),
-            };
-        }
-        let home_apxm = dirs::home_dir().map(|h| h.join(".apxm"));
         Self {
-            apxm_home: home_apxm.unwrap_or_else(|| PathBuf::from(".apxm")),
+            apxm_home: apxm_core::env::state_home(),
         }
     }
 

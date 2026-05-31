@@ -3,7 +3,7 @@
 use apxm_core::log_warn;
 use apxm_core::paths::ApxmPaths;
 use serde::{Deserialize, Serialize};
-use std::{fs, path::PathBuf};
+use std::path::PathBuf;
 
 /// Configuration for Short-Term Memory
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -124,15 +124,14 @@ impl MemoryConfig {
 
 fn memory_dir_path(filename: &str, fallback: &str) -> PathBuf {
     if let Ok(paths) = ApxmPaths::discover() {
-        let memory_dir = paths.project_dir().join("memory");
-        if let Err(err) = fs::create_dir_all(&memory_dir) {
-            log_warn!(
+        match paths.memory_dir() {
+            Ok(memory_dir) => return memory_dir.join(filename),
+            Err(err) => log_warn!(
                 "memory::config",
                 error = %err,
-                "Failed to create .apxm/memory directory"
-            );
+                "Failed to create memory directory under the state root"
+            ),
         }
-        return memory_dir.join(filename);
     }
     PathBuf::from(fallback)
 }

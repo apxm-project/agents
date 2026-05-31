@@ -12,6 +12,16 @@ pub const APXM_SERVER_URL: &str = "APXM_SERVER_URL";
 /// Environment variable name overriding the global APXM home directory.
 pub const APXM_HOME: &str = "APXM_HOME";
 
+/// Environment variable name overriding the read-write state root.
+///
+/// `APXM_HOME` resolves read-only configuration (the backend roster in
+/// `$APXM_HOME/config.toml`); `APXM_STATE_HOME` resolves the directory the
+/// process *writes* into — sessions, memory, rollouts, checkpoints. A deploy
+/// that mounts config read-only and state read-write sets the two to distinct
+/// paths; left unset, state falls back to `apxm_home()` so single-mount
+/// deployments behave exactly as before.
+pub const APXM_STATE_HOME: &str = "APXM_STATE_HOME";
+
 /// Resolve the user's home directory.
 ///
 /// Prefers `dirs::home_dir()` (which honors `$HOME` on Unix and the
@@ -31,6 +41,18 @@ pub fn apxm_home() -> PathBuf {
         return PathBuf::from(path);
     }
     home_dir().join(".apxm")
+}
+
+/// Resolve the read-write state root (`$APXM_STATE_HOME`, else `apxm_home()`).
+///
+/// This is where the process persists sessions, memory, rollouts, and
+/// checkpoints. Config (backends) stays under [`apxm_home`]; only mutable
+/// state honors this override so a deploy can keep config read-only.
+pub fn state_home() -> PathBuf {
+    if let Ok(path) = std::env::var(APXM_STATE_HOME) {
+        return PathBuf::from(path);
+    }
+    apxm_home()
 }
 
 /// Resolve the APXM server URL, honoring `APXM_SERVER_URL` and falling back to
@@ -97,6 +119,48 @@ mod tests {
         unsafe {
             if let Some(v) = prev {
                 std::env::set_var(APXM_HOME, v);
+            }
+        }
+    }
+
+    #[test]
+    #[allow(unsafe_code)]
+    fn state_home_honors_env_override() {
+        let _g = ENV_LOCK.lock().unwrap();
+        let prev = std::env::var(APXM_STATE_HOME).ok();
+        // SAFETY: serialized via ENV_LOCK; restored at end of test.
+        unsafe {
+            std::env::set_var(APXM_STATE_HOME, "/tmp/apxm-state-test");
+        }
+        assert_eq!(state_home(), PathBuf::from("/tmp/apxm-state-test"));
+        unsafe {
+            match prev {
+                Some(v) => std::env::set_var(APXM_STATE_HOME, v),
+                None => std::env::remove_var(APXM_STATE_HOME),
+            }
+        }
+    }
+
+    #[test]
+    #[allow(unsafe_code)]
+    fn state_home_falls_back_to_apxm_home() {
+        let _g = ENV_LOCK.lock().unwrap();
+        let prev_state = std::env::var(APXM_STATE_HOME).ok();
+        let prev_home = std::env::var(APXM_HOME).ok();
+        // SAFETY: serialized via ENV_LOCK; restored at end of test.
+        unsafe {
+            std::env::remove_var(APXM_STATE_HOME);
+            std::env::set_var(APXM_HOME, "/tmp/apxm-home-test");
+        }
+        assert_eq!(state_home(), PathBuf::from("/tmp/apxm-home-test"));
+        unsafe {
+            match prev_state {
+                Some(v) => std::env::set_var(APXM_STATE_HOME, v),
+                None => std::env::remove_var(APXM_STATE_HOME),
+            }
+            match prev_home {
+                Some(v) => std::env::set_var(APXM_HOME, v),
+                None => std::env::remove_var(APXM_HOME),
             }
         }
     }

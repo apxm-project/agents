@@ -8,6 +8,7 @@
 //! Read paths prefer an existing local root. Write paths try local first and
 //! fall back to global when the local root cannot be created.
 
+use crate::env::state_home;
 use dirs::home_dir;
 use std::env;
 use std::fs;
@@ -21,12 +22,17 @@ const CACHE_DIR: &str = "cache";
 const COMPILER_DIR: &str = "compiler";
 const LOGS_DIR: &str = "logs";
 const SESSIONS_DIR: &str = "sessions";
+const MEMORY_DIR: &str = "memory";
 
 /// Resolved APXM directories for the current process.
 #[derive(Debug, Clone)]
 pub struct ApxmPaths {
     home_dir: PathBuf,
     project_dir: PathBuf,
+    /// Read-write state root (`$APXM_STATE_HOME`, else `apxm_home()`). Sessions
+    /// (and other mutable state) anchor here so a deploy can mount config
+    /// read-only while keeping state on a writable volume.
+    state_dir: PathBuf,
 }
 
 impl ApxmPaths {
@@ -39,10 +45,12 @@ impl ApxmPaths {
         let home_dir = Self::resolve_home_dir()
             .map(Self::canonicalize_if_exists)
             .unwrap_or_else(|_| project_dir.clone());
+        let state_dir = Self::canonicalize_if_exists(state_home());
 
         Ok(Self {
             home_dir,
             project_dir,
+            state_dir,
         })
     }
 
@@ -97,14 +105,6 @@ impl ApxmPaths {
         }
     }
 
-    fn read_root(&self) -> &Path {
-        if self.project_dir.is_dir() {
-            &self.project_dir
-        } else {
-            &self.home_dir
-        }
-    }
-
     /// Global home directory (typically `~/.apxm`).
     pub fn home_dir(&self) -> &Path {
         &self.home_dir
@@ -113,6 +113,17 @@ impl ApxmPaths {
     /// Project-specific directory (`<repo>/.apxm`).
     pub fn project_dir(&self) -> &Path {
         &self.project_dir
+    }
+
+    /// Read-write state root (`$APXM_STATE_HOME`, else `apxm_home()`).
+    pub fn state_dir(&self) -> &Path {
+        &self.state_dir
+    }
+
+    /// Directory for persisted memory databases (`<state_dir>/memory`),
+    /// created on demand.
+    pub fn memory_dir(&self) -> io::Result<PathBuf> {
+        Self::ensure_subdir_at(&self.state_dir, MEMORY_DIR)
     }
 
     /// Path to the project-scoped configuration file.
@@ -155,25 +166,25 @@ impl ApxmPaths {
         self.ensure_subdir_with_fallback(LOGS_DIR)
     }
 
-    /// Directory for session output, preferring local project storage and
-    /// falling back to global storage when local creation fails.
+    /// Directory for session output under the read-write state root
+    /// (`<state_dir>/sessions`). Sessions are mutable per-run state, so they
+    /// anchor on the state root rather than the CWD-walked project dir — this
+    /// matches the rollout layout (`<apxm_home>/sessions`) and lets a deploy
+    /// mount config read-only.
     pub fn sessions_dir(&self) -> io::Result<PathBuf> {
-        self.ensure_subdir_with_fallback(SESSIONS_DIR)
+        Self::ensure_subdir_at(&self.state_dir, SESSIONS_DIR)
     }
 
-    /// Preferred sessions directory for read operations.
-    ///
-    /// If a local `.apxm` root already exists, reads stay within that root.
-    /// Otherwise reads fall back to the global home root without creating a
-    /// new local `.apxm` directory.
+    /// Preferred sessions directory for read operations (`<state_dir>/sessions`).
     pub fn sessions_dir_for_read(&self) -> PathBuf {
-        self.read_root().join(SESSIONS_DIR)
+        self.state_dir.join(SESSIONS_DIR)
     }
 
     /// Session lookup roots ordered by precedence.
     ///
-    /// Local project storage is searched first when it exists, then global
-    /// storage is used as a fallback for resolving a specific session ID.
+    /// The state root is authoritative for new sessions. A pre-existing local
+    /// `.apxm/sessions` is still searched first so sessions written before the
+    /// state-root contract remain resolvable.
     pub fn session_lookup_dirs(&self) -> Vec<PathBuf> {
         let mut dirs = Vec::with_capacity(2);
 
@@ -181,8 +192,9 @@ impl ApxmPaths {
             dirs.push(self.project_dir.join(SESSIONS_DIR));
         }
 
-        if dirs.is_empty() || self.home_dir != self.project_dir {
-            dirs.push(self.home_dir.join(SESSIONS_DIR));
+        let state_sessions = self.state_dir.join(SESSIONS_DIR);
+        if !dirs.contains(&state_sessions) {
+            dirs.push(state_sessions);
         }
 
         dirs
@@ -241,36 +253,37 @@ mod tests {
     }
 
     #[test]
-    fn sessions_dir_prefers_local_storage_when_available() {
-        let root = temp_path("local-storage");
+    fn sessions_dir_anchors_on_state_root() {
+        let root = temp_path("state-sessions");
         let project_dir = root.join("workspace").join(".apxm");
         let home_dir = root.join("home").join(".apxm");
+        let state_dir = root.join("state").join(".apxm");
         let paths = ApxmPaths {
             home_dir,
-            project_dir: project_dir.clone(),
+            project_dir,
+            state_dir: state_dir.clone(),
         };
 
         let sessions_dir = paths.sessions_dir().unwrap();
-        assert_eq!(sessions_dir, project_dir.join("sessions"));
+        assert_eq!(sessions_dir, state_dir.join("sessions"));
         assert!(sessions_dir.is_dir());
     }
 
     #[test]
-    fn sessions_dir_falls_back_to_global_when_local_storage_fails() {
-        let root = temp_path("session-fallback");
-        std::fs::create_dir_all(&root).unwrap();
-        let blocker = root.join("blocked");
-        std::fs::write(&blocker, "not a directory").unwrap();
-
+    fn memory_dir_anchors_on_state_root() {
+        let root = temp_path("state-memory");
+        let project_dir = root.join("workspace").join(".apxm");
         let home_dir = root.join("home").join(".apxm");
+        let state_dir = root.join("state").join(".apxm");
         let paths = ApxmPaths {
-            home_dir: home_dir.clone(),
-            project_dir: blocker.join(".apxm"),
+            home_dir,
+            project_dir,
+            state_dir: state_dir.clone(),
         };
 
-        let sessions_dir = paths.sessions_dir().unwrap();
-        assert_eq!(sessions_dir, home_dir.join("sessions"));
-        assert!(sessions_dir.is_dir());
+        let memory_dir = paths.memory_dir().unwrap();
+        assert_eq!(memory_dir, state_dir.join("memory"));
+        assert!(memory_dir.is_dir());
     }
 
     #[test]
@@ -284,6 +297,7 @@ mod tests {
         let paths = ApxmPaths {
             home_dir: home_dir.clone(),
             project_dir: blocker.join(".apxm"),
+            state_dir: home_dir.clone(),
         };
 
         let cache_dir = paths.cache_dir().unwrap();
@@ -292,38 +306,47 @@ mod tests {
     }
 
     #[test]
-    fn sessions_dir_for_read_prefers_existing_local_root() {
-        let root = temp_path("read-local");
+    fn sessions_dir_for_read_uses_state_root() {
+        let root = temp_path("read-state");
         let project_dir = root.join("workspace").join(".apxm");
         let home_dir = root.join("home").join(".apxm");
+        let state_dir = root.join("state").join(".apxm");
         std::fs::create_dir_all(&project_dir).unwrap();
-        std::fs::create_dir_all(&home_dir).unwrap();
+        std::fs::create_dir_all(&state_dir).unwrap();
 
         let paths = ApxmPaths {
             home_dir: home_dir.clone(),
             project_dir: project_dir.clone(),
+            state_dir: state_dir.clone(),
         };
 
-        assert_eq!(paths.sessions_dir_for_read(), project_dir.join("sessions"));
+        assert_eq!(paths.sessions_dir_for_read(), state_dir.join("sessions"));
+        // A pre-existing local `.apxm` is still searched first for lookups so
+        // sessions written before the state-root contract remain resolvable.
         assert_eq!(
             paths.session_lookup_dirs(),
-            vec![project_dir.join("sessions"), home_dir.join("sessions")]
+            vec![project_dir.join("sessions"), state_dir.join("sessions")]
         );
     }
 
     #[test]
-    fn sessions_dir_for_read_uses_global_when_local_root_missing() {
-        let root = temp_path("read-global");
+    fn session_lookup_uses_state_root_when_no_local_project() {
+        let root = temp_path("read-state-only");
         let project_dir = root.join("workspace").join(".apxm");
         let home_dir = root.join("home").join(".apxm");
-        std::fs::create_dir_all(&home_dir).unwrap();
+        let state_dir = root.join("state").join(".apxm");
+        std::fs::create_dir_all(&state_dir).unwrap();
 
         let paths = ApxmPaths {
             home_dir: home_dir.clone(),
             project_dir,
+            state_dir: state_dir.clone(),
         };
 
-        assert_eq!(paths.sessions_dir_for_read(), home_dir.join("sessions"));
-        assert_eq!(paths.session_lookup_dirs(), vec![home_dir.join("sessions")]);
+        assert_eq!(paths.sessions_dir_for_read(), state_dir.join("sessions"));
+        assert_eq!(
+            paths.session_lookup_dirs(),
+            vec![state_dir.join("sessions")]
+        );
     }
 }
