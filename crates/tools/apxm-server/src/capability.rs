@@ -152,6 +152,13 @@ struct PackToolDecl {
     /// Backing kind: `provider` (default), `http`, `static`. `mcp` reserved.
     #[serde(default)]
     kind: Option<String>,
+    /// REST template for `kind = "provider"`: the request method + url. `{param}`
+    /// placeholders in the url are filled from node args at dispatch; the rest of
+    /// the args become the JSON body. When present the node needs no `url`.
+    #[serde(default)]
+    method: Option<String>,
+    #[serde(default)]
+    url: Option<String>,
     #[serde(default)]
     endpoint_pattern: Option<String>,
     #[serde(default)]
@@ -207,13 +214,23 @@ fn capability_from_tool(t: &PackToolDecl) -> Option<Arc<dyn CapabilityExecutor>>
         metadata = metadata.with_read_only();
     }
     match kind {
-        "provider" => Some(Arc::new(
-            apxm_runtime::capability::builtins::ProviderCallCapability::named(
+        // A REST template (method + url) makes the block self-contained: the node
+        // carries only loose args, the cap fills the url + body. Without a url it
+        // falls back to the bare named cap (the node must supply `url`).
+        "provider" => Some(Arc::new(match t.url.clone() {
+            Some(url) => apxm_runtime::capability::builtins::ProviderCallCapability::named_rest(
+                t.capability.clone(),
+                metadata.description.clone(),
+                schema,
+                t.method.clone().unwrap_or_else(|| "POST".to_string()),
+                url,
+            ),
+            None => apxm_runtime::capability::builtins::ProviderCallCapability::named(
                 t.capability.clone(),
                 metadata.description.clone(),
                 schema,
             ),
-        )),
+        })),
         "http" => t.endpoint_pattern.clone().map(|endpoint| {
             Arc::new(HttpCapability { metadata, endpoint, timeout_ms: 30_000, client: reqwest::Client::new() })
                 as Arc<dyn CapabilityExecutor>
@@ -307,11 +324,34 @@ mod pack_tools_tests {
             name: None,
             description: None,
             kind: Some("mcp".into()),
+            method: None,
+            url: None,
             endpoint_pattern: None,
             read_only: false,
             schema: JsonValue::Null,
+            server_url: None,
+            mcp_tool: None,
         };
         assert!(capability_from_tool(&t).is_none(), "mcp backing not registerable yet");
+    }
+
+    #[test]
+    fn provider_tool_with_url_builds_rest_backed_capability() {
+        let t = PackToolDecl {
+            capability: "instagram.create_media".into(),
+            name: Some("Create media".into()),
+            description: None,
+            kind: Some("provider".into()),
+            method: Some("POST".into()),
+            url: Some("https://graph.instagram.com/v25.0/{ig_user_id}/media".into()),
+            endpoint_pattern: None,
+            read_only: false,
+            schema: JsonValue::Null,
+            server_url: None,
+            mcp_tool: None,
+        };
+        let cap = capability_from_tool(&t).expect("provider tool registers");
+        assert_eq!(cap.metadata().name, "instagram.create_media");
     }
 }
 
