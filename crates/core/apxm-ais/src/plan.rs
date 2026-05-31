@@ -67,6 +67,12 @@ pub struct PlanNode {
     /// Working directory for a spawned ACP agent subprocess.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub cwd: Option<String>,
+    /// For `ask`/`agent`/`think`: pin the inference backend (e.g. `amd`) and/or
+    /// model (e.g. `Kimi-K2.6`). `None` defers to the server's default route.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub backend: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub model: Option<String>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub depends_on: Vec<PlanDependency>,
 }
