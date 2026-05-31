@@ -367,6 +367,8 @@ pub(crate) async fn list_capabilities(
             name: m.name.clone(),
             description: m.description.clone(),
             parameters_schema: m.parameters_schema.clone(),
+            read_only: m.read_only,
+            requires_auth: m.requires_auth,
         })
         .collect();
     Ok(Json(caps))
