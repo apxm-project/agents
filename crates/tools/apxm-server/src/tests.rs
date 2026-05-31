@@ -732,6 +732,33 @@ side_effect_policy = "{SIDE_EFFECT_POLICY_SANDBOXED}"
     );
 }
 
+fn write_broader_policy_skill_with_artifact(
+    root: &std::path::Path,
+    artifact_bytes: &[u8],
+    required_capability: &str,
+    allowed_tool: &str,
+    side_effect_policy: &str,
+) {
+    let skill_dir = root.join(FIXTURE_PACKAGE_DIR);
+    std::fs::create_dir_all(&skill_dir).expect(MSG_SKILL_DIR);
+    std::fs::write(skill_dir.join(FILE_SKILL_ARTIFACT), artifact_bytes).expect(FILE_SKILL_ARTIFACT);
+    let artifact_hash = tagged_blake3(artifact_bytes);
+    write_skill_manifest(
+        &skill_dir,
+        &format!(
+            r#"
+skill_id = "{FIXTURE_SKILL_ID}"
+version = "{FIXTURE_SKILL_VERSION}"
+entry_flow = "{FIXTURE_ENTRY_FLOW}"
+artifact_hash = "{artifact_hash}"
+required_capabilities = ["{required_capability}"]
+allowed_tools = ["{allowed_tool}"]
+side_effect_policy = "{side_effect_policy}"
+"#
+        ),
+    );
+}
+
 fn write_side_effect_policy_skill_with_artifact(
     root: &std::path::Path,
     artifact_bytes: &[u8],

@@ -207,6 +207,69 @@ async fn skill_execute_rejects_python_handler_inv_tool() {
 }
 
 #[tokio::test]
+async fn skill_execute_allows_write_admitted_by_broader_policy() {
+    // A deployed workflow carrying its operator grant as `broader[<write>]` runs
+    // the granted write — the durable counterpart of the studio's per-run grant.
+    let temp = tempfile::tempdir().expect("tempdir");
+    let artifact = inv_tool_artifact_bytes(FIXTURE_TOOL, None);
+    write_broader_policy_skill_with_artifact(
+        temp.path(),
+        &artifact,
+        FIXTURE_TOOL,
+        FIXTURE_TOOL,
+        &format!("broader[{FIXTURE_TOOL}]"),
+    );
+    let state = test_state_with_skill_roots(vec![temp.path().to_path_buf()]).await;
+    state
+        .runtime
+        .capability_system()
+        .register(Arc::new(FixtureSideEffectCapability::new(FIXTURE_TOOL)))
+        .expect("register side-effectful fixture capability");
+    let app = build_app(state);
+
+    let (status, body) = post_json(
+        app,
+        &skill_execute_route(FIXTURE_SKILL_ID),
+        serde_json::json!({}),
+    )
+    .await;
+
+    assert_eq!(status, StatusCode::OK, "broader-admitted write failed: {body}");
+    assert_eq!(body["content"], FIXTURE_OUTPUT);
+}
+
+#[tokio::test]
+async fn skill_execute_rejects_write_not_admitted_by_broader_policy() {
+    // A broader policy that admits a *different* capability must not admit the
+    // write the graph actually uses.
+    let temp = tempfile::tempdir().expect("tempdir");
+    let artifact = inv_tool_artifact_bytes(FIXTURE_TOOL, None);
+    write_broader_policy_skill_with_artifact(
+        temp.path(),
+        &artifact,
+        FIXTURE_TOOL,
+        FIXTURE_TOOL,
+        "broader[some.other.write]",
+    );
+    let state = test_state_with_skill_roots(vec![temp.path().to_path_buf()]).await;
+    state
+        .runtime
+        .capability_system()
+        .register(Arc::new(FixtureSideEffectCapability::new(FIXTURE_TOOL)))
+        .expect("register side-effectful fixture capability");
+    let app = build_app(state);
+
+    let (status, body) = post_json(
+        app,
+        &skill_execute_route(FIXTURE_SKILL_ID),
+        serde_json::json!({}),
+    )
+    .await;
+
+    assert_eq!(status, StatusCode::BAD_REQUEST, "expected 400: {body}");
+}
+
+#[tokio::test]
 async fn skill_execute_rejects_non_read_only_side_effect_policies() {
     for policy in ["write_files", "network", "requires_approval"] {
         let temp = tempfile::tempdir().expect("tempdir");
