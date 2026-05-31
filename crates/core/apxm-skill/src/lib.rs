@@ -19,6 +19,10 @@ pub const HASH_PREFIX: &str = "blake3:";
 /// constants instead of duplicating the string literals.
 pub const POLICY_NAME_READ_ONLY: &str = "read_only";
 pub const POLICY_NAME_SANDBOXED: &str = "sandboxed";
+/// Prefix of the `Broader` wire form: `broader[cap.a,cap.b]`. The bracketed,
+/// comma-joined set of admitted capabilities is the durable form of an operator
+/// write grant (e.g. a studio workflow packaged as a skill).
+pub const POLICY_PREFIX_BROADER: &str = "broader[";
 
 /// Classification of what side effects a skill is permitted to perform.
 ///
@@ -36,15 +40,25 @@ pub enum CapabilityPolicy {
 }
 
 impl CapabilityPolicy {
-    /// Parse a manifest's `side_effect_policy` string into a structured
-    /// policy. Unknown values yield `None`; the caller decides whether to
-    /// reject or to promote them to a `Broader` variant out-of-band.
+    /// Parse a manifest's `side_effect_policy` string into a structured policy.
+    /// Accepts `read_only`, `sandboxed`, and the `broader[a,b,…]` grant form
+    /// (the round-trip of [`Self::name`]). Any other value yields `None`; the
+    /// caller decides whether to reject it.
     pub fn from_manifest_value(value: Option<&str>) -> Option<Self> {
         match value {
             None => Some(Self::ReadOnly),
             Some(POLICY_NAME_READ_ONLY) => Some(Self::ReadOnly),
             Some(POLICY_NAME_SANDBOXED) => Some(Self::Sandboxed),
-            Some(_) => None,
+            Some(other) => {
+                let inner = other.strip_prefix(POLICY_PREFIX_BROADER)?.strip_suffix(']')?;
+                let admits: BTreeSet<String> = inner
+                    .split(',')
+                    .map(str::trim)
+                    .filter(|token| !token.is_empty())
+                    .map(String::from)
+                    .collect();
+                Some(Self::Broader { admits })
+            }
         }
     }
 
@@ -57,7 +71,7 @@ impl CapabilityPolicy {
             Self::Sandboxed => POLICY_NAME_SANDBOXED.to_string(),
             Self::Broader { admits } => {
                 let joined: Vec<&str> = admits.iter().map(String::as_str).collect();
-                format!("broader[{}]", joined.join(","))
+                format!("{}{}]", POLICY_PREFIX_BROADER, joined.join(","))
             }
         }
     }
@@ -362,6 +376,24 @@ entry_flow = "{TEST_ENTRY_FLOW}"
             Some(CapabilityPolicy::Sandboxed)
         );
         assert!(CapabilityPolicy::from_manifest_value(Some("write_files")).is_none());
+    }
+
+    #[test]
+    fn capability_policy_broader_round_trips() {
+        let mut admits = BTreeSet::new();
+        admits.insert("instagram.create_media".to_string());
+        admits.insert("instagram.publish_media".to_string());
+        let policy = CapabilityPolicy::Broader { admits };
+        // name() -> "broader[...]" must parse back to the same policy.
+        let wire = policy.name();
+        assert_eq!(wire, "broader[instagram.create_media,instagram.publish_media]");
+        assert_eq!(CapabilityPolicy::from_manifest_value(Some(&wire)), Some(policy));
+        // tolerant of surrounding whitespace in hand-written manifests.
+        let spaced = CapabilityPolicy::from_manifest_value(Some("broader[ a , b ]"));
+        let mut expect = BTreeSet::new();
+        expect.insert("a".to_string());
+        expect.insert("b".to_string());
+        assert_eq!(spaced, Some(CapabilityPolicy::Broader { admits: expect }));
     }
 
     #[test]
