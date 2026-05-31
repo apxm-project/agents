@@ -1,6 +1,6 @@
 use super::*;
 
-const ERROR_SANDBOX_EXECUTION_UNDECLARED: &str = "does not declare sandbox execution";
+const ERROR_WRITE_NOT_GRANTED: &str = "performs writes and was not granted";
 const ERROR_RAW_PYTHON_TOOL_HANDLERS: &str = "python-backed tool handlers";
 const ERROR_TOOLS_ENABLED_ALL: &str = "tools_enabled=true";
 const ERROR_NOT_READ_ONLY: &str = "not read-only";
@@ -126,8 +126,65 @@ async fn execute_rejects_non_read_only_direct_inv_tool() {
         body["error"]
             .as_str()
             .unwrap_or_default()
-            .contains(ERROR_SANDBOX_EXECUTION_UNDECLARED),
-        "expected direct capability rejection: {body}"
+            .contains(ERROR_WRITE_NOT_GRANTED),
+        "expected ungranted write rejection: {body}"
+    );
+}
+
+#[tokio::test]
+async fn execute_allows_granted_direct_inv_tool() {
+    // A non-read-only (Direct) capability runs when the caller explicitly grants
+    // it via admit_capabilities — the consent channel the studio drives.
+    let state = test_state().await;
+    state
+        .runtime
+        .capability_system()
+        .register(Arc::new(FixtureSideEffectCapability::new(FIXTURE_TOOL)))
+        .expect("register side-effectful fixture capability");
+    let app = build_app(state);
+
+    let (status, body) = post_json(
+        app,
+        routes::EXECUTE,
+        serde_json::json!({
+            "air": inv_tool_air(FIXTURE_TOOL),
+            "admit_capabilities": [FIXTURE_TOOL],
+        }),
+    )
+    .await;
+
+    assert_eq!(status, StatusCode::OK, "granted write execute failed: {body}");
+    assert_eq!(body["content"], FIXTURE_OUTPUT);
+}
+
+#[tokio::test]
+async fn execute_rejects_direct_inv_tool_when_admit_lists_other_capability() {
+    // Granting an unrelated capability must not admit the write the graph uses.
+    let state = test_state().await;
+    state
+        .runtime
+        .capability_system()
+        .register(Arc::new(FixtureSideEffectCapability::new(FIXTURE_TOOL)))
+        .expect("register side-effectful fixture capability");
+    let app = build_app(state);
+
+    let (status, body) = post_json(
+        app,
+        routes::EXECUTE,
+        serde_json::json!({
+            "air": inv_tool_air(FIXTURE_TOOL),
+            "admit_capabilities": ["some.other.capability"],
+        }),
+    )
+    .await;
+
+    assert_eq!(status, StatusCode::BAD_REQUEST, "expected 400: {body}");
+    assert!(
+        body["error"]
+            .as_str()
+            .unwrap_or_default()
+            .contains(ERROR_WRITE_NOT_GRANTED),
+        "mismatched grant must not admit the write: {body}"
     );
 }
 
@@ -294,6 +351,7 @@ fn prepare_request_rejects_client_session_root() {
         args: vec![],
         session_id: Some("explicit-session".to_string()),
         session_root: Some(session_root.to_string_lossy().to_string()),
+        admit_capabilities: vec![],
     };
 
     let error = prepare_request(request).expect_err("client session_root should be rejected");
@@ -401,6 +459,7 @@ fn prepare_request_rejects_unsafe_session_id() {
             args: vec![],
             session_id: Some(session_id.to_string()),
             session_root: None,
+            admit_capabilities: vec![],
         };
 
         let error = prepare_request(request).expect_err("unsafe session id should be rejected");
@@ -420,6 +479,7 @@ fn prepare_request_rejects_session_root_without_session_id() {
         args: vec![],
         session_id: None,
         session_root: Some(session_root.to_string_lossy().to_string()),
+        admit_capabilities: vec![],
     };
 
     let error = prepare_request(request).expect_err("client session_root should be rejected");

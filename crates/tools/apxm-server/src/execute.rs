@@ -41,6 +41,12 @@ pub(crate) struct ExecuteRequest {
     pub(crate) session_id: Option<String>,
     #[serde(default)]
     pub(crate) session_root: Option<String>,
+    /// Capabilities the caller has explicitly granted this execution. A
+    /// non-read-only, non-sandboxed (Direct) tool node is admitted only if its
+    /// capability appears here — the itemized consent that lets a workflow
+    /// perform writes. Read-only and sandboxed capabilities never need listing.
+    #[serde(default)]
+    pub(crate) admit_capabilities: Vec<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -56,10 +62,16 @@ pub(crate) async fn execute(
     State(state): State<AppState>,
     Json(req): Json<ExecuteRequest>,
 ) -> Result<Json<ExecuteResponse>, ApiError> {
-    let (air, args, session_id, session_dir) = prepare_request(req)?;
+    let PreparedRequest {
+        air,
+        args,
+        session_id,
+        session_dir,
+        admit,
+    } = prepare_request(req)?;
     let known_caps = registered_capability_names(&state);
     let mut artifact = air_to_artifact_with_caps(&air, &known_caps)?;
-    validate_raw_execute_admission(&artifact, &state)?;
+    validate_raw_execute_admission(&artifact, &state, &admit)?;
     inject_resolved_credentials(&mut artifact).await?;
     let _permit = state.inference_limiter.acquire().await?;
     let execution = state
@@ -80,10 +92,16 @@ pub(crate) async fn execute_stream(
     State(state): State<AppState>,
     Json(req): Json<ExecuteRequest>,
 ) -> Result<Sse<impl Stream<Item = Result<Event, std::convert::Infallible>>>, ApiError> {
-    let (air, args, session_id, session_dir) = prepare_request(req)?;
+    let PreparedRequest {
+        air,
+        args,
+        session_id,
+        session_dir,
+        admit,
+    } = prepare_request(req)?;
     let known_caps = registered_capability_names(&state);
     let mut artifact = air_to_artifact_with_caps(&air, &known_caps)?;
-    validate_raw_execute_admission(&artifact, &state)?;
+    validate_raw_execute_admission(&artifact, &state, &admit)?;
     inject_resolved_credentials(&mut artifact).await?;
     let permit = state.inference_limiter.acquire().await?;
     let stream_config = state.server_config.execution_stream;
@@ -149,15 +167,30 @@ pub(crate) async fn execute_stream(
     )
 }
 
-pub(crate) fn prepare_request(
-    mut req: ExecuteRequest,
-) -> Result<(String, Vec<String>, Option<String>, Option<String>), ApiError> {
+/// The validated, destructured parts of an execute request.
+#[derive(Debug)]
+pub(crate) struct PreparedRequest {
+    pub(crate) air: String,
+    pub(crate) args: Vec<String>,
+    pub(crate) session_id: Option<String>,
+    pub(crate) session_dir: Option<String>,
+    /// Capabilities the caller granted this execution (consent admit-list).
+    pub(crate) admit: std::collections::HashSet<String>,
+}
+
+pub(crate) fn prepare_request(mut req: ExecuteRequest) -> Result<PreparedRequest, ApiError> {
     if req.air.trim().is_empty() {
         return Err(ApiError::bad_request("air must not be empty"));
     }
     let (session_id, session_dir) =
         resolve_session_request(req.session_id.take(), req.session_root.take())?;
-    Ok((req.air, req.args, session_id, session_dir))
+    Ok(PreparedRequest {
+        air: req.air,
+        args: req.args,
+        session_id,
+        session_dir,
+        admit: req.admit_capabilities.into_iter().collect(),
+    })
 }
 
 fn resolve_session_request(
@@ -269,7 +302,11 @@ pub(crate) fn registered_capability_names(state: &AppState) -> std::collections:
         .collect()
 }
 
-fn validate_raw_execute_admission(artifact: &Artifact, state: &AppState) -> Result<(), ApiError> {
+fn validate_raw_execute_admission(
+    artifact: &Artifact,
+    state: &AppState,
+    admit: &std::collections::HashSet<String>,
+) -> Result<(), ApiError> {
     if artifact
         .sections()
         .iter()
@@ -285,7 +322,7 @@ fn validate_raw_execute_admission(artifact: &Artifact, state: &AppState) -> Resu
             }
 
             match node.op_type {
-                AISOperationType::InvTool => validate_raw_inv_tool_node(node, state)?,
+                AISOperationType::InvTool => validate_raw_inv_tool_node(node, state, admit)?,
                 AISOperationType::Ask | AISOperationType::Think | AISOperationType::Reason => {
                     validate_raw_llm_tool_exposure(node, state)?;
                 }
@@ -297,7 +334,11 @@ fn validate_raw_execute_admission(artifact: &Artifact, state: &AppState) -> Resu
     Ok(())
 }
 
-fn validate_raw_inv_tool_node(node: &Node, state: &AppState) -> Result<(), ApiError> {
+fn validate_raw_inv_tool_node(
+    node: &Node,
+    state: &AppState,
+    admit: &std::collections::HashSet<String>,
+) -> Result<(), ApiError> {
     let capability = node
         .attributes
         .get(graph_attrs::CAPABILITY)
@@ -318,9 +359,19 @@ fn validate_raw_inv_tool_node(node: &Node, state: &AppState) -> Result<(), ApiEr
     let args = inv_tool_static_args(node)?;
     match capability_system.sandbox_preflight(capability, &args) {
         Ok(CapabilitySandboxPreflight::Sandboxed { .. }) => Ok(()),
-        Ok(CapabilitySandboxPreflight::Direct) => Err(ApiError::bad_request(format!(
-            "raw execute capability '{capability}' is not read-only and does not declare sandbox execution"
-        ))),
+        // A Direct (write) capability is admitted only if the caller explicitly
+        // granted it for this execution. The grant is itemized consent: anything
+        // not listed stays refused, so the write boundary is preserved.
+        Ok(CapabilitySandboxPreflight::Direct) => {
+            if admit.contains(capability) {
+                Ok(())
+            } else {
+                Err(ApiError::bad_request(format!(
+                    "capability '{capability}' performs writes and was not granted; \
+                     add it to admit_capabilities to authorize this execution"
+                )))
+            }
+        }
         Err(error) => Err(ApiError::bad_request(format!(
             "raw execute capability '{capability}' failed sandbox preflight: {error}"
         ))),
