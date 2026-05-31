@@ -103,6 +103,24 @@ impl Module {
         module_name: Option<&str>,
         manifest: Option<&[crate::passes::PythonToolManifestEntry]>,
     ) -> Result<Artifact> {
+        self.generate_artifact_with_manifest_and_caps(
+            module_name,
+            manifest,
+            &std::collections::HashSet::new(),
+        )
+    }
+
+    /// Like [`generate_artifact_with_manifest`], but `known_caps` declares
+    /// capabilities the host already has registered at runtime (provider/pack
+    /// blocks). They satisfy the tool-binding check (E712) alongside builtins and
+    /// in-graph `REGISTER_CAPABILITY` nodes — a standalone compile passes an empty
+    /// set and stays strict.
+    pub fn generate_artifact_with_manifest_and_caps(
+        &self,
+        module_name: Option<&str>,
+        manifest: Option<&[crate::passes::PythonToolManifestEntry]>,
+        known_caps: &std::collections::HashSet<String>,
+    ) -> Result<Artifact> {
         let payload = self.emit_artifact_payload(module_name)?;
         let mut dags = parse_wire_dags(&payload)?;
         crate::artifact_validation::validate_template_placeholders(&dags)
@@ -113,7 +131,7 @@ impl Module {
         // and copy `python_handler_id` from registrations onto invocations.
         // W721/W723 warnings are logged here (non-fatal).
         for dag in dags.iter_mut() {
-            let warnings = crate::passes::tool_binding_check_dag(dag, manifest)?;
+            let warnings = crate::passes::tool_binding_check_dag(dag, manifest, known_caps)?;
             for w in &warnings {
                 eprintln!("warning[{}]: {}", w.code, w.message);
             }
@@ -132,6 +150,16 @@ impl Module {
 
     pub fn generate_artifact_bytes(&self) -> Result<Vec<u8>> {
         self.generate_artifact_bytes_with_name(None)
+    }
+
+    /// Artifact bytes with host-declared `known_caps` for the tool-binding check.
+    pub fn generate_artifact_bytes_with_known_caps(
+        &self,
+        known_caps: &std::collections::HashSet<String>,
+    ) -> Result<Vec<u8>> {
+        self.generate_artifact_with_manifest_and_caps(None, None, known_caps)?
+            .to_bytes()
+            .map_err(|err| invalid_input_error(err.to_string()))
     }
 
     pub fn generate_artifact_bytes_with_name(&self, module_name: Option<&str>) -> Result<Vec<u8>> {

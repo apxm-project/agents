@@ -142,18 +142,25 @@ def AIS_InvToolOp : AIS_Op<"inv_tool",
   let description = [{
     Invokes a registered capability (tool, API, or function) with parameters.
 
+    `$context` carries optional upstream data operands; `params_json` may
+    reference them by name via `{name}` placeholders (resolved against the
+    `input_names` attribute at runtime), so a tool can consume a prior node's
+    output — the same dataflow contract as `ask`.
+
     Example:
     ```mlir
-    %result = ais.inv_tool "web_search" ("query": "MLIR compiler") : !ais.token
+    %result = ais.inv_tool "web_search" ("query") : !ais.token
+    %result = ais.inv_tool "publish" ("{id}") [%ctr : !ais.token] : !ais.token
     ```
   }];
   let arguments = (ins
     StrAttr:$capability,
-    StrAttr:$params_json
+    StrAttr:$params_json,
+    Variadic<AIS_AnyTokenHandleOrGoal>:$context
   );
   let results = (outs AIS_TokenType:$result);
   let assemblyFormat = [{
-    $capability `(` $params_json `)` attr-dict `:` type($result)
+    $capability `(` $params_json `)` (`[` $context^ `:` type($context) `]`)? attr-dict `:` type($result)
   }];
   let hasVerifier = 1;
 }

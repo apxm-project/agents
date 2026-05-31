@@ -57,7 +57,8 @@ pub(crate) async fn execute(
     Json(req): Json<ExecuteRequest>,
 ) -> Result<Json<ExecuteResponse>, ApiError> {
     let (air, args, session_id, session_dir) = prepare_request(req)?;
-    let mut artifact = air_to_artifact(&air)?;
+    let known_caps = registered_capability_names(&state);
+    let mut artifact = air_to_artifact_with_caps(&air, &known_caps)?;
     validate_raw_execute_admission(&artifact, &state)?;
     inject_resolved_credentials(&mut artifact).await?;
     let _permit = state.inference_limiter.acquire().await?;
@@ -80,7 +81,8 @@ pub(crate) async fn execute_stream(
     Json(req): Json<ExecuteRequest>,
 ) -> Result<Sse<impl Stream<Item = Result<Event, std::convert::Infallible>>>, ApiError> {
     let (air, args, session_id, session_dir) = prepare_request(req)?;
-    let mut artifact = air_to_artifact(&air)?;
+    let known_caps = registered_capability_names(&state);
+    let mut artifact = air_to_artifact_with_caps(&air, &known_caps)?;
     validate_raw_execute_admission(&artifact, &state)?;
     inject_resolved_credentials(&mut artifact).await?;
     let permit = state.inference_limiter.acquire().await?;
@@ -228,6 +230,16 @@ pub(crate) fn air_module_to_artifact(graph: AirModule) -> Result<Artifact, ApiEr
 }
 
 pub(crate) fn air_to_artifact(air_text: &str) -> Result<Artifact, ApiError> {
+    air_to_artifact_with_caps(air_text, &std::collections::HashSet::new())
+}
+
+/// Compile AIR to an artifact, declaring `known_caps` (the host's runtime-
+/// registered provider/pack capabilities) so the tool-binding check accepts
+/// them alongside builtins. An empty set keeps the standalone strict behaviour.
+pub(crate) fn air_to_artifact_with_caps(
+    air_text: &str,
+    known_caps: &std::collections::HashSet<String>,
+) -> Result<Artifact, ApiError> {
     let context = CompilerContext::new().map_err(|error| {
         ApiError::internal_message(format!(
             "failed to initialize APXM compiler context: {error}"
@@ -239,10 +251,22 @@ pub(crate) fn air_to_artifact(air_text: &str) -> Result<Artifact, ApiError> {
         .compile(&air_text)
         .map_err(|error| ApiError::bad_request(format!("failed to compile AIR: {error}")))?;
     let artifact_bytes = module
-        .generate_artifact_bytes()
+        .generate_artifact_bytes_with_known_caps(known_caps)
         .map_err(|error| ApiError::internal_message(format!("failed to emit artifact: {error}")))?;
     Artifact::from_bytes(&artifact_bytes)
         .map_err(|error| ApiError::internal_message(format!("failed to decode artifact: {error}")))
+}
+
+/// The names of every capability registered in the runtime — handed to the
+/// compiler so provider/pack tool nodes pass the tool-binding check.
+pub(crate) fn registered_capability_names(state: &AppState) -> std::collections::HashSet<String> {
+    state
+        .runtime
+        .capability_system()
+        .list_capabilities()
+        .into_iter()
+        .map(|c| c.name)
+        .collect()
 }
 
 fn validate_raw_execute_admission(artifact: &Artifact, state: &AppState) -> Result<(), ApiError> {
