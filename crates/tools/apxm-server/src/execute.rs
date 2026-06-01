@@ -49,6 +49,56 @@ pub(crate) struct ExecuteRequest {
     pub(crate) admit_capabilities: Vec<String>,
 }
 
+/// A caller-supplied PlanGraph plus the same execution controls as
+/// [`ExecuteRequest`]. The `graph` is an `apxm_ais::plan::PlanGraph` envelope
+/// (`{ name, entry, parameters, nodes }`, or wrapped as `{ graph: { ... } }`);
+/// the server lowers it to AIR server-side — bypassing the LLM emission path —
+/// then routes it through the identical admission gate and runtime as
+/// `/v1/execute`.
+#[derive(Debug, Deserialize)]
+pub(crate) struct CompileRequest {
+    pub(crate) graph: JsonValue,
+    #[serde(default)]
+    pub(crate) args: Vec<String>,
+    #[serde(default)]
+    pub(crate) session_id: Option<String>,
+    #[serde(default)]
+    pub(crate) session_root: Option<String>,
+    #[serde(default)]
+    pub(crate) admit_capabilities: Vec<String>,
+}
+
+impl CompileRequest {
+    /// Lower the caller-supplied PlanGraph to AIR and fold it into an
+    /// [`ExecuteRequest`] so the compile route shares the execute path verbatim
+    /// (admission gate, credential injection, runtime, session handling).
+    fn into_execute_request(self) -> Result<ExecuteRequest, ApiError> {
+        let air = crate::mcp_tools::lower_plan_graph_to_air(self.graph)
+            .map_err(|error| ApiError::bad_request(format!("plan graph lowering failed: {error}")))?;
+        Ok(ExecuteRequest {
+            air,
+            args: self.args,
+            session_id: self.session_id,
+            session_root: self.session_root,
+            admit_capabilities: self.admit_capabilities,
+        })
+    }
+}
+
+pub(crate) async fn compile_graph(
+    state: State<AppState>,
+    Json(req): Json<CompileRequest>,
+) -> Result<Json<ExecuteResponse>, ApiError> {
+    execute(state, Json(req.into_execute_request()?)).await
+}
+
+pub(crate) async fn compile_graph_stream(
+    state: State<AppState>,
+    Json(req): Json<CompileRequest>,
+) -> Result<Sse<impl Stream<Item = Result<Event, std::convert::Infallible>>>, ApiError> {
+    execute_stream(state, Json(req.into_execute_request()?)).await
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub(crate) struct ExecuteResponse {
     pub(crate) results: HashMap<String, JsonValue>,
