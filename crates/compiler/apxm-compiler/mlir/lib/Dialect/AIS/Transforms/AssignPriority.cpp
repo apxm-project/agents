@@ -52,7 +52,12 @@ static bool isAisOperation(Operation *op) {
 }
 
 static bool isArtifactOperation(Operation *op) {
-  return isAisOperation(op) || isa<func::ReturnOp>(op);
+  // `op` may be null when it comes from `Value::getDefiningOp()` on a block
+  // argument (e.g. an AIS op that takes a function parameter directly as an
+  // operand). `isa<>` requires a non-null pointer, so the guard is mandatory:
+  // without it `isa<func::ReturnOp>(nullptr)` dereferences null and segfaults
+  // the whole compiler (and any server compiling untrusted AIR at O1+).
+  return op && (isAisOperation(op) || isa<func::ReturnOp>(op));
 }
 
 static std::optional<llvm::StringRef> graphLatencyClass(Operation *op) {
