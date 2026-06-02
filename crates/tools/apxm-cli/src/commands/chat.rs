@@ -15,6 +15,7 @@ use std::io::Write as _;
 use std::path::PathBuf;
 
 use anyhow::{Context, Result, anyhow};
+use apxm_ais::chat::{self, COMPACT_AT_TOKENS, KEEP_RECENT_TURNS, Role};
 use futures::StreamExt;
 use serde_json::Value as JsonValue;
 
@@ -26,11 +27,6 @@ use super::watch::{SseParser, decode_event_frame};
 /// `--server`.
 const DEFAULT_SERVER_BASE: &str = "http://127.0.0.1:18800";
 
-/// Built-in single-ASK chat graph: one `conversation` parameter rendered into
-/// an ASK. Authored from the Python frontend (`g.ask(prompt="{conversation}")`)
-/// and validated with `apxm validate`.
-const BUILTIN_CHAT_AIR: &str = include_str!("chat_default.air");
-
 /// CLI options for the chat REPL.
 #[derive(Debug, Clone)]
 pub struct ChatOptions {
@@ -39,15 +35,11 @@ pub struct ChatOptions {
     pub session_id: Option<String>,
     pub admit: Vec<String>,
     pub tree: bool,
+    /// Enable the agent's `web` tool group each turn (ignored when `--air` is set).
+    pub tools: bool,
+    /// Pin each turn to a registered backend (ignored when `--air` is set).
+    pub backend: Option<String>,
 }
-
-/// Number of most-recent turns kept verbatim during compaction.
-const KEEP_RECENT_TURNS: usize = 4;
-/// Transcript token budget (chars/4 estimate) above which compaction triggers.
-/// A conservative default; ~0.6 of a 32k-token window.
-const COMPACT_AT_TOKENS: usize = 20_000;
-/// Built-in single-ASK summarize graph used to fold old turns into a summary.
-const BUILTIN_SUMMARIZE_AIR: &str = include_str!("chat_summarize.air");
 
 /// Client-side conversation transcript. The runtime carries no role-tagged
 /// message history across turns, so the REPL owns it and threads it back as the
@@ -67,35 +59,31 @@ pub(crate) struct Conversation {
 
 impl Conversation {
     /// Render the running summary (if any) + the verbatim turns + the pending
-    /// user line, leaving a final `Assistant:` for the model to complete.
-    /// When `summary` is empty the output is byte-identical to a flat transcript.
+    /// user line via the shared [`chat::render_transcript`], leaving a final
+    /// `Assistant:` for the model to complete. The summary rides a `System` turn
+    /// ("Summary of earlier conversation: …") — the same framing the studio uses.
     pub(crate) fn render(&self, next_user: &str) -> String {
-        let mut out = String::new();
+        let summary_line;
+        let mut msgs: Vec<(Role, &str)> = Vec::new();
         if !self.summary.is_empty() {
-            out.push_str("Summary so far: ");
-            out.push_str(&self.summary);
-            out.push_str("\n\n");
+            summary_line = format!("Summary of earlier conversation: {}", self.summary);
+            msgs.push((Role::System, summary_line.as_str()));
         }
         for (user, assistant) in &self.turns {
-            out.push_str("User: ");
-            out.push_str(user);
-            out.push_str("\nAssistant: ");
-            out.push_str(assistant);
-            out.push('\n');
+            msgs.push((Role::User, user));
+            msgs.push((Role::Assistant, assistant));
         }
-        out.push_str("User: ");
-        out.push_str(next_user);
-        out.push_str("\nAssistant:");
-        out
+        msgs.push((Role::User, next_user));
+        chat::render_transcript(msgs)
     }
 
     pub(crate) fn record(&mut self, user: String, assistant: String) {
         self.turns.push((user, assistant));
     }
 
-    /// Rough token estimate of the rendered transcript (chars/4 heuristic).
+    /// Rough token estimate of the rendered transcript (shared chars/4 heuristic).
     pub(crate) fn token_estimate(&self) -> usize {
-        self.render("").len() / 4
+        chat::estimate_tokens(&self.render(""))
     }
 
     /// The text of the oldest turns that would be folded by a compaction.
@@ -145,10 +133,17 @@ pub async fn chat_command(opts: ChatOptions) -> Result<()> {
         .or_else(|| std::env::var("APXM_SERVER_BASE").ok())
         .unwrap_or_else(|| DEFAULT_SERVER_BASE.to_string());
     let session_id = opts.session_id.clone().unwrap_or_else(mint_session_id);
+    // `--air` drives a custom graph; otherwise build the shared built-in chat
+    // graph, threading the `--tools` / `--backend` controls through it (the same
+    // builder the studio uses, so the two stay identical).
     let air = match &opts.air {
         Some(p) => std::fs::read_to_string(p)
             .with_context(|| format!("failed to read AIR graph {}", p.display()))?,
-        None => BUILTIN_CHAT_AIR.to_string(),
+        None => chat::chat_air(&chat::ChatAirOptions {
+            backend: opts.backend.as_deref(),
+            model: None,
+            tools: opts.tools,
+        }),
     };
 
     // No read timeout: SSE streams stall between events, and reqwest's default
@@ -304,7 +299,7 @@ async fn summarize_quiet(
 ) -> Result<String> {
     let url = format!("{}/v1/execute/stream", base.trim_end_matches('/'));
     let body = serde_json::json!({
-        "air": BUILTIN_SUMMARIZE_AIR,
+        "air": chat::SUMMARIZE_AIR,
         "args": [text],
         "session_id": session_id,
     });
@@ -348,16 +343,19 @@ fn prompt_grant(capability: &str) -> Result<bool> {
     Ok(a == "y" || a == "yes")
 }
 
-/// Parse the capability name out of the server's write-denial message:
-/// `capability '<cap>' performs writes and was not granted; ...`.
+/// Parse the capability name out of a write-denial message. Matches BOTH the
+/// server's static pre-flight wording (`capability '<cap>' performs writes and
+/// was not granted; …`) and the runtime's invoke-site wording (`write capability
+/// '<cap>' is not admitted by this execution's grant`).
 fn parse_denied_capability(body: &str) -> Option<String> {
+    let is_write_denial =
+        body.contains("performs writes") || body.contains("is not admitted by this execution");
+    if !is_write_denial {
+        return None;
+    }
     let after = body.split_once("capability '")?.1;
     let cap = after.split_once('\'')?.0;
-    if body.contains("performs writes") && !cap.is_empty() {
-        Some(cap.to_string())
-    } else {
-        None
-    }
+    (!cap.is_empty()).then(|| cap.to_string())
 }
 
 /// Run one conversational turn: POST the graph + transcript, stream the SSE,
@@ -574,16 +572,17 @@ mod tests {
 
     #[test]
     fn builtin_air_is_a_single_ask_over_conversation() {
-        assert!(BUILTIN_CHAT_AIR.contains("ais.ask"));
-        assert!(BUILTIN_CHAT_AIR.contains("conversation"));
-        assert!(BUILTIN_CHAT_AIR.contains("ais.entry"));
+        let air = chat::default_chat_air();
+        assert!(air.contains("ais.ask"));
+        assert!(air.contains("conversation"));
+        assert!(air.contains("ais.entry"));
     }
 
     #[test]
     fn summarize_air_validates_shape() {
-        assert!(BUILTIN_SUMMARIZE_AIR.contains("ais.ask"));
-        assert!(BUILTIN_SUMMARIZE_AIR.contains("to_summarize"));
-        assert!(BUILTIN_SUMMARIZE_AIR.contains("ais.entry"));
+        assert!(chat::SUMMARIZE_AIR.contains("ais.ask"));
+        assert!(chat::SUMMARIZE_AIR.contains("to_summarize"));
+        assert!(chat::SUMMARIZE_AIR.contains("ais.entry"));
     }
 
     #[test]
@@ -592,10 +591,10 @@ mod tests {
         let mut c = Conversation::default();
         c.record("hi".into(), "hello".into());
         assert_eq!(c.render("next"), "User: hi\nAssistant: hello\nUser: next\nAssistant:");
-        // With a summary: a "Summary so far:" block is prepended.
+        // With a summary: a System turn carries it (same framing as the studio).
         c.summary = "earlier we discussed X".into();
         let r = c.render("next");
-        assert!(r.starts_with("Summary so far: earlier we discussed X\n\n"));
+        assert!(r.starts_with("System: Summary of earlier conversation: earlier we discussed X\n"));
         assert!(r.contains("User: hi\nAssistant: hello"));
     }
 

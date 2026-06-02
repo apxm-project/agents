@@ -282,7 +282,7 @@ pub enum Commands {
         #[arg(long)]
         air: Option<std::path::PathBuf>,
         /// apxm-server base URL (default $APXM_SERVER_BASE or
-        /// http://127.0.0.1:8000).
+        /// http://127.0.0.1:18800).
         #[arg(long)]
         server: Option<String>,
         /// Reuse/resume a prior conversation by session id instead of minting
@@ -293,6 +293,14 @@ pub enum Commands {
         /// ExecuteRequest.admit_capabilities.
         #[arg(long = "admit", value_name = "CAP")]
         admit: Vec<String>,
+        /// Enable the agent's web tool group each turn (the runtime runs
+        /// independent tool calls in parallel). Ignored when `--air` is set.
+        #[arg(long)]
+        tools: bool,
+        /// Pin each turn to a registered backend by name (as listed by
+        /// `GET /v1/models`). Ignored when `--air` is set.
+        #[arg(long, value_name = "NAME")]
+        backend: Option<String>,
         /// Render the full per-agent event tree each turn instead of just the
         /// assistant's text.
         #[arg(long)]

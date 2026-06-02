@@ -213,6 +213,8 @@ async fn run_cli(cli: Cli) -> Result<()> {
             server,
             session_id,
             admit,
+            tools,
+            backend,
             tree,
         } => {
             commands::chat::chat_command(commands::chat::ChatOptions {
@@ -220,6 +222,8 @@ async fn run_cli(cli: Cli) -> Result<()> {
                 server,
                 session_id,
                 admit,
+                tools,
+                backend,
                 tree,
             })
             .await

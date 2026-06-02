@@ -228,6 +228,7 @@ version = "0.0.1"
 dependencies = [
  "anyhow",
  "apxm-acp",
+ "apxm-ais",
  "apxm-artifact",
  "apxm-backends",
  "apxm-compiler",
