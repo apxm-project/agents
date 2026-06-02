@@ -42,16 +42,33 @@ example uses constructs that pass `apxm validate` (the text-AIR path that
 
 | Step | Construct | What it shows |
 |------|-----------|---------------|
+| recall | `g.query_memory` | session-scoped QMEM read of a prior turn's note |
 | plan | `g.reason` | intent planning over the transcript |
 | answer | `g.ask(tool_groups=[...])` | tool-using turn (group is self-enabling, least privilege) |
-| worker | `g.spawn_agent` | spawning a sub-agent |
-| team | `g.spawn_team` | a named team resolved from `~/.apxm/teams.toml` |
+| research | `g.spawn_agent` + `g.delegate` | dispatching a focused subtask to a sub-agent |
+| summary | `g.call_skill` | post-processing through an installed skill |
 | reply | `g.ask` | synthesizing the user-facing answer |
+| remember | `g.update_memory` + `g.fence` | ordered UMEM write for the next turn |
 
 Continuity is handled by the host: `apxm chat` threads the whole transcript as
 `conversation` each turn, and the runtime additionally supports session-scoped
 QMEM/UMEM (memory keyed by `session_id` — a later turn reads an earlier turn's
 write).
+
+**Runtime prerequisites for the multi-agent and skill steps.** This file is the
+*authoring surface* — it passes `apxm validate` as written. Two steps additionally
+need server-side state to *execute* (without it they return a clean error, not a
+crash):
+
+- `g.delegate(target_agent="researcher", …)` dispatches to a sub-agent *flow*.
+  `g.spawn_agent` only registers the name; the runtime resolves the flow from a
+  second function in the artifact named `Agent.flow` (e.g. `@researcher.main` —
+  see `parse_flow_name`). A self-contained runnable multi-agent graph therefore
+  defines that second function; emit one with hand-written AIR, or register the
+  sub-agent before the turn.
+- `g.call_skill("summarize", …)` resolves an *installed* skill by id. Install a
+  skill named `summarize` (or point the call at one that is installed) for this
+  step to run; otherwise it returns `call_skill:not_found:summarize`.
 
 For a bounded in-graph refinement loop, use the `g.loop(count=N)` context
 manager (see `apxm.Loop`). Open-ended iteration belongs in the host turn-loop.
