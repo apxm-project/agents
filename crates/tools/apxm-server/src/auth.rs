@@ -34,24 +34,25 @@ use axum::response::{IntoResponse, Response};
 
 use crate::routes;
 
-/// Routes that mutate server/runtime state and therefore require auth when
-/// `require_auth` is enabled. Matching is exact-prefix against the request
-/// path so the parameterized skill-execute routes (`/v1/skills/{id}/execute`
-/// and its `/stream` variant) are covered.
+/// Whether a request requires the bearer when `require_auth` is enabled.
+///
+/// DEFAULT-DENY: everything is protected except a small, explicitly public,
+/// non-mutating surface (liveness, model discovery, pure validation) and CORS
+/// preflight. An earlier allow-list only covered execute/skill-execute, leaving
+/// execution and mutation routes (MCP, A2A/tasks, generate, agents/register,
+/// memory writes, checkpoints, compile, run reads) silently open — and any newly
+/// added route would inherit that gap. Default-deny closes the class of bug:
+/// a new route is protected unless deliberately added to the public list.
 fn is_protected(method: &axum::http::Method, path: &str) -> bool {
     if method == axum::http::Method::OPTIONS {
         // Never gate CORS preflight; it carries no Authorization header.
         return false;
     }
-
-    if path == routes::EXECUTE || path == routes::EXECUTE_STREAM {
-        return true;
-    }
-
-    // Skill execution: `/v1/skills/{id}/execute` and `.../execute/stream`.
-    // `/validate` is read-only and intentionally left open.
-    path.starts_with(routes::SKILLS)
-        && (path.ends_with("/execute") || path.ends_with("/execute/stream"))
+    // Public, read-only endpoints that stay open even with auth enabled.
+    let public = path == routes::HEALTH
+        || path == routes::MODELS
+        || (path.starts_with(routes::SKILLS) && path.ends_with("/validate"));
+    !public
 }
 
 /// Resolve the expected bearer at request time. Returns `None` when no token
@@ -190,15 +191,30 @@ mod tests {
     }
 
     #[test]
-    fn read_only_routes_are_open() {
+    fn public_read_routes_are_open() {
+        // Liveness, model discovery, and pure validation stay open with auth on.
         assert!(!is_protected(&axum::http::Method::GET, routes::HEALTH));
         assert!(!is_protected(&axum::http::Method::GET, routes::MODELS));
-        assert!(!is_protected(&axum::http::Method::GET, routes::RUNS));
         assert!(!is_protected(
             &axum::http::Method::POST,
             "/v1/skills/my-skill/validate"
         ));
-        assert!(!is_protected(&axum::http::Method::GET, routes::SKILLS));
+    }
+
+    #[test]
+    fn mutating_and_execution_routes_are_protected_by_default() {
+        // Default-deny: the routes the old allow-list silently left open.
+        for p in [
+            routes::MCP,
+            routes::AGENTS_REGISTER,
+            routes::COMPILE,
+            routes::MEMORY_FACTS_STORE,
+            routes::CHECKPOINTS,
+            routes::RUNS,
+            routes::SKILLS, // listing is gated too when auth is on
+        ] {
+            assert!(is_protected(&axum::http::Method::POST, p), "{p} must be protected");
+        }
     }
 
     #[test]
