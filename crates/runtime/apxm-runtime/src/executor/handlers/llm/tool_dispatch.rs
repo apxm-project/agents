@@ -391,7 +391,9 @@ pub(crate) async fn execute_ask_with_tools(
         .unwrap_or(DEFAULT_MAX_TOOL_ITERATIONS);
 
     let mut current_request = initial_request.clone();
-    let mut accumulated_tool_results: Vec<ToolResult> = Vec::new();
+    // Only the running count of invoked tools is ever read (for logging below);
+    // keep a counter rather than accumulating and cloning the results each round.
+    let mut tools_invoked_count: usize = 0;
     let mut total_input_tokens = 0usize;
     let mut total_output_tokens = 0usize;
     let mut total_prefill_ms = 0.0_f64;
@@ -465,7 +467,7 @@ pub(crate) async fn execute_ask_with_tools(
                 iterations = iteration + 1,
                 total_tokens_in = total_input_tokens,
                 total_tokens_out = total_output_tokens,
-                tools_invoked = accumulated_tool_results.len(),
+                tools_invoked = tools_invoked_count,
                 "ASK tool loop completed"
             );
             ctx.timing_tracker
@@ -508,7 +510,7 @@ pub(crate) async fn execute_ask_with_tools(
                 .ok();
         }
 
-        accumulated_tool_results.extend(tool_results.clone());
+        tools_invoked_count += tool_results.len();
 
         let tool_results_message = format_tool_results_message(&tool_results);
         let continuation_prompt = format!(
@@ -544,9 +546,9 @@ pub(crate) async fn execute_ask_with_tools(
 
     Err(RuntimeError::LLM {
         message: format!(
-            "Tool loop exceeded maximum iterations ({}). Last {} tool calls executed.",
+            "Tool loop exceeded maximum iterations ({}). {} tool calls executed.",
             max_iterations,
-            accumulated_tool_results.len()
+            tools_invoked_count
         ),
         backend: None,
     })
