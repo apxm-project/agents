@@ -68,6 +68,20 @@ fn parse_apxm_fields_honored_value(raw: &str) -> Option<Vec<String>> {
 const DEFAULT_BASE_URL: &str = "https://api.openai.com/v1";
 const PROTOCOL: ProviderProtocol = ProviderProtocol::OpenAI;
 const DEFAULT_MODEL: &str = "gpt-4o-mini";
+/// Output-budget key for reasoning-family models (the classic key is `max_tokens`).
+const MAX_COMPLETION_TOKENS: &str = "max_completion_tokens";
+
+/// Reasoning-family OpenAI/Azure models (gpt-5*, o1/o3/o4*) require
+/// `max_completion_tokens` and reject custom sampling parameters. Matched by id
+/// prefix so new point releases (e.g. `gpt-5.6`, `o5`) are covered without a list.
+fn is_reasoning_model(model: &str) -> bool {
+    let m = model.to_ascii_lowercase();
+    m.starts_with("gpt-5")
+        || m.starts_with("o1")
+        || m.starts_with("o3")
+        || m.starts_with("o4")
+        || m.starts_with("o5")
+}
 
 /// OpenAI LLM backend.
 ///
@@ -295,24 +309,39 @@ impl OpenAIBackend {
         let mut body = json!({});
         body[openai_keys::MODEL] = json!(model);
         body[openai_keys::MESSAGES] = json!(messages);
-        if !self.fixed_temperature_models.contains(model) {
+
+        // Reasoning-family models (gpt-5*, o1/o3/o4*) on the OpenAI / Azure API use
+        // `max_completion_tokens` instead of `max_tokens` and reject custom
+        // `temperature`, `top_p`, and penalties — only provider defaults are
+        // allowed. Older chat models (gpt-4*, gpt-4o*, and OpenAI-compatible
+        // gateways like Kimi/DeepSeek) keep the classic parameters.
+        let reasoning = is_reasoning_model(model);
+
+        if !reasoning && !self.fixed_temperature_models.contains(model) {
             body[openai_keys::TEMPERATURE] = json!(request.temperature);
         }
 
         if let Some(max_tokens) = request.max_tokens {
-            body[message_keys::MAX_TOKENS] = json!(max_tokens);
+            let key = if reasoning {
+                MAX_COMPLETION_TOKENS
+            } else {
+                message_keys::MAX_TOKENS
+            };
+            body[key] = json!(max_tokens);
         }
 
-        if let Some(top_p) = request.top_p {
-            body[openai_keys::TOP_P] = json!(top_p);
-        }
+        if !reasoning {
+            if let Some(top_p) = request.top_p {
+                body[openai_keys::TOP_P] = json!(top_p);
+            }
 
-        if let Some(freq_penalty) = request.frequency_penalty {
-            body[openai_keys::FREQUENCY_PENALTY] = json!(freq_penalty);
-        }
+            if let Some(freq_penalty) = request.frequency_penalty {
+                body[openai_keys::FREQUENCY_PENALTY] = json!(freq_penalty);
+            }
 
-        if let Some(pres_penalty) = request.presence_penalty {
-            body[openai_keys::PRESENCE_PENALTY] = json!(pres_penalty);
+            if let Some(pres_penalty) = request.presence_penalty {
+                body[openai_keys::PRESENCE_PENALTY] = json!(pres_penalty);
+            }
         }
 
         if !request.stop_sequences.is_empty() {
@@ -1000,6 +1029,34 @@ mod tests {
         assert_eq!(body["model"], "gpt-4");
         assert_eq!(body["temperature"], 0.9);
         assert_eq!(body["messages"][0]["content"], "Hello");
+    }
+
+    #[test]
+    fn reasoning_models_use_max_completion_tokens_and_drop_sampling() {
+        for model in ["gpt-5.5", "o3-mini", "o1", "o4-mini"] {
+            let backend = test_backend(model);
+            let request = LLMRequest::new("Hi")
+                .with_temperature(0.7)
+                .with_top_p(0.5)
+                .with_max_tokens(64);
+            let body = backend.build_request_body(&request);
+            assert_eq!(body["max_completion_tokens"], 64, "{model}");
+            assert!(body.get("max_tokens").is_none(), "{model}");
+            assert!(body.get("temperature").is_none(), "{model}");
+            assert!(body.get("top_p").is_none(), "{model}");
+        }
+    }
+
+    #[test]
+    fn classic_models_keep_max_tokens_and_temperature() {
+        for model in ["gpt-4o-mini", "gpt-4.1", "Kimi-K2.6", "DeepSeek-V4-Flash"] {
+            let backend = test_backend(model);
+            let request = LLMRequest::new("Hi").with_temperature(0.7).with_max_tokens(64);
+            let body = backend.build_request_body(&request);
+            assert_eq!(body["max_tokens"], 64, "{model}");
+            assert!(body.get("max_completion_tokens").is_none(), "{model}");
+            assert_eq!(body["temperature"], 0.7, "{model}");
+        }
     }
 
     #[test]
