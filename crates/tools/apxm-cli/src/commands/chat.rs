@@ -21,8 +21,10 @@ use serde_json::Value as JsonValue;
 use super::render::{RunSnapshot, render_tree};
 use super::watch::{SseParser, decode_event_frame};
 
-/// Default apxm-server endpoint. Override via `APXM_SERVER_BASE` or `--server`.
-const DEFAULT_SERVER_BASE: &str = "http://127.0.0.1:8000";
+/// Default apxm-server endpoint. Matches the server's own default bind address
+/// (`apxm-server` `DEFAULT_PORT` = 18800). Override via `APXM_SERVER_BASE` or
+/// `--server`.
+const DEFAULT_SERVER_BASE: &str = "http://127.0.0.1:18800";
 
 /// Built-in single-ASK chat graph: one `conversation` parameter rendered into
 /// an ASK. Authored from the Python frontend (`g.ask(prompt="{conversation}")`)
