@@ -63,6 +63,31 @@ pub(crate) struct ModelList {
     pub(crate) data: Vec<ModelEntry>,
 }
 
+/// A single model id served by a backend (sanitized; no provider metadata).
+#[derive(Debug, Serialize)]
+pub(crate) struct BackendModelEntry {
+    pub(crate) id: String,
+}
+
+/// One registered backend, projected to the non-secret fields a compile-time
+/// registry needs. Deliberately omits `api_key`, `headers`, and `endpoint` so
+/// the discovery endpoint never puts credentials on the wire.
+#[derive(Debug, Serialize)]
+pub(crate) struct BackendEntry {
+    pub(crate) name: String,
+    pub(crate) protocol: String,
+    pub(crate) models: Vec<BackendModelEntry>,
+}
+
+/// Response body for `GET /v1/backends` — the live backend registry with the
+/// model ids each backend serves, so a client (e.g. apxm-studio) can compile
+/// graphs against the same backends the runtime will dispatch to.
+#[derive(Debug, Serialize)]
+pub(crate) struct BackendList {
+    pub(crate) object: &'static str,
+    pub(crate) data: Vec<BackendEntry>,
+}
+
 #[derive(Debug, Serialize)]
 pub(crate) struct ToolEntry {
     pub(crate) name: String,

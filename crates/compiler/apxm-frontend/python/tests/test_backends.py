@@ -128,3 +128,60 @@ def test_graph_routes_stamp_model_for_single_model_backend(backend_config):
     node = graph.to_graph().nodes[0]
     assert node.attributes[gen_keys.BACKEND] == "vllm-alt"
     assert node.attributes[gen_keys.MODEL] == "other-model"
+
+
+@pytest.fixture()
+def multi_model_config(tmp_path, monkeypatch):
+    config = tmp_path / "config.toml"
+    config.write_text(
+        """
+[[backends]]
+name = "amd"
+type = "cloud"
+protocol = "anthropic"
+
+[[backends.models]]
+id = "claude-sonnet-4-6"
+
+[[backends.models]]
+id = "claude-opus-4-8"
+""",
+        encoding="utf-8",
+    )
+    monkeypatch.setenv(ENV_APXM_CONFIG, str(config))
+    return config
+
+
+def test_select_backend_defers_model_for_multi_model_backend(multi_model_config):
+    # Pinning only the backend on a multi-model backend must NOT raise: the
+    # model is left unset so the runtime resolves it (parity with the chat
+    # path), instead of forcing the caller to disambiguate at compile time.
+    from apxm.backends import select_backend
+
+    route = select_backend(backend="amd")
+    assert route.backend == "amd"
+    assert route.model is None
+    assert route.protocol == "anthropic"
+
+
+def test_graph_omits_model_attr_for_deferred_multi_model_backend(multi_model_config):
+    from apxm import GraphRecorder
+    from apxm._generated import constants as gen_keys
+    from apxm.backends import select_backend
+
+    graph = GraphRecorder("deferred_backend")
+    graph.ask(name="routed", prompt="hello", route=select_backend(backend="amd"))
+
+    node = graph.to_graph().nodes[0]
+    assert node.attributes[gen_keys.BACKEND] == "amd"
+    assert gen_keys.MODEL not in node.attributes
+
+
+def test_select_backend_still_resolves_explicit_model_on_multi_model_backend(
+    multi_model_config,
+):
+    from apxm.backends import select_backend
+
+    route = select_backend(backend="amd", model="claude-opus-4-8")
+    assert route.backend == "amd"
+    assert route.model == "claude-opus-4-8"

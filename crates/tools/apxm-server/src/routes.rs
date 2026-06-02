@@ -2,6 +2,7 @@ use std::fmt::Display;
 
 pub(crate) const HEALTH: &str = "/health";
 pub(crate) const MODELS: &str = "/v1/models";
+pub(crate) const BACKENDS: &str = "/v1/backends";
 pub(crate) const EXECUTE: &str = "/v1/execute";
 pub(crate) const EXECUTE_STREAM: &str = "/v1/execute/stream";
 pub(crate) const COMPILE: &str = "/v1/compile";
@@ -56,6 +57,7 @@ pub(crate) const RUN_BLOB: &str = "/v1/runs/{execution_id}/blobs/{blob_ref}";
 pub(crate) enum ServerRoute {
     Health,
     Models,
+    Backends,
     Execute,
     ExecuteStream,
     Compile,
@@ -107,6 +109,7 @@ impl ServerRoute {
         match self {
             Self::Health => HEALTH,
             Self::Models => MODELS,
+            Self::Backends => BACKENDS,
             Self::Execute => EXECUTE,
             Self::ExecuteStream => EXECUTE_STREAM,
             Self::Compile => COMPILE,

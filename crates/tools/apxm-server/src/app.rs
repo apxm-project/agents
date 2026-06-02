@@ -13,7 +13,7 @@ use crate::checkpoints::{create_checkpoint, get_checkpoint, resume_checkpoint};
 use crate::execute::{compile_graph, compile_graph_stream, execute, execute_stream};
 use crate::executions::{get_execution, get_execution_node, list_executions};
 use crate::generate::{handle_generate, handle_generate_stream, handle_schema};
-use crate::health::{health, list_models};
+use crate::health::{health, list_backends, list_models};
 use crate::mcp::mcp_jsonrpc;
 use crate::memory::{delete_fact, search_facts, store_fact};
 use crate::routes::ServerRoute;
@@ -39,6 +39,7 @@ pub(crate) fn build_app(state: AppState) -> Router {
         // Health + meta
         .route(ServerRoute::Health.path(), get(health))
         .route(ServerRoute::Models.path(), get(list_models))
+        .route(ServerRoute::Backends.path(), get(list_backends))
         // Execution
         .route(ServerRoute::Execute.path(), post(execute))
         .route(ServerRoute::ExecuteStream.path(), post(execute_stream))

@@ -188,7 +188,7 @@ def select_backend(
 
     if backend is not None:
         selected = _single_backend(candidates, selector=backend)
-        selected_model = _implicit_model(selected)
+        selected_model = _implicit_model(selected, allow_defer=True)
         return BackendRoute(
             backend=selected.name,
             model=selected_model.id if selected_model is not None else None,
@@ -357,16 +357,27 @@ def _single_backend(backends: list[RegisteredBackend], *, selector: str) -> Regi
     )
 
 
-def _implicit_model(backend: RegisteredBackend) -> RegisteredModel | None:
+def _implicit_model(
+    backend: RegisteredBackend, *, allow_defer: bool = False
+) -> RegisteredModel | None:
     if len(backend.models) == 1:
         return backend.models[0]
     if not backend.models and backend.protocol == _MOCK_PROTOCOL:
         return None
     if not backend.models:
+        if allow_defer:
+            return None
         raise BackendRegistryError(
             f"backend '{backend.name}' has no registered models. Add one with "
             f"`dekk apxm backend add-model {backend.name} <model-id>`."
         )
+    # The backend serves several models and the caller pinned only the backend.
+    # When the caller explicitly chose this backend (allow_defer), leave the
+    # model unset and let the runtime resolve it from the backend's own
+    # configuration — the same contract the chat path relies on. Otherwise the
+    # selection is genuinely ambiguous and we ask the caller to disambiguate.
+    if allow_defer:
+        return None
     raise BackendRegistryError(
         f"backend '{backend.name}' serves multiple models. Pass model= or alias=. "
         f"Registered models: {_format_model_names(backend)}"

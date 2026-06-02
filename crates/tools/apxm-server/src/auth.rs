@@ -46,6 +46,7 @@ fn is_protected(method: &axum::http::Method, path: &str) -> bool {
     // Public, read-only endpoints that stay open even with auth enabled.
     let public = path == routes::HEALTH
         || path == routes::MODELS
+        || path == routes::BACKENDS
         || (path.starts_with(routes::SKILLS) && path.ends_with("/validate"));
     !public
 }
