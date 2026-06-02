@@ -278,7 +278,7 @@ export const LOOP_START: OpSpec = {
   ],
   producesOutput: false,
   needsSubmission: false,
-  minInputs: 1,
+  minInputs: 0,
   exampleJson: "{\"id\": 3, \"op\": \"LOOP_START\", \"attributes\": {\"count_token\": \"3\"}}",
 } as const;
 
@@ -882,6 +882,7 @@ export const ATTR = {
   BACKEND: "backend",
   MAX_TOOL_ITERATIONS: "max_tool_iterations",
   BUDGET: "budget",
+  EFFORT: "effort",
   TEMPLATE_STR: "template_str",
   PROMPT: "prompt",
   TEMPLATE: "template",
