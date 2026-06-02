@@ -106,6 +106,13 @@ impl ExecutionEventEmitter for EmitterAdapter {
         });
     }
 
+    fn emit_llm_thought(&self, content: &str) {
+        self.emit(ThoughtPayload {
+            text: content.to_string(),
+            summary: None,
+        });
+    }
+
     fn emit_tool_start(&self, name: &str, args: &HashMap<String, Value>) {
         let json_args: HashMap<String, serde_json::Value> = args
             .iter()

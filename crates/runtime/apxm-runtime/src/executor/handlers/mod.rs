@@ -376,10 +376,12 @@ async fn execute_llm_request_streaming(
                 break;
             }
             StreamChunk::Thought(thought) => {
-                // Extended thinking tokens — emit as LLM token for now
+                // Extended thinking — emit as a distinct `thought` event so
+                // clients render reasoning apart from the answer. Not counted as
+                // answer text (`emitted_text`): the answer comes from `token`
+                // chunks and the final response content.
                 if let Some(emitter) = &ctx.event_emitter {
-                    emitter.emit_llm_token_for_node(node_id, &thought);
-                    emitted_text = true;
+                    emitter.emit_llm_thought_for_node(node_id, &thought);
                 }
             }
             StreamChunk::Usage(_usage) => {

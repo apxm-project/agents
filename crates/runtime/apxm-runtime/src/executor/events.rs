@@ -149,6 +149,10 @@ pub trait ExecutionEventEmitter: Send + Sync {
 
     // ── Existing ────────────────────────────────────────────────────
     fn emit_llm_token(&self, content: &str);
+    /// Emit an extended-thinking ("reasoning") delta as a distinct `thought`
+    /// event, kept separate from answer `token`s so clients can render it apart
+    /// (the CLI dims it; the studio shows a collapsible thinking block).
+    fn emit_llm_thought(&self, _content: &str) {}
     fn emit_tool_start(&self, name: &str, args: &HashMap<String, Value>);
     fn emit_tool_end(&self, name: &str, result: &Value);
 
@@ -228,6 +232,9 @@ pub trait ExecutionEventEmitter: Send + Sync {
     }
     fn emit_llm_token_for_node(&self, _node_id: u64, content: &str) {
         self.emit_llm_token(content);
+    }
+    fn emit_llm_thought_for_node(&self, _node_id: u64, content: &str) {
+        self.emit_llm_thought(content);
     }
 
     // ── Planning ────────────────────────────────────────────────────
