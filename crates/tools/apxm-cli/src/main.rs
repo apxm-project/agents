@@ -215,6 +215,7 @@ async fn run_cli(cli: Cli) -> Result<()> {
             admit,
             tools,
             backend,
+            model,
             tree,
         } => {
             commands::chat::chat_command(commands::chat::ChatOptions {
@@ -224,6 +225,7 @@ async fn run_cli(cli: Cli) -> Result<()> {
                 admit,
                 tools,
                 backend,
+                model,
                 tree,
             })
             .await

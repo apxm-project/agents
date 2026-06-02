@@ -127,9 +127,20 @@ pub fn chat_air(opts: &ChatAirOptions) -> String {
     air
 }
 
-/// The canonical bare chat graph (no routing/tools) — `chat_air(&default)`.
-pub fn default_chat_air() -> String {
-    chat_air(&ChatAirOptions::default())
+/// Parse the capability name out of a write-denial message. Matches BOTH the
+/// server's static pre-flight wording (`capability '<cap>' performs writes and
+/// was not granted; …`) and the runtime's invoke-site wording (`write capability
+/// '<cap>' is not admitted by this execution's grant`). Shared by the CLI REPL
+/// and the studio backend so both fire the HITL grant prompt on either form.
+pub fn parse_denied_capability(body: &str) -> Option<String> {
+    let is_write_denial =
+        body.contains("performs writes") || body.contains("is not admitted by this execution");
+    if !is_write_denial {
+        return None;
+    }
+    let after = body.split_once("capability '")?.1;
+    let cap = after.split_once('\'')?.0;
+    (!cap.is_empty()).then(|| cap.to_string())
 }
 
 /// Single-ASK summarize graph used by the compaction post-hook to fold older
@@ -168,11 +179,21 @@ mod tests {
 
     #[test]
     fn default_air_is_the_bare_single_ask() {
-        let air = default_chat_air();
+        let air = chat_air(&ChatAirOptions::default());
         assert!(air.contains("ais.ask \"{{{conversation}}}\" : !ais.token"));
         assert!(!air.contains("backend ="));
         assert!(!air.contains("tool_groups"));
         assert!(air.contains("@apxm_chat"));
+    }
+
+    #[test]
+    fn denial_parser_matches_server_and_runtime_wordings() {
+        let server = "capability 'fs.write' performs writes and was not granted";
+        assert_eq!(parse_denied_capability(server).as_deref(), Some("fs.write"));
+        let runtime = "write capability 'fs.write' is not admitted by this execution's grant";
+        assert_eq!(parse_denied_capability(runtime).as_deref(), Some("fs.write"));
+        assert_eq!(parse_denied_capability("capability 'x' is not registered"), None);
+        assert_eq!(parse_denied_capability("unrelated"), None);
     }
 
     #[test]

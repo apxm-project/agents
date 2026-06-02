@@ -301,6 +301,9 @@ pub enum Commands {
         /// `GET /v1/models`). Ignored when `--air` is set.
         #[arg(long, value_name = "NAME")]
         backend: Option<String>,
+        /// Pin each turn to a specific model id. Ignored when `--air` is set.
+        #[arg(long, value_name = "ID")]
+        model: Option<String>,
         /// Render the full per-agent event tree each turn instead of just the
         /// assistant's text.
         #[arg(long)]

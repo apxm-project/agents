@@ -39,6 +39,8 @@ pub struct ChatOptions {
     pub tools: bool,
     /// Pin each turn to a registered backend (ignored when `--air` is set).
     pub backend: Option<String>,
+    /// Pin each turn to a specific model id (ignored when `--air` is set).
+    pub model: Option<String>,
 }
 
 /// Client-side conversation transcript. The runtime carries no role-tagged
@@ -141,7 +143,7 @@ pub async fn chat_command(opts: ChatOptions) -> Result<()> {
             .with_context(|| format!("failed to read AIR graph {}", p.display()))?,
         None => chat::chat_air(&chat::ChatAirOptions {
             backend: opts.backend.as_deref(),
-            model: None,
+            model: opts.model.as_deref(),
             tools: opts.tools,
         }),
     };
@@ -194,38 +196,30 @@ pub async fn chat_command(opts: ChatOptions) -> Result<()> {
         }
 
         let prompt = convo.render(line);
-        match run_turn(&client, &base, &air, &session_id, &prompt, &session_grants, &opts).await {
-            Ok(TurnOutcome::Answered(answer)) => {
-                record_and_compact(&mut convo, line, answer, &client, &base, &session_id).await
-            }
-            Ok(TurnOutcome::NeedsGrant(cap)) => {
-                // Interactive HITL: a write capability was refused. Prompt the
-                // operator; on approval, grant it for the session and retry the
-                // same turn. This rides the existing static admission path
-                // (ExecuteRequest.admit_capabilities) — no server changes.
-                if prompt_grant(&cap)? {
-                    session_grants.push(cap);
-                    match run_turn(
-                        &client, &base, &air, &session_id, &prompt, &session_grants, &opts,
-                    )
-                    .await
-                    {
-                        Ok(TurnOutcome::Answered(answer)) => {
-                            record_and_compact(
-                                &mut convo, line, answer, &client, &base, &session_id,
-                            )
-                            .await
-                        }
-                        Ok(TurnOutcome::NeedsGrant(other)) => {
-                            eprintln!("(turn needs a further grant: {other}; aborting turn)")
-                        }
-                        Err(err) => eprintln!("(turn failed: {err})"),
+        // Interactive HITL grant loop (parity with the studio frontend): on a
+        // refused write capability, prompt the operator; on approval grant it for
+        // the session and retry the SAME turn — repeating if a further write is
+        // refused. Rides the static admission path (admit_capabilities).
+        loop {
+            match run_turn(&client, &base, &air, &session_id, &prompt, &session_grants, &opts).await
+            {
+                Ok(TurnOutcome::Answered(answer)) => {
+                    record_and_compact(&mut convo, line, answer, &client, &base, &session_id).await;
+                    break;
+                }
+                Ok(TurnOutcome::NeedsGrant(cap)) => {
+                    if prompt_grant(&cap)? {
+                        session_grants.push(cap);
+                        continue; // re-run with the new grant
                     }
-                } else {
                     eprintln!("(denied; turn skipped)");
+                    break;
+                }
+                Err(err) => {
+                    eprintln!("(turn failed: {err})");
+                    break;
                 }
             }
-            Err(err) => eprintln!("(turn failed: {err})"),
         }
     }
     Ok(())
@@ -343,20 +337,7 @@ fn prompt_grant(capability: &str) -> Result<bool> {
     Ok(a == "y" || a == "yes")
 }
 
-/// Parse the capability name out of a write-denial message. Matches BOTH the
-/// server's static pre-flight wording (`capability '<cap>' performs writes and
-/// was not granted; …`) and the runtime's invoke-site wording (`write capability
-/// '<cap>' is not admitted by this execution's grant`).
-fn parse_denied_capability(body: &str) -> Option<String> {
-    let is_write_denial =
-        body.contains("performs writes") || body.contains("is not admitted by this execution");
-    if !is_write_denial {
-        return None;
-    }
-    let after = body.split_once("capability '")?.1;
-    let cap = after.split_once('\'')?.0;
-    (!cap.is_empty()).then(|| cap.to_string())
-}
+// Write-denial detection is shared with the studio via `chat::parse_denied_capability`.
 
 /// Run one conversational turn: POST the graph + transcript, stream the SSE,
 /// and return the assistant's text.
@@ -390,7 +371,7 @@ async fn run_turn(
         let text = resp.text().await.unwrap_or_default();
         // A pre-stream 400 from the static write-admission check means a write
         // capability needs explicit consent; surface it for the HITL prompt.
-        if let Some(cap) = parse_denied_capability(&text) {
+        if let Some(cap) = chat::parse_denied_capability(&text) {
             return Ok(TurnOutcome::NeedsGrant(cap));
         }
         return Err(anyhow!("server returned {status} for {url}: {text}"));
@@ -465,7 +446,7 @@ async fn run_turn(
             println!();
         }
         // A write capability may also be refused mid-stream; route it to HITL.
-        if let Some(cap) = parse_denied_capability(&msg) {
+        if let Some(cap) = chat::parse_denied_capability(&msg) {
             return Ok(TurnOutcome::NeedsGrant(cap));
         }
         return Err(anyhow!(msg));
@@ -572,7 +553,7 @@ mod tests {
 
     #[test]
     fn builtin_air_is_a_single_ask_over_conversation() {
-        let air = chat::default_chat_air();
+        let air = chat::chat_air(&chat::ChatAirOptions::default());
         assert!(air.contains("ais.ask"));
         assert!(air.contains("conversation"));
         assert!(air.contains("ais.entry"));
@@ -637,20 +618,5 @@ mod tests {
         assert!(s.len() > "chat-".len());
     }
 
-    #[test]
-    fn parse_denied_capability_extracts_name() {
-        let msg = "capability 'fs.write' performs writes and was not granted; \
-                   add it to admit_capabilities to authorize this execution";
-        assert_eq!(parse_denied_capability(msg).as_deref(), Some("fs.write"));
-    }
-
-    #[test]
-    fn parse_denied_capability_ignores_unrelated_errors() {
-        assert_eq!(parse_denied_capability("some other error"), None);
-        // A capability mention that is not a write-denial is not a grant prompt.
-        assert_eq!(
-            parse_denied_capability("capability 'x' is not registered"),
-            None
-        );
-    }
+    // Write-denial parsing is tested in `apxm_ais::chat` (the shared impl).
 }

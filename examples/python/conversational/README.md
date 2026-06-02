@@ -100,8 +100,8 @@ use the host turn-loop or `AUTONOMOUS` for real iteration.
 
 The REPL compacts the transcript after each turn when it exceeds a token budget:
 the oldest turns are folded into a running `summary` (cumulative) while the most
-recent turns stay verbatim, via a built-in `chat_summarize.air`. `/compact`
-forces it. Durable detail can be persisted to session memory (`umem`) before
+recent turns stay verbatim, via the shared summarize graph
+(`apxm_ais::chat::SUMMARIZE_AIR`). `/compact` forces it. Durable detail can be persisted to session memory (`umem`) before
 dropping. This is the runtime's `on_graph_finished` post-hook concept realized at
 the host level (where the transcript actually lives).
 
