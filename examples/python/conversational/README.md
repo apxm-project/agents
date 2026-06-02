@@ -28,7 +28,7 @@ In the REPL:
 
 - type a message → one turn runs against `POST /v1/execute/stream`
 - `--tree` renders the per-agent dispatch tree (spawns, tool calls) live
-- meta-commands: `/tools` `/skills` `/agents` `/help` `/exit`
+- meta-commands: `/tools` `/skills` `/agents` `/compact` `/help` `/exit`
 - if a turn needs a **write** capability, the REPL prompts
   `grant write capability '<cap>' for this session? [y/N]` and, on approval,
   retries the turn with that grant (the same `admit_capabilities` consent path

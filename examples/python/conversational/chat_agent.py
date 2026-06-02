@@ -17,8 +17,8 @@ local server):
 
 Pipeline per turn:
   recall (qmem) -> plan (reason) -> tool-using answer (ask) ->
-  delegate research (spawn_agent + delegate) -> review team (spawn_team) ->
-  skill post-process (call_skill) -> synthesize (ask) -> remember (umem + fence).
+  delegate research (spawn_agent + delegate) -> skill post-process (call_skill) ->
+  synthesize (ask) -> remember (umem + fence).
 """
 
 from apxm import GraphRecorder, compile
