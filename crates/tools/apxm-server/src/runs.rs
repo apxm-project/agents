@@ -952,6 +952,16 @@ pub(crate) async fn get_run_blob(
     State(state): State<AppState>,
     Path((execution_id, blob_ref)): Path<(String, String)>,
 ) -> Result<Response, ApiError> {
+    // `blob_ref` is a content id used as a filename; reject path separators and
+    // traversal so a crafted ref can't escape the run's `blobs/` dir and read
+    // arbitrary files.
+    if blob_ref.is_empty()
+        || blob_ref.contains('/')
+        || blob_ref.contains('\\')
+        || blob_ref.contains("..")
+    {
+        return Err(ApiError::bad_request("invalid blob reference"));
+    }
     // The index row gives us the rollout file path which encodes
     // started_at; we use the parent directory layout to resolve the
     // sibling `blobs/` directory rather than re-parsing the date out.
