@@ -367,7 +367,16 @@ fn command_matches_blocked(command: &str, blocked: &str) -> bool {
     if blocked == BLOCKED_COMMAND_RM_RECURSIVE_FORCE {
         return contains_recursive_force_rm(command);
     }
-    command.contains(blocked)
+    // Match on unquoted shell-word boundaries (the segmenter strips quotes and
+    // escapes), so quoting tricks that defeat a raw substring check (`s""udo`,
+    // `"sud"o`) are still caught, path-qualified forms (`/usr/bin/sudo`) match by
+    // basename, and incidental substrings (`issue` containing `su`) don't
+    // false-positive. Not bulletproof — command substitution can still evade any
+    // shell denylist, so the capability write boundary is the real gate.
+    shell_word_segments_for_policy(command)
+        .iter()
+        .flatten()
+        .any(|word| word == blocked || word.rsplit('/').next() == Some(blocked))
 }
 
 fn contains_recursive_force_rm(command: &str) -> bool {
