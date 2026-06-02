@@ -107,17 +107,12 @@ unsigned getInputNamesCount(Operation *op) {
 //===----------------------------------------------------------------------===//
 
 LogicalResult QMemOp::verify() {
-  if (getSid().empty())
-    return emitOpError("sid must be non-empty");
+  // `sid` and `memory_tier` are optional attributes (the runtime defaults the
+  // tier to STM and scopes by session), so they are not validated here.
 
-  // Space is now a typed enum attribute - validation happens at parse time
-  // No need to check string values
-
-  // Check result is HandleType
-  if (failed(verifyType<HandleType>(*this, getResult(), "result must be !ais.handle type")))
+  // Result is a token so qmem composes uniformly with the rest of the graph.
+  if (failed(verifyType<TokenType>(*this, getResult(), "result must be !ais.token type")))
     return failure();
-
-  // Note: Handle type no longer carries space parameter, so no consistency check needed
 
   if (auto limit = getLimit()) {
     if (*limit <= 0)
@@ -132,11 +127,12 @@ LogicalResult QMemOp::verify() {
 //===----------------------------------------------------------------------===//
 
 LogicalResult UMemOp::verify() {
-  // Space is now a typed enum attribute - validation happens at parse time
-  // No need to check string values
+  // `key` is the required primary; the written value comes from the first token
+  // input when present, otherwise from the optional `value` attribute.
+  // `memory_tier` is optional (defaults to STM).
 
-  // Check value operand is TokenType
-  if (failed(verifyType<TokenType>(*this, getValue(), "value operand must be !ais.token type")))
+  // Result is a token so the write can be ordered/composed in the graph.
+  if (failed(verifyType<TokenType>(*this, getResult(), "result must be !ais.token type")))
     return failure();
 
   return success();
@@ -233,8 +229,9 @@ LogicalResult ReasonOp::verify() {
 //===----------------------------------------------------------------------===//
 
 LogicalResult PlanOp::verify() {
-  // Check result is GoalType
-  if (failed(verifyType<GoalType>(*this, getResult(), "result must be !ais.goal type")))
+  // Result is a token so the plan composes uniformly downstream (the goal text
+  // rides the `goal` attribute).
+  if (failed(verifyType<TokenType>(*this, getResult(), "result must be !ais.token type")))
     return failure();
 
   // Check all context operands are tokens, handles, or goals
@@ -566,10 +563,8 @@ LogicalResult BranchOnValueOp::verify() {
 //===----------------------------------------------------------------------===//
 
 LogicalResult LoopStartOp::verify() {
-  // Check count operand
-  auto countType = getCount().getType();
-  if (!llvm::isa<TokenType>(countType) && !llvm::isa<HandleType>(countType))
-    return emitOpError("count operand must be !ais.token or !ais.handle type");
+  // The iteration bound is the optional `max_iterations` attribute (no count
+  // operand); the runtime defaults it to 100.
 
   // Check state result
   if (failed(verifyType<TokenType>(*this, getState(), "state result must be !ais.token type")))
@@ -583,11 +578,8 @@ LogicalResult LoopStartOp::verify() {
 //===----------------------------------------------------------------------===//
 
 LogicalResult LoopEndOp::verify() {
-  // Check state operand
-  if (failed(verifyType<TokenType>(*this, getState(), "state operand must be !ais.token type")))
-    return failure();
-
-  // Check result
+  // State inputs are an optional variadic of tokens (constrained by the op
+  // definition); only the result needs an explicit token check here.
   if (failed(verifyType<TokenType>(*this, getResult(), "result must be !ais.token type")))
     return failure();
 

@@ -44,6 +44,7 @@ fn request(skill_id: &str, requested_version: Option<&str>, depth: usize) -> Cal
         parent_session_dir: None,
         spawn_node_id: 1,
         depth,
+        parent_side_effect_policy: None,
     }
 }
 
@@ -232,7 +233,10 @@ async fn call_skill_resolver_rejects_missing_version() {
 async fn call_skill_resolver_rejects_capability_widening() {
     let temp = tempfile::tempdir().expect("tempdir");
     let artifact = skill_artifact_bytes(AISOperationType::ConstStr);
-    write_policy_skill_with_artifact(
+    // Child declares a `sandboxed` side_effect_policy. The parent grant defaults
+    // to `read_only` (request.parent_side_effect_policy = None), which does NOT
+    // admit a sandboxed child — so admission must reject the widen.
+    write_sandboxed_policy_skill_with_artifact(
         temp.path(),
         &artifact,
         FIXTURE_CAPABILITY,
@@ -250,9 +254,38 @@ async fn call_skill_resolver_rejects_capability_widening() {
         "expected capability_widen tag, got: {message}"
     );
     assert!(
-        message.contains(FIXTURE_CAPABILITY),
-        "expected capability name in message, got: {message}"
+        message.contains(FIXTURE_SKILL_ID),
+        "expected skill id in message, got: {message}"
     );
+}
+
+#[tokio::test]
+async fn call_skill_resolver_admits_read_only_child() {
+    // A read-only child under the default (read_only) parent grant is admitted:
+    // policy-based admission replaces the old refuse-all-required-capabilities
+    // rule, so declaring required_capabilities no longer blocks a read_only skill.
+    // `build_resolver` has no runtime installed, so dispatch fails afterward —
+    // we assert only that admission did NOT reject this as a capability widen.
+    let temp = tempfile::tempdir().expect("tempdir");
+    let artifact = skill_artifact_bytes(AISOperationType::ConstStr);
+    write_policy_skill_with_artifact(
+        temp.path(),
+        &artifact,
+        FIXTURE_CAPABILITY,
+        FIXTURE_CAPABILITY,
+    );
+    let resolver = build_resolver(temp.path());
+
+    match resolver.call_skill(request(FIXTURE_SKILL_ID, None, 1)).await {
+        Ok(_) => {}
+        Err(err) => {
+            let message = err.to_string();
+            assert!(
+                !message.contains("capability_widen"),
+                "read_only child must be admitted (not flagged as widen), got: {message}"
+            );
+        }
+    }
 }
 
 // ── Gate 4 ─────────────────────────────────────────────────────────────

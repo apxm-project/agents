@@ -10,9 +10,10 @@ use super::{
     ExecutionContext, Node, Result, Value, apply_llm_request_routing_from_node,
     execute_llm_request_for_node, get_input, get_optional_string_attribute,
     get_optional_u64_attribute,
+    llm::{attach_graph_hints, resolve_node_tools, run_tool_loop},
 };
 use crate::aam::TransitionLabel;
-use apxm_backends::LLMRequest;
+use apxm_backends::{LLMRequest, ToolChoice};
 use apxm_core::constants::{graph::attrs as graph_attrs, runtime::belief_keys};
 use apxm_core::error::RuntimeError;
 
@@ -103,24 +104,69 @@ pub async fn execute(ctx: &ExecutionContext, node: &Node, inputs: Vec<Value>) ->
             plan_response.content
         );
 
-        let action_req = apply_llm_request_routing_from_node(LLMRequest::new(action_prompt), node)?;
+        let mut action_req =
+            apply_llm_request_routing_from_node(LLMRequest::new(action_prompt), node)?;
 
-        let action_response =
+        // If the autonomous node exposes tools (tool_groups / tools / tools_enabled),
+        // run the real model->tool->model loop so the agent can ACT on its decision
+        // (actually invoke capabilities), not just describe an action. Opt-in and
+        // default-safe: no tool attrs => empty tools => the original text-only path.
+        //
+        // Caveat: the backend capability check goes through `ctx.llm_registry`,
+        // which may differ from a node-routed ModelRouter backend; this mirrors
+        // the ASK handler's check exactly (llm/mod.rs).
+        let tools = resolve_node_tools(ctx, node);
+        let action_content = if tools.is_empty() {
             execute_llm_request_for_node(ctx, node, "autonomous_action", &action_req)
                 .await
                 .map_err(|e| RuntimeError::Operation {
                     op_type: node.op_type,
                     message: format!("Failed to execute action (iteration {}): {}", iteration, e),
+                })?
+                .content
+        } else {
+            let backend_name = ctx.llm_registry.resolve_backend_name(&action_req).ok();
+            let supports = backend_name
+                .as_deref()
+                .and_then(|name| ctx.llm_registry.get_backend(name))
+                .map(|b| b.supports_auto_tool_choice())
+                .unwrap_or(false);
+            if supports {
+                action_req = attach_graph_hints(ctx, node, action_req);
+                action_req = action_req.with_tools(tools).with_tool_choice(ToolChoice::Auto);
+                let value = run_tool_loop(ctx, node, &action_req).await.map_err(|e| {
+                    RuntimeError::Operation {
+                        op_type: node.op_type,
+                        message: format!("Failed tool-loop action (iteration {}): {}", iteration, e),
+                    }
                 })?;
+                match value {
+                    Value::String(s) => s,
+                    other => format_state(&other),
+                }
+            } else {
+                // Backend can't accept tool_choice=auto; degrade to text-only.
+                execute_llm_request_for_node(ctx, node, "autonomous_action", &action_req)
+                    .await
+                    .map_err(|e| RuntimeError::Operation {
+                        op_type: node.op_type,
+                        message: format!(
+                            "Failed to execute action (iteration {}): {}",
+                            iteration, e
+                        ),
+                    })?
+                    .content
+            }
+        };
 
-        current_state = Value::String(action_response.content.clone());
+        current_state = Value::String(action_content.clone());
 
         // Step 3: Evaluate progress
         let eval_prompt = format!(
             "Goal: {}\n\n\
             Current state after action:\n{}\n\n\
             Has the goal been achieved? Respond with ONLY 'YES' if the goal is fully achieved, or 'NO' if more work is needed.",
-            goal, action_response.content
+            goal, action_content
         );
 
         let eval_req = apply_llm_request_routing_from_node(LLMRequest::new(eval_prompt), node)?;

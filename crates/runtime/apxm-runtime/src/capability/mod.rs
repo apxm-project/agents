@@ -37,6 +37,7 @@ pub mod flow_registry;
 pub mod interceptor;
 pub mod metadata;
 pub mod registry;
+pub(crate) mod tool_write_lock;
 
 use crate::aam::{Aam, TransitionLabel};
 use crate::sandbox::{IsolationLevel, SandboxRegistry, ValidationResult};

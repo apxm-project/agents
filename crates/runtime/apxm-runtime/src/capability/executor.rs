@@ -95,9 +95,12 @@ impl EchoCapability {
         });
 
         Self {
+            // Echo is side-effect-free: mark it read-only so it is not gated by
+            // the invoke-site write boundary (and runs without a write lock).
             metadata: CapabilityMetadata::new("echo", "Echo a message back to the caller", schema)
                 .with_returns("string")
-                .with_latency(10),
+                .with_latency(10)
+                .with_read_only(),
         }
     }
 }

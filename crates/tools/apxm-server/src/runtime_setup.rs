@@ -20,6 +20,18 @@ pub(crate) async fn build_runtime_with_router(
         warn!(error = %e, "failed to configure ACP agent spawner; SPAWN_AGENT unavailable");
     }
     runtime.init_model_router(ModelRouterConfig::default())?;
+    // Professional-agent middleware chain (dispatcher chokepoint). A generous
+    // per-node timeout bounds a hung node without tripping normal multi-agent
+    // turns; the token-budget guard is a no-op unless an execution carries a
+    // budget. Both are safe to enable globally. (LoopGuard is intentionally
+    // left to explicit per-graph config — its repeat fingerprinting can reject
+    // legitimate deterministic retries in multi-agent loops.)
+    runtime.add_middleware(std::sync::Arc::new(
+        apxm_runtime::TimeoutMiddleware::new(Some(std::time::Duration::from_secs(300))),
+    ));
+    runtime.add_middleware(std::sync::Arc::new(
+        apxm_runtime::TokenBudgetMiddleware::new(),
+    ));
     Ok(runtime)
 }
 

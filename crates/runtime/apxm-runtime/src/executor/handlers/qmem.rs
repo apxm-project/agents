@@ -25,10 +25,11 @@ pub async fn execute(ctx: &ExecutionContext, node: &Node, _inputs: Vec<Value>) -
         None => MemorySpace::Stm, // Default to STM
     };
 
-    // Search memory
+    // Search memory. Scope by session (when present) so a later turn's QMEM
+    // reads the memory an earlier turn's UMEM wrote; falls back to scope_id.
     let results = ctx
         .memory
-        .search_scoped(space, ctx.scope_id(), &query, limit)
+        .search_scoped(space, ctx.memory_scope(), &query, limit)
         .await?;
 
     // Emit memory-read event

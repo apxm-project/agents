@@ -7,10 +7,66 @@ use super::{
     ExecutionContext, Node, Result, Value, get_optional_u64_attribute, get_string_attribute,
     template::{input_names_from_node, render_named},
 };
+use crate::capability::CapabilitySandboxPreflight;
+use crate::metadata_keys;
 use apxm_core::constants::graph::attrs as graph_attrs;
 use apxm_core::constants::runtime::belief_keys;
 use apxm_core::error::RuntimeError;
 use std::collections::HashMap;
+
+/// Returns true if the effective grant policy (wire form of
+/// `apxm_skill::CapabilityPolicy`, e.g. `broader[a,b]`) admits a write to
+/// `cap`. `read_only`/`sandboxed`/absent never admit a Direct write.
+fn grant_admits_write(policy: Option<&str>, cap: &str) -> bool {
+    match policy {
+        Some(p) if p.starts_with("broader[") => p
+            .strip_prefix("broader[")
+            .and_then(|s| s.strip_suffix(']'))
+            .map(|inner| inner.split(',').map(str::trim).any(|t| t == cap))
+            .unwrap_or(false),
+        _ => false,
+    }
+}
+
+/// Invoke-site write boundary — enforced for EVERY tool call regardless of how
+/// the execution was launched (raw /v1/execute, a CALL_SKILL child DAG, a
+/// dispatched graph, SPAWN_AGENT). A Direct (write) capability runs only if this
+/// execution's effective grant (`SIDE_EFFECT_POLICY`, seeded from
+/// admit_capabilities at the top level and propagated to children with no-widen)
+/// admits it. Read-only and sandboxed capabilities are always allowed. This
+/// closes the gap where the write boundary was previously enforced only by the
+/// server's static pre-flight at /v1/execute (bypassable by nested executions).
+fn enforce_write_boundary(
+    ctx: &ExecutionContext,
+    name: &str,
+    args: &HashMap<String, Value>,
+) -> Result<()> {
+    let caps = &ctx.capability_system;
+    if !caps.has_capability(name) || caps.is_read_only(name) {
+        return Ok(());
+    }
+    match caps.sandbox_preflight(name, args) {
+        Ok(CapabilitySandboxPreflight::Sandboxed { .. }) => return Ok(()),
+        Ok(CapabilitySandboxPreflight::Direct) => {}
+        // Pre-flight error -> fail-closed: treat as a write needing admission.
+        Err(_) => {}
+    }
+    let policy = ctx
+        .metadata
+        .get(metadata_keys::SIDE_EFFECT_POLICY)
+        .map(String::as_str);
+    if grant_admits_write(policy, name) {
+        Ok(())
+    } else {
+        Err(RuntimeError::Capability {
+            capability: name.to_string(),
+            message: format!(
+                "write capability '{name}' is not admitted by this execution's grant; \
+                 add it to admit_capabilities to authorize this execution"
+            ),
+        })
+    }
+}
 
 /// Execute INV_TOOL operation - Invoke a registered capability
 ///
@@ -120,7 +176,27 @@ pub async fn execute(ctx: &ExecutionContext, node: &Node, inputs: Vec<Value>) ->
     let result = if let Some(handler_id) = python_handler_id {
         execute_python_tool(ctx, &capability_name, &handler_id, &args, timeout).await?
     } else {
-        ctx.capability_system
+        // Invoke-site write boundary: enforce the no-widen grant for EVERY tool
+        // call, closing the bypass where nested executions skipped the server's
+        // static pre-flight.
+        enforce_write_boundary(ctx, &capability_name, &args)?;
+        // Write serialization on the GRAPH path: the dataflow scheduler runs
+        // independent inv_tool nodes concurrently and serializes only by data
+        // dependency, never by tool identity — so a graph with two same-name
+        // write nodes could race. Acquire the same per-name write lock the ASK
+        // loop uses (shared map) so same-capability writes serialize across both
+        // engines; read-only/sandboxed capabilities never lock.
+        let write_guard = if ctx.capability_system.has_capability(&capability_name)
+            && !ctx.capability_system.is_read_only(&capability_name)
+        {
+            let lock = crate::capability::tool_write_lock::write_lock_for_tool(&capability_name);
+            let guard = lock.clone().write_owned().await;
+            Some((lock, guard))
+        } else {
+            None
+        };
+        let outcome = ctx
+            .capability_system
             .invoke_with_timeout(&capability_name, args, timeout)
             .await
             .map_err(|e| {
@@ -130,7 +206,12 @@ pub async fn execute(ctx: &ExecutionContext, node: &Node, inputs: Vec<Value>) ->
                     "Capability invocation failed"
                 );
                 e
-            })?
+            })?;
+        if let Some((lock, guard)) = write_guard {
+            drop(guard);
+            crate::capability::tool_write_lock::release_write_lock_if_idle(&capability_name, &lock);
+        }
+        outcome
     };
 
     tracing::info!(
@@ -238,6 +319,22 @@ mod tests {
         memory::{MemoryConfig, MemorySystem},
     };
     use apxm_backends::LLMRegistry;
+
+    #[test]
+    fn grant_admits_write_only_for_listed_broader_caps() {
+        // read_only / sandboxed / absent never admit a Direct write.
+        assert!(!grant_admits_write(None, "fs.write"));
+        assert!(!grant_admits_write(Some("read_only"), "fs.write"));
+        assert!(!grant_admits_write(Some("sandboxed"), "fs.write"));
+        // broader[...] admits only the listed capabilities.
+        assert!(grant_admits_write(Some("broader[fs.write,slack.post]"), "fs.write"));
+        assert!(grant_admits_write(
+            Some("broader[fs.write, slack.post]"),
+            "slack.post"
+        ));
+        assert!(!grant_admits_write(Some("broader[slack.post]"), "fs.write"));
+        assert!(!grant_admits_write(Some("broader[]"), "fs.write"));
+    }
     use apxm_core::types::{execution::NodeMetadata, operations::AISOperationType};
     use std::sync::Arc;
 

@@ -210,7 +210,7 @@ fn parse_sse_line(line: &str) -> Option<(&str, &str)> {
     Some((field, rest.strip_prefix(' ').unwrap_or(rest)))
 }
 
-fn decode_event_frame(frame: &SseFrame) -> Option<ApxmEvent> {
+pub(crate) fn decode_event_frame(frame: &SseFrame) -> Option<ApxmEvent> {
     if frame.data.is_empty() {
         return None;
     }

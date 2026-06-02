@@ -45,8 +45,11 @@ pub async fn execute(ctx: &ExecutionContext, node: &Node, inputs: Vec<Value>) ->
                 .await?;
         }
         _ => {
+            // Scope by session (when present) so the write survives across
+            // turns sharing the session; falls back to scope_id. The Episodic
+            // branch above stays keyed by execution_id.
             ctx.memory
-                .write_scoped(space, ctx.scope_id(), key.clone(), value.clone())
+                .write_scoped(space, ctx.memory_scope(), key.clone(), value.clone())
                 .await?;
         }
     }

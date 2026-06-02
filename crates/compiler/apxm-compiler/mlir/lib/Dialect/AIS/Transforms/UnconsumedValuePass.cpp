@@ -79,6 +79,11 @@ static bool hasSideEffects(Operation *op) {
   if (isa<FenceOp>(op))
     return true;
 
+  // UMem is a memory write (side effect); its result token exists only for
+  // ordering (e.g. behind a fence) and is frequently left unconsumed.
+  if (isa<UMemOp>(op))
+    return true;
+
   // Jump and branch operations are control flow
   if (isa<JumpOp, BranchOnValueOp, SwitchOp>(op))
     return true;

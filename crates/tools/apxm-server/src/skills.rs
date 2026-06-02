@@ -280,6 +280,10 @@ struct PreparedCompiledExecution {
     skill_id: String,
     skill_version: String,
     entry_flow: String,
+    /// The launching skill's declared `side_effect_policy` (wire form), seeded
+    /// into the top-level execution metadata so CALL_SKILL admission compares a
+    /// child against this real grant instead of the conservative default.
+    side_effect_policy: Option<String>,
 }
 
 impl PreparedCompiledExecution {
@@ -292,6 +296,23 @@ impl PreparedCompiledExecution {
             flow_name: Some(self.entry_flow.clone()),
         }
     }
+}
+
+/// Build the top-level execution metadata that seeds the launching skill's
+/// effective `side_effect_policy`, so a CALL_SKILL from this execution is
+/// admitted against the real grant rather than the conservative `read_only`
+/// default. An absent policy yields an empty map (the default applies).
+fn side_effect_policy_metadata(
+    policy: Option<&str>,
+) -> std::collections::HashMap<String, String> {
+    let mut map = std::collections::HashMap::new();
+    if let Some(policy) = policy {
+        map.insert(
+            apxm_runtime::metadata_keys::SIDE_EFFECT_POLICY.to_string(),
+            policy.to_string(),
+        );
+    }
+    map
 }
 
 struct PreparedPromptOnlyExecution {
@@ -407,13 +428,16 @@ async fn execute_compiled_skill(
         )
         .with_skill_provenance(prepared.skill_provenance()),
     );
-    let runtime_execution = state.runtime.execute_artifact_with_session_and_emitter(
-        prepared.artifact,
-        prepared.args,
-        Some(prepared.session_id),
-        Some(emitter),
-        Some(prepared.session_dir.clone()),
-    );
+    let runtime_execution = state
+        .runtime
+        .execute_artifact_with_session_emitter_and_metadata(
+            prepared.artifact,
+            prepared.args,
+            Some(prepared.session_id),
+            Some(emitter),
+            Some(prepared.session_dir.clone()),
+            side_effect_policy_metadata(prepared.side_effect_policy.as_deref()),
+        );
     let result = await_skill_execution(
         state,
         &prepared.execution_id,
@@ -793,13 +817,15 @@ pub(crate) async fn execute_skill_stream(
                 )
                 .with_skill_provenance(prepared.skill_provenance()),
             );
-            let runtime_execution = runtime.execute_artifact_with_session_and_emitter(
-                prepared.artifact,
-                prepared.args,
-                Some(prepared.session_id),
-                Some(emitter),
-                Some(prepared.session_dir.clone()),
-            );
+            let runtime_execution = runtime
+                .execute_artifact_with_session_emitter_and_metadata(
+                    prepared.artifact,
+                    prepared.args,
+                    Some(prepared.session_id),
+                    Some(emitter),
+                    Some(prepared.session_dir.clone()),
+                    side_effect_policy_metadata(prepared.side_effect_policy.as_deref()),
+                );
             let result = if let Some(timeout_ms) = prepared.timeout_ms {
                 match tokio::time::timeout(Duration::from_millis(timeout_ms), runtime_execution)
                     .await
@@ -1064,6 +1090,7 @@ fn prepare_skill_execution(
             skill_id: manifest.skill_id.clone(),
             skill_version: manifest.version.clone(),
             entry_flow: manifest.entry_flow.clone(),
+            side_effect_policy: manifest.side_effect_policy.clone(),
         },
     ))
 }

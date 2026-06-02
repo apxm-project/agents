@@ -92,19 +92,23 @@ def AIS_QMemOp : AIS_Op<"qmem",
 
     Example:
     ```mlir
-    %handle = ais.qmem "find facts about topic X" stage "belief_db" in stm : !ais.handle
-    %handle = ais.qmem "find facts" stage "db" in ltm limit 10 : !ais.handle
+    %r = ais.qmem "find facts about topic X" {memory_tier = "stm"} : !ais.token
+    %r = ais.qmem "find facts" {memory_tier = "ltm", limit = 10 : i64} : !ais.token
     ```
+
+    `sid`, `memory_tier`, and `limit` are optional attributes; the runtime
+    defaults the tier to STM and scopes the query by the execution's session.
+    The result is a token so it composes uniformly with the rest of the graph.
   }];
   let arguments = (ins
     StrAttr:$query,
-    StrAttr:$sid,
-    AISMemorySpaceAttr:$memory_tier,
+    OptionalAttr<StrAttr>:$sid,
+    OptionalAttr<StrAttr>:$memory_tier,
     OptionalAttr<I64Attr>:$limit
   );
-  let results = (outs AIS_HandleType:$result);
+  let results = (outs AIS_TokenType:$result);
   let assemblyFormat = [{
-    $query `stage` $sid `in` $memory_tier (`limit` $limit^)? attr-dict `:` type($result)
+    $query attr-dict `:` type($result)
   }];
   let hasVerifier = 1;
 }
@@ -117,17 +121,24 @@ def AIS_UMemOp : AIS_Op<"umem",
 
     Example:
     ```mlir
-    ais.umem %token into stm {key = "fact_123"} : !ais.token
-    ais.umem %data into ltm : !ais.token
+    %r = ais.umem "fact_123" (%v : !ais.token) {memory_tier = "stm"} : !ais.token
+    %r = ais.umem "summary" {memory_tier = "ltm", value = "text"} : !ais.token
     ```
+
+    `key` is the memory key (primary). The written value comes from the first
+    token input when present, otherwise from the optional `value` attribute.
+    `memory_tier` is optional (defaults to STM). The result token lets the write
+    be ordered (e.g. behind a fence) and composed into the graph.
   }];
   let arguments = (ins
-    AIS_TokenType:$value,
-    AISMemorySpaceAttr:$memory_tier,
-    OptionalAttr<StrAttr>:$key
+    StrAttr:$key,
+    OptionalAttr<StrAttr>:$memory_tier,
+    OptionalAttr<StrAttr>:$value,
+    Variadic<AIS_TokenType>:$inputs
   );
+  let results = (outs AIS_TokenType:$result);
   let assemblyFormat = [{
-    $value `into` $memory_tier attr-dict `:` type($value)
+    $key (`(` $inputs^ `:` type($inputs) `)`)? attr-dict `:` type($result)
   }];
   let hasVerifier = 1;
 }
@@ -332,14 +343,17 @@ def AIS_PlanOp : AIS_Op<"plan",
 
     Example:
     ```mlir
-    %goal = ais.plan "Solve task X" (%ctx : !ais.token) : !ais.goal
+    %r = ais.plan "Solve task X" (%ctx : !ais.token) : !ais.token
     ```
+
+    The result is a token so the plan composes uniformly with the rest of the
+    graph (the goal text rides the `goal` attribute).
   }];
   let arguments = (ins
     StrAttr:$goal,
     Variadic<AIS_AnyTokenHandleOrGoal>:$context
   );
-  let results = (outs AIS_GoalType:$result);
+  let results = (outs AIS_TokenType:$result);
   let assemblyFormat = [{
     $goal (`(` $context^ `:` type($context) `)`)? attr-dict `:` type($result)
   }];
@@ -437,7 +451,20 @@ def AIS_MergeOp : AIS_Op<"merge", [Pure]> {
 def AIS_FenceOp : AIS_Op<"fence"> {
   let summary = "Memory fence";
   let description = [{
-    Ensures memory operations are ordered across the fence.
+    Ensures memory operations are ordered across the fence. The input tokens are
+    the writes/reads to order before the fence; the result token sequences any
+    work that must observe them.
+
+    Example:
+    ```mlir
+    %r = ais.fence : !ais.token
+    %r = ais.fence [%w : !ais.token] : !ais.token
+    ```
+  }];
+  let arguments = (ins Variadic<AIS_TokenType>:$inputs);
+  let results = (outs AIS_TokenType:$result);
+  let assemblyFormat = [{
+    (`[` $inputs^ `:` type($inputs) `]`)? attr-dict `:` type($result)
   }];
   let hasVerifier = 1;
 }
@@ -498,23 +525,43 @@ def AIS_BranchOnValueOp : AIS_Op<"branch_on_value"> {
 
 def AIS_LoopStartOp : AIS_Op<"loop_start"> {
   let summary = "Begin bounded loop";
+  let description = [{
+    Begins a bounded loop region. `max_iterations` (optional, default 100 at
+    runtime) bounds the iteration count; `label` is an optional diagnostic name.
+    The result is a loop-state token consumed by the matching `loop_end`.
+
+    Example:
+    ```mlir
+    %state = ais.loop_start {max_iterations = 3 : i64, label = "refine"} : !ais.token
+    ```
+  }];
   let arguments = (ins
-    AIS_AnyTokenOrHandle:$count,
-    StrAttr:$label
+    OptionalAttr<I64Attr>:$max_iterations,
+    OptionalAttr<StrAttr>:$label
   );
   let results = (outs AIS_TokenType:$state);
   let assemblyFormat = [{
-    $count `as` $label attr-dict `:` type($count) `->` type($state)
+    attr-dict `:` type($state)
   }];
   let hasVerifier = 1;
 }
 
 def AIS_LoopEndOp : AIS_Op<"loop_end"> {
   let summary = "End bounded loop";
-  let arguments = (ins AIS_TokenType:$state);
+  let description = [{
+    Marks the end of a bounded loop. The loop-state token(s) from the matching
+    `loop_start` are optional inputs (the loop body sequences via control edges).
+
+    Example:
+    ```mlir
+    %r = ais.loop_end : !ais.token
+    %r = ais.loop_end [%state : !ais.token] : !ais.token
+    ```
+  }];
+  let arguments = (ins Variadic<AIS_TokenType>:$state);
   let results = (outs AIS_TokenType:$result);
   let assemblyFormat = [{
-    $state attr-dict `:` type($state) `->` type($result)
+    (`[` $state^ `:` type($state) `]`)? attr-dict `:` type($result)
   }];
   let hasVerifier = 1;
 }
@@ -689,7 +736,11 @@ def AIS_CallSkillOp : AIS_Op<"call_skill",
   }];
   let arguments = (ins
     StrAttr:$skill_id,
-    OptionalAttr<ArrayAttr>:$args,
+    // `args` is a name->value map (e.g. `{args = {text = "{text}"}}`): the
+    // frontend emitter and the runtime resolve_args (which reads it via
+    // `.as_object()`) both treat it as a dictionary, so it is a DictionaryAttr,
+    // not an ArrayAttr. The verifier does not inspect it.
+    OptionalAttr<DictionaryAttr>:$args,
     OptionalAttr<ArrayAttr>:$input_names,
     Variadic<AIS_AnyTokenHandleOrGoal>:$inputs
   );
@@ -981,27 +1032,45 @@ def AIS_AutonomousOp : AIS_Op<"autonomous"> {
 
 def AIS_DelegateOp : AIS_Op<"delegate"> {
   let summary = "Delegate a task to a sub-agent";
+  let description = [{
+    Delegates `task_spec` to `target_agent` (a previously spawned agent).
+
+    Example:
+    ```mlir
+    %r = ais.delegate "summarize the findings" to "researcher" : !ais.token
+    ```
+  }];
   let arguments = (ins
-    StrAttr:$target,
-    OptionalAttr<StrAttr>:$task,
+    StrAttr:$task_spec,
+    OptionalAttr<StrAttr>:$target_agent,
     Variadic<AIS_TokenType>:$inputs
   );
   let results = (outs AIS_TokenType:$result);
   let assemblyFormat = [{
-    $target (`(` $inputs^ `:` type($inputs) `)`)? attr-dict `:` type($result)
+    $task_spec (`to` $target_agent^)? (`(` $inputs^ `:` type($inputs) `)`)? attr-dict `:` type($result)
   }];
   let hasVerifier = 1;
 }
 
 def AIS_NegotiateOp : AIS_Op<"negotiate"> {
   let summary = "Multi-agent negotiation protocol";
+  let description = [{
+    Runs a negotiation round over `proposal` among `parties` (an attr list) for
+    up to `max_rounds`. The proposal text is the primary; parties/max_rounds ride
+    the attr-dict (matching the frontend emitter and the runtime handler).
+
+    Example:
+    ```mlir
+    %r = ais.negotiate "ship date" {parties = ["a", "b"], max_rounds = 3 : i64} : !ais.token
+    ```
+  }];
   let arguments = (ins
-    StrAttr:$topic,
-    Variadic<AIS_TokenType>:$proposals
+    StrAttr:$proposal,
+    Variadic<AIS_TokenType>:$inputs
   );
   let results = (outs AIS_TokenType:$result);
   let assemblyFormat = [{
-    $topic (`(` $proposals^ `:` type($proposals) `)`)? attr-dict `:` type($result)
+    $proposal (`(` $inputs^ `:` type($inputs) `)`)? attr-dict `:` type($result)
   }];
   let hasVerifier = 1;
 }

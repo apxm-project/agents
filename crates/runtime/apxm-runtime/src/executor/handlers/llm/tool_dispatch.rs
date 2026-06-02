@@ -88,7 +88,7 @@ fn parse_string_array_attr(node: &Node, attr_name: &str) -> Option<Vec<String>> 
         })
 }
 
-pub(super) fn resolve_ask_tools(ctx: &ExecutionContext, node: &Node) -> Vec<ToolDefinition> {
+pub(crate) fn resolve_ask_tools(ctx: &ExecutionContext, node: &Node) -> Vec<ToolDefinition> {
     let tool_names = parse_string_array_attr(node, graph_attrs::TOOLS);
     let tool_groups = parse_string_array_attr(node, graph_attrs::TOOL_GROUPS);
     let tools_enabled_all = node
@@ -99,7 +99,13 @@ pub(super) fn resolve_ask_tools(ctx: &ExecutionContext, node: &Node) -> Vec<Tool
 
     match (tool_names, tool_groups, tools_enabled_all) {
         (Some(names), _, _) if !names.is_empty() => get_tools_by_names(ctx, &names),
-        (_, Some(groups), true) if !groups.is_empty() => {
+        // Naming a non-empty set of tool groups is itself a request to enable
+        // tools for this ASK — the author should not also have to set
+        // `tools_enabled`. An explicit tool list (above) is likewise
+        // self-enabling. Only the "enable everything" case still requires the
+        // explicit `tools_enabled` flag, to avoid silently exposing the full
+        // capability surface to the model.
+        (_, Some(groups), _) if !groups.is_empty() => {
             get_tool_definitions_from_groups(ctx, &groups)
         }
         (_, _, true) => get_tool_definitions_from_capabilities(ctx),
@@ -211,9 +217,10 @@ async fn execute_tool_call(ctx: &ExecutionContext, tool_call: &ToolCall) -> Tool
 /// Read-only tools run without locking. Write tools acquire a write lock
 /// keyed by tool name so concurrent writes to the same tool are serialized
 /// while independent tools execute in parallel.
-static TOOL_WRITE_LOCKS: once_cell::sync::Lazy<
-    dashmap::DashMap<String, std::sync::Arc<tokio::sync::RwLock<()>>>,
-> = once_cell::sync::Lazy::new(dashmap::DashMap::new);
+// Per-capability write serialization is shared with the graph/inv_tool path via
+// `crate::capability::tool_write_lock` so same-name writes serialize on BOTH
+// parallelism engines (not just this in-ASK loop).
+use crate::capability::tool_write_lock::{release_write_lock_if_idle, write_lock_for_tool};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum ToolAccess {
@@ -239,19 +246,6 @@ fn resolve_tool_access(ctx: &ExecutionContext, name: &str) -> Option<ToolAccess>
     }
 
     None
-}
-
-fn write_lock_for_tool(name: &str) -> std::sync::Arc<tokio::sync::RwLock<()>> {
-    TOOL_WRITE_LOCKS
-        .entry(name.to_string())
-        .or_insert_with(|| std::sync::Arc::new(tokio::sync::RwLock::new(())))
-        .clone()
-}
-
-fn release_write_lock_if_idle(name: &str, lock: &std::sync::Arc<tokio::sync::RwLock<()>>) {
-    TOOL_WRITE_LOCKS.remove_if(name, |_, current| {
-        std::sync::Arc::ptr_eq(current, lock) && std::sync::Arc::strong_count(current) == 2
-    });
 }
 
 /// Execute multiple tool calls concurrently, preserving result order.
@@ -384,7 +378,7 @@ pub(super) fn format_tool_results_message(results: &[ToolResult]) -> String {
 /// 3. Execute tool calls via CapabilitySystem
 /// 4. Feed results back to LLM
 /// 5. Repeat until LLM returns text (no tool calls)
-pub(super) async fn execute_ask_with_tools(
+pub(crate) async fn execute_ask_with_tools(
     ctx: &ExecutionContext,
     node: &Node,
     initial_request: &LLMRequest,
@@ -683,13 +677,29 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn resolve_ask_tools_groups_do_not_enable_tools_by_themselves() {
+    async fn resolve_ask_tools_groups_self_enable() {
+        // Naming a non-empty tool group enables tools for that ASK without a
+        // separate `tools_enabled` flag (least-privilege: only the named
+        // group is exposed, not the whole capability surface).
         let ctx = ctx_with_grouped_tools().await;
         let mut node = Node::new(1, AISOperationType::Ask);
         node.attributes.insert(
             graph_attrs::TOOL_GROUPS.to_string(),
             Value::Array(vec![Value::String("web".to_string())]),
         );
+        let names: Vec<String> = resolve_ask_tools(&ctx, &node)
+            .into_iter()
+            .map(|tool| tool.name)
+            .collect();
+        assert_eq!(names, vec!["search_web".to_string()]);
+    }
+
+    #[tokio::test]
+    async fn resolve_ask_tools_no_groups_no_enable_is_empty() {
+        // With neither explicit names, a group, nor tools_enabled, an ASK is
+        // tool-free — the model is not handed the full capability surface.
+        let ctx = ctx_with_grouped_tools().await;
+        let node = Node::new(1, AISOperationType::Ask);
         assert!(resolve_ask_tools(&ctx, &node).is_empty());
     }
 
@@ -718,7 +728,7 @@ mod tests {
 
         assert_eq!(results.len(), 1);
         assert!(!results[0].success);
-        assert!(!TOOL_WRITE_LOCKS.contains_key(tool_name));
+        assert!(!crate::capability::tool_write_lock::contains_lock(tool_name));
     }
 
     #[tokio::test]
@@ -735,6 +745,6 @@ mod tests {
 
         assert_eq!(results.len(), 1);
         assert!(results[0].success);
-        assert!(!TOOL_WRITE_LOCKS.contains_key(tool_name));
+        assert!(!crate::capability::tool_write_lock::contains_lock(tool_name));
     }
 }

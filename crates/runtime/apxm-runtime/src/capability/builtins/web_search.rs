@@ -125,6 +125,8 @@ impl SearchWebCapability {
                 "search".to_string(),
                 "web:search".to_string(),
             ])
+            // Web search retrieves information without mutating state: read-only.
+            .with_read_only()
             .with_latency(450),
             config,
             client: Client::new(),

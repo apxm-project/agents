@@ -52,6 +52,12 @@ use structured_output::{
     process_structured_output, validate_against_output_schema,
 };
 use tool_dispatch::{execute_ask_with_tools, resolve_ask_tools};
+// Re-exported so other handlers (e.g. AUTONOMOUS) can run the same dynamic
+// model->tool->model loop, letting an agent actually execute the tools it
+// decides to use rather than only reasoning about them.
+pub(crate) use tool_dispatch::{
+    execute_ask_with_tools as run_tool_loop, resolve_ask_tools as resolve_node_tools,
+};
 
 /// LLM operation mode (derived from operation type)
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -348,11 +354,12 @@ pub async fn execute(ctx: &ExecutionContext, node: &Node, inputs: Vec<Value>) ->
         let tools = resolve_ask_tools(ctx, node);
 
         if !tools.is_empty() {
-            // Hard-fail if the resolved backend can't accept tool_choice="auto".
-            // Some OpenAI-compatible servers reject it; surface a clear,
-            // actionable error instead of silently dropping tools. Configure
-            // `auto_tool_choice = false` in `~/.apxm/config.toml` for such
-            // servers.
+            // If the resolved backend can't accept tool_choice="auto", proceed
+            // text-only rather than hard-failing the turn: a conversational
+            // agent should still answer when a backend lacks auto tool choice,
+            // just without tools this turn. We warn once so the degradation is
+            // visible. Configure `auto_tool_choice = false` in
+            // `~/.apxm/config.toml` for servers that reject the field.
             let backend_name = ctx
                 .llm_registry
                 .resolve_backend_name(&request)
@@ -370,26 +377,22 @@ pub async fn execute(ctx: &ExecutionContext, node: &Node, inputs: Vec<Value>) ->
                         ),
                         backend: Some(backend_name.clone()),
                     })?;
-            if !backend.supports_auto_tool_choice() {
-                return Err(RuntimeError::LLM {
-                    message: format!(
-                        "Backend '{}' does not support tool_choice=\"auto\". \
-                         Either remove tool usage from this node, configure \
-                         `auto_tool_choice = false` for this backend in \
-                         `~/.apxm/config.toml`, or enable automatic tool choice \
-                         in the registered backend adapter.",
-                        backend_name
-                    ),
-                    backend: Some(backend_name),
-                });
+            if backend.supports_auto_tool_choice() {
+                apxm_llm!(debug,
+                    execution_id = %ctx.execution_id,
+                    tool_count = tools.len(),
+                    "Attaching tools to ASK request"
+                );
+                request = request.with_tools(tools).with_tool_choice(ToolChoice::Auto);
+            } else {
+                apxm_llm!(warn,
+                    execution_id = %ctx.execution_id,
+                    backend = %backend_name,
+                    tool_count = tools.len(),
+                    "Backend does not support tool_choice=\"auto\"; proceeding \
+                     text-only for this ASK (tools dropped this turn)"
+                );
             }
-
-            apxm_llm!(debug,
-                execution_id = %ctx.execution_id,
-                tool_count = tools.len(),
-                "Attaching tools to ASK request"
-            );
-            request = request.with_tools(tools).with_tool_choice(ToolChoice::Auto);
         }
     }
 

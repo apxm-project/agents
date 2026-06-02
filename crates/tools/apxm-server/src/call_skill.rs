@@ -25,7 +25,7 @@ use apxm_core::types::values::Value;
 use apxm_runtime::{
     CallSkillRequest, CallSkillResult, Runtime, SkillResolver, metadata_keys as metadata,
 };
-use apxm_skill::SkillManifest;
+use apxm_skill::{CapabilityPolicy, SkillManifest};
 use async_trait::async_trait;
 
 use crate::skills::{ExecutableSkill, SkillLibrary, SkillLookupError};
@@ -116,13 +116,11 @@ impl SkillResolver for SkillLibrarySkillResolver {
         let resolved_skill_id = manifest.skill_id.clone();
         let resolved_version = manifest.version.clone();
 
-        // Step 2: capability admission — child must not widen the parent's
-        // grant. The parent's grant is not yet plumbed through the
-        // CallSkillRequest, so today we enforce only the conservative
-        // "no required_capabilities" subset rule when invoked from the
-        // default context. The full subset check belongs to the
-        // ExecutionContext refactor that ships parent-grant plumbing.
-        admit_required_capabilities(manifest)?;
+        // Step 2: capability admission — the child must not widen the parent's
+        // grant. Enforces `child_policy ⊆ parent_policy` via
+        // `CapabilityPolicy::admits`, returning the child's policy so it can be
+        // propagated to any grandchildren.
+        let child_policy = admit_child_policy(&request, manifest)?;
 
         // Step 3: load the artifact bytes and parse.
         let runtime = self.upgrade_runtime(&request.skill_id)?;
@@ -132,7 +130,7 @@ impl SkillResolver for SkillLibrarySkillResolver {
         // strings to match the runtime entry-point ABI; non-string values
         // fail typed rather than silently lossy.
         let args = coerce_args_to_strings(&request)?;
-        let parent_metadata = build_child_metadata(&request);
+        let parent_metadata = build_child_metadata(&request, &child_policy);
         let child_session_id = derive_child_session_id(&request);
 
         let child_result = runtime
@@ -265,7 +263,10 @@ fn coerce_args_to_strings(request: &CallSkillRequest) -> Result<Vec<String>, Run
 /// Build the metadata map the runtime layers onto the child's context.
 /// This is the propagation point for the depth counter and the
 /// parent-link breadcrumbs the nested-provenance schema relies on.
-fn build_child_metadata(request: &CallSkillRequest) -> HashMap<String, String> {
+fn build_child_metadata(
+    request: &CallSkillRequest,
+    child_policy: &CapabilityPolicy,
+) -> HashMap<String, String> {
     let mut map = HashMap::new();
     map.insert(
         metadata::CALL_SKILL_DEPTH.to_string(),
@@ -278,6 +279,12 @@ fn build_child_metadata(request: &CallSkillRequest) -> HashMap<String, String> {
     map.insert(
         metadata::PARENT_SCOPE_ID.to_string(),
         request.parent_scope_id.clone(),
+    );
+    // Propagate the admitted child policy as the grandchildren's parent grant,
+    // so a nested CALL_SKILL chain keeps enforcing `descendant ⊆ ancestor`.
+    map.insert(
+        metadata::SIDE_EFFECT_POLICY.to_string(),
+        child_policy.name(),
     );
     map
 }
@@ -337,30 +344,57 @@ fn skill_lookup_error(skill_id: &str, requested: &str, error: SkillLookupError) 
     }
 }
 
-/// Enforce the conservative no-widen rule: until the parent's effective
-/// capability grant is threaded through `CallSkillRequest`, refuse any
-/// child that requests *any* capability. This is intentionally strict —
-/// the right policy is "child.required_capabilities ⊆ parent.grant" but
-/// the parent grant is not plumbed yet, so the only safe default is
-/// "child must be capability-free".
-fn admit_required_capabilities(manifest: &SkillManifest) -> Result<(), RuntimeError> {
-    if manifest.required_capabilities.is_empty() {
-        return Ok(());
-    }
-    let summary = manifest
-        .required_capabilities
-        .iter()
-        .map(String::as_str)
-        .collect::<Vec<_>>()
-        .join(",");
-    Err(RuntimeError::Capability {
-        capability: format!("{CAPABILITY_TAG}:capability_widen:{}", manifest.skill_id),
+/// Enforce the no-widen rule `child_policy ⊆ parent_policy`.
+///
+/// The parent's effective grant arrives as `request.parent_side_effect_policy`
+/// (seeded at the top-level execution and propagated through
+/// [`build_child_metadata`]); `None` is treated as `read_only`. The child's
+/// declared policy is parsed from `manifest.side_effect_policy` (also defaulting
+/// to `read_only`). A child is admitted iff the parent policy admits it. On
+/// success the child's policy is returned so it becomes the grandchildren's
+/// parent grant.
+fn admit_child_policy(
+    request: &CallSkillRequest,
+    manifest: &SkillManifest,
+) -> Result<CapabilityPolicy, RuntimeError> {
+    let parent_policy = CapabilityPolicy::from_manifest_value(
+        request.parent_side_effect_policy.as_deref(),
+    )
+    .ok_or_else(|| RuntimeError::Capability {
+        capability: format!("{CAPABILITY_TAG}:bad_parent_policy:{}", manifest.skill_id),
         message: format!(
-            "child skill '{}' declares required_capabilities=[{}] but parent capability \
-             grant is not yet plumbed into CALL_SKILL; refusing widen by default",
-            manifest.skill_id, summary
+            "parent side_effect_policy '{}' is not a recognized capability policy",
+            request.parent_side_effect_policy.as_deref().unwrap_or("")
         ),
-    })
+    })?;
+
+    let child_policy =
+        CapabilityPolicy::from_manifest_value(manifest.side_effect_policy.as_deref()).ok_or_else(
+            || RuntimeError::Capability {
+                capability: format!("{CAPABILITY_TAG}:bad_child_policy:{}", manifest.skill_id),
+                message: format!(
+                    "child skill '{}' declares side_effect_policy '{}' which is not a \
+                     recognized capability policy",
+                    manifest.skill_id,
+                    manifest.side_effect_policy.as_deref().unwrap_or("")
+                ),
+            },
+        )?;
+
+    if !parent_policy.admits(&child_policy) {
+        return Err(RuntimeError::Capability {
+            capability: format!("{CAPABILITY_TAG}:capability_widen:{}", manifest.skill_id),
+            message: format!(
+                "child skill '{}' requests policy '{}' which widens beyond the parent grant \
+                 '{}'; refusing widen (child must be a subset of parent)",
+                manifest.skill_id,
+                child_policy.name(),
+                parent_policy.name()
+            ),
+        });
+    }
+
+    Ok(child_policy)
 }
 
 /// Install `library` as the runtime's [`SkillResolver`] on the supplied

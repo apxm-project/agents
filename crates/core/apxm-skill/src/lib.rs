@@ -86,9 +86,9 @@ impl CapabilityPolicy {
             (Self::Broader { admits: parent }, Self::Broader { admits: child }) => {
                 child.is_subset(parent)
             }
-            (Self::Broader { admits }, Self::ReadOnly) => {
-                admits.iter().any(|name| name == POLICY_NAME_READ_ONLY)
-            }
+            // ReadOnly is the universal privilege floor: any grant admits a
+            // read-only child (it is strictly less privileged than any policy).
+            (Self::Broader { .. }, Self::ReadOnly) => true,
             (Self::Broader { admits }, Self::Sandboxed) => {
                 admits.iter().any(|name| name == POLICY_NAME_SANDBOXED)
             }
@@ -426,5 +426,18 @@ entry_flow = "{TEST_ENTRY_FLOW}"
             admits: wider_admits,
         };
         assert!(!parent.admits(&wider_child));
+    }
+
+    #[test]
+    fn broader_grant_admits_read_only_child_as_floor() {
+        // A broader grant that does NOT list "read_only" must still admit a
+        // read-only child: read-only is strictly less privileged than any
+        // grant, so it is the universal floor.
+        let mut admits = BTreeSet::new();
+        admits.insert("net.egress.api.example.com".to_string());
+        let parent = CapabilityPolicy::Broader { admits };
+        assert!(parent.admits(&CapabilityPolicy::ReadOnly));
+        // It still does not admit a sandboxed child unless sandboxed is listed.
+        assert!(!parent.admits(&CapabilityPolicy::Sandboxed));
     }
 }

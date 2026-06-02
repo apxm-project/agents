@@ -15,6 +15,11 @@ pub const COMMUNICATE_RECIPIENT: &str = "communicate_recipient";
 pub const COMMUNICATE_MODE: &str = "communicate_mode";
 pub const FLOW_CALL_DEPTH: &str = "flow_call_depth";
 pub const CALL_SKILL_DEPTH: &str = "call_skill_depth";
+/// The effective side-effect policy granted to the current execution (wire
+/// form of `apxm_skill::CapabilityPolicy`). Seeded at the top-level execution
+/// from the launching skill manifest and propagated to children so CALL_SKILL
+/// admission can enforce `child ⊆ parent`.
+pub const SIDE_EFFECT_POLICY: &str = "side_effect_policy";
 pub const TARGET_AGENT: &str = "target_agent";
 pub const TARGET_FLOW: &str = "target_flow";
 pub const TARGET_SKILL_ID: &str = "target_skill_id";

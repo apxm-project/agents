@@ -14,7 +14,9 @@ use crate::types::responses::{
     ToolsCapability,
 };
 
+mod compiler;
 mod dispatch;
+mod dispatch_spec;
 mod schema;
 
 #[allow(unused_imports)]
@@ -68,6 +70,34 @@ pub(crate) async fn mcp_jsonrpc(
         }
         MCP_METHOD_TOOLS_LIST => {
             let mut tools: Vec<ToolEntry> = schema::skill_tool_entries();
+            // PURE compiler tools (side-effect-free): compile / validate / ops.
+            tools.push(ToolEntry {
+                name: compiler::MCP_TOOL_APXM_COMPILE.to_string(),
+                description: "Compile APXM AIR to an artifact; returns ok + diagnostics (no execution)".to_string(),
+                input_schema: compiler::air_input_schema(),
+            });
+            tools.push(ToolEntry {
+                name: compiler::MCP_TOOL_APXM_VALIDATE.to_string(),
+                description: "Validate APXM AIR (compile-check) without executing; returns ok + diagnostics".to_string(),
+                input_schema: compiler::air_input_schema(),
+            });
+            tools.push(ToolEntry {
+                name: compiler::MCP_TOOL_APXM_OPS_LIST.to_string(),
+                description: "List the AIS operation vocabulary (name, mnemonic, category, description)".to_string(),
+                input_schema: serde_json::json!({
+                    "type": "object", "additionalProperties": false, "properties": {}
+                }),
+            });
+            tools.push(ToolEntry {
+                name: compiler::MCP_TOOL_APXM_RUN.to_string(),
+                description: "Compile and run an APXM AIR graph; writes require admit_capabilities (gated at the invoke site)".to_string(),
+                input_schema: compiler::run_input_schema(),
+            });
+            tools.push(ToolEntry {
+                name: dispatch_spec::MCP_TOOL_APXM_DISPATCH.to_string(),
+                description: "Dynamically fan out to sub-agents from a constrained spec (validated + templated to a graph, then run)".to_string(),
+                input_schema: dispatch_spec::dispatch_input_schema(),
+            });
             tools.extend(
                 state
                     .runtime
@@ -97,6 +127,29 @@ pub(crate) async fn mcp_jsonrpc(
                 .get(MCP_TOOL_PARAM_ARGUMENTS)
                 .cloned()
                 .unwrap_or(JsonValue::Object(Default::default()));
+
+            // PURE compiler tools (compile/validate/ops_list) — no execution,
+            // no capability invoke, so they bypass the admission gating below.
+            if let Some(response) = compiler::call_compiler_tool(&state, &id, tool_name, &tool_args)
+            {
+                return response;
+            }
+
+            // apxm_run (side-effecting): compile + run; writes gated by
+            // admit_capabilities + the runtime invoke-site write boundary.
+            if let Some(response) =
+                compiler::call_run_tool(&state, &id, tool_name, &tool_args).await
+            {
+                return response;
+            }
+
+            // apxm_dispatch (Tier 2): constrained sub-agent spec -> templated
+            // graph -> run (same gating as apxm_run).
+            if let Some(response) =
+                dispatch_spec::call_dispatch_tool(&state, &id, tool_name, &tool_args).await
+            {
+                return response;
+            }
 
             if let Some(response) =
                 dispatch::call_skill_tool(&state, &id, tool_name, &tool_args).await

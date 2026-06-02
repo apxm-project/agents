@@ -85,7 +85,7 @@ pub async fn execute(ctx: &ExecutionContext, node: &Node, inputs: Vec<Value>) ->
     if let Some(key) = context_key
         && let Ok(Some(value)) = ctx
             .memory
-            .read_scoped(crate::memory::MemorySpace::Ltm, ctx.scope_id(), &key)
+            .read_scoped(crate::memory::MemorySpace::Ltm, ctx.memory_scope(), &key)
             .await
     {
         context_info = format!("\n\nContext: {:?}", value);

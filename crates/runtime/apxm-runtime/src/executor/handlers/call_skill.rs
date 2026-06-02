@@ -100,6 +100,7 @@ async fn execute_impl(ctx: &ExecutionContext, node: &Node, inputs: Vec<Value>) -
         parent_session_dir: ctx.metadata.get(metadata::SESSION_DIR).cloned(),
         spawn_node_id: node.id,
         depth: next_depth,
+        parent_side_effect_policy: ctx.metadata.get(metadata::SIDE_EFFECT_POLICY).cloned(),
     };
 
     tracing::info!(

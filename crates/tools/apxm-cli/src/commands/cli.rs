@@ -269,6 +269,35 @@ pub enum Commands {
         #[command(subcommand)]
         action: RolloutAction,
     },
+    /// Interactive conversational REPL over a running apxm-server.
+    ///
+    /// Each user message runs one execution of the agent graph, threading a
+    /// stable session id (so server-side memory accrues across turns) and a
+    /// client-side transcript. Defaults to a built-in single-ASK chat graph;
+    /// pass `--air` to drive a custom conversational agent authored in the
+    /// Python frontend.
+    Chat {
+        /// AIR graph driven each turn (path to a `.air` file). Defaults to the
+        /// built-in chat graph (a single ASK over a `{conversation}` param).
+        #[arg(long)]
+        air: Option<std::path::PathBuf>,
+        /// apxm-server base URL (default $APXM_SERVER_BASE or
+        /// http://127.0.0.1:8000).
+        #[arg(long)]
+        server: Option<String>,
+        /// Reuse/resume a prior conversation by session id instead of minting
+        /// a fresh one.
+        #[arg(long)]
+        session_id: Option<String>,
+        /// Capability to admit for write-tool turns (repeatable); forwarded as
+        /// ExecuteRequest.admit_capabilities.
+        #[arg(long = "admit", value_name = "CAP")]
+        admit: Vec<String>,
+        /// Render the full per-agent event tree each turn instead of just the
+        /// assistant's text.
+        #[arg(long)]
+        tree: bool,
+    },
 }
 
 #[derive(Subcommand)]

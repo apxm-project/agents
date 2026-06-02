@@ -108,10 +108,43 @@ pub(crate) struct ExecuteResponse {
     pub(crate) llm_usage: LlmUsageSummary,
 }
 
+/// Seed the top-level execution's effective capability grant from the caller's
+/// `admit_capabilities`, so a nested CALL_SKILL / dispatch admits a child only
+/// if its policy is a subset of this grant (no-widen). Without this seed, every
+/// nested call would default to `read_only` and broader-grant children would be
+/// wrongly rejected — the precondition for a safe capability cascade.
+fn admit_grant_metadata(admit: &std::collections::HashSet<String>) -> HashMap<String, String> {
+    let policy = if admit.is_empty() {
+        apxm_skill::CapabilityPolicy::ReadOnly
+    } else {
+        apxm_skill::CapabilityPolicy::Broader {
+            admits: admit.iter().cloned().collect(),
+        }
+    };
+    let mut metadata = HashMap::new();
+    metadata.insert(
+        apxm_runtime::metadata_keys::SIDE_EFFECT_POLICY.to_string(),
+        policy.name(),
+    );
+    metadata
+}
+
 pub(crate) async fn execute(
     State(state): State<AppState>,
     Json(req): Json<ExecuteRequest>,
 ) -> Result<Json<ExecuteResponse>, ApiError> {
+    Ok(Json(run_air_inner(&state, req).await?))
+}
+
+/// Transport-neutral core: compile + admit + execute one AIR request, returning
+/// the `ExecuteResponse`. Both the REST `/v1/execute` handler and the MCP
+/// `apxm_run` tool call this, so the compile path, the static write-boundary
+/// pre-flight, the credential injection, and the no-widen grant seed are shared
+/// (DRY) rather than duplicated per transport.
+pub(crate) async fn run_air_inner(
+    state: &AppState,
+    req: ExecuteRequest,
+) -> Result<ExecuteResponse, ApiError> {
     let PreparedRequest {
         air,
         args,
@@ -119,23 +152,24 @@ pub(crate) async fn execute(
         session_dir,
         admit,
     } = prepare_request(req)?;
-    let known_caps = registered_capability_names(&state);
+    let known_caps = registered_capability_names(state);
     let mut artifact = air_to_artifact_with_caps(&air, &known_caps)?;
-    validate_raw_execute_admission(&artifact, &state, &admit)?;
+    validate_raw_execute_admission(&artifact, state, &admit)?;
     inject_resolved_credentials(&mut artifact).await?;
     let _permit = state.inference_limiter.acquire().await?;
     let execution = state
         .runtime
-        .execute_artifact_with_session_and_emitter(
+        .execute_artifact_with_session_emitter_and_metadata(
             artifact,
             args,
             session_id,
             None,
             session_dir.clone(),
+            admit_grant_metadata(&admit),
         )
         .await
         .map_err(ApiError::runtime)?;
-    Ok(Json(to_execute_response(execution, session_dir)))
+    Ok(to_execute_response(execution, session_dir))
 }
 
 pub(crate) async fn execute_stream(
@@ -157,6 +191,7 @@ pub(crate) async fn execute_stream(
     let stream_config = state.server_config.execution_stream;
     let (tx, mut rx) = mpsc::channel::<ApxmEvent>(stream_config.channel_capacity.max(1));
     let runtime = Arc::clone(&state.runtime);
+    let grant_metadata = admit_grant_metadata(&admit);
     let trace_id = session_id
         .clone()
         .unwrap_or_else(|| uuid::Uuid::new_v4().to_string());
@@ -168,12 +203,13 @@ pub(crate) async fn execute_stream(
             &trace_id,
         ));
         match runtime
-            .execute_artifact_with_session_and_emitter(
+            .execute_artifact_with_session_emitter_and_metadata(
                 artifact,
                 args,
                 session_id,
                 Some(emitter),
                 session_dir.clone(),
+                grant_metadata,
             )
             .await
         {

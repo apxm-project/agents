@@ -32,6 +32,12 @@ pub struct CallSkillRequest {
     pub spawn_node_id: u64,
     /// Current `CALL_SKILL` nesting depth (parent included).
     pub depth: usize,
+    /// The parent execution's effective side-effect policy (the wire form of
+    /// [`apxm_skill::CapabilityPolicy`], e.g. `read_only`, `sandboxed`,
+    /// `broader[...]`). Threaded so the admission layer can enforce the
+    /// no-widen rule (`child ⊆ parent`) instead of refusing every capability.
+    /// `None` is treated as `read_only` by the admission layer.
+    pub parent_side_effect_policy: Option<String>,
 }
 
 /// Successful result of a `CALL_SKILL` invocation.

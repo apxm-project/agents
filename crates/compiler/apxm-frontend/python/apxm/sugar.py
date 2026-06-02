@@ -99,6 +99,37 @@ class AgentHandle:
             **attributes,
         )
 
+    def chat(self, turns: list[str], **attributes: Any) -> NodeRef:
+        """Emit a fixed multi-turn conversation script against this agent.
+
+        Each entry in ``turns`` becomes a COMMUNICATE turn that takes a Data
+        dependency on the previous turn, producing a sequential exchange with
+        one spawned agent. Template refs (``{name}``) auto-wire from the
+        caller's scope. Returns the final turn's NodeRef.
+
+        This is the in-graph helper for a *bounded* conversation script. An
+        open-ended interactive conversation is driven from the host instead
+        (see ``apxm chat``), re-running the graph once per user message.
+        """
+        if not turns:
+            raise ValueError("chat() requires at least one turn")
+        scope = _caller_locals()
+        last: NodeRef | None = None
+        for msg in turns:
+            node = self._turn(
+                msg,
+                llm_operation=_AGENT_ASK_OPERATION,
+                template_scope=scope,
+                **attributes,
+            )
+            if last is not None:
+                self._recorder.add_edge(
+                    last, node, dependency=graph_keys.DEPENDENCY_DATA
+                )
+            last = node
+        assert last is not None
+        return last
+
     def _turn(
         self,
         message: str,
@@ -305,9 +336,76 @@ def _create_team(self: GraphRecorder, name: str) -> Team:
     return Team(self, name)
 
 
+class Loop:
+    """Context-manager for a bounded in-graph loop region (LOOP_START/LOOP_END).
+
+    Wires the loop region automatically: ``__enter__`` emits LOOP_START with
+    the iteration bound, body nodes added via :meth:`step` chain in iteration
+    order, and ``__exit__`` emits LOOP_END with the counter Data edge from
+    LOOP_START plus a Control edge from the last body node.
+
+    Example::
+
+        with g.loop(count=3, label="refine") as lp:
+            draft = lp.step(g.ask("improve {draft}"))
+            check = lp.step(g.verify(...))
+
+    NOTE: the runtime scheduler is fire-once today, so the body executes a
+    single pass; the ``count`` is recorded for the loop handler/AAM beliefs and
+    the AIR shape is correct, but true back-edge iteration is not yet enforced.
+    Use the host turn-loop (``apxm chat``) or ``AUTONOMOUS`` for real iteration.
+    """
+
+    def __init__(
+        self,
+        recorder: GraphRecorder,
+        *,
+        count: int,
+        label: str | None = None,
+        name: str | None = None,
+    ) -> None:
+        self._g = recorder
+        self._start = recorder.loop_start(
+            name=name, count=count, label=label or (name or "loop")
+        )
+        self._last = self._start
+        self.start = self._start
+        self.end: NodeRef | None = None
+
+    def step(self, node: NodeRef) -> NodeRef:
+        """Chain a body node into the current iteration (Control edge)."""
+        self._g.add_edge(self._last, node, dependency=graph_keys.DEPENDENCY_CONTROL)
+        self._last = node
+        return node
+
+    def __enter__(self) -> "Loop":
+        return self
+
+    def __exit__(self, *exc: Any) -> None:
+        end = self._g.loop_end()
+        # Counter token flows LOOP_START -> LOOP_END (input[0]); the body
+        # sequences into LOOP_END via a Control edge from the last body node.
+        self._g.add_edge(self._start, end, dependency=graph_keys.DEPENDENCY_DATA)
+        if self._last is not self._start:
+            self._g.add_edge(self._last, end, dependency=graph_keys.DEPENDENCY_CONTROL)
+        self.end = end
+
+
+def _create_loop(
+    self: GraphRecorder,
+    count: int,
+    *,
+    label: str | None = None,
+    name: str | None = None,
+) -> Loop:
+    """Open a bounded in-graph loop region. See :class:`Loop`."""
+    return Loop(self, count=count, label=label, name=name)
+
+
 # Monkey-patch GraphRecorder to add ergonomic methods
 GraphRecorder.spawn = _spawn_with_handle  # type: ignore[assignment]
 GraphRecorder.team = _create_team  # type: ignore[assignment]
+GraphRecorder.loop = _create_loop  # type: ignore[assignment]
 
 
-__all__ = ["AgentHandle", "Team"]
+__all__ = ["AgentHandle", "Loop", "Team"]

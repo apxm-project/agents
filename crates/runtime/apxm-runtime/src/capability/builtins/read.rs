@@ -85,6 +85,9 @@ impl ReadCapability {
                 "file:read".to_string(),
                 "read".to_string(),
             ])
+            // Reading a file is side-effect-free: mark read-only so it is not
+            // gated as a write (path/extension policy still applies).
+            .with_read_only()
             .with_latency(35),
             config,
         }

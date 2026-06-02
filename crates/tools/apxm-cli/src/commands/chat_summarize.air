@@ -1,0 +1,6 @@
+module {
+  func.func @apxm_summarize(%arg0: !ais.token {ais.param_name = "to_summarize", ais.param_type = "str"}) -> !ais.token attributes {ais.entry} {
+    %summary = ais.ask "Summarize the following conversation excerpt into a concise running summary that preserves decisions, facts, names, and open tasks. Be terse.\n\n{{{to_summarize}}}" : !ais.token
+    func.return %summary : !ais.token
+  }
+}

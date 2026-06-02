@@ -446,6 +446,18 @@ impl ExecutionContext {
         &self.scope_id
     }
 
+    /// Stable namespace for cross-turn graph memory (QMEM/UMEM/plan LTM).
+    ///
+    /// Returns `session_id` when the host supplied one, so memory written in
+    /// one turn/execution is readable by later executions sharing that session;
+    /// otherwise falls back to the per-execution `scope_id` (the pre-session
+    /// behavior). The invariant that makes this stable: `session_id` is
+    /// propagated to every child context (see `child_with_aam`), while
+    /// `scope_id` is re-minted per node/execution.
+    pub fn memory_scope(&self) -> &str {
+        self.session_id.as_deref().unwrap_or(&self.scope_id)
+    }
+
     /// Get a reference to the flow registry
     pub fn flow_registry(&self) -> &FlowRegistry {
         &self.flow_registry
@@ -510,6 +522,102 @@ mod tests {
 
         assert_eq!(ctx.session_id, Some("session_123".to_string()));
         assert_eq!(ctx.metadata.get("key"), Some(&"value".to_string()));
+    }
+
+    #[tokio::test]
+    async fn test_memory_scope_prefers_session_id() {
+        let memory = Arc::new(
+            MemorySystem::new(MemoryConfig::in_memory_ltm())
+                .await
+                .unwrap(),
+        );
+        let llm_registry = Arc::new(LLMRegistry::new());
+        let capability_system = Arc::new(CapabilitySystem::new());
+
+        // Without a session, memory_scope falls back to the per-execution scope.
+        let no_session =
+            ExecutionContext::new(memory.clone(), llm_registry.clone(), capability_system.clone(), Aam::new());
+        assert_eq!(no_session.memory_scope(), no_session.scope_id());
+
+        // With a session, memory_scope is the (stable) session id.
+        let with_session =
+            ExecutionContext::new(memory, llm_registry, capability_system, Aam::new())
+                .with_session_id("sess-A".to_string());
+        assert_eq!(with_session.memory_scope(), "sess-A");
+        assert_ne!(with_session.memory_scope(), with_session.scope_id());
+    }
+
+    #[tokio::test]
+    async fn test_memory_scope_stable_across_children() {
+        let memory = Arc::new(
+            MemorySystem::new(MemoryConfig::in_memory_ltm())
+                .await
+                .unwrap(),
+        );
+        let llm_registry = Arc::new(LLMRegistry::new());
+        let capability_system = Arc::new(CapabilitySystem::new());
+
+        let parent = ExecutionContext::new(memory, llm_registry, capability_system, Aam::new())
+            .with_session_id("sess-B".to_string());
+        let child = parent.child_with_scope(ScopeSpec::default());
+
+        // scope_id is re-minted per child, but memory_scope (session) is stable —
+        // this is what makes cross-node/cross-turn QMEM/UMEM continuity work.
+        assert_ne!(parent.scope_id(), child.scope_id());
+        assert_eq!(parent.memory_scope(), "sess-B");
+        assert_eq!(child.memory_scope(), "sess-B");
+    }
+
+    #[tokio::test]
+    async fn test_session_scoped_memory_round_trip() {
+        use crate::memory::MemorySpace;
+
+        let memory = Arc::new(
+            MemorySystem::new(MemoryConfig::in_memory_ltm())
+                .await
+                .unwrap(),
+        );
+        let llm_registry = Arc::new(LLMRegistry::new());
+        let capability_system = Arc::new(CapabilitySystem::new());
+
+        // Turn 1: write under a child context of a session.
+        let turn1 = ExecutionContext::new(
+            memory.clone(),
+            llm_registry.clone(),
+            capability_system.clone(),
+            Aam::new(),
+        )
+        .with_session_id("sess-C".to_string());
+        let turn1_node = turn1.child_with_scope(ScopeSpec::default());
+        memory
+            .write_scoped(
+                MemorySpace::Stm,
+                turn1_node.memory_scope(),
+                "fact".to_string(),
+                Value::String("remembered".to_string()),
+            )
+            .await
+            .unwrap();
+
+        // Turn 2: a *different* execution sharing the session reads it back.
+        let turn2 = ExecutionContext::new(memory.clone(), llm_registry, capability_system, Aam::new())
+            .with_session_id("sess-C".to_string());
+        let turn2_node = turn2.child_with_scope(ScopeSpec::default());
+        let got = memory
+            .read_scoped(MemorySpace::Stm, turn2_node.memory_scope(), "fact")
+            .await
+            .unwrap();
+        assert_eq!(got, Some(Value::String("remembered".to_string())));
+
+        // Isolation: a different session does NOT see it.
+        let other = ExecutionContext::new(memory.clone(), Arc::new(LLMRegistry::new()), Arc::new(CapabilitySystem::new()), Aam::new())
+            .with_session_id("sess-OTHER".to_string());
+        let other_node = other.child_with_scope(ScopeSpec::default());
+        let none = memory
+            .read_scoped(MemorySpace::Stm, other_node.memory_scope(), "fact")
+            .await
+            .unwrap();
+        assert_eq!(none, None);
     }
 
     #[tokio::test]

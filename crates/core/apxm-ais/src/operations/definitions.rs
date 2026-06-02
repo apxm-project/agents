@@ -706,6 +706,29 @@ const EMISSION_TOKEN_BRACKETED: MlirEmissionSpec = MlirEmissionSpec {
     syntactic_keywords: &[],
 };
 
+/// Emission spec for LOOP_START: token result, no operands, with the loop
+/// bound (`max_iterations`) and `label` carried in the trailing attr-dict so
+/// the iteration bound round-trips through text-AIR.
+const EMISSION_LOOP_START: MlirEmissionSpec = MlirEmissionSpec {
+    primary_attr: None,
+    context_style: ContextStyle::None,
+    result_type: MlirResultType::Token,
+    positional_attrs: &[],
+    keywords: &["max_iterations", "label"],
+    syntactic_keywords: &[],
+};
+
+/// Emission spec for NEGOTIATE: `proposal` primary, parties/max_rounds in the
+/// attr-dict, parenthesized token inputs, token result.
+const EMISSION_NEGOTIATE: MlirEmissionSpec = MlirEmissionSpec {
+    primary_attr: Some("proposal"),
+    context_style: ContextStyle::Parenthesized,
+    result_type: MlirResultType::Token,
+    positional_attrs: &[],
+    keywords: &["parties", "max_rounds"],
+    syntactic_keywords: &[],
+};
+
 /// Standard emission spec: Void result, no context.
 const EMISSION_VOID_NONE: MlirEmissionSpec = MlirEmissionSpec {
     primary_attr: None,
@@ -1169,9 +1192,9 @@ pub static AIS_OPERATIONS: &[OperationSpec] = &[
             "Token containing iteration count",
         )],
         needs_submission: false,
-        min_inputs: 1,
+        min_inputs: 0,
         produces_output: false,
-        emission: EMISSION_TOKEN_BRACKETED,
+        emission: EMISSION_LOOP_START,
     },
     OperationSpec {
         op_type: AISOperationType::LoopEnd,
@@ -1737,7 +1760,7 @@ pub static AIS_OPERATIONS: &[OperationSpec] = &[
         needs_submission: true,
         min_inputs: 0,
         produces_output: true,
-        emission: EMISSION_TOKEN_BRACKETED,
+        emission: EMISSION_NEGOTIATE,
     },
     // ========== Identity Operations (2) ==========
     OperationSpec {

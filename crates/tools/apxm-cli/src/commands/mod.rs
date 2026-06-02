@@ -10,6 +10,8 @@ pub mod analysis;
 #[cfg(feature = "driver")]
 pub mod backend;
 pub mod cache;
+#[cfg(feature = "driver")]
+pub mod chat;
 pub mod codegen;
 #[cfg(feature = "driver")]
 pub mod compile;
@@ -47,6 +49,8 @@ pub use analysis::*;
 #[cfg(feature = "driver")]
 pub use backend::*;
 pub use cache::*;
+// `chat` is reached via the `commands::chat::` path from main.rs; no glob
+// re-export needed (and a glob would be flagged unused).
 pub use codegen::*;
 #[cfg(feature = "driver")]
 pub use compile::*;

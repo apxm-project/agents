@@ -69,7 +69,8 @@ pub use executor::{
     GraphFinishedEvent, GraphMetricsTracker, GraphStartedEvent, InnerPlanLinker,
     LoopGuardMiddleware, Next, NoOpLinker, NoOpSkillResolver, NoOpWorkflowSpawner,
     NodeFinishedEvent, NodeReadyEvent, NodeStartedEvent, OperationMiddleware, SkillResolver,
-    TimeoutMiddleware, TokenUsageSummary, WorkflowSpawnResult, WorkflowSpawner,
+    TimeoutMiddleware, TokenBudgetMiddleware, TokenUsageSummary, WorkflowSpawnResult,
+    WorkflowSpawner,
 };
 pub use graph_lifecycle::BackendGraphLifecycle;
 pub use memory::{Fact, FactFilter, FactResult, MemoryConfig, MemorySpace, MemorySystem};

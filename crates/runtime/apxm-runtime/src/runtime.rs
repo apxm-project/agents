@@ -353,6 +353,13 @@ impl Runtime {
         self.middlewares = middlewares;
     }
 
+    /// Append one dispatcher middleware for future executions, preserving the
+    /// existing chain. Hosts use this to add guards (token budget, redaction,
+    /// approval) without having to re-list the built-in chain.
+    pub fn add_middleware(&mut self, middleware: Arc<dyn OperationMiddleware>) {
+        self.middlewares.push(middleware);
+    }
+
     /// Replace the scheduler lifecycle hook chain for future executions.
     pub fn set_execution_hooks(&mut self, hooks: Vec<Arc<dyn ExecutionHook>>) {
         self.execution_hooks = hooks;
@@ -625,6 +632,34 @@ impl Runtime {
         .await
     }
 
+    /// Execute a top-level artifact, seeding extra execution metadata.
+    ///
+    /// Identical to [`Self::execute_artifact_with_session_and_emitter`] but
+    /// layers `extra_metadata` (e.g. the launching skill's `side_effect_policy`)
+    /// onto the root context so CALL_SKILL admission can compare a child against
+    /// the real top-level grant rather than the conservative `read_only`
+    /// default. This stays a *top-level* entry (no `parent_execution_id`), so
+    /// metrics still reset.
+    pub async fn execute_artifact_with_session_emitter_and_metadata(
+        &self,
+        artifact: Artifact,
+        args: Vec<String>,
+        session_id: Option<String>,
+        event_emitter: Option<Arc<dyn ExecutionEventEmitter>>,
+        session_dir: Option<String>,
+        extra_metadata: HashMap<String, String>,
+    ) -> Result<RuntimeExecutionResult, RuntimeError> {
+        self.execute_artifact_inner(
+            artifact,
+            args,
+            session_id,
+            event_emitter,
+            session_dir,
+            extra_metadata,
+        )
+        .await
+    }
+
     /// Execute an artifact as the child of a parent execution.
     ///
     /// `parent_metadata` is layered onto the child context's metadata map so
@@ -677,9 +712,12 @@ impl Runtime {
 
         let arg_values: Vec<Value> = args.into_iter().map(Value::String).collect();
         #[cfg(feature = "metrics")]
-        if extra_metadata.is_empty() {
+        if !extra_metadata.contains_key(metadata::PARENT_EXECUTION_ID) {
             // Child executions inherit the parent's accounting; only reset for
-            // a top-level entry call so we don't zero out the parent's in-flight metrics.
+            // a top-level entry call so we don't zero out the parent's in-flight
+            // metrics. A child is identified by an inherited parent_execution_id
+            // (not merely by having any extra metadata — a top-level call may
+            // seed e.g. side_effect_policy and is still a fresh entry).
             self.llm_registry.metrics().reset();
         }
 

@@ -208,6 +208,22 @@ async fn run_cli(cli: Cli) -> Result<()> {
         Commands::Gui { file, port, open } => gui_command(file, port, open),
         Commands::Watch { thread_id, expand } => watch_command(thread_id, expand).await,
         Commands::Rollout { action } => rollout_action(action).await,
+        Commands::Chat {
+            air,
+            server,
+            session_id,
+            admit,
+            tree,
+        } => {
+            commands::chat::chat_command(commands::chat::ChatOptions {
+                air,
+                server,
+                session_id,
+                admit,
+                tree,
+            })
+            .await
+        }
     }
 }
 
@@ -282,10 +298,12 @@ async fn run_cli_no_driver(cli: Cli) -> Result<()> {
         Commands::Cache { action } => cache_command(action, cli.json),
         Commands::Tokenize { text, file, model } => tokenize_command(text, file, model, cli.json),
         Commands::Gui { file, port, open } => gui_command(file, port, open),
-        Commands::Watch { .. } | Commands::Rollout { .. } => Err(anyhow::anyhow!(
-            "apxm watch / apxm rollout require the `driver` feature. Rebuild through `{}`, then re-run the command.",
-            commands::dekk_hints::BUILD
-        )),
+        Commands::Watch { .. } | Commands::Rollout { .. } | Commands::Chat { .. } => {
+            Err(anyhow::anyhow!(
+                "apxm watch / apxm rollout / apxm chat require the `driver` feature. Rebuild through `{}`, then re-run the command.",
+                commands::dekk_hints::BUILD
+            ))
+        }
         _ => Err(anyhow::anyhow!(
             "Command requires the `driver` feature. Rebuild through `{}`, then re-run the command.",
             commands::dekk_hints::BUILD

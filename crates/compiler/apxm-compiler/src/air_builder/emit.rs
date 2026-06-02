@@ -349,76 +349,48 @@ fn emit_node(
             }))
         }
         AISOperationType::QMem => {
+            // Emit the canonical attr-dict form: `ais.qmem "query" {memory_tier
+            // = "stm", ...} : !ais.token`. The query is the primary; every other
+            // attribute (memory_tier, sid, limit, policy) rides the attr-dict.
+            // The result is a token so it composes uniformly downstream.
             let query =
                 get_string_attr(&node.attributes, &[graph_attrs::QUERY]).unwrap_or_default();
-            let sid = get_string_attr(&node.attributes, &["sid", "stage", "scope"])
-                .unwrap_or_else(|| "default".to_string());
-            let space = normalize_memory_space(
-                &get_string_attr(&node.attributes, &[graph_attrs::MEMORY_TIER])
-                    .unwrap_or_else(|| "stm".to_string()),
-            );
-            let limit = get_u64_attr(&node.attributes, graph_attrs::LIMIT);
             let result = format!("%n{}", node.id);
-            let attrs = extra_attr_dict(
-                &node.attributes,
-                &[
-                    graph_attrs::QUERY,
-                    "sid",
-                    "stage",
-                    "scope",
-                    graph_attrs::MEMORY_TIER,
-                    graph_attrs::LIMIT,
-                ],
-            );
-            let limit_str = limit
-                .map(|value| format!(" limit {value}"))
-                .unwrap_or_default();
-
+            let attrs = extra_attr_dict(&node.attributes, &[graph_attrs::QUERY]);
             state.emit(format!(
-                "    {result} = ais.qmem {} stage {} in {}{}{} : !ais.handle<{}>",
+                "    {result} = ais.qmem {}{} : !ais.token",
                 quote_string(&query),
-                quote_string(&sid),
-                space,
-                limit_str,
-                attrs,
-                space
+                attrs
             ));
             Ok(Some(MlirValueRef {
                 ssa: result,
-                ty: MlirValueType::Handle { space },
+                ty: MlirValueType::Token,
             }))
         }
         AISOperationType::UMem => {
-            let key = get_string_attr(&node.attributes, &[graph_attrs::KEY]);
-            let space = normalize_memory_space(
-                &get_string_attr(&node.attributes, &[graph_attrs::MEMORY_TIER])
-                    .unwrap_or_else(|| "stm".to_string()),
-            );
-            let attrs = extra_attr_dict(
-                &node.attributes,
-                &[graph_attrs::KEY, graph_attrs::MEMORY_TIER],
-            );
-
-            let source = if let Some(input) = inputs.first() {
-                ensure_token(state, input.clone())?
+            // Canonical form: `ais.umem "key" (%v : !ais.token)? {memory_tier =
+            // "stm", value = "..."} : !ais.token`. `key` is the primary; the
+            // written value comes from the first token input when present,
+            // otherwise the `value` attribute. The result token allows ordering.
+            let key = get_string_attr(&node.attributes, &[graph_attrs::KEY]).unwrap_or_default();
+            let result = format!("%n{}", node.id);
+            let attrs = extra_attr_dict(&node.attributes, &[graph_attrs::KEY]);
+            let ctx = if let Some(input) = inputs.first() {
+                let source = ensure_token(state, input.clone())?;
+                format!(" ({} : !ais.token)", source.ssa)
             } else {
-                emit_const_token(state, "memory")
+                String::new()
             };
-
-            let full_attrs = match (key.as_ref(), attrs.as_str()) {
-                (Some(k), "") => format!(" {{key = {}}}", quote_string(k)),
-                (Some(k), a) => {
-                    let inner = a.trim().trim_start_matches('{').trim_end_matches('}');
-                    format!(" {{key = {}, {}}}", quote_string(k), inner)
-                }
-                (None, a) => a.to_string(),
-            };
-
             state.emit(format!(
-                "    ais.umem {} into {}{} : !ais.token",
-                source.ssa, space, full_attrs
+                "    {result} = ais.umem {}{}{} : !ais.token",
+                quote_string(&key),
+                ctx,
+                attrs
             ));
-            Ok(None)
+            Ok(Some(MlirValueRef {
+                ssa: result,
+                ty: MlirValueType::Token,
+            }))
         }
         AISOperationType::InvTool => {
             let capability = get_string_attr(&node.attributes, &[graph_attrs::CAPABILITY])
@@ -514,26 +486,15 @@ fn emit_node(
             }))
         }
         AISOperationType::LoopStart => {
-            let mut count = if let Some(input) = inputs.first() {
-                input.clone()
-            } else {
-                emit_const_token(state, "loop")
-            };
-            if matches!(count.ty, MlirValueType::Goal) {
-                count = ensure_token(state, count)?;
-            }
-
-            let label = get_string_attr(&node.attributes, &[graph_attrs::LABEL])
-                .unwrap_or_else(|| "loop".to_string());
-            let attrs = extra_attr_dict_for_node(node, &[graph_attrs::LABEL]);
+            // Canonical attr-dict form: `ais.loop_start {max_iterations = N :
+            // i64, label = "..."} : !ais.token`. The iteration bound is the
+            // optional `max_iterations` attribute (no count operand); the runtime
+            // defaults it to 100. All node attributes ride the attr-dict.
             let result = format!("%n{}", node.id);
-
+            let attrs = extra_attr_dict_for_node(node, &[]);
             state.emit(format!(
-                "    {result} = ais.loop_start {} as {}{} : {} -> !ais.token",
-                count.ssa,
-                quote_string(&label),
-                attrs,
-                format_type(&count.ty)
+                "    {result} = ais.loop_start{} : !ais.token",
+                attrs
             ));
             Ok(Some(MlirValueRef {
                 ssa: result,
@@ -541,17 +502,20 @@ fn emit_node(
             }))
         }
         AISOperationType::LoopEnd => {
-            let source = if let Some(input) = inputs.first() {
-                ensure_token(state, input.clone())?
-            } else {
-                emit_const_token(state, "loop_state")
-            };
-            let attrs = extra_attr_dict_for_node(node, &[]);
+            // Canonical form: `ais.loop_end [%state : !ais.token]? {attrs} :
+            // !ais.token`. The loop-state input is optional (the body sequences
+            // via control edges); the result token marks the loop's end.
             let result = format!("%n{}", node.id);
-
+            let attrs = extra_attr_dict_for_node(node, &[]);
+            let ctx = if let Some(input) = inputs.first() {
+                let source = ensure_token(state, input.clone())?;
+                format!(" [{} : !ais.token]", source.ssa)
+            } else {
+                String::new()
+            };
             state.emit(format!(
-                "    {result} = ais.loop_end {}{} : !ais.token -> !ais.token",
-                source.ssa, attrs
+                "    {result} = ais.loop_end{}{} : !ais.token",
+                ctx, attrs
             ));
             Ok(Some(MlirValueRef {
                 ssa: result,
@@ -635,9 +599,26 @@ fn emit_node(
             }))
         }
         AISOperationType::Fence => {
+            // Canonical form: `ais.fence [%inputs : !ais.token]? {attrs} :
+            // !ais.token`. Inputs are the writes/reads to order; the result
+            // token sequences anything that must observe them.
+            let result = format!("%n{}", node.id);
             let attrs = extra_attr_dict_for_node(node, &[]);
-            state.emit(format!("    ais.fence{attrs}"));
-            Ok(None)
+            let ctx = if inputs.is_empty() {
+                String::new()
+            } else {
+                let mut tokens = Vec::with_capacity(inputs.len());
+                for input in &inputs {
+                    tokens.push(ensure_token(state, input.clone())?.ssa);
+                }
+                let types = vec!["!ais.token"; tokens.len()].join(", ");
+                format!(" [{} : {}]", tokens.join(", "), types)
+            };
+            state.emit(format!("    {result} = ais.fence{ctx}{attrs} : !ais.token"));
+            Ok(Some(MlirValueRef {
+                ssa: result,
+                ty: MlirValueType::Token,
+            }))
         }
         AISOperationType::Plan => {
             let goal = get_string_attr(&node.attributes, &[graph_attrs::GOAL])
@@ -647,14 +628,14 @@ fn emit_node(
             let context = format_context(&inputs, '(', ')');
 
             state.emit(format!(
-                "    {result} = ais.plan {}{}{} : !ais.goal<0>",
+                "    {result} = ais.plan {}{}{} : !ais.token",
                 quote_string(&goal),
                 context,
                 attrs
             ));
             Ok(Some(MlirValueRef {
                 ssa: result,
-                ty: MlirValueType::Goal,
+                ty: MlirValueType::Token,
             }))
         }
         AISOperationType::Reflect => emit_simple_op(

@@ -735,14 +735,25 @@ class GraphRecorder:
         name: str | None = None,
         *,
         count: int | None = None,
+        label: str | None = None,
         **attributes: Any,
     ) -> NodeRef:
-        """Begin a bounded loop (LOOP_START)."""
+        """Begin a bounded loop (LOOP_START).
+
+        The iteration bound is written as ``max_iterations`` because that is
+        the attribute the runtime handler (loop_start.rs) actually reads;
+        ``count_token`` is also stamped so the AIS OpSpec/validator agree.
+        """
         if name is None:
             name = self._auto_name(graph_keys.OP_LOOP_START)
         if count is None:
             raise ValueError("loop_start() missing required keyword argument: 'count'")
-        attrs: dict[str, Any] = {graph_keys.COUNT: count}
+        attrs: dict[str, Any] = {
+            graph_keys.MAX_ITERATIONS: count,
+            graph_keys.COUNT_TOKEN: str(count),
+        }
+        if label is not None:
+            attrs[graph_keys.LABEL] = label
         attrs = self._apply_policy(attrs, attributes)
         return self._add_node(name, graph_keys.OP_LOOP_START, attrs)
 
@@ -916,6 +927,55 @@ class GraphRecorder:
         for _param_name, ref in node_ref_args:
             self.add_edge(ref, node)
 
+        return node
+
+    def call_skill(
+        self,
+        skill_id: str,
+        *,
+        name: str | None = None,
+        args: dict[str, Any] | None = None,
+        version: str | None = None,
+        node_policy: NodePolicy | dict[str, Any] | None = None,
+        **attributes: Any,
+    ) -> NodeRef:
+        """Invoke an installed skill by id (CALL_SKILL).
+
+        Resolves ``skill_id`` through the runtime SkillLibrary, hash-verifies
+        the child artifact, and dispatches it as a child execution. Args follow
+        the same convention as :meth:`call`: NodeRef values auto-wire as Data
+        edges (referenced as ``{param}`` in the serialized args dict) and
+        literals are serialized inline.
+
+        Args:
+            skill_id: Installed skill identifier (optionally ``id@version``).
+            args: Arguments for the skill's parameters (NodeRef or literal).
+            version: Optional version, folded into ``skill_id`` as ``id@version``.
+        """
+        if not skill_id:
+            raise ValueError("call_skill() missing required argument: skill_id")
+        if name is None:
+            name = self._auto_name(graph_keys.OP_CALL_SKILL)
+        resolved_id = (
+            f"{skill_id}@{version}"
+            if version is not None and "@" not in skill_id
+            else skill_id
+        )
+        attrs: dict[str, Any] = {graph_keys.SKILL_ID: resolved_id}
+        if args is not None:
+            literal_args, node_ref_args = self._split_invocation_args(args.items())
+            attrs[graph_keys.ARGS] = _normalize_value(literal_args)
+            if node_ref_args:
+                attrs[graph_keys.INPUT_NAMES] = [pn for pn, _ in node_ref_args]
+        else:
+            node_ref_args = []
+        if node_policy is not None:
+            attrs = self._apply_policy(attrs, {"node_policy": node_policy, **attributes})
+        else:
+            attrs = self._apply_policy(attrs, attributes)
+        node = self._add_node(name, graph_keys.OP_CALL_SKILL, attrs)
+        for _pn, ref in node_ref_args:
+            self.add_edge(ref, node)
         return node
 
     def embed(
@@ -1325,6 +1385,31 @@ class GraphRecorder:
         node = self._add_node(name, graph_keys.OP_SPAWN_AGENT, attrs)
         self._agent_session_nodes[agent_name] = node
         return node
+
+    def spawn_team(
+        self,
+        name: str | None = None,
+        *,
+        team_name: str | None = None,
+        cwd: str | None = None,
+        **attributes: Any,
+    ) -> NodeRef:
+        """Spawn a named team of agents (SPAWN_TEAM).
+
+        The team roster is resolved by the runtime from ``~/.apxm/teams.toml``
+        keyed by ``team_name``; members are not enumerated here. For ad-hoc,
+        workflow-local teams use ``g.team(...).add(...)`` (the N-spawn_agent
+        sugar) instead.
+        """
+        if name is None:
+            name = self._auto_name(graph_keys.OP_SPAWN_TEAM)
+        if team_name is None:
+            raise ValueError("spawn_team() missing required keyword argument: 'team_name'")
+        attrs: dict[str, Any] = {graph_keys.TEAM_NAME: team_name}
+        if cwd is not None:
+            attrs[graph_keys.CWD] = cwd
+        attrs = self._apply_policy(attrs, attributes)
+        return self._add_node(name, graph_keys.OP_SPAWN_TEAM, attrs)
 
     def register_capability(
         self,
