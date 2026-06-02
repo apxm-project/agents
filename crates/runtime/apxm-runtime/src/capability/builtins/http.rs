@@ -17,10 +17,69 @@ use reqwest::Client;
 use reqwest::header::{HeaderMap, HeaderName, HeaderValue};
 use serde_json::json;
 use std::collections::HashMap;
+use std::net::IpAddr;
 use std::sync::OnceLock;
 
 const DEFAULT_TIMEOUT_SECS: u64 = 30;
 const MAX_BODY_BYTES: usize = 1_000_000;
+
+/// True if an address must not be reached from a tool HTTP call — loopback,
+/// private, link-local (incl. 169.254.169.254 cloud metadata), unspecified,
+/// multicast/broadcast, IPv6 ULA. The SSRF block-list.
+fn is_blocked_ip(ip: IpAddr) -> bool {
+    match ip {
+        IpAddr::V4(v4) => {
+            v4.is_loopback()
+                || v4.is_private()
+                || v4.is_link_local() // 169.254.0.0/16 — covers cloud metadata
+                || v4.is_unspecified()
+                || v4.is_broadcast()
+                || v4.is_multicast()
+                || v4.octets()[0] == 0
+        }
+        IpAddr::V6(v6) => {
+            v6.is_loopback()
+                || v6.is_unspecified()
+                || v6.is_multicast()
+                || (v6.segments()[0] & 0xfe00) == 0xfc00 // unique-local fc00::/7
+                || (v6.segments()[0] & 0xffc0) == 0xfe80 // link-local fe80::/10
+        }
+    }
+}
+
+/// SSRF guard for tool HTTP calls: http(s) only, and the host must not resolve
+/// to a blocked address. DNS names are resolved so a public name pointing at a
+/// private IP is rejected too.
+async fn guard_url_ssrf(cap: &str, raw: &str) -> CapabilityResult<()> {
+    let deny = |m: String| RuntimeError::Capability {
+        capability: cap.to_string(),
+        message: m,
+    };
+    let url = reqwest::Url::parse(raw).map_err(|e| deny(format!("invalid url: {e}")))?;
+    match url.scheme() {
+        "http" | "https" => {}
+        s => return Err(deny(format!("scheme '{s}' not allowed (http/https only)"))),
+    }
+    let host = url
+        .host_str()
+        .ok_or_else(|| deny("url has no host".to_string()))?;
+    let ips: Vec<IpAddr> = if let Ok(ip) = host.parse::<IpAddr>() {
+        vec![ip]
+    } else {
+        let port = url.port_or_known_default().unwrap_or(443);
+        tokio::net::lookup_host((host, port))
+            .await
+            .map_err(|e| deny(format!("could not resolve host '{host}': {e}")))?
+            .map(|sa| sa.ip())
+            .collect()
+    };
+    if ips.is_empty() || ips.iter().copied().any(is_blocked_ip) {
+        return Err(deny(format!(
+            "host '{host}' resolves to a blocked (loopback/private/link-local) address"
+        )));
+    }
+    Ok(())
+}
 
 /// One process-wide HTTP client, built lazily on first use (never at startup /
 /// capability construction — building a reqwest client eagerly during runtime
@@ -30,7 +89,20 @@ fn shared_client() -> &'static Client {
     CLIENT.get_or_init(|| {
         Client::builder()
             .timeout(std::time::Duration::from_secs(DEFAULT_TIMEOUT_SECS))
-            .redirect(reqwest::redirect::Policy::limited(5))
+            // Limit redirects AND refuse any hop whose host is a blocked IP
+            // literal (defence-in-depth against redirect-to-metadata SSRF).
+            .redirect(reqwest::redirect::Policy::custom(|attempt| {
+                if attempt.previous().len() >= 5 {
+                    return attempt.error("too many redirects");
+                }
+                if let Some(host) = attempt.url().host_str()
+                    && let Ok(ip) = host.parse::<IpAddr>()
+                    && is_blocked_ip(ip)
+                {
+                    return attempt.stop();
+                }
+                attempt.follow()
+            }))
             .build()
             .unwrap_or_default()
     })
@@ -117,12 +189,38 @@ impl HttpGetCapability {
 impl CapabilityExecutor for HttpGetCapability {
     async fn execute(&self, args: HashMap<String, Value>) -> CapabilityResult<Value> {
         let url = require_string_arg(&args, "url", &self.metadata.name)?.to_string();
+        guard_url_ssrf(&self.metadata.name, &url).await?;
         let resp = shared_client().get(&url).headers(header_map(&args)).send().await;
         finish(&self.metadata.name, resp).await
     }
 
     fn metadata(&self) -> &CapabilityMetadata {
         &self.metadata
+    }
+}
+
+#[cfg(test)]
+mod ssrf_tests {
+    use super::*;
+
+    #[test]
+    fn blocks_private_loopback_and_metadata_ips() {
+        for s in [
+            "127.0.0.1", "10.0.0.5", "192.168.1.1", "172.16.0.1", "169.254.169.254", "0.0.0.0",
+            "::1", "fc00::1", "fe80::1",
+        ] {
+            assert!(is_blocked_ip(s.parse().unwrap()), "{s} should be blocked");
+        }
+        for s in ["8.8.8.8", "1.1.1.1", "93.184.216.34"] {
+            assert!(!is_blocked_ip(s.parse().unwrap()), "{s} should be allowed");
+        }
+    }
+
+    #[tokio::test]
+    async fn guard_rejects_bad_scheme_and_private_ip() {
+        assert!(guard_url_ssrf("http_get", "file:///etc/passwd").await.is_err());
+        assert!(guard_url_ssrf("http_get", "http://169.254.169.254/latest/meta-data").await.is_err());
+        assert!(guard_url_ssrf("http_get", "http://127.0.0.1:8080/").await.is_err());
     }
 }
 
@@ -164,6 +262,7 @@ impl HttpPostCapability {
 impl CapabilityExecutor for HttpPostCapability {
     async fn execute(&self, args: HashMap<String, Value>) -> CapabilityResult<Value> {
         let url = require_string_arg(&args, "url", &self.metadata.name)?.to_string();
+        guard_url_ssrf(&self.metadata.name, &url).await?;
         let mut req = shared_client().post(&url).headers(header_map(&args));
         if let Some(body) = args.get("body") {
             match serde_json::to_value(body) {
