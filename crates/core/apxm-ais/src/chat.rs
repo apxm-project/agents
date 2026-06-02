@@ -1,12 +1,7 @@
-//! Shared conversational-chat primitives.
-//!
-//! The apxm-cli REPL (`apxm chat`) and the apxm-studio backend both drive the
-//! same single-ASK conversational agent: a running transcript rendered into one
-//! ASK, with an optional summarize pass for context compaction. Before this
-//! module each side reimplemented transcript rendering, the chat/summarize AIR,
-//! and the compaction budget — three copies that drifted. Centralizing them here
-//! keeps the Rust surfaces identical by construction. (The TS frontend can't
-//! import Rust, so it mirrors this contract; the values below are the spec.)
+//! Shared conversational-chat primitives — transcript rendering, the chat /
+//! summarize AIR, and the compaction budget — used by both the `apxm chat` CLI
+//! and the apxm-studio backend so they stay identical. (The TS frontend mirrors
+//! this contract; these values are the spec.)
 
 /// Turns kept verbatim during compaction; older turns fold into the summary.
 pub const KEEP_RECENT_TURNS: usize = 4;

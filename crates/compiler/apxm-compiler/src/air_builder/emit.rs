@@ -5,7 +5,11 @@ use apxm_core::types::AISOperationType;
 use apxm_core::types::{Number, Value};
 use std::collections::{BTreeSet, HashMap};
 
+/// The AIS value types. The emitter currently produces only `Token`-typed SSA
+/// values; `Handle`/`Goal` complete the model and are rendered by `format_type`
+/// (and coerced in `BranchOnValue`) for when typed emission lands.
 #[derive(Clone, Debug)]
+#[allow(dead_code)] // complete type model; Handle/Goal not yet constructed
 enum MlirValueType {
     Token,
     Handle { space: String },
@@ -1304,14 +1308,6 @@ fn is_valid_attr_name(name: &str) -> bool {
         return false;
     }
     chars.all(|ch| ch.is_ascii_alphanumeric() || ch == '_' || ch == '.' || ch == '$')
-}
-
-fn normalize_memory_space(value: &str) -> String {
-    match value.trim().to_ascii_lowercase().as_str() {
-        "ltm" => "ltm".to_string(),
-        "episodic" => "episodic".to_string(),
-        _ => "stm".to_string(),
-    }
 }
 
 fn quote_string(value: &str) -> String {

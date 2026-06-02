@@ -35,14 +35,9 @@ use axum::response::{IntoResponse, Response};
 use crate::routes;
 
 /// Whether a request requires the bearer when `require_auth` is enabled.
-///
-/// DEFAULT-DENY: everything is protected except a small, explicitly public,
-/// non-mutating surface (liveness, model discovery, pure validation) and CORS
-/// preflight. An earlier allow-list only covered execute/skill-execute, leaving
-/// execution and mutation routes (MCP, A2A/tasks, generate, agents/register,
-/// memory writes, checkpoints, compile, run reads) silently open — and any newly
-/// added route would inherit that gap. Default-deny closes the class of bug:
-/// a new route is protected unless deliberately added to the public list.
+/// Default-deny: everything is protected except a small public read surface
+/// (liveness, model discovery, validation) and CORS preflight, so a newly added
+/// route is protected unless deliberately listed.
 fn is_protected(method: &axum::http::Method, path: &str) -> bool {
     if method == axum::http::Method::OPTIONS {
         // Never gate CORS preflight; it carries no Authorization header.
