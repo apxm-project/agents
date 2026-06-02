@@ -28,6 +28,37 @@ pub(super) fn default_memoizable_for_backend(backend: Option<&str>) -> bool {
     }
 }
 
+/// Map an `effort` attribute (`off`/`low`/`medium`/`high`) to an extended-
+/// thinking token budget. `off` (or unset) returns `None` — no thinking. The
+/// numbers are the single tunable mapping for thinking effort across backends;
+/// each budget is ≥ the Anthropic minimum (1024). An unrecognized value is a
+/// build/author error surfaced at execution.
+pub(super) fn effort_token_budget(node: &Node) -> Result<Option<u64>> {
+    let Some(effort) = node
+        .attributes
+        .get(graph_attrs::EFFORT)
+        .and_then(|v| v.as_str())
+    else {
+        return Ok(None);
+    };
+    let budget = match effort.trim().to_ascii_lowercase().as_str() {
+        "" | "off" | "none" => return Ok(None),
+        "low" => 2_048,
+        "medium" | "med" => 8_192,
+        "high" => 24_576,
+        other => {
+            return Err(RuntimeError::LLM {
+                message: format!(
+                    "unknown {} '{other}'; expected off, low, medium, or high",
+                    graph_attrs::EFFORT
+                ),
+                backend: None,
+            });
+        }
+    };
+    Ok(Some(budget))
+}
+
 pub(super) fn resolve_node_output_token_limit(node: &Node) -> Result<Option<usize>> {
     let Some(tokens) = get_optional_u64_attribute(node, graph_attrs::TOKEN_BUDGET)? else {
         return Ok(None);

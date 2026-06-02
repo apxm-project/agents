@@ -144,6 +144,7 @@ pub async fn chat_command(opts: ChatOptions) -> Result<()> {
         None => chat::chat_air(&chat::ChatAirOptions {
             backend: opts.backend.as_deref(),
             model: opts.model.as_deref(),
+            effort: None,
             tools: opts.tools,
         }),
     };

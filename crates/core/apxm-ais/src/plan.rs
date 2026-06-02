@@ -73,6 +73,10 @@ pub struct PlanNode {
     pub backend: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub model: Option<String>,
+    /// For `ask`/`agent`/`think`: extended-thinking effort (`off`/`low`/`medium`
+    /// /`high`), lowered to the `effort` attribute. `None` = no extended thinking.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub effort: Option<String>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub depends_on: Vec<PlanDependency>,
 }

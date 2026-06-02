@@ -44,8 +44,8 @@ pub(super) mod structured_output;
 pub(super) mod tool_dispatch;
 
 use pipeline::{
-    charge_tokens, default_memoizable_for_backend, resolve_global_token_budget,
-    resolve_node_output_token_limit,
+    charge_tokens, default_memoizable_for_backend, effort_token_budget,
+    resolve_global_token_budget, resolve_node_output_token_limit,
 };
 use structured_output::{
     build_schema_retry_prompt, output_schema_from_node, parse_structured_output,
@@ -326,10 +326,14 @@ pub async fn execute(ctx: &ExecutionContext, node: &Node, inputs: Vec<Value>) ->
         node,
     )?;
 
-    // Apply mode-specific configuration
-    if mode == LlmMode::Think
-        && let Some(budget_tokens) = budget
-    {
+    // Extended thinking. An explicit `effort` attr (off/low/medium/high) applies
+    // to any LLM op and maps to a thinking token budget; without it, the Think op
+    // still honors its `budget` attr as before. Backends that support extended
+    // thinking (anthropic, vllm, ollama) lower this into their own request.
+    let thinking_budget = effort_token_budget(node)?.or({
+        if mode == LlmMode::Think { budget } else { None }
+    });
+    if let Some(budget_tokens) = thinking_budget {
         request = request
             .with_thinking_token_budget(budget_tokens)
             .with_enable_thinking(true);
@@ -771,6 +775,30 @@ mod tests {
         );
 
         assert_eq!(resolve_node_output_token_limit(&node).unwrap(), Some(128));
+    }
+
+    #[test]
+    fn test_effort_maps_to_thinking_budget() {
+        let cases = [
+            ("off", None),
+            ("low", Some(2_048)),
+            ("medium", Some(8_192)),
+            ("HIGH", Some(24_576)),
+        ];
+        for (effort, expected) in cases {
+            let mut node = Node::new(7, AISOperationType::Ask);
+            node.attributes
+                .insert(graph_attrs::EFFORT.to_string(), Value::String(effort.into()));
+            assert_eq!(effort_token_budget(&node).unwrap(), expected, "effort={effort}");
+        }
+        // No attr -> no thinking.
+        let node = Node::new(7, AISOperationType::Ask);
+        assert_eq!(effort_token_budget(&node).unwrap(), None);
+        // Unknown -> error.
+        let mut bad = Node::new(7, AISOperationType::Ask);
+        bad.attributes
+            .insert(graph_attrs::EFFORT.to_string(), Value::String("ultra".into()));
+        assert!(effort_token_budget(&bad).is_err());
     }
 
     #[tokio::test]

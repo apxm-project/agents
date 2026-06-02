@@ -79,6 +79,10 @@ pub struct ChatAirOptions<'a> {
     pub backend: Option<&'a str>,
     /// Pin this turn to a specific model (the per-node `model` attr).
     pub model: Option<&'a str>,
+    /// Extended-thinking effort for this turn (`low`/`medium`/`high`); the
+    /// runtime lowers it into a thinking token budget. `None` or `off` = no
+    /// extended thinking.
+    pub effort: Option<&'a str>,
     /// Add the self-enabling `web` tool group, making the reply a tool-using
     /// turn (the runtime runs independent tool calls in parallel).
     pub tools: bool,
@@ -100,6 +104,12 @@ pub fn chat_air(opts: &ChatAirOptions) -> String {
         let safe = sanitize_route_id(m);
         if !safe.is_empty() {
             attrs.push(format!("model = \"{safe}\""));
+        }
+    }
+    if let Some(e) = opts.effort {
+        let safe = sanitize_route_id(e);
+        if !safe.is_empty() && safe != "off" {
+            attrs.push(format!("effort = \"{safe}\""));
         }
     }
     if opts.tools {
@@ -196,11 +206,21 @@ mod tests {
         let air = chat_air(&ChatAirOptions {
             backend: Some("amd"),
             model: Some("claude-sonnet-4-6"),
+            effort: Some("medium"),
             tools: true,
         });
         assert!(air.contains("backend = \"amd\""));
         assert!(air.contains("model = \"claude-sonnet-4-6\""));
+        assert!(air.contains("effort = \"medium\""));
         assert!(air.contains("tool_groups = [\"web\"]"));
+    }
+
+    #[test]
+    fn air_omits_effort_when_off_or_unset() {
+        let off = chat_air(&ChatAirOptions { effort: Some("off"), ..Default::default() });
+        assert!(!off.contains("effort"));
+        let unset = chat_air(&ChatAirOptions::default());
+        assert!(!unset.contains("effort"));
     }
 
     #[test]

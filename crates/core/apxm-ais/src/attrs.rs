@@ -33,6 +33,10 @@ pub const BACKEND: &str = "backend";
 pub const MAX_TOOL_ITERATIONS: &str = "max_tool_iterations";
 pub const BUDGET: &str = "budget";
 pub const STRUCTURED: &str = "structured";
+/// Thinking/reasoning effort for LLM ops: `off` | `low` | `medium` | `high`.
+/// Lowered by the runtime into an extended-thinking token budget; an unset or
+/// `off` value disables extended thinking.
+pub const EFFORT: &str = "effort";
 
 // -- Template / prompt --
 pub const TEMPLATE_STR: &str = "template_str";
@@ -283,6 +287,7 @@ pub const ALL_ATTR_NAMES: &[&str] = &[
     BACKEND,
     MAX_TOOL_ITERATIONS,
     BUDGET,
+    EFFORT,
     TEMPLATE_STR,
     PROMPT,
     TEMPLATE,

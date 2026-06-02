@@ -195,8 +195,27 @@ impl AnthropicBackend {
             body["system"] = json!(system_text);
         }
 
-        // Add optional parameters
-        if let Some(top_p) = request.top_p {
+        // Extended thinking. When enabled, Anthropic requires `budget_tokens` in
+        // [1024, max_tokens), temperature == 1, and no `top_p`. Bump max_tokens to
+        // keep output room above the thinking budget and force those constraints.
+        let thinking_enabled =
+            request.enable_thinking == Some(true) || request.thinking_token_budget.is_some();
+        if thinking_enabled {
+            let budget = request
+                .thinking_token_budget
+                .unwrap_or(wire_defaults::ANTHROPIC_MAX_TOKENS as u64)
+                .max(1024);
+            if body["max_tokens"].as_u64().unwrap_or(0) <= budget {
+                body["max_tokens"] = json!(budget + wire_defaults::ANTHROPIC_MAX_TOKENS as u64);
+            }
+            body["thinking"] = json!({ "type": "enabled", "budget_tokens": budget });
+            body["temperature"] = json!(1.0);
+        }
+
+        // Add optional parameters. `top_p` is incompatible with extended thinking.
+        if !thinking_enabled
+            && let Some(top_p) = request.top_p
+        {
             body["top_p"] = json!(top_p);
         }
 
@@ -733,6 +752,52 @@ mod tests {
         assert_eq!(body["temperature"], 0.9);
         assert_eq!(body["system"], "You are helpful");
         assert_eq!(body["messages"][0]["content"], "Hello");
+        // No thinking unless requested.
+        assert!(body.get("thinking").is_none());
+    }
+
+    #[test]
+    fn test_build_request_body_with_thinking() {
+        let backend = AnthropicBackend {
+            api_key: "test".to_string(),
+            model: "claude-sonnet-4-5".to_string(),
+            base_url: DEFAULT_BASE_URL.to_string(),
+            extra_headers: vec![],
+            client: reqwest::Client::new(),
+        };
+
+        let request = LLMRequest::new("Think hard")
+            .with_temperature(0.7)
+            .with_top_p(0.5)
+            .with_max_tokens(512)
+            .with_thinking_token_budget(8_192)
+            .with_enable_thinking(true);
+
+        let body = backend.build_request_body(&request);
+
+        // Anthropic constraints: thinking block present, temperature forced to 1,
+        // top_p dropped, and max_tokens bumped above the thinking budget.
+        assert_eq!(body["thinking"]["type"], "enabled");
+        assert_eq!(body["thinking"]["budget_tokens"], 8_192);
+        assert_eq!(body["temperature"], 1.0);
+        assert!(body.get("top_p").is_none());
+        assert!(body["max_tokens"].as_u64().unwrap() > 8_192);
+    }
+
+    #[test]
+    fn test_thinking_budget_clamped_to_minimum() {
+        let backend = AnthropicBackend {
+            api_key: "test".to_string(),
+            model: "claude-sonnet-4-5".to_string(),
+            base_url: DEFAULT_BASE_URL.to_string(),
+            extra_headers: vec![],
+            client: reqwest::Client::new(),
+        };
+        let request = LLMRequest::new("hi")
+            .with_thinking_token_budget(10)
+            .with_enable_thinking(true);
+        let body = backend.build_request_body(&request);
+        assert_eq!(body["thinking"]["budget_tokens"], 1024);
     }
 
     #[test]
