@@ -1,6 +1,0 @@
-module {
-  func.func @apxm_chat(%arg0: !ais.token {ais.param_name = "conversation", ais.param_type = "str"}) -> !ais.token attributes {ais.entry} {
-    %reply = ais.ask "{{{conversation}}}" : !ais.token
-    func.return %reply : !ais.token
-  }
-}

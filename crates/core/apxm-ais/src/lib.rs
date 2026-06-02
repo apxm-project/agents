@@ -24,6 +24,7 @@
 pub mod aam;
 pub mod attrs;
 pub mod capabilities;
+pub mod chat;
 pub mod defaults;
 pub mod memory;
 pub mod operations;
