@@ -123,7 +123,9 @@ impl Default for ProfileRegistry {
 
 /// Returns the default path for the model profiles config file.
 fn default_profiles_path() -> Option<PathBuf> {
-    dirs::home_dir().map(|home| home.join(".apxm").join("model_profiles.toml"))
+    // Scope to `$APXM_HOME` (falling back to `~/.apxm`), matching the backend
+    // store and models registry so all per-home model config shares one root.
+    Some(apxm_core::env::apxm_home().join("model_profiles.toml"))
 }
 
 #[cfg(test)]

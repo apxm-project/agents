@@ -38,6 +38,12 @@ _SUPPORTS_THINKING_KEY = "supports_thinking"
 _MAX_OUTPUT_TOKENS_KEY = "max_output_tokens"
 _EMPTY_MODEL = "<none>"
 _MOCK_PROTOCOL = "mock"
+# Protocols whose runtime backend resolves a concrete model on its own when a
+# node pins only the backend (the provider coalesces to its configured model).
+# vLLM is deliberately excluded: it bails at execution without an explicit
+# model, so for vLLM we keep raising the precise "pass model=" error at build
+# time rather than deferring into a late runtime failure.
+_RUNTIME_RESOLVES_MODEL = frozenset({"anthropic", "openai", "google", "ollama", "mock"})
 
 
 @dataclass(frozen=True, slots=True)
@@ -364,20 +370,18 @@ def _implicit_model(
         return backend.models[0]
     if not backend.models and backend.protocol == _MOCK_PROTOCOL:
         return None
+    # Zero or several models: the model is left unset. Defer to the runtime only
+    # when the caller explicitly pinned this backend (allow_defer) AND the
+    # protocol self-resolves a model — the same contract the chat path relies on.
+    # vLLM cannot, so it falls through to the precise build-time error below
+    # instead of failing late at execution.
+    if allow_defer and backend.protocol in _RUNTIME_RESOLVES_MODEL:
+        return None
     if not backend.models:
-        if allow_defer:
-            return None
         raise BackendRegistryError(
             f"backend '{backend.name}' has no registered models. Add one with "
             f"`dekk apxm backend add-model {backend.name} <model-id>`."
         )
-    # The backend serves several models and the caller pinned only the backend.
-    # When the caller explicitly chose this backend (allow_defer), leave the
-    # model unset and let the runtime resolve it from the backend's own
-    # configuration — the same contract the chat path relies on. Otherwise the
-    # selection is genuinely ambiguous and we ask the caller to disambiguate.
-    if allow_defer:
-        return None
     raise BackendRegistryError(
         f"backend '{backend.name}' serves multiple models. Pass model= or alias=. "
         f"Registered models: {_format_model_names(backend)}"

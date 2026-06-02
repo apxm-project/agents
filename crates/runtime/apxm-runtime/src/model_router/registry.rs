@@ -271,7 +271,10 @@ impl Default for ModelRegistry {
 
 /// Returns the default path for the models config file.
 fn default_models_path() -> Option<PathBuf> {
-    dirs::home_dir().map(|home| home.join(".apxm").join("models.toml"))
+    // Scope to `$APXM_HOME` (falling back to `~/.apxm`) so this registry lives
+    // under the same root as the backend store (`config.toml`); a relocated
+    // server home must not split its model roster across two directories.
+    Some(apxm_core::env::apxm_home().join("models.toml"))
 }
 
 #[cfg(test)]

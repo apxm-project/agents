@@ -185,3 +185,39 @@ def test_select_backend_still_resolves_explicit_model_on_multi_model_backend(
     route = select_backend(backend="amd", model="claude-opus-4-8")
     assert route.backend == "amd"
     assert route.model == "claude-opus-4-8"
+
+
+@pytest.fixture()
+def multi_model_vllm_config(tmp_path, monkeypatch):
+    config = tmp_path / "config.toml"
+    config.write_text(
+        """
+[[backends]]
+name = "local-vllm"
+type = "local"
+protocol = "vllm"
+
+[[backends.models]]
+id = "llama-3-8b"
+
+[[backends.models]]
+id = "qwen-2-7b"
+""",
+        encoding="utf-8",
+    )
+    monkeypatch.setenv(ENV_APXM_CONFIG, str(config))
+    return config
+
+
+def test_select_backend_does_not_defer_for_multi_model_vllm(multi_model_vllm_config):
+    # vLLM has no runtime self-resolution: deferring would only surface a late
+    # execution failure, so we keep raising the precise, actionable error at
+    # build time for a backend-only pin on a multi-model vLLM backend.
+    from apxm.backends import BackendRegistryError, select_backend
+
+    with pytest.raises(BackendRegistryError, match="serves multiple models"):
+        select_backend(backend="local-vllm")
+
+    # An explicit model still resolves.
+    route = select_backend(backend="local-vllm", model="qwen-2-7b")
+    assert route.model == "qwen-2-7b"
