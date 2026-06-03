@@ -10,6 +10,8 @@ use std::path::Path;
 
 use serde::{Deserialize, Serialize};
 
+pub mod discovery;
+
 pub const MANIFEST_FILE: &str = "skill.toml";
 pub const HASH_PREFIX: &str = "blake3:";
 
@@ -105,6 +107,27 @@ pub struct SkillManifest {
     pub display_name: Option<String>,
     #[serde(default)]
     pub description: Option<String>,
+    /// When this skill should be used — a short "Use when ..." trigger phrase
+    /// consumed by description-based discovery (see the `search_skills`
+    /// capability). Optional; defaults to empty.
+    #[serde(default)]
+    pub when_to_use: Option<String>,
+    /// Free-form discovery tags / keywords used to rank this skill against a
+    /// natural-language request. Optional; defaults to empty.
+    #[serde(default)]
+    pub tags: Vec<String>,
+    /// Skill libraries / ids this program imports into its *visible set* (the
+    /// scoped tier). An agent may discover and CALL_SKILL only its visible set
+    /// = shared-tier skills ∪ resolved imports — never the whole catalogue.
+    /// Entries are lib ids (`apxm-app-github`) or namespaced ids
+    /// (`apxm-app-github::issue_triage`).
+    #[serde(default)]
+    pub imports: Vec<String>,
+    /// When true this skill belongs to the GLOBAL shared tier: visible to every
+    /// agent without an explicit import. When false (default) it is scoped and
+    /// reachable only via an `imports` entry or by being in the same library.
+    #[serde(default)]
+    pub shared: bool,
     pub entry_flow: String,
     #[serde(default)]
     pub source_hash: Option<String>,
@@ -330,6 +353,10 @@ entry_flow = "{TEST_ENTRY_FLOW}"
             entry_flow: String::new(),
             display_name: None,
             description: None,
+            when_to_use: None,
+            tags: Vec::new(),
+            imports: Vec::new(),
+            shared: false,
             source_hash: None,
             air_hash: None,
             artifact_hash: None,

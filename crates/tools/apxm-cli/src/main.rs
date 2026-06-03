@@ -5,6 +5,7 @@
 //! backend registration and management.
 
 mod commands;
+mod context_assembly;
 mod frontend;
 
 use anyhow::Result;

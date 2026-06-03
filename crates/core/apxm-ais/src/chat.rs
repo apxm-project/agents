@@ -62,6 +62,23 @@ where
     out
 }
 
+/// Escape a string for safe interpolation into an MLIR/AIR string literal
+/// (backslash, double-quote, and the common control characters).
+pub fn escape_air_string(s: &str) -> String {
+    let mut out = String::with_capacity(s.len() + 8);
+    for c in s.chars() {
+        match c {
+            '\\' => out.push_str("\\\\"),
+            '"' => out.push_str("\\\""),
+            '\n' => out.push_str("\\n"),
+            '\r' => out.push_str("\\r"),
+            '\t' => out.push_str("\\t"),
+            _ => out.push(c),
+        }
+    }
+    out
+}
+
 /// Keep a routing identifier to the characters real backend/model ids use, so it
 /// is always a safe MLIR string literal when interpolated into AIR.
 pub fn sanitize_route_id(id: &str) -> String {
@@ -73,6 +90,11 @@ pub fn sanitize_route_id(id: &str) -> String {
 /// Per-turn routing/tool options for the built-in conversational graph.
 #[derive(Debug, Default, Clone, Copy)]
 pub struct ChatAirOptions<'a> {
+    /// System prompt for this turn (the per-node `system_prompt` attr, layer-1
+    /// of the runtime's `resolve_system_prompt`). The conversational-agent host
+    /// assembles this from the AGENTS.md / CLAUDE.md / memory hierarchy so the
+    /// agent reads project context. `None` falls through to the runtime default.
+    pub system_prompt: Option<&'a str>,
     /// Pin this turn to a registered backend (the runtime's per-node `backend`
     /// attr). `GET /v1/models` returns backend names, so a picker value is a
     /// backend, not a model id.
@@ -86,6 +108,9 @@ pub struct ChatAirOptions<'a> {
     /// Add the self-enabling `web` tool group, making the reply a tool-using
     /// turn (the runtime runs independent tool calls in parallel).
     pub tools: bool,
+    /// Expose the `skills` tool group so the agent can call `search_skills` to
+    /// discover relevant skills by description (scoped to its visible set).
+    pub skills: bool,
 }
 
 /// Build the built-in single-ASK conversational graph. With default options the
@@ -94,6 +119,11 @@ pub struct ChatAirOptions<'a> {
 /// `{{{conversation}}}` is the parameter placeholder (single-pass substitution).
 pub fn chat_air(opts: &ChatAirOptions) -> String {
     let mut attrs: Vec<String> = Vec::new();
+    if let Some(sp) = opts.system_prompt {
+        if !sp.is_empty() {
+            attrs.push(format!("system_prompt = \"{}\"", escape_air_string(sp)));
+        }
+    }
     if let Some(b) = opts.backend {
         let safe = sanitize_route_id(b);
         if !safe.is_empty() {
@@ -112,8 +142,20 @@ pub fn chat_air(opts: &ChatAirOptions) -> String {
             attrs.push(format!("effort = \"{safe}\""));
         }
     }
+    let mut groups: Vec<&str> = Vec::new();
     if opts.tools {
-        attrs.push("tool_groups = [\"web\"]".to_string());
+        groups.push("web");
+    }
+    if opts.skills {
+        groups.push("skills");
+    }
+    if !groups.is_empty() {
+        let list = groups
+            .iter()
+            .map(|g| format!("\"{g}\""))
+            .collect::<Vec<_>>()
+            .join(", ");
+        attrs.push(format!("tool_groups = [{list}]"));
     }
     let attr_dict = if attrs.is_empty() {
         String::new()
@@ -204,10 +246,12 @@ mod tests {
     #[test]
     fn air_pins_backend_model_and_tools() {
         let air = chat_air(&ChatAirOptions {
+            system_prompt: None,
             backend: Some("amd"),
             model: Some("claude-sonnet-4-6"),
             effort: Some("medium"),
             tools: true,
+            skills: false,
         });
         assert!(air.contains("backend = \"amd\""));
         assert!(air.contains("model = \"claude-sonnet-4-6\""));
@@ -216,11 +260,29 @@ mod tests {
     }
 
     #[test]
+    fn air_exposes_skills_group_for_discovery() {
+        let air = chat_air(&ChatAirOptions { skills: true, ..Default::default() });
+        assert!(air.contains("tool_groups = [\"skills\"]"), "{air}");
+        let both = chat_air(&ChatAirOptions { tools: true, skills: true, ..Default::default() });
+        assert!(both.contains("tool_groups = [\"web\", \"skills\"]"), "{both}");
+    }
+
+    #[test]
     fn air_omits_effort_when_off_or_unset() {
         let off = chat_air(&ChatAirOptions { effort: Some("off"), ..Default::default() });
         assert!(!off.contains("effort"));
         let unset = chat_air(&ChatAirOptions::default());
         assert!(!unset.contains("effort"));
+    }
+
+    #[test]
+    fn air_injects_escaped_system_prompt() {
+        let air = chat_air(&ChatAirOptions {
+            system_prompt: Some("You are APXM.\nProject: \"acme\""),
+            ..Default::default()
+        });
+        // Newlines and quotes are escaped so the AIR string literal stays valid.
+        assert!(air.contains("system_prompt = \"You are APXM.\\nProject: \\\"acme\\\"\""));
     }
 
     #[test]

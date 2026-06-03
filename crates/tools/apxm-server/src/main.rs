@@ -41,6 +41,7 @@ mod auth;
 mod call_skill;
 mod capability;
 mod credentials;
+mod search_skills;
 mod checkpoints;
 mod error;
 mod execute;

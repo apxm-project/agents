@@ -138,16 +138,28 @@ pub async fn chat_command(opts: ChatOptions) -> Result<()> {
     // `--air` drives a custom graph; otherwise build the shared built-in chat
     // graph, threading the `--tools` / `--backend` controls through it (the same
     // builder the studio uses, so the two stay identical).
+    // Context injection: assemble the AGENTS.md / CLAUDE.md hierarchy (global +
+    // project) and feed it as the ASK system prompt, so the agent reads project
+    // context. This is the "reads AGENTS.md for context" pillar of the
+    // conversational-agent-as-APXM-program vision.
+    let context = crate::context_assembly::assemble_context();
     let air = match &opts.air {
         Some(p) => std::fs::read_to_string(p)
             .with_context(|| format!("failed to read AIR graph {}", p.display()))?,
         None => chat::chat_air(&chat::ChatAirOptions {
+            system_prompt: context.as_deref(),
             backend: opts.backend.as_deref(),
             model: opts.model.as_deref(),
             effort: None,
             tools: opts.tools,
+            // Always expose skill discovery so the agent can find relevant skills
+            // by description (scoped to its visible set; shared tier by default).
+            skills: true,
         }),
     };
+    if let Some(ctx) = &context {
+        eprintln!("context: loaded AGENTS.md/CLAUDE.md hierarchy (~{} tokens)", ctx.len() / 4);
+    }
 
     // No read timeout: SSE streams stall between events, and reqwest's default
     // client already has no read timeout (setting it to zero would, per
