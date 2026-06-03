@@ -297,22 +297,32 @@ BUILT + VERIFIED (tests green; warm `cargo` in the main checkout):
   every agent) when its manifest opts in OR it lives under the builtin/global
   root. 3 tests. Realises "global skills shared across all nodes".
 
-So **context injection + scoped skill discovery (with a real global tier) + tool
-execution + context-management-as-middleware** are real and verified for
-`apxm chat`. Committed: `fd1b5d54`, `2ccdacb0`, `287e2f54`.
+- **Server-side visible-set enforcement** — `/v1/execute` accepts `imports`,
+  seeded into `VISIBLE_SKILLS` metadata, propagated no-widen to children; the
+  `CALL_SKILL` resolver gates every target against the caller's visible set.
+  Absent = unrestricted (back-compat). The execution-time half of "no full
+  access". 3 tests.
+- **`lib::skill` namespaced resolution** — `find_record` resolves `lib::skill`
+  ids (pack-filtered), disambiguating same-named skills across libraries; bare
+  ids unchanged. 1 test. Completes libraries-as-namespaces.
+- **Cross-repo (apxm-studio)** — `ChatAirOptions` literal updated for the new
+  `system_prompt`/`skills` fields; builds. Committed on `feat/chat-air-fields`.
 
-REMAINING (sequenced, specs above):
-- **Compaction middleware** — promote the host-side compaction post-hook (which
-  works today) into a composable layer; or express it in-graph via `CALL_SKILL`
-  to a `summarize` skill.
-- **Server-side visible-set enforcement** — pass `imports` on `/v1/execute` +
-  `CALL_SKILL`, filter the library view, no-widen propagation (move the allow-list
-  off the os-dispatch client). Discovery is scoped now; this hardens execution.
-- **Default rich agent program** — ship the `conversational_agent` program as a
-  precompiled default `--air`; `lib::skill` namespacing of skill ids end-to-end.
-- **Cross-repo**: `apxm-studio`'s `ChatAirOptions` literal must add the new
-  `system_prompt`/`skills` fields when it picks up this `apxm-ais`.
+So all four pillars + the full scoped-skill model (discovery + global tier +
+execution enforcement + namespacing) are real and verified. Commits (apxm):
+`fd1b5d54`, `2ccdacb0`, `287e2f54`, `6ebcad59`, `38df0fc8`, `ee5849e7`.
+
+REMAINING (non-blocking, optional polish):
+- **Compaction** — works today in the host (LLM summarize); promoting it to a
+  middleware would put an LLM call in middleware (awkward) — the clean path is
+  in-graph `CALL_SKILL` to a `summarize` skill at the program level. Left as-is.
+- **Default rich program packaging** — the `apxm chat` default is already a full
+  agent (context + discovery + tools + host-threaded history + host compaction);
+  the `conversational_agent` example is the program-loop reference. Shipping a
+  precompiled default `--air` is cosmetic.
+- **Model B** (loop/`RECV` in-graph) — the deeper runtime track, unchanged.
 
 NOTE: a pre-existing, environment-dependent integration test
 (`session_list_prefers_local_root_over_global_home`, unrelated `session list`
-path) fails on this dev box at the base commit too — not introduced here.
+path) fails on this dev box at the base commit too — not introduced here. All
+new tests pass; core crates (skill/ais/runtime/server) are fully green.
