@@ -1830,10 +1830,17 @@ fn find_record(
     records: Vec<SkillRecord>,
     requested_id: &str,
 ) -> Result<SkillRecord, SkillLookupError> {
-    let (skill_id, requested_version) = split_requested_id(requested_id);
+    let (full_id, requested_version) = split_requested_id(requested_id);
+    // Namespaced ids (`lib::skill`) filter by pack, disambiguating collisions;
+    // bare ids match by skill_id across all packs (unchanged behaviour).
+    let (pack_filter, skill_id) = split_namespaced_id(full_id);
     let mut matches: Vec<SkillRecord> = records
         .into_iter()
         .filter(|record| record.skill_id.as_deref() == Some(skill_id))
+        .filter(|record| match pack_filter {
+            Some(pack) => record.pack.as_ref().map(|p| p.pack_id == pack).unwrap_or(false),
+            None => true,
+        })
         .filter(|record| {
             requested_version.is_none() || record.version.as_deref() == requested_version
         })
@@ -1843,6 +1850,15 @@ fn find_record(
         0 => Err(SkillLookupError::NotFound(requested_id.to_string())),
         1 => Ok(matches.remove(0)),
         _ => Err(SkillLookupError::Ambiguous(requested_id.to_string())),
+    }
+}
+
+/// Split a `lib::skill` namespaced id into `(Some(lib), skill)`; a bare id
+/// returns `(None, id)`. Only the first `::` separates the library.
+fn split_namespaced_id(id: &str) -> (Option<&str>, &str) {
+    match id.split_once("::") {
+        Some((pack, name)) if !pack.is_empty() && !name.is_empty() => (Some(pack), name),
+        _ => (None, id),
     }
 }
 
@@ -1870,6 +1886,14 @@ mod unit_tests {
     const TEST_SKILL_ID: &str = "checkout-context-triage";
     const TEST_SKILL_VERSION: &str = "0.1.0";
     const TEST_ENTRY_FLOW: &str = "main";
+
+    #[test]
+    fn splits_namespaced_skill_id() {
+        assert_eq!(split_namespaced_id("ops::deploy"), (Some("ops"), "deploy"));
+        assert_eq!(split_namespaced_id("deploy"), (None, "deploy"));
+        assert_eq!(split_namespaced_id("::deploy"), (None, "::deploy"));
+        assert_eq!(split_namespaced_id("ops::"), (None, "ops::"));
+    }
 
     #[test]
     fn parses_top_level_manifest() {
