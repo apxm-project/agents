@@ -116,6 +116,34 @@ impl SkillResolver for SkillLibrarySkillResolver {
         let resolved_skill_id = manifest.skill_id.clone();
         let resolved_version = manifest.version.clone();
 
+        // Step 1b: visible-set gate. If the caller declared a visible set (its
+        // imports), the target must be visible — shared tier (manifest opt-in or
+        // under the global root) or explicitly imported. Absent = unrestricted
+        // (back-compat). This is the execution-time half of "no full access".
+        let lib_id = executable.record.pack.as_ref().map(|p| p.pack_id.clone());
+        let shared = manifest.shared
+            || self
+                .library
+                .roots()
+                .first()
+                .map(|root| executable.record.package_dir.starts_with(root))
+                .unwrap_or(false);
+        if !skill_visible(
+            request.parent_visible_skills.as_deref(),
+            &resolved_skill_id,
+            lib_id.as_deref(),
+            shared,
+        ) {
+            return Err(RuntimeError::Capability {
+                capability: format!("{CAPABILITY_TAG}:not_visible:{}", request.skill_id),
+                message: format!(
+                    "skill '{}' is not in the caller's visible set; import its \
+                     library or mark it shared",
+                    request.skill_id
+                ),
+            });
+        }
+
         // Step 2: capability admission — the child must not widen the parent's
         // grant. Enforces `child_policy ⊆ parent_policy` via
         // `CapabilityPolicy::admits`, returning the child's policy so it can be
@@ -286,7 +314,40 @@ fn build_child_metadata(
         metadata::SIDE_EFFECT_POLICY.to_string(),
         child_policy.name(),
     );
+    // Propagate the visible set unchanged so a nested CALL_SKILL chain stays
+    // bounded by the original imports (a child cannot widen what it can see).
+    if let Some(visible) = &request.parent_visible_skills {
+        map.insert(metadata::VISIBLE_SKILLS.to_string(), visible.clone());
+    }
     map
+}
+
+/// Visible-set gate for `CALL_SKILL`. `None` parent set = unrestricted
+/// (back-compat). Otherwise the target is allowed iff it is shared (global
+/// tier) or in the caller's imports (whole-library, `lib::skill`, or bare id).
+/// Reuses the unit-tested [`apxm_skill::discovery::VisibleSet`] logic.
+fn skill_visible(
+    parent_visible: Option<&str>,
+    skill_id: &str,
+    library: Option<&str>,
+    shared: bool,
+) -> bool {
+    let Some(csv) = parent_visible else {
+        return true;
+    };
+    let imports = csv
+        .split(',')
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty());
+    let visible = apxm_skill::discovery::VisibleSet::from_imports(imports);
+    visible.sees(&apxm_skill::discovery::SkillCard {
+        skill_id: skill_id.to_string(),
+        library: library.map(|s| s.to_string()),
+        description: String::new(),
+        when_to_use: String::new(),
+        tags: Vec::new(),
+        shared,
+    })
 }
 
 /// Derive a deterministic child session id from the parent's invocation
@@ -416,4 +477,32 @@ pub(crate) fn install(runtime: &mut Arc<Runtime>, library: SkillLibrary) {
         runtime_mut.set_skill_resolver(Arc::clone(&resolver) as Arc<dyn SkillResolver>);
     }
     resolver.attach_runtime(runtime);
+}
+
+#[cfg(test)]
+mod visible_set_tests {
+    use super::skill_visible;
+
+    #[test]
+    fn none_visible_set_is_unrestricted() {
+        // No declared imports => back-compat: any CALL_SKILL is allowed.
+        assert!(skill_visible(None, "anything", Some("lib"), false));
+    }
+
+    #[test]
+    fn shared_skill_always_visible() {
+        assert!(skill_visible(Some("other-lib"), "plan", None, true));
+    }
+
+    #[test]
+    fn scoped_skill_blocked_unless_imported() {
+        // Declared imports that don't cover the target => denied.
+        assert!(!skill_visible(Some("docs"), "deploy", Some("ops"), false));
+        // Whole-library import.
+        assert!(skill_visible(Some("ops"), "deploy", Some("ops"), false));
+        // Namespaced import.
+        assert!(skill_visible(Some("ops::deploy"), "deploy", Some("ops"), false));
+        // Bare-id import.
+        assert!(skill_visible(Some("deploy"), "deploy", Some("ops"), false));
+    }
 }

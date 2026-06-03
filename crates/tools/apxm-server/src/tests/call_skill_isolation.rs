@@ -45,6 +45,7 @@ fn request(skill_id: &str, requested_version: Option<&str>, depth: usize) -> Cal
         spawn_node_id: 1,
         depth,
         parent_side_effect_policy: None,
+        parent_visible_skills: None,
     }
 }
 

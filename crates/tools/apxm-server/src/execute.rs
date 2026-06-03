@@ -47,6 +47,11 @@ pub(crate) struct ExecuteRequest {
     /// perform writes. Read-only and sandboxed capabilities never need listing.
     #[serde(default)]
     pub(crate) admit_capabilities: Vec<String>,
+    /// The agent's visible skill set (lib / lib::skill / skill ids). When
+    /// non-empty, CALL_SKILL is restricted to the shared tier ∪ these imports;
+    /// empty = unrestricted (back-compat).
+    #[serde(default)]
+    pub(crate) imports: Vec<String>,
 }
 
 /// A caller-supplied PlanGraph plus the same execution controls as
@@ -66,6 +71,8 @@ pub(crate) struct CompileRequest {
     pub(crate) session_root: Option<String>,
     #[serde(default)]
     pub(crate) admit_capabilities: Vec<String>,
+    #[serde(default)]
+    pub(crate) imports: Vec<String>,
 }
 
 impl CompileRequest {
@@ -81,6 +88,7 @@ impl CompileRequest {
             session_id: self.session_id,
             session_root: self.session_root,
             admit_capabilities: self.admit_capabilities,
+            imports: self.imports,
         })
     }
 }
@@ -113,7 +121,10 @@ pub(crate) struct ExecuteResponse {
 /// if its policy is a subset of this grant (no-widen). Without this seed, every
 /// nested call would default to `read_only` and broader-grant children would be
 /// wrongly rejected — the precondition for a safe capability cascade.
-fn admit_grant_metadata(admit: &std::collections::HashSet<String>) -> HashMap<String, String> {
+fn admit_grant_metadata(
+    admit: &std::collections::HashSet<String>,
+    imports: &[String],
+) -> HashMap<String, String> {
     let policy = if admit.is_empty() {
         apxm_skill::CapabilityPolicy::ReadOnly
     } else {
@@ -126,6 +137,14 @@ fn admit_grant_metadata(admit: &std::collections::HashSet<String>) -> HashMap<St
         apxm_runtime::metadata_keys::SIDE_EFFECT_POLICY.to_string(),
         policy.name(),
     );
+    // Seed the visible skill set only when the caller declared imports; absent
+    // = unrestricted CALL_SKILL (back-compat). Children inherit this verbatim.
+    if !imports.is_empty() {
+        metadata.insert(
+            apxm_runtime::metadata_keys::VISIBLE_SKILLS.to_string(),
+            imports.join(","),
+        );
+    }
     metadata
 }
 
@@ -151,6 +170,7 @@ pub(crate) async fn run_air_inner(
         session_id,
         session_dir,
         admit,
+        imports,
     } = prepare_request(req)?;
     let known_caps = registered_capability_names(state);
     let mut artifact = air_to_artifact_with_caps(&air, &known_caps)?;
@@ -165,7 +185,7 @@ pub(crate) async fn run_air_inner(
             session_id,
             None,
             session_dir.clone(),
-            admit_grant_metadata(&admit),
+            admit_grant_metadata(&admit, &imports),
         )
         .await
         .map_err(ApiError::runtime)?;
@@ -182,6 +202,7 @@ pub(crate) async fn execute_stream(
         session_id,
         session_dir,
         admit,
+        imports,
     } = prepare_request(req)?;
     let known_caps = registered_capability_names(&state);
     let mut artifact = air_to_artifact_with_caps(&air, &known_caps)?;
@@ -191,7 +212,7 @@ pub(crate) async fn execute_stream(
     let stream_config = state.server_config.execution_stream;
     let (tx, mut rx) = mpsc::channel::<ApxmEvent>(stream_config.channel_capacity.max(1));
     let runtime = Arc::clone(&state.runtime);
-    let grant_metadata = admit_grant_metadata(&admit);
+    let grant_metadata = admit_grant_metadata(&admit, &imports);
     let trace_id = session_id
         .clone()
         .unwrap_or_else(|| uuid::Uuid::new_v4().to_string());
@@ -262,6 +283,8 @@ pub(crate) struct PreparedRequest {
     pub(crate) session_dir: Option<String>,
     /// Capabilities the caller granted this execution (consent admit-list).
     pub(crate) admit: std::collections::HashSet<String>,
+    /// The caller's visible skill set (imports); empty = unrestricted.
+    pub(crate) imports: Vec<String>,
 }
 
 pub(crate) fn prepare_request(mut req: ExecuteRequest) -> Result<PreparedRequest, ApiError> {
@@ -276,6 +299,7 @@ pub(crate) fn prepare_request(mut req: ExecuteRequest) -> Result<PreparedRequest
         session_id,
         session_dir,
         admit: req.admit_capabilities.into_iter().collect(),
+        imports: req.imports,
     })
 }
 

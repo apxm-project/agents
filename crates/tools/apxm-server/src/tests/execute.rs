@@ -352,6 +352,7 @@ fn prepare_request_rejects_client_session_root() {
         session_id: Some("explicit-session".to_string()),
         session_root: Some(session_root.to_string_lossy().to_string()),
         admit_capabilities: vec![],
+        imports: vec![],
     };
 
     let error = prepare_request(request).expect_err("client session_root should be rejected");
@@ -580,6 +581,7 @@ fn prepare_request_rejects_unsafe_session_id() {
             session_id: Some(session_id.to_string()),
             session_root: None,
             admit_capabilities: vec![],
+            imports: vec![],
         };
 
         let error = prepare_request(request).expect_err("unsafe session id should be rejected");
@@ -600,6 +602,7 @@ fn prepare_request_rejects_session_root_without_session_id() {
         session_id: None,
         session_root: Some(session_root.to_string_lossy().to_string()),
         admit_capabilities: vec![],
+        imports: vec![],
     };
 
     let error = prepare_request(request).expect_err("client session_root should be rejected");

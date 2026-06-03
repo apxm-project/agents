@@ -38,6 +38,10 @@ pub struct CallSkillRequest {
     /// no-widen rule (`child ⊆ parent`) instead of refusing every capability.
     /// `None` is treated as `read_only` by the admission layer.
     pub parent_side_effect_policy: Option<String>,
+    /// The caller's visible skill set (comma-joined lib / lib::skill / skill
+    /// ids), from `metadata_keys::VISIBLE_SKILLS`. `None` = unrestricted
+    /// (back-compat); `Some` = the resolver enforces the target is visible.
+    pub parent_visible_skills: Option<String>,
 }
 
 /// Successful result of a `CALL_SKILL` invocation.

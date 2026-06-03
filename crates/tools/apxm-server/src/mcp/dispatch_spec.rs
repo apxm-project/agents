@@ -122,6 +122,7 @@ pub(crate) async fn call_dispatch_tool(
         session_id: None,
         session_root: None,
         admit_capabilities: spec.admit_capabilities.clone(),
+        imports: Vec::new(),
     };
     match run_air_inner(state, req).await {
         Ok(response) => {
