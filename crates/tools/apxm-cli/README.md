@@ -43,7 +43,6 @@ Command-line interface for the APXM graph compiler and runtime toolchain.
 | `session` | Session management |
 | `workflow` | `.apxmw` workflow-file management |
 | `cache` | Cache management |
-| `gui` | Launch the web visualization server |
 
 ## Key Exports
 

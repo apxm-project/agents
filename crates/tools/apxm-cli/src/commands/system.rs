@@ -260,41 +260,12 @@ pub fn doctor_command(config: Option<PathBuf>, json_output: bool) -> Result<()> 
         }
     }
 
-    // 6. Companion binaries (tier-2: warn, do not error)
-    print_section_header("Companion binaries");
-    let gui_present = std::env::current_exe()
-        .ok()
-        .and_then(|p| p.parent().map(|d| d.join("apxm-gui").exists()))
-        .unwrap_or(false)
-        || which_on_path("apxm-gui");
-    if gui_present {
-        print_status_line("apxm-gui", Status::Ok, "found");
-    } else {
-        print_status_line("apxm-gui", Status::Warning, "not installed");
-        print_hint(&format!(
-            "Install from apxm-project/apxm-gui to enable `dekk apxm gui`: {}",
-            dekk_hints::BUILD_GUI
-        ));
-    }
-
     // Return error if MLIR is missing (critical dependency)
     if !mlir_available {
         return Err(anyhow::anyhow!("MLIR toolchain not detected"));
     }
 
     Ok(())
-}
-
-fn which_on_path(name: &str) -> bool {
-    let Some(paths) = env::var_os("PATH") else {
-        return false;
-    };
-    for dir in env::split_paths(&paths) {
-        if dir.join(name).is_file() {
-            return true;
-        }
-    }
-    false
 }
 
 /// Auto-detect the conda prefix for the `apxm` environment.

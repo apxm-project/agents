@@ -8,8 +8,6 @@
 pub const APXM_ENV_HINT: &str = "dekk apxm ...";
 #[cfg(not(feature = "driver"))]
 pub const BUILD: &str = "dekk apxm build";
-pub const BUILD_GUI: &str =
-    "see https://github.com/apxm-project/apxm-gui (cargo install apxm-gui or sibling-clone build)";
 pub const INSTALL_NO_INTERACTIVE: &str = "dekk apxm install --no-interactive";
 pub const DOCTOR: &str = "dekk apxm doctor";
 pub const BACKEND_LIST: &str = "dekk apxm backend list";

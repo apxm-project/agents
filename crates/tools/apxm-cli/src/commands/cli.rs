@@ -242,17 +242,6 @@ pub enum Commands {
         #[arg(long)]
         model: Option<String>,
     },
-    /// Launch the web-based GUI dashboard
-    Gui {
-        /// Graph file to open on startup (.air)
-        file: Option<PathBuf>,
-        /// Port to listen on (default: 18801)
-        #[arg(long, short, default_value = "18801")]
-        port: u16,
-        /// Open browser automatically
-        #[arg(long)]
-        open: bool,
-    },
     /// Phase 14.8.F — stream a run's dispatch tree from
     /// `/v1/runs/<thread>/events/stream` and render it as monospace.
     Watch {
