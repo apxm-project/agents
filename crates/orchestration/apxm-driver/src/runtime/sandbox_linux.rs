@@ -210,6 +210,65 @@ impl SandboxBackend for BubblewrapSandboxBackend {
     async fn destroy_session(&self, _ctx: SandboxContext) -> Result<(), SandboxError> {
         Ok(())
     }
+
+    fn wrap_command(
+        &self,
+        program: &str,
+        args: &[String],
+        cwd: &Path,
+        needs_network: bool,
+    ) -> (String, Vec<String>) {
+        let bwrap_args = build_bwrap_wrap_args(program, args, cwd, needs_network);
+        (executables::BUBBLEWRAP.to_string(), bwrap_args)
+    }
+}
+
+/// Build the `bwrap` argv that wraps a long-running, stdio-attached child
+/// (ACP coding agent, interactive terminal) under bubblewrap confinement.
+///
+/// Unlike [`build_bwrap_command_args`] this is session-free: the working
+/// directory is bound writable in place, `/tmp` is an ephemeral tmpfs, the
+/// rest of the root is read-only, and the network namespace is kept only when
+/// the child needs it (coding agents reach the model gateway, so callers pass
+/// `needs_network = true`). bubblewrap forwards stdin/stdout/stderr to the
+/// inner process, so the caller's pipe wiring is unchanged.
+fn build_bwrap_wrap_args(
+    program: &str,
+    args: &[String],
+    cwd: &Path,
+    needs_network: bool,
+) -> Vec<String> {
+    let cwd = path_string(cwd);
+    let mut wrapped = vec![
+        bubblewrap::FLAG_NEW_SESSION.to_string(),
+        bubblewrap::FLAG_DIE_WITH_PARENT.to_string(),
+        bubblewrap::FLAG_RO_BIND.to_string(),
+        bubblewrap::FILESYSTEM_ROOT.to_string(),
+        bubblewrap::FILESYSTEM_ROOT.to_string(),
+        bubblewrap::FLAG_DEV.to_string(),
+        bubblewrap::FILESYSTEM_DEV.to_string(),
+        bubblewrap::FLAG_PROC.to_string(),
+        bubblewrap::FILESYSTEM_PROC.to_string(),
+        bubblewrap::FLAG_TMPFS.to_string(),
+        bubblewrap::FILESYSTEM_TMP.to_string(),
+        bubblewrap::FLAG_UNSHARE_USER.to_string(),
+        bubblewrap::FLAG_UNSHARE_PID.to_string(),
+    ];
+
+    if !needs_network {
+        wrapped.push(bubblewrap::FLAG_UNSHARE_NET.to_string());
+    }
+
+    wrapped.push(bubblewrap::FLAG_BIND.to_string());
+    wrapped.push(cwd.clone());
+    wrapped.push(cwd.clone());
+    wrapped.push(bubblewrap::FLAG_CHDIR.to_string());
+    wrapped.push(cwd);
+    wrapped.push(bubblewrap::FLAG_SEPARATOR.to_string());
+    wrapped.push(program.to_string());
+    wrapped.extend(args.iter().cloned());
+
+    wrapped
 }
 
 fn bubblewrap_available() -> bool {
@@ -543,5 +602,44 @@ mod tests {
         .unwrap();
 
         assert!(!args.iter().any(|arg| arg == bubblewrap::FLAG_UNSHARE_NET));
+    }
+
+    #[test]
+    fn wrap_args_confine_long_running_child_with_network() {
+        let args = build_bwrap_wrap_args(
+            "claude-code",
+            &["--acp".to_string()],
+            Path::new("/home/dev/project"),
+            true,
+        );
+
+        // read-only root, ephemeral /tmp, namespaces, writable cwd, no net unshare
+        assert!(args.windows(3).any(|w| w
+            == [
+                bubblewrap::FLAG_RO_BIND,
+                bubblewrap::FILESYSTEM_ROOT,
+                bubblewrap::FILESYSTEM_ROOT
+            ]));
+        assert!(args.windows(2).any(|w| w
+            == [bubblewrap::FLAG_TMPFS, bubblewrap::FILESYSTEM_TMP]));
+        assert!(args.iter().any(|a| a == bubblewrap::FLAG_UNSHARE_USER));
+        assert!(args.iter().any(|a| a == bubblewrap::FLAG_UNSHARE_PID));
+        assert!(!args.iter().any(|a| a == bubblewrap::FLAG_UNSHARE_NET));
+        assert!(args.windows(3).any(|w| w
+            == [
+                bubblewrap::FLAG_BIND,
+                "/home/dev/project",
+                "/home/dev/project"
+            ]));
+        // program/args land after the separator, in order
+        let sep = args.iter().position(|a| a == bubblewrap::FLAG_SEPARATOR).unwrap();
+        assert_eq!(args[sep + 1], "claude-code");
+        assert_eq!(args[sep + 2], "--acp");
+    }
+
+    #[test]
+    fn wrap_args_drop_network_when_not_needed() {
+        let args = build_bwrap_wrap_args("sh", &[], Path::new("/work"), false);
+        assert!(args.iter().any(|a| a == bubblewrap::FLAG_UNSHARE_NET));
     }
 }

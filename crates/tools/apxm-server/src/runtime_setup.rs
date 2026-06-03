@@ -8,14 +8,19 @@ pub(crate) async fn build_runtime_with_router(
     config: RuntimeConfig,
 ) -> Result<Runtime, apxm_core::error::RuntimeError> {
     let mut runtime = Runtime::new(config).await?;
-    runtime.set_sandbox_registry(configure_sandbox_registry());
+    let sandbox_registry = configure_sandbox_registry();
+    runtime.set_sandbox_registry(std::sync::Arc::clone(&sandbox_registry));
     register_builtin_capabilities(&runtime);
     load_llm_backends(&runtime).await;
     // Wire the ACP agent spawner so SPAWN_AGENT can launch real subprocess
     // agents (claude, codex, …) through /v1/execute. Best-effort: a failure
     // here only disables agent spawning, it must not abort server startup.
-    if let Err(e) =
-        configure_agent_registry(runtime.process_table(), runtime.capability_system_arc()).await
+    if let Err(e) = configure_agent_registry(
+        runtime.process_table(),
+        runtime.capability_system_arc(),
+        sandbox_registry,
+    )
+    .await
     {
         warn!(error = %e, "failed to configure ACP agent spawner; SPAWN_AGENT unavailable");
     }

@@ -14,7 +14,10 @@ use apxm_core::error::RuntimeError;
 use apxm_core::types::aam::AamContext;
 use apxm_runtime::process::AgentProcess;
 use apxm_runtime::process_table::{AgentPromptResponse, AgentPrompter, AgentSpawner};
+use apxm_runtime::sandbox::{IsolationLevel, SandboxBackend, SandboxRegistry};
 use apxm_runtime::{CapabilitySystem, ProcessTable};
+
+use apxm_acp::registry::AcpAgentProfile;
 
 use crate::error::DriverError;
 
@@ -26,9 +29,10 @@ use crate::error::DriverError;
 pub async fn configure_agent_registry(
     process_table: &ProcessTable,
     capability_system: Arc<CapabilitySystem>,
+    sandbox_registry: Arc<SandboxRegistry>,
 ) -> Result<(), DriverError> {
-    let spawner = Arc::new(AcpAgentSpawner::new());
-    let prompter = Arc::new(AcpAgentPrompter::new(capability_system));
+    let spawner = Arc::new(AcpAgentSpawner::new(Arc::clone(&sandbox_registry)));
+    let prompter = Arc::new(AcpAgentPrompter::new(capability_system, sandbox_registry));
 
     process_table.set_agent_spawner(spawner).await;
     process_table.set_agent_prompter(prompter).await;
@@ -36,17 +40,44 @@ pub async fn configure_agent_registry(
     Ok(())
 }
 
+/// Resolve the sandbox backend to confine an agent under, honoring its profile.
+///
+/// Returns `None` when the profile does not opt into sandboxing. When it does
+/// but no backend can confine a long-running child, this fails closed rather
+/// than spawning the agent unconfined.
+fn select_agent_sandbox(
+    sandbox_registry: &SandboxRegistry,
+    profile: &AcpAgentProfile,
+    profile_name: &str,
+) -> Result<Option<Arc<dyn SandboxBackend>>, RuntimeError> {
+    if !profile.sandbox {
+        return Ok(None);
+    }
+    sandbox_registry
+        .select(IsolationLevel::OsLevel)
+        .map(Some)
+        .map_err(|e| RuntimeError::Operation {
+            op_type: apxm_core::types::operations::AISOperationType::SpawnAgent,
+            message: format!(
+                "agent profile '{profile_name}' requests sandbox isolation but no capable \
+                 backend is available: {e}"
+            ),
+        })
+}
+
 // ─── AgentSpawner implementation ─────────────────────────────────────────────
 
 /// Spawns external ACP agent subprocesses.
 struct AcpAgentSpawner {
     registry: AgentRegistry,
+    sandbox_registry: Arc<SandboxRegistry>,
 }
 
 impl AcpAgentSpawner {
-    fn new() -> Self {
+    fn new(sandbox_registry: Arc<SandboxRegistry>) -> Self {
         Self {
             registry: AgentRegistry::load(),
+            sandbox_registry,
         }
     }
 }
@@ -103,7 +134,9 @@ impl AgentSpawner for AcpAgentSpawner {
             "Spawning ACP agent subprocess"
         );
 
-        let mut session = AcpSession::spawn(agent_name, &profile, cwd, aam_context)
+        let sandbox = select_agent_sandbox(&self.sandbox_registry, &profile, profile_name)?;
+
+        let mut session = AcpSession::spawn(agent_name, &profile, cwd, aam_context, sandbox)
             .await
             .map_err(|e| RuntimeError::Operation {
                 op_type: apxm_core::types::operations::AISOperationType::SpawnAgent,
@@ -147,13 +180,15 @@ impl AgentSpawner for AcpAgentSpawner {
 struct AcpAgentPrompter {
     capability_system: Arc<CapabilitySystem>,
     registry: AgentRegistry,
+    sandbox_registry: Arc<SandboxRegistry>,
 }
 
 impl AcpAgentPrompter {
-    fn new(capability_system: Arc<CapabilitySystem>) -> Self {
+    fn new(capability_system: Arc<CapabilitySystem>, sandbox_registry: Arc<SandboxRegistry>) -> Self {
         Self {
             capability_system,
             registry: AgentRegistry::load(),
+            sandbox_registry,
         }
     }
 }
@@ -184,15 +219,22 @@ impl AgentPrompter for AcpAgentPrompter {
             }
         };
 
-        // Resolve permission mode from cached registry
-        let permission_mode = self
-            .registry
-            .get(&profile_name)
+        // Resolve permission mode and sandbox opt-in from the cached registry.
+        let profile = self.registry.get(&profile_name);
+        let permission_mode = profile
+            .as_ref()
             .map(|p| p.permission_mode.clone())
             .unwrap_or_default();
+        let sandbox = match &profile {
+            Some(p) => select_agent_sandbox(&self.sandbox_registry, p, &profile_name)?,
+            None => None,
+        };
 
-        let handler =
-            CapabilityReverseHandler::new(Arc::clone(&self.capability_system), permission_mode);
+        let handler = CapabilityReverseHandler::with_sandbox(
+            Arc::clone(&self.capability_system),
+            permission_mode,
+            sandbox,
+        );
 
         // Lock the session and send the prompt
         let mut guard = session_arc.lock().await;

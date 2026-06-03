@@ -88,6 +88,12 @@ pub struct AcpAgentProfile {
     /// Capabilities provisioned to this agent (rendered as mcpServers on the ACP wire).
     #[serde(default)]
     pub capabilities: Vec<CapabilityServerConfig>,
+    /// Run the agent (and any terminals it opens) under the host sandbox
+    /// backend when one capable of confining a long-running child is available.
+    /// Defaults off so existing profiles spawn unchanged; the driver only
+    /// applies confinement when this is set and a capable backend exists.
+    #[serde(default)]
+    pub sandbox: bool,
 }
 
 fn default_close_grace() -> u64 {
@@ -185,6 +191,7 @@ impl AgentRegistry {
                     system_prompt: None,
                     skip_preamble: false,
                     capabilities: Vec::new(),
+                    sandbox: false,
                 },
             );
         }
@@ -382,6 +389,7 @@ mod tests {
             system_prompt: None,
             skip_preamble: false,
             capabilities: Vec::new(),
+            sandbox: false,
         };
         reg.registered.insert("custom".to_string(), profile);
         assert!(reg.get("custom").is_some());
@@ -421,6 +429,7 @@ mod tests {
             system_prompt: None,
             skip_preamble: false,
             capabilities: Vec::new(),
+            sandbox: false,
         };
         let toml_str = toml::to_string_pretty(&profile).unwrap();
         let parsed: AcpAgentProfile = toml::from_str(&toml_str).unwrap();

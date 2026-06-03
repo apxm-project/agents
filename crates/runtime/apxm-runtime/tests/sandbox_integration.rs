@@ -7,10 +7,10 @@
 //! 3. Mock backend call verification to prove the registry-selected backend is
 //!    actually invoked.
 //! 4. `SecurityManifest`-driven backend selection.
-//!
-//! **Gap documented**: The `SandboxBackend::execute()` method is NOT called by
-//! the APXM runtime's INV handler.  See the `test_gap_sandbox_not_called_by_inv`
-//! test for details.
+//! 5. The registry-driven execution sequence the capability/INV path performs
+//!    (select -> create_session -> execute -> destroy_session) actually invokes
+//!    the selected backend. End-to-end capability routing is covered by the
+//!    `capability::tests` unit tests (`test_sandbox_routing_with_registry`).
 
 use apxm_runtime::sandbox::{
     DefaultBackend, ExecRequest, ExecResult, IsolationLevel, SandboxBackend, SandboxCapabilities,
@@ -577,25 +577,40 @@ fn sandbox_context_downcast_inner_state() {
 }
 
 // ---------------------------------------------------------------------------
-// Test: Document the integration gap
+// Test: the registry-driven execution path invokes the selected backend
 // ---------------------------------------------------------------------------
 
-#[test]
-fn test_gap_sandbox_not_called_by_inv_handler() {
+/// The capability/INV path (`CapabilitySystem::invoke_with_timeout`) routes a
+/// process-spawning capability by selecting a backend for its `ExecRequest`,
+/// then `create_session -> execute -> destroy_session`. This exercises that
+/// exact sequence and asserts the selected backend's `execute()` runs — the
+/// gap this test once documented as open is now closed.
+#[tokio::test]
+async fn test_registry_selected_backend_is_executed() {
     let mut registry = SandboxRegistry::new();
-    let backend = Arc::new(CountingBackend::new("test", IsolationLevel::PolicyOnly));
+    let backend = Arc::new(CountingBackend::new("test", IsolationLevel::OsLevel));
     let backend_ref = Arc::clone(&backend);
     registry.register(backend);
 
-    let selected = registry.select(IsolationLevel::None).unwrap();
-    assert_eq!(selected.capabilities().name, "test");
+    let request = ExecRequest {
+        min_isolation: IsolationLevel::OsLevel,
+        program: "echo".to_string(),
+        args: vec!["hi".to_string()],
+        ..ExecRequest::default()
+    };
 
-    // During INV execution, the backend's execute() is never called.
+    let selection = registry.select_for_request(&request).unwrap();
+    assert_eq!(selection.backend.capabilities().name, "test");
+
+    let ctx = selection.backend.create_session().await.unwrap();
+    let result = selection.backend.execute(&ctx, request).await.unwrap();
+    selection.backend.destroy_session(ctx).await.unwrap();
+
+    assert!(result.success);
     assert_eq!(
         backend_ref.calls(),
-        0,
-        "Sandbox backend execute() is not called by the INV handler -- \
-         this documents the integration gap. When the gap is closed, \
-         update this assertion."
+        1,
+        "the registry-selected backend's execute() must run on the capability/INV path"
     );
+    assert_eq!(backend_ref.last_program(), "echo");
 }

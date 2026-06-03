@@ -70,9 +70,14 @@ impl RuntimeExecutor {
             .map_err(DriverError::Runtime)?;
 
         let sandbox_registry = configure_sandbox_registry();
-        runtime.set_sandbox_registry(sandbox_registry);
+        runtime.set_sandbox_registry(std::sync::Arc::clone(&sandbox_registry));
 
-        configure_agent_registry(runtime.process_table(), runtime.capability_system_arc()).await?;
+        configure_agent_registry(
+            runtime.process_table(),
+            runtime.capability_system_arc(),
+            sandbox_registry,
+        )
+        .await?;
 
         runtime.set_instruction_config(config.apxm_config.instruction.clone());
         runtime.set_middlewares(build_middlewares(&config.apxm_config.middlewares));

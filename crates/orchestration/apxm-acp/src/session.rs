@@ -53,6 +53,7 @@ impl AcpSession {
         profile: &AcpAgentProfile,
         cwd: &std::path::Path,
         aam_context: &apxm_core::types::aam::AamContext,
+        sandbox: Option<std::sync::Arc<dyn apxm_runtime::sandbox::SandboxBackend>>,
     ) -> Result<Self, AcpError> {
         let parts = shell_words::split(&profile.command).map_err(|e| AcpError::Spawn {
             agent: profile_name.to_string(),
@@ -63,8 +64,15 @@ impl AcpSession {
             reason: "empty command".to_string(),
         })?;
 
-        let mut cmd = Command::new(program);
-        cmd.args(args)
+        // Confine the long-running agent when the driver supplied a capable
+        // backend. Coding agents reach the model gateway, so network stays on.
+        let (program, args) = match &sandbox {
+            Some(backend) => backend.wrap_command(program, args, cwd, true),
+            None => (program.clone(), args.to_vec()),
+        };
+
+        let mut cmd = Command::new(&program);
+        cmd.args(&args)
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
