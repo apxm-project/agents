@@ -20,6 +20,7 @@ fn mock_profile() -> AcpAgentProfile {
         system_prompt: None,
         skip_preamble: false,
         capabilities: Vec::new(),
+        sandbox: false,
     }
 }
 
@@ -44,7 +45,7 @@ async fn full_session_lifecycle() {
 
     // Spawn session
     let aam_ctx = AamContext::default();
-    let mut session = AcpSession::spawn("mock", &profile, &cwd, &aam_ctx)
+    let mut session = AcpSession::spawn("mock", &profile, &cwd, &aam_ctx, None)
         .await
         .expect("should spawn mock agent");
 
@@ -82,7 +83,7 @@ async fn multi_turn_on_same_session() {
     let cwd = std::env::current_dir().unwrap();
 
     let aam_ctx = AamContext::default();
-    let mut session = AcpSession::spawn("mock", &profile, &cwd, &aam_ctx)
+    let mut session = AcpSession::spawn("mock", &profile, &cwd, &aam_ctx, None)
         .await
         .expect("should spawn");
 

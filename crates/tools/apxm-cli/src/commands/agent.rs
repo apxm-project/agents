@@ -131,6 +131,7 @@ pub async fn agent_command(action: AgentAction, json_output: bool) -> Result<()>
                         system_prompt: None,
                         skip_preamble: false,
                         capabilities: Vec::new(),
+                        sandbox: false,
                     }
                 }
                 None => {
@@ -157,7 +158,7 @@ pub async fn agent_command(action: AgentAction, json_output: bool) -> Result<()>
                 let cwd = std::env::current_dir().unwrap_or_default();
                 let start = std::time::Instant::now();
                 let aam_context = apxm_core::types::aam::AamContext::default();
-                match apxm_acp::AcpSession::spawn(&name, &profile, &cwd, &aam_context).await {
+                match apxm_acp::AcpSession::spawn(&name, &profile, &cwd, &aam_context, None).await {
                     Ok(session) => {
                         let elapsed = start.elapsed();
                         println!(
@@ -212,7 +213,7 @@ pub async fn agent_command(action: AgentAction, json_output: bool) -> Result<()>
             let cwd = std::env::current_dir().unwrap_or_default();
             let start = std::time::Instant::now();
             let aam_context = apxm_core::types::aam::AamContext::default();
-            match apxm_acp::AcpSession::spawn(&name, profile, &cwd, &aam_context).await {
+            match apxm_acp::AcpSession::spawn(&name, profile, &cwd, &aam_context, None).await {
                 Ok(session) => {
                     let elapsed = start.elapsed();
                     println!("  Session ID: {}", session.session_id());

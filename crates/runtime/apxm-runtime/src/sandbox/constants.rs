@@ -71,10 +71,12 @@ pub mod bubblewrap {
     pub const FLAG_UNSHARE_USER: &str = "--unshare-user";
     pub const FLAG_UNSHARE_PID: &str = "--unshare-pid";
     pub const FLAG_UNSHARE_NET: &str = "--unshare-net";
+    pub const FLAG_TMPFS: &str = "--tmpfs";
     pub const FLAG_SEPARATOR: &str = "--";
     pub const FILESYSTEM_ROOT: &str = "/";
     pub const FILESYSTEM_DEV: &str = "/dev";
     pub const FILESYSTEM_PROC: &str = "/proc";
+    pub const FILESYSTEM_TMP: &str = "/tmp";
     pub const TMP_DIR: &str = "/apxm-tmp";
     pub const WORKDIR: &str = "/apxm-workdir";
     pub const WARN_READ_ALLOWLISTS: &str = "bubblewrap backend currently enforces read-only root plus writable carve-outs, not per-path read allowlists";

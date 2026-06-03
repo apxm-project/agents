@@ -1,14 +1,22 @@
 use dashmap::DashMap;
+use std::path::PathBuf;
 use std::process::ExitStatus;
 use std::process::Stdio;
+use std::sync::Arc;
 use tokio::io::AsyncReadExt;
 use tokio::process::Command;
+
+use apxm_runtime::sandbox::SandboxBackend;
 
 use crate::AcpError;
 use crate::constants::terminal as term_consts;
 
 pub struct TerminalManager {
     terminals: DashMap<String, Terminal>,
+    /// When set, terminals the agent opens are confined under this backend.
+    /// `terminal/create` spawns on the host via the reverse handler, so an
+    /// otherwise-confined agent could escape through it without this.
+    sandbox: Option<Arc<dyn SandboxBackend>>,
 }
 
 struct Terminal {
@@ -22,6 +30,15 @@ impl TerminalManager {
     pub fn new() -> Self {
         Self {
             terminals: DashMap::new(),
+            sandbox: None,
+        }
+    }
+
+    /// Create a manager whose terminals are confined under `sandbox`.
+    pub fn with_sandbox(sandbox: Option<Arc<dyn SandboxBackend>>) -> Self {
+        Self {
+            terminals: DashMap::new(),
+            sandbox,
         }
     }
 
@@ -35,8 +52,21 @@ impl TerminalManager {
     ) -> Result<String, AcpError> {
         let terminal_id = uuid::Uuid::new_v4().to_string();
 
-        let mut cmd = Command::new(command);
-        cmd.args(args)
+        // Confine the spawned terminal when a backend is configured. Bind the
+        // requested cwd (falling back to the process cwd) so the command can't
+        // reach outside it for writes or escape network isolation policy.
+        let (program, prog_args) = match &self.sandbox {
+            Some(backend) => {
+                let wrap_cwd = cwd
+                    .map(PathBuf::from)
+                    .unwrap_or_else(|| std::env::current_dir().unwrap_or_default());
+                backend.wrap_command(command, args, &wrap_cwd, true)
+            }
+            None => (command.to_string(), args.to_vec()),
+        };
+
+        let mut cmd = Command::new(&program);
+        cmd.args(&prog_args)
             .stdin(Stdio::null())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped());

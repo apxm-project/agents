@@ -7,6 +7,7 @@
 use super::error::SandboxError;
 use super::types::{ExecRequest, ExecResult, SandboxCapabilities, SandboxContext};
 use async_trait::async_trait;
+use std::path::Path;
 
 const DEFAULT_SESSION_ID_PREFIX: &str = "sandbox";
 
@@ -96,6 +97,32 @@ pub trait SandboxBackend: Send + Sync {
     /// Called after graph execution completes (success or failure).
     /// Backends should stop containers, kill VMs, clean up temp dirs, etc.
     async fn destroy_session(&self, ctx: SandboxContext) -> Result<(), SandboxError>;
+
+    /// Rewrite a command so it launches under this backend's isolation.
+    ///
+    /// The one-shot [`execute()`](SandboxBackend::execute) path runs a command
+    /// to completion and returns captured output. Long-running children that
+    /// stay attached to live stdio for their whole lifetime — ACP coding agents
+    /// speaking JSON-RPC over stdin/stdout, interactive terminals — cannot use
+    /// it. For those, the caller spawns the process itself and must first ask
+    /// the backend to rewrite `(program, args)` into a confined equivalent.
+    ///
+    /// Isolation wrappers (e.g. `bwrap`) forward stdin/stdout/stderr to the
+    /// inner child transparently, so the caller's pipe handling is unaffected.
+    ///
+    /// `cwd` is bound writable, `needs_network` keeps the network namespace
+    /// when true. The default implementation applies no isolation and returns
+    /// the command unchanged — appropriate for backends (process-policy,
+    /// remote) that cannot confine a caller-owned spawn.
+    fn wrap_command(
+        &self,
+        program: &str,
+        args: &[String],
+        _cwd: &Path,
+        _needs_network: bool,
+    ) -> (String, Vec<String>) {
+        (program.to_string(), args.to_vec())
+    }
 }
 
 /// A minimal backend that delegates execution to a caller-supplied function.

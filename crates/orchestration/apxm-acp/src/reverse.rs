@@ -41,10 +41,20 @@ impl CapabilityReverseHandler {
         capability_system: Arc<apxm_runtime::CapabilitySystem>,
         permission_mode: PermissionMode,
     ) -> Self {
+        Self::with_sandbox(capability_system, permission_mode, None)
+    }
+
+    /// Build a handler whose agent-opened terminals are confined under the
+    /// given sandbox backend. `None` leaves terminals unconfined (the default).
+    pub fn with_sandbox(
+        capability_system: Arc<apxm_runtime::CapabilitySystem>,
+        permission_mode: PermissionMode,
+        sandbox: Option<Arc<dyn apxm_runtime::sandbox::SandboxBackend>>,
+    ) -> Self {
         Self {
             capability_system,
             permission_mode,
-            terminals: Arc::new(TerminalManager::new()),
+            terminals: Arc::new(TerminalManager::with_sandbox(sandbox)),
             response_text: std::sync::Mutex::new(String::new()),
             token_usage: std::sync::Mutex::new((None, None)),
         }
