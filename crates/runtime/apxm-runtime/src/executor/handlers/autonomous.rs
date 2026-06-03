@@ -20,6 +20,14 @@ use apxm_core::error::RuntimeError;
 const DEFAULT_MAX_ITERATIONS: u64 = 10;
 
 pub async fn execute(ctx: &ExecutionContext, node: &Node, inputs: Vec<Value>) -> Result<Value> {
+    // Converse mode: an in-graph multi-turn conversation loop. Gated by the
+    // `converse = "true"` attribute (rides the op's generic attr-dict). The loop
+    // lives inside this handler (runtime iteration), so the *loop* is part of the
+    // APXM program — not the host. Turns arrive as a JSON-array string in input 0
+    // (batch) or, when absent, via the host's PAUSE/resume turn cycle.
+    if get_optional_string_attribute(node, "converse")?.as_deref() == Some("true") {
+        return converse_loop(ctx, node, inputs).await;
+    }
     let goal = if let Some(goal) = get_optional_string_attribute(node, graph_attrs::PROMPT)? {
         goal
     } else if let Some(goal) = get_optional_string_attribute(node, graph_attrs::TEMPLATE_STR)? {
@@ -230,6 +238,100 @@ pub async fn execute(ctx: &ExecutionContext, node: &Node, inputs: Vec<Value>) ->
     Ok(final_result)
 }
 
+/// In-graph multi-turn conversation loop (the `converse` mode of AUTONOMOUS).
+///
+/// The loop is part of the program: this handler iterates user turns inside the
+/// runtime, each turn an `ASK` against the live model with the persona + the
+/// accumulated transcript (so context carries across turns). Tools are run when
+/// the node exposes a tool group. Turns are read as a JSON-array string in
+/// input 0 (batch). Returns the full transcript.
+async fn converse_loop(ctx: &ExecutionContext, node: &Node, inputs: Vec<Value>) -> Result<Value> {
+    let persona = get_optional_string_attribute(node, graph_attrs::SYSTEM_PROMPT)?
+        .or(get_optional_string_attribute(node, graph_attrs::PROMPT)?)
+        .unwrap_or_else(|| "You are a helpful assistant.".to_string());
+
+    // Turns: JSON array of user messages in input 0.
+    let turns: Vec<String> = inputs
+        .first()
+        .and_then(|v| v.as_str())
+        .and_then(|s| serde_json::from_str::<Vec<String>>(s).ok())
+        .unwrap_or_default();
+
+    let max_turns = get_optional_u64_attribute(node, graph_attrs::MAX_ITERATIONS)?.unwrap_or(100);
+    let tools = resolve_node_tools(ctx, node);
+
+    tracing::info!(
+        execution_id = %ctx.execution_id,
+        node_id = node.id,
+        turns = turns.len(),
+        "Starting CONVERSE in-graph conversation loop"
+    );
+
+    let mut transcript = String::new();
+    let mut last_reply = Value::String(String::new());
+
+    for (i, turn) in turns.iter().enumerate() {
+        if i as u64 >= max_turns {
+            break;
+        }
+        transcript.push_str("User: ");
+        transcript.push_str(turn);
+        transcript.push('\n');
+
+        let prompt = format!("{persona}\n\n{transcript}Assistant:");
+        let mut req = apply_llm_request_routing_from_node(LLMRequest::new(prompt), node)?;
+
+        // Tool-using turn when the node exposes tools and the backend supports
+        // auto tool choice; otherwise a plain text turn. Mirrors the ASK path.
+        let reply = if tools.is_empty() {
+            execute_llm_request_for_node(ctx, node, "converse_turn", &req)
+                .await
+                .map_err(|e| RuntimeError::Operation {
+                    op_type: node.op_type,
+                    message: format!("converse turn {} failed: {}", i + 1, e),
+                })?
+                .content
+        } else {
+            let supports = ctx
+                .llm_registry
+                .resolve_backend_name(&req)
+                .ok()
+                .and_then(|name| ctx.llm_registry.get_backend(&name))
+                .map(|b| b.supports_auto_tool_choice())
+                .unwrap_or(false);
+            if supports {
+                req = attach_graph_hints(ctx, node, req);
+                req = req.with_tools(tools.clone()).with_tool_choice(ToolChoice::Auto);
+                match run_tool_loop(ctx, node, &req).await.map_err(|e| {
+                    RuntimeError::Operation {
+                        op_type: node.op_type,
+                        message: format!("converse tool turn {} failed: {}", i + 1, e),
+                    }
+                })? {
+                    Value::String(s) => s,
+                    other => format_state(&other),
+                }
+            } else {
+                execute_llm_request_for_node(ctx, node, "converse_turn", &req)
+                    .await
+                    .map_err(|e| RuntimeError::Operation {
+                        op_type: node.op_type,
+                        message: format!("converse turn {} failed: {}", i + 1, e),
+                    })?
+                    .content
+            }
+        };
+
+        transcript.push_str("Assistant: ");
+        transcript.push_str(&reply);
+        transcript.push('\n');
+        last_reply = Value::String(reply);
+    }
+
+    let _ = &last_reply;
+    Ok(Value::String(transcript))
+}
+
 fn format_state(state: &Value) -> String {
     match state {
         Value::String(s) => s.clone(),
@@ -306,6 +408,36 @@ mod tests {
         let result = execute(&ctx, &node, vec![]).await;
         assert!(result.is_err());
         assert!(result.unwrap_err().to_string().contains("prompt"));
+    }
+
+    #[tokio::test]
+    async fn test_converse_mode_empty_turns_returns_empty_transcript() {
+        let ctx = ExecutionContext::new(
+            Arc::new(MemorySystem::new(MemoryConfig::in_memory_ltm()).await.unwrap()),
+            Arc::new(LLMRegistry::new()),
+            Arc::new(CapabilitySystem::new()),
+            crate::aam::Aam::new(),
+        );
+        // converse=true gates the in-graph turn loop; no PROMPT goal required.
+        let mut attributes = HashMap::new();
+        attributes.insert("converse".to_string(), Value::String("true".to_string()));
+        attributes.insert(
+            graph_attrs::SYSTEM_PROMPT.to_string(),
+            Value::String("You are terse.".to_string()),
+        );
+        let node = apxm_core::types::execution::Node {
+            id: 1,
+            op_type: AISOperationType::Autonomous,
+            attributes,
+            input_tokens: vec![],
+            output_tokens: vec![100],
+            metadata: NodeMetadata::default(),
+        };
+        // Empty turn list => zero iterations, no LLM call, empty transcript.
+        let result = execute(&ctx, &node, vec![Value::String("[]".to_string())])
+            .await
+            .expect("converse with empty turns should succeed without an LLM");
+        assert_eq!(result, Value::String(String::new()));
     }
 
     #[tokio::test]

@@ -332,5 +332,13 @@ NOTE: a pre-existing, environment-dependent integration test
 path) fails on this dev box at the base commit too — not introduced here. All
 new tests pass; core crates (skill/ais/runtime/server) are fully green.
 
-> **Loop (Model B):** Making the interactive conversation loop fully in-graph
-> needs a `RECV`/`PAUSE`-for-input turn op + scheduler iteration.
+> **Loop — DELIVERED (in-graph, live-verified):** `ais.autonomous` in
+> `converse` mode runs the multi-turn conversation loop *inside the runtime*
+> (one ASK per user turn with persona + accumulated transcript + tools) — the
+> loop is part of the program, no host turn-loop, **no new op, no scheduler
+> surgery, no C++** (Rust-only handler, gated by the `converse` attr via the
+> op's generic attr-dict). Live-verified end to end: turns
+> `["My name is Rafa.","What is my name?"]` -> the agent answers "Your name is
+> Rafa." on turn 2 (cross-turn context). Example: `converse_agent.air`.
+> Remaining polish: *interactive stdin streaming* (turns arrive batched today;
+> per-turn live input would drive the loop via PAUSE/resume from the host).

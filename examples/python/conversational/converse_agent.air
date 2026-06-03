@@ -1,0 +1,21 @@
+// converse_agent.air — the conversation LOOP, in the program.
+//
+// A conversational agent is an APXM program (a loop + middleware + prompts that
+// do context injection, skill discovery and tool execution). `ais.autonomous`
+// in `converse` mode runs the multi-turn loop INSIDE the runtime: one ASK per
+// user turn with the persona + accumulated transcript (context carries across
+// turns), tools via the web+skills groups. The loop is part of the program —
+// no host turn-loop, no scheduler change, no new op.
+//
+// Input `turns` is a JSON array of user messages, passed as the node's operand.
+// Verified live: ["My name is Rafa.","What is my name?"] -> the agent answers
+// "Your name is Rafa." on turn 2 (cross-turn context).
+//
+//   apxm validate converse_agent.air
+//   curl localhost:18800/v1/execute -d '{"air": <this>, "args": ["[\"hi\"]"]}'
+module {
+  func.func @converse_agent(%turns: !ais.token {ais.param_name = "turns", ais.param_type = "str"}) -> !ais.token attributes {ais.entry} {
+    %reply = ais.autonomous "You are APXM Assistant, a precise conversational agent. Use the transcript for context and keep replies concise." (%turns : !ais.token) {converse = "true", max_iterations = 50 : i64, tool_groups = ["web", "skills"]} : !ais.token
+    func.return %reply : !ais.token
+  }
+}
