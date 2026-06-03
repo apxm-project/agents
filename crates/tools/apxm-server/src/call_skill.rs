@@ -116,10 +116,8 @@ impl SkillResolver for SkillLibrarySkillResolver {
         let resolved_skill_id = manifest.skill_id.clone();
         let resolved_version = manifest.version.clone();
 
-        // Step 1b: visible-set gate. If the caller declared a visible set (its
-        // imports), the target must be visible — shared tier (manifest opt-in or
-        // under the global root) or explicitly imported. Absent = unrestricted
-        // (back-compat). This is the execution-time half of "no full access".
+        // Step 1b: visible-set gate — target must be in the caller's visible set
+        // (shared tier or explicitly imported). Absent imports = unrestricted (back-compat).
         let lib_id = executable.record.pack.as_ref().map(|p| p.pack_id.clone());
         let shared = manifest.shared
             || self
@@ -322,10 +320,8 @@ fn build_child_metadata(
     map
 }
 
-/// Visible-set gate for `CALL_SKILL`. `None` parent set = unrestricted
-/// (back-compat). Otherwise the target is allowed iff it is shared (global
-/// tier) or in the caller's imports (whole-library, `lib::skill`, or bare id).
-/// Reuses the unit-tested [`apxm_skill::discovery::VisibleSet`] logic.
+/// Returns true if the target skill is in the caller's visible set.
+/// `None` parent set = unrestricted (back-compat).
 fn skill_visible(
     parent_visible: Option<&str>,
     skill_id: &str,

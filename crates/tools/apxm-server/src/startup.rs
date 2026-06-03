@@ -63,13 +63,7 @@ pub(crate) async fn run_server_with_config(server_config: ServerConfig) -> anyho
     let skill_library = SkillLibrary::new(skill_roots.clone());
 
     let runtime = build_runtime_with_router(server_runtime_config(&server_config)).await?;
-    // Keystone: register connector "action" blocks declared in installed packs'
-    // pack-root tools.toml (default backing = provider.call), so installing a
-    // pack makes its blocks real capabilities with no per-provider Rust.
     crate::capability::register_pack_tools(&runtime, &skill_roots);
-    // Scope-aware, description-based skill discovery: ranks the live catalogue
-    // against a request, restricted to the caller's visible set (shared tier +
-    // imports). Never exposes the whole catalogue.
     crate::search_skills::register(&runtime, skill_library.clone());
     let mut runtime = Arc::new(runtime);
     crate::call_skill::install(&mut runtime, skill_library.clone());

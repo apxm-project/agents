@@ -34,9 +34,7 @@ pub struct ChatOptions {
     pub server: Option<String>,
     pub session_id: Option<String>,
     pub admit: Vec<String>,
-    /// Skill libraries / ids this agent imports (the scoped visible set). Sent
-    /// on each turn so server-side CALL_SKILL scoping applies; empty =
-    /// unrestricted. Shared-tier skills are always visible.
+    /// Skill libraries / ids this agent imports (scoped visible set).
     pub import: Vec<String>,
     pub tree: bool,
     /// Enable the agent's `web` tool group each turn (ignored when `--air` is set).
@@ -139,13 +137,8 @@ pub async fn chat_command(opts: ChatOptions) -> Result<()> {
         .or_else(|| std::env::var("APXM_SERVER_BASE").ok())
         .unwrap_or_else(|| DEFAULT_SERVER_BASE.to_string());
     let session_id = opts.session_id.clone().unwrap_or_else(mint_session_id);
-    // `--air` drives a custom graph; otherwise build the shared built-in chat
-    // graph, threading the `--tools` / `--backend` controls through it (the same
-    // builder the studio uses, so the two stay identical).
-    // Context injection: assemble the AGENTS.md / CLAUDE.md hierarchy (global +
-    // project) and feed it as the ASK system prompt, so the agent reads project
-    // context. This is the "reads AGENTS.md for context" pillar of the
-    // conversational-agent-as-APXM-program vision.
+    // `--air` drives a custom graph; otherwise build the built-in chat graph.
+    // Assemble the AGENTS.md / CLAUDE.md hierarchy and feed it as the system prompt.
     let context = {
         let base = crate::context_assembly::assemble_context();
         if opts.import.is_empty() {
@@ -171,8 +164,6 @@ pub async fn chat_command(opts: ChatOptions) -> Result<()> {
             model: opts.model.as_deref(),
             effort: None,
             tools: opts.tools,
-            // Always expose skill discovery so the agent can find relevant skills
-            // by description (scoped to its visible set; shared tier by default).
             skills: true,
         }),
     };
@@ -390,8 +381,6 @@ async fn run_turn(
         "args": [prompt],
         "session_id": session_id,
         "admit_capabilities": admit,
-        // Declared visible skill set: activates server-side CALL_SKILL scoping
-        // (shared tier ∪ these imports). Empty = unrestricted (back-compat).
         "imports": opts.import,
     });
     let resp = client

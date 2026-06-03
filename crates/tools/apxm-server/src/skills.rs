@@ -1208,9 +1208,7 @@ pub(crate) fn parse_skill_roots(args: &[String]) -> Vec<PathBuf> {
     parse_skill_roots_impl(args)
 }
 
-// Re-export of the `apxm-skill` CLI-style parser; consumed by in-crate
-// integration tests (see `tests/skills_inventory.rs`). The release binary
-// uses `parse_skill_roots` directly.
+// Used by in-crate integration tests; the release binary uses `parse_skill_roots`.
 #[allow(dead_code)]
 pub(crate) fn parse_cli_skill_roots(args: &[String]) -> Vec<PathBuf> {
     parse_cli_skill_roots_impl(args)
@@ -1967,13 +1965,6 @@ upstream = "https://github.com/obra/superpowers"
         fs::create_dir_all(&skill_dir).expect("mkdir");
         assert!(load_pack_info(&skill_dir).is_none());
     }
-
-    // ── 14.2 — Prompt-only ACL tests ────────────────────────────────
-    //
-    // These cover the manifest → request tool-surface mapping
-    // implemented in `build_prompt_only_request`. The function is the
-    // sole producer of the prompt-only LLM request; if it advertises a
-    // tool that the manifest never declared we have an isolation hole.
 
     use crate::checkpoints::CheckpointStore;
     use crate::executions::ExecutionStore;

@@ -1,11 +1,7 @@
-//! Project-context assembly for the conversational agent.
+//! Project-context assembly for `apxm chat`.
 //!
-//! Reads the `AGENTS.md` / `CLAUDE.md` hierarchy (the Codex / Claude-Code
-//! convention) from the user-global tier down to the current directory,
-//! concatenates the files ancestor-first (closer-to-cwd last, so it carries the
-//! highest effective weight), and caps the result. `apxm chat` passes the output
-//! as the ASK system prompt so the agent reads project context — the
-//! "context injection" layer of the conversational-agent-as-APXM-program vision.
+//! Reads the `AGENTS.md` / `CLAUDE.md` hierarchy (global tier → cwd),
+//! concatenates ancestor-first, and caps the result at [`MAX_BYTES`].
 
 use std::path::{Path, PathBuf};
 

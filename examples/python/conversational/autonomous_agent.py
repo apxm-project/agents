@@ -1,33 +1,15 @@
 #!/usr/bin/env python3
-"""autonomous_agent.py — the LOOP element of the vision, as a real APXM program.
+"""autonomous_agent.py — goal-directed agent whose loop lives in the program.
 
-    A conversational agent is an APXM program
-    (a loop + middleware + prompts that do
-     context injection, skill discovery and tool execution).
-
-`conversational_agent.py` is the per-turn body (host drives the turn loop). This
-example makes **the loop itself part of the program**: `ais.autonomous` is a real
-goal-directed loop — plan → act → evaluate, iterating until the goal is satisfied
-or `max_iterations` — so the iteration lives in the APXM graph, not the host.
-
-Mapping to the vision sentence:
-  - LOOP              `g.autonomous(...)` — a genuine iterating runtime loop.
-  - MIDDLEWARE        context injection + conversation-memory + token-budget are
-                      applied by the runtime middleware chain around every node
-                      (registered server-side; not written into the graph).
-  - PROMPTS           the persona + goal prompt below.
-  - CONTEXT INJECTION the system prompt is enriched from AGENTS.md/memory by the
-                      context-injection layer; the loop also accrues memory.
-  - SKILL DISCOVERY   the `skills` tool group exposes `search_skills` (scoped to
-                      the visible set) so the loop can find skills by description.
-  - TOOL EXECUTION    the `web` + `skills` tool groups; the act step runs tools.
+`ais.autonomous` iterates plan → act → evaluate until the goal is satisfied or
+`max_iterations` is reached. Tools (web + skills) run inside each act step.
 
 Run (requires a running apxm-server):
     dekk apxm execute examples/python/conversational/autonomous_agent.py --emit-air > agent.air
     apxm run agent.air --server http://127.0.0.1:18800
 
 Validate without a server:
-    PYTHONPATH=crates/compiler/apxm-frontend/python \
+    PYTHONPATH=crates/compiler/apxm-frontend/python \\
         python3 examples/python/conversational/autonomous_agent.py --validate
 """
 
@@ -42,12 +24,10 @@ PERSONA = (
 
 @compile()
 def autonomous_agent(g: GraphRecorder, goal: str):
-    """A goal-directed agent whose LOOP lives in the program (AUTONOMOUS)."""
-    # THE LOOP: plan -> act -> evaluate, iterating until the goal is met.
+    """A goal-directed agent whose loop lives in the program (AUTONOMOUS)."""
     result = g.autonomous(
         prompt=f"{PERSONA}\n\nGoal: {{goal}}",
         max_iterations=8,
-        # TOOL EXECUTION + SKILL DISCOVERY: web tools and the scoped skill-search.
         tool_groups=["web", "skills"],
     )
     g.done(result)

@@ -20,11 +20,8 @@ use apxm_core::error::RuntimeError;
 const DEFAULT_MAX_ITERATIONS: u64 = 10;
 
 pub async fn execute(ctx: &ExecutionContext, node: &Node, inputs: Vec<Value>) -> Result<Value> {
-    // Converse mode: an in-graph multi-turn conversation loop. Gated by the
-    // `converse = "true"` attribute (rides the op's generic attr-dict). The loop
-    // lives inside this handler (runtime iteration), so the *loop* is part of the
-    // APXM program — not the host. Turns arrive as a JSON-array string in input 0
-    // (batch) or, when absent, via the host's PAUSE/resume turn cycle.
+    // Converse mode: multi-turn loop inside the handler, gated by `converse = "true"`.
+    // Turns arrive as a JSON-array string in input 0.
     if get_optional_string_attribute(node, "converse")?.as_deref() == Some("true") {
         return converse_loop(ctx, node, inputs).await;
     }
@@ -239,12 +236,8 @@ pub async fn execute(ctx: &ExecutionContext, node: &Node, inputs: Vec<Value>) ->
 }
 
 /// In-graph multi-turn conversation loop (the `converse` mode of AUTONOMOUS).
-///
-/// The loop is part of the program: this handler iterates user turns inside the
-/// runtime, each turn an `ASK` against the live model with the persona + the
-/// accumulated transcript (so context carries across turns). Tools are run when
-/// the node exposes a tool group. Turns are read as a JSON-array string in
-/// input 0 (batch). Returns the full transcript.
+/// Each turn is an ASK with persona + accumulated transcript; tools run when
+/// the node exposes a tool group. Returns the full transcript.
 async fn converse_loop(ctx: &ExecutionContext, node: &Node, inputs: Vec<Value>) -> Result<Value> {
     let persona = get_optional_string_attribute(node, graph_attrs::SYSTEM_PROMPT)?
         .or(get_optional_string_attribute(node, graph_attrs::PROMPT)?)

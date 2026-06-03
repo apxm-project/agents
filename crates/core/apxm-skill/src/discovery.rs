@@ -1,17 +1,9 @@
 //! Scope-aware, description-based skill discovery.
 //!
-//! The agent never sees the whole skill catalogue. It sees a **visible set**:
-//!
-//! ```text
-//! visible(agent) = { skills with shared = true }      // the global tier
-//!                ∪ resolve(agent.imports)              // the scoped tier
-//! ```
-//!
-//! `rank` filters the catalogue to that visible set and then ranks the survivors
-//! against a natural-language request by their `description` / `when_to_use` /
-//! `tags` (lexical term overlap). This is the deterministic core behind the
-//! `search_skills` capability; an embedder can replace [`lexical_score`] later
-//! without changing the scoping contract.
+//! `rank` filters the catalogue to the agent's visible set (shared tier ∪
+//! resolved imports) and ranks survivors against a natural-language request by
+//! `description` / `when_to_use` / `tags` (lexical term overlap). This is the
+//! deterministic core behind the `search_skills` capability.
 
 use std::collections::BTreeSet;
 

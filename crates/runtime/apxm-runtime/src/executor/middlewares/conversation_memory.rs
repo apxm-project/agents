@@ -1,13 +1,8 @@
-//! Conversation-memory middleware — context *management* as a composable layer.
+//! Conversation-memory middleware.
 //!
-//! After every `ASK` turn, append the answer to session-scoped memory so the
-//! conversation transcript accrues automatically as the agent runs. The agent
-//! program never has to plumb history: this is the "context management is
-//! middleware" half of the conversational-agent vision (the program owns
-//! deliberate task memory via `qmem`/`umem`; the conversation window is
-//! middleware). STM is keyed by `memory_scope()` (the session id), so turns
-//! written here are readable by the next turn's `qmem` recall within a server
-//! run — the same session-scoping the runtime already uses.
+//! After every `ASK` turn, appends the answer to session-scoped STM so the
+//! conversation transcript accrues automatically. Keyed by `memory_scope()`
+//! (the session id), so turns are readable by the next turn's `qmem` recall.
 
 use crate::executor::{ExecutionContext, Next, OperationMiddleware, Result};
 use crate::memory::MemorySpace;

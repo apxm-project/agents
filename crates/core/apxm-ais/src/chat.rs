@@ -62,8 +62,7 @@ where
     out
 }
 
-/// Escape a string for safe interpolation into an MLIR/AIR string literal
-/// (backslash, double-quote, and the common control characters).
+/// Escape a string for safe interpolation into an AIR string literal.
 pub fn escape_air_string(s: &str) -> String {
     let mut out = String::with_capacity(s.len() + 8);
     for c in s.chars() {
@@ -90,10 +89,7 @@ pub fn sanitize_route_id(id: &str) -> String {
 /// Per-turn routing/tool options for the built-in conversational graph.
 #[derive(Debug, Default, Clone, Copy)]
 pub struct ChatAirOptions<'a> {
-    /// System prompt for this turn (the per-node `system_prompt` attr, layer-1
-    /// of the runtime's `resolve_system_prompt`). The conversational-agent host
-    /// assembles this from the AGENTS.md / CLAUDE.md / memory hierarchy so the
-    /// agent reads project context. `None` falls through to the runtime default.
+    /// System prompt for this turn. `None` falls through to the runtime default.
     pub system_prompt: Option<&'a str>,
     /// Pin this turn to a registered backend (the runtime's per-node `backend`
     /// attr). `GET /v1/models` returns backend names, so a picker value is a

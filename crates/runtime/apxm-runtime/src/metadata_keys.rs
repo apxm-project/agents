@@ -20,10 +20,8 @@ pub const CALL_SKILL_DEPTH: &str = "call_skill_depth";
 /// from the launching skill manifest and propagated to children so CALL_SKILL
 /// admission can enforce `child ⊆ parent`.
 pub const SIDE_EFFECT_POLICY: &str = "side_effect_policy";
-/// The execution's visible skill set (comma-joined lib / lib::skill / skill
-/// ids). Seeded from the request's `imports` and propagated to children so
-/// CALL_SKILL can enforce that a skill is in the caller's visible set
-/// (shared tier ∪ imports). Absent = unrestricted (back-compat).
+/// Comma-joined visible skill set (lib / lib::skill / skill ids). Seeded from
+/// `imports`, propagated to children. Absent = unrestricted (back-compat).
 pub const VISIBLE_SKILLS: &str = "visible_skills";
 pub const TARGET_AGENT: &str = "target_agent";
 pub const TARGET_FLOW: &str = "target_flow";

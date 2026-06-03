@@ -32,9 +32,6 @@ pub(crate) async fn build_runtime_with_router(
     runtime.add_middleware(std::sync::Arc::new(
         apxm_runtime::TokenBudgetMiddleware::new(),
     ));
-    // Context management as a composable layer: record each ASK answer into
-    // session memory so conversation history accrues automatically (the program
-    // recalls it via qmem; it never threads a transcript). Op-scoped to ASK.
     runtime.add_middleware(std::sync::Arc::new(
         apxm_runtime::ConversationMemoryMiddleware::new(),
     ));
@@ -62,12 +59,8 @@ fn register_builtin_capabilities(runtime: &Runtime) {
         Arc::new(ReadCapability::new()),
         Arc::new(WriteCapability::new()),
         Arc::new(BashCapability::new()),
-        // The generic outbound connector block: forwards to a provider via
-        // apxm-auth /proxy (secret stays in apxm-auth). Backs every action block.
         Arc::new(ProviderCallCapability::new()),
-        // The MCP-client bridge: peer backing for MCP-server tools (tools/call).
         Arc::new(McpBridgeCapability::new()),
-        // Token estimator: lets a program decide in-graph when to compact.
         Arc::new(CountTokensCapability::new()),
     ];
     let mut n = 0u32;

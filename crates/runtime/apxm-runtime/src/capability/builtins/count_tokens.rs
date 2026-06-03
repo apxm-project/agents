@@ -1,10 +1,5 @@
 //! `count_tokens` — estimate the token size of a string (chars/4 heuristic,
-//! the same estimate the chat compaction budget uses).
-//!
-//! This is the primitive that lets compaction live *in the graph*: a program
-//! can `count_tokens` the running transcript, `BRANCH_ON_VALUE` on the result,
-//! and `CALL_SKILL` a summarizer when over budget — instead of the host owning
-//! compaction. Read-only and pure.
+//! matching the chat compaction budget). Read-only and pure.
 
 use crate::capability::{
     executor::{CapabilityExecutor, CapabilityResult},
@@ -37,7 +32,6 @@ impl CountTokensCapability {
         }
     }
 
-    /// chars/4 token estimate — identical to `apxm_ais::chat::estimate_tokens`.
     fn estimate(text: &str) -> i64 {
         (text.len() / 4) as i64
     }

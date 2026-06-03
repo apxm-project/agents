@@ -47,9 +47,7 @@ pub(crate) struct ExecuteRequest {
     /// perform writes. Read-only and sandboxed capabilities never need listing.
     #[serde(default)]
     pub(crate) admit_capabilities: Vec<String>,
-    /// The agent's visible skill set (lib / lib::skill / skill ids). When
-    /// non-empty, CALL_SKILL is restricted to the shared tier ∪ these imports;
-    /// empty = unrestricted (back-compat).
+    /// Visible skill set (lib / lib::skill / skill ids). Empty = unrestricted (back-compat).
     #[serde(default)]
     pub(crate) imports: Vec<String>,
 }
@@ -116,11 +114,8 @@ pub(crate) struct ExecuteResponse {
     pub(crate) llm_usage: LlmUsageSummary,
 }
 
-/// Seed the top-level execution's effective capability grant from the caller's
-/// `admit_capabilities`, so a nested CALL_SKILL / dispatch admits a child only
-/// if its policy is a subset of this grant (no-widen). Without this seed, every
-/// nested call would default to `read_only` and broader-grant children would be
-/// wrongly rejected — the precondition for a safe capability cascade.
+/// Build the top-level execution metadata seeding the effective capability grant
+/// so nested CALL_SKILL admission enforces `child ⊆ parent` (no-widen).
 fn admit_grant_metadata(
     admit: &std::collections::HashSet<String>,
     imports: &[String],
@@ -137,8 +132,7 @@ fn admit_grant_metadata(
         apxm_runtime::metadata_keys::SIDE_EFFECT_POLICY.to_string(),
         policy.name(),
     );
-    // Seed the visible skill set only when the caller declared imports; absent
-    // = unrestricted CALL_SKILL (back-compat). Children inherit this verbatim.
+    // Absent = unrestricted CALL_SKILL (back-compat).
     if !imports.is_empty() {
         metadata.insert(
             apxm_runtime::metadata_keys::VISIBLE_SKILLS.to_string(),
@@ -281,9 +275,7 @@ pub(crate) struct PreparedRequest {
     pub(crate) args: Vec<String>,
     pub(crate) session_id: Option<String>,
     pub(crate) session_dir: Option<String>,
-    /// Capabilities the caller granted this execution (consent admit-list).
     pub(crate) admit: std::collections::HashSet<String>,
-    /// The caller's visible skill set (imports); empty = unrestricted.
     pub(crate) imports: Vec<String>,
 }
 
