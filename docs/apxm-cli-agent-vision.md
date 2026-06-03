@@ -305,12 +305,17 @@ BUILT + VERIFIED (tests green; warm `cargo` in the main checkout):
 - **`lib::skill` namespaced resolution** — `find_record` resolves `lib::skill`
   ids (pack-filtered), disambiguating same-named skills across libraries; bare
   ids unchanged. 1 test. Completes libraries-as-namespaces.
+- **CLI scoping** — `apxm chat --import <lib>` (repeatable) sends
+  `ExecuteRequest.imports`, activating server-side CALL_SKILL enforcement for the
+  conversational agent, and surfaces the libraries in the injected context.
+  Verified in `apxm chat --help`.
 - **Cross-repo (apxm-studio)** — `ChatAirOptions` literal updated for the new
   `system_prompt`/`skills` fields; builds. Committed on `feat/chat-air-fields`.
 
 So all four pillars + the full scoped-skill model (discovery + global tier +
-execution enforcement + namespacing) are real and verified. Commits (apxm):
-`fd1b5d54`, `2ccdacb0`, `287e2f54`, `6ebcad59`, `38df0fc8`, `ee5849e7`.
+execution enforcement + namespacing + CLI scoping) are real and verified —
+**Model A is complete end to end.** Commits (apxm): `fd1b5d54`, `2ccdacb0`,
+`287e2f54`, `6ebcad59`, `38df0fc8`, `ee5849e7`, `5b56a9cf`, `6ff09c9a`.
 
 REMAINING (non-blocking, optional polish):
 - **Compaction** — works today in the host (LLM summarize); promoting it to a
