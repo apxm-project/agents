@@ -110,6 +110,7 @@ pub async fn agent_command(action: AgentAction, json_output: bool) -> Result<()>
             command,
             permissions,
             close_grace_ms,
+            sandbox,
             no_test,
         } => {
             use apxm_acp::constants::timeouts as acp_timeouts;
@@ -131,7 +132,7 @@ pub async fn agent_command(action: AgentAction, json_output: bool) -> Result<()>
                         system_prompt: None,
                         skip_preamble: false,
                         capabilities: Vec::new(),
-                        sandbox: false,
+                        sandbox,
                     }
                 }
                 None => {
@@ -147,6 +148,7 @@ pub async fn agent_command(action: AgentAction, json_output: bool) -> Result<()>
                     if let Some(grace) = close_grace_ms {
                         profile.close_grace_ms = grace;
                     }
+                    profile.sandbox = sandbox;
                     profile
                 }
             };

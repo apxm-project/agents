@@ -149,6 +149,10 @@ impl ProcessSandbox {
     }
 
     /// Execute a script (write to temp file, then run with interpreter).
+    ///
+    /// Test-only: production code reaches `ProcessSandbox` through
+    /// `ProcessSandboxBackend::execute`, never this helper.
+    #[cfg(test)]
     pub async fn execute_script(
         &self,
         interpreter: &str,

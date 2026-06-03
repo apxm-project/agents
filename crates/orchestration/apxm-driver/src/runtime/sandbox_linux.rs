@@ -225,7 +225,26 @@ fn build_bwrap_wrap_args(
     needs_network: bool,
 ) -> Vec<String> {
     let cwd = path_string(cwd);
-    let mut wrapped = vec![
+    let mut wrapped = bwrap_isolation_preamble(needs_network);
+    wrapped.push(bubblewrap::FLAG_BIND.to_string());
+    wrapped.push(cwd.clone());
+    wrapped.push(cwd.clone());
+    wrapped.push(bubblewrap::FLAG_CHDIR.to_string());
+    wrapped.push(cwd);
+    wrapped.push(bubblewrap::FLAG_SEPARATOR.to_string());
+    wrapped.push(program.to_string());
+    wrapped.extend(args.iter().cloned());
+
+    wrapped
+}
+
+/// Shared bubblewrap isolation flags for both the one-shot execute path and the
+/// long-running `wrap_command` path: read-only root (over-satisfies read
+/// grants), ephemeral `/tmp`, device and proc mounts, user+pid namespaces, and
+/// network isolation unless the child needs the network. Single source of truth
+/// so the two builders cannot drift apart.
+fn bwrap_isolation_preamble(needs_network: bool) -> Vec<String> {
+    let mut args = vec![
         bubblewrap::FLAG_NEW_SESSION.to_string(),
         bubblewrap::FLAG_DIE_WITH_PARENT.to_string(),
         bubblewrap::FLAG_RO_BIND.to_string(),
@@ -240,21 +259,10 @@ fn build_bwrap_wrap_args(
         bubblewrap::FLAG_UNSHARE_USER.to_string(),
         bubblewrap::FLAG_UNSHARE_PID.to_string(),
     ];
-
     if !needs_network {
-        wrapped.push(bubblewrap::FLAG_UNSHARE_NET.to_string());
+        args.push(bubblewrap::FLAG_UNSHARE_NET.to_string());
     }
-
-    wrapped.push(bubblewrap::FLAG_BIND.to_string());
-    wrapped.push(cwd.clone());
-    wrapped.push(cwd.clone());
-    wrapped.push(bubblewrap::FLAG_CHDIR.to_string());
-    wrapped.push(cwd);
-    wrapped.push(bubblewrap::FLAG_SEPARATOR.to_string());
-    wrapped.push(program.to_string());
-    wrapped.extend(args.iter().cloned());
-
-    wrapped
+    args
 }
 
 fn bubblewrap_available() -> bool {
@@ -372,27 +380,9 @@ fn build_bwrap_command_args(
     // writable /tmp; writable carve-outs are bound at their real paths (they
     // exist under the read-only root, so they can be re-bound writable —
     // synthetic mountpoints can't be created on the read-only root). The tmpfs
-    // is mounted before the carve-out binds so a carve-out under /tmp lands on
-    // the fresh tmpfs.
-    let mut args = vec![
-        bubblewrap::FLAG_NEW_SESSION.to_string(),
-        bubblewrap::FLAG_DIE_WITH_PARENT.to_string(),
-        bubblewrap::FLAG_RO_BIND.to_string(),
-        bubblewrap::FILESYSTEM_ROOT.to_string(),
-        bubblewrap::FILESYSTEM_ROOT.to_string(),
-        bubblewrap::FLAG_DEV.to_string(),
-        bubblewrap::FILESYSTEM_DEV.to_string(),
-        bubblewrap::FLAG_PROC.to_string(),
-        bubblewrap::FILESYSTEM_PROC.to_string(),
-        bubblewrap::FLAG_TMPFS.to_string(),
-        bubblewrap::FILESYSTEM_TMP.to_string(),
-        bubblewrap::FLAG_UNSHARE_USER.to_string(),
-        bubblewrap::FLAG_UNSHARE_PID.to_string(),
-    ];
-
-    if !request.needs_network {
-        args.push(bubblewrap::FLAG_UNSHARE_NET.to_string());
-    }
+    // is mounted (in the shared preamble) before the carve-out binds so a
+    // carve-out under /tmp lands on the fresh tmpfs.
+    let mut args = bwrap_isolation_preamble(request.needs_network);
 
     for mount in writable_mounts {
         args.push(bubblewrap::FLAG_BIND.to_string());

@@ -662,6 +662,11 @@ pub enum AgentAction {
         /// Grace period in ms after closing stdin before SIGTERM
         #[arg(long)]
         close_grace_ms: Option<u64>,
+        /// Confine the agent (and any terminals it opens) under the host sandbox
+        /// backend. Requires a capable backend (bubblewrap); spawning fails
+        /// closed if none is available.
+        #[arg(long)]
+        sandbox: bool,
         /// Skip spawn test (register without verifying the agent is reachable)
         #[arg(long)]
         no_test: bool,
