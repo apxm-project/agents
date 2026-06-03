@@ -5,30 +5,75 @@ Method: 7 parallel investigators over current code + OpenShell docs/source, cite
 
 ---
 
-## TL;DR
+## TL;DR — recommendation
 
-**Marginal value of integrating OpenShell now: 2/5 — fits cleanly, but the gap it
-fills is already ~70% covered by apxm's own sandbox.** The honest sequencing:
+**Own a sandbox *interface*; plug any sandbox (bubblewrap now, OpenShell as one
+backing) behind it. Do NOT build on, or depend on, OpenShell.**
 
-1. **First (no OpenShell, highest value):** finish wiring apxm's **existing**
-   `SandboxBackend` (`Bubblewrap`/`Process`) into the two paths that still run
-   with host powers — the `INV`/capability dispatch and the **unsandboxed ACP
-   coding-agent spawn** — plus translate apxm-os's inert `sandbox` manifest field
-   to a real isolation level. Zero new dependencies; closes the most exploitable
-   gaps in a few hundred lines.
-2. **Then (optional):** add OpenShell as **one more `SandboxBackend`** behind the
-   existing trait, for users who need what bubblewrap can't give: cross-platform
-   (macOS/Windows), hot-reloadable network policy, and fleet/multi-tenant
-   governance. Drive it via its gateway; feed credentials from apxm-auth; **do
-   not wire its inference gateway** (it conflicts with apxm-server's router).
+Two direct answers:
+- *"Should we use OpenShell as the sandbox?"* — **No.** It is alpha, NVIDIA-toolkit-
+  coupled, gateway-daemon-dependent, has **no Rust SDK**, is shared-kernel (not a
+  true microVM despite the name), and spins up in **seconds** (K3s) — fatal for
+  apxm's per-turn `EXC`/`INV` execution. Building on it inherits all of that.
+- *"Should we have our own interface that can connect to any sandbox?"* — **Yes,
+  and it already exists.** apxm-runtime's `SandboxBackend` trait + `SandboxRegistry`
+  *is* that interface (`create_session` / `execute(ExecRequest)→ExecResult` /
+  `destroy_session` / `capabilities` / `validate`, selected by `IsolationLevel`).
+  Two backends already implement it (`Process`, `Bubblewrap`). The interface even
+  fits OpenShell's shape: `create_session` once per agent + many `execute()`
+  amortizes OpenShell's slow spin-up; `ExecRequest` fields translate to its policy.
 
-OpenShell is a *much* better-shaped fit than the earlier OpenClaw look (which was
-also 2/5) — it plugs into a real, existing trait rather than bolting on a system —
-but it is **alpha**, shared-kernel (not a true microVM despite the name), and its
-sandbox spin-up is seconds (K3s), which is wrong for apxm's per-turn `EXC`/`INV`
-model. So: native first, OpenShell as an opt-in backend later.
+So the work is **finish the interface you already own**, not adopt a new system:
+
+1. **P0 (no OpenShell, the real security win):** route `INV`/capability dispatch
+   through the registry (mirror `EXC`); **sandbox the unsandboxed ACP coding-agent
+   spawn** via the backend (fast bubblewrap); enforce apxm-os's inert `sandbox`
+   field as an isolation level. A few hundred lines, zero new deps, no NVIDIA.
+2. **P1 (optional backing):** `OpenShellBackend: SandboxBackend` behind a config
+   flag — *only* where bubblewrap can't reach: cross-platform (macOS/Windows),
+   hot-reload network policy, fleet/multi-tenant. apxm-auth feeds credentials;
+   **inference gateway off** (conflicts with apxm-server's router). Never load-bearing.
+
+Net: marginal value of *adopting OpenShell* = **2/5**; value of *the pluggable
+interface* = high (and mostly already built). Keep the contract; OpenShell is one
+swappable backing among many (bubblewrap, firecracker, gVisor, …) — zero lock-in.
 
 ---
+
+## 0. Architecture — the sandbox interface (own it)
+
+The contract is the product; sandboxes are swappable backings.
+
+```
+          apxm-runtime: SandboxBackend trait  (the interface apxm owns)
+   create_session() · execute(ExecRequest)->ExecResult · destroy_session()
+   · capabilities() · validate() · is_available()        selected by IsolationLevel
+                              │
+   ┌───────────┬─────────────┼──────────────┬───────────────────┐
+   ▼           ▼             ▼              ▼                   ▼
+ Process    Bubblewrap   OpenShell      Firecracker          gVisor
+ (exists)   (exists)     (P1, opt-in)   (future)             (future)
+ <1ms       <50ms        seconds/K3s    microVM              user-kernel
+ fallback   per-turn     cross-plat,    true isolation       syscall filter
+            hot path     hot-reload,
+                         fleet
+```
+
+- **apxm defines the contract** (`ExecRequest`: program/args/env/read_paths/
+  write_paths/needs_network/needs_process_spawn/timeout → `ExecResult`). Every
+  backend translates that to its own mechanism (bubblewrap flags, OpenShell YAML,
+  firecracker config). apxm is never coupled to any one vendor.
+- **The registry picks per workload:** fast bubblewrap for per-turn `EXC`/`INV`;
+  OpenShell only when its extras (cross-platform, hot-reload, fleet) are needed.
+- **What to add to make it cleanly "any sandbox":** (a) session reuse is already
+  in the trait (`create_session` → many `execute`), which is what makes a
+  seconds-to-spin-up backend like OpenShell usable; (b) an optional richer policy
+  descriptor on `ExecRequest` so backends that support per-endpoint network rules /
+  hot-reload (OpenShell) can express more than the common denominator, while simple
+  backends ignore it; (c) credentials via apxm-auth, injected per-backend.
+
+This is exactly the proposed "our own sandbox, connectable to OpenShell" — and it
+is ~70% built already.
 
 ## 1. What OpenShell is (grounded, 2026)
 
