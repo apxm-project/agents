@@ -34,7 +34,14 @@ fn get_sessions_dir(explicit_root: Option<PathBuf>) -> Result<PathBuf> {
         return Ok(path);
     }
     let paths = ApxmPaths::discover().context("Failed to discover APXM paths")?;
-    Ok(paths.sessions_dir_for_read())
+    // Honor the precedence apxm-core defines: a project-local `.apxm/sessions`
+    // takes precedence over the state root. Fall back to the state root (which
+    // may not exist yet) so the empty case still reports cleanly.
+    Ok(paths
+        .session_lookup_dirs()
+        .into_iter()
+        .find(|dir| dir.is_dir())
+        .unwrap_or_else(|| paths.sessions_dir_for_read()))
 }
 
 pub fn session_list_command(

@@ -1,5 +1,3 @@
 #!/usr/bin/env bash
 # apxm-managed-hook
-# Runs the APXM commit-message lint. Bypass with --no-verify is
-# disallowed by .agents/skills/_shared/apxm-agent-operating-rules.md.
 exec python3 "$(git rev-parse --show-toplevel)/tools/scripts/check_commit_message.py" "$1"
