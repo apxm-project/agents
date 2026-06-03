@@ -5,9 +5,10 @@ Skill authoring, MCP server, the agent surfaces themselves.
 ## Skills
 
 - **apxm-mcp-server** — work on the APXM MCP server.
+- **apxm-design-docs** — gate overclaim/citation-drift in `docs/design/`.
 
-Skill-authoring lives in `apxm-project/apxm-libs`
-(`.agents/skills/apxm-skill-authoring/`).
+Skill-authoring conventions live in `.agents/skills/README.md`
+(§ How to add a skill).
 
 ## SSOT
 

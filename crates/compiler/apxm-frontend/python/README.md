@@ -52,10 +52,12 @@ runtime, the AIS dialect, the dekk CLI, and the operator workflow.
 
 - [apxm-project/apxm-eval](https://github.com/apxm-project/apxm-eval) —
   benchmark + evaluation harness, preregistrations, claim cards
-- [apxm-project/apxm-libs](https://github.com/apxm-project/apxm-libs) —
-  compiled skill library loaded by `apxm-server`
 - [apxm-project/vllm](https://github.com/apxm-project/vllm) — graph-aware
   vLLM fork used by APXM-vLLM
+
+Operating skills loaded by `apxm-server` are builtin under
+`crates/tools/apxm-server/skills/` (the former `apxm-libs` repo was folded in;
+see `docs/skills-migration/`).
 
 ## License
 

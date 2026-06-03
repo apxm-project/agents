@@ -11,7 +11,6 @@ const SKILL_ROOT_FLAG: &str = "--skill-root";
 const SKILL_ROOTS_ENV: &str = "APXM_SKILL_ROOTS";
 const BUILTIN_SKILL_ROOT_ENV: &str = env!("APXM_BUILTIN_SKILL_ROOT");
 const USER_INSTALL_DIR: &str = ".apxm/libs";
-const SIBLING_LIBS_DIR: &str = "apxm-libs/skills";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum MimeType {
@@ -179,14 +178,6 @@ pub(crate) fn parse_skill_roots(args: &[String]) -> Vec<PathBuf> {
     }
 
     if let Ok(current_dir) = std::env::current_dir() {
-        let sibling_libs = current_dir
-            .parent()
-            .map(|p| p.join(SIBLING_LIBS_DIR))
-            .filter(|p| p.is_dir());
-        if let Some(sibling) = sibling_libs {
-            roots.push(sibling);
-        }
-
         if roots.is_empty() {
             let repo_skills = current_dir.join(".agents").join("skills");
             if repo_skills.is_dir() {

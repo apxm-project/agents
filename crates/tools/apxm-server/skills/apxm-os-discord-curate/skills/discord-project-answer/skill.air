@@ -1,0 +1,6 @@
+module {
+  func.func @discord_project_answer(%arg0: !ais.token {ais.param_name = "payload", ais.param_type = "str"}) -> !ais.token attributes {ais.entry} {
+    %answer = ais.ask "You answer questions about a project using only its accumulated memory. The\ninput is a JSON envelope { question, agent_context } where agent_context.beliefs\nis the project's memory (scoped to agent_context.belief_scope), built from\neverything said in the channel.\n\nAnswer the question using ONLY agent_context.beliefs as ground truth.\n\nRules:\n1. Be specific: cite the relevant decisions, owners, deadlines, and facts.\n2. If the beliefs do not cover the question, say so plainly — do not invent.\n3. Keep it concise and directly useful; no preamble, no restating the question.\n4. Output the answer text only.\n\nEnvelope:\n{{payload}}\n" : !ais.token
+    func.return %answer : !ais.token
+  }
+}

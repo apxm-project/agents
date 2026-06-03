@@ -111,8 +111,8 @@ pip install --index-url https://test.pypi.org/simple/ apxm==0.X.Y
 
 ## Yanking a release
 
-If a release ships a regression that downstream `apxm-eval` or
-`apxm-libs` consumers depend on, **yank** rather than delete. Yanked
+If a release ships a regression that downstream `apxm-eval`
+consumers depend on, **yank** rather than delete. Yanked
 releases stay installable for pinned users but are skipped by
 `pip install apxm`:
 

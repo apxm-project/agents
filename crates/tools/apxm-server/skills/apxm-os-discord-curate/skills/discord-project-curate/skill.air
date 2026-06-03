@@ -1,0 +1,6 @@
+module {
+  func.func @discord_project_curate(%arg0: !ais.token {ais.param_name = "payload", ais.param_type = "str"}) -> !ais.token attributes {ais.entry} {
+    %curation = ais.ask "You maintain a project's memory from its Discord channel. The input is a JSON\nenvelope { event, agent_context }: a Discord MESSAGE_CREATE plus the agent's\ncurrent beliefs (agent_context.beliefs, scoped to agent_context.belief_scope).\n\nRead the new message and the beliefs, then emit COMPACT JSON ONLY (no prose, no\nmarkdown fences) with exactly this shape:\n\n{ \"belief_writes\":  [ { \"key\": \"project.<name>.<slug>\", \"value\": <json> } ],\n  \"episode_appends\":[ { \"event_type\": \"discord.message\", \"payload\": <message> } ] }\n\nRules:\n1. Write a belief only for durable, reusable facts (decisions, owners, deadlines,\n   requirements, status, links). Skip chit-chat.\n2. Keys MUST start with the belief_scope prefix; out-of-scope writes are dropped.\n3. Merge/refine existing beliefs rather than duplicating them.\n4. Always append exactly one episode for the raw message.\n5. If nothing durable was said, return belief_writes: [] with the one episode.\n6. Emit valid JSON; close every array and object.\n\nEnvelope:\n{{payload}}\n" : !ais.token
+    func.return %curation : !ais.token
+  }
+}

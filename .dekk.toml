@@ -175,17 +175,10 @@ list = { run = "apxm rollout list", description = "List recent rollouts from the
 replay = { run = "apxm rollout replay", description = "Replay a rollout JSONL as a monospace tree" }
 archive = { run = "apxm rollout archive", description = "Bundle rollout + blobs + skill source into a .tar.gz" }
 
-[commands.libs]
-description = "Install, inspect, and verify packs from apxm-project/apxm-libs"
+[commands.skillpack]
+description = "Validate the builtin operating-skill packs under crates/tools/apxm-server/skills/"
 group = "Configuration"
-list = { run = "python tools/scripts/apxm_libs.py list", description = "List installed packs under ~/.apxm/libs/" }
-install = { run = "python tools/scripts/apxm_libs.py install", description = "Install a pack (sibling-clone by default; --source github for releases)" }
-uninstall = { run = "python tools/scripts/apxm_libs.py uninstall", description = "Remove an installed pack" }
-search = { run = "python tools/scripts/apxm_libs.py search", description = "Substring-match pack id, skill, description across sibling catalog" }
-verify = { run = "python tools/scripts/apxm_libs.py verify", description = "Recompute pack_hash and compare to pack.toml [integrity]" }
-pack = { run = "python tools/scripts/apxm_libs.py pack", description = "Build release tarball + compute pack_hash (maintainer; in apxm-libs)" }
-build = { run = "python tools/scripts/apxm_libs.py build", description = "Compile every skill in a pack at the declared opt level and canonicalize artifact_hash / pack_hash" }
-publish = { run = "python tools/scripts/apxm_libs.py publish", description = "Build a pack and print the gh release create invocation (no network call)" }
+validate = { run = "python tools/scripts/validate_pack.py crates/tools/apxm-server/skills", description = "Validate every builtin skill manifest" }
 
 [install]
 wrap = { name = "apxm", target = "target/release/apxm" }

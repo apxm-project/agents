@@ -7,24 +7,14 @@ file by `dekk apxm skills generate`. Edit this file, then regenerate.
 
 ## 1. What APXM is
 
-APXM is an **A**gentic **P**rogram e**X**ecution **M**odel — a graph-aware
-execution engine with first-class support for both compute graphs **and**
-agent execution. It pairs a graph-aware **dispatch + scheduling layer** for
-vLLM (CPU/GPU split: planning/validation/analysis on CPU, inference on GPU)
-with native agent-scope tracking and an agent-layer event vocabulary that
-sits on top of the existing graph-layer events. Its public surface is an
-MLIR dialect (AIS) plus a Rust runtime plus a vLLM fork that accepts
-dispatch hints.
+APXM is a graph-aware **dispatch + scheduling layer** for vLLM, with an
+AMD-aligned **CPU/GPU split** so that planning, validation, and analysis stay
+on CPU while inference runs on GPU. Its public surface is an MLIR dialect
+(AIS) plus a Rust runtime plus a vLLM fork that accepts dispatch hints.
 
-Agents are first-class citizens of APXM, not a CLIC-side convention. The
-runtime emits two layers of events on every run: **Layer 1 — graph events**
-(`operation_start`, `tool_start`, `agent_spawned`, `communicate_dispatched`,
-`graph_edge`, …) describe the dispatched IR; **Layer 2 — agent events**
-(`turn_started`, `subagent_spawn_begin`, `subagent_llm_call_begin`,
-`tool_call_begin`, `agent_message`, `approval_request`, …) describe the
-agent-scope view of the same execution. Both layers fire for the same
-operation when it happens inside an agent scope, so downstream observers
-can pick the layer that matches their UX.
+Do **not** describe APXM as "an agent framework", "an LLM orchestrator", or
+"a multi-agent runtime" — that mischaracterizes the project and confuses
+new contributors. The correct anchor is: *graph-aware dispatch for vLLM*.
 
 ## 2. Authority CLI
 
@@ -247,40 +237,7 @@ Attribute names must be a single source of truth — see the
 `apxm-core`; Python kwargs, MLIR attrs, and Rust executors must all
 resolve through it, never via duplicated string literals.
 
-Agent-layer events are first-class. The Layer 2 kinds (`turn_*`,
-`subagent_*`, `tool_call_*`, `agent_message`, `approval_*`) are emitted by
-the executor when running inside an agent scope, alongside the Layer 1
-graph events (`operation_*`, `tool_*`, `agent_spawned`, `graph_edge`).
-See `crates/runtime/apxm-runtime/src/executor/agent_scope.rs` for the
-scope-tracking primitive (an `AgentScope` stack on the execution
-context). Layer 2 events MUST be additive to Layer 1: existing
-graph-layer events keep their names and shape; never rename or
-repurpose a graph-layer kind to look like an agent-layer kind.
-
-## 10. Two-layer event vocabulary and storage layout
-
-### Two-layer event vocabulary
-
-`apxm-core::events::kind` exposes the canonical names for both layers.
-Categories: graph-layer events use `Lifecycle` / `Agent` / `Topology`;
-agent-layer events use the dedicated `Agent` category for span-shaped
-kinds and `Lifecycle` for turn boundaries. The canonical pairing rule:
-
-- `operation_start[SPAWN_AGENT]` (graph) is paired with
-  `subagent_spawn_begin/end` (agent) whenever the SPAWN_AGENT fires.
-- `operation_start[ASK]` is paired with `subagent_llm_call_begin/end`
-  whenever the ASK is inside a non-empty agent scope.
-- `tool_start` (Layer 1) is paired with `tool_call_begin` (Layer 2) when
-  inside an agent scope; the two are correlated via `meta.call_id`.
-- `turn_started/turn_complete/turn_aborted` bracket the outermost
-  executor entry — exactly one pair per `Runtime::execute` call.
-
-Out-of-scope ASK/INV_TOOL nodes (graph-only, no agent scope) emit ONLY
-the Layer 1 event. The agent layer stays silent.
-
-### Storage layout
-
-#### Storage facts
+## 10. Storage layout
 
 `/home` is shared WekaFS (9.1 TiB, 50+ tenants). It is **not** personal
 disk:
@@ -301,24 +258,6 @@ disk:
 
 See `docs/backends/storage-layout.md` for the full contract and the
 supported migration procedure.
-
-### Multi-instance contract (`APXM_HOME` resolves backend config)
-
-`BackendStore::open` in `crates/runtime/apxm-credentials/src/backend.rs`
-routes through `apxm_core::env::apxm_home`, so `$APXM_HOME` now
-controls *which* backend roster a process sees — not just the session
-and rollout directories it writes into. The resolution is
-`$APXM_HOME → ~/.apxm`; project-local `.apxm/` directories are
-intentionally ignored at this layer (backend credentials are a
-per-instance concern, not a per-checkout concern).
-
-Operational consequence: **one `apxm-server` per `APXM_HOME`** is the
-supported multi-tenant shape. Run each instance with a distinct
-`APXM_HOME` (containerized, systemd-instanced, or otherwise
-process-isolated). The reference container layout for that pattern is
-`deploy/apxm-server/` (Dockerfile + two-tenant compose example +
-README); see `deploy/apxm-server/README.md` for the contract and known
-image-size caveats.
 
 ## 11. Boundaries (read before any potentially destructive action)
 
@@ -377,6 +316,7 @@ push, an overwritten branch, or a tainted benchmark.
 | `apxm-commit` | Commit gate — runs apxm-simplify + apxm-finish first, drafts message in repo log style, lints it, and commits. Auto-commit allowed; never pushes to main; never --force; never --no-verify. Does not open PRs. | `.agents/skills/apxm-commit/SKILL.md` |
 | `apxm-compile-and-execute` | Use when compiling APXM graphs, running .apxmobj artifacts, or executing AIR/IR through the runtime. Enforces dekk apxm as the authority CLI and correct artifact placement under .apxm/. | `.agents/skills/apxm-compile-and-execute/SKILL.md` |
 | `apxm-context` | Prime an APXM session before broad work — runs doctor, reads project.md and the relevant _shared rules, surfaces subsystem ownership, and recalls APXM memory. Run at the start of any session that will touch >1 file or any non-trivial change. | `.agents/skills/apxm-context/SKILL.md` |
+| `apxm-design-docs` | Use when editing conceptual docs under docs/design/. Gates two shipped failure modes — overclaim (present-tense prose about unwired behaviour) and citation drift (claims with no anchor to shipped code). | `.agents/skills/apxm-design-docs/SKILL.md` |
 | `apxm-execute-plan` | Drive an APXM plan to completion without scope creep. Tracks phases with the harness's task tracker, runs focused per-phase verification, refuses to add features beyond the plan, and surfaces blockers immediately. Invoke only after apxm-plan produces an approved plan. | `.agents/skills/apxm-execute-plan/SKILL.md` |
 | `apxm-finish` | Pre-claim gate — runs focused dekk apxm test, doctor, no-legacy lint, secrets scan, and artifact-placement check before any claim of completion. Refuses to claim done until all pass. | `.agents/skills/apxm-finish/SKILL.md` |
 | `apxm-fork-vllm-rebase` | Use when rebasing the external/vllm fork onto a new upstream tag, cherry-picking APXM commits, or resolving conflicts in the fork. Covers the G1 build/smoke gate. | `.agents/skills/apxm-fork-vllm-rebase/SKILL.md` |

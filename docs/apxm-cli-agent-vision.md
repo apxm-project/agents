@@ -26,7 +26,7 @@ the *cognition* should be the program, and it isn't yet.
 
 apxm-os precedent, precisely: "the agent is APXM IR" (`vision.md:104`) means only
 the `on_event`/`answer` flow bodies are IR — and those are **6-line single-`ais.ask`
-graphs** (`apxm-libs/.../discord-project-curate/skill.air:1-6`). The loop
+graphs** (`crates/tools/apxm-server/skills/apxm-os-discord-curate/skills/discord-project-curate/skill.air:1-6`). The loop
 (`os-supervisor/src/lib.rs:607,682`), routing, dedup, belief-scope, and **context
 assembly** (`os-dispatch/src/lib.rs:315`) are all Rust *before* the graph. So even
 the flagship "agent as IR" keeps loop + middleware in Rust. Our vision can put

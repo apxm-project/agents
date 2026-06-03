@@ -1424,10 +1424,10 @@ fn validate_embedded_skill_manifest(
         manifest.air_hash.as_deref(),
     )?;
     // artifact_hash is the BLAKE3 of the artifact bytes themselves;
-    // it cannot live *inside* the artifact it hashes. `dekk apxm libs
-    // build` strips it from the embedded copy by design. The only
-    // legal pair here is embedded=None, manifest=Some(...); anything
-    // else means a tampered/divergent embed.
+    // it cannot live *inside* the artifact it hashes. The compile step
+    // strips it from the embedded copy by design. The only legal pair
+    // here is embedded=None, manifest=Some(...); anything else means a
+    // tampered/divergent embed.
     match (
         embedded.artifact_hash.as_deref(),
         manifest.artifact_hash.as_deref(),

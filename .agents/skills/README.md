@@ -35,9 +35,7 @@ Run in order for any non-trivial session:
 - `apxm-backend-add` — register new APXM backends.
 - `apxm-ais-op-design` — design-before-code for new AIS ops.
 - `apxm-mcp-server` — work on the APXM MCP server.
-
-Skill-authoring lives in the companion repo
-`apxm-project/apxm-libs` (`.agents/skills/apxm-skill-authoring/`).
+- `apxm-design-docs` — gate overclaim/citation-drift in `docs/design/`.
 
 Benchmark, preregistration, claim-evidence, and evaluation-artifact
 skills live in the companion repo `apxm-project/apxm-eval`.
@@ -55,10 +53,22 @@ skills live in the companion repo `apxm-project/apxm-eval`.
 
 ## How to add a skill
 
-The authoring rules live in `apxm-project/apxm-libs`
-(`.agents/skills/apxm-skill-authoring/`). In short:
+Authoring rules (this repo's own SSOT convention):
 
-1. Add `.agents/skills/<name>/SKILL.md` from the template.
+- **Frontmatter**: `name`, `description` (one-line, agent-discoverable),
+  optional `user-invocable: true`.
+- **Body ≤100 lines**, a thin orchestrator. Open with
+  `Load _shared/<rule>.md before broad work.` — never inline `_shared` text.
+  If it grows past 100 lines, move detail to `docs/` or
+  `.agents/domains/<area>/README.md`.
+- List authority commands (not raw `cargo`/`docker`), anti-patterns (the
+  project's hard-won lessons), and a `See also`. No referential content
+  ("for planNN", ticket numbers). Must work for both Claude and Codex.
+- Don't duplicate an existing skill — extend it instead.
+
+Steps:
+
+1. Add `.agents/skills/<name>/SKILL.md` from the convention above.
 2. `dekk apxm skills status` — confirm registration.
 3. `dekk apxm skills generate --target all` — regenerate config files.
 4. Commit both the skill and the regenerated outputs.

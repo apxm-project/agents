@@ -80,9 +80,21 @@ if __name__ == "__main__":
 - `python3 -m py_compile mcp/apxm_server.py` — syntax check.
 - `dekk apxm mcp install` — register; surfaces config errors.
 
+## Cross-surface registration (REST + MCP + A2A)
+
+A new surface spans the handler, route/tool registration, the MCP manifest, the
+Dekk wrapper, and a smoke test — miss one and it ships half-wired. A REST route
+that should also be an MCP tool needs **both** the handler and the tool wrapper
+(don't ship REST-only). Route paths, env names, response markers, and tool names
+are contract strings — keep them in `contract.rs` / `apxm.contract`, not as
+handler literals.
+
 ## Anti-patterns
 
 - Putting business logic in the MCP server. It is a thin shim.
 - Accepting secrets as tool arguments.
 - Parsing stdout in the server. Pass through; let the agent grep.
 - Stateful MCP tools — concurrency hazard.
+- Server middleware using Starlette `BaseHTTPMiddleware` — use raw ASGI. Its
+  receive-queue treats disconnect polls as disconnects and silently nulls chat
+  responses (`feedback_basehttpmiddleware_breaks_chat`).

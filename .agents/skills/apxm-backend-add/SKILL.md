@@ -65,6 +65,16 @@ dekk apxm backend migrate
 - `dekk apxm doctor` — env / resolver sanity.
 - `dekk apxm vllm probe <api_base>` — APXM-vLLM-specific route probe.
 
+## Touch points (implementing a new provider)
+
+Implementing a provider (vs. registering one) spans:
+`crates/runtime/apxm-backends/src/<provider>/{mod.rs,client.rs,config.rs}`,
+`…/registry.rs` (enum + dispatch), `…/apxm-runtime/src/executor.rs` (if a
+dispatch hint is needed), `config/backends.example.toml`,
+`tests/backends/<provider>_smoke.rs`. vLLM dispatch hints go through
+`apxm-fork-vllm-rebase` (cherry-pick against `apxm-rebase-v0.21.0`; never edit
+`external/vllm` in place).
+
 ## Anti-patterns
 
 - Adding a backend without `backend test` afterward — the registry can
@@ -74,3 +84,6 @@ dekk apxm backend migrate
 - Adding a credential as a literal in config rather than `env:<NAME>`.
 - Creating a project-local `.apxm/config.toml` that only sets
   `data-dir` (shadows user-global backends).
+- A literal contract string (e.g. `"reuse_group"`) in a handler — promote it
+  to a `graph_attrs::*` / `metrics_keys::*` constant
+  (`feedback_attribute_dual_naming`).
