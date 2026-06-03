@@ -34,6 +34,10 @@ pub struct ChatOptions {
     pub server: Option<String>,
     pub session_id: Option<String>,
     pub admit: Vec<String>,
+    /// Skill libraries / ids this agent imports (the scoped visible set). Sent
+    /// on each turn so server-side CALL_SKILL scoping applies; empty =
+    /// unrestricted. Shared-tier skills are always visible.
+    pub import: Vec<String>,
     pub tree: bool,
     /// Enable the agent's `web` tool group each turn (ignored when `--air` is set).
     pub tools: bool,
@@ -142,7 +146,22 @@ pub async fn chat_command(opts: ChatOptions) -> Result<()> {
     // project) and feed it as the ASK system prompt, so the agent reads project
     // context. This is the "reads AGENTS.md for context" pillar of the
     // conversational-agent-as-APXM-program vision.
-    let context = crate::context_assembly::assemble_context();
+    let context = {
+        let base = crate::context_assembly::assemble_context();
+        if opts.import.is_empty() {
+            base
+        } else {
+            // Tell the agent its visible libraries so it scopes `search_skills`.
+            let hint = format!(
+                "Imported skill libraries: {}. Call search_skills with these in `imports` to discover them; shared-tier skills are always visible.",
+                opts.import.join(", ")
+            );
+            Some(match base {
+                Some(b) => format!("{b}\n\n{hint}"),
+                None => hint,
+            })
+        }
+    };
     let air = match &opts.air {
         Some(p) => std::fs::read_to_string(p)
             .with_context(|| format!("failed to read AIR graph {}", p.display()))?,
@@ -371,6 +390,9 @@ async fn run_turn(
         "args": [prompt],
         "session_id": session_id,
         "admit_capabilities": admit,
+        // Declared visible skill set: activates server-side CALL_SKILL scoping
+        // (shared tier ∪ these imports). Empty = unrestricted (back-compat).
+        "imports": opts.import,
     });
     let resp = client
         .post(&url)

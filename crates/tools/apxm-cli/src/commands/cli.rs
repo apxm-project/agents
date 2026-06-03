@@ -282,6 +282,11 @@ pub enum Commands {
         /// ExecuteRequest.admit_capabilities.
         #[arg(long = "admit", value_name = "CAP")]
         admit: Vec<String>,
+        /// Skill library / id to import into the agent's visible set (repeatable:
+        /// `lib`, `lib::skill`, or `skill`). Activates server-side CALL_SKILL
+        /// scoping; shared-tier skills are always visible. Empty = unrestricted.
+        #[arg(long = "import", value_name = "LIB")]
+        import: Vec<String>,
         /// Enable the agent's web tool group each turn (the runtime runs
         /// independent tool calls in parallel). Ignored when `--air` is set.
         #[arg(long)]
