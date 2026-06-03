@@ -289,20 +289,30 @@ BUILT + VERIFIED (tests green; warm `cargo` in the main checkout):
   64 tests incl. escaping.
 - **Discovery exposed to the agent** — `chat_air` gains a `skills` tool group;
   `apxm chat` enables it so the agent can call `search_skills`.
+- **Conversation-memory middleware** — `ConversationMemoryMiddleware`
+  (`apxm-runtime`) appends each ASK answer to session-scoped STM so history
+  accrues automatically; op-scoped to ASK; registered in the server chain. 2
+  tests. *Context management as a composable middleware layer.*
+- **Global skill tier** — `search_skills` marks a skill `shared` (visible to
+  every agent) when its manifest opts in OR it lives under the builtin/global
+  root. 3 tests. Realises "global skills shared across all nodes".
 
-So **context injection + skill discovery (scoped) + tool execution** are real and
-verified for `apxm chat`.
+So **context injection + scoped skill discovery (with a real global tier) + tool
+execution + context-management-as-middleware** are real and verified for
+`apxm chat`. Committed: `fd1b5d54`, `2ccdacb0`, `287e2f54`.
 
 REMAINING (sequenced, specs above):
-- **ConversationContext middleware** — history as session memory (recall window
-  pre-ASK, append post-ASK) so the host passes only the latest message.
-- **Compaction middleware** — move the host-side compaction post-hook into a
-  composable layer.
+- **Compaction middleware** — promote the host-side compaction post-hook (which
+  works today) into a composable layer; or express it in-graph via `CALL_SKILL`
+  to a `summarize` skill.
 - **Server-side visible-set enforcement** — pass `imports` on `/v1/execute` +
   `CALL_SKILL`, filter the library view, no-widen propagation (move the allow-list
-  off the os-dispatch client).
+  off the os-dispatch client). Discovery is scoped now; this hardens execution.
 - **Default rich agent program** — ship the `conversational_agent` program as a
-  precompiled default `--air`; tier the skill roots (global/project/local) +
-  `lib::skill` namespacing.
+  precompiled default `--air`; `lib::skill` namespacing of skill ids end-to-end.
 - **Cross-repo**: `apxm-studio`'s `ChatAirOptions` literal must add the new
   `system_prompt`/`skills` fields when it picks up this `apxm-ais`.
+
+NOTE: a pre-existing, environment-dependent integration test
+(`session_list_prefers_local_root_over_global_home`, unrelated `session list`
+path) fails on this dev box at the base commit too — not introduced here.
