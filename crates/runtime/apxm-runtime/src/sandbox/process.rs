@@ -1,5 +1,7 @@
 use super::policy::SandboxPolicy;
-use crate::sandbox::constants::{env as sandbox_env, messages, session_prefixes};
+use crate::sandbox::constants::{env as sandbox_env, messages};
+#[cfg(test)]
+use crate::sandbox::constants::session_prefixes;
 use tokio::process::Command;
 
 /// Result of a sandboxed execution.

@@ -376,12 +376,8 @@ fn build_bwrap_command_args(
     working_directory: &WorkingDirectory,
     writable_mounts: &[WritableMount],
 ) -> Result<Vec<String>, SandboxError> {
-    // Read-only root over-satisfies read grants; an ephemeral tmpfs gives a
-    // writable /tmp; writable carve-outs are bound at their real paths (they
-    // exist under the read-only root, so they can be re-bound writable —
-    // synthetic mountpoints can't be created on the read-only root). The tmpfs
-    // is mounted (in the shared preamble) before the carve-out binds so a
-    // carve-out under /tmp lands on the fresh tmpfs.
+    // The preamble mounts the tmpfs before these binds, so a carve-out under
+    // /tmp lands on the fresh tmpfs rather than being masked by it.
     let mut args = bwrap_isolation_preamble(request.needs_network);
 
     for mount in writable_mounts {

@@ -5,6 +5,9 @@
 //! backend registration and management.
 
 mod commands;
+// Only the driver-gated `chat` command consumes this; gate it to match so the
+// default (non-driver) build doesn't compile it as dead code.
+#[cfg(feature = "driver")]
 mod context_assembly;
 mod frontend;
 
