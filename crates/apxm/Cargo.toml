@@ -21,5 +21,4 @@ apxm-runtime = { workspace = true }
 apxm-backends = { workspace = true }
 
 [features]
-default = ["compiler"]
-compiler = []
+default = []
