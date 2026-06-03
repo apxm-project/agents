@@ -1,5 +1,14 @@
 # NVIDIA OpenShell ↔ apxm — decision & design
 
+> **GAP CLAIMS SUPERSEDED — see `docs/integrations/sandbox-acp-seam.md` on
+> `main`.** The "gaps" listed below (INV/capabilities bypass the sandbox, bash
+> has a dual unsandboxed path, ACP spawn is unsandboxed) were corrected by a
+> later code-level investigation: the capability/`INV` path already routes
+> through `SandboxRegistry` (confined or fail-closed), and the ACP
+> spawn/terminal surfaces are now confined via an opt-in `wrap_command` seam.
+> The OpenShell verdict (own the interface; OpenShell as one opt-in backing)
+> still stands.
+
 Status: investigation, multi-agent verified · 2026-06-03 · branch `investigate/openshell`
 Method: 7 parallel investigators over current code + OpenShell docs/source, cited.
 

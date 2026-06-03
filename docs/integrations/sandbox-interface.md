@@ -1,5 +1,14 @@
 # apxm sandbox interface — backend-agnostic design spec
 
+> **SUPERSEDED IN PART — read with `docs/integrations/sandbox-acp-seam.md` on
+> `main`.** A later code-level investigation corrected several premises here:
+> the capability/`INV` path is **not** an unsandboxed bypass (it already routes
+> through `SandboxRegistry` and fails closed); `read_paths` is an *informational
+> grant*, so the "remove the read-allowlist warning" idea was wrong (the real
+> fix was `validate()` returning `Ok`); the genuine holes were the ACP
+> spawn/terminal surfaces, now closed by a `wrap_command` seam. The full
+> `SessionConfig`/`SpawnRequest` trait evolution below remains valid future work.
+
 Status: design, multi-agent e2e-verified · 2026-06-03 · branch `investigate/openshell`
 Method: 13-agent workflow — investigate (current trait + consumers + candidate
 backends + policy + transport/creds) → design → adversarial verify e2e against each
