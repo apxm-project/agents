@@ -81,6 +81,19 @@ pub fn doctor_command(config: Option<PathBuf>, json_output: bool) -> Result<()> 
             Err(_) => (0, vec![]),
         };
 
+    // --- Sandbox (bubblewrap) ---
+    // bwrap confines EXC, the bash/user-tool capabilities, and sandboxed ACP
+    // agents. Without it OsLevel requests fail closed. A successful --version
+    // also confirms it can run (on Ubuntu the AppArmor userns profile must be
+    // installed, otherwise bwrap is present but unusable).
+    let bwrap_available = std::process::Command::new("bwrap")
+        .arg("--version")
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .status()
+        .map(|s| s.success())
+        .unwrap_or(false);
+
     // --- Environment Variables ---
     let env_apxm_backend = env::var(apxm_env::APXM_BACKEND).ok();
     let env_mlir_dir = env::var(apxm_env::MLIR_DIR).ok();
@@ -125,6 +138,9 @@ pub fn doctor_command(config: Option<PathBuf>, json_output: bool) -> Result<()> 
             "backends": {
                 "count": backend_count,
                 "names": backend_names,
+            },
+            "sandbox": {
+                "bwrap_available": bwrap_available,
             },
             "environment": {
                 apxm_env::APXM_BACKEND: env_apxm_backend,
@@ -197,7 +213,20 @@ pub fn doctor_command(config: Option<PathBuf>, json_output: bool) -> Result<()> 
         ));
     }
 
-    // 3. Environment Variables
+    // 3. Sandbox
+    print_section_header("Sandbox");
+    if bwrap_available {
+        print_status_line("bubblewrap", Status::Ok, "available (bwrap)");
+    } else {
+        print_status_line("bubblewrap", Status::Warning, "not available");
+        print_hint(
+            "Install bubblewrap (`apt-get install bubblewrap`) to confine tool execution. \
+             On Ubuntu also add an AppArmor userns profile for bwrap (see README \
+             \u{2192} System dependencies). Without it, OsLevel sandbox requests fail closed.",
+        );
+    }
+
+    // 4. Environment Variables
     print_section_header("Environment");
     for (name, value) in [
         (apxm_env::APXM_BACKEND, &env_apxm_backend),

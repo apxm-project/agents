@@ -30,16 +30,17 @@ existing capability path.
   (`/apxm-tmp`, `/apxm-workdir`) *under* the read-only root, which fails with
   "Read-only file system". Rewritten to use `--tmpfs /tmp` and to bind writable
   carve-outs at their real host paths (which exist under the read-only root).
-- **The real residual holes are the ACP surfaces**, which spawn directly on the
-  host with no sandbox involvement:
+- **The real residual holes were the ACP surfaces** (now closed — see *What
+  shipped*), which spawned directly on the host with no sandbox involvement:
   - `AcpSession::spawn` — the coding-agent subprocess itself.
   - `TerminalManager::create` (reverse `terminal/create`) — arbitrary commands
-    the agent asks the client to run. Confining the agent while leaving this
-    open would be pointless.
+    the agent asks the client to run. Both are now wrapped together; confining
+    the agent while leaving the terminal open would have been pointless.
 - The integration test `test_gap_sandbox_not_called_by_inv_handler` was **stale**
   — it asserted the gap was open without invoking anything. Replaced with
-  `test_registry_selected_backend_is_executed`, which exercises the
-  select→execute sequence the capability path performs.
+  `test_registry_selected_backend_is_executed`
+  (`crates/runtime/apxm-runtime/tests/sandbox_integration.rs`), which exercises
+  the select→execute sequence the capability path performs.
 
 ## What shipped
 

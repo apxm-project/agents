@@ -474,13 +474,22 @@ impl CapabilitySystem {
                 })?;
         let capabilities = selection.backend.capabilities();
         let warnings = match selection.validation {
+            ValidationResult::Ok => Vec::new(),
             ValidationResult::Degraded { warnings } => {
                 return Err(RuntimeError::Capability {
                     capability: name.to_string(),
                     message: format!("{SANDBOX_DEGRADED_GUARANTEES}: {}", warnings.join("; ")),
                 });
             }
-            ValidationResult::Ok | ValidationResult::Unsupported { .. } => Vec::new(),
+            // `select_for_request` never returns an Unsupported selection (it is
+            // filtered into the rejected set), but fail closed if that ever
+            // changes rather than reporting a confined run that isn't.
+            ValidationResult::Unsupported { reason } => {
+                return Err(RuntimeError::Capability {
+                    capability: name.to_string(),
+                    message: format!("sandbox unsupported: {reason}"),
+                });
+            }
         };
         Ok(CapabilitySandboxPreflight::Sandboxed {
             backend: capabilities.name,

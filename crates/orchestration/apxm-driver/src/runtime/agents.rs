@@ -45,6 +45,11 @@ pub async fn configure_agent_registry(
 /// Returns `None` when the profile does not opt into sandboxing. When it does
 /// but no backend can confine a long-running child, this fails closed rather
 /// than spawning the agent unconfined.
+///
+/// Selection is by isolation level + availability (`registry.select`), not by a
+/// per-request `validate()` — the long-running spawn has no one-shot
+/// `ExecRequest`. A backend whose confinement is request-shape dependent would
+/// need its own check here; today's bubblewrap backend confines uniformly.
 fn select_agent_sandbox(
     sandbox_registry: &SandboxRegistry,
     profile: &AcpAgentProfile,

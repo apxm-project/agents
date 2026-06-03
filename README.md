@@ -52,9 +52,25 @@ misaligned.
   equivalent).
   - On Ubuntu 23.10+ unprivileged user namespaces are restricted by AppArmor
     (`kernel.apparmor_restrict_unprivileged_userns=1`), which blocks `bwrap`
-    unless it has a profile granting `userns`. Install one at
-    `/etc/apparmor.d/bwrap` (`profile bwrap /usr/bin/bwrap flags=(unconfined) {
-    userns, }`) and `apparmor_parser -r` it, or run a setuid `bwrap`. See
+    unless it has a profile granting `userns`, or it is setuid. Create the
+    profile and activate it:
+
+    ```bash
+    sudo tee /etc/apparmor.d/bwrap >/dev/null <<'EOF'
+    abi <abi/4.0>,
+    include <tunables/global>
+    profile bwrap /usr/bin/bwrap flags=(unconfined) {
+      userns,
+      include if exists <local/bwrap>
+    }
+    EOF
+    sudo apparmor_parser -r /etc/apparmor.d/bwrap   # activate now; persists across reboot
+    ```
+
+    Placing the file in `/etc/apparmor.d/` makes it persistent (loaded by
+    `apparmor.service` at boot); `apparmor_parser -r` only activates it
+    immediately without a reboot. `dekk apxm doctor` reports whether `bwrap` is
+    available. See
     [`docs/integrations/sandbox-acp-seam.md`](docs/integrations/sandbox-acp-seam.md).
 
 ## Documentation
