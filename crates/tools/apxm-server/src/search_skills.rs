@@ -11,6 +11,7 @@
 //! [`apxm_skill::discovery`] and is unit-tested there.
 
 use std::collections::HashMap;
+use std::path::Path;
 use std::sync::Arc;
 
 use apxm_core::error::RuntimeError;
@@ -70,6 +71,8 @@ impl SearchSkillsCapability {
 
     /// Build discovery cards from the live catalogue scan.
     fn cards(&self) -> Vec<SkillCard> {
+        // The first root is the builtin/global tier (prepended at startup).
+        let global_root = self.library.roots().first().cloned();
         self.library
             .scan()
             .data
@@ -79,7 +82,7 @@ impl SearchSkillsCapability {
                 let skill_id = rec
                     .skill_id
                     .or_else(|| manifest.as_ref().map(|m| m.skill_id.clone()))?;
-                let (description, when_to_use, tags, shared) = match &manifest {
+                let (description, when_to_use, tags, manifest_shared) = match &manifest {
                     Some(m) => (
                         m.description.clone().unwrap_or_default(),
                         m.when_to_use.clone().unwrap_or_default(),
@@ -88,6 +91,9 @@ impl SearchSkillsCapability {
                     ),
                     None => (String::new(), String::new(), Vec::new(), false),
                 };
+                // A skill is in the global shared tier if its manifest opts in
+                // OR it lives under the always-present builtin (global) root.
+                let shared = is_shared(manifest_shared, &rec.package_dir, global_root.as_deref());
                 Some(SkillCard {
                     skill_id,
                     library: rec.pack.map(|p| p.pack_id),
@@ -99,6 +105,13 @@ impl SearchSkillsCapability {
             })
             .collect()
     }
+}
+
+/// A skill is shared (global tier, visible to every agent) when its manifest
+/// sets `shared`, or it lives under the global root (the always-present builtin
+/// skill root, prepended first at server startup).
+fn is_shared(manifest_shared: bool, pkg_dir: &Path, global_root: Option<&Path>) -> bool {
+    manifest_shared || global_root.map(|r| pkg_dir.starts_with(r)).unwrap_or(false)
 }
 
 #[async_trait]
@@ -164,5 +177,29 @@ pub(crate) fn register(runtime: &Runtime, library: SkillLibrary) {
         Err(error) => {
             warn!(capability = NAME, %error, "failed to register search_skills capability")
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::path::PathBuf;
+
+    #[test]
+    fn manifest_shared_opts_into_global_tier() {
+        assert!(is_shared(true, Path::new("/x/scoped/s"), Some(Path::new("/builtin"))));
+    }
+
+    #[test]
+    fn skills_under_global_root_are_shared() {
+        let global = PathBuf::from("/srv/builtin");
+        assert!(is_shared(false, Path::new("/srv/builtin/plan/skill"), Some(&global)));
+        assert!(!is_shared(false, Path::new("/srv/userlibs/triage/skill"), Some(&global)));
+    }
+
+    #[test]
+    fn no_global_root_means_only_manifest_shared() {
+        assert!(!is_shared(false, Path::new("/anything"), None));
+        assert!(is_shared(true, Path::new("/anything"), None));
     }
 }
