@@ -15,16 +15,21 @@ existing capability path.
   declares no `ExecRequest`. Process-spawning capabilities (`bash`, user tools)
   therefore run *inside* the sandbox or **fail closed** — they are never run
   unconfined.
-- **`bash` currently fails closed on hosts without `bwrap`.** Its `ExecRequest`
-  asks for `OsLevel`; the policy-only `ProcessSandboxBackend` is `PolicyOnly`
-  (filtered out), and a degraded backend is treated as a hard error. This is a
-  usability gap, not an insecurity.
-- **The draft's "minimal fix" (drop the bubblewrap read-allowlist warning) would
-  be unsafe.** The bubblewrap backend `--ro-bind / /` exposes the *entire* root
-  read-only, so it genuinely does not honor a per-path read allowlist. The
-  `Degraded` warning is truthful; removing it would claim enforcement that does
-  not exist. Honoring read allowlists precisely is future work (curated base
-  mount instead of binding all of `/`).
+- **`read_paths` is an informational grant, not a strict allowlist.**
+  `ExecRequest` documents `read_paths`/`write_paths` as "paths the command needs
+  to read/write (informational — backend decides enforcement)". bubblewrap
+  `--ro-bind / /` over-satisfies the read grant (everything is readable) and
+  enforces writes via explicit bind mounts. So a normal request is fully
+  satisfied — `validate()` now returns `Ok`, not `Degraded`. Previously it
+  flagged non-empty `read_paths` as `Degraded`, which (because both EXC and the
+  capability path treat `Degraded` as a hard error) made `bash` **and** EXC fail
+  closed under real `bwrap`. Fixed. Tighter per-path *read restriction* (a
+  curated base mount instead of binding all of `/`) remains future hardening.
+- **The bubblewrap EXECUTE path had a latent mountpoint bug** (never exercised
+  before `bwrap` was installed here): it created synthetic mountpoints
+  (`/apxm-tmp`, `/apxm-workdir`) *under* the read-only root, which fails with
+  "Read-only file system". Rewritten to use `--tmpfs /tmp` and to bind writable
+  carve-outs at their real host paths (which exist under the read-only root).
 - **The real residual holes are the ACP surfaces**, which spawn directly on the
   host with no sandbox involvement:
   - `AcpSession::spawn` — the coding-agent subprocess itself.
@@ -59,22 +64,31 @@ A `wrap_command` seam on the existing `SandboxBackend` trait — no `SessionConf
 Default-off means existing deployments spawn byte-identically; confinement
 engages only on a `bwrap`-equipped host with a profile that requests it.
 
-## Verification
+## Verification (real `bwrap`, installed + working on the dev host)
 
-- `apxm-runtime` 711 lib tests, `apxm-server` 259, `apxm-acp` 36, `apxm-driver`
-  71 — all pass. New: bubblewrap wrap argv tests, the replaced routing test.
-- Rebuilt server starts healthy with the new agent-registry wiring; capabilities
-  register; `/v1/compile` validates and executes a graph end-to-end
-  (`executed_nodes:2, failed_nodes:0`).
-- Real `bwrap` confinement of an agent is not exercisable on the dev host
-  (`bwrap` absent; the gateway `thinking.type` quirk blocks `claude`, only
-  `codex` spawns), so the argv is unit-tested rather than run.
+`bwrap` is installed and made functional under Ubuntu's userns restriction via
+an AppArmor profile granting `userns` (see README → System dependencies).
+
+- Unit/integration: `apxm-runtime` 711, `apxm-server` 259, `apxm-acp` 36,
+  `apxm-driver` (incl. two new `bwrap`-gated e2e tests). All pass.
+- **Real confinement** (`bubblewrap_confines_writes_to_workdir_only`): a command
+  runs, the host root is readable, the working dir is writable, and writes to
+  `/etc` are blocked (read-only root).
+- **ACP `wrap_command` e2e** (`wrap_command_runs_confined_with_live_stdio`): a
+  wrapped child runs under `bwrap` with live stdin/stdout forwarded
+  (`got:hello`) and `/etc` writes blocked — proving the ACP path works.
+- **Network isolation**: with `needs_network=false`, `--unshare-net` leaves only
+  `lo` and outbound connects fail (`NO_NET`); without it, the network is
+  reachable.
+- **Full stack, live server**: `bash` via an `inv_tool` node through
+  `/v1/compile` returns `CONFINED_OK / READ_OK / ETC_BLOCKED` — server → runtime
+  → `CapabilitySystem` → `SandboxRegistry` → `BubblewrapSandboxBackend`. The
+  previously fail-closed `bash`/EXC paths now run confined.
 
 ## Remaining (the larger interface roadmap)
 
 - The full `SessionConfig` / `SpawnRequest` / `SessionHandle` trait evolution
   (see `sandbox-interface.md` on the `investigate/openshell` branch).
-- Make the bubblewrap backend honor per-path read allowlists (base mount instead
-  of `--ro-bind / /`) so `bash` validates `Ok` and runs confined when `bwrap` is
-  present.
+- Tighter per-path *read restriction* (curated base mount instead of binding all
+  of `/`) for confidentiality, beyond today's read-only-whole-root model.
 - Opt-in heavy backings (OpenShell, firecracker, gVisor) behind feature flags.

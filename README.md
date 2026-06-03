@@ -43,6 +43,20 @@ resolved environment (MLIR/LLVM 22, conda env, `CARGO_TARGET_DIR`, vLLM image
 store, HF cache, service registry) and refuses to continue if anything is
 misaligned.
 
+### System dependencies
+
+- **bubblewrap (`bwrap`)** — required to confine tool execution (`EXC`, the
+  `bash` and user-tool capabilities, and sandboxed ACP agents). Without it the
+  registry falls back to the policy-only process backend and `OsLevel` requests
+  fail closed. Install with `apt-get install bubblewrap` (or your distro
+  equivalent).
+  - On Ubuntu 23.10+ unprivileged user namespaces are restricted by AppArmor
+    (`kernel.apparmor_restrict_unprivileged_userns=1`), which blocks `bwrap`
+    unless it has a profile granting `userns`. Install one at
+    `/etc/apparmor.d/bwrap` (`profile bwrap /usr/bin/bwrap flags=(unconfined) {
+    userns, }`) and `apparmor_parser -r` it, or run a setuid `bwrap`. See
+    [`docs/integrations/sandbox-acp-seam.md`](docs/integrations/sandbox-acp-seam.md).
+
 ## Documentation
 
 - [`docs/README.md`](docs/README.md) — full docs index.

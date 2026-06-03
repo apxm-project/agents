@@ -1,4 +1,3 @@
-use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 use std::process::{Command as StdCommand, Stdio as StdStdio};
 use std::time::Instant;
@@ -31,7 +30,6 @@ impl BubblewrapSandboxBackend {
 
 struct BubblewrapSession {
     root: tempfile::TempDir,
-    scratch_dir: PathBuf,
     fallback_workdir: PathBuf,
 }
 
@@ -63,7 +61,7 @@ impl SandboxBackend for BubblewrapSandboxBackend {
         cfg!(target_os = "linux") && bubblewrap_available()
     }
 
-    fn validate(&self, request: &ExecRequest) -> ValidationResult {
+    fn validate(&self, _request: &ExecRequest) -> ValidationResult {
         if !cfg!(target_os = "linux") {
             return ValidationResult::Unsupported {
                 reason: bubblewrap::ERR_ONLY_LINUX.to_string(),
@@ -75,26 +73,19 @@ impl SandboxBackend for BubblewrapSandboxBackend {
             };
         }
 
-        let mut warnings = Vec::new();
-        if !request.read_paths.is_empty() {
-            warnings.push(bubblewrap::WARN_READ_ALLOWLISTS.to_string());
-        }
-
-        if warnings.is_empty() {
-            ValidationResult::Ok
-        } else {
-            ValidationResult::Degraded { warnings }
-        }
+        // `read_paths` is documented as an informational grant ("paths the
+        // command needs to read"). bubblewrap binds the host root read-only,
+        // which over-satisfies any read grant, and enforces writes via explicit
+        // bind mounts of the working dir and `write_paths`. Nothing a standard
+        // request asks for is left unenforced, so this is not degraded.
+        ValidationResult::Ok
     }
 
     async fn create_session(&self) -> Result<SandboxContext, SandboxError> {
         let root =
             tempfile::tempdir().map_err(|error| SandboxError::SessionError(error.to_string()))?;
-        let scratch_dir = root.path().join(session_prefixes::SCRATCH);
         let fallback_workdir = root.path().join(session_prefixes::WORKDIR);
 
-        std::fs::create_dir_all(&scratch_dir)
-            .map_err(|error| SandboxError::SessionError(error.to_string()))?;
         std::fs::create_dir_all(&fallback_workdir)
             .map_err(|error| SandboxError::SessionError(error.to_string()))?;
 
@@ -104,7 +95,6 @@ impl SandboxBackend for BubblewrapSandboxBackend {
             IsolationLevel::Container,
             BubblewrapSession {
                 root,
-                scratch_dir,
                 fallback_workdir,
             },
         ))
@@ -121,12 +111,8 @@ impl SandboxBackend for BubblewrapSandboxBackend {
 
         let working_directory = resolve_working_directory(request.working_dir.as_ref(), session)?;
         let writable_mounts = collect_writable_mounts(&request, &working_directory)?;
-        let command_args = build_bwrap_command_args(
-            &request,
-            &working_directory,
-            &writable_mounts,
-            session.scratch_dir.as_path(),
-        )?;
+        let command_args =
+            build_bwrap_command_args(&request, &working_directory, &writable_mounts)?;
 
         let mut command = Command::new(executables::BUBBLEWRAP);
         command
@@ -148,9 +134,9 @@ impl SandboxBackend for BubblewrapSandboxBackend {
                 command.env(key, value);
             }
         }
-        command.env(sandbox_env::TMPDIR, bubblewrap::TMP_DIR);
-        command.env(sandbox_env::TEMP, bubblewrap::TMP_DIR);
-        command.env(sandbox_env::TMP, bubblewrap::TMP_DIR);
+        command.env(sandbox_env::TMPDIR, bubblewrap::FILESYSTEM_TMP);
+        command.env(sandbox_env::TEMP, bubblewrap::FILESYSTEM_TMP);
+        command.env(sandbox_env::TMP, bubblewrap::FILESYSTEM_TMP);
         for (key, value) in &request.env {
             if !self.policy.blocks_env_var(key) {
                 command.env(key, value);
@@ -300,8 +286,11 @@ fn resolve_working_directory(
             })
         }
         None => Ok(WorkingDirectory {
+            // Mirror the real host path: it exists under the read-only root, so
+            // it can be re-bound writable. A synthetic mountpoint can't be
+            // created on the read-only root.
             host: session.fallback_workdir.clone(),
-            sandbox: PathBuf::from(bubblewrap::WORKDIR),
+            sandbox: session.fallback_workdir.clone(),
         }),
     }
 }
@@ -378,8 +367,13 @@ fn build_bwrap_command_args(
     request: &ExecRequest,
     working_directory: &WorkingDirectory,
     writable_mounts: &[WritableMount],
-    scratch_dir: &Path,
 ) -> Result<Vec<String>, SandboxError> {
+    // Read-only root over-satisfies read grants; an ephemeral tmpfs gives a
+    // writable /tmp; writable carve-outs are bound at their real paths (they
+    // exist under the read-only root, so they can be re-bound writable —
+    // synthetic mountpoints can't be created on the read-only root). The tmpfs
+    // is mounted before the carve-out binds so a carve-out under /tmp lands on
+    // the fresh tmpfs.
     let mut args = vec![
         bubblewrap::FLAG_NEW_SESSION.to_string(),
         bubblewrap::FLAG_DIE_WITH_PARENT.to_string(),
@@ -388,6 +382,10 @@ fn build_bwrap_command_args(
         bubblewrap::FILESYSTEM_ROOT.to_string(),
         bubblewrap::FLAG_DEV.to_string(),
         bubblewrap::FILESYSTEM_DEV.to_string(),
+        bubblewrap::FLAG_PROC.to_string(),
+        bubblewrap::FILESYSTEM_PROC.to_string(),
+        bubblewrap::FLAG_TMPFS.to_string(),
+        bubblewrap::FILESYSTEM_TMP.to_string(),
         bubblewrap::FLAG_UNSHARE_USER.to_string(),
         bubblewrap::FLAG_UNSHARE_PID.to_string(),
     ];
@@ -396,17 +394,7 @@ fn build_bwrap_command_args(
         args.push(bubblewrap::FLAG_UNSHARE_NET.to_string());
     }
 
-    args.push(bubblewrap::FLAG_PROC.to_string());
-    args.push(bubblewrap::FILESYSTEM_PROC.to_string());
-
-    let mut created_dirs = HashSet::new();
-    ensure_sandbox_dir(&mut args, &mut created_dirs, Path::new(bubblewrap::TMP_DIR));
-    args.push(bubblewrap::FLAG_BIND.to_string());
-    args.push(path_string(scratch_dir));
-    args.push(bubblewrap::TMP_DIR.to_string());
-
     for mount in writable_mounts {
-        ensure_mount_target(&mut args, &mut created_dirs, mount.sandbox.as_path());
         args.push(bubblewrap::FLAG_BIND.to_string());
         args.push(path_string(mount.host.as_path()));
         args.push(path_string(mount.sandbox.as_path()));
@@ -419,30 +407,6 @@ fn build_bwrap_command_args(
     args.extend(request.args.clone());
 
     Ok(args)
-}
-
-fn ensure_mount_target(args: &mut Vec<String>, created_dirs: &mut HashSet<PathBuf>, path: &Path) {
-    if path.starts_with(Path::new(bubblewrap::WORKDIR)) {
-        ensure_sandbox_dir(args, created_dirs, Path::new(bubblewrap::WORKDIR));
-
-        let mut current = PathBuf::from(bubblewrap::WORKDIR);
-        if let Ok(relative) = path.strip_prefix(Path::new(bubblewrap::WORKDIR)) {
-            for component in relative.components() {
-                current.push(component.as_os_str());
-                ensure_sandbox_dir(args, created_dirs, current.as_path());
-            }
-        }
-    } else if path.starts_with(Path::new(bubblewrap::TMP_DIR)) {
-        ensure_sandbox_dir(args, created_dirs, Path::new(bubblewrap::TMP_DIR));
-    }
-}
-
-fn ensure_sandbox_dir(args: &mut Vec<String>, created_dirs: &mut HashSet<PathBuf>, path: &Path) {
-    let path = path.to_path_buf();
-    if created_dirs.insert(path.clone()) {
-        args.push(bubblewrap::FLAG_DIR.to_string());
-        args.push(path_string(path.as_path()));
-    }
 }
 
 fn absolute_path(path: &Path) -> Result<PathBuf, SandboxError> {
@@ -524,16 +488,20 @@ mod tests {
     }
 
     #[test]
-    fn validate_reports_degraded_read_allowlists() {
+    fn validate_ok_with_read_and_write_grants() {
         let backend = BubblewrapSandboxBackend::with_default_policy();
 
+        // Read grants are informational and over-satisfied by the read-only
+        // root; writes are enforced via bind mounts. A normal request must
+        // validate Ok (not degraded) so bash/EXC actually run under bwrap.
         if backend.is_available() {
             let result = backend.validate(&ExecRequest {
                 read_paths: vec![PathBuf::from("/etc/hosts")],
+                write_paths: vec![PathBuf::from("/tmp/work")],
                 min_isolation: IsolationLevel::OsLevel,
                 ..ExecRequest::default()
             });
-            assert!(matches!(result, ValidationResult::Degraded { .. }));
+            assert_eq!(result, ValidationResult::Ok);
         }
     }
 
@@ -548,20 +516,14 @@ mod tests {
         };
         let working_directory = WorkingDirectory {
             host: PathBuf::from("/tmp/apxm-test-workdir"),
-            sandbox: PathBuf::from(bubblewrap::WORKDIR),
+            sandbox: PathBuf::from("/tmp/apxm-test-workdir"),
         };
         let writable_mounts = vec![WritableMount {
             host: working_directory.host.clone(),
             sandbox: working_directory.sandbox.clone(),
         }];
 
-        let args = build_bwrap_command_args(
-            &request,
-            &working_directory,
-            &writable_mounts,
-            Path::new("/tmp/apxm-test-scratch"),
-        )
-        .unwrap();
+        let args = build_bwrap_command_args(&request, &working_directory, &writable_mounts).unwrap();
 
         assert!(args.windows(3).any(|window| {
             window
@@ -571,8 +533,11 @@ mod tests {
                     bubblewrap::FILESYSTEM_ROOT,
                 ]
         }));
+        assert!(args.windows(2).any(|w| w == [bubblewrap::FLAG_TMPFS, bubblewrap::FILESYSTEM_TMP]));
         assert!(args.iter().any(|arg| arg == bubblewrap::FLAG_UNSHARE_NET));
-        assert!(args.iter().any(|arg| arg == bubblewrap::WORKDIR));
+        // working dir is bound writable at its real path (chdir target)
+        assert!(args.windows(2).any(|w| w
+            == [bubblewrap::FLAG_CHDIR, "/tmp/apxm-test-workdir"]));
     }
 
     #[test]
@@ -586,20 +551,14 @@ mod tests {
         };
         let working_directory = WorkingDirectory {
             host: PathBuf::from("/tmp/apxm-test-workdir"),
-            sandbox: PathBuf::from(bubblewrap::WORKDIR),
+            sandbox: PathBuf::from("/tmp/apxm-test-workdir"),
         };
         let writable_mounts = vec![WritableMount {
             host: working_directory.host.clone(),
             sandbox: working_directory.sandbox.clone(),
         }];
 
-        let args = build_bwrap_command_args(
-            &request,
-            &working_directory,
-            &writable_mounts,
-            Path::new("/tmp/apxm-test-scratch"),
-        )
-        .unwrap();
+        let args = build_bwrap_command_args(&request, &working_directory, &writable_mounts).unwrap();
 
         assert!(!args.iter().any(|arg| arg == bubblewrap::FLAG_UNSHARE_NET));
     }

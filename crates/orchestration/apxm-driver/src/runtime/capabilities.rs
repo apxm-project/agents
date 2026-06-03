@@ -3,7 +3,6 @@
 use crate::{config::ApXmConfig, error::DriverError};
 use apxm_core::types::AISOperationType;
 use apxm_runtime::CapabilitySystem;
-use apxm_runtime::sandbox::{policy::SandboxPolicy, process::ProcessSandbox};
 
 pub fn configure_capability_registry(
     capability_system: std::sync::Arc<CapabilitySystem>,
@@ -97,43 +96,17 @@ impl UserToolCapability {
 impl apxm_runtime::capability::executor::CapabilityExecutor for UserToolCapability {
     async fn execute(
         &self,
-        args: std::collections::HashMap<String, apxm_core::types::values::Value>,
+        _args: std::collections::HashMap<String, apxm_core::types::values::Value>,
     ) -> apxm_runtime::capability::executor::CapabilityResult<apxm_core::types::values::Value> {
-        use apxm_core::types::values::Value;
-
-        let json_input = serde_json::to_string(&args)
-            .map_err(|e| self.cap_err(format!("Failed to serialize arguments: {e}")))?;
-
-        let policy = SandboxPolicy {
-            timeout: std::time::Duration::from_millis(self.timeout_ms),
-            ..SandboxPolicy::default()
-        };
-        let sandbox = ProcessSandbox::new(policy);
-
-        let args_refs: Vec<&str> = self.args.iter().map(|s| s.as_str()).collect();
-        let result = sandbox
-            .execute(&self.command, &args_refs, Some(&json_input))
-            .await
-            .map_err(|e| self.cap_err(format!("Failed to execute subprocess: {e}")))?;
-
-        if result.timed_out {
-            return Err(self.cap_err(format!("Tool timed out after {}ms", self.timeout_ms)));
-        }
-
-        if result.exit_code != 0 {
-            return Err(self.cap_err(format!(
-                "Tool exited with code {}: {}",
-                result.exit_code,
-                result.stderr.trim()
-            )));
-        }
-
-        // Try to parse stdout as JSON, fall back to plain string
-        match serde_json::from_str::<serde_json::Value>(&result.stdout) {
-            Ok(json_val) => Value::try_from(json_val)
-                .map_err(|e| self.cap_err(format!("Failed to convert JSON output to Value: {e}"))),
-            Err(_) => Ok(Value::String(result.stdout)),
-        }
+        // User tools are process-spawning capabilities: `to_exec_request`
+        // returns an ExecRequest, so `CapabilitySystem` always routes them
+        // through the sandbox registry and never calls this method. Refuse
+        // direct execution so a stray caller can never spawn one unsandboxed.
+        Err(self.cap_err(
+            "user tools must be invoked through the sandbox (to_exec_request path), \
+             not executed directly"
+                .to_string(),
+        ))
     }
 
     fn metadata(&self) -> &apxm_runtime::capability::metadata::CapabilityMetadata {
@@ -162,76 +135,30 @@ impl apxm_runtime::capability::executor::CapabilityExecutor for UserToolCapabili
 #[cfg(test)]
 mod tests {
     use super::*;
-    use apxm_core::types::values::Value;
     use apxm_runtime::capability::executor::CapabilityExecutor;
     use std::collections::HashMap;
 
-    fn make_cap(command: &str, args: &[&str], timeout_ms: u64) -> UserToolCapability {
+    /// `execute()` is the dead direct path: user tools route through the sandbox
+    /// via `to_exec_request`. Direct invocation must refuse rather than spawn.
+    /// Subprocess mechanics are covered by `ProcessSandbox` tests; routing by
+    /// the `capability` unit tests.
+    #[tokio::test]
+    async fn test_user_tool_direct_execute_is_refused() {
         let metadata = apxm_runtime::capability::metadata::CapabilityMetadata::new(
             "test-tool",
             "test tool",
             serde_json::json!({}),
         );
-        UserToolCapability {
+        let cap = UserToolCapability {
             metadata,
-            command: command.to_string(),
-            args: args.iter().map(|s| s.to_string()).collect(),
-            timeout_ms,
-        }
-    }
-
-    #[tokio::test]
-    async fn test_user_tool_echoes_stdin() {
-        let cap = make_cap("cat", &[], 5_000);
-        let mut args = HashMap::new();
-        args.insert("key".to_string(), Value::String("hello".to_string()));
-
-        let result = cap.execute(args).await.unwrap();
-        // cat echoes stdin back; JSON is {"key":"hello"}
-        match result {
-            Value::Object(map) => {
-                assert_eq!(map.get("key"), Some(&Value::String("hello".to_string())));
-            }
-            _ => panic!("Expected JSON object output, got: {:?}", result),
-        }
-    }
-
-    #[tokio::test]
-    async fn test_user_tool_timeout() {
-        let cap = make_cap("sleep", &["10"], 500);
-        let result = cap.execute(HashMap::new()).await;
-        assert!(result.is_err());
-        let err = result.unwrap_err();
-        let msg = format!("{err}");
-        assert!(
-            msg.contains("timed out"),
-            "Expected timeout error, got: {msg}"
-        );
-    }
-
-    #[tokio::test]
-    async fn test_user_tool_nonzero_exit() {
-        let cap = make_cap("bash", &["-c", "echo oops >&2; exit 42"], 5_000);
-        let result = cap.execute(HashMap::new()).await;
-        assert!(result.is_err());
-        let err = result.unwrap_err();
-        let msg = format!("{err}");
-        assert!(
-            msg.contains("42"),
-            "Expected exit code 42 in error, got: {msg}"
-        );
-        assert!(msg.contains("oops"), "Expected stderr in error, got: {msg}");
-    }
-
-    #[tokio::test]
-    async fn test_user_tool_plain_text_output() {
-        // echo outputs non-JSON text, should return as Value::String
-        let cap = make_cap("echo", &["plain text"], 5_000);
-        let result = cap.execute(HashMap::new()).await.unwrap();
-        match result {
-            Value::String(s) => assert!(s.contains("plain text")),
-            _ => panic!("Expected string output, got: {:?}", result),
-        }
+            command: "echo".to_string(),
+            args: vec![],
+            timeout_ms: 5_000,
+        };
+        let err = cap.execute(HashMap::new()).await.unwrap_err();
+        assert!(format!("{err}").contains("through the sandbox"));
+        // It still advertises an ExecRequest so the sandbox path is taken.
+        assert!(cap.to_exec_request(&HashMap::new()).is_some());
     }
 
     #[test]

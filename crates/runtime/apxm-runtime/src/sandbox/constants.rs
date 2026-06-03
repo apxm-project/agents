@@ -14,7 +14,6 @@ pub mod backend_names {
 pub mod session_prefixes {
     pub const PROCESS: &str = "process";
     pub const BUBBLEWRAP: &str = "bwrap";
-    pub const SCRATCH: &str = "scratch";
     pub const WORKDIR: &str = "workdir";
     pub const SCRIPT: &str = "script";
 }
@@ -66,7 +65,6 @@ pub mod bubblewrap {
     pub const FLAG_BIND: &str = "--bind";
     pub const FLAG_DEV: &str = "--dev";
     pub const FLAG_PROC: &str = "--proc";
-    pub const FLAG_DIR: &str = "--dir";
     pub const FLAG_CHDIR: &str = "--chdir";
     pub const FLAG_UNSHARE_USER: &str = "--unshare-user";
     pub const FLAG_UNSHARE_PID: &str = "--unshare-pid";
@@ -77,9 +75,6 @@ pub mod bubblewrap {
     pub const FILESYSTEM_DEV: &str = "/dev";
     pub const FILESYSTEM_PROC: &str = "/proc";
     pub const FILESYSTEM_TMP: &str = "/tmp";
-    pub const TMP_DIR: &str = "/apxm-tmp";
-    pub const WORKDIR: &str = "/apxm-workdir";
-    pub const WARN_READ_ALLOWLISTS: &str = "bubblewrap backend currently enforces read-only root plus writable carve-outs, not per-path read allowlists";
     pub const ERR_NOT_AVAILABLE: &str = "bubblewrap is not available on this host";
     pub const ERR_ONLY_LINUX: &str = "bubblewrap backend is only supported on Linux";
     pub const ERR_SESSION_STATE: &str = "invalid bubblewrap session state";
