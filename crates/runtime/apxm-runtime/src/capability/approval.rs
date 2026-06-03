@@ -1,10 +1,8 @@
 //! Permission/approval flow for capability invocation.
 //!
-//! Provides [`ApprovalStore`] for caching user decisions and
-//! [`ApprovalChannel`] for interactive approval requests.
+//! Provides [`ApprovalStore`] for caching user decisions.
 
 use super::interceptor::InterceptDecision;
-use async_trait::async_trait;
 use parking_lot::RwLock;
 use std::collections::HashMap;
 use std::time::Instant;
@@ -106,26 +104,6 @@ impl Default for ApprovalStore {
     fn default() -> Self {
         Self::new()
     }
-}
-
-/// Async channel for requesting user approval before executing a capability.
-///
-/// Implementations may display a TUI prompt, send an HTTP callback, or
-/// delegate to any other approval mechanism.
-#[async_trait]
-pub trait ApprovalChannel: Send + Sync {
-    /// Request approval for invoking `capability` with the given `args`.
-    ///
-    /// `context` provides human-readable information about why the
-    /// capability is being invoked. The implementation should return an
-    /// [`InterceptDecision`] and an [`ApprovalScope`] indicating how
-    /// long the decision should be cached.
-    async fn request_approval(
-        &self,
-        capability: &str,
-        args: &serde_json::Value,
-        context: &str,
-    ) -> (InterceptDecision, ApprovalScope);
 }
 
 #[cfg(test)]
