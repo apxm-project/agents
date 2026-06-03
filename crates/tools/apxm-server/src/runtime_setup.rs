@@ -46,8 +46,8 @@ pub(crate) async fn build_runtime_with_router(
 /// this the system starts empty and every tool node is rejected.
 fn register_builtin_capabilities(runtime: &Runtime) {
     use apxm_runtime::capability::builtins::{
-        BashCapability, HttpGetCapability, HttpPostCapability, McpBridgeCapability,
-        ProviderCallCapability, ReadCapability, WriteCapability,
+        BashCapability, CountTokensCapability, HttpGetCapability, HttpPostCapability,
+        McpBridgeCapability, ProviderCallCapability, ReadCapability, WriteCapability,
     };
     use apxm_runtime::capability::executor::CapabilityExecutor;
     use std::sync::Arc;
@@ -67,6 +67,8 @@ fn register_builtin_capabilities(runtime: &Runtime) {
         Arc::new(ProviderCallCapability::new()),
         // The MCP-client bridge: peer backing for MCP-server tools (tools/call).
         Arc::new(McpBridgeCapability::new()),
+        // Token estimator: lets a program decide in-graph when to compact.
+        Arc::new(CountTokensCapability::new()),
     ];
     let mut n = 0u32;
     for cap in caps {

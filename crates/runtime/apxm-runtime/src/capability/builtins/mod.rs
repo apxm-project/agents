@@ -4,6 +4,7 @@
 //! `SearchWebCapability` that agents can invoke during workflow execution.
 
 pub mod bash;
+pub mod count_tokens;
 pub mod http;
 pub mod mcp_bridge;
 pub mod provider_call;
@@ -12,6 +13,7 @@ pub mod web_search;
 pub mod write;
 
 pub use bash::{BashCapability, BashConfig};
+pub use count_tokens::CountTokensCapability;
 pub use http::{HttpGetCapability, HttpPostCapability};
 pub use mcp_bridge::McpBridgeCapability;
 pub use provider_call::ProviderCallCapability;
