@@ -32,6 +32,12 @@ pub(crate) async fn build_runtime_with_router(
     runtime.add_middleware(std::sync::Arc::new(
         apxm_runtime::TokenBudgetMiddleware::new(),
     ));
+    // Context management as a composable layer: record each ASK answer into
+    // session memory so conversation history accrues automatically (the program
+    // recalls it via qmem; it never threads a transcript). Op-scoped to ASK.
+    runtime.add_middleware(std::sync::Arc::new(
+        apxm_runtime::ConversationMemoryMiddleware::new(),
+    ));
     Ok(runtime)
 }
 

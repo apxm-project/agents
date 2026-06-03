@@ -43,7 +43,9 @@ pub use hooks::{
 };
 pub use inner_plan_linker::{InnerPlanLinker, NoOpLinker};
 pub use middleware::{Next, OperationMiddleware};
-pub use middlewares::{LoopGuardMiddleware, TimeoutMiddleware, TokenBudgetMiddleware};
+pub use middlewares::{
+    ConversationMemoryMiddleware, LoopGuardMiddleware, TimeoutMiddleware, TokenBudgetMiddleware,
+};
 pub use skill_resolver::{CallSkillRequest, CallSkillResult, NoOpSkillResolver, SkillResolver};
 pub use timing_tracker::TimingTracker;
 pub use token_accounting::{TokenAccountant, TokenUsageSummary};
