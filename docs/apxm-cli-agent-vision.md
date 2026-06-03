@@ -331,3 +331,6 @@ NOTE: a pre-existing, environment-dependent integration test
 (`session_list_prefers_local_root_over_global_home`, unrelated `session list`
 path) fails on this dev box at the base commit too — not introduced here. All
 new tests pass; core crates (skill/ais/runtime/server) are fully green.
+
+> **Loop (Model B):** Making the interactive conversation loop fully in-graph
+> needs a `RECV`/`PAUSE`-for-input turn op + scheduler iteration.
