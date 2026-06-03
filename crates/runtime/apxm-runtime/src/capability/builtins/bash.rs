@@ -1,18 +1,18 @@
 use super::require_string_arg;
 use crate::capability::{
-    executor::{CapabilityExecutor, CapabilityResult, exec_result_to_value},
+    executor::{CapabilityExecutor, CapabilityResult},
     metadata::CapabilityMetadata,
 };
 use crate::sandbox::constants::{executables, shell_args};
-use crate::sandbox::{ExecRequest, ExecResult, IsolationLevel};
+use crate::sandbox::{ExecRequest, IsolationLevel};
 use apxm_core::{
     error::RuntimeError,
     types::{AISOperationType, Value},
 };
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
-use std::{collections::HashMap, path::PathBuf, process::Stdio, time::Instant};
-use tokio::{process::Command, time::Duration};
+use std::{collections::HashMap, path::PathBuf};
+use tokio::time::Duration;
 
 const BLOCKED_COMMAND_RM_RECURSIVE: &str = "rm recursive";
 const BLOCKED_COMMAND_RM_RECURSIVE_FORCE: &str = "rm recursive force";
@@ -235,11 +235,6 @@ impl BashCapability {
         })
     }
 
-    fn truncate_output(stdout: &mut String, stderr: &mut String, max_output_bytes: usize) {
-        let mut remaining = max_output_bytes;
-        truncate_string_in_place(stdout, &mut remaining);
-        truncate_string_in_place(stderr, &mut remaining);
-    }
 }
 
 fn git_allowed_commands() -> Vec<String> {
@@ -279,43 +274,17 @@ impl Default for BashCapability {
 
 #[async_trait]
 impl CapabilityExecutor for BashCapability {
-    async fn execute(&self, args: HashMap<String, Value>) -> CapabilityResult<Value> {
-        let exec_request = self.build_exec_request(&args)?;
-        let mut command_process = Command::new(&exec_request.program);
-        command_process
-            .args(&exec_request.args)
-            .stdin(Stdio::null())
-            .stdout(Stdio::piped())
-            .stderr(Stdio::piped());
-
-        if let Some(working_directory) = &exec_request.working_dir {
-            command_process.current_dir(working_directory);
-        }
-
-        let start = Instant::now();
-        let output = tokio::time::timeout(exec_request.timeout, command_process.output())
-            .await
-            .map_err(|_| RuntimeError::Timeout {
-                op_id: 0,
-                timeout: exec_request.timeout,
-            })?
-            .map_err(|error| RuntimeError::Capability {
-                capability: self.metadata.name.clone(),
-                message: format!("Failed to execute command: {error}"),
-            })?;
-
-        let mut stdout = String::from_utf8_lossy(&output.stdout).into_owned();
-        let mut stderr = String::from_utf8_lossy(&output.stderr).into_owned();
-        Self::truncate_output(&mut stdout, &mut stderr, exec_request.max_output_bytes);
-
-        Ok(exec_result_to_value(ExecResult {
-            success: output.status.success(),
-            exit_code: output.status.code(),
-            stdout,
-            stderr,
-            duration: start.elapsed(),
-            timed_out: false,
-        }))
+    async fn execute(&self, _args: HashMap<String, Value>) -> CapabilityResult<Value> {
+        // bash is a process-spawning capability: it declares an ExecRequest via
+        // `to_exec_request`, so `CapabilitySystem` always routes it through the
+        // sandbox registry and never calls this method. Refuse direct execution
+        // so a stray caller can never spawn bash outside the sandbox.
+        Err(RuntimeError::Capability {
+            capability: self.metadata.name.clone(),
+            message: "bash must be invoked through the sandbox (to_exec_request path), \
+                      not executed directly"
+                .to_string(),
+        })
     }
 
     fn metadata(&self) -> &CapabilityMetadata {
@@ -325,22 +294,6 @@ impl CapabilityExecutor for BashCapability {
     fn to_exec_request(&self, args: &HashMap<String, Value>) -> Option<ExecRequest> {
         self.build_exec_request(args).ok()
     }
-}
-
-fn truncate_string_in_place(value: &mut String, remaining: &mut usize) {
-    if *remaining == 0 {
-        value.clear();
-        return;
-    }
-
-    if value.len() <= *remaining {
-        *remaining -= value.len();
-        return;
-    }
-
-    let boundary = value.floor_char_boundary(*remaining);
-    value.truncate(boundary);
-    *remaining = 0;
 }
 
 fn command_matches_allowed(command: &str, allowed: &str) -> bool {

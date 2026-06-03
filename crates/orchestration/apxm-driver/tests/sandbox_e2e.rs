@@ -4,8 +4,7 @@
 //!   `ProcessSandboxBackend` -> `SandboxBackend` trait -> actual process execution
 //!
 //! They also verify the driver's `configure_sandbox_registry()` wiring and
-//! demonstrate a full graph execution with INV nodes to expose the sandbox
-//! integration gap.
+//! demonstrate a full graph execution with INV nodes.
 //!
 //! # Architecture note
 //!
@@ -14,9 +13,9 @@
 //! The driver registers it via `configure_sandbox_registry()` and injects it
 //! into the `Runtime` via `set_sandbox_registry()`.
 //!
-//! However, the runtime's INV handler does NOT call `SandboxBackend::execute()`
-//! -- it calls `CapabilityExecutor::execute()` directly, which bypasses the
-//! sandbox entirely.
+//! The capability/INV path routes any capability that declares an `ExecRequest`
+//! (via `to_exec_request`) through the selected `SandboxBackend`, so process
+//! tools run confined or fail closed -- never unsandboxed.
 
 use apxm_runtime::sandbox::constants::backend_names;
 use apxm_runtime::sandbox::{
@@ -439,4 +438,116 @@ async fn sandbox_registry_propagates_to_child_contexts() {
 
     // Verify both point to the same Arc
     assert!(Arc::ptr_eq(&ctx.sandbox_registry, &child.sandbox_registry));
+}
+
+/// Real bubblewrap confinement: the host root is readable (over-satisfying the
+/// read grant), writes are confined to the working dir, and writes elsewhere
+/// (read-only root) are blocked. Skipped when `bwrap` is not installed.
+#[tokio::test]
+async fn bubblewrap_confines_writes_to_workdir_only() {
+    use apxm_driver::runtime::sandbox::configure_sandbox_registry;
+    let registry = configure_sandbox_registry();
+    let backend = match registry.select(IsolationLevel::OsLevel) {
+        Ok(b) if b.capabilities().name == backend_names::BUBBLEWRAP => b,
+        _ => {
+            eprintln!("SKIP: bubblewrap backend unavailable (bwrap not installed)");
+            return;
+        }
+    };
+
+    let workdir = std::env::temp_dir().join(format!("apxm-bwrap-e2e-{}", std::process::id()));
+    std::fs::create_dir_all(&workdir).unwrap();
+
+    let session = backend.create_session().await.unwrap();
+    let script = "echo confined; \
+                  cat /etc/hostname >/dev/null 2>&1 && echo readok; \
+                  (echo x > ./in_workdir.txt) && echo wrote_workdir; \
+                  (echo x > /etc/apxm_should_fail) 2>/dev/null && echo WROTE_ETC || echo etc_blocked";
+    let request = ExecRequest {
+        min_isolation: IsolationLevel::OsLevel,
+        program: "sh".to_string(),
+        args: vec!["-c".to_string(), script.to_string()],
+        working_dir: Some(workdir.clone()),
+        read_paths: vec![workdir.clone()],
+        write_paths: vec![workdir.clone()],
+        needs_network: false,
+        ..ExecRequest::default()
+    };
+    let result = backend.execute(&session, request).await.unwrap();
+    backend.destroy_session(session).await.unwrap();
+    let _ = std::fs::remove_dir_all(&workdir);
+
+    assert!(
+        result.success,
+        "sandboxed command failed: stdout={} stderr={}",
+        result.stdout, result.stderr
+    );
+    assert!(result.stdout.contains("confined"), "command did not run");
+    assert!(result.stdout.contains("readok"), "host root should be readable");
+    assert!(
+        result.stdout.contains("wrote_workdir"),
+        "working dir should be writable"
+    );
+    assert!(
+        result.stdout.contains("etc_blocked") && !result.stdout.contains("WROTE_ETC"),
+        "writes outside the working dir must be blocked (read-only root)"
+    );
+}
+
+/// The ACP path: `wrap_command` must yield a confined process that still has
+/// working live stdio (bwrap forwards stdin/stdout to the inner child). Mirrors
+/// how AcpSession attaches pipes. Skipped when `bwrap` is not installed.
+#[tokio::test]
+async fn wrap_command_runs_confined_with_live_stdio() {
+    use apxm_driver::runtime::sandbox::configure_sandbox_registry;
+    use tokio::io::AsyncWriteExt;
+    use tokio::process::Command;
+
+    let registry = configure_sandbox_registry();
+    let backend = match registry.select(IsolationLevel::OsLevel) {
+        Ok(b) if b.capabilities().name == backend_names::BUBBLEWRAP => b,
+        _ => {
+            eprintln!("SKIP: bubblewrap backend unavailable (bwrap not installed)");
+            return;
+        }
+    };
+
+    let workdir = std::env::temp_dir().join(format!("apxm-wrap-e2e-{}", std::process::id()));
+    std::fs::create_dir_all(&workdir).unwrap();
+
+    let (program, args) = backend.wrap_command(
+        "sh",
+        &[
+            "-c".to_string(),
+            "read line; echo \"got:$line\"; \
+             (echo x > /etc/apxm_nope) 2>/dev/null && echo WROTE || echo blocked"
+                .to_string(),
+        ],
+        &workdir,
+        false,
+    );
+    assert_eq!(program, "bwrap", "wrap_command should route through bwrap");
+
+    let mut child = Command::new(&program)
+        .args(&args)
+        .stdin(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::piped())
+        .spawn()
+        .unwrap();
+    child
+        .stdin
+        .take()
+        .unwrap()
+        .write_all(b"hello\n")
+        .await
+        .unwrap();
+    let output = child.wait_with_output().await.unwrap();
+    let _ = std::fs::remove_dir_all(&workdir);
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.contains("got:hello"), "stdio not forwarded: {stdout}");
+    assert!(
+        stdout.contains("blocked") && !stdout.contains("WROTE"),
+        "wrapped process not confined: {stdout}"
+    );
 }
