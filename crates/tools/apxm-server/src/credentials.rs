@@ -33,8 +33,23 @@ impl CredentialResolver {
     }
 
     /// `GET /v1/connections/{id}/token` — returns the current access token.
-    pub(crate) async fn resolve(&self, connection_id: &str) -> anyhow::Result<String> {
-        let url = format!("{}/v1/connections/{}/token", self.base, enc(connection_id));
+    ///
+    /// apxm-auth requires an `owner` query parameter and scopes the connection
+    /// to that tenant. When the dispatch context carries an owner it is threaded
+    /// through `owner`; otherwise the `APXM_AUTH_OWNER` env (default `"default"`)
+    /// is used. The service bearer authenticates the service; owner scopes the
+    /// tenant — both are sent.
+    pub(crate) async fn resolve(
+        &self,
+        connection_id: &str,
+        owner: Option<&str>,
+    ) -> anyhow::Result<String> {
+        let url = format!(
+            "{}/v1/connections/{}/token?owner={}",
+            self.base,
+            enc(connection_id),
+            enc(&resolve_owner(owner))
+        );
         let mut req = self.http.get(url);
         if let Some(b) = &self.bearer {
             req = req.bearer_auth(b);
@@ -45,6 +60,15 @@ impl CredentialResolver {
         }
         Ok(resp.json::<TokenResp>().await?.access_token)
     }
+}
+
+/// Resolve the owner/tenant for an apxm-auth request: prefer an owner carried
+/// by the dispatch context, else `APXM_AUTH_OWNER`, else the `"default"`
+/// convention (matching apxm-auth's own oauth_start default).
+fn resolve_owner(owner: Option<&str>) -> String {
+    owner
+        .map(str::to_string)
+        .unwrap_or_else(|| std::env::var("APXM_AUTH_OWNER").unwrap_or_else(|_| "default".to_string()))
 }
 
 /// Read apxm-auth's per-run bearer (written 0600 by `apxm-auth serve`).

@@ -96,7 +96,12 @@ fn resolve_session_root(ctx: &ExecutionContext, node: &Node) -> Result<Option<St
                 message: "WORKFLOW_SPAWN session_root must not be empty".to_string(),
             });
         }
-        return Ok(Some(trimmed.to_string()));
+        return Err(RuntimeError::Operation {
+            op_type: node.op_type,
+            message:
+                "WORKFLOW_SPAWN session_root is server-controlled and may not be supplied by a graph"
+                    .to_string(),
+        });
     }
 
     if let Some(root) = ctx.metadata.get(metadata::SESSION_ROOT) {
@@ -274,7 +279,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn explicit_session_root_overrides_parent_metadata() {
+    async fn explicit_session_root_is_rejected() {
         let ctx = test_ctx()
             .await
             .with_metadata(
@@ -291,10 +296,11 @@ mod tests {
             Value::String("/tmp/explicit-root".to_string()),
         );
 
-        assert_eq!(
-            resolve_session_root(&ctx, &node).expect("session root"),
-            Some("/tmp/explicit-root".to_string())
-        );
+        let error = resolve_session_root(&ctx, &node).expect_err("session root must be rejected");
+        let RuntimeError::Operation { message, .. } = error else {
+            panic!("expected operation error");
+        };
+        assert!(message.contains("server-controlled"));
     }
 
     #[tokio::test]

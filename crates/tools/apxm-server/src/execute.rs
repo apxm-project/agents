@@ -34,6 +34,8 @@ const ERROR_RAW_PYTHON_TOOL_HANDLERS: &str =
 const ERROR_INV_TOOL_MISSING_CAPABILITY: &str = "INV_TOOL missing capability attribute";
 const ERROR_INV_TOOL_PARAMS_NOT_OBJECT: &str = "INV_TOOL params_json must be a JSON object";
 const ERROR_ASK_REQUIRES_READ_ONLY_TOOLS: &str = "ASK tool exposure requires read-only tools";
+const ADMIT_SPAWN_AGENT: &str = "SPAWN_AGENT";
+const ADMIT_SPAWN_TEAM: &str = "SPAWN_TEAM";
 
 #[derive(Debug, Deserialize)]
 pub(crate) struct ExecuteRequest {
@@ -467,11 +469,44 @@ fn validate_raw_execute_admission(
                 AISOperationType::Ask | AISOperationType::Think | AISOperationType::Reason => {
                     validate_raw_llm_tool_exposure(node, state)?;
                 }
+                AISOperationType::SpawnAgent => {
+                    validate_raw_spawn_op_admission(ADMIT_SPAWN_AGENT, node, admit)?;
+                }
+                AISOperationType::SpawnTeam => {
+                    validate_raw_spawn_op_admission(ADMIT_SPAWN_TEAM, node, admit)?;
+                }
+                AISOperationType::WorkflowSpawn => {
+                    validate_workflow_spawn_node(node).map_err(ApiError::bad_request)?;
+                }
                 _ => {}
             }
         }
     }
 
+    Ok(())
+}
+
+fn validate_raw_spawn_op_admission(
+    admit_name: &str,
+    node: &Node,
+    admit: &std::collections::HashSet<String>,
+) -> Result<(), ApiError> {
+    if admit.contains(admit_name) || admit.contains(&admit_name.to_ascii_lowercase()) {
+        return Ok(());
+    }
+    Err(ApiError::bad_request(format!(
+        "{:?} performs process spawning and was not granted; add '{}' to admit_capabilities to authorize this execution",
+        node.op_type, admit_name
+    )))
+}
+
+fn validate_workflow_spawn_node(node: &Node) -> Result<(), String> {
+    if node.attributes.contains_key(graph_attrs::SESSION_ROOT) {
+        return Err(
+            "WORKFLOW_SPAWN session_root is server-controlled and may not be supplied by a graph"
+                .to_string(),
+        );
+    }
     Ok(())
 }
 
@@ -635,7 +670,7 @@ async fn inject_resolved_credentials(artifact: &mut Artifact) -> Result<(), ApiE
                 continue;
             };
             let r = resolver.get_or_insert_with(crate::credentials::CredentialResolver::from_env);
-            let token = r.resolve(&conn_id).await.map_err(|e| {
+            let token = r.resolve(&conn_id, None).await.map_err(|e| {
                 ApiError::internal_message(format!("credential resolve failed for `{conn_id}`: {e}"))
             })?;
             if let Some(obj) = params.as_object_mut() {

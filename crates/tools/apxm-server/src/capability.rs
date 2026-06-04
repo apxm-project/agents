@@ -3,6 +3,7 @@ use std::sync::Arc;
 
 use apxm_core::error::RuntimeError;
 use apxm_core::types::values::Value;
+use apxm_runtime::capability::builtins::guard_url_ssrf;
 use apxm_runtime::capability::executor::{CapabilityExecutor, CapabilityResult};
 use apxm_runtime::capability::metadata::CapabilityMetadata;
 use async_trait::async_trait;
@@ -51,6 +52,8 @@ impl CapabilityExecutor for HttpCapability {
             capability: self.metadata.name.clone(),
             message: msg,
         };
+
+        guard_url_ssrf(&self.metadata.name, &self.endpoint).await?;
 
         let mut req_builder = self
             .client
@@ -245,8 +248,17 @@ fn capability_from_tool(t: &PackToolDecl) -> Option<Arc<dyn CapabilityExecutor>>
             ),
         })),
         "http" => t.endpoint_pattern.clone().map(|endpoint| {
-            Arc::new(HttpCapability { metadata, endpoint, timeout_ms: 30_000, headers: HashMap::new(), client: reqwest::Client::new() })
-                as Arc<dyn CapabilityExecutor>
+            let client = reqwest::Client::builder()
+                .redirect(reqwest::redirect::Policy::none())
+                .build()
+                .unwrap_or_default();
+            Arc::new(HttpCapability {
+                metadata,
+                endpoint,
+                timeout_ms: 30_000,
+                headers: HashMap::new(),
+                client,
+            }) as Arc<dyn CapabilityExecutor>
         }),
         "mcp" => t.server_url.clone().map(|server_url| {
             let tool = t.mcp_tool.clone().unwrap_or_else(|| t.capability.clone());
@@ -446,13 +458,21 @@ pub(crate) async fn register_capability(
                 .endpoint
                 .clone()
                 .ok_or_else(|| ApiError::bad_request("kind=http requires an endpoint".to_string()))?;
+            guard_url_ssrf(&req.name, &endpoint)
+                .await
+                .map_err(|error| ApiError::bad_request(error.to_string()))?;
             info!(name = %req.name, endpoint = %endpoint, "registering HTTP capability");
             Arc::new(HttpCapability {
                 metadata,
                 endpoint,
                 timeout_ms: req.timeout_ms.unwrap_or(30_000),
                 headers: req.headers.clone().unwrap_or_default(),
-                client: reqwest::Client::new(),
+                client: reqwest::Client::builder()
+                    .redirect(reqwest::redirect::Policy::none())
+                    .build()
+                    .map_err(|e| {
+                        ApiError::internal_message(format!("failed to build HTTP client: {e}"))
+                    })?,
             })
         }
         _ => {

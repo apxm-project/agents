@@ -64,6 +64,15 @@ impl ReadCapability {
         Self::with_config(ReadConfig::default())
     }
 
+    /// Same policy as [`new`] but confined to `base_directory`: relative paths
+    /// resolve under it and any resolved path that escapes it is rejected.
+    pub fn new_with_base_directory(base_directory: PathBuf) -> Self {
+        Self::with_config(ReadConfig {
+            base_directory: Some(base_directory),
+            ..Default::default()
+        })
+    }
+
     pub fn with_config(config: ReadConfig) -> Self {
         Self {
             metadata: CapabilityMetadata::new(

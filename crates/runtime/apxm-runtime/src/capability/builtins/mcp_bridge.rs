@@ -43,6 +43,14 @@ fn auth_base() -> String {
     std::env::var("APXM_AUTH_URL").unwrap_or_else(|_| "http://127.0.0.1:18810".to_string())
 }
 
+/// Owner/tenant scoping for apxm-auth requests. apxm-auth requires an `owner`
+/// query parameter; we use `APXM_AUTH_OWNER` (default `"default"`, matching
+/// apxm-auth's own oauth_start default). The service bearer is separate and
+/// still sent: it authenticates the service, owner scopes the tenant.
+fn auth_owner() -> String {
+    std::env::var("APXM_AUTH_OWNER").unwrap_or_else(|_| "default".to_string())
+}
+
 fn auth_bearer() -> Option<String> {
     let dir = std::env::var("XDG_STATE_HOME")
         .map(std::path::PathBuf::from)
@@ -165,7 +173,12 @@ impl McpBridgeCapability {
 
     async fn resolve_token(&self, credential: &str) -> Option<String> {
         let base = self.base.clone().unwrap_or_else(auth_base);
-        let mut req = shared_client().get(format!("{}/v1/connections/{}/token", base, enc(credential)));
+        let mut req = shared_client().get(format!(
+            "{}/v1/connections/{}/token?owner={}",
+            base,
+            enc(credential),
+            enc(&auth_owner())
+        ));
         if let Some(b) = auth_bearer() {
             req = req.bearer_auth(b);
         }

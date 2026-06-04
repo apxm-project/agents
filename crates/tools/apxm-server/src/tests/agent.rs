@@ -11,7 +11,7 @@ async fn agent_registry_register_returns_ok() {
         routes::AGENTS_REGISTER,
         serde_json::json!({
             "name": "test-agent",
-            "url": "http://localhost:19999",
+            "url": "https://example.com/agent",
             "flows": ["research"],
             "capabilities": ["web-search"]
         }),

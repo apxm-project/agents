@@ -3,6 +3,7 @@
 //! agent registry.
 
 use super::super::{ExecutionContext, Node, Result, Value};
+use crate::capability::builtins::guard_url_ssrf;
 use apxm_core::error::RuntimeError;
 
 /// Dispatch COMMUNICATE over HTTP to an external APXM agent.
@@ -51,6 +52,9 @@ pub(super) async fn execute_http(
             .ok_or_else(|| op_err(format!("Agent '{}' has no 'url' field", recipient)))?
             .to_string()
     };
+    guard_url_ssrf("communicate.http", &base_url)
+        .await
+        .map_err(|error| op_err(error.to_string()))?;
 
     let msg_json = message
         .to_json()

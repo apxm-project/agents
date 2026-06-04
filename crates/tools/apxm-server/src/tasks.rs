@@ -33,7 +33,7 @@ pub(crate) struct QueuedTask {
     pub(crate) status: TaskStatus,
     #[serde(default)]
     pub(crate) claimed_by: Option<String>,
-    #[serde(default)]
+    #[serde(default, skip_serializing)]
     pub(crate) claim_token: Option<String>,
     #[serde(default)]
     pub(crate) lease_expires_ms: Option<u64>,

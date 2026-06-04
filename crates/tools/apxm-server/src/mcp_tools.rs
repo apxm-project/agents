@@ -175,7 +175,7 @@ pub(crate) async fn plan_as_graph_with_recorder(
     )
     .await
     {
-        Ok(candidate) => match build_compiled_plan_graph(candidate) {
+        Ok(candidate) => match build_compiled_plan_graph(candidate, Some(runtime)) {
             Ok(compiled) => compiled,
             Err(error) => {
                 repair_plan_candidate(
@@ -578,7 +578,7 @@ async fn repair_plan_candidate(
                 return Err(error.into_message());
             }
         };
-        match build_compiled_plan_graph(repaired) {
+        match build_compiled_plan_graph(repaired, Some(runtime)) {
             Ok(compiled) => return Ok(compiled),
             Err(error) => last_error = error,
         }
@@ -607,9 +607,15 @@ pub(crate) fn lower_plan_graph_to_air(value: JsonValue) -> Result<String, String
         .map_err(|error| format!("AIR emission failed: {error}"))
 }
 
-fn build_compiled_plan_graph(value: JsonValue) -> Result<CompiledPlanGraph, String> {
+fn build_compiled_plan_graph(
+    value: JsonValue,
+    runtime: Option<&Runtime>,
+) -> Result<CompiledPlanGraph, String> {
     let plan_value = normalize_plan_value(decode_plan_graph(&value)?)?;
     let (plan, normalized_plan) = parse_plan_graph(plan_value)?;
+    if let Some(runtime) = runtime {
+        validate_generated_plan_graph_admission(&plan, runtime)?;
+    }
     let module = lower_plan_to_air_module(&plan)?;
     let air = module
         .to_air()
@@ -632,6 +638,65 @@ fn build_compiled_plan_graph(value: JsonValue) -> Result<CompiledPlanGraph, Stri
         air_hash,
         compile_ms,
     })
+}
+
+fn validate_generated_plan_graph_admission(
+    plan: &PlanGraph,
+    runtime: &Runtime,
+) -> Result<(), String> {
+    for node in &plan.nodes {
+        if node.op == PlanNodeOp::InvTool {
+            validate_generated_plan_inv_tool_node(node, runtime)?;
+        }
+    }
+    Ok(())
+}
+
+fn validate_generated_plan_inv_tool_node(node: &PlanNode, runtime: &Runtime) -> Result<(), String> {
+    let capability = node
+        .capability
+        .as_deref()
+        .ok_or_else(|| admission_error::INV_TOOL_MISSING_CAPABILITY.to_string())?;
+    let capability_system = runtime.capability_system();
+
+    if !capability_system.has_capability(capability) {
+        return Err(admission_error::generated_capability_not_registered(
+            capability,
+        ));
+    }
+
+    if capability_system.is_read_only(capability) {
+        return Ok(());
+    }
+
+    let args = plan_inv_tool_args(node)?;
+    match capability_system.sandbox_preflight(capability, &args) {
+        Ok(CapabilitySandboxPreflight::Sandboxed { .. }) => Ok(()),
+        Ok(CapabilitySandboxPreflight::Direct) => Err(
+            admission_error::generated_capability_direct_side_effect(capability),
+        ),
+        Err(error) => Err(admission_error::generated_capability_sandbox_preflight(
+            capability,
+            &error.to_string(),
+        )),
+    }
+}
+
+fn plan_inv_tool_args(node: &PlanNode) -> Result<HashMap<String, RuntimeValue>, String> {
+    let Some(args) = node.args.as_ref() else {
+        return Ok(HashMap::new());
+    };
+    let Some(object) = args.as_object() else {
+        return Err(admission_error::INV_TOOL_PARAMS_NOT_OBJECT.to_string());
+    };
+
+    let mut out = HashMap::new();
+    for (key, value) in object {
+        let value = RuntimeValue::try_from(value.clone())
+            .map_err(|error| format!("invalid INV_TOOL arg '{key}': {error}"))?;
+        out.insert(key.clone(), value);
+    }
+    Ok(out)
 }
 
 fn normalize_plan_value(mut plan: JsonValue) -> Result<JsonValue, String> {
@@ -1302,11 +1367,30 @@ fn validate_generated_plan_admission(artifact: &Artifact, runtime: &Runtime) -> 
                 AISOperationType::Ask | AISOperationType::Think | AISOperationType::Reason => {
                     validate_generated_llm_tool_exposure(node, runtime)?;
                 }
+                AISOperationType::SpawnAgent | AISOperationType::SpawnTeam => {
+                    return Err(format!(
+                        "generated plans may not contain process-spawn operation {:?}; use raw /v1/execute with explicit admit_capabilities instead",
+                        node.op_type
+                    ));
+                }
+                AISOperationType::WorkflowSpawn => validate_generated_workflow_spawn_node(node)?,
                 _ => {}
             }
         }
     }
 
+    Ok(())
+}
+
+fn validate_generated_workflow_spawn_node(
+    node: &apxm_core::types::execution::Node,
+) -> Result<(), String> {
+    if node.attributes.contains_key(graph_attrs::SESSION_ROOT) {
+        return Err(
+            "WORKFLOW_SPAWN session_root is server-controlled and may not be supplied by a generated plan"
+                .to_string(),
+        );
+    }
     Ok(())
 }
 

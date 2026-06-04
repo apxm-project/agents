@@ -50,7 +50,7 @@ fn is_blocked_ip(ip: IpAddr) -> bool {
 /// SSRF guard for tool HTTP calls: http(s) only, and the host must not resolve
 /// to a blocked address. DNS names are resolved so a public name pointing at a
 /// private IP is rejected too.
-async fn guard_url_ssrf(cap: &str, raw: &str) -> CapabilityResult<()> {
+pub async fn guard_url_ssrf(cap: &str, raw: &str) -> CapabilityResult<()> {
     let deny = |m: String| RuntimeError::Capability {
         capability: cap.to_string(),
         message: m,

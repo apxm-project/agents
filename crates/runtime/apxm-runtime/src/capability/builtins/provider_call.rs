@@ -39,6 +39,14 @@ fn auth_base() -> String {
     std::env::var("APXM_AUTH_URL").unwrap_or_else(|_| "http://127.0.0.1:18810".to_string())
 }
 
+/// Owner/tenant scoping for apxm-auth requests. apxm-auth requires an `owner`
+/// query parameter; we use `APXM_AUTH_OWNER` (default `"default"`, matching
+/// apxm-auth's own oauth_start default). The service bearer is separate and
+/// still sent: it authenticates the service, owner scopes the tenant.
+fn auth_owner() -> String {
+    std::env::var("APXM_AUTH_OWNER").unwrap_or_else(|_| "default".to_string())
+}
+
 /// apxm-auth's per-run bearer, written 0600 by `apxm-auth serve`.
 fn auth_bearer() -> Option<String> {
     let dir = std::env::var("XDG_STATE_HOME")
@@ -208,7 +216,12 @@ impl CapabilityExecutor for ProviderCallCapability {
         }
 
         let base = self.base.clone().unwrap_or_else(auth_base);
-        let endpoint = format!("{}/v1/connections/{}/proxy", base, enc(&credential));
+        let endpoint = format!(
+            "{}/v1/connections/{}/proxy?owner={}",
+            base,
+            enc(&credential),
+            enc(&auth_owner())
+        );
         let mut req = shared_client().post(&endpoint).json(&payload);
         if let Some(b) = auth_bearer() {
             req = req.bearer_auth(b);

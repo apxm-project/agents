@@ -785,6 +785,18 @@ pub mod bindings_inner {
     /// Serialize module to MLIR text. Caller must free with apxm_string_free.
     pub unsafe fn apxm_module_to_string(_m: *mut ApxmModule) -> *mut c_char { std::ptr::null_mut() }
     pub unsafe fn apxm_module_destroy(_m: *mut ApxmModule) {}
+    /// Set a string-valued module attribute. Returns false on failure.
+    pub unsafe fn apxm_module_set_string_attr(
+        _m: *mut ApxmModule, _name: *const c_char, _value: *const c_char,
+    ) -> bool { false }
+    /// Set a bool-valued module attribute. Returns false on failure.
+    pub unsafe fn apxm_module_set_bool_attr(
+        _m: *mut ApxmModule, _name: *const c_char, _value: bool,
+    ) -> bool { false }
+    /// Remove a module attribute. Returns false on failure.
+    pub unsafe fn apxm_module_remove_attr(
+        _m: *mut ApxmModule, _name: *const c_char,
+    ) -> bool { false }
 
     // ── Pass manager ───────────────────────────────────────────────────────
     pub unsafe fn apxm_pass_manager_create(

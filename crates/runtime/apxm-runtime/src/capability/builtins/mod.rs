@@ -14,7 +14,7 @@ pub mod write;
 
 pub use bash::{BashCapability, BashConfig};
 pub use count_tokens::CountTokensCapability;
-pub use http::{HttpGetCapability, HttpPostCapability};
+pub use http::{HttpGetCapability, HttpPostCapability, guard_url_ssrf};
 pub use mcp_bridge::McpBridgeCapability;
 pub use provider_call::ProviderCallCapability;
 pub use read::{ReadCapability, ReadConfig};

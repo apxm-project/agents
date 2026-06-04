@@ -1,3 +1,4 @@
+use apxm_runtime::capability::builtins::guard_url_ssrf;
 use axum::Json;
 use axum::extract::{Path, State};
 use serde::{Deserialize, Serialize};
@@ -103,6 +104,9 @@ pub(crate) async fn register_agent(
     State(state): State<AppState>,
     Json(req): Json<RegisterAgentRequest>,
 ) -> Result<Json<OkAckName>, ApiError> {
+    guard_url_ssrf("agent.url", &req.url)
+        .await
+        .map_err(|error| ApiError::bad_request(error.to_string()))?;
     let reg = AgentRegistration {
         name: req.name.clone(),
         url: req.url,

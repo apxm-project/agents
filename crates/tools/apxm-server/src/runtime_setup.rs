@@ -58,10 +58,21 @@ fn register_builtin_capabilities(runtime: &Runtime) {
     // building one during runtime setup wedged the executor completion path.
     // http_get/http_post use a lazily-initialized shared client. search_web is
     // omitted here (eager client + needs an API key).
+    //
+    // Read is confined to APXM_READ_BASE (defaulting to the process cwd): a
+    // relative path resolves under it and any resolved path escaping it is
+    // rejected, keeping the builtin's default read profile otherwise intact.
+    let read_base = std::env::var_os("APXM_READ_BASE")
+        .map(std::path::PathBuf::from)
+        .or_else(|| std::env::current_dir().ok());
+    let read_capability: Arc<dyn CapabilityExecutor> = match read_base {
+        Some(base) => Arc::new(ReadCapability::new_with_base_directory(base)),
+        None => Arc::new(ReadCapability::new()),
+    };
     let caps: Vec<Arc<dyn CapabilityExecutor>> = vec![
         Arc::new(HttpGetCapability::new()),
         Arc::new(HttpPostCapability::new()),
-        Arc::new(ReadCapability::new()),
+        read_capability,
         Arc::new(WriteCapability::new()),
         Arc::new(BashCapability::new()),
         Arc::new(ProviderCallCapability::new()),

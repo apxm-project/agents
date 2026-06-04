@@ -1,5 +1,6 @@
 use std::sync::Arc;
 
+use apxm_runtime::capability::builtins::guard_url_ssrf;
 use axum::Json;
 use axum::extract::{Path, State};
 use dashmap::DashMap;
@@ -97,9 +98,14 @@ pub(crate) struct ResumeCheckpointRequest {
 pub(crate) async fn create_checkpoint(
     State(state): State<AppState>,
     Json(req): Json<CreateCheckpointRequest>,
-) -> Json<CheckpointCreatedResponse> {
+) -> Result<Json<CheckpointCreatedResponse>, ApiError> {
     let id = req.checkpoint_id.clone();
     let notification_url = req.notification_url.clone();
+    if let Some(notify_url) = notification_url.as_deref() {
+        guard_url_ssrf("checkpoint.notification_url", notify_url)
+            .await
+            .map_err(|error| ApiError::bad_request(error.to_string()))?;
+    }
     let checkpoint = Checkpoint {
         id: id.clone(),
         message: req.message.clone(),
@@ -124,6 +130,7 @@ pub(crate) async fn create_checkpoint(
         tokio::spawn(async move {
             if let Ok(client) = reqwest::Client::builder()
                 .timeout(std::time::Duration::from_secs(5))
+                .redirect(reqwest::redirect::Policy::none())
                 .build()
             {
                 let _ = client.post(&notify_url).json(&payload).send().await;
@@ -131,12 +138,12 @@ pub(crate) async fn create_checkpoint(
         });
     }
 
-    Json(CheckpointCreatedResponse {
+    Ok(Json(CheckpointCreatedResponse {
         ok: true,
         checkpoint_id: id.clone(),
         status: apxm_core::types::SessionStatus::Pending,
         resume_url: routes::checkpoint_resume_path(&id),
-    })
+    }))
 }
 
 pub(crate) async fn get_checkpoint(
