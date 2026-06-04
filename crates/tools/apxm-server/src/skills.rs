@@ -228,6 +228,50 @@ pub(crate) struct SkillExecuteRequest {
     pub(crate) args: Vec<String>,
     #[serde(default)]
     pub(crate) session_id: Option<String>,
+    /// Minimum sandbox isolation the caller requires for this skill's tool
+    /// execution (e.g. an apxm-os agent's `sandbox = bubblewrap`). When set, the
+    /// server confirms a backend that can satisfy it is available and **fails
+    /// closed** otherwise, rather than running the skill less confined than the
+    /// caller asked for. Accepted: `none`, `bubblewrap`, `docker`, `wasm`.
+    #[serde(default)]
+    pub(crate) sandbox_hint: Option<String>,
+}
+
+/// Map a caller's sandbox hint to the minimum [`IsolationLevel`] it implies, or
+/// `None` for an absent/`"none"` hint (no requirement).
+fn sandbox_hint_min_isolation(
+    hint: Option<&str>,
+) -> Result<Option<apxm_runtime::sandbox::IsolationLevel>, ApiError> {
+    use apxm_runtime::sandbox::IsolationLevel;
+    match hint.map(str::trim).filter(|h| !h.is_empty()) {
+        None => Ok(None),
+        Some(h) => match h.to_ascii_lowercase().as_str() {
+            "none" => Ok(None),
+            "bubblewrap" | "docker" => Ok(Some(IsolationLevel::Container)),
+            "wasm" => Ok(Some(IsolationLevel::Wasm)),
+            other => Err(ApiError::bad_request(format!(
+                "unknown sandbox_hint '{other}' (expected none|bubblewrap|docker|wasm)"
+            ))),
+        },
+    }
+}
+
+/// Fail closed when the caller required a sandbox the server cannot provide.
+fn enforce_sandbox_hint(state: &AppState, req: &SkillExecuteRequest) -> Result<(), ApiError> {
+    let Some(min) = sandbox_hint_min_isolation(req.sandbox_hint.as_deref())? else {
+        return Ok(());
+    };
+    state
+        .runtime
+        .sandbox_registry()
+        .select(min)
+        .map(|_| ())
+        .map_err(|e| {
+            ApiError::bad_request(format!(
+                "skill requires sandbox isolation '{}' but no capable backend is available: {e}",
+                req.sandbox_hint.as_deref().unwrap_or_default()
+            ))
+        })
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -372,6 +416,7 @@ pub(crate) async fn execute_skill_by_id(
     id: &str,
     req: SkillExecuteRequest,
 ) -> Result<SkillExecuteResponse, ApiError> {
+    enforce_sandbox_hint(state, &req)?;
     match prepare_skill_execution(state, id, req)? {
         PreparedSkillExecution::Compiled(prepared) => execute_compiled_skill(state, prepared).await,
         PreparedSkillExecution::PromptOnly(prepared) => {

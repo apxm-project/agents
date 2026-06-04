@@ -59,7 +59,11 @@ pub(crate) async fn call_skill_tool(
                 Ok(session_id) => session_id,
                 Err(message) => return Some(mcp_tool_result(id.clone(), message, true)),
             };
-            let request = SkillExecuteRequest { args, session_id };
+            let request = SkillExecuteRequest {
+                args,
+                session_id,
+                sandbox_hint: None,
+            };
             Some(match execute_skill_by_id(state, skill_id, request).await {
                 Ok(response) => mcp_json_tool_result(id.clone(), response),
                 Err(error) => mcp_tool_result(id.clone(), error.message, true),
