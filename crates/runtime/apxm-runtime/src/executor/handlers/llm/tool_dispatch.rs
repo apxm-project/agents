@@ -1,19 +1,29 @@
 //! Function-calling tool registry lookup, parallel dispatch, and ASK tool loop.
 
 use super::{
-    ExecutionContext, charge_tokens, copy_llm_request_routing, resolve_global_token_budget,
+    ExecutionContext, attach_graph_hints, charge_tokens, copy_llm_request_routing,
+    resolve_global_token_budget,
 };
-use apxm_backends::{LLMRequest, ToolDefinition};
+use apxm_backends::{LLMRequest, ToolChoice, ToolDefinition};
 use apxm_core::apxm_llm;
 use apxm_core::constants::graph::attrs as graph_attrs;
 use apxm_core::constants::runtime::belief_keys;
 use apxm_core::error::RuntimeError;
 use apxm_core::types::execution::Node;
+use apxm_core::types::operations::AISOperationType;
 use apxm_core::types::values::Value;
 use apxm_core::types::{ToolCall, ToolResult};
 use std::collections::HashMap;
 
-use super::super::{Result, execute_llm_request_for_node};
+use super::super::{Result, apply_llm_request_routing_from_node, execute_llm_request_for_node};
+
+/// Agent-callable tool that spawns a focused specialist sub-agent. The
+/// converse/autonomous coordinator opts in via the `enable_delegate` node
+/// attribute; calling several `delegate`s in one turn fans them out in
+/// parallel (the in-ASK loop runs tool calls concurrently). This is the
+/// runtime surface of apxm's sub-agent fan-out — graph ops like SPAWN_AGENT
+/// are compile-time only, so converse agents reach delegation through here.
+pub(crate) const DELEGATE_TOOL: &str = "delegate";
 
 /// Default maximum number of tool loop iterations to prevent infinite loops.
 /// Can be overridden per-node via the `max_tool_iterations` attribute.
@@ -97,7 +107,7 @@ pub(crate) fn resolve_ask_tools(ctx: &ExecutionContext, node: &Node) -> Vec<Tool
         .and_then(|v| v.as_bool())
         .unwrap_or(false);
 
-    match (tool_names, tool_groups, tools_enabled_all) {
+    let mut tools = match (tool_names, tool_groups, tools_enabled_all) {
         (Some(names), _, _) if !names.is_empty() => get_tools_by_names(ctx, &names),
         // Naming a non-empty set of tool groups is itself a request to enable
         // tools for this ASK — the author should not also have to set
@@ -110,7 +120,47 @@ pub(crate) fn resolve_ask_tools(ctx: &ExecutionContext, node: &Node) -> Vec<Tool
         }
         (_, _, true) => get_tool_definitions_from_capabilities(ctx),
         _ => vec![],
+    };
+    // Opt-in sub-agent fan-out: a coordinator with `enable_delegate` also gets
+    // the synthetic `delegate` tool, letting it spawn focused specialist
+    // sub-agents at runtime (the spawn/delegate AIS ops are compile-time only).
+    if delegate_enabled(node) {
+        tools.push(delegate_tool_definition());
     }
+    tools
+}
+
+fn delegate_enabled(node: &Node) -> bool {
+    // Accept either a JSON bool (`true`) or the AIR string attribute (`"true"`),
+    // mirroring how converse-mode nodes are authored.
+    node.attributes
+        .get(graph_attrs::ENABLE_DELEGATE)
+        .map(|v| v.as_bool() == Some(true) || v.as_str() == Some("true"))
+        .unwrap_or(false)
+}
+
+fn delegate_tool_definition() -> ToolDefinition {
+    ToolDefinition::new(
+        DELEGATE_TOOL,
+        "Delegate a focused subtask to a specialist sub-agent that runs with the \
+         named tool groups and returns its findings. Issue several delegate calls \
+         in one turn to investigate multiple areas in parallel.",
+        serde_json::json!({
+            "type": "object",
+            "properties": {
+                "task": {
+                    "type": "string",
+                    "description": "The focused subtask for the specialist to investigate and report on."
+                },
+                "tool_groups": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "description": "Tool groups the sub-agent may use (e.g. a module's tool group)."
+                }
+            },
+            "required": ["task"]
+        }),
+    )
 }
 
 /// Execute a single tool call.
@@ -123,7 +173,71 @@ pub(crate) fn resolve_ask_tools(ctx: &ExecutionContext, node: &Node) -> Vec<Tool
 /// resolves them by name; the bridge's manifest (loaded from the artifact's
 /// `python_tools` section) is the authoritative source for which names are
 /// Python-backed.
-async fn execute_tool_call(ctx: &ExecutionContext, tool_call: &ToolCall) -> ToolResult {
+/// Run a focused specialist sub-agent for a `delegate` tool call: a fresh
+/// tool-using ASK over the requested tool groups, returning its findings as the
+/// tool result. Boxed because it re-enters `execute_ask_with_tools` (mutual
+/// recursion). Coordinators issue several `delegate`s in one turn; the parallel
+/// dispatcher fans them out concurrently.
+async fn execute_delegate(
+    ctx: &ExecutionContext,
+    parent_node: &Node,
+    tool_call: &ToolCall,
+    args: &HashMap<String, Value>,
+) -> ToolResult {
+    let task = args
+        .get("task")
+        .and_then(|v| v.as_str())
+        .unwrap_or("")
+        .trim()
+        .to_string();
+    if task.is_empty() {
+        return ToolResult::error(&tool_call.id, "delegate requires a non-empty 'task'");
+    }
+
+    // Synthetic specialist node: inherits the coordinator's backend/model,
+    // scoped to the requested tool groups. It does NOT carry `enable_delegate`,
+    // so specialists are leaf agents that cannot recurse.
+    let mut synth = Node::new(parent_node.id, AISOperationType::Ask);
+    for attr in [graph_attrs::MODEL, graph_attrs::BACKEND] {
+        if let Some(value) = parent_node.attributes.get(attr) {
+            synth.attributes.insert(attr.to_string(), value.clone());
+        }
+    }
+    if let Some(Value::Array(groups)) = args.get("tool_groups") {
+        synth
+            .attributes
+            .insert(graph_attrs::TOOL_GROUPS.to_string(), Value::Array(groups.clone()));
+    }
+
+    let persona = "You are a focused specialist sub-agent. Investigate ONLY the \
+        delegated task using your tools, then report concise, factual findings with \
+        no preamble. If a needed tool is unavailable, say so plainly.";
+    let req = match apply_llm_request_routing_from_node(
+        LLMRequest::new(task).with_system_prompt(persona),
+        &synth,
+    ) {
+        Ok(req) => req,
+        Err(e) => {
+            return ToolResult::error(&tool_call.id, format!("delegate routing failed: {e}"));
+        }
+    };
+    let tools = resolve_ask_tools(ctx, &synth);
+    let req = if tools.is_empty() {
+        req
+    } else {
+        attach_graph_hints(ctx, &synth, req)
+            .with_tools(tools)
+            .with_tool_choice(ToolChoice::Auto)
+    };
+
+    match Box::pin(execute_ask_with_tools(ctx, &synth, &req)).await {
+        Ok(Value::String(s)) => ToolResult::success(&tool_call.id, s),
+        Ok(other) => ToolResult::success(&tool_call.id, format!("{other:?}")),
+        Err(e) => ToolResult::error(&tool_call.id, format!("delegate sub-agent failed: {e}")),
+    }
+}
+
+async fn execute_tool_call(ctx: &ExecutionContext, node: &Node, tool_call: &ToolCall) -> ToolResult {
     apxm_llm!(debug,
         execution_id = %ctx.execution_id,
         tool_name = %tool_call.name,
@@ -141,6 +255,16 @@ async fn execute_tool_call(ctx: &ExecutionContext, tool_call: &ToolCall) -> Tool
 
     if let Some(emitter) = &ctx.event_emitter {
         emitter.emit_tool_start(&tool_call.name, &args);
+    }
+
+    // Native sub-agent fan-out: `delegate` is not a capability — it re-enters
+    // the ASK tool loop as a focused specialist over the requested tool groups.
+    if tool_call.name == DELEGATE_TOOL {
+        let result = execute_delegate(ctx, node, tool_call, &args).await;
+        if let Some(emitter) = &ctx.event_emitter {
+            emitter.emit_tool_end(&tool_call.name, &Value::String(result.content.clone()));
+        }
+        return result;
     }
 
     if let Some(bridge) = ctx.python_tool_bridge.as_ref() {
@@ -257,10 +381,11 @@ fn resolve_tool_access(ctx: &ExecutionContext, name: &str) -> Option<ToolAccess>
 /// - Write calls on different tool names run in parallel.
 async fn execute_tool_calls_parallel(
     ctx: &ExecutionContext,
+    node: &Node,
     tool_calls: &[ToolCall],
 ) -> Vec<ToolResult> {
     if tool_calls.len() == 1 {
-        return vec![execute_tool_call(ctx, &tool_calls[0]).await];
+        return vec![execute_tool_call(ctx, node, &tool_calls[0]).await];
     }
 
     let max_parallel = max_parallel_tool_calls(ctx, tool_calls.len());
@@ -275,13 +400,14 @@ async fn execute_tool_calls_parallel(
 
     let mut results = Vec::with_capacity(tool_calls.len());
     for batch in tool_calls.chunks(max_parallel) {
-        results.extend(execute_tool_call_batch(ctx, batch).await);
+        results.extend(execute_tool_call_batch(ctx, node, batch).await);
     }
     results
 }
 
 async fn execute_tool_call_batch(
     ctx: &ExecutionContext,
+    node: &Node,
     tool_calls: &[ToolCall],
 ) -> Vec<ToolResult> {
     let futures: Vec<_> = tool_calls
@@ -290,12 +416,12 @@ async fn execute_tool_call_batch(
             let access = resolve_tool_access(ctx, &tc.name);
             async move {
                 match access {
-                    Some(ToolAccess::ReadOnly) | None => execute_tool_call(ctx, tc).await,
+                    Some(ToolAccess::ReadOnly) | None => execute_tool_call(ctx, node, tc).await,
                     Some(ToolAccess::Write) => {
                         let lock = write_lock_for_tool(&tc.name);
                         let result = {
                             let _guard = lock.write().await;
-                            execute_tool_call(ctx, tc).await
+                            execute_tool_call(ctx, node, tc).await
                         };
                         release_write_lock_if_idle(&tc.name, &lock);
                         result
@@ -475,7 +601,7 @@ pub(crate) async fn execute_ask_with_tools(
             return Ok(Value::String(response.content));
         }
 
-        let tool_results = execute_tool_calls_parallel(ctx, &response.tool_calls).await;
+        let tool_results = execute_tool_calls_parallel(ctx, node, &response.tool_calls).await;
 
         if !tool_results.is_empty() {
             let results_value = Value::Array(
@@ -726,7 +852,8 @@ mod tests {
             serde_json::json!({}),
         )];
 
-        let results = execute_tool_call_batch(&ctx, &calls).await;
+        let node = Node::new(1, AISOperationType::Ask);
+        let results = execute_tool_call_batch(&ctx, &node, &calls).await;
 
         assert_eq!(results.len(), 1);
         assert!(!results[0].success);
@@ -743,10 +870,48 @@ mod tests {
             serde_json::json!({"message": "hi"}),
         )];
 
-        let results = execute_tool_call_batch(&ctx, &calls).await;
+        let node = Node::new(1, AISOperationType::Ask);
+        let results = execute_tool_call_batch(&ctx, &node, &calls).await;
 
         assert_eq!(results.len(), 1);
         assert!(results[0].success);
         assert!(!crate::capability::tool_write_lock::contains_lock(tool_name));
+    }
+
+    #[tokio::test]
+    async fn delegate_tool_surfaced_only_when_opted_in() {
+        let ctx = ctx_with_grouped_tools().await;
+        let mut node = Node::new(1, AISOperationType::Ask);
+        node.attributes.insert(
+            graph_attrs::TOOL_GROUPS.to_string(),
+            Value::Array(vec![Value::String("web".to_string())]),
+        );
+
+        // Without opt-in: no delegate tool.
+        let names: Vec<String> = resolve_ask_tools(&ctx, &node)
+            .into_iter()
+            .map(|t| t.name)
+            .collect();
+        assert!(!names.contains(&DELEGATE_TOOL.to_string()));
+
+        // With opt-in: delegate is appended alongside the group's tools.
+        node.attributes
+            .insert("enable_delegate".to_string(), Value::String("true".to_string()));
+        let names: Vec<String> = resolve_ask_tools(&ctx, &node)
+            .into_iter()
+            .map(|t| t.name)
+            .collect();
+        assert!(names.contains(&"search_web".to_string()));
+        assert!(names.contains(&DELEGATE_TOOL.to_string()));
+    }
+
+    #[tokio::test]
+    async fn delegate_rejects_empty_task() {
+        let ctx = ctx_with_grouped_tools().await;
+        let node = Node::new(1, AISOperationType::Ask);
+        let tc = ToolCall::new("call_d", DELEGATE_TOOL, serde_json::json!({"task": "   "}));
+        let result = execute_tool_call(&ctx, &node, &tc).await;
+        assert!(!result.success);
+        assert!(result.content.contains("task"));
     }
 }

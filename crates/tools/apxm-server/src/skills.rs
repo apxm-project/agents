@@ -2071,6 +2071,7 @@ upstream = "https://github.com/obra/superpowers"
             rollout_registry: crate::rollout::RolloutRegistry::new(),
             inference_limiter: crate::state::InferenceLimiter::unlimited_for_tests(),
             server_config: apxm_driver::ServerConfig::default(),
+            cancel_registry: Arc::new(DashMap::new()),
         }
     }
 

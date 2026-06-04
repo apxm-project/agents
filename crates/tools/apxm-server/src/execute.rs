@@ -19,10 +19,13 @@ use axum::response::sse::{Event, KeepAlive, Sse};
 use futures::Stream;
 use serde::{Deserialize, Serialize};
 use serde_json::Value as JsonValue;
-use tokio::sync::mpsc;
+use tokio::sync::{Notify, mpsc};
 
 use crate::error::ApiError;
-use crate::state::{AppState, ExecuteCompletePayload, TokioChannelEmitter};
+use crate::state::{
+    AppState, ExecuteCompletePayload, ExecutionStartedPayload, TokioChannelEmitter,
+    TurnAbortedPayload,
+};
 use crate::types::responses::{ExecutionStats, LlmUsageSummary};
 
 const ERROR_RAW_PYTHON_TOOL_SECTIONS: &str = "raw execute does not support python tool sections";
@@ -210,42 +213,77 @@ pub(crate) async fn execute_stream(
     let trace_id = session_id
         .clone()
         .unwrap_or_else(|| uuid::Uuid::new_v4().to_string());
+    // A unique per-execution handle: `session_id` is reused across turns, so it
+    // cannot key cancellation. Registering a `Notify` lets
+    // `POST /v1/runs/{execution_id}/cancel` abort this run at its next await
+    // boundary; the entry is removed once the run settles either way.
+    let execution_id = uuid::Uuid::new_v4().to_string();
+    let cancel = Arc::new(Notify::new());
+    state
+        .cancel_registry
+        .insert(execution_id.clone(), Arc::clone(&cancel));
+    let cancel_registry = Arc::clone(&state.cancel_registry);
     tokio::spawn(async move {
         let _permit = permit;
+        // Frame 0 hands the client the id it needs to address the cancel route.
+        let _ = tx
+            .send(ApxmEvent::root(
+                ExecutionStartedPayload {
+                    execution_id: execution_id.clone(),
+                },
+                EventSource::Server,
+                &trace_id,
+            ))
+            .await;
         let emitter = Arc::new(EmitterAdapter::new(
             Arc::new(TokioChannelEmitter(tx.clone())),
             EventSource::Runtime,
             &trace_id,
         ));
-        match runtime
-            .execute_artifact_with_session_emitter_and_metadata(
-                artifact,
-                args,
-                session_id,
-                Some(emitter),
-                session_dir.clone(),
-                grant_metadata,
-            )
-            .await
-        {
-            Ok(result) => {
+        let execution = runtime.execute_artifact_with_session_emitter_and_metadata(
+            artifact,
+            args,
+            session_id,
+            Some(emitter),
+            session_dir.clone(),
+            grant_metadata,
+        );
+        tokio::select! {
+            outcome = execution => match outcome {
+                Ok(result) => {
+                    let _ = tx
+                        .send(ApxmEvent::root(
+                            ExecuteCompletePayload {
+                                result: to_execute_response(result, session_dir),
+                            },
+                            EventSource::Server,
+                            &trace_id,
+                        ))
+                        .await;
+                }
+                Err(err) => {
+                    let _ = tx
+                        .send(ApxmEvent::root(
+                            ErrorPayload {
+                                message: err.to_string(),
+                                status: None,
+                                recoverable: false,
+                            },
+                            EventSource::Server,
+                            &trace_id,
+                        ))
+                        .await;
+                }
+            },
+            // Cancellation wins: dropping `execution` aborts the in-flight
+            // model/tool call at its await point. Emit `turn_aborted` in place
+            // of `execute_complete`.
+            _ = cancel.notified() => {
                 let _ = tx
                     .send(ApxmEvent::root(
-                        ExecuteCompletePayload {
-                            result: to_execute_response(result, session_dir),
-                        },
-                        EventSource::Server,
-                        &trace_id,
-                    ))
-                    .await;
-            }
-            Err(err) => {
-                let _ = tx
-                    .send(ApxmEvent::root(
-                        ErrorPayload {
-                            message: err.to_string(),
-                            status: None,
-                            recoverable: false,
+                        TurnAbortedPayload {
+                            execution_id: execution_id.clone(),
+                            reason: "cancelled via /v1/runs/{id}/cancel".to_string(),
                         },
                         EventSource::Server,
                         &trace_id,
@@ -253,6 +291,7 @@ pub(crate) async fn execute_stream(
                     .await;
             }
         }
+        cancel_registry.remove(&execution_id);
     });
 
     let stream = async_stream::stream! {

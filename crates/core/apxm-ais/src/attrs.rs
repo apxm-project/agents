@@ -60,6 +60,9 @@ pub const PARAMS_JSON: &str = "params_json";
 pub const TOOLS_ENABLED: &str = "tools_enabled";
 pub const TOOLS: &str = "tools";
 pub const TOOL_GROUPS: &str = "tool_groups";
+/// Opt-in: a converse/autonomous coordinator that also gets the synthetic
+/// `delegate` tool, letting it spawn focused specialist sub-agents at runtime.
+pub const ENABLE_DELEGATE: &str = "enable_delegate";
 pub const CODE: &str = "code";
 pub const INTERPRETER: &str = "interpreter";
 pub const CAPABILITY_NAME: &str = "capability_name";

@@ -111,6 +111,7 @@ pub(crate) async fn run_server_with_config(server_config: ServerConfig) -> anyho
         rollout_registry,
         inference_limiter: InferenceLimiter::from_config(&server_config.inference),
         server_config: server_config.clone(),
+        cancel_registry: Arc::new(DashMap::new()),
     };
 
     let app = build_app(state);
