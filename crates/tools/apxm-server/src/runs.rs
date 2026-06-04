@@ -464,6 +464,34 @@ pub(crate) async fn get_run(
     Ok(Json(record_to_summary(&state, record)))
 }
 
+#[derive(Debug, Serialize)]
+pub(crate) struct CancelResponse {
+    pub(crate) execution_id: String,
+    pub(crate) cancelled: bool,
+}
+
+/// `POST /v1/runs/{execution_id}/cancel` — trip the in-flight run's abort
+/// signal. Returns 404 if the run is unknown or already settled (its registry
+/// entry is removed on completion), so a cancel after the answer lands is a
+/// no-op rather than an error the caller must special-case.
+pub(crate) async fn cancel_run(
+    State(state): State<AppState>,
+    Path(execution_id): Path<String>,
+) -> Result<Json<CancelResponse>, ApiError> {
+    match state.cancel_registry.get(&execution_id) {
+        Some(notify) => {
+            notify.notify_one();
+            Ok(Json(CancelResponse {
+                execution_id,
+                cancelled: true,
+            }))
+        }
+        None => Err(ApiError::not_found(format!(
+            "no in-flight run to cancel: {execution_id}"
+        ))),
+    }
+}
+
 pub(crate) async fn get_run_graph(
     State(state): State<AppState>,
     Path(execution_id): Path<String>,

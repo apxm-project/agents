@@ -414,6 +414,7 @@ async fn test_state_with_skill_roots_and_execution_store(
         rollout_registry: crate::rollout::RolloutRegistry::new(),
         inference_limiter: crate::state::InferenceLimiter::unlimited_for_tests(),
         server_config: apxm_driver::ServerConfig::default(),
+        cancel_registry: Arc::new(DashMap::new()),
     }
 }
 
@@ -447,6 +448,7 @@ async fn test_state_with_runtime_and_skill_roots(
         rollout_registry: crate::rollout::RolloutRegistry::new(),
         inference_limiter: crate::state::InferenceLimiter::unlimited_for_tests(),
         server_config: apxm_driver::ServerConfig::default(),
+        cancel_registry: Arc::new(DashMap::new()),
     }
 }
 
@@ -500,6 +502,42 @@ async fn get_json(app: Router, path: &str) -> (StatusCode, serde_json::Value) {
 fn write_skill_manifest(dir: &std::path::Path, contents: &str) {
     std::fs::create_dir_all(dir).expect(MSG_SKILL_DIR);
     std::fs::write(dir.join(FILE_SKILL_MANIFEST), contents).expect(FILE_SKILL_MANIFEST);
+}
+
+#[tokio::test]
+async fn cancel_route_trips_in_flight_run_and_404s_unknown() {
+    let state = test_state().await;
+    // Share the registry Arc with the app and seed an in-flight handle, as
+    // `execute_stream` would on a live run.
+    let registry = Arc::clone(&state.cancel_registry);
+    let notify = Arc::new(tokio::sync::Notify::new());
+    registry.insert("exec-cancel-test".to_string(), Arc::clone(&notify));
+    let app = crate::build_app(state);
+
+    // A known in-flight run cancels and reports back.
+    let (status, body) = post_json(
+        app.clone(),
+        &crate::routes::run_cancel_path("exec-cancel-test"),
+        serde_json::json!({}),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(body["cancelled"], serde_json::json!(true));
+    assert_eq!(body["execution_id"], serde_json::json!("exec-cancel-test"));
+
+    // The abort signal actually fired — a waiter wakes promptly.
+    tokio::time::timeout(std::time::Duration::from_millis(500), notify.notified())
+        .await
+        .expect("cancel must trip the run's Notify");
+
+    // An unknown / already-settled run is a 404, not a 500.
+    let (status, _) = post_json(
+        app.clone(),
+        &crate::routes::run_cancel_path("nonexistent-run"),
+        serde_json::json!({}),
+    )
+    .await;
+    assert_eq!(status, StatusCode::NOT_FOUND);
 }
 
 fn mock_yield_plan_response() -> serde_json::Value {

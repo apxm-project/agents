@@ -18,7 +18,7 @@ use crate::mcp::mcp_jsonrpc;
 use crate::memory::{delete_fact, search_facts, store_fact};
 use crate::routes::ServerRoute;
 use crate::runs::{
-    get_run, get_run_blob, get_run_events_bulk, get_run_graph, get_run_node, list_runs,
+    cancel_run, get_run, get_run_blob, get_run_events_bulk, get_run_graph, get_run_node, list_runs,
     stream_run_events,
 };
 use crate::skills::{
@@ -118,6 +118,8 @@ pub(crate) fn build_app(state: AppState) -> Router {
         .route(ServerRoute::RunEventsStream.path(), get(stream_run_events))
         // Phase 14.8.E - rollout blob fetch
         .route(ServerRoute::RunBlob.path(), get(get_run_blob))
+        // Mid-flight cancellation — trips the run's abort signal.
+        .route(ServerRoute::RunCancel.path(), post(cancel_run))
         // F04: opt-in, fail-closed bearer auth on mutating routes. The layer
         // is always installed but is a transparent pass-through unless
         // `server_config.auth.require_auth` is enabled (default off), so tests

@@ -25,6 +25,10 @@ pub(crate) struct HttpCapability {
     pub(crate) metadata: CapabilityMetadata,
     pub(crate) endpoint: String,
     pub(crate) timeout_ms: u64,
+    /// Static headers attached to every forwarded call (e.g. an
+    /// `Authorization: Bearer <token>` so the endpoint can authenticate the
+    /// callback). Empty by default — loopback endpoints need no auth.
+    pub(crate) headers: HashMap<String, String>,
     pub(crate) client: reqwest::Client,
 }
 
@@ -48,11 +52,15 @@ impl CapabilityExecutor for HttpCapability {
             message: msg,
         };
 
-        let resp = self
+        let mut req_builder = self
             .client
             .post(&self.endpoint)
             .timeout(std::time::Duration::from_millis(self.timeout_ms))
-            .json(&body)
+            .json(&body);
+        for (name, value) in &self.headers {
+            req_builder = req_builder.header(name.as_str(), value.as_str());
+        }
+        let resp = req_builder
             .send()
             .await
             .map_err(|e| cap_err(format!("request failed: {e}")))?;
@@ -105,6 +113,11 @@ pub(crate) struct RegisterCapabilityRequest {
     /// Timeout in milliseconds for HTTP capability calls (default: 30 000).
     #[serde(default)]
     timeout_ms: Option<u64>,
+    /// Optional static headers forwarded on every HTTP callback — e.g.
+    /// `{"Authorization": "Bearer <token>"}` so a bearer-authenticated endpoint
+    /// accepts the call. Omit for loopback-trusted endpoints.
+    #[serde(default)]
+    headers: Option<HashMap<String, String>>,
     /// Fallback: return a fixed static value (used when `endpoint` is absent).
     #[serde(default)]
     static_response: JsonValue,
@@ -232,7 +245,7 @@ fn capability_from_tool(t: &PackToolDecl) -> Option<Arc<dyn CapabilityExecutor>>
             ),
         })),
         "http" => t.endpoint_pattern.clone().map(|endpoint| {
-            Arc::new(HttpCapability { metadata, endpoint, timeout_ms: 30_000, client: reqwest::Client::new() })
+            Arc::new(HttpCapability { metadata, endpoint, timeout_ms: 30_000, headers: HashMap::new(), client: reqwest::Client::new() })
                 as Arc<dyn CapabilityExecutor>
         }),
         "mcp" => t.server_url.clone().map(|server_url| {
@@ -438,6 +451,7 @@ pub(crate) async fn register_capability(
                 metadata,
                 endpoint,
                 timeout_ms: req.timeout_ms.unwrap_or(30_000),
+                headers: req.headers.clone().unwrap_or_default(),
                 client: reqwest::Client::new(),
             })
         }
@@ -456,7 +470,7 @@ pub(crate) async fn register_capability(
     state
         .runtime
         .capability_system()
-        .register(capability)
+        .register_or_replace(capability)
         .map_err(ApiError::runtime)?;
     Ok(Json(OkAckName::new(req.name)))
 }

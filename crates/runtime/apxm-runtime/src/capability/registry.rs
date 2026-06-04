@@ -56,6 +56,27 @@ impl CapabilityRegistry {
         Ok(())
     }
 
+    /// Register a capability, replacing any existing one of the same name.
+    ///
+    /// Dynamic HTTP capabilities are re-registered every turn by hosts whose
+    /// tool surface is context-scoped (e.g. CLIC re-registers the project's
+    /// tools each conversation turn). Re-registration must overwrite rather
+    /// than fail so the latest schema/endpoint wins.
+    pub fn register_or_replace(&self, capability: Arc<dyn CapabilityExecutor>) -> RegistryResult<()> {
+        let metadata = capability.metadata();
+        let name = metadata.name.clone();
+        let schema = JsonSchema::from_value(metadata.parameters_schema.clone()).map_err(|e| {
+            RuntimeError::Capability {
+                capability: name.clone(),
+                message: format!("Invalid parameter schema: {}", e),
+            }
+        })?;
+        self.schemas.insert(name.clone(), Arc::new(schema));
+        self.capabilities.insert(name.clone(), capability);
+        tracing::info!("Registered capability (replace): {}", name);
+        Ok(())
+    }
+
     /// Get a capability by name.
     pub fn get(&self, name: &str) -> Option<Arc<dyn CapabilityExecutor>> {
         self.capabilities

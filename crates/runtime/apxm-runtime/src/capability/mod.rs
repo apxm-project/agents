@@ -184,6 +184,24 @@ impl CapabilitySystem {
         Ok(())
     }
 
+    /// Register a capability, replacing any existing one of the same name.
+    /// Used by the HTTP registration endpoint so hosts can re-register a
+    /// context-scoped tool surface every turn without a duplicate error.
+    pub fn register_or_replace(
+        &self,
+        capability: Arc<dyn CapabilityExecutor>,
+    ) -> CapabilityResult<()> {
+        let metadata = capability.metadata().clone();
+        self.registry.register_or_replace(Arc::clone(&capability))?;
+
+        if let Some(aam) = &self.aam {
+            let label = TransitionLabel::custom(format!("register_capability:{}", metadata.name));
+            aam.register_capability(metadata.name.clone(), (&metadata).into(), label);
+        }
+
+        Ok(())
+    }
+
     /// Invoke a capability by name with validation
     ///
     /// # Arguments

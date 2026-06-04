@@ -1,6 +1,7 @@
 use std::sync::Arc;
 use std::time::{Duration, SystemTime};
 
+use apxm_core::events::kind::TURN_ABORTED;
 use apxm_core::events::{ApxmEvent, EventCategory, EventKind};
 use apxm_core::impl_event_payload;
 use apxm_driver::ServerConfig;
@@ -8,7 +9,7 @@ use apxm_rollout::{IndexDb, RolloutPaths};
 use apxm_runtime::Runtime;
 use dashmap::DashMap;
 use serde::Serialize;
-use tokio::sync::{Mutex, OwnedSemaphorePermit, Semaphore, mpsc};
+use tokio::sync::{Mutex, Notify, OwnedSemaphorePermit, Semaphore, mpsc};
 
 use crate::a2a::A2aTaskRecord;
 use crate::agent::AgentRegistration;
@@ -52,6 +53,10 @@ pub(crate) struct AppState {
     pub(crate) inference_limiter: InferenceLimiter,
     /// Layered server configuration used by streaming handlers.
     pub(crate) server_config: ServerConfig,
+    /// In-flight streaming executions keyed by `execution_id`, each holding a
+    /// `Notify` that `POST /v1/runs/{id}/cancel` trips to abort the run at the
+    /// next await boundary. Entries are removed when the execution settles.
+    pub(crate) cancel_registry: Arc<DashMap<String, Arc<Notify>>>,
 }
 
 #[derive(Clone)]
@@ -162,3 +167,23 @@ pub(crate) struct ExecuteCompletePayload {
     pub(crate) result: ExecuteResponse,
 }
 impl_event_payload!(ExecuteCompletePayload, EXECUTE_COMPLETE);
+
+pub(crate) const EXECUTION_STARTED: EventKind =
+    EventKind::new("execution_started", EventCategory::Lifecycle, true);
+
+/// First frame of every `/v1/execute/stream` response — carries the unique
+/// `execution_id` the client uses to address `POST /v1/runs/{id}/cancel`.
+#[derive(Debug, Clone, Serialize, serde::Deserialize)]
+pub(crate) struct ExecutionStartedPayload {
+    pub(crate) execution_id: String,
+}
+impl_event_payload!(ExecutionStartedPayload, EXECUTION_STARTED);
+
+/// Terminal frame emitted when a run is cancelled mid-flight via the cancel
+/// route, in place of `execute_complete`.
+#[derive(Debug, Clone, Serialize, serde::Deserialize)]
+pub(crate) struct TurnAbortedPayload {
+    pub(crate) execution_id: String,
+    pub(crate) reason: String,
+}
+impl_event_payload!(TurnAbortedPayload, TURN_ABORTED);
