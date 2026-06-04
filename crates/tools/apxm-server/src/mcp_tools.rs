@@ -657,6 +657,17 @@ fn validate_generated_plan_inv_tool_node(node: &PlanNode, runtime: &Runtime) -> 
         .capability
         .as_deref()
         .ok_or_else(|| admission_error::INV_TOOL_MISSING_CAPABILITY.to_string())?;
+    check_generated_capability_admission(capability, || plan_inv_tool_args(node), runtime)
+}
+
+/// Admission rules for a side-effecting capability invoked by a generated plan:
+/// the capability must be registered, and either read-only or sandbox-preflight
+/// clean (a `Direct` side effect is rejected).
+fn check_generated_capability_admission(
+    capability: &str,
+    args: impl FnOnce() -> Result<HashMap<String, RuntimeValue>, String>,
+    runtime: &Runtime,
+) -> Result<(), String> {
     let capability_system = runtime.capability_system();
 
     if !capability_system.has_capability(capability) {
@@ -669,7 +680,7 @@ fn validate_generated_plan_inv_tool_node(node: &PlanNode, runtime: &Runtime) -> 
         return Ok(());
     }
 
-    let args = plan_inv_tool_args(node)?;
+    let args = args()?;
     match capability_system.sandbox_preflight(capability, &args) {
         Ok(CapabilitySandboxPreflight::Sandboxed { .. }) => Ok(()),
         Ok(CapabilitySandboxPreflight::Direct) => Err(
@@ -1403,29 +1414,7 @@ fn validate_generated_inv_tool_node(
         .get(graph_attrs::CAPABILITY)
         .and_then(|value| value.as_string())
         .ok_or_else(|| admission_error::INV_TOOL_MISSING_CAPABILITY.to_string())?;
-    let capability_system = runtime.capability_system();
-
-    if !capability_system.has_capability(capability) {
-        return Err(admission_error::generated_capability_not_registered(
-            capability,
-        ));
-    }
-
-    if capability_system.is_read_only(capability) {
-        return Ok(());
-    }
-
-    let args = inv_tool_static_args(node)?;
-    match capability_system.sandbox_preflight(capability, &args) {
-        Ok(CapabilitySandboxPreflight::Sandboxed { .. }) => Ok(()),
-        Ok(CapabilitySandboxPreflight::Direct) => Err(
-            admission_error::generated_capability_direct_side_effect(capability),
-        ),
-        Err(error) => Err(admission_error::generated_capability_sandbox_preflight(
-            capability,
-            &error.to_string(),
-        )),
-    }
+    check_generated_capability_admission(capability, || inv_tool_static_args(node), runtime)
 }
 
 fn validate_generated_llm_tool_exposure(

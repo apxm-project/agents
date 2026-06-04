@@ -34,11 +34,8 @@ impl CredentialResolver {
 
     /// `GET /v1/connections/{id}/token` — returns the current access token.
     ///
-    /// apxm-auth requires an `owner` query parameter and scopes the connection
-    /// to that tenant. When the dispatch context carries an owner it is threaded
-    /// through `owner`; otherwise the `APXM_AUTH_OWNER` env (default `"default"`)
-    /// is used. The service bearer authenticates the service; owner scopes the
-    /// tenant — both are sent.
+    /// The bearer authenticates the service; the resolved `owner` scopes the
+    /// connection to a tenant. Both are sent.
     pub(crate) async fn resolve(
         &self,
         connection_id: &str,
@@ -62,9 +59,7 @@ impl CredentialResolver {
     }
 }
 
-/// Resolve the owner/tenant for an apxm-auth request: prefer an owner carried
-/// by the dispatch context, else `APXM_AUTH_OWNER`, else the `"default"`
-/// convention (matching apxm-auth's own oauth_start default).
+/// Owner precedence: dispatch-context owner, else `APXM_AUTH_OWNER`, else `"default"`.
 fn resolve_owner(owner: Option<&str>) -> String {
     owner
         .map(str::to_string)

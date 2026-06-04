@@ -59,9 +59,8 @@ fn register_builtin_capabilities(runtime: &Runtime) {
     // http_get/http_post use a lazily-initialized shared client. search_web is
     // omitted here (eager client + needs an API key).
     //
-    // Read is confined to APXM_READ_BASE (defaulting to the process cwd): a
-    // relative path resolves under it and any resolved path escaping it is
-    // rejected, keeping the builtin's default read profile otherwise intact.
+    // Read is confined to APXM_READ_BASE (defaulting to the process cwd): any
+    // resolved path that escapes the base is rejected.
     let read_base = std::env::var_os("APXM_READ_BASE")
         .map(std::path::PathBuf::from)
         .or_else(|| std::env::current_dir().ok());

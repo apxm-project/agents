@@ -39,10 +39,8 @@ fn auth_base() -> String {
     std::env::var("APXM_AUTH_URL").unwrap_or_else(|_| "http://127.0.0.1:18810".to_string())
 }
 
-/// Owner/tenant scoping for apxm-auth requests. apxm-auth requires an `owner`
-/// query parameter; we use `APXM_AUTH_OWNER` (default `"default"`, matching
-/// apxm-auth's own oauth_start default). The service bearer is separate and
-/// still sent: it authenticates the service, owner scopes the tenant.
+/// apxm-auth requires an `owner` to scope the connection to a tenant. The
+/// bearer authenticates the service; the owner scopes the tenant. Both are sent.
 fn auth_owner() -> String {
     std::env::var("APXM_AUTH_OWNER").unwrap_or_else(|_| "default".to_string())
 }
