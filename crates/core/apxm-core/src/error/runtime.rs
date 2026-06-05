@@ -68,6 +68,16 @@ pub enum RuntimeError {
         message: String,
     },
 
+    /// Not an error: a handler signalling it has PARKED on an external event
+    /// (e.g. PAUSE awaiting human input). The scheduler intercepts this, yields
+    /// the worker lane + concurrency permit, and re-injects the node when the
+    /// event arrives via the park registry (`wait_key`). Never surfaced to users.
+    #[error("Operation parked awaiting event: {wait_key}")]
+    OperationParked {
+        /// Correlation key the external waker uses to resume this node.
+        wait_key: String,
+    },
+
     /// Capability invocation error.
     #[error("Capability error: {capability} - {message}")]
     Capability {
@@ -190,6 +200,11 @@ impl RuntimeError {
                 "operation",
                 message.clone(),
                 serde_json::json!({ "op_type": format!("{}", op_type) }),
+            ),
+            RuntimeError::OperationParked { wait_key } => (
+                "operation_parked",
+                format!("parked awaiting event: {}", wait_key),
+                serde_json::json!({ "wait_key": wait_key }),
             ),
             RuntimeError::Capability {
                 capability,

@@ -1,6 +1,9 @@
 //! Execution metadata keys produced and consumed by the runtime.
 
 pub const PARENT_EXECUTION_ID: &str = "parent_execution_id";
+/// Execution-scoped key the host (apxm-server) stamps so a parked execution can
+/// release/reacquire its cross-execution admission slot via the admission registry.
+pub const ADMISSION_ID: &str = "admission_id";
 pub const SCOPE_ID: &str = "scope_id";
 pub const PARENT_SCOPE_ID: &str = "parent_scope_id";
 pub const SESSION_DIR: &str = "session_dir";

@@ -56,9 +56,56 @@ pub fn is_pure_llm_op(op: &AISOperationType) -> bool {
     )
 }
 
+/// Is this a long-WAITING op that holds its worker while blocking on an external
+/// event, rather than consuming CPU or an LLM slot?
+///
+/// Such ops do ~no compute while waiting, so the scheduler routes them to a
+/// separate, generous concurrency pool — a burst of them must never exhaust the
+/// compute or LLM permits and stall real work. PAUSE/RESUME are NOT here: they
+/// PARK (return `OperationParked`, yielding their worker + permit immediately —
+/// see the scheduler park path), so they hold nothing while waiting. Only
+/// AUTONOMOUS in its `mode = "recv"` form still long-polls while holding a worker.
+pub fn is_blocking_wait_op(node: &apxm_core::types::Node) -> bool {
+    match node.op_type {
+        AISOperationType::Autonomous => node
+            .attributes
+            .get("mode")
+            .and_then(|v| v.as_str())
+            .map(|m| m == "recv")
+            .unwrap_or(false),
+        _ => false,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn node(op: AISOperationType) -> apxm_core::types::Node {
+        apxm_core::types::Node {
+            id: 1,
+            op_type: op,
+            attributes: HashMap::new(),
+            input_tokens: vec![],
+            output_tokens: vec![],
+            metadata: apxm_core::types::execution::NodeMetadata::default(),
+        }
+    }
+
+    #[test]
+    fn blocking_wait_ops_classified() {
+        // PAUSE/RESUME PARK (yield their worker), so they are NOT blocking-pool ops.
+        assert!(!is_blocking_wait_op(&node(AISOperationType::Pause)));
+        assert!(!is_blocking_wait_op(&node(AISOperationType::Resume)));
+        // Compute/LLM ops are not blocking-pool ops either.
+        assert!(!is_blocking_wait_op(&node(AISOperationType::Ask)));
+        assert!(!is_blocking_wait_op(&node(AISOperationType::InvTool)));
+        // AUTONOMOUS holds its worker only in recv mode (it still long-polls).
+        let mut recv = node(AISOperationType::Autonomous);
+        assert!(!is_blocking_wait_op(&recv), "plain autonomous is compute/LLM-bound");
+        recv.attributes.insert("mode".to_string(), Value::String("recv".to_string()));
+        assert!(is_blocking_wait_op(&recv), "autonomous mode=recv holds a worker while waiting");
+    }
 
     #[test]
     fn test_pipeline_candidate_detection() {

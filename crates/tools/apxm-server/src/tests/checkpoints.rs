@@ -209,3 +209,4 @@ fn checkpoint_store_resume_already_resumed_returns_error() {
     assert!(result.is_err());
     assert!(result.unwrap_err().contains("not in pending state"));
 }
+

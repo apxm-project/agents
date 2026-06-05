@@ -25,6 +25,14 @@ pub struct SchedulerConfig {
     #[serde(default = "default_llm_inflight")]
     pub llm_inflight: usize,
 
+    /// Concurrency cap for long-WAITING ops (PAUSE/RESUME/recv) that block on an
+    /// external event rather than consuming CPU or an LLM slot. Generous and
+    /// separate so a burst of human-in-the-loop pauses cannot exhaust the compute
+    /// or LLM pools and stall real work (the documented PAUSE deadlock). These
+    /// ops do near-zero compute while parked, so a high cap is safe.
+    #[serde(default = "default_blocking_inflight")]
+    pub blocking_inflight: usize,
+
     #[serde(default = "default_max_retries")]
     pub max_retries: u32,
 
@@ -90,6 +98,7 @@ impl Default for SchedulerConfig {
             max_concurrency: default_max_concurrency(),
             max_inflight: default_max_inflight(),
             llm_inflight: default_llm_inflight(),
+            blocking_inflight: default_blocking_inflight(),
             max_retries: default_max_retries(),
             retry_backoff_ms: default_retry_backoff_ms(),
             retry_backoff_max_ms: default_retry_backoff_max_ms(),
@@ -201,6 +210,12 @@ fn default_max_inflight() -> usize {
 
 fn default_llm_inflight() -> usize {
     32
+}
+
+fn default_blocking_inflight() -> usize {
+    // Generous: parked PAUSE/RESUME/recv ops do ~no compute, so this only bounds
+    // pathological unbounded growth, not real parallelism.
+    4096
 }
 
 fn default_max_retries() -> u32 {

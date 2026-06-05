@@ -111,6 +111,58 @@ pub(crate) struct InferencePermit {
     _permit: OwnedSemaphorePermit,
 }
 
+impl InferencePermit {
+    /// Consume into the raw owned permit (handed to an [`AdmissionHandle`] so a
+    /// parked execution can release/reacquire its admission slot).
+    pub(crate) fn into_inner(self) -> OwnedSemaphorePermit {
+        self._permit
+    }
+}
+
+impl InferenceLimiter {
+    /// The underlying semaphore, for best-effort reacquire after a parked
+    /// execution released its slot.
+    pub(crate) fn semaphore(&self) -> Arc<Semaphore> {
+        Arc::clone(&self.semaphore)
+    }
+}
+
+/// Admission slot for one execution, manipulable by the runtime: a PARKED
+/// execution releases its inference-admission permit (freeing capacity for active
+/// work) and best-effort reacquires it on wake. Registered in the runtime
+/// `admission_registry` under the execution's `admission_id`; dropping it (on
+/// unregister at completion) finalizes the slot. Implements the runtime's
+/// `ParkAdmission` trait so the runtime stays decoupled from the limiter.
+pub(crate) struct AdmissionHandle {
+    permit: std::sync::Mutex<Option<OwnedSemaphorePermit>>,
+    semaphore: Arc<Semaphore>,
+}
+
+impl AdmissionHandle {
+    pub(crate) fn new(permit: OwnedSemaphorePermit, semaphore: Arc<Semaphore>) -> Self {
+        Self {
+            permit: std::sync::Mutex::new(Some(permit)),
+            semaphore,
+        }
+    }
+}
+
+impl apxm_runtime::scheduler::admission_registry::ParkAdmission for AdmissionHandle {
+    fn on_park(&self) {
+        // Release the admission slot by dropping the permit.
+        *self.permit.lock().expect("admission permit poisoned") = None;
+    }
+
+    fn on_unpark(&self) {
+        // Best-effort, non-blocking reacquire; if saturated, proceed un-admitted
+        // (a bounded transient overshoot beats stalling a resumed agent).
+        let mut p = self.permit.lock().expect("admission permit poisoned");
+        if p.is_none() {
+            *p = self.semaphore.clone().try_acquire_owned().ok();
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

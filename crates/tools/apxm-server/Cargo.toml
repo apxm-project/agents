@@ -33,6 +33,7 @@ blake3.workspace = true
 reqwest.workspace = true
 async-trait.workspace = true
 dashmap.workspace = true
+rusqlite.workspace = true
 uuid.workspace = true
 async-stream.workspace = true
 axum.workspace = true

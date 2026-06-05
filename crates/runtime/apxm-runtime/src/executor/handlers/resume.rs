@@ -1,9 +1,10 @@
-//! RESUME operation — restore execution from a PAUSE checkpoint.
+//! RESUME operation — wait for a PAUSE checkpoint to be resumed.
 //!
-//! Polls the APXM server for the named checkpoint's resumed state. If the
-//! checkpoint has been resumed by a human (via `POST /v1/checkpoints/{id}/resume`),
-//! this handler restores any STM snapshot that was stored during PAUSE, and
-//! returns the `human_input` value for downstream nodes to use.
+//! PARKS (yields its worker lane + concurrency permit) on the named checkpoint
+//! id. When a human resumes it (`POST /v1/checkpoints/{id}/resume`), the server
+//! calls `park_registry::wake(checkpoint_id, human_input)`, which delivers the
+//! `human_input` as this node's output for downstream nodes to consume — the
+//! same event-driven mechanism PAUSE uses, with no polling and no held worker.
 //!
 //! ## AIS usage
 //! ```ais
@@ -11,24 +12,11 @@
 //! resume(checkpoint: "review_plan") -> human_input
 //! ask("Implement approved plan. Human notes: " + human_input) -> code
 //! ```
-//!
-//! ## Polling behaviour
-//! RESUME polls the checkpoint endpoint up to `poll_max_attempts` times
-//! (default 60) with `poll_interval_ms` (default 5000 ms = 5 s) between
-//! attempts. Total default wait: 5 min. Adjust via node attributes if needed.
 
 use super::{ExecutionContext, Node, Result, Value};
 use apxm_core::constants::graph::attrs as graph_attrs;
 use apxm_core::constants::runtime::belief_keys;
 use apxm_core::error::RuntimeError;
-use std::time::Duration;
-
-/// Default number of polling attempts (60 × 5 s = 5 min total).
-const DEFAULT_POLL_ATTEMPTS: u64 = 60;
-/// Default interval between polling attempts (milliseconds).
-const DEFAULT_POLL_INTERVAL_MS: u64 = 5_000;
-/// Timeout for each individual HTTP request (seconds).
-const HTTP_TIMEOUT_SECS: u64 = 10;
 
 pub async fn execute(ctx: &ExecutionContext, node: &Node, _inputs: Vec<Value>) -> Result<Value> {
     let checkpoint_id = node
@@ -40,181 +28,26 @@ pub async fn execute(ctx: &ExecutionContext, node: &Node, _inputs: Vec<Value>) -
             message: "RESUME requires a `checkpoint` attribute".to_string(),
         })?;
 
-    let server_url = apxm_core::env::server_url_with_override(
-        node.attributes
-            .get(graph_attrs::SERVER_URL)
-            .and_then(|v| v.as_string().map(|s| s.to_string()))
-            .or_else(|| ctx.metadata.get("apxm_server_url").cloned()),
+    // Record the resume intent in AAM before parking (preserved from the old
+    // polling path; the wake delivers the value, this is just bookkeeping).
+    let label = crate::aam::TransitionLabel::operation(node.id, node.op_type);
+    ctx.aam.set_belief(
+        format!("{}{}", belief_keys::RESUME_PREFIX, checkpoint_id),
+        Value::String("resumed".to_string()),
+        label,
     );
-
-    let poll_attempts = node
-        .attributes
-        .get(graph_attrs::POLL_MAX_ATTEMPTS)
-        .and_then(|v| v.as_u64())
-        .unwrap_or(DEFAULT_POLL_ATTEMPTS);
-
-    let poll_interval_ms = node
-        .attributes
-        .get(graph_attrs::POLL_INTERVAL_MS)
-        .and_then(|v| v.as_u64())
-        .unwrap_or(DEFAULT_POLL_INTERVAL_MS);
-
-    let url = format!(
-        "{}/v1/checkpoints/{}",
-        server_url.trim_end_matches('/'),
-        checkpoint_id
-    );
-
-    let client = reqwest::Client::builder()
-        .timeout(Duration::from_secs(HTTP_TIMEOUT_SECS))
-        .build()
-        .map_err(|e| RuntimeError::Operation {
-            op_type: node.op_type,
-            message: format!("RESUME: failed to build HTTP client: {}", e),
-        })?;
 
     tracing::info!(
         execution_id = %ctx.execution_id,
         checkpoint_id = %checkpoint_id,
-        poll_attempts,
-        poll_interval_ms,
-        "RESUME: polling for checkpoint completion"
+        "RESUME parking until checkpoint is resumed"
     );
 
-    for attempt in 0..poll_attempts {
-        let resp = client
-            .get(&url)
-            .send()
-            .await
-            .map_err(|e| RuntimeError::Operation {
-                op_type: node.op_type,
-                message: format!(
-                    "RESUME: HTTP GET {} failed (attempt {}): {}",
-                    url,
-                    attempt + 1,
-                    e
-                ),
-            })?;
-
-        if !resp.status().is_success() {
-            let status = resp.status();
-            let text = resp.text().await.unwrap_or_default();
-            return Err(RuntimeError::Operation {
-                op_type: node.op_type,
-                message: format!(
-                    "RESUME: server returned {} for checkpoint '{}': {}",
-                    status, checkpoint_id, text
-                ),
-            });
-        }
-
-        let body: serde_json::Value = resp.json().await.map_err(|e| RuntimeError::Operation {
-            op_type: node.op_type,
-            message: format!("RESUME: failed to parse checkpoint response: {}", e),
-        })?;
-
-        let status = body
-            .get("status")
-            .and_then(|s| s.as_str())
-            .unwrap_or("pending");
-
-        match status {
-            "resumed" => {
-                tracing::info!(
-                    execution_id = %ctx.execution_id,
-                    checkpoint_id = %checkpoint_id,
-                    attempt,
-                    "RESUME: checkpoint has been resumed by human"
-                );
-
-                // Restore STM snapshot if one was stored by PAUSE.
-                restore_stm_snapshot(ctx, &checkpoint_id).await;
-
-                // Record resume in AAM
-                let label = crate::aam::TransitionLabel::operation(node.id, node.op_type);
-                ctx.aam.set_belief(
-                    format!("{}{}", belief_keys::RESUME_PREFIX, checkpoint_id),
-                    Value::String("resumed".to_string()),
-                    label,
-                );
-
-                // Extract and return human_input.
-                let human_input = body
-                    .get("human_input")
-                    .cloned()
-                    .unwrap_or(serde_json::Value::Null);
-
-                return Value::try_from(human_input).map_err(|e| RuntimeError::Operation {
-                    op_type: node.op_type,
-                    message: format!("RESUME: failed to convert human_input to Value: {}", e),
-                });
-            }
-            "expired" => {
-                return Err(RuntimeError::Operation {
-                    op_type: node.op_type,
-                    message: format!("RESUME: checkpoint '{}' has expired", checkpoint_id),
-                });
-            }
-            _ => {
-                // Still pending — wait and retry
-                tracing::debug!(
-                    execution_id = %ctx.execution_id,
-                    checkpoint_id = %checkpoint_id,
-                    attempt,
-                    "RESUME: checkpoint still pending, waiting {}ms",
-                    poll_interval_ms
-                );
-                tokio::time::sleep(Duration::from_millis(poll_interval_ms)).await;
-            }
-        }
-    }
-
-    Err(RuntimeError::Operation {
-        op_type: node.op_type,
-        message: format!(
-            "RESUME: checkpoint '{}' was not resumed within {} attempts ({} ms each)",
-            checkpoint_id, poll_attempts, poll_interval_ms
-        ),
+    // Park: the scheduler yields this worker + permit and re-injects the node
+    // (with the human_input as its output) when the checkpoint is resumed.
+    Err(RuntimeError::OperationParked {
+        wait_key: checkpoint_id,
     })
-}
-
-/// Restore STM state from a snapshot stored by PAUSE.
-async fn restore_stm_snapshot(ctx: &ExecutionContext, checkpoint_id: &str) {
-    let snapshot_key = format!(
-        "{}{}",
-        belief_keys::CHECKPOINT_SNAPSHOT_PREFIX,
-        checkpoint_id
-    );
-    if let Ok(Some(snapshot)) = ctx
-        .memory
-        .read_scoped(
-            crate::memory::MemorySpace::Stm,
-            ctx.scope_id(),
-            &snapshot_key,
-        )
-        .await
-    {
-        if let Value::Object(entries) = snapshot {
-            for (key, value) in entries {
-                // Restore all snapshot entries except the execution_id (keep current).
-                if key != belief_keys::EXECUTION_ID {
-                    let _ = ctx
-                        .memory
-                        .write_scoped(crate::memory::MemorySpace::Stm, ctx.scope_id(), key, value)
-                        .await;
-                }
-            }
-        }
-        // Clean up the snapshot key
-        let _ = ctx
-            .memory
-            .delete_scoped(
-                crate::memory::MemorySpace::Stm,
-                ctx.scope_id(),
-                &snapshot_key,
-            )
-            .await;
-    }
 }
 
 #[cfg(test)]
@@ -230,61 +63,44 @@ mod tests {
     use std::sync::Arc;
 
     async fn make_ctx() -> ExecutionContext {
-        let memory = Arc::new(
-            MemorySystem::new(MemoryConfig::in_memory_ltm())
-                .await
-                .unwrap(),
-        );
+        let memory = Arc::new(MemorySystem::new(MemoryConfig::in_memory_ltm()).await.unwrap());
         let llm_registry = Arc::new(LLMRegistry::new());
         let capability_system = Arc::new(CapabilitySystem::new());
         ExecutionContext::new(memory, llm_registry, capability_system, Aam::new())
     }
 
-    #[tokio::test]
-    async fn test_resume_missing_checkpoint_attribute() {
-        let ctx = make_ctx().await;
-        let node = apxm_core::types::execution::Node {
+    fn resume_node(checkpoint: Option<&str>) -> apxm_core::types::execution::Node {
+        let mut attributes = HashMap::new();
+        if let Some(c) = checkpoint {
+            attributes.insert("checkpoint".to_string(), Value::String(c.to_string()));
+        }
+        apxm_core::types::execution::Node {
             id: 1,
             op_type: AISOperationType::Resume,
-            attributes: HashMap::new(),
+            attributes,
             input_tokens: vec![],
             output_tokens: vec![100],
             metadata: NodeMetadata::default(),
-        };
-        let result = execute(&ctx, &node, vec![]).await;
+        }
+    }
+
+    #[tokio::test]
+    async fn test_resume_missing_checkpoint_attribute() {
+        let ctx = make_ctx().await;
+        let result = execute(&ctx, &resume_node(None), vec![]).await;
         assert!(result.is_err());
         assert!(result.unwrap_err().to_string().contains("checkpoint"));
     }
 
     #[tokio::test]
-    async fn test_resume_server_unavailable() {
+    async fn test_resume_parks_on_checkpoint() {
         let ctx = make_ctx().await;
-        let mut node = apxm_core::types::execution::Node {
-            id: 1,
-            op_type: AISOperationType::Resume,
-            attributes: HashMap::new(),
-            input_tokens: vec![],
-            output_tokens: vec![100],
-            metadata: NodeMetadata::default(),
-        };
-        node.attributes.insert(
-            "checkpoint".to_string(),
-            Value::String("test-cp".to_string()),
-        );
-        node.attributes.insert(
-            "server_url".to_string(),
-            Value::String("http://localhost:19999".to_string()),
-        );
-        // Use very small poll count so test doesn't hang
-        node.attributes.insert(
-            "poll_max_attempts".to_string(),
-            Value::String("1".to_string()),
-        );
-        node.attributes.insert(
-            "poll_interval_ms".to_string(),
-            Value::String("1".to_string()),
-        );
-        let result = execute(&ctx, &node, vec![]).await;
-        assert!(result.is_err());
+        let result = execute(&ctx, &resume_node(Some("review-cp")), vec![]).await;
+        match result {
+            Err(RuntimeError::OperationParked { wait_key }) => {
+                assert_eq!(wait_key, "review-cp", "parks on the checkpoint id");
+            }
+            other => panic!("expected OperationParked, got {other:?}"),
+        }
     }
 }

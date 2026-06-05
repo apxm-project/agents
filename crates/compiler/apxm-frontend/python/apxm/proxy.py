@@ -1462,6 +1462,52 @@ class GraphRecorder:
         attrs = self._apply_policy(attrs, attributes)
         return self._add_node(name, graph_keys.OP_AUTONOMOUS, attrs)
 
+    def recv(
+        self,
+        name: str | None = None,
+        *,
+        recv_url: str,
+        persona: str | None = None,
+        once: bool = True,
+        max_iterations: int | None = None,
+        poll_interval_ms: int | None = None,
+        recv_max_polls: int | None = None,
+        agent: AgentConfig | None = None,
+        model: ModelId | None = None,
+        provider: ProviderSpec | None = None,
+        route: BackendRoute | None = None,
+        backend: str | None = None,
+        **attributes: Any,
+    ) -> NodeRef:
+        """Park as an in-graph node until an event arrives at ``recv_url``, then
+        run one agent turn per event (AUTONOMOUS ``mode=recv``).
+
+        This is the artifact-resident counterpart to a host-loop monitor: the
+        wait lives in the ``.air`` graph. ``once=True`` (default) returns after
+        the first event; ``once=False`` re-arms up to ``max_iterations`` events.
+        ``recv_url`` is polled (2xx + non-empty body = an event) every
+        ``poll_interval_ms``; without ``recv_max_polls`` it waits indefinitely.
+        """
+        recv_attrs: dict[str, Any] = {"mode": "recv", "recv_url": recv_url}
+        if not once:
+            recv_attrs["recv_once"] = "false"
+        if poll_interval_ms is not None:
+            recv_attrs[graph_keys.POLL_INTERVAL_MS] = poll_interval_ms
+        if recv_max_polls is not None:
+            recv_attrs["recv_max_polls"] = recv_max_polls
+        recv_attrs.update(attributes)
+        return self.autonomous(
+            name=name,
+            prompt=persona or "You are an agent reacting to external events.",
+            max_iterations=max_iterations,
+            agent=agent,
+            model=model,
+            provider=provider,
+            route=route,
+            backend=backend,
+            **recv_attrs,
+        )
+
     def to_graph(self) -> ApxmGraph:
         from .backends import validate_graph_routes
 

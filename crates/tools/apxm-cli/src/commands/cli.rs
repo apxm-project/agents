@@ -302,6 +302,12 @@ pub enum Commands {
         /// assistant's text.
         #[arg(long)]
         tree: bool,
+        /// Subscribe to an apxm-os control-plane event stream at this base URL
+        /// (e.g. http://127.0.0.1:9090). Each cue event (process output, file
+        /// change, cron, webhook) becomes a turn, so the agent reacts to external
+        /// events without a human typing — the REPL stays interactive too.
+        #[arg(long = "monitor-url", value_name = "URL")]
+        monitor_url: Option<String>,
     },
 }
 

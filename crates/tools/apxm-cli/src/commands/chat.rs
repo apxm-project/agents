@@ -43,6 +43,11 @@ pub struct ChatOptions {
     pub backend: Option<String>,
     /// Pin each turn to a specific model id (ignored when `--air` is set).
     pub model: Option<String>,
+    /// Subscribe to an apxm-os control-plane event stream
+    /// (`GET {monitor_url}/events`); each cue event becomes a synthetic turn, so
+    /// the agent reacts to external events (file changes, process output, cron,
+    /// webhooks) without a human typing. The REPL stays interactive alongside it.
+    pub monitor_url: Option<String>,
 }
 
 /// Client-side conversation transcript. The runtime carries no role-tagged
@@ -185,67 +190,197 @@ pub async fn chat_command(opts: ChatOptions) -> Result<()> {
     // Capabilities granted for this session: starts with --admit and grows as
     // the operator approves write-tool turns interactively.
     let mut session_grants: Vec<String> = opts.admit.clone();
-    let stdin = std::io::stdin();
+
+    // Optional event source: subscribe to an apxm-os control-plane SSE stream so
+    // external cue events (process output, file changes, cron, webhooks) drive
+    // turns alongside stdin. The agent is no longer blocked waiting on a human.
+    let mut event_rx = match &opts.monitor_url {
+        Some(url) => {
+            let (tx, rx) = tokio::sync::mpsc::unbounded_channel::<String>();
+            spawn_monitor_subscriber(client.clone(), url.clone(), tx);
+            eprintln!("monitor: subscribed to {url}/events — external events become turns");
+            Some(rx)
+        }
+        None => None,
+    };
+
+    // Async stdin so it can be `select!`-ed against the event stream.
+    use tokio::io::AsyncBufReadExt as _;
+    let mut stdin_lines = tokio::io::BufReader::new(tokio::io::stdin()).lines();
+
     loop {
         eprint!("\nuser> ");
         let _ = std::io::stderr().flush();
-        let mut line = String::new();
-        let n = stdin.read_line(&mut line).context("stdin read failed")?;
-        if n == 0 {
-            // EOF (Ctrl-D): clean exit.
-            eprintln!();
-            break;
+
+        // Whichever arrives first: a typed line or an external event. An event
+        // turn skips meta-command handling (its text is JSON, never a `/cmd`).
+        enum Source {
+            Stdin(Option<String>),
+            Event(String),
         }
-        let line = line.trim();
+        let source = tokio::select! {
+            line = stdin_lines.next_line() => Source::Stdin(line.context("stdin read failed")?),
+            Some(cue) = recv_opt(&mut event_rx) => Source::Event(cue),
+        };
+
+        let (line, from_event) = match source {
+            Source::Stdin(None) => {
+                // EOF (Ctrl-D): clean exit.
+                eprintln!();
+                break;
+            }
+            Source::Stdin(Some(l)) => (l.trim().to_string(), false),
+            Source::Event(cue) => {
+                eprintln!("\n[event] {cue}");
+                (cue, true)
+            }
+        };
         if line.is_empty() {
             continue;
         }
-        if let Some(meta) = line.strip_prefix('/') {
-            if meta.split(' ').next() == Some("compact") {
-                // Force a compaction now (post-hook on demand).
-                match compact_if_needed(&mut convo, &client, &base, &session_id, true).await {
-                    Ok(true) => {}
-                    Ok(false) => eprintln!("(nothing to compact yet)"),
-                    Err(err) => eprintln!("(compaction failed: {err})"),
+        if !from_event {
+            if let Some(meta) = line.strip_prefix('/') {
+                if meta.split(' ').next() == Some("compact") {
+                    // Force a compaction now (post-hook on demand).
+                    match compact_if_needed(&mut convo, &client, &base, &session_id, true).await {
+                        Ok(true) => {}
+                        Ok(false) => eprintln!("(nothing to compact yet)"),
+                        Err(err) => eprintln!("(compaction failed: {err})"),
+                    }
+                    continue;
+                }
+                match handle_meta(meta, &client, &base).await {
+                    Ok(true) => break,
+                    Ok(false) => {}
+                    Err(err) => eprintln!("(meta-command error: {err})"),
                 }
                 continue;
             }
-            match handle_meta(meta, &client, &base).await {
-                Ok(true) => break,
-                Ok(false) => {}
-                Err(err) => eprintln!("(meta-command error: {err})"),
-            }
-            continue;
         }
 
-        let prompt = convo.render(line);
-        // Interactive HITL grant loop (parity with the studio frontend): on a
-        // refused write capability, prompt the operator; on approval grant it for
-        // the session and retry the SAME turn — repeating if a further write is
-        // refused. Rides the static admission path (admit_capabilities).
-        loop {
-            match run_turn(&client, &base, &air, &session_id, &prompt, &session_grants, &opts).await
-            {
-                Ok(TurnOutcome::Answered(answer)) => {
-                    record_and_compact(&mut convo, line, answer, &client, &base, &session_id).await;
-                    break;
+        handle_user_turn(
+            &line,
+            &mut convo,
+            &mut session_grants,
+            &client,
+            &base,
+            &air,
+            &session_id,
+            &opts,
+        )
+        .await;
+    }
+    Ok(())
+}
+
+/// Await the next event, or pend forever when no monitor is attached — so an
+/// absent event source simply never wins the `select!`.
+async fn recv_opt(rx: &mut Option<tokio::sync::mpsc::UnboundedReceiver<String>>) -> Option<String> {
+    match rx {
+        Some(r) => r.recv().await,
+        None => std::future::pending().await,
+    }
+}
+
+/// Run one turn for `user_text` (typed or event-driven), including the
+/// interactive HITL grant retry loop. Errors are reported, never fatal — the
+/// REPL keeps serving.
+#[allow(clippy::too_many_arguments)]
+async fn handle_user_turn(
+    user_text: &str,
+    convo: &mut Conversation,
+    session_grants: &mut Vec<String>,
+    client: &reqwest::Client,
+    base: &str,
+    air: &str,
+    session_id: &str,
+    opts: &ChatOptions,
+) {
+    let prompt = convo.render(user_text);
+    // On a refused write capability, prompt the operator; on approval grant it
+    // for the session and retry the SAME turn. Rides the static admission path.
+    loop {
+        match run_turn(client, base, air, session_id, &prompt, session_grants, opts).await {
+            Ok(TurnOutcome::Answered(answer)) => {
+                record_and_compact(convo, user_text, answer, client, base, session_id).await;
+                break;
+            }
+            Ok(TurnOutcome::NeedsGrant(cap)) => match prompt_grant(&cap) {
+                Ok(true) => {
+                    session_grants.push(cap);
+                    continue;
                 }
-                Ok(TurnOutcome::NeedsGrant(cap)) => {
-                    if prompt_grant(&cap)? {
-                        session_grants.push(cap);
-                        continue; // re-run with the new grant
-                    }
+                Ok(false) => {
                     eprintln!("(denied; turn skipped)");
                     break;
                 }
                 Err(err) => {
-                    eprintln!("(turn failed: {err})");
+                    eprintln!("(grant prompt failed: {err})");
                     break;
                 }
+            },
+            Err(err) => {
+                eprintln!("(turn failed: {err})");
+                break;
             }
         }
     }
-    Ok(())
+}
+
+/// Subscribe to an apxm-os control-plane `GET {os}/events` SSE stream and forward
+/// each cue event as a turn string. Reconnects with a fixed backoff so a brief
+/// os outage doesn't end the subscription.
+fn spawn_monitor_subscriber(
+    client: reqwest::Client,
+    os_base: String,
+    tx: tokio::sync::mpsc::UnboundedSender<String>,
+) {
+    let url = format!("{}/events", os_base.trim_end_matches('/'));
+    tokio::spawn(async move {
+        loop {
+            match client.get(&url).header("accept", "text/event-stream").send().await {
+                Ok(resp) if resp.status().is_success() => {
+                    let mut stream = resp.bytes_stream();
+                    let mut parser = SseParser::default();
+                    while let Some(chunk) = stream.next().await {
+                        let Ok(bytes) = chunk else { break };
+                        for frame in parser.feed(&bytes) {
+                            if frame.data.is_empty() {
+                                continue;
+                            }
+                            if tx.send(cue_event_to_turn(&frame.data)).is_err() {
+                                return; // REPL gone
+                            }
+                        }
+                    }
+                }
+                _ => {}
+            }
+            tokio::time::sleep(std::time::Duration::from_secs(3)).await;
+        }
+    });
+}
+
+/// Render a CueEvent JSON payload as a compact, model-friendly turn. Falls back
+/// to the raw JSON if it doesn't parse.
+fn cue_event_to_turn(data: &str) -> String {
+    match serde_json::from_str::<JsonValue>(data) {
+        Ok(ev) => {
+            let kind = ev.get("kind").and_then(|v| v.as_str()).unwrap_or("event");
+            let cue = ev
+                .get("cue_id")
+                .or_else(|| ev.get("key"))
+                .and_then(|v| v.as_str())
+                .unwrap_or("");
+            let payload = ev.get("payload").cloned().unwrap_or(JsonValue::Null);
+            format!(
+                "An apxm-os event fired (kind={kind}{}). Payload: {}. React appropriately for this agent.",
+                if cue.is_empty() { String::new() } else { format!(", cue={cue}") },
+                payload
+            )
+        }
+        Err(_) => format!("An apxm-os event fired: {data}"),
+    }
 }
 
 /// Outcome of one conversational turn.
@@ -557,6 +692,22 @@ async fn print_list(client: &reqwest::Client, url: &str, label: &str) -> Result<
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn cue_event_to_turn_summarizes_structured_event() {
+        let turn = cue_event_to_turn(
+            r#"{"kind":"process","cue_id":"process:tail","payload":{"event":"line","line":"ERROR boom"}}"#,
+        );
+        assert!(turn.contains("kind=process"), "got: {turn}");
+        assert!(turn.contains("cue=process:tail"), "got: {turn}");
+        assert!(turn.contains("ERROR boom"), "payload included: {turn}");
+    }
+
+    #[test]
+    fn cue_event_to_turn_falls_back_to_raw_on_bad_json() {
+        let turn = cue_event_to_turn("not json");
+        assert!(turn.contains("not json"));
+    }
 
     #[test]
     fn conversation_render_threads_history() {

@@ -95,11 +95,24 @@ pub(crate) async fn run_server_with_config(server_config: ServerConfig) -> anyho
     };
     let rollout_registry = RolloutRegistry::with_config(&server_config.rollout);
 
+    // Durable checkpoint store so a parked PAUSE's checkpoint + resumed input
+    // survive a server restart. Falls back to volatile in-memory on open error.
+    let checkpoint_store = {
+        let cp_path = rollout_paths.apxm_home.join("checkpoints.sqlite");
+        match CheckpointStore::open(&cp_path) {
+            Ok(s) => s,
+            Err(error) => {
+                warn!(%error, "failed to open durable checkpoint store; using in-memory");
+                CheckpointStore::new()
+            }
+        }
+    };
+
     let state = AppState {
         runtime,
         agent_registry: Arc::new(DashMap::new()),
         task_manager: TaskQueueManager::new(),
-        checkpoint_store: CheckpointStore::new(),
+        checkpoint_store,
         start_time: SystemTime::now(),
         a2a_tasks: Arc::new(DashMap::new()),
         skill_library,

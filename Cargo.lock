@@ -420,6 +420,7 @@ dependencies = [
  "http-body-util",
  "mimalloc",
  "reqwest",
+ "rusqlite",
  "serde",
  "serde_json",
  "tempfile",

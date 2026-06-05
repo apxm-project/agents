@@ -98,7 +98,7 @@ impl DataflowScheduler {
         let metrics = Arc::new(MetricsCollector::new());
 
         // Build shared scheduler state
-        let (state, workers) = SchedulerState::new_with_hooks(
+        let (mut state, workers) = SchedulerState::new_with_hooks(
             dag,
             self.config.clone(),
             metrics.clone(),
@@ -106,6 +106,12 @@ impl DataflowScheduler {
             inputs,
             hooks.clone(),
         )?;
+        // Carry the host admission key (if any) so a parked execution releases its
+        // cross-execution admission slot and reacquires it on wake.
+        state.admission_id = ctx
+            .metadata
+            .get(crate::metadata_keys::ADMISSION_ID)
+            .cloned();
         // Project AAM goal priorities onto scheduler node priorities.
         // This bridges the two priority systems: compile-time node.metadata.priority
         // and runtime Goal.priority in the AAM.
@@ -308,6 +314,14 @@ fn spawn_watchdog(state: Arc<SchedulerState>) {
                 .load(std::sync::atomic::Ordering::Relaxed);
 
             if now_ms.saturating_sub(last_progress_ms) >= cfg.deadlock_timeout_ms {
+                // A DAG with PARKED nodes is legitimately waiting on an external
+                // event (e.g. a human resuming a PAUSE), not deadlocked — it may
+                // wait arbitrarily long. Reset the timer and keep waiting.
+                if state.parked_count() > 0 {
+                    state.record_progress();
+                    continue;
+                }
+
                 // Before declaring a deadlock, check if any operations are
                 // actively running. Long-running operations (e.g. LLM calls)
                 // are not deadlocks — the scheduler is alive, just waiting.

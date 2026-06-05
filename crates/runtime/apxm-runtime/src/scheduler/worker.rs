@@ -19,7 +19,7 @@ use crossbeam_deque::Worker;
 
 use crate::executor::ExecutionContext;
 use crate::executor::ExecutorEngine;
-use crate::executor::pipeline::is_pure_llm_op;
+use crate::executor::pipeline::{is_blocking_wait_op, is_pure_llm_op};
 use crate::observability::WorkerLocalMetrics;
 use crate::scheduler::internal_state::TokenState;
 use crate::scheduler::queue::Priority;
@@ -87,11 +87,15 @@ pub async fn worker_loop(
             continue;
         };
 
-        // Acquire concurrency permit (backpressure). LLM ops draw from a
-        // separate semaphore so remote-batched serving backends can fan
-        // out without inflating compute parallelism — and vice versa, so a
-        // burst of LLM nodes cannot starve compute-bound work.
-        let semaphore = if is_pure_llm_op(&node.op_type) {
+        // Acquire concurrency permit (backpressure). Three pools that never
+        // starve each other: LLM ops (remote-batched fan-out), long-WAITING ops
+        // (PAUSE/RESUME/recv — block on an external event, ~no compute), and
+        // everything else (compute). Routing blocking waits to their own generous
+        // pool is what stops a burst of human-in-the-loop pauses from exhausting
+        // the compute/LLM permits and stalling real work.
+        let semaphore = if is_blocking_wait_op(&node) {
+            &state.blocking_concurrency
+        } else if is_pure_llm_op(&node.op_type) {
             &state.llm_concurrency
         } else {
             &state.concurrency
@@ -193,6 +197,29 @@ pub async fn worker_loop(
                     drop(permit);
                     break;
                 }
+            }
+            ExecutionOutcome::Parked { wait_key } => {
+                // Yield the lane: register a waker, do NOT finish_one (the node
+                // hasn't completed), and drop the permit so a parked wait holds
+                // neither a worker nor a concurrency slot. `enter_parked` also
+                // releases the execution's cross-execution admission slot on the
+                // 0->1 edge, so many parked agents don't occupy admission capacity
+                // they aren't using. The node is re-injected when
+                // park_registry::wake(wait_key) makes its output token ready.
+                state.enter_parked();
+                let waker = crate::scheduler::park_registry::ParkWaker::new(
+                    Arc::clone(&state),
+                    outputs.clone(),
+                );
+                crate::scheduler::park_registry::register(wait_key, waker);
+                // Keep the watchdog from flagging this idle-by-design moment.
+                state.record_progress();
+                apxm_op!(
+                    debug,
+                    worker = worker_id,
+                    node_id = node_id,
+                    "Operation parked; lane + permit yielded"
+                );
             }
         }
 
@@ -389,6 +416,12 @@ enum ExecutionOutcome {
         attempts: u32,
         start_time: Instant,
     },
+    /// The handler PARKED on an external event: the worker yields its lane +
+    /// permit (no `finish_one`) and registers a waker under `wait_key`; the node
+    /// is re-injected when [`crate::scheduler::park_registry::wake`] fires.
+    Parked {
+        wait_key: String,
+    },
 }
 
 /// Execute an operation with retry logic.
@@ -448,6 +481,11 @@ async fn execute_with_retries(
                     attempts: attempt + 1,
                     start_time,
                 };
+            }
+            // Not a failure: the handler parked on an external event. Surface it
+            // immediately (no retry) so the worker can yield its lane.
+            Err(RuntimeError::OperationParked { wait_key }) => {
+                return ExecutionOutcome::Parked { wait_key };
             }
             Err(error) => {
                 #[cfg(feature = "metrics")]

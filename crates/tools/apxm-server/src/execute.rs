@@ -159,6 +159,22 @@ pub(crate) async fn execute(
 /// `apxm_run` tool call this, so the compile path, the static write-boundary
 /// pre-flight, the credential injection, and the no-widen grant seed are shared
 /// (DRY) rather than duplicated per transport.
+/// Acquire an admission slot and register a park-aware handle, returning the
+/// admission id to stamp into execution metadata. While the execution is parked
+/// (waiting on an event) it releases the slot; on wake it best-effort reacquires.
+/// The caller MUST `admission_registry::unregister(&id)` on completion (this drops
+/// the handle and finalizes the slot).
+async fn acquire_admission(state: &AppState) -> Result<String, ApiError> {
+    let permit = state.inference_limiter.acquire().await?.into_inner();
+    let admission_id = format!("adm-{}", uuid::Uuid::new_v4());
+    let handle = Arc::new(crate::state::AdmissionHandle::new(
+        permit,
+        state.inference_limiter.semaphore(),
+    ));
+    apxm_runtime::scheduler::admission_registry::register(admission_id.clone(), handle);
+    Ok(admission_id)
+}
+
 pub(crate) async fn run_air_inner(
     state: &AppState,
     req: ExecuteRequest,
@@ -175,7 +191,12 @@ pub(crate) async fn run_air_inner(
     let mut artifact = air_to_artifact_with_caps(&air, &known_caps)?;
     validate_raw_execute_admission(&artifact, state, &admit)?;
     inject_resolved_credentials(&mut artifact).await?;
-    let _permit = state.inference_limiter.acquire().await?;
+    let admission_id = acquire_admission(state).await?;
+    let mut metadata = admit_grant_metadata(&admit, &imports);
+    metadata.insert(
+        apxm_runtime::metadata_keys::ADMISSION_ID.to_string(),
+        admission_id.clone(),
+    );
     let execution = state
         .runtime
         .execute_artifact_with_session_emitter_and_metadata(
@@ -184,10 +205,11 @@ pub(crate) async fn run_air_inner(
             session_id,
             None,
             session_dir.clone(),
-            admit_grant_metadata(&admit, &imports),
+            metadata,
         )
-        .await
-        .map_err(ApiError::runtime)?;
+        .await;
+    apxm_runtime::scheduler::admission_registry::unregister(&admission_id);
+    let execution = execution.map_err(ApiError::runtime)?;
     Ok(to_execute_response(execution, session_dir))
 }
 
@@ -207,11 +229,15 @@ pub(crate) async fn execute_stream(
     let mut artifact = air_to_artifact_with_caps(&air, &known_caps)?;
     validate_raw_execute_admission(&artifact, &state, &admit)?;
     inject_resolved_credentials(&mut artifact).await?;
-    let permit = state.inference_limiter.acquire().await?;
+    let admission_id = acquire_admission(&state).await?;
     let stream_config = state.server_config.execution_stream;
     let (tx, mut rx) = mpsc::channel::<ApxmEvent>(stream_config.channel_capacity.max(1));
     let runtime = Arc::clone(&state.runtime);
-    let grant_metadata = admit_grant_metadata(&admit, &imports);
+    let mut grant_metadata = admit_grant_metadata(&admit, &imports);
+    grant_metadata.insert(
+        apxm_runtime::metadata_keys::ADMISSION_ID.to_string(),
+        admission_id.clone(),
+    );
     let trace_id = session_id
         .clone()
         .unwrap_or_else(|| uuid::Uuid::new_v4().to_string());
@@ -226,7 +252,8 @@ pub(crate) async fn execute_stream(
         .insert(execution_id.clone(), Arc::clone(&cancel));
     let cancel_registry = Arc::clone(&state.cancel_registry);
     tokio::spawn(async move {
-        let _permit = permit;
+        // The admission slot is owned by the registered handle (released while
+        // parked, reacquired on wake); unregister after the run settles.
         // Frame 0 hands the client the id it needs to address the cancel route.
         let _ = tx
             .send(ApxmEvent::root(
@@ -293,6 +320,7 @@ pub(crate) async fn execute_stream(
                     .await;
             }
         }
+        apxm_runtime::scheduler::admission_registry::unregister(&admission_id);
         cancel_registry.remove(&execution_id);
     });
 

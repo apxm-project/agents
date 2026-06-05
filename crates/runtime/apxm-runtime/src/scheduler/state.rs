@@ -59,10 +59,27 @@ pub struct SchedulerState {
     /// inflating compute parallelism.
     pub llm_concurrency: ConcurrencyControl,
 
+    /// Concurrency controller for long-WAITING ops (PAUSE/RESUME/recv) that block
+    /// on an external event. Kept separate and generous so a burst of
+    /// human-in-the-loop pauses cannot exhaust the compute or LLM pools and stall
+    /// real work.
+    pub blocking_concurrency: ConcurrencyControl,
+
     // Coordination
     pub executed: Arc<AtomicUsize>,
     pub failed: Arc<AtomicUsize>,
     pub remaining: Arc<AtomicUsize>,
+    /// Nodes currently PARKED on an external event (yielded their worker + permit
+    /// via [`crate::scheduler::park_registry`]). A node here has NOT finished, so
+    /// it counts in `remaining`; the watchdog excludes parked nodes so a
+    /// legitimately-waiting DAG is never mistaken for a deadlock.
+    pub parked: Arc<AtomicUsize>,
+    /// Host admission key (stamped by the server into `metadata`). While this
+    /// execution has any parked node, its cross-execution admission slot is
+    /// released via [`crate::scheduler::admission_registry`]; it is reacquired
+    /// (best-effort) when no nodes remain parked. `None` = not admission-managed
+    /// (tests / non-server runs) → no-op.
+    pub admission_id: Option<String>,
     pub notify_done: Arc<Notify>,
     /// Edge-triggered wake for idle workers. Ready-node producers signal this
     /// so workers can sleep instead of polling the steal queue.
@@ -224,6 +241,9 @@ impl SchedulerState {
         // each other under remote-batched serving.
         let concurrency = ConcurrencyControl::new(cfg.max_inflight);
         let llm_concurrency = ConcurrencyControl::new(cfg.llm_inflight);
+        // Generous separate pool for long-waiting ops (PAUSE/RESUME/recv) so they
+        // never compete with compute/LLM permits.
+        let blocking_concurrency = ConcurrencyControl::new(cfg.blocking_inflight);
 
         // Build state
         let state = Self {
@@ -240,6 +260,7 @@ impl SchedulerState {
             tokens,
             op_states,
 
+            blocking_concurrency,
             work_stealing,
             queue: Arc::clone(&queue),
 
@@ -249,6 +270,8 @@ impl SchedulerState {
             executed: Arc::new(AtomicUsize::new(0)),
             failed: Arc::new(AtomicUsize::new(0)),
             remaining: Arc::new(AtomicUsize::new(dag.nodes.len())),
+            parked: Arc::new(AtomicUsize::new(0)),
+            admission_id: None,
             notify_done: Arc::new(Notify::new()),
             work_notify: Arc::new(Notify::new()),
             watchdog_notify: Arc::new(Notify::new()),
@@ -426,6 +449,77 @@ impl SchedulerState {
 
         self.record_progress();
         Ok(())
+    }
+
+    /// Resume a PARKED node: make its output token(s) ready with `value`, propagate
+    /// readiness to consumers, and perform the SINGLE compensating completion the
+    /// node skipped when it parked (it did neither `publish_outputs` nor
+    /// `finish_one`). This is the cross-frame twin of [`Self::resolve_promise`] +
+    /// `finish_one`; together a park→wake performs exactly one completion, so the
+    /// `remaining` count is invariant vs a normal node finishing.
+    pub fn wake_parked_node(&self, outputs: &[TokenId], value: Value) {
+        for &token_id in outputs {
+            match self.tokens.get_mut(&token_id) {
+                Some(token) if token.ready => continue, // already produced; idempotent
+                Some(mut token) => {
+                    token.ready = true;
+                    token.value = Some(value.clone());
+                }
+                None => {
+                    let mut ts = TokenState::new();
+                    ts.ready = true;
+                    ts.value = Some(value.clone());
+                    self.tokens.insert(token_id, ts);
+                }
+            }
+            if let Ok(ready_nodes) = self.ready_set.on_token_ready(
+                token_id,
+                &self.tokens,
+                &self.priorities,
+                &self.op_states,
+                &self.queue,
+            ) {
+                self.emit_node_ready_batch(&ready_nodes);
+                if !ready_nodes.is_empty() {
+                    self.work_notify.notify_waiters();
+                }
+            }
+        }
+        // The parked node completes now — the one compensating decrement.
+        let prev = self.remaining.fetch_sub(1, Ordering::SeqCst);
+        if prev == 1 {
+            self.notify_done.notify_waiters();
+            self.work_notify.notify_waiters();
+        }
+        // Clear the parked count (and reacquire admission on the 1->0 edge).
+        self.exit_parked();
+        self.record_progress();
+    }
+
+    /// Number of nodes currently parked on an external event.
+    pub fn parked_count(&self) -> usize {
+        self.parked.load(Ordering::SeqCst)
+    }
+
+    /// Record that a node has parked. On the 0->1 transition (the execution
+    /// enters a waiting state) release its cross-execution admission slot so the
+    /// capacity it isn't using can admit other work.
+    pub fn enter_parked(&self) {
+        if self.parked.fetch_add(1, Ordering::SeqCst) == 0
+            && let Some(id) = &self.admission_id
+        {
+            crate::scheduler::admission_registry::on_park(id);
+        }
+    }
+
+    /// Record that a parked node has resumed. On the 1->0 transition (no nodes
+    /// remain parked) best-effort reacquire the admission slot.
+    fn exit_parked(&self) {
+        if self.parked.fetch_sub(1, Ordering::SeqCst) == 1
+            && let Some(id) = &self.admission_id
+        {
+            crate::scheduler::admission_registry::on_unpark(id);
+        }
     }
 
     /// Push an execution frame onto the stack (for sub-flow execution).
@@ -831,6 +925,79 @@ mod tests {
         assert!(state.tokens.contains_key(&20));
         // Workers should be sized to the configured concurrency.
         assert_eq!(workers.len(), 2);
+    }
+
+    // ── Park/wake (event-driven continuation) ─────────────────────────────
+
+    fn new_state(dag: ExecutionDag) -> SchedulerState {
+        let metrics = Arc::new(MetricsCollector::new());
+        SchedulerState::new(dag, test_config().with_llm_inflight(2), metrics, Instant::now(), vec![])
+            .unwrap()
+            .0
+    }
+
+    /// THE mandatory remaining-count invariance gate (the #1 hazard): a node that
+    /// PARKS (no finish_one) and is later WOKEN decrements `remaining` exactly
+    /// once — identical to a normal completion. A miscount here hangs or
+    /// prematurely finishes a DAG.
+    #[test]
+    fn wake_parked_node_preserves_remaining_invariant() {
+        let state = new_state(two_node_dag());
+        assert_eq!(state.remaining.load(Ordering::SeqCst), 2);
+
+        // Park node 1: the worker increments `parked` and SKIPS finish_one.
+        state.parked.fetch_add(1, Ordering::SeqCst);
+        assert_eq!(state.remaining.load(Ordering::SeqCst), 2, "park must not decrement remaining");
+        assert_eq!(state.parked_count(), 1);
+
+        // Wake delivers node 1's output token (10) — the ONE compensating completion.
+        state.wake_parked_node(&[10], Value::String("resumed".into()));
+
+        assert_eq!(
+            state.remaining.load(Ordering::SeqCst),
+            1,
+            "park->wake decrements remaining EXACTLY once (invariant)"
+        );
+        assert_eq!(state.parked_count(), 0, "parked counter cleared on wake");
+        let t = state.tokens.get(&10).expect("token 10 exists");
+        assert!(t.ready, "woken node's output token is ready");
+        assert_eq!(t.value.clone(), Some(Value::String("resumed".into())));
+    }
+
+    #[test]
+    fn park_registry_wake_resumes_parked_node() {
+        use crate::scheduler::park_registry;
+        let state = Arc::new(new_state(two_node_dag()));
+        state.parked.fetch_add(1, Ordering::SeqCst);
+        let key = "cp-park-resume-unique-1";
+        park_registry::register(
+            key.to_string(),
+            park_registry::ParkWaker::new(Arc::clone(&state), vec![10]),
+        );
+        let woken = park_registry::wake(key, Value::String("hi".into()));
+        assert_eq!(woken, 1, "one parked node woken");
+        assert_eq!(state.remaining.load(Ordering::SeqCst), 1);
+        assert!(state.tokens.get(&10).unwrap().ready);
+    }
+
+    #[test]
+    fn park_registry_wake_before_register_is_not_lost() {
+        use crate::scheduler::park_registry;
+        let key = "cp-pre-resolved-unique-2";
+        // Wake arrives BEFORE any waiter registers (the race).
+        park_registry::wake(key, Value::String("early".into()));
+        let state = Arc::new(new_state(two_node_dag()));
+        state.parked.fetch_add(1, Ordering::SeqCst);
+        // Registering now must fire immediately from the stored Resolved value.
+        park_registry::register(
+            key.to_string(),
+            park_registry::ParkWaker::new(Arc::clone(&state), vec![10]),
+        );
+        assert!(
+            state.tokens.get(&10).unwrap().ready,
+            "pre-resolved wake delivered on register (no lost wakeup)"
+        );
+        assert_eq!(state.remaining.load(Ordering::SeqCst), 1);
     }
 
     #[test]

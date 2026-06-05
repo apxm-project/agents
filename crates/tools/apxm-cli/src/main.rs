@@ -221,6 +221,7 @@ async fn run_cli(cli: Cli) -> Result<()> {
             backend,
             model,
             tree,
+            monitor_url,
         } => {
             commands::chat::chat_command(commands::chat::ChatOptions {
                 air,
@@ -232,6 +233,7 @@ async fn run_cli(cli: Cli) -> Result<()> {
                 backend,
                 model,
                 tree,
+                monitor_url,
             })
             .await
         }
