@@ -925,7 +925,7 @@ fn summarize_event(event: &JsonValue) -> Option<String> {
         )),
         name if name == event_kind_constants::ERROR.name() => Some(format!(
             "{seq}error: {}",
-            payload_str(payload, "error").unwrap_or("unknown")
+            payload_str(payload, "message").unwrap_or("unknown")
         )),
         _ => None,
     }
@@ -1176,6 +1176,22 @@ mod tests {
             orchestration_execution_status::SUCCEEDED
         );
         server.finish().await;
+    }
+
+    #[test]
+    fn goal_event_summary_uses_error_payload_message() {
+        let event = json!({
+            "meta": { "seq": 7 },
+            "payload": {
+                "kind": event_kind_constants::ERROR.name(),
+                "message": "worker failed validation"
+            }
+        });
+
+        assert_eq!(
+            summarize_event(&event).as_deref(),
+            Some("#7 error: worker failed validation")
+        );
     }
 
     #[tokio::test]

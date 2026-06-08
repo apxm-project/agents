@@ -1172,6 +1172,7 @@ fn tracking_doc(
             "workflow_path": path_string(&bundle_dir.join("workflow.apxmw")),
             "plan_json": path_string(&bundle_dir.join("plan.json")),
             "graph_json": path_string(&bundle_dir.join("graph.json")),
+            "control": orchestration_control(),
             "workers": worker_prompt_rows(plan),
             "supervisor": supervisor_tracking_row(plan)
         }),
@@ -1722,6 +1723,15 @@ fn orchestration_control() -> OrchestrationControl {
     }
 }
 
+fn orchestration_terminal_event_kinds() -> Vec<&'static str> {
+    vec![
+        kind::ORCHESTRATOR_WAKE.name(),
+        kind::EXECUTE_COMPLETE.name(),
+        kind::ERROR.name(),
+        kind::TURN_ABORTED.name(),
+    ]
+}
+
 fn orchestration_wake_on() -> Vec<String> {
     vec![
         format!(
@@ -1767,12 +1777,7 @@ fn orchestration_runtime_contract(
         initial_since: 0,
         gate_step_id: gate_step_id.to_string(),
         feedback_step_id: "feedback",
-        terminal_event_kinds: vec![
-            kind::ORCHESTRATOR_WAKE.name(),
-            kind::EXECUTE_COMPLETE.name(),
-            kind::ERROR.name(),
-            kind::TURN_ABORTED.name(),
-        ],
+        terminal_event_kinds: orchestration_terminal_event_kinds(),
         next_events_args,
         sleep_event_kind: kind::ORCHESTRATOR_SLEEP.name(),
         wake_event_kind: kind::ORCHESTRATOR_WAKE.name(),
@@ -1780,7 +1785,16 @@ fn orchestration_runtime_contract(
 }
 
 fn orchestrator_prompt() -> Result<String, ApiError> {
-    render_orchestration_template(TEMPLATE_ORCHESTRATION_ORCHESTRATOR, &serde_json::json!({}))
+    render_orchestration_template(
+        TEMPLATE_ORCHESTRATION_ORCHESTRATOR,
+        &serde_json::json!({
+            "start_tool": MCP_TOOL_APXM_ORCHESTRATE_START,
+            "control": orchestration_control(),
+            "terminal_event_kinds": orchestration_terminal_event_kinds(),
+            "sleep_event_kind": kind::ORCHESTRATOR_SLEEP.name(),
+            "wake_event_kind": kind::ORCHESTRATOR_WAKE.name()
+        }),
+    )
 }
 
 fn orchestration_flowchart() -> Result<String, ApiError> {

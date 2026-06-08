@@ -22,9 +22,9 @@ Trigger:
 - Workflow: `{{ workflow_path }}`
 - Plan: `{{ plan_json }}`
 - Graph: `{{ graph_json }}`
-- Status tool: `apxm_workflow_status`
-- Events tool: `apxm_workflow_events`
-- Cancel tool: `apxm_workflow_cancel`
+- Status tool: `{{ control.status_tool }}`
+- Events tool: `{{ control.events_tool }}`
+- Cancel tool: `{{ control.cancel_tool }}`
 
 ## Worker Graph
 

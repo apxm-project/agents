@@ -128,13 +128,13 @@ pub const WORKFLOW_STEP_COMPLETED: EventKind =
 pub const WORKFLOW_FINISHED: EventKind =
     EventKind::new("workflow_finished", EventCategory::Lifecycle, false);
 pub const EXECUTION_STARTED: EventKind =
-    EventKind::new("execution_started", EventCategory::Lifecycle, true);
+    EventKind::new("execution_started", EventCategory::Lifecycle, false);
 pub const EXECUTE_COMPLETE: EventKind =
     EventKind::new("execute_complete", EventCategory::Lifecycle, true);
 pub const ORCHESTRATOR_SLEEP: EventKind =
     EventKind::new("orchestrator_sleep", EventCategory::Lifecycle, false);
 pub const ORCHESTRATOR_WAKE: EventKind =
-    EventKind::new("orchestrator_wake", EventCategory::Lifecycle, false);
+    EventKind::new("orchestrator_wake", EventCategory::Lifecycle, true);
 pub const MEMORY_READ: EventKind =
     EventKind::new("memory_read", EventCategory::Observability, false);
 pub const MEMORY_WRITE: EventKind =

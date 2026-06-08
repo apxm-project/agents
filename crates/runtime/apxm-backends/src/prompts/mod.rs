@@ -368,6 +368,68 @@ mod tests {
         assert!(report.contains("/tmp/prompts/planner.md"));
         assert!(report.contains("/tmp/orchestration.md"));
 
+        let tracking = render_prompt(
+            "orchestration_tracking",
+            &json!({
+                "task": "verify prompt template loading",
+                "context": "",
+                "event": "",
+                "trigger": "",
+                "bundle_dir": "/tmp/bundle",
+                "workflow_path": "/tmp/bundle/workflow.apxmw",
+                "plan_json": "/tmp/bundle/plan.json",
+                "graph_json": "/tmp/bundle/graph.json",
+                "control": {
+                    "status_tool": "apxm_workflow_status",
+                    "events_tool": "apxm_workflow_events",
+                    "cancel_tool": "apxm_workflow_cancel"
+                },
+                "workers": [
+                    {
+                        "id": "planner",
+                        "role_cell": "Plan the work.",
+                        "depends_label": "none",
+                        "cwd": "/tmp/apxm-worker",
+                        "prompt_path": "/tmp/prompts/planner.md",
+                        "report_path": "/tmp/reports/planner.md"
+                    }
+                ],
+                "supervisor": {
+                    "id": "gate",
+                    "depends_label": "`planner`",
+                    "workspace_cwd": null,
+                    "prompt_path": "/tmp/prompts/gate.md",
+                    "report_path": "/tmp/reports/gate.md"
+                }
+            }),
+        )
+        .expect("orchestration_tracking render");
+        assert!(tracking.contains("apxm_workflow_status"));
+        assert!(tracking.contains("/tmp/bundle/workflow.apxmw"));
+
+        let orchestrator = render_prompt(
+            "orchestration_orchestrator",
+            &json!({
+                "start_tool": "apxm_orchestrate_start",
+                "control": {
+                    "status_tool": "apxm_workflow_status",
+                    "events_tool": "apxm_workflow_events",
+                    "cancel_tool": "apxm_workflow_cancel"
+                },
+                "terminal_event_kinds": [
+                    "orchestrator_wake",
+                    "execute_complete",
+                    "error",
+                    "turn_aborted"
+                ],
+                "sleep_event_kind": "orchestrator_sleep",
+                "wake_event_kind": "orchestrator_wake"
+            }),
+        )
+        .expect("orchestration_orchestrator render");
+        assert!(orchestrator.contains("apxm_orchestrate_start"));
+        assert!(orchestrator.contains("orchestrator_wake"));
+
         let flowchart =
             render_prompt("orchestration_flowchart", &json!({})).expect("flowchart render");
         assert!(flowchart.contains("[start background workflow]"));

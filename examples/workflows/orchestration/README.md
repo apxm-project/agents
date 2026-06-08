@@ -1,10 +1,10 @@
 # Native Orchestration Workflows
 
-These examples exercise APXM as an agent-agnostic orchestrator. The checked-in
-workers are deterministic AIR graphs, so they run without Claude, Codex, API
-keys, ACP profiles, or network access. Replace any worker graph with a graph,
-artifact, or workflow that calls a registered agent when you want the same
-shape to drive real workers.
+These examples exercise APXM's native workflow orchestration surface for
+agent-agnostic worker graphs. The checked-in workers are deterministic AIR
+graphs, so they run without Claude, Codex, API keys, ACP profiles, or network
+access. Replace any worker graph with a graph, artifact, or workflow that calls
+a registered agent when you want the same shape to drive real workers.
 
 ## Three Ways To Run Complex Work
 
@@ -12,7 +12,7 @@ Use the smallest surface that matches the job:
 
 - `dekk apxm goal`: an agent or user creates one bounded worker DAG, APXM
   materializes the workflow bundle, starts it in the background, and wakes the
-  orchestrator through `apxm_workflow_events/status`.
+  orchestrator through `apxm_workflow_events` and `apxm_workflow_status`.
 - `dekk apxm workflow run` or `dekk apxm workflow execute`: run a checked-in
   `.apxmw` workflow file after `validate` and `analyze`.
 - `apxm_plan_as_graph`: ask MCP to synthesize a typed AIR graph from natural
@@ -49,7 +49,7 @@ status/events/cancel wakes it.
 [event/task] -> [trigger] -> [parallel workers] -> [gate/eval] -> [feedback]
                                       |
                                       v
-                         [apxm_workflow_status/events/cancel]
+ [apxm_workflow_status + apxm_workflow_events + apxm_workflow_cancel]
 ```
 
 Use `autonomous_task/deterministic_request.json` for a no-agent smoke test, or
@@ -174,5 +174,7 @@ is not involved. `cancel_background/cancel_parked.apxmw` parks on checkpoint
 `apxm_workflow_cancel` when launched through the native MCP workflow tools.
 
 ```bash
-apxm workflow run examples/workflows/orchestration/cancel_background/background_ok.apxmw --background
+dekk apxm workflow execute examples/workflows/orchestration/cancel_background/background_ok.apxmw \
+  --background \
+  --json
 ```
