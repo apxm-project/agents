@@ -79,11 +79,24 @@ The HTTP MCP endpoint also exposes APXM skill library tools:
 - `apxm_aam_recall` -- query AAM beliefs/goals/transitions plus runtime memory
 - `apxm_evidence_lookup` -- query repo-local `.apxm` claim/evaluation evidence
 - `apxm_capability_list` -- list runtime capabilities, LLM backends, and model-router health
+- `apxm_workflow_start` -- start a server-managed `.apxmw` workflow in the background and return `execution_id`, `session_id`, and `session_dir`
+- `apxm_workflow_status` -- fetch the current status, result, error, and event totals for a workflow run by `execution_id`
+- `apxm_workflow_events` -- page retained run events for a workflow run with `since` and `limit`
+- `apxm_workflow_cancel` -- interrupt an in-flight workflow run by server-owned `execution_id`
 
 Skill inventory prepends the bundled server skill root and then appends roots
 configured with repeated `--skill-root <path>` arguments or the
 `APXM_SKILL_ROOTS` path list. Requests cannot provide arbitrary roots, artifact
 paths, raw AIR, or session roots.
+
+Workflow MCP starts are server-owned control-plane executions. The server
+validates the `.apxmw` path, creates a validated wrapper graph around
+`WORKFLOW_SPAWN`, applies the same raw-execute admission and credential
+injection path as `apxm_run`, records a durable execution record, emits retained
+run events and rollout entries, and registers the run for cancellation. Clients
+should treat `execution_id` as the live status/events/cancel handle and
+`session_dir` as the offline workflow/session inspection handle. The request
+does not accept `session_root`; workflow session roots are derived by APXM.
 
 `POST /v1/skills/:id/execute`, `POST /v1/skills/:id/execute/stream`, and
 `apxm_skill_call` are intentionally narrow. They only run already compiled
