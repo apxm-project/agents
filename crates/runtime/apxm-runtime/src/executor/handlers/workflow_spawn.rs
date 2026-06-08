@@ -59,7 +59,11 @@ pub async fn execute(ctx: &ExecutionContext, node: &Node, inputs: Vec<Value>) ->
 
     let result = ctx
         .workflow_spawner
-        .spawn_workflow(invocation, ctx.event_emitter.clone())
+        .spawn_workflow(
+            invocation,
+            ctx.event_emitter.clone(),
+            Some(ctx.cancellation_token.child()),
+        )
         .await?;
 
     let mut payload = HashMap::from([

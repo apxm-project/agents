@@ -112,6 +112,7 @@ impl DataflowScheduler {
             .metadata
             .get(crate::metadata_keys::ADMISSION_ID)
             .cloned();
+        state.cancellation_token = ctx.cancellation_token.clone();
         // Project AAM goal priorities onto scheduler node priorities.
         // This bridges the two priority systems: compile-time node.metadata.priority
         // and runtime Goal.priority in the AAM.
@@ -144,14 +145,16 @@ impl DataflowScheduler {
             "All workers spawned, waiting for completion"
         );
 
-        // Wait for completion or failure (skip if already complete).
-        if state
-            .remaining
-            .load(std::sync::atomic::Ordering::SeqCst)
-            != 0
-            && !state.is_cancelled()
-        {
-            done.await;
+        // Wait for completion, failure, or host-owned cancellation (skip if already complete).
+        if state.remaining.load(std::sync::atomic::Ordering::SeqCst) != 0 && !state.is_cancelled() {
+            let cancellation_token = state.cancellation_token.clone();
+            tokio::select! {
+                _ = done => {}
+                _ = cancellation_token.cancelled() => {
+                    state.set_first_error(RuntimeError::SchedulerCancelled);
+                    state.mark_done();
+                }
+            }
         }
 
         // Clean shutdown: wait for all workers to finish

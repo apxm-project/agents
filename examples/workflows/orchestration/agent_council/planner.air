@@ -1,0 +1,5 @@
+module {
+  func.func @planner(%arg0: !ais.token {ais.param_name = "task", ais.param_type = "str"}) -> !ais.token attributes {ais.entry} {
+    func.return %arg0 : !ais.token
+  }
+}

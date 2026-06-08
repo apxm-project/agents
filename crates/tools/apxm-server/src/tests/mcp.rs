@@ -1,4 +1,5 @@
 use super::*;
+use apxm_core::events::{ApxmEvent, EventSource};
 use std::sync::atomic::{AtomicUsize, Ordering};
 
 #[tokio::test]
@@ -726,6 +727,414 @@ async fn mcp_workflow_cancel_interrupts_in_flight_run() {
             .iter()
             .any(|event| event["payload"]["kind"] == "turn_aborted"),
         "expected turn_aborted event: {events}"
+    );
+}
+
+#[tokio::test]
+async fn mcp_checked_in_agent_council_workflow_runs_and_pages_events() {
+    let app = build_app(test_state().await);
+    let workflow_path = checked_in_workflow_path("agent_council/workflow.apxmw");
+    let task = "orchestrate worker agents";
+
+    let execution_id = start_workflow_via_mcp(
+        app.clone(),
+        &workflow_path,
+        serde_json::json!({ "task": task }),
+        Some("mcp-example-agent-council"),
+    )
+    .await;
+    let status_body = wait_for_workflow_status(app.clone(), &execution_id, STATUS_SUCCEEDED).await;
+    let workflow_status: serde_json::Value =
+        serde_json::from_str(tool_text(&status_body)).expect("workflow status response JSON");
+    let spawn_payload = workflow_spawn_payload(&workflow_status);
+    let result = spawn_payload["result"].as_str().expect("workflow result");
+    assert!(
+        result.contains(&format!("planner={task}")),
+        "missing planner output: {result}"
+    );
+    assert!(
+        result.contains("executor:"),
+        "missing executor output: {result}"
+    );
+    assert!(
+        result.contains("reviewer:"),
+        "missing reviewer output: {result}"
+    );
+    assert!(
+        result.contains(task),
+        "missing workflow arg in output: {result}"
+    );
+
+    let workflow_results: serde_json::Value = serde_json::from_slice(
+        &std::fs::read(
+            std::path::Path::new(spawn_payload["session_dir"].as_str().expect("session_dir"))
+                .join("results.json"),
+        )
+        .expect("read example workflow results.json"),
+    )
+    .expect("workflow results JSON");
+    assert_eq!(workflow_results["status"], "Success");
+    for step in ["planner", "executor", "reviewer", "synthesizer"] {
+        assert_eq!(
+            workflow_results["step_results"][step]["status"], "Success",
+            "step {step} should succeed: {workflow_results}"
+        );
+    }
+
+    let page_one = workflow_events(app.clone(), &execution_id, 0, 1).await;
+    let page_one_events = page_one["events"].as_array().expect("events array");
+    assert_eq!(page_one_events.len(), 1);
+    assert_eq!(page_one_events[0]["meta"]["seq"], 0);
+    assert_eq!(page_one_events[0]["meta"]["source"], "server");
+    assert_eq!(page_one_events[0]["payload"]["kind"], "execution_started");
+    assert_eq!(page_one["next_seq"], 1);
+    assert_eq!(page_one["done"], false);
+
+    let page_two = workflow_events(app.clone(), &execution_id, 1, 3).await;
+    let page_two_events = page_two["events"].as_array().expect("events array");
+    assert!(
+        !page_two_events.is_empty(),
+        "expected second page: {page_two}"
+    );
+    assert!(
+        page_two_events
+            .iter()
+            .all(|event| event["meta"]["seq"].as_u64().unwrap_or_default() >= 1),
+        "page two should honor since: {page_two}"
+    );
+
+    let full = workflow_events(app.clone(), &execution_id, 0, 200).await;
+    let full_events = full["events"].as_array().expect("events array");
+    assert_eq!(full["done"], true);
+    assert_strictly_increasing_event_seq(full_events, &execution_id);
+    assert_eq!(
+        full["next_seq"],
+        full_events.last().expect("last event")["meta"]["seq"]
+            .as_u64()
+            .expect("last seq")
+            + 1
+    );
+    let tail = workflow_events(
+        app,
+        &execution_id,
+        full["next_seq"].as_u64().expect("next_seq"),
+        10,
+    )
+    .await;
+    assert_eq!(
+        tail["events"].as_array().expect("tail events").len(),
+        0,
+        "tail page should be empty: {tail}"
+    );
+    assert_eq!(tail["done"], true);
+
+    assert!(
+        full_events.iter().any(|event| {
+            event["payload"]["kind"] == "operation_end"
+                && event["payload"]["op_type"] == "WORKFLOW_SPAWN"
+                && event["payload"]["success"] == true
+                && event["meta"]["source"] == "runtime"
+                && event["meta"]["skill"]["skill_id"] == "apxm.workflow"
+                && event["meta"]["skill"]["flow_name"] == "workflow_start"
+        }),
+        "expected workflow runtime provenance on WORKFLOW_SPAWN end: {full}"
+    );
+    assert!(
+        full_events.iter().any(|event| {
+            event["payload"]["kind"] == "execute_complete"
+                && event["meta"]["source"] == "server"
+                && event["meta"].get("skill").is_none()
+        }),
+        "expected server execute_complete without skill provenance: {full}"
+    );
+}
+
+#[tokio::test]
+async fn mcp_workflow_events_falls_back_to_rollout_when_since_precedes_retained_window() {
+    let state = test_state().await;
+    let execution_id = "mcp-workflow-retention";
+    let session_root = tempfile::tempdir().expect("session root");
+    let session_dir = session_root.path().join("retention");
+    std::fs::create_dir_all(&session_dir).expect("create session dir");
+    state.execution_store.start_skill_execution(
+        "apxm.workflow",
+        env!("CARGO_PKG_VERSION"),
+        "mcp-workflow-retention-session",
+        &session_dir.to_string_lossy(),
+    );
+    crate::skills::ensure_rollout_open(
+        &state,
+        execution_id,
+        "mcp-workflow-retention-session",
+        "apxm.workflow",
+        env!("CARGO_PKG_VERSION"),
+        None,
+        None,
+        None,
+        Vec::new(),
+    )
+    .await;
+    for idx in 0..130 {
+        let event = state.run_event_bus.record(
+            execution_id,
+            ApxmEvent::root(
+                crate::state::ExecutionStartedPayload {
+                    execution_id: format!("{execution_id}-{idx}"),
+                },
+                EventSource::Server,
+                execution_id,
+            ),
+        );
+        state.rollout_registry.try_record(execution_id, event);
+    }
+    state.rollout_registry.close(execution_id).await;
+
+    let page = workflow_events(build_app(state), execution_id, 0, 2).await;
+    let events = page["events"].as_array().expect("events array");
+    assert_eq!(events.len(), 2, "expected first retained-out page: {page}");
+    assert_eq!(events[0]["meta"]["seq"], 0);
+    assert_eq!(events[1]["meta"]["seq"], 1);
+    assert_eq!(page["next_seq"], 2);
+    assert_eq!(page["done"], false);
+}
+
+#[tokio::test]
+async fn mcp_checked_in_event_feedback_loop_workflow_runs_all_steps() {
+    let app = build_app(test_state().await);
+    let workflow_path = checked_in_workflow_path("event_feedback_loop/workflow.apxmw");
+
+    let execution_id = start_workflow_via_mcp(
+        app.clone(),
+        &workflow_path,
+        serde_json::json!({ "event": "repository changed" }),
+        Some("mcp-example-event-loop"),
+    )
+    .await;
+    let status_body = wait_for_workflow_status(app.clone(), &execution_id, STATUS_SUCCEEDED).await;
+    let workflow_status: serde_json::Value =
+        serde_json::from_str(tool_text(&status_body)).expect("workflow status response JSON");
+    let result = workflow_spawn_payload(&workflow_status)["result"]
+        .as_str()
+        .expect("workflow result");
+    assert!(
+        result.contains("event=repository changed"),
+        "missing event: {result}"
+    );
+    assert!(
+        result.contains("action.write:"),
+        "missing write action: {result}"
+    );
+    assert!(
+        result.contains("action.verify:"),
+        "missing verify action: {result}"
+    );
+
+    let events = workflow_events(app, &execution_id, 0, 200).await;
+    let event_items = events["events"].as_array().expect("events array");
+    let const_starts = event_items
+        .iter()
+        .filter(|event| {
+            event["payload"]["kind"] == "operation_start"
+                && event["payload"]["op_type"] == "CONST_STR"
+        })
+        .count();
+    assert!(
+        const_starts >= 5,
+        "deterministic event-loop child graphs should emit runtime operation events: {events}"
+    );
+    assert!(
+        event_items
+            .iter()
+            .any(|event| event["payload"]["kind"] == "execute_complete"),
+        "expected terminal execute_complete: {events}"
+    );
+}
+
+#[tokio::test]
+async fn mcp_checked_in_approval_gate_parks_wakes_and_reports_resume_events() {
+    const CHECKPOINT_ID: &str = "examples-approval-cp";
+
+    let app = build_app(test_state().await);
+    create_pending_checkpoint(app.clone(), CHECKPOINT_ID).await;
+    let workflow_path = checked_in_workflow_path("approval_gate/workflow.apxmw");
+
+    let execution_id = start_workflow_via_mcp(
+        app.clone(),
+        &workflow_path,
+        serde_json::json!({}),
+        Some("mcp-example-approval-gate"),
+    )
+    .await;
+    let parked_events = wait_for_workflow_events_matching(app.clone(), &execution_id, |events| {
+        events.iter().any(|event| {
+            event["payload"]["kind"] == "operation_start" && event["payload"]["op_type"] == "RESUME"
+        })
+    })
+    .await;
+    assert_eq!(
+        workflow_status_json(app.clone(), &execution_id).await[tool_result::STATUS],
+        STATUS_RUNNING
+    );
+
+    let parked_items = parked_events["events"].as_array().expect("events array");
+    assert!(
+        parked_items.iter().any(|event| {
+            event["payload"]["kind"] == "operation_start" && event["payload"]["op_type"] == "RESUME"
+        }),
+        "parked workflow should expose RESUME operation_start: {parked_events}"
+    );
+    assert!(
+        parked_items.iter().any(|event| {
+            event["payload"]["kind"] == "operation_end"
+                && event["payload"]["op_type"] == "RESUME"
+                && event["payload"]["success"] == false
+        }),
+        "current parked RESUME contract should expose non-success operation_end: {parked_events}"
+    );
+
+    let (status, body) = post_json(
+        app.clone(),
+        &routes::checkpoint_resume_path(CHECKPOINT_ID),
+        serde_json::json!({ "human_input": "approved" }),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "checkpoint resume failed: {body}");
+
+    let status_body = wait_for_workflow_status(app.clone(), &execution_id, STATUS_SUCCEEDED).await;
+    let workflow_status: serde_json::Value =
+        serde_json::from_str(tool_text(&status_body)).expect("workflow status response JSON");
+    assert_eq!(
+        workflow_spawn_payload(&workflow_status)["result"],
+        "approval: approved"
+    );
+    let events = workflow_events(app, &execution_id, 0, 100).await;
+    let event_items = events["events"].as_array().expect("events array");
+    assert!(
+        event_items
+            .iter()
+            .any(|event| event["payload"]["kind"] == "execute_complete"),
+        "expected execute_complete after resume wake: {events}"
+    );
+    assert!(
+        !event_items
+            .iter()
+            .any(|event| event["payload"]["kind"] == "turn_aborted"),
+        "approval wake should not abort: {events}"
+    );
+}
+
+#[tokio::test]
+async fn mcp_checked_in_cancel_parked_workflow_has_no_late_child_work() {
+    const CHECKPOINT_ID: &str = "examples-cancel-cp";
+
+    let app = build_app(test_state().await);
+    create_pending_checkpoint(app.clone(), CHECKPOINT_ID).await;
+    let workflow_path = checked_in_workflow_path("cancel_background/cancel_parked.apxmw");
+
+    let execution_id = start_workflow_via_mcp(
+        app.clone(),
+        &workflow_path,
+        serde_json::json!({}),
+        Some("mcp-example-cancel-parked"),
+    )
+    .await;
+    let _ = wait_for_workflow_events_matching(app.clone(), &execution_id, |events| {
+        events.iter().any(|event| {
+            event["payload"]["kind"] == "operation_start" && event["payload"]["op_type"] == "RESUME"
+        })
+    })
+    .await;
+    assert_eq!(
+        workflow_status_json(app.clone(), &execution_id).await[tool_result::STATUS],
+        STATUS_RUNNING
+    );
+
+    let (status, body) = post_json(
+        app.clone(),
+        routes::MCP,
+        mcp_call(
+            MCP_TOOL_APXM_WORKFLOW_CANCEL,
+            serde_json::json!({ "execution_id": execution_id }),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "workflow cancel failed: {body}");
+    assert_eq!(body[tool_result::RESULT][mcp_fields::IS_ERROR], false);
+    let cancel_response: serde_json::Value =
+        serde_json::from_str(tool_text(&body)).expect("workflow cancel response JSON");
+    assert_eq!(cancel_response[tool_result::EXECUTION_ID], execution_id);
+    assert_eq!(cancel_response["cancelled"], true);
+
+    let status_body = wait_for_workflow_status(app.clone(), &execution_id, STATUS_FAILED).await;
+    let workflow_status: serde_json::Value =
+        serde_json::from_str(tool_text(&status_body)).expect("workflow status response JSON");
+    assert!(
+        workflow_status["error"]
+            .as_str()
+            .unwrap_or_default()
+            .contains("apxm_workflow_cancel"),
+        "expected cancel error: {workflow_status}"
+    );
+
+    let cancelled_events = workflow_events(app.clone(), &execution_id, 0, 100).await;
+    let cancelled_items = cancelled_events["events"].as_array().expect("events array");
+    let abort_seq = cancelled_items
+        .iter()
+        .find(|event| event["payload"]["kind"] == "turn_aborted")
+        .and_then(|event| event["meta"]["seq"].as_u64())
+        .expect("turn_aborted seq");
+
+    let (status, body) = post_json(
+        app.clone(),
+        &routes::checkpoint_resume_path(CHECKPOINT_ID),
+        serde_json::json!({ "human_input": "too late" }),
+    )
+    .await;
+    assert_eq!(
+        status,
+        StatusCode::OK,
+        "late checkpoint resume failed: {body}"
+    );
+    tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+
+    let late_events = workflow_events(app.clone(), &execution_id, 0, 100).await;
+    let late_items = late_events["events"].as_array().expect("events array");
+    assert!(
+        late_items
+            .iter()
+            .any(|event| event["payload"]["kind"] == "turn_aborted"
+                && event["payload"]["execution_id"] == execution_id
+                && event["payload"]["reason"] == "cancelled via apxm_workflow_cancel"),
+        "expected exact turn_aborted payload: {late_events}"
+    );
+    assert!(
+        !late_items
+            .iter()
+            .any(|event| event["payload"]["kind"] == "execute_complete"),
+        "cancelled workflow must not emit execute_complete: {late_events}"
+    );
+    assert!(
+        !late_items.iter().any(|event| {
+            event["meta"]["seq"].as_u64().unwrap_or_default() > abort_seq
+                && event["meta"]["source"] == "runtime"
+        }),
+        "late checkpoint resume must not append runtime events after cancel: {late_events}"
+    );
+
+    let (status, body) = post_json(
+        app,
+        routes::MCP,
+        mcp_call(
+            MCP_TOOL_APXM_WORKFLOW_CANCEL,
+            serde_json::json!({ "execution_id": execution_id }),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "second cancel failed: {body}");
+    assert_eq!(body[tool_result::RESULT][mcp_fields::IS_ERROR], true);
+    assert!(
+        tool_text(&body).contains("no in-flight workflow run to cancel"),
+        "second cancel should report not-in-flight: {body}"
     );
 }
 
@@ -2127,6 +2536,64 @@ async fn create_pending_checkpoint(app: Router, checkpoint_id: &str) {
     assert_eq!(body["status"], "pending");
 }
 
+fn checked_in_workflow_path(relative: &str) -> std::path::PathBuf {
+    let repo_root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../../..")
+        .canonicalize()
+        .expect("canonical repo root");
+    let workflow_path = repo_root
+        .join("examples/workflows/orchestration")
+        .join(relative);
+    assert!(
+        workflow_path.is_file(),
+        "checked-in workflow fixture missing: {}",
+        workflow_path.display()
+    );
+    workflow_path
+}
+
+async fn start_workflow_via_mcp(
+    app: Router,
+    workflow_path: &std::path::Path,
+    args: serde_json::Value,
+    session_id: Option<&str>,
+) -> String {
+    let mut start_args = serde_json::json!({
+        "workflow_path": workflow_path.to_string_lossy().to_string(),
+        "args": args
+    });
+    if let Some(session_id) = session_id {
+        start_args["session_id"] = serde_json::Value::String(session_id.to_string());
+    }
+    let (status, body) = post_json(
+        app,
+        routes::MCP,
+        mcp_call(MCP_TOOL_APXM_WORKFLOW_START, start_args),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "workflow start failed: {body}");
+    assert_eq!(body[tool_result::RESULT][mcp_fields::IS_ERROR], false);
+    let started: serde_json::Value =
+        serde_json::from_str(tool_text(&body)).expect("workflow start response JSON");
+    assert_eq!(started[tool_result::STATUS], STATUS_RUNNING);
+    started[tool_result::EXECUTION_ID]
+        .as_str()
+        .expect("execution_id")
+        .to_string()
+}
+
+fn assert_strictly_increasing_event_seq(events: &[serde_json::Value], execution_id: &str) {
+    let mut previous_seq = None;
+    for event in events {
+        assert_eq!(event["meta"]["trace_id"], execution_id);
+        let seq = event["meta"]["seq"].as_u64().expect("event seq");
+        if let Some(previous) = previous_seq {
+            assert!(seq > previous, "event seq must be increasing");
+        }
+        previous_seq = Some(seq);
+    }
+}
+
 async fn workflow_status_json(app: Router, execution_id: &str) -> serde_json::Value {
     let (status, body) = post_json(
         app,
@@ -2164,6 +2631,27 @@ async fn workflow_events(
     assert_eq!(status, StatusCode::OK, "workflow events failed: {body}");
     assert_eq!(body[tool_result::RESULT][mcp_fields::IS_ERROR], false);
     serde_json::from_str(tool_text(&body)).expect("workflow events response JSON")
+}
+
+async fn wait_for_workflow_events_matching<F>(
+    app: Router,
+    execution_id: &str,
+    predicate: F,
+) -> serde_json::Value
+where
+    F: Fn(&[serde_json::Value]) -> bool,
+{
+    let mut last = serde_json::Value::Null;
+    for _ in 0..100 {
+        let events = workflow_events(app.clone(), execution_id, 0, 100).await;
+        let items = events["events"].as_array().expect("events array");
+        if predicate(items) {
+            return events;
+        }
+        last = events;
+        tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+    }
+    panic!("workflow events did not match predicate: {last}");
 }
 
 fn workflow_spawn_payload(workflow_status: &serde_json::Value) -> &serde_json::Value {

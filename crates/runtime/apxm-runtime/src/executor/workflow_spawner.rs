@@ -7,7 +7,7 @@ use apxm_core::{
 use async_trait::async_trait;
 use std::sync::Arc;
 
-use super::events::ExecutionEventEmitter;
+use super::{cancellation::CancellationToken, events::ExecutionEventEmitter};
 
 /// Result returned by a workflow-spawn bridge.
 #[derive(Debug, Clone)]
@@ -23,6 +23,7 @@ pub trait WorkflowSpawner: Send + Sync {
         &self,
         invocation: WorkflowInvocation,
         parent_emitter: Option<Arc<dyn ExecutionEventEmitter>>,
+        parent_cancellation: Option<CancellationToken>,
     ) -> Result<WorkflowSpawnResult, RuntimeError>;
 }
 
@@ -35,6 +36,7 @@ impl WorkflowSpawner for NoOpWorkflowSpawner {
         &self,
         _invocation: WorkflowInvocation,
         _parent_emitter: Option<Arc<dyn ExecutionEventEmitter>>,
+        _parent_cancellation: Option<CancellationToken>,
     ) -> Result<WorkflowSpawnResult, RuntimeError> {
         Err(RuntimeError::State(
             "Workflow spawning not supported in this context".to_string(),

@@ -13,6 +13,7 @@ use dashmap::{DashMap, DashSet};
 use parking_lot::Mutex;
 use tokio::sync::Notify;
 
+use crate::executor::CancellationToken;
 use crate::executor::hooks::{
     ExecutionHookContext, NodeFinishedEvent, NodeReadyEvent, NodeStartedEvent,
 };
@@ -64,6 +65,7 @@ pub struct SchedulerState {
     /// human-in-the-loop pauses cannot exhaust the compute or LLM pools and stall
     /// real work.
     pub blocking_concurrency: ConcurrencyControl,
+    pub cancellation_token: CancellationToken,
 
     // Coordination
     pub executed: Arc<AtomicUsize>,
@@ -261,6 +263,7 @@ impl SchedulerState {
             op_states,
 
             blocking_concurrency,
+            cancellation_token: CancellationToken::new(),
             work_stealing,
             queue: Arc::clone(&queue),
 
@@ -317,6 +320,8 @@ impl SchedulerState {
         self.remaining.store(0, Ordering::SeqCst);
         self.concurrency.cancel();
         self.llm_concurrency.cancel();
+        self.blocking_concurrency.cancel();
+        self.cancellation_token.cancel();
         self.notify_done.notify_waiters();
         self.work_notify.notify_waiters();
         self.watchdog_notify.notify_one();
@@ -329,7 +334,7 @@ impl SchedulerState {
 
     /// Check if execution has been cancelled.
     pub fn is_cancelled(&self) -> bool {
-        self.concurrency.is_cancelled()
+        self.concurrency.is_cancelled() || self.cancellation_token.is_cancelled()
     }
 
     /// Retrieve the effect metadata for a node, if available.
@@ -458,6 +463,13 @@ impl SchedulerState {
     /// `finish_one`; together a park→wake performs exactly one completion, so the
     /// `remaining` count is invariant vs a normal node finishing.
     pub fn wake_parked_node(&self, outputs: &[TokenId], value: Value) {
+        if self.is_cancelled() {
+            self.set_first_error(RuntimeError::SchedulerCancelled);
+            self.mark_done();
+            self.exit_parked();
+            self.record_progress();
+            return;
+        }
         for &token_id in outputs {
             match self.tokens.get_mut(&token_id) {
                 Some(token) if token.ready => continue, // already produced; idempotent
@@ -931,9 +943,15 @@ mod tests {
 
     fn new_state(dag: ExecutionDag) -> SchedulerState {
         let metrics = Arc::new(MetricsCollector::new());
-        SchedulerState::new(dag, test_config().with_llm_inflight(2), metrics, Instant::now(), vec![])
-            .unwrap()
-            .0
+        SchedulerState::new(
+            dag,
+            test_config().with_llm_inflight(2),
+            metrics,
+            Instant::now(),
+            vec![],
+        )
+        .unwrap()
+        .0
     }
 
     /// THE mandatory remaining-count invariance gate (the #1 hazard): a node that
@@ -947,7 +965,11 @@ mod tests {
 
         // Park node 1: the worker increments `parked` and SKIPS finish_one.
         state.parked.fetch_add(1, Ordering::SeqCst);
-        assert_eq!(state.remaining.load(Ordering::SeqCst), 2, "park must not decrement remaining");
+        assert_eq!(
+            state.remaining.load(Ordering::SeqCst),
+            2,
+            "park must not decrement remaining"
+        );
         assert_eq!(state.parked_count(), 1);
 
         // Wake delivers node 1's output token (10) — the ONE compensating completion.

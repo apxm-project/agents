@@ -14,9 +14,9 @@ use crate::{
         DispatchFallback, DispatchIrV1, dispatch_ir_accounting_json, evaluate_required_capabilities,
     },
     executor::{
-        ExecutionContext, ExecutionEventEmitter, ExecutionHook, ExecutionHookContext,
-        ExecutorEngine, InnerPlanLinker, NoOpLinker, NoOpSkillResolver, NoOpWorkflowSpawner,
-        OperationMiddleware, SkillResolver, WorkflowSpawner,
+        CancellationToken, ExecutionContext, ExecutionEventEmitter, ExecutionHook,
+        ExecutionHookContext, ExecutorEngine, InnerPlanLinker, NoOpLinker, NoOpSkillResolver,
+        NoOpWorkflowSpawner, OperationMiddleware, SkillResolver, WorkflowSpawner,
     },
     graph_lifecycle::{BackendGraphLifecycle, graph_dispatch_ir_from_dag},
     memory::{MemoryConfig, MemorySystem},
@@ -628,6 +628,7 @@ impl Runtime {
             event_emitter,
             session_dir,
             HashMap::new(),
+            None,
         )
         .await
     }
@@ -656,6 +657,34 @@ impl Runtime {
             event_emitter,
             session_dir,
             extra_metadata,
+            None,
+        )
+        .await
+    }
+
+    /// Execute a top-level artifact with a host-owned cancellation token.
+    ///
+    /// This is used by server-managed background workflows so cancelling the
+    /// public execution also cancels nested WORKFLOW_SPAWN children and parked
+    /// wake handles.
+    pub async fn execute_artifact_with_session_emitter_metadata_and_cancellation(
+        &self,
+        artifact: Artifact,
+        args: Vec<String>,
+        session_id: Option<String>,
+        event_emitter: Option<Arc<dyn ExecutionEventEmitter>>,
+        session_dir: Option<String>,
+        extra_metadata: HashMap<String, String>,
+        cancellation_token: CancellationToken,
+    ) -> Result<RuntimeExecutionResult, RuntimeError> {
+        self.execute_artifact_inner(
+            artifact,
+            args,
+            session_id,
+            event_emitter,
+            session_dir,
+            extra_metadata,
+            Some(cancellation_token),
         )
         .await
     }
@@ -683,6 +712,7 @@ impl Runtime {
             event_emitter,
             session_dir,
             parent_metadata,
+            None,
         )
         .await
     }
@@ -695,6 +725,7 @@ impl Runtime {
         event_emitter: Option<Arc<dyn ExecutionEventEmitter>>,
         session_dir: Option<String>,
         extra_metadata: HashMap<String, String>,
+        cancellation_token: Option<CancellationToken>,
     ) -> Result<RuntimeExecutionResult, RuntimeError> {
         let _lane_permit = if let Some(ref sid) = session_id {
             Some(self.session_lane_guard.acquire(sid).await)
@@ -724,6 +755,9 @@ impl Runtime {
         let mut context = self
             .build_context_with_bridge(session_id, event_emitter, session_dir, python_bridge)
             .with_graph_id(graph_id_from_dag(&entry_dag));
+        if let Some(cancellation_token) = cancellation_token {
+            context = context.with_cancellation_token(cancellation_token);
+        }
         for (key, value) in extra_metadata {
             context.metadata.insert(key, value);
         }

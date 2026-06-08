@@ -311,18 +311,17 @@ async fn workflow_run_background_command(
     let log_for_stderr = log
         .try_clone()
         .with_context(|| format!("Failed to clone background log {}", log_file.display()))?;
-    let child = Command::new(&exe)
-        .args(&child_args)
+    let mut command = background_command(&exe, &child_args);
+    command
         .stdin(Stdio::null())
         .stdout(Stdio::from(log))
-        .stderr(Stdio::from(log_for_stderr))
+        .stderr(Stdio::from(log_for_stderr));
+    let child = command
         .spawn()
         .with_context(|| format!("Failed to spawn background workflow {}", file.display()))?;
     let pid = child.id();
 
-    let command_line = std::iter::once(exe.to_string_lossy().to_string())
-        .chain(child_args.iter().cloned())
-        .collect::<Vec<_>>();
+    let command_line = background_command_line(&exe, &child_args);
     apxm_runtime::workflow::write_workflow_background_started(
         &session_dir,
         pid,
@@ -377,6 +376,41 @@ fn build_background_workflow_args(
     child_args.push(file.to_string_lossy().to_string());
     child_args.extend(args.iter().cloned());
     child_args
+}
+
+#[cfg(feature = "driver")]
+#[cfg(unix)]
+fn background_command(exe: &Path, child_args: &[String]) -> Command {
+    // Use the platform `setsid` helper instead of unsafe pre_exec hooks. This
+    // keeps background workflows alive after PTY-based callers return.
+    let mut command = Command::new("setsid");
+    command.arg(exe).args(child_args);
+    command
+}
+
+#[cfg(feature = "driver")]
+#[cfg(not(unix))]
+fn background_command(exe: &Path, child_args: &[String]) -> Command {
+    let mut command = Command::new(exe);
+    command.args(child_args);
+    command
+}
+
+#[cfg(feature = "driver")]
+#[cfg(unix)]
+fn background_command_line(exe: &Path, child_args: &[String]) -> Vec<String> {
+    std::iter::once("setsid".to_string())
+        .chain(std::iter::once(exe.to_string_lossy().to_string()))
+        .chain(child_args.iter().cloned())
+        .collect()
+}
+
+#[cfg(feature = "driver")]
+#[cfg(not(unix))]
+fn background_command_line(exe: &Path, child_args: &[String]) -> Vec<String> {
+    std::iter::once(exe.to_string_lossy().to_string())
+        .chain(child_args.iter().cloned())
+        .collect()
 }
 
 #[cfg(feature = "driver")]
@@ -679,7 +713,11 @@ fn parse_workflow_args(
 
 #[cfg(all(test, feature = "driver"))]
 mod tests {
+    #[cfg(unix)]
+    use super::background_command_line;
     use super::parse_workflow_args;
+    #[cfg(unix)]
+    use std::path::Path;
 
     #[test]
     fn parse_workflow_args_accepts_json_object() {
@@ -699,6 +737,17 @@ mod tests {
         let error = parse_workflow_args(None, &[String::from("missing_delimiter")])
             .expect_err("invalid args must fail");
         assert!(error.to_string().contains("Expected name=value"));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn background_command_line_uses_setsid_on_unix() {
+        let command_line = background_command_line(
+            Path::new("/tmp/apxm"),
+            &["workflow".to_string(), "run".to_string()],
+        );
+        assert_eq!(command_line[0], "setsid");
+        assert_eq!(command_line[1], "/tmp/apxm");
     }
 }
 

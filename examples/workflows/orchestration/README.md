@@ -1,0 +1,100 @@
+# Native Orchestration Workflows
+
+These examples exercise APXM as an agent-agnostic orchestrator. The checked-in
+workers are deterministic AIR graphs, so they run without Claude, Codex, API
+keys, ACP profiles, or network access. Replace any worker graph with a graph,
+artifact, or workflow that calls a registered agent when you want the same
+shape to drive real workers.
+
+## Agent Council
+
+`agent_council/workflow.apxmw` fans a task out to three independent workers and
+then fans their outputs into a synthesizer.
+
+```text
+                 [task]
+                   |
+       +-----------+-----------+
+       |           |           |
+  [planner]   [executor]   [reviewer]
+       |           |           |
+       +-----------+-----------+
+                   |
+             [synthesizer]
+                   |
+                [output]
+```
+
+Run it from the repository root:
+
+```bash
+dekk apxm workflow validate examples/workflows/orchestration/agent_council/workflow.apxmw
+dekk apxm workflow analyze examples/workflows/orchestration/agent_council/workflow.apxmw
+dekk apxm workflow execute examples/workflows/orchestration/agent_council/workflow.apxmw task="ship native workflow orchestration"
+```
+
+## Event Feedback Loop
+
+`event_feedback_loop/workflow.apxmw` models a single deterministic pass through
+event, trigger, action, eval, and feedback. A daemon, scheduler, or MCP client
+can relaunch the workflow when feedback says another pass is needed.
+
+```text
+[event] -> [trigger]
+              |
+        +-----+-----+
+        |           |
+   [write action] [verify action]
+        |           |
+        +-----+-----+
+              |
+            [eval]
+              |
+          [feedback]
+```
+
+Run it from the repository root:
+
+```bash
+dekk apxm workflow execute examples/workflows/orchestration/event_feedback_loop/workflow.apxmw event="repository changed"
+```
+
+## Approval Gate
+
+`approval_gate/workflow.apxmw` parks on a checkpoint and wakes when the APXM
+checkpoint endpoint resumes it. This is the parent-sleeps-while-worker-waits
+path used for human approval, external events, and long-running background
+agents.
+
+```text
+[workflow start] -> [RESUME checkpoint] --parks--> [checkpoint resume event]
+                                           |
+                                           v
+                                      [final output]
+```
+
+MCP clients should use the native workflow tools:
+
+```text
+apxm_workflow_start  -> starts a background workflow and returns execution_id
+apxm_workflow_status -> polls or inspects status by execution_id
+apxm_workflow_events -> reads ordered run events with since/limit paging
+apxm_workflow_cancel -> interrupts a running or parked workflow
+```
+
+For the approval example, create checkpoint `examples-approval-cp`, start the
+workflow, then resume or cancel it through the server. The E2E tests in
+`crates/tools/apxm-server/src/tests/mcp.rs` run these checked-in workflows
+through `apxm_workflow_start`, `apxm_workflow_status`, `apxm_workflow_events`,
+and `apxm_workflow_cancel`.
+
+## Cancel Background
+
+`cancel_background/background_ok.apxmw` is a fast deterministic workflow suited
+for `dekk apxm workflow run --background`. `cancel_background/cancel_parked.apxmw`
+parks on checkpoint `examples-cancel-cp` and is intended for testing
+cancellation through `apxm_workflow_cancel`.
+
+```bash
+apxm workflow run examples/workflows/orchestration/cancel_background/background_ok.apxmw --background
+```

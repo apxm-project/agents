@@ -49,7 +49,7 @@ For backend-free validation, prefer compile-only checks or examples that set
 backend with `dekk apxm backend ...` and select it from the APXM backend
 registry.
 
-All examples use the Python frontend. Dekk can compile Python examples directly:
+Most examples use the Python frontend. Dekk can compile Python examples directly:
 
 ```bash
 dekk apxm compile examples/python/getting-started/hello.py -o hello.apxmobj
@@ -70,6 +70,7 @@ dekk apxm run hello.apxmobj
 7. **[patterns/](python/patterns/)** -- Reusable workflow patterns
 8. **[real-world/](python/real-world/)** -- Complete production workflows
 9. **[native-tools/](python/native-tools/)** -- Native Python agent/tool handoff
-10. **[self-hosted/](python/self-hosted/)** -- APXM building APXM and optional vLLM demos
+10. **[workflows/](workflows/orchestration/)** -- Native `.apxmw` orchestration, event loops, resume, and cancel
+11. **[self-hosted/](python/self-hosted/)** -- APXM building APXM and optional vLLM demos
 
 See [python/README.md](python/README.md) for the full API reference and structure.

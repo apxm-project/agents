@@ -1,0 +1,11 @@
+{
+  "name": "background_ok",
+  "description": "Fast deterministic workflow suited for workflow run --background smoke tests.",
+  "graphs": [
+    {
+      "id": "ok",
+      "path": "ok.air"
+    }
+  ],
+  "output": "{{ok.output}}"
+}

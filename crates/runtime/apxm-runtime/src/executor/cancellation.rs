@@ -9,12 +9,14 @@ use std::sync::{Arc, Weak};
 use std::time::Duration;
 
 use parking_lot::Mutex;
+use tokio::sync::Notify;
 
 /// Shared inner state of a cancellation token.
 struct Inner {
     cancelled: AtomicBool,
     children: Mutex<Vec<Arc<Inner>>>,
     parent: Option<Weak<Inner>>,
+    notify: Notify,
 }
 
 /// A hierarchical cancellation token.
@@ -37,6 +39,7 @@ impl CancellationToken {
                 cancelled: AtomicBool::new(false),
                 children: Mutex::new(Vec::new()),
                 parent: None,
+                notify: Notify::new(),
             }),
         }
     }
@@ -50,6 +53,7 @@ impl CancellationToken {
             cancelled: AtomicBool::new(false),
             children: Mutex::new(Vec::new()),
             parent: Some(Arc::downgrade(&self.inner)),
+            notify: Notify::new(),
         });
         self.inner.children.lock().push(Arc::clone(&child_inner));
         Self { inner: child_inner }
@@ -63,6 +67,20 @@ impl CancellationToken {
     /// Returns `true` if this token or any ancestor has been cancelled.
     pub fn is_cancelled(&self) -> bool {
         is_cancelled_recursive(&self.inner)
+    }
+
+    /// Wait until this token or any ancestor is cancelled.
+    pub async fn cancelled(&self) {
+        loop {
+            if self.is_cancelled() {
+                return;
+            }
+            let notified = self.inner.notify.notified();
+            if self.is_cancelled() {
+                return;
+            }
+            notified.await;
+        }
     }
 
     /// Cancel this token after `timeout` elapses (non-blocking).
@@ -99,6 +117,7 @@ fn cancel_recursive(inner: &Arc<Inner>) {
         return; // already cancelled
     }
 
+    inner.notify.notify_waiters();
     let children = inner.children.lock().clone();
 
     for child in children {
@@ -205,6 +224,32 @@ mod tests {
         // Wait well beyond the cancel_after duration to avoid flakiness under load
         tokio::time::sleep(Duration::from_millis(500)).await;
         assert!(token.is_cancelled());
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn test_cancelled_future_resolves_when_token_is_cancelled() {
+        let token = CancellationToken::new();
+        let waiter = {
+            let token = token.clone();
+            tokio::spawn(async move {
+                token.cancelled().await;
+            })
+        };
+
+        token.cancel();
+        waiter.await.unwrap();
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn test_child_cancelled_future_resolves_when_parent_is_cancelled() {
+        let parent = CancellationToken::new();
+        let child = parent.child();
+        let waiter = tokio::spawn(async move {
+            child.cancelled().await;
+        });
+
+        parent.cancel();
+        waiter.await.unwrap();
     }
 
     #[test]

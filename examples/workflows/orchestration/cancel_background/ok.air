@@ -1,0 +1,6 @@
+module {
+  func.func @ok() -> !ais.token attributes {ais.entry} {
+    %out = ais.const_str "background: ok" : !ais.token
+    func.return %out : !ais.token
+  }
+}

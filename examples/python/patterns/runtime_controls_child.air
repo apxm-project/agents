@@ -1,0 +1,6 @@
+module {
+  func.func @runtime_controls_child() -> !ais.token attributes {ais.entry} {
+    %out = ais.const_str "runtime controls child ok" : !ais.token
+    func.return %out : !ais.token
+  }
+}

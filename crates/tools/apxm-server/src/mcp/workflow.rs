@@ -1,9 +1,12 @@
 use std::path::{Path, PathBuf};
-use std::sync::Arc;
+use std::sync::{
+    Arc,
+    atomic::{AtomicBool, Ordering},
+};
 
 use apxm_artifact::Artifact;
 use apxm_core::events::payload::ErrorPayload;
-use apxm_core::events::{ApxmEvent, EventSource, SkillEventProvenance};
+use apxm_core::events::{ApxmEvent, EventEmitter, EventSource, SkillEventProvenance};
 use apxm_runtime::EmitterAdapter;
 use axum::Json;
 use serde::{Deserialize, Serialize};
@@ -18,7 +21,7 @@ use crate::execute::{
 };
 use crate::executions::{ExecutionRecord, ExecutionStatus};
 use crate::helpers::mcp_tool_result;
-use crate::runs::events_for_run;
+use crate::runs::{events_for_run, events_for_run_since};
 use crate::state::{AppState, ExecuteCompletePayload, ExecutionStartedPayload, TurnAbortedPayload};
 
 pub(crate) const MCP_TOOL_APXM_WORKFLOW_START: &str = "apxm_workflow_start";
@@ -112,6 +115,19 @@ struct PreparedWorkflowRun {
     workflow_path: String,
     metadata: std::collections::HashMap<String, String>,
     admission_id: String,
+}
+
+struct RuntimeEventGate {
+    closed: Arc<AtomicBool>,
+    inner: Arc<dyn EventEmitter>,
+}
+
+impl EventEmitter for RuntimeEventGate {
+    fn emit(&self, event: ApxmEvent) {
+        if !self.closed.load(Ordering::SeqCst) {
+            self.inner.emit(event);
+        }
+    }
 }
 
 pub(crate) fn workflow_start_input_schema() -> JsonValue {
@@ -244,7 +260,8 @@ async fn workflow_events(
     let args: WorkflowEventsArgs = serde_json::from_value(tool_args.clone()).map_err(|error| {
         ApiError::bad_request(format!("invalid workflow_events arguments: {error}"))
     })?;
-    let events = events_for_run(state, &args.execution_id).await;
+    let since = args.since.unwrap_or(0);
+    let events = events_for_run_since(state, &args.execution_id, since).await;
     if events.is_empty() && state.execution_store.get(&args.execution_id).is_none() {
         return Err(ApiError::not_found(format!(
             "workflow run not found: {}",
@@ -252,7 +269,6 @@ async fn workflow_events(
         )));
     }
 
-    let since = args.since.unwrap_or(0);
     let limit = args
         .limit
         .unwrap_or(DEFAULT_EVENTS_LIMIT)
@@ -401,7 +417,16 @@ async fn run_prepared_workflow(
         ),
     );
 
-    let event_sinks = crate::skills::build_skill_event_sinks(&state, &prepared.execution_id, None);
+    let runtime_events_closed = Arc::new(AtomicBool::new(false));
+    let event_sinks = crate::skills::build_skill_event_sinks(&state, &prepared.execution_id, None)
+        .into_iter()
+        .map(|inner| {
+            Arc::new(RuntimeEventGate {
+                closed: Arc::clone(&runtime_events_closed),
+                inner,
+            }) as Arc<dyn EventEmitter>
+        })
+        .collect();
     let emitter = Arc::new(
         EmitterAdapter::new(
             Arc::new(apxm_core::events::FanOutEmitter::new(event_sinks)),
@@ -411,20 +436,34 @@ async fn run_prepared_workflow(
         .with_skill_provenance(workflow_event_provenance()),
     );
 
-    let execution = state
-        .runtime
-        .execute_artifact_with_session_emitter_and_metadata(
-            prepared.artifact,
-            Vec::new(),
-            Some(prepared.session_id.clone()),
-            Some(emitter),
-            Some(prepared.session_dir.clone()),
-            prepared.metadata,
-        );
+    let cancellation_token = apxm_runtime::CancellationToken::new();
+    let runtime = Arc::clone(&state.runtime);
+    let mut execution = tokio::spawn({
+        let cancellation_token = cancellation_token.clone();
+        let artifact = prepared.artifact;
+        let session_id = prepared.session_id.clone();
+        let session_dir = prepared.session_dir.clone();
+        let metadata = prepared.metadata;
+        async move {
+            runtime
+                .execute_artifact_with_session_emitter_metadata_and_cancellation(
+                    artifact,
+                    Vec::new(),
+                    Some(session_id),
+                    Some(emitter),
+                    Some(session_dir),
+                    metadata,
+                    cancellation_token,
+                )
+                .await
+        }
+    });
 
     tokio::select! {
-        outcome = execution => match outcome {
-            Ok(result) => {
+        biased;
+        outcome = &mut execution => match outcome {
+            Ok(Ok(result)) => {
+                runtime_events_closed.store(true, Ordering::SeqCst);
                 let response = to_execute_response(result, Some(prepared.session_dir.clone()));
                 state.execution_store.complete_success(&prepared.execution_id, response.clone());
                 record_workflow_event(
@@ -437,8 +476,27 @@ async fn run_prepared_workflow(
                     ),
                 );
             }
-            Err(error) => {
+            Ok(Err(error)) => {
+                runtime_events_closed.store(true, Ordering::SeqCst);
                 let message = error.to_string();
+                state.execution_store.complete_failure(&prepared.execution_id, message.clone());
+                record_workflow_event(
+                    &state,
+                    &prepared.execution_id,
+                    ApxmEvent::root(
+                        ErrorPayload {
+                            message,
+                            status: None,
+                            recoverable: false,
+                        },
+                        EventSource::Server,
+                        &prepared.execution_id,
+                    ),
+                );
+            }
+            Err(error) => {
+                runtime_events_closed.store(true, Ordering::SeqCst);
+                let message = format!("workflow runtime task failed: {error}");
                 state.execution_store.complete_failure(&prepared.execution_id, message.clone());
                 record_workflow_event(
                     &state,
@@ -456,6 +514,8 @@ async fn run_prepared_workflow(
             }
         },
         _ = cancel.notified() => {
+            runtime_events_closed.store(true, Ordering::SeqCst);
+            cancellation_token.cancel();
             let reason = "cancelled via apxm_workflow_cancel".to_string();
             state.execution_store.complete_failure(&prepared.execution_id, reason.clone());
             record_workflow_event(
@@ -470,6 +530,9 @@ async fn run_prepared_workflow(
                     &prepared.execution_id,
                 ),
             );
+            tokio::spawn(async move {
+                let _ = execution.await;
+            });
         }
     }
 

@@ -962,7 +962,11 @@ pub(crate) async fn events_for_run(state: &AppState, execution_id: &str) -> Vec<
     events_from_disk(state, execution_id).await
 }
 
-async fn events_for_run_since(state: &AppState, execution_id: &str, since: u64) -> Vec<ApxmEvent> {
+pub(crate) async fn events_for_run_since(
+    state: &AppState,
+    execution_id: &str,
+    since: u64,
+) -> Vec<ApxmEvent> {
     let snapshot = state.run_event_bus.snapshot(execution_id);
     if !snapshot.is_empty() {
         if snapshot

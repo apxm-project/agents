@@ -1,0 +1,6 @@
+module {
+  func.func @wait_for_cancel() -> !ais.token attributes {ais.entry} {
+    %resumed = ais.resume "examples-cancel-cp" : !ais.token
+    func.return %resumed : !ais.token
+  }
+}

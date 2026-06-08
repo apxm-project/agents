@@ -8,8 +8,8 @@ use apxm_artifact::Artifact;
 use apxm_core::paths::ApxmPaths;
 use apxm_core::types::{SessionStatus, WorkflowInvocation, WorkflowTarget};
 use apxm_runtime::{
-    ExecutionEventEmitter, Runtime, RuntimeError, RuntimeExecutionResult, WorkflowSpawnResult,
-    WorkflowSpawner,
+    CancellationToken, ExecutionEventEmitter, Runtime, RuntimeError, RuntimeExecutionResult,
+    WorkflowSpawnResult, WorkflowSpawner,
 };
 use async_trait::async_trait;
 use futures::future::join_all;
@@ -46,6 +46,7 @@ impl DriverWorkflowSpawner {
         &'a self,
         invocation: WorkflowInvocation,
         parent_emitter: Option<Arc<dyn ExecutionEventEmitter>>,
+        cancellation_token: Option<CancellationToken>,
     ) -> Pin<Box<dyn Future<Output = Result<WorkflowSpawnResult, RuntimeError>> + Send + 'a>> {
         Box::pin(async move {
             let session_base_dir = resolve_session_base_dir(invocation.session_root.as_deref())?;
@@ -57,6 +58,7 @@ impl DriverWorkflowSpawner {
                         &session_base_dir,
                         &invocation,
                         parent_emitter,
+                        cancellation_token,
                     )
                     .await
                 }
@@ -67,6 +69,7 @@ impl DriverWorkflowSpawner {
                         &session_base_dir,
                         &invocation,
                         parent_emitter,
+                        cancellation_token,
                     )
                     .await
                 }
@@ -76,6 +79,7 @@ impl DriverWorkflowSpawner {
                         invocation.args.clone(),
                         &session_base_dir,
                         parent_emitter,
+                        cancellation_token,
                     )
                     .await
                 }
@@ -97,6 +101,7 @@ impl DriverWorkflowSpawner {
         session_base_dir: &Path,
         invocation: &WorkflowInvocation,
         parent_emitter: Option<Arc<dyn ExecutionEventEmitter>>,
+        cancellation_token: Option<CancellationToken>,
     ) -> Result<WorkflowSpawnResult, RuntimeError> {
         let artifact = {
             let compiler = Compiler::new()
@@ -135,15 +140,29 @@ impl DriverWorkflowSpawner {
             &provenance,
         )?;
 
-        let execution = runtime
-            .execute_artifact_with_session_and_emitter(
-                artifact,
-                ordered_args,
-                None,
-                emitter,
-                Some(session_dir.to_string_lossy().to_string()),
-            )
-            .await;
+        let execution = if let Some(cancellation_token) = cancellation_token {
+            runtime
+                .execute_artifact_with_session_emitter_metadata_and_cancellation(
+                    artifact,
+                    ordered_args,
+                    None,
+                    emitter,
+                    Some(session_dir.to_string_lossy().to_string()),
+                    HashMap::new(),
+                    cancellation_token,
+                )
+                .await
+        } else {
+            runtime
+                .execute_artifact_with_session_and_emitter(
+                    artifact,
+                    ordered_args,
+                    None,
+                    emitter,
+                    Some(session_dir.to_string_lossy().to_string()),
+                )
+                .await
+        };
 
         finalize_child_session(
             &writer,
@@ -167,6 +186,7 @@ impl DriverWorkflowSpawner {
         session_base_dir: &Path,
         invocation: &WorkflowInvocation,
         parent_emitter: Option<Arc<dyn ExecutionEventEmitter>>,
+        cancellation_token: Option<CancellationToken>,
     ) -> Result<WorkflowSpawnResult, RuntimeError> {
         let artifact = Artifact::read_from_path(artifact_path).map_err(|e| {
             RuntimeError::State(format!(
@@ -197,15 +217,29 @@ impl DriverWorkflowSpawner {
             &provenance,
         )?;
 
-        let execution = runtime
-            .execute_artifact_with_session_and_emitter(
-                artifact,
-                ordered_args,
-                None,
-                emitter,
-                Some(session_dir.to_string_lossy().to_string()),
-            )
-            .await;
+        let execution = if let Some(cancellation_token) = cancellation_token {
+            runtime
+                .execute_artifact_with_session_emitter_metadata_and_cancellation(
+                    artifact,
+                    ordered_args,
+                    None,
+                    emitter,
+                    Some(session_dir.to_string_lossy().to_string()),
+                    HashMap::new(),
+                    cancellation_token,
+                )
+                .await
+        } else {
+            runtime
+                .execute_artifact_with_session_and_emitter(
+                    artifact,
+                    ordered_args,
+                    None,
+                    emitter,
+                    Some(session_dir.to_string_lossy().to_string()),
+                )
+                .await
+        };
 
         finalize_child_session(
             &writer,
@@ -228,6 +262,7 @@ impl DriverWorkflowSpawner {
         args: HashMap<String, serde_json::Value>,
         session_base_dir: &Path,
         parent_emitter: Option<Arc<dyn ExecutionEventEmitter>>,
+        cancellation_token: Option<CancellationToken>,
     ) -> Result<WorkflowSpawnResult, RuntimeError> {
         use apxm_runtime::workflow::{WorkflowDef, WorkflowResult, execution_phases, resolve};
 
@@ -270,6 +305,12 @@ impl DriverWorkflowSpawner {
         for phase in execution_phases(&def.graphs)
             .map_err(|e| RuntimeError::State(format!("Workflow planning failed: {e}")))?
         {
+            if cancellation_token
+                .as_ref()
+                .is_some_and(CancellationToken::is_cancelled)
+            {
+                return Err(RuntimeError::SchedulerCancelled);
+            }
             let mut phase_jobs = Vec::new();
 
             for step_id in phase {
@@ -322,10 +363,11 @@ impl DriverWorkflowSpawner {
                 let step_id = step.id.clone();
                 let workflow_session_dir = workflow_session_dir.clone();
                 let parent_emitter = parent_emitter.as_ref().map(Arc::clone);
+                let child_cancellation = cancellation_token.as_ref().map(CancellationToken::child);
                 phase_jobs.push(async move {
                     let step_start = std::time::Instant::now();
                     let outcome = self
-                        .execute_invocation(child_invocation, parent_emitter)
+                        .execute_invocation(child_invocation, parent_emitter, child_cancellation)
                         .await;
                     WorkflowPhaseStepOutcome {
                         step_id,
@@ -433,8 +475,10 @@ impl WorkflowSpawner for DriverWorkflowSpawner {
         &self,
         invocation: WorkflowInvocation,
         parent_emitter: Option<Arc<dyn ExecutionEventEmitter>>,
+        parent_cancellation: Option<CancellationToken>,
     ) -> Result<WorkflowSpawnResult, RuntimeError> {
-        self.execute_invocation(invocation, parent_emitter).await
+        self.execute_invocation(invocation, parent_emitter, parent_cancellation)
+            .await
     }
 }
 
