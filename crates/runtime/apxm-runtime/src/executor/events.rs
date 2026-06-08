@@ -250,6 +250,39 @@ pub trait ExecutionEventEmitter: Send + Sync {
         _parallel_fanout_max: usize,
     ) {
     }
+    fn emit_workflow_started(&self, _workflow_name: &str, _session_dir: &str, _step_count: usize) {}
+    fn emit_workflow_step_started(
+        &self,
+        _workflow_name: &str,
+        _workflow_session_dir: &str,
+        _step_id: &str,
+        _step_index: usize,
+        _step_count: usize,
+    ) {
+    }
+    fn emit_workflow_step_completed(
+        &self,
+        _workflow_name: &str,
+        _workflow_session_dir: &str,
+        _step_id: &str,
+        _step_index: usize,
+        _status: &str,
+        _success: bool,
+        _duration: Duration,
+        _session_dir: Option<&str>,
+        _error: Option<&str>,
+    ) {
+    }
+    fn emit_workflow_finished(
+        &self,
+        _workflow_name: &str,
+        _session_dir: &str,
+        _status: &str,
+        _success: bool,
+        _duration: Duration,
+        _step_count: usize,
+    ) {
+    }
 
     // ── Memory ──────────────────────────────────────────────────────
     fn emit_memory_read(&self, _scope: &str, _key: &str) {}

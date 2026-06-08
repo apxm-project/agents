@@ -303,6 +303,75 @@ impl ExecutionEventEmitter for EmitterAdapter {
         });
     }
 
+    fn emit_workflow_started(&self, workflow_name: &str, session_dir: &str, step_count: usize) {
+        self.emit(WorkflowStartedPayload {
+            workflow_name: workflow_name.to_string(),
+            session_dir: session_dir.to_string(),
+            step_count,
+        });
+    }
+
+    fn emit_workflow_step_started(
+        &self,
+        workflow_name: &str,
+        workflow_session_dir: &str,
+        step_id: &str,
+        step_index: usize,
+        step_count: usize,
+    ) {
+        self.emit(WorkflowStepStartedPayload {
+            workflow_name: workflow_name.to_string(),
+            workflow_session_dir: workflow_session_dir.to_string(),
+            step_id: step_id.to_string(),
+            step_index,
+            step_count,
+        });
+    }
+
+    fn emit_workflow_step_completed(
+        &self,
+        workflow_name: &str,
+        workflow_session_dir: &str,
+        step_id: &str,
+        step_index: usize,
+        status: &str,
+        success: bool,
+        duration: Duration,
+        session_dir: Option<&str>,
+        error: Option<&str>,
+    ) {
+        self.emit(WorkflowStepCompletedPayload {
+            workflow_name: workflow_name.to_string(),
+            workflow_session_dir: workflow_session_dir.to_string(),
+            step_id: step_id.to_string(),
+            step_index,
+            status: status.to_string(),
+            success,
+            duration_ms: duration.as_millis() as u64,
+            session_dir: session_dir.map(str::to_string),
+            error: error.map(str::to_string),
+        });
+    }
+
+    fn emit_workflow_finished(
+        &self,
+        workflow_name: &str,
+        session_dir: &str,
+        status: &str,
+        success: bool,
+        duration: Duration,
+        step_count: usize,
+    ) {
+        self.emit(WorkflowFinishedPayload {
+            workflow_name: workflow_name.to_string(),
+            session_dir: session_dir.to_string(),
+            status: status.to_string(),
+            success,
+            duration_ms: duration.as_millis() as u64,
+            step_count,
+        });
+    }
+
     fn emit_memory_read(&self, scope: &str, key: &str) {
         self.emit(MemoryReadPayload {
             scope: scope.to_string(),

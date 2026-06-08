@@ -25,6 +25,7 @@ pub struct DriverWorkflowSpawner {
 
 struct WorkflowPhaseStepOutcome {
     step_id: String,
+    step_index: usize,
     duration_ms: u64,
     workflow_session_dir: PathBuf,
     outcome: Result<WorkflowSpawnResult, RuntimeError>,
@@ -298,6 +299,16 @@ impl DriverWorkflowSpawner {
         .map_err(|e| {
             RuntimeError::State(format!("Failed to write workflow session start files: {e}"))
         })?;
+        let workflow_session_dir_text = workflow_session_dir.to_string_lossy().to_string();
+        if let Some(emitter) = parent_emitter.as_ref() {
+            emitter.emit_workflow_started(&def.name, &workflow_session_dir_text, def.graphs.len());
+        }
+        let step_index_by_id: HashMap<String, usize> = def
+            .graphs
+            .iter()
+            .enumerate()
+            .map(|(index, step)| (step.id.clone(), index))
+            .collect();
         let mut step_outputs: HashMap<String, String> = HashMap::new();
         let mut step_results = HashMap::new();
         let workflow_start = std::time::Instant::now();
@@ -321,6 +332,9 @@ impl DriverWorkflowSpawner {
                     .ok_or_else(|| {
                         RuntimeError::State(format!("Unknown workflow step '{step_id}'"))
                     })?;
+                let step_index = step_index_by_id.get(&step_id).copied().ok_or_else(|| {
+                    RuntimeError::State(format!("Unknown workflow step '{step_id}'"))
+                })?;
 
                 let should_skip = step.depends_on.iter().any(|dep| {
                     step_results
@@ -331,6 +345,35 @@ impl DriverWorkflowSpawner {
                         .unwrap_or(false)
                 });
                 if should_skip {
+                    apxm_runtime::workflow::write_workflow_step_finished(
+                        &workflow_session_dir,
+                        &def.name,
+                        &step_id,
+                        step_index,
+                        apxm_runtime::workflow::StepStatus::Skipped,
+                        0,
+                        step_results.len() + 1,
+                        def.graphs.len(),
+                        workflow_start.elapsed().as_millis(),
+                    )
+                    .map_err(|e| {
+                        RuntimeError::State(format!(
+                            "Failed to write skipped workflow step '{step_id}': {e}"
+                        ))
+                    })?;
+                    if let Some(emitter) = parent_emitter.as_ref() {
+                        emitter.emit_workflow_step_completed(
+                            &def.name,
+                            &workflow_session_dir_text,
+                            &step_id,
+                            step_index,
+                            workflow_step_status_wire(apxm_runtime::workflow::StepStatus::Skipped),
+                            false,
+                            std::time::Duration::ZERO,
+                            None,
+                            Some("skipped because a dependency did not succeed"),
+                        );
+                    }
                     step_results.insert(
                         step_id.clone(),
                         apxm_runtime::workflow::StepResult {
@@ -360,6 +403,30 @@ impl DriverWorkflowSpawner {
                 child_invocation.session_root =
                     Some(workflow_session_dir.to_string_lossy().to_string());
 
+                apxm_runtime::workflow::write_workflow_step_started(
+                    &workflow_session_dir,
+                    &def.name,
+                    &step_id,
+                    step_index,
+                    step_results.len(),
+                    def.graphs.len(),
+                    workflow_start.elapsed().as_millis(),
+                )
+                .map_err(|e| {
+                    RuntimeError::State(format!(
+                        "Failed to write workflow step start for '{step_id}': {e}"
+                    ))
+                })?;
+                if let Some(emitter) = parent_emitter.as_ref() {
+                    emitter.emit_workflow_step_started(
+                        &def.name,
+                        &workflow_session_dir_text,
+                        &step_id,
+                        step_index,
+                        def.graphs.len(),
+                    );
+                }
+
                 let step_id = step.id.clone();
                 let workflow_session_dir = workflow_session_dir.clone();
                 let parent_emitter = parent_emitter.as_ref().map(Arc::clone);
@@ -371,6 +438,7 @@ impl DriverWorkflowSpawner {
                         .await;
                     WorkflowPhaseStepOutcome {
                         step_id,
+                        step_index,
                         duration_ms: step_start.elapsed().as_millis() as u64,
                         workflow_session_dir,
                         outcome,
@@ -383,6 +451,42 @@ impl DriverWorkflowSpawner {
                 match completed.outcome {
                     Ok(child_result) => {
                         let output = value_to_output_string(&child_result.value);
+                        let child_session_dir = child_result.session_dir.map(PathBuf::from);
+                        let child_session_dir_text = child_session_dir
+                            .as_ref()
+                            .map(|path| path.to_string_lossy().to_string());
+                        apxm_runtime::workflow::write_workflow_step_finished(
+                            &workflow_session_dir,
+                            &def.name,
+                            &completed.step_id,
+                            completed.step_index,
+                            apxm_runtime::workflow::StepStatus::Success,
+                            completed.duration_ms,
+                            step_results.len() + 1,
+                            def.graphs.len(),
+                            workflow_start.elapsed().as_millis(),
+                        )
+                        .map_err(|e| {
+                            RuntimeError::State(format!(
+                                "Failed to write completed workflow step '{}': {e}",
+                                completed.step_id
+                            ))
+                        })?;
+                        if let Some(emitter) = parent_emitter.as_ref() {
+                            emitter.emit_workflow_step_completed(
+                                &def.name,
+                                &workflow_session_dir_text,
+                                &completed.step_id,
+                                completed.step_index,
+                                workflow_step_status_wire(
+                                    apxm_runtime::workflow::StepStatus::Success,
+                                ),
+                                true,
+                                std::time::Duration::from_millis(completed.duration_ms),
+                                child_session_dir_text.as_deref(),
+                                None,
+                            );
+                        }
                         if let Some(ref text) = output {
                             phase_outputs.push((completed.step_id.clone(), text.clone()));
                         }
@@ -393,12 +497,47 @@ impl DriverWorkflowSpawner {
                                 status: apxm_runtime::workflow::StepStatus::Success,
                                 output,
                                 duration_ms: completed.duration_ms,
-                                session_dir: child_result.session_dir.map(PathBuf::from),
+                                session_dir: child_session_dir,
                                 error: None,
                             },
                         );
                     }
                     Err(error) => {
+                        let error_text = error.to_string();
+                        let fallback_session_dir_text =
+                            completed.workflow_session_dir.to_string_lossy().to_string();
+                        apxm_runtime::workflow::write_workflow_step_finished(
+                            &workflow_session_dir,
+                            &def.name,
+                            &completed.step_id,
+                            completed.step_index,
+                            apxm_runtime::workflow::StepStatus::Failed,
+                            completed.duration_ms,
+                            step_results.len() + 1,
+                            def.graphs.len(),
+                            workflow_start.elapsed().as_millis(),
+                        )
+                        .map_err(|e| {
+                            RuntimeError::State(format!(
+                                "Failed to write failed workflow step '{}': {e}",
+                                completed.step_id
+                            ))
+                        })?;
+                        if let Some(emitter) = parent_emitter.as_ref() {
+                            emitter.emit_workflow_step_completed(
+                                &def.name,
+                                &workflow_session_dir_text,
+                                &completed.step_id,
+                                completed.step_index,
+                                workflow_step_status_wire(
+                                    apxm_runtime::workflow::StepStatus::Failed,
+                                ),
+                                false,
+                                std::time::Duration::from_millis(completed.duration_ms),
+                                Some(&fallback_session_dir_text),
+                                Some(&error_text),
+                            );
+                        }
                         step_results.insert(
                             completed.step_id.clone(),
                             apxm_runtime::workflow::StepResult {
@@ -407,7 +546,7 @@ impl DriverWorkflowSpawner {
                                 output: None,
                                 duration_ms: completed.duration_ms,
                                 session_dir: Some(completed.workflow_session_dir),
-                                error: Some(error.to_string()),
+                                error: Some(error_text),
                             },
                         );
                     }
@@ -438,6 +577,16 @@ impl DriverWorkflowSpawner {
                 "Failed to write workflow session result files: {e}"
             ))
         })?;
+        if let Some(emitter) = parent_emitter.as_ref() {
+            emitter.emit_workflow_finished(
+                &workflow_result.workflow_name,
+                &workflow_session_dir_text,
+                workflow_status_wire(workflow_result.status),
+                workflow_result.status == apxm_runtime::workflow::WorkflowStatus::Success,
+                std::time::Duration::from_millis(workflow_result.duration_ms),
+                workflow_result.step_results.len(),
+            );
+        }
 
         match workflow_result.status {
             apxm_runtime::workflow::WorkflowStatus::Success => Ok(WorkflowSpawnResult {
@@ -599,6 +748,22 @@ fn workflow_status_from_steps(
         }
     } else {
         apxm_runtime::workflow::WorkflowStatus::Success
+    }
+}
+
+fn workflow_step_status_wire(status: apxm_runtime::workflow::StepStatus) -> &'static str {
+    match status {
+        apxm_runtime::workflow::StepStatus::Success => "success",
+        apxm_runtime::workflow::StepStatus::Failed => "failed",
+        apxm_runtime::workflow::StepStatus::Skipped => "skipped",
+    }
+}
+
+fn workflow_status_wire(status: apxm_runtime::workflow::WorkflowStatus) -> &'static str {
+    match status {
+        apxm_runtime::workflow::WorkflowStatus::Success => "success",
+        apxm_runtime::workflow::WorkflowStatus::PartialFailure => "partial_failure",
+        apxm_runtime::workflow::WorkflowStatus::Failed => "failed",
     }
 }
 

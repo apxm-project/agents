@@ -119,6 +119,14 @@ pub const PLAN_STEP_COMPLETED: EventKind =
     EventKind::new("plan_step_completed", EventCategory::Lifecycle, false);
 pub const PLAN_GRAPH_EMITTED: EventKind =
     EventKind::new("plan_graph_emitted", EventCategory::Lifecycle, false);
+pub const WORKFLOW_STARTED: EventKind =
+    EventKind::new("workflow_started", EventCategory::Lifecycle, false);
+pub const WORKFLOW_STEP_STARTED: EventKind =
+    EventKind::new("workflow_step_started", EventCategory::Lifecycle, false);
+pub const WORKFLOW_STEP_COMPLETED: EventKind =
+    EventKind::new("workflow_step_completed", EventCategory::Lifecycle, false);
+pub const WORKFLOW_FINISHED: EventKind =
+    EventKind::new("workflow_finished", EventCategory::Lifecycle, false);
 pub const MEMORY_READ: EventKind =
     EventKind::new("memory_read", EventCategory::Observability, false);
 pub const MEMORY_WRITE: EventKind =
@@ -218,6 +226,10 @@ pub const CORE_EVENT_KINDS: &[EventKind] = &[
     PLAN_STEP_STARTED,
     PLAN_STEP_COMPLETED,
     PLAN_GRAPH_EMITTED,
+    WORKFLOW_STARTED,
+    WORKFLOW_STEP_STARTED,
+    WORKFLOW_STEP_COMPLETED,
+    WORKFLOW_FINISHED,
     MEMORY_READ,
     MEMORY_WRITE,
     CHECKPOINT_SAVED,

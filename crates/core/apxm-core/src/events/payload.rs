@@ -168,6 +168,14 @@ fn boxed_core_payload_from_json(
         boxed!(PlanStepCompletedPayload)
     } else if kind_name == kind::PLAN_GRAPH_EMITTED.name() {
         boxed!(PlanGraphEmittedPayload)
+    } else if kind_name == kind::WORKFLOW_STARTED.name() {
+        boxed!(WorkflowStartedPayload)
+    } else if kind_name == kind::WORKFLOW_STEP_STARTED.name() {
+        boxed!(WorkflowStepStartedPayload)
+    } else if kind_name == kind::WORKFLOW_STEP_COMPLETED.name() {
+        boxed!(WorkflowStepCompletedPayload)
+    } else if kind_name == kind::WORKFLOW_FINISHED.name() {
+        boxed!(WorkflowFinishedPayload)
     } else if kind_name == kind::MEMORY_READ.name() {
         boxed!(MemoryReadPayload)
     } else if kind_name == kind::MEMORY_WRITE.name() {
@@ -699,6 +707,78 @@ pub struct PlanGraphEmittedPayload {
     pub parallel_fanout_max: usize,
 }
 impl_event_payload!(PlanGraphEmittedPayload, kind::PLAN_GRAPH_EMITTED);
+
+/// A `.apxmw` workflow session started.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct WorkflowStartedPayload {
+    /// Workflow name from the `.apxmw` file.
+    pub workflow_name: String,
+    /// Workflow-root session directory.
+    pub session_dir: String,
+    /// Number of declared workflow steps.
+    pub step_count: usize,
+}
+impl_event_payload!(WorkflowStartedPayload, kind::WORKFLOW_STARTED);
+
+/// A `.apxmw` workflow step started.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct WorkflowStepStartedPayload {
+    /// Workflow name from the `.apxmw` file.
+    pub workflow_name: String,
+    /// Workflow-root session directory.
+    pub workflow_session_dir: String,
+    /// Step id from the `.apxmw` graph list.
+    pub step_id: String,
+    /// Zero-based index in workflow declaration order.
+    pub step_index: usize,
+    /// Number of declared workflow steps.
+    pub step_count: usize,
+}
+impl_event_payload!(WorkflowStepStartedPayload, kind::WORKFLOW_STEP_STARTED);
+
+/// A `.apxmw` workflow step completed.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct WorkflowStepCompletedPayload {
+    /// Workflow name from the `.apxmw` file.
+    pub workflow_name: String,
+    /// Workflow-root session directory.
+    pub workflow_session_dir: String,
+    /// Step id from the `.apxmw` graph list.
+    pub step_id: String,
+    /// Zero-based index in workflow declaration order.
+    pub step_index: usize,
+    /// Step status (`success`, `failed`, or `skipped`).
+    pub status: String,
+    /// Whether the step succeeded.
+    pub success: bool,
+    /// Step wall-clock duration in milliseconds.
+    pub duration_ms: u64,
+    /// Child graph/artifact/workflow session directory, when one was produced.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub session_dir: Option<String>,
+    /// Safe error string for failed steps.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub error: Option<String>,
+}
+impl_event_payload!(WorkflowStepCompletedPayload, kind::WORKFLOW_STEP_COMPLETED);
+
+/// A `.apxmw` workflow session finished.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct WorkflowFinishedPayload {
+    /// Workflow name from the `.apxmw` file.
+    pub workflow_name: String,
+    /// Workflow-root session directory.
+    pub session_dir: String,
+    /// Workflow status (`success`, `partial_failure`, or `failed`).
+    pub status: String,
+    /// Whether the workflow succeeded.
+    pub success: bool,
+    /// Workflow wall-clock duration in milliseconds.
+    pub duration_ms: u64,
+    /// Number of recorded step results.
+    pub step_count: usize,
+}
+impl_event_payload!(WorkflowFinishedPayload, kind::WORKFLOW_FINISHED);
 
 /// A memory read event.
 #[derive(Debug, Clone, Serialize, Deserialize)]

@@ -157,6 +157,79 @@ impl ExecutionEventEmitter for MultiEmitter {
         });
     }
 
+    fn emit_workflow_started(&self, workflow_name: &str, session_dir: &str, step_count: usize) {
+        self.for_each("emit_workflow_started", |child| {
+            child.emit_workflow_started(workflow_name, session_dir, step_count)
+        });
+    }
+
+    fn emit_workflow_step_started(
+        &self,
+        workflow_name: &str,
+        workflow_session_dir: &str,
+        step_id: &str,
+        step_index: usize,
+        step_count: usize,
+    ) {
+        self.for_each("emit_workflow_step_started", |child| {
+            child.emit_workflow_step_started(
+                workflow_name,
+                workflow_session_dir,
+                step_id,
+                step_index,
+                step_count,
+            )
+        });
+    }
+
+    fn emit_workflow_step_completed(
+        &self,
+        workflow_name: &str,
+        workflow_session_dir: &str,
+        step_id: &str,
+        step_index: usize,
+        status: &str,
+        success: bool,
+        duration: Duration,
+        session_dir: Option<&str>,
+        error: Option<&str>,
+    ) {
+        self.for_each("emit_workflow_step_completed", |child| {
+            child.emit_workflow_step_completed(
+                workflow_name,
+                workflow_session_dir,
+                step_id,
+                step_index,
+                status,
+                success,
+                duration,
+                session_dir,
+                error,
+            )
+        });
+    }
+
+    fn emit_workflow_finished(
+        &self,
+        workflow_name: &str,
+        session_dir: &str,
+        status: &str,
+        success: bool,
+        duration: Duration,
+        step_count: usize,
+    ) {
+        self.for_each("emit_workflow_finished", |child| {
+            child.emit_workflow_finished(
+                workflow_name,
+                session_dir,
+                status,
+                success,
+                duration,
+                step_count,
+            )
+        });
+    }
+
     fn emit_memory_read(&self, scope: &str, key: &str) {
         self.for_each("emit_memory_read", |child| {
             child.emit_memory_read(scope, key)

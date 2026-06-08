@@ -665,6 +665,59 @@ async fn mcp_orchestrate_start_spawns_parallel_workers_with_session_cwds() {
         }),
         "expected COMMUNICATE operation events: {events}"
     );
+    let workflow_started = event_items
+        .iter()
+        .find(|event| event["payload"]["kind"] == "workflow_started")
+        .expect("workflow_started event");
+    assert_eq!(
+        workflow_started["payload"]["workflow_name"],
+        "apxm_orchestrated_task"
+    );
+    assert_eq!(workflow_started["payload"]["step_count"], 5);
+    let workflow_session_dir = workflow_started["payload"]["session_dir"]
+        .as_str()
+        .expect("workflow session_dir");
+    let expected_steps = ["planner", "executor", "verifier", "gate", "feedback"];
+    let started_steps: HashSet<&str> = event_items
+        .iter()
+        .filter(|event| event["payload"]["kind"] == "workflow_step_started")
+        .filter_map(|event| event["payload"]["step_id"].as_str())
+        .collect();
+    assert!(
+        expected_steps
+            .iter()
+            .all(|step_id| started_steps.contains(*step_id)),
+        "orchestration should expose every workflow step start: {events}"
+    );
+    for step_id in expected_steps {
+        let step_completed = event_items
+            .iter()
+            .find(|event| {
+                event["payload"]["kind"] == "workflow_step_completed"
+                    && event["payload"]["step_id"] == step_id
+            })
+            .unwrap_or_else(|| panic!("missing workflow_step_completed for {step_id}: {events}"));
+        assert_eq!(step_completed["payload"]["status"], "success");
+        assert_eq!(
+            step_completed["payload"]["workflow_session_dir"],
+            workflow_session_dir
+        );
+        assert!(
+            step_completed["payload"]["session_dir"]
+                .as_str()
+                .is_some_and(|path| !path.is_empty()),
+            "orchestration step should expose child session_dir: {step_completed}"
+        );
+    }
+    let workflow_finished = event_items
+        .iter()
+        .find(|event| event["payload"]["kind"] == "workflow_finished")
+        .expect("workflow_finished event");
+    assert_eq!(
+        workflow_finished["payload"]["session_dir"],
+        workflow_session_dir
+    );
+    assert_eq!(workflow_finished["payload"]["status"], "success");
 }
 
 #[tokio::test]
@@ -919,8 +972,12 @@ async fn mcp_workflow_start_status_and_events_use_server_execution_id() {
             .any(|value| value["result"] == FIXTURE_OUTPUT),
         "workflow spawn result should carry child output: {workflow_status}"
     );
+    let spawn_payload = workflow_spawn_payload(&workflow_status);
+    let workflow_session_dir = spawn_payload["session_dir"]
+        .as_str()
+        .expect("workflow session_dir");
 
-    let events = workflow_events(app, execution_id, 0, 25).await;
+    let events = workflow_events(app, execution_id, 0, 100).await;
     let event_items = events["events"].as_array().expect("events array");
     assert_eq!(
         workflow_status["totals"]["events"].as_u64(),
@@ -970,6 +1027,47 @@ async fn mcp_workflow_start_status_and_events_use_server_execution_id() {
         }),
         "expected parent WORKFLOW_SPAWN operation_end event: {events}"
     );
+    let workflow_started = event_items
+        .iter()
+        .find(|event| event["payload"]["kind"] == "workflow_started")
+        .expect("workflow_started event");
+    assert_eq!(workflow_started["payload"]["step_count"], 1);
+    assert_eq!(
+        workflow_started["payload"]["session_dir"],
+        workflow_session_dir
+    );
+    let step_started = event_items
+        .iter()
+        .find(|event| event["payload"]["kind"] == "workflow_step_started")
+        .expect("workflow_step_started event");
+    assert_eq!(
+        step_started["payload"]["workflow_session_dir"],
+        workflow_session_dir
+    );
+    assert_eq!(step_started["payload"]["step_id"], "step");
+    let step_completed = event_items
+        .iter()
+        .find(|event| event["payload"]["kind"] == "workflow_step_completed")
+        .expect("workflow_step_completed event");
+    assert_eq!(step_completed["payload"]["step_id"], "step");
+    assert_eq!(step_completed["payload"]["status"], "success");
+    assert_eq!(step_completed["payload"]["success"], true);
+    assert!(
+        step_completed["payload"]["session_dir"]
+            .as_str()
+            .is_some_and(|path| !path.is_empty()),
+        "workflow step completion should expose child session_dir: {events}"
+    );
+    let workflow_finished = event_items
+        .iter()
+        .find(|event| event["payload"]["kind"] == "workflow_finished")
+        .expect("workflow_finished event");
+    assert_eq!(
+        workflow_finished["payload"]["session_dir"],
+        workflow_session_dir
+    );
+    assert_eq!(workflow_finished["payload"]["status"], "success");
+    assert_eq!(workflow_finished["payload"]["success"], true);
 }
 
 #[tokio::test]
@@ -1081,6 +1179,46 @@ async fn mcp_workflow_fans_out_independent_steps_and_fans_in_output() {
             >= 2,
         "child graph tool events should be visible through apxm_workflow_events: {events}"
     );
+    let started_steps: HashSet<&str> = event_items
+        .iter()
+        .filter(|event| event["payload"]["kind"] == "workflow_step_started")
+        .filter_map(|event| event["payload"]["step_id"].as_str())
+        .collect();
+    assert!(
+        ["left", "right"]
+            .iter()
+            .all(|step_id| started_steps.contains(*step_id)),
+        "workflow step starts should include both parallel children: {events}"
+    );
+    for step_id in ["left", "right"] {
+        let step_completed = event_items
+            .iter()
+            .find(|event| {
+                event["payload"]["kind"] == "workflow_step_completed"
+                    && event["payload"]["step_id"] == step_id
+            })
+            .unwrap_or_else(|| panic!("missing workflow_step_completed for {step_id}: {events}"));
+        assert_eq!(step_completed["payload"]["status"], "success");
+        assert_eq!(step_completed["payload"]["success"], true);
+        assert_eq!(
+            step_completed["payload"]["workflow_session_dir"],
+            workflow_session_dir
+        );
+        assert_eq!(
+            step_completed["payload"]["session_dir"],
+            workflow_results["step_results"][step_id]["session_dir"],
+            "step completion event should point at the child session dir"
+        );
+    }
+    let workflow_finished = event_items
+        .iter()
+        .find(|event| event["payload"]["kind"] == "workflow_finished")
+        .expect("workflow_finished event");
+    assert_eq!(
+        workflow_finished["payload"]["session_dir"],
+        workflow_session_dir
+    );
+    assert_eq!(workflow_finished["payload"]["status"], "success");
 }
 
 #[tokio::test]
