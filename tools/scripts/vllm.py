@@ -13,6 +13,7 @@ import hashlib
 import json
 import os
 import re
+import shlex
 import shutil
 import socket
 import subprocess
@@ -1330,6 +1331,7 @@ def _start_one_service(
         f"apxm-vllm-{canonical}",
         "--output",
         str(log_path),
+        *shlex.split(os.environ.get("APXM_VLLM_SBATCH_ARGS", "")),
         str(script),
     ]
 
