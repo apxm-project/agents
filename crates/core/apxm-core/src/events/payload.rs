@@ -176,6 +176,14 @@ fn boxed_core_payload_from_json(
         boxed!(WorkflowStepCompletedPayload)
     } else if kind_name == kind::WORKFLOW_FINISHED.name() {
         boxed!(WorkflowFinishedPayload)
+    } else if kind_name == kind::EXECUTION_STARTED.name() {
+        boxed!(ExecutionStartedPayload)
+    } else if kind_name == kind::EXECUTE_COMPLETE.name() {
+        boxed!(ExecuteCompletePayload)
+    } else if kind_name == kind::ORCHESTRATOR_SLEEP.name() {
+        boxed!(OrchestratorSleepPayload)
+    } else if kind_name == kind::ORCHESTRATOR_WAKE.name() {
+        boxed!(OrchestratorWakePayload)
     } else if kind_name == kind::MEMORY_READ.name() {
         boxed!(MemoryReadPayload)
     } else if kind_name == kind::MEMORY_WRITE.name() {
@@ -779,6 +787,47 @@ pub struct WorkflowFinishedPayload {
     pub step_count: usize,
 }
 impl_event_payload!(WorkflowFinishedPayload, kind::WORKFLOW_FINISHED);
+
+/// A server-owned execution started and can now be followed by execution id.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ExecutionStartedPayload {
+    pub execution_id: String,
+}
+impl_event_payload!(ExecutionStartedPayload, kind::EXECUTION_STARTED);
+
+/// A server-owned execution completed with its serialized response payload.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ExecuteCompletePayload {
+    pub result: serde_json::Value,
+}
+impl_event_payload!(ExecuteCompletePayload, kind::EXECUTE_COMPLETE);
+
+/// Native orchestrator parked after launching a server-owned workflow.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct OrchestratorSleepPayload {
+    pub execution_id: String,
+    pub session_id: String,
+    pub session_dir: String,
+    pub workflow_path: String,
+    pub bundle_dir: String,
+    pub artifacts: serde_json::Value,
+    pub plan: serde_json::Value,
+    pub control: serde_json::Value,
+    pub wake_on: Vec<String>,
+    pub event_loop: String,
+}
+impl_event_payload!(OrchestratorSleepPayload, kind::ORCHESTRATOR_SLEEP);
+
+/// Native orchestrator wake event emitted when the workflow reaches a terminal state.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct OrchestratorWakePayload {
+    pub execution_id: String,
+    pub session_id: String,
+    pub terminal_event: String,
+    pub outcome: String,
+    pub reason: String,
+}
+impl_event_payload!(OrchestratorWakePayload, kind::ORCHESTRATOR_WAKE);
 
 /// A memory read event.
 #[derive(Debug, Clone, Serialize, Deserialize)]

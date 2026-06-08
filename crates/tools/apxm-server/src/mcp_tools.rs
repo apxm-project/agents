@@ -1381,9 +1381,8 @@ fn validate_generated_plan_admission(artifact: &Artifact, runtime: &Runtime) -> 
                     validate_generated_llm_tool_exposure(node, runtime)?;
                 }
                 AISOperationType::SpawnAgent | AISOperationType::SpawnTeam => {
-                    return Err(format!(
-                        "generated plans may not contain process-spawn operation {:?}; use apxm_orchestrate_start or dekk apxm goal for admitted worker orchestration",
-                        node.op_type
+                    return Err(admission_error::generated_process_spawn_not_allowed(
+                        node.op_type,
                     ));
                 }
                 AISOperationType::WorkflowSpawn => validate_generated_workflow_spawn_node(node)?,

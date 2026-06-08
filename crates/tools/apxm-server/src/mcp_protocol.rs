@@ -7,26 +7,26 @@ use apxm_core::types::{OperationCategory, OperationLatency};
 
 pub(crate) mod fields {
     pub(crate) const ADDITIONAL_PROPERTIES: &str = "additionalProperties";
-    pub(crate) const ARGUMENTS: &str = "arguments";
+    pub(crate) const ARGUMENTS: &str = apxm_core::constants::mcp::fields::ARGUMENTS;
     pub(crate) const CAPABILITIES: &str = "capabilities";
-    pub(crate) const CONTENT: &str = "content";
+    pub(crate) const CONTENT: &str = apxm_core::constants::mcp::fields::CONTENT;
     pub(crate) const CONTENTS: &str = "contents";
     pub(crate) const DESCRIPTION: &str = "description";
     pub(crate) const INPUT_SCHEMA: &str = "inputSchema";
-    pub(crate) const IS_ERROR: &str = "isError";
+    pub(crate) const IS_ERROR: &str = apxm_core::constants::mcp::fields::IS_ERROR;
     pub(crate) const ITEMS: &str = "items";
     pub(crate) const LIST_CHANGED: &str = "listChanged";
     pub(crate) const MAXIMUM: &str = "maximum";
     pub(crate) const MIME_TYPE: &str = "mimeType";
     pub(crate) const MINIMUM: &str = "minimum";
-    pub(crate) const NAME: &str = "name";
+    pub(crate) const NAME: &str = apxm_core::constants::mcp::fields::NAME;
     pub(crate) const PROPERTIES: &str = "properties";
     pub(crate) const PROTOCOL_VERSION: &str = "protocolVersion";
     pub(crate) const REQUIRED: &str = "required";
     pub(crate) const RESOURCES: &str = "resources";
     pub(crate) const SERVER_INFO: &str = "serverInfo";
     pub(crate) const SUBSCRIBE: &str = "subscribe";
-    pub(crate) const TEXT: &str = "text";
+    pub(crate) const TEXT: &str = apxm_core::constants::mcp::fields::TEXT;
     pub(crate) const TOOLS: &str = "tools";
     pub(crate) const TYPE: &str = "type";
     pub(crate) const URI: &str = "uri";
@@ -213,6 +213,8 @@ pub(crate) mod defaults {
 }
 
 pub(crate) mod admission_error {
+    use apxm_core::constants::mcp::tools as mcp_tool_names;
+
     pub(crate) const GENERATED_PYTHON_TOOL_SECTIONS: &str =
         "generated plan execution does not support python tool sections";
     pub(crate) const GENERATED_PYTHON_TOOL_HANDLERS: &str =
@@ -248,6 +250,13 @@ pub(crate) mod admission_error {
 
     pub(crate) fn ask_named_tool_not_read_only(tool_name: &str) -> String {
         format!("{ASK_REQUIRES_READ_ONLY_TOOLS}; capability '{tool_name}' is not read-only")
+    }
+
+    pub(crate) fn generated_process_spawn_not_allowed(op_type: impl std::fmt::Display) -> String {
+        format!(
+            "generated plans may not contain process-spawn operation {op_type}; use {} or dekk apxm goal for admitted worker orchestration",
+            mcp_tool_names::APXM_ORCHESTRATE_START
+        )
     }
 }
 
@@ -295,12 +304,12 @@ pub(crate) enum McpMethod {
 impl McpMethod {
     pub(crate) const fn as_str(self) -> &'static str {
         match self {
-            Self::Initialize => "initialize",
-            Self::ToolsList => "tools/list",
-            Self::ToolsCall => "tools/call",
-            Self::ResourcesList => "resources/list",
-            Self::ResourcesRead => "resources/read",
-            Self::Ping => "ping",
+            Self::Initialize => apxm_core::constants::mcp::methods::INITIALIZE,
+            Self::ToolsList => apxm_core::constants::mcp::methods::TOOLS_LIST,
+            Self::ToolsCall => apxm_core::constants::mcp::methods::TOOLS_CALL,
+            Self::ResourcesList => apxm_core::constants::mcp::methods::RESOURCES_LIST,
+            Self::ResourcesRead => apxm_core::constants::mcp::methods::RESOURCES_READ,
+            Self::Ping => apxm_core::constants::mcp::methods::PING,
         }
     }
 

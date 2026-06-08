@@ -1,12 +1,28 @@
 use super::*;
-use apxm_core::events::{ApxmEvent, EventSource};
+use apxm_core::constants::orchestration::admission as orchestration_admission;
+use apxm_core::constants::orchestration::workflow_status as orchestration_workflow_status;
+use apxm_core::events::kind as event_kind;
+use apxm_core::events::payload::ExecutionStartedPayload;
+use apxm_core::events::{ApxmEvent, EventKind, EventSource};
 use apxm_core::types::aam::AamContext;
+use apxm_core::types::{
+    OrchestrationStartStatus, OrchestrationWakeOutcome, OrchestrationWorkspaceCleanup,
+    OrchestrationWorkspaceMode,
+};
 use apxm_runtime::process::AgentProcess;
 use apxm_runtime::process_table::{AgentPromptResponse, AgentPrompter, AgentSpawner};
 use std::any::Any;
 use std::collections::HashSet;
 use std::sync::Mutex;
 use std::sync::atomic::{AtomicUsize, Ordering};
+
+fn payload_kind_is(event: &serde_json::Value, kind: EventKind) -> bool {
+    event["payload"]["kind"] == kind.name()
+}
+
+fn payload_op_is(event: &serde_json::Value, op: AISOperationType) -> bool {
+    event["payload"]["op_type"] == op.to_string()
+}
 
 #[tokio::test]
 async fn mcp_initialize_returns_protocol_version() {
@@ -273,10 +289,6 @@ async fn mcp_tools_list_includes_skill_inventory_tools() {
         names.contains(&MCP_TOOL_APXM_ORCHESTRATE_START),
         "tools: {body}"
     );
-    assert!(
-        !names.contains(&"apxm_dispatch"),
-        "legacy dispatch tool should not be advertised: {body}"
-    );
 }
 
 #[tokio::test]
@@ -431,10 +443,10 @@ async fn mcp_orchestrate_dry_run_allocates_distinct_git_worktrees() {
                 "session_id": session_id,
                 "dry_run": true,
                 "workspace": {
-                    "mode": "git_worktree",
+                    "mode": OrchestrationWorkspaceMode::GitWorktree.as_str(),
                     "repo_root": repo.path(),
                     "base_ref": "HEAD",
-                    "cleanup": "keep"
+                    "cleanup": OrchestrationWorkspaceCleanup::Keep.as_str()
                 },
                 "workers": [
                     { "id": "planner", "role": "plan in a detached worktree" },
@@ -449,18 +461,27 @@ async fn mcp_orchestrate_dry_run_allocates_distinct_git_worktrees() {
     assert_eq!(body[tool_result::RESULT][mcp_fields::IS_ERROR], false);
     let planned: serde_json::Value =
         serde_json::from_str(tool_text(&body)).expect("orchestrate response JSON");
-    assert_eq!(planned[tool_result::STATUS], "planned");
+    assert_eq!(
+        planned[tool_result::STATUS],
+        OrchestrationStartStatus::Planned.as_str()
+    );
     assert!(
         planned.get(tool_result::EXECUTION_ID).is_none(),
         "dry run should not start a workflow: {planned}"
     );
-    assert_eq!(planned["plan"]["workspace_mode"], "git_worktree");
+    assert_eq!(
+        planned["plan"]["workspace_mode"],
+        OrchestrationWorkspaceMode::GitWorktree.as_str()
+    );
 
     let workers = planned["plan"]["workers"].as_array().expect("plan workers");
     assert_eq!(workers.len(), 2);
     let mut cwd_set = HashSet::new();
     for worker in workers {
-        assert_eq!(worker["workspace"]["mode"], "git_worktree");
+        assert_eq!(
+            worker["workspace"]["mode"],
+            OrchestrationWorkspaceMode::GitWorktree.as_str()
+        );
         assert_eq!(worker["workspace"]["worktree_ref"], "HEAD");
         let cwd = std::path::PathBuf::from(worker["cwd"].as_str().expect("worker cwd"));
         assert!(cwd.is_dir(), "worktree cwd should exist: {}", cwd.display());
@@ -518,12 +539,12 @@ async fn mcp_orchestrate_live_git_worktree_workers_spawn_in_distinct_worktrees()
                 "task": "execute in isolated worktrees",
                 "session_id": session_id,
                 "workspace": {
-                    "mode": "git_worktree",
+                    "mode": OrchestrationWorkspaceMode::GitWorktree.as_str(),
                     "repo_root": repo.path(),
                     "base_ref": "HEAD",
-                    "cleanup": "keep"
+                    "cleanup": OrchestrationWorkspaceCleanup::Keep.as_str()
                 },
-                "admit_capabilities": ["SPAWN_AGENT"],
+                "admit_capabilities": [orchestration_admission::SPAWN_AGENT],
                 "workers": [
                     { "id": "planner", "role": "plan in a detached worktree", "profile": "fixture-profile" },
                     { "id": "verifier", "role": "verify in a detached worktree", "profile": "fixture-profile" }
@@ -615,8 +636,8 @@ async fn mcp_orchestrate_start_spawns_parallel_workers_with_session_cwds() {
                 "event": "user requested autonomous parallel orchestration",
                 "trigger": "manual MCP invocation",
                 "session_id": session_id,
-                "workspace": { "mode": "session" },
-                "admit_capabilities": ["SPAWN_AGENT"],
+                "workspace": { "mode": OrchestrationWorkspaceMode::Session.as_str() },
+                "admit_capabilities": [orchestration_admission::SPAWN_AGENT],
                 "workers": [
                     { "id": "planner", "role": "split the work", "profile": "fixture-profile" },
                     { "id": "executor", "role": "implement the work", "profile": "fixture-profile" },
@@ -639,11 +660,11 @@ async fn mcp_orchestrate_start_spawns_parallel_workers_with_session_cwds() {
     assert_eq!(started["sleep_wake"]["sleep_after_start"], true);
     assert_eq!(
         started["orchestration"]["sleep_event_kind"],
-        "orchestrator_sleep"
+        event_kind::ORCHESTRATOR_SLEEP.name()
     );
     assert_eq!(
         started["orchestration"]["wake_event_kind"],
-        "orchestrator_wake"
+        event_kind::ORCHESTRATOR_WAKE.name()
     );
     assert_eq!(
         started["orchestration"]["next_events_args"]["since"], 0,
@@ -671,9 +692,10 @@ async fn mcp_orchestrate_start_spawns_parallel_workers_with_session_cwds() {
     assert!(plan_json.is_file(), "plan json should exist: {started}");
     let tracking_text = std::fs::read_to_string(&tracking_doc).expect("tracking doc text");
     assert!(
-        tracking_text.contains("# Orchestration Packet")
-            && tracking_text.contains("## Worker Graph")
-            && tracking_text.contains("apxm_workflow_events"),
+        tracking_text.contains(MCP_TOOL_APXM_WORKFLOW_EVENTS)
+            && tracking_text.contains("planner")
+            && tracking_text.contains("executor")
+            && !tracking_text.contains("{{"),
         "tracking doc should be a durable orchestration packet: {tracking_text}"
     );
     let worker_prompt_artifacts = artifacts["worker_prompts"]
@@ -702,12 +724,19 @@ async fn mcp_orchestrate_start_spawns_parallel_workers_with_session_cwds() {
             .expect("first worker prompt path"),
     );
     let first_prompt = std::fs::read_to_string(&first_prompt_path).expect("worker prompt text");
-    for expected in ["## Base / Workspace", "## Report Contract"] {
+    for expected in [
+        "design and verify autonomous APXM orchestration",
+        first_prompt_path.to_string_lossy().as_ref(),
+    ] {
         assert!(
             first_prompt.contains(expected),
-            "worker prompt should include '{expected}': {first_prompt}"
+            "worker prompt should include rendered value '{expected}': {first_prompt}"
         );
     }
+    assert!(
+        !first_prompt.contains("{{"),
+        "worker prompt should not contain unresolved template markers: {first_prompt}"
+    );
     let execution_id = started[tool_result::EXECUTION_ID]
         .as_str()
         .expect("execution_id")
@@ -771,7 +800,8 @@ async fn mcp_orchestrate_start_spawns_parallel_workers_with_session_cwds() {
     assert!(
         plan_workers
             .iter()
-            .all(|worker| worker["workspace"]["mode"] == "session"),
+            .all(|worker| worker["workspace"]["mode"]
+                == OrchestrationWorkspaceMode::Session.as_str()),
         "response should expose workspace bindings: {started}"
     );
 
@@ -779,7 +809,7 @@ async fn mcp_orchestrate_start_spawns_parallel_workers_with_session_cwds() {
     let event_items = events["events"].as_array().expect("events array");
     let sleep_event = event_items
         .iter()
-        .find(|event| event["payload"]["kind"] == "orchestrator_sleep")
+        .find(|event| payload_kind_is(event, event_kind::ORCHESTRATOR_SLEEP))
         .expect("orchestrator_sleep event");
     assert_eq!(
         sleep_event["payload"]["control"]["events_tool"], MCP_TOOL_APXM_WORKFLOW_EVENTS,
@@ -794,16 +824,22 @@ async fn mcp_orchestrate_start_spawns_parallel_workers_with_session_cwds() {
     );
     let wake_event = event_items
         .iter()
-        .find(|event| event["payload"]["kind"] == "orchestrator_wake")
+        .find(|event| payload_kind_is(event, event_kind::ORCHESTRATOR_WAKE))
         .expect("orchestrator_wake event");
-    assert_eq!(wake_event["payload"]["outcome"], "succeeded");
-    assert_eq!(wake_event["payload"]["terminal_event"], "execute_complete");
+    assert_eq!(
+        wake_event["payload"]["outcome"],
+        OrchestrationWakeOutcome::Succeeded.as_str()
+    );
+    assert_eq!(
+        wake_event["payload"]["terminal_event"],
+        event_kind::EXECUTE_COMPLETE.name()
+    );
     assert!(
         event_items
             .iter()
             .filter(|event| {
-                event["payload"]["kind"] == "operation_start"
-                    && event["payload"]["op_type"] == "SPAWN_AGENT"
+                payload_kind_is(event, event_kind::OPERATION_START)
+                    && payload_op_is(event, AISOperationType::SpawnAgent)
             })
             .count()
             >= 3,
@@ -811,14 +847,14 @@ async fn mcp_orchestrate_start_spawns_parallel_workers_with_session_cwds() {
     );
     assert!(
         event_items.iter().any(|event| {
-            event["payload"]["kind"] == "operation_start"
-                && event["payload"]["op_type"] == "COMMUNICATE"
+            payload_kind_is(event, event_kind::OPERATION_START)
+                && payload_op_is(event, AISOperationType::Communicate)
         }),
         "expected COMMUNICATE operation events: {events}"
     );
     let workflow_started = event_items
         .iter()
-        .find(|event| event["payload"]["kind"] == "workflow_started")
+        .find(|event| payload_kind_is(event, event_kind::WORKFLOW_STARTED))
         .expect("workflow_started event");
     assert_eq!(
         workflow_started["payload"]["workflow_name"],
@@ -831,7 +867,7 @@ async fn mcp_orchestrate_start_spawns_parallel_workers_with_session_cwds() {
     let expected_steps = ["planner", "executor", "verifier", "gate", "feedback"];
     let started_steps: HashSet<&str> = event_items
         .iter()
-        .filter(|event| event["payload"]["kind"] == "workflow_step_started")
+        .filter(|event| payload_kind_is(event, event_kind::WORKFLOW_STEP_STARTED))
         .filter_map(|event| event["payload"]["step_id"].as_str())
         .collect();
     assert!(
@@ -844,11 +880,14 @@ async fn mcp_orchestrate_start_spawns_parallel_workers_with_session_cwds() {
         let step_completed = event_items
             .iter()
             .find(|event| {
-                event["payload"]["kind"] == "workflow_step_completed"
+                payload_kind_is(event, event_kind::WORKFLOW_STEP_COMPLETED)
                     && event["payload"]["step_id"] == step_id
             })
             .unwrap_or_else(|| panic!("missing workflow_step_completed for {step_id}: {events}"));
-        assert_eq!(step_completed["payload"]["status"], "success");
+        assert_eq!(
+            step_completed["payload"]["status"],
+            orchestration_workflow_status::SUCCESS
+        );
         assert_eq!(
             step_completed["payload"]["workflow_session_dir"],
             workflow_session_dir
@@ -862,13 +901,16 @@ async fn mcp_orchestrate_start_spawns_parallel_workers_with_session_cwds() {
     }
     let workflow_finished = event_items
         .iter()
-        .find(|event| event["payload"]["kind"] == "workflow_finished")
+        .find(|event| payload_kind_is(event, event_kind::WORKFLOW_FINISHED))
         .expect("workflow_finished event");
     assert_eq!(
         workflow_finished["payload"]["session_dir"],
         workflow_session_dir
     );
-    assert_eq!(workflow_finished["payload"]["status"], "success");
+    assert_eq!(
+        workflow_finished["payload"]["status"],
+        orchestration_workflow_status::SUCCESS
+    );
 }
 
 #[tokio::test]
@@ -902,8 +944,8 @@ async fn mcp_orchestrate_acp_gatekeeper_receives_worker_summary() {
                 "task": "gate two deterministic worker outputs with {literal_goal}",
                 "context": "gate prompt regression with {literal_context}",
                 "session_id": session_id,
-                "workspace": { "mode": "session" },
-                "admit_capabilities": ["SPAWN_AGENT"],
+                "workspace": { "mode": OrchestrationWorkspaceMode::Session.as_str() },
+                "admit_capabilities": [orchestration_admission::SPAWN_AGENT],
                 "workers": [
                     { "id": "left", "role": "left branch" },
                     { "id": "right", "role": "right branch" }
@@ -952,7 +994,6 @@ async fn mcp_orchestrate_acp_gatekeeper_receives_worker_summary() {
         "gate two deterministic worker outputs with {literal_goal}",
         "gate prompt regression with {literal_context}",
         "Act as a strict gatekeeper with {literal_constraint}.",
-        "## Worker Summary",
         "left=[\"worker:left role:left branch",
         "right=[\"worker:right role:right branch",
     ] {
@@ -997,8 +1038,8 @@ async fn mcp_orchestrate_cancel_stops_waiting_and_drops_late_worker_events() {
             serde_json::json!({
                 "task": "start long-running workers then cancel",
                 "session_id": session_id,
-                "workspace": { "mode": "session" },
-                "admit_capabilities": ["SPAWN_AGENT"],
+                "workspace": { "mode": OrchestrationWorkspaceMode::Session.as_str() },
+                "admit_capabilities": [orchestration_admission::SPAWN_AGENT],
                 "workers": [
                     { "id": "left", "profile": "fixture-profile" },
                     { "id": "right", "profile": "fixture-profile" }
@@ -1040,7 +1081,7 @@ async fn mcp_orchestrate_cancel_stops_waiting_and_drops_late_worker_events() {
         workflow_status["error"]
             .as_str()
             .unwrap_or_default()
-            .contains("apxm_workflow_cancel"),
+            .contains(MCP_TOOL_APXM_WORKFLOW_CANCEL),
         "expected cancellation error: {workflow_status}"
     );
 
@@ -1048,13 +1089,19 @@ async fn mcp_orchestrate_cancel_stops_waiting_and_drops_late_worker_events() {
     let cancelled_items = cancelled_events["events"].as_array().expect("events array");
     let wake_event = cancelled_items
         .iter()
-        .find(|event| event["payload"]["kind"] == "orchestrator_wake")
+        .find(|event| payload_kind_is(event, event_kind::ORCHESTRATOR_WAKE))
         .expect("cancelled orchestration should emit orchestrator_wake");
-    assert_eq!(wake_event["payload"]["outcome"], "cancelled");
-    assert_eq!(wake_event["payload"]["terminal_event"], "turn_aborted");
+    assert_eq!(
+        wake_event["payload"]["outcome"],
+        OrchestrationWakeOutcome::Cancelled.as_str()
+    );
+    assert_eq!(
+        wake_event["payload"]["terminal_event"],
+        event_kind::TURN_ABORTED.name()
+    );
     let abort_seq = cancelled_items
         .iter()
-        .find(|event| event["payload"]["kind"] == "turn_aborted")
+        .find(|event| payload_kind_is(event, event_kind::TURN_ABORTED))
         .and_then(|event| event["meta"]["seq"].as_u64())
         .expect("turn_aborted seq");
 
@@ -1065,7 +1112,7 @@ async fn mcp_orchestrate_cancel_stops_waiting_and_drops_late_worker_events() {
     assert!(
         !late_items
             .iter()
-            .any(|event| event["payload"]["kind"] == "execute_complete"),
+            .any(|event| payload_kind_is(event, event_kind::EXECUTE_COMPLETE)),
         "cancelled orchestration must not emit execute_complete: {late_events}"
     );
     assert!(
@@ -1160,33 +1207,33 @@ async fn mcp_workflow_start_status_and_events_use_server_execution_id() {
     assert!(
         event_items
             .iter()
-            .any(|event| event["payload"]["kind"] == "execution_started"),
+            .any(|event| payload_kind_is(event, event_kind::EXECUTION_STARTED)),
         "expected execution_started event: {events}"
     );
     assert!(
         event_items
             .iter()
-            .any(|event| event["payload"]["kind"] == "execute_complete"),
+            .any(|event| payload_kind_is(event, event_kind::EXECUTE_COMPLETE)),
         "expected execute_complete event: {events}"
     );
     assert!(
         event_items.iter().any(|event| {
-            event["payload"]["kind"] == "operation_start"
-                && event["payload"]["op_type"] == "WORKFLOW_SPAWN"
+            payload_kind_is(event, event_kind::OPERATION_START)
+                && payload_op_is(event, AISOperationType::WorkflowSpawn)
         }),
         "expected parent WORKFLOW_SPAWN operation_start event: {events}"
     );
     assert!(
         event_items.iter().any(|event| {
-            event["payload"]["kind"] == "operation_end"
-                && event["payload"]["op_type"] == "WORKFLOW_SPAWN"
+            payload_kind_is(event, event_kind::OPERATION_END)
+                && payload_op_is(event, AISOperationType::WorkflowSpawn)
                 && event["payload"]["success"] == true
         }),
         "expected parent WORKFLOW_SPAWN operation_end event: {events}"
     );
     let workflow_started = event_items
         .iter()
-        .find(|event| event["payload"]["kind"] == "workflow_started")
+        .find(|event| payload_kind_is(event, event_kind::WORKFLOW_STARTED))
         .expect("workflow_started event");
     assert_eq!(workflow_started["payload"]["step_count"], 1);
     assert_eq!(
@@ -1195,7 +1242,7 @@ async fn mcp_workflow_start_status_and_events_use_server_execution_id() {
     );
     let step_started = event_items
         .iter()
-        .find(|event| event["payload"]["kind"] == "workflow_step_started")
+        .find(|event| payload_kind_is(event, event_kind::WORKFLOW_STEP_STARTED))
         .expect("workflow_step_started event");
     assert_eq!(
         step_started["payload"]["workflow_session_dir"],
@@ -1204,10 +1251,13 @@ async fn mcp_workflow_start_status_and_events_use_server_execution_id() {
     assert_eq!(step_started["payload"]["step_id"], "step");
     let step_completed = event_items
         .iter()
-        .find(|event| event["payload"]["kind"] == "workflow_step_completed")
+        .find(|event| payload_kind_is(event, event_kind::WORKFLOW_STEP_COMPLETED))
         .expect("workflow_step_completed event");
     assert_eq!(step_completed["payload"]["step_id"], "step");
-    assert_eq!(step_completed["payload"]["status"], "success");
+    assert_eq!(
+        step_completed["payload"]["status"],
+        orchestration_workflow_status::SUCCESS
+    );
     assert_eq!(step_completed["payload"]["success"], true);
     assert!(
         step_completed["payload"]["session_dir"]
@@ -1217,13 +1267,16 @@ async fn mcp_workflow_start_status_and_events_use_server_execution_id() {
     );
     let workflow_finished = event_items
         .iter()
-        .find(|event| event["payload"]["kind"] == "workflow_finished")
+        .find(|event| payload_kind_is(event, event_kind::WORKFLOW_FINISHED))
         .expect("workflow_finished event");
     assert_eq!(
         workflow_finished["payload"]["session_dir"],
         workflow_session_dir
     );
-    assert_eq!(workflow_finished["payload"]["status"], "success");
+    assert_eq!(
+        workflow_finished["payload"]["status"],
+        orchestration_workflow_status::SUCCESS
+    );
     assert_eq!(workflow_finished["payload"]["success"], true);
 }
 
@@ -1340,15 +1393,15 @@ async fn mcp_workflow_fans_out_independent_steps_and_fans_in_output() {
     assert!(
         event_items
             .iter()
-            .any(|event| event["payload"]["kind"] == "execute_complete"),
+            .any(|event| payload_kind_is(event, event_kind::EXECUTE_COMPLETE)),
         "fan-in should complete parent workflow: {events}"
     );
     assert!(
         event_items
             .iter()
             .filter(|event| {
-                event["payload"]["kind"] == "operation_start"
-                    && event["payload"]["op_type"] == "INV_TOOL"
+                payload_kind_is(event, event_kind::OPERATION_START)
+                    && payload_op_is(event, AISOperationType::InvTool)
             })
             .count()
             >= 2,
@@ -1356,7 +1409,7 @@ async fn mcp_workflow_fans_out_independent_steps_and_fans_in_output() {
     );
     let started_steps: HashSet<&str> = event_items
         .iter()
-        .filter(|event| event["payload"]["kind"] == "workflow_step_started")
+        .filter(|event| payload_kind_is(event, event_kind::WORKFLOW_STEP_STARTED))
         .filter_map(|event| event["payload"]["step_id"].as_str())
         .collect();
     assert!(
@@ -1369,11 +1422,14 @@ async fn mcp_workflow_fans_out_independent_steps_and_fans_in_output() {
         let step_completed = event_items
             .iter()
             .find(|event| {
-                event["payload"]["kind"] == "workflow_step_completed"
+                payload_kind_is(event, event_kind::WORKFLOW_STEP_COMPLETED)
                     && event["payload"]["step_id"] == step_id
             })
             .unwrap_or_else(|| panic!("missing workflow_step_completed for {step_id}: {events}"));
-        assert_eq!(step_completed["payload"]["status"], "success");
+        assert_eq!(
+            step_completed["payload"]["status"],
+            orchestration_workflow_status::SUCCESS
+        );
         assert_eq!(step_completed["payload"]["success"], true);
         assert_eq!(
             step_completed["payload"]["workflow_session_dir"],
@@ -1387,13 +1443,16 @@ async fn mcp_workflow_fans_out_independent_steps_and_fans_in_output() {
     }
     let workflow_finished = event_items
         .iter()
-        .find(|event| event["payload"]["kind"] == "workflow_finished")
+        .find(|event| payload_kind_is(event, event_kind::WORKFLOW_FINISHED))
         .expect("workflow_finished event");
     assert_eq!(
         workflow_finished["payload"]["session_dir"],
         workflow_session_dir
     );
-    assert_eq!(workflow_finished["payload"]["status"], "success");
+    assert_eq!(
+        workflow_finished["payload"]["status"],
+        orchestration_workflow_status::SUCCESS
+    );
 }
 
 #[tokio::test]
@@ -1452,7 +1511,7 @@ async fn mcp_workflow_resume_parks_and_wakes_through_checkpoint_endpoint() {
     assert!(
         event_items
             .iter()
-            .any(|event| event["payload"]["kind"] == "execute_complete"),
+            .any(|event| payload_kind_is(event, event_kind::EXECUTE_COMPLETE)),
         "expected execute_complete after checkpoint wake: {events}"
     );
     assert!(
@@ -1547,7 +1606,7 @@ async fn mcp_workflow_cancel_interrupts_parked_resume_without_late_success() {
     assert!(
         !event_items
             .iter()
-            .any(|event| event["payload"]["kind"] == "execute_complete"),
+            .any(|event| payload_kind_is(event, event_kind::EXECUTE_COMPLETE)),
         "cancelled parked workflow must not emit execute_complete: {events}"
     );
 
@@ -1701,7 +1760,10 @@ async fn mcp_checked_in_agent_council_workflow_runs_and_pages_events() {
     assert_eq!(page_one_events.len(), 1);
     assert_eq!(page_one_events[0]["meta"]["seq"], 0);
     assert_eq!(page_one_events[0]["meta"]["source"], "server");
-    assert_eq!(page_one_events[0]["payload"]["kind"], "execution_started");
+    assert_eq!(
+        page_one_events[0]["payload"]["kind"],
+        event_kind::EXECUTION_STARTED.name()
+    );
     assert_eq!(page_one["next_seq"], 1);
     assert_eq!(page_one["done"], false);
 
@@ -1745,8 +1807,8 @@ async fn mcp_checked_in_agent_council_workflow_runs_and_pages_events() {
 
     assert!(
         full_events.iter().any(|event| {
-            event["payload"]["kind"] == "operation_end"
-                && event["payload"]["op_type"] == "WORKFLOW_SPAWN"
+            payload_kind_is(event, event_kind::OPERATION_END)
+                && payload_op_is(event, AISOperationType::WorkflowSpawn)
                 && event["payload"]["success"] == true
                 && event["meta"]["source"] == "runtime"
                 && event["meta"]["skill"]["skill_id"] == "apxm.workflow"
@@ -1756,7 +1818,7 @@ async fn mcp_checked_in_agent_council_workflow_runs_and_pages_events() {
     );
     assert!(
         full_events.iter().any(|event| {
-            event["payload"]["kind"] == "execute_complete"
+            payload_kind_is(event, event_kind::EXECUTE_COMPLETE)
                 && event["meta"]["source"] == "server"
                 && event["meta"].get("skill").is_none()
         }),
@@ -1793,7 +1855,7 @@ async fn mcp_workflow_events_falls_back_to_rollout_when_since_precedes_retained_
         let event = state.run_event_bus.record(
             execution_id,
             ApxmEvent::root(
-                crate::state::ExecutionStartedPayload {
+                ExecutionStartedPayload {
                     execution_id: format!("{execution_id}-{idx}"),
                 },
                 EventSource::Server,
@@ -1849,7 +1911,7 @@ async fn mcp_checked_in_event_feedback_loop_workflow_runs_all_steps() {
     let const_starts = event_items
         .iter()
         .filter(|event| {
-            event["payload"]["kind"] == "operation_start"
+            payload_kind_is(event, event_kind::OPERATION_START)
                 && event["payload"]["op_type"] == "CONST_STR"
         })
         .count();
@@ -1860,7 +1922,7 @@ async fn mcp_checked_in_event_feedback_loop_workflow_runs_all_steps() {
     assert!(
         event_items
             .iter()
-            .any(|event| event["payload"]["kind"] == "execute_complete"),
+            .any(|event| payload_kind_is(event, event_kind::EXECUTE_COMPLETE)),
         "expected terminal execute_complete: {events}"
     );
 }
@@ -1904,7 +1966,7 @@ async fn mcp_checked_in_goal_loop_workflow_runs_all_steps() {
     ] {
         assert!(
             event_items.iter().any(|event| {
-                event["payload"]["kind"] == "workflow_step_completed"
+                payload_kind_is(event, event_kind::WORKFLOW_STEP_COMPLETED)
                     && event["payload"]["step_id"] == step
             }),
             "missing workflow_step_completed for {step}: {events}"
@@ -1929,7 +1991,8 @@ async fn mcp_checked_in_approval_gate_parks_wakes_and_reports_resume_events() {
     .await;
     let parked_events = wait_for_workflow_events_matching(app.clone(), &execution_id, |events| {
         events.iter().any(|event| {
-            event["payload"]["kind"] == "operation_start" && event["payload"]["op_type"] == "RESUME"
+            payload_kind_is(event, event_kind::OPERATION_START)
+                && payload_op_is(event, AISOperationType::Resume)
         })
     })
     .await;
@@ -1941,14 +2004,15 @@ async fn mcp_checked_in_approval_gate_parks_wakes_and_reports_resume_events() {
     let parked_items = parked_events["events"].as_array().expect("events array");
     assert!(
         parked_items.iter().any(|event| {
-            event["payload"]["kind"] == "operation_start" && event["payload"]["op_type"] == "RESUME"
+            payload_kind_is(event, event_kind::OPERATION_START)
+                && payload_op_is(event, AISOperationType::Resume)
         }),
         "parked workflow should expose RESUME operation_start: {parked_events}"
     );
     assert!(
         parked_items.iter().any(|event| {
-            event["payload"]["kind"] == "operation_end"
-                && event["payload"]["op_type"] == "RESUME"
+            payload_kind_is(event, event_kind::OPERATION_END)
+                && payload_op_is(event, AISOperationType::Resume)
                 && event["payload"]["success"] == false
         }),
         "current parked RESUME contract should expose non-success operation_end: {parked_events}"
@@ -1974,7 +2038,7 @@ async fn mcp_checked_in_approval_gate_parks_wakes_and_reports_resume_events() {
     assert!(
         event_items
             .iter()
-            .any(|event| event["payload"]["kind"] == "execute_complete"),
+            .any(|event| payload_kind_is(event, event_kind::EXECUTE_COMPLETE)),
         "expected execute_complete after resume wake: {events}"
     );
     assert!(
@@ -2002,7 +2066,8 @@ async fn mcp_checked_in_cancel_parked_workflow_has_no_late_child_work() {
     .await;
     let _ = wait_for_workflow_events_matching(app.clone(), &execution_id, |events| {
         events.iter().any(|event| {
-            event["payload"]["kind"] == "operation_start" && event["payload"]["op_type"] == "RESUME"
+            payload_kind_is(event, event_kind::OPERATION_START)
+                && payload_op_is(event, AISOperationType::Resume)
         })
     })
     .await;
@@ -2075,7 +2140,7 @@ async fn mcp_checked_in_cancel_parked_workflow_has_no_late_child_work() {
     assert!(
         !late_items
             .iter()
-            .any(|event| event["payload"]["kind"] == "execute_complete"),
+            .any(|event| payload_kind_is(event, event_kind::EXECUTE_COMPLETE)),
         "cancelled workflow must not emit execute_complete: {late_events}"
     );
     assert!(

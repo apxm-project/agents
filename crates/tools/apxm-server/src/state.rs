@@ -1,20 +1,16 @@
 use std::sync::Arc;
 use std::time::{Duration, SystemTime};
 
-use apxm_core::events::kind::TURN_ABORTED;
-use apxm_core::events::{ApxmEvent, EventCategory, EventKind};
-use apxm_core::impl_event_payload;
+use apxm_core::events::ApxmEvent;
 use apxm_driver::ServerConfig;
 use apxm_rollout::{IndexDb, RolloutPaths};
 use apxm_runtime::Runtime;
 use dashmap::DashMap;
-use serde::Serialize;
 use tokio::sync::{Mutex, Notify, OwnedSemaphorePermit, Semaphore, mpsc};
 
 use crate::a2a::A2aTaskRecord;
 use crate::agent::AgentRegistration;
 use crate::checkpoints::CheckpointStore;
-use crate::execute::ExecuteResponse;
 use crate::executions::ExecutionStore;
 use crate::rollout::RolloutRegistry;
 use crate::runs::RunEventBus;
@@ -210,63 +206,3 @@ impl apxm_core::events::EventEmitter for TokioChannelEmitter {
         let _ = self.0.try_send(event);
     }
 }
-
-pub(crate) const EXECUTE_COMPLETE: EventKind =
-    EventKind::new("execute_complete", EventCategory::Lifecycle, true);
-
-#[derive(Debug, Clone, Serialize, serde::Deserialize)]
-pub(crate) struct ExecuteCompletePayload {
-    pub(crate) result: ExecuteResponse,
-}
-impl_event_payload!(ExecuteCompletePayload, EXECUTE_COMPLETE);
-
-pub(crate) const EXECUTION_STARTED: EventKind =
-    EventKind::new("execution_started", EventCategory::Lifecycle, true);
-
-/// First frame of every `/v1/execute/stream` response — carries the unique
-/// `execution_id` the client uses to address `POST /v1/runs/{id}/cancel`.
-#[derive(Debug, Clone, Serialize, serde::Deserialize)]
-pub(crate) struct ExecutionStartedPayload {
-    pub(crate) execution_id: String,
-}
-impl_event_payload!(ExecutionStartedPayload, EXECUTION_STARTED);
-
-/// Terminal frame emitted when a run is cancelled mid-flight via the cancel
-/// route, in place of `execute_complete`.
-#[derive(Debug, Clone, Serialize, serde::Deserialize)]
-pub(crate) struct TurnAbortedPayload {
-    pub(crate) execution_id: String,
-    pub(crate) reason: String,
-}
-impl_event_payload!(TurnAbortedPayload, TURN_ABORTED);
-
-pub(crate) const ORCHESTRATOR_SLEEP: EventKind =
-    EventKind::new("orchestrator_sleep", EventCategory::Lifecycle, false);
-
-#[derive(Debug, Clone, Serialize, serde::Deserialize)]
-pub(crate) struct OrchestratorSleepPayload {
-    pub(crate) execution_id: String,
-    pub(crate) session_id: String,
-    pub(crate) session_dir: String,
-    pub(crate) workflow_path: String,
-    pub(crate) bundle_dir: String,
-    pub(crate) artifacts: serde_json::Value,
-    pub(crate) plan: serde_json::Value,
-    pub(crate) control: serde_json::Value,
-    pub(crate) wake_on: Vec<String>,
-    pub(crate) event_loop: String,
-}
-impl_event_payload!(OrchestratorSleepPayload, ORCHESTRATOR_SLEEP);
-
-pub(crate) const ORCHESTRATOR_WAKE: EventKind =
-    EventKind::new("orchestrator_wake", EventCategory::Lifecycle, false);
-
-#[derive(Debug, Clone, Serialize, serde::Deserialize)]
-pub(crate) struct OrchestratorWakePayload {
-    pub(crate) execution_id: String,
-    pub(crate) session_id: String,
-    pub(crate) terminal_event: String,
-    pub(crate) outcome: String,
-    pub(crate) reason: String,
-}
-impl_event_payload!(OrchestratorWakePayload, ORCHESTRATOR_WAKE);

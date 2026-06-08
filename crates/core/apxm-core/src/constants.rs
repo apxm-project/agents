@@ -293,6 +293,38 @@ pub mod protocols {
     pub const A2A_VERSION: &str = "0.3";
 }
 
+pub mod mcp {
+    /// HTTP route for APXM's JSON-RPC MCP endpoint.
+    pub const ROUTE: &str = "/v1/mcp";
+
+    pub mod methods {
+        pub const INITIALIZE: &str = "initialize";
+        pub const TOOLS_LIST: &str = "tools/list";
+        pub const TOOLS_CALL: &str = "tools/call";
+        pub const RESOURCES_LIST: &str = "resources/list";
+        pub const RESOURCES_READ: &str = "resources/read";
+        pub const PING: &str = "ping";
+    }
+
+    pub mod fields {
+        pub const ARGUMENTS: &str = "arguments";
+        pub const CONTENT: &str = "content";
+        pub const ERROR: &str = "error";
+        pub const IS_ERROR: &str = "isError";
+        pub const NAME: &str = "name";
+        pub const RESULT: &str = "result";
+        pub const TEXT: &str = "text";
+    }
+
+    pub mod tools {
+        pub const APXM_ORCHESTRATE_START: &str = "apxm_orchestrate_start";
+        pub const APXM_WORKFLOW_START: &str = "apxm_workflow_start";
+        pub const APXM_WORKFLOW_STATUS: &str = "apxm_workflow_status";
+        pub const APXM_WORKFLOW_EVENTS: &str = "apxm_workflow_events";
+        pub const APXM_WORKFLOW_CANCEL: &str = "apxm_workflow_cancel";
+    }
+}
+
 pub mod jsonrpc {
     pub const ID: &str = "id";
     pub const METHOD: &str = "method";
@@ -317,6 +349,26 @@ pub mod capabilities {
         BASH, BUILTINS, HTTP_GET, HTTP_POST, MEMORY_SEARCH_FACTS, MEMORY_STORE_FACT, READ,
         SEARCH_WEB, WRITE,
     };
+}
+
+pub mod orchestration {
+    pub mod admission {
+        pub const SPAWN_AGENT: &str = "SPAWN_AGENT";
+        pub const SPAWN_TEAM: &str = "SPAWN_TEAM";
+    }
+
+    pub mod execution_status {
+        pub const RUNNING: &str = "running";
+        pub const SUCCEEDED: &str = "succeeded";
+        pub const FAILED: &str = "failed";
+    }
+
+    pub mod workflow_status {
+        pub const SUCCESS: &str = "success";
+        pub const FAILED: &str = "failed";
+        pub const SKIPPED: &str = "skipped";
+        pub const PARTIAL_FAILURE: &str = "partial_failure";
+    }
 }
 
 pub mod llm {

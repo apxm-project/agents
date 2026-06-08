@@ -108,6 +108,7 @@ pub(crate) fn is_lifecycle_relevant(event: &ApxmEvent) -> bool {
             | kind::SESSION_START
             | kind::SESSION_END
             | kind::ERROR
+            | kind::EXECUTE_COMPLETE
             | kind::CHECKPOINT_SAVED
             | kind::CHECKPOINT_RESTORED
     ) || matches!(
@@ -116,7 +117,6 @@ pub(crate) fn is_lifecycle_relevant(event: &ApxmEvent) -> bool {
         // is defined out-of-crate; match on the wire name.
         "skill_execute_started"
             | "skill_execute_complete"
-            | "execute_complete"
             | "run_started"
             | "run_completed"
             | "run_failed"

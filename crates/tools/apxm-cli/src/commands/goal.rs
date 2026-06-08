@@ -9,17 +9,18 @@ use std::path::PathBuf;
 use std::time::{Duration, Instant};
 
 use anyhow::{Context, Result, anyhow, bail};
+use apxm_core::constants::jsonrpc;
+use apxm_core::constants::mcp::{self as mcp_constants, fields as mcp_fields, tools as mcp_tools};
+use apxm_core::constants::orchestration::admission as orchestration_admission;
+use apxm_core::constants::orchestration::execution_status as orchestration_execution_status;
+use apxm_core::events::kind as event_kind_constants;
+use apxm_core::types::OrchestrationWorkspaceMode;
+use apxm_core::types::{AISOperationType, OrchestrationTransport, OrchestrationWorkspaceCleanup};
 use serde_json::{Map as JsonMap, Value as JsonValue, json};
 
 use super::cli::GoalArgs;
 
 const DEFAULT_SERVER_BASE: &str = "http://127.0.0.1:18800";
-const MCP_PATH: &str = "/v1/mcp";
-const TOOL_ORCHESTRATE_START: &str = "apxm_orchestrate_start";
-const TOOL_WORKFLOW_STATUS: &str = "apxm_workflow_status";
-const TOOL_WORKFLOW_EVENTS: &str = "apxm_workflow_events";
-const TOOL_WORKFLOW_CANCEL: &str = "apxm_workflow_cancel";
-const ADMIT_SPAWN_AGENT: &str = "SPAWN_AGENT";
 const TEMPLATE_ORCHESTRATION_GOAL_WORKER_ROLE: &str = "orchestration_goal_worker_role";
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -55,7 +56,8 @@ pub async fn goal_command(args: GoalArgs, json_output: bool) -> Result<()> {
     match mode {
         GoalMode::Start(task) => {
             let request = build_start_arguments(&args, &task)?;
-            let started = call_mcp_tool(&client, &base, TOOL_ORCHESTRATE_START, request).await?;
+            let started =
+                call_mcp_tool(&client, &base, mcp_tools::APXM_ORCHESTRATE_START, request).await?;
             if !json_output {
                 print_start_summary(&base, &started);
             }
@@ -129,7 +131,7 @@ pub async fn goal_command(args: GoalArgs, json_output: bool) -> Result<()> {
             let cancelled = call_mcp_tool(
                 &client,
                 &base,
-                TOOL_WORKFLOW_CANCEL,
+                mcp_tools::APXM_WORKFLOW_CANCEL,
                 json!({ "execution_id": execution_id }),
             )
             .await?;
@@ -222,7 +224,7 @@ fn build_start_arguments(args: &GoalArgs, task: &str) -> Result<JsonValue> {
             json!({
                 "id": "gate",
                 "profile": profile,
-                "transport": "acp",
+                "transport": OrchestrationTransport::Acp.as_str(),
             }),
         );
     }
@@ -234,7 +236,7 @@ fn build_start_arguments(args: &GoalArgs, task: &str) -> Result<JsonValue> {
         }
     }
     if args.admit_spawn || uses_profiles {
-        admit.insert(ADMIT_SPAWN_AGENT.to_string());
+        admit.insert(orchestration_admission::SPAWN_AGENT.to_string());
     }
     root.insert(
         "admit_capabilities".to_string(),
@@ -474,18 +476,26 @@ fn parse_dependencies(specs: &[String]) -> Result<HashMap<String, Vec<String>>> 
 }
 
 fn workspace_json(args: &GoalArgs) -> Result<JsonValue> {
-    let mode = non_empty(args.workspace.as_str()).unwrap_or("session");
-    if !matches!(mode, "session" | "shared" | "git_worktree") {
-        bail!("--workspace must be one of: session, shared, git_worktree");
-    }
+    let mode = match non_empty(args.workspace.as_str()) {
+        Some(raw) => raw
+            .parse::<OrchestrationWorkspaceMode>()
+            .map_err(|_| anyhow!("--workspace must be one of: session, shared, git_worktree"))?,
+        None => OrchestrationWorkspaceMode::Session,
+    };
 
     let mut workspace = JsonMap::new();
-    workspace.insert("mode".to_string(), JsonValue::String(mode.to_string()));
-    workspace.insert("cleanup".to_string(), JsonValue::String("keep".to_string()));
+    workspace.insert(
+        "mode".to_string(),
+        JsonValue::String(mode.as_str().to_string()),
+    );
+    workspace.insert(
+        "cleanup".to_string(),
+        JsonValue::String(OrchestrationWorkspaceCleanup::Keep.as_str().to_string()),
+    );
 
     let repo_root = match (&args.repo_root, mode) {
         (Some(path), _) => Some(path.clone()),
-        (None, "git_worktree") => Some(
+        (None, OrchestrationWorkspaceMode::GitWorktree) => Some(
             std::env::current_dir()
                 .context("failed to resolve current directory for --workspace git_worktree")?,
         ),
@@ -497,7 +507,7 @@ fn workspace_json(args: &GoalArgs) -> Result<JsonValue> {
             JsonValue::String(path_to_string(repo_root)),
         );
     }
-    if mode == "git_worktree" {
+    if mode == OrchestrationWorkspaceMode::GitWorktree {
         workspace.insert(
             "base_ref".to_string(),
             JsonValue::String(args.base_ref.clone()),
@@ -525,12 +535,12 @@ fn worker_to_json(worker: &WorkerRequest) -> JsonValue {
         value.insert("profile".to_string(), JsonValue::String(profile.clone()));
         value.insert(
             "transport".to_string(),
-            JsonValue::String("acp".to_string()),
+            JsonValue::String(OrchestrationTransport::Acp.as_str().to_string()),
         );
     } else {
         value.insert(
             "transport".to_string(),
-            JsonValue::String("deterministic".to_string()),
+            JsonValue::String(OrchestrationTransport::Deterministic.as_str().to_string()),
         );
     }
     JsonValue::Object(value)
@@ -542,14 +552,14 @@ async fn call_mcp_tool(
     tool_name: &str,
     arguments: JsonValue,
 ) -> Result<JsonValue> {
-    let url = format!("{}{}", base.trim_end_matches('/'), MCP_PATH);
+    let url = format!("{}{}", base.trim_end_matches('/'), mcp_constants::ROUTE);
     let body = json!({
-        "jsonrpc": "2.0",
-        "id": 1,
-        "method": "tools/call",
-        "params": {
-            "name": tool_name,
-            "arguments": arguments,
+        (jsonrpc::JSONRPC): jsonrpc::VERSION,
+        (jsonrpc::ID): 1,
+        (jsonrpc::METHOD): mcp_constants::methods::TOOLS_CALL,
+        (jsonrpc::PARAMS): {
+            (mcp_fields::NAME): tool_name,
+            (mcp_fields::ARGUMENTS): arguments,
         }
     });
     let response = client
@@ -566,22 +576,22 @@ async fn call_mcp_tool(
     if !status.is_success() {
         bail!("MCP HTTP {status}: {payload}");
     }
-    if let Some(error) = payload.get("error") {
+    if let Some(error) = payload.get(jsonrpc::ERROR) {
         bail!("MCP JSON-RPC error: {error}");
     }
 
     let result = payload
-        .get("result")
+        .get(jsonrpc::RESULT)
         .ok_or_else(|| anyhow!("MCP response missing result: {payload}"))?;
     let text = result
-        .get("content")
+        .get(mcp_fields::CONTENT)
         .and_then(JsonValue::as_array)
         .and_then(|items| items.first())
-        .and_then(|item| item.get("text"))
+        .and_then(|item| item.get(mcp_fields::TEXT))
         .and_then(JsonValue::as_str)
         .ok_or_else(|| anyhow!("MCP tool result missing text content: {payload}"))?;
     if result
-        .get("isError")
+        .get(mcp_fields::IS_ERROR)
         .and_then(JsonValue::as_bool)
         .unwrap_or(false)
     {
@@ -598,7 +608,7 @@ async fn workflow_status(
     call_mcp_tool(
         client,
         base,
-        TOOL_WORKFLOW_STATUS,
+        mcp_tools::APXM_WORKFLOW_STATUS,
         json!({ "execution_id": execution_id }),
     )
     .await
@@ -614,7 +624,7 @@ async fn workflow_events(
     call_mcp_tool(
         client,
         base,
-        TOOL_WORKFLOW_EVENTS,
+        mcp_tools::APXM_WORKFLOW_EVENTS,
         json!({
             "execution_id": execution_id,
             "since": since,
@@ -715,10 +725,10 @@ fn terminal_kinds(started: &JsonValue) -> BTreeSet<String> {
         })
         .unwrap_or_else(|| {
             [
-                "orchestrator_wake",
-                "execute_complete",
-                "error",
-                "turn_aborted",
+                event_kind_constants::ORCHESTRATOR_WAKE.name(),
+                event_kind_constants::EXECUTE_COMPLETE.name(),
+                event_kind_constants::ERROR.name(),
+                event_kind_constants::TURN_ABORTED.name(),
             ]
             .into_iter()
             .map(str::to_string)
@@ -732,7 +742,7 @@ fn status_is_terminal(status: &JsonValue) -> bool {
             .get("status")
             .and_then(JsonValue::as_str)
             .unwrap_or_default(),
-        "succeeded" | "failed"
+        orchestration_execution_status::SUCCEEDED | orchestration_execution_status::FAILED
     )
 }
 
@@ -796,7 +806,11 @@ fn print_start_summary(base: &str, started: &JsonValue) {
         }
     }
     println!(
-        "control: {base}{MCP_PATH} ({TOOL_WORKFLOW_STATUS}/{TOOL_WORKFLOW_EVENTS}/{TOOL_WORKFLOW_CANCEL})"
+        "control: {base}{} ({}/{}/{})",
+        mcp_constants::ROUTE,
+        mcp_tools::APXM_WORKFLOW_STATUS,
+        mcp_tools::APXM_WORKFLOW_EVENTS,
+        mcp_tools::APXM_WORKFLOW_CANCEL
     );
 }
 
@@ -840,32 +854,32 @@ fn print_final_status(status: &JsonValue) {
 }
 
 fn summarize_event(event: &JsonValue) -> Option<String> {
-    let kind = event_kind(event)?;
+    let event_name = event_kind(event)?;
     let payload = event.get("payload").unwrap_or(event);
     let seq = event_seq(event)
         .map(|seq| format!("#{seq} "))
         .unwrap_or_default();
-    match kind {
-        "orchestrator_sleep" => Some(format!(
+    match event_name {
+        name if name == event_kind_constants::ORCHESTRATOR_SLEEP.name() => Some(format!(
             "{seq}orchestrator sleeping; runtime owns the workflow until wake"
         )),
-        "orchestrator_wake" => Some(format!(
+        name if name == event_kind_constants::ORCHESTRATOR_WAKE.name() => Some(format!(
             "{seq}orchestrator wake: {} via {}",
             payload_str(payload, "outcome").unwrap_or("unknown"),
             payload_str(payload, "terminal_event").unwrap_or("terminal event")
         )),
-        "workflow_started" => Some(format!(
+        name if name == event_kind_constants::WORKFLOW_STARTED.name() => Some(format!(
             "{seq}workflow {} started ({} steps)",
             payload_str(payload, "workflow_name").unwrap_or("<workflow>"),
             payload_usize(payload, "step_count")
                 .map(|value| value.to_string())
                 .unwrap_or_else(|| "?".to_string())
         )),
-        "workflow_step_started" => Some(format!(
+        name if name == event_kind_constants::WORKFLOW_STEP_STARTED.name() => Some(format!(
             "{seq}step {} started",
             payload_str(payload, "step_id").unwrap_or("<step>")
         )),
-        "workflow_step_completed" => {
+        name if name == event_kind_constants::WORKFLOW_STEP_COMPLETED.name() => {
             let step = payload_str(payload, "step_id").unwrap_or("<step>");
             let status = payload_str(payload, "status").unwrap_or("unknown");
             let duration = payload_u64(payload, "duration_ms")
@@ -876,34 +890,40 @@ fn summarize_event(event: &JsonValue) -> Option<String> {
                 .unwrap_or_default();
             Some(format!("{seq}step {step} {status}{duration}{session}"))
         }
-        "workflow_finished" => Some(format!(
+        name if name == event_kind_constants::WORKFLOW_FINISHED.name() => Some(format!(
             "{seq}workflow {}{}",
             payload_str(payload, "status").unwrap_or("finished"),
             payload_u64(payload, "duration_ms")
                 .map(|value| format!(" in {value}ms"))
                 .unwrap_or_default()
         )),
-        "operation_start" => match payload_str(payload, "op_type") {
-            Some("SPAWN_AGENT") => Some(format!(
-                "{seq}spawn agent node {}",
-                payload_u64(payload, "node_id")
-                    .map(|value| value.to_string())
-                    .unwrap_or_else(|| "?".to_string())
-            )),
-            Some("COMMUNICATE") => Some(format!(
-                "{seq}communicate with worker node {}",
-                payload_u64(payload, "node_id")
-                    .map(|value| value.to_string())
-                    .unwrap_or_else(|| "?".to_string())
-            )),
-            _ => None,
-        },
-        "execute_complete" => Some(format!("{seq}execution complete")),
-        "turn_aborted" => Some(format!(
+        name if name == event_kind_constants::OPERATION_START.name() => {
+            let spawn_agent = AISOperationType::SpawnAgent.to_string();
+            let communicate = AISOperationType::Communicate.to_string();
+            match payload_str(payload, "op_type") {
+                Some(op_type) if op_type == spawn_agent.as_str() => Some(format!(
+                    "{seq}spawn agent node {}",
+                    payload_u64(payload, "node_id")
+                        .map(|value| value.to_string())
+                        .unwrap_or_else(|| "?".to_string())
+                )),
+                Some(op_type) if op_type == communicate.as_str() => Some(format!(
+                    "{seq}communicate with worker node {}",
+                    payload_u64(payload, "node_id")
+                        .map(|value| value.to_string())
+                        .unwrap_or_else(|| "?".to_string())
+                )),
+                _ => None,
+            }
+        }
+        name if name == event_kind_constants::EXECUTE_COMPLETE.name() => {
+            Some(format!("{seq}execution complete"))
+        }
+        name if name == event_kind_constants::TURN_ABORTED.name() => Some(format!(
             "{seq}run aborted: {}",
             payload_str(payload, "reason").unwrap_or("cancelled")
         )),
-        "error" => Some(format!(
+        name if name == event_kind_constants::ERROR.name() => Some(format!(
             "{seq}error: {}",
             payload_str(payload, "error").unwrap_or("unknown")
         )),
@@ -1061,54 +1081,65 @@ mod tests {
         args.executor_profile = Some("profile-b".to_string());
 
         let request = build_start_arguments(&args, "ship the thing").expect("request");
-        assert_eq!(request["workers"][0]["transport"], "acp");
+        assert_eq!(
+            request["workers"][0]["transport"],
+            OrchestrationTransport::Acp.as_str()
+        );
         assert_eq!(request["workers"][0]["profile"], "profile-a");
         assert_eq!(request["workers"][1]["profile"], "profile-b");
-        assert_eq!(request["admit_capabilities"], json!(["SPAWN_AGENT"]));
+        assert_eq!(
+            request["admit_capabilities"],
+            json!([orchestration_admission::SPAWN_AGENT])
+        );
     }
 
     #[tokio::test]
     async fn goal_follow_pages_events_until_wake() {
         let server = MockMcpServer::start(vec![
             ExpectedMcpCall::new(
-                TOOL_ORCHESTRATE_START,
+                mcp_tools::APXM_ORCHESTRATE_START,
                 Some(json!({ "task": "ship" })),
                 json!({
                     "execution_id": "exec-1",
                     "orchestration": {
-                        "terminal_event_kinds": ["orchestrator_wake", "execute_complete", "error", "turn_aborted"]
+                        "terminal_event_kinds": [
+                            event_kind_constants::ORCHESTRATOR_WAKE.name(),
+                            event_kind_constants::EXECUTE_COMPLETE.name(),
+                            event_kind_constants::ERROR.name(),
+                            event_kind_constants::TURN_ABORTED.name()
+                        ]
                     }
                 }),
             ),
             ExpectedMcpCall::new(
-                TOOL_WORKFLOW_EVENTS,
+                mcp_tools::APXM_WORKFLOW_EVENTS,
                 Some(json!({ "execution_id": "exec-1", "since": 0, "limit": 100 })),
                 json!({
                     "events": [
-                        { "meta": { "seq": 0 }, "payload": { "kind": "workflow_started", "workflow_name": "goal", "step_count": 1 } }
+                        { "meta": { "seq": 0 }, "payload": { "kind": event_kind_constants::WORKFLOW_STARTED.name(), "workflow_name": "goal", "step_count": 1 } }
                     ],
                     "next_seq": 1
                 }),
             ),
             ExpectedMcpCall::new(
-                TOOL_WORKFLOW_STATUS,
+                mcp_tools::APXM_WORKFLOW_STATUS,
                 Some(json!({ "execution_id": "exec-1" })),
-                json!({ "execution_id": "exec-1", "status": "running" }),
+                json!({ "execution_id": "exec-1", "status": orchestration_execution_status::RUNNING }),
             ),
             ExpectedMcpCall::new(
-                TOOL_WORKFLOW_EVENTS,
+                mcp_tools::APXM_WORKFLOW_EVENTS,
                 Some(json!({ "execution_id": "exec-1", "since": 1, "limit": 100 })),
                 json!({
                     "events": [
-                        { "meta": { "seq": 1 }, "payload": { "kind": "orchestrator_wake", "outcome": "done", "terminal_event": "workflow_finished" } }
+                        { "meta": { "seq": 1 }, "payload": { "kind": event_kind_constants::ORCHESTRATOR_WAKE.name(), "outcome": "done", "terminal_event": event_kind_constants::WORKFLOW_FINISHED.name() } }
                     ],
                     "next_seq": 2
                 }),
             ),
             ExpectedMcpCall::new(
-                TOOL_WORKFLOW_STATUS,
+                mcp_tools::APXM_WORKFLOW_STATUS,
                 Some(json!({ "execution_id": "exec-1" })),
-                json!({ "execution_id": "exec-1", "status": "succeeded" }),
+                json!({ "execution_id": "exec-1", "status": orchestration_execution_status::SUCCEEDED }),
             ),
         ])
         .await;
@@ -1117,7 +1148,7 @@ mod tests {
         let started = call_mcp_tool(
             &client,
             &server.base,
-            TOOL_ORCHESTRATE_START,
+            mcp_tools::APXM_ORCHESTRATE_START,
             json!({ "task": "ship" }),
         )
         .await
@@ -1138,9 +1169,12 @@ mod tests {
         assert_eq!(follow.events_seen, 2);
         assert_eq!(
             follow.terminal_event_kind.as_deref(),
-            Some("orchestrator_wake")
+            Some(event_kind_constants::ORCHESTRATOR_WAKE.name())
         );
-        assert_eq!(follow.status["status"], "succeeded");
+        assert_eq!(
+            follow.status["status"],
+            orchestration_execution_status::SUCCEEDED
+        );
         server.finish().await;
     }
 
@@ -1148,17 +1182,17 @@ mod tests {
     async fn goal_status_events_and_cancel_call_native_workflow_tools() {
         let server = MockMcpServer::start(vec![
             ExpectedMcpCall::new(
-                TOOL_WORKFLOW_STATUS,
+                mcp_tools::APXM_WORKFLOW_STATUS,
                 Some(json!({ "execution_id": "exec-2" })),
-                json!({ "execution_id": "exec-2", "status": "running" }),
+                json!({ "execution_id": "exec-2", "status": orchestration_execution_status::RUNNING }),
             ),
             ExpectedMcpCall::new(
-                TOOL_WORKFLOW_EVENTS,
+                mcp_tools::APXM_WORKFLOW_EVENTS,
                 Some(json!({ "execution_id": "exec-2", "since": 0, "limit": 50 })),
                 json!({ "events": [], "next_seq": 0 }),
             ),
             ExpectedMcpCall::new(
-                TOOL_WORKFLOW_CANCEL,
+                mcp_tools::APXM_WORKFLOW_CANCEL,
                 Some(json!({ "execution_id": "exec-2" })),
                 json!({ "execution_id": "exec-2", "status": "cancelling" }),
             ),
@@ -1169,7 +1203,7 @@ mod tests {
         let status = workflow_status(&client, &server.base, "exec-2")
             .await
             .expect("status");
-        assert_eq!(status["status"], "running");
+        assert_eq!(status["status"], orchestration_execution_status::RUNNING);
         let events = workflow_events(&client, &server.base, "exec-2", 0, 50)
             .await
             .expect("events");
@@ -1177,7 +1211,7 @@ mod tests {
         let cancelled = call_mcp_tool(
             &client,
             &server.base,
-            TOOL_WORKFLOW_CANCEL,
+            mcp_tools::APXM_WORKFLOW_CANCEL,
             json!({ "execution_id": "exec-2" }),
         )
         .await

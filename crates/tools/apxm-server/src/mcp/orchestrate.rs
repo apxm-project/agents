@@ -9,7 +9,14 @@ use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
+use apxm_core::constants::mcp::tools as mcp_tool_names;
+use apxm_core::constants::orchestration::admission as orchestration_admission;
+use apxm_core::events::kind;
 use apxm_core::paths::ApxmPaths;
+use apxm_core::types::{
+    CommunicateProtocol, OrchestrationStartStatus, OrchestrationTransport,
+    OrchestrationWorkspaceCleanup, OrchestrationWorkspaceMode,
+};
 use axum::Json;
 use serde::{Deserialize, Serialize};
 use serde_json::{Map as JsonMap, Value as JsonValue};
@@ -20,16 +27,9 @@ use crate::state::AppState;
 
 use super::workflow::{WorkflowOrchestrationContract, WorkflowStartArgs, start_workflow_from_args};
 
-pub(crate) const MCP_TOOL_APXM_ORCHESTRATE_START: &str = "apxm_orchestrate_start";
+pub(crate) const MCP_TOOL_APXM_ORCHESTRATE_START: &str = mcp_tool_names::APXM_ORCHESTRATE_START;
 
 const MAX_WORKERS: usize = 16;
-const ADMIT_SPAWN_AGENT: &str = "SPAWN_AGENT";
-const DEFAULT_WORKSPACE_MODE: &str = "session";
-const WORKSPACE_MODE_SESSION: &str = "session";
-const WORKSPACE_MODE_SHARED: &str = "shared";
-const WORKSPACE_MODE_GIT_WORKTREE: &str = "git_worktree";
-const TRANSPORT_ACP: &str = "acp";
-const TRANSPORT_DETERMINISTIC: &str = "deterministic";
 const TEMPLATE_ORCHESTRATION_WORKER: &str = "orchestration_worker";
 const TEMPLATE_ORCHESTRATION_SUPERVISOR: &str = "orchestration_supervisor";
 const TEMPLATE_ORCHESTRATION_TRACKING: &str = "orchestration_tracking";
@@ -76,7 +76,7 @@ struct WorkerSpec {
     #[serde(default)]
     profile: Option<String>,
     #[serde(default)]
-    transport: Option<String>,
+    transport: Option<OrchestrationTransport>,
     #[serde(default)]
     depends_on: Vec<String>,
     #[serde(default)]
@@ -95,7 +95,7 @@ struct SupervisorSpec {
     #[serde(default)]
     profile: Option<String>,
     #[serde(default)]
-    transport: Option<String>,
+    transport: Option<OrchestrationTransport>,
     #[serde(default)]
     mode: Option<String>,
     #[serde(default)]
@@ -106,18 +106,18 @@ struct SupervisorSpec {
 #[serde(deny_unknown_fields)]
 struct WorkspaceSpec {
     #[serde(default)]
-    mode: Option<String>,
+    mode: Option<OrchestrationWorkspaceMode>,
     #[serde(default)]
     repo_root: Option<String>,
     #[serde(default)]
     base_ref: Option<String>,
     #[serde(default)]
-    cleanup: Option<String>,
+    cleanup: Option<OrchestrationWorkspaceCleanup>,
 }
 
 #[derive(Debug, Serialize)]
 struct OrchestrateStartResponse {
-    status: String,
+    status: OrchestrationStartStatus,
     #[serde(skip_serializing_if = "Option::is_none")]
     execution_id: Option<String>,
     session_id: String,
@@ -139,7 +139,7 @@ struct OrchestrationPlanSummary {
     task: String,
     workers: Vec<WorkerPlanSummary>,
     supervisor: SupervisorPlanSummary,
-    workspace_mode: String,
+    workspace_mode: OrchestrationWorkspaceMode,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -165,7 +165,7 @@ struct WorkerPromptArtifact {
 struct WorkerPlanSummary {
     id: String,
     role: String,
-    transport: String,
+    transport: OrchestrationTransport,
     #[serde(skip_serializing_if = "Option::is_none")]
     profile: Option<String>,
     depends_on: Vec<String>,
@@ -176,19 +176,19 @@ struct WorkerPlanSummary {
 #[derive(Debug, Serialize)]
 struct SupervisorPlanSummary {
     id: String,
-    transport: String,
+    transport: OrchestrationTransport,
     #[serde(skip_serializing_if = "Option::is_none")]
     profile: Option<String>,
 }
 
 #[derive(Debug, Serialize)]
 struct WorkspaceBindingSummary {
-    mode: String,
+    mode: OrchestrationWorkspaceMode,
     #[serde(skip_serializing_if = "Option::is_none")]
     worktree_ref: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     base_commit: Option<String>,
-    cleanup: String,
+    cleanup: OrchestrationWorkspaceCleanup,
 }
 
 #[derive(Debug, Serialize)]
@@ -215,7 +215,7 @@ struct OrchestrationRuntimeContract {
 #[derive(Debug, Serialize)]
 struct SleepWakeContract {
     sleep_after_start: bool,
-    wake_on: Vec<&'static str>,
+    wake_on: Vec<String>,
     event_loop: &'static str,
 }
 
@@ -230,7 +230,7 @@ struct OrchestrationPlan {
     task: String,
     workers: Vec<WorkerPlan>,
     supervisor: SupervisorPlan,
-    workspace_mode: String,
+    workspace_mode: OrchestrationWorkspaceMode,
 }
 
 struct WorkerPlan {
@@ -239,7 +239,7 @@ struct WorkerPlan {
     role: String,
     prompt: String,
     profile: Option<String>,
-    transport: String,
+    transport: OrchestrationTransport,
     depends_on: Vec<String>,
     mode: Option<String>,
     model: Option<String>,
@@ -256,7 +256,7 @@ struct SupervisorPlan {
     agent_name: String,
     prompt: String,
     profile: Option<String>,
-    transport: String,
+    transport: OrchestrationTransport,
     mode: Option<String>,
     model: Option<String>,
     cwd: Option<PathBuf>,
@@ -267,10 +267,10 @@ struct SupervisorPlan {
 }
 
 struct WorkspaceBinding {
-    mode: String,
+    mode: OrchestrationWorkspaceMode,
     worktree_ref: Option<String>,
     base_commit: Option<String>,
-    cleanup: String,
+    cleanup: OrchestrationWorkspaceCleanup,
 }
 
 pub(crate) fn orchestrate_start_input_schema() -> JsonValue {
@@ -314,7 +314,7 @@ pub(crate) fn orchestrate_start_input_schema() -> JsonValue {
                         },
                         "transport": {
                             "type": "string",
-                            "enum": [TRANSPORT_ACP, TRANSPORT_DETERMINISTIC],
+                            "enum": OrchestrationTransport::WIRE_VALUES,
                             "description": "acp spawns a real registered profile; deterministic writes a local fixture worker"
                         },
                         "depends_on": { "type": "array", "items": { "type": "string" } },
@@ -331,7 +331,7 @@ pub(crate) fn orchestrate_start_input_schema() -> JsonValue {
                     "id": { "type": "string" },
                     "prompt": { "type": "string" },
                     "profile": { "type": "string" },
-                    "transport": { "type": "string", "enum": [TRANSPORT_ACP, TRANSPORT_DETERMINISTIC] },
+                    "transport": { "type": "string", "enum": OrchestrationTransport::WIRE_VALUES },
                     "mode": { "type": "string" },
                     "model": { "type": "string" }
                 }
@@ -343,12 +343,12 @@ pub(crate) fn orchestrate_start_input_schema() -> JsonValue {
                 "properties": {
                     "mode": {
                         "type": "string",
-                        "enum": [WORKSPACE_MODE_SESSION, WORKSPACE_MODE_SHARED, WORKSPACE_MODE_GIT_WORKTREE],
+                        "enum": OrchestrationWorkspaceMode::WIRE_VALUES,
                         "description": "session creates APXM-owned directories; git_worktree creates one detached Git worktree per worker; shared uses repo_root/current cwd"
                     },
                     "repo_root": { "type": "string", "description": "Required for git_worktree; optional for shared" },
                     "base_ref": { "type": "string", "description": "Git ref for git_worktree mode; defaults to HEAD" },
-                    "cleanup": { "type": "string", "enum": ["keep"], "description": "MVP keeps generated workspaces/worktrees for review" }
+                    "cleanup": { "type": "string", "enum": OrchestrationWorkspaceCleanup::WIRE_VALUES, "description": "MVP keeps generated workspaces/worktrees for review" }
                 }
             },
             "session_id": { "type": "string" },
@@ -394,10 +394,11 @@ async fn orchestrate_start(
         && !request
             .admit_capabilities
             .iter()
-            .any(|capability| capability == ADMIT_SPAWN_AGENT)
+            .any(|capability| capability == orchestration_admission::SPAWN_AGENT)
     {
         return Err(ApiError::bad_request(format!(
-            "{MCP_TOOL_APXM_ORCHESTRATE_START}: transport=acp requires admit_capabilities=[\"{ADMIT_SPAWN_AGENT}\"]"
+            "{MCP_TOOL_APXM_ORCHESTRATE_START}: transport=acp requires admit_capabilities=[\"{}\"]",
+            orchestration_admission::SPAWN_AGENT,
         )));
     }
 
@@ -422,7 +423,7 @@ async fn orchestrate_start(
                 "failed to serialize orchestration control: {error}"
             ))
         })?,
-        wake_on: wake_on.iter().map(|value| (*value).to_string()).collect(),
+        wake_on: wake_on.clone(),
         event_loop: event_loop.to_string(),
     };
     let started = if request.dry_run {
@@ -444,10 +445,11 @@ async fn orchestrate_start(
         )
     };
 
-    let status = started
-        .as_ref()
-        .map(|response| format!("{:?}", response.status).to_ascii_lowercase())
-        .unwrap_or_else(|| "planned".to_string());
+    let status = if started.is_some() {
+        OrchestrationStartStatus::Running
+    } else {
+        OrchestrationStartStatus::Planned
+    };
     let response = OrchestrateStartResponse {
         status,
         execution_id: started
@@ -548,11 +550,7 @@ fn validate_request(request: &OrchestrateStartArgs) -> Result<(), ApiError> {
                 worker.id
             )));
         }
-        validate_transport(
-            worker.transport.as_deref(),
-            worker.profile.as_deref(),
-            "worker",
-        )?;
+        validate_transport(worker.transport, worker.profile.as_deref(), "worker")?;
         validate_optional_text(worker.role.as_deref(), "worker.role")?;
         validate_optional_text(worker.prompt.as_deref(), "worker.prompt")?;
         validate_optional_text(worker.mode.as_deref(), "worker.mode")?;
@@ -567,7 +565,7 @@ fn validate_request(request: &OrchestrateStartArgs) -> Result<(), ApiError> {
             )));
         }
         validate_transport(
-            supervisor.transport.as_deref(),
+            supervisor.transport,
             supervisor.profile.as_deref(),
             "supervisor",
         )?;
@@ -580,33 +578,28 @@ fn validate_request(request: &OrchestrateStartArgs) -> Result<(), ApiError> {
 }
 
 fn validate_transport(
-    transport: Option<&str>,
+    transport: Option<OrchestrationTransport>,
     profile: Option<&str>,
     owner: &str,
 ) -> Result<(), ApiError> {
     match transport.unwrap_or(if profile.is_some() {
-        TRANSPORT_ACP
+        OrchestrationTransport::Acp
     } else {
-        TRANSPORT_DETERMINISTIC
+        OrchestrationTransport::Deterministic
     }) {
-        TRANSPORT_ACP => {
+        OrchestrationTransport::Acp => {
             if profile.is_none_or(str::is_empty) {
                 return Err(ApiError::bad_request(format!(
                     "{owner} transport=acp requires a profile"
                 )));
             }
         }
-        TRANSPORT_DETERMINISTIC => {
+        OrchestrationTransport::Deterministic => {
             if profile.is_some() {
                 return Err(ApiError::bad_request(format!(
                     "{owner} profile requires transport=acp"
                 )));
             }
-        }
-        other => {
-            return Err(ApiError::bad_request(format!(
-                "{owner} transport must be '{TRANSPORT_ACP}' or '{TRANSPORT_DETERMINISTIC}', got '{other}'"
-            )));
         }
     }
     Ok(())
@@ -678,36 +671,17 @@ fn visit_worker<'a>(
 }
 
 struct WorkspacePolicy {
-    mode: String,
+    mode: OrchestrationWorkspaceMode,
     repo_root: Option<PathBuf>,
     base_ref: String,
-    cleanup: String,
+    cleanup: OrchestrationWorkspaceCleanup,
     bundle_dir: PathBuf,
 }
 
 impl WorkspacePolicy {
     fn from_spec(spec: Option<&WorkspaceSpec>, bundle_dir: &Path) -> Result<Self, ApiError> {
-        let mode = spec
-            .and_then(|spec| spec.mode.as_deref())
-            .unwrap_or(DEFAULT_WORKSPACE_MODE)
-            .to_string();
-        if !matches!(
-            mode.as_str(),
-            WORKSPACE_MODE_SESSION | WORKSPACE_MODE_SHARED | WORKSPACE_MODE_GIT_WORKTREE
-        ) {
-            return Err(ApiError::bad_request(format!(
-                "workspace.mode must be '{WORKSPACE_MODE_SESSION}', '{WORKSPACE_MODE_SHARED}', or '{WORKSPACE_MODE_GIT_WORKTREE}'"
-            )));
-        }
-        let cleanup = spec
-            .and_then(|spec| spec.cleanup.as_deref())
-            .unwrap_or("keep")
-            .to_string();
-        if cleanup != "keep" {
-            return Err(ApiError::bad_request(
-                "workspace.cleanup currently supports only 'keep'",
-            ));
-        }
+        let mode = spec.and_then(|spec| spec.mode).unwrap_or_default();
+        let cleanup = spec.and_then(|spec| spec.cleanup).unwrap_or_default();
         let base_ref = spec
             .and_then(|spec| spec.base_ref.as_deref())
             .unwrap_or("HEAD")
@@ -721,7 +695,7 @@ impl WorkspacePolicy {
             .and_then(|spec| spec.repo_root.as_deref())
             .map(resolve_repo_root)
             .transpose()?;
-        if mode == WORKSPACE_MODE_GIT_WORKTREE && repo_root.is_none() {
+        if mode == OrchestrationWorkspaceMode::GitWorktree && repo_root.is_none() {
             return Err(ApiError::bad_request(
                 "workspace.repo_root is required for git_worktree mode",
             ));
@@ -736,8 +710,8 @@ impl WorkspacePolicy {
     }
 
     fn allocate(&self, worker_id: &str) -> Result<(PathBuf, WorkspaceBinding), ApiError> {
-        match self.mode.as_str() {
-            WORKSPACE_MODE_SESSION => {
+        match self.mode {
+            OrchestrationWorkspaceMode::Session => {
                 let cwd = self.bundle_dir.join("workspaces").join(worker_id);
                 std::fs::create_dir_all(&cwd).map_err(|error| {
                     ApiError::internal_message(format!(
@@ -748,28 +722,28 @@ impl WorkspacePolicy {
                 Ok((
                     cwd,
                     WorkspaceBinding {
-                        mode: WORKSPACE_MODE_SESSION.to_string(),
+                        mode: OrchestrationWorkspaceMode::Session,
                         worktree_ref: None,
                         base_commit: None,
-                        cleanup: self.cleanup.clone(),
+                        cleanup: self.cleanup,
                     },
                 ))
             }
-            WORKSPACE_MODE_SHARED => {
+            OrchestrationWorkspaceMode::Shared => {
                 let cwd = self.repo_root.clone().unwrap_or_else(|| {
                     std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."))
                 });
                 Ok((
                     cwd,
                     WorkspaceBinding {
-                        mode: WORKSPACE_MODE_SHARED.to_string(),
+                        mode: OrchestrationWorkspaceMode::Shared,
                         worktree_ref: None,
                         base_commit: None,
-                        cleanup: self.cleanup.clone(),
+                        cleanup: self.cleanup,
                     },
                 ))
             }
-            WORKSPACE_MODE_GIT_WORKTREE => {
+            OrchestrationWorkspaceMode::GitWorktree => {
                 let repo_root = self.repo_root.as_ref().expect("validated repo_root");
                 let cwd = self.bundle_dir.join("worktrees").join(worker_id);
                 std::fs::create_dir_all(cwd.parent().expect("worktree parent")).map_err(
@@ -785,14 +759,13 @@ impl WorkspacePolicy {
                 Ok((
                     cwd,
                     WorkspaceBinding {
-                        mode: WORKSPACE_MODE_GIT_WORKTREE.to_string(),
+                        mode: OrchestrationWorkspaceMode::GitWorktree,
                         worktree_ref: Some(self.base_ref.clone()),
                         base_commit: Some(base_commit),
-                        cleanup: self.cleanup.clone(),
+                        cleanup: self.cleanup,
                     },
                 ))
             }
-            _ => unreachable!("workspace mode validated"),
         }
     }
 }
@@ -808,7 +781,7 @@ fn build_plan(
     let graph_path = bundle_dir.join("graph.json");
     for worker in &request.workers {
         let (cwd, workspace) = workspace_policy.allocate(&worker.id)?;
-        let transport = effective_transport(worker.transport.as_deref(), worker.profile.as_deref());
+        let transport = effective_transport(worker.transport, worker.profile.as_deref());
         workers.push(WorkerPlan {
             id: worker.id.clone(),
             agent_name: agent_name(session_id, &worker.id),
@@ -843,10 +816,10 @@ fn build_plan(
         model: None,
     });
     let supervisor_transport = effective_transport(
-        supervisor_spec.transport.as_deref(),
+        supervisor_spec.transport,
         supervisor_spec.profile.as_deref(),
     );
-    let supervisor_cwd = if supervisor_transport == TRANSPORT_ACP {
+    let supervisor_cwd = if supervisor_transport == OrchestrationTransport::Acp {
         Some(bundle_dir.join("supervisor"))
     } else {
         None
@@ -1333,7 +1306,7 @@ fn render_orchestration_template<T: serde::Serialize>(
 }
 
 fn worker_air(request: &OrchestrateStartArgs, worker: &WorkerPlan) -> Result<String, ApiError> {
-    if worker.transport == TRANSPORT_ACP {
+    if worker.transport == OrchestrationTransport::Acp {
         acp_worker_air(request, worker)
     } else {
         Ok(deterministic_worker_air(worker))
@@ -1348,11 +1321,12 @@ fn acp_worker_air(request: &OrchestrateStartArgs, worker: &WorkerPlan) -> Result
         worker.mode.as_deref(),
         worker.model.as_deref(),
     );
+    let protocol = quote_air(CommunicateProtocol::Acp.as_str());
     Ok(format!(
         r#"module {{
   func.func @worker(%arg0: !ais.token {{ais.param_name = "task", ais.param_type = "str"}}, %arg1: !ais.token {{ais.param_name = "context", ais.param_type = "str"}}, %arg2: !ais.token {{ais.param_name = "event", ais.param_type = "str"}}, %arg3: !ais.token {{ais.param_name = "trigger", ais.param_type = "str"}}, %arg4: !ais.token {{ais.param_name = "upstream", ais.param_type = "str"}}) -> !ais.token attributes {{ais.entry}} {{
     %spawn = ais.spawn_agent {agent_name}{spawn_attrs} : !ais.token
-    %turn = ais.communicate {message} to {agent_name} (%spawn : !ais.token) {{protocol = "acp"}} : !ais.token
+    %turn = ais.communicate {message} to {agent_name} (%spawn : !ais.token) {{protocol = {protocol}}} : !ais.token
     func.return %turn : !ais.token
   }}
 }}
@@ -1360,6 +1334,7 @@ fn acp_worker_air(request: &OrchestrateStartArgs, worker: &WorkerPlan) -> Result
         agent_name = quote_air(&worker.agent_name),
         spawn_attrs = spawn_attrs,
         message = quote_air(&message),
+        protocol = protocol,
     ))
 }
 
@@ -1385,7 +1360,7 @@ fn deterministic_worker_air(worker: &WorkerPlan) -> String {
 
 fn gate_air(request: &OrchestrateStartArgs, plan: &OrchestrationPlan) -> Result<String, ApiError> {
     let supervisor = &plan.supervisor;
-    if supervisor.transport == TRANSPORT_ACP {
+    if supervisor.transport == OrchestrationTransport::Acp {
         let cwd = supervisor.cwd.as_deref();
         let attrs = spawn_attrs(
             supervisor.profile.as_deref(),
@@ -1398,11 +1373,12 @@ fn gate_air(request: &OrchestrateStartArgs, plan: &OrchestrationPlan) -> Result<
             plan,
             "__APXM_WORKER_SUMMARY__",
         )?);
+        let protocol = quote_air(CommunicateProtocol::Acp.as_str());
         Ok(format!(
             r#"module {{
   func.func @gate(%arg0: !ais.token {{ais.param_name = "summary", ais.param_type = "str"}}) -> !ais.token attributes {{ais.entry}} {{
     %spawn = ais.spawn_agent {agent_name}{attrs} : !ais.token
-    %gate = ais.communicate {message} to {agent_name} (%arg0, %spawn : !ais.token, !ais.token) {{protocol = "acp", input_names = ["summary"]}} : !ais.token
+    %gate = ais.communicate {message} to {agent_name} (%arg0, %spawn : !ais.token, !ais.token) {{protocol = {protocol}, input_names = ["summary"]}} : !ais.token
     func.return %gate : !ais.token
   }}
 }}
@@ -1410,6 +1386,7 @@ fn gate_air(request: &OrchestrateStartArgs, plan: &OrchestrationPlan) -> Result<
             agent_name = quote_air(&supervisor.agent_name),
             attrs = attrs,
             message = quote_air(&message),
+            protocol = protocol,
         ))
     } else {
         Ok(format!(
@@ -1564,24 +1541,24 @@ fn agent_name(session_id: &str, id: &str) -> String {
     }
 }
 
-fn effective_transport(transport: Option<&str>, profile: Option<&str>) -> String {
-    transport
-        .unwrap_or(if profile.is_some() {
-            TRANSPORT_ACP
-        } else {
-            TRANSPORT_DETERMINISTIC
-        })
-        .to_string()
+fn effective_transport(
+    transport: Option<OrchestrationTransport>,
+    profile: Option<&str>,
+) -> OrchestrationTransport {
+    transport.unwrap_or(if profile.is_some() {
+        OrchestrationTransport::Acp
+    } else {
+        OrchestrationTransport::Deterministic
+    })
 }
 
 fn orchestration_uses_process_spawns(request: &OrchestrateStartArgs) -> bool {
     request.workers.iter().any(|worker| {
-        effective_transport(worker.transport.as_deref(), worker.profile.as_deref()) == TRANSPORT_ACP
+        effective_transport(worker.transport, worker.profile.as_deref())
+            == OrchestrationTransport::Acp
     }) || request.supervisor.as_ref().is_some_and(|supervisor| {
-        effective_transport(
-            supervisor.transport.as_deref(),
-            supervisor.profile.as_deref(),
-        ) == TRANSPORT_ACP
+        effective_transport(supervisor.transport, supervisor.profile.as_deref())
+            == OrchestrationTransport::Acp
     })
 }
 
@@ -1745,12 +1722,28 @@ fn orchestration_control() -> OrchestrationControl {
     }
 }
 
-fn orchestration_wake_on() -> Vec<&'static str> {
+fn orchestration_wake_on() -> Vec<String> {
     vec![
-        "apxm_workflow_events returns orchestrator_wake",
-        "apxm_workflow_events returns execute_complete, error, or turn_aborted",
-        "apxm_workflow_status reports succeeded or failed",
-        "apxm_workflow_cancel is called by the supervisor/client",
+        format!(
+            "{} returns {}",
+            super::workflow::MCP_TOOL_APXM_WORKFLOW_EVENTS,
+            kind::ORCHESTRATOR_WAKE.name()
+        ),
+        format!(
+            "{} returns {}, {}, or {}",
+            super::workflow::MCP_TOOL_APXM_WORKFLOW_EVENTS,
+            kind::EXECUTE_COMPLETE.name(),
+            kind::ERROR.name(),
+            kind::TURN_ABORTED.name()
+        ),
+        format!(
+            "{} reports succeeded or failed",
+            super::workflow::MCP_TOOL_APXM_WORKFLOW_STATUS
+        ),
+        format!(
+            "{} is called by the supervisor/client",
+            super::workflow::MCP_TOOL_APXM_WORKFLOW_CANCEL
+        ),
     ]
 }
 
@@ -1775,14 +1768,14 @@ fn orchestration_runtime_contract(
         gate_step_id: gate_step_id.to_string(),
         feedback_step_id: "feedback",
         terminal_event_kinds: vec![
-            "orchestrator_wake",
-            "execute_complete",
-            "error",
-            "turn_aborted",
+            kind::ORCHESTRATOR_WAKE.name(),
+            kind::EXECUTE_COMPLETE.name(),
+            kind::ERROR.name(),
+            kind::TURN_ABORTED.name(),
         ],
         next_events_args,
-        sleep_event_kind: "orchestrator_sleep",
-        wake_event_kind: "orchestrator_wake",
+        sleep_event_kind: kind::ORCHESTRATOR_SLEEP.name(),
+        wake_event_kind: kind::ORCHESTRATOR_WAKE.name(),
     }
 }
 

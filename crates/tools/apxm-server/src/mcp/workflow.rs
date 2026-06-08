@@ -5,8 +5,14 @@ use std::sync::{
 };
 
 use apxm_artifact::Artifact;
-use apxm_core::events::payload::ErrorPayload;
-use apxm_core::events::{ApxmEvent, EventEmitter, EventSource, SkillEventProvenance};
+use apxm_core::constants::mcp::tools as mcp_tool_names;
+use apxm_core::events::kind;
+use apxm_core::events::payload::{
+    ErrorPayload, ExecuteCompletePayload, ExecutionStartedPayload, OrchestratorSleepPayload,
+    OrchestratorWakePayload, TurnAbortedPayload,
+};
+use apxm_core::events::{ApxmEvent, EventEmitter, EventKind, EventSource, SkillEventProvenance};
+use apxm_core::types::{OrchestrationWakeOutcome, WORKFLOW_TARGET_KIND_WORKFLOW_PATH};
 use apxm_runtime::EmitterAdapter;
 use axum::Json;
 use serde::{Deserialize, Serialize};
@@ -22,15 +28,12 @@ use crate::execute::{
 use crate::executions::{ExecutionRecord, ExecutionStatus};
 use crate::helpers::mcp_tool_result;
 use crate::runs::{events_for_run, events_for_run_since};
-use crate::state::{
-    AppState, ExecuteCompletePayload, ExecutionStartedPayload, OrchestratorSleepPayload,
-    OrchestratorWakePayload, TurnAbortedPayload,
-};
+use crate::state::AppState;
 
-pub(crate) const MCP_TOOL_APXM_WORKFLOW_START: &str = "apxm_workflow_start";
-pub(crate) const MCP_TOOL_APXM_WORKFLOW_STATUS: &str = "apxm_workflow_status";
-pub(crate) const MCP_TOOL_APXM_WORKFLOW_EVENTS: &str = "apxm_workflow_events";
-pub(crate) const MCP_TOOL_APXM_WORKFLOW_CANCEL: &str = "apxm_workflow_cancel";
+pub(crate) const MCP_TOOL_APXM_WORKFLOW_START: &str = mcp_tool_names::APXM_WORKFLOW_START;
+pub(crate) const MCP_TOOL_APXM_WORKFLOW_STATUS: &str = mcp_tool_names::APXM_WORKFLOW_STATUS;
+pub(crate) const MCP_TOOL_APXM_WORKFLOW_EVENTS: &str = mcp_tool_names::APXM_WORKFLOW_EVENTS;
+pub(crate) const MCP_TOOL_APXM_WORKFLOW_CANCEL: &str = mcp_tool_names::APXM_WORKFLOW_CANCEL;
 
 const WORKFLOW_RECORD_ID: &str = "apxm.workflow";
 const WORKFLOW_RECORD_ENTRY: &str = "workflow_start";
@@ -499,15 +502,17 @@ async fn run_prepared_workflow(
                     &prepared.execution_id,
                     &prepared.session_id,
                     orchestration_enabled,
-                    "execute_complete",
-                    "succeeded",
+                    kind::EXECUTE_COMPLETE,
+                    OrchestrationWakeOutcome::Succeeded,
                     "workflow completed",
                 );
                 record_workflow_event(
                     &state,
                     &prepared.execution_id,
                     ApxmEvent::root(
-                        ExecuteCompletePayload { result: response },
+                        ExecuteCompletePayload {
+                            result: serde_json::to_value(&response).unwrap_or(JsonValue::Null),
+                        },
                         EventSource::Server,
                         &prepared.execution_id,
                     ),
@@ -522,8 +527,8 @@ async fn run_prepared_workflow(
                     &prepared.execution_id,
                     &prepared.session_id,
                     orchestration_enabled,
-                    "error",
-                    "failed",
+                    kind::ERROR,
+                    OrchestrationWakeOutcome::Failed,
                     &message,
                 );
                 record_workflow_event(
@@ -549,8 +554,8 @@ async fn run_prepared_workflow(
                     &prepared.execution_id,
                     &prepared.session_id,
                     orchestration_enabled,
-                    "error",
-                    "failed",
+                    kind::ERROR,
+                    OrchestrationWakeOutcome::Failed,
                     &message,
                 );
                 record_workflow_event(
@@ -571,15 +576,15 @@ async fn run_prepared_workflow(
         _ = cancel.notified() => {
             runtime_events_closed.store(true, Ordering::SeqCst);
             cancellation_token.cancel();
-            let reason = "cancelled via apxm_workflow_cancel".to_string();
+            let reason = format!("cancelled via {MCP_TOOL_APXM_WORKFLOW_CANCEL}");
             state.execution_store.complete_failure(&prepared.execution_id, reason.clone());
             record_orchestrator_wake_event(
                 &state,
                 &prepared.execution_id,
                 &prepared.session_id,
                 orchestration_enabled,
-                "turn_aborted",
-                "cancelled",
+                kind::TURN_ABORTED,
+                OrchestrationWakeOutcome::Cancelled,
                 &reason,
             );
             record_workflow_event(
@@ -588,7 +593,9 @@ async fn run_prepared_workflow(
                 ApxmEvent::root(
                     TurnAbortedPayload {
                         execution_id: prepared.execution_id.clone(),
-                        reason,
+                        duration_ms: 0,
+                        reason: OrchestrationWakeOutcome::Cancelled.as_str().to_string(),
+                        error_message_safe: Some(reason),
                     },
                     EventSource::Server,
                     &prepared.execution_id,
@@ -637,8 +644,8 @@ fn record_orchestrator_wake_event(
     execution_id: &str,
     session_id: &str,
     enabled: bool,
-    terminal_event: &str,
-    outcome: &str,
+    terminal_event: EventKind,
+    outcome: OrchestrationWakeOutcome,
     reason: &str,
 ) {
     if !enabled {
@@ -651,8 +658,8 @@ fn record_orchestrator_wake_event(
             OrchestratorWakePayload {
                 execution_id: execution_id.to_string(),
                 session_id: session_id.to_string(),
-                terminal_event: terminal_event.to_string(),
-                outcome: outcome.to_string(),
+                terminal_event: terminal_event.name().to_string(),
+                outcome: outcome.as_str().to_string(),
                 reason: reason.to_string(),
             },
             EventSource::Server,
@@ -720,16 +727,17 @@ fn workflow_spawn_air(
     Ok(format!(
         r#"module {{
   func.func @apxm_mcp_workflow_start() -> !ais.token attributes {{ais.entry}} {{
-    %child = ais.workflow_spawn "workflow_path" {workflow_target}{attrs} : !ais.token
+    %child = ais.workflow_spawn {workflow_target_kind} {workflow_target}{attrs} : !ais.token
     func.return %child : !ais.token
   }}
 }}
-"#
+"#,
+        workflow_target_kind = quote_air_string(WORKFLOW_TARGET_KIND_WORKFLOW_PATH),
     ))
 }
 
 fn workflow_spawn_attrs(args: &JsonMap<String, JsonValue>) -> Result<String, ApiError> {
-    let mut parts = vec!["await_result = true".to_string()];
+    let mut parts = vec![format!("{} = true", apxm_ais::attrs::AWAIT_RESULT)];
     if !args.is_empty() {
         parts.push(format!(
             "args = {}",

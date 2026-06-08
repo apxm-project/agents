@@ -47,6 +47,10 @@ export const WORKFLOW_STARTED = kind("workflow_started", "lifecycle");
 export const WORKFLOW_STEP_STARTED = kind("workflow_step_started", "lifecycle");
 export const WORKFLOW_STEP_COMPLETED = kind("workflow_step_completed", "lifecycle");
 export const WORKFLOW_FINISHED = kind("workflow_finished", "lifecycle");
+export const EXECUTION_STARTED = kind("execution_started", "lifecycle", true);
+export const EXECUTE_COMPLETE = kind("execute_complete", "lifecycle", true);
+export const ORCHESTRATOR_SLEEP = kind("orchestrator_sleep", "lifecycle");
+export const ORCHESTRATOR_WAKE = kind("orchestrator_wake", "lifecycle");
 export const MEMORY_READ = kind("memory_read", "observability");
 export const MEMORY_WRITE = kind("memory_write", "observability");
 export const CHECKPOINT_SAVED = kind("checkpoint_saved", "lifecycle");
@@ -108,6 +112,10 @@ export const CORE_EVENT_KINDS = [
   WORKFLOW_STEP_STARTED,
   WORKFLOW_STEP_COMPLETED,
   WORKFLOW_FINISHED,
+  EXECUTION_STARTED,
+  EXECUTE_COMPLETE,
+  ORCHESTRATOR_SLEEP,
+  ORCHESTRATOR_WAKE,
   MEMORY_READ,
   MEMORY_WRITE,
   CHECKPOINT_SAVED,

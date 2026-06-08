@@ -42,7 +42,7 @@ pub(crate) const A2A_TASK_DETAIL: &str = "/a2a/tasks/{id}";
 pub(crate) const GENERATE: &str = "/v1/generate";
 pub(crate) const GENERATE_STREAM: &str = "/v1/generate-stream";
 pub(crate) const SCHEMA: &str = "/v1/schema";
-pub(crate) const MCP: &str = "/v1/mcp";
+pub(crate) const MCP: &str = apxm_core::constants::mcp::ROUTE;
 // Phase 14.8.B — observer endpoints.
 pub(crate) const RUNS: &str = "/v1/runs";
 pub(crate) const RUN_DETAIL: &str = "/v1/runs/{execution_id}";

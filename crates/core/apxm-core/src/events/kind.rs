@@ -127,6 +127,14 @@ pub const WORKFLOW_STEP_COMPLETED: EventKind =
     EventKind::new("workflow_step_completed", EventCategory::Lifecycle, false);
 pub const WORKFLOW_FINISHED: EventKind =
     EventKind::new("workflow_finished", EventCategory::Lifecycle, false);
+pub const EXECUTION_STARTED: EventKind =
+    EventKind::new("execution_started", EventCategory::Lifecycle, true);
+pub const EXECUTE_COMPLETE: EventKind =
+    EventKind::new("execute_complete", EventCategory::Lifecycle, true);
+pub const ORCHESTRATOR_SLEEP: EventKind =
+    EventKind::new("orchestrator_sleep", EventCategory::Lifecycle, false);
+pub const ORCHESTRATOR_WAKE: EventKind =
+    EventKind::new("orchestrator_wake", EventCategory::Lifecycle, false);
 pub const MEMORY_READ: EventKind =
     EventKind::new("memory_read", EventCategory::Observability, false);
 pub const MEMORY_WRITE: EventKind =
@@ -230,6 +238,10 @@ pub const CORE_EVENT_KINDS: &[EventKind] = &[
     WORKFLOW_STEP_STARTED,
     WORKFLOW_STEP_COMPLETED,
     WORKFLOW_FINISHED,
+    EXECUTION_STARTED,
+    EXECUTE_COMPLETE,
+    ORCHESTRATOR_SLEEP,
+    ORCHESTRATOR_WAKE,
     MEMORY_READ,
     MEMORY_WRITE,
     CHECKPOINT_SAVED,

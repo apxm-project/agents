@@ -5,7 +5,10 @@ use apxm_artifact::Artifact;
 use apxm_compiler::AirModule;
 use apxm_compiler::{Context as CompilerContext, Pipeline as CompilerPipeline};
 use apxm_core::constants::graph::attrs as graph_attrs;
-use apxm_core::events::payload::ErrorPayload;
+use apxm_core::constants::orchestration::admission as orchestration_admission;
+use apxm_core::events::payload::{
+    ErrorPayload, ExecuteCompletePayload, ExecutionStartedPayload, TurnAbortedPayload,
+};
 use apxm_core::events::{ApxmEvent, EventSource};
 use apxm_core::paths::ApxmPaths;
 use apxm_core::types::AISOperationType;
@@ -22,10 +25,7 @@ use serde_json::Value as JsonValue;
 use tokio::sync::{Notify, mpsc};
 
 use crate::error::ApiError;
-use crate::state::{
-    AppState, ExecuteCompletePayload, ExecutionStartedPayload, TokioChannelEmitter,
-    TurnAbortedPayload,
-};
+use crate::state::{AppState, TokioChannelEmitter};
 use crate::types::responses::{ExecutionStats, LlmUsageSummary};
 
 const ERROR_RAW_PYTHON_TOOL_SECTIONS: &str = "raw execute does not support python tool sections";
@@ -34,8 +34,8 @@ const ERROR_RAW_PYTHON_TOOL_HANDLERS: &str =
 const ERROR_INV_TOOL_MISSING_CAPABILITY: &str = "INV_TOOL missing capability attribute";
 const ERROR_INV_TOOL_PARAMS_NOT_OBJECT: &str = "INV_TOOL params_json must be a JSON object";
 const ERROR_ASK_REQUIRES_READ_ONLY_TOOLS: &str = "ASK tool exposure requires read-only tools";
-const ADMIT_SPAWN_AGENT: &str = "SPAWN_AGENT";
-const ADMIT_SPAWN_TEAM: &str = "SPAWN_TEAM";
+const ADMIT_SPAWN_AGENT: &str = orchestration_admission::SPAWN_AGENT;
+const ADMIT_SPAWN_TEAM: &str = orchestration_admission::SPAWN_TEAM;
 
 #[derive(Debug, Deserialize)]
 pub(crate) struct ExecuteRequest {
@@ -284,7 +284,8 @@ pub(crate) async fn execute_stream(
                     let _ = tx
                         .send(ApxmEvent::root(
                             ExecuteCompletePayload {
-                                result: to_execute_response(result, session_dir),
+                                result: serde_json::to_value(to_execute_response(result, session_dir))
+                                    .unwrap_or(JsonValue::Null),
                             },
                             EventSource::Server,
                             &trace_id,
@@ -313,7 +314,11 @@ pub(crate) async fn execute_stream(
                     .send(ApxmEvent::root(
                         TurnAbortedPayload {
                             execution_id: execution_id.clone(),
-                            reason: "cancelled via /v1/runs/{id}/cancel".to_string(),
+                            duration_ms: 0,
+                            reason: "cancelled".to_string(),
+                            error_message_safe: Some(
+                                "cancelled via /v1/runs/{id}/cancel".to_string(),
+                            ),
                         },
                         EventSource::Server,
                         &trace_id,

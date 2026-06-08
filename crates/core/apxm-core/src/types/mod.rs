@@ -19,6 +19,7 @@ pub mod graph_hints;
 pub mod graph_metrics;
 pub mod intents;
 pub mod metrics;
+pub mod orchestration;
 
 // ── Domain ─────────────────────────────────────────────────
 pub mod compiler;
@@ -64,6 +65,11 @@ pub use metrics::{GraphStatusKey, MetricsLevel};
 pub use models::{
     FinishReason, LLMResponse, ModelCapabilities, ModelInfo, TimingBreakdown, TokenUsage, ToolCall,
     ToolResult,
+};
+pub use orchestration::{
+    OrchestrationStartStatus, OrchestrationTransport, OrchestrationWakeOutcome,
+    OrchestrationWorkspaceCleanup, OrchestrationWorkspaceMode, UnknownOrchestrationTransport,
+    UnknownOrchestrationWorkspaceCleanup, UnknownOrchestrationWorkspaceMode,
 };
 
 pub use operations::metadata::{

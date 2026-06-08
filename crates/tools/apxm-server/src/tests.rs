@@ -97,9 +97,9 @@ const NODE_OUTPUT_FIELD: &str = "output";
 const REDACTED_FIELD: &str = "redacted";
 const SUMMARY_FIELD: &str = "summary";
 const HASH_FIELD: &str = "hash";
-const STATUS_SUCCEEDED: &str = "succeeded";
-const STATUS_RUNNING: &str = "running";
-const STATUS_FAILED: &str = "failed";
+const STATUS_SUCCEEDED: &str = apxm_core::constants::orchestration::execution_status::SUCCEEDED;
+const STATUS_RUNNING: &str = apxm_core::constants::orchestration::execution_status::RUNNING;
+const STATUS_FAILED: &str = apxm_core::constants::orchestration::execution_status::FAILED;
 
 const FIXTURE_PACKAGE_DIR: &str = "checkout";
 const FIXTURE_SKILL_SESSION_DIR: &str = "skills";
