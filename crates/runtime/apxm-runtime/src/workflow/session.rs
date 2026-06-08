@@ -105,18 +105,26 @@ pub fn write_workflow_step_started(
             step_index,
         },
     )?;
-    let completed_nodes = read_live(session_dir)
-        .map(|live| live.completed_nodes)
+    let existing_live = read_live(session_dir);
+    let completed_nodes = existing_live
+        .as_ref()
+        .map(|live| live.completed_nodes.clone())
         .unwrap_or_default();
+    let mut running_nodes = existing_live
+        .map(|live| live.running_nodes)
+        .unwrap_or_default();
+    let node_id = workflow_step_node_id(step_index);
+    running_nodes.retain(|node| node.id != node_id);
+    running_nodes.push(NodeInfo {
+        id: node_id,
+        name: step_id.to_string(),
+        op: AISOperationType::WorkflowSpawn,
+    });
     write_live(
         session_dir,
         &LiveSessionState {
             status: SessionStatus::Running,
-            running_nodes: vec![NodeInfo {
-                id: workflow_step_node_id(step_index),
-                name: step_id.to_string(),
-                op: AISOperationType::WorkflowSpawn,
-            }],
+            running_nodes,
             completed_nodes,
             completed,
             total: Some(total),
@@ -148,11 +156,18 @@ pub fn write_workflow_step_finished(
             success,
         },
     )?;
-    let mut completed_nodes = read_live(session_dir)
+    let existing_live = read_live(session_dir);
+    let mut running_nodes = existing_live
+        .as_ref()
+        .map(|live| live.running_nodes.clone())
+        .unwrap_or_default();
+    let node_id = workflow_step_node_id(step_index);
+    running_nodes.retain(|node| node.id != node_id);
+    let mut completed_nodes = existing_live
         .map(|live| live.completed_nodes)
         .unwrap_or_default();
     completed_nodes.push(CompletedNodeInfo {
-        id: workflow_step_node_id(step_index),
+        id: node_id,
         name: step_id.to_string(),
         op: AISOperationType::WorkflowSpawn,
         duration_ms,
@@ -170,7 +185,7 @@ pub fn write_workflow_step_finished(
         session_dir,
         &LiveSessionState {
             status: SessionStatus::Running,
-            running_nodes: Vec::new(),
+            running_nodes,
             completed_nodes,
             completed,
             total: Some(total),
@@ -193,6 +208,9 @@ pub fn write_workflow_session_finished(session_dir: &Path, result: &WorkflowResu
     } else {
         SessionStatus::Failed
     };
+    let completed_nodes = read_live(session_dir)
+        .map(|live| live.completed_nodes)
+        .unwrap_or_default();
 
     write_manifest(
         session_dir,
@@ -216,7 +234,7 @@ pub fn write_workflow_session_finished(session_dir: &Path, result: &WorkflowResu
         &LiveSessionState {
             status,
             running_nodes: Vec::new(),
-            completed_nodes: Vec::new(),
+            completed_nodes,
             completed: result.step_results.len(),
             total: Some(result.step_results.len()),
             elapsed_ms: result.duration_ms as u128,

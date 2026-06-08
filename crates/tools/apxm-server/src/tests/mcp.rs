@@ -1159,6 +1159,24 @@ async fn mcp_workflow_fans_out_independent_steps_and_fans_in_output() {
         workflow_results["step_results"]["right"]["session_dir"],
         "parallel children should keep distinct child session dirs"
     );
+    let live_path = std::path::Path::new(workflow_session_dir).join("live.json");
+    let workflow_live: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(&live_path).expect("read workflow live.json"))
+            .expect("workflow live JSON");
+    assert_eq!(workflow_live["completed"], 2);
+    assert_eq!(workflow_live["total"], 2);
+    let completed_node_names: HashSet<&str> = workflow_live["completed_nodes"]
+        .as_array()
+        .expect("completed_nodes")
+        .iter()
+        .filter_map(|node| node["name"].as_str())
+        .collect();
+    assert!(
+        ["left", "right"]
+            .iter()
+            .all(|step_id| completed_node_names.contains(*step_id)),
+        "workflow live.json should retain completed step names: {workflow_live}"
+    );
 
     let events = workflow_events(app, execution_id, 0, 50).await;
     let event_items = events["events"].as_array().expect("events array");
