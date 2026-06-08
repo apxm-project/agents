@@ -1,6 +1,6 @@
 //! CLI type definitions for APXM.
 
-use clap::{Parser, Subcommand};
+use clap::{Args, Parser, Subcommand};
 use std::path::PathBuf;
 
 use apxm_core::types::{MetricsLevel, OptimizationTarget};
@@ -258,6 +258,12 @@ pub enum Commands {
         #[command(subcommand)]
         action: RolloutAction,
     },
+    /// Start, follow, inspect, or cancel an autonomous APXM goal run.
+    ///
+    /// This is the user-facing entry point for APXM-owned orchestration:
+    /// it calls the server MCP `apxm_orchestrate_start` tool, then follows
+    /// `apxm_workflow_events/status` until the orchestrator wakes.
+    Goal(GoalArgs),
     /// Interactive conversational REPL over a running apxm-server.
     ///
     /// Each user message runs one execution of the agent graph, threading a
@@ -309,6 +315,121 @@ pub enum Commands {
         #[arg(long = "monitor-url", value_name = "URL")]
         monitor_url: Option<String>,
     },
+}
+
+#[derive(Args, Debug, Clone)]
+pub struct GoalArgs {
+    /// Goal/task for APXM to decompose and supervise.
+    #[arg(value_name = "TASK")]
+    pub task: Option<String>,
+
+    /// Print status for an existing goal execution id.
+    #[arg(long, value_name = "EXECUTION_ID")]
+    pub status: Option<String>,
+
+    /// Print retained workflow events for an existing goal execution id.
+    #[arg(long, value_name = "EXECUTION_ID")]
+    pub events: Option<String>,
+
+    /// Cancel an in-flight goal execution id.
+    #[arg(long, value_name = "EXECUTION_ID")]
+    pub cancel: Option<String>,
+
+    /// apxm-server base URL (default $APXM_SERVER_BASE or http://127.0.0.1:18800).
+    #[arg(long)]
+    pub server: Option<String>,
+
+    /// Reuse a caller-provided orchestration session id.
+    #[arg(long = "session-id")]
+    pub session_id: Option<String>,
+
+    /// Optional repository, product, or run context passed to workers.
+    #[arg(long)]
+    pub context: Option<String>,
+
+    /// Optional event payload/reason that triggered this goal loop.
+    #[arg(long)]
+    pub event: Option<String>,
+
+    /// Optional trigger rule or source for this goal loop.
+    #[arg(long)]
+    pub trigger: Option<String>,
+
+    /// Custom worker as ID[:ROLE[:PROFILE]]. Repeat for fan-out workers.
+    #[arg(long = "worker", value_name = "ID[:ROLE[:PROFILE]]")]
+    pub workers: Vec<String>,
+
+    /// Worker dependencies as WORKER=DEP1,DEP2. Repeat to shape phases.
+    #[arg(long = "depends", value_name = "WORKER=DEP1,DEP2")]
+    pub depends: Vec<String>,
+
+    /// Registered profile for the default planner worker.
+    #[arg(long = "planner", alias = "planner-profile", value_name = "PROFILE")]
+    pub planner_profile: Option<String>,
+
+    /// Registered profile for the default executor worker.
+    #[arg(long = "executor", alias = "executor-profile", value_name = "PROFILE")]
+    pub executor_profile: Option<String>,
+
+    /// Registered profile for the default critic worker.
+    #[arg(long = "critic", alias = "critic-profile", value_name = "PROFILE")]
+    pub critic_profile: Option<String>,
+
+    /// Registered profile for the default verifier worker.
+    #[arg(long = "verifier", alias = "verifier-profile", value_name = "PROFILE")]
+    pub verifier_profile: Option<String>,
+
+    /// Registered profile for the final gate/eval supervisor.
+    #[arg(
+        long = "supervisor",
+        alias = "supervisor-profile",
+        value_name = "PROFILE"
+    )]
+    pub supervisor_profile: Option<String>,
+
+    /// Workspace allocation mode: session, shared, or git_worktree.
+    #[arg(long = "workspace", default_value = "session")]
+    pub workspace: String,
+
+    /// Repository root for shared or git_worktree workspace modes.
+    #[arg(long = "repo-root")]
+    pub repo_root: Option<PathBuf>,
+
+    /// Git ref used when --workspace git_worktree is selected.
+    #[arg(long = "base-ref", default_value = "HEAD")]
+    pub base_ref: String,
+
+    /// Extra capability grant forwarded to APXM admission (repeatable).
+    #[arg(long = "admit", value_name = "CAP")]
+    pub admit: Vec<String>,
+
+    /// Explicitly grant SPAWN_AGENT. Also auto-granted when profiles are used.
+    #[arg(long = "admit-spawn")]
+    pub admit_spawn: bool,
+
+    /// Skill library / id to import into the goal run's visible set.
+    #[arg(long = "import", value_name = "LIB")]
+    pub import: Vec<String>,
+
+    /// Materialize and validate the generated workflow bundle without starting it.
+    #[arg(long = "dry-run")]
+    pub dry_run: bool,
+
+    /// Start the goal but do not poll workflow events.
+    #[arg(long = "no-follow")]
+    pub no_follow: bool,
+
+    /// Event page size while following.
+    #[arg(long = "limit", default_value_t = 100)]
+    pub limit: usize,
+
+    /// Poll interval while following.
+    #[arg(long = "poll-ms", default_value_t = 500)]
+    pub poll_ms: u64,
+
+    /// Stop following after this many seconds without cancelling the run.
+    #[arg(long = "timeout-secs")]
+    pub timeout_secs: Option<u64>,
 }
 
 #[derive(Subcommand)]

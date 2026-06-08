@@ -211,6 +211,7 @@ async fn run_cli(cli: Cli) -> Result<()> {
         Commands::Tokenize { text, file, model } => tokenize_command(text, file, model, cli.json),
         Commands::Watch { thread_id, expand } => watch_command(thread_id, expand).await,
         Commands::Rollout { action } => rollout_action(action).await,
+        Commands::Goal(args) => goal_command(args, cli.json).await,
         Commands::Chat {
             air,
             server,
@@ -310,6 +311,7 @@ async fn run_cli_no_driver(cli: Cli) -> Result<()> {
         Commands::Workflow { action } => workflow_command_no_driver(action, cli.json),
         Commands::Cache { action } => cache_command(action, cli.json),
         Commands::Tokenize { text, file, model } => tokenize_command(text, file, model, cli.json),
+        Commands::Goal(args) => goal_command(args, cli.json).await,
         Commands::Watch { .. } | Commands::Rollout { .. } | Commands::Chat { .. } => {
             Err(anyhow::anyhow!(
                 "apxm watch / apxm rollout / apxm chat require the `driver` feature. Rebuild through `{}`, then re-run the command.",

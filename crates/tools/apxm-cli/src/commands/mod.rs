@@ -18,6 +18,7 @@ pub mod compile;
 pub(crate) mod dekk_hints;
 #[cfg(feature = "driver")]
 pub mod execute;
+pub mod goal;
 pub mod ops;
 pub mod process;
 #[cfg(feature = "driver")]
@@ -55,6 +56,7 @@ pub use codegen::*;
 pub use compile::*;
 #[cfg(feature = "driver")]
 pub use execute::*;
+pub use goal::*;
 pub use ops::*;
 pub use process::*;
 pub use replay::*;
