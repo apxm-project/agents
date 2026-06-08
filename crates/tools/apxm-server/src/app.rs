@@ -49,7 +49,10 @@ pub(crate) fn build_app(state: AppState) -> Router {
         // Caller-supplied PlanGraph: lower → execute, bypassing LLM emission
         // but applying the same raw-execute admission gate.
         .route(ServerRoute::Compile.path(), post(compile_graph))
-        .route(ServerRoute::CompileStream.path(), post(compile_graph_stream))
+        .route(
+            ServerRoute::CompileStream.path(),
+            post(compile_graph_stream),
+        )
         // Memory
         .route(ServerRoute::MemoryFactsStore.path(), post(store_fact))
         .route(ServerRoute::MemoryFactsSearch.path(), post(search_facts))
@@ -148,10 +151,7 @@ pub(crate) fn build_app(state: AppState) -> Router {
 /// that `CorsLayer::permissive()` emitted.
 fn loopback_cors_layer() -> CorsLayer {
     let predicate = |origin: &HeaderValue, _request_parts: &axum::http::request::Parts| {
-        origin
-            .to_str()
-            .map(is_loopback_origin)
-            .unwrap_or(false)
+        origin.to_str().map(is_loopback_origin).unwrap_or(false)
     };
     CorsLayer::new()
         .allow_origin(AllowOrigin::predicate(predicate))

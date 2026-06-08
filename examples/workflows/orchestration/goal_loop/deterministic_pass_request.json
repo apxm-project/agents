@@ -1,0 +1,40 @@
+{
+  "task": "Plan, execute, review, and verify one bounded APXM improvement.",
+  "context": "Deterministic example; no external workers, credentials, or API keys are required.",
+  "event": "manual goal requested",
+  "trigger": "goal-loop policy admitted one bounded pass",
+  "workspace": {
+    "mode": "session",
+    "cleanup": "keep"
+  },
+  "workers": [
+    {
+      "id": "planner",
+      "role": "Split the goal into one bounded worker DAG and identify acceptance checks.",
+      "transport": "deterministic"
+    },
+    {
+      "id": "executor",
+      "role": "Perform the bounded implementation slice described by the planner.",
+      "transport": "deterministic",
+      "depends_on": ["planner"]
+    },
+    {
+      "id": "critic",
+      "role": "Review the bounded result for risks, dissent, and missing evidence.",
+      "transport": "deterministic",
+      "depends_on": ["executor"]
+    },
+    {
+      "id": "verifier",
+      "role": "Run focused verification and report evidence.",
+      "transport": "deterministic",
+      "depends_on": ["executor", "critic"]
+    }
+  ],
+  "supervisor": {
+    "id": "gate",
+    "transport": "deterministic",
+    "prompt": "Return pass, needs_more, blocked, or unsafe with evidence."
+  }
+}

@@ -1,0 +1,7 @@
+module {
+  func.func @feedback(%arg0: !ais.token {ais.param_name = "eval", ais.param_type = "str"}) -> !ais.token attributes {ais.entry} {
+    %label = ais.const_str "feedback: pass records evidence; needs_more emits another APXM event for a new admitted pass; blocked checkpoints; unsafe cancels:" : !ais.token
+    %out = ais.merge %label, %arg0 : !ais.token, !ais.token -> !ais.token
+    func.return %out : !ais.token
+  }
+}

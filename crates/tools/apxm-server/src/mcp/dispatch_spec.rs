@@ -187,11 +187,17 @@ fn spec_to_air(spec: &DispatchSpec) -> Result<String, String> {
                 } else {
                     st.params.to_string()
                 };
-                let mut l =
-                    format!("    {ssa} = ais.inv_tool {} ({})", quote_air(&st.capability), quote_air(&params));
+                let mut l = format!(
+                    "    {ssa} = ais.inv_tool {} ({})",
+                    quote_air(&st.capability),
+                    quote_air(&params)
+                );
                 if !st.depends_on.is_empty() {
                     let (refs, types, names) = dep_parts(st, &ssa_of);
-                    l.push_str(&format!(" [{} : {}] {{input_names = [{}]}}", refs, types, names));
+                    l.push_str(&format!(
+                        " [{} : {}] {{input_names = [{}]}}",
+                        refs, types, names
+                    ));
                 }
                 l.push_str(" : !ais.token\n");
                 l
@@ -211,7 +217,10 @@ fn spec_to_air(spec: &DispatchSpec) -> Result<String, String> {
                 let mut l = format!("    {ssa} = ais.ask {}", quote_air(&prompt));
                 if !st.depends_on.is_empty() {
                     let (refs, types, names) = dep_parts(st, &ssa_of);
-                    l.push_str(&format!(" [{} : {}] {{input_names = [{}]}}", refs, types, names));
+                    l.push_str(&format!(
+                        " [{} : {}] {{input_names = [{}]}}",
+                        refs, types, names
+                    ));
                 }
                 l.push_str(" : !ais.token\n");
                 l
@@ -297,7 +306,11 @@ mod tests {
             {"id": "a", "prompt": "x", "depends_on": ["b"]},
             {"id": "b", "prompt": "y"}
         ]}));
-        assert!(spec_to_air(&s).unwrap_err().contains("forward reference or cycle"));
+        assert!(
+            spec_to_air(&s)
+                .unwrap_err()
+                .contains("forward reference or cycle")
+        );
     }
 
     #[test]
@@ -325,7 +338,11 @@ mod tests {
     #[test]
     fn tool_step_requires_capability() {
         let s = spec(serde_json::json!({"steps": [{"id": "t", "kind": "tool"}]}));
-        assert!(spec_to_air(&s).unwrap_err().contains("requires a 'capability'"));
+        assert!(
+            spec_to_air(&s)
+                .unwrap_err()
+                .contains("requires a 'capability'")
+        );
     }
 
     #[test]

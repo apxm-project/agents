@@ -277,7 +277,10 @@ async fn call_skill_resolver_admits_read_only_child() {
     );
     let resolver = build_resolver(temp.path());
 
-    match resolver.call_skill(request(FIXTURE_SKILL_ID, None, 1)).await {
+    match resolver
+        .call_skill(request(FIXTURE_SKILL_ID, None, 1))
+        .await
+    {
         Ok(_) => {}
         Err(err) => {
             let message = err.to_string();

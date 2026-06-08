@@ -4,6 +4,13 @@
 
 The A-PXM process model introduces formal OS-like abstractions for agent lifecycle management. Agents are **processes**; node executions within an agent are **threads**.
 
+Agent processes are runtime execution identities, not organization-chart nodes.
+Reporting lines, directory visibility, delegation rights, and approval chains are
+host policy owned by `apxm-os`/Studio and must be enforced before a request is
+lowered into `SPAWN_AGENT`, `COMMUNICATE`, `HANDOFF`, or `DELEGATE`. The runtime
+must not infer those relationships from the ProcessTable or scheduler state. See
+[Agent Topology Boundary](../agent-topology-boundary.md).
+
 ---
 
 ## 1. Agent Lifecycle
@@ -97,6 +104,11 @@ The COMMUNICATE operation dispatches by protocol. Each protocol has its own tran
 | `broadcast` | Fan-out to all agents | FlowRegistry scan | Per-agent snapshot |
 
 The protocol is selected via the `protocol` node attribute. When omitted, `local` is the default.
+
+Protocol dispatch is not an authorization layer. A host that needs
+topology-aware messaging must filter/admit the concrete recipient before this
+operation runs, or attach host policy middleware that rejects the node before the
+handler dispatches it.
 
 ---
 

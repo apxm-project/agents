@@ -153,7 +153,11 @@ async fn execute_allows_granted_direct_inv_tool() {
     )
     .await;
 
-    assert_eq!(status, StatusCode::OK, "granted write execute failed: {body}");
+    assert_eq!(
+        status,
+        StatusCode::OK,
+        "granted write execute failed: {body}"
+    );
     assert_eq!(body["content"], FIXTURE_OUTPUT);
 }
 

@@ -31,9 +31,9 @@ pub(crate) async fn build_runtime_with_router(
     // budget. Both are safe to enable globally. (LoopGuard is intentionally
     // left to explicit per-graph config — its repeat fingerprinting can reject
     // legitimate deterministic retries in multi-agent loops.)
-    runtime.add_middleware(std::sync::Arc::new(
-        apxm_runtime::TimeoutMiddleware::new(Some(std::time::Duration::from_secs(300))),
-    ));
+    runtime.add_middleware(std::sync::Arc::new(apxm_runtime::TimeoutMiddleware::new(
+        Some(std::time::Duration::from_secs(300)),
+    )));
     runtime.add_middleware(std::sync::Arc::new(
         apxm_runtime::TokenBudgetMiddleware::new(),
     ));
@@ -83,7 +83,9 @@ fn register_builtin_capabilities(runtime: &Runtime) {
         let name = cap.metadata().name.clone();
         match sys.register(cap) {
             Ok(()) => n += 1,
-            Err(e) => warn!(capability = %name, error = %e, "failed to register builtin capability"),
+            Err(e) => {
+                warn!(capability = %name, error = %e, "failed to register builtin capability")
+            }
         }
     }
     info!(count = n, "registered builtin tool capabilities");

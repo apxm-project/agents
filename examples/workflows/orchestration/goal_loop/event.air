@@ -1,0 +1,8 @@
+module {
+  func.func @event(%arg0: !ais.token {ais.param_name = "goal", ais.param_type = "str"}, %arg1: !ais.token {ais.param_name = "event", ais.param_type = "str"}) -> !ais.token attributes {ais.entry} {
+    %label = ais.const_str "goal.event:" : !ais.token
+    %goal = ais.merge %label, %arg0 : !ais.token, !ais.token -> !ais.token
+    %out = ais.merge %goal, %arg1 : !ais.token, !ais.token -> !ais.token
+    func.return %out : !ais.token
+  }
+}

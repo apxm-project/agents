@@ -234,7 +234,11 @@ async fn skill_execute_allows_write_admitted_by_broader_policy() {
     )
     .await;
 
-    assert_eq!(status, StatusCode::OK, "broader-admitted write failed: {body}");
+    assert_eq!(
+        status,
+        StatusCode::OK,
+        "broader-admitted write failed: {body}"
+    );
     assert_eq!(body["content"], FIXTURE_OUTPUT);
 }
 

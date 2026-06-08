@@ -78,6 +78,8 @@ misaligned.
 - [`docs/README.md`](docs/README.md) — full docs index.
 - [`docs/pxm/readme.md`](docs/pxm/readme.md) — PXM theory and APXM's origin
   story.
+- [`docs/agent-topology-boundary.md`](docs/agent-topology-boundary.md) —
+  hard rule: agent hierarchy and reachability are policy outside the runtime.
 - [`docs/compiler/pipeline.md`](docs/compiler/pipeline.md) — compiler pass
   pipeline.
 - [`docs/backends/vllm.md`](docs/backends/vllm.md) — APXM/vLLM contract.

@@ -83,8 +83,9 @@ impl CompileRequest {
     /// [`ExecuteRequest`] so the compile route shares the execute path verbatim
     /// (admission gate, credential injection, runtime, session handling).
     fn into_execute_request(self) -> Result<ExecuteRequest, ApiError> {
-        let air = crate::mcp_tools::lower_plan_graph_to_air(self.graph)
-            .map_err(|error| ApiError::bad_request(format!("plan graph lowering failed: {error}")))?;
+        let air = crate::mcp_tools::lower_plan_graph_to_air(self.graph).map_err(|error| {
+            ApiError::bad_request(format!("plan graph lowering failed: {error}"))
+        })?;
         Ok(ExecuteRequest {
             air,
             args: self.args,
@@ -699,7 +700,9 @@ pub(crate) async fn inject_resolved_credentials(artifact: &mut Artifact) -> Resu
             };
             let r = resolver.get_or_insert_with(crate::credentials::CredentialResolver::from_env);
             let token = r.resolve(&conn_id, None).await.map_err(|e| {
-                ApiError::internal_message(format!("credential resolve failed for `{conn_id}`: {e}"))
+                ApiError::internal_message(format!(
+                    "credential resolve failed for `{conn_id}`: {e}"
+                ))
             })?;
             if let Some(obj) = params.as_object_mut() {
                 obj.remove("credential");

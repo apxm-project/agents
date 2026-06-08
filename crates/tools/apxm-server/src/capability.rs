@@ -220,10 +220,17 @@ fn default_provider_schema() -> JsonValue {
 /// registerable yet, e.g. `mcp`).
 fn capability_from_tool(t: &PackToolDecl) -> Option<Arc<dyn CapabilityExecutor>> {
     let kind = t.kind.as_deref().unwrap_or("provider");
-    let schema = if t.schema.is_null() { default_provider_schema() } else { t.schema.clone() };
+    let schema = if t.schema.is_null() {
+        default_provider_schema()
+    } else {
+        t.schema.clone()
+    };
     let mut metadata = CapabilityMetadata::new(
         t.capability.clone(),
-        t.description.clone().or_else(|| t.name.clone()).unwrap_or_else(|| t.capability.clone()),
+        t.description
+            .clone()
+            .or_else(|| t.name.clone())
+            .unwrap_or_else(|| t.capability.clone()),
         schema.clone(),
     );
     if t.read_only {
@@ -262,12 +269,14 @@ fn capability_from_tool(t: &PackToolDecl) -> Option<Arc<dyn CapabilityExecutor>>
         }),
         "mcp" => t.server_url.clone().map(|server_url| {
             let tool = t.mcp_tool.clone().unwrap_or_else(|| t.capability.clone());
-            Arc::new(apxm_runtime::capability::builtins::McpBridgeCapability::named(
-                t.capability.clone(),
-                metadata.description.clone(),
-                server_url,
-                tool,
-            )) as Arc<dyn CapabilityExecutor>
+            Arc::new(
+                apxm_runtime::capability::builtins::McpBridgeCapability::named(
+                    t.capability.clone(),
+                    metadata.description.clone(),
+                    server_url,
+                    tool,
+                ),
+            ) as Arc<dyn CapabilityExecutor>
         }),
         other => {
             info!(capability = %t.capability, kind = %other, "skipping tools.toml entry (kind not registerable yet)");
@@ -278,7 +287,9 @@ fn capability_from_tool(t: &PackToolDecl) -> Option<Arc<dyn CapabilityExecutor>>
 
 /// Read a pack dir's pack-root `tools.toml` and build its capability executors.
 fn pack_tools_in_dir(pack_dir: &std::path::Path) -> Vec<Arc<dyn CapabilityExecutor>> {
-    let Ok(raw) = std::fs::read_to_string(pack_dir.join("tools.toml")) else { return Vec::new() };
+    let Ok(raw) = std::fs::read_to_string(pack_dir.join("tools.toml")) else {
+        return Vec::new();
+    };
     let file: PackToolsFile = match toml::from_str(&raw) {
         Ok(f) => f,
         Err(e) => {
@@ -299,7 +310,9 @@ pub(crate) fn register_pack_tools(runtime: &apxm_runtime::Runtime, roots: &[std:
     let sys = runtime.capability_system();
     let mut registered = 0u32;
     for root in roots {
-        let Ok(entries) = std::fs::read_dir(root) else { continue };
+        let Ok(entries) = std::fs::read_dir(root) else {
+            continue;
+        };
         for entry in entries.flatten() {
             let pack_dir = entry.path();
             if !pack_dir.is_dir() {
@@ -314,7 +327,10 @@ pub(crate) fn register_pack_tools(runtime: &apxm_runtime::Runtime, roots: &[std:
         }
     }
     if registered > 0 {
-        info!(count = registered, "registered pack tool capabilities from tools.toml");
+        info!(
+            count = registered,
+            "registered pack tool capabilities from tools.toml"
+        );
     }
 }
 
@@ -357,7 +373,10 @@ mod pack_tools_tests {
             server_url: None,
             mcp_tool: None,
         };
-        assert!(capability_from_tool(&t).is_none(), "mcp backing not registerable yet");
+        assert!(
+            capability_from_tool(&t).is_none(),
+            "mcp backing not registerable yet"
+        );
     }
 
     #[test]
@@ -422,21 +441,26 @@ pub(crate) async fn register_capability(
     // legacy selection (endpoint => http, else static). This is the seam the
     // pack loader uses (kind=provider for connector blocks) and where the future
     // `mcp` bridge plugs in — the capability-id contract is unchanged either way.
-    let kind = req
-        .kind
-        .clone()
-        .unwrap_or_else(|| if req.endpoint.is_some() { "http".into() } else { "static".into() });
+    let kind = req.kind.clone().unwrap_or_else(|| {
+        if req.endpoint.is_some() {
+            "http".into()
+        } else {
+            "static".into()
+        }
+    });
 
     let capability: Arc<dyn CapabilityExecutor> = match kind.as_str() {
         "provider" => {
             // Connector default: backed by provider.call (REST via apxm-auth
             // /proxy). The block carries url/method/body/credential in its args.
             info!(name = %req.name, "registering provider capability (apxm-auth proxy)");
-            Arc::new(apxm_runtime::capability::builtins::ProviderCallCapability::named(
-                req.name.clone(),
-                req.description.clone(),
-                metadata.parameters_schema.clone(),
-            ))
+            Arc::new(
+                apxm_runtime::capability::builtins::ProviderCallCapability::named(
+                    req.name.clone(),
+                    req.description.clone(),
+                    metadata.parameters_schema.clone(),
+                ),
+            )
         }
         "mcp" => {
             // MCP-client bridge: a per-tool block on an external MCP server.
@@ -446,18 +470,19 @@ pub(crate) async fn register_capability(
                 .ok_or_else(|| ApiError::bad_request("kind=mcp requires server_url".to_string()))?;
             let tool = req.mcp_tool.clone().unwrap_or_else(|| req.name.clone());
             info!(name = %req.name, server_url = %server_url, tool = %tool, "registering MCP-bridge capability");
-            Arc::new(apxm_runtime::capability::builtins::McpBridgeCapability::named(
-                req.name.clone(),
-                req.description.clone(),
-                server_url,
-                tool,
-            ))
+            Arc::new(
+                apxm_runtime::capability::builtins::McpBridgeCapability::named(
+                    req.name.clone(),
+                    req.description.clone(),
+                    server_url,
+                    tool,
+                ),
+            )
         }
         "http" => {
-            let endpoint = req
-                .endpoint
-                .clone()
-                .ok_or_else(|| ApiError::bad_request("kind=http requires an endpoint".to_string()))?;
+            let endpoint = req.endpoint.clone().ok_or_else(|| {
+                ApiError::bad_request("kind=http requires an endpoint".to_string())
+            })?;
             guard_url_ssrf(&req.name, &endpoint)
                 .await
                 .map_err(|error| ApiError::bad_request(error.to_string()))?;

@@ -13,6 +13,9 @@ The AIS is a typed intermediate representation -- the ISA contract for agentic A
 2. **Latency-aware**: LLM operations are stratified by latency budget (ASK ~1s, THINK ~3s, REASON ~10s), enabling the scheduler to make informed decisions about overlap and prioritization.
 3. **Effect-explicit**: side effects (memory writes, tool calls, messages) are first-class operations, not hidden behind opaque function calls.
 4. **Future-typed**: async operations return `Future<T>` handles that integrate with the dataflow token system.
+5. **Topology-agnostic**: multi-agent operations carry concrete targets. They do
+   not encode organization policy such as reporting lines, directory visibility,
+   approval chains, or who may reach whom.
 
 ## Instruction Categories
 
@@ -25,12 +28,18 @@ The AIS operations are organized across multiple categories. Run `apxm ops list`
 | **Tools** | INV | External tool invocation with typed parameter marshalling |
 | **ControlFlow** | BRANCH_ON_VALUE, SWITCH, FLOW_CALL | Conditional routing and sub-flow invocation |
 | **Synchronization** | MERGE, WAIT_ALL, FENCE | Synchronization barriers and token collection |
-| **Communication** | COMM | Inter-agent messaging |
+| **Communication** | COMMUNICATE | Inter-agent messaging |
 | **Coordination** | DELEGATE, NEGOTIATE | Multi-agent task distribution |
 | **ErrorHandling** | TRY_CATCH | Exception handling with recovery subgraphs |
 | **Identity** | NOP, IDENTITY | Pass-through operations for graph structuring |
 
 For per-operation details and examples, see the [apxm-ais README](../../crates/core/apxm-ais/README.md).
+
+`COMMUNICATE`, `DELEGATE`, `NEGOTIATE`, `HANDOFF`, and `SPAWN_AGENT` are executable
+coordination primitives. They are not an agent hierarchy model. Hosts such as
+`apxm-os` may use topology policy to decide whether these operations are allowed,
+but APXM runtime receives only the admitted concrete target. See
+[Agent Topology Boundary](../agent-topology-boundary.md).
 
 ## Latency-Typed LLM Operations
 

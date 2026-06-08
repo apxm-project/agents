@@ -346,9 +346,7 @@ impl PreparedCompiledExecution {
 /// effective `side_effect_policy`, so a CALL_SKILL from this execution is
 /// admitted against the real grant rather than the conservative `read_only`
 /// default. An absent policy yields an empty map (the default applies).
-fn side_effect_policy_metadata(
-    policy: Option<&str>,
-) -> std::collections::HashMap<String, String> {
+fn side_effect_policy_metadata(policy: Option<&str>) -> std::collections::HashMap<String, String> {
     let mut map = std::collections::HashMap::new();
     if let Some(policy) = policy {
         map.insert(
@@ -862,15 +860,14 @@ pub(crate) async fn execute_skill_stream(
                 )
                 .with_skill_provenance(prepared.skill_provenance()),
             );
-            let runtime_execution = runtime
-                .execute_artifact_with_session_emitter_and_metadata(
-                    prepared.artifact,
-                    prepared.args,
-                    Some(prepared.session_id),
-                    Some(emitter),
-                    Some(prepared.session_dir.clone()),
-                    side_effect_policy_metadata(prepared.side_effect_policy.as_deref()),
-                );
+            let runtime_execution = runtime.execute_artifact_with_session_emitter_and_metadata(
+                prepared.artifact,
+                prepared.args,
+                Some(prepared.session_id),
+                Some(emitter),
+                Some(prepared.session_dir.clone()),
+                side_effect_policy_metadata(prepared.side_effect_policy.as_deref()),
+            );
             let result = if let Some(timeout_ms) = prepared.timeout_ms {
                 match tokio::time::timeout(Duration::from_millis(timeout_ms), runtime_execution)
                     .await
@@ -1881,7 +1878,11 @@ fn find_record(
         .into_iter()
         .filter(|record| record.skill_id.as_deref() == Some(skill_id))
         .filter(|record| match pack_filter {
-            Some(pack) => record.pack.as_ref().map(|p| p.pack_id == pack).unwrap_or(false),
+            Some(pack) => record
+                .pack
+                .as_ref()
+                .map(|p| p.pack_id == pack)
+                .unwrap_or(false),
             None => true,
         })
         .filter(|record| {

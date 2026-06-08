@@ -97,7 +97,9 @@ fn bearer_file_path(config: &ServerAuthConfig) -> Option<PathBuf> {
 /// Extract the bearer token from an `Authorization: Bearer <token>` header.
 fn presented_bearer(req: &Request<Body>) -> Option<String> {
     let value = req.headers().get(header::AUTHORIZATION)?.to_str().ok()?;
-    let token = value.strip_prefix("Bearer ").or_else(|| value.strip_prefix("bearer "))?;
+    let token = value
+        .strip_prefix("Bearer ")
+        .or_else(|| value.strip_prefix("bearer "))?;
     let trimmed = token.trim();
     if trimmed.is_empty() {
         None
@@ -209,7 +211,10 @@ mod tests {
             routes::RUNS,
             routes::SKILLS, // listing is gated too when auth is on
         ] {
-            assert!(is_protected(&axum::http::Method::POST, p), "{p} must be protected");
+            assert!(
+                is_protected(&axum::http::Method::POST, p),
+                "{p} must be protected"
+            );
         }
     }
 

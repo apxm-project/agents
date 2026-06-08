@@ -23,6 +23,34 @@ status/events/cancel wakes it.
 Use `autonomous_task/deterministic_request.json` for a no-agent smoke test, or
 `autonomous_task/acp_git_worktree_request.json` with registered ACP profiles.
 
+## Goal Loop
+
+`goal_loop/` shows the APXM-owned control envelope for a long-running goal
+without pretending `.apxmw` has recursive scheduler loops. It turns one admitted
+goal event into one bounded orchestration pass, then records feedback that can
+trigger another admitted pass through APXM OS or an MCP client.
+
+```text
+[goal/event] -> [trigger + policy gate] -> [bounded pass request]
+                                             |
+                                             v
+                                      [start one pass]
+                                             |
+                                             v
+                                    [eval] -> [feedback]
+```
+
+Run the deterministic pack from the repository root:
+
+```bash
+dekk apxm workflow validate examples/workflows/orchestration/goal_loop/workflow.apxmw
+dekk apxm workflow analyze examples/workflows/orchestration/goal_loop/workflow.apxmw
+dekk apxm workflow execute examples/workflows/orchestration/goal_loop/workflow.apxmw \
+  goal="ship a bounded APXM improvement" \
+  event="manual goal requested" \
+  policy="goal_loop.policy.json"
+```
+
 ## Agent Council
 
 `agent_council/workflow.apxmw` fans a task out to three independent workers and

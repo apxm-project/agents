@@ -1739,6 +1739,61 @@ async fn mcp_checked_in_event_feedback_loop_workflow_runs_all_steps() {
 }
 
 #[tokio::test]
+async fn mcp_checked_in_goal_loop_workflow_runs_all_steps() {
+    let app = build_app(test_state().await);
+    let workflow_path = checked_in_workflow_path("goal_loop/workflow.apxmw");
+
+    let execution_id = start_workflow_via_mcp(
+        app.clone(),
+        &workflow_path,
+        serde_json::json!({
+            "goal": "ship a bounded APXM improvement",
+            "event": "manual goal requested",
+            "policy": "goal_loop.policy.json"
+        }),
+        Some("mcp-example-goal-loop"),
+    )
+    .await;
+    let status_body = wait_for_workflow_status(app.clone(), &execution_id, STATUS_SUCCEEDED).await;
+    let workflow_status: serde_json::Value =
+        serde_json::from_str(tool_text(&status_body)).expect("workflow status response JSON");
+    let result = workflow_spawn_payload(&workflow_status)["result"]
+        .as_str()
+        .expect("workflow result");
+    assert!(
+        result.contains("goal=ship a bounded APXM improvement"),
+        "missing goal: {result}"
+    );
+    assert!(
+        result.contains("start.pass: call apxm_orchestrate_start once"),
+        "missing bounded pass start action: {result}"
+    );
+    assert!(
+        result.contains("needs_more emits another APXM event"),
+        "missing feedback transition: {result}"
+    );
+
+    let events = workflow_events(app, &execution_id, 0, 200).await;
+    let event_items = events["events"].as_array().expect("events array");
+    for step in [
+        "event",
+        "trigger",
+        "plan_pass",
+        "start_pass",
+        "eval",
+        "feedback",
+    ] {
+        assert!(
+            event_items.iter().any(|event| {
+                event["payload"]["kind"] == "workflow_step_completed"
+                    && event["payload"]["step_id"] == step
+            }),
+            "missing workflow_step_completed for {step}: {events}"
+        );
+    }
+}
+
+#[tokio::test]
 async fn mcp_checked_in_approval_gate_parks_wakes_and_reports_resume_events() {
     const CHECKPOINT_ID: &str = "examples-approval-cp";
 

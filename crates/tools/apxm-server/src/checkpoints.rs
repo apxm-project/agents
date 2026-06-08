@@ -109,7 +109,9 @@ impl CheckpointStore {
     /// volatile mode.
     fn persist(&self, cp: &Checkpoint) {
         let Some(db) = &self.db else { return };
-        let Ok(json) = serde_json::to_string(cp) else { return };
+        let Ok(json) = serde_json::to_string(cp) else {
+            return;
+        };
         if let Ok(conn) = db.lock() {
             let _ = conn.execute(
                 "INSERT INTO checkpoints (id, json) VALUES (?1, ?2)
@@ -313,7 +315,8 @@ mod store_tests {
             let s = CheckpointStore::open(&path).unwrap();
             s.create(pending("dur-1"));
             s.create(pending("dur-2"));
-            s.resume("dur-1", serde_json::json!({ "answer": 42 })).unwrap();
+            s.resume("dur-1", serde_json::json!({ "answer": 42 }))
+                .unwrap();
         }
 
         // Session 2: reopen — both checkpoints recovered with their state.

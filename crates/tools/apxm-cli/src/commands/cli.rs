@@ -258,7 +258,7 @@ pub enum Commands {
         #[command(subcommand)]
         action: RolloutAction,
     },
-    /// Start, follow, inspect, or cancel an autonomous APXM goal run.
+    /// Start, follow, inspect, or cancel a bounded APXM goal orchestration run.
     ///
     /// Sends the task to APXM server, which owns worker admission,
     /// workflow execution, events, cancellation, and sessions.
@@ -346,11 +346,11 @@ pub struct GoalArgs {
     #[arg(long)]
     pub context: Option<String>,
 
-    /// Optional event payload/reason that triggered this goal loop.
+    /// Optional event payload/reason that triggered this goal pass.
     #[arg(long, hide = true)]
     pub event: Option<String>,
 
-    /// Optional trigger rule or source for this goal loop.
+    /// Optional trigger rule or source for this goal pass.
     #[arg(long, hide = true)]
     pub trigger: Option<String>,
 

@@ -8,6 +8,21 @@ A-PXM is a formal Program Execution Model (PXM) for agentic AI. It treats agent
 workflows not as opaque scripts but as typed dataflow graphs, making them
 visible to compilers, schedulers, and verification tools.
 
+## Workflow Boundary
+
+An APXM workflow is a bounded dataflow graph. Long-running autonomous behavior
+is built by composing explicit passes through host-owned control loops:
+
+```text
+[event] -> [trigger] -> [action/workflow pass] -> [eval] -> [feedback]
+```
+
+The graph owns the visible work for one admitted pass. APXM server owns
+execution IDs, sessions, events, status, cancellation, and evidence. APXM OS or
+an MCP client owns listener policy, dedupe, retry, re-arm, and whether feedback
+starts another admitted pass. This keeps orchestration observable without
+pretending that every workflow must contain a recursive scheduler loop.
+
 ---
 
 ## Learning Path
@@ -18,6 +33,7 @@ visible to compilers, schedulers, and verification tools.
 | 2 | [ais.md](ais.md) | The Agent Instruction Set, typed operations organized by category, latency model, and MLIR dialect. |
 | 3 | [memory.md](memory.md) | A-PXM's three-tier hierarchy (STM / LTM / Episodic) and why each tier exists. |
 | 4 | [processes.md](processes.md) | Agent lifecycle, process/thread distinction, and multi-agent execution semantics. |
+| 5 | [../agent-topology-boundary.md](../agent-topology-boundary.md) | The hard runtime boundary: organization topology is host policy, not APXM execution semantics. |
 
 ---
 
@@ -27,5 +43,5 @@ The theory documented here is realized in the compiler and runtime. For
 implementation details, see the crate READMEs:
 
 - [apxm-compiler](../../crates/compiler/apxm-compiler/README.md): MLIR pipeline, [optimization pipeline](../compiler/pipeline.md), artifact format
-- [apxm-runtime](../../crates/runtime/apxm-runtime/README.md): dataflow scheduler, memory hierarchy, multi-agent
+- [apxm-runtime](../../crates/runtime/apxm-runtime/README.md): dataflow scheduler, memory hierarchy, concrete multi-agent primitives
 - [apxm-ais](../../crates/core/apxm-ais/README.md): 43 AIS operations, attributes, types

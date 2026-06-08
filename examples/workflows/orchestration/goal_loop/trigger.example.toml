@@ -1,0 +1,26 @@
+# Draft APXM OS trigger sidecar for the goal-loop workflow pack.
+# APXM OS owns provider listeners, dedupe, retry, and re-arm behavior.
+
+[[triggers]]
+id = "goal-loop-manual"
+enabled = true
+source = "manual"
+kind = "goal.requested"
+subject = "project:*"
+dedupe_key = "payload.goal"
+dedupe_window_ms = 86400000
+action_type = "workflow"
+target = "workflow.apxmw"
+
+[triggers.inputs]
+policy = "goal_loop.policy.json"
+
+[triggers.policy]
+max_iterations = 5
+timeout_ms = 900000
+max_usd = 2.0
+requires_approval = false
+
+[triggers.inputs_from_event]
+goal = "payload.goal"
+event = "payload"

@@ -414,29 +414,28 @@ fn admit_child_policy(
     request: &CallSkillRequest,
     manifest: &SkillManifest,
 ) -> Result<CapabilityPolicy, RuntimeError> {
-    let parent_policy = CapabilityPolicy::from_manifest_value(
-        request.parent_side_effect_policy.as_deref(),
+    let parent_policy =
+        CapabilityPolicy::from_manifest_value(request.parent_side_effect_policy.as_deref())
+            .ok_or_else(|| RuntimeError::Capability {
+                capability: format!("{CAPABILITY_TAG}:bad_parent_policy:{}", manifest.skill_id),
+                message: format!(
+                    "parent side_effect_policy '{}' is not a recognized capability policy",
+                    request.parent_side_effect_policy.as_deref().unwrap_or("")
+                ),
+            })?;
+
+    let child_policy = CapabilityPolicy::from_manifest_value(
+        manifest.side_effect_policy.as_deref(),
     )
     .ok_or_else(|| RuntimeError::Capability {
-        capability: format!("{CAPABILITY_TAG}:bad_parent_policy:{}", manifest.skill_id),
+        capability: format!("{CAPABILITY_TAG}:bad_child_policy:{}", manifest.skill_id),
         message: format!(
-            "parent side_effect_policy '{}' is not a recognized capability policy",
-            request.parent_side_effect_policy.as_deref().unwrap_or("")
+            "child skill '{}' declares side_effect_policy '{}' which is not a \
+                     recognized capability policy",
+            manifest.skill_id,
+            manifest.side_effect_policy.as_deref().unwrap_or("")
         ),
     })?;
-
-    let child_policy =
-        CapabilityPolicy::from_manifest_value(manifest.side_effect_policy.as_deref()).ok_or_else(
-            || RuntimeError::Capability {
-                capability: format!("{CAPABILITY_TAG}:bad_child_policy:{}", manifest.skill_id),
-                message: format!(
-                    "child skill '{}' declares side_effect_policy '{}' which is not a \
-                     recognized capability policy",
-                    manifest.skill_id,
-                    manifest.side_effect_policy.as_deref().unwrap_or("")
-                ),
-            },
-        )?;
 
     if !parent_policy.admits(&child_policy) {
         return Err(RuntimeError::Capability {
@@ -508,7 +507,12 @@ mod visible_set_tests {
         // Whole-library import.
         assert!(skill_visible(Some("ops"), "deploy", Some("ops"), false));
         // Namespaced import.
-        assert!(skill_visible(Some("ops::deploy"), "deploy", Some("ops"), false));
+        assert!(skill_visible(
+            Some("ops::deploy"),
+            "deploy",
+            Some("ops"),
+            false
+        ));
         // Bare-id import.
         assert!(skill_visible(Some("deploy"), "deploy", Some("ops"), false));
     }

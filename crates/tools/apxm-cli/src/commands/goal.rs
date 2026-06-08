@@ -1,4 +1,4 @@
-//! `apxm goal` - user-facing autonomous orchestration over APXM server MCP.
+//! `apxm goal` - user-facing bounded orchestration over APXM server MCP.
 //!
 //! The CLI stays thin: it builds a bounded worker plan, calls the server-owned
 //! `apxm_orchestrate_start` tool, then follows the existing workflow

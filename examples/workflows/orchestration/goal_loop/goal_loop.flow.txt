@@ -1,0 +1,38 @@
+[goal/event]
+    |
+    v
+[normalize event]
+    |
+    v
+[trigger + policy gate in APXM OS/server]
+    |
+    +--> [duplicate / denied] -> [record ignored]
+    |
+    v
+[planner/controller builds one bounded worker DAG]
+    |
+    v
+[APXM validates graph + worker policy]
+    |
+    v
+[apxm_orchestrate_start for one bounded pass]
+    |
+    v
+[orchestrator_sleep]
+    |
+    v
+[APXM workflow owns worker spawn + fan-in + gate/eval + feedback]
+    |
+    v
+[workflow events/status]
+    |
+    v
+[eval]
+    |
+    +--> [pass]       -> [record evidence + done]
+    |
+    +--> [needs_more] -> [feedback event/task] -> [next admitted pass]
+    |
+    +--> [blocked]    -> [checkpoint / human resume]
+    |
+    +--> [unsafe]     -> [cancel + record failure]

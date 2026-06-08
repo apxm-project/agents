@@ -89,6 +89,7 @@ Read in this order:
 | 2 | [ais](pxm/ais.md)                  | Agent Instruction Set — typed operations, MLIR dialect              |
 | 3 | [memory](pxm/memory.md)            | The STM / LTM / Episodic tiers and first-class memory ops           |
 | 4 | [processes](pxm/processes.md)      | Agent lifecycle, the process/thread distinction                     |
+| 5 | [agent topology boundary](agent-topology-boundary.md) | Hard rule: org topology is policy outside APXM runtime |
 
 ## The Compiler
 
@@ -133,3 +134,8 @@ generation paths. The compiler, runtime, codegen, and bindings should consume th
 shared `apxm-core` surface unless they are explicitly participating in authoring or
 generation. That invariant is what lets the same `.apxmobj` artifact run in any
 APXM environment.
+
+**Topology is policy outside the runtime.** Agent hierarchy and reachability are
+authored by higher layers and enforced before execution is lowered into concrete
+APXM operations. The runtime executes admitted graphs; it does not interpret
+company/org relationships. See [agent topology boundary](agent-topology-boundary.md).

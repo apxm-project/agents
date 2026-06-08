@@ -1,0 +1,92 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "APXM bounded goal pass request",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["task", "workers"],
+  "properties": {
+    "task": {
+      "type": "string",
+      "description": "Concrete task for one bounded orchestration pass."
+    },
+    "context": {
+      "type": "string",
+      "description": "Repository, product, or run context passed to workers."
+    },
+    "event": {
+      "type": "string",
+      "description": "Event or provenance that triggered this pass."
+    },
+    "trigger": {
+      "type": "string",
+      "description": "Trigger rule or reason for this pass."
+    },
+    "workers": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 16,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["id"],
+        "properties": {
+          "id": { "type": "string" },
+          "role": { "type": "string" },
+          "prompt": { "type": "string" },
+          "profile": { "type": "string" },
+          "transport": {
+            "type": "string",
+            "enum": ["deterministic", "acp"]
+          },
+          "depends_on": {
+            "type": "array",
+            "items": { "type": "string" }
+          },
+          "mode": { "type": "string" },
+          "model": { "type": "string" }
+        }
+      }
+    },
+    "supervisor": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "id": { "type": "string" },
+        "prompt": { "type": "string" },
+        "profile": { "type": "string" },
+        "transport": {
+          "type": "string",
+          "enum": ["deterministic", "acp"]
+        },
+        "mode": { "type": "string" },
+        "model": { "type": "string" }
+      }
+    },
+    "workspace": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "mode": {
+          "type": "string",
+          "enum": ["session", "shared", "git_worktree"]
+        },
+        "repo_root": { "type": "string" },
+        "base_ref": { "type": "string" },
+        "cleanup": {
+          "type": "string",
+          "enum": ["keep"]
+        }
+      }
+    },
+    "session_id": { "type": "string" },
+    "admit_capabilities": {
+      "type": "array",
+      "items": { "type": "string" }
+    },
+    "imports": {
+      "type": "array",
+      "items": { "type": "string" }
+    },
+    "dry_run": { "type": "boolean" }
+  }
+}

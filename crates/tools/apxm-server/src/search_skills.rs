@@ -187,14 +187,26 @@ mod tests {
 
     #[test]
     fn manifest_shared_opts_into_global_tier() {
-        assert!(is_shared(true, Path::new("/x/scoped/s"), Some(Path::new("/builtin"))));
+        assert!(is_shared(
+            true,
+            Path::new("/x/scoped/s"),
+            Some(Path::new("/builtin"))
+        ));
     }
 
     #[test]
     fn skills_under_global_root_are_shared() {
         let global = PathBuf::from("/srv/builtin");
-        assert!(is_shared(false, Path::new("/srv/builtin/plan/skill"), Some(&global)));
-        assert!(!is_shared(false, Path::new("/srv/userlibs/triage/skill"), Some(&global)));
+        assert!(is_shared(
+            false,
+            Path::new("/srv/builtin/plan/skill"),
+            Some(&global)
+        ));
+        assert!(!is_shared(
+            false,
+            Path::new("/srv/userlibs/triage/skill"),
+            Some(&global)
+        ));
     }
 
     #[test]

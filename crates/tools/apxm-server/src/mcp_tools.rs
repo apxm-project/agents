@@ -15,7 +15,9 @@ use apxm_core::constants::{memory as memory_const, session::files as session_fil
 use apxm_core::events::{EventEmitter, EventSource, SkillEventProvenance};
 use apxm_core::paths::ApxmPaths;
 use apxm_core::types::Value as RuntimeValue;
-use apxm_core::types::{AISOperationType, DependencyType, Number as RuntimeNumber, OptimizationLevel};
+use apxm_core::types::{
+    AISOperationType, DependencyType, Number as RuntimeNumber, OptimizationLevel,
+};
 use apxm_driver::ServerMcpConfig;
 use apxm_runtime::capability::CapabilitySandboxPreflight;
 use apxm_runtime::{
@@ -2058,8 +2060,14 @@ mod tests {
         // The lowered module carries the plan name and the THINK op so the
         // downstream compiler/admission path sees the same AIR an emitted plan
         // would have produced.
-        assert!(air.contains("caller_plan"), "AIR should name the plan: {air}");
-        assert!(air.contains("think"), "AIR should contain the think op: {air}");
+        assert!(
+            air.contains("caller_plan"),
+            "AIR should name the plan: {air}"
+        );
+        assert!(
+            air.contains("think"),
+            "AIR should contain the think op: {air}"
+        );
     }
 
     #[test]
