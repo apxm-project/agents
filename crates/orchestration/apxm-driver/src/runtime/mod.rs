@@ -234,6 +234,30 @@ impl RuntimeExecutor {
     }
 }
 
+/// Install the driver workflow-spawn bridge on a server-owned runtime.
+///
+/// APXM server constructs `Runtime` directly instead of going through
+/// [`RuntimeExecutor`], but server/MCP graph execution still needs the same
+/// `WORKFLOW_SPAWN` host bridge as the CLI. The bridge keeps only a weak handle
+/// back to the runtime to avoid a reference cycle.
+pub fn install_workflow_spawner(
+    runtime: &mut Arc<Runtime>,
+    configured_emitter: Option<Arc<dyn ExecutionEventEmitter>>,
+) -> Result<(), apxm_runtime::RuntimeError> {
+    let workflow_spawner = Arc::new(DriverWorkflowSpawner::new(configured_emitter));
+    {
+        let runtime = Arc::get_mut(runtime).ok_or_else(|| {
+            apxm_runtime::RuntimeError::State(
+                "cannot install workflow spawner after runtime has been shared".to_string(),
+            )
+        })?;
+        runtime.set_workflow_spawner(workflow_spawner.clone());
+    }
+    let runtime_weak = Arc::downgrade(runtime);
+    workflow_spawner.attach_runtime(runtime_weak);
+    Ok(())
+}
+
 fn build_middlewares(configs: &[MiddlewareConfig]) -> Vec<Arc<dyn OperationMiddleware>> {
     configs
         .iter()
@@ -247,4 +271,101 @@ fn build_middlewares(configs: &[MiddlewareConfig]) -> Vec<Arc<dyn OperationMiddl
             }
         })
         .collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use apxm_artifact::Artifact;
+    use apxm_compiler::{Context, Pipeline};
+
+    const CONST_GRAPH: &str = r#"module {
+  func.func @const_graph() -> !ais.token attributes {ais.entry} {
+    %value = ais.const_str "ok" : !ais.token
+    func.return %value : !ais.token
+  }
+}
+"#;
+
+    #[tokio::test]
+    async fn installed_workflow_spawner_executes_workflow_spawn_graph() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let graph_path = temp.path().join("child.air");
+        let workflow_path = temp.path().join("child.apxmw");
+        std::fs::write(&graph_path, CONST_GRAPH).expect("write graph");
+        std::fs::write(
+            &workflow_path,
+            serde_json::to_vec_pretty(&serde_json::json!({
+                "name": "child",
+                "graphs": [
+                    {"id": "const_step", "path": "child.air"}
+                ],
+                "output": "{{const_step.output}}"
+            }))
+            .expect("serialize workflow"),
+        )
+        .expect("write workflow");
+
+        let context = Context::new().expect("compiler context");
+        let pipeline = Pipeline::new(&context);
+        let workflow_target = air_string(workflow_path.to_string_lossy().as_ref());
+        let air = format!(
+            r#"module {{
+  func.func @server_workflow_spawn() -> !ais.token attributes {{ais.entry}} {{
+    %child = ais.workflow_spawn "workflow_path" "{workflow_target}" {{await_result = true}} : !ais.token
+    func.return %child : !ais.token
+  }}
+}}
+"#
+        );
+        let module = pipeline.compile(&air).expect("compile workflow spawn air");
+        let artifact = Artifact::from_bytes(
+            &module
+                .generate_artifact_bytes()
+                .expect("generate artifact bytes"),
+        )
+        .expect("decode artifact");
+
+        let runtime = Runtime::new(apxm_runtime::RuntimeConfig::in_memory())
+            .await
+            .expect("runtime");
+        let mut runtime = Arc::new(runtime);
+        install_workflow_spawner(&mut runtime, None).expect("install workflow spawner");
+
+        let parent_session_dir = temp.path().join("sessions").join("parent");
+        std::fs::create_dir_all(&parent_session_dir).expect("create parent session");
+        let execution = runtime
+            .execute_artifact_with_session_and_emitter(
+                artifact,
+                Vec::new(),
+                Some("parent".to_string()),
+                None,
+                Some(parent_session_dir.to_string_lossy().to_string()),
+            )
+            .await
+            .expect("execute workflow spawn");
+        let output = execution
+            .results
+            .values()
+            .last()
+            .expect("workflow spawn result")
+            .to_json()
+            .expect("result json");
+
+        assert_eq!(output["result"], "ok");
+        let child_session_dir = output["session_dir"].as_str().expect("session_dir");
+        assert!(
+            child_session_dir.contains("workflow-child-"),
+            "child session dir: {child_session_dir}"
+        );
+        assert!(
+            std::path::Path::new(child_session_dir)
+                .join("results.json")
+                .is_file()
+        );
+    }
+
+    fn air_string(value: &str) -> String {
+        value.replace('\\', "\\\\").replace('"', "\\\"")
+    }
 }
