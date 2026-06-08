@@ -250,6 +250,11 @@ fn execute_workflow_file<'a>(
             .to_path_buf();
         let phases = execution_phases(&def.graphs)?;
         let workflow_session_dir = create_workflow_session_dir(session_base_dir, &def.name)?;
+        apxm_runtime::workflow::write_workflow_session_started(
+            &workflow_session_dir,
+            &def.name,
+            def.graphs.len(),
+        )?;
 
         let start = Instant::now();
         let mut step_outputs: HashMap<String, String> = HashMap::new();
@@ -394,16 +399,16 @@ fn execute_workflow_file<'a>(
             .map(|tmpl| apxm_runtime::workflow::resolve(tmpl, &step_outputs, &params));
         let status = workflow_status_from_steps(&step_results);
 
-        Ok((
-            apxm_runtime::workflow::WorkflowResult {
-                workflow_name: def.name,
-                status,
-                step_results,
-                output,
-                duration_ms: start.elapsed().as_millis() as u64,
-            },
-            workflow_session_dir,
-        ))
+        let result = apxm_runtime::workflow::WorkflowResult {
+            workflow_name: def.name,
+            status,
+            step_results,
+            output,
+            duration_ms: start.elapsed().as_millis() as u64,
+        };
+        apxm_runtime::workflow::write_workflow_session_finished(&workflow_session_dir, &result)?;
+
+        Ok((result, workflow_session_dir))
     })
 }
 

@@ -1696,6 +1696,10 @@ fn workflow_run_nested_workflow_uses_explicit_root_for_parent_and_child() {
     let parent_session_dir = Path::new(body["session_dir"].as_str().unwrap());
     assert!(parent_session_dir.is_dir());
     assert_eq!(parent_session_dir.parent().unwrap(), session_root);
+    assert!(parent_session_dir.join("manifest.json").is_file());
+    assert!(parent_session_dir.join("live.json").is_file());
+    assert!(parent_session_dir.join("results.json").is_file());
+    assert!(parent_session_dir.join("metrics.json").is_file());
     assert_eq!(body["output"], "ok");
 
     let child_session_dir = Path::new(
@@ -1705,6 +1709,56 @@ fn workflow_run_nested_workflow_uses_explicit_root_for_parent_and_child() {
     );
     assert!(child_session_dir.is_dir());
     assert_eq!(child_session_dir.parent().unwrap(), parent_session_dir);
+
+    let list_out = apxm()
+        .current_dir(workflow_root)
+        .args([
+            "--json",
+            "session",
+            "list",
+            "--limit",
+            "10",
+            "--session-root",
+            session_root.to_str().unwrap(),
+        ])
+        .output()
+        .unwrap();
+    assert!(
+        list_out.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&list_out.stderr)
+    );
+    let sessions: serde_json::Value = serde_json::from_slice(&list_out.stdout).unwrap();
+    let sessions = sessions.as_array().unwrap();
+    assert_eq!(sessions.len(), 1);
+    assert_eq!(
+        sessions[0]["execution_id"],
+        parent_session_dir.file_name().unwrap().to_str().unwrap()
+    );
+
+    let inspect_out = apxm()
+        .current_dir(workflow_root)
+        .args([
+            "--json",
+            "session",
+            "inspect",
+            parent_session_dir.to_str().unwrap(),
+        ])
+        .output()
+        .unwrap();
+    assert!(
+        inspect_out.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&inspect_out.stderr)
+    );
+    let inspected: serde_json::Value = serde_json::from_slice(&inspect_out.stdout).unwrap();
+    assert_eq!(inspected["manifest"]["graph_name"], "parent");
+    assert_eq!(inspected["results"]["workflow_name"], "parent");
+    assert_eq!(inspected["results"]["output"], "ok");
+    assert_eq!(
+        inspected["results"]["step_results"]["child_workflow"]["session_dir"],
+        child_session_dir.to_str().unwrap()
+    );
 }
 
 // ─── doctor ────────────────────────────────────────────────────────────────

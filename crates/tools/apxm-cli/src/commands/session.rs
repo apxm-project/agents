@@ -164,6 +164,9 @@ pub fn session_inspect_command(session_id: String, json: bool) -> Result<()> {
 
     let nodes_dir = session_path.join(constants::session::files::NODES_DIR);
     let mut node_info = Vec::new();
+    let live = read_json_if_present(&session_path.join(constants::session::files::LIVE))?;
+    let results = read_json_if_present(&session_path.join(constants::session::files::RESULTS))?;
+    let metrics = read_json_if_present(&session_path.join(constants::session::files::METRICS))?;
 
     if nodes_dir.exists() {
         for entry in std::fs::read_dir(&nodes_dir)? {
@@ -188,6 +191,9 @@ pub fn session_inspect_command(session_id: String, json: bool) -> Result<()> {
         let output = serde_json::json!({
             "manifest": manifest,
             "nodes": node_info,
+            "live": live,
+            "results": results,
+            "metrics": metrics,
             "path": session_path.display().to_string(),
         });
         println!("{}", serde_json::to_string_pretty(&output)?);
@@ -222,8 +228,38 @@ pub fn session_inspect_command(session_id: String, json: bool) -> Result<()> {
                 }
             }
         }
+        if let Some(results) = &results
+            && let Some(step_results) = results.get("step_results").and_then(|v| v.as_object())
+        {
+            println!();
+            println!("Workflow steps:");
+            for (step_id, step) in step_results {
+                let status = step
+                    .get("status")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("unknown");
+                let session_dir = step
+                    .get("session_dir")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("");
+                println!("  {} | {}", step_id, status);
+                if !session_dir.is_empty() {
+                    println!("    Session: {}", session_dir);
+                }
+            }
+        }
     }
     Ok(())
+}
+
+fn read_json_if_present(path: &Path) -> Result<Option<serde_json::Value>> {
+    if !path.is_file() {
+        return Ok(None);
+    }
+    let text = std::fs::read_to_string(path)?;
+    let value = serde_json::from_str(&text)
+        .with_context(|| format!("Failed to parse JSON file {}", path.display()))?;
+    Ok(Some(value))
 }
 
 fn resolve_session_path(session_id: &str) -> Result<PathBuf> {

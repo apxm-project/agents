@@ -238,8 +238,17 @@ impl DriverWorkflowSpawner {
             })?
             .to_path_buf();
         let workflow_session_dir = create_workflow_session_dir(session_base_dir, &def.name)?;
+        apxm_runtime::workflow::write_workflow_session_started(
+            &workflow_session_dir,
+            &def.name,
+            def.graphs.len(),
+        )
+        .map_err(|e| {
+            RuntimeError::State(format!("Failed to write workflow session start files: {e}"))
+        })?;
         let mut step_outputs: HashMap<String, String> = HashMap::new();
         let mut step_results = HashMap::new();
+        let workflow_start = std::time::Instant::now();
 
         for phase in execution_phases(&def.graphs)
             .map_err(|e| RuntimeError::State(format!("Workflow planning failed: {e}")))?
@@ -334,8 +343,17 @@ impl DriverWorkflowSpawner {
                 .output
                 .as_ref()
                 .map(|template| resolve(template, &step_outputs, &param_values)),
-            duration_ms: 0,
+            duration_ms: workflow_start.elapsed().as_millis() as u64,
         };
+        apxm_runtime::workflow::write_workflow_session_finished(
+            &workflow_session_dir,
+            &workflow_result,
+        )
+        .map_err(|e| {
+            RuntimeError::State(format!(
+                "Failed to write workflow session result files: {e}"
+            ))
+        })?;
 
         match workflow_result.status {
             apxm_runtime::workflow::WorkflowStatus::Success => Ok(WorkflowSpawnResult {
