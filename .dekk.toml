@@ -77,6 +77,21 @@ validate = { run = "apxm validate", description = "Validate graph against AIS co
 analyze = { run = "apxm analyze", description = "Analyze parallelism and critical path", group = "Authoring" }
 explain = { run = "apxm explain", description = "Human-readable summary of a graph", group = "Authoring" }
 
+[commands.workflow]
+description = "Validate, analyze, run, and follow APXM workflow files"
+group = "Orchestration"
+execute = { run = "apxm workflow run", description = "Execute a workflow file" }
+validate = { run = "apxm workflow validate", description = "Validate a workflow file" }
+analyze = { run = "apxm workflow analyze", description = "Show workflow phases and critical path" }
+
+[commands.session]
+description = "Inspect APXM execution session outputs"
+group = "Observability"
+list = { run = "apxm session list", description = "List execution sessions" }
+inspect = { run = "apxm session inspect", description = "Show detailed information about a session" }
+diff = { run = "apxm session diff", description = "Compare two sessions" }
+clean = { run = "apxm session clean", description = "Clean old sessions" }
+
 [commands.backend]
 description = "Manage inference backends (cloud/onprem/local)"
 group = "Configuration"
