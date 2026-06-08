@@ -76,6 +76,7 @@ watch = { run = "apxm watch", description = "Stream a live run's dispatch tree f
 validate = { run = "apxm validate", description = "Validate graph against AIS contract", skill = true, group = "Authoring" }
 analyze = { run = "apxm analyze", description = "Analyze parallelism and critical path", group = "Authoring" }
 explain = { run = "apxm explain", description = "Human-readable summary of a graph", group = "Authoring" }
+goal = { run = "apxm goal", description = "Start, follow, inspect, or cancel a bounded APXM goal orchestration run", group = "Orchestration" }
 
 [commands.workflow]
 description = "Validate, analyze, run, and follow APXM workflow files"
