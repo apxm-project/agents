@@ -960,6 +960,10 @@ fn path_to_string(path: PathBuf) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::collections::VecDeque;
+    use std::sync::{Arc, Mutex};
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+    use tokio::net::TcpListener;
 
     fn args_with_task() -> GoalArgs {
         GoalArgs {
@@ -1063,6 +1067,125 @@ mod tests {
         assert_eq!(request["admit_capabilities"], json!(["SPAWN_AGENT"]));
     }
 
+    #[tokio::test]
+    async fn goal_follow_pages_events_until_wake() {
+        let server = MockMcpServer::start(vec![
+            ExpectedMcpCall::new(
+                TOOL_ORCHESTRATE_START,
+                Some(json!({ "task": "ship" })),
+                json!({
+                    "execution_id": "exec-1",
+                    "orchestration": {
+                        "terminal_event_kinds": ["orchestrator_wake", "execute_complete", "error", "turn_aborted"]
+                    }
+                }),
+            ),
+            ExpectedMcpCall::new(
+                TOOL_WORKFLOW_EVENTS,
+                Some(json!({ "execution_id": "exec-1", "since": 0, "limit": 100 })),
+                json!({
+                    "events": [
+                        { "meta": { "seq": 0 }, "payload": { "kind": "workflow_started", "workflow_name": "goal", "step_count": 1 } }
+                    ],
+                    "next_seq": 1
+                }),
+            ),
+            ExpectedMcpCall::new(
+                TOOL_WORKFLOW_STATUS,
+                Some(json!({ "execution_id": "exec-1" })),
+                json!({ "execution_id": "exec-1", "status": "running" }),
+            ),
+            ExpectedMcpCall::new(
+                TOOL_WORKFLOW_EVENTS,
+                Some(json!({ "execution_id": "exec-1", "since": 1, "limit": 100 })),
+                json!({
+                    "events": [
+                        { "meta": { "seq": 1 }, "payload": { "kind": "orchestrator_wake", "outcome": "done", "terminal_event": "workflow_finished" } }
+                    ],
+                    "next_seq": 2
+                }),
+            ),
+            ExpectedMcpCall::new(
+                TOOL_WORKFLOW_STATUS,
+                Some(json!({ "execution_id": "exec-1" })),
+                json!({ "execution_id": "exec-1", "status": "succeeded" }),
+            ),
+        ])
+        .await;
+        let client = reqwest::Client::builder().build().expect("client");
+
+        let started = call_mcp_tool(
+            &client,
+            &server.base,
+            TOOL_ORCHESTRATE_START,
+            json!({ "task": "ship" }),
+        )
+        .await
+        .expect("start");
+        let follow = follow_goal(
+            &client,
+            &server.base,
+            "exec-1",
+            terminal_kinds(&started),
+            100,
+            Duration::from_millis(1),
+            Some(Duration::from_secs(2)),
+            false,
+        )
+        .await
+        .expect("follow");
+
+        assert_eq!(follow.events_seen, 2);
+        assert_eq!(
+            follow.terminal_event_kind.as_deref(),
+            Some("orchestrator_wake")
+        );
+        assert_eq!(follow.status["status"], "succeeded");
+        server.finish().await;
+    }
+
+    #[tokio::test]
+    async fn goal_status_events_and_cancel_call_native_workflow_tools() {
+        let server = MockMcpServer::start(vec![
+            ExpectedMcpCall::new(
+                TOOL_WORKFLOW_STATUS,
+                Some(json!({ "execution_id": "exec-2" })),
+                json!({ "execution_id": "exec-2", "status": "running" }),
+            ),
+            ExpectedMcpCall::new(
+                TOOL_WORKFLOW_EVENTS,
+                Some(json!({ "execution_id": "exec-2", "since": 0, "limit": 50 })),
+                json!({ "events": [], "next_seq": 0 }),
+            ),
+            ExpectedMcpCall::new(
+                TOOL_WORKFLOW_CANCEL,
+                Some(json!({ "execution_id": "exec-2" })),
+                json!({ "execution_id": "exec-2", "status": "cancelling" }),
+            ),
+        ])
+        .await;
+        let client = reqwest::Client::builder().build().expect("client");
+
+        let status = workflow_status(&client, &server.base, "exec-2")
+            .await
+            .expect("status");
+        assert_eq!(status["status"], "running");
+        let events = workflow_events(&client, &server.base, "exec-2", 0, 50)
+            .await
+            .expect("events");
+        assert_eq!(events["events"], json!([]));
+        let cancelled = call_mcp_tool(
+            &client,
+            &server.base,
+            TOOL_WORKFLOW_CANCEL,
+            json!({ "execution_id": "exec-2" }),
+        )
+        .await
+        .expect("cancel");
+        assert_eq!(cancelled["status"], "cancelling");
+        server.finish().await;
+    }
+
     #[test]
     fn parses_custom_worker_and_dependencies() {
         let mut args = args_with_task();
@@ -1092,5 +1215,121 @@ mod tests {
         let reviewer = workers.iter().find(|worker| worker.id == "review").unwrap();
         assert_eq!(reviewer.profile.as_deref(), Some("profile-review"));
         assert_eq!(reviewer.depends_on, vec!["build"]);
+    }
+
+    struct ExpectedMcpCall {
+        tool: &'static str,
+        args: Option<JsonValue>,
+        response: JsonValue,
+    }
+
+    impl ExpectedMcpCall {
+        fn new(tool: &'static str, args: Option<JsonValue>, response: JsonValue) -> Self {
+            Self {
+                tool,
+                args,
+                response,
+            }
+        }
+    }
+
+    struct MockMcpServer {
+        base: String,
+        task: tokio::task::JoinHandle<()>,
+    }
+
+    impl MockMcpServer {
+        async fn start(calls: Vec<ExpectedMcpCall>) -> Self {
+            let listener = TcpListener::bind("127.0.0.1:0").await.expect("bind");
+            let base = format!("http://{}", listener.local_addr().expect("local addr"));
+            let calls = Arc::new(Mutex::new(VecDeque::from(calls)));
+            let task_calls = Arc::clone(&calls);
+            let task = tokio::spawn(async move {
+                loop {
+                    if task_calls.lock().expect("calls lock").is_empty() {
+                        break;
+                    }
+                    let (mut stream, _) = listener.accept().await.expect("accept");
+                    let request = read_http_json(&mut stream).await;
+                    let expected = task_calls
+                        .lock()
+                        .expect("calls lock")
+                        .pop_front()
+                        .expect("expected call");
+                    assert_eq!(request["params"]["name"], expected.tool);
+                    if let Some(args) = expected.args {
+                        assert_eq!(request["params"]["arguments"], args);
+                    }
+                    write_mcp_response(&mut stream, expected.response).await;
+                }
+            });
+            Self { base, task }
+        }
+
+        async fn finish(self) {
+            self.task.await.expect("mock server task");
+        }
+    }
+
+    async fn read_http_json(stream: &mut tokio::net::TcpStream) -> JsonValue {
+        let mut buffer = Vec::new();
+        let mut chunk = [0u8; 1024];
+        loop {
+            let read = stream.read(&mut chunk).await.expect("read request");
+            assert!(read > 0, "connection closed before complete request");
+            buffer.extend_from_slice(&chunk[..read]);
+            if let Some(header_end) = http_header_end(&buffer) {
+                let headers = std::str::from_utf8(&buffer[..header_end]).expect("headers utf8");
+                let content_len = http_content_length(headers);
+                if buffer.len() >= header_end + content_len {
+                    let body = &buffer[header_end..header_end + content_len];
+                    return serde_json::from_slice(body).expect("request JSON");
+                }
+            }
+        }
+    }
+
+    async fn write_mcp_response(stream: &mut tokio::net::TcpStream, response: JsonValue) {
+        let body = json!({
+            "jsonrpc": "2.0",
+            "id": 1,
+            "result": {
+                "content": [
+                    {
+                        "type": "text",
+                        "text": serde_json::to_string(&response).expect("response text")
+                    }
+                ],
+                "isError": false
+            }
+        })
+        .to_string();
+        let response = format!(
+            "HTTP/1.1 200 OK\r\ncontent-type: application/json\r\ncontent-length: {}\r\nconnection: close\r\n\r\n{}",
+            body.len(),
+            body
+        );
+        stream
+            .write_all(response.as_bytes())
+            .await
+            .expect("write response");
+    }
+
+    fn http_header_end(buffer: &[u8]) -> Option<usize> {
+        buffer
+            .windows(4)
+            .position(|window| window == b"\r\n\r\n")
+            .map(|index| index + 4)
+    }
+
+    fn http_content_length(headers: &str) -> usize {
+        headers
+            .lines()
+            .find_map(|line| {
+                let (name, value) = line.split_once(':')?;
+                name.eq_ignore_ascii_case("content-length")
+                    .then(|| value.trim().parse().expect("content-length"))
+            })
+            .expect("content-length header")
     }
 }

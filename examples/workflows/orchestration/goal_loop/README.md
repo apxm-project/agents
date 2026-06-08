@@ -37,8 +37,10 @@ apxm_orchestrate_start({ task, context, event, trigger, workers, workspace, ... 
 That call remains one explicit bounded worker DAG. If `eval` returns
 `needs_more`, the controller or APXM OS starts another admitted pass with a new
 request; it does not recursively prompt hidden workers outside APXM. The
-deterministic AIR files label these transitions for testing; production policy
-admission, dedupe, checkpoint, cancellation, and re-arm live in APXM OS/server.
+deterministic AIR files label these transitions for testing. APXM server owns
+execution IDs, session IDs, retained events, cancellation, worker admission, and
+evidence for each pass; APXM OS or the calling controller owns external trigger
+listeners, dedupe, retry, and re-arm behavior.
 
 ## Run The Deterministic Pack
 
@@ -69,7 +71,7 @@ IDs with registered APXM worker profiles and granting:
 The schema in `pass_request.schema.json` documents the expected shape for one
 bounded pass. `goal_loop.policy.json` documents the outer loop limits:
 iteration budget, timeout, budget, cancellation, and checkpoint behavior that
-APXM OS/server must enforce when it admits and re-arms passes.
+the controller must enforce while APXM server executes each admitted pass.
 
 ## Boundary
 

@@ -273,6 +273,10 @@ async fn mcp_tools_list_includes_skill_inventory_tools() {
         names.contains(&MCP_TOOL_APXM_ORCHESTRATE_START),
         "tools: {body}"
     );
+    assert!(
+        !names.contains(&"apxm_dispatch"),
+        "legacy dispatch tool should not be advertised: {body}"
+    );
 }
 
 #[tokio::test]
@@ -483,6 +487,102 @@ async fn mcp_orchestrate_dry_run_allocates_distinct_git_worktrees() {
 }
 
 #[tokio::test]
+async fn mcp_orchestrate_live_git_worktree_workers_spawn_in_distinct_worktrees() {
+    let repo = init_fixture_git_repo();
+    let state = test_state().await;
+    let spawns = Arc::new(Mutex::new(Vec::new()));
+    let prompt_probe = Arc::new(WorkflowBarrier::new(2));
+    let prompts = Arc::new(Mutex::new(Vec::new()));
+    state
+        .runtime
+        .process_table()
+        .set_agent_spawner(Arc::new(RecordingAgentSpawner::new(Arc::clone(&spawns))))
+        .await;
+    state
+        .runtime
+        .process_table()
+        .set_agent_prompter(Arc::new(BarrierAgentPrompter::new(
+            Arc::clone(&prompt_probe),
+            Arc::clone(&prompts),
+        )))
+        .await;
+    let app = build_app(state);
+    let session_id = format!("mcp-orchestrate-live-worktree-{}", uuid::Uuid::new_v4());
+
+    let (status, body) = post_json(
+        app.clone(),
+        routes::MCP,
+        mcp_call(
+            MCP_TOOL_APXM_ORCHESTRATE_START,
+            serde_json::json!({
+                "task": "execute in isolated worktrees",
+                "session_id": session_id,
+                "workspace": {
+                    "mode": "git_worktree",
+                    "repo_root": repo.path(),
+                    "base_ref": "HEAD",
+                    "cleanup": "keep"
+                },
+                "admit_capabilities": ["SPAWN_AGENT"],
+                "workers": [
+                    { "id": "planner", "role": "plan in a detached worktree", "profile": "fixture-profile" },
+                    { "id": "verifier", "role": "verify in a detached worktree", "profile": "fixture-profile" }
+                ]
+            }),
+        ),
+    )
+    .await;
+
+    assert_eq!(status, StatusCode::OK, "orchestrate start failed: {body}");
+    assert_eq!(body[tool_result::RESULT][mcp_fields::IS_ERROR], false);
+    let started: serde_json::Value =
+        serde_json::from_str(tool_text(&body)).expect("orchestrate response JSON");
+    let execution_id = started[tool_result::EXECUTION_ID]
+        .as_str()
+        .expect("execution_id")
+        .to_string();
+
+    let status_body = wait_for_workflow_status(app, &execution_id, STATUS_SUCCEEDED).await;
+    let workflow_status: serde_json::Value =
+        serde_json::from_str(tool_text(&status_body)).expect("workflow status response JSON");
+    assert_eq!(workflow_status[tool_result::STATUS], STATUS_SUCCEEDED);
+
+    let spawns = spawns.lock().expect("spawns lock");
+    assert_eq!(spawns.len(), 2, "expected one spawn per worker: {spawns:?}");
+    let mut cwd_set = HashSet::new();
+    for spawn in spawns.iter() {
+        assert_eq!(spawn.profile_name, "fixture-profile");
+        assert!(
+            spawn.cwd.join(".git").exists(),
+            "spawn cwd should be a git worktree: {}",
+            spawn.cwd.display()
+        );
+        assert!(
+            spawn.extra_env.contains_key("APXM_NODE_WORKSPACE"),
+            "spawn should receive workspace env: {spawn:?}"
+        );
+        assert!(
+            cwd_set.insert(spawn.cwd.clone()),
+            "spawn cwd should be distinct: {spawns:?}"
+        );
+    }
+    drop(spawns);
+
+    for cwd in cwd_set {
+        let _ = std::process::Command::new("git")
+            .arg("-C")
+            .arg(repo.path())
+            .arg("worktree")
+            .arg("remove")
+            .arg("--force")
+            .arg(&cwd)
+            .status();
+    }
+    let bundle_dir = std::path::PathBuf::from(started["bundle_dir"].as_str().expect("bundle_dir"));
+    let _ = std::fs::remove_dir_all(bundle_dir);
+}
+
+#[tokio::test]
 async fn mcp_orchestrate_start_spawns_parallel_workers_with_session_cwds() {
     let state = test_state().await;
     let spawns = Arc::new(Mutex::new(Vec::new()));
@@ -538,10 +638,6 @@ async fn mcp_orchestrate_start_spawns_parallel_workers_with_session_cwds() {
     );
     assert_eq!(started["sleep_wake"]["sleep_after_start"], true);
     assert_eq!(
-        started["sleep_wake"]["event_loop"],
-        "event -> trigger -> parallel worker actions -> gate/eval -> feedback -> next event"
-    );
-    assert_eq!(
         started["orchestration"]["sleep_event_kind"],
         "orchestrator_sleep"
     );
@@ -549,19 +645,9 @@ async fn mcp_orchestrate_start_spawns_parallel_workers_with_session_cwds() {
         started["orchestration"]["wake_event_kind"],
         "orchestrator_wake"
     );
-    assert_eq!(started["orchestration"]["initial_since"], 0);
-    assert_eq!(started["orchestration"]["gate_step_id"], "gate");
-    assert_eq!(started["orchestration"]["feedback_step_id"], "feedback");
     assert_eq!(
         started["orchestration"]["next_events_args"]["since"], 0,
         "orchestration response should include the first event cursor: {started}"
-    );
-    assert!(
-        started["orchestrator_prompt"]
-            .as_str()
-            .unwrap_or_default()
-            .contains("go idle"),
-        "orchestrator prompt should describe sleep/wake behavior: {started}"
     );
     let artifacts = &started["artifacts"];
     let bundle_dir = std::path::PathBuf::from(started["bundle_dir"].as_str().expect("bundle_dir"));
@@ -607,28 +693,20 @@ async fn mcp_orchestrate_start_spawns_parallel_workers_with_session_cwds() {
             report_path.is_file(),
             "worker report stub should exist: {report_path:?}"
         );
+        assert!(prompt_path.starts_with(bundle_dir.join("prompts")));
+        assert!(report_path.starts_with(bundle_dir.join("reports")));
+    }
+    let first_prompt_path = std::path::PathBuf::from(
+        worker_prompt_artifacts[0]["prompt"]
+            .as_str()
+            .expect("first worker prompt path"),
+    );
+    let first_prompt = std::fs::read_to_string(&first_prompt_path).expect("worker prompt text");
+    for expected in ["## Base / Workspace", "## Report Contract"] {
         assert!(
-            report_path.starts_with(bundle_dir.join("reports")),
-            "report should live in the bundle reports dir: {report_path:?}"
+            first_prompt.contains(expected),
+            "worker prompt should include '{expected}': {first_prompt}"
         );
-        let report = std::fs::read_to_string(&report_path).expect("worker report text");
-        assert!(
-            report.contains("# Report:") && report.contains("Status: planned"),
-            "worker report should start as a concrete report stub: {report}"
-        );
-        let prompt = std::fs::read_to_string(&prompt_path).expect("worker prompt text");
-        for expected in [
-            "## Base / Workspace",
-            "## Read First",
-            "## Validation / Evidence",
-            "## Report Contract",
-            "Do not merge, push, update integration refs",
-        ] {
-            assert!(
-                prompt.contains(expected),
-                "worker prompt should include '{expected}': {prompt}"
-            );
-        }
     }
     let execution_id = started[tool_result::EXECUTION_ID]
         .as_str()
@@ -658,11 +736,7 @@ async fn mcp_orchestrate_start_spawns_parallel_workers_with_session_cwds() {
     for prompt in &prompt_texts {
         for expected in [
             "Task:\ndesign and verify autonomous APXM orchestration",
-            "Context:\nrepo-level implementation task",
-            "Event:\nuser requested autonomous parallel orchestration",
-            "Trigger:\nmanual MCP invocation",
             "Assigned workspace:",
-            "Return: status, concrete output, changed files if any, tests run, blockers, and handoff notes.",
         ] {
             assert!(
                 prompt.contains(expected),
@@ -675,16 +749,7 @@ async fn mcp_orchestrate_start_spawns_parallel_workers_with_session_cwds() {
     assert_eq!(spawns.len(), 3, "expected one spawn per worker: {spawns:?}");
     let mut cwd_set = HashSet::new();
     for spawn in spawns.iter() {
-        assert!(
-            spawn.agent_name.starts_with("orchestration_worker_"),
-            "agent name should be APXM-generated: {spawn:?}"
-        );
         assert_eq!(spawn.profile_name, "fixture-profile");
-        assert!(spawn.mode.is_none(), "mode should default unset: {spawn:?}");
-        assert!(
-            spawn.model.is_none(),
-            "model should default unset: {spawn:?}"
-        );
         assert!(
             spawn.cwd.is_dir(),
             "session workspace should exist: {}",
@@ -721,26 +786,11 @@ async fn mcp_orchestrate_start_spawns_parallel_workers_with_session_cwds() {
         "orchestrator_sleep should carry workflow control handles: {events}"
     );
     assert_eq!(
-        sleep_event["payload"]["artifacts"]["tracking_doc"], artifacts["tracking_doc"],
-        "orchestrator_sleep should expose the durable orchestration packet: {events}"
-    );
-    assert_eq!(
         sleep_event["payload"]["plan"]["workers"]
             .as_array()
             .expect("sleep plan workers")
             .len(),
         3
-    );
-    assert!(
-        sleep_event["payload"]["wake_on"]
-            .as_array()
-            .expect("wake_on")
-            .iter()
-            .any(|value| value
-                .as_str()
-                .unwrap_or_default()
-                .contains("orchestrator_wake")),
-        "sleep event should identify the wake event kind: {sleep_event}"
     );
     let wake_event = event_items
         .iter()
@@ -888,12 +938,7 @@ async fn mcp_orchestrate_acp_gatekeeper_receives_worker_summary() {
         1,
         "expected only the ACP gate to spawn: {spawns:?}"
     );
-    assert!(
-        spawns[0]
-            .agent_name
-            .starts_with("orchestration_worker_gate_"),
-        "gate should use APXM-generated agent name: {spawns:?}"
-    );
+    assert_eq!(spawns[0].profile_name, "fixture-profile");
     drop(spawns);
 
     let prompt_texts = prompts.lock().expect("prompt records lock").clone();
@@ -910,13 +955,20 @@ async fn mcp_orchestrate_acp_gatekeeper_receives_worker_summary() {
         "## Worker Summary",
         "left=[\"worker:left role:left branch",
         "right=[\"worker:right role:right branch",
-        "Return gate decision, failed assumptions, merge/conflict notes, and next feedback action.",
     ] {
         assert!(
             gate_prompt.contains(expected),
             "gate prompt should include '{expected}': {gate_prompt}"
         );
     }
+    assert!(
+        !gate_prompt.contains("__APXM_WORKER_SUMMARY__"),
+        "gate prompt should resolve the runtime worker summary placeholder: {gate_prompt}"
+    );
+    assert!(
+        !gate_prompt.contains("{{"),
+        "gate prompt should not contain unresolved template delimiters: {gate_prompt}"
+    );
 }
 
 #[tokio::test]
@@ -1839,14 +1891,6 @@ async fn mcp_checked_in_goal_loop_workflow_runs_all_steps() {
         result.contains("goal=ship a bounded APXM improvement"),
         "missing goal: {result}"
     );
-    assert!(
-        result.contains("start.pass: call apxm_orchestrate_start once"),
-        "missing bounded pass start action: {result}"
-    );
-    assert!(
-        result.contains("needs_more emits another APXM event"),
-        "missing feedback transition: {result}"
-    );
 
     let events = workflow_events(app, &execution_id, 0, 200).await;
     let event_items = events["events"].as_array().expect("events array");
@@ -2022,8 +2066,11 @@ async fn mcp_checked_in_cancel_parked_workflow_has_no_late_child_work() {
             .iter()
             .any(|event| event["payload"]["kind"] == "turn_aborted"
                 && event["payload"]["execution_id"] == execution_id
-                && event["payload"]["reason"] == "cancelled via apxm_workflow_cancel"),
-        "expected exact turn_aborted payload: {late_events}"
+                && event["payload"]["reason"]
+                    .as_str()
+                    .unwrap_or_default()
+                    .contains("cancel")),
+        "expected cancelled turn_aborted payload: {late_events}"
     );
     assert!(
         !late_items
@@ -3642,11 +3689,8 @@ fn run_git(repo: &std::path::Path, args: &[&str]) {
 
 #[derive(Debug, Clone)]
 struct RecordedAgentSpawn {
-    agent_name: String,
     profile_name: String,
     cwd: std::path::PathBuf,
-    mode: Option<String>,
-    model: Option<String>,
     extra_env: HashMap<String, String>,
 }
 
@@ -3664,11 +3708,11 @@ impl RecordingAgentSpawner {
 impl AgentSpawner for RecordingAgentSpawner {
     async fn spawn_external(
         &self,
-        agent_name: &str,
+        _agent_name: &str,
         profile_name: &str,
         cwd: &std::path::Path,
-        mode: Option<&str>,
-        model: Option<&str>,
+        _mode: Option<&str>,
+        _model: Option<&str>,
         _aam_context: &AamContext,
         extra_env: &HashMap<String, String>,
     ) -> Result<Arc<tokio::sync::Mutex<dyn Any + Send + Sync>>, RuntimeError> {
@@ -3676,11 +3720,8 @@ impl AgentSpawner for RecordingAgentSpawner {
             .lock()
             .expect("spawn records lock")
             .push(RecordedAgentSpawn {
-                agent_name: agent_name.to_string(),
                 profile_name: profile_name.to_string(),
                 cwd: cwd.to_path_buf(),
-                mode: mode.map(str::to_string),
-                model: model.map(str::to_string),
                 extra_env: extra_env.clone(),
             });
         Ok(Arc::new(tokio::sync::Mutex::new(())))

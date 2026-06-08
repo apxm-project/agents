@@ -5,8 +5,8 @@
 //! any MCP client (the `apxm chat` agent, apxm-studio, Claude Code) can compile
 //! and validate APXM AIR and discover the op vocabulary. They never execute a
 //! graph and never invoke a capability, so they need no admission/no-widen
-//! gating — that boundary applies only to the side-effecting `apxm_run` /
-//! `apxm_dispatch` tools (built behind the invoke-site interceptor).
+//! gating — that boundary applies to side-effecting execution tools such as
+//! `apxm_run`, native workflow control, and orchestration.
 
 use axum::Json;
 use serde_json::Value as JsonValue;

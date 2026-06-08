@@ -105,7 +105,7 @@ recent turns stay verbatim, via the shared summarize graph
 dropping. This is the runtime's `on_graph_finished` post-hook concept realized at
 the host level (where the transcript actually lives).
 
-## Compiler + dispatch as an MCP server (`/v1/mcp`)
+## Compiler + orchestration as an MCP server (`/v1/mcp`)
 
 Any MCP client (this agent, apxm-studio, Claude Code) can drive the compiler and
 runtime over the existing JSON-RPC facade — a thin, DRY layer over the same
@@ -114,20 +114,24 @@ handlers as the REST API:
 - `apxm_compile` / `apxm_validate` (PURE): compile-check AIR; a compile error is
   a normal result (`ok:false` + diagnostics), not a protocol error.
 - `apxm_ops_list` (PURE): the AIS op vocabulary.
-- `apxm_run` (side-effecting): compile + run AIR — the safe "agent writes IR →
-  dispatch" path; writes require `admit_capabilities`.
-- `apxm_dispatch` (side-effecting): the agent emits a **constrained spec**
-  (`{sub_agents:[{id,role,prompt,depends_on}]}`); the server validates it
-  (breadth cap, dup/dangling/cycle checks) and templates it to a fan-out graph,
-  then runs it. Deterministic topology, model-driven decision — no raw codegen in
-  the default path.
+- `apxm_run` (side-effecting): compile + run canonical AIR; writes require
+  `admit_capabilities`.
+- `apxm_orchestrate_start` (side-effecting): execute one explicit bounded
+  worker DAG through the native workflow control plane, returning
+  `execution_id`, workflow events/status/cancel handles, session directories,
+  and orchestration artifacts.
+- `apxm_workflow_start/status/events/cancel` (side-effecting): launch, observe,
+  and stop checked-in `.apxmw` workflows through server-owned control handles.
+- `apxm_plan_as_graph`: synthesize graph proposals from natural language. Treat
+  generated graphs as proposals until APXM validates and admits them; do not use
+  it to bypass worker admission.
 - `apxm_skill_call` (pre-existing): invoke a vetted installed skill by id.
 
 ### Security: one no-widen boundary, enforced at the invoke chokepoint
 
 The write boundary is enforced at the runtime `inv_tool` invoke site (not only
 the server's static pre-flight), so it holds for **every** path — raw execute,
-`CALL_SKILL` child DAGs, `apxm_dispatch`, and `SPAWN_AGENT`. The effective grant
+`CALL_SKILL` child DAGs, workflow starts, and `SPAWN_AGENT`. The effective grant
 (`SIDE_EFFECT_POLICY`) is seeded from `admit_capabilities` at the top level and
 propagated to children with no-widen (`child ⊆ parent`). Read-only and sandboxed
 capabilities are always allowed; a Direct write runs only if the execution's

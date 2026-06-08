@@ -165,12 +165,13 @@ workflow, then resume or cancel it through the server. The E2E tests in
 through `apxm_workflow_start`, `apxm_workflow_status`, `apxm_workflow_events`,
 and `apxm_workflow_cancel`.
 
-## Cancel Background
+## Local Background Workflow
 
 `cancel_background/background_ok.apxmw` is a fast deterministic workflow suited
-for `dekk apxm workflow run --background`. `cancel_background/cancel_parked.apxmw`
-parks on checkpoint `examples-cancel-cp` and is intended for testing
-cancellation through `apxm_workflow_cancel`.
+for explicit local CLI background workflow testing when a server control plane
+is not involved. `cancel_background/cancel_parked.apxmw` parks on checkpoint
+`examples-cancel-cp` and is intended for testing cancellation through
+`apxm_workflow_cancel` when launched through the native MCP workflow tools.
 
 ```bash
 apxm workflow run examples/workflows/orchestration/cancel_background/background_ok.apxmw --background

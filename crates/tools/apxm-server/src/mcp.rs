@@ -16,7 +16,6 @@ use crate::types::responses::{
 
 mod compiler;
 mod dispatch;
-mod dispatch_spec;
 mod orchestrate;
 mod schema;
 mod workflow;
@@ -109,11 +108,6 @@ pub(crate) async fn mcp_jsonrpc(
                 input_schema: compiler::run_input_schema(),
             });
             tools.push(ToolEntry {
-                name: dispatch_spec::MCP_TOOL_APXM_DISPATCH.to_string(),
-                description: "Dynamically fan out to sub-agents from a constrained spec (validated + templated to a graph, then run)".to_string(),
-                input_schema: dispatch_spec::dispatch_input_schema(),
-            });
-            tools.push(ToolEntry {
                 name: workflow::MCP_TOOL_APXM_WORKFLOW_START.to_string(),
                 description: "Start a server-managed APXM .apxmw workflow in the background; returns execution_id/session handles".to_string(),
                 input_schema: workflow::workflow_start_input_schema(),
@@ -183,14 +177,6 @@ pub(crate) async fn mcp_jsonrpc(
             // admit_capabilities + the runtime invoke-site write boundary.
             if let Some(response) =
                 compiler::call_run_tool(&state, &id, tool_name, &tool_args).await
-            {
-                return response;
-            }
-
-            // apxm_dispatch (Tier 2): constrained sub-agent spec -> templated
-            // graph -> run (same gating as apxm_run).
-            if let Some(response) =
-                dispatch_spec::call_dispatch_tool(&state, &id, tool_name, &tool_args).await
             {
                 return response;
             }
