@@ -297,6 +297,14 @@ mod tests {
     use super::*;
     use apxm_artifact::Artifact;
     use apxm_compiler::{Context, Pipeline};
+    use apxm_core::error::RuntimeError;
+    use apxm_core::types::Value;
+    use apxm_runtime::capability::executor::CapabilityExecutor;
+    use apxm_runtime::capability::metadata::CapabilityMetadata;
+    use async_trait::async_trait;
+    use std::collections::HashMap;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    use tokio::sync::Notify;
 
     const CONST_GRAPH: &str = r#"module {
   func.func @const_graph() -> !ais.token attributes {ais.entry} {
@@ -384,7 +392,189 @@ mod tests {
         );
     }
 
+    #[tokio::test]
+    async fn installed_workflow_spawner_runs_independent_workflow_phase_steps_in_parallel() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        std::fs::write(
+            temp.path().join("left.air"),
+            tool_graph("fixture_phase_left"),
+        )
+        .expect("write left graph");
+        std::fs::write(
+            temp.path().join("right.air"),
+            tool_graph("fixture_phase_right"),
+        )
+        .expect("write right graph");
+        let workflow_path = temp.path().join("parallel.apxmw");
+        std::fs::write(
+            &workflow_path,
+            serde_json::to_vec_pretty(&serde_json::json!({
+                "name": "parallel_phase",
+                "graphs": [
+                    {"id": "left", "path": "left.air"},
+                    {"id": "right", "path": "right.air"}
+                ],
+                "output": "{{left.output}}+{{right.output}}"
+            }))
+            .expect("serialize workflow"),
+        )
+        .expect("write workflow");
+
+        let context = Context::new().expect("compiler context");
+        let pipeline = Pipeline::new(&context);
+        let workflow_target = air_string(workflow_path.to_string_lossy().as_ref());
+        let air = format!(
+            r#"module {{
+  func.func @parallel_workflow_spawn() -> !ais.token attributes {{ais.entry}} {{
+    %child = ais.workflow_spawn "workflow_path" "{workflow_target}" {{await_result = true}} : !ais.token
+    func.return %child : !ais.token
+  }}
+}}
+"#
+        );
+        let module = pipeline.compile(&air).expect("compile workflow spawn air");
+        let artifact = Artifact::from_bytes(
+            &module
+                .generate_artifact_bytes()
+                .expect("generate artifact bytes"),
+        )
+        .expect("decode artifact");
+
+        let runtime = Runtime::new(apxm_runtime::RuntimeConfig::in_memory())
+            .await
+            .expect("runtime");
+        let mut runtime = Arc::new(runtime);
+        let probe = Arc::new(ParallelProbe::new(2));
+        runtime
+            .capability_system()
+            .register(Arc::new(BarrierCapability::new(
+                "fixture_phase_left",
+                "left",
+                Arc::clone(&probe),
+            )))
+            .expect("register left capability");
+        runtime
+            .capability_system()
+            .register(Arc::new(BarrierCapability::new(
+                "fixture_phase_right",
+                "right",
+                Arc::clone(&probe),
+            )))
+            .expect("register right capability");
+        install_workflow_spawner(&mut runtime, None).expect("install workflow spawner");
+
+        let parent_session_dir = temp.path().join("sessions").join("parent");
+        std::fs::create_dir_all(&parent_session_dir).expect("create parent session");
+        let execution = runtime
+            .execute_artifact_with_session_and_emitter(
+                artifact,
+                Vec::new(),
+                Some("parent".to_string()),
+                None,
+                Some(parent_session_dir.to_string_lossy().to_string()),
+            )
+            .await
+            .expect("execute workflow spawn");
+        let output = execution
+            .results
+            .values()
+            .last()
+            .expect("workflow spawn result")
+            .to_json()
+            .expect("result json");
+
+        assert_eq!(output["result"], "left+right");
+        assert!(
+            probe.max_seen.load(Ordering::SeqCst) >= 2,
+            "independent workflow steps should overlap in one execution phase"
+        );
+    }
+
     fn air_string(value: &str) -> String {
         value.replace('\\', "\\\\").replace('"', "\\\"")
+    }
+
+    fn tool_graph(capability: &str) -> String {
+        format!(
+            r#"module {{
+  func.func @tool_graph() -> !ais.token attributes {{ais.entry}} {{
+    %reg = ais.register_capability "{capability}" {{description = "fixture phase probe"}} : !ais.token
+    %tool = ais.inv_tool "{capability}" ("{{}}") [%reg : !ais.token] : !ais.token
+    func.return %tool : !ais.token
+  }}
+}}
+"#
+        )
+    }
+
+    struct ParallelProbe {
+        expected: usize,
+        current: AtomicUsize,
+        max_seen: AtomicUsize,
+        notify: Notify,
+    }
+
+    impl ParallelProbe {
+        fn new(expected: usize) -> Self {
+            Self {
+                expected,
+                current: AtomicUsize::new(0),
+                max_seen: AtomicUsize::new(0),
+                notify: Notify::new(),
+            }
+        }
+
+        async fn enter(&self) {
+            let current = self.current.fetch_add(1, Ordering::SeqCst) + 1;
+            self.max_seen.fetch_max(current, Ordering::SeqCst);
+            if current >= self.expected {
+                self.notify.notify_waiters();
+            }
+            let _ = tokio::time::timeout(
+                std::time::Duration::from_millis(250),
+                self.notify.notified(),
+            )
+            .await;
+        }
+
+        fn exit(&self) {
+            self.current.fetch_sub(1, Ordering::SeqCst);
+        }
+    }
+
+    struct BarrierCapability {
+        metadata: CapabilityMetadata,
+        label: String,
+        probe: Arc<ParallelProbe>,
+    }
+
+    impl BarrierCapability {
+        fn new(name: &str, label: &str, probe: Arc<ParallelProbe>) -> Self {
+            Self {
+                metadata: CapabilityMetadata::new(
+                    name,
+                    "Fixture capability that records concurrent workflow phase execution",
+                    serde_json::json!({ "type": "object", "properties": {} }),
+                )
+                .with_returns("string")
+                .with_read_only(),
+                label: label.to_string(),
+                probe,
+            }
+        }
+    }
+
+    #[async_trait]
+    impl CapabilityExecutor for BarrierCapability {
+        async fn execute(&self, _args: HashMap<String, Value>) -> Result<Value, RuntimeError> {
+            self.probe.enter().await;
+            tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+            self.probe.exit();
+            Ok(Value::String(self.label.clone()))
+        }
+
+        fn metadata(&self) -> &CapabilityMetadata {
+            &self.metadata
+        }
     }
 }

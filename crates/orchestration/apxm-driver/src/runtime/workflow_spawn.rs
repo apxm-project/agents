@@ -12,6 +12,7 @@ use apxm_runtime::{
     WorkflowSpawner,
 };
 use async_trait::async_trait;
+use futures::future::join_all;
 
 use crate::compiler::Compiler;
 use crate::hooks;
@@ -20,6 +21,13 @@ use crate::session_output::{SessionEventEmitter, SessionOutputWriter, SessionPro
 pub struct DriverWorkflowSpawner {
     runtime: Mutex<Option<Weak<Runtime>>>,
     configured_emitter: Option<Arc<dyn ExecutionEventEmitter>>,
+}
+
+struct WorkflowPhaseStepOutcome {
+    step_id: String,
+    duration_ms: u64,
+    workflow_session_dir: PathBuf,
+    outcome: Result<WorkflowSpawnResult, RuntimeError>,
 }
 
 impl DriverWorkflowSpawner {
@@ -37,6 +45,7 @@ impl DriverWorkflowSpawner {
     fn execute_invocation<'a>(
         &'a self,
         invocation: WorkflowInvocation,
+        parent_emitter: Option<Arc<dyn ExecutionEventEmitter>>,
     ) -> Pin<Box<dyn Future<Output = Result<WorkflowSpawnResult, RuntimeError>> + Send + 'a>> {
         Box::pin(async move {
             let session_base_dir = resolve_session_base_dir(invocation.session_root.as_deref())?;
@@ -47,6 +56,7 @@ impl DriverWorkflowSpawner {
                         &invocation.args,
                         &session_base_dir,
                         &invocation,
+                        parent_emitter,
                     )
                     .await
                 }
@@ -56,6 +66,7 @@ impl DriverWorkflowSpawner {
                         &invocation.args,
                         &session_base_dir,
                         &invocation,
+                        parent_emitter,
                     )
                     .await
                 }
@@ -64,6 +75,7 @@ impl DriverWorkflowSpawner {
                         Path::new(&path),
                         invocation.args.clone(),
                         &session_base_dir,
+                        parent_emitter,
                     )
                     .await
                 }
@@ -84,6 +96,7 @@ impl DriverWorkflowSpawner {
         args: &HashMap<String, serde_json::Value>,
         session_base_dir: &Path,
         invocation: &WorkflowInvocation,
+        parent_emitter: Option<Arc<dyn ExecutionEventEmitter>>,
     ) -> Result<WorkflowSpawnResult, RuntimeError> {
         let artifact = {
             let compiler = Compiler::new()
@@ -117,6 +130,7 @@ impl DriverWorkflowSpawner {
             input_graph.as_ref(),
             artifact.entry_dag().map(|dag| dag.nodes.len()),
             runtime.memory_system_arc(),
+            parent_emitter,
             self.configured_emitter.as_ref().map(Arc::clone),
             &provenance,
         )?;
@@ -152,6 +166,7 @@ impl DriverWorkflowSpawner {
         args: &HashMap<String, serde_json::Value>,
         session_base_dir: &Path,
         invocation: &WorkflowInvocation,
+        parent_emitter: Option<Arc<dyn ExecutionEventEmitter>>,
     ) -> Result<WorkflowSpawnResult, RuntimeError> {
         let artifact = Artifact::read_from_path(artifact_path).map_err(|e| {
             RuntimeError::State(format!(
@@ -177,6 +192,7 @@ impl DriverWorkflowSpawner {
             None,
             artifact.entry_dag().map(|dag| dag.nodes.len()),
             runtime.memory_system_arc(),
+            parent_emitter,
             self.configured_emitter.as_ref().map(Arc::clone),
             &provenance,
         )?;
@@ -211,6 +227,7 @@ impl DriverWorkflowSpawner {
         workflow_path: &Path,
         args: HashMap<String, serde_json::Value>,
         session_base_dir: &Path,
+        parent_emitter: Option<Arc<dyn ExecutionEventEmitter>>,
     ) -> Result<WorkflowSpawnResult, RuntimeError> {
         use apxm_runtime::workflow::{WorkflowDef, WorkflowResult, execution_phases, resolve};
 
@@ -253,6 +270,8 @@ impl DriverWorkflowSpawner {
         for phase in execution_phases(&def.graphs)
             .map_err(|e| RuntimeError::State(format!("Workflow planning failed: {e}")))?
         {
+            let mut phase_jobs = Vec::new();
+
             for step_id in phase {
                 let step = def
                     .graphs
@@ -300,19 +319,38 @@ impl DriverWorkflowSpawner {
                 child_invocation.session_root =
                     Some(workflow_session_dir.to_string_lossy().to_string());
 
-                match self.execute_invocation(child_invocation).await {
+                let step_id = step.id.clone();
+                let workflow_session_dir = workflow_session_dir.clone();
+                let parent_emitter = parent_emitter.as_ref().map(Arc::clone);
+                phase_jobs.push(async move {
+                    let step_start = std::time::Instant::now();
+                    let outcome = self
+                        .execute_invocation(child_invocation, parent_emitter)
+                        .await;
+                    WorkflowPhaseStepOutcome {
+                        step_id,
+                        duration_ms: step_start.elapsed().as_millis() as u64,
+                        workflow_session_dir,
+                        outcome,
+                    }
+                });
+            }
+
+            let mut phase_outputs = Vec::new();
+            for completed in join_all(phase_jobs).await {
+                match completed.outcome {
                     Ok(child_result) => {
                         let output = value_to_output_string(&child_result.value);
                         if let Some(ref text) = output {
-                            step_outputs.insert(step.id.clone(), text.clone());
+                            phase_outputs.push((completed.step_id.clone(), text.clone()));
                         }
                         step_results.insert(
-                            step.id.clone(),
+                            completed.step_id.clone(),
                             apxm_runtime::workflow::StepResult {
-                                id: step.id.clone(),
+                                id: completed.step_id,
                                 status: apxm_runtime::workflow::StepStatus::Success,
                                 output,
-                                duration_ms: 0,
+                                duration_ms: completed.duration_ms,
                                 session_dir: child_result.session_dir.map(PathBuf::from),
                                 error: None,
                             },
@@ -320,18 +358,22 @@ impl DriverWorkflowSpawner {
                     }
                     Err(error) => {
                         step_results.insert(
-                            step.id.clone(),
+                            completed.step_id.clone(),
                             apxm_runtime::workflow::StepResult {
-                                id: step.id.clone(),
+                                id: completed.step_id,
                                 status: apxm_runtime::workflow::StepStatus::Failed,
                                 output: None,
-                                duration_ms: 0,
-                                session_dir: Some(workflow_session_dir.clone()),
+                                duration_ms: completed.duration_ms,
+                                session_dir: Some(completed.workflow_session_dir),
                                 error: Some(error.to_string()),
                             },
                         );
                     }
                 }
+            }
+
+            for (step_id, output) in phase_outputs {
+                step_outputs.insert(step_id, output);
             }
         }
 
@@ -390,8 +432,9 @@ impl WorkflowSpawner for DriverWorkflowSpawner {
     async fn spawn_workflow(
         &self,
         invocation: WorkflowInvocation,
+        parent_emitter: Option<Arc<dyn ExecutionEventEmitter>>,
     ) -> Result<WorkflowSpawnResult, RuntimeError> {
-        self.execute_invocation(invocation).await
+        self.execute_invocation(invocation, parent_emitter).await
     }
 }
 
@@ -586,6 +629,7 @@ fn create_session_emitter(
     input_graph: Option<&apxm_compiler::AirModule>,
     total_nodes: Option<usize>,
     memory: Arc<apxm_runtime::memory::MemorySystem>,
+    parent_emitter: Option<Arc<dyn ExecutionEventEmitter>>,
     configured_emitter: Option<Arc<dyn ExecutionEventEmitter>>,
     provenance: &SessionProvenance,
 ) -> Result<Option<Arc<dyn ExecutionEventEmitter>>, RuntimeError> {
@@ -604,10 +648,9 @@ fn create_session_emitter(
         emitter.set_total_nodes(total_nodes as u64);
     }
     emitter.set_memory(memory);
-    Ok(hooks::compose_emitters(
-        Some(emitter as Arc<dyn ExecutionEventEmitter>),
-        configured_emitter,
-    ))
+    let session_emitter = Some(emitter as Arc<dyn ExecutionEventEmitter>);
+    let composed = hooks::compose_emitters(session_emitter, parent_emitter);
+    Ok(hooks::compose_emitters(composed, configured_emitter))
 }
 
 fn finalize_child_session(

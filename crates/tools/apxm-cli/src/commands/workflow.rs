@@ -34,6 +34,13 @@ use std::time::Instant;
 use super::implementations::load_config;
 
 #[cfg(feature = "driver")]
+struct CliWorkflowStepOutcome {
+    step_id: String,
+    step_index: usize,
+    result: apxm_runtime::workflow::StepResult,
+}
+
+#[cfg(feature = "driver")]
 pub async fn workflow_command(
     action: WorkflowAction,
     config: Option<PathBuf>,
@@ -433,8 +440,13 @@ fn execute_workflow_file<'a>(
                 println!("{indent}Phase {phase_idx}: {} step(s)", phase.len());
             }
 
+            let mut phase_jobs = Vec::new();
             for step_id in phase {
-                let step_index = step_results.len();
+                let step_index = def
+                    .graphs
+                    .iter()
+                    .position(|s| &s.id == step_id)
+                    .unwrap_or(step_results.len());
                 let step = def
                     .graphs
                     .iter()
@@ -505,57 +517,70 @@ fn execute_workflow_file<'a>(
                     start.elapsed().as_millis(),
                 )?;
 
-                let step_start = Instant::now();
-                let step_result = match step_path.extension().and_then(|ext| ext.to_str()) {
-                    Some("apxmw") => {
-                        let (child_result, child_session_dir) = execute_workflow_file(
-                            &step_path,
-                            resolved_params,
-                            &workflow_session_dir,
-                            None,
-                            linker,
-                            depth + 1,
-                            render_progress,
-                        )
-                        .await?;
-                        workflow_step_result_from_nested(
-                            step_id.clone(),
-                            child_result,
-                            child_session_dir,
-                            step_start.elapsed().as_millis() as u64,
-                        )
-                    }
-                    Some("apxmobj") => {
-                        execute_artifact_step(
-                            linker,
-                            step_id,
-                            &step_path,
-                            &resolved_params,
-                            &step_session_dir,
-                            step_start,
-                        )
-                        .await?
-                    }
-                    _ => {
-                        execute_graph_step(
-                            linker,
-                            step_id,
-                            &step_path,
-                            &resolved_params,
-                            &step_session_dir,
-                            step_start,
-                        )
-                        .await?
-                    }
-                };
+                let step_id = step_id.clone();
+                let workflow_session_dir = workflow_session_dir.clone();
+                phase_jobs.push(async move {
+                    let step_start = Instant::now();
+                    let result = match step_path.extension().and_then(|ext| ext.to_str()) {
+                        Some("apxmw") => {
+                            let (child_result, child_session_dir) = execute_workflow_file(
+                                &step_path,
+                                resolved_params,
+                                &workflow_session_dir,
+                                None,
+                                linker,
+                                depth + 1,
+                                render_progress,
+                            )
+                            .await?;
+                            workflow_step_result_from_nested(
+                                step_id.clone(),
+                                child_result,
+                                child_session_dir,
+                                step_start.elapsed().as_millis() as u64,
+                            )
+                        }
+                        Some("apxmobj") => {
+                            execute_artifact_step(
+                                linker,
+                                &step_id,
+                                &step_path,
+                                &resolved_params,
+                                &step_session_dir,
+                                step_start,
+                            )
+                            .await?
+                        }
+                        _ => {
+                            execute_graph_step(
+                                linker,
+                                &step_id,
+                                &step_path,
+                                &resolved_params,
+                                &step_session_dir,
+                                step_start,
+                            )
+                            .await?
+                        }
+                    };
+                    Ok::<_, anyhow::Error>(CliWorkflowStepOutcome {
+                        step_id,
+                        step_index,
+                        result,
+                    })
+                });
+            }
 
-                if let Some(ref out) = step_result.output
-                    && step_result.status == apxm_runtime::workflow::StepStatus::Success
+            let mut phase_outputs = Vec::new();
+            for completed in futures::future::join_all(phase_jobs).await {
+                let completed = completed?;
+                if let Some(ref out) = completed.result.output
+                    && completed.result.status == apxm_runtime::workflow::StepStatus::Success
                 {
-                    step_outputs.insert(step_id.clone(), out.clone());
+                    phase_outputs.push((completed.step_id.clone(), out.clone()));
                 }
 
-                let status_icon = match step_result.status {
+                let status_icon = match completed.result.status {
                     apxm_runtime::workflow::StepStatus::Success => {
                         apxm_core::constants::ui::icons::SUCCESS
                     }
@@ -570,23 +595,27 @@ fn execute_workflow_file<'a>(
                     println!(
                         "{indent}  {} {} ({:.1}s)",
                         status_icon,
-                        step_id,
-                        step_result.duration_ms as f64 / 1000.0
+                        completed.step_id,
+                        completed.result.duration_ms as f64 / 1000.0
                     );
                 }
                 apxm_runtime::workflow::write_workflow_step_finished(
                     &workflow_session_dir,
                     &def.name,
-                    step_id,
-                    step_index,
-                    step_result.status,
-                    step_result.duration_ms,
+                    &completed.step_id,
+                    completed.step_index,
+                    completed.result.status,
+                    completed.result.duration_ms,
                     step_results.len() + 1,
                     def.graphs.len(),
                     start.elapsed().as_millis(),
                 )?;
 
-                step_results.insert(step_id.clone(), step_result);
+                step_results.insert(completed.step_id, completed.result);
+            }
+
+            for (step_id, output) in phase_outputs {
+                step_outputs.insert(step_id, output);
             }
 
             if render_progress {

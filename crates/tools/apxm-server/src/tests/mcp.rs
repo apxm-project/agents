@@ -1,4 +1,5 @@
 use super::*;
+use std::sync::atomic::{AtomicUsize, Ordering};
 
 #[tokio::test]
 async fn mcp_initialize_returns_protocol_version() {
@@ -316,24 +317,29 @@ async fn mcp_workflow_start_status_and_events_use_server_execution_id() {
         "workflow spawn result should carry child output: {workflow_status}"
     );
 
-    let (status, body) = post_json(
-        app,
-        routes::MCP,
-        mcp_call(
-            MCP_TOOL_APXM_WORKFLOW_EVENTS,
-            serde_json::json!({
-                "execution_id": execution_id,
-                "since": 0,
-                "limit": 25
-            }),
-        ),
-    )
-    .await;
-    assert_eq!(status, StatusCode::OK, "workflow events failed: {body}");
-    assert_eq!(body[tool_result::RESULT][mcp_fields::IS_ERROR], false);
-    let events: serde_json::Value =
-        serde_json::from_str(tool_text(&body)).expect("workflow events response JSON");
+    let events = workflow_events(app, execution_id, 0, 25).await;
     let event_items = events["events"].as_array().expect("events array");
+    assert_eq!(
+        workflow_status["totals"]["events"].as_u64(),
+        Some(event_items.len() as u64),
+        "status event total should match event stream after completion: {events}"
+    );
+    assert_eq!(
+        events["done"], true,
+        "single-page event fetch should be done"
+    );
+    let mut previous_seq = None;
+    for event in event_items {
+        assert_eq!(event["meta"]["trace_id"], execution_id);
+        let seq = event["meta"]["seq"].as_u64().expect("event seq");
+        if let Some(previous) = previous_seq {
+            assert!(seq > previous, "event seq must be increasing: {events}");
+        }
+        previous_seq = Some(seq);
+    }
+    if let Some(last_seq) = previous_seq {
+        assert_eq!(events["next_seq"], last_seq + 1);
+    }
     assert!(
         event_items
             .iter()
@@ -346,6 +352,300 @@ async fn mcp_workflow_start_status_and_events_use_server_execution_id() {
             .any(|event| event["payload"]["kind"] == "execute_complete"),
         "expected execute_complete event: {events}"
     );
+    assert!(
+        event_items.iter().any(|event| {
+            event["payload"]["kind"] == "operation_start"
+                && event["payload"]["op_type"] == "WORKFLOW_SPAWN"
+        }),
+        "expected parent WORKFLOW_SPAWN operation_start event: {events}"
+    );
+    assert!(
+        event_items.iter().any(|event| {
+            event["payload"]["kind"] == "operation_end"
+                && event["payload"]["op_type"] == "WORKFLOW_SPAWN"
+                && event["payload"]["success"] == true
+        }),
+        "expected parent WORKFLOW_SPAWN operation_end event: {events}"
+    );
+}
+
+#[tokio::test]
+async fn mcp_workflow_fans_out_independent_steps_and_fans_in_output() {
+    const LEFT_TOOL: &str = "fixture_parallel_left";
+    const RIGHT_TOOL: &str = "fixture_parallel_right";
+
+    let temp = tempfile::tempdir().expect("tempdir");
+    let workflow_path = write_parallel_workflow_fixture(
+        temp.path(),
+        &[
+            ("left", "left.air", &tool_air(LEFT_TOOL)),
+            ("right", "right.air", &tool_air(RIGHT_TOOL)),
+        ],
+        "{{left.output}}+{{right.output}}",
+    );
+    let state = test_state().await;
+    let probe = Arc::new(WorkflowBarrier::new(2));
+    state
+        .runtime
+        .capability_system()
+        .register(Arc::new(FixtureBarrierCapability::new(
+            LEFT_TOOL,
+            "left",
+            Arc::clone(&probe),
+        )))
+        .expect("register left capability");
+    state
+        .runtime
+        .capability_system()
+        .register(Arc::new(FixtureBarrierCapability::new(
+            RIGHT_TOOL,
+            "right",
+            Arc::clone(&probe),
+        )))
+        .expect("register right capability");
+    let app = build_app(state);
+
+    let (status, body) = post_json(
+        app.clone(),
+        routes::MCP,
+        mcp_call(
+            MCP_TOOL_APXM_WORKFLOW_START,
+            serde_json::json!({
+                "workflow_path": workflow_path,
+                "session_id": "mcp-workflow-parallel"
+            }),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "workflow start failed: {body}");
+    assert_eq!(body[tool_result::RESULT][mcp_fields::IS_ERROR], false);
+    let started: serde_json::Value =
+        serde_json::from_str(tool_text(&body)).expect("workflow start response JSON");
+    assert_eq!(started[tool_result::STATUS], STATUS_RUNNING);
+    let execution_id = started[tool_result::EXECUTION_ID]
+        .as_str()
+        .expect("execution_id");
+
+    let status_body = wait_for_workflow_status(app.clone(), execution_id, STATUS_SUCCEEDED).await;
+    let workflow_status: serde_json::Value =
+        serde_json::from_str(tool_text(&status_body)).expect("workflow status response JSON");
+    let spawn_payload = workflow_spawn_payload(&workflow_status);
+    assert_eq!(spawn_payload["result"], "left+right");
+    assert!(
+        probe.max_seen.load(Ordering::SeqCst) >= 2,
+        "independent .apxmw steps should overlap before workflow fan-in"
+    );
+
+    let workflow_session_dir = spawn_payload["session_dir"]
+        .as_str()
+        .expect("workflow session_dir");
+    let results_path = std::path::Path::new(workflow_session_dir).join("results.json");
+    let workflow_results: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(&results_path).expect("read workflow results.json"))
+            .expect("workflow results JSON");
+    assert_eq!(workflow_results["status"], "Success");
+    assert_eq!(workflow_results["output"], "left+right");
+    assert_eq!(
+        workflow_results["step_results"]["left"]["status"],
+        "Success"
+    );
+    assert_eq!(
+        workflow_results["step_results"]["right"]["status"],
+        "Success"
+    );
+    assert_ne!(
+        workflow_results["step_results"]["left"]["session_dir"],
+        workflow_results["step_results"]["right"]["session_dir"],
+        "parallel children should keep distinct child session dirs"
+    );
+
+    let events = workflow_events(app, execution_id, 0, 50).await;
+    let event_items = events["events"].as_array().expect("events array");
+    assert!(
+        event_items
+            .iter()
+            .any(|event| event["payload"]["kind"] == "execute_complete"),
+        "fan-in should complete parent workflow: {events}"
+    );
+    assert!(
+        event_items
+            .iter()
+            .filter(|event| {
+                event["payload"]["kind"] == "operation_start"
+                    && event["payload"]["op_type"] == "INV_TOOL"
+            })
+            .count()
+            >= 2,
+        "child graph tool events should be visible through apxm_workflow_events: {events}"
+    );
+}
+
+#[tokio::test]
+async fn mcp_workflow_resume_parks_and_wakes_through_checkpoint_endpoint() {
+    const CHECKPOINT_ID: &str = "mcp-workflow-resume-cp";
+
+    let temp = tempfile::tempdir().expect("tempdir");
+    let workflow_path =
+        write_workflow_fixture(temp.path(), "resume.air", &resume_air(CHECKPOINT_ID));
+    let app = build_app(test_state().await);
+    create_pending_checkpoint(app.clone(), CHECKPOINT_ID).await;
+
+    let (status, body) = post_json(
+        app.clone(),
+        routes::MCP,
+        mcp_call(
+            MCP_TOOL_APXM_WORKFLOW_START,
+            serde_json::json!({
+                "workflow_path": workflow_path,
+                "session_id": "mcp-workflow-resume"
+            }),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "workflow start failed: {body}");
+    assert_eq!(body[tool_result::RESULT][mcp_fields::IS_ERROR], false);
+    let started: serde_json::Value =
+        serde_json::from_str(tool_text(&body)).expect("workflow start response JSON");
+    let execution_id = started[tool_result::EXECUTION_ID]
+        .as_str()
+        .expect("execution_id");
+
+    tokio::time::sleep(std::time::Duration::from_millis(80)).await;
+    let running = workflow_status_json(app.clone(), execution_id).await;
+    assert_eq!(running[tool_result::STATUS], STATUS_RUNNING);
+
+    let (status, body) = post_json(
+        app.clone(),
+        &routes::checkpoint_resume_path(CHECKPOINT_ID),
+        serde_json::json!({ "human_input": "approved" }),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "checkpoint resume failed: {body}");
+    assert_eq!(body["status"], "resumed");
+
+    let status_body = wait_for_workflow_status(app.clone(), execution_id, STATUS_SUCCEEDED).await;
+    let workflow_status: serde_json::Value =
+        serde_json::from_str(tool_text(&status_body)).expect("workflow status response JSON");
+    assert_eq!(
+        workflow_spawn_payload(&workflow_status)["result"],
+        "approved"
+    );
+
+    let events = workflow_events(app, execution_id, 0, 50).await;
+    let event_items = events["events"].as_array().expect("events array");
+    assert!(
+        event_items
+            .iter()
+            .any(|event| event["payload"]["kind"] == "execute_complete"),
+        "expected execute_complete after checkpoint wake: {events}"
+    );
+    assert!(
+        !event_items
+            .iter()
+            .any(|event| event["payload"]["kind"] == "turn_aborted"),
+        "resume path should not abort: {events}"
+    );
+}
+
+#[tokio::test]
+async fn mcp_workflow_cancel_interrupts_parked_resume_without_late_success() {
+    const CHECKPOINT_ID: &str = "mcp-workflow-cancel-parked-cp";
+
+    let temp = tempfile::tempdir().expect("tempdir");
+    let workflow_path =
+        write_workflow_fixture(temp.path(), "resume.air", &resume_air(CHECKPOINT_ID));
+    let app = build_app(test_state().await);
+    create_pending_checkpoint(app.clone(), CHECKPOINT_ID).await;
+
+    let (status, body) = post_json(
+        app.clone(),
+        routes::MCP,
+        mcp_call(
+            MCP_TOOL_APXM_WORKFLOW_START,
+            serde_json::json!({ "workflow_path": workflow_path }),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "workflow start failed: {body}");
+    assert_eq!(body[tool_result::RESULT][mcp_fields::IS_ERROR], false);
+    let started: serde_json::Value =
+        serde_json::from_str(tool_text(&body)).expect("workflow start response JSON");
+    let execution_id = started[tool_result::EXECUTION_ID]
+        .as_str()
+        .expect("execution_id");
+
+    tokio::time::sleep(std::time::Duration::from_millis(80)).await;
+    assert_eq!(
+        workflow_status_json(app.clone(), execution_id).await[tool_result::STATUS],
+        STATUS_RUNNING
+    );
+
+    let (status, body) = post_json(
+        app.clone(),
+        routes::MCP,
+        mcp_call(
+            MCP_TOOL_APXM_WORKFLOW_CANCEL,
+            serde_json::json!({ "execution_id": execution_id }),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "workflow cancel failed: {body}");
+    assert_eq!(body[tool_result::RESULT][mcp_fields::IS_ERROR], false);
+    let status_body = wait_for_workflow_status(app.clone(), execution_id, STATUS_FAILED).await;
+    let workflow_status: serde_json::Value =
+        serde_json::from_str(tool_text(&status_body)).expect("workflow status response JSON");
+    assert!(
+        workflow_status["error"]
+            .as_str()
+            .unwrap_or_default()
+            .contains("apxm_workflow_cancel"),
+        "expected cancellation error: {workflow_status}"
+    );
+
+    let (status, body) = post_json(
+        app.clone(),
+        &routes::checkpoint_resume_path(CHECKPOINT_ID),
+        serde_json::json!({ "human_input": "too late" }),
+    )
+    .await;
+    assert_eq!(
+        status,
+        StatusCode::OK,
+        "late checkpoint resume failed: {body}"
+    );
+    tokio::time::sleep(std::time::Duration::from_millis(80)).await;
+    assert_eq!(
+        workflow_status_json(app.clone(), execution_id).await[tool_result::STATUS],
+        STATUS_FAILED,
+        "late checkpoint resume must not flip cancelled workflow to success"
+    );
+
+    let events = workflow_events(app.clone(), execution_id, 0, 50).await;
+    let event_items = events["events"].as_array().expect("events array");
+    assert!(
+        event_items
+            .iter()
+            .any(|event| event["payload"]["kind"] == "turn_aborted"),
+        "expected turn_aborted event: {events}"
+    );
+    assert!(
+        !event_items
+            .iter()
+            .any(|event| event["payload"]["kind"] == "execute_complete"),
+        "cancelled parked workflow must not emit execute_complete: {events}"
+    );
+
+    let (status, body) = post_json(
+        app,
+        routes::MCP,
+        mcp_call(
+            MCP_TOOL_APXM_WORKFLOW_CANCEL,
+            serde_json::json!({ "execution_id": execution_id }),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "second cancel failed: {body}");
+    assert_eq!(body[tool_result::RESULT][mcp_fields::IS_ERROR], true);
 }
 
 #[tokio::test]
@@ -1747,17 +2047,132 @@ fn write_workflow_fixture(
     workflow_path
 }
 
-fn sleep_tool_air(capability: &str) -> String {
+fn write_parallel_workflow_fixture(
+    root: &std::path::Path,
+    steps: &[(&str, &str, &str)],
+    output: &str,
+) -> std::path::PathBuf {
+    let graphs: Vec<serde_json::Value> = steps
+        .iter()
+        .map(|(id, graph_name, graph_air)| {
+            std::fs::write(root.join(graph_name), graph_air).expect("write workflow graph");
+            serde_json::json!({ "id": id, "path": graph_name })
+        })
+        .collect();
+    let workflow_path = root.join("workflow.apxmw");
+    std::fs::write(
+        &workflow_path,
+        serde_json::to_vec_pretty(&serde_json::json!({
+            "name": "mcp_parallel_workflow_fixture",
+            "graphs": graphs,
+            "output": output
+        }))
+        .expect("serialize workflow fixture"),
+    )
+    .expect("write workflow fixture");
+    workflow_path
+}
+
+fn tool_air(capability: &str) -> String {
     format!(
         r#"module {{
   func.func @main() -> !ais.token attributes {{ais.entry}} {{
-    %reg = ais.register_capability "{capability}" {{description = "fixture sleep tool"}} : !ais.token
-    %tool = ais.inv_tool "{capability}" ("{{}}") : !ais.token
+    %reg = ais.register_capability "{capability}" {{description = "fixture tool"}} : !ais.token
+    %tool = ais.inv_tool "{capability}" ("{{}}") [%reg : !ais.token] : !ais.token
     func.return %tool : !ais.token
   }}
 }}
 "#
     )
+}
+
+fn sleep_tool_air(capability: &str) -> String {
+    format!(
+        r#"module {{
+  func.func @main() -> !ais.token attributes {{ais.entry}} {{
+    %reg = ais.register_capability "{capability}" {{description = "fixture sleep tool"}} : !ais.token
+    %tool = ais.inv_tool "{capability}" ("{{}}") [%reg : !ais.token] : !ais.token
+    func.return %tool : !ais.token
+  }}
+}}
+"#
+    )
+}
+
+fn resume_air(checkpoint_id: &str) -> String {
+    format!(
+        r#"module {{
+  func.func @main() -> !ais.token attributes {{ais.entry}} {{
+    %resumed = ais.resume "{checkpoint_id}" : !ais.token
+    func.return %resumed : !ais.token
+  }}
+}}
+"#
+    )
+}
+
+async fn create_pending_checkpoint(app: Router, checkpoint_id: &str) {
+    let (status, body) = post_json(
+        app,
+        routes::CHECKPOINTS,
+        serde_json::json!({
+            "checkpoint_id": checkpoint_id,
+            "message": "fixture workflow checkpoint",
+            "display_data": null
+        }),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "checkpoint create failed: {body}");
+    assert_eq!(body["checkpoint_id"], checkpoint_id);
+    assert_eq!(body["status"], "pending");
+}
+
+async fn workflow_status_json(app: Router, execution_id: &str) -> serde_json::Value {
+    let (status, body) = post_json(
+        app,
+        routes::MCP,
+        mcp_call(
+            MCP_TOOL_APXM_WORKFLOW_STATUS,
+            serde_json::json!({ "execution_id": execution_id }),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "workflow status failed: {body}");
+    assert_eq!(body[tool_result::RESULT][mcp_fields::IS_ERROR], false);
+    serde_json::from_str(tool_text(&body)).expect("workflow status JSON")
+}
+
+async fn workflow_events(
+    app: Router,
+    execution_id: &str,
+    since: u64,
+    limit: usize,
+) -> serde_json::Value {
+    let (status, body) = post_json(
+        app,
+        routes::MCP,
+        mcp_call(
+            MCP_TOOL_APXM_WORKFLOW_EVENTS,
+            serde_json::json!({
+                "execution_id": execution_id,
+                "since": since,
+                "limit": limit
+            }),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "workflow events failed: {body}");
+    assert_eq!(body[tool_result::RESULT][mcp_fields::IS_ERROR], false);
+    serde_json::from_str(tool_text(&body)).expect("workflow events response JSON")
+}
+
+fn workflow_spawn_payload(workflow_status: &serde_json::Value) -> &serde_json::Value {
+    workflow_status["result"]["results"]
+        .as_object()
+        .expect("result map")
+        .values()
+        .find(|value| value.get("result").is_some())
+        .expect("workflow spawn payload")
 }
 
 async fn wait_for_workflow_status(
@@ -1788,6 +2203,77 @@ async fn wait_for_workflow_status(
         tokio::time::sleep(std::time::Duration::from_millis(20)).await;
     }
     panic!("workflow did not reach status {expected_status}: {last_body}");
+}
+
+struct WorkflowBarrier {
+    expected: usize,
+    current: AtomicUsize,
+    max_seen: AtomicUsize,
+    notify: tokio::sync::Notify,
+}
+
+impl WorkflowBarrier {
+    fn new(expected: usize) -> Self {
+        Self {
+            expected,
+            current: AtomicUsize::new(0),
+            max_seen: AtomicUsize::new(0),
+            notify: tokio::sync::Notify::new(),
+        }
+    }
+
+    async fn enter(&self) {
+        let current = self.current.fetch_add(1, Ordering::SeqCst) + 1;
+        self.max_seen.fetch_max(current, Ordering::SeqCst);
+        if current >= self.expected {
+            self.notify.notify_waiters();
+        }
+        let _ = tokio::time::timeout(
+            std::time::Duration::from_millis(250),
+            self.notify.notified(),
+        )
+        .await;
+    }
+
+    fn exit(&self) {
+        self.current.fetch_sub(1, Ordering::SeqCst);
+    }
+}
+
+struct FixtureBarrierCapability {
+    metadata: CapabilityMetadata,
+    label: String,
+    barrier: Arc<WorkflowBarrier>,
+}
+
+impl FixtureBarrierCapability {
+    fn new(name: &str, label: &str, barrier: Arc<WorkflowBarrier>) -> Self {
+        Self {
+            metadata: CapabilityMetadata::new(
+                name,
+                "Fixture workflow barrier capability",
+                serde_json::json!({ "type": "object", "properties": {} }),
+            )
+            .with_returns("string")
+            .with_read_only(),
+            label: label.to_string(),
+            barrier,
+        }
+    }
+}
+
+#[async_trait]
+impl CapabilityExecutor for FixtureBarrierCapability {
+    async fn execute(&self, _args: HashMap<String, Value>) -> Result<Value, RuntimeError> {
+        self.barrier.enter().await;
+        tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+        self.barrier.exit();
+        Ok(Value::String(self.label.clone()))
+    }
+
+    fn metadata(&self) -> &CapabilityMetadata {
+        &self.metadata
+    }
 }
 
 struct FixtureSleepCapability {
