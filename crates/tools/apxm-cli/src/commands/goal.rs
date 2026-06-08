@@ -250,40 +250,53 @@ fn build_start_arguments(args: &GoalArgs, task: &str) -> Result<JsonValue> {
 }
 
 fn build_workers(args: &GoalArgs) -> Result<Vec<WorkerRequest>> {
+    let deps = parse_dependencies(&args.depends)?;
     let mut workers = if args.workers.is_empty() {
-        default_workers(args)
+        let mut workers = default_workers(args);
+        let reviewers = build_reviewers(args, vec!["executor".to_string()])?;
+        let reviewer_ids = reviewers
+            .iter()
+            .map(|worker| worker.id.clone())
+            .collect::<Vec<_>>();
+        let verifier_index = workers
+            .iter()
+            .position(|worker| worker.id == "verifier")
+            .expect("default workers include verifier");
+        workers.splice(verifier_index..verifier_index, reviewers);
+        if let Some(verifier) = workers.iter_mut().find(|worker| worker.id == "verifier") {
+            verifier.depends_on.extend(reviewer_ids);
+        }
+        workers
     } else {
         if args.planner_profile.is_some()
             || args.executor_profile.is_some()
-            || args.critic_profile.is_some()
             || args.verifier_profile.is_some()
         {
             bail!(
-                "--planner/--executor/--critic/--verifier apply only to the default worker set; use --worker ID:ROLE:PROFILE for custom workers"
+                "--planner/--executor/--verifier apply only to the default worker set; use --worker ID:ROLE:PROFILE for custom workers"
             );
         }
-        args.workers
+        let mut workers = args
+            .workers
             .iter()
             .map(|raw| parse_worker(raw))
-            .collect::<Result<Vec<_>>>()?
+            .collect::<Result<Vec<_>>>()?;
+        apply_known_dependencies(&mut workers, &deps);
+        let reviewer_depends = terminal_worker_ids(&workers);
+        workers.extend(build_reviewers(args, reviewer_depends)?);
+        workers
     };
+    ensure_unique_worker_ids(&workers)?;
 
-    let deps = parse_dependencies(&args.depends)?;
-    for (worker_id, depends_on) in deps {
-        let worker = workers
-            .iter_mut()
-            .find(|worker| worker.id == worker_id)
-            .ok_or_else(|| anyhow!("--depends references unknown worker '{worker_id}'"))?;
-        worker.depends_on = depends_on;
-    }
+    apply_dependencies(&mut workers, deps)?;
     Ok(workers)
 }
 
 fn default_workers(args: &GoalArgs) -> Vec<WorkerRequest> {
-    let mut workers = vec![
+    vec![
         WorkerRequest {
             id: "planner".to_string(),
-            role: "Plan the work and acceptance checks.".to_string(),
+            role: "Act as the planner/orchestrator: split the goal, define worker briefs, and set acceptance checks for this bounded pass.".to_string(),
             profile: args
                 .planner_profile
                 .as_deref()
@@ -293,7 +306,7 @@ fn default_workers(args: &GoalArgs) -> Vec<WorkerRequest> {
         },
         WorkerRequest {
             id: "executor".to_string(),
-            role: "Do the work from the plan.".to_string(),
+            role: "Execute the work described by the planner/orchestrator for this bounded pass.".to_string(),
             profile: args
                 .executor_profile
                 .as_deref()
@@ -311,27 +324,17 @@ fn default_workers(args: &GoalArgs) -> Vec<WorkerRequest> {
                 .map(str::to_string),
             depends_on: vec!["executor".to_string()],
         },
-    ];
-
-    if let Some(profile) = args.critic_profile.as_deref().and_then(non_empty) {
-        workers.insert(
-            2,
-            WorkerRequest {
-                id: "critic".to_string(),
-                role: "Review the plan and implementation risks.".to_string(),
-                profile: Some(profile.to_string()),
-                depends_on: vec!["planner".to_string()],
-            },
-        );
-        if let Some(verifier) = workers.iter_mut().find(|worker| worker.id == "verifier") {
-            verifier.depends_on.push("critic".to_string());
-        }
-    }
-
-    workers
+    ]
 }
 
 fn parse_worker(raw: &str) -> Result<WorkerRequest> {
+    parse_worker_with_default(raw, |id| format!("Complete the '{id}' worker slice."))
+}
+
+fn parse_worker_with_default(
+    raw: &str,
+    default_role: impl FnOnce(&str) -> String,
+) -> Result<WorkerRequest> {
     let mut parts = raw.splitn(3, ':');
     let id = parts
         .next()
@@ -341,7 +344,7 @@ fn parse_worker(raw: &str) -> Result<WorkerRequest> {
         .next()
         .and_then(non_empty)
         .map(str::to_string)
-        .unwrap_or_else(|| format!("Complete the '{id}' worker slice."));
+        .unwrap_or_else(|| default_role(id));
     let profile = parts.next().and_then(non_empty).map(str::to_string);
     Ok(WorkerRequest {
         id: id.to_string(),
@@ -349,6 +352,100 @@ fn parse_worker(raw: &str) -> Result<WorkerRequest> {
         profile,
         depends_on: Vec::new(),
     })
+}
+
+fn build_reviewers(args: &GoalArgs, depends_on: Vec<String>) -> Result<Vec<WorkerRequest>> {
+    let mut reviewers = Vec::new();
+    for (index, raw) in args.critics.iter().enumerate() {
+        let id = generated_role_id("critic", index);
+        reviewers.push(parse_review_worker(raw, &id, &depends_on)?);
+    }
+    for (index, raw) in args.reviewers.iter().enumerate() {
+        let id = generated_role_id("reviewer", index);
+        reviewers.push(parse_review_worker(raw, &id, &depends_on)?);
+    }
+    Ok(reviewers)
+}
+
+fn parse_review_worker(
+    raw: &str,
+    generated_id: &str,
+    depends_on: &[String],
+) -> Result<WorkerRequest> {
+    let default_role = |id: &str| {
+        format!(
+            "Review the goal output as '{id}', preserving risks, dissent, missing evidence, and follow-up recommendations."
+        )
+    };
+    let mut worker = if raw.contains(':') {
+        parse_worker_with_default(raw, default_role)?
+    } else {
+        WorkerRequest {
+            id: generated_id.to_string(),
+            role: default_role(generated_id),
+            profile: non_empty(raw).map(str::to_string),
+            depends_on: Vec::new(),
+        }
+    };
+    worker.depends_on = depends_on.to_vec();
+    Ok(worker)
+}
+
+fn generated_role_id(prefix: &str, index: usize) -> String {
+    if index == 0 {
+        prefix.to_string()
+    } else {
+        format!("{prefix}{}", index + 1)
+    }
+}
+
+fn terminal_worker_ids(workers: &[WorkerRequest]) -> Vec<String> {
+    let depended_on = workers
+        .iter()
+        .flat_map(|worker| worker.depends_on.iter().map(String::as_str))
+        .collect::<BTreeSet<_>>();
+    let terminals = workers
+        .iter()
+        .filter(|worker| !depended_on.contains(worker.id.as_str()))
+        .map(|worker| worker.id.clone())
+        .collect::<Vec<_>>();
+    if terminals.is_empty() {
+        workers.iter().map(|worker| worker.id.clone()).collect()
+    } else {
+        terminals
+    }
+}
+
+fn ensure_unique_worker_ids(workers: &[WorkerRequest]) -> Result<()> {
+    let mut ids = BTreeSet::new();
+    for worker in workers {
+        if !ids.insert(worker.id.as_str()) {
+            bail!("duplicate worker id '{}'", worker.id);
+        }
+    }
+    Ok(())
+}
+
+fn apply_known_dependencies(workers: &mut [WorkerRequest], deps: &HashMap<String, Vec<String>>) {
+    for (worker_id, depends_on) in deps {
+        if let Some(worker) = workers.iter_mut().find(|worker| worker.id == *worker_id) {
+            worker.depends_on = depends_on.clone();
+        }
+    }
+}
+
+fn apply_dependencies(
+    workers: &mut [WorkerRequest],
+    deps: HashMap<String, Vec<String>>,
+) -> Result<()> {
+    for (worker_id, depends_on) in deps {
+        let worker = workers
+            .iter_mut()
+            .find(|worker| worker.id == worker_id)
+            .ok_or_else(|| anyhow!("--depends references unknown worker '{worker_id}'"))?;
+        worker.depends_on = depends_on;
+    }
+    Ok(())
 }
 
 fn parse_dependencies(specs: &[String]) -> Result<HashMap<String, Vec<String>>> {
@@ -855,7 +952,8 @@ mod tests {
             depends: Vec::new(),
             planner_profile: None,
             executor_profile: None,
-            critic_profile: None,
+            critics: Vec::new(),
+            reviewers: Vec::new(),
             verifier_profile: None,
             supervisor_profile: None,
             workspace: "session".to_string(),
@@ -902,9 +1000,12 @@ mod tests {
     }
 
     #[test]
-    fn critic_profile_opts_into_review_worker() {
+    fn critic_profiles_opt_into_review_workers() {
         let mut args = args_with_task();
-        args.critic_profile = Some("codex".to_string());
+        args.critics = vec![
+            "profile-review".to_string(),
+            "security:Security review:profile-sec".to_string(),
+        ];
 
         let request = build_start_arguments(&args, "ship the thing").expect("request");
         let workers = request["workers"].as_array().expect("workers");
@@ -913,23 +1014,28 @@ mod tests {
                 .iter()
                 .filter_map(|worker| worker["id"].as_str())
                 .collect::<Vec<_>>(),
-            vec!["planner", "executor", "critic", "verifier"]
+            vec!["planner", "executor", "critic", "security", "verifier"]
         );
-        assert_eq!(workers[2]["profile"], "codex");
-        assert_eq!(workers[2]["depends_on"], json!(["planner"]));
-        assert_eq!(workers[3]["depends_on"], json!(["executor", "critic"]));
+        assert_eq!(workers[2]["profile"], "profile-review");
+        assert_eq!(workers[2]["depends_on"], json!(["executor"]));
+        assert_eq!(workers[3]["profile"], "profile-sec");
+        assert_eq!(workers[3]["role"], "Security review");
+        assert_eq!(
+            workers[4]["depends_on"],
+            json!(["executor", "critic", "security"])
+        );
     }
 
     #[test]
     fn profiles_auto_grant_spawn_agent() {
         let mut args = args_with_task();
-        args.planner_profile = Some("codex".to_string());
-        args.executor_profile = Some("claude".to_string());
+        args.planner_profile = Some("profile-a".to_string());
+        args.executor_profile = Some("profile-b".to_string());
 
         let request = build_start_arguments(&args, "ship the thing").expect("request");
         assert_eq!(request["workers"][0]["transport"], "acp");
-        assert_eq!(request["workers"][0]["profile"], "codex");
-        assert_eq!(request["workers"][1]["profile"], "claude");
+        assert_eq!(request["workers"][0]["profile"], "profile-a");
+        assert_eq!(request["workers"][1]["profile"], "profile-b");
         assert_eq!(request["admit_capabilities"], json!(["SPAWN_AGENT"]));
     }
 
@@ -937,14 +1043,30 @@ mod tests {
     fn parses_custom_worker_and_dependencies() {
         let mut args = args_with_task();
         args.workers = vec![
-            "research:Research the API:codex".to_string(),
-            "build:Implement it:claude".to_string(),
+            "research:Research the API:profile-a".to_string(),
+            "build:Implement it:profile-b".to_string(),
         ];
         args.depends = vec!["build=research".to_string()];
 
         let workers = build_workers(&args).expect("workers");
         assert_eq!(workers[0].id, "research");
-        assert_eq!(workers[0].profile.as_deref(), Some("codex"));
+        assert_eq!(workers[0].profile.as_deref(), Some("profile-a"));
         assert_eq!(workers[1].depends_on, vec!["research"]);
+    }
+
+    #[test]
+    fn custom_workers_can_add_repeatable_reviewers() {
+        let mut args = args_with_task();
+        args.workers = vec![
+            "research:Research the API:profile-a".to_string(),
+            "build:Implement it:profile-b".to_string(),
+        ];
+        args.depends = vec!["build=research".to_string()];
+        args.reviewers = vec!["review:Review implementation:profile-review".to_string()];
+
+        let workers = build_workers(&args).expect("workers");
+        let reviewer = workers.iter().find(|worker| worker.id == "review").unwrap();
+        assert_eq!(reviewer.profile.as_deref(), Some("profile-review"));
+        assert_eq!(reviewer.depends_on, vec!["build"]);
     }
 }

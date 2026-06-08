@@ -32,6 +32,7 @@ const TRANSPORT_ACP: &str = "acp";
 const TRANSPORT_DETERMINISTIC: &str = "deterministic";
 
 #[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
 struct OrchestrateStartArgs {
     task: String,
     #[serde(default)]
@@ -56,6 +57,7 @@ struct OrchestrateStartArgs {
 }
 
 #[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
 struct WorkerSpec {
     id: String,
     #[serde(default)]
@@ -75,6 +77,7 @@ struct WorkerSpec {
 }
 
 #[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
 struct SupervisorSpec {
     #[serde(default = "default_supervisor_id")]
     id: String,
@@ -91,6 +94,7 @@ struct SupervisorSpec {
 }
 
 #[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
 struct WorkspaceSpec {
     #[serde(default)]
     mode: Option<String>,
@@ -237,7 +241,7 @@ pub(crate) fn orchestrate_start_input_schema() -> JsonValue {
         "properties": {
             "task": {
                 "type": "string",
-                "description": "Top-level task the autonomous orchestrator should split and supervise"
+                "description": "Task label and instructions for one bounded orchestration pass"
             },
             "context": {
                 "type": "string",
@@ -245,17 +249,17 @@ pub(crate) fn orchestrate_start_input_schema() -> JsonValue {
             },
             "event": {
                 "type": "string",
-                "description": "Optional event that triggered this orchestration loop"
+                "description": "Optional event or provenance that triggered this orchestration pass"
             },
             "trigger": {
                 "type": "string",
-                "description": "Optional trigger rule or reason for this loop pass"
+                "description": "Optional trigger rule or reason for this orchestration pass"
             },
             "workers": {
                 "type": "array",
                 "minItems": 1,
                 "maxItems": MAX_WORKERS,
-                "description": "Bounded worker graph. Independent workers run in parallel; depends_on creates fan-in/fan-out phases.",
+                "description": "Bounded worker graph for one orchestration pass. Independent workers run in parallel; depends_on creates fan-in/fan-out phases.",
                 "items": {
                     "type": "object",
                     "additionalProperties": false,
@@ -266,7 +270,7 @@ pub(crate) fn orchestrate_start_input_schema() -> JsonValue {
                         "prompt": { "type": "string" },
                         "profile": {
                             "type": "string",
-                            "description": "Optional ACP profile such as claude, codex, or any registered custom agent"
+                            "description": "Optional ACP profile from the APXM agent registry"
                         },
                         "transport": {
                             "type": "string",
@@ -1242,7 +1246,7 @@ fn default_supervisor_id() -> String {
 }
 
 fn default_supervisor_prompt() -> String {
-    "Act as the APXM gatekeeper. Evaluate all worker outputs, identify conflicts or missing verification, decide whether the loop can finish, and emit feedback for the next loop if needed.".to_string()
+    "Act as the APXM gatekeeper. Evaluate all worker outputs, identify conflicts or missing verification, decide whether this bounded pass satisfied the task, and recommend a follow-up pass only if needed.".to_string()
 }
 
 fn orchestration_control() -> OrchestrationControl {
@@ -1295,7 +1299,7 @@ fn orchestration_runtime_contract(
 }
 
 fn orchestrator_prompt() -> String {
-    "You are the APXM autonomous orchestrator. Convert the incoming event/task into a bounded worker graph, call apxm_orchestrate_start once with explicit workers and workspace policy, then go idle. Do not keep prompting the workers manually. Treat orchestrator_sleep as APXM taking ownership of the run. Wake by reading apxm_workflow_events/status for the returned execution_id until orchestrator_wake or a terminal execute_complete/error/turn_aborted event appears; cancel with apxm_workflow_cancel when policy or budget requires it. On completion, run the gate/eval feedback through the next event->trigger->action loop only if the returned feedback says another bounded pass is necessary.".to_string()
+    "You are calling a single-pass APXM orchestration primitive. Produce or receive the explicit bounded worker DAG before calling apxm_orchestrate_start, then call it once with a workspace policy and go idle. Do not keep prompting workers manually. Treat orchestrator_sleep as APXM taking ownership of the run. Wake by reading apxm_workflow_events/status for the returned execution_id until orchestrator_wake or a terminal execute_complete/error/turn_aborted event appears; cancel with apxm_workflow_cancel when policy or budget requires it. If feedback requires more work, the caller agent or APXM OS may start another bounded pass.".to_string()
 }
 
 fn orchestration_flowchart() -> String {

@@ -370,9 +370,17 @@ pub struct GoalArgs {
     #[arg(long = "executor", alias = "executor-profile", value_name = "PROFILE")]
     pub executor_profile: Option<String>,
 
-    /// Optional reviewer profile. Adds a reviewer worker after planning.
-    #[arg(long = "critic", alias = "critic-profile", value_name = "PROFILE")]
-    pub critic_profile: Option<String>,
+    /// Optional reviewer/critic profile or ID[:ROLE[:PROFILE]]. Repeat for more reviewers.
+    #[arg(
+        long = "critic",
+        alias = "critic-profile",
+        value_name = "PROFILE|ID[:ROLE[:PROFILE]]"
+    )]
+    pub critics: Vec<String>,
+
+    /// Optional reviewer profile or ID[:ROLE[:PROFILE]]. Repeat for more reviewers.
+    #[arg(long = "reviewer", value_name = "PROFILE|ID[:ROLE[:PROFILE]]")]
+    pub reviewers: Vec<String>,
 
     /// Registered profile for the default verifier worker.
     #[arg(long = "verifier", alias = "verifier-profile", value_name = "PROFILE")]

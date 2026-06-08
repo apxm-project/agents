@@ -83,7 +83,7 @@ The HTTP MCP endpoint also exposes APXM skill library tools:
 - `apxm_workflow_status` -- fetch the current status, result, error, and event totals for a workflow run by `execution_id`
 - `apxm_workflow_events` -- page retained run events for a workflow run with `since` and `limit`
 - `apxm_workflow_cancel` -- interrupt an in-flight workflow run by server-owned `execution_id`
-- `apxm_orchestrate_start` -- compile a bounded task/worker plan into a server-owned parallel workflow, allocate worker workspaces or Git worktrees, emit `orchestrator_sleep`/`orchestrator_wake` lifecycle events, and return workflow status/events/cancel handles
+- `apxm_orchestrate_start` -- start one server-owned orchestration pass from an explicit bounded worker DAG, allocate worker workspaces or Git worktrees, emit `orchestrator_sleep`/`orchestrator_wake` lifecycle events, and return workflow status/events/cancel handles
 
 Skill inventory prepends the bundled server skill root and then appends roots
 configured with repeated `--skill-root <path>` arguments or the
@@ -99,9 +99,12 @@ should treat `execution_id` as the live status/events/cancel handle and
 `session_dir` as the offline workflow/session inspection handle. The request
 does not accept `session_root`; workflow session roots are derived by APXM.
 
-Native orchestration starts are also server-owned workflow executions. An
-orchestrator agent should call `apxm_orchestrate_start` once, keep the returned
-`execution_id`, then go idle until `apxm_workflow_events` returns
+Native orchestration starts are also server-owned workflow executions. A caller
+agent, CLI, or APXM OS trigger should resolve the task into an explicit bounded
+worker DAG before calling `apxm_orchestrate_start`; this MCP tool executes that
+one pass and does not recursively plan new passes. After start, the caller
+should keep the returned `execution_id`, then go idle until
+`apxm_workflow_events` returns
 `orchestrator_wake`, `execute_complete`, `error`, or `turn_aborted`, or until
 `apxm_workflow_status` reports `succeeded` or `failed`. Real ACP workers require
 the caller to grant `admit_capabilities: ["SPAWN_AGENT"]`.

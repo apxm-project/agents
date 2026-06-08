@@ -304,6 +304,36 @@ async fn mcp_orchestrate_start_rejects_duplicate_worker_ids() {
 }
 
 #[tokio::test]
+async fn mcp_orchestrate_start_rejects_unknown_goal_planning_fields() {
+    let app = build_app(test_state().await);
+
+    let (status, body) = post_json(
+        app,
+        routes::MCP,
+        mcp_call(
+            MCP_TOOL_APXM_ORCHESTRATE_START,
+            serde_json::json!({
+                "task": "do not silently absorb autonomous planner args",
+                "goal": "plan recursively",
+                "max_iterations": 5,
+                "workers": [
+                    { "id": "planner", "role": "plan one pass" }
+                ]
+            }),
+        ),
+    )
+    .await;
+
+    assert_eq!(status, StatusCode::OK, "orchestrate call failed: {body}");
+    assert_eq!(body[tool_result::RESULT][mcp_fields::IS_ERROR], true);
+    let text = tool_text(&body);
+    assert!(
+        text.contains("unknown field") && text.contains("goal"),
+        "expected unknown-field diagnostic for goal-planning args: {body}"
+    );
+}
+
+#[tokio::test]
 async fn mcp_orchestrate_start_rejects_invalid_worker_dependencies() {
     let cases = [
         (

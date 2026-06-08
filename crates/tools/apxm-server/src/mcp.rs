@@ -139,7 +139,7 @@ pub(crate) async fn mcp_jsonrpc(
             });
             tools.push(ToolEntry {
                 name: orchestrate::MCP_TOOL_APXM_ORCHESTRATE_START.to_string(),
-                description: "Compile a task into a server-owned parallel orchestration workflow, allocate worker workspaces/worktrees, start it in the background, and return workflow status/events/cancel handles".to_string(),
+                description: "Start one server-owned orchestration pass from an explicit bounded worker DAG, allocate worker workspaces/worktrees, and return workflow status/events/cancel handles".to_string(),
                 input_schema: orchestrate::orchestrate_start_input_schema(),
             });
             tools.extend(
