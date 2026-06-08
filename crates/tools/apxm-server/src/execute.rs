@@ -121,7 +121,7 @@ pub(crate) struct ExecuteResponse {
 
 /// Build the top-level execution metadata seeding the effective capability grant
 /// so nested CALL_SKILL admission enforces `child ⊆ parent` (no-widen).
-fn admit_grant_metadata(
+pub(crate) fn admit_grant_metadata(
     admit: &std::collections::HashSet<String>,
     imports: &[String],
 ) -> HashMap<String, String> {
@@ -164,7 +164,7 @@ pub(crate) async fn execute(
 /// (waiting on an event) it releases the slot; on wake it best-effort reacquires.
 /// The caller MUST `admission_registry::unregister(&id)` on completion (this drops
 /// the handle and finalizes the slot).
-async fn acquire_admission(state: &AppState) -> Result<String, ApiError> {
+pub(crate) async fn acquire_admission(state: &AppState) -> Result<String, ApiError> {
     let permit = state.inference_limiter.acquire().await?.into_inner();
     let admission_id = format!("adm-{}", uuid::Uuid::new_v4());
     let handle = Arc::new(crate::state::AdmissionHandle::new(
@@ -473,7 +473,7 @@ pub(crate) fn registered_capability_names(state: &AppState) -> std::collections:
         .collect()
 }
 
-fn validate_raw_execute_admission(
+pub(crate) fn validate_raw_execute_admission(
     artifact: &Artifact,
     state: &AppState,
     admit: &std::collections::HashSet<String>,
@@ -666,7 +666,7 @@ fn parse_string_array_attr(node: &Node, attr_name: &str) -> Option<Vec<String>> 
 /// `headers.Authorization = "Bearer <token>"` (dropping the bare id) so the
 /// dispatched HTTP capability authenticates. Off by default → a stack without
 /// apxm-auth is unaffected. The resolved token is never logged.
-async fn inject_resolved_credentials(artifact: &mut Artifact) -> Result<(), ApiError> {
+pub(crate) async fn inject_resolved_credentials(artifact: &mut Artifact) -> Result<(), ApiError> {
     let enabled = std::env::var("APXM_RESOLVE_CREDENTIALS")
         .map(|v| !v.is_empty() && v != "0")
         .unwrap_or(false);

@@ -51,7 +51,9 @@ use crate::mcp::{
     MCP_TOOL_APXM_AAM_RECALL, MCP_TOOL_APXM_CAPABILITY_LIST, MCP_TOOL_APXM_EVIDENCE_LOOKUP,
     MCP_TOOL_APXM_PLAN_AS_GRAPH, MCP_TOOL_APXM_SKILL_CALL, MCP_TOOL_APXM_SKILL_GET,
     MCP_TOOL_APXM_SKILL_VALIDATE, MCP_TOOL_APXM_SKILLS_LIST, MCP_TOOL_APXM_TRACE_FETCH,
-    MCP_TOOL_PARAM_ARGUMENTS as MCP_PARAM_ARGUMENTS, MCP_TOOL_PARAM_NAME as MCP_PARAM_NAME,
+    MCP_TOOL_APXM_WORKFLOW_CANCEL, MCP_TOOL_APXM_WORKFLOW_EVENTS, MCP_TOOL_APXM_WORKFLOW_START,
+    MCP_TOOL_APXM_WORKFLOW_STATUS, MCP_TOOL_PARAM_ARGUMENTS as MCP_PARAM_ARGUMENTS,
+    MCP_TOOL_PARAM_NAME as MCP_PARAM_NAME,
 };
 use crate::mcp_protocol::{
     admission_error, args as mcp_args, fields as mcp_fields, plan_field, plan_skill,
@@ -96,6 +98,8 @@ const REDACTED_FIELD: &str = "redacted";
 const SUMMARY_FIELD: &str = "summary";
 const HASH_FIELD: &str = "hash";
 const STATUS_SUCCEEDED: &str = "succeeded";
+const STATUS_RUNNING: &str = "running";
+const STATUS_FAILED: &str = "failed";
 
 const FIXTURE_PACKAGE_DIR: &str = "checkout";
 const FIXTURE_SKILL_SESSION_DIR: &str = "skills";
@@ -388,7 +392,7 @@ async fn test_state_with_skill_roots_and_execution_store(
         .expect("test runtime");
     let mut runtime = Arc::new(runtime);
     let skill_library = SkillLibrary::new(skill_roots);
-    crate::call_skill::install(&mut runtime, skill_library.clone());
+    install_test_runtime_bridges(&mut runtime, skill_library.clone());
     AppState {
         runtime,
         agent_registry: Arc::new(DashMap::new()),
@@ -424,7 +428,7 @@ async fn test_state_with_runtime_and_skill_roots(
 ) -> AppState {
     let mut runtime = Arc::new(runtime);
     let skill_library = SkillLibrary::new(skill_roots);
-    crate::call_skill::install(&mut runtime, skill_library.clone());
+    install_test_runtime_bridges(&mut runtime, skill_library.clone());
     AppState {
         runtime,
         agent_registry: Arc::new(DashMap::new()),
@@ -450,6 +454,19 @@ async fn test_state_with_runtime_and_skill_roots(
         server_config: apxm_driver::ServerConfig::default(),
         cancel_registry: Arc::new(DashMap::new()),
     }
+}
+
+fn install_test_runtime_bridges(runtime: &mut Arc<Runtime>, skill_library: SkillLibrary) {
+    let (skill_resolver, workflow_spawner) = {
+        let runtime_mut = Arc::get_mut(runtime)
+            .expect("test runtime bridges must be installed before runtime is shared");
+        let skill_resolver = crate::call_skill::install_unattached(runtime_mut, skill_library);
+        let workflow_spawner =
+            apxm_driver::runtime::install_workflow_spawner_unattached(runtime_mut, None);
+        (skill_resolver, workflow_spawner)
+    };
+    skill_resolver.attach_runtime(runtime);
+    workflow_spawner.attach_runtime(runtime);
 }
 
 /// POST a JSON body to `path` and return `(StatusCode, serde_json::Value)`.

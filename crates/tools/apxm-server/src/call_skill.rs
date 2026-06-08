@@ -464,15 +464,26 @@ fn admit_child_policy(
 /// `get_mut` rejects an [`Arc`] that has any outstanding `Weak` peers.
 /// Once the resolver is in place we downgrade the now-shared runtime and
 /// thread the [`Weak`] into the resolver for child dispatch.
+#[allow(dead_code)]
 pub(crate) fn install(runtime: &mut Arc<Runtime>, library: SkillLibrary) {
-    let resolver = Arc::new(SkillLibrarySkillResolver::new(library));
-    {
+    let resolver = {
         let runtime_mut = Arc::get_mut(runtime).expect(
             "install must be called while the runtime Arc has no other strong or weak references",
         );
-        runtime_mut.set_skill_resolver(Arc::clone(&resolver) as Arc<dyn SkillResolver>);
-    }
+        install_unattached(runtime_mut, library)
+    };
     resolver.attach_runtime(runtime);
+}
+
+pub(crate) fn install_unattached(
+    runtime: &mut Runtime,
+    library: SkillLibrary,
+) -> Arc<SkillLibrarySkillResolver> {
+    let resolver = Arc::new(SkillLibrarySkillResolver::new(library));
+    {
+        runtime.set_skill_resolver(Arc::clone(&resolver) as Arc<dyn SkillResolver>);
+    }
+    resolver
 }
 
 #[cfg(test)]

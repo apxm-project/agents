@@ -18,6 +18,7 @@ mod compiler;
 mod dispatch;
 mod dispatch_spec;
 mod schema;
+mod workflow;
 
 #[allow(unused_imports)]
 pub(crate) use schema::{
@@ -27,6 +28,11 @@ pub(crate) use schema::{
     MCP_TOOL_APXM_SKILL_CALL, MCP_TOOL_APXM_SKILL_GET, MCP_TOOL_APXM_SKILL_VALIDATE,
     MCP_TOOL_APXM_SKILLS_LIST, MCP_TOOL_APXM_TRACE_FETCH, MCP_TOOL_PARAM_ARGUMENTS,
     MCP_TOOL_PARAM_NAME, McpRequest,
+};
+#[allow(unused_imports)]
+pub(crate) use workflow::{
+    MCP_TOOL_APXM_WORKFLOW_CANCEL, MCP_TOOL_APXM_WORKFLOW_EVENTS, MCP_TOOL_APXM_WORKFLOW_START,
+    MCP_TOOL_APXM_WORKFLOW_STATUS,
 };
 
 const MCP_ERROR_ARGUMENTS_OBJECT: &str = "arguments must be an object";
@@ -73,17 +79,23 @@ pub(crate) async fn mcp_jsonrpc(
             // PURE compiler tools (side-effect-free): compile / validate / ops.
             tools.push(ToolEntry {
                 name: compiler::MCP_TOOL_APXM_COMPILE.to_string(),
-                description: "Compile APXM AIR to an artifact; returns ok + diagnostics (no execution)".to_string(),
+                description:
+                    "Compile APXM AIR to an artifact; returns ok + diagnostics (no execution)"
+                        .to_string(),
                 input_schema: compiler::air_input_schema(),
             });
             tools.push(ToolEntry {
                 name: compiler::MCP_TOOL_APXM_VALIDATE.to_string(),
-                description: "Validate APXM AIR (compile-check) without executing; returns ok + diagnostics".to_string(),
+                description:
+                    "Validate APXM AIR (compile-check) without executing; returns ok + diagnostics"
+                        .to_string(),
                 input_schema: compiler::air_input_schema(),
             });
             tools.push(ToolEntry {
                 name: compiler::MCP_TOOL_APXM_OPS_LIST.to_string(),
-                description: "List the AIS operation vocabulary (name, mnemonic, category, description)".to_string(),
+                description:
+                    "List the AIS operation vocabulary (name, mnemonic, category, description)"
+                        .to_string(),
                 input_schema: serde_json::json!({
                     "type": "object", "additionalProperties": false, "properties": {}
                 }),
@@ -97,6 +109,30 @@ pub(crate) async fn mcp_jsonrpc(
                 name: dispatch_spec::MCP_TOOL_APXM_DISPATCH.to_string(),
                 description: "Dynamically fan out to sub-agents from a constrained spec (validated + templated to a graph, then run)".to_string(),
                 input_schema: dispatch_spec::dispatch_input_schema(),
+            });
+            tools.push(ToolEntry {
+                name: workflow::MCP_TOOL_APXM_WORKFLOW_START.to_string(),
+                description: "Start a server-managed APXM .apxmw workflow in the background; returns execution_id/session handles".to_string(),
+                input_schema: workflow::workflow_start_input_schema(),
+            });
+            tools.push(ToolEntry {
+                name: workflow::MCP_TOOL_APXM_WORKFLOW_STATUS.to_string(),
+                description: "Fetch status for a server-managed APXM workflow run by execution_id"
+                    .to_string(),
+                input_schema: workflow::workflow_status_input_schema(),
+            });
+            tools.push(ToolEntry {
+                name: workflow::MCP_TOOL_APXM_WORKFLOW_EVENTS.to_string(),
+                description:
+                    "Fetch retained events for a server-managed APXM workflow run by execution_id"
+                        .to_string(),
+                input_schema: workflow::workflow_events_input_schema(),
+            });
+            tools.push(ToolEntry {
+                name: workflow::MCP_TOOL_APXM_WORKFLOW_CANCEL.to_string(),
+                description: "Cancel an in-flight server-managed APXM workflow run by execution_id"
+                    .to_string(),
+                input_schema: workflow::workflow_cancel_input_schema(),
             });
             tools.extend(
                 state
@@ -147,6 +183,12 @@ pub(crate) async fn mcp_jsonrpc(
             // graph -> run (same gating as apxm_run).
             if let Some(response) =
                 dispatch_spec::call_dispatch_tool(&state, &id, tool_name, &tool_args).await
+            {
+                return response;
+            }
+
+            if let Some(response) =
+                workflow::call_workflow_tool(&state, &id, tool_name, &tool_args).await
             {
                 return response;
             }

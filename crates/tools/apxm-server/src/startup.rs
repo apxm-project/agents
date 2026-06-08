@@ -66,9 +66,18 @@ pub(crate) async fn run_server_with_config(server_config: ServerConfig) -> anyho
     crate::capability::register_pack_tools(&runtime, &skill_roots);
     crate::search_skills::register(&runtime, skill_library.clone());
     let mut runtime = Arc::new(runtime);
-    apxm_driver::runtime::install_workflow_spawner(&mut runtime, None)
-        .map_err(|error| anyhow::anyhow!("failed to install workflow spawner: {error}"))?;
-    crate::call_skill::install(&mut runtime, skill_library.clone());
+    let (skill_resolver, workflow_spawner) = {
+        let runtime_mut = Arc::get_mut(&mut runtime).ok_or_else(|| {
+            anyhow::anyhow!("failed to install runtime bridges after runtime was shared")
+        })?;
+        let skill_resolver =
+            crate::call_skill::install_unattached(runtime_mut, skill_library.clone());
+        let workflow_spawner =
+            apxm_driver::runtime::install_workflow_spawner_unattached(runtime_mut, None);
+        (skill_resolver, workflow_spawner)
+    };
+    skill_resolver.attach_runtime(&runtime);
+    workflow_spawner.attach_runtime(&runtime);
 
     // Phase 14.8.C — wire the outbound lifecycle webhook if configured.
     // Optional + fire-and-forget.

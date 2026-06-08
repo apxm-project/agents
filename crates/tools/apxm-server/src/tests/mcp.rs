@@ -245,6 +245,188 @@ async fn mcp_tools_list_includes_skill_inventory_tools() {
         names.contains(&MCP_TOOL_APXM_CAPABILITY_LIST),
         "tools: {body}"
     );
+    assert!(
+        names.contains(&MCP_TOOL_APXM_WORKFLOW_START),
+        "tools: {body}"
+    );
+    assert!(
+        names.contains(&MCP_TOOL_APXM_WORKFLOW_STATUS),
+        "tools: {body}"
+    );
+    assert!(
+        names.contains(&MCP_TOOL_APXM_WORKFLOW_EVENTS),
+        "tools: {body}"
+    );
+    assert!(
+        names.contains(&MCP_TOOL_APXM_WORKFLOW_CANCEL),
+        "tools: {body}"
+    );
+}
+
+#[tokio::test]
+async fn mcp_workflow_start_status_and_events_use_server_execution_id() {
+    let temp = tempfile::tempdir().expect("tempdir");
+    let workflow_path = write_workflow_fixture(temp.path(), "child.air", &const_only_air());
+    let app = build_app(test_state().await);
+
+    let (status, body) = post_json(
+        app.clone(),
+        routes::MCP,
+        mcp_call(
+            MCP_TOOL_APXM_WORKFLOW_START,
+            serde_json::json!({
+                "workflow_path": workflow_path,
+                "session_id": "mcp-workflow-start-status"
+            }),
+        ),
+    )
+    .await;
+
+    assert_eq!(status, StatusCode::OK, "workflow start failed: {body}");
+    assert_eq!(body[tool_result::RESULT][mcp_fields::IS_ERROR], false);
+    let started: serde_json::Value =
+        serde_json::from_str(tool_text(&body)).expect("workflow start response JSON");
+    let execution_id = started[tool_result::EXECUTION_ID]
+        .as_str()
+        .expect("execution_id");
+    assert_eq!(started[tool_result::STATUS], STATUS_RUNNING);
+    assert_eq!(started[MCP_ARG_SESSION_ID], "mcp-workflow-start-status");
+    assert!(
+        started["session_dir"]
+            .as_str()
+            .is_some_and(|path| !path.is_empty()),
+        "session_dir missing: {started}"
+    );
+
+    let status_body = wait_for_workflow_status(app.clone(), execution_id, STATUS_SUCCEEDED).await;
+    let workflow_status: serde_json::Value =
+        serde_json::from_str(tool_text(&status_body)).expect("workflow status response JSON");
+    assert_eq!(workflow_status[tool_result::STATUS], STATUS_SUCCEEDED);
+    assert_eq!(
+        workflow_status[tool_result::EXECUTION_ID],
+        execution_id,
+        "status should use the server-owned execution_id"
+    );
+    assert!(
+        workflow_status["result"]["results"]
+            .as_object()
+            .expect("result map")
+            .values()
+            .any(|value| value["result"] == FIXTURE_OUTPUT),
+        "workflow spawn result should carry child output: {workflow_status}"
+    );
+
+    let (status, body) = post_json(
+        app,
+        routes::MCP,
+        mcp_call(
+            MCP_TOOL_APXM_WORKFLOW_EVENTS,
+            serde_json::json!({
+                "execution_id": execution_id,
+                "since": 0,
+                "limit": 25
+            }),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "workflow events failed: {body}");
+    assert_eq!(body[tool_result::RESULT][mcp_fields::IS_ERROR], false);
+    let events: serde_json::Value =
+        serde_json::from_str(tool_text(&body)).expect("workflow events response JSON");
+    let event_items = events["events"].as_array().expect("events array");
+    assert!(
+        event_items
+            .iter()
+            .any(|event| event["payload"]["kind"] == "execution_started"),
+        "expected execution_started event: {events}"
+    );
+    assert!(
+        event_items
+            .iter()
+            .any(|event| event["payload"]["kind"] == "execute_complete"),
+        "expected execute_complete event: {events}"
+    );
+}
+
+#[tokio::test]
+async fn mcp_workflow_cancel_interrupts_in_flight_run() {
+    const SLEEP_TOOL: &str = "fixture_sleep";
+
+    let temp = tempfile::tempdir().expect("tempdir");
+    let workflow_path =
+        write_workflow_fixture(temp.path(), "sleep.air", &sleep_tool_air(SLEEP_TOOL));
+    let state = test_state().await;
+    state
+        .runtime
+        .capability_system()
+        .register(Arc::new(FixtureSleepCapability::new(SLEEP_TOOL)))
+        .expect("register sleep capability");
+    let app = build_app(state);
+
+    let (status, body) = post_json(
+        app.clone(),
+        routes::MCP,
+        mcp_call(
+            MCP_TOOL_APXM_WORKFLOW_START,
+            serde_json::json!({ "workflow_path": workflow_path }),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "workflow start failed: {body}");
+    assert_eq!(body[tool_result::RESULT][mcp_fields::IS_ERROR], false);
+    let started: serde_json::Value =
+        serde_json::from_str(tool_text(&body)).expect("workflow start response JSON");
+    let execution_id = started[tool_result::EXECUTION_ID]
+        .as_str()
+        .expect("execution_id");
+
+    let (status, body) = post_json(
+        app.clone(),
+        routes::MCP,
+        mcp_call(
+            MCP_TOOL_APXM_WORKFLOW_CANCEL,
+            serde_json::json!({ "execution_id": execution_id }),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "workflow cancel failed: {body}");
+    assert_eq!(body[tool_result::RESULT][mcp_fields::IS_ERROR], false);
+    let cancelled: serde_json::Value =
+        serde_json::from_str(tool_text(&body)).expect("workflow cancel response JSON");
+    assert_eq!(cancelled["cancelled"], true);
+
+    let status_body = wait_for_workflow_status(app.clone(), execution_id, STATUS_FAILED).await;
+    let workflow_status: serde_json::Value =
+        serde_json::from_str(tool_text(&status_body)).expect("workflow status response JSON");
+    assert_eq!(workflow_status[tool_result::STATUS], STATUS_FAILED);
+    assert!(
+        workflow_status["error"]
+            .as_str()
+            .unwrap_or_default()
+            .contains("apxm_workflow_cancel"),
+        "expected cancellation error: {workflow_status}"
+    );
+
+    let (status, body) = post_json(
+        app,
+        routes::MCP,
+        mcp_call(
+            MCP_TOOL_APXM_WORKFLOW_EVENTS,
+            serde_json::json!({ "execution_id": execution_id }),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "workflow events failed: {body}");
+    let events: serde_json::Value =
+        serde_json::from_str(tool_text(&body)).expect("workflow events response JSON");
+    assert!(
+        events["events"]
+            .as_array()
+            .expect("events array")
+            .iter()
+            .any(|event| event["payload"]["kind"] == "turn_aborted"),
+        "expected turn_aborted event: {events}"
+    );
 }
 
 #[tokio::test]
@@ -1540,4 +1722,100 @@ async fn mcp_resources_list_builtin_wins_on_id_collision() {
         .resolve_skill_uri(&user_versioned_uri)
         .expect("user versioned read");
     assert_eq!(user_read.text, COLLIDING_USER_SOURCE);
+}
+
+fn write_workflow_fixture(
+    root: &std::path::Path,
+    graph_name: &str,
+    graph_air: &str,
+) -> std::path::PathBuf {
+    let graph_path = root.join(graph_name);
+    std::fs::write(&graph_path, graph_air).expect("write workflow graph");
+    let workflow_path = root.join("workflow.apxmw");
+    std::fs::write(
+        &workflow_path,
+        serde_json::to_vec_pretty(&serde_json::json!({
+            "name": "mcp_workflow_fixture",
+            "graphs": [
+                { "id": "step", "path": graph_name }
+            ],
+            "output": "{{step.output}}"
+        }))
+        .expect("serialize workflow fixture"),
+    )
+    .expect("write workflow fixture");
+    workflow_path
+}
+
+fn sleep_tool_air(capability: &str) -> String {
+    format!(
+        r#"module {{
+  func.func @main() -> !ais.token attributes {{ais.entry}} {{
+    %reg = ais.register_capability "{capability}" {{description = "fixture sleep tool"}} : !ais.token
+    %tool = ais.inv_tool "{capability}" ("{{}}") : !ais.token
+    func.return %tool : !ais.token
+  }}
+}}
+"#
+    )
+}
+
+async fn wait_for_workflow_status(
+    app: Router,
+    execution_id: &str,
+    expected_status: &str,
+) -> serde_json::Value {
+    let mut last_body = serde_json::Value::Null;
+    for _ in 0..100 {
+        let (status, body) = post_json(
+            app.clone(),
+            routes::MCP,
+            mcp_call(
+                MCP_TOOL_APXM_WORKFLOW_STATUS,
+                serde_json::json!({ "execution_id": execution_id }),
+            ),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK, "workflow status failed: {body}");
+        if body[tool_result::RESULT][mcp_fields::IS_ERROR] == false {
+            let status_json: serde_json::Value =
+                serde_json::from_str(tool_text(&body)).expect("workflow status JSON");
+            if status_json[tool_result::STATUS] == expected_status {
+                return body;
+            }
+        }
+        last_body = body;
+        tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+    }
+    panic!("workflow did not reach status {expected_status}: {last_body}");
+}
+
+struct FixtureSleepCapability {
+    metadata: CapabilityMetadata,
+}
+
+impl FixtureSleepCapability {
+    fn new(name: &str) -> Self {
+        Self {
+            metadata: CapabilityMetadata::new(
+                name,
+                "Fixture slow read-only capability",
+                serde_json::json!({ "type": "object", "properties": {} }),
+            )
+            .with_returns("string")
+            .with_read_only(),
+        }
+    }
+}
+
+#[async_trait]
+impl CapabilityExecutor for FixtureSleepCapability {
+    async fn execute(&self, _args: HashMap<String, Value>) -> Result<Value, RuntimeError> {
+        tokio::time::sleep(std::time::Duration::from_secs(5)).await;
+        Ok(Value::String(FIXTURE_OUTPUT.to_string()))
+    }
+
+    fn metadata(&self) -> &CapabilityMetadata {
+        &self.metadata
+    }
 }

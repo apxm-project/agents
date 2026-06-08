@@ -244,18 +244,37 @@ pub fn install_workflow_spawner(
     runtime: &mut Arc<Runtime>,
     configured_emitter: Option<Arc<dyn ExecutionEventEmitter>>,
 ) -> Result<(), apxm_runtime::RuntimeError> {
-    let workflow_spawner = Arc::new(DriverWorkflowSpawner::new(configured_emitter));
-    {
+    let installed = {
         let runtime = Arc::get_mut(runtime).ok_or_else(|| {
             apxm_runtime::RuntimeError::State(
                 "cannot install workflow spawner after runtime has been shared".to_string(),
             )
         })?;
-        runtime.set_workflow_spawner(workflow_spawner.clone());
-    }
-    let runtime_weak = Arc::downgrade(runtime);
-    workflow_spawner.attach_runtime(runtime_weak);
+        install_workflow_spawner_unattached(runtime, configured_emitter)
+    };
+    installed.attach_runtime(runtime);
     Ok(())
+}
+
+pub struct InstalledWorkflowSpawner {
+    spawner: Arc<DriverWorkflowSpawner>,
+}
+
+impl InstalledWorkflowSpawner {
+    pub fn attach_runtime(&self, runtime: &Arc<Runtime>) {
+        self.spawner.attach_runtime(Arc::downgrade(runtime));
+    }
+}
+
+pub fn install_workflow_spawner_unattached(
+    runtime: &mut Runtime,
+    configured_emitter: Option<Arc<dyn ExecutionEventEmitter>>,
+) -> InstalledWorkflowSpawner {
+    let workflow_spawner = Arc::new(DriverWorkflowSpawner::new(configured_emitter));
+    runtime.set_workflow_spawner(workflow_spawner.clone());
+    InstalledWorkflowSpawner {
+        spawner: workflow_spawner,
+    }
 }
 
 fn build_middlewares(configs: &[MiddlewareConfig]) -> Vec<Arc<dyn OperationMiddleware>> {
