@@ -260,9 +260,8 @@ pub enum Commands {
     },
     /// Start, follow, inspect, or cancel an autonomous APXM goal run.
     ///
-    /// This is the user-facing entry point for APXM-owned orchestration:
-    /// it calls the server MCP `apxm_orchestrate_start` tool, then follows
-    /// `apxm_workflow_events/status` until the orchestrator wakes.
+    /// Sends the task to APXM server, which owns worker admission,
+    /// workflow execution, events, cancellation, and sessions.
     Goal(GoalArgs),
     /// Interactive conversational REPL over a running apxm-server.
     ///
@@ -340,7 +339,7 @@ pub struct GoalArgs {
     pub server: Option<String>,
 
     /// Reuse a caller-provided orchestration session id.
-    #[arg(long = "session-id")]
+    #[arg(long = "session-id", hide = true)]
     pub session_id: Option<String>,
 
     /// Optional repository, product, or run context passed to workers.
@@ -348,11 +347,11 @@ pub struct GoalArgs {
     pub context: Option<String>,
 
     /// Optional event payload/reason that triggered this goal loop.
-    #[arg(long)]
+    #[arg(long, hide = true)]
     pub event: Option<String>,
 
     /// Optional trigger rule or source for this goal loop.
-    #[arg(long)]
+    #[arg(long, hide = true)]
     pub trigger: Option<String>,
 
     /// Custom worker as ID[:ROLE[:PROFILE]]. Repeat for fan-out workers.
@@ -360,7 +359,7 @@ pub struct GoalArgs {
     pub workers: Vec<String>,
 
     /// Worker dependencies as WORKER=DEP1,DEP2. Repeat to shape phases.
-    #[arg(long = "depends", value_name = "WORKER=DEP1,DEP2")]
+    #[arg(long = "depends", value_name = "WORKER=DEP1,DEP2", hide = true)]
     pub depends: Vec<String>,
 
     /// Registered profile for the default planner worker.
@@ -371,7 +370,7 @@ pub struct GoalArgs {
     #[arg(long = "executor", alias = "executor-profile", value_name = "PROFILE")]
     pub executor_profile: Option<String>,
 
-    /// Registered profile for the default critic worker.
+    /// Optional reviewer profile. Adds a reviewer worker after planning.
     #[arg(long = "critic", alias = "critic-profile", value_name = "PROFILE")]
     pub critic_profile: Option<String>,
 
@@ -396,23 +395,23 @@ pub struct GoalArgs {
     pub repo_root: Option<PathBuf>,
 
     /// Git ref used when --workspace git_worktree is selected.
-    #[arg(long = "base-ref", default_value = "HEAD")]
+    #[arg(long = "base-ref", default_value = "HEAD", hide = true)]
     pub base_ref: String,
 
     /// Extra capability grant forwarded to APXM admission (repeatable).
-    #[arg(long = "admit", value_name = "CAP")]
+    #[arg(long = "admit", value_name = "CAP", hide = true)]
     pub admit: Vec<String>,
 
     /// Explicitly grant SPAWN_AGENT. Also auto-granted when profiles are used.
-    #[arg(long = "admit-spawn")]
+    #[arg(long = "admit-spawn", hide = true)]
     pub admit_spawn: bool,
 
     /// Skill library / id to import into the goal run's visible set.
-    #[arg(long = "import", value_name = "LIB")]
+    #[arg(long = "import", value_name = "LIB", hide = true)]
     pub import: Vec<String>,
 
     /// Materialize and validate the generated workflow bundle without starting it.
-    #[arg(long = "dry-run")]
+    #[arg(long = "dry-run", hide = true)]
     pub dry_run: bool,
 
     /// Start the goal but do not poll workflow events.
@@ -420,15 +419,15 @@ pub struct GoalArgs {
     pub no_follow: bool,
 
     /// Event page size while following.
-    #[arg(long = "limit", default_value_t = 100)]
+    #[arg(long = "limit", default_value_t = 100, hide = true)]
     pub limit: usize,
 
     /// Poll interval while following.
-    #[arg(long = "poll-ms", default_value_t = 500)]
+    #[arg(long = "poll-ms", default_value_t = 500, hide = true)]
     pub poll_ms: u64,
 
     /// Stop following after this many seconds without cancelling the run.
-    #[arg(long = "timeout-secs")]
+    #[arg(long = "timeout-secs", hide = true)]
     pub timeout_secs: Option<u64>,
 }
 

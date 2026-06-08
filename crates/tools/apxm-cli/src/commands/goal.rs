@@ -280,32 +280,55 @@ fn build_workers(args: &GoalArgs) -> Result<Vec<WorkerRequest>> {
 }
 
 fn default_workers(args: &GoalArgs) -> Vec<WorkerRequest> {
-    vec![
+    let mut workers = vec![
         WorkerRequest {
             id: "planner".to_string(),
-            role: "Decompose the goal into bounded worker packets, acceptance criteria, risk gates, and verification steps.".to_string(),
-            profile: args.planner_profile.as_deref().and_then(non_empty).map(str::to_string),
+            role: "Plan the work and acceptance checks.".to_string(),
+            profile: args
+                .planner_profile
+                .as_deref()
+                .and_then(non_empty)
+                .map(str::to_string),
             depends_on: Vec::new(),
         },
         WorkerRequest {
             id: "executor".to_string(),
-            role: "Implement or perform the primary work from the planner handoff.".to_string(),
-            profile: args.executor_profile.as_deref().and_then(non_empty).map(str::to_string),
-            depends_on: vec!["planner".to_string()],
-        },
-        WorkerRequest {
-            id: "critic".to_string(),
-            role: "Review the plan and executor assumptions, flag risks, conflicts, and missing context.".to_string(),
-            profile: args.critic_profile.as_deref().and_then(non_empty).map(str::to_string),
+            role: "Do the work from the plan.".to_string(),
+            profile: args
+                .executor_profile
+                .as_deref()
+                .and_then(non_empty)
+                .map(str::to_string),
             depends_on: vec!["planner".to_string()],
         },
         WorkerRequest {
             id: "verifier".to_string(),
-            role: "Verify executor output against acceptance criteria and produce pass/fail evidence.".to_string(),
-            profile: args.verifier_profile.as_deref().and_then(non_empty).map(str::to_string),
-            depends_on: vec!["executor".to_string(), "critic".to_string()],
+            role: "Verify the result and report evidence.".to_string(),
+            profile: args
+                .verifier_profile
+                .as_deref()
+                .and_then(non_empty)
+                .map(str::to_string),
+            depends_on: vec!["executor".to_string()],
         },
-    ]
+    ];
+
+    if let Some(profile) = args.critic_profile.as_deref().and_then(non_empty) {
+        workers.insert(
+            2,
+            WorkerRequest {
+                id: "critic".to_string(),
+                role: "Review the plan and implementation risks.".to_string(),
+                profile: Some(profile.to_string()),
+                depends_on: vec!["planner".to_string()],
+            },
+        );
+        if let Some(verifier) = workers.iter_mut().find(|worker| worker.id == "verifier") {
+            verifier.depends_on.push("critic".to_string());
+        }
+    }
+
+    workers
 }
 
 fn parse_worker(raw: &str) -> Result<WorkerRequest> {
@@ -863,8 +886,26 @@ mod tests {
     }
 
     #[test]
-    fn default_goal_workers_shape_fanout_after_planning() {
+    fn default_goal_workers_are_minimal() {
         let args = args_with_task();
+        let request = build_start_arguments(&args, "ship the thing").expect("request");
+        let workers = request["workers"].as_array().expect("workers");
+        assert_eq!(
+            workers
+                .iter()
+                .filter_map(|worker| worker["id"].as_str())
+                .collect::<Vec<_>>(),
+            vec!["planner", "executor", "verifier"]
+        );
+        assert_eq!(workers[1]["depends_on"], json!(["planner"]));
+        assert_eq!(workers[2]["depends_on"], json!(["executor"]));
+    }
+
+    #[test]
+    fn critic_profile_opts_into_review_worker() {
+        let mut args = args_with_task();
+        args.critic_profile = Some("codex".to_string());
+
         let request = build_start_arguments(&args, "ship the thing").expect("request");
         let workers = request["workers"].as_array().expect("workers");
         assert_eq!(
@@ -874,7 +915,7 @@ mod tests {
                 .collect::<Vec<_>>(),
             vec!["planner", "executor", "critic", "verifier"]
         );
-        assert_eq!(workers[1]["depends_on"], json!(["planner"]));
+        assert_eq!(workers[2]["profile"], "codex");
         assert_eq!(workers[2]["depends_on"], json!(["planner"]));
         assert_eq!(workers[3]["depends_on"], json!(["executor", "critic"]));
     }
