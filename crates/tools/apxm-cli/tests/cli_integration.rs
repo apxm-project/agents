@@ -1761,6 +1761,105 @@ fn workflow_run_nested_workflow_uses_explicit_root_for_parent_and_child() {
     );
 }
 
+#[cfg(feature = "driver")]
+#[test]
+fn workflow_run_background_returns_follow_handles_and_records_events() {
+    let temp = tempfile::tempdir().unwrap();
+    let workflow_root = temp.path();
+    let session_root = workflow_root.join("workflow-sessions");
+    let graph_path = workflow_root.join("graph.air");
+    let workflow_path = workflow_root.join("background.apxmw");
+
+    std::fs::write(&graph_path, CONST_GRAPH).unwrap();
+    write_json_file(
+        &workflow_path,
+        &serde_json::json!({
+            "name": "background",
+            "graphs": [
+                {"id": "const_step", "path": "graph.air"}
+            ],
+            "output": "{{const_step.output}}"
+        }),
+    );
+
+    let out = apxm()
+        .current_dir(workflow_root)
+        .env("APXM_MOCK_BACKEND", "1")
+        .args([
+            "--json",
+            "workflow",
+            "run",
+            "--background",
+            "--session-root",
+            session_root.to_str().unwrap(),
+            workflow_path.to_str().unwrap(),
+        ])
+        .output()
+        .unwrap();
+
+    assert!(
+        out.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let body: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap();
+    assert_eq!(body["status"], "background");
+    assert!(body["pid"].as_u64().unwrap() > 0);
+
+    let session_dir = Path::new(body["session_dir"].as_str().unwrap());
+    let log_file = Path::new(body["log_file"].as_str().unwrap());
+    assert_eq!(session_dir.parent().unwrap(), session_root);
+    assert!(session_dir.join("manifest.json").is_file());
+    assert!(session_dir.join("live.json").is_file());
+    assert!(session_dir.join("background.json").is_file());
+    assert_eq!(log_file, session_dir.join("background.log"));
+    assert!(log_file.is_file());
+
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+    while !session_dir.join("results.json").is_file() {
+        if std::time::Instant::now() > deadline {
+            #[cfg(unix)]
+            {
+                let _ = Command::new("kill")
+                    .arg(body["pid"].as_u64().unwrap().to_string())
+                    .status();
+            }
+            panic!(
+                "background workflow did not finish; log:\n{}",
+                std::fs::read_to_string(log_file).unwrap_or_default()
+            );
+        }
+        std::thread::sleep(std::time::Duration::from_millis(100));
+    }
+
+    let inspect_out = apxm()
+        .current_dir(workflow_root)
+        .args([
+            "--json",
+            "session",
+            "inspect",
+            session_dir.to_str().unwrap(),
+        ])
+        .output()
+        .unwrap();
+    assert!(
+        inspect_out.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&inspect_out.stderr)
+    );
+    let inspected: serde_json::Value = serde_json::from_slice(&inspect_out.stdout).unwrap();
+    assert_eq!(inspected["manifest"]["status"], "completed");
+    assert_eq!(inspected["live"]["status"], "completed");
+    assert_eq!(inspected["results"]["output"], "ok");
+
+    let trace = std::fs::read_to_string(session_dir.join("trace.ndjson")).unwrap();
+    assert!(trace.contains("\"kind\":\"session_start\""));
+    assert!(trace.contains("\"kind\":\"plan_created\""));
+    assert!(trace.contains("\"kind\":\"plan_step_started\""));
+    assert!(trace.contains("\"kind\":\"plan_step_completed\""));
+    assert!(trace.contains("\"kind\":\"session_end\""));
+}
+
 // ─── doctor ────────────────────────────────────────────────────────────────
 
 #[test]

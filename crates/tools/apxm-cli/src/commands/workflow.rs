@@ -15,12 +15,16 @@ use super::dekk_hints;
 #[cfg(feature = "driver")]
 use std::collections::HashMap;
 #[cfg(feature = "driver")]
+use std::fs::OpenOptions;
+#[cfg(feature = "driver")]
 use std::future::Future;
 #[cfg(feature = "driver")]
 use std::path::Path;
 use std::path::PathBuf;
 #[cfg(feature = "driver")]
 use std::pin::Pin;
+#[cfg(feature = "driver")]
+use std::process::{Command, Stdio};
 #[cfg(feature = "driver")]
 use std::sync::Arc;
 #[cfg(feature = "driver")]
@@ -30,14 +34,32 @@ use std::time::Instant;
 use super::implementations::load_config;
 
 #[cfg(feature = "driver")]
-pub async fn workflow_command(action: WorkflowAction, json: bool) -> Result<()> {
+pub async fn workflow_command(
+    action: WorkflowAction,
+    config: Option<PathBuf>,
+    json: bool,
+) -> Result<()> {
     match action {
         WorkflowAction::Run {
             file,
+            background,
             args_json,
             args,
             session_root,
-        } => workflow_run_command(file, args_json, args, session_root, json).await,
+            session_dir,
+        } => {
+            workflow_run_command(
+                file,
+                background,
+                args_json,
+                args,
+                session_root,
+                session_dir,
+                config,
+                json,
+            )
+            .await
+        }
         WorkflowAction::Validate { file } => workflow_validate_command(file, json),
         WorkflowAction::Analyze { file } => workflow_analyze_command(file, json),
     }
@@ -152,18 +174,41 @@ pub fn workflow_analyze_command(file: PathBuf, json: bool) -> Result<()> {
 #[cfg(feature = "driver")]
 pub async fn workflow_run_command(
     file: PathBuf,
+    background: bool,
     args_json: Option<String>,
     args: Vec<String>,
     session_root: Option<PathBuf>,
+    session_dir: Option<PathBuf>,
+    config: Option<PathBuf>,
     json: bool,
 ) -> Result<()> {
-    let params = parse_workflow_args(args_json.as_deref(), &args)?;
-    let config = load_config(None)?;
-    let linker = Linker::new(LinkerConfig::from_apxm_config(config)).await?;
-    let session_base_dir = resolve_workflow_sessions_dir(session_root.as_deref())?;
+    if background {
+        return workflow_run_background_command(file, args_json, args, session_root, config, json)
+            .await;
+    }
 
-    let (result, session_dir) =
-        execute_workflow_file(&file, params, &session_base_dir, &linker, 0, !json).await?;
+    let params = parse_workflow_args(args_json.as_deref(), &args)?;
+    let config = load_config(config)?;
+    let linker = Linker::new(LinkerConfig::from_apxm_config(config)).await?;
+    let session_base_dir = if let Some(exact_session_dir) = session_dir.as_deref() {
+        exact_session_dir
+            .parent()
+            .map(Path::to_path_buf)
+            .unwrap_or_else(|| PathBuf::from("."))
+    } else {
+        resolve_workflow_sessions_dir(session_root.as_deref())?
+    };
+
+    let (result, session_dir) = execute_workflow_file(
+        &file,
+        params,
+        &session_base_dir,
+        session_dir.as_deref(),
+        &linker,
+        0,
+        !json,
+    )
+    .await?;
 
     if json {
         let output = serde_json::json!({
@@ -211,6 +256,123 @@ pub async fn workflow_run_command(
 }
 
 #[cfg(feature = "driver")]
+async fn workflow_run_background_command(
+    file: PathBuf,
+    args_json: Option<String>,
+    args: Vec<String>,
+    session_root: Option<PathBuf>,
+    config: Option<PathBuf>,
+    json: bool,
+) -> Result<()> {
+    use apxm_runtime::workflow::WorkflowDef;
+
+    let params = parse_workflow_args(args_json.as_deref(), &args)?;
+    let def = WorkflowDef::from_file(&file)
+        .with_context(|| format!("Failed to load workflow file {}", file.display()))?;
+    let errors = def.validate();
+    if !errors.is_empty() {
+        return Err(anyhow::anyhow!(
+            "Workflow validation failed: {}",
+            errors.join(", ")
+        ));
+    }
+    validate_workflow_params(&def, &params)?;
+
+    let session_base_dir = resolve_workflow_sessions_dir(session_root.as_deref())?;
+    let session_dir = create_workflow_session_dir(&session_base_dir, &def.name)?;
+    apxm_runtime::workflow::write_workflow_session_started(
+        &session_dir,
+        &def.name,
+        def.graphs.len(),
+    )?;
+
+    let log_file = session_dir.join("background.log");
+    let child_args = build_background_workflow_args(
+        &file,
+        args_json.as_deref(),
+        &args,
+        &session_dir,
+        config.as_deref(),
+        json,
+    );
+    let exe = std::env::current_exe().context("Failed to resolve current APXM executable")?;
+    let log = OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(&log_file)
+        .with_context(|| format!("Failed to open background log {}", log_file.display()))?;
+    let log_for_stderr = log
+        .try_clone()
+        .with_context(|| format!("Failed to clone background log {}", log_file.display()))?;
+    let child = Command::new(&exe)
+        .args(&child_args)
+        .stdin(Stdio::null())
+        .stdout(Stdio::from(log))
+        .stderr(Stdio::from(log_for_stderr))
+        .spawn()
+        .with_context(|| format!("Failed to spawn background workflow {}", file.display()))?;
+    let pid = child.id();
+
+    let command_line = std::iter::once(exe.to_string_lossy().to_string())
+        .chain(child_args.iter().cloned())
+        .collect::<Vec<_>>();
+    apxm_runtime::workflow::write_workflow_background_started(
+        &session_dir,
+        pid,
+        &log_file,
+        &command_line,
+    )?;
+
+    if json {
+        let output = serde_json::json!({
+            "status": "background",
+            "pid": pid,
+            "workflow_name": def.name,
+            "session_dir": session_dir,
+            "log_file": log_file,
+            "command": command_line,
+        });
+        println!("{}", serde_json::to_string_pretty(&output)?);
+        return Ok(());
+    }
+
+    println!("Workflow started in background");
+    println!("  PID: {pid}");
+    println!("  Session directory: {}", session_dir.display());
+    println!("  Log file: {}", log_file.display());
+    println!("  Follow: apxm session inspect {}", session_dir.display());
+    Ok(())
+}
+
+#[cfg(feature = "driver")]
+fn build_background_workflow_args(
+    file: &Path,
+    args_json: Option<&str>,
+    args: &[String],
+    session_dir: &Path,
+    config: Option<&Path>,
+    json: bool,
+) -> Vec<String> {
+    let mut child_args = vec!["workflow".to_string(), "run".to_string()];
+    if json {
+        child_args.push("--json".to_string());
+    }
+    if let Some(config) = config {
+        child_args.push("--config".to_string());
+        child_args.push(config.to_string_lossy().to_string());
+    }
+    child_args.push("--session-dir".to_string());
+    child_args.push(session_dir.to_string_lossy().to_string());
+    if let Some(args_json) = args_json {
+        child_args.push("--args-json".to_string());
+        child_args.push(args_json.to_string());
+    }
+    child_args.push(file.to_string_lossy().to_string());
+    child_args.extend(args.iter().cloned());
+    child_args
+}
+
+#[cfg(feature = "driver")]
 type WorkflowRunFuture<'a> = Pin<
     Box<dyn Future<Output = Result<(apxm_runtime::workflow::WorkflowResult, PathBuf)>> + Send + 'a>,
 >;
@@ -220,6 +382,7 @@ fn execute_workflow_file<'a>(
     file: &'a Path,
     params: HashMap<String, String>,
     session_base_dir: &'a Path,
+    explicit_session_dir: Option<&'a Path>,
     linker: &'a Linker,
     depth: usize,
     render_progress: bool,
@@ -249,7 +412,12 @@ fn execute_workflow_file<'a>(
             .ok_or_else(|| anyhow::anyhow!("Failed to get parent directory"))?
             .to_path_buf();
         let phases = execution_phases(&def.graphs)?;
-        let workflow_session_dir = create_workflow_session_dir(session_base_dir, &def.name)?;
+        let workflow_session_dir = if let Some(session_dir) = explicit_session_dir {
+            std::fs::create_dir_all(session_dir)?;
+            session_dir.to_path_buf()
+        } else {
+            create_workflow_session_dir(session_base_dir, &def.name)?
+        };
         apxm_runtime::workflow::write_workflow_session_started(
             &workflow_session_dir,
             &def.name,
@@ -266,6 +434,7 @@ fn execute_workflow_file<'a>(
             }
 
             for step_id in phase {
+                let step_index = step_results.len();
                 let step = def
                     .graphs
                     .iter()
@@ -282,6 +451,17 @@ fn execute_workflow_file<'a>(
                     if render_progress {
                         println!("{indent}  {step_id} Skipping (failed dependency)");
                     }
+                    apxm_runtime::workflow::write_workflow_step_finished(
+                        &workflow_session_dir,
+                        &def.name,
+                        step_id,
+                        step_index,
+                        apxm_runtime::workflow::StepStatus::Skipped,
+                        0,
+                        step_results.len() + 1,
+                        def.graphs.len(),
+                        start.elapsed().as_millis(),
+                    )?;
                     step_results.insert(
                         step_id.clone(),
                         apxm_runtime::workflow::StepResult {
@@ -315,6 +495,15 @@ fn execute_workflow_file<'a>(
                         step_path.display()
                     );
                 }
+                apxm_runtime::workflow::write_workflow_step_started(
+                    &workflow_session_dir,
+                    &def.name,
+                    step_id,
+                    step_index,
+                    step_results.len(),
+                    def.graphs.len(),
+                    start.elapsed().as_millis(),
+                )?;
 
                 let step_start = Instant::now();
                 let step_result = match step_path.extension().and_then(|ext| ext.to_str()) {
@@ -323,6 +512,7 @@ fn execute_workflow_file<'a>(
                             &step_path,
                             resolved_params,
                             &workflow_session_dir,
+                            None,
                             linker,
                             depth + 1,
                             render_progress,
@@ -384,6 +574,17 @@ fn execute_workflow_file<'a>(
                         step_result.duration_ms as f64 / 1000.0
                     );
                 }
+                apxm_runtime::workflow::write_workflow_step_finished(
+                    &workflow_session_dir,
+                    &def.name,
+                    step_id,
+                    step_index,
+                    step_result.status,
+                    step_result.duration_ms,
+                    step_results.len() + 1,
+                    def.graphs.len(),
+                    start.elapsed().as_millis(),
+                )?;
 
                 step_results.insert(step_id.clone(), step_result);
             }

@@ -467,6 +467,9 @@ pub enum WorkflowAction {
     Run {
         /// Workflow file (.apxmw)
         file: PathBuf,
+        /// Start the workflow in a detached APXM child process and return follow handles
+        #[arg(long)]
+        background: bool,
         /// Workflow arguments as a JSON object for machine callers
         #[arg(long, conflicts_with = "args")]
         args_json: Option<String>,
@@ -476,6 +479,9 @@ pub enum WorkflowAction {
         /// Explicit sessions root for this workflow run
         #[arg(long)]
         session_root: Option<PathBuf>,
+        /// Internal: exact workflow session directory to use
+        #[arg(long, hide = true)]
+        session_dir: Option<PathBuf>,
     },
     /// Validate a workflow file
     Validate {

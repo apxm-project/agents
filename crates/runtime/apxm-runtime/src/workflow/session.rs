@@ -1,12 +1,24 @@
 //! Session-file helpers for workflow-level followability.
 
+use std::fs::OpenOptions;
+use std::io::Write;
 use std::path::Path;
 
 use anyhow::Result;
 use apxm_core::constants;
-use apxm_core::types::{LiveSessionState, SessionManifest, SessionStatus};
+use apxm_core::events::payload::{
+    EventPayload, PlanCreatedPayload, PlanStepCompletedPayload, PlanStepStartedPayload,
+    SessionEndPayload, SessionStartPayload,
+};
+use apxm_core::events::{ApxmEvent, EventSource};
+use apxm_core::types::operations::AISOperationType;
+use apxm_core::types::{
+    CompletedNodeInfo, LiveSessionState, NodeInfo, SessionManifest, SessionStatus,
+};
 
 use super::{StepStatus, WorkflowResult, WorkflowStatus};
+
+const BACKGROUND_FILE: &str = "background.json";
 
 /// Persist the workflow root session as running.
 ///
@@ -52,7 +64,121 @@ pub fn write_workflow_session_started(
             current_phase: Some("workflow".to_string()),
         },
     )?;
+    initialize_workflow_trace(session_dir, &workflow_name, step_count)?;
     Ok(())
+}
+
+/// Persist background-launch metadata for a workflow session.
+pub fn write_workflow_background_started(
+    session_dir: &Path,
+    pid: u32,
+    log_file: &Path,
+    command: &[String],
+) -> Result<()> {
+    std::fs::create_dir_all(session_dir)?;
+    write_json(
+        session_dir.join(BACKGROUND_FILE),
+        &serde_json::json!({
+            "pid": pid,
+            "status": "background",
+            "log_file": log_file,
+            "command": command,
+            "started_at": chrono::Utc::now().to_rfc3339(),
+        }),
+    )
+}
+
+/// Persist workflow-root progress when a child step starts.
+pub fn write_workflow_step_started(
+    session_dir: &Path,
+    workflow_name: &str,
+    step_id: &str,
+    step_index: usize,
+    completed: usize,
+    total: usize,
+    elapsed_ms: u128,
+) -> Result<()> {
+    append_next_trace_event(
+        session_dir,
+        PlanStepStartedPayload {
+            plan_id: workflow_name.to_string(),
+            step_index,
+        },
+    )?;
+    let completed_nodes = read_live(session_dir)
+        .map(|live| live.completed_nodes)
+        .unwrap_or_default();
+    write_live(
+        session_dir,
+        &LiveSessionState {
+            status: SessionStatus::Running,
+            running_nodes: vec![NodeInfo {
+                id: workflow_step_node_id(step_index),
+                name: step_id.to_string(),
+                op: AISOperationType::WorkflowSpawn,
+            }],
+            completed_nodes,
+            completed,
+            total: Some(total),
+            elapsed_ms,
+            success: false,
+            current_phase: Some(format!("step:{step_id}")),
+        },
+    )
+}
+
+/// Persist workflow-root progress when a child step finishes or is skipped.
+pub fn write_workflow_step_finished(
+    session_dir: &Path,
+    workflow_name: &str,
+    step_id: &str,
+    step_index: usize,
+    status: StepStatus,
+    duration_ms: u64,
+    completed: usize,
+    total: usize,
+    elapsed_ms: u128,
+) -> Result<()> {
+    let success = status == StepStatus::Success;
+    append_next_trace_event(
+        session_dir,
+        PlanStepCompletedPayload {
+            plan_id: workflow_name.to_string(),
+            step_index,
+            success,
+        },
+    )?;
+    let mut completed_nodes = read_live(session_dir)
+        .map(|live| live.completed_nodes)
+        .unwrap_or_default();
+    completed_nodes.push(CompletedNodeInfo {
+        id: workflow_step_node_id(step_index),
+        name: step_id.to_string(),
+        op: AISOperationType::WorkflowSpawn,
+        duration_ms,
+        status: step_session_status(status),
+        input_tokens: None,
+        output_tokens: None,
+        prefill_ms: None,
+        decode_ms: None,
+    });
+    if completed_nodes.len() > 10 {
+        completed_nodes = completed_nodes.split_off(completed_nodes.len() - 10);
+    }
+
+    write_live(
+        session_dir,
+        &LiveSessionState {
+            status: SessionStatus::Running,
+            running_nodes: Vec::new(),
+            completed_nodes,
+            completed,
+            total: Some(total),
+            elapsed_ms,
+            success: false,
+            current_phase: Some(format!("step:{step_id}")),
+        },
+    )
 }
 
 /// Persist final workflow-level session files.
@@ -71,7 +197,7 @@ pub fn write_workflow_session_finished(session_dir: &Path, result: &WorkflowResu
     write_manifest(
         session_dir,
         &SessionManifest {
-            execution_id,
+            execution_id: execution_id.clone(),
             graph_name: Some(result.workflow_name.clone()),
             timestamp,
             status,
@@ -100,6 +226,13 @@ pub fn write_workflow_session_finished(session_dir: &Path, result: &WorkflowResu
     )?;
     write_results(session_dir, result)?;
     write_metrics(session_dir, result)?;
+    append_next_trace_event(
+        session_dir,
+        SessionEndPayload {
+            session_id: execution_id,
+            total_turns: result.step_results.len(),
+        },
+    )?;
     Ok(())
 }
 
@@ -168,6 +301,85 @@ fn write_metrics(session_dir: &Path, result: &WorkflowResult) -> Result<()> {
             }
         }),
     )
+}
+
+fn initialize_workflow_trace(
+    session_dir: &Path,
+    workflow_name: &str,
+    step_count: usize,
+) -> Result<()> {
+    let trace_path = session_dir.join(constants::session::files::TRACE);
+    if trace_path.is_file() && trace_path.metadata()?.len() > 0 {
+        return Ok(());
+    }
+
+    let execution_id = workflow_execution_id(session_dir);
+    append_trace_event(
+        session_dir,
+        &execution_id,
+        0,
+        SessionStartPayload {
+            session_id: execution_id.clone(),
+        },
+    )?;
+    append_trace_event(
+        session_dir,
+        &execution_id,
+        1,
+        PlanCreatedPayload {
+            plan_id: workflow_name.to_string(),
+            steps: step_count,
+        },
+    )
+}
+
+fn append_next_trace_event<P: EventPayload>(session_dir: &Path, payload: P) -> Result<()> {
+    let execution_id = workflow_execution_id(session_dir);
+    let seq = next_trace_seq(session_dir)?;
+    append_trace_event(session_dir, &execution_id, seq, payload)
+}
+
+fn append_trace_event<P: EventPayload>(
+    session_dir: &Path,
+    trace_id: &str,
+    seq: u64,
+    payload: P,
+) -> Result<()> {
+    std::fs::create_dir_all(session_dir)?;
+    let event = ApxmEvent::root(payload, EventSource::Session, trace_id).with_seq(seq);
+    let line = serde_json::to_string(&event)?;
+    let mut file = OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(session_dir.join(constants::session::files::TRACE))?;
+    writeln!(file, "{line}")?;
+    Ok(())
+}
+
+fn next_trace_seq(session_dir: &Path) -> Result<u64> {
+    let path = session_dir.join(constants::session::files::TRACE);
+    if !path.is_file() {
+        return Ok(0);
+    }
+    let text = std::fs::read_to_string(path)?;
+    Ok(text.lines().count() as u64)
+}
+
+fn read_live(session_dir: &Path) -> Option<LiveSessionState> {
+    let path = session_dir.join(constants::session::files::LIVE);
+    let text = std::fs::read_to_string(path).ok()?;
+    serde_json::from_str(&text).ok()
+}
+
+fn workflow_step_node_id(step_index: usize) -> u64 {
+    step_index.saturating_add(1) as u64
+}
+
+fn step_session_status(status: StepStatus) -> SessionStatus {
+    match status {
+        StepStatus::Success => SessionStatus::Completed,
+        StepStatus::Failed | StepStatus::Skipped => SessionStatus::Failed,
+    }
 }
 
 fn write_json(path: std::path::PathBuf, value: &impl serde::Serialize) -> Result<()> {

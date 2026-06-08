@@ -14,6 +14,9 @@ pub mod topo;
 
 pub use def::{GraphStep, WorkflowDef, WorkflowParam};
 pub use runner::{StepResult, StepStatus, WorkflowResult, WorkflowRunner, WorkflowStatus};
-pub use session::{write_workflow_session_finished, write_workflow_session_started};
+pub use session::{
+    write_workflow_background_started, write_workflow_session_finished,
+    write_workflow_session_started, write_workflow_step_finished, write_workflow_step_started,
+};
 pub use template::resolve;
 pub use topo::execution_phases;

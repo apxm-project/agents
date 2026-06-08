@@ -206,7 +206,7 @@ async fn run_cli(cli: Cli) -> Result<()> {
         Commands::Replay { session } => replay_command(session),
         Commands::Session { action } => session_command(action, cli.json),
         Commands::Process { action } => process_command(action, cli.json),
-        Commands::Workflow { action } => workflow_command(action, cli.json).await,
+        Commands::Workflow { action } => workflow_command(action, cli.config, cli.json).await,
         Commands::Cache { action } => cache_command(action, cli.json),
         Commands::Tokenize { text, file, model } => tokenize_command(text, file, model, cli.json),
         Commands::Watch { thread_id, expand } => watch_command(thread_id, expand).await,
