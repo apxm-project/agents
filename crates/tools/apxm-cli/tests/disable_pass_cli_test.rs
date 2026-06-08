@@ -38,6 +38,16 @@ const SMALL_PIPELINE: &str = r#"module {
 }
 "#;
 
+/// The explicit --pass-list case intentionally omits prompt-building passes,
+/// so use a local graph that does not need the prompt/input-name contract.
+const LOCAL_CONST_GRAPH: &str = r#"module {
+  func.func @disable_pass_test() -> !ais.token attributes {ais.entry} {
+    %value = ais.const_str "ok" : !ais.token
+    func.return %value : !ais.token
+  }
+}
+"#;
+
 fn write_tmp_graph(content: &str) -> tempfile::NamedTempFile {
     let mut f = tempfile::Builder::new().suffix(".air").tempfile().unwrap();
     f.write_all(content.as_bytes()).unwrap();
@@ -100,7 +110,7 @@ fn disable_pass_removes_pass_from_diagnostics() {
 
 #[test]
 fn pass_list_override_replaces_default_selection() {
-    let graph = write_tmp_graph(SMALL_PIPELINE);
+    let graph = write_tmp_graph(LOCAL_CONST_GRAPH);
     let tmp = tempfile::tempdir().unwrap();
     let out = tmp.path().join("out.apxmobj");
     let diag = tmp.path().join("diag.json");

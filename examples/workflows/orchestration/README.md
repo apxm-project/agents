@@ -6,6 +6,38 @@ keys, ACP profiles, or network access. Replace any worker graph with a graph,
 artifact, or workflow that calls a registered agent when you want the same
 shape to drive real workers.
 
+## Three Ways To Run Complex Work
+
+Use the smallest surface that matches the job:
+
+- `dekk apxm goal`: an agent or user creates one bounded worker DAG, APXM
+  materializes the workflow bundle, starts it in the background, and wakes the
+  orchestrator through `apxm_workflow_events/status`.
+- `dekk apxm workflow run` or `dekk apxm workflow execute`: run a checked-in
+  `.apxmw` workflow file after `validate` and `analyze`.
+- `apxm_plan_as_graph`: ask MCP to synthesize a typed AIR graph from natural
+  language. It is graph-oriented; worker-spawning orchestration should still go
+  through `goal` or `apxm_orchestrate_start`.
+
+```text
+[goal or event]
+       |
+       v
+[planner/orchestrator creates bounded DAG]
+       |
+       v
+[APXM starts workflow + records execution_id]
+       |
+       v
+[orchestrator sleeps]
+       |
+       v
+[workers finish -> gate/eval -> feedback]
+       |
+       v
+[events/status wake orchestrator]
+```
+
 ## Autonomous Task
 
 `autonomous_task/` shows the native MCP path for an orchestrator agent that

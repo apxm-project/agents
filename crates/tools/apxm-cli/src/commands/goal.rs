@@ -20,6 +20,7 @@ const TOOL_WORKFLOW_STATUS: &str = "apxm_workflow_status";
 const TOOL_WORKFLOW_EVENTS: &str = "apxm_workflow_events";
 const TOOL_WORKFLOW_CANCEL: &str = "apxm_workflow_cancel";
 const ADMIT_SPAWN_AGENT: &str = "SPAWN_AGENT";
+const TEMPLATE_ORCHESTRATION_GOAL_WORKER_ROLE: &str = "orchestration_goal_worker_role";
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 enum GoalMode {
@@ -252,7 +253,7 @@ fn build_start_arguments(args: &GoalArgs, task: &str) -> Result<JsonValue> {
 fn build_workers(args: &GoalArgs) -> Result<Vec<WorkerRequest>> {
     let deps = parse_dependencies(&args.depends)?;
     let mut workers = if args.workers.is_empty() {
-        let mut workers = default_workers(args);
+        let mut workers = default_workers(args)?;
         let reviewers = build_reviewers(args, vec!["executor".to_string()])?;
         let reviewer_ids = reviewers
             .iter()
@@ -292,11 +293,11 @@ fn build_workers(args: &GoalArgs) -> Result<Vec<WorkerRequest>> {
     Ok(workers)
 }
 
-fn default_workers(args: &GoalArgs) -> Vec<WorkerRequest> {
-    vec![
+fn default_workers(args: &GoalArgs) -> Result<Vec<WorkerRequest>> {
+    Ok(vec![
         WorkerRequest {
             id: "planner".to_string(),
-            role: "Act as the planner/orchestrator: split the goal, define worker briefs, and set acceptance checks for this bounded pass.".to_string(),
+            role: default_goal_role("planner", "planner")?,
             profile: args
                 .planner_profile
                 .as_deref()
@@ -306,7 +307,7 @@ fn default_workers(args: &GoalArgs) -> Vec<WorkerRequest> {
         },
         WorkerRequest {
             id: "executor".to_string(),
-            role: "Execute the work described by the planner/orchestrator for this bounded pass.".to_string(),
+            role: default_goal_role("executor", "executor")?,
             profile: args
                 .executor_profile
                 .as_deref()
@@ -316,7 +317,7 @@ fn default_workers(args: &GoalArgs) -> Vec<WorkerRequest> {
         },
         WorkerRequest {
             id: "verifier".to_string(),
-            role: "Verify the result and report evidence.".to_string(),
+            role: default_goal_role("verifier", "verifier")?,
             profile: args
                 .verifier_profile
                 .as_deref()
@@ -324,27 +325,26 @@ fn default_workers(args: &GoalArgs) -> Vec<WorkerRequest> {
                 .map(str::to_string),
             depends_on: vec!["executor".to_string()],
         },
-    ]
+    ])
 }
 
 fn parse_worker(raw: &str) -> Result<WorkerRequest> {
-    parse_worker_with_default(raw, |id| format!("Complete the '{id}' worker slice."))
+    parse_worker_with_default(raw, |id| default_goal_role("custom", id))
 }
 
 fn parse_worker_with_default(
     raw: &str,
-    default_role: impl FnOnce(&str) -> String,
+    default_role: impl FnOnce(&str) -> Result<String>,
 ) -> Result<WorkerRequest> {
     let mut parts = raw.splitn(3, ':');
     let id = parts
         .next()
         .and_then(non_empty)
         .ok_or_else(|| anyhow!("worker spec must start with an id"))?;
-    let role = parts
-        .next()
-        .and_then(non_empty)
-        .map(str::to_string)
-        .unwrap_or_else(|| default_role(id));
+    let role = match parts.next().and_then(non_empty) {
+        Some(role) => role.to_string(),
+        None => default_role(id)?,
+    };
     let profile = parts.next().and_then(non_empty).map(str::to_string);
     Ok(WorkerRequest {
         id: id.to_string(),
@@ -372,23 +372,30 @@ fn parse_review_worker(
     generated_id: &str,
     depends_on: &[String],
 ) -> Result<WorkerRequest> {
-    let default_role = |id: &str| {
-        format!(
-            "Review the goal output as '{id}', preserving risks, dissent, missing evidence, and follow-up recommendations."
-        )
-    };
+    let default_role = |id: &str| default_goal_role("reviewer", id);
     let mut worker = if raw.contains(':') {
         parse_worker_with_default(raw, default_role)?
     } else {
         WorkerRequest {
             id: generated_id.to_string(),
-            role: default_role(generated_id),
+            role: default_role(generated_id)?,
             profile: non_empty(raw).map(str::to_string),
             depends_on: Vec::new(),
         }
     };
     worker.depends_on = depends_on.to_vec();
     Ok(worker)
+}
+
+fn default_goal_role(kind: &str, worker_id: &str) -> Result<String> {
+    apxm_backends::render_prompt(
+        TEMPLATE_ORCHESTRATION_GOAL_WORKER_ROLE,
+        &json!({
+            "kind": kind,
+            "worker_id": worker_id
+        }),
+    )
+    .map_err(|error| anyhow!("failed to render goal worker role template: {error}"))
 }
 
 fn generated_role_id(prefix: &str, index: usize) -> String {
@@ -747,6 +754,23 @@ fn print_start_summary(base: &str, started: &JsonValue) {
     if let Some(workflow_path) = started.get("workflow_path").and_then(JsonValue::as_str) {
         println!("workflow: {workflow_path}");
     }
+    if let Some(artifacts) = started.get("artifacts") {
+        if let Some(tracking_doc) = artifacts.get("tracking_doc").and_then(JsonValue::as_str) {
+            println!("tracking: {tracking_doc}");
+        }
+        if let Some(plan_json) = artifacts.get("plan_json").and_then(JsonValue::as_str) {
+            println!("plan: {plan_json}");
+        }
+        if let Some(graph_json) = artifacts.get("graph_json").and_then(JsonValue::as_str) {
+            println!("graph: {graph_json}");
+        }
+        if let Some(prompts_dir) = artifacts.get("prompts_dir").and_then(JsonValue::as_str) {
+            println!("prompts: {prompts_dir}");
+        }
+        if let Some(reports_dir) = artifacts.get("reports_dir").and_then(JsonValue::as_str) {
+            println!("reports: {reports_dir}");
+        }
+    }
     if let Some(workers) = started
         .get("plan")
         .and_then(|plan| plan.get("workers"))
@@ -823,7 +847,7 @@ fn summarize_event(event: &JsonValue) -> Option<String> {
         .unwrap_or_default();
     match kind {
         "orchestrator_sleep" => Some(format!(
-            "{seq}orchestrator sleeping; APXM owns the workflow until wake"
+            "{seq}orchestrator sleeping; runtime owns the workflow until wake"
         )),
         "orchestrator_wake" => Some(format!(
             "{seq}orchestrator wake: {} via {}",

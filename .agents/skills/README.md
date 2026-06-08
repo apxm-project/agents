@@ -29,6 +29,8 @@ Run in order for any non-trivial session:
 
 - `apxm-vllm-service` — APXM-vLLM service operation (existing).
 - `apxm-compile-and-execute` — compile graphs and run `.apxmobj`.
+- `apxm-goal-orchestrator` — create, start, and follow bounded APXM goal
+  orchestration passes through `dekk apxm goal` or workflow MCP tools.
 - `apxm-mlir-pass-development` — add/modify MLIR passes.
 - `apxm-fork-vllm-rebase` — rebase the `external/vllm` fork.
 - `apxm-model-zoo-operate` — operate the vLLM zoo manifests.

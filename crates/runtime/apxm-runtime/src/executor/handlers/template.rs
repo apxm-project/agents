@@ -38,7 +38,7 @@ pub fn render_named(
     }
 
     let names = parse_placeholder_names(template);
-    if names.is_empty() {
+    if names.is_empty() && !template.contains("{{") && !template.contains("}}") {
         return Ok(template.to_string());
     }
 
@@ -46,6 +46,16 @@ pub fn render_named(
     let bytes = template.as_bytes();
     let mut i = 0;
     while i < bytes.len() {
+        if bytes[i] == b'{' && i + 1 < bytes.len() && bytes[i + 1] == b'{' {
+            out.push('{');
+            i += 2;
+            continue;
+        }
+        if bytes[i] == b'}' && i + 1 < bytes.len() && bytes[i + 1] == b'}' {
+            out.push('}');
+            i += 2;
+            continue;
+        }
         if bytes[i] == b'{' {
             let start = i + 1;
             let mut end = start;
@@ -150,6 +160,20 @@ mod tests {
         // `{` not followed by a name+`}` is preserved.
         let out = render_named("a {} b { c", &[], &[]).unwrap();
         assert_eq!(out, "a {} b { c");
+    }
+
+    #[test]
+    fn escaped_double_braces_render_as_literal_braces() {
+        let names = vec!["topic".to_string()];
+        let inputs = vec![Value::String("rust".to_string())];
+        let out = render_named("literal {{topic}} and {topic}", &inputs, &names).unwrap();
+        assert_eq!(out, "literal {topic} and rust");
+    }
+
+    #[test]
+    fn escaped_double_braces_render_without_placeholders() {
+        let out = render_named("literal {{topic}}", &[], &[]).unwrap();
+        assert_eq!(out, "literal {topic}");
     }
 
     #[test]

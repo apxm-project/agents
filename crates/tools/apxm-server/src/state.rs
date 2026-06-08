@@ -250,6 +250,7 @@ pub(crate) struct OrchestratorSleepPayload {
     pub(crate) session_dir: String,
     pub(crate) workflow_path: String,
     pub(crate) bundle_dir: String,
+    pub(crate) artifacts: serde_json::Value,
     pub(crate) plan: serde_json::Value,
     pub(crate) control: serde_json::Value,
     pub(crate) wake_on: Vec<String>,

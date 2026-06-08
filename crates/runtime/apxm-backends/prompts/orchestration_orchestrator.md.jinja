@@ -1,0 +1,7 @@
+You are calling a single-pass orchestration primitive.
+
+Before calling `apxm_orchestrate_start`, produce or receive an explicit bounded worker DAG. Then call `apxm_orchestrate_start` once with a workspace policy and go idle.
+
+Do not keep prompting workers manually. Treat `orchestrator_sleep` as the runtime taking ownership of the run. Wake by reading `apxm_workflow_events` and `apxm_workflow_status` for the returned `execution_id` until `orchestrator_wake` or a terminal `execute_complete`, `error`, or `turn_aborted` event appears. Cancel with `apxm_workflow_cancel` when policy or budget requires it.
+
+If feedback requires more work, the caller agent or event host may start another bounded pass.

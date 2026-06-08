@@ -347,11 +347,11 @@ pub struct GoalArgs {
     pub context: Option<String>,
 
     /// Optional event payload/reason that triggered this goal pass.
-    #[arg(long, hide = true)]
+    #[arg(long)]
     pub event: Option<String>,
 
     /// Optional trigger rule or source for this goal pass.
-    #[arg(long, hide = true)]
+    #[arg(long)]
     pub trigger: Option<String>,
 
     /// Custom worker as ID[:ROLE[:PROFILE]]. Repeat for fan-out workers.
@@ -359,7 +359,7 @@ pub struct GoalArgs {
     pub workers: Vec<String>,
 
     /// Worker dependencies as WORKER=DEP1,DEP2. Repeat to shape phases.
-    #[arg(long = "depends", value_name = "WORKER=DEP1,DEP2", hide = true)]
+    #[arg(long = "depends", value_name = "WORKER=DEP1,DEP2")]
     pub depends: Vec<String>,
 
     /// Registered profile for the default planner worker.
@@ -403,11 +403,11 @@ pub struct GoalArgs {
     pub repo_root: Option<PathBuf>,
 
     /// Git ref used when --workspace git_worktree is selected.
-    #[arg(long = "base-ref", default_value = "HEAD", hide = true)]
+    #[arg(long = "base-ref", default_value = "HEAD")]
     pub base_ref: String,
 
     /// Extra capability grant forwarded to APXM admission (repeatable).
-    #[arg(long = "admit", value_name = "CAP", hide = true)]
+    #[arg(long = "admit", value_name = "CAP")]
     pub admit: Vec<String>,
 
     /// Explicitly grant SPAWN_AGENT. Also auto-granted when profiles are used.
@@ -415,11 +415,11 @@ pub struct GoalArgs {
     pub admit_spawn: bool,
 
     /// Skill library / id to import into the goal run's visible set.
-    #[arg(long = "import", value_name = "LIB", hide = true)]
+    #[arg(long = "import", value_name = "LIB")]
     pub import: Vec<String>,
 
     /// Materialize and validate the generated workflow bundle without starting it.
-    #[arg(long = "dry-run", hide = true)]
+    #[arg(long = "dry-run")]
     pub dry_run: bool,
 
     /// Start the goal but do not poll workflow events.
@@ -435,7 +435,7 @@ pub struct GoalArgs {
     pub poll_ms: u64,
 
     /// Stop following after this many seconds without cancelling the run.
-    #[arg(long = "timeout-secs", hide = true)]
+    #[arg(long = "timeout-secs")]
     pub timeout_secs: Option<u64>,
 }
 
@@ -592,6 +592,7 @@ pub enum ProcessAction {
 #[derive(Subcommand)]
 pub enum WorkflowAction {
     /// Execute a workflow file
+    #[command(visible_alias = "execute")]
     Run {
         /// Workflow file (.apxmw)
         file: PathBuf,
@@ -621,6 +622,53 @@ pub enum WorkflowAction {
         /// Workflow file (.apxmw)
         file: PathBuf,
     },
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use clap::{CommandFactory, Parser};
+
+    #[test]
+    fn workflow_execute_alias_parses_as_run() {
+        let cli = Cli::try_parse_from(["apxm", "workflow", "execute", "workflow.apxmw"])
+            .expect("workflow execute alias should parse");
+        match cli.command {
+            Commands::Workflow {
+                action:
+                    WorkflowAction::Run {
+                        file, background, ..
+                    },
+            } => {
+                assert_eq!(file, PathBuf::from("workflow.apxmw"));
+                assert!(!background);
+            }
+            _ => panic!("expected workflow run action"),
+        }
+    }
+
+    #[test]
+    fn goal_authoring_flags_are_visible_in_help() {
+        let mut command = Cli::command();
+        let goal = command
+            .find_subcommand_mut("goal")
+            .expect("goal subcommand should exist");
+        let mut help = Vec::new();
+        goal.write_long_help(&mut help).expect("goal help");
+        let help = String::from_utf8(help).expect("utf8 help");
+        for flag in [
+            "--event",
+            "--trigger",
+            "--depends",
+            "--base-ref",
+            "--admit",
+            "--import",
+            "--dry-run",
+            "--timeout-secs",
+        ] {
+            assert!(help.contains(flag), "missing {flag} in help:\n{help}");
+        }
+    }
 }
 
 #[derive(Subcommand)]

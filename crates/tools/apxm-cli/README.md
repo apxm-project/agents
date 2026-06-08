@@ -42,7 +42,35 @@ Command-line interface for the APXM graph compiler and runtime toolchain.
 | `codegen` | Generate frontend (Python) and TypeScript code from AIS definitions |
 | `session` | Session management |
 | `workflow` | `.apxmw` workflow-file management |
+| `goal` | Start, follow, inspect, or cancel a bounded APXM goal orchestration run |
+| `chat` | Interactive REPL over a running `apxm-server` |
+| `rollout` | Inspect, replay, and archive rollout transcripts |
 | `cache` | Cache management |
+
+## Complex Work Paths
+
+Use `goal` when an agent or human wants APXM to create one bounded worker DAG,
+start it through the server, and wait on workflow events:
+
+```bash
+dekk apxm goal "Investigate and implement the scoped change" \
+  --workspace git_worktree \
+  --repo-root /path/to/repo \
+  --worker research:"Inspect relevant code":worker-a \
+  --worker implement:"Make the patch":worker-b \
+  --worker verify:"Run checks":worker-c \
+  --depends implement=research \
+  --depends verify=implement
+```
+
+`goal` calls the server-owned orchestration path and follows
+`apxm_workflow_events/status` unless `--no-follow` is set. Use `--status`,
+`--events`, or `--cancel` with the returned execution id to inspect or stop a
+run later.
+
+Use `workflow run` for checked-in `.apxmw` files. `workflow execute` is a
+visible alias for `workflow run`, so raw `apxm` and `dekk apxm workflow
+execute` both work.
 
 ## Key Exports
 

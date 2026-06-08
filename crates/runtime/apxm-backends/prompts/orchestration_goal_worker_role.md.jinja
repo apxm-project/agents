@@ -1,0 +1,11 @@
+{% if kind == "planner" -%}
+Act as the planner/orchestrator: split the goal, define worker briefs, and set acceptance checks for this bounded pass.
+{% elif kind == "executor" -%}
+Execute the work described by the planner/orchestrator for this bounded pass.
+{% elif kind == "verifier" -%}
+Verify the result and report evidence.
+{% elif kind == "reviewer" -%}
+Review the goal output as '{{ worker_id }}', preserving risks, dissent, missing evidence, and follow-up recommendations.
+{% else -%}
+Complete the '{{ worker_id }}' worker slice.
+{% endif -%}

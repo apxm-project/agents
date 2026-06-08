@@ -1,0 +1,51 @@
+# Gatekeeper Prompt: {{ supervisor.id }}
+
+## Goal
+
+Task:
+{{ task }}
+
+Context:
+{{ context }}
+
+Event:
+{{ event }}
+
+Trigger:
+{{ trigger }}
+
+## Read First
+
+- Tracking doc: `{{ supervisor.tracking_doc }}`
+- Graph JSON: `{{ supervisor.graph_json }}`
+- Supervisor report: `{{ supervisor.report_path }}`
+- Worker reports and workflow session output.
+
+## Worker Inputs
+
+| Worker | Depends On | Prompt | Expected Report |
+|---|---|---|---|
+{% for worker in workers -%}
+| `{{ worker.id }}` | {{ worker.depends_label }} | `{{ worker.prompt_path }}` | `{{ worker.report_path }}` |
+{% endfor %}
+
+## Worker Summary
+
+{% if supervisor.worker_summary -%}
+{{ supervisor.worker_summary }}
+{% else -%}
+Worker outputs are supplied by the workflow session for the gate step.
+{% endif %}
+
+## Gate Checklist
+
+- Decide whether this bounded pass satisfied the goal, needs another pass, is blocked, or is unsafe.
+- Check worker evidence, validation, reports, changed files, and dependency/conflict notes.
+- Do not integrate, merge, push, update pins, or remove worktrees unless the caller explicitly authorizes that outside this gate.
+- Preserve dissent, failed assumptions, and missing evidence as first-class findings.
+
+## Supervisor Instructions
+
+{{ supervisor.instructions }}
+
+Return gate decision, failed assumptions, merge/conflict notes, and next feedback action.

@@ -55,6 +55,7 @@ pub(crate) struct WorkflowStartArgs {
 #[derive(Debug, Clone)]
 pub(crate) struct WorkflowOrchestrationContract {
     pub(crate) bundle_dir: String,
+    pub(crate) artifacts: JsonValue,
     pub(crate) plan: JsonValue,
     pub(crate) control: JsonValue,
     pub(crate) wake_on: Vec<String>,
@@ -619,6 +620,7 @@ fn record_orchestrator_sleep_event(
                 session_dir: prepared.session_dir.clone(),
                 workflow_path: prepared.workflow_path.clone(),
                 bundle_dir: contract.bundle_dir.clone(),
+                artifacts: contract.artifacts.clone(),
                 plan: contract.plan.clone(),
                 control: contract.control.clone(),
                 wake_on: contract.wake_on.clone(),

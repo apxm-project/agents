@@ -1,0 +1,23 @@
+[event/task]
+    |
+    v
+[trigger + bounded worker plan]
+    |
+    v
+[allocate per-worker workspace/worktree]
+    |
+    v
+[start background workflow]
+    |
+    +--> [worker A SPAWN_AGENT -> COMMUNICATE]
+    +--> [worker B SPAWN_AGENT -> COMMUNICATE]
+    +--> [worker N SPAWN_AGENT -> COMMUNICATE]
+    |
+    v
+[gate/eval waits for all workers]
+    |
+    v
+[feedback]
+    |
+    v
+[sleep until status/events/cancel wakes the orchestrator]

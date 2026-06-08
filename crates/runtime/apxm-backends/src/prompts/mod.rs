@@ -307,4 +307,83 @@ mod tests {
     fn list_prompts_is_stable() {
         let _ = list_prompts();
     }
+
+    #[test]
+    fn orchestration_templates_are_registered() {
+        let prompts = list_prompts();
+        for name in [
+            "orchestration_worker",
+            "orchestration_supervisor",
+            "orchestration_tracking",
+            "orchestration_orchestrator",
+            "orchestration_flowchart",
+            "orchestration_report_stub",
+            "orchestration_goal_worker_role",
+            "orchestration_default_worker_instructions",
+            "orchestration_default_supervisor_instructions",
+        ] {
+            assert!(prompts.contains(&name.to_string()), "missing {name}");
+        }
+
+        let rendered = render_prompt(
+            "orchestration_worker",
+            &json!({
+                "task": "verify prompt template loading",
+                "context": "",
+                "event": "",
+                "trigger": "",
+                "worker": {
+                    "id": "planner",
+                    "role": "Plan the work.",
+                    "cwd": "/tmp/apxm-worker",
+                    "tracking_doc": "/tmp/orchestration.md",
+                    "graph_json": "/tmp/graph.json",
+                    "prompt_path": "/tmp/prompts/planner.md",
+                    "report_path": "/tmp/reports/planner.md",
+                    "upstream_note": "No upstream worker dependencies.",
+                    "instructions": "Create the bounded plan.",
+                    "workspace": {
+                        "mode": "session",
+                        "worktree_ref": null,
+                        "base_commit": null,
+                        "cleanup": "keep"
+                    }
+                }
+            }),
+        )
+        .expect("orchestration_worker render");
+        assert!(rendered.contains("# Worker Prompt: planner"));
+        assert!(rendered.contains("## Validation / Evidence"));
+
+        let report = render_prompt(
+            "orchestration_report_stub",
+            &json!({
+                "owner": {
+                    "id": "planner",
+                    "kind": "worker",
+                    "prompt_path": "/tmp/prompts/planner.md",
+                    "tracking_doc": "/tmp/orchestration.md",
+                    "graph_json": "/tmp/graph.json"
+                }
+            }),
+        )
+        .expect("orchestration_report_stub render");
+        assert!(report.contains("# Report: planner"));
+        assert!(report.contains("Status: planned"));
+
+        let flowchart =
+            render_prompt("orchestration_flowchart", &json!({})).expect("flowchart render");
+        assert!(flowchart.contains("[start background workflow]"));
+        assert!(!flowchart.contains("APXM background"));
+
+        let role = render_prompt(
+            "orchestration_goal_worker_role",
+            &json!({
+                "kind": "reviewer",
+                "worker_id": "critic"
+            }),
+        )
+        .expect("orchestration_goal_worker_role render");
+        assert!(role.contains("Review the goal output as 'critic'"));
+    }
 }

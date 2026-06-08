@@ -19,6 +19,10 @@ pub fn parse_placeholder_names(s: &str) -> Vec<&str> {
     let bytes = s.as_bytes();
     let mut i = 0;
     while i < bytes.len() {
+        if bytes[i] == b'{' && i + 1 < bytes.len() && bytes[i + 1] == b'{' {
+            i += 2;
+            continue;
+        }
         if bytes[i] == b'{' {
             let start = i + 1;
             let mut end = start;
@@ -66,6 +70,14 @@ mod tests {
         assert!(parse_placeholder_names("{ }").is_empty());
         assert!(parse_placeholder_names("{a-b}").is_empty());
         assert!(parse_placeholder_names("{a b}").is_empty());
+    }
+
+    #[test]
+    fn parse_ignores_escaped_double_braces() {
+        assert_eq!(
+            parse_placeholder_names("literal {{topic}} and {real}"),
+            vec!["real"]
+        );
     }
 
     #[test]

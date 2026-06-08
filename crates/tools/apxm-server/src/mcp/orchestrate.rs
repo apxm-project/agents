@@ -30,6 +30,15 @@ const WORKSPACE_MODE_SHARED: &str = "shared";
 const WORKSPACE_MODE_GIT_WORKTREE: &str = "git_worktree";
 const TRANSPORT_ACP: &str = "acp";
 const TRANSPORT_DETERMINISTIC: &str = "deterministic";
+const TEMPLATE_ORCHESTRATION_WORKER: &str = "orchestration_worker";
+const TEMPLATE_ORCHESTRATION_SUPERVISOR: &str = "orchestration_supervisor";
+const TEMPLATE_ORCHESTRATION_TRACKING: &str = "orchestration_tracking";
+const TEMPLATE_ORCHESTRATION_ORCHESTRATOR: &str = "orchestration_orchestrator";
+const TEMPLATE_ORCHESTRATION_FLOWCHART: &str = "orchestration_flowchart";
+const TEMPLATE_ORCHESTRATION_REPORT_STUB: &str = "orchestration_report_stub";
+const TEMPLATE_ORCHESTRATION_DEFAULT_WORKER: &str = "orchestration_default_worker_instructions";
+const TEMPLATE_ORCHESTRATION_DEFAULT_SUPERVISOR: &str =
+    "orchestration_default_supervisor_instructions";
 
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -116,6 +125,7 @@ struct OrchestrateStartResponse {
     session_dir: Option<String>,
     workflow_path: String,
     bundle_dir: String,
+    artifacts: OrchestrationArtifacts,
     plan: OrchestrationPlanSummary,
     control: OrchestrationControl,
     orchestration: OrchestrationRuntimeContract,
@@ -130,6 +140,25 @@ struct OrchestrationPlanSummary {
     workers: Vec<WorkerPlanSummary>,
     supervisor: SupervisorPlanSummary,
     workspace_mode: String,
+}
+
+#[derive(Debug, Clone, Serialize)]
+struct OrchestrationArtifacts {
+    tracking_doc: String,
+    graph_json: String,
+    plan_json: String,
+    prompts_dir: String,
+    reports_dir: String,
+    worker_prompts: Vec<WorkerPromptArtifact>,
+    supervisor_prompt: String,
+    supervisor_report: String,
+}
+
+#[derive(Debug, Clone, Serialize)]
+struct WorkerPromptArtifact {
+    id: String,
+    prompt: String,
+    report: String,
 }
 
 #[derive(Debug, Serialize)]
@@ -157,6 +186,8 @@ struct WorkspaceBindingSummary {
     mode: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     worktree_ref: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    base_commit: Option<String>,
     cleanup: String,
 }
 
@@ -213,6 +244,10 @@ struct WorkerPlan {
     mode: Option<String>,
     model: Option<String>,
     cwd: PathBuf,
+    tracking_doc_path: PathBuf,
+    graph_path: PathBuf,
+    prompt_path: PathBuf,
+    report_path: PathBuf,
     workspace: WorkspaceBinding,
 }
 
@@ -225,11 +260,16 @@ struct SupervisorPlan {
     mode: Option<String>,
     model: Option<String>,
     cwd: Option<PathBuf>,
+    tracking_doc_path: PathBuf,
+    graph_path: PathBuf,
+    prompt_path: PathBuf,
+    report_path: PathBuf,
 }
 
 struct WorkspaceBinding {
     mode: String,
     worktree_ref: Option<String>,
+    base_commit: Option<String>,
     cleanup: String,
 }
 
@@ -363,11 +403,17 @@ async fn orchestrate_start(
 
     let bundle = materialize_orchestration_bundle(&request)?;
     let plan_summary = bundle.plan.summary();
+    let artifacts = orchestration_artifacts(&bundle.bundle_dir, &bundle.plan);
     let control = orchestration_control();
     let wake_on = orchestration_wake_on();
     let event_loop = orchestration_event_loop();
     let orchestration_contract = WorkflowOrchestrationContract {
         bundle_dir: bundle.bundle_dir.to_string_lossy().to_string(),
+        artifacts: serde_json::to_value(&artifacts).map_err(|error| {
+            ApiError::internal_message(format!(
+                "failed to serialize orchestration artifacts: {error}"
+            ))
+        })?,
         plan: serde_json::to_value(&plan_summary).map_err(|error| {
             ApiError::internal_message(format!("failed to serialize orchestration plan: {error}"))
         })?,
@@ -413,6 +459,7 @@ async fn orchestrate_start(
             .map(|response| response.session_dir.clone()),
         workflow_path: bundle.workflow_path.to_string_lossy().to_string(),
         bundle_dir: bundle.bundle_dir.to_string_lossy().to_string(),
+        artifacts,
         plan: plan_summary,
         control,
         orchestration: orchestration_runtime_contract(
@@ -426,8 +473,8 @@ async fn orchestrate_start(
             wake_on,
             event_loop,
         },
-        orchestrator_prompt: orchestrator_prompt(),
-        flowchart: orchestration_flowchart(),
+        orchestrator_prompt: orchestrator_prompt()?,
+        flowchart: orchestration_flowchart()?,
     };
     Ok(response)
 }
@@ -703,6 +750,7 @@ impl WorkspacePolicy {
                     WorkspaceBinding {
                         mode: WORKSPACE_MODE_SESSION.to_string(),
                         worktree_ref: None,
+                        base_commit: None,
                         cleanup: self.cleanup.clone(),
                     },
                 ))
@@ -716,6 +764,7 @@ impl WorkspacePolicy {
                     WorkspaceBinding {
                         mode: WORKSPACE_MODE_SHARED.to_string(),
                         worktree_ref: None,
+                        base_commit: None,
                         cleanup: self.cleanup.clone(),
                     },
                 ))
@@ -732,11 +781,13 @@ impl WorkspacePolicy {
                     },
                 )?;
                 create_git_worktree(repo_root, &cwd, &self.base_ref)?;
+                let base_commit = git_rev_parse(&cwd, "HEAD")?;
                 Ok((
                     cwd,
                     WorkspaceBinding {
                         mode: WORKSPACE_MODE_GIT_WORKTREE.to_string(),
                         worktree_ref: Some(self.base_ref.clone()),
+                        base_commit: Some(base_commit),
                         cleanup: self.cleanup.clone(),
                     },
                 ))
@@ -753,6 +804,8 @@ fn build_plan(
     workspace_policy: &WorkspacePolicy,
 ) -> Result<OrchestrationPlan, ApiError> {
     let mut workers = Vec::with_capacity(request.workers.len());
+    let tracking_doc_path = bundle_dir.join("orchestration.md");
+    let graph_path = bundle_dir.join("graph.json");
     for worker in &request.workers {
         let (cwd, workspace) = workspace_policy.allocate(&worker.id)?;
         let transport = effective_transport(worker.transport.as_deref(), worker.profile.as_deref());
@@ -763,16 +816,20 @@ fn build_plan(
                 .role
                 .clone()
                 .unwrap_or_else(|| format!("worker {}", worker.id)),
-            prompt: worker
-                .prompt
-                .clone()
-                .unwrap_or_else(|| default_worker_prompt(&worker.id)),
+            prompt: match worker.prompt.clone() {
+                Some(prompt) => prompt,
+                None => default_worker_prompt(&worker.id)?,
+            },
             profile: worker.profile.clone(),
             transport,
             depends_on: worker.depends_on.clone(),
             mode: worker.mode.clone(),
             model: worker.model.clone(),
             cwd,
+            tracking_doc_path: tracking_doc_path.clone(),
+            graph_path: graph_path.clone(),
+            prompt_path: bundle_dir.join("prompts").join(format!("{}.md", worker.id)),
+            report_path: bundle_dir.join("reports").join(format!("{}.md", worker.id)),
             workspace,
         });
     }
@@ -802,21 +859,31 @@ fn build_plan(
             ))
         })?;
     }
+    let supervisor_id = supervisor_spec.id.clone();
 
     Ok(OrchestrationPlan {
         task: request.task.clone(),
         workers,
         supervisor: SupervisorPlan {
-            agent_name: agent_name(session_id, &supervisor_spec.id),
-            id: supervisor_spec.id,
-            prompt: supervisor_spec
-                .prompt
-                .unwrap_or_else(default_supervisor_prompt),
+            agent_name: agent_name(session_id, &supervisor_id),
+            id: supervisor_id.clone(),
+            prompt: match supervisor_spec.prompt {
+                Some(prompt) => prompt,
+                None => default_supervisor_prompt()?,
+            },
             profile: supervisor_spec.profile,
             transport: supervisor_transport,
             mode: supervisor_spec.mode,
             model: supervisor_spec.model,
             cwd: supervisor_cwd,
+            tracking_doc_path,
+            graph_path,
+            prompt_path: bundle_dir
+                .join("prompts")
+                .join(format!("{supervisor_id}.md")),
+            report_path: bundle_dir
+                .join("reports")
+                .join(format!("{supervisor_id}.md")),
         },
         workspace_mode: workspace_policy.mode.clone(),
     })
@@ -828,23 +895,53 @@ fn write_bundle_files(
     plan: &OrchestrationPlan,
 ) -> Result<(), ApiError> {
     let workers_dir = bundle_dir.join("workers");
+    let prompts_dir = bundle_dir.join("prompts");
+    let reports_dir = bundle_dir.join("reports");
     std::fs::create_dir_all(&workers_dir).map_err(|error| {
         ApiError::internal_message(format!(
             "failed to create workers dir '{}': {error}",
             workers_dir.display()
         ))
     })?;
+    std::fs::create_dir_all(&prompts_dir).map_err(|error| {
+        ApiError::internal_message(format!(
+            "failed to create prompts dir '{}': {error}",
+            prompts_dir.display()
+        ))
+    })?;
+    std::fs::create_dir_all(&reports_dir).map_err(|error| {
+        ApiError::internal_message(format!(
+            "failed to create reports dir '{}': {error}",
+            reports_dir.display()
+        ))
+    })?;
     for worker in &plan.workers {
-        let air = worker_air(request, worker);
+        let air = worker_air(request, worker)?;
         std::fs::write(workers_dir.join(format!("{}.air", worker.id)), air).map_err(|error| {
             ApiError::internal_message(format!(
                 "failed to write worker graph '{}': {error}",
                 worker.id
             ))
         })?;
+        write_text_file(
+            &worker.prompt_path,
+            &render_worker_prompt(request, worker)?,
+            "worker prompt",
+        )?;
+        write_text_file(
+            &worker.report_path,
+            &render_report_stub(
+                worker.id.as_str(),
+                "worker",
+                &worker.prompt_path,
+                &worker.tracking_doc_path,
+                &worker.graph_path,
+            )?,
+            "worker report stub",
+        )?;
     }
 
-    std::fs::write(bundle_dir.join("gate.air"), gate_air(&plan.supervisor)).map_err(|error| {
+    std::fs::write(bundle_dir.join("gate.air"), gate_air(request, plan)?).map_err(|error| {
         ApiError::internal_message(format!("failed to write gate graph: {error}"))
     })?;
     std::fs::write(bundle_dir.join("feedback.air"), feedback_air()).map_err(|error| {
@@ -855,9 +952,40 @@ fn write_bundle_files(
         workflow_json(request, plan)?,
     )
     .map_err(|error| ApiError::internal_message(format!("failed to write workflow: {error}")))?;
+    write_json_file(
+        &bundle_dir.join("plan.json"),
+        &plan_packet_json(request, plan, bundle_dir)?,
+        "orchestration plan packet",
+    )?;
+    write_json_file(
+        &bundle_dir.join("graph.json"),
+        &graph_packet_json(plan),
+        "orchestration graph packet",
+    )?;
+    write_text_file(
+        &bundle_dir.join("orchestration.md"),
+        &tracking_doc(request, plan, bundle_dir)?,
+        "orchestration tracking doc",
+    )?;
+    write_text_file(
+        &plan.supervisor.prompt_path,
+        &render_supervisor_prompt(request, plan, "")?,
+        "supervisor prompt",
+    )?;
+    write_text_file(
+        &plan.supervisor.report_path,
+        &render_report_stub(
+            plan.supervisor.id.as_str(),
+            "gate",
+            &plan.supervisor.prompt_path,
+            &plan.supervisor.tracking_doc_path,
+            &plan.supervisor.graph_path,
+        )?,
+        "supervisor report stub",
+    )?;
     std::fs::write(
         bundle_dir.join("orchestrator_prompt.txt"),
-        orchestrator_prompt(),
+        orchestrator_prompt()?,
     )
     .map_err(|error| {
         ApiError::internal_message(format!("failed to write orchestrator prompt: {error}"))
@@ -865,23 +993,362 @@ fn write_bundle_files(
     Ok(())
 }
 
-fn worker_air(request: &OrchestrateStartArgs, worker: &WorkerPlan) -> String {
-    if worker.transport == TRANSPORT_ACP {
-        acp_worker_air(request, worker)
-    } else {
-        deterministic_worker_air(worker)
+fn write_text_file(path: &Path, contents: &str, label: &str) -> Result<(), ApiError> {
+    std::fs::write(path, contents).map_err(|error| {
+        ApiError::internal_message(format!(
+            "failed to write {label} '{}': {error}",
+            path.display()
+        ))
+    })
+}
+
+fn write_json_file(path: &Path, value: &JsonValue, label: &str) -> Result<(), ApiError> {
+    let contents = serde_json::to_vec_pretty(value).map_err(|error| {
+        ApiError::internal_message(format!("failed to serialize {label}: {error}"))
+    })?;
+    std::fs::write(path, contents).map_err(|error| {
+        ApiError::internal_message(format!(
+            "failed to write {label} '{}': {error}",
+            path.display()
+        ))
+    })
+}
+
+fn plan_packet_json(
+    request: &OrchestrateStartArgs,
+    plan: &OrchestrationPlan,
+    bundle_dir: &Path,
+) -> Result<JsonValue, ApiError> {
+    Ok(serde_json::json!({
+        "task": request.task.as_str(),
+        "context": request.context.as_deref().unwrap_or(""),
+        "event": request.event.as_deref().unwrap_or(""),
+        "trigger": request.trigger.as_deref().unwrap_or(""),
+        "workspace_mode": plan.workspace_mode.as_str(),
+        "bundle_dir": path_string(bundle_dir),
+        "workflow_path": path_string(&bundle_dir.join("workflow.apxmw")),
+        "tracking_doc": path_string(&bundle_dir.join("orchestration.md")),
+        "graph_json": path_string(&bundle_dir.join("graph.json")),
+        "control": orchestration_control(),
+        "workers": plan
+            .workers
+            .iter()
+            .map(worker_packet_json)
+            .collect::<Vec<_>>(),
+        "supervisor": supervisor_packet_json(&plan.supervisor)
+    }))
+}
+
+fn worker_packet_json(worker: &WorkerPlan) -> JsonValue {
+    serde_json::json!({
+        "id": worker.id.as_str(),
+        "role": worker.role.as_str(),
+        "transport": worker.transport.as_str(),
+        "profile": worker.profile.as_deref(),
+        "depends_on": &worker.depends_on,
+        "cwd": path_string(&worker.cwd),
+        "prompt_path": path_string(&worker.prompt_path),
+        "report_path": path_string(&worker.report_path),
+        "tracking_doc": path_string(&worker.tracking_doc_path),
+        "graph_json": path_string(&worker.graph_path),
+        "workspace": workspace_binding_json(&worker.workspace)
+    })
+}
+
+fn supervisor_packet_json(supervisor: &SupervisorPlan) -> JsonValue {
+    serde_json::json!({
+        "id": supervisor.id.as_str(),
+        "transport": supervisor.transport.as_str(),
+        "profile": supervisor.profile.as_deref(),
+        "cwd": supervisor.cwd.as_ref().map(|path| path_string(path)),
+        "prompt_path": path_string(&supervisor.prompt_path),
+        "report_path": path_string(&supervisor.report_path),
+        "tracking_doc": path_string(&supervisor.tracking_doc_path),
+        "graph_json": path_string(&supervisor.graph_path)
+    })
+}
+
+fn graph_packet_json(plan: &OrchestrationPlan) -> JsonValue {
+    let mut nodes = plan
+        .workers
+        .iter()
+        .map(|worker| {
+            serde_json::json!({
+                "id": worker.id.as_str(),
+                "kind": "worker",
+                "depends_on": &worker.depends_on,
+                "prompt_path": path_string(&worker.prompt_path),
+                "report_path": path_string(&worker.report_path),
+                "cwd": path_string(&worker.cwd)
+            })
+        })
+        .collect::<Vec<_>>();
+    let worker_ids = plan
+        .workers
+        .iter()
+        .map(|worker| worker.id.clone())
+        .collect::<Vec<_>>();
+    nodes.push(serde_json::json!({
+        "id": plan.supervisor.id.as_str(),
+        "kind": "gate",
+        "depends_on": worker_ids,
+        "prompt_path": path_string(&plan.supervisor.prompt_path),
+        "report_path": path_string(&plan.supervisor.report_path)
+    }));
+    nodes.push(serde_json::json!({
+        "id": "feedback",
+        "kind": "feedback",
+        "depends_on": [plan.supervisor.id.clone()]
+    }));
+
+    serde_json::json!({
+        "description": "event -> trigger -> parallel workers -> gate/eval -> feedback",
+        "workspace_mode": plan.workspace_mode.as_str(),
+        "nodes": nodes,
+        "edges": graph_edges(plan)
+    })
+}
+
+fn graph_edges(plan: &OrchestrationPlan) -> Vec<JsonValue> {
+    let mut edges = Vec::new();
+    for worker in &plan.workers {
+        for dep in &worker.depends_on {
+            edges.push(serde_json::json!({
+                "from": dep,
+                "to": worker.id.as_str(),
+                "reason": "depends_on"
+            }));
+        }
+        edges.push(serde_json::json!({
+            "from": worker.id.as_str(),
+            "to": plan.supervisor.id.as_str(),
+            "reason": "gate fan-in"
+        }));
+    }
+    edges.push(serde_json::json!({
+        "from": plan.supervisor.id.as_str(),
+        "to": "feedback",
+        "reason": "gate decision"
+    }));
+    edges
+}
+
+fn orchestration_artifacts(bundle_dir: &Path, plan: &OrchestrationPlan) -> OrchestrationArtifacts {
+    OrchestrationArtifacts {
+        tracking_doc: path_string(&bundle_dir.join("orchestration.md")),
+        graph_json: path_string(&bundle_dir.join("graph.json")),
+        plan_json: path_string(&bundle_dir.join("plan.json")),
+        prompts_dir: path_string(&bundle_dir.join("prompts")),
+        reports_dir: path_string(&bundle_dir.join("reports")),
+        worker_prompts: plan
+            .workers
+            .iter()
+            .map(|worker| WorkerPromptArtifact {
+                id: worker.id.clone(),
+                prompt: path_string(&worker.prompt_path),
+                report: path_string(&worker.report_path),
+            })
+            .collect(),
+        supervisor_prompt: path_string(&plan.supervisor.prompt_path),
+        supervisor_report: path_string(&plan.supervisor.report_path),
     }
 }
 
-fn acp_worker_air(request: &OrchestrateStartArgs, worker: &WorkerPlan) -> String {
-    let message = worker_message(request, worker);
+fn workspace_binding_json(workspace: &WorkspaceBinding) -> JsonValue {
+    serde_json::json!({
+        "mode": workspace.mode.as_str(),
+        "worktree_ref": workspace.worktree_ref.as_deref(),
+        "base_commit": workspace.base_commit.as_deref(),
+        "cleanup": workspace.cleanup.as_str()
+    })
+}
+
+fn depends_label(depends_on: &[String]) -> String {
+    if depends_on.is_empty() {
+        "none".to_string()
+    } else {
+        depends_on
+            .iter()
+            .map(|dep| format!("`{dep}`"))
+            .collect::<Vec<_>>()
+            .join(", ")
+    }
+}
+
+fn markdown_cell(value: &str) -> String {
+    value.replace('|', "\\|").replace('\n', "<br>")
+}
+
+fn path_string(path: &Path) -> String {
+    path.to_string_lossy().to_string()
+}
+
+fn tracking_doc(
+    request: &OrchestrateStartArgs,
+    plan: &OrchestrationPlan,
+    bundle_dir: &Path,
+) -> Result<String, ApiError> {
+    render_orchestration_template(
+        TEMPLATE_ORCHESTRATION_TRACKING,
+        &serde_json::json!({
+            "task": request.task.as_str(),
+            "context": request.context.as_deref().unwrap_or(""),
+            "event": request.event.as_deref().unwrap_or(""),
+            "trigger": request.trigger.as_deref().unwrap_or(""),
+            "bundle_dir": path_string(bundle_dir),
+            "workflow_path": path_string(&bundle_dir.join("workflow.apxmw")),
+            "plan_json": path_string(&bundle_dir.join("plan.json")),
+            "graph_json": path_string(&bundle_dir.join("graph.json")),
+            "workers": worker_prompt_rows(plan),
+            "supervisor": supervisor_tracking_row(plan)
+        }),
+    )
+}
+
+fn render_worker_prompt(
+    request: &OrchestrateStartArgs,
+    worker: &WorkerPlan,
+) -> Result<String, ApiError> {
+    render_orchestration_template(
+        TEMPLATE_ORCHESTRATION_WORKER,
+        &serde_json::json!({
+            "task": request.task.as_str(),
+            "context": request.context.as_deref().unwrap_or(""),
+            "event": request.event.as_deref().unwrap_or(""),
+            "trigger": request.trigger.as_deref().unwrap_or(""),
+            "worker": worker_prompt_context(worker)
+        }),
+    )
+}
+
+fn render_supervisor_prompt(
+    request: &OrchestrateStartArgs,
+    plan: &OrchestrationPlan,
+    worker_summary: &str,
+) -> Result<String, ApiError> {
+    render_orchestration_template(
+        TEMPLATE_ORCHESTRATION_SUPERVISOR,
+        &serde_json::json!({
+            "task": request.task.as_str(),
+            "context": request.context.as_deref().unwrap_or(""),
+            "event": request.event.as_deref().unwrap_or(""),
+            "trigger": request.trigger.as_deref().unwrap_or(""),
+            "workers": worker_prompt_rows(plan),
+            "supervisor": supervisor_prompt_context(&plan.supervisor, worker_summary)
+        }),
+    )
+}
+
+fn render_report_stub(
+    owner_id: &str,
+    owner_kind: &str,
+    prompt_path: &Path,
+    tracking_doc_path: &Path,
+    graph_path: &Path,
+) -> Result<String, ApiError> {
+    render_orchestration_template(
+        TEMPLATE_ORCHESTRATION_REPORT_STUB,
+        &serde_json::json!({
+            "owner": {
+                "id": owner_id,
+                "kind": owner_kind,
+                "prompt_path": path_string(prompt_path),
+                "tracking_doc": path_string(tracking_doc_path),
+                "graph_json": path_string(graph_path)
+            }
+        }),
+    )
+}
+
+fn worker_prompt_context(worker: &WorkerPlan) -> JsonValue {
+    serde_json::json!({
+        "id": worker.id.as_str(),
+        "role": worker.role.as_str(),
+        "cwd": path_string(&worker.cwd),
+        "tracking_doc": path_string(&worker.tracking_doc_path),
+        "graph_json": path_string(&worker.graph_path),
+        "prompt_path": path_string(&worker.prompt_path),
+        "report_path": path_string(&worker.report_path),
+        "depends_on": &worker.depends_on,
+        "depends_label": depends_label(&worker.depends_on),
+        "has_upstream": !worker.depends_on.is_empty(),
+        "instructions": worker.prompt.as_str(),
+        "workspace": workspace_binding_json(&worker.workspace)
+    })
+}
+
+fn worker_prompt_rows(plan: &OrchestrationPlan) -> Vec<JsonValue> {
+    plan.workers
+        .iter()
+        .map(|worker| {
+            serde_json::json!({
+                "id": worker.id.as_str(),
+                "role": worker.role.as_str(),
+                "role_cell": markdown_cell(&worker.role),
+                "depends_label": depends_label(&worker.depends_on),
+                "cwd": path_string(&worker.cwd),
+                "prompt_path": path_string(&worker.prompt_path),
+                "report_path": path_string(&worker.report_path)
+            })
+        })
+        .collect()
+}
+
+fn supervisor_prompt_context(supervisor: &SupervisorPlan, worker_summary: &str) -> JsonValue {
+    serde_json::json!({
+        "id": supervisor.id.as_str(),
+        "tracking_doc": path_string(&supervisor.tracking_doc_path),
+        "graph_json": path_string(&supervisor.graph_path),
+        "prompt_path": path_string(&supervisor.prompt_path),
+        "report_path": path_string(&supervisor.report_path),
+        "worker_summary": worker_summary,
+        "instructions": supervisor.prompt.as_str()
+    })
+}
+
+fn supervisor_tracking_row(plan: &OrchestrationPlan) -> JsonValue {
+    serde_json::json!({
+        "id": plan.supervisor.id.as_str(),
+        "depends_label": plan
+            .workers
+            .iter()
+            .map(|worker| format!("`{}`", worker.id))
+            .collect::<Vec<_>>()
+            .join(", "),
+        "workspace_cwd": plan.supervisor.cwd.as_ref().map(|path| path_string(path)),
+        "prompt_path": path_string(&plan.supervisor.prompt_path),
+        "report_path": path_string(&plan.supervisor.report_path)
+    })
+}
+
+fn render_orchestration_template<T: serde::Serialize>(
+    template: &str,
+    context: &T,
+) -> Result<String, ApiError> {
+    apxm_backends::render_prompt(template, context).map_err(|error| {
+        ApiError::internal_message(format!(
+            "failed to render orchestration prompt template '{template}': {error}"
+        ))
+    })
+}
+
+fn worker_air(request: &OrchestrateStartArgs, worker: &WorkerPlan) -> Result<String, ApiError> {
+    if worker.transport == TRANSPORT_ACP {
+        acp_worker_air(request, worker)
+    } else {
+        Ok(deterministic_worker_air(worker))
+    }
+}
+
+fn acp_worker_air(request: &OrchestrateStartArgs, worker: &WorkerPlan) -> Result<String, ApiError> {
+    let message = worker_message(request, worker)?;
     let spawn_attrs = spawn_attrs(
         worker.profile.as_deref(),
         Some(&worker.cwd),
         worker.mode.as_deref(),
         worker.model.as_deref(),
     );
-    format!(
+    Ok(format!(
         r#"module {{
   func.func @worker(%arg0: !ais.token {{ais.param_name = "task", ais.param_type = "str"}}, %arg1: !ais.token {{ais.param_name = "context", ais.param_type = "str"}}, %arg2: !ais.token {{ais.param_name = "event", ais.param_type = "str"}}, %arg3: !ais.token {{ais.param_name = "trigger", ais.param_type = "str"}}, %arg4: !ais.token {{ais.param_name = "upstream", ais.param_type = "str"}}) -> !ais.token attributes {{ais.entry}} {{
     %spawn = ais.spawn_agent {agent_name}{spawn_attrs} : !ais.token
@@ -893,7 +1360,7 @@ fn acp_worker_air(request: &OrchestrateStartArgs, worker: &WorkerPlan) -> String
         agent_name = quote_air(&worker.agent_name),
         spawn_attrs = spawn_attrs,
         message = quote_air(&message),
-    )
+    ))
 }
 
 fn deterministic_worker_air(worker: &WorkerPlan) -> String {
@@ -916,7 +1383,8 @@ fn deterministic_worker_air(worker: &WorkerPlan) -> String {
     )
 }
 
-fn gate_air(supervisor: &SupervisorPlan) -> String {
+fn gate_air(request: &OrchestrateStartArgs, plan: &OrchestrationPlan) -> Result<String, ApiError> {
+    let supervisor = &plan.supervisor;
     if supervisor.transport == TRANSPORT_ACP {
         let cwd = supervisor.cwd.as_deref();
         let attrs = spawn_attrs(
@@ -925,11 +1393,12 @@ fn gate_air(supervisor: &SupervisorPlan) -> String {
             supervisor.mode.as_deref(),
             supervisor.model.as_deref(),
         );
-        let message = format!(
-            "{}\n\nWorker summary:\n{{summary}}\n\nReturn gate decision, failed assumptions, merge/conflict notes, and next feedback action. Worker outputs are also persisted in the APXM workflow session for this gate step.",
-            supervisor.prompt
-        );
-        format!(
+        let message = runtime_message_with_summary_placeholder(&render_supervisor_prompt(
+            request,
+            plan,
+            "__APXM_WORKER_SUMMARY__",
+        )?);
+        Ok(format!(
             r#"module {{
   func.func @gate(%arg0: !ais.token {{ais.param_name = "summary", ais.param_type = "str"}}) -> !ais.token attributes {{ais.entry}} {{
     %spawn = ais.spawn_agent {agent_name}{attrs} : !ais.token
@@ -941,9 +1410,9 @@ fn gate_air(supervisor: &SupervisorPlan) -> String {
             agent_name = quote_air(&supervisor.agent_name),
             attrs = attrs,
             message = quote_air(&message),
-        )
+        ))
     } else {
-        format!(
+        Ok(format!(
             r#"module {{
   func.func @gate(%arg0: !ais.token {{ais.param_name = "summary", ais.param_type = "str"}}) -> !ais.token attributes {{ais.entry}} {{
     %label = ais.const_str {label} : !ais.token
@@ -953,7 +1422,7 @@ fn gate_air(supervisor: &SupervisorPlan) -> String {
 }}
 "#,
             label = quote_air("gate/eval: "),
-        )
+        ))
     }
 }
 
@@ -1020,7 +1489,7 @@ fn workflow_json(
     }));
 
     serde_json::to_vec_pretty(&serde_json::json!({
-        "name": "apxm_orchestrated_task",
+        "name": "orchestrated_task",
         "description": "Generated by apxm_orchestrate_start: event -> trigger -> parallel workers -> gate/eval -> feedback.",
         "graphs": graphs,
         "output": "{{feedback.output}}"
@@ -1062,28 +1531,24 @@ fn spawn_attrs(
     }
 }
 
-fn worker_message(request: &OrchestrateStartArgs, worker: &WorkerPlan) -> String {
-    let upstream_note = if worker.depends_on.is_empty() {
-        "No upstream worker dependencies.".to_string()
-    } else {
-        format!(
-            "This worker is ordered after: {}. Use the APXM workflow session/event stream for upstream output context when needed.",
-            worker.depends_on.join(", ")
-        )
-    };
-    format!(
-        "You are APXM worker '{id}'.\nRole: {role}\nAssigned workspace: {cwd}\nWorkspace mode: {workspace_mode}\n\nTask:\n{task}\n\nContext:\n{context}\n\nEvent:\n{event}\n\nTrigger:\n{trigger}\n\nUpstream:\n{upstream_note}\n\nInstructions:\n{prompt}\n\nReturn: status, concrete output, changed files if any, tests run, blockers, and handoff notes.",
-        id = worker.id,
-        role = worker.role,
-        cwd = worker.cwd.display(),
-        workspace_mode = worker.workspace.mode,
-        task = request.task.as_str(),
-        context = request.context.as_deref().unwrap_or(""),
-        event = request.event.as_deref().unwrap_or(""),
-        trigger = request.trigger.as_deref().unwrap_or(""),
-        upstream_note = upstream_note,
-        prompt = worker.prompt,
-    )
+fn worker_message(request: &OrchestrateStartArgs, worker: &WorkerPlan) -> Result<String, ApiError> {
+    render_worker_prompt(request, worker)
+}
+
+fn runtime_message_with_summary_placeholder(message: &str) -> String {
+    escape_runtime_template_literals(message).replace("__APXM_WORKER_SUMMARY__", "{summary}")
+}
+
+fn escape_runtime_template_literals(value: &str) -> String {
+    let mut escaped = String::with_capacity(value.len());
+    for ch in value.chars() {
+        match ch {
+            '{' => escaped.push_str("{{"),
+            '}' => escaped.push_str("}}"),
+            _ => escaped.push(ch),
+        }
+    }
+    escaped
 }
 
 fn agent_name(session_id: &str, id: &str) -> String {
@@ -1093,9 +1558,9 @@ fn agent_name(session_id: &str, id: &str) -> String {
         .take(12)
         .collect::<String>();
     if suffix.is_empty() {
-        format!("apxm_worker_{id}")
+        format!("orchestration_worker_{id}")
     } else {
-        format!("apxm_worker_{id}_{suffix}")
+        format!("orchestration_worker_{id}_{suffix}")
     }
 }
 
@@ -1204,6 +1669,24 @@ fn create_git_worktree(repo_root: &Path, cwd: &Path, base_ref: &str) -> Result<(
     Ok(())
 }
 
+fn git_rev_parse(repo_root: &Path, rev: &str) -> Result<String, ApiError> {
+    let output = Command::new("git")
+        .arg("-C")
+        .arg(repo_root)
+        .arg("rev-parse")
+        .arg(rev)
+        .output()
+        .map_err(|error| ApiError::bad_request(format!("failed to run git rev-parse: {error}")))?;
+    if !output.status.success() {
+        return Err(ApiError::bad_request(format!(
+            "git rev-parse {rev} failed in '{}': {}",
+            repo_root.display(),
+            String::from_utf8_lossy(&output.stderr).trim()
+        )));
+    }
+    Ok(String::from_utf8_lossy(&output.stdout).trim().to_string())
+}
+
 impl OrchestrationPlan {
     fn summary(&self) -> OrchestrationPlanSummary {
         OrchestrationPlanSummary {
@@ -1221,6 +1704,7 @@ impl OrchestrationPlan {
                     workspace: WorkspaceBindingSummary {
                         mode: worker.workspace.mode.clone(),
                         worktree_ref: worker.workspace.worktree_ref.clone(),
+                        base_commit: worker.workspace.base_commit.clone(),
                         cleanup: worker.workspace.cleanup.clone(),
                     },
                 })
@@ -1235,9 +1719,10 @@ impl OrchestrationPlan {
     }
 }
 
-fn default_worker_prompt(id: &str) -> String {
-    format!(
-        "Complete the '{id}' slice independently. Stay inside your assigned workspace/worktree, avoid asking the human for prompts, and report enough detail for the supervisor to evaluate the result."
+fn default_worker_prompt(id: &str) -> Result<String, ApiError> {
+    render_orchestration_template(
+        TEMPLATE_ORCHESTRATION_DEFAULT_WORKER,
+        &serde_json::json!({ "worker_id": id }),
     )
 }
 
@@ -1245,8 +1730,11 @@ fn default_supervisor_id() -> String {
     "gate".to_string()
 }
 
-fn default_supervisor_prompt() -> String {
-    "Act as the APXM gatekeeper. Evaluate all worker outputs, identify conflicts or missing verification, decide whether this bounded pass satisfied the task, and recommend a follow-up pass only if needed.".to_string()
+fn default_supervisor_prompt() -> Result<String, ApiError> {
+    render_orchestration_template(
+        TEMPLATE_ORCHESTRATION_DEFAULT_SUPERVISOR,
+        &serde_json::json!({}),
+    )
 }
 
 fn orchestration_control() -> OrchestrationControl {
@@ -1298,12 +1786,12 @@ fn orchestration_runtime_contract(
     }
 }
 
-fn orchestrator_prompt() -> String {
-    "You are calling a single-pass APXM orchestration primitive. Produce or receive the explicit bounded worker DAG before calling apxm_orchestrate_start, then call it once with a workspace policy and go idle. Do not keep prompting workers manually. Treat orchestrator_sleep as APXM taking ownership of the run. Wake by reading apxm_workflow_events/status for the returned execution_id until orchestrator_wake or a terminal execute_complete/error/turn_aborted event appears; cancel with apxm_workflow_cancel when policy or budget requires it. If feedback requires more work, the caller agent or APXM OS may start another bounded pass.".to_string()
+fn orchestrator_prompt() -> Result<String, ApiError> {
+    render_orchestration_template(TEMPLATE_ORCHESTRATION_ORCHESTRATOR, &serde_json::json!({}))
 }
 
-fn orchestration_flowchart() -> String {
-    "[event/task]\n    |\n    v\n[trigger + bounded worker plan]\n    |\n    v\n[allocate per-worker workspace/worktree]\n    |\n    v\n[start APXM background workflow]\n    |\n    +--> [worker A SPAWN_AGENT -> COMMUNICATE]\n    +--> [worker B SPAWN_AGENT -> COMMUNICATE]\n    +--> [worker N SPAWN_AGENT -> COMMUNICATE]\n    |\n    v\n[gate/eval waits for all workers]\n    |\n    v\n[feedback]\n    |\n    v\n[sleep until status/events/cancel wakes the orchestrator]".to_string()
+fn orchestration_flowchart() -> Result<String, ApiError> {
+    render_orchestration_template(TEMPLATE_ORCHESTRATION_FLOWCHART, &serde_json::json!({}))
 }
 
 fn quote_air(value: &str) -> String {

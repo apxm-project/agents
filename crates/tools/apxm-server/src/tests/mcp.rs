@@ -563,6 +563,73 @@ async fn mcp_orchestrate_start_spawns_parallel_workers_with_session_cwds() {
             .contains("go idle"),
         "orchestrator prompt should describe sleep/wake behavior: {started}"
     );
+    let artifacts = &started["artifacts"];
+    let bundle_dir = std::path::PathBuf::from(started["bundle_dir"].as_str().expect("bundle_dir"));
+    let tracking_doc = std::path::PathBuf::from(
+        artifacts["tracking_doc"]
+            .as_str()
+            .expect("tracking_doc artifact"),
+    );
+    let graph_json = std::path::PathBuf::from(
+        artifacts["graph_json"]
+            .as_str()
+            .expect("graph_json artifact"),
+    );
+    let plan_json =
+        std::path::PathBuf::from(artifacts["plan_json"].as_str().expect("plan_json artifact"));
+    assert!(
+        tracking_doc.is_file(),
+        "tracking doc should exist: {started}"
+    );
+    assert!(graph_json.is_file(), "graph json should exist: {started}");
+    assert!(plan_json.is_file(), "plan json should exist: {started}");
+    let tracking_text = std::fs::read_to_string(&tracking_doc).expect("tracking doc text");
+    assert!(
+        tracking_text.contains("# Orchestration Packet")
+            && tracking_text.contains("## Worker Graph")
+            && tracking_text.contains("apxm_workflow_events"),
+        "tracking doc should be a durable orchestration packet: {tracking_text}"
+    );
+    let worker_prompt_artifacts = artifacts["worker_prompts"]
+        .as_array()
+        .expect("worker_prompts");
+    assert_eq!(worker_prompt_artifacts.len(), 3);
+    for artifact in worker_prompt_artifacts {
+        let prompt_path =
+            std::path::PathBuf::from(artifact["prompt"].as_str().expect("worker prompt path"));
+        let report_path =
+            std::path::PathBuf::from(artifact["report"].as_str().expect("worker report path"));
+        assert!(
+            prompt_path.is_file(),
+            "worker prompt should exist: {prompt_path:?}"
+        );
+        assert!(
+            report_path.is_file(),
+            "worker report stub should exist: {report_path:?}"
+        );
+        assert!(
+            report_path.starts_with(bundle_dir.join("reports")),
+            "report should live in the bundle reports dir: {report_path:?}"
+        );
+        let report = std::fs::read_to_string(&report_path).expect("worker report text");
+        assert!(
+            report.contains("# Report:") && report.contains("Status: planned"),
+            "worker report should start as a concrete report stub: {report}"
+        );
+        let prompt = std::fs::read_to_string(&prompt_path).expect("worker prompt text");
+        for expected in [
+            "## Base / Workspace",
+            "## Read First",
+            "## Validation / Evidence",
+            "## Report Contract",
+            "Do not merge, push, update integration refs",
+        ] {
+            assert!(
+                prompt.contains(expected),
+                "worker prompt should include '{expected}': {prompt}"
+            );
+        }
+    }
     let execution_id = started[tool_result::EXECUTION_ID]
         .as_str()
         .expect("execution_id")
@@ -609,7 +676,7 @@ async fn mcp_orchestrate_start_spawns_parallel_workers_with_session_cwds() {
     let mut cwd_set = HashSet::new();
     for spawn in spawns.iter() {
         assert!(
-            spawn.agent_name.starts_with("apxm_worker_"),
+            spawn.agent_name.starts_with("orchestration_worker_"),
             "agent name should be APXM-generated: {spawn:?}"
         );
         assert_eq!(spawn.profile_name, "fixture-profile");
@@ -652,6 +719,10 @@ async fn mcp_orchestrate_start_spawns_parallel_workers_with_session_cwds() {
     assert_eq!(
         sleep_event["payload"]["control"]["events_tool"], MCP_TOOL_APXM_WORKFLOW_EVENTS,
         "orchestrator_sleep should carry workflow control handles: {events}"
+    );
+    assert_eq!(
+        sleep_event["payload"]["artifacts"]["tracking_doc"], artifacts["tracking_doc"],
+        "orchestrator_sleep should expose the durable orchestration packet: {events}"
     );
     assert_eq!(
         sleep_event["payload"]["plan"]["workers"]
@@ -701,7 +772,7 @@ async fn mcp_orchestrate_start_spawns_parallel_workers_with_session_cwds() {
         .expect("workflow_started event");
     assert_eq!(
         workflow_started["payload"]["workflow_name"],
-        "apxm_orchestrated_task"
+        "orchestrated_task"
     );
     assert_eq!(workflow_started["payload"]["step_count"], 5);
     let workflow_session_dir = workflow_started["payload"]["session_dir"]
@@ -778,8 +849,8 @@ async fn mcp_orchestrate_acp_gatekeeper_receives_worker_summary() {
         mcp_call(
             MCP_TOOL_APXM_ORCHESTRATE_START,
             serde_json::json!({
-                "task": "gate two deterministic worker outputs",
-                "context": "gate prompt regression",
+                "task": "gate two deterministic worker outputs with {literal_goal}",
+                "context": "gate prompt regression with {literal_context}",
                 "session_id": session_id,
                 "workspace": { "mode": "session" },
                 "admit_capabilities": ["SPAWN_AGENT"],
@@ -790,7 +861,7 @@ async fn mcp_orchestrate_acp_gatekeeper_receives_worker_summary() {
                 "supervisor": {
                     "id": "gate",
                     "profile": "fixture-profile",
-                    "prompt": "Act as a strict gatekeeper."
+                    "prompt": "Act as a strict gatekeeper with {literal_constraint}."
                 }
             }),
         ),
@@ -818,7 +889,9 @@ async fn mcp_orchestrate_acp_gatekeeper_receives_worker_summary() {
         "expected only the ACP gate to spawn: {spawns:?}"
     );
     assert!(
-        spawns[0].agent_name.starts_with("apxm_worker_gate_"),
+        spawns[0]
+            .agent_name
+            .starts_with("orchestration_worker_gate_"),
         "gate should use APXM-generated agent name: {spawns:?}"
     );
     drop(spawns);
@@ -831,8 +904,10 @@ async fn mcp_orchestrate_acp_gatekeeper_receives_worker_summary() {
     );
     let gate_prompt = &prompt_texts[0];
     for expected in [
-        "Act as a strict gatekeeper.",
-        "Worker summary:",
+        "gate two deterministic worker outputs with {literal_goal}",
+        "gate prompt regression with {literal_context}",
+        "Act as a strict gatekeeper with {literal_constraint}.",
+        "## Worker Summary",
         "left=[\"worker:left role:left branch",
         "right=[\"worker:right role:right branch",
         "Return gate decision, failed assumptions, merge/conflict notes, and next feedback action.",

@@ -56,8 +56,12 @@
       "description": "Use when rebasing the external/vllm fork onto a new upstream tag, cherry-picking APXM commits, or resolving conflicts in the fork. Covers the G1 build/smoke gate."
     },
     {
+      "name": "apxm-goal-orchestrator",
+      "description": "Use when an agent should turn a complex APXM goal into a bounded worker DAG or workflow, execute it through APXM, wait on workflow events/status, and synthesize verified artifacts. Covers `dekk apxm goal`, `apxm_orchestrate_start`, `apxm_workflow_*`, and `apxm_plan_as_graph` selection."
+    },
+    {
       "name": "apxm-mcp-server",
-      "description": "Use when working on or registering the APXM MCP server (mcp/apxm_server.py). Each tool shells dekk apxm <cmd>; registration goes through dekk apxm mcp install."
+      "description": "Use when working on APXM MCP surfaces: the Rust HTTP `/v1/mcp` endpoint, the Rust stdio `apxm-mcp-server` binary, or cross-agent MCP registration. Prefer server-owned HTTP MCP for workflow/orchestration control."
     },
     {
       "name": "apxm-mlir-pass-development",
