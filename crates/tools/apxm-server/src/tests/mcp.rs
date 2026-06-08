@@ -1,5 +1,11 @@
 use super::*;
 use apxm_core::events::{ApxmEvent, EventSource};
+use apxm_core::types::aam::AamContext;
+use apxm_runtime::process::AgentProcess;
+use apxm_runtime::process_table::{AgentPromptResponse, AgentPrompter, AgentSpawner};
+use std::any::Any;
+use std::collections::HashSet;
+use std::sync::Mutex;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
 #[tokio::test]
@@ -262,6 +268,379 @@ async fn mcp_tools_list_includes_skill_inventory_tools() {
     assert!(
         names.contains(&MCP_TOOL_APXM_WORKFLOW_CANCEL),
         "tools: {body}"
+    );
+    assert!(
+        names.contains(&MCP_TOOL_APXM_ORCHESTRATE_START),
+        "tools: {body}"
+    );
+}
+
+#[tokio::test]
+async fn mcp_orchestrate_start_rejects_duplicate_worker_ids() {
+    let app = build_app(test_state().await);
+
+    let (status, body) = post_json(
+        app,
+        routes::MCP,
+        mcp_call(
+            MCP_TOOL_APXM_ORCHESTRATE_START,
+            serde_json::json!({
+                "task": "split duplicate workers",
+                "workers": [
+                    { "id": "review", "role": "first" },
+                    { "id": "review", "role": "second" }
+                ]
+            }),
+        ),
+    )
+    .await;
+
+    assert_eq!(status, StatusCode::OK, "orchestrate call failed: {body}");
+    assert_eq!(body[tool_result::RESULT][mcp_fields::IS_ERROR], true);
+    assert!(
+        tool_text(&body).contains("duplicate worker id"),
+        "expected duplicate-worker diagnostic: {body}"
+    );
+}
+
+#[tokio::test]
+async fn mcp_orchestrate_start_requires_spawn_admission_for_acp_workers() {
+    let app = build_app(test_state().await);
+
+    let (status, body) = post_json(
+        app,
+        routes::MCP,
+        mcp_call(
+            MCP_TOOL_APXM_ORCHESTRATE_START,
+            serde_json::json!({
+                "task": "run a real worker",
+                "workers": [
+                    { "id": "executor", "profile": "fixture-profile" }
+                ]
+            }),
+        ),
+    )
+    .await;
+
+    assert_eq!(status, StatusCode::OK, "orchestrate call failed: {body}");
+    assert_eq!(body[tool_result::RESULT][mcp_fields::IS_ERROR], true);
+    assert!(
+        tool_text(&body).contains("requires admit_capabilities"),
+        "expected spawn admission diagnostic: {body}"
+    );
+}
+
+#[tokio::test]
+async fn mcp_orchestrate_dry_run_allocates_distinct_git_worktrees() {
+    let repo = init_fixture_git_repo();
+    let app = build_app(test_state().await);
+    let session_id = format!("mcp-orchestrate-worktree-{}", uuid::Uuid::new_v4());
+
+    let (status, body) = post_json(
+        app,
+        routes::MCP,
+        mcp_call(
+            MCP_TOOL_APXM_ORCHESTRATE_START,
+            serde_json::json!({
+                "task": "plan isolated worktree execution",
+                "session_id": session_id,
+                "dry_run": true,
+                "workspace": {
+                    "mode": "git_worktree",
+                    "repo_root": repo.path(),
+                    "base_ref": "HEAD",
+                    "cleanup": "keep"
+                },
+                "workers": [
+                    { "id": "planner", "role": "plan in a detached worktree" },
+                    { "id": "verifier", "role": "verify in a detached worktree" }
+                ]
+            }),
+        ),
+    )
+    .await;
+
+    assert_eq!(status, StatusCode::OK, "orchestrate dry run failed: {body}");
+    assert_eq!(body[tool_result::RESULT][mcp_fields::IS_ERROR], false);
+    let planned: serde_json::Value =
+        serde_json::from_str(tool_text(&body)).expect("orchestrate response JSON");
+    assert_eq!(planned[tool_result::STATUS], "planned");
+    assert!(
+        planned.get(tool_result::EXECUTION_ID).is_none(),
+        "dry run should not start a workflow: {planned}"
+    );
+    assert_eq!(planned["plan"]["workspace_mode"], "git_worktree");
+
+    let workers = planned["plan"]["workers"].as_array().expect("plan workers");
+    assert_eq!(workers.len(), 2);
+    let mut cwd_set = HashSet::new();
+    for worker in workers {
+        assert_eq!(worker["workspace"]["mode"], "git_worktree");
+        assert_eq!(worker["workspace"]["worktree_ref"], "HEAD");
+        let cwd = std::path::PathBuf::from(worker["cwd"].as_str().expect("worker cwd"));
+        assert!(cwd.is_dir(), "worktree cwd should exist: {}", cwd.display());
+        assert!(
+            cwd.join(".git").exists(),
+            "git worktree should have a .git file: {}",
+            cwd.display()
+        );
+        assert!(cwd_set.insert(cwd), "worktree cwd should be distinct");
+    }
+
+    for cwd in cwd_set {
+        let _ = std::process::Command::new("git")
+            .arg("-C")
+            .arg(repo.path())
+            .arg("worktree")
+            .arg("remove")
+            .arg("--force")
+            .arg(&cwd)
+            .status();
+    }
+    let bundle_dir = std::path::PathBuf::from(planned["bundle_dir"].as_str().expect("bundle_dir"));
+    let _ = std::fs::remove_dir_all(bundle_dir);
+}
+
+#[tokio::test]
+async fn mcp_orchestrate_start_spawns_parallel_workers_with_session_cwds() {
+    let state = test_state().await;
+    let spawns = Arc::new(Mutex::new(Vec::new()));
+    let prompt_probe = Arc::new(WorkflowBarrier::new(3));
+    let prompts = Arc::new(Mutex::new(Vec::new()));
+    state
+        .runtime
+        .process_table()
+        .set_agent_spawner(Arc::new(RecordingAgentSpawner::new(Arc::clone(&spawns))))
+        .await;
+    state
+        .runtime
+        .process_table()
+        .set_agent_prompter(Arc::new(BarrierAgentPrompter::new(
+            Arc::clone(&prompt_probe),
+            Arc::clone(&prompts),
+        )))
+        .await;
+    let app = build_app(state);
+    let session_id = format!("mcp-orchestrate-parallel-{}", uuid::Uuid::new_v4());
+
+    let (status, body) = post_json(
+        app.clone(),
+        routes::MCP,
+        mcp_call(
+            MCP_TOOL_APXM_ORCHESTRATE_START,
+            serde_json::json!({
+                "task": "design and verify autonomous APXM orchestration",
+                "context": "repo-level implementation task",
+                "event": "user requested autonomous parallel orchestration",
+                "trigger": "manual MCP invocation",
+                "session_id": session_id,
+                "workspace": { "mode": "session" },
+                "admit_capabilities": ["SPAWN_AGENT"],
+                "workers": [
+                    { "id": "planner", "role": "split the work", "profile": "fixture-profile" },
+                    { "id": "executor", "role": "implement the work", "profile": "fixture-profile" },
+                    { "id": "verifier", "role": "verify the work", "profile": "fixture-profile" }
+                ]
+            }),
+        ),
+    )
+    .await;
+
+    assert_eq!(status, StatusCode::OK, "orchestrate start failed: {body}");
+    assert_eq!(body[tool_result::RESULT][mcp_fields::IS_ERROR], false);
+    let started: serde_json::Value =
+        serde_json::from_str(tool_text(&body)).expect("orchestrate response JSON");
+    assert_eq!(started[tool_result::STATUS], STATUS_RUNNING);
+    assert_eq!(
+        started["control"]["events_tool"],
+        MCP_TOOL_APXM_WORKFLOW_EVENTS
+    );
+    assert_eq!(started["sleep_wake"]["sleep_after_start"], true);
+    assert!(
+        started["orchestrator_prompt"]
+            .as_str()
+            .unwrap_or_default()
+            .contains("go idle"),
+        "orchestrator prompt should describe sleep/wake behavior: {started}"
+    );
+    let execution_id = started[tool_result::EXECUTION_ID]
+        .as_str()
+        .expect("execution_id")
+        .to_string();
+
+    let status_body = wait_for_workflow_status(app.clone(), &execution_id, STATUS_SUCCEEDED).await;
+    let workflow_status: serde_json::Value =
+        serde_json::from_str(tool_text(&status_body)).expect("workflow status response JSON");
+    let result = workflow_spawn_payload(&workflow_status)["result"]
+        .as_str()
+        .expect("workflow result");
+    assert!(
+        result.contains("feedback:") && result.contains("gate/eval:"),
+        "expected gate/eval feedback fan-in result: {result}"
+    );
+    assert!(
+        prompt_probe.max_seen.load(Ordering::SeqCst) >= 3,
+        "independent ACP worker prompts should overlap before gate fan-in"
+    );
+
+    let spawns = spawns.lock().expect("spawns lock");
+    assert_eq!(spawns.len(), 3, "expected one spawn per worker: {spawns:?}");
+    let mut cwd_set = HashSet::new();
+    for spawn in spawns.iter() {
+        assert!(
+            spawn.agent_name.starts_with("apxm_worker_"),
+            "agent name should be APXM-generated: {spawn:?}"
+        );
+        assert_eq!(spawn.profile_name, "fixture-profile");
+        assert!(spawn.mode.is_none(), "mode should default unset: {spawn:?}");
+        assert!(
+            spawn.model.is_none(),
+            "model should default unset: {spawn:?}"
+        );
+        assert!(
+            spawn.cwd.is_dir(),
+            "session workspace should exist: {}",
+            spawn.cwd.display()
+        );
+        assert!(
+            spawn.extra_env.contains_key("APXM_NODE_WORKSPACE"),
+            "spawn should receive APXM_NODE_WORKSPACE env: {spawn:?}"
+        );
+        assert!(
+            cwd_set.insert(spawn.cwd.clone()),
+            "worker cwd should be distinct: {spawns:?}"
+        );
+    }
+    drop(spawns);
+
+    let plan_workers = started["plan"]["workers"].as_array().expect("plan workers");
+    assert_eq!(plan_workers.len(), 3);
+    assert!(
+        plan_workers
+            .iter()
+            .all(|worker| worker["workspace"]["mode"] == "session"),
+        "response should expose workspace bindings: {started}"
+    );
+
+    let events = workflow_events(app, &execution_id, 0, 200).await;
+    let event_items = events["events"].as_array().expect("events array");
+    assert!(
+        event_items
+            .iter()
+            .filter(|event| {
+                event["payload"]["kind"] == "operation_start"
+                    && event["payload"]["op_type"] == "SPAWN_AGENT"
+            })
+            .count()
+            >= 3,
+        "expected SPAWN_AGENT operation events for workers: {events}"
+    );
+    assert!(
+        event_items.iter().any(|event| {
+            event["payload"]["kind"] == "operation_start"
+                && event["payload"]["op_type"] == "COMMUNICATE"
+        }),
+        "expected COMMUNICATE operation events: {events}"
+    );
+}
+
+#[tokio::test]
+async fn mcp_orchestrate_cancel_stops_waiting_and_drops_late_worker_events() {
+    let state = test_state().await;
+    let spawns = Arc::new(Mutex::new(Vec::new()));
+    let hold = Arc::new(HoldAgentPrompter::new());
+    state
+        .runtime
+        .process_table()
+        .set_agent_spawner(Arc::new(RecordingAgentSpawner::new(Arc::clone(&spawns))))
+        .await;
+    state
+        .runtime
+        .process_table()
+        .set_agent_prompter(Arc::clone(&hold) as Arc<dyn AgentPrompter>)
+        .await;
+    let app = build_app(state);
+    let session_id = format!("mcp-orchestrate-cancel-{}", uuid::Uuid::new_v4());
+
+    let (status, body) = post_json(
+        app.clone(),
+        routes::MCP,
+        mcp_call(
+            MCP_TOOL_APXM_ORCHESTRATE_START,
+            serde_json::json!({
+                "task": "start long-running workers then cancel",
+                "session_id": session_id,
+                "workspace": { "mode": "session" },
+                "admit_capabilities": ["SPAWN_AGENT"],
+                "workers": [
+                    { "id": "left", "profile": "fixture-profile" },
+                    { "id": "right", "profile": "fixture-profile" }
+                ]
+            }),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "orchestrate start failed: {body}");
+    assert_eq!(body[tool_result::RESULT][mcp_fields::IS_ERROR], false);
+    let started: serde_json::Value =
+        serde_json::from_str(tool_text(&body)).expect("orchestrate response JSON");
+    let execution_id = started[tool_result::EXECUTION_ID]
+        .as_str()
+        .expect("execution_id")
+        .to_string();
+
+    hold.wait_for_prompts(2).await;
+    assert_eq!(
+        workflow_status_json(app.clone(), &execution_id).await[tool_result::STATUS],
+        STATUS_RUNNING
+    );
+
+    let (status, body) = post_json(
+        app.clone(),
+        routes::MCP,
+        mcp_call(
+            MCP_TOOL_APXM_WORKFLOW_CANCEL,
+            serde_json::json!({ "execution_id": execution_id }),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "workflow cancel failed: {body}");
+    assert_eq!(body[tool_result::RESULT][mcp_fields::IS_ERROR], false);
+    let status_body = wait_for_workflow_status(app.clone(), &execution_id, STATUS_FAILED).await;
+    let workflow_status: serde_json::Value =
+        serde_json::from_str(tool_text(&status_body)).expect("workflow status response JSON");
+    assert!(
+        workflow_status["error"]
+            .as_str()
+            .unwrap_or_default()
+            .contains("apxm_workflow_cancel"),
+        "expected cancellation error: {workflow_status}"
+    );
+
+    let cancelled_events = workflow_events(app.clone(), &execution_id, 0, 100).await;
+    let cancelled_items = cancelled_events["events"].as_array().expect("events array");
+    let abort_seq = cancelled_items
+        .iter()
+        .find(|event| event["payload"]["kind"] == "turn_aborted")
+        .and_then(|event| event["meta"]["seq"].as_u64())
+        .expect("turn_aborted seq");
+
+    hold.release();
+    tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+    let late_events = workflow_events(app, &execution_id, 0, 100).await;
+    let late_items = late_events["events"].as_array().expect("events array");
+    assert!(
+        !late_items
+            .iter()
+            .any(|event| event["payload"]["kind"] == "execute_complete"),
+        "cancelled orchestration must not emit execute_complete: {late_events}"
+    );
+    assert!(
+        !late_items.iter().any(|event| {
+            event["meta"]["seq"].as_u64().unwrap_or_default() > abort_seq
+                && event["meta"]["source"] == "runtime"
+        }),
+        "late worker completion must not append runtime events after cancel: {late_events}"
     );
 }
 
@@ -2691,6 +3070,176 @@ async fn wait_for_workflow_status(
         tokio::time::sleep(std::time::Duration::from_millis(20)).await;
     }
     panic!("workflow did not reach status {expected_status}: {last_body}");
+}
+
+fn init_fixture_git_repo() -> tempfile::TempDir {
+    let repo = tempfile::tempdir().expect("git repo tempdir");
+    run_git(repo.path(), &["init"]);
+    run_git(
+        repo.path(),
+        &["config", "user.email", "apxm-test@example.invalid"],
+    );
+    run_git(repo.path(), &["config", "user.name", "APXM Test"]);
+    std::fs::write(repo.path().join("README.md"), "fixture repo\n").expect("fixture README");
+    run_git(repo.path(), &["add", "README.md"]);
+    run_git(repo.path(), &["commit", "-m", "initial fixture commit"]);
+    repo
+}
+
+fn run_git(repo: &std::path::Path, args: &[&str]) {
+    let output = std::process::Command::new("git")
+        .arg("-C")
+        .arg(repo)
+        .args(args)
+        .output()
+        .unwrap_or_else(|error| panic!("failed to run git {args:?}: {error}"));
+    assert!(
+        output.status.success(),
+        "git {args:?} failed:\nstdout={}\nstderr={}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+}
+
+#[derive(Debug, Clone)]
+struct RecordedAgentSpawn {
+    agent_name: String,
+    profile_name: String,
+    cwd: std::path::PathBuf,
+    mode: Option<String>,
+    model: Option<String>,
+    extra_env: HashMap<String, String>,
+}
+
+struct RecordingAgentSpawner {
+    records: Arc<Mutex<Vec<RecordedAgentSpawn>>>,
+}
+
+impl RecordingAgentSpawner {
+    fn new(records: Arc<Mutex<Vec<RecordedAgentSpawn>>>) -> Self {
+        Self { records }
+    }
+}
+
+#[async_trait]
+impl AgentSpawner for RecordingAgentSpawner {
+    async fn spawn_external(
+        &self,
+        agent_name: &str,
+        profile_name: &str,
+        cwd: &std::path::Path,
+        mode: Option<&str>,
+        model: Option<&str>,
+        _aam_context: &AamContext,
+        extra_env: &HashMap<String, String>,
+    ) -> Result<Arc<tokio::sync::Mutex<dyn Any + Send + Sync>>, RuntimeError> {
+        self.records
+            .lock()
+            .expect("spawn records lock")
+            .push(RecordedAgentSpawn {
+                agent_name: agent_name.to_string(),
+                profile_name: profile_name.to_string(),
+                cwd: cwd.to_path_buf(),
+                mode: mode.map(str::to_string),
+                model: model.map(str::to_string),
+                extra_env: extra_env.clone(),
+            });
+        Ok(Arc::new(tokio::sync::Mutex::new(())))
+    }
+}
+
+struct BarrierAgentPrompter {
+    probe: Arc<WorkflowBarrier>,
+    prompts: Arc<Mutex<Vec<String>>>,
+}
+
+impl BarrierAgentPrompter {
+    fn new(probe: Arc<WorkflowBarrier>, prompts: Arc<Mutex<Vec<String>>>) -> Self {
+        Self { probe, prompts }
+    }
+}
+
+#[async_trait]
+impl AgentPrompter for BarrierAgentPrompter {
+    async fn prompt(
+        &self,
+        process: &AgentProcess,
+        message: &str,
+    ) -> Result<AgentPromptResponse, RuntimeError> {
+        self.prompts
+            .lock()
+            .expect("prompt records lock")
+            .push(message.to_string());
+        self.probe.enter().await;
+        Ok(AgentPromptResponse::text(format!(
+            "{} completed: {}",
+            process.name,
+            truncate_for_fixture(message)
+        )))
+    }
+}
+
+struct HoldAgentPrompter {
+    started: AtomicUsize,
+    notify_started: tokio::sync::Notify,
+    release: tokio::sync::Notify,
+}
+
+impl HoldAgentPrompter {
+    fn new() -> Self {
+        Self {
+            started: AtomicUsize::new(0),
+            notify_started: tokio::sync::Notify::new(),
+            release: tokio::sync::Notify::new(),
+        }
+    }
+
+    async fn wait_for_prompts(&self, expected: usize) {
+        for _ in 0..100 {
+            if self.started.load(Ordering::SeqCst) >= expected {
+                return;
+            }
+            let _ = tokio::time::timeout(
+                std::time::Duration::from_millis(20),
+                self.notify_started.notified(),
+            )
+            .await;
+        }
+        panic!(
+            "expected {expected} held prompts, saw {}",
+            self.started.load(Ordering::SeqCst)
+        );
+    }
+
+    fn release(&self) {
+        self.release.notify_waiters();
+    }
+}
+
+#[async_trait]
+impl AgentPrompter for HoldAgentPrompter {
+    async fn prompt(
+        &self,
+        process: &AgentProcess,
+        _message: &str,
+    ) -> Result<AgentPromptResponse, RuntimeError> {
+        self.started.fetch_add(1, Ordering::SeqCst);
+        self.notify_started.notify_waiters();
+        self.release.notified().await;
+        Ok(AgentPromptResponse::text(format!(
+            "{} released after cancel",
+            process.name
+        )))
+    }
+}
+
+fn truncate_for_fixture(message: &str) -> String {
+    const MAX: usize = 64;
+    if message.len() <= MAX {
+        message.to_string()
+    } else {
+        format!("{}...", &message[..MAX])
+    }
 }
 
 struct WorkflowBarrier {

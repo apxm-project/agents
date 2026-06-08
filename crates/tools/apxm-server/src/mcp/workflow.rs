@@ -35,16 +35,16 @@ const DEFAULT_EVENTS_LIMIT: usize = 100;
 const MAX_EVENTS_LIMIT: usize = 1000;
 
 #[derive(Debug, Deserialize)]
-struct WorkflowStartArgs {
-    workflow_path: String,
+pub(crate) struct WorkflowStartArgs {
+    pub(crate) workflow_path: String,
     #[serde(default)]
-    args: JsonMap<String, JsonValue>,
+    pub(crate) args: JsonMap<String, JsonValue>,
     #[serde(default)]
-    session_id: Option<String>,
+    pub(crate) session_id: Option<String>,
     #[serde(default)]
-    admit_capabilities: Vec<String>,
+    pub(crate) admit_capabilities: Vec<String>,
     #[serde(default)]
-    imports: Vec<String>,
+    pub(crate) imports: Vec<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -61,13 +61,13 @@ struct WorkflowEventsArgs {
     limit: Option<usize>,
 }
 
-#[derive(Debug, Serialize)]
-struct WorkflowStartResponse {
-    status: ExecutionStatus,
-    execution_id: String,
-    session_id: String,
-    session_dir: String,
-    workflow_path: String,
+#[derive(Debug, Clone, Serialize)]
+pub(crate) struct WorkflowStartResponse {
+    pub(crate) status: ExecutionStatus,
+    pub(crate) execution_id: String,
+    pub(crate) session_id: String,
+    pub(crate) session_dir: String,
+    pub(crate) workflow_path: String,
 }
 
 #[derive(Debug, Serialize)]
@@ -224,6 +224,13 @@ async fn start_workflow(
         serde_json::from_value(tool_args.clone()).map_err(|error| {
             ApiError::bad_request(format!("invalid workflow_start arguments: {error}"))
         })?;
+    start_workflow_from_args(state, request).await
+}
+
+pub(crate) async fn start_workflow_from_args(
+    state: &AppState,
+    request: WorkflowStartArgs,
+) -> Result<WorkflowStartResponse, ApiError> {
     let prepared = prepare_workflow_run(state, request).await?;
     let response = WorkflowStartResponse {
         status: ExecutionStatus::Running,

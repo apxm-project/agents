@@ -6,6 +6,23 @@ keys, ACP profiles, or network access. Replace any worker graph with a graph,
 artifact, or workflow that calls a registered agent when you want the same
 shape to drive real workers.
 
+## Autonomous Task
+
+`autonomous_task/` shows the native MCP path for an orchestrator agent that
+creates a bounded parallel worker graph, assigns each worker a workspace or Git
+worktree, starts the workflow in the background, and then sleeps until APXM
+status/events/cancel wakes it.
+
+```text
+[event/task] -> [trigger] -> [parallel workers] -> [gate/eval] -> [feedback]
+                                      |
+                                      v
+                         [apxm_workflow_status/events/cancel]
+```
+
+Use `autonomous_task/deterministic_request.json` for a no-agent smoke test, or
+`autonomous_task/acp_git_worktree_request.json` with registered ACP profiles.
+
 ## Agent Council
 
 `agent_council/workflow.apxmw` fans a task out to three independent workers and

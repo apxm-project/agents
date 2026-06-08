@@ -17,9 +17,12 @@ use crate::types::responses::{
 mod compiler;
 mod dispatch;
 mod dispatch_spec;
+mod orchestrate;
 mod schema;
 mod workflow;
 
+#[allow(unused_imports)]
+pub(crate) use orchestrate::MCP_TOOL_APXM_ORCHESTRATE_START;
 #[allow(unused_imports)]
 pub(crate) use schema::{
     MCP_METHOD_INITIALIZE, MCP_METHOD_RESOURCES_LIST, MCP_METHOD_RESOURCES_READ,
@@ -134,6 +137,11 @@ pub(crate) async fn mcp_jsonrpc(
                     .to_string(),
                 input_schema: workflow::workflow_cancel_input_schema(),
             });
+            tools.push(ToolEntry {
+                name: orchestrate::MCP_TOOL_APXM_ORCHESTRATE_START.to_string(),
+                description: "Compile a task into a server-owned parallel orchestration workflow, allocate worker workspaces/worktrees, start it in the background, and return workflow status/events/cancel handles".to_string(),
+                input_schema: orchestrate::orchestrate_start_input_schema(),
+            });
             tools.extend(
                 state
                     .runtime
@@ -189,6 +197,12 @@ pub(crate) async fn mcp_jsonrpc(
 
             if let Some(response) =
                 workflow::call_workflow_tool(&state, &id, tool_name, &tool_args).await
+            {
+                return response;
+            }
+
+            if let Some(response) =
+                orchestrate::call_orchestrate_tool(&state, &id, tool_name, &tool_args).await
             {
                 return response;
             }

@@ -1,0 +1,45 @@
+{
+  "task": "Implement a bounded repository change and verify it end to end.",
+  "context": "Each worker gets an APXM-owned detached Git worktree. Replace profile names with any registered ACP profiles in this runtime.",
+  "event": "repository improvement requested",
+  "trigger": "autonomous orchestrator policy admitted a parallel worker run",
+  "workspace": {
+    "mode": "git_worktree",
+    "repo_root": "/absolute/path/to/repo",
+    "base_ref": "HEAD",
+    "cleanup": "keep"
+  },
+  "admit_capabilities": [
+    "SPAWN_AGENT"
+  ],
+  "workers": [
+    {
+      "id": "planner",
+      "role": "Produce the concrete implementation plan and risks.",
+      "profile": "codex",
+      "prompt": "Plan the change. Do not edit files. Return exact files, tests, and constraints."
+    },
+    {
+      "id": "executor",
+      "role": "Implement the accepted bounded change in your own worktree.",
+      "profile": "claude",
+      "depends_on": [
+        "planner"
+      ],
+      "prompt": "Implement the change in your assigned worktree. Return changed files and tests run."
+    },
+    {
+      "id": "verifier",
+      "role": "Verify behavior independently in your own worktree.",
+      "profile": "codex",
+      "depends_on": [
+        "executor"
+      ],
+      "prompt": "Verify the change, run focused tests, and report any blockers or regressions."
+    }
+  ],
+  "supervisor": {
+    "id": "gate",
+    "prompt": "Evaluate worker outputs, identify conflicts, decide whether the loop can finish, and emit feedback for another bounded pass only when required."
+  }
+}
