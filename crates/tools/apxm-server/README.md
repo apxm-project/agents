@@ -83,6 +83,7 @@ The HTTP MCP endpoint also exposes APXM skill library tools:
 - `apxm_workflow_status` -- fetch the current status, result, error, and event totals for a workflow run by `execution_id`
 - `apxm_workflow_events` -- page retained run events for a workflow run with `since` and `limit`
 - `apxm_workflow_cancel` -- interrupt an in-flight workflow run by server-owned `execution_id`
+- `apxm_orchestrate_start` -- compile a bounded task/worker plan into a server-owned parallel workflow, allocate worker workspaces or Git worktrees, emit `orchestrator_sleep`/`orchestrator_wake` lifecycle events, and return workflow status/events/cancel handles
 
 Skill inventory prepends the bundled server skill root and then appends roots
 configured with repeated `--skill-root <path>` arguments or the
@@ -97,6 +98,13 @@ run events and rollout entries, and registers the run for cancellation. Clients
 should treat `execution_id` as the live status/events/cancel handle and
 `session_dir` as the offline workflow/session inspection handle. The request
 does not accept `session_root`; workflow session roots are derived by APXM.
+
+Native orchestration starts are also server-owned workflow executions. An
+orchestrator agent should call `apxm_orchestrate_start` once, keep the returned
+`execution_id`, then go idle until `apxm_workflow_events` returns
+`orchestrator_wake`, `execute_complete`, `error`, or `turn_aborted`, or until
+`apxm_workflow_status` reports `succeeded` or `failed`. Real ACP workers require
+the caller to grant `admit_capabilities: ["SPAWN_AGENT"]`.
 
 `POST /v1/skills/:id/execute`, `POST /v1/skills/:id/execute/stream`, and
 `apxm_skill_call` are intentionally narrow. They only run already compiled
@@ -157,6 +165,12 @@ The `apxm-mcp-server` binary exposes these tools over stdio:
 - `apxm_aam_recall` -- query AAM state and memory
 - `apxm_evidence_lookup` -- query `.apxm` evidence stores
 - `apxm_capability_list` -- list runtime capabilities and backend health
+
+The stdio binary is a compile/query/debug surface. It does not expose the
+server-owned workflow or orchestration control tools
+`apxm_workflow_start/status/events/cancel` or `apxm_orchestrate_start`; use the
+HTTP MCP endpoint at `/v1/mcp` when an agent needs managed background runs,
+retained events, cancellation, and APXM-owned worker sessions.
 
 It also exposes MCP resources:
 

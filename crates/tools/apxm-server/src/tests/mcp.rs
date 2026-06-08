@@ -304,6 +304,57 @@ async fn mcp_orchestrate_start_rejects_duplicate_worker_ids() {
 }
 
 #[tokio::test]
+async fn mcp_orchestrate_start_rejects_invalid_worker_dependencies() {
+    let cases = [
+        (
+            serde_json::json!({
+                "task": "unknown dependency",
+                "workers": [
+                    { "id": "executor", "depends_on": ["planner"] }
+                ]
+            }),
+            "depends_on unknown worker",
+        ),
+        (
+            serde_json::json!({
+                "task": "self dependency",
+                "workers": [
+                    { "id": "executor", "depends_on": ["executor"] }
+                ]
+            }),
+            "cannot depend on itself",
+        ),
+        (
+            serde_json::json!({
+                "task": "cyclic dependency",
+                "workers": [
+                    { "id": "left", "depends_on": ["right"] },
+                    { "id": "right", "depends_on": ["left"] }
+                ]
+            }),
+            "dependency cycle",
+        ),
+    ];
+
+    for (request, expected) in cases {
+        let app = build_app(test_state().await);
+        let (status, body) = post_json(
+            app,
+            routes::MCP,
+            mcp_call(MCP_TOOL_APXM_ORCHESTRATE_START, request),
+        )
+        .await;
+
+        assert_eq!(status, StatusCode::OK, "orchestrate call failed: {body}");
+        assert_eq!(body[tool_result::RESULT][mcp_fields::IS_ERROR], true);
+        assert!(
+            tool_text(&body).contains(expected),
+            "expected dependency diagnostic '{expected}': {body}"
+        );
+    }
+}
+
+#[tokio::test]
 async fn mcp_orchestrate_start_requires_spawn_admission_for_acp_workers() {
     let app = build_app(test_state().await);
 
@@ -456,6 +507,25 @@ async fn mcp_orchestrate_start_spawns_parallel_workers_with_session_cwds() {
         MCP_TOOL_APXM_WORKFLOW_EVENTS
     );
     assert_eq!(started["sleep_wake"]["sleep_after_start"], true);
+    assert_eq!(
+        started["sleep_wake"]["event_loop"],
+        "event -> trigger -> parallel worker actions -> gate/eval -> feedback -> next event"
+    );
+    assert_eq!(
+        started["orchestration"]["sleep_event_kind"],
+        "orchestrator_sleep"
+    );
+    assert_eq!(
+        started["orchestration"]["wake_event_kind"],
+        "orchestrator_wake"
+    );
+    assert_eq!(started["orchestration"]["initial_since"], 0);
+    assert_eq!(started["orchestration"]["gate_step_id"], "gate");
+    assert_eq!(started["orchestration"]["feedback_step_id"], "feedback");
+    assert_eq!(
+        started["orchestration"]["next_events_args"]["since"], 0,
+        "orchestration response should include the first event cursor: {started}"
+    );
     assert!(
         started["orchestrator_prompt"]
             .as_str()
@@ -482,6 +552,27 @@ async fn mcp_orchestrate_start_spawns_parallel_workers_with_session_cwds() {
         prompt_probe.max_seen.load(Ordering::SeqCst) >= 3,
         "independent ACP worker prompts should overlap before gate fan-in"
     );
+    let prompt_texts = prompts.lock().expect("prompt records lock").clone();
+    assert_eq!(
+        prompt_texts.len(),
+        3,
+        "expected worker prompts: {prompt_texts:?}"
+    );
+    for prompt in &prompt_texts {
+        for expected in [
+            "Task:\ndesign and verify autonomous APXM orchestration",
+            "Context:\nrepo-level implementation task",
+            "Event:\nuser requested autonomous parallel orchestration",
+            "Trigger:\nmanual MCP invocation",
+            "Assigned workspace:",
+            "Return: status, concrete output, changed files if any, tests run, blockers, and handoff notes.",
+        ] {
+            assert!(
+                prompt.contains(expected),
+                "worker prompt should include '{expected}': {prompt}"
+            );
+        }
+    }
 
     let spawns = spawns.lock().expect("spawns lock");
     assert_eq!(spawns.len(), 3, "expected one spawn per worker: {spawns:?}");
@@ -524,6 +615,38 @@ async fn mcp_orchestrate_start_spawns_parallel_workers_with_session_cwds() {
 
     let events = workflow_events(app, &execution_id, 0, 200).await;
     let event_items = events["events"].as_array().expect("events array");
+    let sleep_event = event_items
+        .iter()
+        .find(|event| event["payload"]["kind"] == "orchestrator_sleep")
+        .expect("orchestrator_sleep event");
+    assert_eq!(
+        sleep_event["payload"]["control"]["events_tool"], MCP_TOOL_APXM_WORKFLOW_EVENTS,
+        "orchestrator_sleep should carry workflow control handles: {events}"
+    );
+    assert_eq!(
+        sleep_event["payload"]["plan"]["workers"]
+            .as_array()
+            .expect("sleep plan workers")
+            .len(),
+        3
+    );
+    assert!(
+        sleep_event["payload"]["wake_on"]
+            .as_array()
+            .expect("wake_on")
+            .iter()
+            .any(|value| value
+                .as_str()
+                .unwrap_or_default()
+                .contains("orchestrator_wake")),
+        "sleep event should identify the wake event kind: {sleep_event}"
+    );
+    let wake_event = event_items
+        .iter()
+        .find(|event| event["payload"]["kind"] == "orchestrator_wake")
+        .expect("orchestrator_wake event");
+    assert_eq!(wake_event["payload"]["outcome"], "succeeded");
+    assert_eq!(wake_event["payload"]["terminal_event"], "execute_complete");
     assert!(
         event_items
             .iter()
@@ -542,6 +665,100 @@ async fn mcp_orchestrate_start_spawns_parallel_workers_with_session_cwds() {
         }),
         "expected COMMUNICATE operation events: {events}"
     );
+}
+
+#[tokio::test]
+async fn mcp_orchestrate_acp_gatekeeper_receives_worker_summary() {
+    let state = test_state().await;
+    let spawns = Arc::new(Mutex::new(Vec::new()));
+    let prompt_probe = Arc::new(WorkflowBarrier::new(1));
+    let prompts = Arc::new(Mutex::new(Vec::new()));
+    state
+        .runtime
+        .process_table()
+        .set_agent_spawner(Arc::new(RecordingAgentSpawner::new(Arc::clone(&spawns))))
+        .await;
+    state
+        .runtime
+        .process_table()
+        .set_agent_prompter(Arc::new(BarrierAgentPrompter::new(
+            Arc::clone(&prompt_probe),
+            Arc::clone(&prompts),
+        )))
+        .await;
+    let app = build_app(state);
+    let session_id = format!("mcp-orchestrate-gate-{}", uuid::Uuid::new_v4());
+
+    let (status, body) = post_json(
+        app.clone(),
+        routes::MCP,
+        mcp_call(
+            MCP_TOOL_APXM_ORCHESTRATE_START,
+            serde_json::json!({
+                "task": "gate two deterministic worker outputs",
+                "context": "gate prompt regression",
+                "session_id": session_id,
+                "workspace": { "mode": "session" },
+                "admit_capabilities": ["SPAWN_AGENT"],
+                "workers": [
+                    { "id": "left", "role": "left branch" },
+                    { "id": "right", "role": "right branch" }
+                ],
+                "supervisor": {
+                    "id": "gate",
+                    "profile": "fixture-profile",
+                    "prompt": "Act as a strict gatekeeper."
+                }
+            }),
+        ),
+    )
+    .await;
+
+    assert_eq!(status, StatusCode::OK, "orchestrate start failed: {body}");
+    assert_eq!(body[tool_result::RESULT][mcp_fields::IS_ERROR], false);
+    let started: serde_json::Value =
+        serde_json::from_str(tool_text(&body)).expect("orchestrate response JSON");
+    let execution_id = started[tool_result::EXECUTION_ID]
+        .as_str()
+        .expect("execution_id")
+        .to_string();
+
+    let status_body = wait_for_workflow_status(app, &execution_id, STATUS_SUCCEEDED).await;
+    let workflow_status: serde_json::Value =
+        serde_json::from_str(tool_text(&status_body)).expect("workflow status response JSON");
+    assert_eq!(workflow_status[tool_result::STATUS], STATUS_SUCCEEDED);
+
+    let spawns = spawns.lock().expect("spawns lock");
+    assert_eq!(
+        spawns.len(),
+        1,
+        "expected only the ACP gate to spawn: {spawns:?}"
+    );
+    assert!(
+        spawns[0].agent_name.starts_with("apxm_worker_gate_"),
+        "gate should use APXM-generated agent name: {spawns:?}"
+    );
+    drop(spawns);
+
+    let prompt_texts = prompts.lock().expect("prompt records lock").clone();
+    assert_eq!(
+        prompt_texts.len(),
+        1,
+        "expected one gate prompt: {prompt_texts:?}"
+    );
+    let gate_prompt = &prompt_texts[0];
+    for expected in [
+        "Act as a strict gatekeeper.",
+        "Worker summary:",
+        "left=[\"worker:left role:left branch",
+        "right=[\"worker:right role:right branch",
+        "Return gate decision, failed assumptions, merge/conflict notes, and next feedback action.",
+    ] {
+        assert!(
+            gate_prompt.contains(expected),
+            "gate prompt should include '{expected}': {gate_prompt}"
+        );
+    }
 }
 
 #[tokio::test]
@@ -619,6 +836,12 @@ async fn mcp_orchestrate_cancel_stops_waiting_and_drops_late_worker_events() {
 
     let cancelled_events = workflow_events(app.clone(), &execution_id, 0, 100).await;
     let cancelled_items = cancelled_events["events"].as_array().expect("events array");
+    let wake_event = cancelled_items
+        .iter()
+        .find(|event| event["payload"]["kind"] == "orchestrator_wake")
+        .expect("cancelled orchestration should emit orchestrator_wake");
+    assert_eq!(wake_event["payload"]["outcome"], "cancelled");
+    assert_eq!(wake_event["payload"]["terminal_event"], "turn_aborted");
     let abort_seq = cancelled_items
         .iter()
         .find(|event| event["payload"]["kind"] == "turn_aborted")

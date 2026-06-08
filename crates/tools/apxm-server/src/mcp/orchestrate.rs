@@ -18,7 +18,7 @@ use crate::error::ApiError;
 use crate::helpers::mcp_tool_result;
 use crate::state::AppState;
 
-use super::workflow::{WorkflowStartArgs, start_workflow_from_args};
+use super::workflow::{WorkflowOrchestrationContract, WorkflowStartArgs, start_workflow_from_args};
 
 pub(crate) const MCP_TOOL_APXM_ORCHESTRATE_START: &str = "apxm_orchestrate_start";
 
@@ -114,6 +114,7 @@ struct OrchestrateStartResponse {
     bundle_dir: String,
     plan: OrchestrationPlanSummary,
     control: OrchestrationControl,
+    orchestration: OrchestrationRuntimeContract,
     sleep_wake: SleepWakeContract,
     orchestrator_prompt: String,
     flowchart: String,
@@ -160,6 +161,20 @@ struct OrchestrationControl {
     status_tool: &'static str,
     events_tool: &'static str,
     cancel_tool: &'static str,
+}
+
+#[derive(Debug, Serialize)]
+struct OrchestrationRuntimeContract {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    execution_id: Option<String>,
+    initial_since: u64,
+    gate_step_id: String,
+    feedback_step_id: &'static str,
+    terminal_event_kinds: Vec<&'static str>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    next_events_args: Option<JsonValue>,
+    sleep_event_kind: &'static str,
+    wake_event_kind: &'static str,
 }
 
 #[derive(Debug, Serialize)]
@@ -343,6 +358,23 @@ async fn orchestrate_start(
     }
 
     let bundle = materialize_orchestration_bundle(&request)?;
+    let plan_summary = bundle.plan.summary();
+    let control = orchestration_control();
+    let wake_on = orchestration_wake_on();
+    let event_loop = orchestration_event_loop();
+    let orchestration_contract = WorkflowOrchestrationContract {
+        bundle_dir: bundle.bundle_dir.to_string_lossy().to_string(),
+        plan: serde_json::to_value(&plan_summary).map_err(|error| {
+            ApiError::internal_message(format!("failed to serialize orchestration plan: {error}"))
+        })?,
+        control: serde_json::to_value(&control).map_err(|error| {
+            ApiError::internal_message(format!(
+                "failed to serialize orchestration control: {error}"
+            ))
+        })?,
+        wake_on: wake_on.iter().map(|value| (*value).to_string()).collect(),
+        event_loop: event_loop.to_string(),
+    };
     let started = if request.dry_run {
         None
     } else {
@@ -355,6 +387,7 @@ async fn orchestrate_start(
                     session_id: Some(bundle.session_id.clone()),
                     admit_capabilities: request.admit_capabilities.clone(),
                     imports: request.imports.clone(),
+                    orchestration: Some(orchestration_contract),
                 },
             )
             .await?,
@@ -376,20 +409,18 @@ async fn orchestrate_start(
             .map(|response| response.session_dir.clone()),
         workflow_path: bundle.workflow_path.to_string_lossy().to_string(),
         bundle_dir: bundle.bundle_dir.to_string_lossy().to_string(),
-        plan: bundle.plan.summary(),
-        control: OrchestrationControl {
-            status_tool: super::workflow::MCP_TOOL_APXM_WORKFLOW_STATUS,
-            events_tool: super::workflow::MCP_TOOL_APXM_WORKFLOW_EVENTS,
-            cancel_tool: super::workflow::MCP_TOOL_APXM_WORKFLOW_CANCEL,
-        },
+        plan: plan_summary,
+        control,
+        orchestration: orchestration_runtime_contract(
+            started
+                .as_ref()
+                .map(|response| response.execution_id.clone()),
+            &bundle.plan.supervisor.id,
+        ),
         sleep_wake: SleepWakeContract {
             sleep_after_start: !request.dry_run,
-            wake_on: vec![
-                "apxm_workflow_events returns a terminal execute_complete or turn_aborted event",
-                "apxm_workflow_status reports succeeded or failed",
-                "apxm_workflow_cancel is called by the supervisor/client",
-            ],
-            event_loop: "event -> trigger -> parallel worker actions -> gate/eval -> feedback -> next event",
+            wake_on,
+            event_loop,
         },
         orchestrator_prompt: orchestrator_prompt(),
         flowchart: orchestration_flowchart(),
@@ -891,14 +922,14 @@ fn gate_air(supervisor: &SupervisorPlan) -> String {
             supervisor.model.as_deref(),
         );
         let message = format!(
-            "{}\n\nReturn gate decision, failed assumptions, merge/conflict notes, and next feedback action. Worker outputs are also persisted in the APXM workflow session for this gate step.",
+            "{}\n\nWorker summary:\n{{summary}}\n\nReturn gate decision, failed assumptions, merge/conflict notes, and next feedback action. Worker outputs are also persisted in the APXM workflow session for this gate step.",
             supervisor.prompt
         );
         format!(
             r#"module {{
   func.func @gate(%arg0: !ais.token {{ais.param_name = "summary", ais.param_type = "str"}}) -> !ais.token attributes {{ais.entry}} {{
     %spawn = ais.spawn_agent {agent_name}{attrs} : !ais.token
-    %gate = ais.communicate {message} to {agent_name} (%spawn : !ais.token) {{protocol = "acp"}} : !ais.token
+    %gate = ais.communicate {message} to {agent_name} (%arg0, %spawn : !ais.token, !ais.token) {{protocol = "acp", input_names = ["summary"]}} : !ais.token
     func.return %gate : !ais.token
   }}
 }}
@@ -1214,8 +1245,57 @@ fn default_supervisor_prompt() -> String {
     "Act as the APXM gatekeeper. Evaluate all worker outputs, identify conflicts or missing verification, decide whether the loop can finish, and emit feedback for the next loop if needed.".to_string()
 }
 
+fn orchestration_control() -> OrchestrationControl {
+    OrchestrationControl {
+        status_tool: super::workflow::MCP_TOOL_APXM_WORKFLOW_STATUS,
+        events_tool: super::workflow::MCP_TOOL_APXM_WORKFLOW_EVENTS,
+        cancel_tool: super::workflow::MCP_TOOL_APXM_WORKFLOW_CANCEL,
+    }
+}
+
+fn orchestration_wake_on() -> Vec<&'static str> {
+    vec![
+        "apxm_workflow_events returns orchestrator_wake",
+        "apxm_workflow_events returns execute_complete, error, or turn_aborted",
+        "apxm_workflow_status reports succeeded or failed",
+        "apxm_workflow_cancel is called by the supervisor/client",
+    ]
+}
+
+fn orchestration_event_loop() -> &'static str {
+    "event -> trigger -> parallel worker actions -> gate/eval -> feedback -> next event"
+}
+
+fn orchestration_runtime_contract(
+    execution_id: Option<String>,
+    gate_step_id: &str,
+) -> OrchestrationRuntimeContract {
+    let next_events_args = execution_id.as_ref().map(|execution_id| {
+        serde_json::json!({
+            "execution_id": execution_id,
+            "since": 0,
+            "limit": 100
+        })
+    });
+    OrchestrationRuntimeContract {
+        execution_id,
+        initial_since: 0,
+        gate_step_id: gate_step_id.to_string(),
+        feedback_step_id: "feedback",
+        terminal_event_kinds: vec![
+            "orchestrator_wake",
+            "execute_complete",
+            "error",
+            "turn_aborted",
+        ],
+        next_events_args,
+        sleep_event_kind: "orchestrator_sleep",
+        wake_event_kind: "orchestrator_wake",
+    }
+}
+
 fn orchestrator_prompt() -> String {
-    "You are the APXM autonomous orchestrator. Convert the incoming event/task into a bounded worker graph, call apxm_orchestrate_start once with explicit workers and workspace policy, then go idle. Do not keep prompting the workers manually. Wake by reading apxm_workflow_events/status for the returned execution_id; cancel with apxm_workflow_cancel when policy or budget requires it. On completion, run the gate/eval feedback through the next event->trigger->action loop only if the returned feedback says another bounded pass is necessary.".to_string()
+    "You are the APXM autonomous orchestrator. Convert the incoming event/task into a bounded worker graph, call apxm_orchestrate_start once with explicit workers and workspace policy, then go idle. Do not keep prompting the workers manually. Treat orchestrator_sleep as APXM taking ownership of the run. Wake by reading apxm_workflow_events/status for the returned execution_id until orchestrator_wake or a terminal execute_complete/error/turn_aborted event appears; cancel with apxm_workflow_cancel when policy or budget requires it. On completion, run the gate/eval feedback through the next event->trigger->action loop only if the returned feedback says another bounded pass is necessary.".to_string()
 }
 
 fn orchestration_flowchart() -> String {

@@ -1,6 +1,6 @@
 ---
 name: apxm-mcp-server
-description: Use when working on or registering the APXM MCP server (mcp/apxm_server.py). Each tool shells dekk apxm <cmd>; registration goes through dekk apxm mcp install.
+description: Use when working on APXM MCP surfaces: the Rust HTTP `/v1/mcp` endpoint, the Rust stdio `apxm-mcp-server` binary, or cross-agent MCP registration. Prefer server-owned HTTP MCP for workflow/orchestration control.
 user-invocable: true
 ---
 
@@ -8,26 +8,45 @@ user-invocable: true
 
 Load `_shared/apxm-development-rules.md` before broad work.
 
-## What the MCP server is
+## What the MCP surfaces are
 
-A FastMCP-based Python server at `mcp/apxm_server.py` that exposes
-`dekk apxm` operations as MCP tools. Each tool shells the
-corresponding `dekk apxm` command and returns `{exit_code, stdout,
-stderr}` as JSON.
+APXM has two Rust MCP surfaces:
 
-The pattern follows `carts-plugin/mcp/carts_server.py`. Every tool is
-a thin wrapper — no MCP server should reimplement what Dekk already
-does.
+- `apxm-server` exposes HTTP MCP at `POST /v1/mcp`. This is the
+  server-owned control plane for long-running workflows, retained events,
+  cancellation, server-owned sessions, skill inventory, and orchestration.
+- `apxm-mcp-server` exposes stdio MCP for compile/query/debug tools. It does
+  not own background workflow sessions or orchestration state.
 
-## Tools exposed (target set)
+Do not resurrect the old FastMCP `mcp/apxm_server.py` design unless the repo
+reintroduces it. MCP should stay a thin interface over APXM server/runtime
+capabilities.
 
-- **Build/test**: `apxm_build`, `apxm_test`, `apxm_doctor`,
-  `apxm_codegen`.
-- **Compile/run**: `apxm_compile`, `apxm_execute`, `apxm_run`,
-  `apxm_validate`, `apxm_ops_list`.
-- **vLLM ops**: `apxm_vllm_doctor`, `apxm_vllm_zoo_apply`,
-  `apxm_vllm_service_list`, `apxm_vllm_service_exec`.
-- **Checks**: `apxm_check_no_legacy`.
+## HTTP MCP Tools
+
+- Compile/query: `apxm_validate`, `apxm_compile`, `apxm_ops_list`,
+  `apxm_run`, `apxm_plan_as_graph`, `apxm_trace_fetch`, `apxm_aam_recall`,
+  `apxm_evidence_lookup`, `apxm_capability_list`.
+- Skills: `apxm_skills_list`, `apxm_skill_get`, `apxm_skill_validate`,
+  `apxm_skill_call`.
+- Workflow control: `apxm_workflow_start`, `apxm_workflow_status`,
+  `apxm_workflow_events`, `apxm_workflow_cancel`.
+- Native orchestration: `apxm_orchestrate_start`.
+
+`apxm_orchestrate_start` compiles a bounded task/worker plan into a
+server-owned workflow. The orchestrator agent calls it once, records the
+returned `execution_id`, then sleeps until `apxm_workflow_events` returns
+`orchestrator_wake`, `execute_complete`, `error`, or `turn_aborted`, or
+`apxm_workflow_status` reports a terminal state. Real ACP workers require
+`admit_capabilities: ["SPAWN_AGENT"]`.
+
+## Stdio MCP Tools
+
+The stdio binary exposes compile/query tools such as `apxm_validate`,
+`apxm_compile`, `apxm_get_contract`, `apxm_analyze`, `apxm_plan_as_graph`,
+`apxm_trace_fetch`, `apxm_aam_recall`, `apxm_evidence_lookup`, and
+`apxm_capability_list`. Use HTTP MCP when a caller needs workflow start/status,
+events, cancel, or orchestration.
 
 ## Registration
 
@@ -41,43 +60,17 @@ Do not bypass it.
 
 ## Rules
 
-- Every MCP tool **must** shell `dekk apxm <cmd>` — never reimplement
-  the logic in Python. The Dekk command is the contract.
-- Return `{exit_code, stdout, stderr}` verbatim. Do not parse or
-  filter; the calling agent can grep its own output.
-- No state in the MCP server. Every tool call is stateless; concurrent
-  calls must not stomp on each other (which is automatic when each
-  shells a fresh subprocess).
+- Keep MCP thin. Do not duplicate scheduling, worker admission, budget policy,
+  trigger matching, or session ownership in MCP wrappers.
+- Server-owned tools return APXM handles such as `execution_id`, `session_id`,
+  `session_dir`, `workflow_path`, and retained event cursors. Do not invent
+  shell process handles for server-managed runs.
 - Secrets stay in the env — never accept `api_key` or
-  `LLM_GATEWAY_KEY` as a tool argument. The Dekk env already carries
-  them via the conda shell.
-
-## Implementation skeleton
-
-```python
-from mcp.server.fastmcp import FastMCP
-import subprocess, json
-
-mcp = FastMCP("apxm")
-
-def _run(args: list[str]) -> dict:
-    p = subprocess.run(["dekk", "apxm", *args], capture_output=True, text=True)
-    return {"exit_code": p.returncode, "stdout": p.stdout, "stderr": p.stderr}
-
-@mcp.tool()
-def apxm_doctor() -> dict:
-    """Run dekk apxm doctor."""
-    return _run(["doctor"])
-
-# ... one wrapper per command ...
-
-if __name__ == "__main__":
-    mcp.run()
-```
+  `LLM_GATEWAY_KEY` as a tool argument.
 
 ## Diagnostics
 
-- `python3 -m py_compile mcp/apxm_server.py` — syntax check.
+- `cargo check -p apxm-server` — compile the HTTP and stdio MCP binaries.
 - `dekk apxm mcp install` — register; surfaces config errors.
 
 ## Cross-surface registration (REST + MCP + A2A)
@@ -93,8 +86,9 @@ handler literals.
 
 - Putting business logic in the MCP server. It is a thin shim.
 - Accepting secrets as tool arguments.
-- Parsing stdout in the server. Pass through; let the agent grep.
-- Stateful MCP tools — concurrency hazard.
+- Adding a second orchestration status/events/cancel control plane. Use
+  `apxm_workflow_status/events/cancel` for runs started by
+  `apxm_orchestrate_start`.
 - Server middleware using Starlette `BaseHTTPMiddleware` — use raw ASGI. Its
   receive-queue treats disconnect polls as disconnects and silently nulls chat
   responses (`feedback_basehttpmiddleware_breaks_chat`).

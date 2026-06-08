@@ -239,3 +239,33 @@ pub(crate) struct TurnAbortedPayload {
     pub(crate) reason: String,
 }
 impl_event_payload!(TurnAbortedPayload, TURN_ABORTED);
+
+pub(crate) const ORCHESTRATOR_SLEEP: EventKind =
+    EventKind::new("orchestrator_sleep", EventCategory::Lifecycle, false);
+
+#[derive(Debug, Clone, Serialize, serde::Deserialize)]
+pub(crate) struct OrchestratorSleepPayload {
+    pub(crate) execution_id: String,
+    pub(crate) session_id: String,
+    pub(crate) session_dir: String,
+    pub(crate) workflow_path: String,
+    pub(crate) bundle_dir: String,
+    pub(crate) plan: serde_json::Value,
+    pub(crate) control: serde_json::Value,
+    pub(crate) wake_on: Vec<String>,
+    pub(crate) event_loop: String,
+}
+impl_event_payload!(OrchestratorSleepPayload, ORCHESTRATOR_SLEEP);
+
+pub(crate) const ORCHESTRATOR_WAKE: EventKind =
+    EventKind::new("orchestrator_wake", EventCategory::Lifecycle, false);
+
+#[derive(Debug, Clone, Serialize, serde::Deserialize)]
+pub(crate) struct OrchestratorWakePayload {
+    pub(crate) execution_id: String,
+    pub(crate) session_id: String,
+    pub(crate) terminal_event: String,
+    pub(crate) outcome: String,
+    pub(crate) reason: String,
+}
+impl_event_payload!(OrchestratorWakePayload, ORCHESTRATOR_WAKE);

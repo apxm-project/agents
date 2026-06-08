@@ -22,7 +22,10 @@ use crate::execute::{
 use crate::executions::{ExecutionRecord, ExecutionStatus};
 use crate::helpers::mcp_tool_result;
 use crate::runs::{events_for_run, events_for_run_since};
-use crate::state::{AppState, ExecuteCompletePayload, ExecutionStartedPayload, TurnAbortedPayload};
+use crate::state::{
+    AppState, ExecuteCompletePayload, ExecutionStartedPayload, OrchestratorSleepPayload,
+    OrchestratorWakePayload, TurnAbortedPayload,
+};
 
 pub(crate) const MCP_TOOL_APXM_WORKFLOW_START: &str = "apxm_workflow_start";
 pub(crate) const MCP_TOOL_APXM_WORKFLOW_STATUS: &str = "apxm_workflow_status";
@@ -45,6 +48,17 @@ pub(crate) struct WorkflowStartArgs {
     pub(crate) admit_capabilities: Vec<String>,
     #[serde(default)]
     pub(crate) imports: Vec<String>,
+    #[serde(skip)]
+    pub(crate) orchestration: Option<WorkflowOrchestrationContract>,
+}
+
+#[derive(Debug, Clone)]
+pub(crate) struct WorkflowOrchestrationContract {
+    pub(crate) bundle_dir: String,
+    pub(crate) plan: JsonValue,
+    pub(crate) control: JsonValue,
+    pub(crate) wake_on: Vec<String>,
+    pub(crate) event_loop: String,
 }
 
 #[derive(Debug, Deserialize)]
@@ -115,6 +129,7 @@ struct PreparedWorkflowRun {
     workflow_path: String,
     metadata: std::collections::HashMap<String, String>,
     admission_id: String,
+    orchestration: Option<WorkflowOrchestrationContract>,
 }
 
 struct RuntimeEventGate {
@@ -382,6 +397,7 @@ async fn prepare_workflow_run(
         workflow_path: workflow_path.to_string_lossy().to_string(),
         metadata,
         admission_id,
+        orchestration: request.orchestration.take(),
     })
 }
 
@@ -423,6 +439,9 @@ async fn run_prepared_workflow(
             &prepared.execution_id,
         ),
     );
+    if let Some(contract) = &prepared.orchestration {
+        record_orchestrator_sleep_event(&state, &prepared, contract);
+    }
 
     let runtime_events_closed = Arc::new(AtomicBool::new(false));
     let event_sinks = crate::skills::build_skill_event_sinks(&state, &prepared.execution_id, None)
@@ -445,6 +464,7 @@ async fn run_prepared_workflow(
 
     let cancellation_token = apxm_runtime::CancellationToken::new();
     let runtime = Arc::clone(&state.runtime);
+    let orchestration_enabled = prepared.orchestration.is_some();
     let mut execution = tokio::spawn({
         let cancellation_token = cancellation_token.clone();
         let artifact = prepared.artifact;
@@ -473,6 +493,15 @@ async fn run_prepared_workflow(
                 runtime_events_closed.store(true, Ordering::SeqCst);
                 let response = to_execute_response(result, Some(prepared.session_dir.clone()));
                 state.execution_store.complete_success(&prepared.execution_id, response.clone());
+                record_orchestrator_wake_event(
+                    &state,
+                    &prepared.execution_id,
+                    &prepared.session_id,
+                    orchestration_enabled,
+                    "execute_complete",
+                    "succeeded",
+                    "workflow completed",
+                );
                 record_workflow_event(
                     &state,
                     &prepared.execution_id,
@@ -487,6 +516,15 @@ async fn run_prepared_workflow(
                 runtime_events_closed.store(true, Ordering::SeqCst);
                 let message = error.to_string();
                 state.execution_store.complete_failure(&prepared.execution_id, message.clone());
+                record_orchestrator_wake_event(
+                    &state,
+                    &prepared.execution_id,
+                    &prepared.session_id,
+                    orchestration_enabled,
+                    "error",
+                    "failed",
+                    &message,
+                );
                 record_workflow_event(
                     &state,
                     &prepared.execution_id,
@@ -505,6 +543,15 @@ async fn run_prepared_workflow(
                 runtime_events_closed.store(true, Ordering::SeqCst);
                 let message = format!("workflow runtime task failed: {error}");
                 state.execution_store.complete_failure(&prepared.execution_id, message.clone());
+                record_orchestrator_wake_event(
+                    &state,
+                    &prepared.execution_id,
+                    &prepared.session_id,
+                    orchestration_enabled,
+                    "error",
+                    "failed",
+                    &message,
+                );
                 record_workflow_event(
                     &state,
                     &prepared.execution_id,
@@ -525,6 +572,15 @@ async fn run_prepared_workflow(
             cancellation_token.cancel();
             let reason = "cancelled via apxm_workflow_cancel".to_string();
             state.execution_store.complete_failure(&prepared.execution_id, reason.clone());
+            record_orchestrator_wake_event(
+                &state,
+                &prepared.execution_id,
+                &prepared.session_id,
+                orchestration_enabled,
+                "turn_aborted",
+                "cancelled",
+                &reason,
+            );
             record_workflow_event(
                 &state,
                 &prepared.execution_id,
@@ -546,6 +602,61 @@ async fn run_prepared_workflow(
     apxm_runtime::scheduler::admission_registry::unregister(&prepared.admission_id);
     state.cancel_registry.remove(&prepared.execution_id);
     state.rollout_registry.close(&prepared.execution_id).await;
+}
+
+fn record_orchestrator_sleep_event(
+    state: &AppState,
+    prepared: &PreparedWorkflowRun,
+    contract: &WorkflowOrchestrationContract,
+) {
+    record_workflow_event(
+        state,
+        &prepared.execution_id,
+        ApxmEvent::root(
+            OrchestratorSleepPayload {
+                execution_id: prepared.execution_id.clone(),
+                session_id: prepared.session_id.clone(),
+                session_dir: prepared.session_dir.clone(),
+                workflow_path: prepared.workflow_path.clone(),
+                bundle_dir: contract.bundle_dir.clone(),
+                plan: contract.plan.clone(),
+                control: contract.control.clone(),
+                wake_on: contract.wake_on.clone(),
+                event_loop: contract.event_loop.clone(),
+            },
+            EventSource::Server,
+            &prepared.execution_id,
+        ),
+    );
+}
+
+fn record_orchestrator_wake_event(
+    state: &AppState,
+    execution_id: &str,
+    session_id: &str,
+    enabled: bool,
+    terminal_event: &str,
+    outcome: &str,
+    reason: &str,
+) {
+    if !enabled {
+        return;
+    }
+    record_workflow_event(
+        state,
+        execution_id,
+        ApxmEvent::root(
+            OrchestratorWakePayload {
+                execution_id: execution_id.to_string(),
+                session_id: session_id.to_string(),
+                terminal_event: terminal_event.to_string(),
+                outcome: outcome.to_string(),
+                reason: reason.to_string(),
+            },
+            EventSource::Server,
+            execution_id,
+        ),
+    );
 }
 
 fn status_response(record: ExecutionRecord, event_count: usize) -> WorkflowStatusResponse {

@@ -25,7 +25,10 @@ use crate::skills::{
     execute_skill, execute_skill_stream, get_skill, list_skills, register_skill_event_payloads,
     validate_skill,
 };
-use crate::state::{AppState, EXECUTE_COMPLETE, ExecuteCompletePayload};
+use crate::state::{
+    AppState, EXECUTE_COMPLETE, ExecuteCompletePayload, ORCHESTRATOR_SLEEP, ORCHESTRATOR_WAKE,
+    OrchestratorSleepPayload, OrchestratorWakePayload,
+};
 use crate::tasks::{claim_task, complete_task, create_task, list_tasks};
 
 /// Build the Axum router for the APXM server.
@@ -186,13 +189,22 @@ fn is_loopback_origin(origin: &str) -> bool {
 }
 
 fn register_server_event_payloads() {
-    match apxm_core::events::register_event_payload::<ExecuteCompletePayload>(EXECUTE_COMPLETE) {
+    register_server_event_payload::<ExecuteCompletePayload>(EXECUTE_COMPLETE);
+    register_server_event_payload::<OrchestratorSleepPayload>(ORCHESTRATOR_SLEEP);
+    register_server_event_payload::<OrchestratorWakePayload>(ORCHESTRATOR_WAKE);
+    register_skill_event_payloads();
+}
+
+fn register_server_event_payload<T>(kind: apxm_core::events::EventKind)
+where
+    T: apxm_core::events::EventPayload + serde::de::DeserializeOwned,
+{
+    match apxm_core::events::register_event_payload::<T>(kind) {
         Ok(()) | Err(apxm_core::events::EventRegistryError::AlreadyRegistered { .. }) => {}
         Err(apxm_core::events::EventRegistryError::CoreKind { kind }) => {
             panic!("server event kind `{kind}` conflicts with core event kind");
         }
     }
-    register_skill_event_payloads();
 }
 
 #[cfg(test)]

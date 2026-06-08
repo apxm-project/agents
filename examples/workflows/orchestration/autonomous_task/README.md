@@ -42,7 +42,18 @@ The returned JSON includes:
 - `execution_id` for `apxm_workflow_status/events/cancel`.
 - `workflow_path` and `bundle_dir` for the generated workflow bundle.
 - `plan.workers[*].cwd` showing each worker's assigned workspace.
+- `orchestration.next_events_args` with the first `apxm_workflow_events` cursor.
+- `orchestration.sleep_event_kind = "orchestrator_sleep"` and
+  `orchestration.wake_event_kind = "orchestrator_wake"`.
 - `orchestrator_prompt` describing the autonomous sleep/wake loop.
+
+The run event stream includes an `orchestrator_sleep` event once APXM has
+accepted ownership of the workflow and an `orchestrator_wake` event before the
+terminal `execute_complete`, `error`, or `turn_aborted` event. The orchestrator
+agent should not prompt workers manually after start; it should page
+`apxm_workflow_events` with `since = next_seq`, confirm the terminal state with
+`apxm_workflow_status`, and only start another bounded pass if the feedback step
+requires it.
 
 For real ACP workers, callers must grant process spawning explicitly:
 
