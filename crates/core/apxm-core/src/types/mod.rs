@@ -48,7 +48,9 @@ pub use execution::{
     WORKFLOW_TARGET_KIND_WORKFLOW_PATH, WorkflowInvocation, WorkflowInvocationKind, WorkflowNode,
     WorkflowTarget,
 };
-pub use goal::{Goal, GoalId, GoalStatus};
+pub use goal::{
+    GateStatus, GateVerdict, Goal, GoalDecision, GoalId, GoalStatus, decide as decide_goal,
+};
 pub use graph_hints::{
     ApxmGraphHints, BackendGraphCapabilities, CompilerHints, GraphBackendKind, GraphMetadata,
     GraphStatusSnapshot, NodeSpec, PinMode, PinPolicy, PriorityClass,
