@@ -1058,6 +1058,31 @@ fn summarize_event(event: &JsonValue) -> Option<String> {
             "{seq}error: {}",
             payload_str(payload, "message").unwrap_or("unknown")
         )),
+        name if name == event_kind_constants::GOAL_GATE_VERDICT.name() => Some(format!(
+            "{seq}gate verdict: {} — {}",
+            payload_str(payload, "status").unwrap_or("unknown"),
+            payload_str(payload, "reason").unwrap_or("")
+        )),
+        name if name == event_kind_constants::GOAL_CONVERGED.name() => Some(format!(
+            "{seq}goal converged: {}",
+            payload_str(payload, "reason").unwrap_or("met")
+        )),
+        name if name == event_kind_constants::GOAL_NEEDS_ANOTHER_PASS.name() => Some(format!(
+            "{seq}goal needs another pass (next iteration {}): {}",
+            payload_u64(payload, "next_iteration")
+                .map(|value| value.to_string())
+                .unwrap_or_else(|| "?".to_string()),
+            payload_str(payload, "reason").unwrap_or("")
+        )),
+        name if name == event_kind_constants::GOAL_HALTED.name() => Some(format!(
+            "{seq}goal halted{}: {}",
+            if payload.get("exhausted").and_then(JsonValue::as_bool) == Some(true) {
+                " (pass budget exhausted)"
+            } else {
+                ""
+            },
+            payload_str(payload, "reason").unwrap_or("")
+        )),
         _ => None,
     }
 }
@@ -1379,6 +1404,33 @@ mod tests {
         assert_eq!(
             summarize_event(&event).as_deref(),
             Some("#7 error: worker failed validation")
+        );
+    }
+
+    #[test]
+    fn goal_event_summary_renders_convergence_events() {
+        let verdict = json!({
+            "meta": { "seq": 84 },
+            "payload": {
+                "kind": event_kind_constants::GOAL_GATE_VERDICT.name(),
+                "status": "needs_more", "reason": "two checks failing"
+            }
+        });
+        assert_eq!(
+            summarize_event(&verdict).as_deref(),
+            Some("#84 gate verdict: needs_more — two checks failing")
+        );
+
+        let halted = json!({
+            "meta": { "seq": 90 },
+            "payload": {
+                "kind": event_kind_constants::GOAL_HALTED.name(),
+                "exhausted": true, "reason": "pass budget exhausted"
+            }
+        });
+        assert_eq!(
+            summarize_event(&halted).as_deref(),
+            Some("#90 goal halted (pass budget exhausted): pass budget exhausted")
         );
     }
 
