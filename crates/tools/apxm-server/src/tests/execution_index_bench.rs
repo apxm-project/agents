@@ -29,6 +29,7 @@ fn make_record(execution_id: &str, session_dir: &Path) -> ExecutionRecord {
         error: None,
         node_outputs: Vec::new(),
         node_metrics: Vec::new(),
+        goal: None,
     }
 }
 

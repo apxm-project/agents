@@ -8,11 +8,15 @@ use apxm_artifact::Artifact;
 use apxm_core::constants::mcp::tools as mcp_tool_names;
 use apxm_core::events::kind;
 use apxm_core::events::payload::{
-    ErrorPayload, ExecuteCompletePayload, ExecutionStartedPayload, OrchestratorSleepPayload,
+    ErrorPayload, ExecuteCompletePayload, ExecutionStartedPayload, GoalConvergedPayload,
+    GoalGateVerdictPayload, GoalHaltedPayload, GoalNeedsAnotherPassPayload, OrchestratorSleepPayload,
     OrchestratorWakePayload, TurnAbortedPayload,
 };
 use apxm_core::events::{ApxmEvent, EventEmitter, EventKind, EventSource, SkillEventProvenance};
-use apxm_core::types::{OrchestrationWakeOutcome, WORKFLOW_TARGET_KIND_WORKFLOW_PATH};
+use apxm_core::types::{
+    GateStatus, GateVerdict, GoalDecision, OrchestrationWakeOutcome,
+    WORKFLOW_TARGET_KIND_WORKFLOW_PATH, decide_goal,
+};
 use apxm_runtime::EmitterAdapter;
 use axum::Json;
 use serde::{Deserialize, Serialize};
@@ -63,6 +67,10 @@ pub(crate) struct WorkflowOrchestrationContract {
     pub(crate) control: JsonValue,
     pub(crate) wake_on: Vec<String>,
     pub(crate) event_loop: String,
+    /// Zero-based index of this bounded pass within the goal.
+    pub(crate) iteration: usize,
+    /// Hard ceiling on the number of bounded passes for this goal.
+    pub(crate) max_iterations: usize,
 }
 
 #[derive(Debug, Deserialize)]
@@ -101,6 +109,10 @@ struct WorkflowStatusResponse {
     result: Option<crate::execute::ExecuteResponse>,
     #[serde(skip_serializing_if = "Option::is_none")]
     error: Option<String>,
+    /// Goal-convergence outcome (typed gate verdict + runtime decision) when
+    /// this run was an orchestration pass.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    goal: Option<JsonValue>,
     totals: WorkflowTotals,
 }
 
@@ -469,6 +481,13 @@ async fn run_prepared_workflow(
     let cancellation_token = apxm_runtime::CancellationToken::new();
     let runtime = Arc::clone(&state.runtime);
     let orchestration_enabled = prepared.orchestration.is_some();
+    // Goal-pass coordinates (iteration, max_iterations) drive the convergence
+    // decision once the pass settles. Captured before the artifact moves into
+    // the run task.
+    let goal_pass = prepared
+        .orchestration
+        .as_ref()
+        .map(|contract| (contract.iteration, contract.max_iterations));
     let mut execution = tokio::spawn({
         let cancellation_token = cancellation_token.clone();
         let artifact = prepared.artifact;
@@ -495,8 +514,26 @@ async fn run_prepared_workflow(
         outcome = &mut execution => match outcome {
             Ok(Ok(result)) => {
                 runtime_events_closed.store(true, Ordering::SeqCst);
+                let failed_nodes = result.stats.failed_nodes;
                 let response = to_execute_response(result, Some(prepared.session_dir.clone()));
                 state.execution_store.complete_success(&prepared.execution_id, response.clone());
+                if let Some((iteration, max_iterations)) = goal_pass {
+                    // The gate node is the terminal node, so its output is the
+                    // run's content. Prefer a parsed (LLM) verdict; fall back to
+                    // the structural verdict from the pass outcome.
+                    let verdict = response
+                        .content
+                        .as_deref()
+                        .and_then(GateVerdict::parse_json)
+                        .unwrap_or_else(|| GateVerdict::from_pass_outcome(failed_nodes, Vec::new()));
+                    record_goal_outcome(
+                        &state,
+                        &prepared.execution_id,
+                        iteration,
+                        max_iterations,
+                        verdict,
+                    );
+                }
                 record_orchestrator_wake_event(
                     &state,
                     &prepared.execution_id,
@@ -522,6 +559,21 @@ async fn run_prepared_workflow(
                 runtime_events_closed.store(true, Ordering::SeqCst);
                 let message = error.to_string();
                 state.execution_store.complete_failure(&prepared.execution_id, message.clone());
+                if let Some((iteration, max_iterations)) = goal_pass {
+                    // An operational failure leaves work undone: warrant another
+                    // bounded pass (decide() halts once the budget is spent).
+                    let verdict = GateVerdict::needs_more(
+                        format!("pass failed: {message}"),
+                        Vec::new(),
+                    );
+                    record_goal_outcome(
+                        &state,
+                        &prepared.execution_id,
+                        iteration,
+                        max_iterations,
+                        verdict,
+                    );
+                }
                 record_orchestrator_wake_event(
                     &state,
                     &prepared.execution_id,
@@ -549,6 +601,16 @@ async fn run_prepared_workflow(
                 runtime_events_closed.store(true, Ordering::SeqCst);
                 let message = format!("workflow runtime task failed: {error}");
                 state.execution_store.complete_failure(&prepared.execution_id, message.clone());
+                if let Some((iteration, max_iterations)) = goal_pass {
+                    let verdict = GateVerdict::needs_more(message.clone(), Vec::new());
+                    record_goal_outcome(
+                        &state,
+                        &prepared.execution_id,
+                        iteration,
+                        max_iterations,
+                        verdict,
+                    );
+                }
                 record_orchestrator_wake_event(
                     &state,
                     &prepared.execution_id,
@@ -578,6 +640,17 @@ async fn run_prepared_workflow(
             cancellation_token.cancel();
             let reason = format!("cancelled via {MCP_TOOL_APXM_WORKFLOW_CANCEL}");
             state.execution_store.complete_failure(&prepared.execution_id, reason.clone());
+            if let Some((iteration, max_iterations)) = goal_pass {
+                // Cancellation is a deliberate stop, not a retry candidate.
+                let verdict = GateVerdict::halt(GateStatus::Blocked, reason.clone());
+                record_goal_outcome(
+                    &state,
+                    &prepared.execution_id,
+                    iteration,
+                    max_iterations,
+                    verdict,
+                );
+            }
             record_orchestrator_wake_event(
                 &state,
                 &prepared.execution_id,
@@ -668,6 +741,80 @@ fn record_orchestrator_wake_event(
     );
 }
 
+/// Evaluate a goal pass: emit the typed gate verdict, run the runtime
+/// convergence decision, emit the matching decision event, and persist both on
+/// the execution record. Completion is decided here, in the runtime, rather than
+/// being left to the orchestrator prompt.
+fn record_goal_outcome(
+    state: &AppState,
+    execution_id: &str,
+    iteration: usize,
+    max_iterations: usize,
+    verdict: GateVerdict,
+) {
+    record_workflow_event(
+        state,
+        execution_id,
+        ApxmEvent::root(
+            GoalGateVerdictPayload {
+                execution_id: execution_id.to_string(),
+                iteration,
+                max_iterations,
+                status: verdict.status.as_str().to_string(),
+                reason: verdict.reason.clone(),
+                remaining: verdict.remaining.clone(),
+            },
+            EventSource::Server,
+            execution_id,
+        ),
+    );
+
+    let decision = decide_goal(&verdict, iteration, max_iterations);
+    let decision_event = match &decision {
+        GoalDecision::Converged { reason } => ApxmEvent::root(
+            GoalConvergedPayload {
+                execution_id: execution_id.to_string(),
+                iteration,
+                reason: reason.clone(),
+            },
+            EventSource::Server,
+            execution_id,
+        ),
+        GoalDecision::Iterate {
+            reason,
+            next_iteration,
+        } => ApxmEvent::root(
+            GoalNeedsAnotherPassPayload {
+                execution_id: execution_id.to_string(),
+                iteration,
+                next_iteration: *next_iteration,
+                reason: reason.clone(),
+            },
+            EventSource::Server,
+            execution_id,
+        ),
+        GoalDecision::Halted { reason, exhausted } => ApxmEvent::root(
+            GoalHaltedPayload {
+                execution_id: execution_id.to_string(),
+                iteration,
+                reason: reason.clone(),
+                exhausted: *exhausted,
+            },
+            EventSource::Server,
+            execution_id,
+        ),
+    };
+    record_workflow_event(state, execution_id, decision_event);
+
+    let goal = serde_json::json!({
+        "iteration": iteration,
+        "max_iterations": max_iterations,
+        "verdict": verdict,
+        "decision": decision,
+    });
+    state.execution_store.set_goal_outcome(execution_id, goal);
+}
+
 fn status_response(record: ExecutionRecord, event_count: usize) -> WorkflowStatusResponse {
     WorkflowStatusResponse {
         execution_id: record.execution_id,
@@ -678,6 +825,7 @@ fn status_response(record: ExecutionRecord, event_count: usize) -> WorkflowStatu
         completed_at_ms: record.completed_at_ms,
         result: record.result,
         error: record.error,
+        goal: record.goal,
         totals: WorkflowTotals {
             events: event_count,
             node_outputs: record.node_outputs.len(),

@@ -479,6 +479,7 @@ mod tests {
             error: None,
             node_outputs: Vec::new(),
             node_metrics: Vec::new(),
+            goal: None,
         }
     }
 

@@ -62,6 +62,11 @@ pub(crate) struct ExecutionRecord {
     pub(crate) node_outputs: Vec<NodeOutputRecord>,
     #[serde(default)]
     pub(crate) node_metrics: Vec<NodeMetricsRecord>,
+    /// Goal-convergence outcome for an orchestration pass: the typed gate
+    /// verdict and the runtime decision derived from it. Absent for
+    /// non-orchestration runs.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) goal: Option<serde_json::Value>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -226,6 +231,7 @@ impl ExecutionStore {
             error: None,
             node_outputs: Vec::new(),
             node_metrics: Vec::new(),
+            goal: None,
         };
         self.inner
             .insert(record.execution_id.clone(), record.clone());
@@ -261,6 +267,23 @@ impl ExecutionStore {
         entry.completed_at_ms = Some(now_ms());
         entry.result = None;
         entry.error = Some(error);
+        let record = entry.clone();
+        drop(entry);
+        persist_record_snapshot(&record);
+        self.index.upsert_from_record(&record);
+        Some(record)
+    }
+
+    /// Attach the goal-convergence outcome (verdict + decision) to a settled
+    /// record and re-persist it. Called after `complete_success`/`_failure` for
+    /// orchestration passes.
+    pub(crate) fn set_goal_outcome(
+        &self,
+        execution_id: &str,
+        goal: serde_json::Value,
+    ) -> Option<ExecutionRecord> {
+        let mut entry = self.inner.get_mut(execution_id)?;
+        entry.goal = Some(goal);
         let record = entry.clone();
         drop(entry);
         persist_record_snapshot(&record);

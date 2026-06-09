@@ -61,6 +61,14 @@ struct OrchestrateStartArgs {
     admit_capabilities: Vec<String>,
     #[serde(default)]
     imports: Vec<String>,
+    /// Zero-based index of this bounded pass within a goal. Callers running a
+    /// multi-pass goal increment this on each admitted pass.
+    #[serde(default)]
+    iteration: usize,
+    /// Hard ceiling on the number of bounded passes for the goal. Defaults to a
+    /// single pass; the runtime convergence decision is bounded by this.
+    #[serde(default)]
+    max_iterations: Option<usize>,
     #[serde(default)]
     dry_run: bool,
 }
@@ -358,6 +366,16 @@ pub(crate) fn orchestrate_start_input_schema() -> JsonValue {
                 "description": "Must include SPAWN_AGENT when any worker/supervisor uses transport=acp"
             },
             "imports": { "type": "array", "items": { "type": "string" } },
+            "iteration": {
+                "type": "integer",
+                "minimum": 0,
+                "description": "Zero-based index of this bounded pass within a goal (default 0)"
+            },
+            "max_iterations": {
+                "type": "integer",
+                "minimum": 1,
+                "description": "Hard ceiling on bounded passes for the goal; the runtime convergence decision is bounded by this (default 1)"
+            },
             "dry_run": {
                 "type": "boolean",
                 "description": "Validate and materialize the workflow bundle without starting it"
@@ -425,6 +443,8 @@ async fn orchestrate_start(
         })?,
         wake_on: wake_on.clone(),
         event_loop: event_loop.to_string(),
+        iteration: request.iteration,
+        max_iterations: request.max_iterations.unwrap_or(1).max(1),
     };
     let started = if request.dry_run {
         None
