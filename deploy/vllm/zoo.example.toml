@@ -22,6 +22,10 @@ image = "apxm-vllm-runtime:<APXM_SHA>-<VLLM_SHA>-post-rebase"
 scheduling_policy = "priority"
 enable_prefix_caching = true
 max_num_seqs = 64
+# Optional shared storage controls. APXM always mounts data.vllm.hf_cache
+# at /models/hf. model_roots are mounted read-only under /models/roots/<n>
+# and allow local-path refs such as /shared/models/snapshots/foo.
+# model_roots = ["/shared/models"]
 
 # --- Shape A: single-node single-instance ----------------------------
 # One vLLM container on one node, all GPUs assigned to one TP group.
@@ -38,6 +42,9 @@ port = 8916
 gpus = "0,1,2,3,4,5,6,7"
 weights_gb = 240
 max_model_len = 32768
+# Optional per-deployment HF cache override. Use only when this model lives in
+# a distinct cache root; otherwise APXM searches data.vllm.hf_cache_roots.
+# hf_home = "/shared/models/cache/huggingface/apxm-cache"
 # Model-specific parser fields are OPTIONAL. Set ONLY when the model
 # needs them; never default. A wrong reasoning_parser crashes vLLM
 # startup with a vocab KeyError.

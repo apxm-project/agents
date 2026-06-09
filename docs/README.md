@@ -108,11 +108,11 @@ purpose. The live ordering is in
 - [backends/vllm.md](backends/vllm.md) — Dekk-first Docker/image-store setup,
   registration, and metrics guidance for the graph-aware APXM-vLLM fork
 - [backends/model-zoo-quickstart.md](backends/model-zoo-quickstart.md) — 15-minute
-  walkthrough from `APXM_VLLM_HF_HOME` to a working zoo
+  walkthrough from shared model storage to a working zoo
 - [backends/model-zoo.md](backends/model-zoo.md) — zoo operator reference
 - [backends/storage-layout.md](backends/storage-layout.md) — where APXM puts
-  large files (HF cache, image store, evaluation artifacts) and the supported
-  relocation procedure
+  large files (HF cache, model roots, image store, evaluation artifacts)
+  and the supported relocation procedure
 
 ## Trying It Out
 

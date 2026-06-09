@@ -23,7 +23,7 @@ import tomllib
 import urllib.error
 import urllib.request
 import uuid
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 from typing import Any
 
 from apxm.data_config import (
@@ -61,6 +61,8 @@ from apxm.contract import (
     arg_value,
     build_layout,
     effective_hf_home,
+    effective_hf_cache_roots,
+    effective_model_roots,
     enum_values,
     env_name,
     env_reference,
@@ -98,9 +100,12 @@ TEMP_GRAPH_ID_PREFIX = PROBE.temp_graph_id_prefix
 TEMP_EXECUTION_ID_PREFIX = PROBE.temp_execution_id_prefix
 TEMP_NODE_NAME = PROBE.temp_node_name
 ENV_HF_HOME = env_name(EnvVar.HF_HOME)
+ENV_HUGGINGFACE_HUB_CACHE = env_name(EnvVar.HUGGINGFACE_HUB_CACHE)
 ENV_APXM_VLLM_HF_HOME = env_name(EnvVar.APXM_VLLM_HF_HOME)
+ENV_APXM_VLLM_HF_CACHE_ROOTS = env_name(EnvVar.APXM_VLLM_HF_CACHE_ROOTS)
 ENV_APXM_VLLM_IMAGE = env_name(EnvVar.APXM_VLLM_IMAGE)
 ENV_APXM_VLLM_SERVICE_NAME = env_name(EnvVar.APXM_VLLM_SERVICE_NAME)
+ENV_APXM_VLLM_MODEL_ROOTS = env_name(EnvVar.APXM_VLLM_MODEL_ROOTS)
 ENV_HF_TOKEN = env_name(EnvVar.HF_TOKEN)
 ENV_VLLM_API_KEY = env_name(EnvVar.VLLM_API_KEY)
 ENV_HIP_VISIBLE_DEVICES = env_name(EnvVar.HIP_VISIBLE_DEVICES)
@@ -279,14 +284,130 @@ def _doctor_payload() -> str:
     )
 
 
-def _hf_home(args: argparse.Namespace | None = None) -> str:
-    """Return the HF cache root from the single mandatory env var.
+def _host_path(value: str | Path) -> Path:
+    return Path(os.path.expandvars(str(value))).expanduser()
 
-    The `args` parameter is kept for call-site compatibility but ignored;
-    `APXM_VLLM_HF_HOME` is the only accepted source.
+
+def _dedupe_host_paths(paths: list[str | Path]) -> list[Path]:
+    unique: list[Path] = []
+    seen: set[str] = set()
+    for raw in paths:
+        text = str(raw).strip()
+        if not text:
+            continue
+        path = _host_path(text)
+        key = str(path.resolve(strict=False))
+        if key in seen:
+            continue
+        seen.add(key)
+        unique.append(path)
+    return unique
+
+
+def _hf_home(args: argparse.Namespace | None = None, *, model: str | None = None) -> str:
+    """Return the HF cache root for a service.
+
+    A CLI/manifest value is authoritative. Otherwise APXM chooses the first
+    configured HF cache root that already contains the requested HF model id,
+    falling back to the primary writable cache for downloads and new models.
     """
-    del args
+    if args is not None:
+        explicit = arg_value(args, ArgName.HF_HOME)
+        if explicit:
+            return str(_host_path(str(explicit)))
+    if model:
+        return _select_hf_home_for_model(model)
     return effective_hf_home()
+
+
+def _hf_cache_roots() -> list[Path]:
+    return _dedupe_host_paths(list(effective_hf_cache_roots()))
+
+
+def _model_roots(args: argparse.Namespace | None = None) -> list[Path]:
+    roots: list[str | Path] = list(effective_model_roots())
+    if args is not None:
+        roots.extend(arg_value(args, ArgName.MODEL_ROOT, []) or [])
+    return _dedupe_host_paths(roots)
+
+
+def _is_local_model_ref(model: str) -> bool:
+    expanded = os.path.expandvars(model).strip()
+    return (
+        expanded.startswith("/")
+        or expanded.startswith("./")
+        or expanded.startswith("../")
+        or expanded.startswith("~")
+        or Path(expanded).expanduser().exists()
+    )
+
+
+def _hf_repo_cache_dir(model: str) -> str | None:
+    if not model or _is_local_model_ref(model) or "://" in model:
+        return None
+    return "models--" + model.replace("/", "--")
+
+
+def _select_hf_home_for_model(model: str, explicit: str | None = None) -> str:
+    if explicit:
+        return str(_host_path(explicit))
+    repo_dir = _hf_repo_cache_dir(model)
+    if repo_dir is None:
+        return effective_hf_home()
+
+    symlink_match: Path | None = None
+    for root in _hf_cache_roots():
+        candidate = root / "hub" / repo_dir
+        if not candidate.exists():
+            continue
+        if candidate.is_symlink():
+            symlink_match = symlink_match or root
+            continue
+        return str(root)
+    if symlink_match is not None:
+        return str(symlink_match)
+    return effective_hf_home()
+
+
+def _relative_to(path: Path, root: Path) -> Path | None:
+    try:
+        return path.resolve(strict=False).relative_to(root.resolve(strict=False))
+    except ValueError:
+        return None
+
+
+def _container_mounts(hf_home: str, model_roots: list[Path]) -> list[tuple[Path, str, bool]]:
+    mounts: list[tuple[Path, str, bool]] = [(_host_path(hf_home), ContainerPath.HF_HOME.value, False)]
+    for idx, root in enumerate(model_roots):
+        container_root = str(PurePosixPath(ContainerPath.MODEL_ROOTS.value) / str(idx))
+        mounts.append((root, container_root, True))
+    return mounts
+
+
+def _container_model_ref(model: str, mounts: list[tuple[Path, str, bool]]) -> str:
+    if not _is_local_model_ref(model):
+        return model
+
+    host_model = _host_path(model)
+    if str(host_model).startswith("/models/"):
+        return str(host_model)
+
+    for host_root, container_root, _readonly in sorted(
+        mounts,
+        key=lambda item: len(str(item[0].resolve(strict=False))),
+        reverse=True,
+    ):
+        rel = _relative_to(host_model, host_root)
+        if rel is None:
+            continue
+        return str(PurePosixPath(container_root) / PurePosixPath(rel.as_posix()))
+
+    mounted = ", ".join(str(root) for root, _, _ in mounts)
+    raise SystemExit(
+        f"local model path {model!r} is not under any mounted model root. "
+        f"Configured roots: {mounted}. Add the parent directory to "
+        f"data.vllm.model_roots or {ENV_APXM_VLLM_MODEL_ROOTS}."
+    )
 
 
 def _api_key(args: argparse.Namespace) -> str | None:
@@ -1125,7 +1246,7 @@ def cache_warm_cmd(args: argparse.Namespace) -> int:
         )
         return 1
 
-    hf_home = effective_hf_home()
+    hf_home = _hf_home(args, model=args.model)
     Path(hf_home).mkdir(parents=True, exist_ok=True)
 
     # The APXM-vLLM image's ENTRYPOINT is the vLLM OpenAI API server.
@@ -1135,6 +1256,7 @@ def cache_warm_cmd(args: argparse.Namespace) -> int:
         "docker", "run", "--rm",
         DockerFlag.NETWORK.value, DockerValue.HOST_NETWORK.value,
         DockerFlag.ENV.value, f"{ENV_HF_HOME}={ContainerPath.HF_HOME.value}",
+        DockerFlag.ENV.value, f"{ENV_HUGGINGFACE_HUB_CACHE}={ContainerPath.HF_HOME.value}/hub",
         DockerFlag.VOLUME.value, f"{hf_home}:{ContainerPath.HF_HOME.value}",
         "--entrypoint", "hf",
     ]
@@ -1252,6 +1374,15 @@ def _squeue_state(job_id: str) -> str:
     return state[0] if state else "GONE"
 
 
+def _recorded_service_is_live(state: dict[str, Any]) -> bool:
+    """Return false for stale service records whose Slurm job has disappeared."""
+
+    job_id = str(state.get("job_id") or "").strip()
+    if not job_id:
+        return False
+    return _squeue_state(job_id) != "GONE"
+
+
 def _start_one_service(
     *,
     name: str,
@@ -1261,6 +1392,7 @@ def _start_one_service(
     backend_name: str,
     served_model_name: str | None = None,
     hf_home: str | None = None,
+    model_roots: list[str] | None = None,
     max_model_len: int | None = None,
     max_num_seqs: int | None = None,
     scheduling_policy: str | None = None,
@@ -1304,6 +1436,8 @@ def _start_one_service(
     )
     if hf_home:
         env[ENV_HF_HOME_HOST] = hf_home
+    if model_roots:
+        env[ENV_APXM_VLLM_MODEL_ROOTS] = os.pathsep.join(str(root) for root in model_roots)
     if max_model_len is not None:
         env[ENV_MAX_MODEL_LEN] = str(max_model_len)
     if max_num_seqs is not None:
@@ -1355,6 +1489,8 @@ def _start_one_service(
         "image": image,
         "model": model,
         "served_model_name": served,
+        "hf_home": hf_home,
+        "model_roots": model_roots or [],
         "backend_name": backend_name,
         "port": port,
         "local_endpoint": _endpoint(port),
@@ -1500,6 +1636,8 @@ def _zoo_expand_entries(manifest: dict[str, Any]) -> list[dict[str, Any]]:
                     "model": entry["model"],
                     # Per-entry `image` override (manifest > env).
                     "image": entry.get("image"),
+                    "hf_home": entry.get("hf_home"),
+                    "model_roots": entry.get("model_roots"),
                     "served_model_name": entry.get("served_model_name", entry["model"]),
                     "backend_name": (
                         entry.get("backend_name") if len(replica_names) == 1
@@ -1541,7 +1679,8 @@ def _zoo_disk_pre_check(manifest: dict[str, Any]) -> None:
     if total_weights_gb <= 0:
         return
     required_gb = total_weights_gb * 1.2
-    home = Path.home()
+    home = Path(effective_hf_home())
+    home.mkdir(parents=True, exist_ok=True)
     try:
         usage = shutil.disk_usage(home)
     except OSError as exc:
@@ -1555,6 +1694,16 @@ def _zoo_disk_pre_check(manifest: dict[str, Any]) -> None:
             f"required = Σ(weights_gb) * 1.2 = {required_gb:.1f} GB. "
             f"Free up space or coordinate a shared HF cache namespace before retrying."
         )
+
+
+def _zoo_entry_model_roots(entry: dict[str, Any]) -> list[str]:
+    roots: list[str | Path] = list(effective_model_roots())
+    explicit = entry.get("model_roots")
+    if isinstance(explicit, str):
+        roots.extend(part for part in explicit.split(os.pathsep) if part)
+    elif isinstance(explicit, list):
+        roots.extend(str(part) for part in explicit)
+    return [str(path) for path in _dedupe_host_paths(roots)]
 
 
 def zoo_cache_warm_cmd(args: argparse.Namespace) -> int:
@@ -1575,7 +1724,7 @@ def zoo_cache_warm_cmd(args: argparse.Namespace) -> int:
         ns = argparse.Namespace(
             model=model,
             image=entry.get("image") or getattr(args, "image", None),
-            hf_home=getattr(args, "hf_home", None),
+            hf_home=entry.get("hf_home") or getattr(args, "hf_home", None),
             revision=entry.get("revision"),
         )
         step_rc = cache_warm_cmd(ns)
@@ -1627,12 +1776,21 @@ def zoo_apply_cmd(args: argparse.Namespace) -> int:
     rc = 0
     for entry in desired:
         if entry["name"] in existing:
-            print(f"[zoo apply] already running: {entry['name']} (probing)")
-            probe_ns = argparse.Namespace(name=entry["name"], probe=False)
-            service_status_cmd(probe_ns)
-            started.append({"name": entry["name"], "job_id": existing[entry["name"]].get("job_id"), "status": "existing"})
-            continue
+            state = existing[entry["name"]]
+            if _recorded_service_is_live(state):
+                print(f"[zoo apply] already running: {entry['name']} (probing)")
+                probe_ns = argparse.Namespace(name=entry["name"], probe=False)
+                service_status_cmd(probe_ns)
+                started.append({"name": entry["name"], "job_id": state.get("job_id"), "status": "existing"})
+                continue
+
+            _print(
+                f"[zoo apply] stale service record for {entry['name']} "
+                f"(job_id={state.get('job_id')}); relaunching"
+            )
+            _service_state_file(entry["name"]).unlink(missing_ok=True)
         print(f"[zoo apply] starting {entry['name']} on port {entry['port']}")
+        hf_home = _select_hf_home_for_model(entry["model"], entry.get("hf_home"))
         step_rc, state = _start_one_service(
             name=entry["name"],
             model=entry["model"],
@@ -1640,7 +1798,8 @@ def zoo_apply_cmd(args: argparse.Namespace) -> int:
             image=entry["image"] or _resolve_image(),
             backend_name=entry["backend_name"] or DEFAULT_BACKEND_NAME,
             served_model_name=entry["served_model_name"],
-            hf_home=effective_hf_home(),
+            hf_home=hf_home,
+            model_roots=_zoo_entry_model_roots(entry),
             max_model_len=entry["max_model_len"],
             max_num_seqs=entry["max_num_seqs"],
             scheduling_policy=entry["scheduling_policy"],
@@ -1713,6 +1872,7 @@ def zoo_scale_cmd(args: argparse.Namespace) -> int:
     for e in desired:
         if e["name"] in existing:
             continue
+        hf_home = _select_hf_home_for_model(e["model"], e.get("hf_home"))
         step_rc, state = _start_one_service(
             name=e["name"],
             model=e["model"],
@@ -1720,7 +1880,8 @@ def zoo_scale_cmd(args: argparse.Namespace) -> int:
             image=entry["image"] or _resolve_image(),
             backend_name=e["backend_name"] or DEFAULT_BACKEND_NAME,
             served_model_name=e["served_model_name"],
-            hf_home=effective_hf_home(),
+            hf_home=hf_home,
+            model_roots=_zoo_entry_model_roots(e),
             max_model_len=e["max_model_len"],
             max_num_seqs=e["max_num_seqs"],
             scheduling_policy=e["scheduling_policy"],
@@ -1860,6 +2021,11 @@ def service_exec_cmd(args: argparse.Namespace, extra_args: list[str]) -> int:
         ENV_APXM_VLLM_IMAGE: state.get("image"),
         ENV_MODEL_REF: state.get("model"),
         ENV_SERVED_MODEL_ID: state.get("served_model_name"),
+        ENV_HF_HOME_HOST: state.get("hf_home"),
+        ENV_APXM_VLLM_MODEL_ROOTS: (
+            os.pathsep.join(str(root) for root in state.get("model_roots", []))
+            if isinstance(state.get("model_roots"), list) else state.get("model_roots")
+        ),
         ENV_BACKEND_NAME: state.get("backend_name"),
         ENV_PORT: state.get("port"),
         ENV_MAX_MODEL_LEN: state.get("max_model_len"),
@@ -1925,7 +2091,9 @@ def docker_start_cmd(args: argparse.Namespace, extra_args: list[str]) -> int:
     LOG_DIR.mkdir(parents=True, exist_ok=True)
     served_model_name = args.served_model_name or args.model
     endpoint = _endpoint_for_args(args)
-    hf_home = _hf_home(args)
+    hf_home = _hf_home(args, model=args.model)
+    mounts = _container_mounts(hf_home, _model_roots(args))
+    container_model = _container_model_ref(args.model, mounts)
     cmd = [
         DOCKER,
         DockerCommand.RUN.value,
@@ -1953,16 +2121,21 @@ def docker_start_cmd(args: argparse.Namespace, extra_args: list[str]) -> int:
     slurm_job_id = os.environ.get(ENV_SLURM_JOB_ID, "").strip()
     if slurm_job_id:
         cmd.extend([DockerFlag.LABEL.value, f"{DockerLabel.SLURM_JOB_ID.value}={slurm_job_id}"])
-    if hf_home:
-        Path(hf_home).mkdir(parents=True, exist_ok=True)
-        cmd.extend(
-            [
-                DockerFlag.ENV.value,
-                f"{ENV_HF_HOME}={ContainerPath.HF_HOME.value}",
-                DockerFlag.VOLUME.value,
-                f"{hf_home}:{ContainerPath.HF_HOME.value}",
-            ]
-        )
+    for host_root, container_root, readonly in mounts:
+        if container_root == ContainerPath.HF_HOME.value:
+            host_root.mkdir(parents=True, exist_ok=True)
+            cmd.extend(
+                [
+                    DockerFlag.ENV.value,
+                    f"{ENV_HF_HOME}={container_root}",
+                    DockerFlag.ENV.value,
+                    f"{ENV_HUGGINGFACE_HUB_CACHE}={container_root}/hub",
+                ]
+            )
+        elif not host_root.exists():
+            raise SystemExit(f"configured model root does not exist: {host_root}")
+        suffix = ":ro" if readonly else ""
+        cmd.extend([DockerFlag.VOLUME.value, f"{host_root}:{container_root}{suffix}"])
     if args.gpus:
         cmd.extend(
             [
@@ -1980,13 +2153,18 @@ def docker_start_cmd(args: argparse.Namespace, extra_args: list[str]) -> int:
         return 1
 
     cmd.append(args.image)
-    cmd.extend(_build_container_vllm_args(args, extra_args))
+    container_args = argparse.Namespace(**vars(args))
+    container_args.model = container_model
+    container_args.served_model_name = served_model_name
+    cmd.extend(_build_container_vllm_args(container_args, extra_args))
 
     _require_api_key_for_public_bind(args)
     _print(f"Starting APXM-vLLM container {container_name}")
     _print(f"image={args.image}")
     _print(f"endpoint={endpoint}")
     _print(f"hf_home={hf_home}")
+    if container_model != args.model:
+        _print(f"container_model={container_model}")
     result = _capture(cmd, cwd=REPO_ROOT)
     if result.returncode != 0:
         if result.stdout.strip():
@@ -2132,6 +2310,16 @@ def _add_model_args(parser: argparse.ArgumentParser) -> None:
         help=(
             "Cache root for Hugging Face-backed model refs; optional for local "
             f"paths (or set {ENV_APXM_VLLM_HF_HOME}/{ENV_HF_HOME})"
+        ),
+    )
+    parser.add_argument(
+        "--model-root",
+        action="append",
+        default=[],
+        dest=ArgName.MODEL_ROOT.value,
+        help=(
+            "Host directory to mount read-only for local model paths. Repeatable; "
+            f"also configurable through data.vllm.model_roots or {ENV_APXM_VLLM_MODEL_ROOTS}."
         ),
     )
     parser.add_argument("--served-model-name", help="Override the model id exposed by the server")

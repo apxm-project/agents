@@ -11,20 +11,23 @@ modes), see [`model-zoo.md`](model-zoo.md). For the contract
 
 ---
 
-## 1. Set the shared HF cache (once per shell)
+## 1. Set shared model storage
 
-```bash
-export APXM_VLLM_HF_HOME="$HOME/.cache/huggingface-apxm-vllm"
+Prefer `.apxm/config.toml` so login shells, Slurm jobs, and direct
+`docker-start` calls all resolve the same shared paths:
+
+```toml
+[data.vllm]
+hf_cache = "/shared/models/cache/huggingface"
+hf_cache_roots = ["/shared/models/cache/huggingface/apxm-cache"]
+model_roots = ["/shared/models"]
 ```
 
-Put this in your shell rc. The controller refuses to run without it
-(no silent fallback). The cache must live on a filesystem that every
-Slurm compute node can read at the same path — typically a
-cluster-shared mount. If your `$HOME` doesn't have room for the cache
-or isn't visible cluster-wide, point `APXM_VLLM_HF_HOME` at a
-shared-mount alternative (e.g.
-`/shared/$USER/.apxm/huggingface-apxm-vllm`). The full rules and the
-in-place migration procedure live in
+The cache and every model root must live on a filesystem that every
+Slurm compute node can read at the same path. `APXM_VLLM_HF_HOME`,
+`APXM_VLLM_HF_CACHE_ROOTS`, and `APXM_VLLM_MODEL_ROOTS` are still valid
+one-shell overrides, but cluster use should not put model weights in
+`$HOME`. The full rules and migration procedure live in
 [`storage-layout.md`](storage-layout.md).
 
 ## 2. Verify host readiness
@@ -107,8 +110,10 @@ Notes:
 dekk apxm vllm zoo-cache-warm
 ```
 
-Walks the manifest's `model` fields and downloads each into
-`APXM_VLLM_HF_HOME`. No GPU allocation. Idempotent and resumable.
+Walks the manifest's `model` fields and downloads each into the primary
+shared `hf_cache` unless the model is already present in a configured
+HF cache root or the manifest supplies `hf_home`. No GPU allocation.
+Idempotent and resumable.
 Refuses to start if the cache filesystem has less free space than
 `Σ(weights_gb) × 1.2`.
 
@@ -211,8 +216,10 @@ prints a peer-protection warning. Use `zoo-scale --replicas 0` or
 ## Common pitfalls
 
 - **HF cache path looks wrong** — run `dekk apxm vllm doctor` and
-  check the `hf_cache` line plus its `[source]` tag. Override via
-  `.apxm/config.toml` (`data.vllm.hf_cache`) or `APXM_VLLM_HF_HOME`.
+  check `hf_cache`, `hf_cache_roots`, and `model_roots` plus their
+  `[source]` tags. Override via `.apxm/config.toml`
+  (`data.vllm.hf_cache`, `data.vllm.hf_cache_roots`,
+  `data.vllm.model_roots`) or the matching APXM_VLLM_* env vars.
 - **`required image not supplied`** — pin `image` in `[defaults]`.
   No silent factory default.
 - **`zoo manifest not found`** — you forgot step 4. Copy the example.

@@ -113,20 +113,22 @@ without a cherry-pick plan onto that branch.
 The supported serving path is the Dekk-controlled Docker image flow:
 
 ```bash
-export APXM_VLLM_HF_HOME="$HOME/.cache/huggingface-apxm-vllm"
 dekk apxm vllm doctor
 dekk apxm vllm docker-build --image apxm-vllm-runtime:<TAG> --base-image <VLLM_BASE>
 dekk apxm vllm docker-save  --image apxm-vllm-runtime:<TAG>
 
 cp deploy/vllm/zoo.example.toml deploy/vllm/zoo.toml   # then edit
-dekk apxm vllm zoo-cache-warm                          # CPU-only HF download
+dekk apxm vllm zoo-cache-warm                          # CPU-only shared HF download
 dekk apxm vllm zoo-apply                               # submits Slurm jobs
 dekk apxm vllm service-list                            # watch readiness
 dekk apxm vllm service-exec <NAME> -- dekk apxm execute <GRAPH.py>
 ```
 
-`APXM_VLLM_HF_HOME` must point at a filesystem every Slurm compute node
-can read at the same path. The zoo manifest is the only operator
+Configure `.apxm/config.toml` so `data.vllm.hf_cache` and
+`data.vllm.model_roots` point at shared storage every Slurm compute node
+can read at the same path. `APXM_VLLM_HF_HOME` and
+`APXM_VLLM_MODEL_ROOTS` are one-shell overrides, not an invitation to put
+large model weights in `$HOME`. The zoo manifest is the only operator
 surface — `service-start` and `service-adopt` are not public CLI. See
 [`docs/backends/storage-layout.md`](docs/backends/storage-layout.md) for
 the placement rules.

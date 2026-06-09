@@ -1,7 +1,7 @@
 # APXM storage layout
 
 This is the operator reference for **where APXM puts large files on disk**.
-It covers the four buckets that grow without bound, the visibility
+It covers the storage buckets that grow without bound, the visibility
 constraint each one has, and the supported way to relocate any of them
 without breaking the Dekk / Slurm pipeline.
 
@@ -17,21 +17,26 @@ this file (not the call sites) when the layout changes.
 | Bucket | Default location | Required visibility | Typical size |
 |---|---|---|---|
 | Hugging Face model cache | `.apxm/config.toml` → `data.vllm.hf_cache` (or `APXM_VLLM_HF_HOME`) | All compute nodes | 10s – 100s of GiB per model |
+| Shared local model roots | `.apxm/config.toml` → `data.vllm.model_roots` (or `APXM_VLLM_MODEL_ROOTS`) | All compute nodes | Existing shared model trees |
 | Saved vLLM Docker images | `.apxm/vllm-images/*.docker.tar` (in repo) | All compute nodes | 5 – 15 GiB per image |
 | Service state, logs, deploy snapshots | `.apxm/vllm-services/`, `.apxm/vllm-logs/`, `.apxm/deploy/` (in repo) | Controller host only | KiB – MiB |
 | Eval/session artifacts (`.apxmobj`, CSVs, diagnostics) | `.apxm/evaluation/`, `.apxm/sessions/` (in repo) | Controller host only | MiB – low GiB |
 
-The two buckets with cross-node visibility requirements (HF cache and
-saved Docker images) **must** sit on a filesystem mounted at the same
-path on every Slurm-eligible node. Everything else stays inside the
-checkout.
+The model buckets with cross-node visibility requirements (HF cache,
+local model roots, and saved Docker images) **must** sit on a filesystem
+mounted at the same path on every Slurm-eligible node. Everything else
+stays inside the checkout.
 
 ## 1. Hugging Face model cache
 
 The vLLM container bind-mounts the resolved cache path at `/models/hf`
 and reads model weights from there. `dekk apxm vllm zoo-cache-warm`
 writes into the same directory using the Hugging Face hub layout
-(`hub/models--<org>--<name>/blobs|snapshots|refs`).
+(`hub/models--<org>--<name>/blobs|snapshots|refs`). Optional
+`data.vllm.hf_cache_roots` entries are searched read-only before
+launching a service; if a model id is already present in an extra root,
+APXM mounts that root as `/models/hf` for the service instead of
+duplicating weights.
 
 ### Configuration (preferred: config file)
 
@@ -47,13 +52,17 @@ dir = "/shared/${USER}/.apxm"
 
 # Optional: override one bucket independently of data.dir.
 [data.vllm]
-# hf_cache = "/shared/${USER}/.apxm/huggingface-apxm-vllm"
+# hf_cache = "/shared/models/cache/huggingface"
+# hf_cache_roots = ["/shared/models/cache/huggingface/other-namespace"]
+# model_roots = ["/shared/models"]
 ```
 
 Resolution order (highest priority first):
 
 1. CLI flag (e.g. `--hf-home`)
-2. Per-resource env var (`APXM_VLLM_HF_HOME`, `APXM_VLLM_IMAGE_STORE`)
+2. Per-resource env var (`APXM_VLLM_HF_HOME`,
+   `APXM_VLLM_HF_CACHE_ROOTS`, `APXM_VLLM_MODEL_ROOTS`,
+   `APXM_VLLM_IMAGE_STORE`)
 3. `APXM_HOME` env var (umbrella for `data.dir`)
 4. Project config `<repo>/.apxm/config.toml`
 5. Default: `<repo>/.apxm/<bucket>/`
@@ -61,13 +70,29 @@ Resolution order (highest priority first):
 `dekk apxm vllm doctor` prints the resolved layout with source
 attribution per field — use it to confirm an override took effect.
 
+### Local model roots
+
+For local path model refs, configure the shared parent directory once:
+
+```toml
+[data.vllm]
+model_roots = ["/shared/models"]
+```
+
+APXM mounts each root read-only at `/models/roots/<n>` and rewrites a
+host model path such as `/shared/models/my-model` to the corresponding
+container path before invoking `vllm serve`. This keeps local model
+trees in shared storage and avoids copying weights into `$HOME` or into
+the APXM checkout.
+
 ### Hard requirements
 
 1. **The path must resolve to the same content on every Slurm
    compute node**, because the per-service Slurm wrapper
-   (`deploy/vllm/run-vllm.sh`) `-v $HF_HOME_HOST:/models/hf` on the
-   allocated node. Local-to-login-host scratch volumes do not satisfy
-   this — the compute node would see an empty directory.
+   (`deploy/vllm/run-vllm.sh`) `-v $HF_HOME_HOST:/models/hf` and mounts
+   configured model roots on the allocated node. Local-to-login-host
+   scratch volumes do not satisfy this — the compute node would see an
+   empty directory.
 2. **Free space ≥ Σ(model `weights_gb`) × 1.2.** `zoo-cache-warm`
    refuses to start otherwise.
 3. **With no config and no env**, the cache resolves to
@@ -80,31 +105,28 @@ attribution per field — use it to confirm an override took effect.
 | Filesystem class | Use it for the HF cache? |
 |---|---|
 | Cluster-shared network filesystem (NFS / WekaFS / Lustre) mounted at the same path on login + all compute nodes | **Yes.** This is the supported default. |
-| `$HOME` if `$HOME` is the same cluster-shared FS | Yes, when the home quota has room. |
+| `$HOME` if `$HOME` is the same cluster-shared FS | Only for small single-user setups. Do not use it for shared cluster model weights when `/shared/models` is available. |
 | Per-node local scratch (`/scratch`, `/tmp`, NVMe LV) | **No** for a vanilla setup. Only valid if every Slurm allocation is pinned to a single host and you re-warm the cache after every node change. |
 | Object storage (S3, GCS, Azure Blob) | No. vLLM expects POSIX. |
 
-A typical export:
+A typical cluster config points at the shared cache and shared model
+namespace:
 
-```bash
-export APXM_VLLM_HF_HOME="$HOME/.cache/huggingface-apxm-vllm"
-```
-
-This default works whenever `$HOME` is the shared FS. On clusters where
-`$HOME` is space-constrained or per-user but a separate
-`/shared/<user>/` mount has more room, override:
-
-```bash
-export APXM_VLLM_HF_HOME="/shared/$USER/.apxm/huggingface-apxm-vllm"
+```toml
+[data.vllm]
+hf_cache = "/shared/models/cache/huggingface"
+hf_cache_roots = ["/shared/models/cache/huggingface/apxm-cache"]
+model_roots = ["/shared/models"]
 ```
 
 ### Migrating an existing cache to a new mount
 
-Safe procedure when `$HOME` runs out of space:
+Safe procedure if an old per-user `$HOME` cache already exists and needs
+to move to shared storage:
 
 ```bash
 OLD="$HOME/.cache/huggingface-apxm-vllm"
-NEW="/shared/$USER/.apxm/huggingface-apxm-vllm"
+NEW="/shared/models/cache/huggingface/$USER"
 
 mkdir -p "$NEW"
 rsync -aHAX --info=stats2 "$OLD/" "$NEW/"
@@ -113,13 +135,13 @@ diff -rq <(cd "$OLD" && find . -type f | sort) \
 
 rm -rf "$OLD"
 ln -s "$NEW" "$OLD"                              # back-compat symlink
-export APXM_VLLM_HF_HOME="$NEW"                  # update for new shells
+# Then set data.vllm.hf_cache or APXM_VLLM_HF_HOME to "$NEW".
 ```
 
 The symlink lets every doc that still says
 `$HOME/.cache/huggingface-apxm-vllm` keep working — Docker bind mounts
-follow symlinks at resolution time. Update the canonical value of
-`APXM_VLLM_HF_HOME` in your shell rc once you're confident.
+follow symlinks at resolution time. Update `.apxm/config.toml` once
+you're confident.
 
 Stop any running `dekk apxm vllm` service before relocating; the
 container does not handle the bind-mount source disappearing
@@ -164,16 +186,17 @@ appear under `examples/` or in the docs source tree.
 The controller already runs two pre-checks; rely on them rather than
 your memory:
 
-- `dekk apxm vllm doctor` reports `hf_home_free_gb`. A 120 GB
-  threshold is the warning line.
+- `dekk apxm vllm doctor` reports the resolved `hf_cache`,
+  `hf_cache_roots`, and `model_roots`; run `df -h` on those paths before
+  large downloads.
 - `dekk apxm vllm zoo-cache-warm` refuses to start when the HF cache
   filesystem has less free space than `Σ(weights_gb) × 1.2`.
 
-For a fast home-quota check after a long benchmark run:
+For a fast shared-storage check after a long benchmark run:
 
 ```bash
-df -h "$APXM_VLLM_HF_HOME" .apxm/vllm-images
-du -sh "$APXM_VLLM_HF_HOME" .apxm/vllm-images .apxm/evaluation \
+df -h /shared/models/cache/huggingface .apxm/vllm-images
+du -sh /shared/models/cache/huggingface .apxm/vllm-images .apxm/evaluation \
        .apxm/sessions 2>/dev/null
 ```
 

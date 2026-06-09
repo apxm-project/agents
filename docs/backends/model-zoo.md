@@ -15,7 +15,8 @@ This document is the getting-started guide. The conceptual contract
 - One vLLM container per service, scheduled by Slurm onto any node in
   the cluster.
 - Model-agnostic: any model vLLM can load (HF id, local path, mirror)
-  is a one-line entry in the manifest.
+  is a one-line entry in the manifest. APXM can search multiple HF cache
+  roots and bind-mount shared local model roots without copying weights.
 - Three deployment shapes out of the box: single-instance,
   multi-instance on one node (GPU groups), and multi-instance across
   nodes (replicas). Multi-node Ray (cross-node TP+PP for one model) is
@@ -30,12 +31,15 @@ This document is the getting-started guide. The conceptual contract
 ## Prerequisites (do once per cluster)
 
 ```bash
-# 1. The shared HF cache root is the single mandatory env var. It must
-#    point at a filesystem visible from every Slurm compute node at the
-#    same path; see docs/backends/storage-layout.md if $HOME is full or
-#    not cluster-shared. Put it in your shell rc so every session
-#    inherits it.
-export APXM_VLLM_HF_HOME=$HOME/.cache/huggingface-apxm-vllm
+# 1. Put model storage on a shared filesystem visible from every Slurm
+#    compute node. Prefer .apxm/config.toml so Slurm jobs and direct
+#    docker-start calls resolve the same roots.
+#
+#    Minimal C42-style shape:
+#      data.vllm.hf_cache = "/shared/models/cache/huggingface"
+#      data.vllm.model_roots = ["/shared/models"]
+#
+#    APXM_VLLM_HF_HOME still overrides the primary HF cache for one shell.
 
 # 2. Verify host readiness (Docker, buildx, Slurm tools, fork SHA).
 dekk apxm vllm doctor
@@ -88,6 +92,8 @@ template covering the three deployment shapes. Replace the
 | `weights_gb` | recommended | Approx model size; used by the capacity pre-check. |
 | `max_model_len`, `max_num_seqs` | no | Forwarded to vLLM. |
 | `image` | no (inherits `[defaults].image`) | Per-deployment image override. |
+| `hf_home` | no | Per-deployment HF cache override. Usually leave unset; APXM searches configured HF cache roots and chooses the first root containing the model id. |
+| `model_roots` | no | Extra host directories to mount read-only for local-path model refs. Inherits `[defaults]`; merged with `data.vllm.model_roots`. |
 | `scheduling_policy` | no (default `priority`) | Only `priority` is accepted; FCFS is not supported by APXM. |
 | `enable_prefix_caching` | no (default true) | Toggle vLLM's prefix cache. |
 | `reasoning_parser` | model-specific | Only set when the model needs it (e.g. `openai_gptoss`). A wrong value crashes startup with a vocab `KeyError`. |
@@ -96,6 +102,9 @@ template covering the three deployment shapes. Replace the
 
 `[defaults]` at the top of the manifest applies to every entry unless
 overridden. Pin `image` there so `zoo-apply` never falls through to env.
+Storage roots are usually better in `.apxm/config.toml`; use manifest
+`hf_home` or `model_roots` only when one deployment needs a different
+cache or local model tree.
 
 ### Deployment shapes (illustrated in `zoo.example.toml`)
 
@@ -149,7 +158,9 @@ moment of submission.
 
 ## Adding a new model
 
-1. `dekk apxm vllm cache-warm <MODEL_REF>` (one-time, CPU-only).
+1. `dekk apxm vllm cache-warm <MODEL_REF>` (one-time, CPU-only). APXM
+   writes to the primary shared HF cache unless the model is already in
+   a configured cache root or `--hf-home` / `hf_home` is supplied.
 2. Append a `[[deployment]]` block to your `deploy/vllm/zoo.toml`.
 3. `dekk apxm vllm zoo-apply` — only the new entry will be submitted.
 4. `dekk apxm vllm probe --port <PORT>` confirms the APXM router is up.
@@ -178,8 +189,13 @@ requests through the dispatcher.
 ## Failure modes worth knowing
 
 - **HF cache path looks wrong** — run `dekk apxm vllm doctor` and
-  check the `hf_cache` line plus its `[source]` tag. Override via
-  `.apxm/config.toml` (`data.vllm.hf_cache`) or `APXM_VLLM_HF_HOME`.
+  check `hf_cache`, `hf_cache_roots`, and `model_roots` plus their
+  `[source]` tags. Override via `.apxm/config.toml`
+  (`data.vllm.hf_cache`, `data.vllm.hf_cache_roots`,
+  `data.vllm.model_roots`) or the matching APXM_VLLM_* env vars.
+- **Local path cannot be loaded** — make sure the host path is under
+  one configured `model_roots` entry. APXM rewrites that host path to
+  `/models/roots/<n>/...` before starting vLLM.
 - **`required image not supplied`** — pin `image` in `[defaults]` or
   pass via env. No silent factory default.
 - **`zoo manifest not found`** — copy `zoo.example.toml` to

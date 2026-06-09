@@ -22,9 +22,11 @@ class EnvVar(str, Enum):
     APXM_HOME = "APXM_HOME"
     APXM_MATRIX_VARIANT = "APXM_MATRIX_VARIANT"
     APXM_VLLM_CACHE_SALT = "APXM_VLLM_CACHE_SALT"
+    APXM_VLLM_HF_CACHE_ROOTS = "APXM_VLLM_HF_CACHE_ROOTS"
     APXM_VLLM_HF_HOME = "APXM_VLLM_HF_HOME"
     APXM_VLLM_IMAGE = "APXM_VLLM_IMAGE"
     APXM_VLLM_IMAGE_STORE = "APXM_VLLM_IMAGE_STORE"
+    APXM_VLLM_MODEL_ROOTS = "APXM_VLLM_MODEL_ROOTS"
     APXM_VLLM_SERVICE_NAME = "APXM_VLLM_SERVICE_NAME"
     BACKEND_NAME = "BACKEND_NAME"
     CUDA_VISIBLE_DEVICES = "CUDA_VISIBLE_DEVICES"
@@ -32,6 +34,7 @@ class EnvVar(str, Enum):
     GPUS = "GPUS"
     HF_HOME_HOST = "HF_HOME_HOST"
     HF_HOME = "HF_HOME"
+    HUGGINGFACE_HUB_CACHE = "HUGGINGFACE_HUB_CACHE"
     HF_TOKEN = "HF_TOKEN"
     HIP_VISIBLE_DEVICES = "HIP_VISIBLE_DEVICES"
     MAX_MODEL_LEN = "MAX_MODEL_LEN"
@@ -264,6 +267,7 @@ class ContainerPath(str, Enum):
     """Container paths used by the APXM/vLLM Docker runtime."""
 
     HF_HOME = "/models/hf"
+    MODEL_ROOTS = "/models/roots"
 
 
 class ApxmWorkspacePath(str, Enum):
@@ -321,6 +325,7 @@ class ArgName(str, Enum):
     MANIFEST = "manifest"
     MAX_NUM_SEQS = "max_num_seqs"
     MODEL = "model"
+    MODEL_ROOT = "model_root"
     NAME = "name"
     PORT = "port"
     PRUNE = "prune"
@@ -522,6 +527,33 @@ def effective_hf_home(
 
     layout = resolve_data_layout(find_repo_root(Path(__file__)), environ=environ)
     return str(layout.hf_cache)
+
+
+def effective_hf_cache_roots(
+    *,
+    environ: dict[str, str] | os._Environ[str] = os.environ,
+) -> tuple[str, ...]:
+    """Return the ordered HF cache roots APXM may search for cached models.
+
+    The first element is always the writable primary ``hf_cache``; remaining
+    roots are read-only search locations configured via
+    ``data.vllm.hf_cache_roots`` or ``APXM_VLLM_HF_CACHE_ROOTS``.
+    """
+    from apxm.data_config import resolve_data_layout
+
+    layout = resolve_data_layout(find_repo_root(Path(__file__)), environ=environ)
+    return tuple(str(path) for path in layout.hf_cache_roots)
+
+
+def effective_model_roots(
+    *,
+    environ: dict[str, str] | os._Environ[str] = os.environ,
+) -> tuple[str, ...]:
+    """Return host directories that APXM bind-mounts for local model paths."""
+    from apxm.data_config import resolve_data_layout
+
+    layout = resolve_data_layout(find_repo_root(Path(__file__)), environ=environ)
+    return tuple(str(path) for path in layout.model_roots)
 
 
 def local_endpoint(*, host: str, port: int) -> str:
