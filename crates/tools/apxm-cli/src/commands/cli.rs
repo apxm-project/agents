@@ -422,6 +422,12 @@ pub struct GoalArgs {
     #[arg(long = "dry-run")]
     pub dry_run: bool,
 
+    /// Maximum bounded passes to run the goal until the gate verdict converges.
+    /// Each pass is admitted independently; the runtime decides convergence.
+    /// Defaults to 1 (a single pass).
+    #[arg(long = "max-iterations", value_name = "N")]
+    pub max_iterations: Option<usize>,
+
     /// Start the goal but do not poll workflow events.
     #[arg(long = "no-follow")]
     pub no_follow: bool,

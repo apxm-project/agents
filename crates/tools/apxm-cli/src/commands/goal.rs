@@ -55,55 +55,100 @@ pub async fn goal_command(args: GoalArgs, json_output: bool) -> Result<()> {
 
     match mode {
         GoalMode::Start(task) => {
-            let request = build_start_arguments(&args, &task)?;
-            let started =
-                call_mcp_tool(&client, &base, mcp_tools::APXM_ORCHESTRATE_START, request).await?;
-            if !json_output {
-                print_start_summary(&base, &started);
-            }
+            // A goal is a bounded sequence of admitted passes. Each pass is an
+            // ultracode-style fan-out; after it settles the runtime emits a
+            // typed convergence decision, and this loop runs another admitted
+            // pass only while the runtime asks for one (`iterate`). The runtime
+            // bounds the loop via `max_iterations`, so it always terminates.
+            let max_iterations = args.max_iterations.unwrap_or(1).max(1);
+            let mut iteration = 0usize;
+            let mut context_override: Option<String> = None;
+            let mut passes: Vec<JsonValue> = Vec::new();
 
-            let should_follow = !args.no_follow
-                && !args.dry_run
-                && started
-                    .get("execution_id")
-                    .and_then(JsonValue::as_str)
-                    .is_some();
-            let follow = if should_follow {
+            loop {
+                let request = build_start_arguments(
+                    &args,
+                    &task,
+                    iteration,
+                    max_iterations,
+                    context_override.as_deref(),
+                )?;
+                let started =
+                    call_mcp_tool(&client, &base, mcp_tools::APXM_ORCHESTRATE_START, request)
+                        .await?;
+                if !json_output {
+                    if max_iterations > 1 {
+                        println!("== goal pass {}/{} ==", iteration + 1, max_iterations);
+                    }
+                    print_start_summary(&base, &started);
+                }
+
+                let should_follow = !args.no_follow
+                    && !args.dry_run
+                    && started
+                        .get("execution_id")
+                        .and_then(JsonValue::as_str)
+                        .is_some();
+                if !should_follow {
+                    if json_output {
+                        passes.push(json!({ "start": started }));
+                    }
+                    break;
+                }
+
                 let execution_id = started
                     .get("execution_id")
                     .and_then(JsonValue::as_str)
-                    .expect("checked execution_id");
+                    .expect("checked execution_id")
+                    .to_string();
                 let terminal_kinds = terminal_kinds(&started);
-                Some(
-                    follow_goal(
-                        &client,
-                        &base,
-                        execution_id,
-                        terminal_kinds,
-                        args.limit,
-                        Duration::from_millis(args.poll_ms),
-                        args.timeout_secs.map(Duration::from_secs),
-                        !json_output,
-                    )
-                    .await?,
+                let follow = follow_goal(
+                    &client,
+                    &base,
+                    &execution_id,
+                    terminal_kinds,
+                    args.limit,
+                    Duration::from_millis(args.poll_ms),
+                    args.timeout_secs.map(Duration::from_secs),
+                    !json_output,
                 )
-            } else {
-                None
-            };
-
-            if json_output {
-                let output = match follow {
-                    Some(follow) => json!({
+                .await?;
+                if !json_output {
+                    print_final_status(&follow.status);
+                }
+                if json_output {
+                    passes.push(json!({
                         "start": started,
                         "events_seen": follow.events_seen,
                         "terminal_event_kind": follow.terminal_event_kind,
                         "status": follow.status,
-                    }),
-                    None => json!({ "start": started }),
-                };
-                println!("{}", serde_json::to_string_pretty(&output)?);
-            } else if let Some(follow) = follow {
-                print_final_status(&follow.status);
+                    }));
+                }
+
+                match goal_loop_step(&follow.status, max_iterations) {
+                    GoalLoopStep::Iterate {
+                        next_iteration,
+                        remaining,
+                    } => {
+                        if !json_output {
+                            println!(
+                                "goal: runtime requested another pass ({} item(s) remaining)",
+                                remaining.len()
+                            );
+                        }
+                        iteration = next_iteration;
+                        context_override =
+                            Some(next_pass_context(args.context.as_deref(), &remaining));
+                    }
+                    GoalLoopStep::Stop => break,
+                }
+            }
+
+            if json_output {
+                println!(
+                    "{}",
+                    serde_json::to_string_pretty(&json!({ "passes": passes }))?
+                );
             }
         }
         GoalMode::Status(execution_id) => {
@@ -195,14 +240,32 @@ fn resolve_server_base(server: Option<&str>) -> String {
         .unwrap_or_else(|| DEFAULT_SERVER_BASE.to_string())
 }
 
-fn build_start_arguments(args: &GoalArgs, task: &str) -> Result<JsonValue> {
+fn build_start_arguments(
+    args: &GoalArgs,
+    task: &str,
+    iteration: usize,
+    max_iterations: usize,
+    context_override: Option<&str>,
+) -> Result<JsonValue> {
     let workers = build_workers(args)?;
     let uses_profiles =
         workers.iter().any(|worker| worker.profile.is_some()) || args.supervisor_profile.is_some();
 
     let mut root = JsonMap::new();
     root.insert("task".to_string(), JsonValue::String(task.to_string()));
-    insert_optional_string(&mut root, "context", args.context.as_deref());
+    insert_optional_string(
+        &mut root,
+        "context",
+        context_override.or(args.context.as_deref()),
+    );
+    root.insert(
+        "iteration".to_string(),
+        JsonValue::from(iteration as u64),
+    );
+    root.insert(
+        "max_iterations".to_string(),
+        JsonValue::from(max_iterations as u64),
+    );
     insert_optional_string(&mut root, "event", args.event.as_deref());
     insert_optional_string(&mut root, "trigger", args.trigger.as_deref());
     insert_optional_string(&mut root, "session_id", args.session_id.as_deref());
@@ -703,6 +766,74 @@ async fn follow_goal(
     }
 }
 
+/// One step of the bounded goal loop, derived from the runtime convergence
+/// decision attached to a settled pass's status.
+#[derive(Debug, PartialEq, Eq)]
+enum GoalLoopStep {
+    /// Run another admitted pass at `next_iteration`, carrying `remaining`.
+    Iterate {
+        next_iteration: usize,
+        remaining: Vec<String>,
+    },
+    /// Stop: the goal converged, halted, or reported no decision.
+    Stop,
+}
+
+/// Read the runtime goal decision off a terminal status and decide whether to
+/// run another bounded pass. The runtime only emits `iterate` while the pass
+/// budget allows it, but this also guards `next_iteration` against the ceiling
+/// so the loop terminates even if the server contract drifts.
+fn goal_loop_step(status: &JsonValue, max_iterations: usize) -> GoalLoopStep {
+    let Some(goal) = status.get("goal") else {
+        return GoalLoopStep::Stop;
+    };
+    let decision = goal.get("decision");
+    let decision_kind = decision
+        .and_then(|d| d.get("decision"))
+        .and_then(JsonValue::as_str);
+    if decision_kind != Some("iterate") {
+        return GoalLoopStep::Stop;
+    }
+    let next_iteration = decision
+        .and_then(|d| d.get("next_iteration"))
+        .and_then(JsonValue::as_u64)
+        .map(|value| value as usize);
+    let Some(next_iteration) = next_iteration.filter(|next| *next < max_iterations) else {
+        return GoalLoopStep::Stop;
+    };
+    let remaining = goal
+        .get("verdict")
+        .and_then(|verdict| verdict.get("remaining"))
+        .and_then(JsonValue::as_array)
+        .map(|items| {
+            items
+                .iter()
+                .filter_map(|item| item.as_str().map(str::to_string))
+                .collect()
+        })
+        .unwrap_or_default();
+    GoalLoopStep::Iterate {
+        next_iteration,
+        remaining,
+    }
+}
+
+/// Build the context for the next bounded pass: the original context plus the
+/// remaining work items the gate verdict reported.
+fn next_pass_context(base_context: Option<&str>, remaining: &[String]) -> String {
+    let mut parts = Vec::new();
+    if let Some(base) = base_context.and_then(non_empty) {
+        parts.push(base.to_string());
+    }
+    if !remaining.is_empty() {
+        parts.push(format!(
+            "Remaining from the previous pass:\n- {}",
+            remaining.join("\n- ")
+        ));
+    }
+    parts.join("\n\n")
+}
+
 fn next_since_from_events(current: u64, events: &[JsonValue]) -> u64 {
     events
         .iter()
@@ -1011,6 +1142,7 @@ mod tests {
             admit_spawn: false,
             import: Vec::new(),
             dry_run: false,
+            max_iterations: None,
             no_follow: false,
             limit: 100,
             poll_ms: 500,
@@ -1034,7 +1166,7 @@ mod tests {
     #[test]
     fn default_goal_workers_are_minimal() {
         let args = args_with_task();
-        let request = build_start_arguments(&args, "ship the thing").expect("request");
+        let request = build_start_arguments(&args, "ship the thing", 0, 1, None).expect("request");
         let workers = request["workers"].as_array().expect("workers");
         assert_eq!(
             workers
@@ -1048,6 +1180,62 @@ mod tests {
     }
 
     #[test]
+    fn build_start_arguments_carries_iteration_budget() {
+        let args = args_with_task();
+        let request = build_start_arguments(&args, "ship it", 2, 5, Some("carry")).expect("request");
+        assert_eq!(request["iteration"], json!(2));
+        assert_eq!(request["max_iterations"], json!(5));
+        assert_eq!(request["context"], json!("carry"));
+    }
+
+    #[test]
+    fn goal_loop_iterates_on_runtime_iterate_decision() {
+        let status = json!({
+            "goal": {
+                "decision": { "decision": "iterate", "reason": "more", "next_iteration": 1 },
+                "verdict": { "status": "needs_more", "remaining": ["finish auth", "rerun lint"] }
+            }
+        });
+        assert_eq!(
+            goal_loop_step(&status, 3),
+            GoalLoopStep::Iterate {
+                next_iteration: 1,
+                remaining: vec!["finish auth".to_string(), "rerun lint".to_string()],
+            }
+        );
+    }
+
+    #[test]
+    fn goal_loop_stops_on_converged_or_halted() {
+        for decision in ["converged", "halted"] {
+            let status = json!({ "goal": { "decision": { "decision": decision } } });
+            assert_eq!(goal_loop_step(&status, 5), GoalLoopStep::Stop);
+        }
+        // No goal block at all (non-orchestration run) also stops.
+        assert_eq!(goal_loop_step(&json!({}), 5), GoalLoopStep::Stop);
+    }
+
+    #[test]
+    fn goal_loop_stops_when_next_iteration_hits_ceiling() {
+        // Defensive: even if the runtime says iterate, never exceed the ceiling.
+        let status = json!({
+            "goal": { "decision": { "decision": "iterate", "next_iteration": 3 } }
+        });
+        assert_eq!(goal_loop_step(&status, 3), GoalLoopStep::Stop);
+    }
+
+    #[test]
+    fn next_pass_context_appends_remaining() {
+        let ctx = next_pass_context(Some("repo: /x"), &["do A".to_string(), "do B".to_string()]);
+        assert!(ctx.contains("repo: /x"));
+        assert!(ctx.contains("Remaining from the previous pass"));
+        assert!(ctx.contains("- do A"));
+        assert!(ctx.contains("- do B"));
+        // No base context, no remaining → empty.
+        assert_eq!(next_pass_context(None, &[]), "");
+    }
+
+    #[test]
     fn critic_profiles_opt_into_review_workers() {
         let mut args = args_with_task();
         args.critics = vec![
@@ -1055,7 +1243,7 @@ mod tests {
             "security:Security review:profile-sec".to_string(),
         ];
 
-        let request = build_start_arguments(&args, "ship the thing").expect("request");
+        let request = build_start_arguments(&args, "ship the thing", 0, 1, None).expect("request");
         let workers = request["workers"].as_array().expect("workers");
         assert_eq!(
             workers
@@ -1080,7 +1268,7 @@ mod tests {
         args.planner_profile = Some("profile-a".to_string());
         args.executor_profile = Some("profile-b".to_string());
 
-        let request = build_start_arguments(&args, "ship the thing").expect("request");
+        let request = build_start_arguments(&args, "ship the thing", 0, 1, None).expect("request");
         assert_eq!(
             request["workers"][0]["transport"],
             OrchestrationTransport::Acp.as_str()
