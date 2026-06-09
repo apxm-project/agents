@@ -189,6 +189,7 @@ mod tests {
             tags: vec![],
             supports_thinking: false,
             max_output_tokens: None,
+            ..Default::default()
         });
 
         model_registry.register(ModelEntry {
@@ -200,6 +201,7 @@ mod tests {
             tags: vec![],
             supports_thinking: false,
             max_output_tokens: None,
+            ..Default::default()
         });
 
         // Register profile with candidates
@@ -246,6 +248,7 @@ mod tests {
             tags: vec![],
             supports_thinking: false,
             max_output_tokens: None,
+            ..Default::default()
         });
 
         model_registry.register(ModelEntry {
@@ -257,6 +260,7 @@ mod tests {
             tags: vec![],
             supports_thinking: false,
             max_output_tokens: None,
+            ..Default::default()
         });
 
         // Register profile
@@ -308,6 +312,7 @@ mod tests {
             tags: vec![],
             supports_thinking: false,
             max_output_tokens: None,
+            ..Default::default()
         });
 
         // Register profile

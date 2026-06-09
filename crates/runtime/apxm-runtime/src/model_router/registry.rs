@@ -16,6 +16,10 @@
 //! cost_per_1k_output = 0.015
 //! context_window = 200000
 //! tags = ["production", "smart"]
+//! supports_vision = true
+//! supports_tools = true
+//! supports_json = true
+//! quality_tier = 9
 //!
 //! [[models]]
 //! name = "fast-model"
@@ -24,6 +28,8 @@
 //! cost_per_1k_output = 0.00125
 //! context_window = 200000
 //! tags = ["fast", "cheap"]
+//! supports_json = true
+//! quality_tier = 3
 //!
 //! [[models]]
 //! name = "cheap-model"
@@ -32,8 +38,16 @@
 //! cost_per_1k_output = 0.0006
 //! context_window = 128000
 //! tags = ["cheap", "fast"]
+//! quality_tier = 1
+//! local = true
 //!
 //! [routing]
+//! # Optional global optimization target for the pool: "cost" | "latency"
+//! # | "quality" | "balanced". When set (and no per-operation policy
+//! # applies), the router ranks the price/capability table by this target.
+//! # When omitted (or "balanced") the legacy prefer_tags/fallback_tags
+//! # behaviour is used.
+//! target = "cost"
 //! prefer_tags = ["production"]
 //! fallback_tags = ["cheap"]
 //! ```
@@ -45,8 +59,14 @@ use std::sync::Arc;
 
 use parking_lot::RwLock;
 
-/// A single model entry from the registry.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+use super::RoutingTarget;
+
+/// A single model entry from the registry — one row of the price/capability
+/// table loaded from `models.toml`.
+///
+/// `Default` is derived so new columns can be added without breaking the many
+/// struct-literal construction sites in tests (`..Default::default()`).
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct ModelEntry {
     /// Model identifier (as sent to the API).
     pub name: String,
@@ -58,7 +78,8 @@ pub struct ModelEntry {
     /// Cost per 1,000 output tokens (USD).
     #[serde(default)]
     pub cost_per_1k_output: f64,
-    /// Context window size in tokens.
+    /// Context window size in tokens. `0` means "unknown / unconstrained" and
+    /// disables the context-fit filter for this model.
     #[serde(default)]
     pub context_window: usize,
     /// Tags for routing policy (e.g. "fast", "cheap", "production").
@@ -70,6 +91,24 @@ pub struct ModelEntry {
     /// Maximum output tokens supported.
     #[serde(default)]
     pub max_output_tokens: Option<usize>,
+    /// Whether this model accepts image inputs (multimodal vision).
+    #[serde(default)]
+    pub supports_vision: bool,
+    /// Whether this model supports tool / function calling.
+    #[serde(default)]
+    pub supports_tools: bool,
+    /// Whether this model supports structured (JSON / schema) output.
+    #[serde(default)]
+    pub supports_json: bool,
+    /// Operator-supplied quality prior (higher = stronger). Used to rank for
+    /// `RoutingTarget::Quality`. This is a static, hand-curated number, not a
+    /// learned/measured score.
+    #[serde(default)]
+    pub quality_tier: u8,
+    /// Whether this model runs locally / on-prem (data does not leave the
+    /// host). Used to satisfy a privacy constraint on the request.
+    #[serde(default)]
+    pub local: bool,
 }
 
 impl ModelEntry {
@@ -83,6 +122,24 @@ impl ModelEntry {
         let input_cost = (input_tokens as f64 / 1000.0) * self.cost_per_1k_input;
         let output_cost = (output_tokens as f64 / 1000.0) * self.cost_per_1k_output;
         input_cost + output_cost
+    }
+
+    /// Returns true if this model can hold a request of the given estimated
+    /// input + output token budget.
+    ///
+    /// A `context_window` of `0` is treated as "unknown" and always passes, so
+    /// an unconfigured table never filters every candidate out. When
+    /// `max_output_tokens` is set, the requested output must also fit.
+    pub fn fits_context(&self, input_tokens: usize, output_tokens: usize) -> bool {
+        if self.context_window != 0 && input_tokens + output_tokens > self.context_window {
+            return false;
+        }
+        if let Some(max_out) = self.max_output_tokens {
+            if output_tokens > max_out {
+                return false;
+            }
+        }
+        true
     }
 }
 
@@ -98,6 +155,12 @@ pub struct DefaultsConfig {
 /// Routing policy from the config file.
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct RoutingConfig {
+    /// Optional global optimization target for the pool. When set (and no
+    /// per-operation policy applies), the router ranks the price/capability
+    /// table by this target instead of using `prefer_tags`. `None` (or
+    /// `Balanced`) keeps the legacy tag-based behaviour.
+    #[serde(default)]
+    pub target: Option<RoutingTarget>,
     /// Tags to prefer when selecting a model (ordered by priority).
     #[serde(default)]
     pub prefer_tags: Vec<String>,
@@ -301,6 +364,7 @@ mod tests {
             tags: vec!["fast".to_string()],
             supports_thinking: false,
             max_output_tokens: None,
+            ..Default::default()
         });
         let entry = reg.get("test-model").unwrap();
         assert_eq!(entry.backend, "test-backend");
@@ -319,6 +383,7 @@ mod tests {
             tags: vec!["cheap".to_string(), "fast".to_string()],
             supports_thinking: false,
             max_output_tokens: None,
+            ..Default::default()
         });
         reg.register(ModelEntry {
             name: "smart".to_string(),
@@ -329,6 +394,7 @@ mod tests {
             tags: vec!["production".to_string()],
             supports_thinking: true,
             max_output_tokens: None,
+            ..Default::default()
         });
 
         let fast = reg.models_with_tags(&["fast"]);
@@ -352,6 +418,7 @@ mod tests {
             tags: vec![],
             supports_thinking: false,
             max_output_tokens: None,
+            ..Default::default()
         });
         let cost = reg.estimate_cost("m", 1000, 500).unwrap();
         assert!((cost - (1.0 + 1.0)).abs() < 1e-9); // 1.0 input + 1.0 output
@@ -413,6 +480,7 @@ fallback_tags = ["cheap"]
             tags: vec![],
             supports_thinking: false,
             max_output_tokens: None,
+            ..Default::default()
         });
         reg.register(ModelEntry {
             name: "cheap".to_string(),
@@ -423,8 +491,82 @@ fallback_tags = ["cheap"]
             tags: vec![],
             supports_thinking: false,
             max_output_tokens: None,
+            ..Default::default()
         });
         let cheapest = reg.cheapest().unwrap();
         assert_eq!(cheapest.name, "cheap");
+    }
+
+    #[test]
+    fn test_model_entry_default() {
+        let e = ModelEntry::default();
+        assert!(e.name.is_empty());
+        assert_eq!(e.quality_tier, 0);
+        assert!(!e.supports_vision);
+        assert!(!e.local);
+    }
+
+    #[test]
+    fn test_fits_context() {
+        let e = ModelEntry {
+            context_window: 1000,
+            max_output_tokens: Some(256),
+            ..Default::default()
+        };
+        assert!(e.fits_context(500, 200)); // 700 <= 1000, out 200 <= 256
+        assert!(!e.fits_context(900, 200)); // 1100 > 1000
+        assert!(!e.fits_context(100, 300)); // out 300 > 256
+
+        // context_window == 0 means "unknown": never filters out.
+        let unbounded = ModelEntry::default();
+        assert!(unbounded.fits_context(1_000_000, 1_000_000));
+    }
+
+    #[test]
+    fn test_load_from_toml_capability_columns_and_target() {
+        let toml_content = r#"
+[routing]
+target = "cost"
+prefer_tags = ["production"]
+
+[[models]]
+name = "vision-pro"
+backend = "anthropic"
+cost_per_1k_input = 0.003
+cost_per_1k_output = 0.015
+context_window = 200000
+tags = ["production"]
+supports_vision = true
+supports_tools = true
+supports_json = true
+quality_tier = 9
+
+[[models]]
+name = "text-cheap"
+backend = "vllm"
+cost_per_1k_input = 0.0001
+cost_per_1k_output = 0.0003
+context_window = 16000
+supports_json = true
+quality_tier = 1
+local = true
+"#;
+        let mut tmp = tempfile::NamedTempFile::new().unwrap();
+        tmp.write_all(toml_content.as_bytes()).unwrap();
+
+        let reg = ModelRegistry::new();
+        reg.load_from_path(tmp.path()).unwrap();
+
+        let vp = reg.get("vision-pro").unwrap();
+        assert!(vp.supports_vision && vp.supports_tools && vp.supports_json);
+        assert_eq!(vp.quality_tier, 9);
+        assert!(!vp.local);
+
+        let tc = reg.get("text-cheap").unwrap();
+        assert!(!tc.supports_vision);
+        assert!(tc.local);
+        assert_eq!(tc.quality_tier, 1);
+
+        assert_eq!(reg.routing().target, Some(RoutingTarget::Cost));
     }
 }
