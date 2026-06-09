@@ -27,6 +27,19 @@ use agents::configure_agent_registry;
 mod workflow_spawn;
 use workflow_spawn::DriverWorkflowSpawner;
 
+/// Parse an operator-configured routing target string into a
+/// [`apxm_runtime::RoutingTarget`], defaulting to `Balanced` for `None` or
+/// unrecognized values.
+fn parse_routing_target(target: Option<&str>) -> apxm_runtime::RoutingTarget {
+    use apxm_runtime::RoutingTarget;
+    match target.map(str::trim).map(str::to_ascii_lowercase).as_deref() {
+        Some("cost") => RoutingTarget::Cost,
+        Some("latency") => RoutingTarget::Latency,
+        Some("quality") => RoutingTarget::Quality,
+        _ => RoutingTarget::Balanced,
+    }
+}
+
 /// Runtime executor used by the driver to run compiled DAGs.
 pub struct RuntimeExecutor {
     runtime: Arc<Runtime>,
@@ -57,7 +70,7 @@ impl RuntimeExecutor {
                     operation,
                     model: route.model.clone(),
                     backend: route.backend.clone(),
-                    target: apxm_runtime::RoutingTarget::Balanced,
+                    target: parse_routing_target(route.target.as_deref()),
                 })
             })
             .collect::<Vec<_>>();
@@ -297,6 +310,18 @@ mod tests {
     use super::*;
     use apxm_artifact::Artifact;
     use apxm_compiler::{Context, Pipeline};
+
+    #[test]
+    fn parse_routing_target_maps_known_values() {
+        use apxm_runtime::RoutingTarget;
+        assert_eq!(parse_routing_target(Some("cost")), RoutingTarget::Cost);
+        assert_eq!(parse_routing_target(Some("Latency")), RoutingTarget::Latency);
+        assert_eq!(parse_routing_target(Some(" QUALITY ")), RoutingTarget::Quality);
+        assert_eq!(parse_routing_target(Some("balanced")), RoutingTarget::Balanced);
+        // Unknown / None default to Balanced.
+        assert_eq!(parse_routing_target(Some("nonsense")), RoutingTarget::Balanced);
+        assert_eq!(parse_routing_target(None), RoutingTarget::Balanced);
+    }
     use apxm_core::error::RuntimeError;
     use apxm_core::types::Value;
     use apxm_runtime::capability::executor::CapabilityExecutor;
