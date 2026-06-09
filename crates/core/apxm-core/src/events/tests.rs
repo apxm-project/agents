@@ -126,6 +126,43 @@ mod tests {
         }
     );
     roundtrip_test!(
+        serde_goal_gate_verdict,
+        GoalGateVerdictPayload {
+            execution_id: "exec-1".into(),
+            iteration: 0,
+            max_iterations: 3,
+            status: "needs_more".into(),
+            reason: "two checks still failing".into(),
+            remaining: vec!["fix auth test".into(), "rerun lint".into()],
+        }
+    );
+    roundtrip_test!(
+        serde_goal_converged,
+        GoalConvergedPayload {
+            execution_id: "exec-1".into(),
+            iteration: 2,
+            reason: "all acceptance checks pass".into(),
+        }
+    );
+    roundtrip_test!(
+        serde_goal_needs_another_pass,
+        GoalNeedsAnotherPassPayload {
+            execution_id: "exec-1".into(),
+            iteration: 0,
+            next_iteration: 1,
+            reason: "gate requested another pass".into(),
+        }
+    );
+    roundtrip_test!(
+        serde_goal_halted,
+        GoalHaltedPayload {
+            execution_id: "exec-1".into(),
+            iteration: 2,
+            reason: "pass budget exhausted".into(),
+            exhausted: true,
+        }
+    );
+    roundtrip_test!(
         serde_thought,
         ThoughtPayload {
             text: "thinking...".into(),

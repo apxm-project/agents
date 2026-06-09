@@ -184,6 +184,14 @@ fn boxed_core_payload_from_json(
         boxed!(OrchestratorSleepPayload)
     } else if kind_name == kind::ORCHESTRATOR_WAKE.name() {
         boxed!(OrchestratorWakePayload)
+    } else if kind_name == kind::GOAL_GATE_VERDICT.name() {
+        boxed!(GoalGateVerdictPayload)
+    } else if kind_name == kind::GOAL_CONVERGED.name() {
+        boxed!(GoalConvergedPayload)
+    } else if kind_name == kind::GOAL_NEEDS_ANOTHER_PASS.name() {
+        boxed!(GoalNeedsAnotherPassPayload)
+    } else if kind_name == kind::GOAL_HALTED.name() {
+        boxed!(GoalHaltedPayload)
     } else if kind_name == kind::MEMORY_READ.name() {
         boxed!(MemoryReadPayload)
     } else if kind_name == kind::MEMORY_WRITE.name() {
@@ -828,6 +836,54 @@ pub struct OrchestratorWakePayload {
     pub reason: String,
 }
 impl_event_payload!(OrchestratorWakePayload, kind::ORCHESTRATOR_WAKE);
+
+/// Typed gate verdict emitted after a bounded goal pass. Mirrors
+/// [`crate::types::goal::GateVerdict`] plus the pass coordinates so observers
+/// can see exactly what the gate decided and where in the budget it occurred.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct GoalGateVerdictPayload {
+    pub execution_id: String,
+    /// Zero-based index of the pass that produced this verdict.
+    pub iteration: usize,
+    pub max_iterations: usize,
+    /// Wire spelling of the gate status (`done` / `needs_more` / `blocked` / `unsafe`).
+    pub status: String,
+    pub reason: String,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub remaining: Vec<String>,
+}
+impl_event_payload!(GoalGateVerdictPayload, kind::GOAL_GATE_VERDICT);
+
+/// The goal converged: the gate reported the goal is met.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct GoalConvergedPayload {
+    pub execution_id: String,
+    pub iteration: usize,
+    pub reason: String,
+}
+impl_event_payload!(GoalConvergedPayload, kind::GOAL_CONVERGED);
+
+/// The goal needs another admitted pass; the runtime decided to iterate.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct GoalNeedsAnotherPassPayload {
+    pub execution_id: String,
+    pub iteration: usize,
+    /// Zero-based index of the next pass to run.
+    pub next_iteration: usize,
+    pub reason: String,
+}
+impl_event_payload!(GoalNeedsAnotherPassPayload, kind::GOAL_NEEDS_ANOTHER_PASS);
+
+/// The goal stopped without converging: blocked, unsafe, or pass budget spent.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct GoalHaltedPayload {
+    pub execution_id: String,
+    pub iteration: usize,
+    pub reason: String,
+    /// True when halting solely because the pass budget was exhausted.
+    pub exhausted: bool,
+}
+impl_event_payload!(GoalHaltedPayload, kind::GOAL_HALTED);
 
 /// A memory read event.
 #[derive(Debug, Clone, Serialize, Deserialize)]

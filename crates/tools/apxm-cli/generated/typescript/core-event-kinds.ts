@@ -51,6 +51,10 @@ export const EXECUTION_STARTED = kind("execution_started", "lifecycle");
 export const EXECUTE_COMPLETE = kind("execute_complete", "lifecycle", true);
 export const ORCHESTRATOR_SLEEP = kind("orchestrator_sleep", "lifecycle");
 export const ORCHESTRATOR_WAKE = kind("orchestrator_wake", "lifecycle", true);
+export const GOAL_GATE_VERDICT = kind("goal_gate_verdict", "lifecycle");
+export const GOAL_CONVERGED = kind("goal_converged", "lifecycle");
+export const GOAL_NEEDS_ANOTHER_PASS = kind("goal_needs_another_pass", "lifecycle");
+export const GOAL_HALTED = kind("goal_halted", "lifecycle");
 export const MEMORY_READ = kind("memory_read", "observability");
 export const MEMORY_WRITE = kind("memory_write", "observability");
 export const CHECKPOINT_SAVED = kind("checkpoint_saved", "lifecycle");
@@ -116,6 +120,10 @@ export const CORE_EVENT_KINDS = [
   EXECUTE_COMPLETE,
   ORCHESTRATOR_SLEEP,
   ORCHESTRATOR_WAKE,
+  GOAL_GATE_VERDICT,
+  GOAL_CONVERGED,
+  GOAL_NEEDS_ANOTHER_PASS,
+  GOAL_HALTED,
   MEMORY_READ,
   MEMORY_WRITE,
   CHECKPOINT_SAVED,
