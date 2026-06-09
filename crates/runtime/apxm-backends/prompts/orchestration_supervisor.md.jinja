@@ -49,3 +49,26 @@ Worker outputs are supplied by the workflow session for the gate step.
 {{ supervisor.instructions }}
 
 Return gate decision, failed assumptions, merge/conflict notes, and next feedback action.
+
+## Required Verdict (machine-read)
+
+End your response with a single fenced JSON object — and nothing after it — that
+the runtime parses to decide convergence. It must be valid JSON of this shape:
+
+{% raw %}
+```json
+{
+  "status": "done | needs_more | blocked | unsafe",
+  "reason": "one-sentence justification",
+  "remaining": ["concrete unfinished item", "..."],
+  "confidence": 0.0
+}
+```
+{% endraw %}
+
+- `status` — `done` if this bounded pass met the goal; `needs_more` if another
+  admitted pass is warranted; `blocked` if external input is required; `unsafe`
+  if continuing would violate policy.
+- `remaining` — the concrete items still outstanding when `status` is
+  `needs_more`; an empty list otherwise. They are carried into the next pass.
+- `reason` — a short justification a human can read in the decision log.
