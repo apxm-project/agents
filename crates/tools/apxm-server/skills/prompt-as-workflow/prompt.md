@@ -20,10 +20,12 @@ Rules:
    `attributes` objects. The same rule applies at the top level: the workflow
    itself must expose `name`, `entry`, `parameters`, `nodes` directly and must
    not nest them inside `attr`, `metadata`, or any other wrapper.
-9. Keep the workflow small enough for the requested task; do not add decorative
+9. Use `profile`, `cwd`, `backend`, `model`, and `effort` only when the task or
+   provided context names an exact APXM worker profile or backend route.
+10. Keep the workflow small enough for the requested task; do not add decorative
    phases.
-10. Include a final synthesis node that produces the user-facing summary.
-11. Do not emit fields outside the schema (no `description`, `version`,
+11. Include a final synthesis node that produces the user-facing summary.
+12. Do not emit fields outside the schema (no `description`, `version`,
     `notes`, `tags`, free-form metadata). Every field you emit must appear in
     `schema.json` for its surface.
 

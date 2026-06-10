@@ -117,7 +117,7 @@ impl SkillResolver for SkillLibrarySkillResolver {
         let resolved_version = manifest.version.clone();
 
         // Step 1b: visible-set gate — target must be in the caller's visible set
-        // (shared tier or explicitly imported). Absent imports = unrestricted (back-compat).
+        // (shared tier or explicitly imported).
         let lib_id = executable.record.pack.as_ref().map(|p| p.pack_id.clone());
         let shared = manifest.shared
             || self
@@ -321,16 +321,14 @@ fn build_child_metadata(
 }
 
 /// Returns true if the target skill is in the caller's visible set.
-/// `None` parent set = unrestricted (back-compat).
+/// `None` is treated the same as an empty import set: only shared skills are visible.
 fn skill_visible(
     parent_visible: Option<&str>,
     skill_id: &str,
     library: Option<&str>,
     shared: bool,
 ) -> bool {
-    let Some(csv) = parent_visible else {
-        return true;
-    };
+    let csv = parent_visible.unwrap_or_default();
     let imports = csv
         .split(',')
         .map(|s| s.trim().to_string())
@@ -490,9 +488,9 @@ mod visible_set_tests {
     use super::skill_visible;
 
     #[test]
-    fn none_visible_set_is_unrestricted() {
-        // No declared imports => back-compat: any CALL_SKILL is allowed.
-        assert!(skill_visible(None, "anything", Some("lib"), false));
+    fn none_visible_set_only_sees_shared_skills() {
+        assert!(!skill_visible(None, "anything", Some("lib"), false));
+        assert!(skill_visible(None, "anything", Some("lib"), true));
     }
 
     #[test]

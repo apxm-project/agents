@@ -52,7 +52,7 @@ pub(crate) struct ExecuteRequest {
     /// perform writes. Read-only and sandboxed capabilities never need listing.
     #[serde(default)]
     pub(crate) admit_capabilities: Vec<String>,
-    /// Visible skill set (lib / lib::skill / skill ids). Empty = unrestricted (back-compat).
+    /// Visible skill set (lib / lib::skill / skill ids). Empty means only shared skills.
     #[serde(default)]
     pub(crate) imports: Vec<String>,
 }
@@ -137,13 +137,10 @@ pub(crate) fn admit_grant_metadata(
         apxm_runtime::metadata_keys::SIDE_EFFECT_POLICY.to_string(),
         policy.name(),
     );
-    // Absent = unrestricted CALL_SKILL (back-compat).
-    if !imports.is_empty() {
-        metadata.insert(
-            apxm_runtime::metadata_keys::VISIBLE_SKILLS.to_string(),
-            imports.join(","),
-        );
-    }
+    metadata.insert(
+        apxm_runtime::metadata_keys::VISIBLE_SKILLS.to_string(),
+        imports.join(","),
+    );
     metadata
 }
 

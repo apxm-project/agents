@@ -99,8 +99,6 @@ pub(crate) fn build_app(state: AppState) -> Router {
         // A2A v0.3 - AgentCard discovery + REST task lifecycle
         .route(ServerRoute::AgentCard.path(), get(agent_card))
         .route(ServerRoute::A2a.path(), post(a2a_jsonrpc))
-        // Peer-convention alias: apxm-os / os-client post tasks/send to /a2a/v1.
-        .route(ServerRoute::A2aV1.path(), post(a2a_jsonrpc))
         .route(ServerRoute::A2aTasksSend.path(), post(a2a_send_task))
         .route(ServerRoute::A2aTaskDetail.path(), get(a2a_get_task))
         // LLM generation routes

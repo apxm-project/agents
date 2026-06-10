@@ -15,7 +15,7 @@ contract is committed to.
   checksums, and explicit GitHub publishing through `gh`.
 
 ### Removed
-- Removed the last `service-start` compatibility stub from the Dekk vLLM
+- Removed the last `service-start` command stub from the Dekk vLLM
   surface. The model zoo manifest remains the only service launch path.
 
 ### Fixed — fork-side v0.21.0 rebase regression
@@ -102,8 +102,8 @@ contract is committed to.
 
 ### Added — plans-as-graphs
 - LLM PLAN prompt teaches the `inner_plan.task_dag` schema with three
-  worked examples (fan-out, diamond, linear). Backwards-compatible:
-  the legacy `plan: [steps]` shape still parses.
+  worked examples (fan-out, diamond, linear). The canonical `task_dag`
+  shape is the supported plan payload.
 - `PLAN_GRAPH_EMITTED` event + `PlanGraphEmittedPayload`
   (`plan_id`, `generating_model`, `node_count`, `task_ids`,
   `parallel_fanout_max`) — lets trace consumers tell apart

@@ -127,7 +127,6 @@ const FIXTURE_OUTPUT_V2: &str = "ok-v2";
 const FIXTURE_AAM_KEY: &str = "fixture_mcp_belief";
 const FIXTURE_AAM_VALUE: &str = "mcp memory ready";
 const FIXTURE_AAM_QUERY: &str = "fixture_mcp";
-const FIXTURE_EVIDENCE_PATH: &str = ".apxm/docs/evaluation/MCP-SERVER-PLAN.md";
 const FIXTURE_EVIDENCE_QUERY: &str = "rust implementation";
 const FIXTURE_PLAN_BACKEND: &str = "mock-plan";
 const FIXTURE_PLAN_NAME: &str = "fixture_generated_plan";
@@ -143,7 +142,11 @@ const FIXTURE_PLAN_OP_YIELD: &str = "yield";
 const FIXTURE_PLAN_OP_ASK: &str = "ask";
 const FIXTURE_PLAN_OP_INV_TOOL: &str = "inv_tool";
 const FIXTURE_PLAN_OP_UNKNOWN: &str = "unknown_op";
-const FIXTURE_PLAN_ATTR_ALIAS: &str = "attr";
+const FIXTURE_WORKER_PROFILE: &str = "codex";
+const FIXTURE_WORKER_CWD: &str = "/tmp/apxm-worker";
+const FIXTURE_BACKEND: &str = "local";
+const FIXTURE_MODEL: &str = "test-model";
+const FIXTURE_EFFORT: &str = "medium";
 const FIXTURE_WRITE_TOOL: &str = apxm_core::constants::capabilities::WRITE;
 const FIXTURE_NODE_ID: u64 = 1;
 const FIXTURE_COMPILER_VERSION: &str = "test-compiler";
@@ -601,34 +604,30 @@ fn mock_named_dependency_plan_response() -> serde_json::Value {
             {
                 (plan_field::ID): FIXTURE_PLAN_SUMMARY_NODE_NAME,
                 (plan_field::OP): FIXTURE_PLAN_OP_YIELD,
-                (FIXTURE_PLAN_ATTR_ALIAS): {
-                    (plan_field::PROMPT): "Summarize risk from the README inspection."
-                },
+                (plan_field::PROMPT): "Summarize risk from the README inspection.",
                 (plan_field::DEPENDS_ON): [FIXTURE_PLAN_INSPECT_NODE_NAME]
             }
         ]
     })
 }
 
-fn mock_top_level_attr_alias_plan_response() -> serde_json::Value {
-    // Exercises normalize_plan_top_level_attribute_aliases: the model nests
-    // the entire graph inside a top-level `attr` wrapper and also volunteers
-    // an unrelated `description` field. The normalizer must lift the nested
-    // fields and strip the stray top-level keys before serde sees them.
+fn mock_routed_plan_response() -> serde_json::Value {
     serde_json::json!({
-        (FIXTURE_PLAN_ATTR_ALIAS): {
-            (plan_field::NAME): FIXTURE_PLAN_NAME,
-            (plan_field::ENTRY): FIXTURE_ENTRY_FLOW,
-            (plan_field::NODES): [
-                {
-                    (plan_field::ID): FIXTURE_NODE_ID,
-                    (plan_field::NAME): FIXTURE_PLAN_NODE_NAME,
-                    (plan_field::OP): FIXTURE_PLAN_OP_YIELD,
-                    (plan_field::PROMPT): FIXTURE_OUTPUT
-                }
-            ]
-        },
-        "description": "free-form metadata the model volunteered"
+        (plan_field::NAME): FIXTURE_PLAN_NAME,
+        (plan_field::ENTRY): FIXTURE_ENTRY_FLOW,
+        (plan_field::NODES): [
+            {
+                (plan_field::ID): FIXTURE_NODE_ID,
+                (plan_field::NAME): FIXTURE_PLAN_NODE_NAME,
+                (plan_field::OP): FIXTURE_PLAN_OP_ASK,
+                (plan_field::PROMPT): FIXTURE_OUTPUT,
+                (plan_field::PROFILE): FIXTURE_WORKER_PROFILE,
+                (plan_field::CWD): FIXTURE_WORKER_CWD,
+                (plan_field::BACKEND): FIXTURE_BACKEND,
+                (plan_field::MODEL): FIXTURE_MODEL,
+                (plan_field::EFFORT): FIXTURE_EFFORT
+            }
+        ]
     })
 }
 

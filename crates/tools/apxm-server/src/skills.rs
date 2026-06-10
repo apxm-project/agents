@@ -1585,9 +1585,9 @@ upstream = "https://github.com/obra/superpowers"
     }
 
     #[test]
-    fn load_pack_info_returns_none_for_legacy_layout() {
+    fn load_pack_info_returns_none_for_unpackaged_skill_dir() {
         let tmp = tempfile::tempdir().expect("tempdir");
-        let skill_dir = tmp.path().join("legacy-skill");
+        let skill_dir = tmp.path().join("unpackaged-skill");
         fs::create_dir_all(&skill_dir).expect("mkdir");
         assert!(load_pack_info(&skill_dir).is_none());
     }

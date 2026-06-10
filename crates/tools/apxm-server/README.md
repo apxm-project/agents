@@ -74,7 +74,7 @@ The HTTP MCP endpoint also exposes APXM skill library tools:
 - `skill_get` -- return one skill manifest and validation record
 - `skill_validate` -- re-read and validate one installed skill
 - `skill_call` -- execute a static skill artifact from the server-owned library
-- `prompt_as_workflow` -- route prompt-to-workflow emission through `model_router`, validate/repair the emitted JSON with compiler feedback, canonicalize common structured-output drift, lower through `AirModule`, compile, optionally execute, and return a compact summary with `trace_id`
+- `prompt_as_workflow` -- route prompt-to-workflow emission through `model_router`, validate/repair the emitted JSON with compiler feedback, lower through `AirModule`, compile, optionally execute, and return a compact summary with `trace_id`
 - `trace_fetch` -- fetch execution, episodic, or session trace details by `trace_id`
 - `aam_recall` -- query AAM beliefs/goals/transitions plus runtime memory
 - `evidence_lookup` -- query repo-local `.apxm` claim/evaluation evidence
@@ -134,8 +134,8 @@ pass sandbox preflight, and HTTP MCP executions are recorded with
 `execution_id == trace_id` so `trace_fetch` can retrieve them directly.
 Plan emission also adds runtime capability guidance to the model prompt and
 canonicalizes numeric-string and symbolic node ids, named dependency
-references, shorthand `depends_on` node references, legacy `attr` spellings, and missing
-generated names before typed validation. Plan emission is bounded by
+references, shorthand `depends_on` node references, and missing generated names
+before typed validation. Plan emission is bounded by
 `server.mcp.plan_emit_timeout_ms` or `APXM_MCP_PLAN_EMIT_TIMEOUT_MS`; if the
 model route times out, the tool returns an explicit MCP tool error instead of
 compiling a generic workflow.

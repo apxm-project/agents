@@ -2357,14 +2357,8 @@ async fn mcp_prompt_as_workflow_repairs_invalid_candidate_before_compile() {
 }
 
 #[tokio::test]
-async fn mcp_prompt_as_workflow_normalizes_top_level_attribute_alias() {
-    // A plan wrapped in a top-level `attr` alias with a stray `description`
-    // field must compile on the first try via the
-    // normalize_plan_top_level_attribute_aliases pass — without it, the
-    // wrapper would burn a repair turn before serde could parse the graph.
-    let app = build_app(
-        test_state_with_mock_plan_response(mock_top_level_attr_alias_plan_response()).await,
-    );
+async fn mcp_prompt_as_workflow_preserves_worker_and_backend_routing_fields() {
+    let app = build_app(test_state_with_mock_plan_response(mock_routed_plan_response()).await);
 
     let (status, body) = post_json(
         app,
@@ -2382,29 +2376,22 @@ async fn mcp_prompt_as_workflow_normalizes_top_level_attribute_alias() {
     assert_eq!(
         status,
         StatusCode::OK,
-        "mcp top-level attr-alias normalization failed: {body}"
+        "mcp routed workflow compile failed: {body}"
     );
     assert_eq!(
         body[tool_result::RESULT][mcp_fields::IS_ERROR],
         false,
-        "top-level attr-alias normalization returned an error: {body}"
+        "routed workflow compile returned an error: {body}"
     );
     let response: serde_json::Value =
         serde_json::from_str(tool_text(&body)).expect("plan response JSON");
     assert_eq!(response[tool_result::STATUS], mcp_status::COMPILED);
-    assert_eq!(
-        response[tool_result::WORKFLOW][plan_field::NAME],
-        FIXTURE_PLAN_NAME
-    );
-    assert_eq!(
-        response[tool_result::WORKFLOW][plan_field::NODES][0][plan_field::OP],
-        FIXTURE_PLAN_OP_YIELD
-    );
-    // The stray top-level field must not survive normalization.
-    assert!(
-        response[tool_result::WORKFLOW].get("description").is_none(),
-        "stray top-level field leaked into normalized plan: {response}"
-    );
+    let node = &response[tool_result::WORKFLOW][plan_field::NODES][0];
+    assert_eq!(node[plan_field::PROFILE], FIXTURE_WORKER_PROFILE);
+    assert_eq!(node[plan_field::CWD], FIXTURE_WORKER_CWD);
+    assert_eq!(node[plan_field::BACKEND], FIXTURE_BACKEND);
+    assert_eq!(node[plan_field::MODEL], FIXTURE_MODEL);
+    assert_eq!(node[plan_field::EFFORT], FIXTURE_EFFORT);
 }
 
 #[tokio::test]
@@ -2650,11 +2637,22 @@ async fn mcp_aam_recall_returns_matching_beliefs() {
 #[tokio::test]
 async fn mcp_evidence_lookup_reads_repo_local_apxm_docs() {
     let app = build_app(test_state().await);
-    let evidence_path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+    let evidence_dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
         .ancestors()
         .nth(3)
         .expect("workspace root")
-        .join(FIXTURE_EVIDENCE_PATH);
+        .join(".apxm")
+        .join("docs")
+        .join("evaluation")
+        .join("test-fixtures")
+        .join(std::process::id().to_string());
+    std::fs::create_dir_all(&evidence_dir).expect("create evidence fixture dir");
+    let evidence_path = evidence_dir.join("MCP-SERVER-PLAN.md");
+    std::fs::write(
+        &evidence_path,
+        format!("# MCP Server Plan\n\nThis fixture covers {FIXTURE_EVIDENCE_QUERY} evidence.\n"),
+    )
+    .expect("write evidence fixture");
 
     let (status, body) = post_json(
         app,
@@ -2684,6 +2682,8 @@ async fn mcp_evidence_lookup_reads_repo_local_apxm_docs() {
             .ends_with("MCP-SERVER-PLAN.md"),
         "matches: {response}"
     );
+    let _ = std::fs::remove_file(evidence_path);
+    let _ = std::fs::remove_dir(evidence_dir);
 }
 
 #[tokio::test]

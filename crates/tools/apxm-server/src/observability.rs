@@ -18,8 +18,8 @@
 //! configured through layered APXM server config, with the standard OTLP env
 //! var applied as a startup override.
 //!
-//! Backwards-compatible: if the env var is unset, `init` returns
-//! `Ok(None)` and `OtelEmitter::dispatch` is a no-op.
+//! If the env var is unset, `init` returns `Ok(None)` and
+//! `OtelEmitter::dispatch` is a no-op.
 
 use std::sync::Arc;
 

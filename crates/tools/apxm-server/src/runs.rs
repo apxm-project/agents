@@ -11,9 +11,8 @@
 //! late-attaching observer can replay from `seq=0` then tail live.
 //! Events also fan out to a tokio broadcast channel for streaming.
 //!
-//! Backwards-compatible: the producer-side `/v1/skills/.../execute`
-//! routes are untouched and observers that don't know about
-//! `/v1/runs` simply ignore it.
+//! This observer surface is additive: producers keep writing normal execution
+//! events, and `/v1/runs` gives clients a read-only view over those records.
 
 use std::collections::{HashMap, VecDeque};
 use std::convert::Infallible;
@@ -1008,25 +1007,15 @@ pub(crate) async fn get_run_blob(
         .and_then(|s| s.to_str())
         .unwrap_or("");
     let sidecar = parent.join(stem);
-    // Try both common extensions — blobs are serialized as JSON today but
-    // the layout allows for `.txt` legacy blobs.
-    let candidates = ["json", "txt"];
-    for ext in candidates {
-        let blob_path = sidecar.join("blobs").join(format!("{blob_ref}.{ext}"));
-        if blob_path.exists() {
-            let bytes = tokio::fs::read(&blob_path).await.map_err(|error| {
-                ApiError::internal_message(format!("failed to read blob: {error}"))
-            })?;
-            let mime = if ext == "json" {
-                "application/json"
-            } else {
-                "text/plain"
-            };
-            return Ok(Response::builder()
-                .header(header::CONTENT_TYPE, mime)
-                .body(Body::from(bytes))
-                .unwrap());
-        }
+    let blob_path = sidecar.join("blobs").join(format!("{blob_ref}.json"));
+    if blob_path.exists() {
+        let bytes = tokio::fs::read(&blob_path)
+            .await
+            .map_err(|error| ApiError::internal_message(format!("failed to read blob: {error}")))?;
+        return Ok(Response::builder()
+            .header(header::CONTENT_TYPE, "application/json")
+            .body(Body::from(bytes))
+            .unwrap());
     }
     Err(ApiError::not_found(format!(
         "blob {blob_ref} not found for run {execution_id}"

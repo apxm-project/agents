@@ -25,6 +25,50 @@ async fn models_returns_json_array() {
     );
 }
 
+// ── /v1/capabilities/register ────────────────────────────────────────────
+
+#[tokio::test]
+async fn capability_register_requires_explicit_kind() {
+    let app = build_app(test_state().await);
+    let (status, body) = post_json(
+        app,
+        routes::CAPABILITIES_REGISTER,
+        serde_json::json!({
+            "name": "test.static",
+            "description": "test static capability",
+            "parameters_schema": {},
+            "static_response": { "ok": true }
+        }),
+    )
+    .await;
+
+    assert_eq!(status, StatusCode::BAD_REQUEST, "unexpected body: {body}");
+    assert!(
+        body.to_string().contains("requires explicit kind"),
+        "expected explicit kind error: {body}"
+    );
+}
+
+#[tokio::test]
+async fn capability_register_accepts_explicit_static_kind() {
+    let app = build_app(test_state().await);
+    let (status, body) = post_json(
+        app,
+        routes::CAPABILITIES_REGISTER,
+        serde_json::json!({
+            "name": "test.static",
+            "description": "test static capability",
+            "parameters_schema": {},
+            "kind": "static",
+            "static_response": { "ok": true }
+        }),
+    )
+    .await;
+
+    assert_eq!(status, StatusCode::OK, "register failed: {body}");
+    assert_eq!(body["name"], "test.static");
+}
+
 // ── /v1/memory (LTM facts) ────────────────────────────────────────────────
 
 #[tokio::test]

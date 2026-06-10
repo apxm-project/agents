@@ -33,10 +33,6 @@ pub(crate) const CHECKPOINT_DETAIL: &str = "/v1/checkpoints/{id}";
 pub(crate) const CHECKPOINT_RESUME: &str = "/v1/checkpoints/{id}/resume";
 pub(crate) const AGENT_CARD: &str = "/.well-known/agent.json";
 pub(crate) const A2A: &str = "/a2a";
-/// Alias for the JSON-RPC endpoint matching the peer convention apxm-os and the
-/// `os-client` A2A client use (`/a2a/v1`); see os-core `peer.rs`. Without it,
-/// os->apxm-server `tasks/send` 404s.
-pub(crate) const A2A_V1: &str = "/a2a/v1";
 pub(crate) const A2A_TASKS_SEND: &str = "/a2a/tasks/send";
 pub(crate) const A2A_TASK_DETAIL: &str = "/a2a/tasks/{id}";
 pub(crate) const GENERATE: &str = "/v1/generate";
@@ -89,7 +85,6 @@ pub(crate) enum ServerRoute {
     CheckpointResume,
     AgentCard,
     A2a,
-    A2aV1,
     A2aTasksSend,
     A2aTaskDetail,
     Generate,
@@ -142,7 +137,6 @@ impl ServerRoute {
             Self::CheckpointResume => CHECKPOINT_RESUME,
             Self::AgentCard => AGENT_CARD,
             Self::A2a => A2A,
-            Self::A2aV1 => A2A_V1,
             Self::A2aTasksSend => A2A_TASKS_SEND,
             Self::A2aTaskDetail => A2A_TASK_DETAIL,
             Self::Generate => GENERATE,

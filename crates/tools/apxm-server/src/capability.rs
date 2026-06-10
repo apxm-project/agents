@@ -109,8 +109,7 @@ pub(crate) struct RegisterCapabilityRequest {
     /// Optional tags for inventory and routing.
     #[serde(default)]
     tags: Vec<String>,
-    /// If set, an `HttpCapability` is created that POSTs to this URL.
-    /// Takes priority over `static_response`.
+    /// Endpoint used by `kind=http`.
     #[serde(default)]
     endpoint: Option<String>,
     /// Timeout in milliseconds for HTTP capability calls (default: 30 000).
@@ -121,13 +120,12 @@ pub(crate) struct RegisterCapabilityRequest {
     /// accepts the call. Omit for loopback-trusted endpoints.
     #[serde(default)]
     headers: Option<HashMap<String, String>>,
-    /// Fallback: return a fixed static value (used when `endpoint` is absent).
+    /// Static capability response for `kind=static`.
     #[serde(default)]
     static_response: JsonValue,
     /// Explicit backing kind for the capability-id contract:
     /// `provider` (REST via apxm-auth /proxy — the connector default),
     /// `http` (forward to `endpoint`), `static`, or `mcp` (MCP-server bridge).
-    /// When unset, falls back to the legacy endpoint/static selection.
     #[serde(default)]
     kind: Option<String>,
     /// MCP server URL for `kind=mcp`.
@@ -437,17 +435,12 @@ pub(crate) async fn register_capability(
         metadata = metadata.with_tags(req.tags.clone());
     }
 
-    // Resolve the backing kind. Explicit `kind` wins; otherwise fall back to the
-    // legacy selection (endpoint => http, else static). This is the seam the
-    // pack loader uses (kind=provider for connector blocks) and where the future
-    // `mcp` bridge plugs in — the capability-id contract is unchanged either way.
-    let kind = req.kind.clone().unwrap_or_else(|| {
-        if req.endpoint.is_some() {
-            "http".into()
-        } else {
-            "static".into()
-        }
-    });
+    let kind = req.kind.clone().ok_or_else(|| {
+        ApiError::bad_request(
+            "capability registration requires explicit kind: provider, http, mcp, or static"
+                .to_string(),
+        )
+    })?;
 
     let capability: Arc<dyn CapabilityExecutor> = match kind.as_str() {
         "provider" => {
@@ -500,8 +493,7 @@ pub(crate) async fn register_capability(
                     })?,
             })
         }
-        _ => {
-            // Static capability — always returns the same configured value.
+        "static" => {
             let response_value = Value::try_from(req.static_response)
                 .map_err(|e| ApiError::bad_request(e.to_string()))?;
             info!(name = %req.name, "registering static capability");
@@ -509,6 +501,12 @@ pub(crate) async fn register_capability(
                 metadata,
                 static_response: response_value,
             })
+        }
+        _ => {
+            return Err(ApiError::bad_request(format!(
+                "unknown capability kind '{}'; expected provider, http, mcp, or static",
+                kind
+            )));
         }
     };
 
