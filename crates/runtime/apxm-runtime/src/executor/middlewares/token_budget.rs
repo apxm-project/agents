@@ -92,7 +92,9 @@ mod tests {
         let error = OperationDispatcher::dispatch(&ctx, &node, vec![])
             .await
             .unwrap_err();
-        assert!(matches!(error, RuntimeError::Operation { op_type, .. } if op_type == AISOperationType::Nop));
+        assert!(
+            matches!(error, RuntimeError::Operation { op_type, .. } if op_type == AISOperationType::Nop)
+        );
     }
 
     #[tokio::test]
@@ -104,7 +106,11 @@ mod tests {
         ctx.consumed_tokens.store(10, Ordering::Relaxed);
         // Nop dispatches to a passthrough; within budget it must not error.
         let node = Node::new(8, AISOperationType::Nop);
-        assert!(OperationDispatcher::dispatch(&ctx, &node, vec![]).await.is_ok());
+        assert!(
+            OperationDispatcher::dispatch(&ctx, &node, vec![])
+                .await
+                .is_ok()
+        );
     }
 
     #[tokio::test]
@@ -114,6 +120,10 @@ mod tests {
             .with_middlewares(vec![Arc::new(TokenBudgetMiddleware::new())]);
         ctx.consumed_tokens.store(1_000_000, Ordering::Relaxed);
         let node = Node::new(9, AISOperationType::Nop);
-        assert!(OperationDispatcher::dispatch(&ctx, &node, vec![]).await.is_ok());
+        assert!(
+            OperationDispatcher::dispatch(&ctx, &node, vec![])
+                .await
+                .is_ok()
+        );
     }
 }

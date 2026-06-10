@@ -18,6 +18,7 @@ path = "src/bin/apxm_mcp.rs"
 
 [dependencies]
 apxm-ais.workspace = true
+apxm-acp.workspace = true
 apxm-artifact.workspace = true
 apxm-compiler.workspace = true
 apxm-core.workspace = true
@@ -40,6 +41,7 @@ axum.workspace = true
 futures.workspace = true
 serde.workspace = true
 serde_json.workspace = true
+shell-words = "1.1"
 toml.workspace = true
 mimalloc = { version = "0.1", default-features = false }
 tokio = { workspace = true, features = ["macros", "rt-multi-thread", "sync", "signal", "time"] }

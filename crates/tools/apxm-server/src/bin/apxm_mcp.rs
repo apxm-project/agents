@@ -34,6 +34,8 @@ use apxm_core::types::execution::ExecutionDag;
 use apxm_core::types::{AIS_OPERATIONS, OptimizationLevel};
 use serde_json::{Value, json};
 
+#[path = "../config_layers.rs"]
+mod config_layers;
 #[path = "../mcp_protocol.rs"]
 mod mcp_protocol;
 #[path = "../mcp_tools.rs"]
@@ -903,19 +905,21 @@ fn build_suggestions(
 // ---------------------------------------------------------------------------
 
 fn tool_prompt_as_workflow(args: Value) -> Result<String, String> {
-    run_with_stdio_runtime(
-        |runtime| async move { mcp_tools::prompt_as_workflow(&runtime, args).await },
-    )
+    run_with_stdio_runtime(|runtime, server_config| async move {
+        mcp_tools::prompt_as_workflow_with_recorder(&runtime, args, None, &server_config.mcp).await
+    })
 }
 
 fn tool_trace_fetch(args: Value) -> Result<String, String> {
-    run_with_stdio_runtime(|runtime| async move {
+    run_with_stdio_runtime(|runtime, _server_config| async move {
         mcp_tools::trace_fetch(Some(&runtime), None, args).await
     })
 }
 
 fn tool_aam_recall(args: Value) -> Result<String, String> {
-    run_with_stdio_runtime(|runtime| async move { mcp_tools::aam_recall(&runtime, args).await })
+    run_with_stdio_runtime(|runtime, _server_config| async move {
+        mcp_tools::aam_recall(&runtime, args).await
+    })
 }
 
 fn tool_evidence_lookup(args: Value) -> Result<String, String> {
@@ -924,12 +928,14 @@ fn tool_evidence_lookup(args: Value) -> Result<String, String> {
 }
 
 fn tool_capability_list(args: Value) -> Result<String, String> {
-    run_with_stdio_runtime(|runtime| async move { Ok(mcp_tools::capability_list(&runtime, args)) })
+    run_with_stdio_runtime(|runtime, _server_config| async move {
+        Ok(mcp_tools::capability_list(&runtime, args))
+    })
 }
 
 fn run_with_stdio_runtime<F, Fut>(f: F) -> Result<String, String>
 where
-    F: FnOnce(apxm_runtime::Runtime) -> Fut,
+    F: FnOnce(apxm_runtime::Runtime, apxm_driver::ServerConfig) -> Fut,
     Fut: std::future::Future<Output = Result<Value, String>>,
 {
     let rt = tokio::runtime::Builder::new_current_thread()
@@ -937,11 +943,13 @@ where
         .build()
         .map_err(|error| format!("tokio runtime init failed: {error}"))?;
     let output = rt.block_on(async {
+        let server_config = config_layers::server_config_from_layers()
+            .map_err(|error| format!("server config init failed: {error}"))?;
         let runtime =
             runtime_setup::build_runtime_with_router(apxm_runtime::RuntimeConfig::default(), None)
                 .await
                 .map_err(|error| format!("runtime init failed: {error}"))?;
-        f(runtime).await
+        f(runtime, server_config).await
     })?;
     serde_json::to_string_pretty(&output).map_err(|error| error.to_string())
 }

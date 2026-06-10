@@ -24,8 +24,16 @@ pub fn assemble_from(start: &Path, home: Option<&Path>) -> Option<String> {
 
     // Global tier — shared across every project (lowest precedence, read first).
     if let Some(home) = home {
-        push_file(&mut sections, &home.join(".apxm/AGENTS.md"), "~/.apxm/AGENTS.md");
-        push_file(&mut sections, &home.join(".claude/CLAUDE.md"), "~/.claude/CLAUDE.md");
+        push_file(
+            &mut sections,
+            &home.join(".apxm/AGENTS.md"),
+            "~/.apxm/AGENTS.md",
+        );
+        push_file(
+            &mut sections,
+            &home.join(".claude/CLAUDE.md"),
+            "~/.claude/CLAUDE.md",
+        );
     }
 
     // Project tier — ancestor-first from the git root down to `start`.
@@ -96,8 +104,14 @@ mod tests {
 
         let out = assemble_from(&sub, None).expect("context");
         // Both files present, ancestor (root) before the more specific (svc).
-        assert!(out.contains("root rules") && out.contains("svc rules"), "{out}");
-        assert!(out.find("root rules").unwrap() < out.find("svc rules").unwrap(), "{out}");
+        assert!(
+            out.contains("root rules") && out.contains("svc rules"),
+            "{out}"
+        );
+        assert!(
+            out.find("root rules").unwrap() < out.find("svc rules").unwrap(),
+            "{out}"
+        );
     }
 
     #[test]
@@ -119,7 +133,10 @@ mod tests {
 
         let out = assemble_from(&repo, None).expect("context");
         assert!(out.contains("inside repo"));
-        assert!(!out.contains("OUTSIDE"), "must not walk past git root: {out}");
+        assert!(
+            !out.contains("OUTSIDE"),
+            "must not walk past git root: {out}"
+        );
     }
 
     #[test]
@@ -134,6 +151,9 @@ mod tests {
         fs::write(proj.join("AGENTS.md"), "project rules").unwrap();
 
         let out = assemble_from(&proj, Some(&home)).expect("context");
-        assert!(out.find("global rules").unwrap() < out.find("project rules").unwrap(), "{out}");
+        assert!(
+            out.find("global rules").unwrap() < out.find("project rules").unwrap(),
+            "{out}"
+        );
     }
 }

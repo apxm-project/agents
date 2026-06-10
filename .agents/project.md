@@ -1,9 +1,9 @@
 # APXM — agent-facing project memory
 
-This file is the single source of truth (SSOT) for every coding agent that
-enters this repository (Claude Code, Codex CLI, Cursor, Aider, Gemini, etc.).
-Both `CLAUDE.md` and `AGENTS.md` in the repo root are generated from this
-file by `dekk apxm skills generate`. Edit this file, then regenerate.
+The `.agents/` tree is the single source of truth (SSOT) for every coding
+agent that enters this repository (Claude Code, Codex CLI, Cursor, Aider,
+Gemini, etc.). Repo-root agent files are generated from `.agents/project.md`
+by `dekk apxm skills generate`; edit `.agents/` sources, then regenerate.
 
 ## 1. What APXM is
 
@@ -29,6 +29,9 @@ Command groups (see `dekk apxm --help` for the live list):
   `test-python-frontend`, `codegen`, `clean`, `scrub-rustc-cache`
 - **Compilation**: `compile`, `execute`, `run`, `decompile`
 - **Authoring**: `validate`, `analyze`, `explain`, `gui`, `tokenize`
+- **Goals & Workflows**: `goal`, `workflow`; MCP callers use
+  `goal_start`, `workflow_start`, `workflow_status`,
+  `workflow_events`, `workflow_cancel`, and `prompt_as_workflow`
 - **Configuration**: `doctor`, `backend`, `vllm`, `agent`, `tool`, `cache`,
   `process`, `mcp`, `server`, `commit-lint`, `install-hooks`
 - **Discovery**: `ops`, `template`
@@ -40,33 +43,42 @@ Command groups (see `dekk apxm --help` for the live list):
 If a needed action isn't yet wrapped, **add a Dekk command** in `.dekk.toml`
 rather than shelling out — that is the project-wide pattern.
 
+For complex bounded work, prefer the native APXM control plane instead of
+manual subagent prompting. Use `dekk apxm goal` for role-based fan-out/fan-in
+with worker admission and sleep/wake events. MCP callers call `goal_start`
+once, then observe or stop the run with `workflow_status`,
+`workflow_events`, and `workflow_cancel`. Checked-in `.apxmw` workflows use
+`dekk apxm workflow` or `workflow_start`; natural-language workflow drafts use
+`prompt_as_workflow` and remain proposals until APXM validates and admits
+them.
+
 ## 3. Lifecycle workflow
 
 Every non-trivial session ceremonially routes through 6 lifecycle skills.
 They are thin orchestrators (≤100 lines each) — they do not contain rule
 content themselves; they point at `_shared/` rules.
 
-1. **`/apxm-org:apxm-context`** — prime the session: `dekk apxm doctor`,
+1. **`apxm-context`** — prime the session: `dekk apxm doctor`,
    read `.agents/project.md`, pull the relevant `_shared/` rule, recall
    memory, confirm subsystem ownership. Run before any work touching >1
    file.
-2. **`/apxm-org:apxm-plan`** — write a plan before implementing. Required
+2. **`apxm-plan`** — write a plan before implementing. Required
    for changes that touch >3 files, modify a public API/AIS op, introduce
    a claim, or need GPU allocation.
-3. **`/apxm-org:apxm-execute-plan`** — drive an approved plan to
-   completion with `TaskCreate`/`TaskUpdate`, focused per-phase
+3. **`apxm-execute-plan`** — drive an approved plan to
+   completion with the current harness task tracker, focused per-phase
    verification, no scope creep.
-4. **`/apxm-org:apxm-simplify`** — remove copied `_shared/` text, weak
+4. **`apxm-simplify`** — remove copied `_shared/` text, weak
    abstractions, referential comments, and over-large skill bodies before
    declaring done.
-5. **`/apxm-org:apxm-finish`** — pre-claim gate: run focused
+5. **`apxm-finish`** — pre-claim gate: run focused
    `dekk apxm test`, `dekk apxm doctor`, `check_no_legacy_vllm.py
    --strict`, secrets scan, artifact-placement check. Refuse to claim
    "done" until all pass.
-6. **`/apxm-org:apxm-commit`** — pre-commit/pre-push gate: enforce the
+6. **`apxm-commit`** — pre-commit/pre-push gate: enforce the
    user's commit rules — no auto-commit, no push without explicit
-   approval, PRs only for pushed work, never push to `main`, never
-   `--no-verify`.
+   approval, PRs only for pushed work, push to `main` only when explicitly
+   authorized, never `--no-verify`.
 
 This is the *ironbear pattern* — each skill is a checkpoint, not a body of
 new content. Skills inside the lifecycle can invoke domain skills (e.g.
@@ -292,7 +304,7 @@ supported migration procedure.
 - Any `sudo` invocation.
 - Any `docker run/build/rm/rmi` or image-tag mutation.
 - Any Slurm submission (`sbatch`, `srun`, `salloc`).
-- Posting to Slack/email/webhooks.
+- Posting to external notification or webhook endpoints.
 - Any edit to `~/.apxm/config.toml`, `~/.bashrc`, `~/.gitconfig`,
   systemd units, cron entries, or `.claude/settings.local.json`.
 - Cross-crate refactors and changes to public APIs / AIS ops — these

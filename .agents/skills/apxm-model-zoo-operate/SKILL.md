@@ -1,6 +1,6 @@
 ---
 name: apxm-model-zoo-operate
-description: Use when adding, scaling, or probing models in the vLLM zoo (deploy/vllm/zoo*.toml). Enforces the docker-load → cache-warm → service-start → service-exec order and zoo-apply over service-start.
+description: Use when adding, scaling, or probing models in the vLLM zoo (deploy/vllm/zoo*.toml). Enforces docker-load then cache-warm then zoo-apply then service-exec/status; never use legacy service-start.
 user-invocable: true
 ---
 
@@ -15,11 +15,11 @@ Load `_shared/apxm-development-rules.md`,
 The pattern that prevents GPU-time-on-HF-download incidents:
 
 ```
-docker-load  →  cache-warm  →  service-start  →  service-exec
+docker-load  →  cache-warm  →  zoo-apply  →  service-exec/status
 ```
 
 `docker-load` and `cache-warm` run **without** a GPU allocation.
-`service-start` (via `zoo-apply`) is the first GPU-allocating step.
+`zoo-apply` reconciles services and is the first GPU-allocating step.
 See `apxm_model_zoo_deploy_pattern` memory.
 
 ## Canonical commands

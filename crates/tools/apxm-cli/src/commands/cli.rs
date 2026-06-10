@@ -362,20 +362,20 @@ pub struct GoalArgs {
     #[arg(long = "depends", value_name = "WORKER=DEP1,DEP2")]
     pub depends: Vec<String>,
 
+    /// Bind default/custom workers to registered ACP agents selected by APXM.
+    #[arg(long = "use-agents")]
+    pub use_agents: bool,
+
     /// Registered profile for the default planner worker.
-    #[arg(long = "planner", alias = "planner-profile", value_name = "PROFILE")]
+    #[arg(long = "planner", value_name = "PROFILE")]
     pub planner_profile: Option<String>,
 
     /// Registered profile for the default executor worker.
-    #[arg(long = "executor", alias = "executor-profile", value_name = "PROFILE")]
+    #[arg(long = "executor", value_name = "PROFILE")]
     pub executor_profile: Option<String>,
 
     /// Optional reviewer/critic profile or ID[:ROLE[:PROFILE]]. Repeat for more reviewers.
-    #[arg(
-        long = "critic",
-        alias = "critic-profile",
-        value_name = "PROFILE|ID[:ROLE[:PROFILE]]"
-    )]
+    #[arg(long = "critic", value_name = "PROFILE|ID[:ROLE[:PROFILE]]")]
     pub critics: Vec<String>,
 
     /// Optional reviewer profile or ID[:ROLE[:PROFILE]]. Repeat for more reviewers.
@@ -383,15 +383,11 @@ pub struct GoalArgs {
     pub reviewers: Vec<String>,
 
     /// Registered profile for the default verifier worker.
-    #[arg(long = "verifier", alias = "verifier-profile", value_name = "PROFILE")]
+    #[arg(long = "verifier", value_name = "PROFILE")]
     pub verifier_profile: Option<String>,
 
     /// Registered profile for the final gate/eval supervisor.
-    #[arg(
-        long = "supervisor",
-        alias = "supervisor-profile",
-        value_name = "PROFILE"
-    )]
+    #[arg(long = "supervisor", value_name = "PROFILE")]
     pub supervisor_profile: Option<String>,
 
     /// Workspace allocation mode: session, shared, or git_worktree.

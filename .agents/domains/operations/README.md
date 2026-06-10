@@ -11,7 +11,7 @@ vLLM zoo, service management, Slurm, storage layout.
 
 ## Deploy order (non-negotiable)
 
-`docker-load → cache-warm → service-start → service-exec`.
+`docker-load → cache-warm → zoo-apply → service-exec/status`.
 `docker-load` and `cache-warm` run without a GPU allocation. See
 `apxm_model_zoo_deploy_pattern`.
 

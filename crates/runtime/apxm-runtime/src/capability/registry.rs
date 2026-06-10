@@ -62,7 +62,10 @@ impl CapabilityRegistry {
     /// tool surface is context-scoped (e.g. CLIC re-registers the project's
     /// tools each conversation turn). Re-registration must overwrite rather
     /// than fail so the latest schema/endpoint wins.
-    pub fn register_or_replace(&self, capability: Arc<dyn CapabilityExecutor>) -> RegistryResult<()> {
+    pub fn register_or_replace(
+        &self,
+        capability: Arc<dyn CapabilityExecutor>,
+    ) -> RegistryResult<()> {
         let metadata = capability.metadata();
         let name = metadata.name.clone();
         let schema = JsonSchema::from_value(metadata.parameters_schema.clone()).map_err(|e| {

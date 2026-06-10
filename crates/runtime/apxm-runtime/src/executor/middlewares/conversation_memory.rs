@@ -92,7 +92,11 @@ mod tests {
     use std::sync::Arc;
 
     async fn test_context() -> ExecutionContext {
-        let memory = Arc::new(MemorySystem::new(MemoryConfig::in_memory_ltm()).await.unwrap());
+        let memory = Arc::new(
+            MemorySystem::new(MemoryConfig::in_memory_ltm())
+                .await
+                .unwrap(),
+        );
         ExecutionContext::new(
             memory,
             Arc::new(LLMRegistry::new()),

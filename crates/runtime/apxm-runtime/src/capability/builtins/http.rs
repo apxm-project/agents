@@ -117,9 +117,10 @@ fn header_map(args: &HashMap<String, Value>) -> HeaderMap {
         if let Ok(serde_json::Value::Object(obj)) = serde_json::to_value(hv) {
             for (k, v) in obj {
                 if let Some(s) = v.as_str() {
-                    if let (Ok(name), Ok(val)) =
-                        (HeaderName::from_bytes(k.as_bytes()), HeaderValue::from_str(s))
-                    {
+                    if let (Ok(name), Ok(val)) = (
+                        HeaderName::from_bytes(k.as_bytes()),
+                        HeaderValue::from_str(s),
+                    ) {
                         map.insert(name, val);
                     }
                 }
@@ -190,7 +191,11 @@ impl CapabilityExecutor for HttpGetCapability {
     async fn execute(&self, args: HashMap<String, Value>) -> CapabilityResult<Value> {
         let url = require_string_arg(&args, "url", &self.metadata.name)?.to_string();
         guard_url_ssrf(&self.metadata.name, &url).await?;
-        let resp = shared_client().get(&url).headers(header_map(&args)).send().await;
+        let resp = shared_client()
+            .get(&url)
+            .headers(header_map(&args))
+            .send()
+            .await;
         finish(&self.metadata.name, resp).await
     }
 
@@ -206,8 +211,15 @@ mod ssrf_tests {
     #[test]
     fn blocks_private_loopback_and_metadata_ips() {
         for s in [
-            "127.0.0.1", "10.0.0.5", "192.168.1.1", "172.16.0.1", "169.254.169.254", "0.0.0.0",
-            "::1", "fc00::1", "fe80::1",
+            "127.0.0.1",
+            "10.0.0.5",
+            "192.168.1.1",
+            "172.16.0.1",
+            "169.254.169.254",
+            "0.0.0.0",
+            "::1",
+            "fc00::1",
+            "fe80::1",
         ] {
             assert!(is_blocked_ip(s.parse().unwrap()), "{s} should be blocked");
         }
@@ -218,9 +230,21 @@ mod ssrf_tests {
 
     #[tokio::test]
     async fn guard_rejects_bad_scheme_and_private_ip() {
-        assert!(guard_url_ssrf("http_get", "file:///etc/passwd").await.is_err());
-        assert!(guard_url_ssrf("http_get", "http://169.254.169.254/latest/meta-data").await.is_err());
-        assert!(guard_url_ssrf("http_get", "http://127.0.0.1:8080/").await.is_err());
+        assert!(
+            guard_url_ssrf("http_get", "file:///etc/passwd")
+                .await
+                .is_err()
+        );
+        assert!(
+            guard_url_ssrf("http_get", "http://169.254.169.254/latest/meta-data")
+                .await
+                .is_err()
+        );
+        assert!(
+            guard_url_ssrf("http_get", "http://127.0.0.1:8080/")
+                .await
+                .is_err()
+        );
     }
 }
 
@@ -267,7 +291,11 @@ impl CapabilityExecutor for HttpPostCapability {
         if let Some(body) = args.get("body") {
             match serde_json::to_value(body) {
                 Ok(serde_json::Value::String(s)) => req = req.body(s),
-                Ok(jv) => req = req.header("content-type", "application/json").body(jv.to_string()),
+                Ok(jv) => {
+                    req = req
+                        .header("content-type", "application/json")
+                        .body(jv.to_string())
+                }
                 Err(_) => {}
             }
         }

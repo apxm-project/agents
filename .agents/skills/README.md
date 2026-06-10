@@ -10,7 +10,7 @@ that points at one or more shared rules in `_shared/`.
 - `.agents/skills/_shared/*.md` — shared rules loaded by skills.
 - `.agents/skills/<name>/SKILL.md` — individual skills.
 
-The generated files (`AGENTS.md`, `CLAUDE.md`, `.agents.json`,
+The generated files (`AGENTS.md`, `CLAUDE.md`, `CODEX.md`, `.agents.json`,
 `.cursorrules`, `.github/copilot-instructions.md`) come from running
 `dekk apxm skills generate --target all`. Never edit them by hand.
 

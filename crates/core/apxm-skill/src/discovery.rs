@@ -117,11 +117,7 @@ fn lexical_score(q_terms: &[String], raw_query: &str, card: &SkillCard) -> f32 {
     let id_terms: BTreeSet<String> = tokenize(&card.skill_id).into_iter().collect();
     let desc_terms: BTreeSet<String> = tokenize(&card.description).into_iter().collect();
     let when_terms: BTreeSet<String> = tokenize(&card.when_to_use).into_iter().collect();
-    let tag_terms: BTreeSet<String> = card
-        .tags
-        .iter()
-        .flat_map(|t| tokenize(t))
-        .collect();
+    let tag_terms: BTreeSet<String> = card.tags.iter().flat_map(|t| tokenize(t)).collect();
 
     let mut total = 0.0f32;
     for q in q_terms {
@@ -168,8 +164,21 @@ fn tokenize(s: &str) -> Vec<String> {
 fn is_stopword(t: &str) -> bool {
     matches!(
         t,
-        "the" | "and" | "for" | "with" | "how" | "use" | "when" | "that"
-            | "this" | "you" | "your" | "are" | "from" | "into" | "via"
+        "the"
+            | "and"
+            | "for"
+            | "with"
+            | "how"
+            | "use"
+            | "when"
+            | "that"
+            | "this"
+            | "you"
+            | "your"
+            | "are"
+            | "from"
+            | "into"
+            | "via"
     )
 }
 
@@ -177,7 +186,14 @@ fn is_stopword(t: &str) -> bool {
 mod tests {
     use super::*;
 
-    fn card(id: &str, lib: Option<&str>, desc: &str, when: &str, tags: &[&str], shared: bool) -> SkillCard {
+    fn card(
+        id: &str,
+        lib: Option<&str>,
+        desc: &str,
+        when: &str,
+        tags: &[&str],
+        shared: bool,
+    ) -> SkillCard {
         SkillCard {
             skill_id: id.to_string(),
             library: lib.map(|s| s.to_string()),
@@ -190,12 +206,30 @@ mod tests {
 
     fn catalogue() -> Vec<SkillCard> {
         vec![
-            card("pdf_extract", Some("docs"), "Extract text and tables from PDF files",
-                 "Use when the user mentions PDFs or document extraction", &["pdf", "document"], false),
-            card("web_search", None, "Search the web for current information",
-                 "Use when the user needs fresh facts", &["search", "web"], true),
-            card("deploy", Some("ops"), "Deploy a service to production",
-                 "Use when the user asks to ship or release", &["deploy", "release"], false),
+            card(
+                "pdf_extract",
+                Some("docs"),
+                "Extract text and tables from PDF files",
+                "Use when the user mentions PDFs or document extraction",
+                &["pdf", "document"],
+                false,
+            ),
+            card(
+                "web_search",
+                None,
+                "Search the web for current information",
+                "Use when the user needs fresh facts",
+                &["search", "web"],
+                true,
+            ),
+            card(
+                "deploy",
+                Some("ops"),
+                "Deploy a service to production",
+                "Use when the user asks to ship or release",
+                &["deploy", "release"],
+                false,
+            ),
         ]
     }
 
@@ -229,22 +263,35 @@ mod tests {
         // Query matches pdf_extract, but it is not imported and not shared.
         let v = VisibleSet::default();
         let hits = rank("extract tables from a pdf", &catalogue(), &v, 5);
-        assert!(hits.iter().all(|m| m.skill_id != "pdf_extract"),
-                "scoped skill must not leak into discovery: {hits:?}");
+        assert!(
+            hits.iter().all(|m| m.skill_id != "pdf_extract"),
+            "scoped skill must not leak into discovery: {hits:?}"
+        );
     }
 
     #[test]
     fn rank_orders_by_relevance_within_visible_set() {
         let v = VisibleSet::from_imports(["docs", "ops"]);
-        let hits = rank("I need to extract a table from a PDF document", &catalogue(), &v, 5);
-        assert_eq!(hits.first().map(|m| m.skill_id.as_str()), Some("pdf_extract"),
-                   "most relevant visible skill should rank first: {hits:?}");
+        let hits = rank(
+            "I need to extract a table from a PDF document",
+            &catalogue(),
+            &v,
+            5,
+        );
+        assert_eq!(
+            hits.first().map(|m| m.skill_id.as_str()),
+            Some("pdf_extract"),
+            "most relevant visible skill should rank first: {hits:?}"
+        );
     }
 
     #[test]
     fn no_match_returns_empty_not_everything() {
         let v = VisibleSet::from_imports(["docs", "ops"]);
         let hits = rank("xyzzy quux nonsense", &catalogue(), &v, 5);
-        assert!(hits.is_empty(), "irrelevant query must not return skills: {hits:?}");
+        assert!(
+            hits.is_empty(),
+            "irrelevant query must not return skills: {hits:?}"
+        );
     }
 }

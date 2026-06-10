@@ -7,7 +7,7 @@
       "skills": ".claude/skills/"
     },
     "codex": {
-      "instructions": "AGENTS.md",
+      "instructions": "CODEX.md",
       "skills": "~/.codex/skills/"
     },
     "copilot": {
@@ -29,7 +29,7 @@
     },
     {
       "name": "apxm-commit",
-      "description": "Commit gate \u2014 runs apxm-simplify + apxm-finish first, drafts message in repo log style, lints it, and commits. Auto-commit allowed; never pushes to main; never --force; never --no-verify. Does not open PRs."
+      "description": "Commit gate \u2014 runs apxm-simplify + apxm-finish first, drafts message in repo log style, lints it, and commits only with explicit user approval. Pushes to main only with explicit approval; never --force; never --no-verify. Does not open PRs."
     },
     {
       "name": "apxm-compile-and-execute",
@@ -69,7 +69,7 @@
     },
     {
       "name": "apxm-model-zoo-operate",
-      "description": "Use when adding, scaling, or probing models in the vLLM zoo (deploy/vllm/zoo*.toml). Enforces the docker-load \u2192 cache-warm \u2192 service-start \u2192 service-exec order and zoo-apply over service-start."
+      "description": "Use when adding, scaling, or probing models in the vLLM zoo (deploy/vllm/zoo*.toml). Enforces docker-load then cache-warm then zoo-apply then service-exec/status; never use legacy service-start."
     },
     {
       "name": "apxm-plan",

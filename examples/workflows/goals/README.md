@@ -3,8 +3,9 @@
 These examples exercise APXM's native workflow coordination surface for
 agent-agnostic worker graphs. The checked-in workers are deterministic AIR
 graphs, so they run without Claude, Codex, API keys, ACP profiles, or network
-access. Replace any worker graph with a graph, artifact, or workflow that calls
-a registered agent when you want the same shape to drive real workers.
+access. Replace any deterministic worker with a graph, artifact, or workflow
+that calls a registered agent when you want the same shape to drive real
+workers.
 
 ## Three Ways To Run Complex Work
 

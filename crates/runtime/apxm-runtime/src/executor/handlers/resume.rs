@@ -63,7 +63,11 @@ mod tests {
     use std::sync::Arc;
 
     async fn make_ctx() -> ExecutionContext {
-        let memory = Arc::new(MemorySystem::new(MemoryConfig::in_memory_ltm()).await.unwrap());
+        let memory = Arc::new(
+            MemorySystem::new(MemoryConfig::in_memory_ltm())
+                .await
+                .unwrap(),
+        );
         let llm_registry = Arc::new(LLMRegistry::new());
         let capability_system = Arc::new(CapabilitySystem::new());
         ExecutionContext::new(memory, llm_registry, capability_system, Aam::new())

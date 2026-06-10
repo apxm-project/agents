@@ -213,9 +213,7 @@ impl AnthropicBackend {
         }
 
         // Add optional parameters. `top_p` is incompatible with extended thinking.
-        if !thinking_enabled
-            && let Some(top_p) = request.top_p
-        {
+        if !thinking_enabled && let Some(top_p) = request.top_p {
             body["top_p"] = json!(top_p);
         }
 

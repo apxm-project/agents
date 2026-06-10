@@ -63,8 +63,7 @@ identifier name is good, a comment usually isn't needed.
 ### 9. `.agents.json` contract
 
 If the change adds or changes any skill, run
-`dekk apxm skills status` to confirm Claude and Codex
-(`dekk apxm skills sync` → `~/.codex/skills/`) both resolve.
+`dekk apxm skills status` to confirm generated agent surfaces resolve.
 
 ### 10. Generated artifact placement
 

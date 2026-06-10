@@ -239,6 +239,18 @@ impl AgentRegistry {
         entries
     }
 
+    /// List only user-registered agents.
+    ///
+    /// Built-in templates are spawnable through [`Self::get`], but callers that
+    /// auto-select real workers should prefer explicit user registrations. This
+    /// avoids treating every built-in template as an available local route.
+    pub fn registered(&self) -> Vec<(String, &AcpAgentProfile)> {
+        self.registered
+            .iter()
+            .map(|(name, profile)| (name.clone(), profile))
+            .collect()
+    }
+
     /// Look up a built-in template by name.
     pub fn get_template(&self, name: &str) -> Option<&AcpAgentProfile> {
         self.templates.get(name)

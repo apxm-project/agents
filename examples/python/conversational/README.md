@@ -122,8 +122,8 @@ handlers as the REST API:
   and goal artifacts.
 - `workflow_start/status/events/cancel` (side-effecting): launch, observe,
   and stop checked-in `.apxmw` workflows through server-owned control handles.
-- `prompt_as_workflow`: synthesize graph proposals from natural language. Treat
-  generated graphs as proposals until APXM validates and admits them; do not use
+- `prompt_as_workflow`: synthesize workflow proposals from natural language. Treat
+  generated workflows as proposals until APXM validates and admits them; do not use
   it to bypass worker admission.
 - `skill_call` (pre-existing): invoke a vetted installed skill by id.
 

@@ -1,9 +1,9 @@
 # APXM — agent-facing project memory
 
-This file is the single source of truth (SSOT) for every coding agent that
-enters this repository (Claude Code, Codex CLI, Cursor, Aider, Gemini, etc.).
-Both `CLAUDE.md` and `AGENTS.md` in the repo root are generated from this
-file by `dekk apxm skills generate`. Edit this file, then regenerate.
+The `.agents/` tree is the single source of truth (SSOT) for every coding
+agent that enters this repository (Claude Code, Codex CLI, Cursor, Aider,
+Gemini, etc.). Repo-root agent files are generated from `.agents/project.md`
+by `dekk apxm skills generate`; edit `.agents/` sources, then regenerate.
 
 ## 1. What APXM is
 
@@ -29,6 +29,9 @@ Command groups (see `dekk apxm --help` for the live list):
   `test-python-frontend`, `codegen`, `clean`, `scrub-rustc-cache`
 - **Compilation**: `compile`, `execute`, `run`, `decompile`
 - **Authoring**: `validate`, `analyze`, `explain`, `gui`, `tokenize`
+- **Goals & Workflows**: `goal`, `workflow`; MCP callers use
+  `goal_start`, `workflow_start`, `workflow_status`,
+  `workflow_events`, `workflow_cancel`, and `prompt_as_workflow`
 - **Configuration**: `doctor`, `backend`, `vllm`, `agent`, `tool`, `cache`,
   `process`, `mcp`, `server`, `commit-lint`, `install-hooks`
 - **Discovery**: `ops`, `template`
@@ -40,33 +43,42 @@ Command groups (see `dekk apxm --help` for the live list):
 If a needed action isn't yet wrapped, **add a Dekk command** in `.dekk.toml`
 rather than shelling out — that is the project-wide pattern.
 
+For complex bounded work, prefer the native APXM control plane instead of
+manual subagent prompting. Use `dekk apxm goal` for role-based fan-out/fan-in
+with worker admission and sleep/wake events. MCP callers call `goal_start`
+once, then observe or stop the run with `workflow_status`,
+`workflow_events`, and `workflow_cancel`. Checked-in `.apxmw` workflows use
+`dekk apxm workflow` or `workflow_start`; natural-language workflow drafts use
+`prompt_as_workflow` and remain proposals until APXM validates and admits
+them.
+
 ## 3. Lifecycle workflow
 
 Every non-trivial session ceremonially routes through 6 lifecycle skills.
 They are thin orchestrators (≤100 lines each) — they do not contain rule
 content themselves; they point at `_shared/` rules.
 
-1. **`/apxm-org:apxm-context`** — prime the session: `dekk apxm doctor`,
+1. **`apxm-context`** — prime the session: `dekk apxm doctor`,
    read `.agents/project.md`, pull the relevant `_shared/` rule, recall
    memory, confirm subsystem ownership. Run before any work touching >1
    file.
-2. **`/apxm-org:apxm-plan`** — write a plan before implementing. Required
+2. **`apxm-plan`** — write a plan before implementing. Required
    for changes that touch >3 files, modify a public API/AIS op, introduce
    a claim, or need GPU allocation.
-3. **`/apxm-org:apxm-execute-plan`** — drive an approved plan to
-   completion with `TaskCreate`/`TaskUpdate`, focused per-phase
+3. **`apxm-execute-plan`** — drive an approved plan to
+   completion with the current harness task tracker, focused per-phase
    verification, no scope creep.
-4. **`/apxm-org:apxm-simplify`** — remove copied `_shared/` text, weak
+4. **`apxm-simplify`** — remove copied `_shared/` text, weak
    abstractions, referential comments, and over-large skill bodies before
    declaring done.
-5. **`/apxm-org:apxm-finish`** — pre-claim gate: run focused
+5. **`apxm-finish`** — pre-claim gate: run focused
    `dekk apxm test`, `dekk apxm doctor`, `check_no_legacy_vllm.py
    --strict`, secrets scan, artifact-placement check. Refuse to claim
    "done" until all pass.
-6. **`/apxm-org:apxm-commit`** — pre-commit/pre-push gate: enforce the
+6. **`apxm-commit`** — pre-commit/pre-push gate: enforce the
    user's commit rules — no auto-commit, no push without explicit
-   approval, PRs only for pushed work, never push to `main`, never
-   `--no-verify`.
+   approval, PRs only for pushed work, push to `main` only when explicitly
+   authorized, never `--no-verify`.
 
 This is the *ironbear pattern* — each skill is a checkpoint, not a body of
 new content. Skills inside the lifecycle can invoke domain skills (e.g.
@@ -292,7 +304,7 @@ supported migration procedure.
 - Any `sudo` invocation.
 - Any `docker run/build/rm/rmi` or image-tag mutation.
 - Any Slurm submission (`sbatch`, `srun`, `salloc`).
-- Posting to Slack/email/webhooks.
+- Posting to external notification or webhook endpoints.
 - Any edit to `~/.apxm/config.toml`, `~/.bashrc`, `~/.gitconfig`,
   systemd units, cron entries, or `.claude/settings.local.json`.
 - Cross-crate refactors and changes to public APIs / AIS ops — these
@@ -307,15 +319,13 @@ push, an overwritten branch, or a tainted benchmark.
 <!-- BEGIN SKILLS INVENTORY -->
 ## Available Skills
 
-Before editing CARTS sources, scan the Skills inventory below and read the SKILL.md for any whose description matches your task.
-
 ### Other
 
 | Skill | Description | Path |
 | --- | --- | --- |
 | `apxm-ais-op-design` | Use before adding or modifying an AIS op in apxm-core. Enforces the design-before-code gate, the canonical-attribute rule, and the build-dialect + codegen cadence. | `.agents/skills/apxm-ais-op-design/SKILL.md` |
 | `apxm-backend-add` | Use when registering a new APXM inference backend (cloud, on-prem, or local). Enforces hard-fail-at-config-time and the no-legacy / no-fallback contract on resolver behavior. | `.agents/skills/apxm-backend-add/SKILL.md` |
-| `apxm-commit` | Commit gate — runs apxm-simplify + apxm-finish first, drafts message in repo log style, lints it, and commits. Auto-commit allowed; never pushes to main; never --force; never --no-verify. Does not open PRs. | `.agents/skills/apxm-commit/SKILL.md` |
+| `apxm-commit` | Commit gate — runs apxm-simplify + apxm-finish first, drafts message in repo log style, lints it, and commits only with explicit user approval. Pushes to main only with explicit approval; never --force; never --no-verify. Does not open PRs. | `.agents/skills/apxm-commit/SKILL.md` |
 | `apxm-compile-and-execute` | Use when compiling APXM graphs, running .apxmobj artifacts, or executing AIR/IR through the runtime. Enforces dekk apxm as the authority CLI and correct artifact placement under .apxm/. | `.agents/skills/apxm-compile-and-execute/SKILL.md` |
 | `apxm-context` | Prime an APXM session before broad work — runs doctor, reads project.md and the relevant _shared rules, surfaces subsystem ownership, and recalls APXM memory. Run at the start of any session that will touch >1 file or any non-trivial change. | `.agents/skills/apxm-context/SKILL.md` |
 | `apxm-design-docs` | Use when editing conceptual docs under docs/design/. Gates two shipped failure modes — overclaim (present-tense prose about unwired behaviour) and citation drift (claims with no anchor to shipped code). | `.agents/skills/apxm-design-docs/SKILL.md` |
@@ -325,7 +335,7 @@ Before editing CARTS sources, scan the Skills inventory below and read the SKILL
 | `apxm-goal-orchestrator` | Use when an agent should turn a complex APXM goal into a bounded worker DAG or workflow, execute it through APXM, wait on workflow events/status, and synthesize verified artifacts. Covers `dekk apxm goal`, `goal_start`, `workflow_*`, and `prompt_as_workflow` selection. | `.agents/skills/apxm-goal-orchestrator/SKILL.md` |
 | `apxm-mcp-server` | Use when working on APXM MCP surfaces: the Rust HTTP `/v1/mcp` endpoint, the Rust stdio `apxm-mcp-server` binary, or cross-agent MCP registration. Prefer server-owned HTTP MCP for workflow/orchestration control. | `.agents/skills/apxm-mcp-server/SKILL.md` |
 | `apxm-mlir-pass-development` | Use when adding, modifying, or reordering MLIR passes in the APXM compiler pipeline. Enforces the single pass-list source of truth, the AIS-core ownership rule, and the build-dialect + codegen cadence after .td edits. | `.agents/skills/apxm-mlir-pass-development/SKILL.md` |
-| `apxm-model-zoo-operate` | Use when adding, scaling, or probing models in the vLLM zoo (deploy/vllm/zoo*.toml). Enforces the docker-load → cache-warm → service-start → service-exec order and zoo-apply over service-start. | `.agents/skills/apxm-model-zoo-operate/SKILL.md` |
+| `apxm-model-zoo-operate` | Use when adding, scaling, or probing models in the vLLM zoo (deploy/vllm/zoo*.toml). Enforces docker-load then cache-warm then zoo-apply then service-exec/status; never use legacy service-start. | `.agents/skills/apxm-model-zoo-operate/SKILL.md` |
 | `apxm-plan` | Produce a written plan before non-trivial APXM implementation. Required for changes touching >3 files, modifying a public API or AIS op, or needing Slurm GPU allocation. Enforces APXM-specific gates (AIS-op-vs-compose decision, dialect-codegen impact). | `.agents/skills/apxm-plan/SKILL.md` |
 | `apxm-simplify` | Pre-finish review pass — remove copied _shared text, weak abstractions, referential comments, and over-large skill bodies before claiming completion. Mandatory before apxm-finish and any commit. | `.agents/skills/apxm-simplify/SKILL.md` |
 | `apxm-vllm-service` | Use when building, launching, probing, or running APXM workloads against the Dockerized APXM-vLLM backend, especially on Slurm compute nodes. Enforces Dekk as the authority CLI, persistent service allocations, image-store reuse, and service-exec for commands that need the vLLM endpoint. | `.agents/skills/apxm-vllm-service/SKILL.md` |

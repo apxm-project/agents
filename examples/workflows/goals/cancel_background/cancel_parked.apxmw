@@ -1,6 +1,6 @@
 {
   "name": "cancel_parked",
-  "description": "Park on a checkpoint so apxm_workflow_cancel can interrupt the workflow.",
+  "description": "Park on a checkpoint so workflow_cancel can interrupt the workflow.",
   "graphs": [
     {
       "id": "wait_for_cancel",

@@ -102,9 +102,16 @@ mod tests {
         assert!(!is_blocking_wait_op(&node(AISOperationType::InvTool)));
         // AUTONOMOUS holds its worker only in recv mode (it still long-polls).
         let mut recv = node(AISOperationType::Autonomous);
-        assert!(!is_blocking_wait_op(&recv), "plain autonomous is compute/LLM-bound");
-        recv.attributes.insert("mode".to_string(), Value::String("recv".to_string()));
-        assert!(is_blocking_wait_op(&recv), "autonomous mode=recv holds a worker while waiting");
+        assert!(
+            !is_blocking_wait_op(&recv),
+            "plain autonomous is compute/LLM-bound"
+        );
+        recv.attributes
+            .insert("mode".to_string(), Value::String("recv".to_string()));
+        assert!(
+            is_blocking_wait_op(&recv),
+            "autonomous mode=recv holds a worker while waiting"
+        );
     }
 
     #[test]

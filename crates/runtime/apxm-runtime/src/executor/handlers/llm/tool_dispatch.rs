@@ -204,9 +204,10 @@ async fn execute_delegate(
         }
     }
     if let Some(Value::Array(groups)) = args.get("tool_groups") {
-        synth
-            .attributes
-            .insert(graph_attrs::TOOL_GROUPS.to_string(), Value::Array(groups.clone()));
+        synth.attributes.insert(
+            graph_attrs::TOOL_GROUPS.to_string(),
+            Value::Array(groups.clone()),
+        );
     }
 
     let persona = "You are a focused specialist sub-agent. Investigate ONLY the \
@@ -237,7 +238,11 @@ async fn execute_delegate(
     }
 }
 
-async fn execute_tool_call(ctx: &ExecutionContext, node: &Node, tool_call: &ToolCall) -> ToolResult {
+async fn execute_tool_call(
+    ctx: &ExecutionContext,
+    node: &Node,
+    tool_call: &ToolCall,
+) -> ToolResult {
     apxm_llm!(debug,
         execution_id = %ctx.execution_id,
         tool_name = %tool_call.name,
@@ -673,8 +678,7 @@ pub(crate) async fn execute_ask_with_tools(
     Err(RuntimeError::LLM {
         message: format!(
             "Tool loop exceeded maximum iterations ({}). {} tool calls executed.",
-            max_iterations,
-            tools_invoked_count
+            max_iterations, tools_invoked_count
         ),
         backend: None,
     })
@@ -857,7 +861,9 @@ mod tests {
 
         assert_eq!(results.len(), 1);
         assert!(!results[0].success);
-        assert!(!crate::capability::tool_write_lock::contains_lock(tool_name));
+        assert!(!crate::capability::tool_write_lock::contains_lock(
+            tool_name
+        ));
     }
 
     #[tokio::test]
@@ -875,7 +881,9 @@ mod tests {
 
         assert_eq!(results.len(), 1);
         assert!(results[0].success);
-        assert!(!crate::capability::tool_write_lock::contains_lock(tool_name));
+        assert!(!crate::capability::tool_write_lock::contains_lock(
+            tool_name
+        ));
     }
 
     #[tokio::test]
@@ -895,8 +903,10 @@ mod tests {
         assert!(!names.contains(&DELEGATE_TOOL.to_string()));
 
         // With opt-in: delegate is appended alongside the group's tools.
-        node.attributes
-            .insert("enable_delegate".to_string(), Value::String("true".to_string()));
+        node.attributes.insert(
+            "enable_delegate".to_string(),
+            Value::String("true".to_string()),
+        );
         let names: Vec<String> = resolve_ask_tools(&ctx, &node)
             .into_iter()
             .map(|t| t.name)

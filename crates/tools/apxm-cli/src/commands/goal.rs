@@ -269,6 +269,15 @@ fn build_start_arguments(
         "workers".to_string(),
         JsonValue::Array(workers.iter().map(worker_to_json).collect()),
     );
+    if args.use_agents {
+        root.insert(
+            "selection".to_string(),
+            json!({
+                "agents": "auto",
+                "require_agents": true,
+            }),
+        );
+    }
     root.insert("workspace".to_string(), workspace_json(args)?);
 
     if let Some(profile) = args
@@ -294,7 +303,7 @@ fn build_start_arguments(
             admit.insert(cap.trim().to_string());
         }
     }
-    if args.admit_spawn || uses_profiles {
+    if args.admit_spawn || uses_profiles || args.use_agents {
         admit.insert(goal_admission::SPAWN_AGENT.to_string());
     }
     root.insert(
@@ -1150,6 +1159,7 @@ mod tests {
             trigger: None,
             workers: Vec::new(),
             depends: Vec::new(),
+            use_agents: false,
             planner_profile: None,
             executor_profile: None,
             critics: Vec::new(),
@@ -1297,6 +1307,31 @@ mod tests {
         );
         assert_eq!(request["workers"][0]["profile"], "profile-a");
         assert_eq!(request["workers"][1]["profile"], "profile-b");
+        assert_eq!(
+            request["admit_capabilities"],
+            json!([goal_admission::SPAWN_AGENT])
+        );
+    }
+
+    #[test]
+    fn use_agents_requests_server_side_selection() {
+        let mut args = args_with_task();
+        args.use_agents = true;
+
+        let request = build_start_arguments(&args, "ship the thing", 0, 1, None).expect("request");
+
+        assert_eq!(
+            request["selection"],
+            json!({
+                "agents": "auto",
+                "require_agents": true,
+            })
+        );
+        assert_eq!(
+            request["workers"][0]["transport"],
+            OrchestrationTransport::Deterministic.as_str(),
+            "CLI leaves binding to goal_start"
+        );
         assert_eq!(
             request["admit_capabilities"],
             json!([goal_admission::SPAWN_AGENT])

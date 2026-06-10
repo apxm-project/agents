@@ -330,9 +330,8 @@ pub async fn execute(ctx: &ExecutionContext, node: &Node, inputs: Vec<Value>) ->
     // to any LLM op and maps to a thinking token budget; without it, the Think op
     // still honors its `budget` attr as before. Backends that support extended
     // thinking (anthropic, vllm, ollama) lower this into their own request.
-    let thinking_budget = effort_token_budget(node)?.or({
-        if mode == LlmMode::Think { budget } else { None }
-    });
+    let thinking_budget =
+        effort_token_budget(node)?.or(if mode == LlmMode::Think { budget } else { None });
     if let Some(budget_tokens) = thinking_budget {
         request = request
             .with_thinking_token_budget(budget_tokens)
@@ -787,17 +786,25 @@ mod tests {
         ];
         for (effort, expected) in cases {
             let mut node = Node::new(7, AISOperationType::Ask);
-            node.attributes
-                .insert(graph_attrs::EFFORT.to_string(), Value::String(effort.into()));
-            assert_eq!(effort_token_budget(&node).unwrap(), expected, "effort={effort}");
+            node.attributes.insert(
+                graph_attrs::EFFORT.to_string(),
+                Value::String(effort.into()),
+            );
+            assert_eq!(
+                effort_token_budget(&node).unwrap(),
+                expected,
+                "effort={effort}"
+            );
         }
         // No attr -> no thinking.
         let node = Node::new(7, AISOperationType::Ask);
         assert_eq!(effort_token_budget(&node).unwrap(), None);
         // Unknown -> error.
         let mut bad = Node::new(7, AISOperationType::Ask);
-        bad.attributes
-            .insert(graph_attrs::EFFORT.to_string(), Value::String("ultra".into()));
+        bad.attributes.insert(
+            graph_attrs::EFFORT.to_string(),
+            Value::String("ultra".into()),
+        );
         assert!(effort_token_budget(&bad).is_err());
     }
 

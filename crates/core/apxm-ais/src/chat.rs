@@ -234,8 +234,14 @@ mod tests {
         let server = "capability 'fs.write' performs writes and was not granted";
         assert_eq!(parse_denied_capability(server).as_deref(), Some("fs.write"));
         let runtime = "write capability 'fs.write' is not admitted by this execution's grant";
-        assert_eq!(parse_denied_capability(runtime).as_deref(), Some("fs.write"));
-        assert_eq!(parse_denied_capability("capability 'x' is not registered"), None);
+        assert_eq!(
+            parse_denied_capability(runtime).as_deref(),
+            Some("fs.write")
+        );
+        assert_eq!(
+            parse_denied_capability("capability 'x' is not registered"),
+            None
+        );
         assert_eq!(parse_denied_capability("unrelated"), None);
     }
 
@@ -257,15 +263,28 @@ mod tests {
 
     #[test]
     fn air_exposes_skills_group_for_discovery() {
-        let air = chat_air(&ChatAirOptions { skills: true, ..Default::default() });
+        let air = chat_air(&ChatAirOptions {
+            skills: true,
+            ..Default::default()
+        });
         assert!(air.contains("tool_groups = [\"skills\"]"), "{air}");
-        let both = chat_air(&ChatAirOptions { tools: true, skills: true, ..Default::default() });
-        assert!(both.contains("tool_groups = [\"web\", \"skills\"]"), "{both}");
+        let both = chat_air(&ChatAirOptions {
+            tools: true,
+            skills: true,
+            ..Default::default()
+        });
+        assert!(
+            both.contains("tool_groups = [\"web\", \"skills\"]"),
+            "{both}"
+        );
     }
 
     #[test]
     fn air_omits_effort_when_off_or_unset() {
-        let off = chat_air(&ChatAirOptions { effort: Some("off"), ..Default::default() });
+        let off = chat_air(&ChatAirOptions {
+            effort: Some("off"),
+            ..Default::default()
+        });
         assert!(!off.contains("effort"));
         let unset = chat_air(&ChatAirOptions::default());
         assert!(!unset.contains("effort"));
@@ -284,7 +303,10 @@ mod tests {
     #[test]
     fn route_id_sanitized() {
         assert_eq!(sanitize_route_id("amd\" injected"), "amdinjected");
-        assert_eq!(sanitize_route_id("vendor/model-1.5:turbo"), "vendor/model-1.5:turbo");
+        assert_eq!(
+            sanitize_route_id("vendor/model-1.5:turbo"),
+            "vendor/model-1.5:turbo"
+        );
     }
 
     #[test]

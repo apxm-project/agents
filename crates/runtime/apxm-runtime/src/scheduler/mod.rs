@@ -8,10 +8,10 @@
 //! - Deadlock detection
 //! - Semaphore-based backpressure
 
+pub mod admission_registry;
 pub mod concurrency_control;
 pub mod config;
 pub mod dataflow;
-pub mod admission_registry;
 pub mod lane_queue;
 pub mod park_registry;
 pub mod queue;

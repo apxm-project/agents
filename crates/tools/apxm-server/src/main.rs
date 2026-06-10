@@ -41,6 +41,7 @@ mod auth;
 mod call_skill;
 mod capability;
 mod checkpoints;
+mod config_layers;
 mod credentials;
 mod error;
 mod execute;
@@ -83,7 +84,7 @@ pub(crate) const DEFAULT_ADDR: &str = "127.0.0.1:18800";
 pub(crate) const DEFAULT_PUBLIC_URL: &str = "http://localhost:18800";
 
 fn main() -> anyhow::Result<()> {
-    let server_config = startup::server_config_from_layers()?;
+    let server_config = config_layers::server_config_from_layers()?;
     let workers = server_worker_threads(&server_config);
     tokio::runtime::Builder::new_multi_thread()
         .worker_threads(workers)

@@ -20,7 +20,7 @@ use crate::capability::{
 use apxm_core::{error::RuntimeError, types::Value};
 use async_trait::async_trait;
 use reqwest::Client;
-use serde_json::{json, Value as JsonValue};
+use serde_json::{Value as JsonValue, json};
 use std::collections::HashMap;
 use std::sync::OnceLock;
 
@@ -52,9 +52,13 @@ fn auth_owner() -> String {
 fn auth_bearer() -> Option<String> {
     let dir = std::env::var("XDG_STATE_HOME")
         .map(std::path::PathBuf::from)
-        .or_else(|_| std::env::var("HOME").map(|h| std::path::PathBuf::from(h).join(".local/state")))
+        .or_else(|_| {
+            std::env::var("HOME").map(|h| std::path::PathBuf::from(h).join(".local/state"))
+        })
         .ok()?;
-    std::fs::read_to_string(dir.join("apxm/auth/auth.bearer")).ok().map(|s| s.trim().to_string())
+    std::fs::read_to_string(dir.join("apxm/auth/auth.bearer"))
+        .ok()
+        .map(|s| s.trim().to_string())
 }
 
 fn enc(seg: &str) -> String {
@@ -62,7 +66,9 @@ fn enc(seg: &str) -> String {
     let mut out = String::with_capacity(seg.len());
     for b in seg.bytes() {
         match b {
-            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'_' | b'.' | b'~' => out.push(b as char),
+            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'_' | b'.' | b'~' => {
+                out.push(b as char)
+            }
             _ => {
                 out.push('%');
                 out.push(HEX[(b >> 4) as usize] as char);
@@ -79,7 +85,9 @@ fn url_allowed(url: &str) -> bool {
         return !rest.is_empty();
     }
     if let Some(rest) = url.strip_prefix("http://") {
-        return rest.starts_with("127.0.0.1") || rest.starts_with("localhost") || rest.starts_with("[::1]");
+        return rest.starts_with("127.0.0.1")
+            || rest.starts_with("localhost")
+            || rest.starts_with("[::1]");
     }
     false
 }
@@ -98,7 +106,10 @@ pub fn pin_tools(tools: &JsonValue) -> String {
                     let name = t.get("name").and_then(|n| n.as_str()).unwrap_or_default();
                     // Canonical JSON of the input schema (serde_json sorts object keys
                     // deterministically via BTreeMap is not guaranteed; use compact form).
-                    let schema = t.get("inputSchema").map(std::string::ToString::to_string).unwrap_or_default();
+                    let schema = t
+                        .get("inputSchema")
+                        .map(std::string::ToString::to_string)
+                        .unwrap_or_default();
                     format!("{name}\u{1f}{schema}")
                 })
                 .collect()
@@ -158,12 +169,18 @@ impl McpBridgeCapability {
     }
 
     /// A per-tool MCP block (kind=mcp) with the server URL + tool name baked in.
-    pub fn named(name: impl Into<String>, description: impl Into<String>, server_url: String, tool: String) -> Self {
+    pub fn named(
+        name: impl Into<String>,
+        description: impl Into<String>,
+        server_url: String,
+        tool: String,
+    ) -> Self {
         let mut c = Self::new();
-        c.metadata = CapabilityMetadata::new(name, description, c.metadata.parameters_schema.clone())
-            .with_returns("string")
-            .with_groups(vec!["mcp".to_string(), "provider".to_string()])
-            .with_latency(800);
+        c.metadata =
+            CapabilityMetadata::new(name, description, c.metadata.parameters_schema.clone())
+                .with_returns("string")
+                .with_groups(vec!["mcp".to_string(), "provider".to_string()])
+                .with_latency(800);
         c.server_url = Some(server_url);
         c.tool = Some(tool);
         c
@@ -184,7 +201,11 @@ impl McpBridgeCapability {
         if !resp.status().is_success() {
             return None;
         }
-        resp.json::<JsonValue>().await.ok()?.get("access_token").and_then(|v| v.as_str().map(String::from))
+        resp.json::<JsonValue>()
+            .await
+            .ok()?
+            .get("access_token")
+            .and_then(|v| v.as_str().map(String::from))
     }
 }
 
@@ -192,7 +213,10 @@ impl McpBridgeCapability {
 impl CapabilityExecutor for McpBridgeCapability {
     async fn execute(&self, args: HashMap<String, Value>) -> CapabilityResult<Value> {
         let cap = self.metadata.name.clone();
-        let cap_err = |msg: String| RuntimeError::Capability { capability: cap.clone(), message: msg };
+        let cap_err = |msg: String| RuntimeError::Capability {
+            capability: cap.clone(),
+            message: msg,
+        };
         let as_json = |k: &str| args.get(k).and_then(|v| serde_json::to_value(v).ok());
 
         let server_url = self
@@ -206,7 +230,9 @@ impl CapabilityExecutor for McpBridgeCapability {
             .or_else(|| as_json("tool").and_then(|j| j.as_str().map(String::from)))
             .ok_or_else(|| cap_err("missing `tool`".into()))?;
         if !url_allowed(&server_url) {
-            return Err(cap_err(format!("server_url failed egress policy: {server_url}")));
+            return Err(cap_err(format!(
+                "server_url failed egress policy: {server_url}"
+            )));
         }
         let arguments = as_json("arguments").unwrap_or_else(|| json!({}));
 
@@ -227,16 +253,23 @@ impl CapabilityExecutor for McpBridgeCapability {
             }
         }
 
-        let resp = req.send().await.map_err(|e| cap_err(format!("MCP request failed: {e}")))?;
+        let resp = req
+            .send()
+            .await
+            .map_err(|e| cap_err(format!("MCP request failed: {e}")))?;
         if !resp.status().is_success() {
             let s = resp.status();
-            return Err(cap_err(format!("MCP server returned {s}: {}", resp.text().await.unwrap_or_default())));
+            return Err(cap_err(format!(
+                "MCP server returned {s}: {}",
+                resp.text().await.unwrap_or_default()
+            )));
         }
         let mut text = resp.text().await.unwrap_or_default();
         if text.len() > MAX_BODY_BYTES {
             text.truncate(MAX_BODY_BYTES);
         }
-        let rpc: JsonValue = serde_json::from_str(&text).map_err(|e| cap_err(format!("MCP response parse: {e}")))?;
+        let rpc: JsonValue =
+            serde_json::from_str(&text).map_err(|e| cap_err(format!("MCP response parse: {e}")))?;
         if let Some(err) = rpc.get("error") {
             return Err(cap_err(format!("MCP tools/call error: {err}")));
         }
@@ -294,21 +327,32 @@ mod tests {
             { "name": "list_issues", "inputSchema": { "type": "object" } },
             { "name": "exfiltrate", "inputSchema": { "type": "object" } }
         ]);
-        assert!(!verify_tool_pin(&v2, &pin_tools(&v1)), "added tool must break the pin");
+        assert!(
+            !verify_tool_pin(&v2, &pin_tools(&v1)),
+            "added tool must break the pin"
+        );
 
         // A changed input schema (silent behavior change) also breaks the pin.
         let v3 = json!([
             { "name": "create_issue", "inputSchema": { "type": "object", "x": 1 } },
             { "name": "list_issues", "inputSchema": { "type": "object" } }
         ]);
-        assert!(!verify_tool_pin(&v3, &pin_tools(&v1)), "changed schema must break the pin");
+        assert!(
+            !verify_tool_pin(&v3, &pin_tools(&v1)),
+            "changed schema must break the pin"
+        );
     }
 
     #[test]
     fn metadata_is_mcp_call() {
         let c = McpBridgeCapability::new();
         assert_eq!(c.metadata().name, "mcp.call");
-        let n = McpBridgeCapability::named("github-mcp.create_issue", "Create issue", "https://x".into(), "create_issue".into());
+        let n = McpBridgeCapability::named(
+            "github-mcp.create_issue",
+            "Create issue",
+            "https://x".into(),
+            "create_issue".into(),
+        );
         assert_eq!(n.metadata().name, "github-mcp.create_issue");
         assert_eq!(n.tool.as_deref(), Some("create_issue"));
     }

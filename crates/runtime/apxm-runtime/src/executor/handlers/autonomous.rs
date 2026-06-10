@@ -148,11 +148,16 @@ pub async fn execute(ctx: &ExecutionContext, node: &Node, inputs: Vec<Value>) ->
                 .unwrap_or(false);
             if supports {
                 action_req = attach_graph_hints(ctx, node, action_req);
-                action_req = action_req.with_tools(tools).with_tool_choice(ToolChoice::Auto);
+                action_req = action_req
+                    .with_tools(tools)
+                    .with_tool_choice(ToolChoice::Auto);
                 let value = run_tool_loop(ctx, node, &action_req).await.map_err(|e| {
                     RuntimeError::Operation {
                         op_type: node.op_type,
-                        message: format!("Failed tool-loop action (iteration {}): {}", iteration, e),
+                        message: format!(
+                            "Failed tool-loop action (iteration {}): {}",
+                            iteration, e
+                        ),
                     }
                 })?;
                 match value {
@@ -322,7 +327,9 @@ async fn run_agent_turn(
         .is_some_and(|b| b.supports_auto_tool_choice());
     if supports {
         req = attach_graph_hints(ctx, node, req);
-        req = req.with_tools(tools.to_vec()).with_tool_choice(ToolChoice::Auto);
+        req = req
+            .with_tools(tools.to_vec())
+            .with_tool_choice(ToolChoice::Auto);
         let out = run_tool_loop(ctx, node, &req)
             .await
             .map_err(|e| RuntimeError::Operation {
@@ -365,12 +372,13 @@ async fn recv_loop(ctx: &ExecutionContext, node: &Node, inputs: Vec<Value>) -> R
         .or(get_optional_string_attribute(node, graph_attrs::PROMPT)?)
         .unwrap_or_else(|| "You are an agent reacting to external events.".to_string());
 
-    let recv_url =
-        get_optional_string_attribute(node, "recv_url")?.ok_or_else(|| RuntimeError::Operation {
+    let recv_url = get_optional_string_attribute(node, "recv_url")?.ok_or_else(|| {
+        RuntimeError::Operation {
             op_type: node.op_type,
             message: "recv mode requires a `recv_url` attribute (event source endpoint)"
                 .to_string(),
-        })?;
+        }
+    })?;
 
     let once = get_optional_string_attribute(node, "recv_once")?.as_deref() != Some("false");
     let max_events = if once {
@@ -540,7 +548,11 @@ mod tests {
     #[tokio::test]
     async fn test_converse_mode_empty_turns_returns_empty_transcript() {
         let ctx = ExecutionContext::new(
-            Arc::new(MemorySystem::new(MemoryConfig::in_memory_ltm()).await.unwrap()),
+            Arc::new(
+                MemorySystem::new(MemoryConfig::in_memory_ltm())
+                    .await
+                    .unwrap(),
+            ),
             Arc::new(LLMRegistry::new()),
             Arc::new(CapabilitySystem::new()),
             crate::aam::Aam::new(),
@@ -647,7 +659,11 @@ mod tests {
 
     async fn test_ctx() -> ExecutionContext {
         ExecutionContext::new(
-            Arc::new(MemorySystem::new(MemoryConfig::in_memory_ltm()).await.unwrap()),
+            Arc::new(
+                MemorySystem::new(MemoryConfig::in_memory_ltm())
+                    .await
+                    .unwrap(),
+            ),
             Arc::new(LLMRegistry::new()),
             Arc::new(CapabilitySystem::new()),
             crate::aam::Aam::new(),
@@ -660,7 +676,10 @@ mod tests {
         let ctx = test_ctx().await;
         let node = recv_node(&[]);
         let err = execute(&ctx, &node, vec![]).await.unwrap_err().to_string();
-        assert!(err.contains("recv_url"), "expected recv_url error, got: {err}");
+        assert!(
+            err.contains("recv_url"),
+            "expected recv_url error, got: {err}"
+        );
     }
 
     #[tokio::test]
@@ -671,12 +690,17 @@ mod tests {
         // its safety bound without a backend or event server.
         let ctx = test_ctx().await;
         let node = recv_node(&[
-            ("recv_url", Value::String("http://127.0.0.1:1/events".to_string())),
+            (
+                "recv_url",
+                Value::String("http://127.0.0.1:1/events".to_string()),
+            ),
             ("recv_once", Value::String("false".to_string())),
             ("recv_max_polls", num(2)),
             ("poll_interval_ms", num(10)),
         ]);
-        let result = execute(&ctx, &node, vec![]).await.expect("recv returns Ok on idle");
+        let result = execute(&ctx, &node, vec![])
+            .await
+            .expect("recv returns Ok on idle");
         assert_eq!(result, Value::String(String::new()));
     }
 }

@@ -9,6 +9,7 @@ use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
+use apxm_backends::HealthStatus;
 use apxm_core::constants::mcp::tools as mcp_tool_names;
 use apxm_core::constants::orchestration::admission as goal_admission;
 use apxm_core::events::kind;
@@ -53,6 +54,8 @@ struct GoalStartArgs {
     #[serde(default)]
     supervisor: Option<SupervisorSpec>,
     #[serde(default)]
+    selection: Option<GoalSelectionSpec>,
+    #[serde(default)]
     workspace: Option<WorkspaceSpec>,
     #[serde(default)]
     session_id: Option<String>,
@@ -70,6 +73,15 @@ struct GoalStartArgs {
     max_iterations: Option<usize>,
     #[serde(default)]
     dry_run: bool,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct GoalSelectionSpec {
+    #[serde(default)]
+    agents: Option<String>,
+    #[serde(default)]
+    require_agents: bool,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -134,6 +146,8 @@ struct GoalStartResponse {
     bundle_dir: String,
     artifacts: GoalArtifacts,
     plan: GoalPlanSummary,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    selection: Option<GoalSelectionSummary>,
     control: GoalControl,
     goal: GoalRuntimeContract,
     sleep_wake: SleepWakeContract,
@@ -224,6 +238,41 @@ struct SleepWakeContract {
     sleep_after_start: bool,
     wake_on: Vec<String>,
     event_loop: &'static str,
+}
+
+#[derive(Debug, Clone, Serialize)]
+struct GoalSelectionSummary {
+    agents: String,
+    candidates: Vec<AgentSelectionCandidate>,
+    workers: Vec<WorkerSelectionSummary>,
+    backends: Vec<BackendSelectionSummary>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+struct AgentSelectionCandidate {
+    profile: String,
+    executable: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    default_mode: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    default_model: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+struct WorkerSelectionSummary {
+    id: String,
+    profile: Option<String>,
+    source: &'static str,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    mode: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    model: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+struct BackendSelectionSummary {
+    name: String,
+    health: String,
 }
 
 struct GoalBundle {
@@ -343,6 +392,22 @@ pub(crate) fn goal_start_input_schema() -> JsonValue {
                     "model": { "type": "string" }
                 }
             },
+            "selection": {
+                "type": "object",
+                "additionalProperties": false,
+                "description": "Optional APXM-native worker selection policy. The server binds from registered ACP agents and reports current backend health before materializing the workflow.",
+                "properties": {
+                    "agents": {
+                        "type": "string",
+                        "enum": ["auto"],
+                        "description": "auto binds workers without explicit profiles to registered APXM agents"
+                    },
+                    "require_agents": {
+                        "type": "boolean",
+                        "description": "When true, fail if agent auto-selection cannot bind every unprofiled worker"
+                    }
+                }
+            },
             "workspace": {
                 "type": "object",
                 "additionalProperties": false,
@@ -402,8 +467,9 @@ async fn goal_start(
     state: &AppState,
     tool_args: &JsonValue,
 ) -> Result<GoalStartResponse, ApiError> {
-    let request: GoalStartArgs = serde_json::from_value(tool_args.clone())
+    let mut request: GoalStartArgs = serde_json::from_value(tool_args.clone())
         .map_err(|error| ApiError::bad_request(format!("invalid goal_start arguments: {error}")))?;
+    let selection = apply_goal_selection(state, &mut request)?;
     let uses_process_spawns = goal_uses_process_spawns(&request);
     if uses_process_spawns
         && !request
@@ -476,6 +542,7 @@ async fn goal_start(
         bundle_dir: bundle.bundle_dir.to_string_lossy().to_string(),
         artifacts,
         plan: plan_summary,
+        selection,
         control,
         goal: goal_runtime_contract(
             started
@@ -610,6 +677,162 @@ fn validate_transport(
         }
     }
     Ok(())
+}
+
+fn apply_goal_selection(
+    state: &AppState,
+    request: &mut GoalStartArgs,
+) -> Result<Option<GoalSelectionSummary>, ApiError> {
+    let Some(selection) = request.selection.as_ref() else {
+        return Ok(None);
+    };
+    let agents_mode = selection.agents.as_deref().unwrap_or("");
+    if agents_mode.is_empty() {
+        if selection.require_agents {
+            return Err(ApiError::bad_request(
+                "goal_start selection.require_agents requires selection.agents='auto'",
+            ));
+        }
+        return Ok(Some(GoalSelectionSummary {
+            agents: "disabled".to_string(),
+            candidates: Vec::new(),
+            workers: request
+                .workers
+                .iter()
+                .map(|worker| worker_selection_summary(worker, "explicit"))
+                .collect(),
+            backends: backend_selection_summary(state),
+        }));
+    }
+    if agents_mode != "auto" {
+        return Err(ApiError::bad_request(
+            "goal_start selection.agents must be 'auto'",
+        ));
+    }
+
+    let explicit_profiles: HashSet<String> = request
+        .workers
+        .iter()
+        .filter(|worker| worker.profile.is_some())
+        .map(|worker| worker.id.clone())
+        .collect();
+    let candidates = discover_goal_agent_candidates();
+    bind_goal_agent_selection(request, &candidates, selection.require_agents)?;
+
+    Ok(Some(GoalSelectionSummary {
+        agents: "auto".to_string(),
+        candidates,
+        workers: request
+            .workers
+            .iter()
+            .map(|worker| {
+                let source = if explicit_profiles.contains(&worker.id) {
+                    "explicit"
+                } else if worker.profile.is_some() {
+                    "selected"
+                } else {
+                    "deterministic"
+                };
+                worker_selection_summary(worker, source)
+            })
+            .collect(),
+        backends: backend_selection_summary(state),
+    }))
+}
+
+fn bind_goal_agent_selection(
+    request: &mut GoalStartArgs,
+    candidates: &[AgentSelectionCandidate],
+    require_agents: bool,
+) -> Result<(), ApiError> {
+    let mut cursor = 0usize;
+    for worker in request.workers.iter_mut() {
+        if worker.profile.is_some() {
+            continue;
+        }
+        let Some(candidate) = candidates.get(cursor % candidates.len().max(1)) else {
+            if require_agents {
+                return Err(ApiError::bad_request(
+                    "goal_start selection.agents=auto found no registered APXM agents with resolvable commands; run `dekk apxm agent add <name>` or omit selection for deterministic workers",
+                ));
+            }
+            continue;
+        };
+        worker.profile = Some(candidate.profile.clone());
+        worker.transport = Some(OrchestrationTransport::Acp);
+        if worker.mode.is_none() {
+            worker.mode = candidate.default_mode.clone();
+        }
+        if worker.model.is_none() {
+            worker.model = candidate.default_model.clone();
+        }
+        cursor += 1;
+    }
+    Ok(())
+}
+
+fn discover_goal_agent_candidates() -> Vec<AgentSelectionCandidate> {
+    apxm_acp::AgentRegistry::load()
+        .registered()
+        .into_iter()
+        .filter_map(|(name, profile)| {
+            let executable = resolvable_command_program(&profile.command)?;
+            Some(AgentSelectionCandidate {
+                profile: name,
+                executable,
+                default_mode: profile.default_mode.clone(),
+                default_model: profile.default_model.clone(),
+            })
+        })
+        .collect()
+}
+
+fn worker_selection_summary(worker: &WorkerSpec, source: &'static str) -> WorkerSelectionSummary {
+    WorkerSelectionSummary {
+        id: worker.id.clone(),
+        profile: worker.profile.clone(),
+        source,
+        mode: worker.mode.clone(),
+        model: worker.model.clone(),
+    }
+}
+
+fn backend_selection_summary(state: &AppState) -> Vec<BackendSelectionSummary> {
+    let registry = state.runtime.llm_registry();
+    registry
+        .backend_names()
+        .into_iter()
+        .map(|name| BackendSelectionSummary {
+            health: health_status_label(registry.backend_health(&name)).to_string(),
+            name,
+        })
+        .collect()
+}
+
+fn health_status_label(status: HealthStatus) -> &'static str {
+    match status {
+        HealthStatus::Healthy => "healthy",
+        HealthStatus::Degraded => "degraded",
+        HealthStatus::Unhealthy => "unhealthy",
+        HealthStatus::Unknown => "unknown",
+    }
+}
+
+fn resolvable_command_program(command: &str) -> Option<String> {
+    let parts = shell_words::split(command).ok()?;
+    let program = parts
+        .iter()
+        .find(|part| !part.contains('=') && part.as_str() != "env")?;
+    if program.contains('/') {
+        return Path::new(program.as_str())
+            .is_file()
+            .then(|| program.to_string());
+    }
+    std::env::var_os("PATH").and_then(|paths| {
+        std::env::split_paths(&paths)
+            .any(|path| path.join(program.as_str()).is_file())
+            .then(|| program.to_string())
+    })
 }
 
 fn validate_optional_text(value: Option<&str>, field: &str) -> Result<(), ApiError> {
@@ -1802,4 +2025,99 @@ fn mcp_json_tool_result<T: serde::Serialize>(id: JsonValue, value: T) -> Json<Js
             .to_string()
     });
     mcp_tool_result(id, text, false)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn request_with_workers(workers: Vec<WorkerSpec>) -> GoalStartArgs {
+        GoalStartArgs {
+            task: "ship".to_string(),
+            context: None,
+            event: None,
+            trigger: None,
+            workers,
+            supervisor: None,
+            selection: None,
+            workspace: None,
+            session_id: None,
+            admit_capabilities: Vec::new(),
+            imports: Vec::new(),
+            iteration: 0,
+            max_iterations: None,
+            dry_run: true,
+        }
+    }
+
+    fn worker(id: &str, profile: Option<&str>) -> WorkerSpec {
+        WorkerSpec {
+            id: id.to_string(),
+            role: None,
+            prompt: None,
+            profile: profile.map(str::to_string),
+            transport: None,
+            depends_on: Vec::new(),
+            mode: None,
+            model: None,
+        }
+    }
+
+    #[test]
+    fn goal_agent_selection_binds_unprofiled_workers_round_robin() {
+        let mut request = request_with_workers(vec![
+            worker("planner", None),
+            worker("executor", Some("explicit")),
+            worker("verifier", None),
+        ]);
+        let candidates = vec![
+            AgentSelectionCandidate {
+                profile: "agent-a".to_string(),
+                executable: "agent-a".to_string(),
+                default_mode: Some("architect".to_string()),
+                default_model: Some("model-a".to_string()),
+            },
+            AgentSelectionCandidate {
+                profile: "agent-b".to_string(),
+                executable: "agent-b".to_string(),
+                default_mode: None,
+                default_model: Some("model-b".to_string()),
+            },
+        ];
+
+        bind_goal_agent_selection(&mut request, &candidates, true).expect("selection");
+
+        assert_eq!(request.workers[0].profile.as_deref(), Some("agent-a"));
+        assert_eq!(
+            request.workers[0].transport,
+            Some(OrchestrationTransport::Acp)
+        );
+        assert_eq!(request.workers[0].mode.as_deref(), Some("architect"));
+        assert_eq!(request.workers[0].model.as_deref(), Some("model-a"));
+        assert_eq!(request.workers[1].profile.as_deref(), Some("explicit"));
+        assert_eq!(request.workers[2].profile.as_deref(), Some("agent-b"));
+        assert_eq!(request.workers[2].model.as_deref(), Some("model-b"));
+    }
+
+    #[test]
+    fn goal_agent_selection_can_require_real_agents() {
+        let mut request = request_with_workers(vec![worker("planner", None)]);
+        let error = bind_goal_agent_selection(&mut request, &[], true).expect_err("must fail");
+        assert!(
+            error
+                .message
+                .contains("found no registered APXM agents with resolvable commands")
+        );
+
+        bind_goal_agent_selection(&mut request, &[], false).expect("optional selection");
+        assert!(request.workers[0].profile.is_none());
+    }
+
+    #[test]
+    fn goal_agent_selection_command_resolution_uses_shell_words() {
+        let program = resolvable_command_program("env APXM_MODE=test '/bin/sh' -c true")
+            .expect("quoted command should resolve");
+
+        assert_eq!(program, "/bin/sh");
+    }
 }

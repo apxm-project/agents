@@ -189,7 +189,10 @@ struct AcpAgentPrompter {
 }
 
 impl AcpAgentPrompter {
-    fn new(capability_system: Arc<CapabilitySystem>, sandbox_registry: Arc<SandboxRegistry>) -> Self {
+    fn new(
+        capability_system: Arc<CapabilitySystem>,
+        sandbox_registry: Arc<SandboxRegistry>,
+    ) -> Self {
         Self {
             capability_system,
             registry: AgentRegistry::load(),

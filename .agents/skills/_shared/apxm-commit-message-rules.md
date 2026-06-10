@@ -85,7 +85,7 @@ Right: `prereg(plan09): J/req cell — telecom N=20`.
 - `chore(external/vllm)`: submodule bump; body names the upstream SHA
   and what APXM commits ride on top.
 - `docs(<scope>)`: when touching `.agents/` SSOT, remember to
-  `dekk apxm skills generate` so `CLAUDE.md` + `AGENTS.md` stay synced.
+  `dekk apxm skills generate --target all` so generated agent files stay synced.
 
 ## Bypass policy
 

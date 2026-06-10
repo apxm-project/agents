@@ -483,7 +483,10 @@ async fn bubblewrap_confines_writes_to_workdir_only() {
         result.stdout, result.stderr
     );
     assert!(result.stdout.contains("confined"), "command did not run");
-    assert!(result.stdout.contains("readok"), "host root should be readable");
+    assert!(
+        result.stdout.contains("readok"),
+        "host root should be readable"
+    );
     assert!(
         result.stdout.contains("wrote_workdir"),
         "working dir should be writable"
@@ -545,7 +548,10 @@ async fn wrap_command_runs_confined_with_live_stdio() {
     let _ = std::fs::remove_dir_all(&workdir);
 
     let stdout = String::from_utf8_lossy(&output.stdout);
-    assert!(stdout.contains("got:hello"), "stdio not forwarded: {stdout}");
+    assert!(
+        stdout.contains("got:hello"),
+        "stdio not forwarded: {stdout}"
+    );
     assert!(
         stdout.contains("blocked") && !stdout.contains("WROTE"),
         "wrapped process not confined: {stdout}"

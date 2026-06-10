@@ -234,7 +234,6 @@ impl BashCapability {
             ..ExecRequest::default()
         })
     }
-
 }
 
 fn git_allowed_commands() -> Vec<String> {

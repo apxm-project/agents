@@ -31,7 +31,7 @@ Run these in order. If any fail, do **not** claim completion:
 6. **Commit-message lint** for any queued commits:
    `dekk apxm commit-lint --range origin/main..HEAD`.
 7. **Skills status** if anything under `.agents/` changed:
-   `dekk apxm skills status`. Confirm CLAUDE.md, AGENTS.md, and
+   `dekk apxm skills status`. Confirm generated agent files and
    `.agents.json` are coherent.
 8. **`git status --short`** and **`git diff --stat`**. Read every
    line. Nothing should be unexpected.

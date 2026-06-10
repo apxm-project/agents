@@ -401,6 +401,7 @@ name = "apxm-server"
 version = "0.0.1"
 dependencies = [
  "anyhow",
+ "apxm-acp",
  "apxm-ais",
  "apxm-artifact",
  "apxm-backends",
@@ -424,6 +425,7 @@ dependencies = [
  "rusqlite",
  "serde",
  "serde_json",
+ "shell-words",
  "tempfile",
  "tokio",
  "tokio-stream",

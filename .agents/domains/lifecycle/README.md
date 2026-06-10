@@ -7,8 +7,8 @@ routes through these:
    `_shared/` rules, subsystem ownership).
 2. **apxm-plan** — design before implementing; required for >3 files,
    public API changes, or Slurm allocations.
-3. **apxm-execute-plan** — drive the plan with `TaskCreate`/
-   `TaskUpdate`, focused verification, no scope creep.
+3. **apxm-execute-plan** — drive the plan with the current harness task
+   tracker, focused verification, no scope creep.
 4. **apxm-simplify** — remove copied `_shared/` text, weak
    abstractions, referential comments before claiming done.
 5. **apxm-finish** — focused tests, doctor, no-legacy lint, secrets

@@ -13,8 +13,7 @@ creep. Invoke only after `apxm-plan` and an explicit user approval.
 
 1. **Restate the plan's phase boundaries** at the start. Be explicit
    about what each phase produces and where it ends.
-2. **Track phases with the harness's task tracker** (Claude Code:
-   `TaskCreate`/`TaskUpdate`; Codex/others: equivalent task list).
+2. **Track phases with the current harness's task tracker**.
    Mark each `in_progress` when starting and `completed` as soon as
    done — do not batch.
 3. **After each phase, run focused verification** from the plan's

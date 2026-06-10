@@ -1051,7 +1051,9 @@ mod tests {
     fn classic_models_keep_max_tokens_and_temperature() {
         for model in ["gpt-4o-mini", "gpt-4.1", "Kimi-K2.6", "DeepSeek-V4-Flash"] {
             let backend = test_backend(model);
-            let request = LLMRequest::new("Hi").with_temperature(0.7).with_max_tokens(64);
+            let request = LLMRequest::new("Hi")
+                .with_temperature(0.7)
+                .with_max_tokens(64);
             let body = backend.build_request_body(&request);
             assert_eq!(body["max_tokens"], 64, "{model}");
             assert!(body.get("max_completion_tokens").is_none(), "{model}");

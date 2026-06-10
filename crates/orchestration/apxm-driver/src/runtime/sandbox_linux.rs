@@ -509,7 +509,8 @@ mod tests {
             sandbox: working_directory.sandbox.clone(),
         }];
 
-        let args = build_bwrap_command_args(&request, &working_directory, &writable_mounts).unwrap();
+        let args =
+            build_bwrap_command_args(&request, &working_directory, &writable_mounts).unwrap();
 
         assert!(args.windows(3).any(|window| {
             window
@@ -519,11 +520,16 @@ mod tests {
                     bubblewrap::FILESYSTEM_ROOT,
                 ]
         }));
-        assert!(args.windows(2).any(|w| w == [bubblewrap::FLAG_TMPFS, bubblewrap::FILESYSTEM_TMP]));
+        assert!(
+            args.windows(2)
+                .any(|w| w == [bubblewrap::FLAG_TMPFS, bubblewrap::FILESYSTEM_TMP])
+        );
         assert!(args.iter().any(|arg| arg == bubblewrap::FLAG_UNSHARE_NET));
         // working dir is bound writable at its real path (chdir target)
-        assert!(args.windows(2).any(|w| w
-            == [bubblewrap::FLAG_CHDIR, "/tmp/apxm-test-workdir"]));
+        assert!(
+            args.windows(2)
+                .any(|w| w == [bubblewrap::FLAG_CHDIR, "/tmp/apxm-test-workdir"])
+        );
     }
 
     #[test]
@@ -544,7 +550,8 @@ mod tests {
             sandbox: working_directory.sandbox.clone(),
         }];
 
-        let args = build_bwrap_command_args(&request, &working_directory, &writable_mounts).unwrap();
+        let args =
+            build_bwrap_command_args(&request, &working_directory, &writable_mounts).unwrap();
 
         assert!(!args.iter().any(|arg| arg == bubblewrap::FLAG_UNSHARE_NET));
     }
@@ -565,8 +572,10 @@ mod tests {
                 bubblewrap::FILESYSTEM_ROOT,
                 bubblewrap::FILESYSTEM_ROOT
             ]));
-        assert!(args.windows(2).any(|w| w
-            == [bubblewrap::FLAG_TMPFS, bubblewrap::FILESYSTEM_TMP]));
+        assert!(
+            args.windows(2)
+                .any(|w| w == [bubblewrap::FLAG_TMPFS, bubblewrap::FILESYSTEM_TMP])
+        );
         assert!(args.iter().any(|a| a == bubblewrap::FLAG_UNSHARE_USER));
         assert!(args.iter().any(|a| a == bubblewrap::FLAG_UNSHARE_PID));
         assert!(!args.iter().any(|a| a == bubblewrap::FLAG_UNSHARE_NET));
@@ -577,7 +586,10 @@ mod tests {
                 "/home/dev/project"
             ]));
         // program/args land after the separator, in order
-        let sep = args.iter().position(|a| a == bubblewrap::FLAG_SEPARATOR).unwrap();
+        let sep = args
+            .iter()
+            .position(|a| a == bubblewrap::FLAG_SEPARATOR)
+            .unwrap();
         assert_eq!(args[sep + 1], "claude-code");
         assert_eq!(args[sep + 2], "--acp");
     }

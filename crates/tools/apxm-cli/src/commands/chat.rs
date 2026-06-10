@@ -173,7 +173,10 @@ pub async fn chat_command(opts: ChatOptions) -> Result<()> {
         }),
     };
     if let Some(ctx) = &context {
-        eprintln!("context: loaded AGENTS.md/CLAUDE.md hierarchy (~{} tokens)", ctx.len() / 4);
+        eprintln!(
+            "context: loaded AGENTS.md/CLAUDE.md hierarchy (~{} tokens)",
+            ctx.len() / 4
+        );
     }
 
     // No read timeout: SSE streams stall between events, and reqwest's default
@@ -338,7 +341,12 @@ fn spawn_monitor_subscriber(
     let url = format!("{}/events", os_base.trim_end_matches('/'));
     tokio::spawn(async move {
         loop {
-            match client.get(&url).header("accept", "text/event-stream").send().await {
+            match client
+                .get(&url)
+                .header("accept", "text/event-stream")
+                .send()
+                .await
+            {
                 Ok(resp) if resp.status().is_success() => {
                     let mut stream = resp.bytes_stream();
                     let mut parser = SseParser::default();
@@ -375,7 +383,11 @@ fn cue_event_to_turn(data: &str) -> String {
             let payload = ev.get("payload").cloned().unwrap_or(JsonValue::Null);
             format!(
                 "An apxm-os event fired (kind={kind}{}). Payload: {}. React appropriately for this agent.",
-                if cue.is_empty() { String::new() } else { format!(", cue={cue}") },
+                if cue.is_empty() {
+                    String::new()
+                } else {
+                    format!(", cue={cue}")
+                },
                 payload
             )
         }
@@ -474,7 +486,9 @@ async fn summarize_quiet(
         let chunk = chunk.context("SSE chunk read failed")?;
         for frame in parser.feed(&chunk) {
             if let Ok(v) = serde_json::from_str::<JsonValue>(&frame.data)
-                && let Some(c) = v.pointer("/payload/result/content").and_then(|c| c.as_str())
+                && let Some(c) = v
+                    .pointer("/payload/result/content")
+                    .and_then(|c| c.as_str())
             {
                 summary = c.to_string();
             }
@@ -578,7 +592,10 @@ async fn run_turn(
                     let _ = std::io::stdout().flush();
                 }
                 // ExecuteComplete carries the authoritative final content.
-                if let Some(c) = v.pointer("/payload/result/content").and_then(|c| c.as_str()) {
+                if let Some(c) = v
+                    .pointer("/payload/result/content")
+                    .and_then(|c| c.as_str())
+                {
                     assistant = c.to_string();
                 }
                 // ErrorPayload carries a message.
@@ -746,7 +763,10 @@ mod tests {
         // No summary: byte-identical to a flat transcript (back-compat).
         let mut c = Conversation::default();
         c.record("hi".into(), "hello".into());
-        assert_eq!(c.render("next"), "User: hi\nAssistant: hello\nUser: next\nAssistant:");
+        assert_eq!(
+            c.render("next"),
+            "User: hi\nAssistant: hello\nUser: next\nAssistant:"
+        );
         // With a summary: a System turn carries it (same framing as the studio).
         c.summary = "earlier we discussed X".into();
         let r = c.render("next");

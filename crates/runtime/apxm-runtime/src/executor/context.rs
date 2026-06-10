@@ -535,8 +535,12 @@ mod tests {
         let capability_system = Arc::new(CapabilitySystem::new());
 
         // Without a session, memory_scope falls back to the per-execution scope.
-        let no_session =
-            ExecutionContext::new(memory.clone(), llm_registry.clone(), capability_system.clone(), Aam::new());
+        let no_session = ExecutionContext::new(
+            memory.clone(),
+            llm_registry.clone(),
+            capability_system.clone(),
+            Aam::new(),
+        );
         assert_eq!(no_session.memory_scope(), no_session.scope_id());
 
         // With a session, memory_scope is the (stable) session id.
@@ -600,8 +604,9 @@ mod tests {
             .unwrap();
 
         // Turn 2: a *different* execution sharing the session reads it back.
-        let turn2 = ExecutionContext::new(memory.clone(), llm_registry, capability_system, Aam::new())
-            .with_session_id("sess-C".to_string());
+        let turn2 =
+            ExecutionContext::new(memory.clone(), llm_registry, capability_system, Aam::new())
+                .with_session_id("sess-C".to_string());
         let turn2_node = turn2.child_with_scope(ScopeSpec::default());
         let got = memory
             .read_scoped(MemorySpace::Stm, turn2_node.memory_scope(), "fact")
@@ -610,8 +615,13 @@ mod tests {
         assert_eq!(got, Some(Value::String("remembered".to_string())));
 
         // Isolation: a different session does NOT see it.
-        let other = ExecutionContext::new(memory.clone(), Arc::new(LLMRegistry::new()), Arc::new(CapabilitySystem::new()), Aam::new())
-            .with_session_id("sess-OTHER".to_string());
+        let other = ExecutionContext::new(
+            memory.clone(),
+            Arc::new(LLMRegistry::new()),
+            Arc::new(CapabilitySystem::new()),
+            Aam::new(),
+        )
+        .with_session_id("sess-OTHER".to_string());
         let other_node = other.child_with_scope(ScopeSpec::default());
         let none = memory
             .read_scoped(MemorySpace::Stm, other_node.memory_scope(), "fact")
