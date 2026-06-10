@@ -304,24 +304,24 @@ mod tests {
     }
 
     #[test]
-    fn orchestration_templates_are_registered() {
+    fn goal_templates_are_registered() {
         let prompts = list_prompts();
         for name in [
-            "orchestration_worker",
-            "orchestration_supervisor",
-            "orchestration_tracking",
-            "orchestration_orchestrator",
-            "orchestration_flowchart",
-            "orchestration_report_stub",
-            "orchestration_goal_worker_role",
-            "orchestration_default_worker_instructions",
-            "orchestration_default_supervisor_instructions",
+            "goal_worker",
+            "goal_supervisor",
+            "goal_tracking",
+            "goal_controller",
+            "goal_flowchart",
+            "goal_report_stub",
+            "goal_worker_role",
+            "goal_default_worker_instructions",
+            "goal_default_supervisor_instructions",
         ] {
             assert!(prompts.contains(&name.to_string()), "missing {name}");
         }
 
         let rendered = render_prompt(
-            "orchestration_worker",
+            "goal_worker",
             &json!({
                 "task": "verify prompt template loading",
                 "context": "",
@@ -331,7 +331,7 @@ mod tests {
                     "id": "planner",
                     "role": "Plan the work.",
                     "cwd": "/tmp/apxm-worker",
-                    "tracking_doc": "/tmp/orchestration.md",
+                    "tracking_doc": "/tmp/goal.md",
                     "graph_json": "/tmp/graph.json",
                     "prompt_path": "/tmp/prompts/planner.md",
                     "report_path": "/tmp/reports/planner.md",
@@ -346,30 +346,30 @@ mod tests {
                 }
             }),
         )
-        .expect("orchestration_worker render");
+        .expect("goal_worker render");
         assert!(rendered.contains("planner"));
-        assert!(rendered.contains("/tmp/orchestration.md"));
+        assert!(rendered.contains("/tmp/goal.md"));
         assert!(rendered.contains("/tmp/reports/planner.md"));
 
         let report = render_prompt(
-            "orchestration_report_stub",
+            "goal_report_stub",
             &json!({
                 "owner": {
                     "id": "planner",
                     "kind": "worker",
                     "prompt_path": "/tmp/prompts/planner.md",
-                    "tracking_doc": "/tmp/orchestration.md",
+                    "tracking_doc": "/tmp/goal.md",
                     "graph_json": "/tmp/graph.json"
                 }
             }),
         )
-        .expect("orchestration_report_stub render");
+        .expect("goal_report_stub render");
         assert!(report.contains("planner"));
         assert!(report.contains("/tmp/prompts/planner.md"));
-        assert!(report.contains("/tmp/orchestration.md"));
+        assert!(report.contains("/tmp/goal.md"));
 
         let tracking = render_prompt(
-            "orchestration_tracking",
+            "goal_tracking",
             &json!({
                 "task": "verify prompt template loading",
                 "context": "",
@@ -403,14 +403,14 @@ mod tests {
                 }
             }),
         )
-        .expect("orchestration_tracking render");
+        .expect("goal_tracking render");
         assert!(tracking.contains("apxm_workflow_status"));
         assert!(tracking.contains("/tmp/bundle/workflow.apxmw"));
 
-        let orchestrator = render_prompt(
-            "orchestration_orchestrator",
+        let controller = render_prompt(
+            "goal_controller",
             &json!({
-                "start_tool": "apxm_orchestrate_start",
+                "start_tool": "apxm_goal_start",
                 "control": {
                     "status_tool": "apxm_workflow_status",
                     "events_tool": "apxm_workflow_events",
@@ -426,22 +426,21 @@ mod tests {
                 "wake_event_kind": "orchestrator_wake"
             }),
         )
-        .expect("orchestration_orchestrator render");
-        assert!(orchestrator.contains("apxm_orchestrate_start"));
-        assert!(orchestrator.contains("orchestrator_wake"));
+        .expect("goal_controller render");
+        assert!(controller.contains("apxm_goal_start"));
+        assert!(controller.contains("orchestrator_wake"));
 
-        let flowchart =
-            render_prompt("orchestration_flowchart", &json!({})).expect("flowchart render");
+        let flowchart = render_prompt("goal_flowchart", &json!({})).expect("flowchart render");
         assert!(flowchart.contains("[start background workflow]"));
 
         let role = render_prompt(
-            "orchestration_goal_worker_role",
+            "goal_worker_role",
             &json!({
                 "kind": "reviewer",
                 "worker_id": "critic"
             }),
         )
-        .expect("orchestration_goal_worker_role render");
+        .expect("goal_worker_role render");
         assert!(role.contains("critic"));
     }
 }

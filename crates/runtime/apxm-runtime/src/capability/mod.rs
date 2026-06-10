@@ -119,6 +119,14 @@ impl CapabilitySystem {
         &self.approval_store
     }
 
+    /// The AAM handle this system was built with, if any.
+    ///
+    /// Native tools that mutate goal state (e.g. `manage_task`) are constructed
+    /// with this handle so they share the runtime's single goal tree.
+    pub fn aam(&self) -> Option<&Aam> {
+        self.aam.as_ref()
+    }
+
     /// Set the sandbox registry for routing capability execution through
     /// sandbox backends.
     ///

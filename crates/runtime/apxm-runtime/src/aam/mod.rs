@@ -170,6 +170,23 @@ impl Aam {
         }))
     }
 
+    pub fn update_goal(
+        &self,
+        goal_id: GoalId,
+        description: Option<String>,
+        priority: Option<u32>,
+        status: Option<GoalStatus>,
+        label: TransitionLabel,
+    ) -> Option<TransitionRecord> {
+        let mut state = self.inner.write();
+        if !state.goal_details.contains_key(&goal_id) {
+            return None;
+        }
+        Some(state.apply_transition(label, move |state| {
+            state.update_goal(goal_id, description, priority, status)
+        }))
+    }
+
     pub fn remove_goal(&self, goal_id: GoalId, label: TransitionLabel) -> Option<TransitionRecord> {
         let mut state = self.inner.write();
         if !state.goal_details.contains_key(&goal_id) {
@@ -196,6 +213,11 @@ impl Aam {
     /// Set the completion policy for a goal.
     pub fn set_completion_policy(&self, goal_id: GoalId, policy: CompletionPolicy) {
         self.inner.write().goal_tree.set_policy(goal_id, policy);
+    }
+
+    /// The explicitly-set completion policy for a goal, if any.
+    pub fn completion_policy(&self, goal_id: &GoalId) -> Option<CompletionPolicy> {
+        self.inner.read().goal_tree.policy_opt(goal_id)
     }
 
     /// Check if a parent goal should auto-complete based on its children's statuses,
@@ -420,6 +442,45 @@ impl AamState {
                 from: old,
                 to: new_status,
             });
+        }
+        delta
+    }
+
+    fn update_goal(
+        &mut self,
+        goal_id: GoalId,
+        description: Option<String>,
+        priority: Option<u32>,
+        status: Option<GoalStatus>,
+    ) -> TransitionDelta {
+        let mut delta = TransitionDelta::default();
+        if let Some(goal) = self.goal_details.get_mut(&goal_id) {
+            let before = goal.clone();
+            if let Some(description) = description {
+                goal.description = description;
+            }
+            if let Some(priority) = priority {
+                goal.priority = priority;
+                self.goals.remove(&goal_id);
+                self.goals.push(goal_id, priority);
+            }
+            if let Some(status) = status {
+                let old = goal.status;
+                goal.status = status;
+                if old != status {
+                    delta.goal_changes.push(GoalChange::StatusChanged {
+                        id: goal_id,
+                        from: old,
+                        to: status,
+                    });
+                }
+            }
+            if before != *goal {
+                delta.goal_changes.push(GoalChange::Updated {
+                    before,
+                    after: goal.clone(),
+                });
+            }
         }
         delta
     }

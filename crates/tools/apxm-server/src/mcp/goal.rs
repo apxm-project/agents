@@ -1,4 +1,4 @@
-//! Native task orchestration MCP entry point.
+//! Native goal-start MCP entry point.
 //!
 //! This layer is intentionally a compiler/materializer, not a second runtime:
 //! it turns a bounded worker plan into a generated workflow bundle and then
@@ -10,7 +10,7 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 
 use apxm_core::constants::mcp::tools as mcp_tool_names;
-use apxm_core::constants::orchestration::admission as orchestration_admission;
+use apxm_core::constants::orchestration::admission as goal_admission;
 use apxm_core::events::kind;
 use apxm_core::paths::ApxmPaths;
 use apxm_core::types::{
@@ -27,22 +27,21 @@ use crate::state::AppState;
 
 use super::workflow::{WorkflowOrchestrationContract, WorkflowStartArgs, start_workflow_from_args};
 
-pub(crate) const MCP_TOOL_APXM_ORCHESTRATE_START: &str = mcp_tool_names::APXM_ORCHESTRATE_START;
+pub(crate) const MCP_TOOL_APXM_GOAL_START: &str = mcp_tool_names::APXM_GOAL_START;
 
 const MAX_WORKERS: usize = 16;
-const TEMPLATE_ORCHESTRATION_WORKER: &str = "orchestration_worker";
-const TEMPLATE_ORCHESTRATION_SUPERVISOR: &str = "orchestration_supervisor";
-const TEMPLATE_ORCHESTRATION_TRACKING: &str = "orchestration_tracking";
-const TEMPLATE_ORCHESTRATION_ORCHESTRATOR: &str = "orchestration_orchestrator";
-const TEMPLATE_ORCHESTRATION_FLOWCHART: &str = "orchestration_flowchart";
-const TEMPLATE_ORCHESTRATION_REPORT_STUB: &str = "orchestration_report_stub";
-const TEMPLATE_ORCHESTRATION_DEFAULT_WORKER: &str = "orchestration_default_worker_instructions";
-const TEMPLATE_ORCHESTRATION_DEFAULT_SUPERVISOR: &str =
-    "orchestration_default_supervisor_instructions";
+const TEMPLATE_GOAL_WORKER: &str = "goal_worker";
+const TEMPLATE_GOAL_SUPERVISOR: &str = "goal_supervisor";
+const TEMPLATE_GOAL_TRACKING: &str = "goal_tracking";
+const TEMPLATE_GOAL_CONTROLLER: &str = "goal_controller";
+const TEMPLATE_GOAL_FLOWCHART: &str = "goal_flowchart";
+const TEMPLATE_GOAL_REPORT_STUB: &str = "goal_report_stub";
+const TEMPLATE_GOAL_DEFAULT_WORKER: &str = "goal_default_worker_instructions";
+const TEMPLATE_GOAL_DEFAULT_SUPERVISOR: &str = "goal_default_supervisor_instructions";
 
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
-struct OrchestrateStartArgs {
+struct GoalStartArgs {
     task: String,
     #[serde(default)]
     context: Option<String>,
@@ -124,7 +123,7 @@ struct WorkspaceSpec {
 }
 
 #[derive(Debug, Serialize)]
-struct OrchestrateStartResponse {
+struct GoalStartResponse {
     status: OrchestrationStartStatus,
     #[serde(skip_serializing_if = "Option::is_none")]
     execution_id: Option<String>,
@@ -133,17 +132,17 @@ struct OrchestrateStartResponse {
     session_dir: Option<String>,
     workflow_path: String,
     bundle_dir: String,
-    artifacts: OrchestrationArtifacts,
-    plan: OrchestrationPlanSummary,
-    control: OrchestrationControl,
-    orchestration: OrchestrationRuntimeContract,
+    artifacts: GoalArtifacts,
+    plan: GoalPlanSummary,
+    control: GoalControl,
+    goal: GoalRuntimeContract,
     sleep_wake: SleepWakeContract,
-    orchestrator_prompt: String,
+    goal_prompt: String,
     flowchart: String,
 }
 
 #[derive(Debug, Serialize)]
-struct OrchestrationPlanSummary {
+struct GoalPlanSummary {
     task: String,
     workers: Vec<WorkerPlanSummary>,
     supervisor: SupervisorPlanSummary,
@@ -151,7 +150,7 @@ struct OrchestrationPlanSummary {
 }
 
 #[derive(Debug, Clone, Serialize)]
-struct OrchestrationArtifacts {
+struct GoalArtifacts {
     tracking_doc: String,
     graph_json: String,
     plan_json: String,
@@ -200,14 +199,14 @@ struct WorkspaceBindingSummary {
 }
 
 #[derive(Debug, Serialize)]
-struct OrchestrationControl {
+struct GoalControl {
     status_tool: &'static str,
     events_tool: &'static str,
     cancel_tool: &'static str,
 }
 
 #[derive(Debug, Serialize)]
-struct OrchestrationRuntimeContract {
+struct GoalRuntimeContract {
     #[serde(skip_serializing_if = "Option::is_none")]
     execution_id: Option<String>,
     initial_since: u64,
@@ -227,14 +226,14 @@ struct SleepWakeContract {
     event_loop: &'static str,
 }
 
-struct OrchestrationBundle {
+struct GoalBundle {
     session_id: String,
     bundle_dir: PathBuf,
     workflow_path: PathBuf,
-    plan: OrchestrationPlan,
+    plan: GoalPlan,
 }
 
-struct OrchestrationPlan {
+struct GoalPlan {
     task: String,
     workers: Vec<WorkerPlan>,
     supervisor: SupervisorPlan,
@@ -281,7 +280,7 @@ struct WorkspaceBinding {
     cleanup: OrchestrationWorkspaceCleanup,
 }
 
-pub(crate) fn orchestrate_start_input_schema() -> JsonValue {
+pub(crate) fn goal_start_input_schema() -> JsonValue {
     serde_json::json!({
         "type": "object",
         "additionalProperties": false,
@@ -289,7 +288,7 @@ pub(crate) fn orchestrate_start_input_schema() -> JsonValue {
         "properties": {
             "task": {
                 "type": "string",
-                "description": "Task label and instructions for one bounded orchestration pass"
+                "description": "Task label and instructions for one bounded goal pass"
             },
             "context": {
                 "type": "string",
@@ -297,17 +296,17 @@ pub(crate) fn orchestrate_start_input_schema() -> JsonValue {
             },
             "event": {
                 "type": "string",
-                "description": "Optional event or provenance that triggered this orchestration pass"
+                "description": "Optional event or provenance that triggered this goal pass"
             },
             "trigger": {
                 "type": "string",
-                "description": "Optional trigger rule or reason for this orchestration pass"
+                "description": "Optional trigger rule or reason for this goal pass"
             },
             "workers": {
                 "type": "array",
                 "minItems": 1,
                 "maxItems": MAX_WORKERS,
-                "description": "Bounded worker graph for one orchestration pass. Independent workers run in parallel; depends_on creates fan-in/fan-out phases.",
+                "description": "Bounded worker graph for one goal pass. Independent workers run in parallel; depends_on creates fan-in/fan-out phases.",
                 "items": {
                     "type": "object",
                     "additionalProperties": false,
@@ -384,62 +383,56 @@ pub(crate) fn orchestrate_start_input_schema() -> JsonValue {
     })
 }
 
-pub(crate) async fn call_orchestrate_tool(
+pub(crate) async fn call_goal_tool(
     state: &AppState,
     id: &JsonValue,
     tool_name: &str,
     tool_args: &JsonValue,
 ) -> Option<Json<JsonValue>> {
-    if tool_name != MCP_TOOL_APXM_ORCHESTRATE_START {
+    if tool_name != MCP_TOOL_APXM_GOAL_START {
         return None;
     }
-    Some(match orchestrate_start(state, tool_args).await {
+    Some(match goal_start(state, tool_args).await {
         Ok(response) => mcp_json_tool_result(id.clone(), response),
         Err(error) => mcp_tool_result(id.clone(), error.message, true),
     })
 }
 
-async fn orchestrate_start(
+async fn goal_start(
     state: &AppState,
     tool_args: &JsonValue,
-) -> Result<OrchestrateStartResponse, ApiError> {
-    let request: OrchestrateStartArgs =
-        serde_json::from_value(tool_args.clone()).map_err(|error| {
-            ApiError::bad_request(format!("invalid orchestrate_start arguments: {error}"))
-        })?;
-    let uses_process_spawns = orchestration_uses_process_spawns(&request);
+) -> Result<GoalStartResponse, ApiError> {
+    let request: GoalStartArgs = serde_json::from_value(tool_args.clone())
+        .map_err(|error| ApiError::bad_request(format!("invalid goal_start arguments: {error}")))?;
+    let uses_process_spawns = goal_uses_process_spawns(&request);
     if uses_process_spawns
         && !request
             .admit_capabilities
             .iter()
-            .any(|capability| capability == orchestration_admission::SPAWN_AGENT)
+            .any(|capability| capability == goal_admission::SPAWN_AGENT)
     {
         return Err(ApiError::bad_request(format!(
-            "{MCP_TOOL_APXM_ORCHESTRATE_START}: transport=acp requires admit_capabilities=[\"{}\"]",
-            orchestration_admission::SPAWN_AGENT,
+            "{MCP_TOOL_APXM_GOAL_START}: transport=acp requires admit_capabilities=[\"{}\"]",
+            goal_admission::SPAWN_AGENT,
         )));
     }
 
-    let bundle = materialize_orchestration_bundle(&request)?;
+    let bundle = materialize_goal_bundle(&request)?;
     let plan_summary = bundle.plan.summary();
-    let artifacts = orchestration_artifacts(&bundle.bundle_dir, &bundle.plan);
-    let control = orchestration_control();
-    let wake_on = orchestration_wake_on();
-    let event_loop = orchestration_event_loop();
-    let orchestration_contract = WorkflowOrchestrationContract {
+    let artifacts = goal_artifacts(&bundle.bundle_dir, &bundle.plan);
+    let control = goal_control();
+    let wake_on = goal_wake_on();
+    let event_loop = goal_event_loop();
+    let goal_contract = WorkflowOrchestrationContract {
         bundle_dir: bundle.bundle_dir.to_string_lossy().to_string(),
         artifacts: serde_json::to_value(&artifacts).map_err(|error| {
-            ApiError::internal_message(format!(
-                "failed to serialize orchestration artifacts: {error}"
-            ))
+            ApiError::internal_message(format!("failed to serialize goal artifacts: {error}"))
         })?,
         plan: serde_json::to_value(&plan_summary).map_err(|error| {
-            ApiError::internal_message(format!("failed to serialize orchestration plan: {error}"))
+            ApiError::internal_message(format!("failed to serialize goal plan: {error}"))
         })?,
         control: serde_json::to_value(&control).map_err(|error| {
-            ApiError::internal_message(format!(
-                "failed to serialize orchestration control: {error}"
-            ))
+            ApiError::internal_message(format!("failed to serialize goal control: {error}"))
         })?,
         wake_on: wake_on.clone(),
         event_loop: event_loop.to_string(),
@@ -458,7 +451,7 @@ async fn orchestrate_start(
                     session_id: Some(bundle.session_id.clone()),
                     admit_capabilities: request.admit_capabilities.clone(),
                     imports: request.imports.clone(),
-                    orchestration: Some(orchestration_contract),
+                    orchestration: Some(goal_contract),
                 },
             )
             .await?,
@@ -470,7 +463,7 @@ async fn orchestrate_start(
     } else {
         OrchestrationStartStatus::Planned
     };
-    let response = OrchestrateStartResponse {
+    let response = GoalStartResponse {
         status,
         execution_id: started
             .as_ref()
@@ -484,7 +477,7 @@ async fn orchestrate_start(
         artifacts,
         plan: plan_summary,
         control,
-        orchestration: orchestration_runtime_contract(
+        goal: goal_runtime_contract(
             started
                 .as_ref()
                 .map(|response| response.execution_id.clone()),
@@ -495,39 +488,35 @@ async fn orchestrate_start(
             wake_on,
             event_loop,
         },
-        orchestrator_prompt: orchestrator_prompt()?,
-        flowchart: orchestration_flowchart()?,
+        goal_prompt: goal_prompt()?,
+        flowchart: goal_flowchart()?,
     };
     Ok(response)
 }
 
-fn materialize_orchestration_bundle(
-    request: &OrchestrateStartArgs,
-) -> Result<OrchestrationBundle, ApiError> {
+fn materialize_goal_bundle(request: &GoalStartArgs) -> Result<GoalBundle, ApiError> {
     validate_request(request)?;
     let session_id = request
         .session_id
         .clone()
-        .unwrap_or_else(|| format!("orchestrate-{}", uuid::Uuid::new_v4()));
+        .unwrap_or_else(|| format!("goal-{}", uuid::Uuid::new_v4()));
     validate_component_id(&session_id, "session_id")?;
 
     let paths = ApxmPaths::discover().map_err(|error| {
         ApiError::internal_message(format!("failed to resolve APXM paths: {error}"))
     })?;
-    let root = paths
-        .cache_component_dir("orchestrations")
-        .map_err(|error| {
-            ApiError::internal_message(format!("failed to create orchestration cache: {error}"))
-        })?;
+    let root = paths.cache_component_dir("goals").map_err(|error| {
+        ApiError::internal_message(format!("failed to create goal cache: {error}"))
+    })?;
     let bundle_dir = root.join(&session_id);
     if bundle_dir.exists() {
         return Err(ApiError::bad_request(format!(
-            "orchestration session already exists: {session_id}"
+            "goal session already exists: {session_id}"
         )));
     }
     std::fs::create_dir_all(&bundle_dir).map_err(|error| {
         ApiError::internal_message(format!(
-            "failed to create orchestration bundle '{}': {error}",
+            "failed to create goal bundle '{}': {error}",
             bundle_dir.display()
         ))
     })?;
@@ -536,7 +525,7 @@ fn materialize_orchestration_bundle(
     let plan = build_plan(request, &session_id, &bundle_dir, &workspace_policy)?;
     write_bundle_files(&bundle_dir, request, &plan)?;
 
-    Ok(OrchestrationBundle {
+    Ok(GoalBundle {
         session_id,
         workflow_path: bundle_dir.join("workflow.apxmw"),
         bundle_dir,
@@ -544,20 +533,18 @@ fn materialize_orchestration_bundle(
     })
 }
 
-fn validate_request(request: &OrchestrateStartArgs) -> Result<(), ApiError> {
+fn validate_request(request: &GoalStartArgs) -> Result<(), ApiError> {
     if request.task.trim().is_empty() {
-        return Err(ApiError::bad_request(
-            "orchestrate_start task must not be empty",
-        ));
+        return Err(ApiError::bad_request("goal_start task must not be empty"));
     }
     if request.workers.is_empty() {
         return Err(ApiError::bad_request(
-            "orchestrate_start workers must be non-empty",
+            "goal_start workers must be non-empty",
         ));
     }
     if request.workers.len() > MAX_WORKERS {
         return Err(ApiError::bad_request(format!(
-            "orchestrate_start workers exceeds breadth cap of {MAX_WORKERS}"
+            "goal_start workers exceeds breadth cap of {MAX_WORKERS}"
         )));
     }
 
@@ -566,7 +553,7 @@ fn validate_request(request: &OrchestrateStartArgs) -> Result<(), ApiError> {
         validate_component_id(&worker.id, "worker.id")?;
         if !ids.insert(worker.id.as_str()) {
             return Err(ApiError::bad_request(format!(
-                "orchestrate_start duplicate worker id '{}'",
+                "goal_start duplicate worker id '{}'",
                 worker.id
             )));
         }
@@ -580,7 +567,7 @@ fn validate_request(request: &OrchestrateStartArgs) -> Result<(), ApiError> {
         validate_component_id(&supervisor.id, "supervisor.id")?;
         if ids.contains(supervisor.id.as_str()) {
             return Err(ApiError::bad_request(format!(
-                "orchestrate_start supervisor id '{}' conflicts with a worker id",
+                "goal_start supervisor id '{}' conflicts with a worker id",
                 supervisor.id
             )));
         }
@@ -676,7 +663,7 @@ fn visit_worker<'a>(
     }
     if !visiting.insert(id) {
         return Err(ApiError::bad_request(format!(
-            "orchestrate_start worker dependency cycle involving '{id}'"
+            "goal_start worker dependency cycle involving '{id}'"
         )));
     }
     let worker = by_id
@@ -791,13 +778,13 @@ impl WorkspacePolicy {
 }
 
 fn build_plan(
-    request: &OrchestrateStartArgs,
+    request: &GoalStartArgs,
     session_id: &str,
     bundle_dir: &Path,
     workspace_policy: &WorkspacePolicy,
-) -> Result<OrchestrationPlan, ApiError> {
+) -> Result<GoalPlan, ApiError> {
     let mut workers = Vec::with_capacity(request.workers.len());
-    let tracking_doc_path = bundle_dir.join("orchestration.md");
+    let tracking_doc_path = bundle_dir.join("goal.md");
     let graph_path = bundle_dir.join("graph.json");
     for worker in &request.workers {
         let (cwd, workspace) = workspace_policy.allocate(&worker.id)?;
@@ -854,7 +841,7 @@ fn build_plan(
     }
     let supervisor_id = supervisor_spec.id.clone();
 
-    Ok(OrchestrationPlan {
+    Ok(GoalPlan {
         task: request.task.clone(),
         workers,
         supervisor: SupervisorPlan {
@@ -884,8 +871,8 @@ fn build_plan(
 
 fn write_bundle_files(
     bundle_dir: &Path,
-    request: &OrchestrateStartArgs,
-    plan: &OrchestrationPlan,
+    request: &GoalStartArgs,
+    plan: &GoalPlan,
 ) -> Result<(), ApiError> {
     let workers_dir = bundle_dir.join("workers");
     let prompts_dir = bundle_dir.join("prompts");
@@ -948,17 +935,17 @@ fn write_bundle_files(
     write_json_file(
         &bundle_dir.join("plan.json"),
         &plan_packet_json(request, plan, bundle_dir)?,
-        "orchestration plan packet",
+        "goal plan packet",
     )?;
     write_json_file(
         &bundle_dir.join("graph.json"),
         &graph_packet_json(plan),
-        "orchestration graph packet",
+        "goal graph packet",
     )?;
     write_text_file(
-        &bundle_dir.join("orchestration.md"),
+        &bundle_dir.join("goal.md"),
         &tracking_doc(request, plan, bundle_dir)?,
-        "orchestration tracking doc",
+        "goal tracking doc",
     )?;
     write_text_file(
         &plan.supervisor.prompt_path,
@@ -976,12 +963,8 @@ fn write_bundle_files(
         )?,
         "supervisor report stub",
     )?;
-    std::fs::write(
-        bundle_dir.join("orchestrator_prompt.txt"),
-        orchestrator_prompt()?,
-    )
-    .map_err(|error| {
-        ApiError::internal_message(format!("failed to write orchestrator prompt: {error}"))
+    std::fs::write(bundle_dir.join("goal_prompt.txt"), goal_prompt()?).map_err(|error| {
+        ApiError::internal_message(format!("failed to write goal prompt: {error}"))
     })?;
     Ok(())
 }
@@ -1008,8 +991,8 @@ fn write_json_file(path: &Path, value: &JsonValue, label: &str) -> Result<(), Ap
 }
 
 fn plan_packet_json(
-    request: &OrchestrateStartArgs,
-    plan: &OrchestrationPlan,
+    request: &GoalStartArgs,
+    plan: &GoalPlan,
     bundle_dir: &Path,
 ) -> Result<JsonValue, ApiError> {
     Ok(serde_json::json!({
@@ -1020,9 +1003,9 @@ fn plan_packet_json(
         "workspace_mode": plan.workspace_mode.as_str(),
         "bundle_dir": path_string(bundle_dir),
         "workflow_path": path_string(&bundle_dir.join("workflow.apxmw")),
-        "tracking_doc": path_string(&bundle_dir.join("orchestration.md")),
+        "tracking_doc": path_string(&bundle_dir.join("goal.md")),
         "graph_json": path_string(&bundle_dir.join("graph.json")),
-        "control": orchestration_control(),
+        "control": goal_control(),
         "workers": plan
             .workers
             .iter()
@@ -1061,7 +1044,7 @@ fn supervisor_packet_json(supervisor: &SupervisorPlan) -> JsonValue {
     })
 }
 
-fn graph_packet_json(plan: &OrchestrationPlan) -> JsonValue {
+fn graph_packet_json(plan: &GoalPlan) -> JsonValue {
     let mut nodes = plan
         .workers
         .iter()
@@ -1102,7 +1085,7 @@ fn graph_packet_json(plan: &OrchestrationPlan) -> JsonValue {
     })
 }
 
-fn graph_edges(plan: &OrchestrationPlan) -> Vec<JsonValue> {
+fn graph_edges(plan: &GoalPlan) -> Vec<JsonValue> {
     let mut edges = Vec::new();
     for worker in &plan.workers {
         for dep in &worker.depends_on {
@@ -1126,9 +1109,9 @@ fn graph_edges(plan: &OrchestrationPlan) -> Vec<JsonValue> {
     edges
 }
 
-fn orchestration_artifacts(bundle_dir: &Path, plan: &OrchestrationPlan) -> OrchestrationArtifacts {
-    OrchestrationArtifacts {
-        tracking_doc: path_string(&bundle_dir.join("orchestration.md")),
+fn goal_artifacts(bundle_dir: &Path, plan: &GoalPlan) -> GoalArtifacts {
+    GoalArtifacts {
+        tracking_doc: path_string(&bundle_dir.join("goal.md")),
         graph_json: path_string(&bundle_dir.join("graph.json")),
         plan_json: path_string(&bundle_dir.join("plan.json")),
         prompts_dir: path_string(&bundle_dir.join("prompts")),
@@ -1177,12 +1160,12 @@ fn path_string(path: &Path) -> String {
 }
 
 fn tracking_doc(
-    request: &OrchestrateStartArgs,
-    plan: &OrchestrationPlan,
+    request: &GoalStartArgs,
+    plan: &GoalPlan,
     bundle_dir: &Path,
 ) -> Result<String, ApiError> {
-    render_orchestration_template(
-        TEMPLATE_ORCHESTRATION_TRACKING,
+    render_goal_template(
+        TEMPLATE_GOAL_TRACKING,
         &serde_json::json!({
             "task": request.task.as_str(),
             "context": request.context.as_deref().unwrap_or(""),
@@ -1192,19 +1175,16 @@ fn tracking_doc(
             "workflow_path": path_string(&bundle_dir.join("workflow.apxmw")),
             "plan_json": path_string(&bundle_dir.join("plan.json")),
             "graph_json": path_string(&bundle_dir.join("graph.json")),
-            "control": orchestration_control(),
+            "control": goal_control(),
             "workers": worker_prompt_rows(plan),
             "supervisor": supervisor_tracking_row(plan)
         }),
     )
 }
 
-fn render_worker_prompt(
-    request: &OrchestrateStartArgs,
-    worker: &WorkerPlan,
-) -> Result<String, ApiError> {
-    render_orchestration_template(
-        TEMPLATE_ORCHESTRATION_WORKER,
+fn render_worker_prompt(request: &GoalStartArgs, worker: &WorkerPlan) -> Result<String, ApiError> {
+    render_goal_template(
+        TEMPLATE_GOAL_WORKER,
         &serde_json::json!({
             "task": request.task.as_str(),
             "context": request.context.as_deref().unwrap_or(""),
@@ -1216,12 +1196,12 @@ fn render_worker_prompt(
 }
 
 fn render_supervisor_prompt(
-    request: &OrchestrateStartArgs,
-    plan: &OrchestrationPlan,
+    request: &GoalStartArgs,
+    plan: &GoalPlan,
     worker_summary: &str,
 ) -> Result<String, ApiError> {
-    render_orchestration_template(
-        TEMPLATE_ORCHESTRATION_SUPERVISOR,
+    render_goal_template(
+        TEMPLATE_GOAL_SUPERVISOR,
         &serde_json::json!({
             "task": request.task.as_str(),
             "context": request.context.as_deref().unwrap_or(""),
@@ -1240,8 +1220,8 @@ fn render_report_stub(
     tracking_doc_path: &Path,
     graph_path: &Path,
 ) -> Result<String, ApiError> {
-    render_orchestration_template(
-        TEMPLATE_ORCHESTRATION_REPORT_STUB,
+    render_goal_template(
+        TEMPLATE_GOAL_REPORT_STUB,
         &serde_json::json!({
             "owner": {
                 "id": owner_id,
@@ -1271,7 +1251,7 @@ fn worker_prompt_context(worker: &WorkerPlan) -> JsonValue {
     })
 }
 
-fn worker_prompt_rows(plan: &OrchestrationPlan) -> Vec<JsonValue> {
+fn worker_prompt_rows(plan: &GoalPlan) -> Vec<JsonValue> {
     plan.workers
         .iter()
         .map(|worker| {
@@ -1300,7 +1280,7 @@ fn supervisor_prompt_context(supervisor: &SupervisorPlan, worker_summary: &str) 
     })
 }
 
-fn supervisor_tracking_row(plan: &OrchestrationPlan) -> JsonValue {
+fn supervisor_tracking_row(plan: &GoalPlan) -> JsonValue {
     serde_json::json!({
         "id": plan.supervisor.id.as_str(),
         "depends_label": plan
@@ -1315,18 +1295,18 @@ fn supervisor_tracking_row(plan: &OrchestrationPlan) -> JsonValue {
     })
 }
 
-fn render_orchestration_template<T: serde::Serialize>(
+fn render_goal_template<T: serde::Serialize>(
     template: &str,
     context: &T,
 ) -> Result<String, ApiError> {
     apxm_backends::render_prompt(template, context).map_err(|error| {
         ApiError::internal_message(format!(
-            "failed to render orchestration prompt template '{template}': {error}"
+            "failed to render goal prompt template '{template}': {error}"
         ))
     })
 }
 
-fn worker_air(request: &OrchestrateStartArgs, worker: &WorkerPlan) -> Result<String, ApiError> {
+fn worker_air(request: &GoalStartArgs, worker: &WorkerPlan) -> Result<String, ApiError> {
     if worker.transport == OrchestrationTransport::Acp {
         acp_worker_air(request, worker)
     } else {
@@ -1334,7 +1314,7 @@ fn worker_air(request: &OrchestrateStartArgs, worker: &WorkerPlan) -> Result<Str
     }
 }
 
-fn acp_worker_air(request: &OrchestrateStartArgs, worker: &WorkerPlan) -> Result<String, ApiError> {
+fn acp_worker_air(request: &GoalStartArgs, worker: &WorkerPlan) -> Result<String, ApiError> {
     let message = worker_message(request, worker)?;
     let spawn_attrs = spawn_attrs(
         worker.profile.as_deref(),
@@ -1379,7 +1359,7 @@ fn deterministic_worker_air(worker: &WorkerPlan) -> String {
     )
 }
 
-fn gate_air(request: &OrchestrateStartArgs, plan: &OrchestrationPlan) -> Result<String, ApiError> {
+fn gate_air(request: &GoalStartArgs, plan: &GoalPlan) -> Result<String, ApiError> {
     let supervisor = &plan.supervisor;
     if supervisor.transport == OrchestrationTransport::Acp {
         let cwd = supervisor.cwd.as_deref();
@@ -1438,10 +1418,7 @@ fn feedback_air() -> String {
     )
 }
 
-fn workflow_json(
-    request: &OrchestrateStartArgs,
-    plan: &OrchestrationPlan,
-) -> Result<Vec<u8>, ApiError> {
+fn workflow_json(request: &GoalStartArgs, plan: &GoalPlan) -> Result<Vec<u8>, ApiError> {
     let mut graphs = Vec::with_capacity(plan.workers.len() + 2);
     for worker in &plan.workers {
         let upstream = upstream_template(&worker.depends_on);
@@ -1487,8 +1464,8 @@ fn workflow_json(
     }));
 
     serde_json::to_vec_pretty(&serde_json::json!({
-        "name": "orchestrated_task",
-        "description": "Generated by apxm_orchestrate_start: event -> trigger -> parallel workers -> gate/eval -> feedback.",
+        "name": "goal_pass",
+        "description": "Generated by apxm_goal_start: event -> trigger -> parallel workers -> gate/eval -> feedback.",
         "graphs": graphs,
         "output": "{{feedback.output}}"
     }))
@@ -1529,7 +1506,7 @@ fn spawn_attrs(
     }
 }
 
-fn worker_message(request: &OrchestrateStartArgs, worker: &WorkerPlan) -> Result<String, ApiError> {
+fn worker_message(request: &GoalStartArgs, worker: &WorkerPlan) -> Result<String, ApiError> {
     render_worker_prompt(request, worker)
 }
 
@@ -1556,9 +1533,9 @@ fn agent_name(session_id: &str, id: &str) -> String {
         .take(12)
         .collect::<String>();
     if suffix.is_empty() {
-        format!("orchestration_worker_{id}")
+        format!("goal_worker_{id}")
     } else {
-        format!("orchestration_worker_{id}_{suffix}")
+        format!("goal_worker_{id}_{suffix}")
     }
 }
 
@@ -1573,7 +1550,7 @@ fn effective_transport(
     })
 }
 
-fn orchestration_uses_process_spawns(request: &OrchestrateStartArgs) -> bool {
+fn goal_uses_process_spawns(request: &GoalStartArgs) -> bool {
     request.workers.iter().any(|worker| {
         effective_transport(worker.transport, worker.profile.as_deref())
             == OrchestrationTransport::Acp
@@ -1685,9 +1662,9 @@ fn git_rev_parse(repo_root: &Path, rev: &str) -> Result<String, ApiError> {
     Ok(String::from_utf8_lossy(&output.stdout).trim().to_string())
 }
 
-impl OrchestrationPlan {
-    fn summary(&self) -> OrchestrationPlanSummary {
-        OrchestrationPlanSummary {
+impl GoalPlan {
+    fn summary(&self) -> GoalPlanSummary {
+        GoalPlanSummary {
             task: self.task.clone(),
             workers: self
                 .workers
@@ -1718,8 +1695,8 @@ impl OrchestrationPlan {
 }
 
 fn default_worker_prompt(id: &str) -> Result<String, ApiError> {
-    render_orchestration_template(
-        TEMPLATE_ORCHESTRATION_DEFAULT_WORKER,
+    render_goal_template(
+        TEMPLATE_GOAL_DEFAULT_WORKER,
         &serde_json::json!({ "worker_id": id }),
     )
 }
@@ -1729,21 +1706,18 @@ fn default_supervisor_id() -> String {
 }
 
 fn default_supervisor_prompt() -> Result<String, ApiError> {
-    render_orchestration_template(
-        TEMPLATE_ORCHESTRATION_DEFAULT_SUPERVISOR,
-        &serde_json::json!({}),
-    )
+    render_goal_template(TEMPLATE_GOAL_DEFAULT_SUPERVISOR, &serde_json::json!({}))
 }
 
-fn orchestration_control() -> OrchestrationControl {
-    OrchestrationControl {
+fn goal_control() -> GoalControl {
+    GoalControl {
         status_tool: super::workflow::MCP_TOOL_APXM_WORKFLOW_STATUS,
         events_tool: super::workflow::MCP_TOOL_APXM_WORKFLOW_EVENTS,
         cancel_tool: super::workflow::MCP_TOOL_APXM_WORKFLOW_CANCEL,
     }
 }
 
-fn orchestration_terminal_event_kinds() -> Vec<&'static str> {
+fn goal_terminal_event_kinds() -> Vec<&'static str> {
     vec![
         kind::ORCHESTRATOR_WAKE.name(),
         kind::EXECUTE_COMPLETE.name(),
@@ -1752,7 +1726,7 @@ fn orchestration_terminal_event_kinds() -> Vec<&'static str> {
     ]
 }
 
-fn orchestration_wake_on() -> Vec<String> {
+fn goal_wake_on() -> Vec<String> {
     vec![
         format!(
             "{} returns {}",
@@ -1777,14 +1751,11 @@ fn orchestration_wake_on() -> Vec<String> {
     ]
 }
 
-fn orchestration_event_loop() -> &'static str {
+fn goal_event_loop() -> &'static str {
     "event -> trigger -> parallel worker actions -> gate/eval -> feedback -> next event"
 }
 
-fn orchestration_runtime_contract(
-    execution_id: Option<String>,
-    gate_step_id: &str,
-) -> OrchestrationRuntimeContract {
+fn goal_runtime_contract(execution_id: Option<String>, gate_step_id: &str) -> GoalRuntimeContract {
     let next_events_args = execution_id.as_ref().map(|execution_id| {
         serde_json::json!({
             "execution_id": execution_id,
@@ -1792,33 +1763,33 @@ fn orchestration_runtime_contract(
             "limit": 100
         })
     });
-    OrchestrationRuntimeContract {
+    GoalRuntimeContract {
         execution_id,
         initial_since: 0,
         gate_step_id: gate_step_id.to_string(),
         feedback_step_id: "feedback",
-        terminal_event_kinds: orchestration_terminal_event_kinds(),
+        terminal_event_kinds: goal_terminal_event_kinds(),
         next_events_args,
         sleep_event_kind: kind::ORCHESTRATOR_SLEEP.name(),
         wake_event_kind: kind::ORCHESTRATOR_WAKE.name(),
     }
 }
 
-fn orchestrator_prompt() -> Result<String, ApiError> {
-    render_orchestration_template(
-        TEMPLATE_ORCHESTRATION_ORCHESTRATOR,
+fn goal_prompt() -> Result<String, ApiError> {
+    render_goal_template(
+        TEMPLATE_GOAL_CONTROLLER,
         &serde_json::json!({
-            "start_tool": MCP_TOOL_APXM_ORCHESTRATE_START,
-            "control": orchestration_control(),
-            "terminal_event_kinds": orchestration_terminal_event_kinds(),
+            "start_tool": MCP_TOOL_APXM_GOAL_START,
+            "control": goal_control(),
+            "terminal_event_kinds": goal_terminal_event_kinds(),
             "sleep_event_kind": kind::ORCHESTRATOR_SLEEP.name(),
             "wake_event_kind": kind::ORCHESTRATOR_WAKE.name()
         }),
     )
 }
 
-fn orchestration_flowchart() -> Result<String, ApiError> {
-    render_orchestration_template(TEMPLATE_ORCHESTRATION_FLOWCHART, &serde_json::json!({}))
+fn goal_flowchart() -> Result<String, ApiError> {
+    render_goal_template(TEMPLATE_GOAL_FLOWCHART, &serde_json::json!({}))
 }
 
 fn quote_air(value: &str) -> String {

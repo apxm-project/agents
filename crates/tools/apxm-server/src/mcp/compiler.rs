@@ -6,7 +6,7 @@
 //! and validate APXM AIR and discover the op vocabulary. They never execute a
 //! graph and never invoke a capability, so they need no admission/no-widen
 //! gating — that boundary applies to side-effecting execution tools such as
-//! `apxm_run`, native workflow control, and orchestration.
+//! `apxm_run`, native workflow control, and goal starts.
 
 use axum::Json;
 use serde_json::Value as JsonValue;

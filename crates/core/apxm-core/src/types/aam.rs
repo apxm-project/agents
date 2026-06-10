@@ -88,6 +88,12 @@ impl GoalTree {
         self.policies.get(goal_id).copied().unwrap_or_default()
     }
 
+    /// The explicitly-set completion policy for a goal, or `None` if one was
+    /// never set (distinguishes an explicit `AllChildren` from the default).
+    pub fn policy_opt(&self, goal_id: &GoalId) -> Option<CompletionPolicy> {
+        self.policies.get(goal_id).copied()
+    }
+
     /// Remove a goal from the tree (both as parent and child).
     pub fn remove(&mut self, goal_id: &GoalId) {
         self.children.remove(goal_id);

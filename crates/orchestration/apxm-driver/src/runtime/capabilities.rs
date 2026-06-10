@@ -12,6 +12,8 @@ pub fn configure_capability_registry(
     apxm_runtime::capability::builtins::register_standard_tools(&capability_system, &tools_config)
         .map_err(DriverError::Runtime)?;
 
+    register_agent_management_tools(&capability_system);
+
     if let Err(e) = register_user_tools(&capability_system) {
         tracing::warn!("Failed to load user tools from ~/.apxm/tools.json: {}", e);
     }
@@ -20,6 +22,49 @@ pub fn configure_capability_registry(
     // The ACP tool entry is intentionally not registered.
 
     Ok(())
+}
+
+/// Register the durable agent-management tools (`schedule`, `manage_task`).
+///
+/// These are always-on builtins (BUILTINS allowlist parity). The driver has no
+/// in-process schedule firer — that runs inside `apxm-server` — so in a
+/// driver-only context schedules are persisted but fire only while a server is
+/// running against the same state home. `manage_task` requires an AAM handle on
+/// the capability system; without one it is skipped.
+fn register_agent_management_tools(capability_system: &CapabilitySystem) {
+    use apxm_runtime::capability::builtins::{
+        ManageTaskCapability, ScheduleCapability, ToolsStore,
+    };
+    use std::sync::Arc;
+
+    let store_path =
+        apxm_core::env::state_home().join(apxm_core::constants::agent_tools::STORE_FILENAME);
+    let store = match ToolsStore::open(&store_path) {
+        Ok(store) => store,
+        Err(error) => {
+            tracing::warn!(
+                "failed to open agent tools store; schedule/manage_task disabled: {error}"
+            );
+            return;
+        }
+    };
+
+    match capability_system.aam() {
+        Some(aam) => {
+            if let Err(e) = capability_system.register(Arc::new(ManageTaskCapability::new(
+                aam.clone(),
+                store.clone(),
+            ))) {
+                tracing::warn!("failed to register manage_task capability: {e}");
+            }
+        }
+        None => tracing::warn!("capability system has no AAM; manage_task not registered"),
+    }
+
+    let arm = Arc::new(tokio::sync::Notify::new());
+    if let Err(e) = capability_system.register(Arc::new(ScheduleCapability::new(store, arm))) {
+        tracing::warn!("failed to register schedule capability: {e}");
+    }
 }
 
 fn register_user_tools(capability_system: &CapabilitySystem) -> Result<(), DriverError> {

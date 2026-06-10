@@ -42,7 +42,7 @@ Command-line interface for the APXM graph compiler and runtime toolchain.
 | `codegen` | Generate frontend (Python) and TypeScript code from AIS definitions |
 | `session` | Session management |
 | `workflow` | `.apxmw` workflow-file management |
-| `goal` | Start, follow, inspect, or cancel a bounded APXM goal orchestration run |
+| `goal` | Start, follow, inspect, or cancel a bounded APXM goal run |
 | `chat` | Interactive REPL over a running `apxm-server` |
 | `rollout` | Inspect, replay, and archive rollout transcripts |
 | `cache` | Cache management |
@@ -63,14 +63,12 @@ dekk apxm goal "Investigate and implement the scoped change" \
   --depends verify=implement
 ```
 
-`goal` calls the server-owned orchestration path and follows
+`goal` calls the server-owned goal-start path and follows
 `apxm_workflow_events/status` unless `--no-follow` is set. Use `--status`,
 `--events`, or `--cancel` with the returned execution id to inspect or stop a
 run later.
 
-Use `workflow run` for checked-in `.apxmw` files. `workflow execute` is a
-visible alias for `workflow run`, so raw `apxm` and `dekk apxm workflow
-execute` both work.
+Use `workflow run` for checked-in `.apxmw` files.
 
 ## Key Exports
 
@@ -81,6 +79,6 @@ execute` both work.
 
 | Crate | Purpose |
 |-------|---------|
-| apxm-driver | Compilation and execution orchestration (behind `driver` feature) |
+| apxm-driver | Compilation and execution coordination (behind `driver` feature) |
 | apxm-core | Shared graph contract, types, and error codes |
 | apxm-compiler | `AirModule` for validation and codegen |

@@ -2,7 +2,7 @@ use std::collections::{HashMap, HashSet, VecDeque};
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 use apxm_ais::plan::{PlanDependencyKind, PlanGraph, PlanNode, PlanNodeOp};
 use apxm_artifact::Artifact;
@@ -116,13 +116,16 @@ struct CompiledPlanGraph {
 
 enum PlanCandidateError {
     Emission(String),
+    Timeout(String),
     InvalidCandidate(String),
 }
 
 impl PlanCandidateError {
     fn into_message(self) -> String {
         match self {
-            Self::Emission(message) | Self::InvalidCandidate(message) => message,
+            Self::Emission(message) | Self::Timeout(message) | Self::InvalidCandidate(message) => {
+                message
+            }
         }
     }
 }
@@ -165,6 +168,7 @@ pub(crate) async fn plan_as_graph_with_recorder(
     let schema: JsonValue = serde_json::from_str(PLAN_SCHEMA)
         .map_err(|error| format!("bundled plan schema is invalid JSON: {error}"))?;
     let emission_start = Instant::now();
+    let mut warnings = Vec::new();
     let compiled = match emit_plan_candidate(
         runtime,
         &task,
@@ -206,6 +210,14 @@ pub(crate) async fn plan_as_graph_with_recorder(
             )
             .await?
         }
+        Err(PlanCandidateError::Timeout(message)) => {
+            warnings.push(message.clone());
+            build_compiled_plan_graph(
+                deterministic_plan_fallback(&task, context.as_deref(), constraints.as_ref()),
+                Some(runtime),
+            )
+            .map_err(|error| format!("plan timeout fallback failed to compile: {error}"))?
+        }
         Err(error @ PlanCandidateError::Emission(_)) => return Err(error.into_message()),
     };
     let emission_ms = emission_start.elapsed().as_millis();
@@ -218,6 +230,10 @@ pub(crate) async fn plan_as_graph_with_recorder(
         (tool_result::ARTIFACT_HASH): compiled.artifact_hash,
         (tool_result::STATS): compile_stats(&compiled.artifact, compiled.compile_ms, emission_ms),
     });
+    if !warnings.is_empty() {
+        output[tool_result::WARNINGS] =
+            JsonValue::Array(warnings.into_iter().map(JsonValue::String).collect());
+    }
 
     if should_execute {
         validate_generated_plan_admission(&compiled.artifact, runtime)?;
@@ -476,26 +492,57 @@ pub(crate) async fn aam_recall_with_config(
     }))
 }
 
+#[allow(dead_code)]
 pub(crate) fn capability_list(runtime: &Runtime, args: JsonValue) -> JsonValue {
+    capability_list_with_config(runtime, args, &ServerMcpConfig::default())
+}
+
+pub(crate) fn capability_list_with_config(
+    runtime: &Runtime,
+    args: JsonValue,
+    config: &ServerMcpConfig,
+) -> JsonValue {
     let query = args
         .get(mcp_args::QUERY)
         .and_then(JsonValue::as_str)
         .unwrap_or_default()
         .to_ascii_lowercase();
-    let mut capabilities: Vec<JsonValue> = runtime
+    let query_terms = query
+        .split_whitespace()
+        .filter(|term| !term.is_empty())
+        .collect::<Vec<_>>();
+    let top_k = args
+        .get(mcp_args::TOP_K)
+        .and_then(JsonValue::as_u64)
+        .map(|value| value as usize)
+        .filter(|value| *value > 0)
+        .unwrap_or(config.default_top_k)
+        .clamp(1, config.max_top_k.max(1));
+    let mut capabilities: Vec<(JsonValue, usize)> = runtime
         .capability_system()
         .list_capabilities()
         .into_iter()
-        .map(|capability| serde_json::to_value(capability).unwrap_or(JsonValue::Null))
+        .map(|capability| {
+            let value = serde_json::to_value(capability).unwrap_or(JsonValue::Null);
+            let score = capability_query_score(&query_terms, &value);
+            (value, score)
+        })
         .collect();
-    if !query.is_empty() {
-        capabilities.retain(|value| {
-            serde_json::to_string(value)
-                .unwrap_or_default()
-                .to_ascii_lowercase()
-                .contains(&query)
-        });
+    if !query_terms.is_empty() {
+        capabilities.retain(|(_, score)| *score > 0);
     }
+    capabilities.sort_by(|(left, left_score), (right, right_score)| {
+        right_score.cmp(left_score).then_with(|| {
+            capability_name(left)
+                .unwrap_or_default()
+                .cmp(capability_name(right).unwrap_or_default())
+        })
+    });
+    let capabilities = capabilities
+        .into_iter()
+        .take(top_k)
+        .map(|(value, _)| value)
+        .collect::<Vec<_>>();
 
     let backends = runtime.llm_registry().backend_names();
     let health = runtime
@@ -508,6 +555,25 @@ pub(crate) fn capability_list(runtime: &Runtime, args: JsonValue) -> JsonValue {
         (tool_result::BACKENDS): backends,
         (tool_result::HEALTH): health,
     })
+}
+
+fn capability_query_score(query_terms: &[&str], capability: &JsonValue) -> usize {
+    if query_terms.is_empty() {
+        return 1;
+    }
+    let haystack = serde_json::to_string(capability)
+        .unwrap_or_default()
+        .to_ascii_lowercase();
+    query_terms
+        .iter()
+        .filter(|term| haystack.contains(**term))
+        .count()
+}
+
+fn capability_name(capability: &JsonValue) -> Option<&str> {
+    capability
+        .get(tool_result::NAME)
+        .and_then(JsonValue::as_str)
 }
 
 #[allow(dead_code)]
@@ -579,6 +645,9 @@ async fn repair_plan_candidate(
             Err(error @ PlanCandidateError::Emission(_)) => {
                 return Err(error.into_message());
             }
+            Err(error @ PlanCandidateError::Timeout(_)) => {
+                return Err(error.into_message());
+            }
         };
         match build_compiled_plan_graph(repaired, Some(runtime)) {
             Ok(compiled) => return Ok(compiled),
@@ -586,6 +655,50 @@ async fn repair_plan_candidate(
         }
     }
     Err(format!("{PLAN_REPAIRED_INVALID_PREFIX}: {last_error}"))
+}
+
+fn deterministic_plan_fallback(
+    task: &str,
+    context: Option<&str>,
+    constraints: Option<&JsonValue>,
+) -> JsonValue {
+    let mut prompt = String::from(
+        "Plan emission timed out before the model router returned a candidate. Task: ",
+    );
+    prompt.push_str(task.trim());
+    if let Some(context) = context.and_then(non_empty_trimmed) {
+        prompt.push_str("\nContext: ");
+        prompt.push_str(context);
+    }
+    if let Some(constraints) = constraints {
+        prompt.push_str("\nConstraints: ");
+        prompt.push_str(&constraints.to_string());
+    }
+    prompt.push_str(
+        "\nThis deterministic fallback is side-effect-free; retry with a healthy model route for a richer graph.",
+    );
+
+    json!({
+        (plan_field::NAME): "deterministic_plan_timeout_fallback",
+        (plan_field::ENTRY): "timeout_fallback_summary",
+        (plan_field::NODES): [
+            {
+                (plan_field::ID): 1,
+                (plan_field::NAME): "timeout_fallback_summary",
+                (plan_field::OP): PlanNodeOp::Yield.as_str(),
+                (plan_field::PROMPT): prompt
+            }
+        ]
+    })
+}
+
+fn non_empty_trimmed(value: &str) -> Option<&str> {
+    let trimmed = value.trim();
+    if trimmed.is_empty() {
+        None
+    } else {
+        Some(trimmed)
+    }
 }
 
 /// Lower a caller-supplied plan graph straight to AIR text, bypassing the
@@ -1080,9 +1193,25 @@ async fn emit_plan_candidate(
         json!(plan_skill::EMISSION_CAPABILITY),
     )
     .with_trace_id(trace_id.to_string());
-    let response = router.generate(request).await.map_err(|error| {
-        PlanCandidateError::Emission(format!("model-router plan emission failed: {error}"))
-    })?;
+    let timeout_ms = config.plan_emit_timeout_ms.max(1);
+    let response = match tokio::time::timeout(
+        Duration::from_millis(timeout_ms),
+        router.generate(request),
+    )
+    .await
+    {
+        Ok(Ok(response)) => response,
+        Ok(Err(error)) => {
+            return Err(PlanCandidateError::Emission(format!(
+                "model-router plan emission failed: {error}"
+            )));
+        }
+        Err(_) => {
+            return Err(PlanCandidateError::Timeout(format!(
+                "model-router plan emission timed out after {timeout_ms}ms; compiled deterministic fallback graph"
+            )));
+        }
+    };
     extract_json_document(&response.content).map_err(PlanCandidateError::InvalidCandidate)
 }
 

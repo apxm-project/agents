@@ -16,7 +16,7 @@ agents. It exercises one admitted pass through the control envelope:
 [bounded pass request]
     |
     v
-[start pass through apxm_orchestrate_start]
+[start pass through apxm_goal_start]
     |
     v
 [eval]
@@ -31,7 +31,7 @@ The production action step represented by `start_pass.air` is the server MCP
 call:
 
 ```text
-apxm_orchestrate_start({ task, context, event, trigger, workers, workspace, ... })
+apxm_goal_start({ task, context, event, trigger, workers, workspace, ... })
 ```
 
 That call remains one explicit bounded worker DAG. If `eval` returns
@@ -47,9 +47,9 @@ listeners, dedupe, retry, and re-arm behavior.
 From the repository root:
 
 ```bash
-dekk apxm workflow validate examples/workflows/orchestration/goal_loop/workflow.apxmw
-dekk apxm workflow analyze examples/workflows/orchestration/goal_loop/workflow.apxmw
-dekk apxm workflow execute examples/workflows/orchestration/goal_loop/workflow.apxmw \
+dekk apxm workflow validate examples/workflows/goals/goal_loop/workflow.apxmw
+dekk apxm workflow analyze examples/workflows/goals/goal_loop/workflow.apxmw
+dekk apxm workflow run examples/workflows/goals/goal_loop/workflow.apxmw \
   goal="ship a bounded APXM improvement" \
   event="manual goal requested" \
   policy="goal_loop.policy.json"
@@ -60,7 +60,7 @@ start-pass action, eval, and feedback decision.
 
 ## Native Pass Requests
 
-Use `deterministic_pass_request.json` as a no-agent `apxm_orchestrate_start`
+Use `deterministic_pass_request.json` as a no-agent `apxm_goal_start`
 request. Use `acp_git_worktree_pass_request.json` after replacing the profile
 IDs with registered APXM worker profiles and granting:
 
@@ -77,7 +77,7 @@ the controller must enforce while APXM server executes each admitted pass.
 
 - APXM skills/plugins are triggers and instructions, not the runtime.
 - Worker-authored graphs are proposals until APXM validates and admits them.
-- `apxm_orchestrate_start` executes one bounded pass and returns workflow
+- `apxm_goal_start` executes one bounded pass and returns workflow
   status/events/cancel handles.
 - APXM OS owns external event listeners, trigger sidecars, dedupe, retry, and
   re-arm behavior.

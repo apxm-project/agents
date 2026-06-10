@@ -136,7 +136,11 @@ pub(crate) async fn call_skill_tool(
         ),
         MCP_TOOL_APXM_CAPABILITY_LIST => Some(mcp_json_tool_result(
             id.clone(),
-            mcp_tools::capability_list(&state.runtime, tool_args.clone()),
+            mcp_tools::capability_list_with_config(
+                &state.runtime,
+                tool_args.clone(),
+                &state.server_config.mcp,
+            ),
         )),
         _ => None,
     }

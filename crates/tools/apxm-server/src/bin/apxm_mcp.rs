@@ -936,7 +936,7 @@ where
         .map_err(|error| format!("tokio runtime init failed: {error}"))?;
     let output = rt.block_on(async {
         let runtime =
-            runtime_setup::build_runtime_with_router(apxm_runtime::RuntimeConfig::default())
+            runtime_setup::build_runtime_with_router(apxm_runtime::RuntimeConfig::default(), None)
                 .await
                 .map_err(|error| format!("runtime init failed: {error}"))?;
         f(runtime).await

@@ -62,7 +62,12 @@ pub(crate) async fn run_server_with_config(server_config: ServerConfig) -> anyho
     let skill_roots = prepend_builtin_skill_root(parse_skill_roots(&args));
     let skill_library = SkillLibrary::new(skill_roots.clone());
 
-    let runtime = build_runtime_with_router(server_runtime_config(&server_config)).await?;
+    let task_manager = TaskQueueManager::new();
+    let runtime = build_runtime_with_router(
+        server_runtime_config(&server_config),
+        Some(crate::tasks::scheduled_prompt_on_fire(task_manager.clone())),
+    )
+    .await?;
     crate::capability::register_pack_tools(&runtime, &skill_roots);
     crate::search_skills::register(&runtime, skill_library.clone());
     let mut runtime = Arc::new(runtime);
@@ -122,7 +127,7 @@ pub(crate) async fn run_server_with_config(server_config: ServerConfig) -> anyho
     let state = AppState {
         runtime,
         agent_registry: Arc::new(DashMap::new()),
-        task_manager: TaskQueueManager::new(),
+        task_manager,
         checkpoint_store,
         start_time: SystemTime::now(),
         a2a_tasks: Arc::new(DashMap::new()),
@@ -182,6 +187,9 @@ fn apply_server_env_overrides(config: &mut ServerConfig) {
     }
     if let Some(value) = env_f64(apxm_env::APXM_MCP_PLAN_TEMPERATURE) {
         config.mcp.plan_temperature = value;
+    }
+    if let Some(value) = env_u64(apxm_env::APXM_MCP_PLAN_EMIT_TIMEOUT_MS) {
+        config.mcp.plan_emit_timeout_ms = value;
     }
     if let Some(value) = env_usize(apxm_env::APXM_MCP_PLAN_REPAIR_ATTEMPTS) {
         config.mcp.plan_repair_attempts = value;

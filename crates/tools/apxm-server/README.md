@@ -83,7 +83,7 @@ The HTTP MCP endpoint also exposes APXM skill library tools:
 - `apxm_workflow_status` -- fetch the current status, result, error, and event totals for a workflow run by `execution_id`
 - `apxm_workflow_events` -- page retained run events for a workflow run with `since` and `limit`
 - `apxm_workflow_cancel` -- interrupt an in-flight workflow run by server-owned `execution_id`
-- `apxm_orchestrate_start` -- start one server-owned orchestration pass from an explicit bounded worker DAG, allocate worker workspaces or Git worktrees, emit `orchestrator_sleep`/`orchestrator_wake` lifecycle events, and return workflow status/events/cancel handles
+- `apxm_goal_start` -- start one server-owned goal pass from an explicit bounded worker DAG, allocate worker workspaces or Git worktrees, emit `orchestrator_sleep`/`orchestrator_wake` lifecycle events, and return workflow status/events/cancel handles
 
 Skill inventory prepends the bundled server skill root and then appends roots
 configured with repeated `--skill-root <path>` arguments or the
@@ -99,15 +99,22 @@ should treat `execution_id` as the live status/events/cancel handle and
 `session_dir` as the offline workflow/session inspection handle. The request
 does not accept `session_root`; workflow session roots are derived by APXM.
 
-Native orchestration starts are also server-owned workflow executions. A caller
+Native goal starts are also server-owned workflow executions. A caller
 agent, CLI, or APXM OS trigger should resolve the task into an explicit bounded
-worker DAG before calling `apxm_orchestrate_start`; this MCP tool executes that
+worker DAG before calling `apxm_goal_start`; this MCP tool executes that
 one pass and does not recursively plan new passes. After start, the caller
 should keep the returned `execution_id`, then go idle until
 `apxm_workflow_events` returns
 `orchestrator_wake`, `execute_complete`, `error`, or `turn_aborted`, or until
 `apxm_workflow_status` reports `succeeded` or `failed`. Real ACP workers require
 the caller to grant `admit_capabilities: ["SPAWN_AGENT"]`.
+
+The runtime registers durable agent-management capabilities as normal runtime
+tools: `schedule` arms one-shot, recurring, or cron wakeups, and `manage_task`
+creates and updates AAM-backed tasks/goals. Both persist through the shared
+agent-tools store under APXM state home. In `apxm-server`, fired scheduled
+prompts are routed into the CLAIM task queue; `payload.queue` selects the queue
+and otherwise defaults to `scheduled_prompts`.
 
 `POST /v1/skills/:id/execute`, `POST /v1/skills/:id/execute/stream`, and
 `apxm_skill_call` are intentionally narrow. They only run already compiled
@@ -127,8 +134,11 @@ pass sandbox preflight, and HTTP MCP executions are recorded with
 `execution_id == trace_id` so `apxm_trace_fetch` can retrieve them directly.
 Plan emission also adds runtime capability guidance to the model prompt and
 canonicalizes numeric-string and symbolic node ids, named dependency
-references, shorthand `depends_on` node references, `attr` aliases, and missing
-generated names before typed validation.
+references, shorthand `depends_on` node references, legacy `attr` spellings, and missing
+generated names before typed validation. Plan emission is bounded by
+`server.mcp.plan_emit_timeout_ms` or `APXM_MCP_PLAN_EMIT_TIMEOUT_MS`; if the
+model route times out, the tool returns a compiled deterministic,
+side-effect-free fallback graph with a warning instead of hanging.
 Sessions are created under APXM-owned skill session directories using a
 generated or simple validated `session_id`, streamed skill runs emit typed
 `node_output` and `node_metrics` events, prompt and node-output observability is
@@ -170,8 +180,8 @@ The `apxm-mcp-server` binary exposes these tools over stdio:
 - `apxm_capability_list` -- list runtime capabilities and backend health
 
 The stdio binary is a compile/query/debug surface. It does not expose the
-server-owned workflow or orchestration control tools
-`apxm_workflow_start/status/events/cancel` or `apxm_orchestrate_start`; use the
+server-owned workflow or goal control tools
+`apxm_workflow_start/status/events/cancel` or `apxm_goal_start`; use the
 HTTP MCP endpoint at `/v1/mcp` when an agent needs managed background runs,
 retained events, cancellation, and APXM-owned worker sessions.
 

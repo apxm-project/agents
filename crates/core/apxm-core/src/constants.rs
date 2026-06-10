@@ -80,6 +80,8 @@ pub mod env {
     pub const APXM_MCP_PLAN_MAX_TOKENS: &str = "APXM_MCP_PLAN_MAX_TOKENS";
     /// Temperature used for MCP plan graph emission.
     pub const APXM_MCP_PLAN_TEMPERATURE: &str = "APXM_MCP_PLAN_TEMPERATURE";
+    /// Maximum wall-clock time, in milliseconds, for one MCP plan graph emission request.
+    pub const APXM_MCP_PLAN_EMIT_TIMEOUT_MS: &str = "APXM_MCP_PLAN_EMIT_TIMEOUT_MS";
     /// Repair attempts for invalid MCP plan graph emissions.
     pub const APXM_MCP_PLAN_REPAIR_ATTEMPTS: &str = "APXM_MCP_PLAN_REPAIR_ATTEMPTS";
     /// Capability entries included in MCP plan graph prompt guidance.
@@ -317,7 +319,7 @@ pub mod mcp {
     }
 
     pub mod tools {
-        pub const APXM_ORCHESTRATE_START: &str = "apxm_orchestrate_start";
+        pub const APXM_GOAL_START: &str = "apxm_goal_start";
         pub const APXM_WORKFLOW_START: &str = "apxm_workflow_start";
         pub const APXM_WORKFLOW_STATUS: &str = "apxm_workflow_status";
         pub const APXM_WORKFLOW_EVENTS: &str = "apxm_workflow_events";
@@ -345,10 +347,21 @@ pub mod jsonrpc {
 pub mod capabilities {
     //! Re-exported from `apxm-ais` (single source of truth). Do not redefine
     //! these here; add new capability ids in `apxm_ais::capabilities`.
+    pub use apxm_ais::capabilities::groups;
     pub use apxm_ais::capabilities::{
-        BASH, BUILTINS, HTTP_GET, HTTP_POST, MEMORY_SEARCH_FACTS, MEMORY_STORE_FACT, READ,
-        SEARCH_WEB, WRITE,
+        AGENT_MANAGEMENT_BUILTINS, BASH, BUILTINS, HTTP_GET, HTTP_POST, MANAGE_TASK,
+        MEMORY_SEARCH_FACTS, MEMORY_STORE_FACT, READ, SCHEDULE, SEARCH_WEB, STANDARD_BUILTINS,
+        WRITE,
     };
+}
+
+pub mod agent_tools {
+    /// SQLite database file shared by durable agent-management capabilities.
+    pub const STORE_FILENAME: &str = "agent_tools.sqlite";
+    /// Payload field used by `schedule` fires to select a server task queue.
+    pub const PAYLOAD_QUEUE: &str = "queue";
+    /// Default queue used when a fired scheduled prompt does not specify one.
+    pub const SCHEDULED_PROMPT_QUEUE: &str = "scheduled_prompts";
 }
 
 pub mod orchestration {

@@ -1,6 +1,6 @@
 use super::*;
-use apxm_core::constants::orchestration::admission as orchestration_admission;
-use apxm_core::constants::orchestration::workflow_status as orchestration_workflow_status;
+use apxm_core::constants::orchestration::admission as goal_admission;
+use apxm_core::constants::orchestration::workflow_status as goal_workflow_status;
 use apxm_core::events::kind as event_kind;
 use apxm_core::events::payload::ExecutionStartedPayload;
 use apxm_core::events::{ApxmEvent, EventKind, EventSource};
@@ -285,21 +285,18 @@ async fn mcp_tools_list_includes_skill_inventory_tools() {
         names.contains(&MCP_TOOL_APXM_WORKFLOW_CANCEL),
         "tools: {body}"
     );
-    assert!(
-        names.contains(&MCP_TOOL_APXM_ORCHESTRATE_START),
-        "tools: {body}"
-    );
+    assert!(names.contains(&MCP_TOOL_APXM_GOAL_START), "tools: {body}");
 }
 
 #[tokio::test]
-async fn mcp_orchestrate_start_rejects_duplicate_worker_ids() {
+async fn mcp_goal_start_rejects_duplicate_worker_ids() {
     let app = build_app(test_state().await);
 
     let (status, body) = post_json(
         app,
         routes::MCP,
         mcp_call(
-            MCP_TOOL_APXM_ORCHESTRATE_START,
+            MCP_TOOL_APXM_GOAL_START,
             serde_json::json!({
                 "task": "split duplicate workers",
                 "workers": [
@@ -311,7 +308,7 @@ async fn mcp_orchestrate_start_rejects_duplicate_worker_ids() {
     )
     .await;
 
-    assert_eq!(status, StatusCode::OK, "orchestrate call failed: {body}");
+    assert_eq!(status, StatusCode::OK, "goal call failed: {body}");
     assert_eq!(body[tool_result::RESULT][mcp_fields::IS_ERROR], true);
     assert!(
         tool_text(&body).contains("duplicate worker id"),
@@ -320,14 +317,14 @@ async fn mcp_orchestrate_start_rejects_duplicate_worker_ids() {
 }
 
 #[tokio::test]
-async fn mcp_orchestrate_start_rejects_unknown_goal_planning_fields() {
+async fn mcp_goal_start_rejects_unknown_goal_planning_fields() {
     let app = build_app(test_state().await);
 
     let (status, body) = post_json(
         app,
         routes::MCP,
         mcp_call(
-            MCP_TOOL_APXM_ORCHESTRATE_START,
+            MCP_TOOL_APXM_GOAL_START,
             serde_json::json!({
                 "task": "do not silently absorb autonomous planner args",
                 "goal": "plan recursively",
@@ -340,7 +337,7 @@ async fn mcp_orchestrate_start_rejects_unknown_goal_planning_fields() {
     )
     .await;
 
-    assert_eq!(status, StatusCode::OK, "orchestrate call failed: {body}");
+    assert_eq!(status, StatusCode::OK, "goal call failed: {body}");
     assert_eq!(body[tool_result::RESULT][mcp_fields::IS_ERROR], true);
     let text = tool_text(&body);
     assert!(
@@ -350,7 +347,7 @@ async fn mcp_orchestrate_start_rejects_unknown_goal_planning_fields() {
 }
 
 #[tokio::test]
-async fn mcp_orchestrate_start_rejects_invalid_worker_dependencies() {
+async fn mcp_goal_start_rejects_invalid_worker_dependencies() {
     let cases = [
         (
             serde_json::json!({
@@ -387,11 +384,11 @@ async fn mcp_orchestrate_start_rejects_invalid_worker_dependencies() {
         let (status, body) = post_json(
             app,
             routes::MCP,
-            mcp_call(MCP_TOOL_APXM_ORCHESTRATE_START, request),
+            mcp_call(MCP_TOOL_APXM_GOAL_START, request),
         )
         .await;
 
-        assert_eq!(status, StatusCode::OK, "orchestrate call failed: {body}");
+        assert_eq!(status, StatusCode::OK, "goal call failed: {body}");
         assert_eq!(body[tool_result::RESULT][mcp_fields::IS_ERROR], true);
         assert!(
             tool_text(&body).contains(expected),
@@ -401,14 +398,14 @@ async fn mcp_orchestrate_start_rejects_invalid_worker_dependencies() {
 }
 
 #[tokio::test]
-async fn mcp_orchestrate_start_requires_spawn_admission_for_acp_workers() {
+async fn mcp_goal_start_requires_spawn_admission_for_acp_workers() {
     let app = build_app(test_state().await);
 
     let (status, body) = post_json(
         app,
         routes::MCP,
         mcp_call(
-            MCP_TOOL_APXM_ORCHESTRATE_START,
+            MCP_TOOL_APXM_GOAL_START,
             serde_json::json!({
                 "task": "run a real worker",
                 "workers": [
@@ -419,7 +416,7 @@ async fn mcp_orchestrate_start_requires_spawn_admission_for_acp_workers() {
     )
     .await;
 
-    assert_eq!(status, StatusCode::OK, "orchestrate call failed: {body}");
+    assert_eq!(status, StatusCode::OK, "goal call failed: {body}");
     assert_eq!(body[tool_result::RESULT][mcp_fields::IS_ERROR], true);
     assert!(
         tool_text(&body).contains("requires admit_capabilities"),
@@ -428,16 +425,16 @@ async fn mcp_orchestrate_start_requires_spawn_admission_for_acp_workers() {
 }
 
 #[tokio::test]
-async fn mcp_orchestrate_dry_run_allocates_distinct_git_worktrees() {
+async fn mcp_goal_dry_run_allocates_distinct_git_worktrees() {
     let repo = init_fixture_git_repo();
     let app = build_app(test_state().await);
-    let session_id = format!("mcp-orchestrate-worktree-{}", uuid::Uuid::new_v4());
+    let session_id = format!("mcp-goal-worktree-{}", uuid::Uuid::new_v4());
 
     let (status, body) = post_json(
         app,
         routes::MCP,
         mcp_call(
-            MCP_TOOL_APXM_ORCHESTRATE_START,
+            MCP_TOOL_APXM_GOAL_START,
             serde_json::json!({
                 "task": "plan isolated worktree execution",
                 "session_id": session_id,
@@ -457,10 +454,10 @@ async fn mcp_orchestrate_dry_run_allocates_distinct_git_worktrees() {
     )
     .await;
 
-    assert_eq!(status, StatusCode::OK, "orchestrate dry run failed: {body}");
+    assert_eq!(status, StatusCode::OK, "goal dry run failed: {body}");
     assert_eq!(body[tool_result::RESULT][mcp_fields::IS_ERROR], false);
     let planned: serde_json::Value =
-        serde_json::from_str(tool_text(&body)).expect("orchestrate response JSON");
+        serde_json::from_str(tool_text(&body)).expect("goal response JSON");
     assert_eq!(
         planned[tool_result::STATUS],
         OrchestrationStartStatus::Planned.as_str()
@@ -508,7 +505,7 @@ async fn mcp_orchestrate_dry_run_allocates_distinct_git_worktrees() {
 }
 
 #[tokio::test]
-async fn mcp_orchestrate_live_git_worktree_workers_spawn_in_distinct_worktrees() {
+async fn mcp_goal_live_git_worktree_workers_spawn_in_distinct_worktrees() {
     let repo = init_fixture_git_repo();
     let state = test_state().await;
     let spawns = Arc::new(Mutex::new(Vec::new()));
@@ -528,13 +525,13 @@ async fn mcp_orchestrate_live_git_worktree_workers_spawn_in_distinct_worktrees()
         )))
         .await;
     let app = build_app(state);
-    let session_id = format!("mcp-orchestrate-live-worktree-{}", uuid::Uuid::new_v4());
+    let session_id = format!("mcp-goal-live-worktree-{}", uuid::Uuid::new_v4());
 
     let (status, body) = post_json(
         app.clone(),
         routes::MCP,
         mcp_call(
-            MCP_TOOL_APXM_ORCHESTRATE_START,
+            MCP_TOOL_APXM_GOAL_START,
             serde_json::json!({
                 "task": "execute in isolated worktrees",
                 "session_id": session_id,
@@ -544,7 +541,7 @@ async fn mcp_orchestrate_live_git_worktree_workers_spawn_in_distinct_worktrees()
                     "base_ref": "HEAD",
                     "cleanup": OrchestrationWorkspaceCleanup::Keep.as_str()
                 },
-                "admit_capabilities": [orchestration_admission::SPAWN_AGENT],
+                "admit_capabilities": [goal_admission::SPAWN_AGENT],
                 "workers": [
                     { "id": "planner", "role": "plan in a detached worktree", "profile": "fixture-profile" },
                     { "id": "verifier", "role": "verify in a detached worktree", "profile": "fixture-profile" }
@@ -554,10 +551,10 @@ async fn mcp_orchestrate_live_git_worktree_workers_spawn_in_distinct_worktrees()
     )
     .await;
 
-    assert_eq!(status, StatusCode::OK, "orchestrate start failed: {body}");
+    assert_eq!(status, StatusCode::OK, "goal start failed: {body}");
     assert_eq!(body[tool_result::RESULT][mcp_fields::IS_ERROR], false);
     let started: serde_json::Value =
-        serde_json::from_str(tool_text(&body)).expect("orchestrate response JSON");
+        serde_json::from_str(tool_text(&body)).expect("goal response JSON");
     let execution_id = started[tool_result::EXECUTION_ID]
         .as_str()
         .expect("execution_id")
@@ -604,7 +601,7 @@ async fn mcp_orchestrate_live_git_worktree_workers_spawn_in_distinct_worktrees()
 }
 
 #[tokio::test]
-async fn mcp_orchestrate_start_spawns_parallel_workers_with_session_cwds() {
+async fn mcp_goal_start_spawns_parallel_workers_with_session_cwds() {
     let state = test_state().await;
     let spawns = Arc::new(Mutex::new(Vec::new()));
     let prompt_probe = Arc::new(WorkflowBarrier::new(3));
@@ -623,21 +620,21 @@ async fn mcp_orchestrate_start_spawns_parallel_workers_with_session_cwds() {
         )))
         .await;
     let app = build_app(state);
-    let session_id = format!("mcp-orchestrate-parallel-{}", uuid::Uuid::new_v4());
+    let session_id = format!("mcp-goal-parallel-{}", uuid::Uuid::new_v4());
 
     let (status, body) = post_json(
         app.clone(),
         routes::MCP,
         mcp_call(
-            MCP_TOOL_APXM_ORCHESTRATE_START,
+            MCP_TOOL_APXM_GOAL_START,
             serde_json::json!({
-                "task": "design and verify autonomous APXM orchestration",
+                "task": "design and verify autonomous APXM goal execution",
                 "context": "repo-level implementation task",
-                "event": "user requested autonomous parallel orchestration",
+                "event": "user requested autonomous parallel goal execution",
                 "trigger": "manual MCP invocation",
                 "session_id": session_id,
                 "workspace": { "mode": OrchestrationWorkspaceMode::Session.as_str() },
-                "admit_capabilities": [orchestration_admission::SPAWN_AGENT],
+                "admit_capabilities": [goal_admission::SPAWN_AGENT],
                 "workers": [
                     { "id": "planner", "role": "split the work", "profile": "fixture-profile" },
                     { "id": "executor", "role": "implement the work", "profile": "fixture-profile" },
@@ -648,10 +645,10 @@ async fn mcp_orchestrate_start_spawns_parallel_workers_with_session_cwds() {
     )
     .await;
 
-    assert_eq!(status, StatusCode::OK, "orchestrate start failed: {body}");
+    assert_eq!(status, StatusCode::OK, "goal start failed: {body}");
     assert_eq!(body[tool_result::RESULT][mcp_fields::IS_ERROR], false);
     let started: serde_json::Value =
-        serde_json::from_str(tool_text(&body)).expect("orchestrate response JSON");
+        serde_json::from_str(tool_text(&body)).expect("goal response JSON");
     assert_eq!(started[tool_result::STATUS], STATUS_RUNNING);
     assert_eq!(
         started["control"]["events_tool"],
@@ -659,16 +656,16 @@ async fn mcp_orchestrate_start_spawns_parallel_workers_with_session_cwds() {
     );
     assert_eq!(started["sleep_wake"]["sleep_after_start"], true);
     assert_eq!(
-        started["orchestration"]["sleep_event_kind"],
+        started["goal"]["sleep_event_kind"],
         event_kind::ORCHESTRATOR_SLEEP.name()
     );
     assert_eq!(
-        started["orchestration"]["wake_event_kind"],
+        started["goal"]["wake_event_kind"],
         event_kind::ORCHESTRATOR_WAKE.name()
     );
     assert_eq!(
-        started["orchestration"]["next_events_args"]["since"], 0,
-        "orchestration response should include the first event cursor: {started}"
+        started["goal"]["next_events_args"]["since"], 0,
+        "goal response should include the first event cursor: {started}"
     );
     let artifacts = &started["artifacts"];
     let bundle_dir = std::path::PathBuf::from(started["bundle_dir"].as_str().expect("bundle_dir"));
@@ -696,7 +693,7 @@ async fn mcp_orchestrate_start_spawns_parallel_workers_with_session_cwds() {
             && tracking_text.contains("planner")
             && tracking_text.contains("executor")
             && !tracking_text.contains("{{"),
-        "tracking doc should be a durable orchestration packet: {tracking_text}"
+        "tracking doc should be a durable goal packet: {tracking_text}"
     );
     let worker_prompt_artifacts = artifacts["worker_prompts"]
         .as_array()
@@ -725,7 +722,7 @@ async fn mcp_orchestrate_start_spawns_parallel_workers_with_session_cwds() {
     );
     let first_prompt = std::fs::read_to_string(&first_prompt_path).expect("worker prompt text");
     for expected in [
-        "design and verify autonomous APXM orchestration",
+        "design and verify autonomous APXM goal execution",
         first_prompt_path.to_string_lossy().as_ref(),
     ] {
         assert!(
@@ -764,7 +761,7 @@ async fn mcp_orchestrate_start_spawns_parallel_workers_with_session_cwds() {
     );
     for prompt in &prompt_texts {
         for expected in [
-            "Task:\ndesign and verify autonomous APXM orchestration",
+            "Task:\ndesign and verify autonomous APXM goal execution",
             "Assigned workspace:",
         ] {
             assert!(
@@ -856,10 +853,7 @@ async fn mcp_orchestrate_start_spawns_parallel_workers_with_session_cwds() {
         .iter()
         .find(|event| payload_kind_is(event, event_kind::WORKFLOW_STARTED))
         .expect("workflow_started event");
-    assert_eq!(
-        workflow_started["payload"]["workflow_name"],
-        "orchestrated_task"
-    );
+    assert_eq!(workflow_started["payload"]["workflow_name"], "goal_pass");
     assert_eq!(workflow_started["payload"]["step_count"], 5);
     let workflow_session_dir = workflow_started["payload"]["session_dir"]
         .as_str()
@@ -874,7 +868,7 @@ async fn mcp_orchestrate_start_spawns_parallel_workers_with_session_cwds() {
         expected_steps
             .iter()
             .all(|step_id| started_steps.contains(*step_id)),
-        "orchestration should expose every workflow step start: {events}"
+        "goal should expose every workflow step start: {events}"
     );
     for step_id in expected_steps {
         let step_completed = event_items
@@ -886,7 +880,7 @@ async fn mcp_orchestrate_start_spawns_parallel_workers_with_session_cwds() {
             .unwrap_or_else(|| panic!("missing workflow_step_completed for {step_id}: {events}"));
         assert_eq!(
             step_completed["payload"]["status"],
-            orchestration_workflow_status::SUCCESS
+            goal_workflow_status::SUCCESS
         );
         assert_eq!(
             step_completed["payload"]["workflow_session_dir"],
@@ -896,7 +890,7 @@ async fn mcp_orchestrate_start_spawns_parallel_workers_with_session_cwds() {
             step_completed["payload"]["session_dir"]
                 .as_str()
                 .is_some_and(|path| !path.is_empty()),
-            "orchestration step should expose child session_dir: {step_completed}"
+            "goal step should expose child session_dir: {step_completed}"
         );
     }
     let workflow_finished = event_items
@@ -909,12 +903,12 @@ async fn mcp_orchestrate_start_spawns_parallel_workers_with_session_cwds() {
     );
     assert_eq!(
         workflow_finished["payload"]["status"],
-        orchestration_workflow_status::SUCCESS
+        goal_workflow_status::SUCCESS
     );
 }
 
 #[tokio::test]
-async fn mcp_orchestrate_acp_gatekeeper_receives_worker_summary() {
+async fn mcp_goal_acp_gatekeeper_receives_worker_summary() {
     let state = test_state().await;
     let spawns = Arc::new(Mutex::new(Vec::new()));
     let prompt_probe = Arc::new(WorkflowBarrier::new(1));
@@ -933,19 +927,19 @@ async fn mcp_orchestrate_acp_gatekeeper_receives_worker_summary() {
         )))
         .await;
     let app = build_app(state);
-    let session_id = format!("mcp-orchestrate-gate-{}", uuid::Uuid::new_v4());
+    let session_id = format!("mcp-goal-gate-{}", uuid::Uuid::new_v4());
 
     let (status, body) = post_json(
         app.clone(),
         routes::MCP,
         mcp_call(
-            MCP_TOOL_APXM_ORCHESTRATE_START,
+            MCP_TOOL_APXM_GOAL_START,
             serde_json::json!({
                 "task": "gate two deterministic worker outputs with {literal_goal}",
                 "context": "gate prompt regression with {literal_context}",
                 "session_id": session_id,
                 "workspace": { "mode": OrchestrationWorkspaceMode::Session.as_str() },
-                "admit_capabilities": [orchestration_admission::SPAWN_AGENT],
+                "admit_capabilities": [goal_admission::SPAWN_AGENT],
                 "workers": [
                     { "id": "left", "role": "left branch" },
                     { "id": "right", "role": "right branch" }
@@ -960,10 +954,10 @@ async fn mcp_orchestrate_acp_gatekeeper_receives_worker_summary() {
     )
     .await;
 
-    assert_eq!(status, StatusCode::OK, "orchestrate start failed: {body}");
+    assert_eq!(status, StatusCode::OK, "goal start failed: {body}");
     assert_eq!(body[tool_result::RESULT][mcp_fields::IS_ERROR], false);
     let started: serde_json::Value =
-        serde_json::from_str(tool_text(&body)).expect("orchestrate response JSON");
+        serde_json::from_str(tool_text(&body)).expect("goal response JSON");
     let execution_id = started[tool_result::EXECUTION_ID]
         .as_str()
         .expect("execution_id")
@@ -1013,7 +1007,7 @@ async fn mcp_orchestrate_acp_gatekeeper_receives_worker_summary() {
 }
 
 #[tokio::test]
-async fn mcp_orchestrate_cancel_stops_waiting_and_drops_late_worker_events() {
+async fn mcp_goal_cancel_stops_waiting_and_drops_late_worker_events() {
     let state = test_state().await;
     let spawns = Arc::new(Mutex::new(Vec::new()));
     let hold = Arc::new(HoldAgentPrompter::new());
@@ -1028,18 +1022,18 @@ async fn mcp_orchestrate_cancel_stops_waiting_and_drops_late_worker_events() {
         .set_agent_prompter(Arc::clone(&hold) as Arc<dyn AgentPrompter>)
         .await;
     let app = build_app(state);
-    let session_id = format!("mcp-orchestrate-cancel-{}", uuid::Uuid::new_v4());
+    let session_id = format!("mcp-goal-cancel-{}", uuid::Uuid::new_v4());
 
     let (status, body) = post_json(
         app.clone(),
         routes::MCP,
         mcp_call(
-            MCP_TOOL_APXM_ORCHESTRATE_START,
+            MCP_TOOL_APXM_GOAL_START,
             serde_json::json!({
                 "task": "start long-running workers then cancel",
                 "session_id": session_id,
                 "workspace": { "mode": OrchestrationWorkspaceMode::Session.as_str() },
-                "admit_capabilities": [orchestration_admission::SPAWN_AGENT],
+                "admit_capabilities": [goal_admission::SPAWN_AGENT],
                 "workers": [
                     { "id": "left", "profile": "fixture-profile" },
                     { "id": "right", "profile": "fixture-profile" }
@@ -1048,10 +1042,10 @@ async fn mcp_orchestrate_cancel_stops_waiting_and_drops_late_worker_events() {
         ),
     )
     .await;
-    assert_eq!(status, StatusCode::OK, "orchestrate start failed: {body}");
+    assert_eq!(status, StatusCode::OK, "goal start failed: {body}");
     assert_eq!(body[tool_result::RESULT][mcp_fields::IS_ERROR], false);
     let started: serde_json::Value =
-        serde_json::from_str(tool_text(&body)).expect("orchestrate response JSON");
+        serde_json::from_str(tool_text(&body)).expect("goal response JSON");
     let execution_id = started[tool_result::EXECUTION_ID]
         .as_str()
         .expect("execution_id")
@@ -1090,7 +1084,7 @@ async fn mcp_orchestrate_cancel_stops_waiting_and_drops_late_worker_events() {
     let wake_event = cancelled_items
         .iter()
         .find(|event| payload_kind_is(event, event_kind::ORCHESTRATOR_WAKE))
-        .expect("cancelled orchestration should emit orchestrator_wake");
+        .expect("cancelled goal should emit orchestrator_wake");
     assert_eq!(
         wake_event["payload"]["outcome"],
         OrchestrationWakeOutcome::Cancelled.as_str()
@@ -1113,7 +1107,7 @@ async fn mcp_orchestrate_cancel_stops_waiting_and_drops_late_worker_events() {
         !late_items
             .iter()
             .any(|event| payload_kind_is(event, event_kind::EXECUTE_COMPLETE)),
-        "cancelled orchestration must not emit execute_complete: {late_events}"
+        "cancelled goal must not emit execute_complete: {late_events}"
     );
     assert!(
         !late_items.iter().any(|event| {
@@ -1256,7 +1250,7 @@ async fn mcp_workflow_start_status_and_events_use_server_execution_id() {
     assert_eq!(step_completed["payload"]["step_id"], "step");
     assert_eq!(
         step_completed["payload"]["status"],
-        orchestration_workflow_status::SUCCESS
+        goal_workflow_status::SUCCESS
     );
     assert_eq!(step_completed["payload"]["success"], true);
     assert!(
@@ -1275,7 +1269,7 @@ async fn mcp_workflow_start_status_and_events_use_server_execution_id() {
     );
     assert_eq!(
         workflow_finished["payload"]["status"],
-        orchestration_workflow_status::SUCCESS
+        goal_workflow_status::SUCCESS
     );
     assert_eq!(workflow_finished["payload"]["success"], true);
 }
@@ -1428,7 +1422,7 @@ async fn mcp_workflow_fans_out_independent_steps_and_fans_in_output() {
             .unwrap_or_else(|| panic!("missing workflow_step_completed for {step_id}: {events}"));
         assert_eq!(
             step_completed["payload"]["status"],
-            orchestration_workflow_status::SUCCESS
+            goal_workflow_status::SUCCESS
         );
         assert_eq!(step_completed["payload"]["success"], true);
         assert_eq!(
@@ -1451,7 +1445,7 @@ async fn mcp_workflow_fans_out_independent_steps_and_fans_in_output() {
     );
     assert_eq!(
         workflow_finished["payload"]["status"],
-        orchestration_workflow_status::SUCCESS
+        goal_workflow_status::SUCCESS
     );
 }
 
@@ -1708,7 +1702,7 @@ async fn mcp_workflow_cancel_interrupts_in_flight_run() {
 async fn mcp_checked_in_agent_council_workflow_runs_and_pages_events() {
     let app = build_app(test_state().await);
     let workflow_path = checked_in_workflow_path("agent_council/workflow.apxmw");
-    let task = "orchestrate worker agents";
+    let task = "coordinate worker agents";
 
     let execution_id = start_workflow_via_mcp(
         app.clone(),
@@ -2252,6 +2246,46 @@ async fn mcp_plan_as_graph_compiles_mock_model_plan() {
 }
 
 #[tokio::test]
+async fn mcp_plan_as_graph_compiles_timeout_fallback() {
+    let runtime = runtime_with_mock_plan_backend(
+        MockLLMBackend::static_response(mock_yield_plan_response().to_string()).with_latency_ms(50),
+    )
+    .await;
+    let mut state = test_state_with_runtime_and_skill_roots(runtime, Vec::new()).await;
+    state.server_config.mcp.plan_emit_timeout_ms = 1;
+    let app = build_app(state);
+
+    let (status, body) = post_json(
+        app,
+        routes::MCP,
+        mcp_call(
+            MCP_TOOL_APXM_PLAN_AS_GRAPH,
+            serde_json::json!({
+                (mcp_args::TASK): FIXTURE_PLAN_TASK,
+                (mcp_args::EXECUTE): false
+            }),
+        ),
+    )
+    .await;
+
+    assert_eq!(status, StatusCode::OK, "mcp plan fallback failed: {body}");
+    assert_eq!(body[tool_result::RESULT][mcp_fields::IS_ERROR], false);
+    let response: serde_json::Value =
+        serde_json::from_str(tool_text(&body)).expect("plan response JSON");
+    assert_eq!(response[tool_result::STATUS], mcp_status::COMPILED);
+    assert_eq!(
+        response[tool_result::PLAN][plan_field::NAME],
+        "deterministic_plan_timeout_fallback"
+    );
+    assert!(
+        response[tool_result::WARNINGS][0]
+            .as_str()
+            .is_some_and(|warning| warning.contains("timed out")),
+        "timeout warning missing: {response}"
+    );
+}
+
+#[tokio::test]
 async fn mcp_plan_as_graph_normalizes_named_dependency_refs() {
     let app =
         build_app(test_state_with_mock_plan_response(mock_named_dependency_plan_response()).await);
@@ -2687,6 +2721,40 @@ async fn mcp_capability_list_returns_registered_runtime_capabilities() {
         "capabilities: {response}"
     );
     assert!(response[tool_result::BACKENDS].is_array(), "{response}");
+}
+
+#[tokio::test]
+async fn mcp_capability_list_matches_multi_token_query() {
+    let state = test_state().await;
+    state
+        .runtime
+        .capability_system()
+        .register(Arc::new(FixtureReadCapability::new(FIXTURE_TOOL)))
+        .expect("register fixture capability");
+    let app = build_app(state);
+
+    let (status, body) = post_json(
+        app,
+        routes::MCP,
+        mcp_call(
+            MCP_TOOL_APXM_CAPABILITY_LIST,
+            serde_json::json!({
+                (mcp_args::QUERY): format!("missing {FIXTURE_TOOL}"),
+                (mcp_args::TOP_K): 1
+            }),
+        ),
+    )
+    .await;
+
+    assert_eq!(status, StatusCode::OK, "mcp capability list failed: {body}");
+    assert_eq!(body["result"]["isError"], false);
+    let response: serde_json::Value =
+        serde_json::from_str(tool_text(&body)).expect("capability response JSON");
+    let capabilities = response[tool_result::CAPABILITIES]
+        .as_array()
+        .expect("capabilities array");
+    assert_eq!(capabilities.len(), 1, "capabilities: {response}");
+    assert_eq!(capabilities[0][tool_result::NAME], FIXTURE_TOOL);
 }
 
 #[tokio::test]
@@ -3571,9 +3639,7 @@ fn checked_in_workflow_path(relative: &str) -> std::path::PathBuf {
         .join("../../..")
         .canonicalize()
         .expect("canonical repo root");
-    let workflow_path = repo_root
-        .join("examples/workflows/orchestration")
-        .join(relative);
+    let workflow_path = repo_root.join("examples/workflows/goals").join(relative);
     assert!(
         workflow_path.is_file(),
         "checked-in workflow fixture missing: {}",

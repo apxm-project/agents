@@ -3,7 +3,7 @@
 ## Why APXM?
 
 APXM compiles agent workflows into optimized execution plans. Instead of writing
-imperative orchestration code, you declare *what* your agents should do and the
+imperative coordination code, you declare *what* your agents should do and the
 compiler figures out *how* to run it efficiently:
 
 - **Implicit parallelism** -- independent nodes run concurrently without manual threading
@@ -70,7 +70,7 @@ dekk apxm run hello.apxmobj
 7. **[patterns/](python/patterns/)** -- Reusable workflow patterns
 8. **[real-world/](python/real-world/)** -- Complete production workflows
 9. **[native-tools/](python/native-tools/)** -- Native Python agent/tool handoff
-10. **[workflows/](workflows/orchestration/)** -- Native `.apxmw` orchestration, event loops, resume, and cancel
+10. **[workflows/](workflows/goals/)** -- Native `.apxmw` workflow coordination, event loops, resume, and cancel
 11. **[self-hosted/](python/self-hosted/)** -- APXM building APXM and optional vLLM demos
 
 See [python/README.md](python/README.md) for the full API reference and structure.

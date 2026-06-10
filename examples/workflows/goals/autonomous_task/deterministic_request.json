@@ -1,7 +1,7 @@
 {
   "task": "Design and verify a small APXM workflow improvement.",
   "context": "Deterministic example; no external agents or API keys are required.",
-  "event": "manual orchestration smoke test",
+  "event": "manual goal smoke test",
   "trigger": "developer requested a dry local demonstration",
   "workspace": {
     "mode": "session"

@@ -507,6 +507,8 @@ fn execution_record_snapshot_file_name(execution_id: &str) -> String {
 
 fn is_execution_record_snapshot(path: &FsPath) -> bool {
     path.is_file()
+        && path.file_name().and_then(|name| name.to_str())
+            != Some(crate::execution_index::INDEX_FILE_NAME)
         && path.extension().and_then(|extension| extension.to_str())
             == Some(EXECUTION_RECORD_EXTENSION)
 }
@@ -652,6 +654,19 @@ mod tests {
         let store = ExecutionStore::with_index_max_entries(0);
 
         assert_eq!(store.index.max_entries_for_tests(), 1);
+    }
+
+    #[test]
+    fn execution_snapshot_filter_skips_index_sidecar() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let sidecar = temp
+            .path()
+            .join(EXECUTION_RECORDS_DIR)
+            .join(crate::execution_index::INDEX_FILE_NAME);
+        std::fs::create_dir_all(sidecar.parent().expect("sidecar parent")).expect("mkdir");
+        std::fs::write(&sidecar, "{}").expect("write sidecar");
+
+        assert!(!is_execution_record_snapshot(&sidecar));
     }
 
     #[test]

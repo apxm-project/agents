@@ -1,16 +1,18 @@
 use apxm_backends::BackendRegistration;
 use apxm_driver::runtime::agents::configure_agent_registry;
 use apxm_driver::runtime::sandbox::configure_sandbox_registry;
+use apxm_runtime::capability::builtins::{FiredSchedule, OnFire};
 use apxm_runtime::{ModelRouterConfig, Runtime, RuntimeConfig};
 use tracing::{info, warn};
 
 pub(crate) async fn build_runtime_with_router(
     config: RuntimeConfig,
+    schedule_on_fire: Option<OnFire>,
 ) -> Result<Runtime, apxm_core::error::RuntimeError> {
     let mut runtime = Runtime::new(config).await?;
     let sandbox_registry = configure_sandbox_registry();
     runtime.set_sandbox_registry(std::sync::Arc::clone(&sandbox_registry));
-    register_builtin_capabilities(&runtime);
+    register_builtin_capabilities(&runtime, schedule_on_fire);
     load_llm_backends(&runtime).await;
     // Wire the ACP agent spawner so SPAWN_AGENT can launch real subprocess
     // agents (claude, codex, …) through /v1/execute. Best-effort: a failure
@@ -46,10 +48,11 @@ pub(crate) async fn build_runtime_with_router(
 /// Register the runtime's builtin tool capabilities so `inv_tool` nodes are
 /// admitted by raw `/v1/execute` (which checks the capability system). Without
 /// this the system starts empty and every tool node is rejected.
-fn register_builtin_capabilities(runtime: &Runtime) {
+fn register_builtin_capabilities(runtime: &Runtime, schedule_on_fire: Option<OnFire>) {
     use apxm_runtime::capability::builtins::{
         BashCapability, CountTokensCapability, HttpGetCapability, HttpPostCapability,
-        McpBridgeCapability, ProviderCallCapability, ReadCapability, WriteCapability,
+        ManageTaskCapability, McpBridgeCapability, ProviderCallCapability, ReadCapability,
+        ScheduleCapability, ToolsStore, WriteCapability,
     };
     use apxm_runtime::capability::executor::CapabilityExecutor;
     use std::sync::Arc;
@@ -68,7 +71,7 @@ fn register_builtin_capabilities(runtime: &Runtime) {
         Some(base) => Arc::new(ReadCapability::new_with_base_directory(base)),
         None => Arc::new(ReadCapability::new()),
     };
-    let caps: Vec<Arc<dyn CapabilityExecutor>> = vec![
+    let mut caps: Vec<Arc<dyn CapabilityExecutor>> = vec![
         Arc::new(HttpGetCapability::new()),
         Arc::new(HttpPostCapability::new()),
         read_capability,
@@ -78,6 +81,33 @@ fn register_builtin_capabilities(runtime: &Runtime) {
         Arc::new(McpBridgeCapability::new()),
         Arc::new(CountTokensCapability::new()),
     ];
+
+    // Durable agent-management tools (schedule + manage_task). These are always
+    // registered (BUILTINS allowlist parity) and back onto a single SQLite file
+    // under the state home. The schedule firer fires due wakeups in-process via
+    // the park registry; armed schedules and the task tree survive a restart.
+    let store_path =
+        apxm_core::env::state_home().join(apxm_core::constants::agent_tools::STORE_FILENAME);
+    match ToolsStore::open(&store_path) {
+        Ok(store) => {
+            restore_tasks(runtime.aam(), &store);
+            let arm = Arc::new(tokio::sync::Notify::new());
+            caps.push(Arc::new(ManageTaskCapability::new(
+                runtime.aam().clone(),
+                store.clone(),
+            )));
+            caps.push(Arc::new(ScheduleCapability::new(
+                store.clone(),
+                arm.clone(),
+            )));
+            let on_fire = schedule_on_fire.unwrap_or_else(default_schedule_on_fire);
+            apxm_runtime::capability::builtins::spawn_firer(store, arm, Some(on_fire));
+        }
+        Err(error) => {
+            warn!(%error, "failed to open agent tools store; schedule/manage_task unavailable")
+        }
+    }
+
     let mut n = 0u32;
     for cap in caps {
         let name = cap.metadata().name.clone();
@@ -89,6 +119,62 @@ fn register_builtin_capabilities(runtime: &Runtime) {
         }
     }
     info!(count = n, "registered builtin tool capabilities");
+}
+
+fn default_schedule_on_fire() -> OnFire {
+    std::sync::Arc::new(log_schedule_fire)
+}
+
+fn log_schedule_fire(fired: FiredSchedule) {
+    info!(
+        target: "apxm::schedule",
+        schedule_id = %fired.id,
+        kind = %fired.kind,
+        recurring = fired.recurring,
+        prompt = fired.prompt.as_deref().unwrap_or(""),
+        payload = %fired.payload,
+        "schedule fired"
+    );
+}
+
+/// Rehydrate the runtime's goal tree from the durable task store so tasks
+/// created in a previous run are visible to `manage_task` after a restart.
+fn restore_tasks(aam: &apxm_runtime::Aam, store: &apxm_runtime::capability::builtins::ToolsStore) {
+    use apxm_runtime::{Goal, TransitionLabel};
+    let rows = match store.load_tasks() {
+        Ok(rows) => rows,
+        Err(error) => {
+            warn!(%error, "failed to load tasks from store");
+            return;
+        }
+    };
+    let mut restored = 0u32;
+    for row in rows {
+        let Ok(goal) = serde_json::from_str::<Goal>(&row.json) else {
+            continue;
+        };
+        let goal_id = goal.id;
+        let label = TransitionLabel::custom("manage_task:restore");
+        match goal.parent_id {
+            Some(parent_id) => {
+                aam.add_child_goal(parent_id, goal, label);
+            }
+            None => {
+                aam.add_goal(goal, label);
+            }
+        }
+        if let Some(policy) = row
+            .policy
+            .as_deref()
+            .and_then(apxm_runtime::capability::builtins::parse_policy)
+        {
+            aam.set_completion_policy(goal_id, policy);
+        }
+        restored += 1;
+    }
+    if restored > 0 {
+        info!(count = restored, "restored tasks from durable store");
+    }
 }
 
 #[allow(dead_code)]

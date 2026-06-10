@@ -1,7 +1,7 @@
 {% if kind == "planner" -%}
-Act as the planner/orchestrator: split the goal, define worker briefs, and set acceptance checks for this bounded pass.
+Act as the planner/controller: split the goal, define worker briefs, and set acceptance checks for this bounded pass.
 {% elif kind == "executor" -%}
-Execute the work described by the planner/orchestrator for this bounded pass.
+Execute the work described by the planner/controller for this bounded pass.
 {% elif kind == "verifier" -%}
 Verify the result and report evidence.
 {% elif kind == "reviewer" -%}

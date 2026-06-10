@@ -12,6 +12,14 @@ pub mod read;
 pub mod web_search;
 pub mod write;
 
+// Durable agent-management tools (require the `sqlite` feature for persistence).
+#[cfg(feature = "sqlite")]
+pub mod manage_task;
+#[cfg(feature = "sqlite")]
+pub mod schedule;
+#[cfg(feature = "sqlite")]
+pub mod store;
+
 pub use bash::{BashCapability, BashConfig};
 pub use count_tokens::CountTokensCapability;
 pub use http::{HttpGetCapability, HttpPostCapability, guard_url_ssrf};
@@ -20,6 +28,13 @@ pub use provider_call::ProviderCallCapability;
 pub use read::{ReadCapability, ReadConfig};
 pub use web_search::{SearchDepth, SearchWebCapability, SearchWebConfig};
 pub use write::{WriteCapability, WriteConfig};
+
+#[cfg(feature = "sqlite")]
+pub use manage_task::{ManageTaskCapability, parse_policy, wire_policy};
+#[cfg(feature = "sqlite")]
+pub use schedule::{FiredSchedule, OnFire, ScheduleCapability, fire_due, spawn_firer};
+#[cfg(feature = "sqlite")]
+pub use store::{ScheduleRow, TaskRow, ToolsStore};
 
 use crate::CapabilitySystem;
 use apxm_core::{error::RuntimeError, types::Value};

@@ -1,4 +1,4 @@
-//! High-level linker that orchestrates compiler and runtime execution.
+//! High-level linker that coordinates compiler and runtime execution.
 
 use std::path::Path;
 use std::sync::Arc;
@@ -16,7 +16,7 @@ fn state_err(msg: impl Into<String>) -> DriverError {
     DriverError::Runtime(RuntimeError::State(msg.into()))
 }
 
-/// Linker configuration that drives compiler and runtime orchestration.
+/// Linker configuration that drives compiler and runtime coordination.
 #[derive(Debug, Clone)]
 pub struct LinkerConfig {
     /// APxM configuration (providers, tools, policies).
@@ -83,7 +83,7 @@ pub struct LinkMetrics {
     pub runtime_time: std::time::Duration,
 }
 
-/// High-level linker that orchestrates compiler and runtime execution.
+/// High-level linker that coordinates compiler and runtime execution.
 pub struct Linker {
     /// MLIR compiler required for AIR-to-artifact compilation.
     compiler: Option<Compiler>,

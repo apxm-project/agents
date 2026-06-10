@@ -16,6 +16,10 @@ pub type GoalDetailMap = HashMap<GoalId, Goal>;
 pub enum GoalChange {
     Added(Goal),
     Removed(GoalId),
+    Updated {
+        before: Goal,
+        after: Goal,
+    },
     StatusChanged {
         id: GoalId,
         from: GoalStatus,

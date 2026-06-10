@@ -1,6 +1,7 @@
 use std::collections::VecDeque;
 use std::sync::Arc;
 
+use apxm_runtime::capability::builtins::{FiredSchedule, OnFire};
 use axum::Json;
 use axum::extract::{Path, State};
 use dashmap::DashMap;
@@ -13,6 +14,9 @@ use crate::error::ApiError;
 use crate::helpers::now_ms;
 use crate::state::AppState;
 use crate::types::responses::{OkAckId, TaskClaimResponse, TaskCreatedResponse, TaskListResponse};
+
+const SCHEDULED_PROMPT_QUEUE: &str = apxm_core::constants::agent_tools::SCHEDULED_PROMPT_QUEUE;
+const PAYLOAD_QUEUE: &str = apxm_core::constants::agent_tools::PAYLOAD_QUEUE;
 
 /// Status of a queued task.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -225,6 +229,74 @@ impl TaskQueueManager {
             None => vec![],
         }
     }
+}
+
+pub(crate) fn scheduled_prompt_on_fire(task_manager: TaskQueueManager) -> OnFire {
+    Arc::new(move |fired| {
+        log_schedule_fire(fired.clone());
+        let Some(prompt) = fired
+            .prompt
+            .as_deref()
+            .map(str::trim)
+            .filter(|p| !p.is_empty())
+        else {
+            return;
+        };
+        let payload_json = parse_schedule_payload(&fired.payload);
+        let queue = schedule_queue(&payload_json);
+        let task = QueuedTask {
+            id: uuid::Uuid::new_v4().to_string(),
+            queue,
+            data: serde_json::json!({
+                "kind": "scheduled_prompt",
+                "schedule_id": fired.id,
+                "schedule_kind": fired.kind,
+                "recurring": fired.recurring,
+                "prompt": prompt,
+                "payload": payload_json,
+            }),
+            status: TaskStatus::Pending,
+            claimed_by: None,
+            claim_token: None,
+            lease_expires_ms: None,
+            result: None,
+            created_at_ms: now_ms(),
+            completed_at_ms: None,
+        };
+        let manager = task_manager.clone();
+        tokio::spawn(async move {
+            let id = task.id.clone();
+            let queue = task.queue.clone();
+            manager.enqueue(task).await;
+            info!(%id, %queue, "scheduled prompt enqueued");
+        });
+    })
+}
+
+fn log_schedule_fire(fired: FiredSchedule) {
+    info!(
+        target: "apxm::schedule",
+        schedule_id = %fired.id,
+        kind = %fired.kind,
+        recurring = fired.recurring,
+        prompt = fired.prompt.as_deref().unwrap_or(""),
+        payload = %fired.payload,
+        "schedule fired"
+    );
+}
+
+fn parse_schedule_payload(payload: &str) -> JsonValue {
+    serde_json::from_str(payload).unwrap_or_else(|_| serde_json::json!({}))
+}
+
+fn schedule_queue(payload: &JsonValue) -> String {
+    payload
+        .get(PAYLOAD_QUEUE)
+        .and_then(JsonValue::as_str)
+        .map(str::trim)
+        .filter(|queue| !queue.is_empty())
+        .unwrap_or(SCHEDULED_PROMPT_QUEUE)
+        .to_string()
 }
 
 // ─── Task Queue Handlers (CLAIM op backend) ─────────────────────────────────

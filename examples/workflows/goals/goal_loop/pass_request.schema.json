@@ -7,7 +7,7 @@
   "properties": {
     "task": {
       "type": "string",
-      "description": "Concrete task for one bounded orchestration pass."
+      "description": "Concrete task for one bounded goal pass."
     },
     "context": {
       "type": "string",

@@ -12,7 +12,7 @@ use apxm_core::types::{
 use std::{collections::HashMap, sync::Arc};
 use tokio::sync::RwLock;
 
-/// Executor engine orchestrates DAG execution
+/// Executor engine coordinates DAG execution.
 pub struct ExecutorEngine {
     context: ExecutionContext,
 }

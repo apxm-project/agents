@@ -1,7 +1,7 @@
 # Self-Hosted APXM Workflows
 
 This directory contains APXM workflows that use APXM to build APXM itself. They
-orchestrate registered coding agents and optional self-hosted vLLM routes.
+coordinate registered coding agents and optional self-hosted vLLM routes.
 
 ## Requirements
 
@@ -147,4 +147,4 @@ During execution:
 - Results are written to the session directory
 
 The result is a self-hosted toolchain where the compiler and runtime
-orchestrate coding agents that modify the compiler and runtime themselves.
+coordinate coding agents that modify the compiler and runtime themselves.

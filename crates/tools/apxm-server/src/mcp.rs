@@ -16,12 +16,12 @@ use crate::types::responses::{
 
 mod compiler;
 mod dispatch;
-mod orchestrate;
+mod goal;
 mod schema;
 mod workflow;
 
 #[allow(unused_imports)]
-pub(crate) use orchestrate::MCP_TOOL_APXM_ORCHESTRATE_START;
+pub(crate) use goal::MCP_TOOL_APXM_GOAL_START;
 #[allow(unused_imports)]
 pub(crate) use schema::{
     MCP_METHOD_INITIALIZE, MCP_METHOD_RESOURCES_LIST, MCP_METHOD_RESOURCES_READ,
@@ -132,9 +132,9 @@ pub(crate) async fn mcp_jsonrpc(
                 input_schema: workflow::workflow_cancel_input_schema(),
             });
             tools.push(ToolEntry {
-                name: orchestrate::MCP_TOOL_APXM_ORCHESTRATE_START.to_string(),
-                description: "Start one server-owned orchestration pass from an explicit bounded worker DAG, allocate worker workspaces/worktrees, and return workflow status/events/cancel handles".to_string(),
-                input_schema: orchestrate::orchestrate_start_input_schema(),
+                name: goal::MCP_TOOL_APXM_GOAL_START.to_string(),
+                description: "Start one server-owned goal pass from an explicit bounded worker DAG, allocate worker workspaces/worktrees, and return workflow status/events/cancel handles".to_string(),
+                input_schema: goal::goal_start_input_schema(),
             });
             tools.extend(
                 state
@@ -187,9 +187,7 @@ pub(crate) async fn mcp_jsonrpc(
                 return response;
             }
 
-            if let Some(response) =
-                orchestrate::call_orchestrate_tool(&state, &id, tool_name, &tool_args).await
-            {
+            if let Some(response) = goal::call_goal_tool(&state, &id, tool_name, &tool_args).await {
                 return response;
             }
 

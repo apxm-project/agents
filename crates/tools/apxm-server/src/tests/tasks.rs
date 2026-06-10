@@ -194,6 +194,33 @@ async fn task_manager_claim_or_wait_wakes_on_enqueue() {
 }
 
 #[tokio::test]
+async fn scheduled_prompt_fire_enqueues_claimable_task() {
+    let mgr = TaskQueueManager::new();
+    let on_fire = crate::tasks::scheduled_prompt_on_fire(mgr.clone());
+
+    on_fire(apxm_runtime::capability::builtins::FiredSchedule {
+        id: "sched-1".to_string(),
+        kind: "once".to_string(),
+        recurring: false,
+        prompt: Some("continue the goal".to_string()),
+        payload: serde_json::json!({
+            apxm_core::constants::agent_tools::PAYLOAD_QUEUE: "scheduled-test",
+            "extra": 7
+        })
+        .to_string(),
+    });
+
+    let claimed = mgr
+        .claim_or_wait("scheduled-test", "agent", 60_000, 1_000)
+        .await
+        .expect("scheduled prompt task should be claimable");
+    assert_eq!(claimed.data["kind"], "scheduled_prompt");
+    assert_eq!(claimed.data["schedule_id"], "sched-1");
+    assert_eq!(claimed.data["prompt"], "continue the goal");
+    assert_eq!(claimed.data["payload"]["extra"], 7);
+}
+
+#[tokio::test]
 async fn task_manager_claim_skips_already_claimed() {
     let mgr = TaskQueueManager::new();
     mgr.enqueue(make_task("t1", "q")).await;

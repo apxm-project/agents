@@ -1,6 +1,6 @@
-# Native Orchestration Workflows
+# Native Goal Workflows
 
-These examples exercise APXM's native workflow orchestration surface for
+These examples exercise APXM's native workflow coordination surface for
 agent-agnostic worker graphs. The checked-in workers are deterministic AIR
 graphs, so they run without Claude, Codex, API keys, ACP profiles, or network
 access. Replace any worker graph with a graph, artifact, or workflow that calls
@@ -12,35 +12,35 @@ Use the smallest surface that matches the job:
 
 - `dekk apxm goal`: an agent or user creates one bounded worker DAG, APXM
   materializes the workflow bundle, starts it in the background, and wakes the
-  orchestrator through `apxm_workflow_events` and `apxm_workflow_status`.
-- `dekk apxm workflow run` or `dekk apxm workflow execute`: run a checked-in
+  caller through `apxm_workflow_events` and `apxm_workflow_status`.
+- `dekk apxm workflow run`: run a checked-in
   `.apxmw` workflow file after `validate` and `analyze`.
 - `apxm_plan_as_graph`: ask MCP to synthesize a typed AIR graph from natural
-  language. It is graph-oriented; worker-spawning orchestration should still go
-  through `goal` or `apxm_orchestrate_start`.
+  language. It is graph-oriented; worker-spawning goal execution should still go
+  through `goal` or `apxm_goal_start`.
 
 ```text
 [goal or event]
        |
        v
-[planner/orchestrator creates bounded DAG]
+[planner/controller creates bounded DAG]
        |
        v
 [APXM starts workflow + records execution_id]
        |
        v
-[orchestrator sleeps]
+[caller sleeps]
        |
        v
 [workers finish -> gate/eval -> feedback]
        |
        v
-[events/status wake orchestrator]
+[events/status wake caller]
 ```
 
 ## Autonomous Task
 
-`autonomous_task/` shows the native MCP path for an orchestrator agent that
+`autonomous_task/` shows the native MCP path for an controller agent that
 creates a bounded parallel worker graph, assigns each worker a workspace or Git
 worktree, starts the workflow in the background, and then sleeps until APXM
 status/events/cancel wakes it.
@@ -59,7 +59,7 @@ Use `autonomous_task/deterministic_request.json` for a no-agent smoke test, or
 
 `goal_loop/` shows the APXM-owned control envelope for a long-running goal
 without pretending `.apxmw` has recursive scheduler loops. It turns one admitted
-goal event into one bounded orchestration pass, then records feedback that can
+goal event into one bounded goal pass, then records feedback that can
 trigger another admitted pass through APXM OS or an MCP client.
 
 ```text
@@ -75,9 +75,9 @@ trigger another admitted pass through APXM OS or an MCP client.
 Run the deterministic pack from the repository root:
 
 ```bash
-dekk apxm workflow validate examples/workflows/orchestration/goal_loop/workflow.apxmw
-dekk apxm workflow analyze examples/workflows/orchestration/goal_loop/workflow.apxmw
-dekk apxm workflow execute examples/workflows/orchestration/goal_loop/workflow.apxmw \
+dekk apxm workflow validate examples/workflows/goals/goal_loop/workflow.apxmw
+dekk apxm workflow analyze examples/workflows/goals/goal_loop/workflow.apxmw
+dekk apxm workflow run examples/workflows/goals/goal_loop/workflow.apxmw \
   goal="ship a bounded APXM improvement" \
   event="manual goal requested" \
   policy="goal_loop.policy.json"
@@ -105,9 +105,9 @@ then fans their outputs into a synthesizer.
 Run it from the repository root:
 
 ```bash
-dekk apxm workflow validate examples/workflows/orchestration/agent_council/workflow.apxmw
-dekk apxm workflow analyze examples/workflows/orchestration/agent_council/workflow.apxmw
-dekk apxm workflow execute examples/workflows/orchestration/agent_council/workflow.apxmw task="ship native workflow orchestration"
+dekk apxm workflow validate examples/workflows/goals/agent_council/workflow.apxmw
+dekk apxm workflow analyze examples/workflows/goals/agent_council/workflow.apxmw
+dekk apxm workflow run examples/workflows/goals/agent_council/workflow.apxmw task="ship native workflow coordination"
 ```
 
 ## Event Feedback Loop
@@ -133,7 +133,7 @@ can relaunch the workflow when feedback says another pass is needed.
 Run it from the repository root:
 
 ```bash
-dekk apxm workflow execute examples/workflows/orchestration/event_feedback_loop/workflow.apxmw event="repository changed"
+dekk apxm workflow run examples/workflows/goals/event_feedback_loop/workflow.apxmw event="repository changed"
 ```
 
 ## Approval Gate
@@ -174,7 +174,7 @@ is not involved. `cancel_background/cancel_parked.apxmw` parks on checkpoint
 `apxm_workflow_cancel` when launched through the native MCP workflow tools.
 
 ```bash
-dekk apxm workflow execute examples/workflows/orchestration/cancel_background/background_ok.apxmw \
+dekk apxm workflow run examples/workflows/goals/cancel_background/background_ok.apxmw \
   --background \
   --json
 ```

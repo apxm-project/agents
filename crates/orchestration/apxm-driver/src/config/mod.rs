@@ -436,6 +436,7 @@ impl Default for ServerRolloutConfig {
 pub struct ServerMcpConfig {
     pub plan_max_tokens: usize,
     pub plan_temperature: f64,
+    pub plan_emit_timeout_ms: u64,
     pub plan_repair_attempts: usize,
     pub plan_capability_guidance_limit: usize,
     pub default_top_k: usize,
@@ -453,6 +454,7 @@ impl Default for ServerMcpConfig {
         Self {
             plan_max_tokens: 8192,
             plan_temperature: 0.0,
+            plan_emit_timeout_ms: 30_000,
             plan_repair_attempts: 3,
             plan_capability_guidance_limit: 32,
             default_top_k: 10,
@@ -1135,6 +1137,7 @@ mod tests {
             [server.mcp]
             plan_max_tokens = 4096
             plan_temperature = 0.2
+            plan_emit_timeout_ms = 12345
             plan_repair_attempts = 2
             plan_capability_guidance_limit = 16
             default_top_k = 8
@@ -1234,6 +1237,7 @@ mod tests {
         assert_eq!(config.server.rollout.spill_threshold_bytes, Some(1048576));
         assert_eq!(config.server.mcp.plan_max_tokens, 4096);
         assert_eq!(config.server.mcp.plan_temperature, 0.2);
+        assert_eq!(config.server.mcp.plan_emit_timeout_ms, 12345);
         assert_eq!(config.server.mcp.plan_repair_attempts, 2);
         assert_eq!(config.server.mcp.plan_capability_guidance_limit, 16);
         assert_eq!(config.server.mcp.default_top_k, 8);

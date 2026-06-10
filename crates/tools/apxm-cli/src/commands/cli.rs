@@ -258,7 +258,7 @@ pub enum Commands {
         #[command(subcommand)]
         action: RolloutAction,
     },
-    /// Start, follow, inspect, or cancel a bounded APXM goal orchestration run.
+    /// Start, follow, inspect, or cancel a bounded APXM goal run.
     ///
     /// Sends the task to APXM server, which owns worker admission,
     /// workflow execution, events, cancellation, and sessions.
@@ -338,7 +338,7 @@ pub struct GoalArgs {
     #[arg(long)]
     pub server: Option<String>,
 
-    /// Reuse a caller-provided orchestration session id.
+    /// Reuse a caller-provided goal session id.
     #[arg(long = "session-id", hide = true)]
     pub session_id: Option<String>,
 
@@ -597,8 +597,7 @@ pub enum ProcessAction {
 
 #[derive(Subcommand)]
 pub enum WorkflowAction {
-    /// Execute a workflow file
-    #[command(visible_alias = "execute")]
+    /// Run a workflow file
     Run {
         /// Workflow file (.apxmw)
         file: PathBuf,
@@ -636,9 +635,9 @@ mod tests {
     use clap::{CommandFactory, Parser};
 
     #[test]
-    fn workflow_execute_alias_parses_as_run() {
-        let cli = Cli::try_parse_from(["apxm", "workflow", "execute", "workflow.apxmw"])
-            .expect("workflow execute alias should parse");
+    fn workflow_run_parses() {
+        let cli = Cli::try_parse_from(["apxm", "workflow", "run", "workflow.apxmw"])
+            .expect("workflow run should parse");
         match cli.command {
             Commands::Workflow {
                 action:

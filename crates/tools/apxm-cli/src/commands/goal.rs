@@ -1,7 +1,7 @@
-//! `apxm goal` - user-facing bounded orchestration over APXM server MCP.
+//! `apxm goal` - user-facing bounded goal execution over APXM server MCP.
 //!
 //! The CLI stays thin: it builds a bounded worker plan, calls the server-owned
-//! `apxm_orchestrate_start` tool, then follows the existing workflow
+//! `apxm_goal_start` tool, then follows the existing workflow
 //! status/events/cancel tools by `execution_id`.
 
 use std::collections::{BTreeSet, HashMap};
@@ -11,8 +11,8 @@ use std::time::{Duration, Instant};
 use anyhow::{Context, Result, anyhow, bail};
 use apxm_core::constants::jsonrpc;
 use apxm_core::constants::mcp::{self as mcp_constants, fields as mcp_fields, tools as mcp_tools};
-use apxm_core::constants::orchestration::admission as orchestration_admission;
-use apxm_core::constants::orchestration::execution_status as orchestration_execution_status;
+use apxm_core::constants::orchestration::admission as goal_admission;
+use apxm_core::constants::orchestration::execution_status as goal_execution_status;
 use apxm_core::events::kind as event_kind_constants;
 use apxm_core::types::OrchestrationWorkspaceMode;
 use apxm_core::types::{AISOperationType, OrchestrationTransport, OrchestrationWorkspaceCleanup};
@@ -21,7 +21,7 @@ use serde_json::{Map as JsonMap, Value as JsonValue, json};
 use super::cli::GoalArgs;
 
 const DEFAULT_SERVER_BASE: &str = "http://127.0.0.1:18800";
-const TEMPLATE_ORCHESTRATION_GOAL_WORKER_ROLE: &str = "orchestration_goal_worker_role";
+const TEMPLATE_GOAL_WORKER_ROLE: &str = "goal_worker_role";
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 enum GoalMode {
@@ -74,8 +74,7 @@ pub async fn goal_command(args: GoalArgs, json_output: bool) -> Result<()> {
                     context_override.as_deref(),
                 )?;
                 let started =
-                    call_mcp_tool(&client, &base, mcp_tools::APXM_ORCHESTRATE_START, request)
-                        .await?;
+                    call_mcp_tool(&client, &base, mcp_tools::APXM_GOAL_START, request).await?;
                 if !json_output {
                     if max_iterations > 1 {
                         println!("== goal pass {}/{} ==", iteration + 1, max_iterations);
@@ -258,10 +257,7 @@ fn build_start_arguments(
         "context",
         context_override.or(args.context.as_deref()),
     );
-    root.insert(
-        "iteration".to_string(),
-        JsonValue::from(iteration as u64),
-    );
+    root.insert("iteration".to_string(), JsonValue::from(iteration as u64));
     root.insert(
         "max_iterations".to_string(),
         JsonValue::from(max_iterations as u64),
@@ -299,7 +295,7 @@ fn build_start_arguments(
         }
     }
     if args.admit_spawn || uses_profiles {
-        admit.insert(orchestration_admission::SPAWN_AGENT.to_string());
+        admit.insert(goal_admission::SPAWN_AGENT.to_string());
     }
     root.insert(
         "admit_capabilities".to_string(),
@@ -454,7 +450,7 @@ fn parse_review_worker(
 
 fn default_goal_role(kind: &str, worker_id: &str) -> Result<String> {
     apxm_backends::render_prompt(
-        TEMPLATE_ORCHESTRATION_GOAL_WORKER_ROLE,
+        TEMPLATE_GOAL_WORKER_ROLE,
         &json!({
             "kind": kind,
             "worker_id": worker_id
@@ -844,7 +840,7 @@ fn next_since_from_events(current: u64, events: &[JsonValue]) -> u64 {
 
 fn terminal_kinds(started: &JsonValue) -> BTreeSet<String> {
     started
-        .get("orchestration")
+        .get("goal")
         .and_then(|value| value.get("terminal_event_kinds"))
         .and_then(JsonValue::as_array)
         .map(|items| {
@@ -873,7 +869,7 @@ fn status_is_terminal(status: &JsonValue) -> bool {
             .get("status")
             .and_then(JsonValue::as_str)
             .unwrap_or_default(),
-        orchestration_execution_status::SUCCEEDED | orchestration_execution_status::FAILED
+        goal_execution_status::SUCCEEDED | goal_execution_status::FAILED
     )
 }
 
@@ -1207,7 +1203,8 @@ mod tests {
     #[test]
     fn build_start_arguments_carries_iteration_budget() {
         let args = args_with_task();
-        let request = build_start_arguments(&args, "ship it", 2, 5, Some("carry")).expect("request");
+        let request =
+            build_start_arguments(&args, "ship it", 2, 5, Some("carry")).expect("request");
         assert_eq!(request["iteration"], json!(2));
         assert_eq!(request["max_iterations"], json!(5));
         assert_eq!(request["context"], json!("carry"));
@@ -1236,7 +1233,7 @@ mod tests {
             let status = json!({ "goal": { "decision": { "decision": decision } } });
             assert_eq!(goal_loop_step(&status, 5), GoalLoopStep::Stop);
         }
-        // No goal block at all (non-orchestration run) also stops.
+        // No goal block at all (non-goal run) also stops.
         assert_eq!(goal_loop_step(&json!({}), 5), GoalLoopStep::Stop);
     }
 
@@ -1302,7 +1299,7 @@ mod tests {
         assert_eq!(request["workers"][1]["profile"], "profile-b");
         assert_eq!(
             request["admit_capabilities"],
-            json!([orchestration_admission::SPAWN_AGENT])
+            json!([goal_admission::SPAWN_AGENT])
         );
     }
 
@@ -1310,11 +1307,11 @@ mod tests {
     async fn goal_follow_pages_events_until_wake() {
         let server = MockMcpServer::start(vec![
             ExpectedMcpCall::new(
-                mcp_tools::APXM_ORCHESTRATE_START,
+                mcp_tools::APXM_GOAL_START,
                 Some(json!({ "task": "ship" })),
                 json!({
                     "execution_id": "exec-1",
-                    "orchestration": {
+                    "goal": {
                         "terminal_event_kinds": [
                             event_kind_constants::ORCHESTRATOR_WAKE.name(),
                             event_kind_constants::EXECUTE_COMPLETE.name(),
@@ -1337,7 +1334,7 @@ mod tests {
             ExpectedMcpCall::new(
                 mcp_tools::APXM_WORKFLOW_STATUS,
                 Some(json!({ "execution_id": "exec-1" })),
-                json!({ "execution_id": "exec-1", "status": orchestration_execution_status::RUNNING }),
+                json!({ "execution_id": "exec-1", "status": goal_execution_status::RUNNING }),
             ),
             ExpectedMcpCall::new(
                 mcp_tools::APXM_WORKFLOW_EVENTS,
@@ -1352,7 +1349,7 @@ mod tests {
             ExpectedMcpCall::new(
                 mcp_tools::APXM_WORKFLOW_STATUS,
                 Some(json!({ "execution_id": "exec-1" })),
-                json!({ "execution_id": "exec-1", "status": orchestration_execution_status::SUCCEEDED }),
+                json!({ "execution_id": "exec-1", "status": goal_execution_status::SUCCEEDED }),
             ),
         ])
         .await;
@@ -1361,7 +1358,7 @@ mod tests {
         let started = call_mcp_tool(
             &client,
             &server.base,
-            mcp_tools::APXM_ORCHESTRATE_START,
+            mcp_tools::APXM_GOAL_START,
             json!({ "task": "ship" }),
         )
         .await
@@ -1384,10 +1381,7 @@ mod tests {
             follow.terminal_event_kind.as_deref(),
             Some(event_kind_constants::ORCHESTRATOR_WAKE.name())
         );
-        assert_eq!(
-            follow.status["status"],
-            orchestration_execution_status::SUCCEEDED
-        );
+        assert_eq!(follow.status["status"], goal_execution_status::SUCCEEDED);
         server.finish().await;
     }
 
@@ -1440,7 +1434,7 @@ mod tests {
             ExpectedMcpCall::new(
                 mcp_tools::APXM_WORKFLOW_STATUS,
                 Some(json!({ "execution_id": "exec-2" })),
-                json!({ "execution_id": "exec-2", "status": orchestration_execution_status::RUNNING }),
+                json!({ "execution_id": "exec-2", "status": goal_execution_status::RUNNING }),
             ),
             ExpectedMcpCall::new(
                 mcp_tools::APXM_WORKFLOW_EVENTS,
@@ -1459,7 +1453,7 @@ mod tests {
         let status = workflow_status(&client, &server.base, "exec-2")
             .await
             .expect("status");
-        assert_eq!(status["status"], orchestration_execution_status::RUNNING);
+        assert_eq!(status["status"], goal_execution_status::RUNNING);
         let events = workflow_events(&client, &server.base, "exec-2", 0, 50)
             .await
             .expect("events");
