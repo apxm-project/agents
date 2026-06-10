@@ -46,6 +46,48 @@ fn apxm_disable_hints() -> bool {
     })
 }
 
+/// Env var selecting a single APXM mechanism for isolation experiments.
+/// Values: `priority`, `prefix`, `registration`. Unset (the default) leaves the
+/// full envelope untouched, so normal runs are unaffected.
+const ISOLATE_ENV: &str = "APXM_ISOLATE";
+
+fn apxm_isolate() -> Option<String> {
+    static MODE: OnceLock<Option<String>> = OnceLock::new();
+    MODE.get_or_init(|| {
+        std::env::var(ISOLATE_ENV)
+            .ok()
+            .map(|s| s.trim().to_ascii_lowercase())
+            .filter(|s| matches!(s.as_str(), "priority" | "prefix" | "registration"))
+    })
+    .clone()
+}
+
+/// Drop the hint-field families not selected by `mode` from a rendered
+/// `ApxmGraphHints` object so one mechanism can be measured in isolation.
+/// Registration fields (graph/execution/node ids) and structural fields
+/// (schema_version, downstream_nodes, compiler_hints) are always retained; the
+/// `registration` control mode keeps only those.
+fn prune_isolated_hints(value: serde_json::Value, mode: &str) -> serde_json::Value {
+    let serde_json::Value::Object(mut map) = value else {
+        return value;
+    };
+    let drop: &[&str] = match mode {
+        "priority" => &["reuse_group", "pin_policy", "graph_metrics"],
+        "prefix" => &["priority_class"],
+        "registration" => &[
+            "priority_class",
+            "reuse_group",
+            "pin_policy",
+            "graph_metrics",
+        ],
+        _ => &[],
+    };
+    for key in drop {
+        map.remove(*key);
+    }
+    serde_json::Value::Object(map)
+}
+
 mod request_keys {
     pub const THINKING_TOKEN_BUDGET: &str = "thinking_token_budget";
     pub const STRUCTURED_OUTPUTS: &str = "structured_outputs";
@@ -463,6 +505,12 @@ impl GraphAwareVllmBackend {
                     .or_insert_with(|| serde_json::json!({}));
                 if let serde_json::Value::Object(vllm_xargs_map) = vllm_xargs {
                     let rendered_hints = serde_json::to_value(hints).unwrap_or_default();
+                    // Mechanism-isolation experiments (APXM_ISOLATE) keep only one
+                    // hint family; unset leaves the full envelope unchanged.
+                    let rendered_hints = match apxm_isolate() {
+                        Some(mode) => prune_isolated_hints(rendered_hints, &mode),
+                        None => rendered_hints,
+                    };
                     match vllm_xargs_map.get_mut(apxm_llm::HINTS_FIELD) {
                         Some(existing) => match (existing, rendered_hints) {
                             (
@@ -484,6 +532,7 @@ impl GraphAwareVllmBackend {
                 }
 
                 if !map.contains_key(apxm_llm::REQUEST_PRIORITY)
+                    && apxm_isolate().map_or(true, |m| m == "priority")
                     && let Some(priority_class) = &hints.priority_class
                 {
                     let priority = u8::from(VllmRequestPriority::from(*priority_class));
