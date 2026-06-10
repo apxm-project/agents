@@ -57,7 +57,7 @@ pub(crate) struct ExecuteRequest {
     pub(crate) imports: Vec<String>,
 }
 
-/// A caller-supplied PlanGraph plus the same execution controls as
+/// A caller-supplied workflow plus the same execution controls as
 /// [`ExecuteRequest`]. The `graph` is an `apxm_ais::plan::PlanGraph` envelope
 /// (`{ name, entry, parameters, nodes }`, or wrapped as `{ graph: { ... } }`);
 /// the server lowers it to AIR server-side — bypassing the LLM emission path —
@@ -79,13 +79,12 @@ pub(crate) struct CompileRequest {
 }
 
 impl CompileRequest {
-    /// Lower the caller-supplied PlanGraph to AIR and fold it into an
+    /// Lower the caller-supplied workflow to AIR and fold it into an
     /// [`ExecuteRequest`] so the compile route shares the execute path verbatim
     /// (admission gate, credential injection, runtime, session handling).
     fn into_execute_request(self) -> Result<ExecuteRequest, ApiError> {
-        let air = crate::mcp_tools::lower_plan_graph_to_air(self.graph).map_err(|error| {
-            ApiError::bad_request(format!("plan graph lowering failed: {error}"))
-        })?;
+        let air = crate::mcp_tools::lower_plan_graph_to_air(self.graph)
+            .map_err(|error| ApiError::bad_request(format!("workflow lowering failed: {error}")))?;
         Ok(ExecuteRequest {
             air,
             args: self.args,

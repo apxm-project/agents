@@ -372,7 +372,7 @@ fn prepare_request_rejects_client_session_root() {
 
 #[tokio::test]
 async fn compile_lowers_and_executes_caller_supplied_graph() {
-    // A caller-supplied PlanGraph posted to /v1/compile lowers server-side and
+    // A caller-supplied workflow posted to /v1/compile lowers server-side and
     // runs through the same runtime as /v1/execute — here a read-only inv_tool.
     let state = test_state().await;
     state
@@ -469,7 +469,7 @@ async fn compile_rejects_invalid_graph() {
         body["error"]
             .as_str()
             .unwrap_or_default()
-            .contains("plan graph lowering failed"),
+            .contains("workflow lowering failed"),
         "expected lowering failure: {body}"
     );
 }

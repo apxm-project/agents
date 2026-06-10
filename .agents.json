@@ -7,7 +7,7 @@
       "skills": ".claude/skills/"
     },
     "codex": {
-      "instructions": "CODEX.md",
+      "instructions": "AGENTS.md",
       "skills": "~/.codex/skills/"
     },
     "copilot": {

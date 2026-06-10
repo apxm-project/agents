@@ -76,15 +76,15 @@ pub mod env {
     pub const APXM_RUNTIME_LLM_INFLIGHT: &str = "APXM_RUNTIME_LLM_INFLIGHT";
     /// Maximum parallel tool calls admitted within one LLM tool-call turn.
     pub const APXM_RUNTIME_MAX_PARALLEL_TOOL_CALLS: &str = "APXM_RUNTIME_MAX_PARALLEL_TOOL_CALLS";
-    /// Maximum tokens requested for MCP plan graph emission.
+    /// Maximum tokens requested for MCP workflow emission.
     pub const APXM_MCP_PLAN_MAX_TOKENS: &str = "APXM_MCP_PLAN_MAX_TOKENS";
-    /// Temperature used for MCP plan graph emission.
+    /// Temperature used for MCP workflow emission.
     pub const APXM_MCP_PLAN_TEMPERATURE: &str = "APXM_MCP_PLAN_TEMPERATURE";
-    /// Maximum wall-clock time, in milliseconds, for one MCP plan graph emission request.
+    /// Maximum wall-clock time, in milliseconds, for one MCP workflow emission request.
     pub const APXM_MCP_PLAN_EMIT_TIMEOUT_MS: &str = "APXM_MCP_PLAN_EMIT_TIMEOUT_MS";
-    /// Repair attempts for invalid MCP plan graph emissions.
+    /// Repair attempts for invalid MCP workflow emissions.
     pub const APXM_MCP_PLAN_REPAIR_ATTEMPTS: &str = "APXM_MCP_PLAN_REPAIR_ATTEMPTS";
-    /// Capability entries included in MCP plan graph prompt guidance.
+    /// Capability entries included in MCP workflow prompt guidance.
     pub const APXM_MCP_PLAN_CAPABILITY_GUIDANCE_LIMIT: &str =
         "APXM_MCP_PLAN_CAPABILITY_GUIDANCE_LIMIT";
     /// Default top-k for MCP recall style tools.

@@ -1,6 +1,7 @@
 [package]
 name = "apxm-server"
 version.workspace = true
+publish = false
 edition.workspace = true
 build = "build.rs"
 description = "HTTP API wrapper for APXM runtime"

@@ -73,6 +73,22 @@ misaligned.
     available. See
     [`docs/integrations/sandbox-acp-seam.md`](docs/integrations/sandbox-acp-seam.md).
 
+## Releases
+
+Release work also goes through Dekk:
+
+```bash
+dekk apxm release check     # readiness checks; no publishing
+dekk apxm release dist      # writes archives + SHA256SUMS under .apxm/releases
+dekk apxm release publish   # dry run by default; pass --yes to publish with gh
+```
+
+`release dist` packages the Python wheel/sdist, release binaries (`apxm`,
+`apxm-server`, `apxm-mcp-server`), runtime libraries, docs, source archive,
+and checksums under `.apxm/releases/vX.Y.Z`. GitHub publishing uses `gh` and
+never creates a release unless `--yes` is explicit. PyPI upload is a separate
+maintainer action: `dekk apxm release pypi --yes`.
+
 ## Documentation
 
 - [`docs/README.md`](docs/README.md) — full docs index.
@@ -97,6 +113,6 @@ rules. Released under the [MIT License](LICENSE); the bundled vLLM fork at
 
 For coding agents (Claude Code, Codex CLI, Cursor, Aider, Gemini): read
 [`AGENTS.md`](AGENTS.md) (or [`CLAUDE.md`](CLAUDE.md)) before doing any work.
-The 6-skill lifecycle — `/apxm-org:apxm-context` → `apxm-plan` →
+The 6-skill lifecycle — `apxm-context` → `apxm-plan` →
 `apxm-execute-plan` → `apxm-simplify` → `apxm-finish` → `apxm-commit` — is
 the project-wide pattern.

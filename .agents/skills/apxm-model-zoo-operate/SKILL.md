@@ -50,9 +50,6 @@ dekk apxm vllm service-stop <name>       # cancel a service job
   - `deploy/vllm/zoo.example.toml` — committed template.
   - `deploy/vllm/zoo.test-*.toml`, `deploy/vllm/zoo.review-*.toml` —
     checked-in test/eval manifests; edit carefully, never overwrite.
-- `dekk apxm vllm verify-cross-shard-pins` for multi-node Ray vLLM
-  services — confirms pin broadcast across shards.
-
 ## Hardware reality
 
 `apxm_hardware` memory: 8x MI300X (1.5 TiB VRAM), 2x Xeon 8570,

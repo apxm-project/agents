@@ -1,5 +1,5 @@
-//! Plan-graph wire DTO — the single source of truth for the "plan as graph"
-//! emission schema (`prompt-as-workflow/schema.json`).
+//! Workflow wire DTO — the single source of truth for the
+//! `prompt_as_workflow` emission schema (`prompt-as-workflow/schema.json`).
 //!
 //! This is the typed shape that the apxm-server plan tool deserializes and that
 //! external authoring front-ends (e.g. apxm-studio) lower a canvas into. Keeping
@@ -36,7 +36,7 @@ pub struct PlanParameter {
     pub required: Option<bool>,
 }
 
-/// A plan-graph node. Field requiredness depends on `op` (the compiler enforces
+/// A workflow node. Field requiredness depends on `op` (the compiler enforces
 /// it; conformant lowering produces valid nodes).
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]

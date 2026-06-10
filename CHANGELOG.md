@@ -7,6 +7,17 @@ contract is committed to.
 
 ## [Unreleased]
 
+## [0.1.0] - 2026-06-10
+
+### Added
+- `dekk apxm release check`, `release dist`, and `release publish` now provide
+  a first-class release path: readiness checks, `.apxm/releases` archives,
+  checksums, and explicit GitHub publishing through `gh`.
+
+### Removed
+- Removed the last `service-start` compatibility stub from the Dekk vLLM
+  surface. The model zoo manifest remains the only service launch path.
+
 ### Fixed — fork-side v0.21.0 rebase regression
 - `external/vllm` bumped to `cc1fbf4c0` on the `apxm` branch:
   the APXM patch in `vllm/v1/core/sched/scheduler.py` called the

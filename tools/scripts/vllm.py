@@ -150,7 +150,6 @@ COMMANDS_WITHOUT_EXTRA_ARGS = {
     VllmCommand.DOCKER_STATUS.value,
     VllmCommand.DOCKER_LOGS.value,
     VllmCommand.DOCKER_SAVE.value,
-    VllmCommand.SERVICE_START.value,
     VllmCommand.SERVICE_STATUS.value,
     VllmCommand.SERVICE_LIST.value,
     VllmCommand.SERVICE_STOP.value,
@@ -1406,11 +1405,10 @@ def _start_one_service(
 ) -> tuple[int, dict[str, Any] | None]:
     """Submit one Slurm-owned APXM-vLLM service. Returns (rc, state).
 
-    Pure helper: callers (CLI `service-start`, `zoo apply`) build the kwargs
-    explicitly so there is exactly one entry point that turns a configured
-    service into a Slurm submission. The function does not inspect argparse
-    Namespaces, so `zoo apply` can drive it from manifest data without
-    fabricating one.
+    Pure helper: manifest reconciliation builds the kwargs explicitly so there
+    is exactly one entry point that turns a configured service into a Slurm
+    submission. The function does not inspect argparse Namespaces, so
+    `zoo apply` can drive it from manifest data without fabricating one.
     """
     if not shutil.which(SBATCH):
         _print("sbatch is not available on this host.")
@@ -1504,22 +1502,6 @@ def _start_one_service(
         "submitted_at": time.time(),
     }
     return 0, state
-
-
-def service_start_cmd(args: argparse.Namespace) -> int:
-    """Stub that redirects callers to the manifest-driven deploy path.
-
-    Operators write a manifest entry in `deploy/vllm/zoo.toml` and call
-    `dekk apxm vllm zoo-apply`. `_start_one_service` remains as the
-    internal entry point that `zoo-apply` invokes.
-    """
-    del args
-    _print(
-        "service-start is not supported. "
-        "Add a [[deployment]] entry to deploy/vllm/zoo.toml and run "
-        "`dekk apxm vllm zoo-apply` instead. See docs/backends/model-zoo.md."
-    )
-    return 2
 
 
 ZOO_MANIFEST_SCHEMA_VERSION = 1
@@ -2576,76 +2558,6 @@ def build_parser() -> argparse.ArgumentParser:
             docker_parser.add_argument("--lines", type=int, default=DEFAULTS.log_lines, help="Number of lines to show")
             docker_parser.add_argument("--follow", action="store_true", help="Follow the log")
         docker_parser.set_defaults(**{ArgName.HANDLER.value: lambda ns, extra, h=handler: h(ns)})
-
-    # Adopting an externally-started job is done by appending a [[deployment]]
-    # entry to deploy/vllm/zoo.toml (or your own manifest) and running
-    # `zoo apply`; idempotent reconciliation covers the "record an existing
-    # job" workflow.
-
-    service_start = subparsers.add_parser(
-        VllmCommand.SERVICE_START.value,
-        help="Submit a persistent Slurm-owned APXM-vLLM service job",
-    )
-    service_start.add_argument(ArgName.NAME.value, help="Service name stored under .apxm/vllm-services")
-    service_start.add_argument(ArgName.MODEL.value, help="vLLM model id or local model path")
-    service_start.add_argument(
-        "--image",
-        dest=ArgName.IMAGE.value,
-        help="APXM-vLLM image tag/digest (default: APXM_VLLM_IMAGE or apxm-vllm-runtime:<apxm>-<vllm>)",
-    )
-    service_start.add_argument("--backend-name", default=DEFAULT_BACKEND_NAME, help="APXM backend name")
-    service_start.add_argument("--port", type=int, default=None, help="vLLM port")
-    service_start.add_argument("--served-model-name", dest=ArgName.SERVED_MODEL_NAME.value, help="Served model id")
-    service_start.add_argument(
-        "--hf-home",
-        dest=ArgName.HF_HOME.value,
-        help=f"Host Hugging Face cache root (or set {ENV_APXM_VLLM_HF_HOME}/{ENV_HF_HOME})",
-    )
-    service_start.add_argument(
-        "--max-model-len",
-        type=int,
-        default=SERVICE_DEFAULTS.max_model_len,
-        help="MAX_MODEL_LEN exported to the Slurm wrapper",
-    )
-    service_start.add_argument(
-        "--max-num-seqs",
-        dest=ArgName.MAX_NUM_SEQS.value,
-        type=int,
-        default=SERVICE_DEFAULTS.max_num_seqs,
-        help="MAX_NUM_SEQS exported to the Slurm wrapper",
-    )
-    service_start.add_argument(
-        VllmServeFlag.SCHEDULING_POLICY.value,
-        dest=ArgName.SCHEDULING_POLICY.value,
-        choices=[p.value for p in SchedulingPolicy],
-        default=SERVICE_DEFAULTS.scheduling_policy,
-        help="SCHEDULING_POLICY exported to the Slurm wrapper",
-    )
-    service_start.add_argument(
-        "--enable-prefix-caching",
-        dest=ArgName.ENABLE_PREFIX_CACHING.value,
-        action=argparse.BooleanOptionalAction,
-        default=SERVICE_DEFAULTS.enable_prefix_caching,
-        help="ENABLE_PREFIX_CACHING exported to the Slurm wrapper",
-    )
-    service_start.add_argument(
-        "--startup-timeout",
-        type=float,
-        default=SERVICE_DEFAULTS.startup_timeout_seconds,
-        help="STARTUP_TIMEOUT_SECONDS exported to the Slurm wrapper",
-    )
-    service_start.add_argument(
-        "--gpus",
-        dest=ArgName.GPUS.value,
-        help="GPU subset to pin (forwarded to the wrapper as HIP_VISIBLE_DEVICES/CUDA_VISIBLE_DEVICES)",
-    )
-    service_start.add_argument(
-        "--tensor-parallel-size",
-        dest=ArgName.TENSOR_PARALLEL_SIZE.value,
-        type=int,
-        help="TENSOR_PARALLEL_SIZE exported to the Slurm wrapper",
-    )
-    service_start.set_defaults(**{ArgName.HANDLER.value: lambda ns, extra: service_start_cmd(ns)})
 
     service_list = subparsers.add_parser(
         VllmCommand.SERVICE_LIST.value,

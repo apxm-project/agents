@@ -134,7 +134,7 @@ checksum = "7f202df86484c868dbad7eaa557ef785d5c66295e41b460ef922eca0723b842c"
 
 [[package]]
 name = "apxm"
-version = "0.0.1"
+version = "0.1.0"
 dependencies = [
  "apxm-ais",
  "apxm-backends",
@@ -145,7 +145,7 @@ dependencies = [
 
 [[package]]
 name = "apxm-acp"
-version = "0.0.1"
+version = "0.1.0"
 dependencies = [
  "apxm-core",
  "apxm-credentials",
@@ -167,7 +167,7 @@ dependencies = [
 
 [[package]]
 name = "apxm-ais"
-version = "0.0.1"
+version = "0.1.0"
 dependencies = [
  "serde",
  "serde_json",
@@ -177,7 +177,7 @@ dependencies = [
 
 [[package]]
 name = "apxm-artifact"
-version = "0.0.1"
+version = "0.1.0"
 dependencies = [
  "anyhow",
  "apxm-core",
@@ -189,7 +189,7 @@ dependencies = [
 
 [[package]]
 name = "apxm-backends"
-version = "0.0.1"
+version = "0.1.0"
 dependencies = [
  "anyhow",
  "apxm-core",
@@ -224,7 +224,7 @@ dependencies = [
 
 [[package]]
 name = "apxm-cli"
-version = "0.0.1"
+version = "0.1.0"
 dependencies = [
  "anyhow",
  "apxm-acp",
@@ -261,7 +261,7 @@ dependencies = [
 
 [[package]]
 name = "apxm-compiler"
-version = "0.0.1"
+version = "0.1.0"
 dependencies = [
  "anyhow",
  "apxm-ais",
@@ -281,7 +281,7 @@ dependencies = [
 
 [[package]]
 name = "apxm-core"
-version = "0.0.1"
+version = "0.1.0"
 dependencies = [
  "anyhow",
  "apxm-ais",
@@ -302,7 +302,7 @@ dependencies = [
 
 [[package]]
 name = "apxm-credentials"
-version = "0.0.1"
+version = "0.1.0"
 dependencies = [
  "apxm-backends",
  "apxm-core",
@@ -315,7 +315,7 @@ dependencies = [
 
 [[package]]
 name = "apxm-driver"
-version = "0.0.1"
+version = "0.1.0"
 dependencies = [
  "apxm-acp",
  "apxm-artifact",
@@ -341,7 +341,7 @@ dependencies = [
 
 [[package]]
 name = "apxm-rollout"
-version = "0.0.1"
+version = "0.1.0"
 dependencies = [
  "apxm-core",
  "blake3",
@@ -360,7 +360,7 @@ dependencies = [
 
 [[package]]
 name = "apxm-runtime"
-version = "0.0.1"
+version = "0.1.0"
 dependencies = [
  "anyhow",
  "apxm-artifact",
@@ -398,7 +398,7 @@ dependencies = [
 
 [[package]]
 name = "apxm-server"
-version = "0.0.1"
+version = "0.1.0"
 dependencies = [
  "anyhow",
  "apxm-acp",
@@ -439,7 +439,7 @@ dependencies = [
 
 [[package]]
 name = "apxm-skill"
-version = "0.0.1"
+version = "0.1.0"
 dependencies = [
  "blake3",
  "serde",

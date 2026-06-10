@@ -23,7 +23,8 @@ Run in order for any non-trivial session:
 3. `apxm-execute-plan` — execute the approved plan.
 4. `apxm-simplify` — remove avoidable complexity.
 5. `apxm-finish` — pre-claim gate (tests, doctor, lint, secrets).
-6. `apxm-commit` — pre-PR gate (no auto-commit, no push to main).
+6. `apxm-commit` — pre-commit/pre-push gate; push to `main` only with
+   explicit user authorization.
 
 ## Domain skills
 

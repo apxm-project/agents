@@ -32,12 +32,19 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 RULES: tuple[LintRule, ...] = (
     # --- Legacy CLI tokens ---------------------------------------------
     LintRule(
-        # CLI invocations only; retrospective comments about removed commands
-        # are legitimate and must not trigger the lint.
         name="legacy-service-start",
-        pattern=r"dekk\s+apxm\s+vllm\s+service-start\b|sbatch\s+.*service-start",
+        pattern=(
+            r"dekk\s+apxm\s+vllm\s+service-start\b|sbatch\s+.*service-start|"
+            r"\bSERVICE_START\b|service_start\s*=|service_start_cmd|"
+            r"VllmCommand\.SERVICE_START|\"service-start\""
+        ),
         description="`service-start` CLI removed by the model-zoo migration; use `zoo apply` instead",
-        include_globs=("tools/**/*.py", "docs/**/*.md", "deploy/**/*", "examples/**/*", ".dekk.toml", "README.md"),
+        include_globs=(
+            "tools/**/*.py",
+            "crates/compiler/apxm-frontend/python/apxm/contract.py",
+            ".dekk.toml",
+            "README.md",
+        ),
         exclude_globs=("tools/scripts/check_no_legacy_vllm.py",),
     ),
     LintRule(

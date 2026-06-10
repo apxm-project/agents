@@ -9,10 +9,9 @@ project conventions and skill defaults.
 - **Auto-commit is allowed.** When work is at a clean stopping point
   (apxm-finish gate passed, message drafted in repo style), commit
   without an extra approval round-trip.
-- **Push directly to a feature branch is allowed** once the local
-  commit is sound. No PR step — the user moves work to `main` through
-  their own flow when ready.
-- **No push to `main`.** Always push to a feature branch.
+- **Push directly to a feature branch is allowed by default** once the
+  local commit is sound. No PR step is required unless the user asks.
+- **Push to `main` only when explicitly authorized by the user.**
 - **No `git push --force`** anywhere. Even on a feature branch, ask
   first.
 - **No `--no-verify`.** If a hook fails, fix the root cause; never

@@ -182,7 +182,6 @@ class VllmCommand(str, Enum):
     DOCKER_STOP = "docker-stop"
     DOCKER_STATUS = "docker-status"
     DOCKER_LOGS = "docker-logs"
-    SERVICE_START = "service-start"
     SERVICE_STATUS = "service-status"
     SERVICE_LIST = "service-list"
     SERVICE_EXEC = "service-exec"

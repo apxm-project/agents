@@ -1,13 +1,13 @@
 # Releasing apxm
 
 This doc covers releases of the `apxm` Python package on PyPI. The Rust
-crates are not yet published — the workspace tracks `0.0.1` and waits
+crates are not yet published — the workspace tracks the release version and waits
 for the public Rust API to stabilize.
 
-Releases are cut **manually** from a maintainer's machine using `twine`.
-There is intentionally no GitHub Actions workflow that auto-publishes:
-the maintainer's PyPI API token never leaves the local environment, and
-every release is a deliberate human action.
+Releases are cut **manually** from a maintainer's machine through
+`dekk apxm release`. There is intentionally no GitHub Actions workflow that
+auto-publishes: the maintainer's PyPI API token never leaves the local
+environment, and every release is a deliberate human action.
 
 ## Versioning
 
@@ -38,31 +38,15 @@ every release is a deliberate human action.
 ## Pre-release checks
 
 ```bash
-# Generated files are current
-dekk apxm codegen
-git diff --exit-code crates/compiler/apxm-frontend/python/apxm/_generated/
-
-# Tests pass
-dekk apxm test-python-frontend
-
-# Build cleanly in a fresh venv
-python3 -m venv /tmp/apxm-build && /tmp/apxm-build/bin/pip install build
-/tmp/apxm-build/bin/python -m build crates/compiler/apxm-frontend/python/
-```
-
-Verify the wheel installs and imports in a clean venv:
-
-```bash
-python3 -m venv /tmp/apxm-smoke
-/tmp/apxm-smoke/bin/pip install crates/compiler/apxm-frontend/python/dist/apxm-*.whl
-/tmp/apxm-smoke/bin/python -c "from apxm.contract import RepoLayout, build_layout; from apxm import GraphRecorder, compile; print('OK')"
+dekk apxm release check
 ```
 
 ## Cutting a release
 
-1. Bump `version =` in `crates/compiler/apxm-frontend/python/pyproject.toml`.
+1. Bump `version =` in `crates/compiler/apxm-frontend/python/pyproject.toml`
+   and `[workspace.package].version` in `Cargo.toml`.
 2. Commit:
-   `chore(release): bump apxm python to v0.X.Y`
+   `chore(release): bump apxm to v0.X.Y`
 3. Open and merge the PR.
 4. Tag the release on `main`:
    ```bash
@@ -71,25 +55,20 @@ python3 -m venv /tmp/apxm-smoke
    ```
 5. From a clean checkout of the tagged commit, rebuild the artifacts:
    ```bash
-   rm -rf crates/compiler/apxm-frontend/python/dist/
-   python3 -m venv /tmp/apxm-release && /tmp/apxm-release/bin/pip install build twine
-   /tmp/apxm-release/bin/python -m build crates/compiler/apxm-frontend/python/
-   /tmp/apxm-release/bin/python -m twine check crates/compiler/apxm-frontend/python/dist/*
+   dekk apxm release dist
    ```
-6. Upload to PyPI:
+   Artifacts are written under `.apxm/releases/v0.X.Y/`, including the
+   Python wheel/sdist, binary archive, source archive, and `SHA256SUMS`.
+6. Upload to PyPI when the Python package is ready:
    ```bash
-   /tmp/apxm-release/bin/python -m twine upload \
-     crates/compiler/apxm-frontend/python/dist/apxm-0.X.Y*
+   dekk apxm release pypi --yes
    ```
    `twine` reads credentials from `~/.pypirc` (or
    `TWINE_USERNAME`/`TWINE_PASSWORD` env vars). Confirm the upload by
    visiting <https://pypi.org/project/apxm/0.X.Y/>.
-7. Create a GitHub release for the tag (release notes only, no asset
-   upload — PyPI is the artifact store):
+7. Create the GitHub release:
    ```bash
-   gh release create v0.X.Y \
-     --title "apxm 0.X.Y" \
-     --notes-file release-notes/v0.X.Y.md
+   dekk apxm release publish --yes
    ```
 
 ## Test publishing (optional)
@@ -97,9 +76,7 @@ python3 -m venv /tmp/apxm-smoke
 To rehearse a release against TestPyPI:
 
 ```bash
-/tmp/apxm-release/bin/python -m twine upload \
-  --repository testpypi \
-  crates/compiler/apxm-frontend/python/dist/apxm-0.X.Y*
+dekk apxm release pypi --repository testpypi --yes
 ```
 
 Requires a separate TestPyPI account + token under a `[testpypi]` block

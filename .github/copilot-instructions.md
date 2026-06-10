@@ -35,10 +35,11 @@ Command groups (see `dekk apxm --help` for the live list):
 - **Configuration**: `doctor`, `backend`, `vllm`, `agent`, `tool`, `cache`,
   `process`, `mcp`, `server`, `commit-lint`, `install-hooks`
 - **Discovery**: `ops`, `template`
+- **Release**: `release {check, dist, publish, pypi}`
 - **vLLM operate**: `dekk apxm vllm {doctor, probe, cache-warm,
   docker-build, docker-save, docker-load, zoo-apply, zoo-status, zoo-scale,
   zoo-cache-warm, service-list, service-status, service-exec, service-stop,
-  check-no-legacy, verify-cross-shard-pins}`
+  check-no-legacy}`
 
 If a needed action isn't yet wrapped, **add a Dekk command** in `.dekk.toml`
 rather than shelling out — that is the project-wide pattern.

@@ -2531,7 +2531,7 @@ async fn mcp_prompt_as_workflow_allows_sandboxed_generated_tool() {
     assert_eq!(
         status,
         StatusCode::OK,
-        "sandboxed generated plan should return MCP 200: {body}"
+        "sandboxed generated workflow should return MCP 200: {body}"
     );
     assert_eq!(body[tool_result::RESULT][mcp_fields::IS_ERROR], false);
     let response: serde_json::Value =

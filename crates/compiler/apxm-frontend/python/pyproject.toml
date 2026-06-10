@@ -8,14 +8,13 @@ version = "0.1.0"
 description = "Python frontend for APXM graph construction, AIR emission, and workflow execution"
 readme = "README.md"
 requires-python = ">=3.10"
-license = { text = "MIT" }
+license = "MIT"
 authors = [{ name = "The APXM authors" }]
 keywords = ["apxm", "workflows", "graphs", "agents", "mlir"]
 classifiers = [
     "Development Status :: 3 - Alpha",
     "Intended Audience :: Developers",
     "Intended Audience :: Science/Research",
-    "License :: OSI Approved :: MIT License",
     "Operating System :: POSIX :: Linux",
     "Operating System :: MacOS",
     "Programming Language :: Python :: 3",

@@ -225,7 +225,7 @@ async def _spawn_with_stubs(tmp: str) -> asyncio.subprocess.Process:
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.anyio
+@pytest.mark.asyncio
 async def test_concurrent_calls():
     """Three concurrent calls complete with correct results."""
     with tempfile.TemporaryDirectory() as tmp:
@@ -253,7 +253,7 @@ async def test_concurrent_calls():
             await _close(proc)
 
 
-@pytest.mark.anyio
+@pytest.mark.asyncio
 async def test_unknown_handler_id():
     """Calling a non-existent tool_id returns an error with kind=unknown_handler."""
     with tempfile.TemporaryDirectory() as tmp:
@@ -268,7 +268,7 @@ async def test_unknown_handler_id():
             await _close(proc)
 
 
-@pytest.mark.anyio
+@pytest.mark.asyncio
 async def test_exception_in_tool():
     """Tool that raises an exception returns structured error."""
     with tempfile.TemporaryDirectory() as tmp:
@@ -285,7 +285,7 @@ async def test_exception_in_tool():
             await _close(proc)
 
 
-@pytest.mark.anyio
+@pytest.mark.asyncio
 async def test_manifest_source_file_makes_non_main_module_importable():
     """Artifacts can import module-backed tools from source_file metadata alone."""
     with tempfile.TemporaryDirectory() as tmp:
@@ -327,7 +327,7 @@ def summarize(text: str) -> str:
             os.unlink(manifest_path)
 
 
-@pytest.mark.anyio
+@pytest.mark.asyncio
 async def test_cancel():
     """Cancelling an in-flight call produces a cancelled error."""
     with tempfile.TemporaryDirectory() as tmp:
@@ -349,7 +349,7 @@ async def test_cancel():
             await _close(proc)
 
 
-@pytest.mark.anyio
+@pytest.mark.asyncio
 async def test_eof_graceful_shutdown():
     """Closing stdin causes the worker to exit cleanly."""
     with tempfile.TemporaryDirectory() as tmp:
@@ -364,7 +364,7 @@ async def test_eof_graceful_shutdown():
         assert proc.returncode == 0
 
 
-@pytest.mark.anyio
+@pytest.mark.asyncio
 async def test_timeout_enforcement():
     """A call with a very short deadline_ms times out."""
     with tempfile.TemporaryDirectory() as tmp:

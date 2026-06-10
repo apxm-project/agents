@@ -68,7 +68,7 @@ const PLAN_NODE_NESTED_ATTRIBUTE_FIELDS: &[&str] = &[
     plan_field::CAPABILITY,
     plan_field::ARGS,
 ];
-// Top-level (graph) fields tolerated by serde for PlanGraph. Any other key the
+// Top-level workflow fields tolerated by serde for PlanGraph. Any other key the
 // LLM volunteered (e.g. `attr`, `description`, `metadata`) is stripped during
 // normalization so a small schema slip does not waste a repair attempt. At
 // graph scope every allowed field is also lift-eligible, so the alias-lift
@@ -130,7 +130,7 @@ impl PlanCandidateError {
     }
 }
 
-// Plan-graph wire DTO (`PlanGraph`/`PlanNode`/`PlanParameter`/`PlanDependency`/
+// Workflow wire DTO (`PlanGraph`/`PlanNode`/`PlanParameter`/`PlanDependency`/
 // `PlanNodeOp`/`PlanDependencyKind`) is defined once in `apxm_ais::plan` and
 // imported above — the single source of truth shared with authoring front-ends.
 
@@ -720,7 +720,7 @@ fn validate_generated_plan_inv_tool_node(node: &PlanNode, runtime: &Runtime) -> 
     check_generated_capability_admission(capability, || plan_inv_tool_args(node), runtime)
 }
 
-/// Admission rules for a side-effecting capability invoked by a generated plan:
+/// Admission rules for a side-effecting capability invoked by a generated workflow:
 /// the capability must be registered, and either read-only or sandbox-preflight
 /// clean (a `Direct` side effect is rejected).
 fn check_generated_capability_admission(
@@ -1189,7 +1189,7 @@ fn decode_plan_graph(value: &JsonValue) -> Result<JsonValue, String> {
 
 fn parse_plan_graph(value: JsonValue) -> Result<(PlanGraph, JsonValue), String> {
     let plan: PlanGraph = serde_json::from_value(value.clone())
-        .map_err(|error| format!("plan JSON does not satisfy schema: {error}"))?;
+        .map_err(|error| format!("workflow JSON does not satisfy schema: {error}"))?;
     validate_plan_graph(&plan)?;
     Ok((plan, value))
 }
@@ -1471,7 +1471,7 @@ fn validate_generated_workflow_spawn_node(
 ) -> Result<(), String> {
     if node.attributes.contains_key(graph_attrs::SESSION_ROOT) {
         return Err(
-            "WORKFLOW_SPAWN session_root is server-controlled and may not be supplied by a generated plan"
+            "WORKFLOW_SPAWN session_root is server-controlled and may not be supplied by a generated workflow"
                 .to_string(),
         );
     }

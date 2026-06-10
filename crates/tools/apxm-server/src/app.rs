@@ -43,7 +43,7 @@ pub(crate) fn build_app(state: AppState) -> Router {
         // Execution
         .route(ServerRoute::Execute.path(), post(execute))
         .route(ServerRoute::ExecuteStream.path(), post(execute_stream))
-        // Caller-supplied PlanGraph: lower → execute, bypassing LLM emission
+        // Caller-supplied workflow DTO: lower → execute, bypassing LLM emission
         // but applying the same raw-execute admission gate.
         .route(ServerRoute::Compile.path(), post(compile_graph))
         .route(

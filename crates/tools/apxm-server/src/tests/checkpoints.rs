@@ -10,7 +10,7 @@ async fn checkpoint_create_returns_pending() {
         routes::CHECKPOINTS,
         serde_json::json!({
             "checkpoint_id": "cp-test-001",
-            "message": "Please review the generated plan",
+            "message": "Please review the generated workflow",
             "display_data": { "plan": "step 1, step 2, step 3" }
         }),
     )

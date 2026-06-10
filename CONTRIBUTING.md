@@ -54,22 +54,22 @@ Every non-trivial session routes through six lifecycle skills. They are
 checkpoints, not new bodies of content — the rules live under
 `.agents/skills/_shared/`.
 
-1. `/apxm-org:apxm-context` — prime the session (`dekk apxm doctor`,
+1. `apxm-context` — prime the session (`dekk apxm doctor`,
    `.agents/project.md`, the relevant `_shared/` rule, memory recall).
-2. `/apxm-org:apxm-plan` — write a plan before implementing. Required for
+2. `apxm-plan` — write a plan before implementing. Required for
    changes touching more than three files, modifying a public API or AIS
    op, introducing a claim, or needing GPU allocation.
-3. `/apxm-org:apxm-execute-plan` — drive the plan to completion with
+3. `apxm-execute-plan` — drive the plan to completion with
    focused per-phase verification, no scope creep.
-4. `/apxm-org:apxm-simplify` — remove copied `_shared/` text, weak
+4. `apxm-simplify` — remove copied `_shared/` text, weak
    abstractions, referential comments, and over-large skill bodies before
    declaring done.
-5. `/apxm-org:apxm-finish` — pre-claim gate: focused `dekk apxm test`,
+5. `apxm-finish` — pre-claim gate: focused `dekk apxm test`,
    `dekk apxm doctor`, `check_no_legacy_vllm.py --strict`, secrets scan,
    artifact-placement check.
-6. `/apxm-org:apxm-commit` — pre-commit and pre-push gate: no auto-commit,
-   no push without explicit approval, PRs only for pushed work, never push
-   to `main`, never `--no-verify`.
+6. `apxm-commit` — pre-commit and pre-push gate: no auto-commit,
+   no push without explicit approval, PRs only for pushed work, push to
+   `main` only when explicitly authorized, never `--no-verify`.
 
 Skip `apxm-context` and `apxm-plan` only for typos or single-line edits.
 Never skip `apxm-finish` or `apxm-commit`.
@@ -91,9 +91,10 @@ If a hook fails, fix the root cause — never re-stage and bypass with
 
 ## Submitting a change
 
-1. Create a feature branch off `main`. Short, kebab-case branch names
-   (e.g. `fix-skill-server-double-escape`, `add-call-skill-op`). Never
-   work directly on `main` and never push to `main`.
+1. Create a feature branch off `main` by default. Short, kebab-case
+   branch names (e.g. `fix-skill-server-double-escape`,
+   `add-call-skill-op`). Work directly on `main` or push to `main` only
+   when explicitly authorized.
 2. Keep commits small and self-contained. The subject line is at most
    72 characters, imperative mood, and follows the rules above.
 3. Run the build and the relevant focused tests before opening a PR.
@@ -102,6 +103,24 @@ If a hook fails, fix the root cause — never re-stage and bypass with
    change touches a compiler pass, the runtime, or a public API, note
    the impact on existing skill artifacts.
 5. AI-assisted PRs are welcome. The review and test bar is the same.
+
+## Creating a release
+
+Releases are cut from a clean, synced `main` checkout:
+
+```bash
+dekk apxm release check
+dekk apxm release dist
+dekk apxm release publish --yes
+```
+
+`release check` validates git sync, version consistency, changelog coverage,
+tag availability, the no-legacy vLLM lint, bundled skill manifests, Dekk
+doctor, generated bindings, Python tests, release notes, and release builds.
+`release dist` writes Python, binary, and source archives plus `SHA256SUMS`
+under `.apxm/releases/vX.Y.Z`. `release publish` uses `gh`; without `--yes`
+it prints the exact release assets and exits without changing GitHub. PyPI
+upload is explicit and separate: `dekk apxm release pypi --yes`.
 
 ## Working on the vLLM fork
 

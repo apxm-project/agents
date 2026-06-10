@@ -160,7 +160,21 @@ def _is_release_artifact(path: Path) -> bool:
 
 def _copy_file(source: Path, destination: Path) -> None:
     destination.parent.mkdir(parents=True, exist_ok=True)
-    shutil.copy2(source, destination)
+    fd, temp_name = tempfile.mkstemp(
+        prefix=f".{destination.name}.",
+        suffix=".tmp",
+        dir=destination.parent,
+    )
+    os.close(fd)
+    temp_path = Path(temp_name)
+    try:
+        shutil.copy2(source, temp_path)
+        os.replace(temp_path, destination)
+    finally:
+        try:
+            temp_path.unlink()
+        except FileNotFoundError:
+            pass
 
 
 def _mirror_release_outputs(project_root: Path, target_dir: Path) -> None:

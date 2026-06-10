@@ -25,7 +25,7 @@ members = [
 resolver = "3"
 
 [workspace.package]
-version = "0.0.1"
+version = "0.1.0"
 edition = "2024"
 license = "MIT"
 repository = "https://github.com/apxm-project/apxm"
@@ -37,18 +37,18 @@ readme = "README.md"
 
 [workspace.dependencies]
 # ── Internal crates ──────────────────────────────────────────
-apxm-ais = { version = "0.0.1", path = "crates/core/apxm-ais" }
-apxm-core = { version = "0.0.1", path = "crates/core/apxm-core" }
-apxm-skill = { version = "0.0.1", path = "crates/core/apxm-skill" }
-apxm-compiler = { version = "0.0.1", path = "crates/compiler/apxm-compiler" }
-apxm-runtime = { version = "0.0.1", path = "crates/runtime/apxm-runtime" }
-apxm-backends = { version = "0.0.1", path = "crates/runtime/apxm-backends" }
-apxm-credentials = { version = "0.0.1", path = "crates/runtime/apxm-credentials" }
-apxm-rollout = { version = "0.0.1", path = "crates/runtime/apxm-rollout" }
-apxm-driver = { version = "0.0.1", path = "crates/orchestration/apxm-driver" }
-apxm-acp = { version = "0.0.1", path = "crates/orchestration/apxm-acp" }
-apxm-artifact = { version = "0.0.1", path = "crates/orchestration/apxm-artifact" }
-apxm = { version = "0.0.1", path = "crates/apxm"}
+apxm-ais = { version = "0.1.0", path = "crates/core/apxm-ais" }
+apxm-core = { version = "0.1.0", path = "crates/core/apxm-core" }
+apxm-skill = { version = "0.1.0", path = "crates/core/apxm-skill" }
+apxm-compiler = { version = "0.1.0", path = "crates/compiler/apxm-compiler" }
+apxm-runtime = { version = "0.1.0", path = "crates/runtime/apxm-runtime" }
+apxm-backends = { version = "0.1.0", path = "crates/runtime/apxm-backends" }
+apxm-credentials = { version = "0.1.0", path = "crates/runtime/apxm-credentials" }
+apxm-rollout = { version = "0.1.0", path = "crates/runtime/apxm-rollout" }
+apxm-driver = { version = "0.1.0", path = "crates/orchestration/apxm-driver" }
+apxm-acp = { version = "0.1.0", path = "crates/orchestration/apxm-acp" }
+apxm-artifact = { version = "0.1.0", path = "crates/orchestration/apxm-artifact" }
+apxm = { version = "0.1.0", path = "crates/apxm"}
 
 # ── Serialization ────────────────────────────────────────────
 serde = { version = "1.0", features = ["derive"] }

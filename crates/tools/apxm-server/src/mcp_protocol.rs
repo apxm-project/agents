@@ -216,9 +216,9 @@ pub(crate) mod admission_error {
     use apxm_core::constants::mcp::tools as mcp_tool_names;
 
     pub(crate) const GENERATED_PYTHON_TOOL_SECTIONS: &str =
-        "generated plan execution does not support python tool sections";
+        "generated workflow execution does not support python tool sections";
     pub(crate) const GENERATED_PYTHON_TOOL_HANDLERS: &str =
-        "generated plan execution does not support python-backed tool handlers";
+        "generated workflow execution does not support python-backed tool handlers";
     pub(crate) const INV_TOOL_MISSING_CAPABILITY: &str = "INV_TOOL missing capability attribute";
     pub(crate) const INV_TOOL_PARAMS_NOT_OBJECT: &str =
         "INV_TOOL params_json must be a JSON object";
@@ -227,17 +227,17 @@ pub(crate) mod admission_error {
     pub(crate) const TRACE_ID_UNSAFE: &str = "trace_id must contain only ASCII letters, digits, '-', '_', or '.', and must not be '.' or '..'";
 
     pub(crate) fn generated_capability_not_registered(capability: &str) -> String {
-        format!("generated plan capability '{capability}' is not registered")
+        format!("generated workflow capability '{capability}' is not registered")
     }
 
     pub(crate) fn generated_capability_direct_side_effect(capability: &str) -> String {
         format!(
-            "generated plan capability '{capability}' is not read-only and does not declare sandbox execution"
+            "generated workflow capability '{capability}' is not read-only and does not declare sandbox execution"
         )
     }
 
     pub(crate) fn generated_capability_sandbox_preflight(capability: &str, error: &str) -> String {
-        format!("generated plan capability '{capability}' failed sandbox preflight: {error}")
+        format!("generated workflow capability '{capability}' failed sandbox preflight: {error}")
     }
 
     pub(crate) fn ask_group_capability_not_read_only(capability: &str) -> String {
@@ -254,7 +254,7 @@ pub(crate) mod admission_error {
 
     pub(crate) fn generated_process_spawn_not_allowed(op_type: impl std::fmt::Display) -> String {
         format!(
-            "generated plans may not contain process-spawn operation {op_type}; use {} or dekk apxm goal for admitted worker goal execution",
+            "generated workflows may not contain process-spawn operation {op_type}; use {} or dekk apxm goal for admitted worker goal execution",
             mcp_tool_names::APXM_GOAL_START
         )
     }
