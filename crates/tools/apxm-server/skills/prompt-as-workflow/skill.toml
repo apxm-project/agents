@@ -1,8 +1,8 @@
-skill_id = "apxm-plan-as-graph"
+skill_id = "prompt-as-workflow"
 version = "0.1.0"
-display_name = "APXM Plan as Graph"
-description = "Emit a typed APXM AIR graph for complex agent work, then compile and dispatch it through APXM."
-entry_flow = "apxm_plan_as_graph"
+display_name = "APXM Prompt as Workflow"
+description = "Emit a typed APXM workflow for complex agent work, then compile and dispatch it through APXM."
+entry_flow = "prompt_as_workflow"
 required_capabilities = ["plan_emission_v1"]
 timeout_ms = 300000
 token_limit = 32768
@@ -11,7 +11,7 @@ side_effect_policy = "sandboxed"
 [[inputs]]
 name = "task"
 type = "string"
-description = "Natural-language task to turn into an APXM execution graph."
+description = "Natural-language task to turn into an APXM execution workflow."
 required = true
 
 [[inputs]]

@@ -111,21 +111,21 @@ Any MCP client (this agent, apxm-studio, Claude Code) can drive the compiler and
 runtime over the existing JSON-RPC facade — a thin, DRY layer over the same
 handlers as the REST API:
 
-- `apxm_compile` / `apxm_validate` (PURE): compile-check AIR; a compile error is
+- `compile` / `validate` (PURE): compile-check AIR; a compile error is
   a normal result (`ok:false` + diagnostics), not a protocol error.
-- `apxm_ops_list` (PURE): the AIS op vocabulary.
-- `apxm_run` (side-effecting): compile + run canonical AIR; writes require
+- `ops_list` (PURE): the AIS op vocabulary.
+- `run` (side-effecting): compile + run canonical AIR; writes require
   `admit_capabilities`.
-- `apxm_goal_start` (side-effecting): execute one explicit bounded
+- `goal_start` (side-effecting): execute one explicit bounded
   worker DAG through the native workflow control plane, returning
   `execution_id`, workflow events/status/cancel handles, session directories,
   and goal artifacts.
-- `apxm_workflow_start/status/events/cancel` (side-effecting): launch, observe,
+- `workflow_start/status/events/cancel` (side-effecting): launch, observe,
   and stop checked-in `.apxmw` workflows through server-owned control handles.
-- `apxm_plan_as_graph`: synthesize graph proposals from natural language. Treat
+- `prompt_as_workflow`: synthesize graph proposals from natural language. Treat
   generated graphs as proposals until APXM validates and admits them; do not use
   it to bypass worker admission.
-- `apxm_skill_call` (pre-existing): invoke a vetted installed skill by id.
+- `skill_call` (pre-existing): invoke a vetted installed skill by id.
 
 ### Security: one no-widen boundary, enforced at the invoke chokepoint
 

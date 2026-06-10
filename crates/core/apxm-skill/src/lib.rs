@@ -52,7 +52,9 @@ impl CapabilityPolicy {
             Some(POLICY_NAME_READ_ONLY) => Some(Self::ReadOnly),
             Some(POLICY_NAME_SANDBOXED) => Some(Self::Sandboxed),
             Some(other) => {
-                let inner = other.strip_prefix(POLICY_PREFIX_BROADER)?.strip_suffix(']')?;
+                let inner = other
+                    .strip_prefix(POLICY_PREFIX_BROADER)?
+                    .strip_suffix(']')?;
                 let admits: BTreeSet<String> = inner
                     .split(',')
                     .map(str::trim)
@@ -400,13 +402,19 @@ entry_flow = "{TEST_ENTRY_FLOW}"
     #[test]
     fn capability_policy_broader_round_trips() {
         let mut admits = BTreeSet::new();
-        admits.insert("instagram.create_media".to_string());
-        admits.insert("instagram.publish_media".to_string());
+        admits.insert("provider.media_create".to_string());
+        admits.insert("provider.media_publish".to_string());
         let policy = CapabilityPolicy::Broader { admits };
         // name() -> "broader[...]" must parse back to the same policy.
         let wire = policy.name();
-        assert_eq!(wire, "broader[instagram.create_media,instagram.publish_media]");
-        assert_eq!(CapabilityPolicy::from_manifest_value(Some(&wire)), Some(policy));
+        assert_eq!(
+            wire,
+            "broader[provider.media_create,provider.media_publish]"
+        );
+        assert_eq!(
+            CapabilityPolicy::from_manifest_value(Some(&wire)),
+            Some(policy)
+        );
         // tolerant of surrounding whitespace in hand-written manifests.
         let spaced = CapabilityPolicy::from_manifest_value(Some("broader[ a , b ]"));
         let mut expect = BTreeSet::new();

@@ -18,7 +18,7 @@ pub(crate) const MCP_TOOL_APXM_SKILLS_LIST: &str = SkillTool::List.as_str();
 pub(crate) const MCP_TOOL_APXM_SKILL_GET: &str = SkillTool::Get.as_str();
 pub(crate) const MCP_TOOL_APXM_SKILL_VALIDATE: &str = SkillTool::Validate.as_str();
 pub(crate) const MCP_TOOL_APXM_SKILL_CALL: &str = SkillTool::Call.as_str();
-pub(crate) const MCP_TOOL_APXM_PLAN_AS_GRAPH: &str = Tier3Tool::PlanAsGraph.as_str();
+pub(crate) const MCP_TOOL_APXM_PROMPT_AS_WORKFLOW: &str = Tier3Tool::PromptAsWorkflow.as_str();
 pub(crate) const MCP_TOOL_APXM_TRACE_FETCH: &str = Tier3Tool::TraceFetch.as_str();
 pub(crate) const MCP_TOOL_APXM_AAM_RECALL: &str = Tier3Tool::AamRecall.as_str();
 pub(crate) const MCP_TOOL_APXM_EVIDENCE_LOOKUP: &str = Tier3Tool::EvidenceLookup.as_str();
@@ -78,9 +78,9 @@ pub(crate) fn skill_tool_entries() -> Vec<ToolEntry> {
 pub(crate) fn tier3_tool_entries() -> Vec<ToolEntry> {
     vec![
         ToolEntry {
-            name: MCP_TOOL_APXM_PLAN_AS_GRAPH.to_string(),
-            description: tool_description::tier3(Tier3Tool::PlanAsGraph).to_string(),
-            input_schema: plan_as_graph_input_schema(),
+            name: MCP_TOOL_APXM_PROMPT_AS_WORKFLOW.to_string(),
+            description: tool_description::tier3(Tier3Tool::PromptAsWorkflow).to_string(),
+            input_schema: prompt_as_workflow_input_schema(),
         },
         ToolEntry {
             name: MCP_TOOL_APXM_TRACE_FETCH.to_string(),
@@ -154,7 +154,7 @@ fn skill_call_input_schema() -> JsonValue {
     })
 }
 
-fn plan_as_graph_input_schema() -> JsonValue {
+fn prompt_as_workflow_input_schema() -> JsonValue {
     serde_json::json!({
         (fields::TYPE): schema_type::OBJECT,
         (fields::ADDITIONAL_PROPERTIES): false,
@@ -162,15 +162,15 @@ fn plan_as_graph_input_schema() -> JsonValue {
         (fields::PROPERTIES): {
             (args::TASK): {
                 (fields::TYPE): schema_type::STRING,
-                (fields::DESCRIPTION): "Natural-language task to convert into an APXM execution graph"
+                (fields::DESCRIPTION): "Natural-language task to convert into an APXM execution workflow"
             },
             (args::CONTEXT): {
                 (fields::TYPE): schema_type::STRING,
-                (fields::DESCRIPTION): "Optional context that should shape the graph"
+                (fields::DESCRIPTION): "Optional context that should shape the workflow"
             },
             (args::CONSTRAINTS): {
                 (fields::TYPE): schema_type::OBJECT,
-                (fields::DESCRIPTION): "Optional structured constraints for the graph emitter"
+                (fields::DESCRIPTION): "Optional structured constraints for the workflow emitter"
             },
             (args::PARAMETERS): {
                 (fields::TYPE): schema_type::OBJECT,
@@ -196,7 +196,7 @@ fn trace_fetch_input_schema() -> JsonValue {
         (fields::PROPERTIES): {
             (args::TRACE_ID): {
                 (fields::TYPE): schema_type::STRING,
-                (fields::DESCRIPTION): "Execution trace id returned by apxm_plan_as_graph or skill execution"
+                (fields::DESCRIPTION): "Execution trace id returned by prompt_as_workflow or skill execution"
             },
             (args::NODE_ID): {
                 (fields::TYPE): schema_type::INTEGER,

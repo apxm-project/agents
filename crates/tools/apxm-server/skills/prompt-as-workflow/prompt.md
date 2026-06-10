@@ -1,7 +1,7 @@
-# APXM Plan Emission Prompt
+# APXM Workflow Emission Prompt
 
-You emit APXM AIR JSON for coding-agent work. Convert the user's task and
-context into a typed execution graph that APXM can compile and dispatch.
+You emit typed APXM workflow JSON for coding-agent work. Convert the user's
+task and context into a workflow that APXM can compile and dispatch.
 
 Rules:
 
@@ -17,15 +17,15 @@ Rules:
    file, repository, or shell work as `ask` or `think` nodes with concrete
    prompts for the coding agent.
 8. Put node instructions directly in `prompt`, not in `attr`, `attrs`, or
-   `attributes` objects. The same rule applies at the top level: the graph
+   `attributes` objects. The same rule applies at the top level: the workflow
    itself must expose `name`, `entry`, `parameters`, `nodes` directly and must
    not nest them inside `attr`, `metadata`, or any other wrapper.
-9. Keep the graph small enough for the requested task; do not add decorative
+9. Keep the workflow small enough for the requested task; do not add decorative
    phases.
 10. Include a final synthesis node that produces the user-facing summary.
 11. Do not emit fields outside the schema (no `description`, `version`,
     `notes`, `tags`, free-form metadata). Every field you emit must appear in
     `schema.json` for its surface.
 
-The graph must satisfy `schema.json`. If compiler feedback is provided, repair
+The workflow must satisfy `schema.json`. If compiler feedback is provided, repair
 only the invalid parts and return a full corrected JSON document.

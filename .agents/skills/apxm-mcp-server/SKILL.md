@@ -24,28 +24,28 @@ capabilities.
 
 ## HTTP MCP Tools
 
-- Compile/query: `apxm_validate`, `apxm_compile`, `apxm_ops_list`,
-  `apxm_run`, `apxm_plan_as_graph`, `apxm_trace_fetch`, `apxm_aam_recall`,
-  `apxm_evidence_lookup`, `apxm_capability_list`.
-- Skills: `apxm_skills_list`, `apxm_skill_get`, `apxm_skill_validate`,
-  `apxm_skill_call`.
-- Workflow control: `apxm_workflow_start`, `apxm_workflow_status`,
-  `apxm_workflow_events`, `apxm_workflow_cancel`.
-- Native orchestration: `apxm_orchestrate_start`.
+- Compile/query: `validate`, `compile`, `ops_list`,
+  `run`, `prompt_as_workflow`, `trace_fetch`, `aam_recall`,
+  `evidence_lookup`, `capability_list`.
+- Skills: `skills_list`, `skill_get`, `skill_validate`,
+  `skill_call`.
+- Workflow control: `workflow_start`, `workflow_status`,
+  `workflow_events`, `workflow_cancel`.
+- Native orchestration: `goal_start`.
 
-`apxm_orchestrate_start` compiles a bounded task/worker plan into a
+`goal_start` compiles a bounded task/worker plan into a
 server-owned workflow. The orchestrator agent calls it once, records the
-returned `execution_id`, then sleeps until `apxm_workflow_events` returns
+returned `execution_id`, then sleeps until `workflow_events` returns
 `orchestrator_wake`, `execute_complete`, `error`, or `turn_aborted`, or
-`apxm_workflow_status` reports a terminal state. Real ACP workers require
+`workflow_status` reports a terminal state. Real ACP workers require
 `admit_capabilities: ["SPAWN_AGENT"]`.
 
 ## Stdio MCP Tools
 
-The stdio binary exposes compile/query tools such as `apxm_validate`,
-`apxm_compile`, `apxm_get_contract`, `apxm_analyze`, `apxm_plan_as_graph`,
-`apxm_trace_fetch`, `apxm_aam_recall`, `apxm_evidence_lookup`, and
-`apxm_capability_list`. Use HTTP MCP when a caller needs workflow start/status,
+The stdio binary exposes compile/query tools such as `validate`,
+`compile`, `get_contract`, `analyze`, `prompt_as_workflow`,
+`trace_fetch`, `aam_recall`, `evidence_lookup`, and
+`capability_list`. Use HTTP MCP when a caller needs workflow start/status,
 events, cancel, or orchestration.
 
 ## Registration
@@ -87,8 +87,8 @@ handler literals.
 - Putting business logic in the MCP server. It is a thin shim.
 - Accepting secrets as tool arguments.
 - Adding a second orchestration status/events/cancel control plane. Use
-  `apxm_workflow_status/events/cancel` for runs started by
-  `apxm_orchestrate_start`.
+  `workflow_status/events/cancel` for runs started by
+  `goal_start`.
 - Server middleware using Starlette `BaseHTTPMiddleware` — use raw ASGI. Its
   receive-queue treats disconnect polls as disconnects and silently nulls chat
   responses (`feedback_basehttpmiddleware_breaks_chat`).

@@ -30,8 +30,8 @@ use crate::mcp_protocol::{
     plan_skill, status as mcp_status, tool_result,
 };
 
-const PLAN_PROMPT: &str = include_str!("../skills/apxm-plan-as-graph/prompt.md");
-const PLAN_SCHEMA: &str = include_str!("../skills/apxm-plan-as-graph/schema.json");
+const PLAN_PROMPT: &str = include_str!("../skills/prompt-as-workflow/prompt.md");
+const PLAN_SCHEMA: &str = include_str!("../skills/prompt-as-workflow/schema.json");
 // Three attempts cover the observed worst case where the first emission
 // violates the schema one way (e.g. an unknown wrapper field) and the
 // second-turn repair introduces a different violation (e.g. omits a
@@ -135,11 +135,14 @@ impl PlanCandidateError {
 // imported above — the single source of truth shared with authoring front-ends.
 
 #[allow(dead_code)]
-pub(crate) async fn plan_as_graph(runtime: &Runtime, args: JsonValue) -> Result<JsonValue, String> {
-    plan_as_graph_with_recorder(runtime, args, None, &ServerMcpConfig::default()).await
+pub(crate) async fn prompt_as_workflow(
+    runtime: &Runtime,
+    args: JsonValue,
+) -> Result<JsonValue, String> {
+    prompt_as_workflow_with_recorder(runtime, args, None, &ServerMcpConfig::default()).await
 }
 
-pub(crate) async fn plan_as_graph_with_recorder(
+pub(crate) async fn prompt_as_workflow_with_recorder(
     runtime: &Runtime,
     args: JsonValue,
     recorder: Option<Arc<dyn PlanExecutionRecorder>>,
@@ -168,7 +171,6 @@ pub(crate) async fn plan_as_graph_with_recorder(
     let schema: JsonValue = serde_json::from_str(PLAN_SCHEMA)
         .map_err(|error| format!("bundled plan schema is invalid JSON: {error}"))?;
     let emission_start = Instant::now();
-    let mut warnings = Vec::new();
     let compiled = match emit_plan_candidate(
         runtime,
         &task,
@@ -210,30 +212,19 @@ pub(crate) async fn plan_as_graph_with_recorder(
             )
             .await?
         }
-        Err(PlanCandidateError::Timeout(message)) => {
-            warnings.push(message.clone());
-            build_compiled_plan_graph(
-                deterministic_plan_fallback(&task, context.as_deref(), constraints.as_ref()),
-                Some(runtime),
-            )
-            .map_err(|error| format!("plan timeout fallback failed to compile: {error}"))?
-        }
-        Err(error @ PlanCandidateError::Emission(_)) => return Err(error.into_message()),
+        Err(error @ PlanCandidateError::Emission(_))
+        | Err(error @ PlanCandidateError::Timeout(_)) => return Err(error.into_message()),
     };
     let emission_ms = emission_start.elapsed().as_millis();
 
     let mut output = json!({
         (tool_result::STATUS): mcp_status::COMPILED,
         (tool_result::TRACE_ID): trace_id,
-        (tool_result::PLAN): compiled.normalized_plan,
+        (tool_result::WORKFLOW): compiled.normalized_plan,
         (tool_result::AIR_HASH): compiled.air_hash,
         (tool_result::ARTIFACT_HASH): compiled.artifact_hash,
         (tool_result::STATS): compile_stats(&compiled.artifact, compiled.compile_ms, emission_ms),
     });
-    if !warnings.is_empty() {
-        output[tool_result::WARNINGS] =
-            JsonValue::Array(warnings.into_iter().map(JsonValue::String).collect());
-    }
 
     if should_execute {
         validate_generated_plan_admission(&compiled.artifact, runtime)?;
@@ -645,9 +636,7 @@ async fn repair_plan_candidate(
             Err(error @ PlanCandidateError::Emission(_)) => {
                 return Err(error.into_message());
             }
-            Err(error @ PlanCandidateError::Timeout(_)) => {
-                return Err(error.into_message());
-            }
+            Err(error @ PlanCandidateError::Timeout(_)) => return Err(error.into_message()),
         };
         match build_compiled_plan_graph(repaired, Some(runtime)) {
             Ok(compiled) => return Ok(compiled),
@@ -657,51 +646,7 @@ async fn repair_plan_candidate(
     Err(format!("{PLAN_REPAIRED_INVALID_PREFIX}: {last_error}"))
 }
 
-fn deterministic_plan_fallback(
-    task: &str,
-    context: Option<&str>,
-    constraints: Option<&JsonValue>,
-) -> JsonValue {
-    let mut prompt = String::from(
-        "Plan emission timed out before the model router returned a candidate. Task: ",
-    );
-    prompt.push_str(task.trim());
-    if let Some(context) = context.and_then(non_empty_trimmed) {
-        prompt.push_str("\nContext: ");
-        prompt.push_str(context);
-    }
-    if let Some(constraints) = constraints {
-        prompt.push_str("\nConstraints: ");
-        prompt.push_str(&constraints.to_string());
-    }
-    prompt.push_str(
-        "\nThis deterministic fallback is side-effect-free; retry with a healthy model route for a richer graph.",
-    );
-
-    json!({
-        (plan_field::NAME): "deterministic_plan_timeout_fallback",
-        (plan_field::ENTRY): "timeout_fallback_summary",
-        (plan_field::NODES): [
-            {
-                (plan_field::ID): 1,
-                (plan_field::NAME): "timeout_fallback_summary",
-                (plan_field::OP): PlanNodeOp::Yield.as_str(),
-                (plan_field::PROMPT): prompt
-            }
-        ]
-    })
-}
-
-fn non_empty_trimmed(value: &str) -> Option<&str> {
-    let trimmed = value.trim();
-    if trimmed.is_empty() {
-        None
-    } else {
-        Some(trimmed)
-    }
-}
-
-/// Lower a caller-supplied plan graph straight to AIR text, bypassing the
+/// Lower a caller-supplied plan workflow straight to AIR text, bypassing the
 /// LLM emission path (`emit_plan_candidate`/ModelRouter). Accepts the same
 /// envelope shapes `build_compiled_plan_graph` does (`{ nodes, ... }` or
 /// `{ graph: { ... } }`) and applies the identical normalize → parse →
@@ -1175,7 +1120,7 @@ async fn emit_plan_candidate(
 ) -> Result<JsonValue, PlanCandidateError> {
     let router = runtime
         .model_router()
-        .ok_or_else(|| PlanCandidateError::Emission("model router unavailable; initialize APXM server runtime with ModelRouter before calling apxm_plan_as_graph".to_string()))?;
+        .ok_or_else(|| PlanCandidateError::Emission("model router unavailable; initialize APXM server runtime with ModelRouter before calling prompt_as_workflow".to_string()))?;
     let capability_guidance = plan_capability_guidance(runtime, config);
     let request = LLMRequest::new(emit_prompt(
         task,
@@ -1194,24 +1139,22 @@ async fn emit_plan_candidate(
     )
     .with_trace_id(trace_id.to_string());
     let timeout_ms = config.plan_emit_timeout_ms.max(1);
-    let response = match tokio::time::timeout(
-        Duration::from_millis(timeout_ms),
-        router.generate(request),
-    )
-    .await
-    {
-        Ok(Ok(response)) => response,
-        Ok(Err(error)) => {
-            return Err(PlanCandidateError::Emission(format!(
-                "model-router plan emission failed: {error}"
-            )));
-        }
-        Err(_) => {
-            return Err(PlanCandidateError::Timeout(format!(
-                "model-router plan emission timed out after {timeout_ms}ms; compiled deterministic fallback graph"
-            )));
-        }
-    };
+    let response =
+        match tokio::time::timeout(Duration::from_millis(timeout_ms), router.generate(request))
+            .await
+        {
+            Ok(Ok(response)) => response,
+            Ok(Err(error)) => {
+                return Err(PlanCandidateError::Emission(format!(
+                    "model-router plan emission failed: {error}"
+                )));
+            }
+            Err(_) => {
+                return Err(PlanCandidateError::Timeout(format!(
+                    "model-router plan emission timed out after {timeout_ms}ms"
+                )));
+            }
+        };
     extract_json_document(&response.content).map_err(PlanCandidateError::InvalidCandidate)
 }
 

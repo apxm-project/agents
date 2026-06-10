@@ -1,6 +1,4 @@
 {
-  "task": "Refactor a target module while preserving behavior and verifying tests.",
-  "graph": {
     "name": "refactor_workflow",
     "entry": "refactor",
     "parameters": [
@@ -24,5 +22,4 @@
         { "node": 4, "dependency": "Data" }
       ] }
     ]
-  }
 }

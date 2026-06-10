@@ -12,12 +12,12 @@ Use the smallest surface that matches the job:
 
 - `dekk apxm goal`: an agent or user creates one bounded worker DAG, APXM
   materializes the workflow bundle, starts it in the background, and wakes the
-  caller through `apxm_workflow_events` and `apxm_workflow_status`.
+  caller through `workflow_events` and `workflow_status`.
 - `dekk apxm workflow run`: run a checked-in
   `.apxmw` workflow file after `validate` and `analyze`.
-- `apxm_plan_as_graph`: ask MCP to synthesize a typed AIR graph from natural
-  language. It is graph-oriented; worker-spawning goal execution should still go
-  through `goal` or `apxm_goal_start`.
+- `prompt_as_workflow`: ask MCP to synthesize a typed APXM workflow from natural
+  language. It is workflow-oriented; worker-spawning goal execution should still go
+  through `goal` or `goal_start`.
 
 ```text
 [goal or event]
@@ -49,7 +49,7 @@ status/events/cancel wakes it.
 [event/task] -> [trigger] -> [parallel workers] -> [gate/eval] -> [feedback]
                                       |
                                       v
- [apxm_workflow_status + apxm_workflow_events + apxm_workflow_cancel]
+ [workflow_status + workflow_events + workflow_cancel]
 ```
 
 Use `autonomous_task/deterministic_request.json` for a no-agent smoke test, or
@@ -153,17 +153,17 @@ agents.
 MCP clients should use the native workflow tools:
 
 ```text
-apxm_workflow_start  -> starts a background workflow and returns execution_id
-apxm_workflow_status -> polls or inspects status by execution_id
-apxm_workflow_events -> reads ordered run events with since/limit paging
-apxm_workflow_cancel -> interrupts a running or parked workflow
+workflow_start  -> starts a background workflow and returns execution_id
+workflow_status -> polls or inspects status by execution_id
+workflow_events -> reads ordered run events with since/limit paging
+workflow_cancel -> interrupts a running or parked workflow
 ```
 
 For the approval example, create checkpoint `examples-approval-cp`, start the
 workflow, then resume or cancel it through the server. The E2E tests in
 `crates/tools/apxm-server/src/tests/mcp.rs` run these checked-in workflows
-through `apxm_workflow_start`, `apxm_workflow_status`, `apxm_workflow_events`,
-and `apxm_workflow_cancel`.
+through `workflow_start`, `workflow_status`, `workflow_events`,
+and `workflow_cancel`.
 
 ## Local Background Workflow
 
@@ -171,7 +171,7 @@ and `apxm_workflow_cancel`.
 for explicit local CLI background workflow testing when a server control plane
 is not involved. `cancel_background/cancel_parked.apxmw` parks on checkpoint
 `examples-cancel-cp` and is intended for testing cancellation through
-`apxm_workflow_cancel` when launched through the native MCP workflow tools.
+`workflow_cancel` when launched through the native MCP workflow tools.
 
 ```bash
 dekk apxm workflow run examples/workflows/goals/cancel_background/background_ok.apxmw \

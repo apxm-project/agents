@@ -55,9 +55,9 @@ runtime, the AIS dialect, the dekk CLI, and the operator workflow.
 - [apxm-project/vllm](https://github.com/apxm-project/vllm) — graph-aware
   vLLM fork used by APXM-vLLM
 
-Operating skills loaded by `apxm-server` are builtin under
-`crates/tools/apxm-server/skills/` (the former `apxm-libs` repo was folded in;
-see `docs/skills-migration/`).
+Provider-agnostic operating skills loaded by `apxm-server` are builtin under
+`crates/tools/apxm-server/skills/`; deployment-specific skills should be
+installed through explicit skill roots.
 
 ## License
 

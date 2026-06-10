@@ -17,7 +17,7 @@
 //! pause(
 //!   message: "Please review findings before proceeding",
 //!   checkpoint_id: "human_review_1",
-//!   notification_url: "https://hooks.slack.com/..."
+//!   notification_url: "https://hooks.provider.test/..."
 //! ) <- findings -> human_input
 //! ```
 

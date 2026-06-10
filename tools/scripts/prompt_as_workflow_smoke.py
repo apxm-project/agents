@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Run real-backend APXM MCP plan-as-graph dogfood tasks.
+"""Run real-backend APXM MCP prompt-as-workflow dogfood tasks.
 
 The runner intentionally stores generated evidence under .apxm so checked-in
 examples and docs stay source-only.
@@ -24,7 +24,7 @@ class JsonRpcMethod(enum.StrEnum):
 
 
 class McpTool(enum.StrEnum):
-    PLAN_AS_GRAPH = "apxm_plan_as_graph"
+    PROMPT_AS_WORKFLOW = "prompt_as_workflow"
 
 
 class JsonRpcField(enum.StrEnum):
@@ -59,19 +59,19 @@ JSONRPC_VERSION = "2.0"
 DEFAULT_SERVICE = "gptoss120b"
 DEFAULT_SERVER_BIN = "target/release/apxm-mcp-server"
 DEFAULT_TIMEOUT_SECONDS = 600
-DEFAULT_SCENARIO = "mcp-server-plan-as-graph-dogfood"
+DEFAULT_SCENARIO = "mcp-server-prompt-as-workflow-dogfood"
 UTC_SUFFIX = "Z"
 
 DOGFOOD_TASKS: tuple[str, ...] = (
     "Create an APXM plan to inspect README changes, identify user-facing risk, and summarize the result.",
     "Create an APXM plan to review Cargo.toml and Cargo.lock changes for dependency or feature risk.",
     "Create an APXM plan to audit MCP server changes for protocol compatibility and missing tests.",
-    "Create an APXM plan to inspect the apxm_plan_as_graph implementation and summarize validation risks.",
+    "Create an APXM plan to inspect the prompt_as_workflow implementation and summarize validation risks.",
     "Create an APXM plan to review query tool behavior for trace, memory, evidence, and capability lookup.",
     "Create an APXM plan to check HTTP MCP parity with stdio MCP for all Tier-3 tools.",
     "Create an APXM plan to inspect the Dekk MCP installer and summarize config-writer risk.",
     "Create an APXM plan to verify stale Python/FastMCP framing has been removed from active docs.",
-    "Create an APXM plan to audit the bundled apxm-plan-as-graph skill resources for completeness.",
+    "Create an APXM plan to audit the bundled prompt-as-workflow skill resources for completeness.",
     "Create an APXM plan to inspect schema.json and summarize contract gaps for generated plans.",
     "Create an APXM plan to review prompt.md for ambiguous instructions that could cause invalid JSON.",
     "Create an APXM plan to inspect generated-plan admission rules and summarize side-effect risks.",
@@ -82,7 +82,7 @@ DOGFOOD_TASKS: tuple[str, ...] = (
     "Create an APXM plan to inspect execution-record persistence for HTTP MCP generated plans.",
     "Create an APXM plan to review README documentation for new MCP tools and missing caveats.",
     "Create an APXM plan to inspect docs/design updates for consistency with the Rust MCP direction.",
-    "Create an APXM plan to review tests/mcp.rs for gaps in plan-as-graph coverage.",
+    "Create an APXM plan to review tests/mcp.rs for gaps in prompt-as-workflow coverage.",
     "Create an APXM plan to inspect mcp_protocol.rs and summarize scattered string risk.",
     "Create an APXM plan to review mcp/schema.rs for accurate input schemas for new tools.",
     "Create an APXM plan to inspect mcp/dispatch.rs for safe argument handling across query tools.",
@@ -131,7 +131,7 @@ def build_request(index: int, task: str, trace_prefix: str, execute: bool) -> di
         JsonRpcField.ID: index,
         JsonRpcField.METHOD: JsonRpcMethod.TOOLS_CALL,
         JsonRpcField.PARAMS: {
-            JsonRpcField.NAME: McpTool.PLAN_AS_GRAPH,
+            JsonRpcField.NAME: McpTool.PROMPT_AS_WORKFLOW,
             JsonRpcField.ARGUMENTS: {
                 PlanArg.TASK: task,
                 PlanArg.EXECUTE: execute,

@@ -26,7 +26,7 @@ pub(crate) use goal::MCP_TOOL_APXM_GOAL_START;
 pub(crate) use schema::{
     MCP_METHOD_INITIALIZE, MCP_METHOD_RESOURCES_LIST, MCP_METHOD_RESOURCES_READ,
     MCP_METHOD_TOOLS_CALL, MCP_METHOD_TOOLS_LIST, MCP_RESOURCE_PARAM_URI, MCP_TOOL_APXM_AAM_RECALL,
-    MCP_TOOL_APXM_CAPABILITY_LIST, MCP_TOOL_APXM_EVIDENCE_LOOKUP, MCP_TOOL_APXM_PLAN_AS_GRAPH,
+    MCP_TOOL_APXM_CAPABILITY_LIST, MCP_TOOL_APXM_EVIDENCE_LOOKUP, MCP_TOOL_APXM_PROMPT_AS_WORKFLOW,
     MCP_TOOL_APXM_SKILL_CALL, MCP_TOOL_APXM_SKILL_GET, MCP_TOOL_APXM_SKILL_VALIDATE,
     MCP_TOOL_APXM_SKILLS_LIST, MCP_TOOL_APXM_TRACE_FETCH, MCP_TOOL_PARAM_ARGUMENTS,
     MCP_TOOL_PARAM_NAME, McpRequest,
@@ -173,7 +173,7 @@ pub(crate) async fn mcp_jsonrpc(
                 return response;
             }
 
-            // apxm_run (side-effecting): compile + run; writes gated by
+            // run (side-effecting): compile + run; writes gated by
             // admit_capabilities + the runtime invoke-site write boundary.
             if let Some(response) =
                 compiler::call_run_tool(&state, &id, tool_name, &tool_args).await

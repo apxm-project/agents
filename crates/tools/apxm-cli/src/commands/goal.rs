@@ -1,7 +1,7 @@
 //! `apxm goal` - user-facing bounded goal execution over APXM server MCP.
 //!
 //! The CLI stays thin: it builds a bounded worker plan, calls the server-owned
-//! `apxm_goal_start` tool, then follows the existing workflow
+//! `goal_start` tool, then follows the existing workflow
 //! status/events/cancel tools by `execution_id`.
 
 use std::collections::{BTreeSet, HashMap};

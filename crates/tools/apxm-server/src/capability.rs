@@ -159,7 +159,7 @@ impl CapabilityExecutor for StaticCapability {
 /// spec the install-gated catalog renders and the kernel registers.
 #[derive(Debug, Deserialize)]
 struct PackToolDecl {
-    /// Capability id the inv_tool node lowers to (e.g. `slack.post`).
+    /// Capability id the inv_tool node lowers to (e.g. `provider.write`).
     capability: String,
     #[serde(default)]
     name: Option<String>,
@@ -345,15 +345,15 @@ mod pack_tools_tests {
         std::fs::create_dir_all(&dir).unwrap();
         std::fs::write(
             dir.join("tools.toml"),
-            "[[tool]]\nname = \"Post message\"\ncapability = \"slack.post\"\nkind = \"provider\"\nread_only = false\n",
+            "[[tool]]\nname = \"Provider write\"\ncapability = \"provider.write\"\nkind = \"provider\"\nread_only = false\n",
         )
         .unwrap();
 
         let caps = pack_tools_in_dir(&dir);
         assert_eq!(caps.len(), 1, "one tool registered");
         let m = caps[0].metadata();
-        assert_eq!(m.name, "slack.post");
-        assert!(!m.read_only, "slack.post is write-class");
+        assert_eq!(m.name, "provider.write");
+        assert!(!m.read_only, "provider.write is write-class");
 
         let _ = std::fs::remove_dir_all(&dir);
     }
@@ -382,12 +382,12 @@ mod pack_tools_tests {
     #[test]
     fn provider_tool_with_url_builds_rest_backed_capability() {
         let t = PackToolDecl {
-            capability: "instagram.create_media".into(),
+            capability: "provider.media_create".into(),
             name: Some("Create media".into()),
             description: None,
             kind: Some("provider".into()),
             method: Some("POST".into()),
-            url: Some("https://graph.instagram.com/v25.0/{ig_user_id}/media".into()),
+            url: Some("https://api.provider.test/v1/{account_id}/media".into()),
             endpoint_pattern: None,
             read_only: false,
             schema: JsonValue::Null,
@@ -395,7 +395,7 @@ mod pack_tools_tests {
             mcp_tool: None,
         };
         let cap = capability_from_tool(&t).expect("provider tool registers");
-        assert_eq!(cap.metadata().name, "instagram.create_media");
+        assert_eq!(cap.metadata().name, "provider.media_create");
     }
 }
 

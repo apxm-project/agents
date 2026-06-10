@@ -24,13 +24,12 @@ cross-cutting concerns into APXM** (program + middleware + dynamic prompts). The
 outer loop staying in the host is acceptable — apxm-os does exactly that — but
 the *cognition* should be the program, and it isn't yet.
 
-apxm-os precedent, precisely: "the agent is APXM IR" (`vision.md:104`) means only
-the `on_event`/`answer` flow bodies are IR — and those are **6-line single-`ais.ask`
-graphs** (`crates/tools/apxm-server/skills/apxm-os-discord-curate/skills/discord-project-curate/skill.air:1-6`). The loop
-(`os-supervisor/src/lib.rs:607,682`), routing, dedup, belief-scope, and **context
-assembly** (`os-dispatch/src/lib.rs:315`) are all Rust *before* the graph. So even
-the flagship "agent as IR" keeps loop + middleware in Rust. Our vision can put
-*more* into APXM than apxm-os does — but we should be honest about where the
+apxm-os precedent, precisely: "the agent is APXM IR" (`vision.md:104`) means the
+event flow body can be IR while the outer listener, routing, dedup,
+belief-scope, and context assembly remain host responsibilities. The generic
+APXM repo no longer bundles provider-specific listener skills as examples; the
+boundary still matters. Our vision can put *more* into APXM than earlier
+listener prototypes did — but we should be honest about where the host/runtime
 boundary is.
 
 ---

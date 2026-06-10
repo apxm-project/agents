@@ -1,6 +1,4 @@
 {
-  "task": "Run a design, implementation, and review pipeline for a feature.",
-  "graph": {
     "name": "sdlc_pipeline",
     "entry": "sdlc",
     "parameters": [
@@ -18,5 +16,4 @@
         { "node": 3, "dependency": "Data" }
       ] }
     ]
-  }
 }

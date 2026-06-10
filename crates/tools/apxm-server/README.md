@@ -70,20 +70,20 @@ ambiguous and clients should use `skill://<skill-id>@<version>/...`.
 
 The HTTP MCP endpoint also exposes APXM skill library tools:
 
-- `apxm_skills_list` -- list installed server-owned skill records
-- `apxm_skill_get` -- return one skill manifest and validation record
-- `apxm_skill_validate` -- re-read and validate one installed skill
-- `apxm_skill_call` -- execute a static skill artifact from the server-owned library
-- `apxm_plan_as_graph` -- route task-to-graph emission through `model_router`, validate/repair the emitted JSON with compiler feedback, canonicalize common structured-output drift, lower through `AirModule`, compile, optionally execute, and return a compact summary with `trace_id`
-- `apxm_trace_fetch` -- fetch execution, episodic, or session trace details by `trace_id`
-- `apxm_aam_recall` -- query AAM beliefs/goals/transitions plus runtime memory
-- `apxm_evidence_lookup` -- query repo-local `.apxm` claim/evaluation evidence
-- `apxm_capability_list` -- list runtime capabilities, LLM backends, and model-router health
-- `apxm_workflow_start` -- start a server-managed `.apxmw` workflow in the background and return `execution_id`, `session_id`, and `session_dir`
-- `apxm_workflow_status` -- fetch the current status, result, error, and event totals for a workflow run by `execution_id`
-- `apxm_workflow_events` -- page retained run events for a workflow run with `since` and `limit`
-- `apxm_workflow_cancel` -- interrupt an in-flight workflow run by server-owned `execution_id`
-- `apxm_goal_start` -- start one server-owned goal pass from an explicit bounded worker DAG, allocate worker workspaces or Git worktrees, emit `orchestrator_sleep`/`orchestrator_wake` lifecycle events, and return workflow status/events/cancel handles
+- `skills_list` -- list installed server-owned skill records
+- `skill_get` -- return one skill manifest and validation record
+- `skill_validate` -- re-read and validate one installed skill
+- `skill_call` -- execute a static skill artifact from the server-owned library
+- `prompt_as_workflow` -- route prompt-to-workflow emission through `model_router`, validate/repair the emitted JSON with compiler feedback, canonicalize common structured-output drift, lower through `AirModule`, compile, optionally execute, and return a compact summary with `trace_id`
+- `trace_fetch` -- fetch execution, episodic, or session trace details by `trace_id`
+- `aam_recall` -- query AAM beliefs/goals/transitions plus runtime memory
+- `evidence_lookup` -- query repo-local `.apxm` claim/evaluation evidence
+- `capability_list` -- list runtime capabilities, LLM backends, and model-router health
+- `workflow_start` -- start a server-managed `.apxmw` workflow in the background and return `execution_id`, `session_id`, and `session_dir`
+- `workflow_status` -- fetch the current status, result, error, and event totals for a workflow run by `execution_id`
+- `workflow_events` -- page retained run events for a workflow run with `since` and `limit`
+- `workflow_cancel` -- interrupt an in-flight workflow run by server-owned `execution_id`
+- `goal_start` -- start one server-owned goal pass from an explicit bounded worker DAG, allocate worker workspaces or Git worktrees, emit `orchestrator_sleep`/`orchestrator_wake` lifecycle events, and return workflow status/events/cancel handles
 
 Skill inventory prepends the bundled server skill root and then appends roots
 configured with repeated `--skill-root <path>` arguments or the
@@ -93,7 +93,7 @@ paths, raw AIR, or session roots.
 Workflow MCP starts are server-owned control-plane executions. The server
 validates the `.apxmw` path, creates a validated wrapper graph around
 `WORKFLOW_SPAWN`, applies the same raw-execute admission and credential
-injection path as `apxm_run`, records a durable execution record, emits retained
+injection path as `run`, records a durable execution record, emits retained
 run events and rollout entries, and registers the run for cancellation. Clients
 should treat `execution_id` as the live status/events/cancel handle and
 `session_dir` as the offline workflow/session inspection handle. The request
@@ -101,12 +101,12 @@ does not accept `session_root`; workflow session roots are derived by APXM.
 
 Native goal starts are also server-owned workflow executions. A caller
 agent, CLI, or APXM OS trigger should resolve the task into an explicit bounded
-worker DAG before calling `apxm_goal_start`; this MCP tool executes that
+worker DAG before calling `goal_start`; this MCP tool executes that
 one pass and does not recursively plan new passes. After start, the caller
 should keep the returned `execution_id`, then go idle until
-`apxm_workflow_events` returns
+`workflow_events` returns
 `orchestrator_wake`, `execute_complete`, `error`, or `turn_aborted`, or until
-`apxm_workflow_status` reports `succeeded` or `failed`. Real ACP workers require
+`workflow_status` reports `succeeded` or `failed`. Real ACP workers require
 the caller to grant `admit_capabilities: ["SPAWN_AGENT"]`.
 
 The runtime registers durable agent-management capabilities as normal runtime
@@ -117,7 +117,7 @@ prompts are routed into the CLAIM task queue; `payload.queue` selects the queue
 and otherwise defaults to `scheduled_prompts`.
 
 `POST /v1/skills/:id/execute`, `POST /v1/skills/:id/execute/stream`, and
-`apxm_skill_call` are intentionally narrow. They only run already compiled
+`skill_call` are intentionally narrow. They only run already compiled
 `skill.apxmobj` packages whose manifest validates and whose declared
 `artifact_hash` matches the file read at execution time. The server rejects
 symlinked artifacts, entry-flow mismatches, unknown request fields such as
@@ -127,18 +127,18 @@ declared capabilities/tools that are registered in the runtime. With omitted or
 `read_only` side-effect policy those capabilities must be read-only; with
 `sandboxed` policy, side-effectful capabilities must declare sandbox execution
 and pass sandbox preflight. Python-backed `INV_TOOL` handlers are rejected.
-Generated plans from `apxm_plan_as_graph` follow the same safety shape before
+Generated plans from `prompt_as_workflow` follow the same safety shape before
 execution: Python tool sections and Python-backed handlers are rejected,
 side-effectful direct capabilities are rejected, sandbox-capable tools must
 pass sandbox preflight, and HTTP MCP executions are recorded with
-`execution_id == trace_id` so `apxm_trace_fetch` can retrieve them directly.
+`execution_id == trace_id` so `trace_fetch` can retrieve them directly.
 Plan emission also adds runtime capability guidance to the model prompt and
 canonicalizes numeric-string and symbolic node ids, named dependency
 references, shorthand `depends_on` node references, legacy `attr` spellings, and missing
 generated names before typed validation. Plan emission is bounded by
 `server.mcp.plan_emit_timeout_ms` or `APXM_MCP_PLAN_EMIT_TIMEOUT_MS`; if the
-model route times out, the tool returns a compiled deterministic,
-side-effect-free fallback graph with a warning instead of hanging.
+model route times out, the tool returns an explicit MCP tool error instead of
+compiling a generic workflow.
 Sessions are created under APXM-owned skill session directories using a
 generated or simple validated `session_id`, streamed skill runs emit typed
 `node_output` and `node_metrics` events, prompt and node-output observability is
@@ -154,7 +154,7 @@ process.
 
 The raw `/v1/execute` endpoint remains a developer/debug API for direct AIR
 experiments. Agent-facing skill clients should use `/v1/skills/:id/execute` or
-the MCP `apxm_skill_call` tool so execution goes through the skill manifest,
+the MCP `skill_call` tool so execution goes through the skill manifest,
 hash, operation-policy, and server-owned-session checks.
 
 ## A2A Endpoints
@@ -169,19 +169,19 @@ hash, operation-policy, and server-owned-session checks.
 
 The `apxm-mcp-server` binary exposes these tools over stdio:
 
-- `apxm_validate` -- validate AIR text
-- `apxm_compile` -- compile AIR text to an optimized artifact
-- `apxm_get_contract` -- return the full AIS contract
-- `apxm_analyze` -- analyze graph phases, parallelism, and critical path
-- `apxm_plan_as_graph` -- emit, validate/repair with compiler feedback, compile, and optionally execute a plan graph via the model router
-- `apxm_trace_fetch` -- fetch a compact trace summary by `trace_id`
-- `apxm_aam_recall` -- query AAM state and memory
-- `apxm_evidence_lookup` -- query `.apxm` evidence stores
-- `apxm_capability_list` -- list runtime capabilities and backend health
+- `validate` -- validate AIR text
+- `compile` -- compile AIR text to an optimized artifact
+- `get_contract` -- return the full AIS contract
+- `analyze` -- analyze graph phases, parallelism, and critical path
+- `prompt_as_workflow` -- emit, validate/repair with compiler feedback, compile, and optionally execute a workflow via the model router
+- `trace_fetch` -- fetch a compact trace summary by `trace_id`
+- `aam_recall` -- query AAM state and memory
+- `evidence_lookup` -- query `.apxm` evidence stores
+- `capability_list` -- list runtime capabilities and backend health
 
 The stdio binary is a compile/query/debug surface. It does not expose the
 server-owned workflow or goal control tools
-`apxm_workflow_start/status/events/cancel` or `apxm_goal_start`; use the
+`workflow_start/status/events/cancel` or `goal_start`; use the
 HTTP MCP endpoint at `/v1/mcp` when an agent needs managed background runs,
 retained events, cancellation, and APXM-owned worker sessions.
 
@@ -191,7 +191,7 @@ It also exposes MCP resources:
 - `resources/read` -- read allowlisted skill resource content
 
 The default bundled skill root is `crates/tools/apxm-server/skills/`, currently
-including `skill://apxm-plan-as-graph/SKILL.md`.
+including `skill://prompt-as-workflow/SKILL.md`.
 
 The stdio and HTTP MCP surfaces share protocol method names, tool names,
 resource fields, schema keys, and tool-result keys through
@@ -209,21 +209,21 @@ for Codex CLI. Use
 `dekk apxm mcp list --auto-detect` to inspect detected configs, or
 `dekk apxm mcp uninstall --auto-detect` to remove the registration.
 
-Real-backend plan-as-graph dogfood runs can be repeated with:
+Real-backend prompt-as-workflow dogfood runs can be repeated with:
 
 ```bash
-python3 tools/scripts/apxm_plan_as_graph_smoke.py
+python3 tools/scripts/prompt_as_workflow_smoke.py
 ```
 
-The runner invokes `apxm_plan_as_graph` through the release stdio MCP binary,
+The runner invokes `prompt_as_workflow` through the release stdio MCP binary,
 uses `dekk apxm vllm service-exec gptoss120b` by default, and writes run
 evidence under `.apxm/evaluation/mcp-server/runs/<UTC>/`.
 
 `apxm-mcp-server` can expose skill resources safely, but raw AIR execution is
-still a developer/debug path. `apxm_execute` is hidden from `tools/list` and
+still a developer/debug path. `execute` is hidden from `tools/list` and
 rejected by `tools/call` by default. Set `APXM_MCP_ENABLE_RAW_EXECUTE=1`
 explicitly to expose and enable it for local debugging. Safe static skill
-execution should continue to use the HTTP MCP `apxm_skill_call` tool or REST
+execution should continue to use the HTTP MCP `skill_call` tool or REST
 skill execution routes so execution goes through manifest validation, hash
 checks, and sandbox preflight. This stdio-only raw-execution gate is separate
 from the raw HTTP `/v1/execute` developer/debug API described above.

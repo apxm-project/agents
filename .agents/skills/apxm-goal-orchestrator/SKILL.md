@@ -1,6 +1,6 @@
 ---
 name: apxm-goal-orchestrator
-description: Use when an agent should turn a complex APXM goal into a bounded worker DAG or workflow, execute it through APXM, wait on workflow events/status, and synthesize verified artifacts. Covers `dekk apxm goal`, `apxm_orchestrate_start`, `apxm_workflow_*`, and `apxm_plan_as_graph` selection.
+description: Use when an agent should turn a complex APXM goal into a bounded worker DAG or workflow, execute it through APXM, wait on workflow events/status, and synthesize verified artifacts. Covers `dekk apxm goal`, `goal_start`, `workflow_*`, and `prompt_as_workflow` selection.
 user-invocable: true
 ---
 
@@ -15,13 +15,13 @@ bounded pass, APXM executes it, and the caller waits through APXM events.
 ## Choose the Surface
 
 1. **Goal orchestration**: use `dekk apxm goal` or MCP
-   `apxm_orchestrate_start` when the task needs worker roles, fan-out/fan-in,
+   `goal_start` when the task needs worker roles, fan-out/fan-in,
    workspaces, worktrees, gate/eval, and sleep/wake events.
 2. **Checked-in workflow**: use `dekk apxm workflow validate|analyze|run`
    when a `.apxmw` file already exists or the work should become a reusable
    workflow artifact.
-3. **Graph synthesis**: use `apxm_plan_as_graph` when natural language should
-   become a typed AIR graph. Treat generated graphs as proposals until APXM
+3. **Workflow synthesis**: use `prompt_as_workflow` when natural language should
+   become a typed APXM workflow. Treat generated workflows as proposals until APXM
    validates, compiles, and admits them. Do not use this path to bypass
    external-worker admission.
 
@@ -49,16 +49,16 @@ Use `--event` and `--trigger` when this pass comes from an external event, and
 
 ## MCP Pattern
 
-1. Call `apxm_orchestrate_start` once with `task`, optional
+1. Call `goal_start` once with `task`, optional
    `context/event/trigger`, explicit `workers`, optional `supervisor`, and
    workspace policy. Include `admit_capabilities: ["SPAWN_AGENT"]` for real
    ACP/headless workers.
 2. Store `execution_id`, `session_id`, `session_dir`, `workflow_path`,
    `bundle_dir`, and returned artifact paths.
-3. Stop prompting workers manually. Page `apxm_workflow_events` with
+3. Stop prompting workers manually. Page `workflow_events` with
    `since = next_seq`; wake on `orchestrator_wake` or terminal events.
-4. Confirm the terminal result with `apxm_workflow_status`.
-5. Use `apxm_workflow_cancel` for interruption. Do not invent a second cancel
+4. Confirm the terminal result with `workflow_status`.
+5. Use `workflow_cancel` for interruption. Do not invent a second cancel
    or process-control path for server-owned runs.
 
 ## Worker DAG Rules
@@ -79,7 +79,7 @@ Use `--event` and `--trigger` when this pass comes from an external event, and
 - Adding an MCP tool that combines natural-language planning, worker admission,
   execution, waiting, and policy into one opaque call.
 - Manually spawning or reprompting workers after APXM accepted the workflow.
-- Treating `apxm_plan_as_graph` output as trusted executable worker spawn logic.
+- Treating `prompt_as_workflow` output as trusted executable worker spawn logic.
 - Starting raw shell background jobs for server-owned workflows.
 - Claiming APXM verification when only local files were inspected.
 

@@ -2,8 +2,9 @@
 """Validate one or more APXM skill-pack directories.
 
 The builtin operating skills live under crates/tools/apxm-server/skills/.
-(This validator and the pack format were inherited from the former apxm-libs
-repo, which was dissolved 2026-06-03; see docs/skills-migration/.)
+That root may be either a pack catalog or a flat catalog of built-in skill
+packages; flat catalogs are provider-agnostic server resources, not
+integration packs.
 
 The pack format is a single, unified shape. A pack may contain one or many
 skills; the optional `agent.toml` / `hierarchy.toml` / `tools.toml` files
@@ -193,6 +194,27 @@ def _validate_skill(skill_dir: Path) -> int:
     return 0
 
 
+def _is_skill_dir(path: Path) -> bool:
+    return (path / "skill.toml").is_file()
+
+
+def validate_flat_skill_catalog(catalog_dir: Path, require_artifact: bool = False) -> int:
+    failures = 0
+    skill_dirs = sorted(p for p in catalog_dir.iterdir() if p.is_dir() and _is_skill_dir(p))
+    if not skill_dirs:
+        _fail(catalog_dir, "no pack.toml, pack subdirectories, or flat skill directories")
+        return 1
+
+    for skill_dir in skill_dirs:
+        failures += _validate_skill(skill_dir)
+        if require_artifact:
+            failures += _check_artifact(catalog_dir.name, skill_dir.name, skill_dir)
+
+    if failures == 0:
+        print(f"OK   {catalog_dir}")
+    return 0 if failures == 0 else 1
+
+
 def validate_pack(pack_dir: Path, require_artifact: bool = False) -> int:
     failures = 0
     manifest_path = pack_dir / "pack.toml"
@@ -232,10 +254,7 @@ def validate_pack(pack_dir: Path, require_artifact: bool = False) -> int:
 
     pack_id = manifest.get("pack_id") or pack_dir.name
 
-    # The catalog ships ONE content kind: skills (skills/<id>/ with AIR).
-    # See docs/vision.md. The provider/connector plane ([app] + tools.toml) was
-    # removed to apxm-auth (docs/migration/connectors-removed.md).
-    #
+    # The built-in catalog ships provider-agnostic skills only.
     # The validator still RELAXES the skills/ requirement when a pack carries
     # root block metadata ([app] or tools.toml) — the "bundle" shape — because
     # the wire format permits it and the docs/examples/bundle/ fixture uses it.
@@ -315,8 +334,7 @@ def main() -> int:
                 p for p in path.iterdir() if p.is_dir() and (p / "pack.toml").is_file()
             )
             if not pack_dirs:
-                print(f"FAIL {path}: no pack.toml and no pack subdirectories", file=sys.stderr)
-                rc = 1
+                rc |= validate_flat_skill_catalog(path, require_artifact=args.require_artifact)
                 continue
         for pack_dir in pack_dirs:
             rc |= validate_pack(pack_dir, require_artifact=args.require_artifact)

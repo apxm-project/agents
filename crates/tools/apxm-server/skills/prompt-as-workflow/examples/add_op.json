@@ -1,6 +1,4 @@
 {
-  "task": "Add a new AIS operation across compiler, runtime, and tests.",
-  "graph": {
     "name": "add_operation",
     "entry": "add_op",
     "parameters": [
@@ -26,5 +24,4 @@
         { "node": 5, "dependency": "Data" }
       ] }
     ]
-  }
 }

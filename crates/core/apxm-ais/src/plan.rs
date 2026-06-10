@@ -1,5 +1,5 @@
 //! Plan-graph wire DTO — the single source of truth for the "plan as graph"
-//! emission schema (`apxm-plan-as-graph/schema.json`).
+//! emission schema (`prompt-as-workflow/schema.json`).
 //!
 //! This is the typed shape that the apxm-server plan tool deserializes and that
 //! external authoring front-ends (e.g. apxm-studio) lower a canvas into. Keeping
@@ -14,7 +14,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::AISOperationType;
 
-/// A complete plan graph — the artifact handed to the compiler / dispatched.
+/// A complete plan workflow — the artifact handed to the compiler / dispatched.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]
 pub struct PlanGraph {
@@ -212,7 +212,10 @@ mod tests {
         });
         let g: PlanGraph = serde_json::from_value(json.clone()).unwrap();
         assert_eq!(g.nodes[0].max_tokens, Some(4096));
-        assert_eq!(g.nodes[1].depends_on[0].dependency, PlanDependencyKind::Data);
+        assert_eq!(
+            g.nodes[1].depends_on[0].dependency,
+            PlanDependencyKind::Data
+        );
         // re-serialize and ensure it parses again (stable shape)
         let back = serde_json::to_value(&g).unwrap();
         let _g2: PlanGraph = serde_json::from_value(back).unwrap();

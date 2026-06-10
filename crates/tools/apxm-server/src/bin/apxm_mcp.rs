@@ -7,13 +7,13 @@
 //!
 //! # Tools
 //!
-//! - `apxm_validate`      -- validate AIR against the AIS contract
-//! - `apxm_compile`       -- compile AIR to an optimized artifact
-//! - `apxm_execute`       -- compile + execute AIR only when explicitly enabled
-//! - `apxm_get_contract`  -- return the full AIS contract (ops, attrs, types)
+//! - `validate`      -- validate AIR against the AIS contract
+//! - `compile`       -- compile AIR to an optimized artifact
+//! - `execute`       -- compile + execute AIR only when explicitly enabled
+//! - `get_contract`  -- return the full AIS contract (ops, attrs, types)
 //! - `resources/list`     -- enumerate bundled/user APXM skill resources
 //! - `resources/read`     -- read `skill://...` resources
-//! - `apxm_plan_as_graph` -- emit, validate, compile, and optionally execute a plan graph
+//! - `prompt_as_workflow` -- emit, validate, compile, and optionally execute a workflow
 //! - query tools          -- fetch traces, AAM memory, evidence, and capabilities
 //!
 //! # Running
@@ -53,7 +53,7 @@ const MCP_PROTOCOL_VERSION: &str = apxm_core::constants::protocols::MCP_VERSION;
 const SERVER_NAME: &str = server_name::STDIO;
 const SERVER_VERSION: &str = env!("CARGO_PKG_VERSION");
 const RAW_EXECUTE_ENV: &str = "APXM_MCP_ENABLE_RAW_EXECUTE";
-const RAW_EXECUTE_DISABLED_MESSAGE: &str = "apxm_execute is disabled by default in the stdio MCP server. Use the HTTP MCP apxm_skill_call tool for server-owned skills, or set APXM_MCP_ENABLE_RAW_EXECUTE=1 for explicit developer/debug raw AIR execution.";
+const RAW_EXECUTE_DISABLED_MESSAGE: &str = "execute is disabled by default in the stdio MCP server. Use the HTTP MCP skill_call tool for server-owned skills, or set APXM_MCP_ENABLE_RAW_EXECUTE=1 for explicit developer/debug raw AIR execution.";
 
 // JSON-RPC error codes
 const PARSE_ERROR: i64 = apxm_core::constants::jsonrpc::error_codes::PARSE_ERROR;
@@ -226,22 +226,22 @@ fn handle_tools_list(raw_execute_enabled: bool) -> Result<Value, Value> {
             }
         }),
         json!({
-            (mcp_fields::NAME): Tier3Tool::PlanAsGraph.as_str(),
-            (mcp_fields::DESCRIPTION): tool_description::tier3(Tier3Tool::PlanAsGraph),
+            (mcp_fields::NAME): Tier3Tool::PromptAsWorkflow.as_str(),
+            (mcp_fields::DESCRIPTION): tool_description::tier3(Tier3Tool::PromptAsWorkflow),
             (mcp_fields::INPUT_SCHEMA): {
                 (mcp_fields::TYPE): schema_type::OBJECT,
                 (mcp_fields::PROPERTIES): {
                     (mcp_args::TASK): {
                         (mcp_fields::TYPE): schema_type::STRING,
-                        (mcp_fields::DESCRIPTION): "Natural-language task to convert into an APXM execution graph"
+                        (mcp_fields::DESCRIPTION): "Natural-language task to convert into an APXM execution workflow"
                     },
                     (mcp_args::CONTEXT): {
                         (mcp_fields::TYPE): schema_type::STRING,
-                        (mcp_fields::DESCRIPTION): "Optional context that should shape the graph"
+                        (mcp_fields::DESCRIPTION): "Optional context that should shape the workflow"
                     },
                     (mcp_args::CONSTRAINTS): {
                         (mcp_fields::TYPE): schema_type::OBJECT,
-                        (mcp_fields::DESCRIPTION): "Optional structured constraints for the graph emitter"
+                        (mcp_fields::DESCRIPTION): "Optional structured constraints for the workflow emitter"
                     },
                     (mcp_args::PARAMETERS): {
                         (mcp_fields::TYPE): schema_type::OBJECT,
@@ -267,7 +267,7 @@ fn handle_tools_list(raw_execute_enabled: bool) -> Result<Value, Value> {
                 (mcp_fields::PROPERTIES): {
                     (mcp_args::TRACE_ID): {
                         (mcp_fields::TYPE): schema_type::STRING,
-                        (mcp_fields::DESCRIPTION): "Execution trace id returned by apxm_plan_as_graph or skill execution"
+                        (mcp_fields::DESCRIPTION): "Execution trace id returned by prompt_as_workflow or skill execution"
                     },
                     (mcp_args::NODE_ID): {
                         (mcp_fields::TYPE): schema_type::INTEGER,
@@ -315,7 +315,7 @@ fn handle_tools_list(raw_execute_enabled: bool) -> Result<Value, Value> {
             2,
             json!({
                 (mcp_fields::NAME): StdioTool::Execute.as_str(),
-                (mcp_fields::DESCRIPTION): "Developer/debug only: compile and execute raw APXM AIR in one shot. Safe skill clients should use HTTP MCP apxm_skill_call.",
+                (mcp_fields::DESCRIPTION): "Developer/debug only: compile and execute raw APXM AIR in one shot. Safe skill clients should use HTTP MCP skill_call.",
                 (mcp_fields::INPUT_SCHEMA): {
                     (mcp_fields::TYPE): schema_type::OBJECT,
                     (mcp_fields::PROPERTIES): {
@@ -355,7 +355,7 @@ fn handle_tools_call(params: Value, raw_execute_enabled: bool) -> Result<Value, 
         Some(StdioTool::GetContract) => tool_get_contract(),
         Some(StdioTool::Analyze) => tool_analyze(args),
         None => match Tier3Tool::from_str(name) {
-            Some(Tier3Tool::PlanAsGraph) => tool_plan_as_graph(args),
+            Some(Tier3Tool::PromptAsWorkflow) => tool_prompt_as_workflow(args),
             Some(Tier3Tool::TraceFetch) => tool_trace_fetch(args),
             Some(Tier3Tool::AamRecall) => tool_aam_recall(args),
             Some(Tier3Tool::EvidenceLookup) => tool_evidence_lookup(args),
@@ -431,7 +431,7 @@ fn handle_resources_read_with_roots(params: Value, roots: &[PathBuf]) -> Result<
 }
 
 // ---------------------------------------------------------------------------
-// Tool: apxm_validate
+// Tool: validate
 // ---------------------------------------------------------------------------
 
 fn tool_validate(args: Value) -> Result<String, String> {
@@ -458,7 +458,7 @@ fn tool_validate(args: Value) -> Result<String, String> {
 }
 
 // ---------------------------------------------------------------------------
-// Tool: apxm_compile
+// Tool: compile
 // ---------------------------------------------------------------------------
 
 fn tool_compile(args: Value) -> Result<String, String> {
@@ -507,7 +507,7 @@ fn tool_compile(args: Value) -> Result<String, String> {
 }
 
 // ---------------------------------------------------------------------------
-// Tool: apxm_execute (hidden and disabled unless APXM_MCP_ENABLE_RAW_EXECUTE is set)
+// Tool: execute (hidden and disabled unless APXM_MCP_ENABLE_RAW_EXECUTE is set)
 // ---------------------------------------------------------------------------
 
 fn tool_execute(args: Value) -> Result<String, String> {
@@ -597,7 +597,7 @@ fn tool_execute(args: Value) -> Result<String, String> {
 }
 
 // ---------------------------------------------------------------------------
-// Tool: apxm_get_contract
+// Tool: get_contract
 // ---------------------------------------------------------------------------
 
 fn tool_get_contract() -> Result<String, String> {
@@ -652,7 +652,7 @@ fn tool_get_contract() -> Result<String, String> {
 }
 
 // ---------------------------------------------------------------------------
-// Tool: apxm_analyze
+// Tool: analyze
 // ---------------------------------------------------------------------------
 
 fn tool_analyze(args: Value) -> Result<String, String> {
@@ -902,8 +902,10 @@ fn build_suggestions(
 // Tier-3 dispatch/query tools
 // ---------------------------------------------------------------------------
 
-fn tool_plan_as_graph(args: Value) -> Result<String, String> {
-    run_with_stdio_runtime(|runtime| async move { mcp_tools::plan_as_graph(&runtime, args).await })
+fn tool_prompt_as_workflow(args: Value) -> Result<String, String> {
+    run_with_stdio_runtime(
+        |runtime| async move { mcp_tools::prompt_as_workflow(&runtime, args).await },
+    )
 }
 
 fn tool_trace_fetch(args: Value) -> Result<String, String> {
@@ -1001,7 +1003,7 @@ mod tests {
         assert!(names.contains(&StdioTool::Compile.as_str()));
         assert!(!names.contains(&StdioTool::Execute.as_str()));
         assert!(names.contains(&StdioTool::GetContract.as_str()));
-        assert!(names.contains(&Tier3Tool::PlanAsGraph.as_str()));
+        assert!(names.contains(&Tier3Tool::PromptAsWorkflow.as_str()));
         assert!(names.contains(&Tier3Tool::TraceFetch.as_str()));
         assert!(names.contains(&Tier3Tool::AamRecall.as_str()));
         assert!(names.contains(&Tier3Tool::EvidenceLookup.as_str()));

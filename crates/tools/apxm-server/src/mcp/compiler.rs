@@ -1,12 +1,12 @@
-//! PURE (side-effect-free) MCP compiler tools: `apxm_compile`, `apxm_validate`,
-//! `apxm_ops_list`.
+//! PURE (side-effect-free) MCP compiler tools: `compile`, `validate`,
+//! `ops_list`.
 //!
 //! These expose the APXM compiler over the existing `/v1/mcp` JSON-RPC facade so
 //! any MCP client (the `apxm chat` agent, apxm-studio, Claude Code) can compile
 //! and validate APXM AIR and discover the op vocabulary. They never execute a
 //! graph and never invoke a capability, so they need no admission/no-widen
 //! gating — that boundary applies to side-effecting execution tools such as
-//! `apxm_run`, native workflow control, and goal starts.
+//! `run`, native workflow control, and goal starts.
 
 use axum::Json;
 use serde_json::Value as JsonValue;
@@ -15,12 +15,12 @@ use crate::execute::{air_to_artifact_with_caps, registered_capability_names};
 use crate::helpers::mcp_tool_result;
 use crate::state::AppState;
 
-pub(crate) const MCP_TOOL_APXM_COMPILE: &str = "apxm_compile";
-pub(crate) const MCP_TOOL_APXM_VALIDATE: &str = "apxm_validate";
-pub(crate) const MCP_TOOL_APXM_OPS_LIST: &str = "apxm_ops_list";
-pub(crate) const MCP_TOOL_APXM_RUN: &str = "apxm_run";
+pub(crate) const MCP_TOOL_APXM_COMPILE: &str = "compile";
+pub(crate) const MCP_TOOL_APXM_VALIDATE: &str = "validate";
+pub(crate) const MCP_TOOL_APXM_OPS_LIST: &str = "ops_list";
+pub(crate) const MCP_TOOL_APXM_RUN: &str = "run";
 
-/// JSON Schema for `apxm_run` ({air, args?, session_id?, admit_capabilities?}).
+/// JSON Schema for `run` ({air, args?, session_id?, admit_capabilities?}).
 pub(crate) fn run_input_schema() -> JsonValue {
     serde_json::json!({
         "type": "object",
@@ -55,7 +55,7 @@ pub(crate) async fn call_run_tool(
         Err(error) => {
             return Some(mcp_tool_result(
                 id.clone(),
-                format!("invalid apxm_run arguments: {error}"),
+                format!("invalid run arguments: {error}"),
                 true,
             ));
         }

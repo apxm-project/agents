@@ -15,7 +15,7 @@
 [APXM validates graph + worker policy]
     |
     v
-[apxm_goal_start for one bounded pass]
+[goal_start for one bounded pass]
     |
     v
 [orchestrator_sleep]

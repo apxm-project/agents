@@ -1,6 +1,4 @@
 {
-  "task": "Audit the APXM project for build, test, policy, TODO, and compiler coverage issues.",
-  "graph": {
     "name": "project_audit",
     "entry": "audit",
     "parameters": [
@@ -21,5 +19,4 @@
         { "node": 5, "dependency": "Data" }
       ] }
     ]
-  }
 }

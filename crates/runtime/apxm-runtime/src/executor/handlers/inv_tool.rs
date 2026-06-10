@@ -327,12 +327,18 @@ mod tests {
         assert!(!grant_admits_write(Some("read_only"), "fs.write"));
         assert!(!grant_admits_write(Some("sandboxed"), "fs.write"));
         // broader[...] admits only the listed capabilities.
-        assert!(grant_admits_write(Some("broader[fs.write,slack.post]"), "fs.write"));
         assert!(grant_admits_write(
-            Some("broader[fs.write, slack.post]"),
-            "slack.post"
+            Some("broader[fs.write,provider.write]"),
+            "fs.write"
         ));
-        assert!(!grant_admits_write(Some("broader[slack.post]"), "fs.write"));
+        assert!(grant_admits_write(
+            Some("broader[fs.write, provider.write]"),
+            "provider.write"
+        ));
+        assert!(!grant_admits_write(
+            Some("broader[provider.write]"),
+            "fs.write"
+        ));
         assert!(!grant_admits_write(Some("broader[]"), "fs.write"));
     }
     use apxm_core::types::{execution::NodeMetadata, operations::AISOperationType};

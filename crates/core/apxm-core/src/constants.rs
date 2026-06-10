@@ -319,11 +319,11 @@ pub mod mcp {
     }
 
     pub mod tools {
-        pub const APXM_GOAL_START: &str = "apxm_goal_start";
-        pub const APXM_WORKFLOW_START: &str = "apxm_workflow_start";
-        pub const APXM_WORKFLOW_STATUS: &str = "apxm_workflow_status";
-        pub const APXM_WORKFLOW_EVENTS: &str = "apxm_workflow_events";
-        pub const APXM_WORKFLOW_CANCEL: &str = "apxm_workflow_cancel";
+        pub const APXM_GOAL_START: &str = "goal_start";
+        pub const APXM_WORKFLOW_START: &str = "workflow_start";
+        pub const APXM_WORKFLOW_STATUS: &str = "workflow_status";
+        pub const APXM_WORKFLOW_EVENTS: &str = "workflow_events";
+        pub const APXM_WORKFLOW_CANCEL: &str = "workflow_cancel";
     }
 }
 

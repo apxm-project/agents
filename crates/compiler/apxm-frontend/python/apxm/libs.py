@@ -20,7 +20,7 @@ Example
 
     from apxm.libs import load
 
-    h = load("apxm-plan-as-graph")        # @latest
+    h = load("prompt-as-workflow")        # @latest
     h_pinned = load("apxm-orient@0.2.0")  # pinned version
 
     result = h.invoke(task="...")
@@ -140,7 +140,7 @@ def load(skill_id: str) -> SkillHandle:
     both formats are forwarded to the server's
     :func:`apxm_server::SkillLibrary::find_executable`, which is the
     single source of truth for skill resolution (same path used by
-    ``/v1/skills/{id}/execute`` and the MCP ``apxm_skill_call`` tool).
+    ``/v1/skills/{id}/execute`` and the MCP ``skill_call`` tool).
 
     A successful load fetches the skill's declared input order so that
     later :meth:`SkillHandle.invoke` calls can map ``**kwargs`` to

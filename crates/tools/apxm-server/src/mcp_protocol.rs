@@ -126,7 +126,7 @@ pub(crate) mod tool_result {
     pub(crate) const PARALLEL_MS: &str = "parallel_ms";
     pub(crate) const PARALLELISM_DEGREE: &str = "parallelism_degree";
     pub(crate) const PARAMETER_TYPES: &str = "parameter_types";
-    pub(crate) const PLAN: &str = "plan";
+    pub(crate) const WORKFLOW: &str = "workflow";
     pub(crate) const PHASE: &str = "phase";
     pub(crate) const PREVIEW: &str = "preview";
     pub(crate) const PRODUCES_OUTPUT: &str = "produces_output";
@@ -189,9 +189,9 @@ pub(crate) mod status {
 }
 
 pub(crate) mod plan_skill {
-    pub(crate) const ID: &str = "apxm-plan-as-graph";
+    pub(crate) const ID: &str = "prompt-as-workflow";
     pub(crate) const VERSION: &str = "0.1.0";
-    pub(crate) const ENTRY_FLOW: &str = "apxm_plan_as_graph";
+    pub(crate) const ENTRY_FLOW: &str = "prompt_as_workflow";
     pub(crate) const TRACE_PREFIX: &str = "apxm-plan";
     pub(crate) const EMISSION_CAPABILITY: &str = "plan_emission_v1";
     pub(crate) const REQUEST_CAPABILITY_KEY: &str = "capability";
@@ -338,11 +338,11 @@ pub(crate) enum StdioTool {
 impl StdioTool {
     pub(crate) const fn as_str(self) -> &'static str {
         match self {
-            Self::Validate => "apxm_validate",
-            Self::Compile => "apxm_compile",
-            Self::Execute => "apxm_execute",
-            Self::GetContract => "apxm_get_contract",
-            Self::Analyze => "apxm_analyze",
+            Self::Validate => "validate",
+            Self::Compile => "compile",
+            Self::Execute => "execute",
+            Self::GetContract => "get_contract",
+            Self::Analyze => "analyze",
         }
     }
 
@@ -360,7 +360,7 @@ impl StdioTool {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum Tier3Tool {
-    PlanAsGraph,
+    PromptAsWorkflow,
     TraceFetch,
     AamRecall,
     EvidenceLookup,
@@ -370,17 +370,17 @@ pub(crate) enum Tier3Tool {
 impl Tier3Tool {
     pub(crate) const fn as_str(self) -> &'static str {
         match self {
-            Self::PlanAsGraph => "apxm_plan_as_graph",
-            Self::TraceFetch => "apxm_trace_fetch",
-            Self::AamRecall => "apxm_aam_recall",
-            Self::EvidenceLookup => "apxm_evidence_lookup",
-            Self::CapabilityList => "apxm_capability_list",
+            Self::PromptAsWorkflow => "prompt_as_workflow",
+            Self::TraceFetch => "trace_fetch",
+            Self::AamRecall => "aam_recall",
+            Self::EvidenceLookup => "evidence_lookup",
+            Self::CapabilityList => "capability_list",
         }
     }
 
     pub(crate) fn from_str(value: &str) -> Option<Self> {
         match value {
-            value if value == Self::PlanAsGraph.as_str() => Some(Self::PlanAsGraph),
+            value if value == Self::PromptAsWorkflow.as_str() => Some(Self::PromptAsWorkflow),
             value if value == Self::TraceFetch.as_str() => Some(Self::TraceFetch),
             value if value == Self::AamRecall.as_str() => Some(Self::AamRecall),
             value if value == Self::EvidenceLookup.as_str() => Some(Self::EvidenceLookup),
@@ -393,7 +393,7 @@ impl Tier3Tool {
 pub(crate) mod tool_description {
     use super::Tier3Tool;
 
-    pub(crate) const PLAN_AS_GRAPH: &str = "Emit an APXM plan graph via the model router, validate and repair the AIR JSON, compile it, optionally execute it, and return a compact summary with trace_id.";
+    pub(crate) const PROMPT_AS_WORKFLOW: &str = "Emit an APXM workflow via the model router, validate and repair the workflow JSON, compile it, optionally execute it, and return a compact summary with trace_id.";
     pub(crate) const TRACE_FETCH: &str =
         "Fetch a compact execution trace summary by trace_id; pass full=true for detailed records.";
     pub(crate) const AAM_RECALL: &str =
@@ -405,7 +405,7 @@ pub(crate) mod tool_description {
 
     pub(crate) const fn tier3(tool: Tier3Tool) -> &'static str {
         match tool {
-            Tier3Tool::PlanAsGraph => PLAN_AS_GRAPH,
+            Tier3Tool::PromptAsWorkflow => PROMPT_AS_WORKFLOW,
             Tier3Tool::TraceFetch => TRACE_FETCH,
             Tier3Tool::AamRecall => AAM_RECALL,
             Tier3Tool::EvidenceLookup => EVIDENCE_LOOKUP,
@@ -425,10 +425,10 @@ pub(crate) enum SkillTool {
 impl SkillTool {
     pub(crate) const fn as_str(self) -> &'static str {
         match self {
-            Self::List => "apxm_skills_list",
-            Self::Get => "apxm_skill_get",
-            Self::Validate => "apxm_skill_validate",
-            Self::Call => "apxm_skill_call",
+            Self::List => "skills_list",
+            Self::Get => "skill_get",
+            Self::Validate => "skill_validate",
+            Self::Call => "skill_call",
         }
     }
 }

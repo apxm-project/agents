@@ -1,6 +1,4 @@
 {
-  "task": "Run a parallel code-review council and synthesize a final verdict.",
-  "graph": {
     "name": "code_review_council",
     "entry": "review",
     "parameters": [
@@ -19,5 +17,4 @@
         { "node": 4, "dependency": "Data" }
       ] }
     ]
-  }
 }

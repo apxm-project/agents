@@ -157,7 +157,7 @@ pub(crate) async fn execute(
 
 /// Transport-neutral core: compile + admit + execute one AIR request, returning
 /// the `ExecuteResponse`. Both the REST `/v1/execute` handler and the MCP
-/// `apxm_run` tool call this, so the compile path, the static write-boundary
+/// `run` tool call this, so the compile path, the static write-boundary
 /// pre-flight, the credential injection, and the no-widen grant seed are shared
 /// (DRY) rather than duplicated per transport.
 /// Acquire an admission slot and register a park-aware handle, returning the

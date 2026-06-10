@@ -5,9 +5,6 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use apxm_artifact::Artifact;
-use apxm_backends::{
-    LLMRequest, Message as LLMMessage, Role as LLMRole, ToolChoice, ToolDefinition,
-};
 use apxm_core::constants::graph::attrs as graph_attrs;
 use apxm_core::events::payload::ErrorPayload;
 use apxm_core::events::{ApxmEvent, EventCategory, EventKind, EventSource, SkillEventProvenance};
@@ -357,24 +354,6 @@ fn side_effect_policy_metadata(policy: Option<&str>) -> std::collections::HashMa
     map
 }
 
-struct PreparedPromptOnlyExecution {
-    skill_md_body: String,
-    args: Vec<String>,
-    session_id: String,
-    session_dir: String,
-    timeout_ms: Option<u64>,
-    execution_id: String,
-    skill_id: String,
-    skill_version: String,
-    required_capabilities: Vec<String>,
-    allowed_tools: Vec<String>,
-}
-
-enum PreparedSkillExecution {
-    Compiled(PreparedCompiledExecution),
-    PromptOnly(PreparedPromptOnlyExecution),
-}
-
 pub(crate) async fn list_skills(State(state): State<AppState>) -> Json<SkillScan> {
     Json(state.skill_library.scan())
 }
@@ -415,12 +394,8 @@ pub(crate) async fn execute_skill_by_id(
     req: SkillExecuteRequest,
 ) -> Result<SkillExecuteResponse, ApiError> {
     enforce_sandbox_hint(state, &req)?;
-    match prepare_skill_execution(state, id, req)? {
-        PreparedSkillExecution::Compiled(prepared) => execute_compiled_skill(state, prepared).await,
-        PreparedSkillExecution::PromptOnly(prepared) => {
-            execute_prompt_only_skill(state, prepared).await
-        }
-    }
+    let prepared = prepare_skill_execution(state, id, req)?;
+    execute_compiled_skill(state, prepared).await
 }
 
 async fn execute_compiled_skill(
@@ -509,183 +484,6 @@ async fn execute_compiled_skill(
     })
 }
 
-async fn execute_prompt_only_skill(
-    state: &AppState,
-    prepared: PreparedPromptOnlyExecution,
-) -> Result<SkillExecuteResponse, ApiError> {
-    let _permit = state.inference_limiter.acquire().await?;
-    let request = build_prompt_only_request(state, &prepared);
-
-    // Open rollout BEFORE the first event so the JSONL sink doesn't miss
-    // the skill_execute_started line. The prompt-only path doesn't ship a
-    // .apxmobj, so artifact/air hashes go in blank — source_hash still pins
-    // SKILL.md identity.
-    ensure_rollout_open(
-        state,
-        &prepared.execution_id,
-        &prepared.session_id,
-        &prepared.skill_id,
-        &prepared.skill_version,
-        None,
-        None,
-        None,
-        prepared.args.clone(),
-    )
-    .await;
-
-    // Record the skill_execute_started event into the run bus so
-    // /v1/runs/.../events and the webhook see the lifecycle event
-    // even on the fast prompt-only path.
-    emit_skill_started(state, &prepared);
-
-    let started_ms = now_ms_u128();
-    let result = state.runtime.llm_registry().generate(request).await;
-    let elapsed_ms = now_ms_u128().saturating_sub(started_ms);
-
-    match result {
-        Ok(llm_response) => {
-            // Build a synthetic ExecuteResponse: the LLM message is the
-            // entire user-visible content, results map is empty, and
-            // llm_usage reflects the single round-trip.
-            let response = ExecuteResponse {
-                results: std::collections::HashMap::new(),
-                content: Some(llm_response.content.clone()),
-                session_dir: Some(prepared.session_dir.clone()),
-                stats: crate::types::responses::ExecutionStats {
-                    executed_nodes: 0,
-                    failed_nodes: 0,
-                    duration_ms: elapsed_ms,
-                },
-                llm_usage: crate::types::responses::LlmUsageSummary {
-                    input_tokens: llm_response.usage.input_tokens,
-                    output_tokens: llm_response.usage.output_tokens,
-                    total_requests: 1,
-                },
-            };
-            state
-                .execution_store
-                .complete_success(&prepared.execution_id, response.clone());
-            emit_skill_completed(state, &prepared.execution_id, response.clone());
-            state.rollout_registry.close(&prepared.execution_id).await;
-            Ok(SkillExecuteResponse {
-                execution_id: prepared.execution_id,
-                response,
-            })
-        }
-        Err(error) => {
-            let message = format!("prompt-only skill LLM call failed: {error}");
-            state
-                .execution_store
-                .complete_failure(&prepared.execution_id, message.clone());
-            emit_skill_failed(state, &prepared.execution_id, &message);
-            state.rollout_registry.close(&prepared.execution_id).await;
-            Err(ApiError::internal_message(message))
-        }
-    }
-}
-
-fn emit_skill_started(state: &AppState, prepared: &PreparedPromptOnlyExecution) {
-    let event = ApxmEvent::root(
-        SkillExecuteStartedPayload {
-            execution_id: prepared.execution_id.clone(),
-            skill_id: prepared.skill_id.clone(),
-            skill_version: prepared.skill_version.clone(),
-            session_id: prepared.session_id.clone(),
-        },
-        EventSource::Server,
-        &prepared.execution_id,
-    );
-    emit_recorded_run_event(state, &prepared.execution_id, event);
-}
-
-fn emit_skill_completed(state: &AppState, execution_id: &str, result: ExecuteResponse) {
-    let event = ApxmEvent::root(
-        SkillExecuteCompletePayload {
-            execution_id: execution_id.to_string(),
-            result,
-        },
-        EventSource::Server,
-        execution_id,
-    );
-    emit_recorded_run_event(state, execution_id, event);
-}
-
-fn emit_skill_failed(state: &AppState, execution_id: &str, message: &str) {
-    let event = ApxmEvent::root(
-        ErrorPayload {
-            message: message.to_string(),
-            status: None,
-            recoverable: false,
-        },
-        EventSource::Server,
-        execution_id,
-    );
-    emit_recorded_run_event(state, execution_id, event);
-}
-
-fn build_prompt_only_request(
-    state: &AppState,
-    prepared: &PreparedPromptOnlyExecution,
-) -> LLMRequest {
-    let system = prepared.skill_md_body.clone();
-    let user = prepared.args.first().cloned().unwrap_or_default();
-    let messages = vec![
-        LLMMessage::text(LLMRole::System, system),
-        LLMMessage::text(LLMRole::User, user),
-    ];
-    let mut request = LLMRequest::from_messages(messages);
-    request.trace_id = Some(prepared.execution_id.clone());
-
-    // ACL: the tool surface exposed to the LLM must equal
-    // manifest.allowed_tools (when set) ∪ manifest.required_capabilities.
-    // When `allowed_tools` is empty we fall back to `required_capabilities`
-    // because that's the legacy single-list shape some packs still ship.
-    let allowed: HashSet<&str> = if !prepared.allowed_tools.is_empty() {
-        prepared.allowed_tools.iter().map(String::as_str).collect()
-    } else {
-        prepared
-            .required_capabilities
-            .iter()
-            .map(String::as_str)
-            .collect()
-    };
-
-    // Empty surface ⇒ skill explicitly opts out of tool use: ToolChoice
-    // stays None and `tools` stays unset (no surface advertised).
-    if allowed.is_empty() {
-        return request;
-    }
-
-    let capability_system = state.runtime.capability_system();
-    let tools: Vec<ToolDefinition> = capability_system
-        .list_capabilities()
-        .into_iter()
-        .filter(|cap| allowed.contains(cap.name.as_str()))
-        .map(|cap| {
-            ToolDefinition::new(
-                cap.name.clone(),
-                cap.description.clone(),
-                cap.parameters_schema,
-            )
-        })
-        .collect();
-
-    // If none of the declared tools resolved to a registered capability we
-    // emit no tools and no tool_choice — better than advertising a partial
-    // surface that silently drops what the manifest promised.
-    if tools.is_empty() {
-        return request;
-    }
-
-    request.tools = Some(tools);
-    request.tool_choice = Some(ToolChoice::Auto);
-    request
-}
-
-fn now_ms_u128() -> u128 {
-    crate::helpers::now_ms() as u128
-}
-
 fn record_run_event(state: &AppState, execution_id: &str, event: ApxmEvent) -> ApxmEvent {
     let event = state.run_event_bus.record(execution_id, event);
     state
@@ -755,8 +553,6 @@ pub(crate) fn build_skill_event_sinks(
 }
 
 /// Open a rollout recorder for an execution if not already open. Idempotent.
-/// Pulled out so both compiled + prompt-only execution paths share the same
-/// "open before first event" entry point.
 pub(crate) async fn ensure_rollout_open(
     state: &AppState,
     execution_id: &str,
@@ -799,185 +595,32 @@ pub(crate) async fn execute_skill_stream(
     let (tx, mut rx) = mpsc::channel::<ApxmEvent>(stream_config.channel_capacity.max(1));
     let prepared = prepare_skill_execution(&state, &id, req)?;
     let permit = state.inference_limiter.acquire().await?;
-    let compiled = match prepared {
-        PreparedSkillExecution::Compiled(prep) => Some((prep, permit)),
-        PreparedSkillExecution::PromptOnly(prep) => {
-            spawn_prompt_only_stream_task(state.clone(), prep, tx.clone(), permit);
-            None
-        }
-    };
-
-    if let Some((prepared, permit)) = compiled {
-        let runtime = Arc::clone(&state.runtime);
-        let execution_store = state.execution_store.clone();
-        let trace_id = prepared.execution_id.clone();
-        let tx = tx.clone();
-
-        // Open rollout up front on the streaming compiled path. Subagent
-        // recorders are opened later by the executor's SPAWN_AGENT
-        // handler — the parent recorder must exist first.
-        ensure_rollout_open(
-            &state,
-            &prepared.execution_id,
-            &prepared.session_id,
-            &prepared.skill_id,
-            &prepared.skill_version,
-            None,
-            None,
-            None,
-            prepared.args.clone(),
-        )
-        .await;
-
-        tokio::spawn(async move {
-            let _permit = permit;
-            send_recorded_run_event(
-                &state,
-                &tx,
-                &prepared.execution_id,
-                ApxmEvent::root(
-                    SkillExecuteStartedPayload {
-                        execution_id: prepared.execution_id.clone(),
-                        skill_id: prepared.skill_id.clone(),
-                        skill_version: prepared.skill_version.clone(),
-                        session_id: prepared.session_id.clone(),
-                    },
-                    EventSource::Server,
-                    &trace_id,
-                ),
-            )
-            .await;
-            let event_sinks = build_skill_event_sinks(
-                &state,
-                &prepared.execution_id,
-                Some(Arc::new(TokioChannelEmitter(tx.clone()))),
-            );
-            let emitter = Arc::new(
-                apxm_runtime::EmitterAdapter::new(
-                    Arc::new(apxm_core::events::FanOutEmitter::new(event_sinks)),
-                    EventSource::Runtime,
-                    &trace_id,
-                )
-                .with_skill_provenance(prepared.skill_provenance()),
-            );
-            let runtime_execution = runtime.execute_artifact_with_session_emitter_and_metadata(
-                prepared.artifact,
-                prepared.args,
-                Some(prepared.session_id),
-                Some(emitter),
-                Some(prepared.session_dir.clone()),
-                side_effect_policy_metadata(prepared.side_effect_policy.as_deref()),
-            );
-            let result = if let Some(timeout_ms) = prepared.timeout_ms {
-                match tokio::time::timeout(Duration::from_millis(timeout_ms), runtime_execution)
-                    .await
-                {
-                    Ok(result) => result,
-                    Err(_) => {
-                        let message = "skill execution timed out".to_string();
-                        execution_store.complete_failure(&prepared.execution_id, message.clone());
-                        send_recorded_run_event(
-                            &state,
-                            &tx,
-                            &prepared.execution_id,
-                            ApxmEvent::root(
-                                ErrorPayload {
-                                    message,
-                                    status: None,
-                                    recoverable: false,
-                                },
-                                EventSource::Server,
-                                &trace_id,
-                            ),
-                        )
-                        .await;
-                        return;
-                    }
-                }
-            } else {
-                runtime_execution.await
-            };
-
-            match result {
-                Ok(result) => {
-                    let response = to_execute_response(result, Some(prepared.session_dir));
-                    execution_store.complete_success(&prepared.execution_id, response.clone());
-                    send_recorded_run_event(
-                        &state,
-                        &tx,
-                        &prepared.execution_id,
-                        ApxmEvent::root(
-                            SkillExecuteCompletePayload {
-                                execution_id: prepared.execution_id.clone(),
-                                result: response,
-                            },
-                            EventSource::Server,
-                            &trace_id,
-                        ),
-                    )
-                    .await;
-                }
-                Err(error) => {
-                    let message = error.to_string();
-                    execution_store.complete_failure(&prepared.execution_id, message.clone());
-                    send_recorded_run_event(
-                        &state,
-                        &tx,
-                        &prepared.execution_id,
-                        ApxmEvent::root(
-                            ErrorPayload {
-                                message,
-                                status: None,
-                                recoverable: false,
-                            },
-                            EventSource::Server,
-                            &trace_id,
-                        ),
-                    )
-                    .await;
-                }
-            }
-            state.rollout_registry.close(&prepared.execution_id).await;
-        });
-    }
-    drop(tx);
-
-    let stream = async_stream::stream! {
-        while let Some(item) = rx.recv().await {
-            let data = serde_json::to_string(&item).unwrap_or_else(|_| "{}".to_string());
-            yield Ok(Event::default().data(data));
-        }
-    };
-    Ok(Sse::new(stream).keep_alive(
-        KeepAlive::new().interval(Duration::from_secs(stream_config.keep_alive_secs.max(1))),
-    ))
-}
-
-fn spawn_prompt_only_stream_task(
-    state: AppState,
-    prepared: PreparedPromptOnlyExecution,
-    tx: mpsc::Sender<ApxmEvent>,
-    permit: crate::state::InferencePermit,
-) {
+    let runtime = Arc::clone(&state.runtime);
+    let execution_store = state.execution_store.clone();
     let trace_id = prepared.execution_id.clone();
+    let tx_task = tx.clone();
+
+    // Open rollout up front on the streaming compiled path. Subagent
+    // recorders are opened later by the executor's SPAWN_AGENT handler;
+    // the parent recorder must exist first.
+    ensure_rollout_open(
+        &state,
+        &prepared.execution_id,
+        &prepared.session_id,
+        &prepared.skill_id,
+        &prepared.skill_version,
+        None,
+        None,
+        None,
+        prepared.args.clone(),
+    )
+    .await;
 
     tokio::spawn(async move {
         let _permit = permit;
-        ensure_rollout_open(
-            &state,
-            &prepared.execution_id,
-            &prepared.session_id,
-            &prepared.skill_id,
-            &prepared.skill_version,
-            None,
-            None,
-            None,
-            prepared.args.clone(),
-        )
-        .await;
         send_recorded_run_event(
             &state,
-            &tx,
+            &tx_task,
             &prepared.execution_id,
             ApxmEvent::root(
                 SkillExecuteStartedPayload {
@@ -991,43 +634,62 @@ fn spawn_prompt_only_stream_task(
             ),
         )
         .await;
-
-        let request = build_prompt_only_request(&state, &prepared);
-        let started_ms = now_ms_u128();
-        let call = state.runtime.llm_registry().generate(request);
+        let event_sinks = build_skill_event_sinks(
+            &state,
+            &prepared.execution_id,
+            Some(Arc::new(TokioChannelEmitter(tx_task.clone()))),
+        );
+        let emitter = Arc::new(
+            apxm_runtime::EmitterAdapter::new(
+                Arc::new(apxm_core::events::FanOutEmitter::new(event_sinks)),
+                EventSource::Runtime,
+                &trace_id,
+            )
+            .with_skill_provenance(prepared.skill_provenance()),
+        );
+        let runtime_execution = runtime.execute_artifact_with_session_emitter_and_metadata(
+            prepared.artifact,
+            prepared.args,
+            Some(prepared.session_id),
+            Some(emitter),
+            Some(prepared.session_dir.clone()),
+            side_effect_policy_metadata(prepared.side_effect_policy.as_deref()),
+        );
         let result = if let Some(timeout_ms) = prepared.timeout_ms {
-            match tokio::time::timeout(Duration::from_millis(timeout_ms), call).await {
-                Ok(result) => result.map_err(|error| error.to_string()),
-                Err(_) => Err("prompt-only skill LLM call timed out".to_string()),
+            match tokio::time::timeout(Duration::from_millis(timeout_ms), runtime_execution).await {
+                Ok(result) => result,
+                Err(_) => {
+                    let message = "skill execution timed out".to_string();
+                    execution_store.complete_failure(&prepared.execution_id, message.clone());
+                    send_recorded_run_event(
+                        &state,
+                        &tx_task,
+                        &prepared.execution_id,
+                        ApxmEvent::root(
+                            ErrorPayload {
+                                message,
+                                status: None,
+                                recoverable: false,
+                            },
+                            EventSource::Server,
+                            &trace_id,
+                        ),
+                    )
+                    .await;
+                    return;
+                }
             }
         } else {
-            call.await.map_err(|error| error.to_string())
+            runtime_execution.await
         };
 
         match result {
-            Ok(llm_response) => {
-                let elapsed_ms = now_ms_u128().saturating_sub(started_ms);
-                let response = ExecuteResponse {
-                    results: std::collections::HashMap::new(),
-                    content: Some(llm_response.content.clone()),
-                    session_dir: Some(prepared.session_dir.clone()),
-                    stats: crate::types::responses::ExecutionStats {
-                        executed_nodes: 0,
-                        failed_nodes: 0,
-                        duration_ms: elapsed_ms,
-                    },
-                    llm_usage: crate::types::responses::LlmUsageSummary {
-                        input_tokens: llm_response.usage.input_tokens,
-                        output_tokens: llm_response.usage.output_tokens,
-                        total_requests: 1,
-                    },
-                };
-                state
-                    .execution_store
-                    .complete_success(&prepared.execution_id, response.clone());
+            Ok(result) => {
+                let response = to_execute_response(result, Some(prepared.session_dir));
+                execution_store.complete_success(&prepared.execution_id, response.clone());
                 send_recorded_run_event(
                     &state,
-                    &tx,
+                    &tx_task,
                     &prepared.execution_id,
                     ApxmEvent::root(
                         SkillExecuteCompletePayload {
@@ -1040,13 +702,12 @@ fn spawn_prompt_only_stream_task(
                 )
                 .await;
             }
-            Err(message) => {
-                state
-                    .execution_store
-                    .complete_failure(&prepared.execution_id, message.clone());
+            Err(error) => {
+                let message = error.to_string();
+                execution_store.complete_failure(&prepared.execution_id, message.clone());
                 send_recorded_run_event(
                     &state,
-                    &tx,
+                    &tx_task,
                     &prepared.execution_id,
                     ApxmEvent::root(
                         ErrorPayload {
@@ -1063,13 +724,24 @@ fn spawn_prompt_only_stream_task(
         }
         state.rollout_registry.close(&prepared.execution_id).await;
     });
+    drop(tx);
+
+    let stream = async_stream::stream! {
+        while let Some(item) = rx.recv().await {
+            let data = serde_json::to_string(&item).unwrap_or_else(|_| "{}".to_string());
+            yield Ok(Event::default().data(data));
+        }
+    };
+    Ok(Sse::new(stream).keep_alive(
+        KeepAlive::new().interval(Duration::from_secs(stream_config.keep_alive_secs.max(1))),
+    ))
 }
 
 fn prepare_skill_execution(
     state: &AppState,
     id: &str,
     req: SkillExecuteRequest,
-) -> Result<PreparedSkillExecution, ApiError> {
+) -> Result<PreparedCompiledExecution, ApiError> {
     let executable = state
         .skill_library
         .find_executable(id)
@@ -1079,23 +751,11 @@ fn prepare_skill_execution(
         .manifest
         .as_ref()
         .ok_or_else(|| ApiError::bad_request("skill manifest is invalid or missing"))?;
-    // Prompt-only fallback: scaffolded packs ship manifest + SKILL.md but
-    // no compiled .apxmobj. Run them through the LLM with SKILL.md as
-    // the system prompt instead of rejecting the request.
     if matches!(executable.record.compile_status, CompileStatus::NotCompiled)
         && executable.record.files.has_skill_md
     {
-        if executable.record.validation.status != ValidationStatus::Valid {
-            let details = executable.record.validation.errors.join("; ");
-            let message = if details.is_empty() {
-                "skill validation failed".to_string()
-            } else {
-                format!("skill validation failed: {details}")
-            };
-            return Err(ApiError::bad_request(message));
-        }
-        return Ok(PreparedSkillExecution::PromptOnly(
-            prepare_prompt_only_execution(state, &executable, manifest, req)?,
+        return Err(ApiError::bad_request(
+            "skill is not compiled; compile the skill artifact before execution",
         ));
     }
     let artifact = load_static_skill_artifact(&executable, manifest, state)?;
@@ -1121,65 +781,8 @@ fn prepare_skill_execution(
         &session_id,
         &session_dir,
     );
-    Ok(PreparedSkillExecution::Compiled(
-        PreparedCompiledExecution {
-            artifact,
-            args: req.args,
-            session_id,
-            session_dir,
-            timeout_ms: manifest.timeout_ms,
-            execution_id: execution.execution_id,
-            skill_id: manifest.skill_id.clone(),
-            skill_version: manifest.version.clone(),
-            entry_flow: manifest.entry_flow.clone(),
-            side_effect_policy: manifest.side_effect_policy.clone(),
-        },
-    ))
-}
-
-fn prepare_prompt_only_execution(
-    state: &AppState,
-    executable: &ExecutableSkill,
-    manifest: &SkillManifest,
-    req: SkillExecuteRequest,
-) -> Result<PreparedPromptOnlyExecution, ApiError> {
-    let source_path = executable.record.package_dir.join(SOURCE_FILE);
-    let raw = fs::read_to_string(&source_path).map_err(|error| {
-        ApiError::bad_request(format!(
-            "failed to read {SOURCE_FILE} at {}: {error}",
-            source_path.display()
-        ))
-    })?;
-    let skill_md_body = strip_yaml_frontmatter(&raw).trim().to_string();
-    if skill_md_body.is_empty() {
-        return Err(ApiError::bad_request(format!(
-            "{SOURCE_FILE} body is empty after stripping frontmatter"
-        )));
-    }
-    let session_id = req
-        .session_id
-        .map(validate_session_id)
-        .transpose()?
-        .unwrap_or_else(|| uuid::Uuid::new_v4().to_string());
-    let session_dir = skill_session_dir(&manifest.skill_id, &session_id)?;
-    let execution = state.execution_store.start_skill_execution_with_provenance(
-        SkillExecutionProvenance {
-            skill_id: manifest.skill_id.clone(),
-            skill_version: manifest.version.clone(),
-            entry_flow: Some(manifest.entry_flow.clone()),
-            source_hash: executable.record.hashes.source_hash.clone(),
-            air_hash: None,
-            artifact_hash: None,
-            parent_execution_id: None,
-            parent_skill_id: None,
-            parent_skill_version: None,
-            scope_id: None,
-        },
-        &session_id,
-        &session_dir,
-    );
-    Ok(PreparedPromptOnlyExecution {
-        skill_md_body,
+    Ok(PreparedCompiledExecution {
+        artifact,
         args: req.args,
         session_id,
         session_dir,
@@ -1187,32 +790,9 @@ fn prepare_prompt_only_execution(
         execution_id: execution.execution_id,
         skill_id: manifest.skill_id.clone(),
         skill_version: manifest.version.clone(),
-        required_capabilities: manifest.required_capabilities.clone(),
-        allowed_tools: manifest.allowed_tools.clone(),
+        entry_flow: manifest.entry_flow.clone(),
+        side_effect_policy: manifest.side_effect_policy.clone(),
     })
-}
-
-fn strip_yaml_frontmatter(source: &str) -> &str {
-    // SKILL.md packs (Anthropic-style) start with a YAML frontmatter
-    // block delimited by `---` lines. The body after the closing `---`
-    // is the system prompt. Returns the original string when no
-    // recognizable frontmatter is present.
-    let trimmed = source.trim_start_matches('\u{feff}');
-    let Some(rest) = trimmed.strip_prefix("---") else {
-        return source;
-    };
-    let rest = rest.strip_prefix('\n').unwrap_or(rest);
-    let mut search = rest;
-    while let Some(idx) = search.find("---") {
-        let before_ok = idx == 0 || search[..idx].ends_with('\n');
-        let after = &search[idx + 3..];
-        let after_ok = after.is_empty() || after.starts_with('\n') || after.starts_with('\r');
-        if before_ok && after_ok {
-            return after.strip_prefix('\n').unwrap_or(after);
-        }
-        search = &search[idx + 3..];
-    }
-    source
 }
 
 async fn await_skill_execution(
@@ -2010,133 +1590,5 @@ upstream = "https://github.com/obra/superpowers"
         let skill_dir = tmp.path().join("legacy-skill");
         fs::create_dir_all(&skill_dir).expect("mkdir");
         assert!(load_pack_info(&skill_dir).is_none());
-    }
-
-    use crate::checkpoints::CheckpointStore;
-    use crate::executions::ExecutionStore;
-    use crate::skills::SkillLibrary;
-    use crate::state::AppState;
-    use crate::tasks::TaskQueueManager;
-    use apxm_runtime::capability::executor::EchoCapability;
-    use apxm_runtime::{Runtime, RuntimeConfig};
-    use dashmap::DashMap;
-    use std::sync::Arc;
-    use std::time::SystemTime;
-
-    fn prompt_only_prepared(
-        required_capabilities: Vec<String>,
-        allowed_tools: Vec<String>,
-    ) -> PreparedPromptOnlyExecution {
-        PreparedPromptOnlyExecution {
-            skill_md_body: "You are a helper.".to_string(),
-            args: vec!["hello".to_string()],
-            session_id: "test-session".to_string(),
-            session_dir: "/tmp".to_string(),
-            timeout_ms: None,
-            execution_id: "test-exec".to_string(),
-            skill_id: TEST_SKILL_ID.to_string(),
-            skill_version: TEST_SKILL_VERSION.to_string(),
-            required_capabilities,
-            allowed_tools,
-        }
-    }
-
-    async fn test_state_with_echo() -> AppState {
-        let runtime = Runtime::new(RuntimeConfig::in_memory())
-            .await
-            .expect("test runtime");
-        runtime
-            .capability_system()
-            .register(Arc::new(EchoCapability::new()))
-            .expect("register echo capability");
-        AppState {
-            runtime: Arc::new(runtime),
-            agent_registry: Arc::new(DashMap::new()),
-            task_manager: TaskQueueManager::new(),
-            checkpoint_store: CheckpointStore::new(),
-            start_time: SystemTime::now(),
-            a2a_tasks: Arc::new(DashMap::new()),
-            skill_library: SkillLibrary::default(),
-            execution_store: ExecutionStore::new(),
-            run_event_bus: crate::runs::RunEventBus::new(),
-            webhook_dispatcher: None,
-            rollout_paths: Arc::new(apxm_rollout::RolloutPaths::new({
-                let dir = tempfile::tempdir().expect("rollout home");
-                let path = dir.path().to_path_buf();
-                std::mem::forget(dir);
-                path
-            })),
-            rollout_index: Arc::new(tokio::sync::Mutex::new(
-                apxm_rollout::IndexDb::open_in_memory().expect("rollout index"),
-            )),
-            rollout_registry: crate::rollout::RolloutRegistry::new(),
-            inference_limiter: crate::state::InferenceLimiter::unlimited_for_tests(),
-            server_config: apxm_driver::ServerConfig::default(),
-            cancel_registry: Arc::new(DashMap::new()),
-        }
-    }
-
-    #[tokio::test]
-    async fn prompt_only_skill_filters_tool_surface_to_declared_capabilities() {
-        let state = test_state_with_echo().await;
-        let prepared = prompt_only_prepared(vec!["echo".to_string()], vec![]);
-
-        let request = build_prompt_only_request(&state, &prepared);
-
-        let tools = request
-            .tools
-            .expect("tools present when capability declared");
-        assert_eq!(tools.len(), 1);
-        assert_eq!(tools[0].name, "echo");
-        // ToolChoice::Auto is the only legal value when the surface is non-empty.
-        assert!(matches!(request.tool_choice, Some(ToolChoice::Auto)));
-    }
-
-    #[tokio::test]
-    async fn prompt_only_skill_filters_out_unregistered_capabilities() {
-        let state = test_state_with_echo().await;
-        // `nonexistent_tool` is declared but never registered — must NOT
-        // leak into the surface.
-        let prepared = prompt_only_prepared(
-            vec!["echo".to_string(), "nonexistent_tool".to_string()],
-            vec![],
-        );
-
-        let request = build_prompt_only_request(&state, &prepared);
-
-        let tools = request.tools.expect("tools present");
-        assert_eq!(tools.len(), 1);
-        assert_eq!(tools[0].name, "echo");
-    }
-
-    #[tokio::test]
-    async fn prompt_only_skill_prefers_allowed_tools_over_required_capabilities() {
-        let state = test_state_with_echo().await;
-        // When `allowed_tools` is set, it's the authoritative surface;
-        // `required_capabilities` does NOT widen it.
-        let prepared = prompt_only_prepared(vec!["echo".to_string()], vec!["echo".to_string()]);
-
-        let request = build_prompt_only_request(&state, &prepared);
-
-        let tools = request.tools.expect("tools present");
-        assert_eq!(tools.len(), 1);
-        assert_eq!(tools[0].name, "echo");
-    }
-
-    #[tokio::test]
-    async fn prompt_only_skill_with_no_required_capabilities_disables_tool_use() {
-        let state = test_state_with_echo().await;
-        let prepared = prompt_only_prepared(vec![], vec![]);
-
-        let request = build_prompt_only_request(&state, &prepared);
-
-        assert!(
-            request.tools.is_none(),
-            "empty ACL must not advertise any tools"
-        );
-        assert!(
-            request.tool_choice.is_none(),
-            "empty ACL must leave tool_choice unset"
-        );
     }
 }

@@ -256,7 +256,7 @@ async fn mcp_tools_list_includes_skill_inventory_tools() {
     );
     assert!(names.contains(&MCP_TOOL_APXM_SKILL_CALL), "tools: {body}");
     assert!(
-        names.contains(&MCP_TOOL_APXM_PLAN_AS_GRAPH),
+        names.contains(&MCP_TOOL_APXM_PROMPT_AS_WORKFLOW),
         "tools: {body}"
     );
     assert!(names.contains(&MCP_TOOL_APXM_TRACE_FETCH), "tools: {body}");
@@ -1399,7 +1399,7 @@ async fn mcp_workflow_fans_out_independent_steps_and_fans_in_output() {
             })
             .count()
             >= 2,
-        "child graph tool events should be visible through apxm_workflow_events: {events}"
+        "child graph tool events should be visible through workflow_events: {events}"
     );
     let started_steps: HashSet<&str> = event_items
         .iter()
@@ -1567,7 +1567,7 @@ async fn mcp_workflow_cancel_interrupts_parked_resume_without_late_success() {
         workflow_status["error"]
             .as_str()
             .unwrap_or_default()
-            .contains("apxm_workflow_cancel"),
+            .contains("workflow_cancel"),
         "expected cancellation error: {workflow_status}"
     );
 
@@ -1672,7 +1672,7 @@ async fn mcp_workflow_cancel_interrupts_in_flight_run() {
         workflow_status["error"]
             .as_str()
             .unwrap_or_default()
-            .contains("apxm_workflow_cancel"),
+            .contains("workflow_cancel"),
         "expected cancellation error: {workflow_status}"
     );
 
@@ -2093,7 +2093,7 @@ async fn mcp_checked_in_cancel_parked_workflow_has_no_late_child_work() {
         workflow_status["error"]
             .as_str()
             .unwrap_or_default()
-            .contains("apxm_workflow_cancel"),
+            .contains("workflow_cancel"),
         "expected cancel error: {workflow_status}"
     );
 
@@ -2163,7 +2163,7 @@ async fn mcp_checked_in_cancel_parked_workflow_has_no_late_child_work() {
 }
 
 #[tokio::test]
-async fn mcp_plan_as_graph_reports_missing_router_as_tool_error() {
+async fn mcp_prompt_as_workflow_reports_missing_router_as_tool_error() {
     let app = build_app(test_state().await);
 
     let (status, body) = post_json(
@@ -2174,7 +2174,7 @@ async fn mcp_plan_as_graph_reports_missing_router_as_tool_error() {
             "id": 26,
             "method": MCP_METHOD_TOOLS_CALL,
             "params": {
-                (MCP_PARAM_NAME): MCP_TOOL_APXM_PLAN_AS_GRAPH,
+                (MCP_PARAM_NAME): MCP_TOOL_APXM_PROMPT_AS_WORKFLOW,
                 (MCP_PARAM_ARGUMENTS): {
                     (mcp_args::TASK): "audit this repository",
                     (mcp_args::EXECUTE): false
@@ -2196,14 +2196,14 @@ async fn mcp_plan_as_graph_reports_missing_router_as_tool_error() {
 }
 
 #[tokio::test]
-async fn mcp_plan_as_graph_compiles_mock_model_plan() {
+async fn mcp_prompt_as_workflow_compiles_mock_model_plan() {
     let app = build_app(test_state_with_mock_plan_response(mock_yield_plan_response()).await);
 
     let (status, body) = post_json(
         app,
         routes::MCP,
         mcp_call(
-            MCP_TOOL_APXM_PLAN_AS_GRAPH,
+            MCP_TOOL_APXM_PROMPT_AS_WORKFLOW,
             serde_json::json!({
                 (mcp_args::TASK): FIXTURE_PLAN_TASK,
                 (mcp_args::EXECUTE): false
@@ -2212,7 +2212,11 @@ async fn mcp_plan_as_graph_compiles_mock_model_plan() {
     )
     .await;
 
-    assert_eq!(status, StatusCode::OK, "mcp plan-as-graph failed: {body}");
+    assert_eq!(
+        status,
+        StatusCode::OK,
+        "mcp prompt-as-workflow failed: {body}"
+    );
     assert_eq!(body[tool_result::RESULT][mcp_fields::IS_ERROR], false);
     let response: serde_json::Value =
         serde_json::from_str(tool_text(&body)).expect("plan response JSON");
@@ -2236,7 +2240,7 @@ async fn mcp_plan_as_graph_compiles_mock_model_plan() {
         "artifact hash missing: {response}"
     );
     assert_eq!(
-        response[tool_result::PLAN][plan_field::NAME],
+        response[tool_result::WORKFLOW][plan_field::NAME],
         FIXTURE_PLAN_NAME
     );
     assert_eq!(
@@ -2246,7 +2250,7 @@ async fn mcp_plan_as_graph_compiles_mock_model_plan() {
 }
 
 #[tokio::test]
-async fn mcp_plan_as_graph_compiles_timeout_fallback() {
+async fn mcp_prompt_as_workflow_reports_timeout_as_tool_error() {
     let runtime = runtime_with_mock_plan_backend(
         MockLLMBackend::static_response(mock_yield_plan_response().to_string()).with_latency_ms(50),
     )
@@ -2259,7 +2263,7 @@ async fn mcp_plan_as_graph_compiles_timeout_fallback() {
         app,
         routes::MCP,
         mcp_call(
-            MCP_TOOL_APXM_PLAN_AS_GRAPH,
+            MCP_TOOL_APXM_PROMPT_AS_WORKFLOW,
             serde_json::json!({
                 (mcp_args::TASK): FIXTURE_PLAN_TASK,
                 (mcp_args::EXECUTE): false
@@ -2268,25 +2272,20 @@ async fn mcp_plan_as_graph_compiles_timeout_fallback() {
     )
     .await;
 
-    assert_eq!(status, StatusCode::OK, "mcp plan fallback failed: {body}");
-    assert_eq!(body[tool_result::RESULT][mcp_fields::IS_ERROR], false);
-    let response: serde_json::Value =
-        serde_json::from_str(tool_text(&body)).expect("plan response JSON");
-    assert_eq!(response[tool_result::STATUS], mcp_status::COMPILED);
     assert_eq!(
-        response[tool_result::PLAN][plan_field::NAME],
-        "deterministic_plan_timeout_fallback"
+        status,
+        StatusCode::OK,
+        "MCP tool errors should stay JSON-RPC 200: {body}"
     );
+    assert_eq!(body[tool_result::RESULT][mcp_fields::IS_ERROR], true);
     assert!(
-        response[tool_result::WARNINGS][0]
-            .as_str()
-            .is_some_and(|warning| warning.contains("timed out")),
-        "timeout warning missing: {response}"
+        tool_text(&body).contains("model-router plan emission timed out"),
+        "timeout should be explicit and should not compile a generic workflow: {body}"
     );
 }
 
 #[tokio::test]
-async fn mcp_plan_as_graph_normalizes_named_dependency_refs() {
+async fn mcp_prompt_as_workflow_normalizes_named_dependency_refs() {
     let app =
         build_app(test_state_with_mock_plan_response(mock_named_dependency_plan_response()).await);
 
@@ -2294,7 +2293,7 @@ async fn mcp_plan_as_graph_normalizes_named_dependency_refs() {
         app,
         routes::MCP,
         mcp_call(
-            MCP_TOOL_APXM_PLAN_AS_GRAPH,
+            MCP_TOOL_APXM_PROMPT_AS_WORKFLOW,
             serde_json::json!({
                 (mcp_args::TASK): FIXTURE_PLAN_TASK,
                 (mcp_args::EXECUTE): false
@@ -2312,14 +2311,14 @@ async fn mcp_plan_as_graph_normalizes_named_dependency_refs() {
     let response: serde_json::Value =
         serde_json::from_str(tool_text(&body)).expect("plan response JSON");
     assert_eq!(
-        response[tool_result::PLAN][plan_field::NODES][1][plan_field::DEPENDS_ON][0]
+        response[tool_result::WORKFLOW][plan_field::NODES][1][plan_field::DEPENDS_ON][0]
             [plan_field::NODE],
         1
     );
 }
 
 #[tokio::test]
-async fn mcp_plan_as_graph_repairs_invalid_candidate_before_compile() {
+async fn mcp_prompt_as_workflow_repairs_invalid_candidate_before_compile() {
     let backend = MockLLMBackend::static_response(mock_invalid_plan_response().to_string())
         .when_prompt_contains(
             FIXTURE_PLAN_REPAIR_MARKER,
@@ -2337,7 +2336,7 @@ async fn mcp_plan_as_graph_repairs_invalid_candidate_before_compile() {
         app,
         routes::MCP,
         mcp_call(
-            MCP_TOOL_APXM_PLAN_AS_GRAPH,
+            MCP_TOOL_APXM_PROMPT_AS_WORKFLOW,
             serde_json::json!({
                 (mcp_args::TASK): FIXTURE_PLAN_TASK,
                 (mcp_args::EXECUTE): false
@@ -2352,13 +2351,13 @@ async fn mcp_plan_as_graph_repairs_invalid_candidate_before_compile() {
         serde_json::from_str(tool_text(&body)).expect("plan response JSON");
     assert_eq!(response[tool_result::STATUS], mcp_status::COMPILED);
     assert_eq!(
-        response[tool_result::PLAN][plan_field::NODES][0][plan_field::OP],
+        response[tool_result::WORKFLOW][plan_field::NODES][0][plan_field::OP],
         FIXTURE_PLAN_OP_YIELD
     );
 }
 
 #[tokio::test]
-async fn mcp_plan_as_graph_normalizes_top_level_attribute_alias() {
+async fn mcp_prompt_as_workflow_normalizes_top_level_attribute_alias() {
     // A plan wrapped in a top-level `attr` alias with a stray `description`
     // field must compile on the first try via the
     // normalize_plan_top_level_attribute_aliases pass — without it, the
@@ -2371,7 +2370,7 @@ async fn mcp_plan_as_graph_normalizes_top_level_attribute_alias() {
         app,
         routes::MCP,
         mcp_call(
-            MCP_TOOL_APXM_PLAN_AS_GRAPH,
+            MCP_TOOL_APXM_PROMPT_AS_WORKFLOW,
             serde_json::json!({
                 (mcp_args::TASK): FIXTURE_PLAN_TASK,
                 (mcp_args::EXECUTE): false
@@ -2394,29 +2393,29 @@ async fn mcp_plan_as_graph_normalizes_top_level_attribute_alias() {
         serde_json::from_str(tool_text(&body)).expect("plan response JSON");
     assert_eq!(response[tool_result::STATUS], mcp_status::COMPILED);
     assert_eq!(
-        response[tool_result::PLAN][plan_field::NAME],
+        response[tool_result::WORKFLOW][plan_field::NAME],
         FIXTURE_PLAN_NAME
     );
     assert_eq!(
-        response[tool_result::PLAN][plan_field::NODES][0][plan_field::OP],
+        response[tool_result::WORKFLOW][plan_field::NODES][0][plan_field::OP],
         FIXTURE_PLAN_OP_YIELD
     );
     // The stray top-level field must not survive normalization.
     assert!(
-        response[tool_result::PLAN].get("description").is_none(),
+        response[tool_result::WORKFLOW].get("description").is_none(),
         "stray top-level field leaked into normalized plan: {response}"
     );
 }
 
 #[tokio::test]
-async fn mcp_plan_as_graph_records_execution_under_trace_id() {
+async fn mcp_prompt_as_workflow_records_execution_under_trace_id() {
     let app = build_app(test_state_with_mock_plan_response(mock_yield_plan_response()).await);
 
     let (status, body) = post_json(
         app.clone(),
         routes::MCP,
         mcp_call(
-            MCP_TOOL_APXM_PLAN_AS_GRAPH,
+            MCP_TOOL_APXM_PROMPT_AS_WORKFLOW,
             serde_json::json!({
                 (mcp_args::TASK): FIXTURE_PLAN_TASK,
                 (mcp_args::EXECUTE): true,
@@ -2463,7 +2462,7 @@ async fn mcp_plan_as_graph_records_execution_under_trace_id() {
 }
 
 #[tokio::test]
-async fn mcp_plan_as_graph_rejects_unsafe_generated_direct_tool() {
+async fn mcp_prompt_as_workflow_rejects_unsafe_generated_direct_tool() {
     let state =
         test_state_with_mock_plan_response(mock_inv_tool_plan_response(FIXTURE_WRITE_TOOL)).await;
     state
@@ -2479,7 +2478,7 @@ async fn mcp_plan_as_graph_rejects_unsafe_generated_direct_tool() {
         app,
         routes::MCP,
         mcp_call(
-            MCP_TOOL_APXM_PLAN_AS_GRAPH,
+            MCP_TOOL_APXM_PROMPT_AS_WORKFLOW,
             serde_json::json!({
                 (mcp_args::TASK): FIXTURE_PLAN_TASK,
                 (mcp_args::EXECUTE): true
@@ -2501,7 +2500,7 @@ async fn mcp_plan_as_graph_rejects_unsafe_generated_direct_tool() {
 }
 
 #[tokio::test]
-async fn mcp_plan_as_graph_allows_sandboxed_generated_tool() {
+async fn mcp_prompt_as_workflow_allows_sandboxed_generated_tool() {
     let mut runtime = runtime_with_mock_plan_backend(MockLLMBackend::static_response(
         mock_inv_tool_plan_response(FIXTURE_WRITE_TOOL).to_string(),
     ))
@@ -2519,7 +2518,7 @@ async fn mcp_plan_as_graph_allows_sandboxed_generated_tool() {
         app,
         routes::MCP,
         mcp_call(
-            MCP_TOOL_APXM_PLAN_AS_GRAPH,
+            MCP_TOOL_APXM_PROMPT_AS_WORKFLOW,
             serde_json::json!({
                 (mcp_args::TASK): FIXTURE_PLAN_TASK,
                 (mcp_args::EXECUTE): true,
@@ -2545,14 +2544,14 @@ async fn mcp_plan_as_graph_allows_sandboxed_generated_tool() {
 }
 
 #[tokio::test]
-async fn mcp_plan_as_graph_rejects_unsafe_trace_id_before_emission() {
+async fn mcp_prompt_as_workflow_rejects_unsafe_trace_id_before_emission() {
     let app = build_app(test_state().await);
 
     let (status, body) = post_json(
         app,
         routes::MCP,
         mcp_call(
-            MCP_TOOL_APXM_PLAN_AS_GRAPH,
+            MCP_TOOL_APXM_PROMPT_AS_WORKFLOW,
             serde_json::json!({
                 (mcp_args::TASK): FIXTURE_PLAN_TASK,
                 (mcp_args::EXECUTE): false,
@@ -3264,9 +3263,9 @@ const ALT_USER_SKILL_PACKAGE_DIR: &str = "alt-user-skill";
 const ALT_USER_SKILL_ID: &str = "alt-user-skill";
 const ALT_USER_SKILL_VERSION: &str = "0.2.0";
 const ALT_USER_SKILL_SOURCE: &str = "# Alt User Skill\n";
-const BUILTIN_SKILL_ID: &str = "apxm-plan-as-graph";
+const BUILTIN_SKILL_ID: &str = "prompt-as-workflow";
 const COLLIDING_USER_VERSION: &str = "9.9.9-user-override";
-const COLLIDING_USER_SOURCE: &str = "# User override of apxm-plan-as-graph\n";
+const COLLIDING_USER_SOURCE: &str = "# User override of prompt-as-workflow\n";
 
 static SKILL_ROOTS_ENV_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
@@ -3465,7 +3464,7 @@ async fn mcp_resources_list_combines_cli_and_env_roots() {
 
 #[tokio::test]
 async fn mcp_resources_list_builtin_wins_on_id_collision() {
-    // User attempts to shadow the bundled `apxm-plan-as-graph` skill by
+    // User attempts to shadow the bundled `prompt-as-workflow` skill by
     // contributing a package with the same skill_id (different version) via
     // `--skill-root`. The builtin must still appear, and listings must
     // disambiguate by version so the bundled artifact is not silently

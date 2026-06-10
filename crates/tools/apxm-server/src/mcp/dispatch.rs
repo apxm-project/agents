@@ -15,7 +15,7 @@ use crate::state::AppState;
 
 use super::schema::{
     MCP_TOOL_APXM_AAM_RECALL, MCP_TOOL_APXM_CAPABILITY_LIST, MCP_TOOL_APXM_EVIDENCE_LOOKUP,
-    MCP_TOOL_APXM_PLAN_AS_GRAPH, MCP_TOOL_APXM_SKILL_CALL, MCP_TOOL_APXM_SKILL_GET,
+    MCP_TOOL_APXM_PROMPT_AS_WORKFLOW, MCP_TOOL_APXM_SKILL_CALL, MCP_TOOL_APXM_SKILL_GET,
     MCP_TOOL_APXM_SKILL_VALIDATE, MCP_TOOL_APXM_SKILLS_LIST, MCP_TOOL_APXM_TRACE_FETCH,
     MCP_TOOL_ARG_ARGS, MCP_TOOL_ARG_ID, MCP_TOOL_ARG_SESSION_ID,
 };
@@ -69,8 +69,8 @@ pub(crate) async fn call_skill_tool(
                 Err(error) => mcp_tool_result(id.clone(), error.message, true),
             })
         }
-        MCP_TOOL_APXM_PLAN_AS_GRAPH => Some(
-            match mcp_tools::plan_as_graph_with_recorder(
+        MCP_TOOL_APXM_PROMPT_AS_WORKFLOW => Some(
+            match mcp_tools::prompt_as_workflow_with_recorder(
                 &state.runtime,
                 tool_args.clone(),
                 Some(Arc::new(HttpPlanExecutionRecorder::new(
