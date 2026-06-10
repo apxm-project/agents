@@ -454,7 +454,7 @@ impl Default for ServerMcpConfig {
         Self {
             plan_max_tokens: 8192,
             plan_temperature: 0.0,
-            plan_emit_timeout_ms: 30_000,
+            plan_emit_timeout_ms: 120_000,
             plan_repair_attempts: 3,
             plan_capability_guidance_limit: 32,
             default_top_k: 10,

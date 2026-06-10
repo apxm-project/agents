@@ -380,9 +380,9 @@ mod tests {
                 "plan_json": "/tmp/bundle/plan.json",
                 "graph_json": "/tmp/bundle/graph.json",
                 "control": {
-                    "status_tool": "apxm_workflow_status",
-                    "events_tool": "apxm_workflow_events",
-                    "cancel_tool": "apxm_workflow_cancel"
+                    "status_tool": "workflow_status",
+                    "events_tool": "workflow_events",
+                    "cancel_tool": "workflow_cancel"
                 },
                 "workers": [
                     {
@@ -404,17 +404,17 @@ mod tests {
             }),
         )
         .expect("goal_tracking render");
-        assert!(tracking.contains("apxm_workflow_status"));
+        assert!(tracking.contains("workflow_status"));
         assert!(tracking.contains("/tmp/bundle/workflow.apxmw"));
 
         let controller = render_prompt(
             "goal_controller",
             &json!({
-                "start_tool": "apxm_goal_start",
+                "start_tool": "goal_start",
                 "control": {
-                    "status_tool": "apxm_workflow_status",
-                    "events_tool": "apxm_workflow_events",
-                    "cancel_tool": "apxm_workflow_cancel"
+                    "status_tool": "workflow_status",
+                    "events_tool": "workflow_events",
+                    "cancel_tool": "workflow_cancel"
                 },
                 "terminal_event_kinds": [
                     "orchestrator_wake",
@@ -427,7 +427,7 @@ mod tests {
             }),
         )
         .expect("goal_controller render");
-        assert!(controller.contains("apxm_goal_start"));
+        assert!(controller.contains("goal_start"));
         assert!(controller.contains("orchestrator_wake"));
 
         let flowchart = render_prompt("goal_flowchart", &json!({})).expect("flowchart render");

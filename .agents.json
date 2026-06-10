@@ -57,7 +57,7 @@
     },
     {
       "name": "apxm-goal-orchestrator",
-      "description": "Use when an agent should turn a complex APXM goal into a bounded worker DAG or workflow, execute it through APXM, wait on workflow events/status, and synthesize verified artifacts. Covers `dekk apxm goal`, `apxm_orchestrate_start`, `apxm_workflow_*`, and `apxm_plan_as_graph` selection."
+      "description": "Use when an agent should turn a complex APXM goal into a bounded worker DAG or workflow, execute it through APXM, wait on workflow events/status, and synthesize verified artifacts. Covers `dekk apxm goal`, `goal_start`, `workflow_*`, and `prompt_as_workflow` selection."
     },
     {
       "name": "apxm-mcp-server",

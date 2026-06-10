@@ -13,7 +13,7 @@ use std::sync::Arc;
 use std::sync::atomic::Ordering;
 use std::time::{Duration, Instant};
 
-use apxm_core::types::{Node, NodeId, Number, OpStatus, TokenId, Value};
+use apxm_core::types::{AISOperationType, Node, NodeId, Number, OpStatus, TokenId, Value};
 use apxm_core::{apxm_op, apxm_token};
 use crossbeam_deque::Worker;
 
@@ -419,9 +419,7 @@ enum ExecutionOutcome {
     /// The handler PARKED on an external event: the worker yields its lane +
     /// permit (no `finish_one`) and registers a waker under `wait_key`; the node
     /// is re-injected when [`crate::scheduler::park_registry::wake`] fires.
-    Parked {
-        wait_key: String,
-    },
+    Parked { wait_key: String },
 }
 
 /// Execute an operation with retry logic.
@@ -535,11 +533,20 @@ async fn execute_with_retries(
 }
 
 fn max_scheduler_retries_for_node(configured_max_retries: u32, node: &Node) -> u32 {
-    if is_pure_llm_op(&node.op_type) {
+    if is_pure_llm_op(&node.op_type) || is_non_retryable_side_effect_op(&node.op_type) {
         0
     } else {
         configured_max_retries
     }
+}
+
+fn is_non_retryable_side_effect_op(op: &AISOperationType) -> bool {
+    matches!(
+        op,
+        AISOperationType::WorkflowSpawn
+            | AISOperationType::SpawnAgent
+            | AISOperationType::Communicate
+    )
 }
 
 /// Calculate exponential backoff delay in milliseconds.
@@ -950,6 +957,17 @@ mod tests {
             max_scheduler_retries_for_node(3, &make_op_node(AISOperationType::Reason)),
             0
         );
+    }
+
+    #[test]
+    fn scheduler_retries_are_disabled_for_non_idempotent_orchestration_ops() {
+        for op in [
+            AISOperationType::WorkflowSpawn,
+            AISOperationType::SpawnAgent,
+            AISOperationType::Communicate,
+        ] {
+            assert_eq!(max_scheduler_retries_for_node(3, &make_op_node(op)), 0);
+        }
     }
 
     #[test]

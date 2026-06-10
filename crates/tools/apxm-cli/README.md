@@ -64,7 +64,7 @@ dekk apxm goal "Investigate and implement the scoped change" \
 ```
 
 `goal` calls the server-owned goal-start path and follows
-`apxm_workflow_events/status` unless `--no-follow` is set. Use `--status`,
+`workflow_events`/`workflow_status` unless `--no-follow` is set. Use `--status`,
 `--events`, or `--cancel` with the returned execution id to inspect or stop a
 run later.
 
