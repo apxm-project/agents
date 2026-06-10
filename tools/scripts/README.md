@@ -1,7 +1,7 @@
 # APXM Scripts
 
 `tools/scripts/` contains Python entrypoints that Dekk calls directly. Keep
-public command names in `.dekk.toml`; keep implementation detail inside a
+public command names in `.dekk.toml`; keep implementation details inside a
 script-local package when a command grows beyond one responsibility.
 
 ## Command Wrappers
@@ -10,16 +10,16 @@ script-local package when a command grows beyond one responsibility.
   MLIR library path handling, release binary mirroring, dialect rebuilds, and
   cache cleanup.
 - `vllm.py` owns APXM-vLLM operator workflows. Keep the public surface under
-  `dekk apxm vllm`; do not add compatibility commands for removed service
-  flows.
-- `release.py` is the Dekk-facing release entrypoint. The implementation lives
-  in `apxm_release/`:
+  `dekk apxm vllm`; do not re-add the removed `service-start` or
+  `service-adopt` commands.
+- `release.py` is the Dekk-facing release entrypoint. Key modules live in
+  `apxm_release/`:
   - `checks.py` runs release readiness gates.
   - `dist.py` builds archives, Python distributions, and checksums.
   - `publish.py` owns GitHub and PyPI publishing.
   - `cli.py` owns argument parsing.
 
-## Validators And Installers
+## Validators and Installers
 
 - `check_commit_message.py` enforces APXM commit-message rules for hooks and
   Dekk.

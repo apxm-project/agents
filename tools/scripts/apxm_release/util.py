@@ -15,7 +15,6 @@ from apxm_release.constants import (
     PYTHON_PROJECT,
     RELEASE_ROOT,
     REPO_ROOT,
-    CheckResult,
 )
 
 
@@ -61,7 +60,9 @@ def release_version() -> str:
     workspace = workspace_version()
     python = python_version()
     if workspace != python:
-        raise SystemExit(f"workspace version {workspace} does not match Python package version {python}")
+        raise SystemExit(
+            f"workspace version {workspace} does not match Python package version {python}"
+        )
     return workspace
 
 
@@ -80,14 +81,6 @@ def target_label() -> str:
     system = platform.system().lower() or "unknown"
     libc = "gnu" if system == "linux" else system
     return f"{machine}-{system}-{libc}"
-
-
-def result(name: str, ok: bool, detail: str) -> CheckResult:
-    return CheckResult(name, ok, detail)
-
-
-def print_result(check: CheckResult) -> None:
-    print(f"[{'OK' if check.ok else 'FAIL'}] {check.name}: {check.detail}")
 
 
 def last_line(process: subprocess.CompletedProcess[str]) -> str:

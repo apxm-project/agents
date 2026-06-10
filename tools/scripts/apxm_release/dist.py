@@ -3,10 +3,10 @@
 from __future__ import annotations
 
 import argparse
-import tempfile
-import tarfile
 import shutil
 import sys
+import tarfile
+import tempfile
 from pathlib import Path
 
 from apxm_release.checks import run_checks
@@ -72,7 +72,9 @@ def _make_tarball(staging: Path, output: Path, arc_root: str) -> None:
 
 def _make_source_archive(output: Path, arc_root: str) -> None:
     output.parent.mkdir(parents=True, exist_ok=True)
-    archive = run(["git", "archive", "--format=tar.gz", f"--prefix={arc_root}/", "-o", str(output), "HEAD"])
+    archive = run(
+        ["git", "archive", "--format=tar.gz", f"--prefix={arc_root}/", "-o", str(output), "HEAD"]
+    )
     if archive.returncode != 0:
         raise SystemExit(archive.returncode)
 
@@ -106,7 +108,11 @@ def _build_python_dist(output_dir: Path) -> list[Path]:
         smoke_pip = venv_bin(smoke_venv, "pip")
         smoke_python = venv_bin(smoke_venv, "python")
         smoke_env = clean_python_env()
-        if run([str(smoke_pip), "install", "--force-reinstall", str(wheel)], env=smoke_env).returncode != 0:
+        installed_wheel = run(
+            [str(smoke_pip), "install", "--force-reinstall", str(wheel)],
+            env=smoke_env,
+        )
+        if installed_wheel.returncode != 0:
             raise SystemExit("failed to install built Python wheel")
         smoke = (
             "from apxm.contract import RepoLayout, build_layout; "
