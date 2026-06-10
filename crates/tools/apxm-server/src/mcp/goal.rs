@@ -37,8 +37,10 @@ const TEMPLATE_GOAL_TRACKING: &str = "goal_tracking";
 const TEMPLATE_GOAL_CONTROLLER: &str = "goal_controller";
 const TEMPLATE_GOAL_FLOWCHART: &str = "goal_flowchart";
 const TEMPLATE_GOAL_REPORT_STUB: &str = "goal_report_stub";
+const TEMPLATE_GOAL_WORKER_ROLE: &str = "goal_worker_role";
 const TEMPLATE_GOAL_DEFAULT_WORKER: &str = "goal_default_worker_instructions";
 const TEMPLATE_GOAL_DEFAULT_SUPERVISOR: &str = "goal_default_supervisor_instructions";
+const DEFAULT_AUTO_PLAN_MAX_WORKERS: usize = 8;
 
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -50,7 +52,10 @@ struct GoalStartArgs {
     event: Option<String>,
     #[serde(default)]
     trigger: Option<String>,
-    workers: Vec<WorkerSpec>,
+    #[serde(default)]
+    workers: Option<Vec<WorkerSpec>>,
+    #[serde(default)]
+    planning: Option<GoalPlanningSpec>,
     #[serde(default)]
     supervisor: Option<SupervisorSpec>,
     #[serde(default)]
@@ -82,6 +87,27 @@ struct GoalSelectionSpec {
     agents: Option<String>,
     #[serde(default)]
     require_agents: bool,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct GoalPlanningSpec {
+    #[serde(default)]
+    mode: Option<String>,
+    #[serde(default)]
+    max_workers: Option<usize>,
+}
+
+impl GoalStartArgs {
+    fn workers(&self) -> &[WorkerSpec] {
+        self.workers.as_deref().unwrap_or(&[])
+    }
+
+    fn workers_mut(&mut self) -> &mut Vec<WorkerSpec> {
+        self.workers
+            .as_mut()
+            .expect("goal planning must prepare workers before mutation")
+    }
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -146,6 +172,7 @@ struct GoalStartResponse {
     bundle_dir: String,
     artifacts: GoalArtifacts,
     plan: GoalPlanSummary,
+    planning: GoalPlanningSummary,
     #[serde(skip_serializing_if = "Option::is_none")]
     selection: Option<GoalSelectionSummary>,
     control: GoalControl,
@@ -161,6 +188,15 @@ struct GoalPlanSummary {
     workers: Vec<WorkerPlanSummary>,
     supervisor: SupervisorPlanSummary,
     workspace_mode: OrchestrationWorkspaceMode,
+}
+
+#[derive(Debug, Clone, Serialize)]
+struct GoalPlanningSummary {
+    mode: &'static str,
+    generated: bool,
+    worker_count: usize,
+    max_workers: usize,
+    reason: String,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -333,7 +369,7 @@ pub(crate) fn goal_start_input_schema() -> JsonValue {
     serde_json::json!({
         "type": "object",
         "additionalProperties": false,
-        "required": ["task", "workers"],
+        "required": ["task"],
         "properties": {
             "task": {
                 "type": "string",
@@ -355,7 +391,7 @@ pub(crate) fn goal_start_input_schema() -> JsonValue {
                 "type": "array",
                 "minItems": 1,
                 "maxItems": MAX_WORKERS,
-                "description": "Bounded worker graph for one goal pass. Independent workers run in parallel; depends_on creates fan-in/fan-out phases.",
+                "description": "Optional bounded worker graph for one goal pass. When omitted, APXM creates a bounded worker DAG from task/context/event/trigger before admission. Independent workers run in parallel; depends_on creates fan-in/fan-out phases.",
                 "items": {
                     "type": "object",
                     "additionalProperties": false,
@@ -376,6 +412,24 @@ pub(crate) fn goal_start_input_schema() -> JsonValue {
                         "depends_on": { "type": "array", "items": { "type": "string" } },
                         "mode": { "type": "string" },
                         "model": { "type": "string" }
+                    }
+                }
+            },
+            "planning": {
+                "type": "object",
+                "additionalProperties": false,
+                "description": "Server-owned goal planning policy used when workers are omitted.",
+                "properties": {
+                    "mode": {
+                        "type": "string",
+                        "enum": ["auto"],
+                        "description": "auto lets APXM generate the bounded worker DAG for this pass"
+                    },
+                    "max_workers": {
+                        "type": "integer",
+                        "minimum": 1,
+                        "maximum": MAX_WORKERS,
+                        "description": "Ceiling for server-generated workers; APXM may use fewer"
                     }
                 }
             },
@@ -469,6 +523,7 @@ async fn goal_start(
 ) -> Result<GoalStartResponse, ApiError> {
     let mut request: GoalStartArgs = serde_json::from_value(tool_args.clone())
         .map_err(|error| ApiError::bad_request(format!("invalid goal_start arguments: {error}")))?;
+    let planning = apply_goal_planning(&mut request)?;
     let selection = apply_goal_selection(state, &mut request)?;
     let uses_process_spawns = goal_uses_process_spawns(&request);
     if uses_process_spawns
@@ -483,7 +538,7 @@ async fn goal_start(
         )));
     }
 
-    let bundle = materialize_goal_bundle(&request)?;
+    let bundle = materialize_goal_bundle(&request, &planning)?;
     let plan_summary = bundle.plan.summary();
     let artifacts = goal_artifacts(&bundle.bundle_dir, &bundle.plan);
     let control = goal_control();
@@ -542,6 +597,7 @@ async fn goal_start(
         bundle_dir: bundle.bundle_dir.to_string_lossy().to_string(),
         artifacts,
         plan: plan_summary,
+        planning,
         selection,
         control,
         goal: goal_runtime_contract(
@@ -561,7 +617,10 @@ async fn goal_start(
     Ok(response)
 }
 
-fn materialize_goal_bundle(request: &GoalStartArgs) -> Result<GoalBundle, ApiError> {
+fn materialize_goal_bundle(
+    request: &GoalStartArgs,
+    planning: &GoalPlanningSummary,
+) -> Result<GoalBundle, ApiError> {
     validate_request(request)?;
     let session_id = request
         .session_id
@@ -590,7 +649,7 @@ fn materialize_goal_bundle(request: &GoalStartArgs) -> Result<GoalBundle, ApiErr
 
     let workspace_policy = WorkspacePolicy::from_spec(request.workspace.as_ref(), &bundle_dir)?;
     let plan = build_plan(request, &session_id, &bundle_dir, &workspace_policy)?;
-    write_bundle_files(&bundle_dir, request, &plan)?;
+    write_bundle_files(&bundle_dir, request, planning, &plan)?;
 
     Ok(GoalBundle {
         session_id,
@@ -604,19 +663,19 @@ fn validate_request(request: &GoalStartArgs) -> Result<(), ApiError> {
     if request.task.trim().is_empty() {
         return Err(ApiError::bad_request("goal_start task must not be empty"));
     }
-    if request.workers.is_empty() {
+    if request.workers().is_empty() {
         return Err(ApiError::bad_request(
             "goal_start workers must be non-empty",
         ));
     }
-    if request.workers.len() > MAX_WORKERS {
+    if request.workers().len() > MAX_WORKERS {
         return Err(ApiError::bad_request(format!(
             "goal_start workers exceeds breadth cap of {MAX_WORKERS}"
         )));
     }
 
     let mut ids = HashSet::new();
-    for worker in &request.workers {
+    for worker in request.workers() {
         validate_component_id(&worker.id, "worker.id")?;
         if !ids.insert(worker.id.as_str()) {
             return Err(ApiError::bad_request(format!(
@@ -647,8 +706,242 @@ fn validate_request(request: &GoalStartArgs) -> Result<(), ApiError> {
         validate_optional_text(supervisor.mode.as_deref(), "supervisor.mode")?;
         validate_optional_text(supervisor.model.as_deref(), "supervisor.model")?;
     }
-    validate_dependencies(&request.workers)?;
+    validate_dependencies(request.workers())?;
     Ok(())
+}
+
+fn apply_goal_planning(request: &mut GoalStartArgs) -> Result<GoalPlanningSummary, ApiError> {
+    let mode = request
+        .planning
+        .as_ref()
+        .and_then(|planning| planning.mode.as_deref())
+        .unwrap_or("auto")
+        .trim();
+    if !mode.is_empty() && mode != "auto" {
+        return Err(ApiError::bad_request(
+            "goal_start planning.mode must be 'auto'",
+        ));
+    }
+
+    let requested_max = request
+        .planning
+        .as_ref()
+        .and_then(|planning| planning.max_workers)
+        .unwrap_or(DEFAULT_AUTO_PLAN_MAX_WORKERS);
+    if !(1..=MAX_WORKERS).contains(&requested_max) {
+        return Err(ApiError::bad_request(format!(
+            "goal_start planning.max_workers must be between 1 and {MAX_WORKERS}"
+        )));
+    }
+    let max_workers = requested_max;
+
+    let Some(workers) = request.workers.as_ref() else {
+        let workers = auto_goal_workers(request, max_workers)?;
+        let worker_count = workers.len();
+        request.workers = Some(workers);
+        return Ok(GoalPlanningSummary {
+            mode: "auto",
+            generated: true,
+            worker_count,
+            max_workers,
+            reason: "workers were omitted; APXM generated a bounded DAG from task context"
+                .to_string(),
+        });
+    };
+
+    if workers.is_empty() {
+        return Err(ApiError::bad_request(
+            "goal_start workers must be non-empty when provided",
+        ));
+    }
+
+    if workers.len() > MAX_WORKERS {
+        return Err(ApiError::bad_request(format!(
+            "goal_start workers exceeds breadth cap of {MAX_WORKERS}"
+        )));
+    }
+
+    Ok(GoalPlanningSummary {
+        mode: "explicit",
+        generated: false,
+        worker_count: workers.len(),
+        max_workers,
+        reason: "caller supplied an explicit bounded worker DAG".to_string(),
+    })
+}
+
+fn auto_goal_workers(
+    request: &GoalStartArgs,
+    max_workers: usize,
+) -> Result<Vec<WorkerSpec>, ApiError> {
+    let task_text = goal_planning_text(request);
+    let complex = contains_any(
+        &task_text,
+        &[
+            "ultra",
+            "investigate",
+            "architecture",
+            "consistent",
+            "alignment",
+            "migration",
+            "migrate",
+            "e2e",
+            "end to end",
+            "whole project",
+            "all of it",
+        ],
+    );
+    let needs_research = complex
+        || contains_any(
+            &task_text,
+            &[
+                "inspect", "research", "revise", "check", "review", "organize",
+            ],
+        );
+    let needs_docs = contains_any(
+        &task_text,
+        &["doc", "docs", "documentation", "readme", "skill"],
+    );
+    let needs_release = contains_any(
+        &task_text,
+        &["release", "publish", "version", "packag", "ship"],
+    );
+    let needs_critic = complex
+        || contains_any(
+            &task_text,
+            &["risk", "security", "critic", "dissent", "regression"],
+        );
+
+    let mut ids = match max_workers {
+        1 => vec!["implement"],
+        2 => vec!["implement", "verify"],
+        _ => vec!["planner", "implement", "verify"],
+    };
+    add_auto_worker_id(&mut ids, "research", needs_research, max_workers);
+    add_auto_worker_id(&mut ids, "docs", needs_docs, max_workers);
+    add_auto_worker_id(&mut ids, "critic", needs_critic, max_workers);
+    add_auto_worker_id(&mut ids, "release", needs_release, max_workers);
+    let needs_synthesizer = ids.len() >= 5 || (complex && ids.len() >= 4);
+    add_auto_worker_id(&mut ids, "synthesizer", needs_synthesizer, max_workers);
+
+    ids.sort_by_key(|id| auto_worker_order(id));
+    let included = ids.iter().copied().collect::<HashSet<_>>();
+    ids.into_iter()
+        .map(|id| auto_goal_worker(id, &included))
+        .collect::<Result<Vec<_>, _>>()
+}
+
+fn add_auto_worker_id(ids: &mut Vec<&'static str>, id: &'static str, enabled: bool, max: usize) {
+    if enabled && ids.len() < max && !ids.contains(&id) {
+        ids.push(id);
+    }
+}
+
+fn auto_goal_worker(id: &'static str, included: &HashSet<&str>) -> Result<WorkerSpec, ApiError> {
+    let kind = match id {
+        "implement" => "executor",
+        "verify" => "verifier",
+        "critic" => "reviewer",
+        other => other,
+    };
+    Ok(WorkerSpec {
+        id: id.to_string(),
+        role: Some(goal_worker_role(kind, id)?),
+        prompt: None,
+        profile: None,
+        transport: None,
+        depends_on: auto_worker_dependencies(id, included),
+        mode: None,
+        model: None,
+    })
+}
+
+fn auto_worker_dependencies(id: &str, included: &HashSet<&str>) -> Vec<String> {
+    let deps: Vec<&str> = match id {
+        "research" if included.contains("planner") => vec!["planner"],
+        "implement" => {
+            let mut deps = Vec::new();
+            if included.contains("planner") {
+                deps.push("planner");
+            }
+            if included.contains("research") {
+                deps.push("research");
+            }
+            deps
+        }
+        "docs" => vec!["implement"],
+        "critic" => vec!["implement"],
+        "verify" => {
+            let mut deps = vec!["implement"];
+            if included.contains("docs") {
+                deps.push("docs");
+            }
+            deps
+        }
+        "release" => {
+            let mut deps = vec!["verify"];
+            if included.contains("docs") {
+                deps.push("docs");
+            }
+            deps
+        }
+        "synthesizer" => {
+            let mut deps = Vec::new();
+            for dep in ["critic", "verify", "release"] {
+                if included.contains(dep) {
+                    deps.push(dep);
+                }
+            }
+            if deps.is_empty() && included.contains("implement") {
+                deps.push("implement");
+            }
+            deps
+        }
+        _ => Vec::new(),
+    };
+    deps.into_iter().map(str::to_string).collect()
+}
+
+fn auto_worker_order(id: &&str) -> usize {
+    match *id {
+        "planner" => 0,
+        "research" => 1,
+        "implement" => 2,
+        "docs" => 3,
+        "critic" => 4,
+        "verify" => 5,
+        "release" => 6,
+        "synthesizer" => 7,
+        _ => 99,
+    }
+}
+
+fn goal_planning_text(request: &GoalStartArgs) -> String {
+    [
+        Some(request.task.as_str()),
+        request.context.as_deref(),
+        request.event.as_deref(),
+        request.trigger.as_deref(),
+    ]
+    .into_iter()
+    .flatten()
+    .collect::<Vec<_>>()
+    .join("\n")
+    .to_lowercase()
+}
+
+fn contains_any(text: &str, needles: &[&str]) -> bool {
+    needles.iter().any(|needle| text.contains(needle))
+}
+
+fn goal_worker_role(kind: &str, worker_id: &str) -> Result<String, ApiError> {
+    render_goal_template(
+        TEMPLATE_GOAL_WORKER_ROLE,
+        &serde_json::json!({
+            "kind": kind,
+            "worker_id": worker_id
+        }),
+    )
 }
 
 fn validate_transport(
@@ -697,7 +990,7 @@ fn apply_goal_selection(
             agents: "disabled".to_string(),
             candidates: Vec::new(),
             workers: request
-                .workers
+                .workers()
                 .iter()
                 .map(|worker| worker_selection_summary(worker, "explicit"))
                 .collect(),
@@ -711,7 +1004,7 @@ fn apply_goal_selection(
     }
 
     let explicit_profiles: HashSet<String> = request
-        .workers
+        .workers()
         .iter()
         .filter(|worker| worker.profile.is_some())
         .map(|worker| worker.id.clone())
@@ -723,7 +1016,7 @@ fn apply_goal_selection(
         agents: "auto".to_string(),
         candidates,
         workers: request
-            .workers
+            .workers()
             .iter()
             .map(|worker| {
                 let source = if explicit_profiles.contains(&worker.id) {
@@ -746,7 +1039,7 @@ fn bind_goal_agent_selection(
     require_agents: bool,
 ) -> Result<(), ApiError> {
     let mut cursor = 0usize;
-    for worker in request.workers.iter_mut() {
+    for worker in request.workers_mut().iter_mut() {
         if worker.profile.is_some() {
             continue;
         }
@@ -1006,10 +1299,10 @@ fn build_plan(
     bundle_dir: &Path,
     workspace_policy: &WorkspacePolicy,
 ) -> Result<GoalPlan, ApiError> {
-    let mut workers = Vec::with_capacity(request.workers.len());
+    let mut workers = Vec::with_capacity(request.workers().len());
     let tracking_doc_path = bundle_dir.join("goal.md");
     let graph_path = bundle_dir.join("graph.json");
-    for worker in &request.workers {
+    for worker in request.workers() {
         let (cwd, workspace) = workspace_policy.allocate(&worker.id)?;
         let transport = effective_transport(worker.transport, worker.profile.as_deref());
         workers.push(WorkerPlan {
@@ -1095,6 +1388,7 @@ fn build_plan(
 fn write_bundle_files(
     bundle_dir: &Path,
     request: &GoalStartArgs,
+    planning: &GoalPlanningSummary,
     plan: &GoalPlan,
 ) -> Result<(), ApiError> {
     let workers_dir = bundle_dir.join("workers");
@@ -1157,7 +1451,7 @@ fn write_bundle_files(
     .map_err(|error| ApiError::internal_message(format!("failed to write workflow: {error}")))?;
     write_json_file(
         &bundle_dir.join("plan.json"),
-        &plan_packet_json(request, plan, bundle_dir)?,
+        &plan_packet_json(request, planning, plan, bundle_dir)?,
         "goal plan packet",
     )?;
     write_json_file(
@@ -1215,6 +1509,7 @@ fn write_json_file(path: &Path, value: &JsonValue, label: &str) -> Result<(), Ap
 
 fn plan_packet_json(
     request: &GoalStartArgs,
+    planning: &GoalPlanningSummary,
     plan: &GoalPlan,
     bundle_dir: &Path,
 ) -> Result<JsonValue, ApiError> {
@@ -1229,6 +1524,7 @@ fn plan_packet_json(
         "tracking_doc": path_string(&bundle_dir.join("goal.md")),
         "graph_json": path_string(&bundle_dir.join("graph.json")),
         "control": goal_control(),
+        "planning": planning,
         "workers": plan
             .workers
             .iter()
@@ -1774,7 +2070,7 @@ fn effective_transport(
 }
 
 fn goal_uses_process_spawns(request: &GoalStartArgs) -> bool {
-    request.workers.iter().any(|worker| {
+    request.workers().iter().any(|worker| {
         effective_transport(worker.transport, worker.profile.as_deref())
             == OrchestrationTransport::Acp
     }) || request.supervisor.as_ref().is_some_and(|supervisor| {
@@ -2037,7 +2333,8 @@ mod tests {
             context: None,
             event: None,
             trigger: None,
-            workers,
+            workers: Some(workers),
+            planning: None,
             supervisor: None,
             selection: None,
             workspace: None,
@@ -2087,16 +2384,16 @@ mod tests {
 
         bind_goal_agent_selection(&mut request, &candidates, true).expect("selection");
 
-        assert_eq!(request.workers[0].profile.as_deref(), Some("agent-a"));
+        assert_eq!(request.workers()[0].profile.as_deref(), Some("agent-a"));
         assert_eq!(
-            request.workers[0].transport,
+            request.workers()[0].transport,
             Some(OrchestrationTransport::Acp)
         );
-        assert_eq!(request.workers[0].mode.as_deref(), Some("architect"));
-        assert_eq!(request.workers[0].model.as_deref(), Some("model-a"));
-        assert_eq!(request.workers[1].profile.as_deref(), Some("explicit"));
-        assert_eq!(request.workers[2].profile.as_deref(), Some("agent-b"));
-        assert_eq!(request.workers[2].model.as_deref(), Some("model-b"));
+        assert_eq!(request.workers()[0].mode.as_deref(), Some("architect"));
+        assert_eq!(request.workers()[0].model.as_deref(), Some("model-a"));
+        assert_eq!(request.workers()[1].profile.as_deref(), Some("explicit"));
+        assert_eq!(request.workers()[2].profile.as_deref(), Some("agent-b"));
+        assert_eq!(request.workers()[2].model.as_deref(), Some("model-b"));
     }
 
     #[test]
@@ -2110,7 +2407,7 @@ mod tests {
         );
 
         bind_goal_agent_selection(&mut request, &[], false).expect("optional selection");
-        assert!(request.workers[0].profile.is_none());
+        assert!(request.workers()[0].profile.is_none());
     }
 
     #[test]

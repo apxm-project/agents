@@ -6,6 +6,8 @@
 //! client-side transcript that is passed back as the graph's `conversation`
 //! parameter every turn. This is the host-resident conversational loop: the
 //! runtime stays single-shot ("one DAG = one turn") and the REPL drives it.
+//! The built-in graph is a direct ASK by default, or a SPAWN_AGENT +
+//! COMMUNICATE turn when `--agent` selects an ACP profile such as `claude`.
 //!
 //! The SSE stream is parsed with the same [`super::watch::SseParser`] +
 //! [`super::render`] machinery the `watch` command uses, so the per-agent
@@ -16,6 +18,7 @@ use std::path::PathBuf;
 
 use anyhow::{Context, Result, anyhow};
 use apxm_ais::chat::{self, COMPACT_AT_TOKENS, KEEP_RECENT_TURNS, Role};
+use apxm_core::constants::orchestration::admission as orchestration_admission;
 use futures::StreamExt;
 use serde_json::Value as JsonValue;
 
@@ -43,6 +46,12 @@ pub struct ChatOptions {
     pub backend: Option<String>,
     /// Pin each turn to a specific model id (ignored when `--air` is set).
     pub model: Option<String>,
+    /// Spawn this ACP profile for each turn instead of using a direct ASK node.
+    pub agent: Option<String>,
+    /// Optional ACP mode for `agent`.
+    pub agent_mode: Option<String>,
+    /// Optional ACP model request for `agent`.
+    pub agent_model: Option<String>,
     /// Subscribe to an apxm-os control-plane event stream
     /// (`GET {monitor_url}/events`); each cue event becomes a synthetic turn, so
     /// the agent reacts to external events (file changes, process output, cron,
@@ -134,6 +143,54 @@ fn mint_session_id() -> String {
     format!("chat-{:x}", nanos)
 }
 
+fn non_empty(value: &str) -> Option<&str> {
+    let trimmed = value.trim();
+    if trimmed.is_empty() {
+        None
+    } else {
+        Some(trimmed)
+    }
+}
+
+fn chat_air_for_options(opts: &ChatOptions, context: Option<&str>) -> Result<String> {
+    match &opts.air {
+        Some(path) => std::fs::read_to_string(path)
+            .with_context(|| format!("failed to read AIR graph {}", path.display())),
+        None => Ok(builtin_chat_air(opts, context)),
+    }
+}
+
+fn builtin_chat_air(opts: &ChatOptions, context: Option<&str>) -> String {
+    match opts.agent.as_deref().and_then(non_empty) {
+        Some(profile) => chat::acp_chat_air(&chat::ChatAcpAirOptions {
+            profile,
+            system_prompt: context,
+            mode: opts.agent_mode.as_deref().and_then(non_empty),
+            model: opts.agent_model.as_deref().and_then(non_empty),
+        }),
+        None => chat::chat_air(&chat::ChatAirOptions {
+            system_prompt: context,
+            backend: opts.backend.as_deref(),
+            model: opts.model.as_deref(),
+            effort: None,
+            tools: opts.tools,
+            skills: true,
+        }),
+    }
+}
+
+fn initial_session_grants(opts: &ChatOptions) -> Vec<String> {
+    let mut grants = opts.admit.clone();
+    if opts.agent.as_deref().and_then(non_empty).is_some()
+        && !grants
+            .iter()
+            .any(|capability| capability == orchestration_admission::SPAWN_AGENT)
+    {
+        grants.push(orchestration_admission::SPAWN_AGENT.to_string());
+    }
+    grants
+}
+
 /// Entry point dispatched from `main.rs`.
 pub async fn chat_command(opts: ChatOptions) -> Result<()> {
     let base = opts
@@ -160,18 +217,7 @@ pub async fn chat_command(opts: ChatOptions) -> Result<()> {
             })
         }
     };
-    let air = match &opts.air {
-        Some(p) => std::fs::read_to_string(p)
-            .with_context(|| format!("failed to read AIR graph {}", p.display()))?,
-        None => chat::chat_air(&chat::ChatAirOptions {
-            system_prompt: context.as_deref(),
-            backend: opts.backend.as_deref(),
-            model: opts.model.as_deref(),
-            effort: None,
-            tools: opts.tools,
-            skills: true,
-        }),
-    };
+    let air = chat_air_for_options(&opts, context.as_deref())?;
     if let Some(ctx) = &context {
         eprintln!(
             "context: loaded AGENTS.md/CLAUDE.md hierarchy (~{} tokens)",
@@ -192,7 +238,7 @@ pub async fn chat_command(opts: ChatOptions) -> Result<()> {
     let mut convo = Conversation::default();
     // Capabilities granted for this session: starts with --admit and grows as
     // the operator approves write-tool turns interactively.
-    let mut session_grants: Vec<String> = opts.admit.clone();
+    let mut session_grants = initial_session_grants(&opts);
 
     // Optional event source: subscribe to an apxm-os control-plane SSE stream so
     // external cue events (process output, file changes, cron, webhooks) drive
@@ -710,6 +756,24 @@ async fn print_list(client: &reqwest::Client, url: &str, label: &str) -> Result<
 mod tests {
     use super::*;
 
+    fn chat_opts() -> ChatOptions {
+        ChatOptions {
+            air: None,
+            server: None,
+            session_id: None,
+            admit: Vec::new(),
+            import: Vec::new(),
+            tree: false,
+            tools: false,
+            backend: None,
+            model: None,
+            agent: None,
+            agent_mode: None,
+            agent_model: None,
+            monitor_url: None,
+        }
+    }
+
     #[test]
     fn cue_event_to_turn_summarizes_structured_event() {
         let turn = cue_event_to_turn(
@@ -749,6 +813,58 @@ mod tests {
         assert!(air.contains("ais.ask"));
         assert!(air.contains("conversation"));
         assert!(air.contains("ais.entry"));
+    }
+
+    #[test]
+    fn chat_default_mode_builds_direct_ask_without_spawn_grant() {
+        let mut opts = chat_opts();
+        opts.backend = Some("amd".to_string());
+        opts.model = Some("cheap-model".to_string());
+        let air = builtin_chat_air(&opts, Some("project instructions"));
+
+        assert!(air.contains("ais.ask"), "{air}");
+        assert!(air.contains("backend = \"amd\""), "{air}");
+        assert!(air.contains("model = \"cheap-model\""), "{air}");
+        assert!(!air.contains("ais.spawn_agent"), "{air}");
+        assert!(
+            !initial_session_grants(&opts)
+                .contains(&orchestration_admission::SPAWN_AGENT.to_string())
+        );
+    }
+
+    #[test]
+    fn chat_agent_mode_builds_acp_graph_and_spawn_grant() {
+        let mut opts = chat_opts();
+        opts.agent = Some("claude".to_string());
+        opts.agent_mode = Some("architect".to_string());
+        opts.agent_model = Some("claude-3-5-haiku-latest".to_string());
+        let air = builtin_chat_air(&opts, Some("orchestrate through APXM"));
+
+        assert!(air.contains("ais.spawn_agent"), "{air}");
+        assert!(air.contains("profile = \"claude\""), "{air}");
+        assert!(air.contains("mode = \"architect\""), "{air}");
+        assert!(air.contains("model = \"claude-3-5-haiku-latest\""), "{air}");
+        assert!(air.contains("ais.communicate"), "{air}");
+        assert!(
+            initial_session_grants(&opts)
+                .contains(&orchestration_admission::SPAWN_AGENT.to_string())
+        );
+    }
+
+    #[test]
+    fn chat_agent_mode_does_not_duplicate_spawn_grant() {
+        let mut opts = chat_opts();
+        opts.agent = Some("claude".to_string());
+        opts.admit = vec![orchestration_admission::SPAWN_AGENT.to_string()];
+        let grants = initial_session_grants(&opts);
+
+        assert_eq!(
+            grants
+                .iter()
+                .filter(|grant| *grant == orchestration_admission::SPAWN_AGENT)
+                .count(),
+            1
+        );
     }
 
     #[test]

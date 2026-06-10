@@ -31,10 +31,11 @@ The production action step represented by `start_pass.air` is the server MCP
 call:
 
 ```text
-goal_start({ task, context, event, trigger, workers, workspace, ... })
+goal_start({ task, context, event, trigger, planning, workspace, ... })
 ```
 
-That call remains one explicit bounded worker DAG. If `eval` returns
+When `workers` is omitted, `goal_start` creates one bounded worker DAG for the
+pass; when `workers` is present, that explicit DAG is used. If `eval` returns
 `needs_more`, the controller or APXM OS starts another admitted pass with a new
 request; it does not recursively prompt hidden workers outside APXM. The
 deterministic AIR files label these transitions for testing. APXM server owns
@@ -69,7 +70,8 @@ IDs with registered APXM worker profiles and granting:
 ```
 
 The schema in `pass_request.schema.json` documents the expected shape for one
-bounded pass. `goal_loop.policy.json` documents the outer loop limits:
+bounded pass. Omit `workers` for server auto-planning, or provide it to pin the
+DAG manually. `goal_loop.policy.json` documents the outer loop limits:
 iteration budget, timeout, budget, cancellation, and checkpoint behavior that
 the controller must enforce while APXM server executes each admitted pass.
 

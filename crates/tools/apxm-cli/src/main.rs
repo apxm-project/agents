@@ -221,6 +221,9 @@ async fn run_cli(cli: Cli) -> Result<()> {
             tools,
             backend,
             model,
+            agent,
+            agent_mode,
+            agent_model,
             tree,
             monitor_url,
         } => {
@@ -233,6 +236,9 @@ async fn run_cli(cli: Cli) -> Result<()> {
                 tools,
                 backend,
                 model,
+                agent,
+                agent_mode,
+                agent_model,
                 tree,
                 monitor_url,
             })

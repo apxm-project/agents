@@ -9,8 +9,9 @@ user-invocable: true
 Load `_shared/apxm-development-rules.md` before broad work.
 
 Use this skill when a human or agent wants APXM to own a complex pass instead
-of manually prompting subagents. The planner/orchestrator creates one explicit
-bounded pass, APXM executes it, and the caller waits through APXM events.
+of manually prompting subagents. `goal_start` can create one bounded worker DAG
+from the task, or accept an explicit DAG when the caller needs to pin it. APXM
+executes the pass, and the caller waits through APXM events.
 
 ## Choose the Surface
 
@@ -32,17 +33,14 @@ dekk apxm agent list
 dekk apxm goal "Investigate and implement the bounded change" \
   --context "Repo: /path/to/repo; constraints: focused patch + tests" \
   --workspace git_worktree \
-  --repo-root /path/to/repo \
-  --worker research:"Inspect relevant code and docs":worker-a \
-  --worker implement:"Make the scoped patch":worker-b \
-  --worker verify:"Run checks and inspect evidence":worker-c \
-  --depends implement=research \
-  --depends verify=implement \
-  --supervisor worker-d
+  --repo-root /path/to/repo
 ```
 
-Profile IDs are examples. Bind roles to whatever APXM-registered workers are
-ready; do not assume Claude, Codex, or any provider-specific host exists.
+By default the CLI omits `workers`, asks `goal_start` to auto-plan the bounded
+DAG, and requests APXM agent selection. Use repeatable `--worker` and
+`--depends` only when the pass must be pinned manually. Profile IDs are
+examples; bind roles to whatever APXM-registered workers are ready, and do not
+assume Claude, Codex, or any provider-specific host exists.
 
 Use `--event` and `--trigger` when this pass comes from an external event, and
 `--dry-run` when the first step should only materialize and validate the bundle.
@@ -50,8 +48,9 @@ Use `--event` and `--trigger` when this pass comes from an external event, and
 ## MCP Pattern
 
 1. Call `goal_start` once with `task`, optional
-   `context/event/trigger`, explicit `workers`, optional `supervisor`, and
-   workspace policy. Include `admit_capabilities: ["SPAWN_AGENT"]` for real
+   `context/event/trigger`, optional `planning`, optional explicit `workers`,
+   optional `supervisor`, and workspace policy. Omit `workers` for server-owned
+   auto-planning. Include `admit_capabilities: ["SPAWN_AGENT"]` for real
    ACP/headless workers.
 2. Store `execution_id`, `session_id`, `session_dir`, `workflow_path`,
    `bundle_dir`, and returned artifact paths.
@@ -65,7 +64,8 @@ Use `--event` and `--trigger` when this pass comes from an external event, and
 
 - Split by independent artifacts: research, implementation, critique,
   verification, and synthesis are roles, not provider names.
-- Use `--depends` or `depends_on` to create phases. Keep each pass bounded;
+- Let `goal_start` create the DAG unless the phase order must be pinned. Use
+  `--depends` or `depends_on` to create manual phases. Keep each pass bounded;
   if feedback requires more work, start another admitted pass.
 - In `git_worktree` mode, provide `--repo-root`; APXM assigns per-worker
   detached worktrees and records them in the orchestration packet.

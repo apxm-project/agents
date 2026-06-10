@@ -133,7 +133,7 @@ pub(crate) async fn mcp_jsonrpc(
             });
             tools.push(ToolEntry {
                 name: goal::MCP_TOOL_APXM_GOAL_START.to_string(),
-                description: "Start one server-owned goal pass from an explicit bounded worker DAG, allocate worker workspaces/worktrees, and return workflow status/events/cancel handles".to_string(),
+                description: "Start one server-owned goal pass, auto-planning a bounded worker DAG when workers are omitted, allocating worker workspaces/worktrees, and returning workflow status/events/cancel handles".to_string(),
                 input_schema: goal::goal_start_input_schema(),
             });
             tools.extend(

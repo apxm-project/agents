@@ -296,13 +296,23 @@ pub enum Commands {
         /// independent tool calls in parallel). Ignored when `--air` is set.
         #[arg(long)]
         tools: bool,
-        /// Pin each turn to a registered backend by name (as listed by
-        /// `GET /v1/models`). Ignored when `--air` is set.
+        /// Pin each direct-ASK turn to a registered backend by name (as listed by
+        /// `GET /v1/models`). Ignored when `--air` or `--agent` is set.
         #[arg(long, value_name = "NAME")]
         backend: Option<String>,
-        /// Pin each turn to a specific model id. Ignored when `--air` is set.
+        /// Pin each direct-ASK turn to a specific model id. Ignored when `--air`
+        /// or `--agent` is set; use `--agent-model` for ACP agents.
         #[arg(long, value_name = "ID")]
         model: Option<String>,
+        /// Run each chat turn through a spawned ACP agent profile, such as `claude`.
+        #[arg(long = "agent", value_name = "PROFILE", conflicts_with = "air")]
+        agent: Option<String>,
+        /// ACP mode for `--agent`, such as `architect`.
+        #[arg(long = "agent-mode", value_name = "MODE", requires = "agent")]
+        agent_mode: Option<String>,
+        /// ACP model request for `--agent`, used when the profile supports model control.
+        #[arg(long = "agent-model", value_name = "MODEL", requires = "agent")]
+        agent_model: Option<String>,
         /// Render the full per-agent event tree each turn instead of just the
         /// assistant's text.
         #[arg(long)]
@@ -318,7 +328,7 @@ pub enum Commands {
 
 #[derive(Args, Debug, Clone)]
 pub struct GoalArgs {
-    /// Goal/task for APXM to decompose and supervise.
+    /// Goal/task for APXM to decompose, plan, and supervise.
     #[arg(value_name = "TASK")]
     pub task: Option<String>,
 
@@ -354,15 +364,15 @@ pub struct GoalArgs {
     #[arg(long)]
     pub trigger: Option<String>,
 
-    /// Custom worker as ID[:ROLE[:PROFILE]]. Repeat for fan-out workers.
+    /// Pin an explicit worker as ID[:ROLE[:PROFILE]]. Repeat to override auto-planning.
     #[arg(long = "worker", value_name = "ID[:ROLE[:PROFILE]]")]
     pub workers: Vec<String>,
 
-    /// Worker dependencies as WORKER=DEP1,DEP2. Repeat to shape phases.
+    /// Dependencies for explicit workers as WORKER=DEP1,DEP2. Repeat to shape phases.
     #[arg(long = "depends", value_name = "WORKER=DEP1,DEP2")]
     pub depends: Vec<String>,
 
-    /// Bind default/custom workers to registered ACP agents selected by APXM.
+    /// Bind unprofiled explicit workers to registered ACP agents selected by APXM.
     #[arg(long = "use-agents")]
     pub use_agents: bool,
 
@@ -669,6 +679,94 @@ mod tests {
         ] {
             assert!(help.contains(flag), "missing {flag} in help:\n{help}");
         }
+    }
+
+    #[test]
+    fn chat_agent_flags_are_visible_in_help() {
+        let mut command = Cli::command();
+        let chat = command
+            .find_subcommand_mut("chat")
+            .expect("chat subcommand should exist");
+        let mut help = Vec::new();
+        chat.write_long_help(&mut help).expect("chat help");
+        let help = String::from_utf8(help).expect("utf8 help");
+        for flag in ["--agent", "--agent-mode", "--agent-model"] {
+            assert!(help.contains(flag), "missing {flag} in help:\n{help}");
+        }
+    }
+
+    #[test]
+    fn chat_parses_direct_ask_routing() {
+        let cli = Cli::try_parse_from([
+            "apxm",
+            "chat",
+            "--backend",
+            "local",
+            "--model",
+            "cheap-model",
+        ])
+        .expect("direct chat routing should parse");
+
+        match cli.command {
+            Commands::Chat {
+                backend,
+                model,
+                agent,
+                agent_model,
+                ..
+            } => {
+                assert_eq!(backend.as_deref(), Some("local"));
+                assert_eq!(model.as_deref(), Some("cheap-model"));
+                assert!(agent.is_none());
+                assert!(agent_model.is_none());
+            }
+            _ => panic!("expected chat command"),
+        }
+    }
+
+    #[test]
+    fn chat_parses_acp_agent_routing() {
+        let cli = Cli::try_parse_from([
+            "apxm",
+            "chat",
+            "--agent",
+            "claude",
+            "--agent-mode",
+            "architect",
+            "--agent-model",
+            "claude-3-5-haiku-latest",
+        ])
+        .expect("ACP agent chat routing should parse");
+
+        match cli.command {
+            Commands::Chat {
+                backend,
+                model,
+                agent,
+                agent_mode,
+                agent_model,
+                ..
+            } => {
+                assert!(backend.is_none());
+                assert!(model.is_none());
+                assert_eq!(agent.as_deref(), Some("claude"));
+                assert_eq!(agent_mode.as_deref(), Some("architect"));
+                assert_eq!(agent_model.as_deref(), Some("claude-3-5-haiku-latest"));
+            }
+            _ => panic!("expected chat command"),
+        }
+    }
+
+    #[test]
+    fn chat_rejects_incoherent_agent_routing() {
+        assert!(
+            Cli::try_parse_from(["apxm", "chat", "--air", "chat.air", "--agent", "claude"])
+                .is_err()
+        );
+        assert!(
+            Cli::try_parse_from(["apxm", "chat", "--agent-model", "claude-3-5-haiku-latest"])
+                .is_err()
+        );
     }
 }
 

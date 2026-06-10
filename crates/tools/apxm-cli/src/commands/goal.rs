@@ -246,7 +246,12 @@ fn build_start_arguments(
     max_iterations: usize,
     context_override: Option<&str>,
 ) -> Result<JsonValue> {
-    let workers = build_workers(args)?;
+    let auto_plan = should_auto_plan(args);
+    let workers = if auto_plan {
+        Vec::new()
+    } else {
+        build_workers(args)?
+    };
     let uses_profiles =
         workers.iter().any(|worker| worker.profile.is_some()) || args.supervisor_profile.is_some();
 
@@ -265,11 +270,15 @@ fn build_start_arguments(
     insert_optional_string(&mut root, "event", args.event.as_deref());
     insert_optional_string(&mut root, "trigger", args.trigger.as_deref());
     insert_optional_string(&mut root, "session_id", args.session_id.as_deref());
-    root.insert(
-        "workers".to_string(),
-        JsonValue::Array(workers.iter().map(worker_to_json).collect()),
-    );
-    if args.use_agents {
+    if auto_plan {
+        root.insert("planning".to_string(), json!({ "mode": "auto" }));
+    } else {
+        root.insert(
+            "workers".to_string(),
+            JsonValue::Array(workers.iter().map(worker_to_json).collect()),
+        );
+    }
+    if auto_plan || args.use_agents {
         root.insert(
             "selection".to_string(),
             json!({
@@ -303,7 +312,7 @@ fn build_start_arguments(
             admit.insert(cap.trim().to_string());
         }
     }
-    if args.admit_spawn || uses_profiles || args.use_agents {
+    if args.admit_spawn || uses_profiles || args.use_agents || auto_plan {
         admit.insert(goal_admission::SPAWN_AGENT.to_string());
     }
     root.insert(
@@ -318,6 +327,16 @@ fn build_start_arguments(
     }
     root.insert("dry_run".to_string(), JsonValue::Bool(args.dry_run));
     Ok(JsonValue::Object(root))
+}
+
+fn should_auto_plan(args: &GoalArgs) -> bool {
+    args.workers.is_empty()
+        && args.depends.is_empty()
+        && args.planner_profile.is_none()
+        && args.executor_profile.is_none()
+        && args.verifier_profile.is_none()
+        && args.critics.is_empty()
+        && args.reviewers.is_empty()
 }
 
 fn build_workers(args: &GoalArgs) -> Result<Vec<WorkerRequest>> {
@@ -1195,19 +1214,26 @@ mod tests {
     }
 
     #[test]
-    fn default_goal_workers_are_minimal() {
+    fn default_goal_requests_server_auto_planning() {
         let args = args_with_task();
         let request = build_start_arguments(&args, "ship the thing", 0, 1, None).expect("request");
-        let workers = request["workers"].as_array().expect("workers");
         assert_eq!(
-            workers
-                .iter()
-                .filter_map(|worker| worker["id"].as_str())
-                .collect::<Vec<_>>(),
-            vec!["planner", "executor", "verifier"]
+            request.get("workers"),
+            None,
+            "CLI should let goal_start own default DAG planning"
         );
-        assert_eq!(workers[1]["depends_on"], json!(["planner"]));
-        assert_eq!(workers[2]["depends_on"], json!(["executor"]));
+        assert_eq!(request["planning"], json!({ "mode": "auto" }));
+        assert_eq!(
+            request["selection"],
+            json!({
+                "agents": "auto",
+                "require_agents": true,
+            })
+        );
+        assert_eq!(
+            request["admit_capabilities"],
+            json!([goal_admission::SPAWN_AGENT])
+        );
     }
 
     #[test]
@@ -1327,11 +1353,8 @@ mod tests {
                 "require_agents": true,
             })
         );
-        assert_eq!(
-            request["workers"][0]["transport"],
-            OrchestrationTransport::Deterministic.as_str(),
-            "CLI leaves binding to goal_start"
-        );
+        assert_eq!(request.get("workers"), None);
+        assert_eq!(request["planning"], json!({ "mode": "auto" }));
         assert_eq!(
             request["admit_capabilities"],
             json!([goal_admission::SPAWN_AGENT])

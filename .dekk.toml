@@ -73,6 +73,7 @@ install-hooks = { run = "python tools/scripts/install_git_hooks.py", description
 
 gui = { run = "apxm gui", description = "Launch the web-based GUI dashboard", skill = true, group = "Authoring" }
 watch = { run = "apxm watch", description = "Stream a live run's dispatch tree from apxm-server (Phase 14.8.F)", group = "Observability" }
+chat = { run = "apxm chat", description = "Run the APXM conversational REPL over apxm-server", group = "Authoring" }
 validate = { run = "apxm validate", description = "Validate graph against AIS contract", skill = true, group = "Authoring" }
 analyze = { run = "apxm analyze", description = "Analyze parallelism and critical path", group = "Authoring" }
 explain = { run = "apxm explain", description = "Human-readable summary of a graph", group = "Authoring" }

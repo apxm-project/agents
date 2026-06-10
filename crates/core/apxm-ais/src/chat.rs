@@ -109,6 +109,19 @@ pub struct ChatAirOptions<'a> {
     pub skills: bool,
 }
 
+/// Per-turn routing options for a conversational ACP agent graph.
+#[derive(Debug, Clone, Copy)]
+pub struct ChatAcpAirOptions<'a> {
+    /// ACP profile to spawn, for example `claude`.
+    pub profile: &'a str,
+    /// System prompt prepended to the rendered transcript.
+    pub system_prompt: Option<&'a str>,
+    /// Optional ACP mode set during spawn, for example `architect`.
+    pub mode: Option<&'a str>,
+    /// Optional ACP model requested during spawn when the profile supports it.
+    pub model: Option<&'a str>,
+}
+
 /// Build the built-in single-ASK conversational graph. With default options the
 /// output is the canonical bare chat graph (one ASK over the `conversation`
 /// param); `backend`/`model`/`tools` ride the ASK attr-dict the runtime reads.
@@ -170,6 +183,40 @@ pub fn chat_air(opts: &ChatAirOptions) -> String {
     air
 }
 
+/// Build a conversational graph that spawns one ACP profile and sends the
+/// rendered transcript to it. The CLI still owns the conversation loop; this
+/// graph makes the per-turn assistant a real APXM-managed ACP worker.
+pub fn acp_chat_air(opts: &ChatAcpAirOptions) -> String {
+    let profile = sanitize_route_id(opts.profile);
+    let mut spawn_attrs = vec![format!("profile = \"{profile}\"")];
+    if let Some(mode) = opts.mode {
+        let safe = sanitize_route_id(mode);
+        if !safe.is_empty() {
+            spawn_attrs.push(format!("mode = \"{safe}\""));
+        }
+    }
+    if let Some(model) = opts.model {
+        let safe = sanitize_route_id(model);
+        if !safe.is_empty() {
+            spawn_attrs.push(format!("model = \"{safe}\""));
+        }
+    }
+
+    let message = match opts.system_prompt.filter(|prompt| !prompt.is_empty()) {
+        Some(system_prompt) => format!(
+            "System instructions:\n{}\n\nConversation:\n{{conversation}}",
+            system_prompt
+        ),
+        None => "{conversation}".to_string(),
+    };
+
+    format!(
+        "module {{\n  func.func @apxm_chat(%arg0: !ais.token {{ais.param_name = \"conversation\", ais.param_type = \"str\"}}) -> !ais.token attributes {{ais.entry}} {{\n    %spawn = ais.spawn_agent \"apxm_chat_orchestrator\" {{{}}} : !ais.token\n    %reply = ais.communicate \"{}\" to \"apxm_chat_orchestrator\" (%arg0, %spawn : !ais.token, !ais.token) {{protocol = \"acp\", input_names = [\"conversation\"]}} : !ais.token\n    func.return %reply : !ais.token\n  }}\n}}\n",
+        spawn_attrs.join(", "),
+        escape_air_string(&message),
+    )
+}
+
 /// Parse the capability name out of a write-denial message. Matches BOTH the
 /// server's static pre-flight wording (`capability '<cap>' performs writes and
 /// was not granted; …`) and the runtime's invoke-site wording (`write capability
@@ -227,6 +274,25 @@ mod tests {
         assert!(!air.contains("backend ="));
         assert!(!air.contains("tool_groups"));
         assert!(air.contains("@apxm_chat"));
+    }
+
+    #[test]
+    fn acp_chat_air_spawns_profile_with_model_and_templates_conversation() {
+        let air = acp_chat_air(&ChatAcpAirOptions {
+            profile: "claude",
+            system_prompt: Some("You are the orchestrator."),
+            mode: Some("architect"),
+            model: Some("claude-3-5-haiku-latest"),
+        });
+        assert!(air.contains("ais.spawn_agent \"apxm_chat_orchestrator\""));
+        assert!(air.contains("profile = \"claude\""));
+        assert!(air.contains("mode = \"architect\""));
+        assert!(air.contains("model = \"claude-3-5-haiku-latest\""));
+        assert!(air.contains("ais.communicate"));
+        assert!(air.contains("protocol = \"acp\""));
+        assert!(air.contains("input_names = [\"conversation\"]"));
+        assert!(air.contains("System instructions:\\nYou are the orchestrator."));
+        assert!(air.contains("{conversation}"));
     }
 
     #[test]

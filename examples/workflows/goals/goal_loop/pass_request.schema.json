@@ -3,7 +3,7 @@
   "title": "APXM bounded goal pass request",
   "type": "object",
   "additionalProperties": false,
-  "required": ["task", "workers"],
+  "required": ["task"],
   "properties": {
     "task": {
       "type": "string",
@@ -23,6 +23,7 @@
     },
     "workers": {
       "type": "array",
+      "description": "Optional explicit bounded worker DAG. When omitted, goal_start auto-plans the DAG for this pass.",
       "minItems": 1,
       "maxItems": 16,
       "items": {
@@ -44,6 +45,21 @@
           },
           "mode": { "type": "string" },
           "model": { "type": "string" }
+        }
+      }
+    },
+    "planning": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "mode": {
+          "type": "string",
+          "enum": ["auto"]
+        },
+        "max_workers": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 16
         }
       }
     },

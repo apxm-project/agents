@@ -49,24 +49,30 @@ Command-line interface for the APXM graph compiler and runtime toolchain.
 
 ## Complex Work Paths
 
-Use `goal` when an agent or human wants APXM to create one bounded worker DAG,
+Use `goal` when an agent or human wants APXM to plan one bounded worker DAG,
 start it through the server, and wait on workflow events:
 
 ```bash
 dekk apxm goal "Investigate and implement the scoped change" \
   --workspace git_worktree \
-  --repo-root /path/to/repo \
-  --worker research:"Inspect relevant code":worker-a \
-  --worker implement:"Make the patch":worker-b \
-  --worker verify:"Run checks":worker-c \
-  --depends implement=research \
-  --depends verify=implement
+  --repo-root /path/to/repo
 ```
 
 `goal` calls the server-owned goal-start path and follows
-`workflow_events`/`workflow_status` unless `--no-follow` is set. Use `--status`,
-`--events`, or `--cancel` with the returned execution id to inspect or stop a
-run later.
+`workflow_events`/`workflow_status` unless `--no-follow` is set. By default the
+CLI omits `workers`, so the server auto-plans the bounded DAG and binds
+registered agents. Use repeatable `--worker` plus `--depends` only when the DAG
+must be pinned manually. Use `--status`, `--events`, or `--cancel` with the
+returned execution id to inspect or stop a run later.
+
+Use `chat` for a conversational loop over `apxm-server`. By default it runs a
+direct server-side ASK turn. Pass `--agent claude` to make each turn spawn and
+communicate with an ACP Claude profile instead; `--agent-model` requests a
+specific model when the selected ACP profile supports model control:
+
+```bash
+dekk apxm chat --agent claude --agent-model claude-3-5-haiku-latest
+```
 
 Use `workflow run` for checked-in `.apxmw` files.
 

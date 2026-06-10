@@ -83,7 +83,7 @@ The HTTP MCP endpoint also exposes APXM skill library tools:
 - `workflow_status` -- fetch the current status, result, error, and event totals for a workflow run by `execution_id`
 - `workflow_events` -- page retained run events for a workflow run with `since` and `limit`
 - `workflow_cancel` -- interrupt an in-flight workflow run by server-owned `execution_id`
-- `goal_start` -- start one server-owned goal pass from an explicit bounded worker DAG, allocate worker workspaces or Git worktrees, emit `orchestrator_sleep`/`orchestrator_wake` lifecycle events, and return workflow status/events/cancel handles
+- `goal_start` -- start one server-owned goal pass, auto-plan a bounded worker DAG when `workers` is omitted, allocate worker workspaces or Git worktrees, emit `orchestrator_sleep`/`orchestrator_wake` lifecycle events, and return workflow status/events/cancel handles
 
 Skill inventory prepends the bundled server skill root and then appends roots
 configured with repeated `--skill-root <path>` arguments or the
@@ -100,10 +100,11 @@ should treat `execution_id` as the live status/events/cancel handle and
 does not accept `session_root`; workflow session roots are derived by APXM.
 
 Native goal starts are also server-owned workflow executions. A caller
-agent, CLI, or APXM OS trigger should resolve the task into an explicit bounded
-worker DAG before calling `goal_start`; this MCP tool executes that
-one pass and does not recursively plan new passes. After start, the caller
-should keep the returned `execution_id`, then go idle until
+agent, CLI, or APXM OS trigger can either omit `workers` and let `goal_start`
+create a bounded worker DAG for this pass, or provide an explicit `workers`
+array to pin the DAG. This MCP tool executes one pass and does not recursively
+spawn hidden follow-up passes. After start, the caller should keep the returned
+`execution_id`, then go idle until
 `workflow_events` returns
 `orchestrator_wake`, `execute_complete`, `error`, or `turn_aborted`, or until
 `workflow_status` reports `succeeded` or `failed`. Real ACP workers require

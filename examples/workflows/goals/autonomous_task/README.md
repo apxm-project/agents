@@ -1,8 +1,9 @@
 # Autonomous Task Goal Run
 
 `goal_start` lets an agent stop manually prompting subagents. The
-controller submits one bounded worker plan, APXM materializes a workflow,
-starts it in the background, and the controller sleeps until
+controller submits a task, optionally with an explicit bounded worker plan.
+When `workers` is omitted, APXM creates the bounded worker DAG for the pass.
+APXM materializes a workflow, starts it in the background, and the controller sleeps until
 `workflow_status`, `workflow_events`, or `workflow_cancel` wakes
 it.
 
@@ -10,7 +11,7 @@ it.
 [event/task]
     |
     v
-[trigger + bounded worker plan]
+[trigger + optional explicit worker plan]
     |
     v
 [allocate per-worker workspace/worktree]
@@ -38,8 +39,10 @@ the runtime has registered ACP profiles such as `codex`, `claude`, or any
 custom worker profile. APXM is profile-name agnostic; those names are examples.
 
 For CLI callers, `dekk apxm goal` is the high-level wrapper around this native
-MCP path. It builds the bounded worker request, calls `goal_start`,
-and follows `workflow_events/status` unless `--no-follow` is set.
+MCP path. By default it lets the server plan the bounded worker request, calls
+`goal_start`, and follows `workflow_events/status` unless `--no-follow` is set.
+Pass repeatable `--worker` and `--depends` only when the worker DAG must be
+pinned manually.
 
 The returned JSON includes:
 
@@ -49,6 +52,8 @@ The returned JSON includes:
   `artifacts.worker_prompts[*].prompt`, and initialized report files for the
   generated goal packet.
 - `plan.workers[*].cwd` showing each worker's assigned workspace.
+- `planning` showing whether APXM generated the worker DAG or the caller
+  provided it explicitly.
 - `goal.next_events_args` with the first `workflow_events` cursor.
 - `goal.sleep_event_kind = "orchestrator_sleep"` and
   `goal.wake_event_kind = "orchestrator_wake"`.

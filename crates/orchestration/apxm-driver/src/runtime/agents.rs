@@ -70,6 +70,14 @@ fn select_agent_sandbox(
         })
 }
 
+fn is_unsupported_session_control(error: &apxm_acp::AcpError) -> bool {
+    matches!(
+        error,
+        apxm_acp::AcpError::AgentError { code, .. }
+            if *code == apxm_acp::constants::json_rpc_errors::METHOD_NOT_FOUND
+    )
+}
+
 // ─── AgentSpawner implementation ─────────────────────────────────────────────
 
 /// Spawns external ACP agent subprocesses.
@@ -128,7 +136,7 @@ impl AgentSpawner for AcpAgentSpawner {
             profile.env.insert(k.clone(), v.clone());
         }
 
-        // Apply profile defaults as fallbacks for mode/model
+        // Profile defaults fill mode/model when the graph does not specify them.
         let effective_mode = mode.or(profile.default_mode.as_deref());
         let effective_model = model.or(profile.default_model.as_deref());
 
@@ -150,20 +158,44 @@ impl AgentSpawner for AcpAgentSpawner {
 
         // Apply session controls if specified (or from profile defaults)
         if let Some(mode_id) = effective_mode {
-            apxm_acp::controls::SessionControls::set_mode(&mut session, mode_id)
-                .await
-                .map_err(|e| RuntimeError::Operation {
-                    op_type: apxm_core::types::operations::AISOperationType::SpawnAgent,
-                    message: format!("set_mode('{}') failed: {}", mode_id, e),
-                })?;
+            if let Err(e) =
+                apxm_acp::controls::SessionControls::set_mode(&mut session, mode_id).await
+            {
+                if is_unsupported_session_control(&e) {
+                    apxm_acp!(
+                        warn,
+                        agent_name = agent_name,
+                        profile = profile_name,
+                        mode = mode_id,
+                        "ACP agent does not support session mode control"
+                    );
+                } else {
+                    return Err(RuntimeError::Operation {
+                        op_type: apxm_core::types::operations::AISOperationType::SpawnAgent,
+                        message: format!("set_mode('{}') failed: {}", mode_id, e),
+                    });
+                }
+            }
         }
         if let Some(model_id) = effective_model {
-            apxm_acp::controls::SessionControls::set_model(&mut session, model_id)
-                .await
-                .map_err(|e| RuntimeError::Operation {
-                    op_type: apxm_core::types::operations::AISOperationType::SpawnAgent,
-                    message: format!("set_model('{}') failed: {}", model_id, e),
-                })?;
+            if let Err(e) =
+                apxm_acp::controls::SessionControls::set_model(&mut session, model_id).await
+            {
+                if is_unsupported_session_control(&e) {
+                    apxm_acp!(
+                        warn,
+                        agent_name = agent_name,
+                        profile = profile_name,
+                        model = model_id,
+                        "ACP agent does not support session model control"
+                    );
+                } else {
+                    return Err(RuntimeError::Operation {
+                        op_type: apxm_core::types::operations::AISOperationType::SpawnAgent,
+                        message: format!("set_model('{}') failed: {}", model_id, e),
+                    });
+                }
+            }
         }
 
         apxm_acp!(info,
@@ -176,6 +208,26 @@ impl AgentSpawner for AcpAgentSpawner {
         let session_arc: Arc<tokio::sync::Mutex<dyn std::any::Any + Send + Sync>> =
             Arc::new(tokio::sync::Mutex::new(session));
         Ok(session_arc)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn unsupported_session_control_is_json_rpc_method_not_found() {
+        let unsupported = apxm_acp::AcpError::AgentError {
+            code: apxm_acp::constants::json_rpc_errors::METHOD_NOT_FOUND,
+            message: "Method not found".to_string(),
+        };
+        let invalid_request = apxm_acp::AcpError::AgentError {
+            code: -32600,
+            message: "Invalid request".to_string(),
+        };
+
+        assert!(is_unsupported_session_control(&unsupported));
+        assert!(!is_unsupported_session_control(&invalid_request));
     }
 }
 

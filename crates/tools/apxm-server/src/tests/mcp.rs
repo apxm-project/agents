@@ -347,6 +347,101 @@ async fn mcp_goal_start_rejects_unknown_goal_planning_fields() {
 }
 
 #[tokio::test]
+async fn mcp_goal_start_auto_plans_when_workers_are_omitted() {
+    let app = build_app(test_state().await);
+    let session_id = format!("mcp-goal-auto-plan-{}", uuid::Uuid::new_v4());
+
+    let (status, body) = post_json(
+        app,
+        routes::MCP,
+        mcp_call(
+            MCP_TOOL_APXM_GOAL_START,
+            serde_json::json!({
+                "task": "investigate docs and implement release alignment e2e",
+                "session_id": session_id,
+                "dry_run": true,
+                "planning": { "mode": "auto", "max_workers": 6 }
+            }),
+        ),
+    )
+    .await;
+
+    assert_eq!(status, StatusCode::OK, "goal call failed: {body}");
+    assert_eq!(body[tool_result::RESULT][mcp_fields::IS_ERROR], false);
+    let planned: serde_json::Value =
+        serde_json::from_str(tool_text(&body)).expect("goal response JSON");
+    assert_eq!(
+        planned[tool_result::STATUS],
+        OrchestrationStartStatus::Planned.as_str()
+    );
+    assert_eq!(planned["planning"]["mode"], "auto");
+    assert_eq!(planned["planning"]["generated"], true);
+    assert_eq!(planned["planning"]["max_workers"], 6);
+
+    let workers = planned["plan"]["workers"].as_array().expect("plan workers");
+    assert!(
+        (3..=6).contains(&workers.len()),
+        "auto-plan should stay bounded: {planned}"
+    );
+    let ids: Vec<&str> = workers
+        .iter()
+        .filter_map(|worker| worker["id"].as_str())
+        .collect();
+    assert!(ids.contains(&"planner"), "expected planner: {planned}");
+    assert!(ids.contains(&"implement"), "expected implement: {planned}");
+    assert!(ids.contains(&"verify"), "expected verify: {planned}");
+    let implement = workers
+        .iter()
+        .find(|worker| worker["id"] == "implement")
+        .expect("implement worker");
+    assert!(
+        implement["depends_on"]
+            .as_array()
+            .expect("implement deps")
+            .iter()
+            .any(|dep| dep == "planner"),
+        "implement should depend on planner: {planned}"
+    );
+
+    let plan_json = std::path::PathBuf::from(
+        planned["artifacts"]["plan_json"]
+            .as_str()
+            .expect("plan_json artifact"),
+    );
+    let plan_packet: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(&plan_json).expect("plan json bytes"))
+            .expect("plan json");
+    assert_eq!(plan_packet["planning"]["generated"], true);
+    let bundle_dir = std::path::PathBuf::from(planned["bundle_dir"].as_str().expect("bundle_dir"));
+    let _ = std::fs::remove_dir_all(bundle_dir);
+}
+
+#[tokio::test]
+async fn mcp_goal_start_rejects_explicit_empty_workers() {
+    let app = build_app(test_state().await);
+
+    let (status, body) = post_json(
+        app,
+        routes::MCP,
+        mcp_call(
+            MCP_TOOL_APXM_GOAL_START,
+            serde_json::json!({
+                "task": "empty workers should be explicit error",
+                "workers": []
+            }),
+        ),
+    )
+    .await;
+
+    assert_eq!(status, StatusCode::OK, "goal call failed: {body}");
+    assert_eq!(body[tool_result::RESULT][mcp_fields::IS_ERROR], true);
+    assert!(
+        tool_text(&body).contains("workers must be non-empty when provided"),
+        "expected explicit-empty-workers diagnostic: {body}"
+    );
+}
+
+#[tokio::test]
 async fn mcp_goal_start_rejects_invalid_worker_dependencies() {
     let cases = [
         (
@@ -650,6 +745,8 @@ async fn mcp_goal_start_spawns_parallel_workers_with_session_cwds() {
     let started: serde_json::Value =
         serde_json::from_str(tool_text(&body)).expect("goal response JSON");
     assert_eq!(started[tool_result::STATUS], STATUS_RUNNING);
+    assert_eq!(started["planning"]["mode"], "explicit");
+    assert_eq!(started["planning"]["generated"], false);
     assert_eq!(
         started["control"]["events_tool"],
         MCP_TOOL_APXM_WORKFLOW_EVENTS
