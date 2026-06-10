@@ -873,7 +873,7 @@ pub use bindings_inner::*;
     Ok(())
 }
 
-/// Main build process orchestrator
+/// Main build process coordinator
 fn build() -> Result<()> {
     let config = BuildConfig::from_env()?;
     config.ensure_directories()?;

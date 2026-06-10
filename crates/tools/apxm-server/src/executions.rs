@@ -62,9 +62,9 @@ pub(crate) struct ExecutionRecord {
     pub(crate) node_outputs: Vec<NodeOutputRecord>,
     #[serde(default)]
     pub(crate) node_metrics: Vec<NodeMetricsRecord>,
-    /// Goal-convergence outcome for an orchestration pass: the typed gate
+    /// Goal-convergence outcome for a goal pass: the typed gate
     /// verdict and the runtime decision derived from it. Absent for
-    /// non-orchestration runs.
+    /// non-goal runs.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub(crate) goal: Option<serde_json::Value>,
 }
@@ -276,7 +276,7 @@ impl ExecutionStore {
 
     /// Attach the goal-convergence outcome (verdict + decision) to a settled
     /// record and re-persist it. Called after `complete_success`/`_failure` for
-    /// orchestration passes.
+    /// goal passes.
     pub(crate) fn set_goal_outcome(
         &self,
         execution_id: &str,

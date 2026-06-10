@@ -1,6 +1,6 @@
 # apxm-driver
 
-Orchestration layer bridging compiler and runtime.
+Coordination layer bridging compiler and runtime.
 
 ## Overview
 
@@ -11,7 +11,7 @@ Orchestration layer bridging compiler and runtime.
 | Module | Description |
 |--------|-------------|
 | `config/` | `ApXmConfig`, `ChatConfig` -- TOML-based configuration (`~/.apxm/config.toml`) |
-| `linker/` | `Linker`, `LinkerConfig`, `LinkResult` -- compile + execute orchestration |
+| `linker/` | `Linker`, `LinkerConfig`, `LinkResult` -- compile + execute coordination |
 | `compiler/` | Compiler wrapper for `AirModule` parsing and MLIR lowering |
 | `runtime/mod` | `RuntimeExecutor` -- runtime with LLM backends configured |
 | `runtime/llm` | LLM registry setup from config |

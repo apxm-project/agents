@@ -1704,7 +1704,7 @@ fn is_allowed_static_skill_op(op: AISOperationType) -> bool {
             | AISOperationType::Fence
             | AISOperationType::WaitAll
             | AISOperationType::Yield
-            // Agent-graph orchestration: SPAWN_AGENT spawns a child agent
+            // Agent-graph coordination: SPAWN_AGENT spawns a child agent
             // under the active scope policy; COMMUNICATE delivers a message
             // to the spawned target.
             | AISOperationType::SpawnAgent

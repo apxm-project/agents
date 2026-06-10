@@ -20,7 +20,7 @@ is built by composing explicit passes through host-owned control loops:
 The graph owns the visible work for one admitted pass. APXM server owns
 execution IDs, sessions, events, status, cancellation, and evidence. APXM OS or
 an MCP client owns listener policy, dedupe, retry, re-arm, and whether feedback
-starts another admitted pass. This keeps orchestration observable without
+starts another admitted pass. This keeps coordination observable without
 pretending that every workflow must contain a recursive scheduler loop.
 
 ---

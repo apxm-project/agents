@@ -810,7 +810,7 @@ pub struct ExecuteCompletePayload {
 }
 impl_event_payload!(ExecuteCompletePayload, kind::EXECUTE_COMPLETE);
 
-/// Native orchestrator parked after launching a server-owned workflow.
+/// Native goal caller parked after launching a server-owned workflow.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct OrchestratorSleepPayload {
     pub execution_id: String,
@@ -826,7 +826,7 @@ pub struct OrchestratorSleepPayload {
 }
 impl_event_payload!(OrchestratorSleepPayload, kind::ORCHESTRATOR_SLEEP);
 
-/// Native orchestrator wake event emitted when the workflow reaches a terminal state.
+/// Native goal wake event emitted when the workflow reaches a terminal state.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct OrchestratorWakePayload {
     pub execution_id: String,

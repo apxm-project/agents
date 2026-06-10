@@ -9,8 +9,8 @@ use apxm_core::constants::mcp::tools as mcp_tool_names;
 use apxm_core::events::kind;
 use apxm_core::events::payload::{
     ErrorPayload, ExecuteCompletePayload, ExecutionStartedPayload, GoalConvergedPayload,
-    GoalGateVerdictPayload, GoalHaltedPayload, GoalNeedsAnotherPassPayload, OrchestratorSleepPayload,
-    OrchestratorWakePayload, TurnAbortedPayload,
+    GoalGateVerdictPayload, GoalHaltedPayload, GoalNeedsAnotherPassPayload,
+    OrchestratorSleepPayload, OrchestratorWakePayload, TurnAbortedPayload,
 };
 use apxm_core::events::{ApxmEvent, EventEmitter, EventKind, EventSource, SkillEventProvenance};
 use apxm_core::types::{
@@ -110,7 +110,7 @@ struct WorkflowStatusResponse {
     #[serde(skip_serializing_if = "Option::is_none")]
     error: Option<String>,
     /// Goal-convergence outcome (typed gate verdict + runtime decision) when
-    /// this run was an orchestration pass.
+    /// this run was a goal pass.
     #[serde(skip_serializing_if = "Option::is_none")]
     goal: Option<JsonValue>,
     totals: WorkflowTotals,
@@ -744,7 +744,7 @@ fn record_orchestrator_wake_event(
 /// Evaluate a goal pass: emit the typed gate verdict, run the runtime
 /// convergence decision, emit the matching decision event, and persist both on
 /// the execution record. Completion is decided here, in the runtime, rather than
-/// being left to the orchestrator prompt.
+/// being left to the goal prompt.
 fn record_goal_outcome(
     state: &AppState,
     execution_id: &str,

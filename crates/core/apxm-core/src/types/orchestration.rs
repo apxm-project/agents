@@ -1,4 +1,4 @@
-//! Typed wire values for APXM's native orchestration control surface.
+//! Typed wire values for APXM's native goal control surface.
 
 use std::fmt;
 use std::str::FromStr;
@@ -30,7 +30,7 @@ impl fmt::Display for OrchestrationStartStatus {
     }
 }
 
-/// Transport used for a generated orchestration worker or supervisor.
+/// Transport used for a generated goal worker or supervisor.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum OrchestrationTransport {
@@ -74,13 +74,13 @@ pub struct UnknownOrchestrationTransport(pub String);
 
 impl fmt::Display for UnknownOrchestrationTransport {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "unknown orchestration transport: {}", self.0)
+        write!(f, "unknown goal transport: {}", self.0)
     }
 }
 
 impl std::error::Error for UnknownOrchestrationTransport {}
 
-/// Workspace allocation policy for native orchestration workers.
+/// Workspace allocation policy for native goal workers.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum OrchestrationWorkspaceMode {
@@ -138,13 +138,13 @@ pub struct UnknownOrchestrationWorkspaceMode(pub String);
 
 impl fmt::Display for UnknownOrchestrationWorkspaceMode {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "unknown orchestration workspace mode: {}", self.0)
+        write!(f, "unknown goal workspace mode: {}", self.0)
     }
 }
 
 impl std::error::Error for UnknownOrchestrationWorkspaceMode {}
 
-/// Cleanup policy for generated orchestration workspaces.
+/// Cleanup policy for generated goal workspaces.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum OrchestrationWorkspaceCleanup {
@@ -190,17 +190,13 @@ pub struct UnknownOrchestrationWorkspaceCleanup(pub String);
 
 impl fmt::Display for UnknownOrchestrationWorkspaceCleanup {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(
-            f,
-            "unknown orchestration workspace cleanup policy: {}",
-            self.0
-        )
+        write!(f, "unknown goal workspace cleanup policy: {}", self.0)
     }
 }
 
 impl std::error::Error for UnknownOrchestrationWorkspaceCleanup {}
 
-/// Outcome value emitted by the native orchestrator wake event.
+/// Outcome value emitted by the native goal wake event.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum OrchestrationWakeOutcome {

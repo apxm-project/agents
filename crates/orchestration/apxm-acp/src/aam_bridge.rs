@@ -67,7 +67,7 @@ pub fn render_system_prompt(ctx: &AamContext) -> Option<String> {
     }
 
     Some(format!(
-        "## Context (from APXM orchestrator)\n\n{}",
+        "## Context (from APXM controller)\n\n{}",
         sections.join("\n\n")
     ))
 }
@@ -105,7 +105,7 @@ mod tests {
         ctx.system_prompt = Some("## Session\nExecution: exec-123".to_string());
 
         let result = render_system_prompt(&ctx).unwrap();
-        assert!(result.contains("## Context (from APXM orchestrator)"));
+        assert!(result.contains("## Context (from APXM controller)"));
         assert!(result.contains("## Session"));
         assert!(result.contains("exec-123"));
     }

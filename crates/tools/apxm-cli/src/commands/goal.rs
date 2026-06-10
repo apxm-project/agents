@@ -988,10 +988,10 @@ fn summarize_event(event: &JsonValue) -> Option<String> {
         .unwrap_or_default();
     match event_name {
         name if name == event_kind_constants::ORCHESTRATOR_SLEEP.name() => Some(format!(
-            "{seq}orchestrator sleeping; runtime owns the workflow until wake"
+            "{seq}goal pass sleeping; runtime owns the workflow until wake"
         )),
         name if name == event_kind_constants::ORCHESTRATOR_WAKE.name() => Some(format!(
-            "{seq}orchestrator wake: {} via {}",
+            "{seq}goal pass wake: {} via {}",
             payload_str(payload, "outcome").unwrap_or("unknown"),
             payload_str(payload, "terminal_event").unwrap_or("terminal event")
         )),

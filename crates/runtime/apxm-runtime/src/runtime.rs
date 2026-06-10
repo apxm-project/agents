@@ -1,4 +1,4 @@
-//! Runtime orchestrator - Main entry point for the APxM runtime
+//! Runtime coordinator - Main entry point for the APxM runtime
 
 use crate::metadata_keys as metadata;
 use crate::model_router::{ModelRouter, ModelRouterConfig};
@@ -150,7 +150,7 @@ impl Default for LlmToolDispatchConfig {
     }
 }
 
-/// APxM Runtime - Main orchestrator
+/// APxM Runtime - Main coordinator
 ///
 /// The runtime coordinates all subsystems and provides the main API
 /// for executing APxM programs.

@@ -254,7 +254,7 @@ pub(crate) mod admission_error {
 
     pub(crate) fn generated_process_spawn_not_allowed(op_type: impl std::fmt::Display) -> String {
         format!(
-            "generated plans may not contain process-spawn operation {op_type}; use {} or dekk apxm goal for admitted worker orchestration",
+            "generated plans may not contain process-spawn operation {op_type}; use {} or dekk apxm goal for admitted worker goal execution",
             mcp_tool_names::APXM_GOAL_START
         )
     }

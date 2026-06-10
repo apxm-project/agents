@@ -44,7 +44,7 @@ pub struct Goal {
 }
 
 /// What a gate/eval node reports about whether a goal is met after one bounded
-/// orchestration pass.
+/// goal pass.
 ///
 /// This is the typed counterpart to the free-text summary a gate node used to
 /// pass through. Making it a typed value is what lets the runtime *decide*
@@ -210,7 +210,13 @@ impl GateVerdict {
             let line = line.trim();
             let candidate = line
                 .split_once(':')
-                .map(|(k, v)| if k.trim().eq_ignore_ascii_case("status") { v } else { line })
+                .map(|(k, v)| {
+                    if k.trim().eq_ignore_ascii_case("status") {
+                        v
+                    } else {
+                        line
+                    }
+                })
                 .unwrap_or(line);
             let candidate = candidate
                 .trim()
@@ -414,7 +420,10 @@ mod convergence_tests {
             }
         );
         assert!(!decide(&v, 0, 3).is_terminal());
-        assert_eq!(decide(&v, 1, 3).event_kind_name(), "goal_needs_another_pass");
+        assert_eq!(
+            decide(&v, 1, 3).event_kind_name(),
+            "goal_needs_another_pass"
+        );
     }
 
     #[test]
@@ -544,6 +553,12 @@ mod convergence_tests {
         let schema = GateVerdict::output_schema();
         assert_eq!(schema["type"], "object");
         let statuses = &schema["properties"]["status"]["enum"];
-        assert!(statuses.as_array().unwrap().iter().any(|s| s == "needs_more"));
+        assert!(
+            statuses
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|s| s == "needs_more")
+        );
     }
 }

@@ -1,9 +1,9 @@
-//! APxM Driver - Configuration, linker, and orchestration
+//! APxM Driver - Configuration, linker, and coordination
 //!
-//! This crate consolidates configuration and orchestration:
+//! This crate consolidates configuration and coordination:
 //!
 //! - **`config`**: TOML-based configuration (`~/.apxm/config.toml`)
-//! - **`linker`**: High-level linker orchestrating compiler/runtime
+//! - **`linker`**: High-level linker coordinating compiler/runtime
 //! - **`compiler`**: Compiler wrapper for AirModule parsing and lowering
 //! - **`runtime`**: Runtime executor for DAG execution
 //!
@@ -18,7 +18,7 @@
 //!        ▼                      ▼                      ▼
 //!   ┌──────────┐          ┌──────────┐          ┌──────────┐
 //!   │  config  │          │  linker  │          │ runtime  │
-//!   │  TOML    │          │Orchestr. │          │  Exec    │
+//!   │  TOML    │          │  Coord.  │          │  Exec    │
 //!   │ Parsing  │          │  Logic   │          │  DAGs    │
 //!   └──────────┘          └──────────┘          └──────────┘
 //! ```

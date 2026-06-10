@@ -1,4 +1,4 @@
-//! Executor engine - Main orchestrator for DAG execution
+//! Executor engine - Main coordinator for DAG execution
 
 use super::{ExecutionContext, Result, dispatcher::OperationDispatcher};
 use crate::graph_lifecycle::{graph_dispatch_ir_from_dag, graph_metadata_from_dispatch_ir};
