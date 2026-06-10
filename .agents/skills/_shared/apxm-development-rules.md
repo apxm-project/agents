@@ -54,10 +54,12 @@ configure backends.
 
 - Before inventing a path string, check `apxm.contract.RepoLayout` /
   `apxm.contract.build_layout()`.
-- Before adding a new script, look in `tools/scripts/` — many wrappers
-  already exist (`vllm.py`, `cargo.py`, `check_no_legacy_vllm.py`,
-  `apxm_mcp_install.py`). The shared APXM/vLLM operational names live
-  in the `apxm` Python package at `crates/compiler/apxm-frontend/python/`.
+- Before adding a new script, look in `tools/scripts/` — many entrypoints
+  already exist (`cargo.py`, `vllm.py`, `release.py`,
+  `check_no_legacy_vllm.py`, `apxm_mcp_install.py`). Keep public names in
+  `.dekk.toml`; put larger implementations in a script-local package.
+  The shared APXM/vLLM operational names live in the `apxm` Python package at
+  `crates/compiler/apxm-frontend/python/`.
 
 ## Targeted verification
 

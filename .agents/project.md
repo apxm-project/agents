@@ -101,8 +101,10 @@ new content. Skills inside the lifecycle can invoke domain skills (e.g.
   `apxm-rebase-v0.21.0` (upstream v0.21.0 + 5 APXM commits at
   `apxm-project/vllm`). Never edit upstream files there directly without a
   cherry-pick plan.
-- **`tools/scripts/`** — Python wrappers Dekk calls into (`vllm.py`,
-  `cargo.py`, `check_no_legacy_vllm.py`, `apxm_mcp_install.py`).
+- **`tools/scripts/`** — Python entrypoints Dekk calls into (`cargo.py`,
+  `vllm.py`, `release.py`, `check_no_legacy_vllm.py`,
+  `apxm_mcp_install.py`). Larger command implementations live in a
+  script-local package such as `apxm_release/`.
 - **`crates/compiler/apxm-frontend/python/apxm/`** — installable `apxm`
   Python package. `apxm.contract` owns the APXM/vLLM operational names
   (env vars, routes, dataclasses, `build_layout()`); `apxm.data_config`
