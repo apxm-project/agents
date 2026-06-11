@@ -73,7 +73,7 @@ pub enum AISOperationType {
     Switch,
     /// Call a flow on another agent.
     FlowCall,
-    /// Spawn an external graph, artifact, or workflow as a child execution.
+    /// Spawn an external AIR file, artifact, or workflow as a child execution.
     WorkflowSpawn,
     /// Call another skill by manifest identity (`<skill_id>[@<version>]`).
     /// The runtime resolves the id through the live `SkillLibrary` and
@@ -457,7 +457,7 @@ impl AISOperationType {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum ReferenceType {
-    /// Registered ACP agent profile.
+    /// APXM ACP agent profile.
     Profile,
     /// Registered LLM backend (e.g., "openai", "corp-gateway").
     Backend,
@@ -1283,8 +1283,8 @@ pub static AIS_OPERATIONS: &[OperationSpec] = &[
         op_type: AISOperationType::WorkflowSpawn,
         name: "WorkflowSpawn",
         category: OperationCategory::ControlFlow,
-        description: "Spawn an external graph, artifact, or workflow as a child execution",
-        long_description: "Invokes an external graph file, precompiled artifact, or workflow file as a child execution boundary. \
+        description: "Spawn an external AIR file, artifact, or workflow as a child execution",
+        long_description: "Invokes an external AIR file, precompiled artifact, or workflow file as a child execution boundary. \
             Arguments are passed by name through the args map. The child run resolves its session root from the explicit node attribute when present, \
             otherwise it inherits the parent execution root.",
         latency: OperationLatency::High,
@@ -1294,11 +1294,11 @@ pub static AIS_OPERATIONS: &[OperationSpec] = &[
         fields: &[
             OperationField::required(
                 attrs::TARGET_KIND,
-                "Invocation target kind: graph_path, artifact_path, or workflow_path",
+                "Invocation target kind: air_path, artifact_path, or workflow_path",
             ),
             OperationField::required(
                 attrs::TARGET,
-                "Path of the graph, artifact, or workflow to execute",
+                "Path of the AIR file, artifact, or workflow to execute",
             ),
             OperationField::optional(attrs::ARGS, "Arguments to pass to the child execution"),
             OperationField::optional(
@@ -1801,11 +1801,12 @@ pub static AIS_OPERATIONS: &[OperationSpec] = &[
         name: "SpawnAgent",
         category: OperationCategory::Coordination,
         description: "Create a new agent instance at runtime, optionally as an ACP subprocess",
-        long_description: "Spawns a new agent instance. Without 'profile', registers a local \
-            process for flow-based agents. With 'profile', spawns a real ACP subprocess \
-            through the ProcessTable's AgentSpawner. The agent can then receive COMMUNICATE \
-            (protocol 'acp' or 'local') or DELEGATE messages. Returns the agent's identifier \
-            and metadata.",
+        long_description: "Spawns a new agent instance. Without profile or agent_route, registers \
+            a local process for flow-based agents. With profile, spawns that ACP profile. With \
+            agent_route='auto', APXM selects an ACP profile from host-supplied route candidates \
+            using required_capabilities and preferred_profiles. The agent can then receive \
+            COMMUNICATE (protocol 'acp' or 'local') or DELEGATE messages. Returns the agent's \
+            identifier and metadata.",
         latency: OperationLatency::Medium,
         example_json: Some(
             r#"{"id": 1, "op": "SPAWN_AGENT", "attributes": {"agent_name": "worker", "profile": "example-acp-profile", "mode": "architect"}}"#,
@@ -1814,17 +1815,28 @@ pub static AIS_OPERATIONS: &[OperationSpec] = &[
             OperationField::required(attrs::AGENT_NAME, "Name for the new agent"),
             OperationField::optional_ref(
                 attrs::PROFILE,
-                "Registered ACP agent profile. When present, spawns an ACP subprocess",
+                "APXM ACP agent profile. When present, spawns an ACP subprocess",
                 ReferenceType::Profile,
+            ),
+            OperationField::optional(
+                attrs::AGENT_ROUTE,
+                "Set to 'auto' to let APXM select an ACP profile when profile is omitted",
+            ),
+            OperationField::optional(
+                attrs::REQUIRED_CAPABILITIES,
+                "Abstract route capabilities required from the selected ACP profile",
+            ),
+            OperationField::optional(
+                attrs::PREFERRED_PROFILES,
+                "Preferred APXM ACP profiles used as a tie-breaker after capability fit",
             ),
             OperationField::optional(
                 attrs::MODE,
                 "Agent mode to set after spawn (e.g. 'architect', 'code')",
             ),
-            OperationField::optional_ref(
+            OperationField::optional(
                 attrs::MODEL,
-                "Model override accepted by the selected backend",
-                ReferenceType::Model,
+                "Agent-specific model hint accepted by the selected ACP profile",
             ),
             OperationField::optional(
                 attrs::CWD,
@@ -1848,6 +1860,9 @@ pub static AIS_OPERATIONS: &[OperationSpec] = &[
             positional_attrs: &[],
             keywords: &[
                 attrs::PROFILE,
+                attrs::AGENT_ROUTE,
+                attrs::REQUIRED_CAPABILITIES,
+                attrs::PREFERRED_PROFILES,
                 attrs::MODE,
                 attrs::MODEL,
                 attrs::CWD,

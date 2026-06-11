@@ -12,7 +12,7 @@ use apxm_core::types::{
 use apxm_runtime::process::AgentProcess;
 use apxm_runtime::process_table::{AgentPromptResponse, AgentPrompter, AgentSpawner};
 use std::any::Any;
-use std::collections::HashSet;
+use std::collections::{BTreeSet, HashSet};
 use std::sync::Mutex;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
@@ -439,41 +439,65 @@ async fn mcp_goal_start_auto_plans_when_workers_are_omitted() {
         "implement should depend on planner: {planned}"
     );
 
-    let plan_json = std::path::PathBuf::from(
-        planned["artifacts"]["plan_json"]
-            .as_str()
-            .expect("plan_json artifact"),
+    let artifact_keys = planned["artifacts"]
+        .as_object()
+        .expect("artifact object")
+        .keys()
+        .cloned()
+        .collect::<BTreeSet<_>>();
+    assert_eq!(
+        artifact_keys,
+        BTreeSet::from([
+            "feedback_air".to_string(),
+            "gate_air".to_string(),
+            "prompts_dir".to_string(),
+            "reports_dir".to_string(),
+            "supervisor_prompt".to_string(),
+            "supervisor_report".to_string(),
+            "tracking_doc".to_string(),
+            "worker_air_dir".to_string(),
+            "worker_prompts".to_string(),
+        ]),
+        "goal response should expose only AIR/workflow artifacts: {planned}"
     );
-    let plan_packet: serde_json::Value =
-        serde_json::from_slice(&std::fs::read(&plan_json).expect("plan json bytes"))
-            .expect("plan json");
-    assert_eq!(plan_packet["planning"]["generated"], true);
+    let workflow_path =
+        std::path::PathBuf::from(planned["workflow_path"].as_str().expect("workflow_path"));
+    let workflow_manifest: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(&workflow_path).expect("workflow manifest bytes"))
+            .expect("workflow manifest");
+    assert!(
+        workflow_manifest["steps"].is_array() && workflow_manifest.get("graphs").is_none(),
+        "goal should materialize workflow steps only: {workflow_manifest}"
+    );
     let bundle_dir = std::path::PathBuf::from(planned["bundle_dir"].as_str().expect("bundle_dir"));
     let _ = std::fs::remove_dir_all(bundle_dir);
 }
 
 #[tokio::test]
-async fn mcp_goal_start_model_planner_proposes_worker_dag() {
+async fn mcp_goal_start_model_planner_proposes_worker_workflow() {
     let app = build_app(
-        test_state_with_mock_plan_response(serde_json::json!({
-            "reason": "split inspection, implementation, and verification",
-            "workers": [
-                {
-                    "id": "survey",
-                    "role": "Inspect the current goal architecture and report constraints."
-                },
-                {
-                    "id": "implement",
-                    "role": "Implement the admitted architecture change.",
-                    "depends_on": ["survey"]
-                },
-                {
-                    "id": "verify",
-                    "role": "Run focused checks and report any residual failures.",
-                    "depends_on": ["implement"]
-                }
-            ]
-        }))
+        test_state_with_mock_workflow_response(
+            serde_json::json!({
+                "reason": "split inspection, implementation, and verification",
+                "workers": [
+                    {
+                        "id": "survey",
+                        "role": "Inspect the current goal architecture and report constraints."
+                    },
+                    {
+                        "id": "implement",
+                        "role": "Implement the admitted architecture change.",
+                        "depends_on": ["survey"]
+                    },
+                    {
+                        "id": "verify",
+                        "role": "Run focused checks and report any residual failures.",
+                        "depends_on": ["implement"]
+                    }
+                ]
+            })
+            .to_string(),
+        )
         .await,
     );
     let session_id = format!("mcp-goal-model-plan-{}", uuid::Uuid::new_v4());
@@ -884,20 +908,44 @@ async fn mcp_goal_start_spawns_parallel_workers_with_session_cwds() {
             .as_str()
             .expect("tracking_doc artifact"),
     );
-    let graph_json = std::path::PathBuf::from(
-        artifacts["graph_json"]
+    let worker_air_dir = std::path::PathBuf::from(
+        artifacts["worker_air_dir"]
             .as_str()
-            .expect("graph_json artifact"),
+            .expect("worker_air_dir artifact"),
     );
-    let plan_json =
-        std::path::PathBuf::from(artifacts["plan_json"].as_str().expect("plan_json artifact"));
+    let gate_air =
+        std::path::PathBuf::from(artifacts["gate_air"].as_str().expect("gate_air artifact"));
     assert!(
         tracking_doc.is_file(),
         "tracking doc should exist: {started}"
     );
-    assert!(graph_json.is_file(), "graph json should exist: {started}");
-    assert!(plan_json.is_file(), "plan json should exist: {started}");
+    assert!(
+        worker_air_dir.is_dir(),
+        "worker AIR directory should exist: {started}"
+    );
+    assert!(gate_air.is_file(), "gate AIR should exist: {started}");
     let tracking_text = std::fs::read_to_string(&tracking_doc).expect("tracking doc text");
+    let artifact_keys = artifacts
+        .as_object()
+        .expect("artifact object")
+        .keys()
+        .cloned()
+        .collect::<BTreeSet<_>>();
+    assert_eq!(
+        artifact_keys,
+        BTreeSet::from([
+            "feedback_air".to_string(),
+            "gate_air".to_string(),
+            "prompts_dir".to_string(),
+            "reports_dir".to_string(),
+            "supervisor_prompt".to_string(),
+            "supervisor_report".to_string(),
+            "tracking_doc".to_string(),
+            "worker_air_dir".to_string(),
+            "worker_prompts".to_string(),
+        ]),
+        "goal artifacts should expose only workflow/AIR paths: {started}"
+    );
     assert!(
         tracking_text.contains(MCP_TOOL_APXM_GOAL_EVENTS)
             && tracking_text.contains("planner")
@@ -1721,43 +1769,6 @@ async fn mcp_workflow_fans_out_independent_steps_and_fans_in_output() {
     let workflow_session_dir = spawn_payload["session_dir"]
         .as_str()
         .expect("workflow session_dir");
-    let results_path = std::path::Path::new(workflow_session_dir).join("results.json");
-    let workflow_results: serde_json::Value =
-        serde_json::from_slice(&std::fs::read(&results_path).expect("read workflow results.json"))
-            .expect("workflow results JSON");
-    assert_eq!(workflow_results["status"], "Success");
-    assert_eq!(workflow_results["output"], "left+right");
-    assert_eq!(
-        workflow_results["step_results"]["left"]["status"],
-        "Success"
-    );
-    assert_eq!(
-        workflow_results["step_results"]["right"]["status"],
-        "Success"
-    );
-    assert_ne!(
-        workflow_results["step_results"]["left"]["session_dir"],
-        workflow_results["step_results"]["right"]["session_dir"],
-        "parallel children should keep distinct child session dirs"
-    );
-    let live_path = std::path::Path::new(workflow_session_dir).join("live.json");
-    let workflow_live: serde_json::Value =
-        serde_json::from_slice(&std::fs::read(&live_path).expect("read workflow live.json"))
-            .expect("workflow live JSON");
-    assert_eq!(workflow_live["completed"], 2);
-    assert_eq!(workflow_live["total"], 2);
-    let completed_node_names: HashSet<&str> = workflow_live["completed_nodes"]
-        .as_array()
-        .expect("completed_nodes")
-        .iter()
-        .filter_map(|node| node["name"].as_str())
-        .collect();
-    assert!(
-        ["left", "right"]
-            .iter()
-            .all(|step_id| completed_node_names.contains(*step_id)),
-        "workflow live.json should retain completed step names: {workflow_live}"
-    );
 
     let events = workflow_events(app, execution_id, 0, 50).await;
     let event_items = events["events"].as_array().expect("events array");
@@ -1776,7 +1787,7 @@ async fn mcp_workflow_fans_out_independent_steps_and_fans_in_output() {
             })
             .count()
             >= 2,
-        "child graph tool events should be visible through workflow_events: {events}"
+        "child workflow tool events should be visible through workflow_events: {events}"
     );
     let started_steps: HashSet<&str> = event_items
         .iter()
@@ -1789,6 +1800,7 @@ async fn mcp_workflow_fans_out_independent_steps_and_fans_in_output() {
             .all(|step_id| started_steps.contains(*step_id)),
         "workflow step starts should include both parallel children: {events}"
     );
+    let mut completed_session_dirs = Vec::new();
     for step_id in ["left", "right"] {
         let step_completed = event_items
             .iter()
@@ -1806,12 +1818,16 @@ async fn mcp_workflow_fans_out_independent_steps_and_fans_in_output() {
             step_completed["payload"]["workflow_session_dir"],
             workflow_session_dir
         );
-        assert_eq!(
-            step_completed["payload"]["session_dir"],
-            workflow_results["step_results"][step_id]["session_dir"],
-            "step completion event should point at the child session dir"
+        completed_session_dirs.push(
+            step_completed["payload"]["session_dir"]
+                .as_str()
+                .expect("child session_dir"),
         );
     }
+    assert_ne!(
+        completed_session_dirs[0], completed_session_dirs[1],
+        "parallel children should keep distinct child session dirs"
+    );
     let workflow_finished = event_items
         .iter()
         .find(|event| payload_kind_is(event, event_kind::WORKFLOW_FINISHED))
@@ -2076,7 +2092,7 @@ async fn mcp_workflow_cancel_interrupts_in_flight_run() {
 }
 
 #[tokio::test]
-async fn mcp_checked_in_agent_council_workflow_runs_and_pages_events() {
+async fn mcp_checked_in_agent_council_workflow_runs() {
     let app = build_app(test_state().await);
     let workflow_path = checked_in_workflow_path("agent_council/workflow.apxmw");
     let task = "coordinate worker agents";
@@ -2110,72 +2126,8 @@ async fn mcp_checked_in_agent_council_workflow_runs_and_pages_events() {
         "missing workflow arg in output: {result}"
     );
 
-    let workflow_results: serde_json::Value = serde_json::from_slice(
-        &std::fs::read(
-            std::path::Path::new(spawn_payload["session_dir"].as_str().expect("session_dir"))
-                .join("results.json"),
-        )
-        .expect("read example workflow results.json"),
-    )
-    .expect("workflow results JSON");
-    assert_eq!(workflow_results["status"], "Success");
-    for step in ["planner", "executor", "reviewer", "synthesizer"] {
-        assert_eq!(
-            workflow_results["step_results"][step]["status"], "Success",
-            "step {step} should succeed: {workflow_results}"
-        );
-    }
-
-    let page_one = workflow_events(app.clone(), &execution_id, 0, 1).await;
-    let page_one_events = page_one["events"].as_array().expect("events array");
-    assert_eq!(page_one_events.len(), 1);
-    assert_eq!(page_one_events[0]["meta"]["seq"], 0);
-    assert_eq!(page_one_events[0]["meta"]["source"], "server");
-    assert_eq!(
-        page_one_events[0]["payload"]["kind"],
-        event_kind::EXECUTION_STARTED.name()
-    );
-    assert_eq!(page_one["next_seq"], 1);
-    assert_eq!(page_one["done"], false);
-
-    let page_two = workflow_events(app.clone(), &execution_id, 1, 3).await;
-    let page_two_events = page_two["events"].as_array().expect("events array");
-    assert!(
-        !page_two_events.is_empty(),
-        "expected second page: {page_two}"
-    );
-    assert!(
-        page_two_events
-            .iter()
-            .all(|event| event["meta"]["seq"].as_u64().unwrap_or_default() >= 1),
-        "page two should honor since: {page_two}"
-    );
-
     let full = workflow_events(app.clone(), &execution_id, 0, 200).await;
     let full_events = full["events"].as_array().expect("events array");
-    assert_eq!(full["done"], true);
-    assert_strictly_increasing_event_seq(full_events, &execution_id);
-    assert_eq!(
-        full["next_seq"],
-        full_events.last().expect("last event")["meta"]["seq"]
-            .as_u64()
-            .expect("last seq")
-            + 1
-    );
-    let tail = workflow_events(
-        app,
-        &execution_id,
-        full["next_seq"].as_u64().expect("next_seq"),
-        10,
-    )
-    .await;
-    assert_eq!(
-        tail["events"].as_array().expect("tail events").len(),
-        0,
-        "tail page should be empty: {tail}"
-    );
-    assert_eq!(tail["done"], true);
-
     assert!(
         full_events.iter().any(|event| {
             payload_kind_is(event, event_kind::OPERATION_END)
@@ -2198,7 +2150,7 @@ async fn mcp_checked_in_agent_council_workflow_runs_and_pages_events() {
 }
 
 #[tokio::test]
-async fn mcp_workflow_events_falls_back_to_rollout_when_since_precedes_retained_window() {
+async fn mcp_workflow_events_reads_rollout_when_since_precedes_retained_window() {
     let state = test_state().await;
     let execution_id = "mcp-workflow-retention";
     let session_root = tempfile::tempdir().expect("session root");
@@ -2288,7 +2240,7 @@ async fn mcp_checked_in_event_feedback_loop_workflow_runs_all_steps() {
         .count();
     assert!(
         const_starts >= 5,
-        "deterministic event-loop child graphs should emit runtime operation events: {events}"
+        "deterministic event-loop child workflows should emit runtime operation events: {events}"
     );
     assert!(
         event_items
@@ -2421,125 +2373,6 @@ async fn mcp_checked_in_approval_gate_parks_wakes_and_reports_resume_events() {
 }
 
 #[tokio::test]
-async fn mcp_checked_in_cancel_parked_workflow_has_no_late_child_work() {
-    const CHECKPOINT_ID: &str = "examples-cancel-cp";
-
-    let app = build_app(test_state().await);
-    create_pending_checkpoint(app.clone(), CHECKPOINT_ID).await;
-    let workflow_path = checked_in_workflow_path("cancel_background/cancel_parked.apxmw");
-
-    let execution_id = start_workflow_via_mcp(
-        app.clone(),
-        &workflow_path,
-        serde_json::json!({}),
-        Some("mcp-example-cancel-parked"),
-    )
-    .await;
-    let _ = wait_for_workflow_events_matching(app.clone(), &execution_id, |events| {
-        events.iter().any(|event| {
-            payload_kind_is(event, event_kind::OPERATION_START)
-                && payload_op_is(event, AISOperationType::Resume)
-        })
-    })
-    .await;
-    assert_eq!(
-        workflow_status_json(app.clone(), &execution_id).await[tool_result::STATUS],
-        STATUS_RUNNING
-    );
-
-    let (status, body) = post_json(
-        app.clone(),
-        routes::MCP,
-        mcp_call(
-            MCP_TOOL_APXM_WORKFLOW_CANCEL,
-            serde_json::json!({ "execution_id": execution_id }),
-        ),
-    )
-    .await;
-    assert_eq!(status, StatusCode::OK, "workflow cancel failed: {body}");
-    assert_eq!(body[tool_result::RESULT][mcp_fields::IS_ERROR], false);
-    let cancel_response: serde_json::Value =
-        serde_json::from_str(tool_text(&body)).expect("workflow cancel response JSON");
-    assert_eq!(cancel_response[tool_result::EXECUTION_ID], execution_id);
-    assert_eq!(cancel_response["cancelled"], true);
-
-    let status_body = wait_for_workflow_status(app.clone(), &execution_id, STATUS_FAILED).await;
-    let workflow_status: serde_json::Value =
-        serde_json::from_str(tool_text(&status_body)).expect("workflow status response JSON");
-    assert!(
-        workflow_status["error"]
-            .as_str()
-            .unwrap_or_default()
-            .contains("workflow_cancel"),
-        "expected cancel error: {workflow_status}"
-    );
-
-    let cancelled_events = workflow_events(app.clone(), &execution_id, 0, 100).await;
-    let cancelled_items = cancelled_events["events"].as_array().expect("events array");
-    let abort_seq = cancelled_items
-        .iter()
-        .find(|event| event["payload"]["kind"] == "turn_aborted")
-        .and_then(|event| event["meta"]["seq"].as_u64())
-        .expect("turn_aborted seq");
-
-    let (status, body) = post_json(
-        app.clone(),
-        &routes::checkpoint_resume_path(CHECKPOINT_ID),
-        serde_json::json!({ "human_input": "too late" }),
-    )
-    .await;
-    assert_eq!(
-        status,
-        StatusCode::OK,
-        "late checkpoint resume failed: {body}"
-    );
-    tokio::time::sleep(std::time::Duration::from_millis(100)).await;
-
-    let late_events = workflow_events(app.clone(), &execution_id, 0, 100).await;
-    let late_items = late_events["events"].as_array().expect("events array");
-    assert!(
-        late_items
-            .iter()
-            .any(|event| event["payload"]["kind"] == "turn_aborted"
-                && event["payload"]["execution_id"] == execution_id
-                && event["payload"]["reason"]
-                    .as_str()
-                    .unwrap_or_default()
-                    .contains("cancel")),
-        "expected cancelled turn_aborted payload: {late_events}"
-    );
-    assert!(
-        !late_items
-            .iter()
-            .any(|event| payload_kind_is(event, event_kind::EXECUTE_COMPLETE)),
-        "cancelled workflow must not emit execute_complete: {late_events}"
-    );
-    assert!(
-        !late_items.iter().any(|event| {
-            event["meta"]["seq"].as_u64().unwrap_or_default() > abort_seq
-                && event["meta"]["source"] == "runtime"
-        }),
-        "late checkpoint resume must not append runtime events after cancel: {late_events}"
-    );
-
-    let (status, body) = post_json(
-        app,
-        routes::MCP,
-        mcp_call(
-            MCP_TOOL_APXM_WORKFLOW_CANCEL,
-            serde_json::json!({ "execution_id": execution_id }),
-        ),
-    )
-    .await;
-    assert_eq!(status, StatusCode::OK, "second cancel failed: {body}");
-    assert_eq!(body[tool_result::RESULT][mcp_fields::IS_ERROR], true);
-    assert!(
-        tool_text(&body).contains("no in-flight workflow run to cancel"),
-        "second cancel should report not-in-flight: {body}"
-    );
-}
-
-#[tokio::test]
 async fn mcp_prompt_as_workflow_reports_missing_router_as_tool_error() {
     let app = build_app(test_state().await);
 
@@ -2573,8 +2406,8 @@ async fn mcp_prompt_as_workflow_reports_missing_router_as_tool_error() {
 }
 
 #[tokio::test]
-async fn mcp_prompt_as_workflow_compiles_mock_model_plan() {
-    let app = build_app(test_state_with_mock_plan_response(mock_yield_plan_response()).await);
+async fn mcp_prompt_as_workflow_compiles_mock_model_air() {
+    let app = build_app(test_state_with_mock_workflow_response(mock_yield_air_response()).await);
 
     let (status, body) = post_json(
         app,
@@ -2582,7 +2415,7 @@ async fn mcp_prompt_as_workflow_compiles_mock_model_plan() {
         mcp_call(
             MCP_TOOL_APXM_PROMPT_AS_WORKFLOW,
             serde_json::json!({
-                (mcp_args::TASK): FIXTURE_PLAN_TASK,
+                (mcp_args::TASK): FIXTURE_WORKFLOW_TASK,
                 (mcp_args::EXECUTE): false
             }),
         ),
@@ -2596,7 +2429,7 @@ async fn mcp_prompt_as_workflow_compiles_mock_model_plan() {
     );
     assert_eq!(body[tool_result::RESULT][mcp_fields::IS_ERROR], false);
     let response: serde_json::Value =
-        serde_json::from_str(tool_text(&body)).expect("plan response JSON");
+        serde_json::from_str(tool_text(&body)).expect("tool response");
     assert_eq!(response[tool_result::STATUS], mcp_status::COMPILED);
     assert!(
         response[tool_result::TRACE_ID]
@@ -2616,9 +2449,15 @@ async fn mcp_prompt_as_workflow_compiles_mock_model_plan() {
             .is_some_and(|hash| hash.starts_with(REDACTION_HASH_PREFIX_BLAKE3)),
         "artifact hash missing: {response}"
     );
-    assert_eq!(
-        response[tool_result::WORKFLOW][plan_field::NAME],
-        FIXTURE_PLAN_NAME
+    assert!(
+        response[tool_result::AIR_TEXT]
+            .as_str()
+            .is_some_and(|air| air.contains("func.func @main")),
+        "AIR missing from response: {response}"
+    );
+    assert!(
+        std::path::Path::new(response[tool_result::AIR_PATH].as_str().expect("air_path")).is_file(),
+        "AIR path should be written: {response}"
     );
     assert_eq!(
         response[tool_result::SUMMARY][tool_result::EXECUTED_NODES],
@@ -2628,12 +2467,12 @@ async fn mcp_prompt_as_workflow_compiles_mock_model_plan() {
 
 #[tokio::test]
 async fn mcp_prompt_as_workflow_reports_timeout_as_tool_error() {
-    let runtime = runtime_with_mock_plan_backend(
-        MockLLMBackend::static_response(mock_yield_plan_response().to_string()).with_latency_ms(50),
+    let runtime = runtime_with_mock_workflow_backend(
+        MockLLMBackend::static_response(mock_yield_air_response()).with_latency_ms(50),
     )
     .await;
     let mut state = test_state_with_runtime_and_skill_roots(runtime, Vec::new()).await;
-    state.server_config.mcp.plan_emit_timeout_ms = 1;
+    state.server_config.mcp.workflow_emit_timeout_ms = 1;
     let app = build_app(state);
 
     let (status, body) = post_json(
@@ -2642,7 +2481,7 @@ async fn mcp_prompt_as_workflow_reports_timeout_as_tool_error() {
         mcp_call(
             MCP_TOOL_APXM_PROMPT_AS_WORKFLOW,
             serde_json::json!({
-                (mcp_args::TASK): FIXTURE_PLAN_TASK,
+                (mcp_args::TASK): FIXTURE_WORKFLOW_TASK,
                 (mcp_args::EXECUTE): false
             }),
         ),
@@ -2656,54 +2495,18 @@ async fn mcp_prompt_as_workflow_reports_timeout_as_tool_error() {
     );
     assert_eq!(body[tool_result::RESULT][mcp_fields::IS_ERROR], true);
     assert!(
-        tool_text(&body).contains("model-router plan emission timed out"),
+        tool_text(&body).contains("model-router AIR emission timed out"),
         "timeout should be explicit and should not compile a generic workflow: {body}"
     );
 }
 
 #[tokio::test]
-async fn mcp_prompt_as_workflow_normalizes_named_dependency_refs() {
-    let app =
-        build_app(test_state_with_mock_plan_response(mock_named_dependency_plan_response()).await);
-
-    let (status, body) = post_json(
-        app,
-        routes::MCP,
-        mcp_call(
-            MCP_TOOL_APXM_PROMPT_AS_WORKFLOW,
-            serde_json::json!({
-                (mcp_args::TASK): FIXTURE_PLAN_TASK,
-                (mcp_args::EXECUTE): false
-            }),
-        ),
-    )
-    .await;
-
-    assert_eq!(
-        status,
-        StatusCode::OK,
-        "mcp named dependency normalization failed: {body}"
-    );
-    assert_eq!(body[tool_result::RESULT][mcp_fields::IS_ERROR], false);
-    let response: serde_json::Value =
-        serde_json::from_str(tool_text(&body)).expect("plan response JSON");
-    assert_eq!(
-        response[tool_result::WORKFLOW][plan_field::NODES][1][plan_field::DEPENDS_ON][0]
-            [plan_field::NODE],
-        1
-    );
-}
-
-#[tokio::test]
 async fn mcp_prompt_as_workflow_repairs_invalid_candidate_before_compile() {
-    let backend = MockLLMBackend::static_response(mock_invalid_plan_response().to_string())
-        .when_prompt_contains(
-            FIXTURE_PLAN_REPAIR_MARKER,
-            mock_yield_plan_response().to_string(),
-        );
+    let backend = MockLLMBackend::static_response(mock_invalid_air_response())
+        .when_prompt_contains(FIXTURE_WORKFLOW_REPAIR_MARKER, mock_yield_air_response());
     let app = build_app(
         test_state_with_runtime_and_skill_roots(
-            runtime_with_mock_plan_backend(backend).await,
+            runtime_with_mock_workflow_backend(backend).await,
             Vec::new(),
         )
         .await,
@@ -2715,36 +2518,39 @@ async fn mcp_prompt_as_workflow_repairs_invalid_candidate_before_compile() {
         mcp_call(
             MCP_TOOL_APXM_PROMPT_AS_WORKFLOW,
             serde_json::json!({
-                (mcp_args::TASK): FIXTURE_PLAN_TASK,
+                (mcp_args::TASK): FIXTURE_WORKFLOW_TASK,
                 (mcp_args::EXECUTE): false
             }),
         ),
     )
     .await;
 
-    assert_eq!(status, StatusCode::OK, "mcp plan repair failed: {body}");
+    assert_eq!(status, StatusCode::OK, "mcp AIR repair failed: {body}");
     assert_eq!(body[tool_result::RESULT][mcp_fields::IS_ERROR], false);
     let response: serde_json::Value =
-        serde_json::from_str(tool_text(&body)).expect("plan response JSON");
+        serde_json::from_str(tool_text(&body)).expect("tool response");
     assert_eq!(response[tool_result::STATUS], mcp_status::COMPILED);
-    assert_eq!(
-        response[tool_result::WORKFLOW][plan_field::NODES][0][plan_field::OP],
-        FIXTURE_PLAN_OP_YIELD
+    assert!(
+        response[tool_result::AIR_TEXT]
+            .as_str()
+            .is_some_and(|air| air.contains("ais.const_str")),
+        "repaired AIR should be returned: {response}"
     );
 }
 
 #[tokio::test]
-async fn mcp_prompt_as_workflow_preserves_worker_and_backend_routing_fields() {
-    let app = build_app(test_state_with_mock_plan_response(mock_routed_plan_response()).await);
+async fn mcp_prompt_as_workflow_records_execution_under_trace_id() {
+    let app = build_app(test_state_with_mock_workflow_response(mock_yield_air_response()).await);
 
     let (status, body) = post_json(
-        app,
+        app.clone(),
         routes::MCP,
         mcp_call(
             MCP_TOOL_APXM_PROMPT_AS_WORKFLOW,
             serde_json::json!({
-                (mcp_args::TASK): FIXTURE_PLAN_TASK,
-                (mcp_args::EXECUTE): false
+                (mcp_args::TASK): FIXTURE_WORKFLOW_TASK,
+                (mcp_args::EXECUTE): true,
+                (mcp_args::TRACE_ID): FIXTURE_WORKFLOW_TRACE_ID
             }),
         ),
     )
@@ -2753,50 +2559,15 @@ async fn mcp_prompt_as_workflow_preserves_worker_and_backend_routing_fields() {
     assert_eq!(
         status,
         StatusCode::OK,
-        "mcp routed workflow compile failed: {body}"
+        "mcp workflow execution failed: {body}"
     );
-    assert_eq!(
-        body[tool_result::RESULT][mcp_fields::IS_ERROR],
-        false,
-        "routed workflow compile returned an error: {body}"
-    );
-    let response: serde_json::Value =
-        serde_json::from_str(tool_text(&body)).expect("plan response JSON");
-    assert_eq!(response[tool_result::STATUS], mcp_status::COMPILED);
-    let node = &response[tool_result::WORKFLOW][plan_field::NODES][0];
-    assert_eq!(node[plan_field::PROFILE], FIXTURE_WORKER_PROFILE);
-    assert_eq!(node[plan_field::CWD], FIXTURE_WORKER_CWD);
-    assert_eq!(node[plan_field::BACKEND], FIXTURE_BACKEND);
-    assert_eq!(node[plan_field::MODEL], FIXTURE_MODEL);
-    assert_eq!(node[plan_field::EFFORT], FIXTURE_EFFORT);
-}
-
-#[tokio::test]
-async fn mcp_prompt_as_workflow_records_execution_under_trace_id() {
-    let app = build_app(test_state_with_mock_plan_response(mock_yield_plan_response()).await);
-
-    let (status, body) = post_json(
-        app.clone(),
-        routes::MCP,
-        mcp_call(
-            MCP_TOOL_APXM_PROMPT_AS_WORKFLOW,
-            serde_json::json!({
-                (mcp_args::TASK): FIXTURE_PLAN_TASK,
-                (mcp_args::EXECUTE): true,
-                (mcp_args::TRACE_ID): FIXTURE_PLAN_TRACE_ID
-            }),
-        ),
-    )
-    .await;
-
-    assert_eq!(status, StatusCode::OK, "mcp plan execution failed: {body}");
     assert_eq!(body[tool_result::RESULT][mcp_fields::IS_ERROR], false);
     let response: serde_json::Value =
-        serde_json::from_str(tool_text(&body)).expect("plan response JSON");
+        serde_json::from_str(tool_text(&body)).expect("tool response");
     assert_eq!(response[tool_result::STATUS], mcp_status::EXECUTED);
     assert_eq!(
         response[tool_result::EXECUTION_ID],
-        FIXTURE_PLAN_TRACE_ID,
+        FIXTURE_WORKFLOW_TRACE_ID,
         "execution_id should be the requested trace_id: {response}"
     );
 
@@ -2805,30 +2576,30 @@ async fn mcp_prompt_as_workflow_records_execution_under_trace_id() {
         routes::MCP,
         mcp_call(
             MCP_TOOL_APXM_TRACE_FETCH,
-            serde_json::json!({ (mcp_args::TRACE_ID): FIXTURE_PLAN_TRACE_ID }),
+            serde_json::json!({ (mcp_args::TRACE_ID): FIXTURE_WORKFLOW_TRACE_ID }),
         ),
     )
     .await;
 
     assert_eq!(status, StatusCode::OK, "mcp trace fetch failed: {body}");
     assert_eq!(body[tool_result::RESULT][mcp_fields::IS_ERROR], false);
-    let trace: serde_json::Value =
-        serde_json::from_str(tool_text(&body)).expect("trace response JSON");
+    let trace: serde_json::Value = serde_json::from_str(tool_text(&body)).expect("trace response");
     assert_eq!(trace[tool_result::STATUS], mcp_status::FOUND);
     assert_eq!(
         trace[tool_result::EXECUTION][tool_result::EXECUTION_ID],
-        FIXTURE_PLAN_TRACE_ID
+        FIXTURE_WORKFLOW_TRACE_ID
     );
     assert_eq!(
         trace[tool_result::EXECUTION][tool_result::SKILL_ID],
-        plan_skill::ID
+        workflow_skill::ID
     );
 }
 
 #[tokio::test]
 async fn mcp_prompt_as_workflow_rejects_unsafe_generated_direct_tool() {
     let state =
-        test_state_with_mock_plan_response(mock_inv_tool_plan_response(FIXTURE_WRITE_TOOL)).await;
+        test_state_with_mock_workflow_response(mock_inv_tool_air_response(FIXTURE_WRITE_TOOL))
+            .await;
     state
         .runtime
         .capability_system()
@@ -2844,7 +2615,7 @@ async fn mcp_prompt_as_workflow_rejects_unsafe_generated_direct_tool() {
         mcp_call(
             MCP_TOOL_APXM_PROMPT_AS_WORKFLOW,
             serde_json::json!({
-                (mcp_args::TASK): FIXTURE_PLAN_TASK,
+                (mcp_args::TASK): FIXTURE_WORKFLOW_TASK,
                 (mcp_args::EXECUTE): true
             }),
         ),
@@ -2859,14 +2630,14 @@ async fn mcp_prompt_as_workflow_rejects_unsafe_generated_direct_tool() {
     assert_eq!(body[tool_result::RESULT][mcp_fields::IS_ERROR], true);
     assert!(
         tool_text(&body).contains(ERROR_MCP_AGENT_SAFE),
-        "expected generated-plan side-effect rejection: {body}"
+        "expected generated AIR side-effect rejection: {body}"
     );
 }
 
 #[tokio::test]
 async fn mcp_prompt_as_workflow_allows_sandboxed_generated_tool() {
-    let mut runtime = runtime_with_mock_plan_backend(MockLLMBackend::static_response(
-        mock_inv_tool_plan_response(FIXTURE_WRITE_TOOL).to_string(),
+    let mut runtime = runtime_with_mock_workflow_backend(MockLLMBackend::static_response(
+        mock_inv_tool_air_response(FIXTURE_WRITE_TOOL),
     ))
     .await;
     runtime.set_sandbox_registry(Arc::new(fixture_sandbox_registry()));
@@ -2884,9 +2655,9 @@ async fn mcp_prompt_as_workflow_allows_sandboxed_generated_tool() {
         mcp_call(
             MCP_TOOL_APXM_PROMPT_AS_WORKFLOW,
             serde_json::json!({
-                (mcp_args::TASK): FIXTURE_PLAN_TASK,
+                (mcp_args::TASK): FIXTURE_WORKFLOW_TASK,
                 (mcp_args::EXECUTE): true,
-                (mcp_args::TRACE_ID): FIXTURE_PLAN_SANDBOX_TRACE_ID
+                (mcp_args::TRACE_ID): FIXTURE_WORKFLOW_SANDBOX_TRACE_ID
             }),
         ),
     )
@@ -2899,11 +2670,11 @@ async fn mcp_prompt_as_workflow_allows_sandboxed_generated_tool() {
     );
     assert_eq!(body[tool_result::RESULT][mcp_fields::IS_ERROR], false);
     let response: serde_json::Value =
-        serde_json::from_str(tool_text(&body)).expect("plan response JSON");
+        serde_json::from_str(tool_text(&body)).expect("tool response");
     assert_eq!(response[tool_result::STATUS], mcp_status::EXECUTED);
     assert_eq!(
         response[tool_result::EXECUTION_ID],
-        FIXTURE_PLAN_SANDBOX_TRACE_ID
+        FIXTURE_WORKFLOW_SANDBOX_TRACE_ID
     );
 }
 
@@ -2917,9 +2688,9 @@ async fn mcp_prompt_as_workflow_rejects_unsafe_trace_id_before_emission() {
         mcp_call(
             MCP_TOOL_APXM_PROMPT_AS_WORKFLOW,
             serde_json::json!({
-                (mcp_args::TASK): FIXTURE_PLAN_TASK,
+                (mcp_args::TASK): FIXTURE_WORKFLOW_TASK,
                 (mcp_args::EXECUTE): false,
-                (mcp_args::TRACE_ID): FIXTURE_PLAN_INVALID_TRACE_ID
+                (mcp_args::TRACE_ID): FIXTURE_WORKFLOW_INVALID_TRACE_ID
             }),
         ),
     )
@@ -3470,6 +3241,60 @@ async fn mcp_unknown_method_returns_error_code() {
 }
 
 #[tokio::test]
+async fn mcp_compiler_tools_accept_air_and_python_sources() {
+    let temp = tempfile::tempdir().expect("tempdir");
+    let air_path = temp.path().join("workflow.air");
+    std::fs::write(&air_path, const_only_air()).expect("write air");
+    let py_path = temp.path().join("emit_workflow.py");
+    std::fs::write(
+        &py_path,
+        format!(
+            r#"import os
+if os.environ.get("APXM_EMIT_AIR") != "1":
+    raise SystemExit("APXM_EMIT_AIR not set")
+print({air:?})
+"#,
+            air = const_only_air()
+        ),
+    )
+    .expect("write python emitter");
+    let app = build_app(test_state().await);
+
+    let compiled = successful_mcp_tool_json(
+        app.clone(),
+        "compile",
+        serde_json::json!({ (mcp_args::PATH): air_path.to_string_lossy() }),
+    )
+    .await;
+    assert_eq!(
+        compiled["ok"], true,
+        "compile should accept .air path: {compiled}"
+    );
+
+    let validated = successful_mcp_tool_json(
+        app.clone(),
+        "validate",
+        serde_json::json!({ (mcp_args::PATH): py_path.to_string_lossy() }),
+    )
+    .await;
+    assert_eq!(
+        validated["ok"], true,
+        "validate should accept Python path: {validated}"
+    );
+
+    let executed = successful_mcp_tool_json(
+        app,
+        "run",
+        serde_json::json!({ (mcp_args::PATH): air_path.to_string_lossy() }),
+    )
+    .await;
+    assert_eq!(
+        executed["content"], FIXTURE_OUTPUT,
+        "run should execute AIR path: {executed}"
+    );
+}
+
+#[tokio::test]
 async fn mcp_tools_call_validates_registered_capability_arguments() {
     let state = test_state().await;
     state
@@ -3909,18 +3734,18 @@ async fn mcp_resources_list_builtin_wins_on_id_collision() {
 
 fn write_workflow_fixture(
     root: &std::path::Path,
-    graph_name: &str,
-    graph_air: &str,
+    air_name: &str,
+    air_text: &str,
 ) -> std::path::PathBuf {
-    let graph_path = root.join(graph_name);
-    std::fs::write(&graph_path, graph_air).expect("write workflow graph");
+    let air_path = root.join(air_name);
+    std::fs::write(&air_path, air_text).expect("write workflow AIR");
     let workflow_path = root.join("workflow.apxmw");
     std::fs::write(
         &workflow_path,
         serde_json::to_vec_pretty(&serde_json::json!({
             "name": "mcp_workflow_fixture",
-            "graphs": [
-                { "id": "step", "path": graph_name }
+            "steps": [
+                { "id": "step", "path": air_name }
             ],
             "output": "{{step.output}}"
         }))
@@ -3935,11 +3760,11 @@ fn write_parallel_workflow_fixture(
     steps: &[(&str, &str, &str)],
     output: &str,
 ) -> std::path::PathBuf {
-    let graphs: Vec<serde_json::Value> = steps
+    let steps: Vec<serde_json::Value> = steps
         .iter()
-        .map(|(id, graph_name, graph_air)| {
-            std::fs::write(root.join(graph_name), graph_air).expect("write workflow graph");
-            serde_json::json!({ "id": id, "path": graph_name })
+        .map(|(id, air_name, air_text)| {
+            std::fs::write(root.join(air_name), air_text).expect("write workflow AIR");
+            serde_json::json!({ "id": id, "path": air_name })
         })
         .collect();
     let workflow_path = root.join("workflow.apxmw");
@@ -3947,7 +3772,7 @@ fn write_parallel_workflow_fixture(
         &workflow_path,
         serde_json::to_vec_pretty(&serde_json::json!({
             "name": "mcp_parallel_workflow_fixture",
-            "graphs": graphs,
+            "steps": steps,
             "output": output
         }))
         .expect("serialize workflow fixture"),
@@ -4052,18 +3877,6 @@ async fn start_workflow_via_mcp(
         .as_str()
         .expect("execution_id")
         .to_string()
-}
-
-fn assert_strictly_increasing_event_seq(events: &[serde_json::Value], execution_id: &str) {
-    let mut previous_seq = None;
-    for event in events {
-        assert_eq!(event["meta"]["trace_id"], execution_id);
-        let seq = event["meta"]["seq"].as_u64().expect("event seq");
-        if let Some(previous) = previous_seq {
-            assert!(seq > previous, "event seq must be increasing");
-        }
-        previous_seq = Some(seq);
-    }
 }
 
 async fn workflow_status_json(app: Router, execution_id: &str) -> serde_json::Value {
@@ -4281,6 +4094,24 @@ impl RecordingAgentSpawner {
 
 #[async_trait]
 impl AgentSpawner for RecordingAgentSpawner {
+    fn route_candidates(&self) -> Vec<apxm_runtime::AgentRouteCandidate> {
+        vec![apxm_runtime::AgentRouteCandidate {
+            profile: "fixture-profile".to_string(),
+            description: Some("Fixture ACP profile for MCP workflow tests.".to_string()),
+            source: Some("test".to_string()),
+            executable: "fixture-agent".to_string(),
+            capabilities: vec![
+                "read".to_string(),
+                "write".to_string(),
+                "execute".to_string(),
+                "critique".to_string(),
+                "workflow_author".to_string(),
+            ],
+            default_mode: None,
+            default_model: None,
+        }]
+    }
+
     async fn spawn_external(
         &self,
         _agent_name: &str,

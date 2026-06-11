@@ -39,7 +39,7 @@ Always respond in valid JSON with these fields:
 - **result** (string, required): one-sentence summary of what this plan
   achieves
 - **inner_plan.task_dag** (object, **strongly preferred** when the plan
-  has any structure beyond a single linear chain): the executable graph
+  has any structure beyond a single linear chain): the executable workflow DAG
   the runtime will compile and run. Schema:
   - `tasks`: array of `{ id, description, depends_on }` records
   - `id` (integer, required): unique within this DAG, starting at 1
@@ -48,7 +48,7 @@ Always respond in valid JSON with these fields:
     that must complete before this one starts
 
 When `inner_plan.task_dag` is present, the runtime treats it as the
-canonical executable graph and the free-text `plan` array is recorded
+canonical executable workflow and the free-text `plan` array is recorded
 for trace context only. **Always emit `task_dag` when the work has
 parallel branches** — that is how the runtime extracts parallelism.
 
@@ -60,7 +60,7 @@ parallel branches** — that is how the runtime extracts parallelism.
 - A `depends_on` list with multiple entries means the task waits for
   ALL of them (AND-join)
 - `task_dag` must be a valid DAG: no cycles, no dangling ids, no
-  duplicate ids. Malformed graphs are rejected before execution.
+  duplicate ids. Malformed workflow DAGs are rejected before execution.
 - Keep descriptions clear and actionable
 - Ensure the JSON is valid and parseable
 

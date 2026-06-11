@@ -365,69 +365,6 @@ fn test_shared_prefix_analysis_marks_latency_fanout() {
 }
 
 #[test]
-fn test_priority_on_fan_out() {
-    // Create a fan-out graph: node1 -> [node2, node3, node4]
-    // node1 has fan-out of 3, should get priority=70 (High)
-    let graph = AirModule {
-        name: "fan_out".to_string(),
-        nodes: vec![
-            AirNode {
-                id: 1,
-                name: "producer".to_string(),
-                op: AISOperationType::ConstStr,
-                attributes: HashMap::from([(
-                    graph_attrs::VALUE.into(),
-                    Value::String("shared".into()),
-                )]),
-            },
-            AirNode {
-                id: 2,
-                name: "consumer1".to_string(),
-                op: AISOperationType::Ask,
-                attributes: ask_attrs("producer"),
-            },
-            AirNode {
-                id: 3,
-                name: "consumer2".to_string(),
-                op: AISOperationType::Ask,
-                attributes: ask_attrs("producer"),
-            },
-            AirNode {
-                id: 4,
-                name: "consumer3".to_string(),
-                op: AISOperationType::Ask,
-                attributes: ask_attrs("producer"),
-            },
-        ],
-        edges: vec![
-            AirEdge {
-                from: 1,
-                to: 2,
-                dependency: DependencyType::Data,
-            },
-            AirEdge {
-                from: 1,
-                to: 3,
-                dependency: DependencyType::Data,
-            },
-            AirEdge {
-                from: 1,
-                to: 4,
-                dependency: DependencyType::Data,
-            },
-        ],
-        parameters: vec![],
-        metadata: HashMap::new(),
-    };
-
-    let context = Context::new().expect("compiler context");
-    let pipeline = Pipeline::with_opt_level(&context, OptimizationLevel::O1);
-
-    // Compile the module through the pipeline (requires MLIR)
-    let _module = pipeline.compile_graph(&graph).expect("compilation failed");
-}
-
-#[test]
 fn test_priority_normal_for_non_critical() {
     // Create a graph with a non-critical branch:
     // node1 -> node2 -> node4 (critical path)

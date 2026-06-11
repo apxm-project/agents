@@ -1,4 +1,4 @@
-//! WORKFLOW_SPAWN operation - execute a child graph, artifact, or workflow.
+//! WORKFLOW_SPAWN operation - execute a child AIR file, artifact, or workflow.
 
 use std::collections::HashMap;
 use std::path::Path;
@@ -228,8 +228,8 @@ mod tests {
     use crate::memory::{MemoryConfig, MemorySystem};
     use apxm_backends::LLMRegistry;
     use apxm_core::types::{
-        AISOperationType, Node, WORKFLOW_TARGET_KIND_ARTIFACT_PATH,
-        WORKFLOW_TARGET_KIND_GRAPH_PATH, WORKFLOW_TARGET_KIND_WORKFLOW_PATH,
+        AISOperationType, Node, WORKFLOW_TARGET_KIND_AIR_PATH, WORKFLOW_TARGET_KIND_ARTIFACT_PATH,
+        WORKFLOW_TARGET_KIND_WORKFLOW_PATH,
     };
     use std::sync::Arc;
 
@@ -260,8 +260,8 @@ mod tests {
     #[test]
     fn parse_target_uses_shared_kind_contract() {
         assert!(matches!(
-            parse_target(WORKFLOW_TARGET_KIND_GRAPH_PATH, "graphs/review.air"),
-            Ok(WorkflowTarget::GraphPath { .. })
+            parse_target(WORKFLOW_TARGET_KIND_AIR_PATH, "steps/review.air"),
+            Ok(WorkflowTarget::AirPath { .. })
         ));
         assert!(matches!(
             parse_target(WORKFLOW_TARGET_KIND_ARTIFACT_PATH, "build/review.apxmobj"),
@@ -280,7 +280,7 @@ mod tests {
         let RuntimeError::Operation { message, .. } = error else {
             panic!("expected operation error");
         };
-        assert!(message.contains(WORKFLOW_TARGET_KIND_GRAPH_PATH));
+        assert!(message.contains(WORKFLOW_TARGET_KIND_AIR_PATH));
         assert!(message.contains(WORKFLOW_TARGET_KIND_ARTIFACT_PATH));
         assert!(message.contains(WORKFLOW_TARGET_KIND_WORKFLOW_PATH));
     }

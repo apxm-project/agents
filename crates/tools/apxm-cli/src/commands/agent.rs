@@ -51,7 +51,11 @@ pub async fn agent_command(action: AgentAction, json_output: bool) -> Result<()>
                         serde_json::json!({
                             (json_keys::NAME): name,
                             (json_keys::COMMAND): profile.command,
-                            (json_keys::SOURCE): if *from_template { sources::TEMPLATE } else { sources::CUSTOM },
+                            (json_keys::DESCRIPTION): profile.description,
+                            (json_keys::ROUTE_CAPABILITIES): profile.route_capabilities,
+                            (json_keys::DEFAULT_MODE): profile.default_mode,
+                            (json_keys::DEFAULT_MODEL): profile.default_model,
+                            (json_keys::SOURCE): if *from_template { sources::TEMPLATE } else { sources::USER_PROFILE },
                             (json_keys::CLOSE_GRACE_MS): profile.close_grace_ms,
                             (json_keys::SESSION_CREATE_TIMEOUT_MS): profile.session_create_timeout_ms,
                         })
@@ -67,14 +71,14 @@ pub async fn agent_command(action: AgentAction, json_output: bool) -> Result<()>
 
             if list.is_empty() {
                 println!(
-                    "No agents registered. Run 'apxm agent add <agent>' or 'apxm agent templates' to see available templates."
+                    "No ACP agent profiles available. Run 'apxm agent templates' or add a profile with 'apxm agent add <agent>'."
                 );
                 return Ok(());
             }
 
-            print_section_header("Registered ACP Agents");
+            print_section_header("Available ACP Agent Profiles");
             let max_name = list.iter().map(|(n, _, _)| n.len()).max().unwrap_or(8);
-            let max_source = 8; // "template"
+            let max_source = sources::USER_PROFILE.len();
             println!(
                 "  {:<name_w$}  {:<src_w$}  {}",
                 "AGENT",
@@ -87,7 +91,7 @@ pub async fn agent_command(action: AgentAction, json_output: bool) -> Result<()>
                 let source = if *from_template {
                     sources::TEMPLATE
                 } else {
-                    sources::CUSTOM
+                    sources::USER_PROFILE
                 };
                 println!(
                     "  {:<name_w$}  {:<src_w$}  {}",
@@ -100,7 +104,7 @@ pub async fn agent_command(action: AgentAction, json_output: bool) -> Result<()>
             }
             println!();
             println!(
-                "{} agent{} registered",
+                "{} profile{} available",
                 list.len(),
                 if list.len() == 1 { "" } else { "s" }
             );
@@ -118,25 +122,22 @@ pub async fn agent_command(action: AgentAction, json_output: bool) -> Result<()>
             let mut reg = apxm_acp::AgentRegistry::load();
 
             let profile = match command {
-                Some(cmd) => {
-                    // Custom registration with explicit command
-                    apxm_acp::AcpAgentProfile {
-                        command: cmd,
-                        close_grace_ms: close_grace_ms
-                            .unwrap_or(acp_timeouts::DEFAULT_CLOSE_GRACE_MS),
-                        session_create_timeout_ms: acp_timeouts::DEFAULT_SESSION_TIMEOUT_MS,
-                        permission_mode: permissions,
-                        env: Default::default(),
-                        default_mode: None,
-                        default_model: None,
-                        system_prompt: None,
-                        skip_preamble: false,
-                        capabilities: Vec::new(),
-                        sandbox,
-                    }
-                }
+                Some(cmd) => apxm_acp::AcpAgentProfile {
+                    command: cmd,
+                    description: None,
+                    close_grace_ms: close_grace_ms.unwrap_or(acp_timeouts::DEFAULT_CLOSE_GRACE_MS),
+                    session_create_timeout_ms: acp_timeouts::DEFAULT_SESSION_TIMEOUT_MS,
+                    permission_mode: permissions,
+                    env: Default::default(),
+                    default_mode: None,
+                    default_model: None,
+                    route_capabilities: apxm_acp::default_route_capabilities(),
+                    system_prompt: None,
+                    skip_preamble: false,
+                    capabilities: Vec::new(),
+                    sandbox,
+                },
                 None => {
-                    // Template-based registration
                     let mut profile = reg
                         .get_template(&name)
                         .ok_or_else(|| {
@@ -183,7 +184,7 @@ pub async fn agent_command(action: AgentAction, json_output: bool) -> Result<()>
             let display_cmd = profile.command.clone();
             reg.add(name.clone(), profile)
                 .map_err(|e| anyhow::anyhow!("Failed to save agent profile: {e}"))?;
-            print_section_header("Agent Registered");
+            print_section_header("Agent Profile Saved");
             print_status_line(&name, Status::Ok, &display_cmd);
         }
         AgentAction::Remove { name } => {
@@ -206,9 +207,7 @@ pub async fn agent_command(action: AgentAction, json_output: bool) -> Result<()>
         AgentAction::Test { name } => {
             let reg = apxm_acp::AgentRegistry::load();
             let profile = reg.get(&name).ok_or_else(|| {
-                anyhow::anyhow!(
-                    "Agent '{name}' not registered. Register with: apxm agent add {name}"
-                )
+                anyhow::anyhow!("Agent profile '{name}' is not available. Run: apxm agent list")
             })?;
             println!("Testing agent '{}'...", name.bold());
             println!("  Command: {}", profile.command);
@@ -245,6 +244,11 @@ pub async fn agent_command(action: AgentAction, json_output: bool) -> Result<()>
                         serde_json::json!({
                             (json_keys::NAME): name,
                             (json_keys::COMMAND): profile.command,
+                            (json_keys::DESCRIPTION): profile.description,
+                            (json_keys::ROUTE_CAPABILITIES): profile.route_capabilities,
+                            (json_keys::DEFAULT_MODE): profile.default_mode,
+                            (json_keys::DEFAULT_MODEL): profile.default_model,
+                            (json_keys::SOURCE): sources::TEMPLATE,
                             (json_keys::CLOSE_GRACE_MS): profile.close_grace_ms,
                             (json_keys::SESSION_CREATE_TIMEOUT_MS): profile.session_create_timeout_ms,
                         })
@@ -278,7 +282,7 @@ pub async fn agent_command(action: AgentAction, json_output: bool) -> Result<()>
             }
             println!();
             println!(
-                "{} templates available. Register with: apxm agent add <name>",
+                "{} templates available. Save a user profile with: apxm agent add <name>",
                 templates.len()
             );
         }

@@ -365,28 +365,6 @@ class TestDocstringParsing:
 
 
 # ---------------------------------------------------------------------------
-# Import from apxm top-level
-# ---------------------------------------------------------------------------
-
-
-class TestImports:
-    def test_flat_import_tool(self):
-        from apxm import tool as t
-
-        assert t is tool
-
-    def test_flat_import_tool_context(self):
-        from apxm import ToolContext as TC
-
-        assert TC is ToolContext
-
-    def test_flat_import_function_tool(self):
-        from apxm import FunctionTool as FT
-
-        assert FT is FunctionTool
-
-
-# ---------------------------------------------------------------------------
 # Graph lowering
 # ---------------------------------------------------------------------------
 

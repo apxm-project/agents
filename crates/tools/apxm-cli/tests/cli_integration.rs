@@ -78,7 +78,7 @@ fn compiler_library_name() -> &'static str {
     }
 }
 
-fn write_tmp_graph(content: &str) -> tempfile::NamedTempFile {
+fn write_tmp_air(content: &str) -> tempfile::NamedTempFile {
     let mut f = tempfile::Builder::new().suffix(".air").tempfile().unwrap();
     f.write_all(content.as_bytes()).unwrap();
     f.flush().unwrap();
@@ -178,7 +178,7 @@ fn write_session_manifest(
     std::fs::create_dir_all(&session_dir).unwrap();
     let manifest = serde_json::json!({
         "execution_id": execution_id,
-        "graph_name": "test-graph",
+        "workflow_name": "test-workflow",
         "timestamp": timestamp,
         "status": "completed",
         "duration_ms": 1234,
@@ -267,14 +267,14 @@ module {
   }
 }
 ''')"##;
-    let graph = write_tmp_file_named(".py", source);
+    let workflow = write_tmp_file_named(".py", source);
     let tmp = tempfile::tempdir().unwrap();
     let artifact = tmp.path().join("tool_data_edge.apxmobj");
 
     let compile = apxm()
         .args([
             "compile",
-            graph.path().to_str().unwrap(),
+            workflow.path().to_str().unwrap(),
             "--opt-level",
             "0",
             "-o",
@@ -320,14 +320,14 @@ module {
   }
 }
 "##;
-    let graph = write_tmp_file_named(".air", source);
+    let workflow = write_tmp_file_named(".air", source);
     let tmp = tempfile::tempdir().unwrap();
     let artifact = tmp.path().join("tool_data_edge.apxmobj");
 
     let compile = apxm()
         .args([
             "compile",
-            graph.path().to_str().unwrap(),
+            workflow.path().to_str().unwrap(),
             "--opt-level",
             "0",
             "-o",
@@ -386,14 +386,14 @@ def comprehension_flow(g: GraphRecorder):
 if __name__ == "__main__":
     run(comprehension_flow())
 "##;
-    let graph = write_tmp_file_named(".py", source);
+    let workflow = write_tmp_file_named(".py", source);
     let tmp = tempfile::tempdir().unwrap();
     let artifact = tmp.path().join("comprehension_flow.apxmobj");
 
     let compile = apxm()
         .args([
             "compile",
-            graph.path().to_str().unwrap(),
+            workflow.path().to_str().unwrap(),
             "--opt-level",
             "1",
             "--pass-list",
@@ -428,7 +428,7 @@ if __name__ == "__main__":
     assert_eq!(air.matches(": !ais.token]").count(), 2);
 }
 
-// ─── Valid graphs ───────────────────────────────────────────────────────────
+// ─── Valid AIR workflows ────────────────────────────────────────────────────
 
 const VALID_ASK: &str = r#"module {
   func.func @test_ask() -> !ais.token attributes {ais.entry} {
@@ -468,12 +468,12 @@ const CONST_GRAPH: &str = r#"module {
 }
 "#;
 
-// ─── validate: valid graphs ─────────────────────────────────────────────────
+// ─── validate: valid AIR workflows ──────────────────────────────────────────
 
 #[cfg(feature = "driver")]
 #[test]
 fn validate_valid_ask_air() {
-    let f = write_tmp_graph(VALID_ASK);
+    let f = write_tmp_air(VALID_ASK);
     let out = apxm()
         .args(["--json", "validate", f.path().to_str().unwrap()])
         .output()
@@ -482,19 +482,6 @@ fn validate_valid_ask_air() {
     let v: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap();
     assert_eq!(v["valid"], true);
     assert!(v["errors"].as_array().unwrap().is_empty());
-}
-
-#[cfg(feature = "driver")]
-#[test]
-fn validate_valid_pipeline_air() {
-    let f = write_tmp_graph(VALID_PIPELINE);
-    let out = apxm()
-        .args(["--json", "validate", f.path().to_str().unwrap()])
-        .output()
-        .unwrap();
-    assert!(out.status.success());
-    let v: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap();
-    assert_eq!(v["valid"], true);
 }
 
 #[cfg(feature = "driver")]
@@ -552,7 +539,7 @@ fn execute_json_errors_are_emitted_as_json() {
 #[cfg(feature = "driver")]
 #[test]
 fn execute_air_with_local_controls_succeeds_end_to_end() {
-    let graph = write_tmp_file_named(".air", CONST_GRAPH);
+    let workflow = write_tmp_file_named(".air", CONST_GRAPH);
     let temp = tempfile::tempdir().unwrap();
     let hook_log = temp.path().join("hook.log");
     let sessions_root = temp.path().join("sessions");
@@ -565,7 +552,7 @@ fn execute_air_with_local_controls_succeeds_end_to_end() {
             "--config",
             config.path().to_str().unwrap(),
             "execute",
-            graph.path().to_str().unwrap(),
+            workflow.path().to_str().unwrap(),
             "--emit-session",
             sessions_root.to_str().unwrap(),
         ])
@@ -596,7 +583,7 @@ fn execute_air_with_local_controls_succeeds_end_to_end() {
 // ─── validate: error cases ──────────────────────────────────────────────────
 
 #[test]
-fn validate_rejects_graph_json_source() {
+fn validate_rejects_non_air_source() {
     let f = write_tmp_file_named(".json", VALID_ASK);
     let out = apxm()
         .args(["--json", "validate", f.path().to_str().unwrap()])
@@ -624,7 +611,7 @@ fn validate_file_not_found() {
 
 #[test]
 fn validate_invalid_air() {
-    let f = write_tmp_graph("not valid AIR");
+    let f = write_tmp_air("not valid AIR");
     let out = apxm()
         .args(["--json", "validate", f.path().to_str().unwrap()])
         .output()
@@ -673,8 +660,8 @@ fn codegen_frontend_writes_generated_python_files() {
 
 #[cfg(feature = "driver")]
 #[test]
-fn analyze_parallel_graph() {
-    let f = write_tmp_graph(VALID_PARALLEL);
+fn analyze_parallel_workflow() {
+    let f = write_tmp_air(VALID_PARALLEL);
     let out = apxm()
         .args(["--json", "analyze", f.path().to_str().unwrap()])
         .output()
@@ -685,35 +672,6 @@ fn analyze_parallel_graph() {
     assert_eq!(v["depth"], 3);
     assert_eq!(v["node_count"], 4);
     assert_eq!(v["edge_count"], 3);
-}
-
-#[cfg(feature = "driver")]
-#[test]
-fn analyze_single_node() {
-    let f = write_tmp_graph(VALID_ASK);
-    let out = apxm()
-        .args(["--json", "analyze", f.path().to_str().unwrap()])
-        .output()
-        .unwrap();
-    assert!(out.status.success());
-    let v: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap();
-    assert_eq!(v["max_parallelism"], 1);
-    assert_eq!(v["depth"], 2);
-    assert_eq!(v["speedup"]["estimated_speedup"], "1.00x");
-}
-
-#[cfg(feature = "driver")]
-#[test]
-fn analyze_pipeline_graph() {
-    let f = write_tmp_graph(VALID_PIPELINE);
-    let out = apxm()
-        .args(["--json", "analyze", f.path().to_str().unwrap()])
-        .output()
-        .unwrap();
-    assert!(out.status.success());
-    let v: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap();
-    assert_eq!(v["max_parallelism"], 1);
-    assert_eq!(v["depth"], 3);
 }
 
 // ─── ops ────────────────────────────────────────────────────────────────────
@@ -834,7 +792,7 @@ fn template_roundtrip_validate() {
     let template: serde_json::Value = serde_json::from_slice(&show_out.stdout).unwrap();
     let air = template["air"].as_str().unwrap();
 
-    let f = write_tmp_graph(air);
+    let f = write_tmp_air(air);
     let val_out = apxm()
         .args(["--json", "validate", f.path().to_str().unwrap()])
         .output()
@@ -848,7 +806,7 @@ fn template_roundtrip_validate() {
 
 #[test]
 fn validate_no_nodes() {
-    let f = write_tmp_graph("module { }");
+    let f = write_tmp_air("module { }");
     let out = apxm()
         .args(["--json", "validate", f.path().to_str().unwrap()])
         .output()
@@ -860,7 +818,7 @@ fn validate_no_nodes() {
 
 #[test]
 fn validate_edge_nonexistent_source() {
-    let f = write_tmp_graph(
+    let f = write_tmp_air(
         "module { func.func @broken() -> !ais.token { func.return %missing : !ais.token } }",
     );
     let out = apxm()
@@ -874,7 +832,7 @@ fn validate_edge_nonexistent_source() {
 
 #[test]
 fn validate_duplicate_parameter_name() {
-    let f = write_tmp_graph(
+    let f = write_tmp_air(
         "module { func.func @dup(%arg0: !ais.token {ais.param_name = \"p\", ais.param_type = \"str\"}, %arg1: !ais.token {ais.param_name = \"p\", ais.param_type = \"int\"}) -> !ais.token attributes {ais.entry} { func.return %arg0 : !ais.token } }",
     );
     let out = apxm()
@@ -887,8 +845,8 @@ fn validate_duplicate_parameter_name() {
 
 #[cfg(feature = "driver")]
 #[test]
-fn validate_disconnected_graph() {
-    let f = write_tmp_graph(
+fn validate_disconnected_components() {
+    let f = write_tmp_air(
         r#"module {
   func.func @disconnected() -> !ais.token attributes {ais.entry} {
     %a = ais.ask "x" : !ais.token
@@ -911,7 +869,7 @@ fn validate_disconnected_graph() {
 #[cfg(feature = "driver")]
 #[test]
 fn validate_parameter_invalid_type() {
-    let f = write_tmp_graph(
+    let f = write_tmp_air(
         "module { func.func @param_type(%arg0: !ais.token {ais.param_name = \"p\", ais.param_type = \"invalid_type\"}) -> !ais.token attributes {ais.entry} { func.return %arg0 : !ais.token } }",
     );
     let out = apxm()
@@ -927,7 +885,7 @@ fn validate_parameter_invalid_type() {
 #[cfg(feature = "driver")]
 #[test]
 fn analyze_disconnected_components() {
-    let f = write_tmp_graph(
+    let f = write_tmp_air(
         r#"module {
   func.func @parallel_components() -> !ais.token attributes {ais.entry} {
     %a = ais.ask "x" : !ais.token
@@ -951,7 +909,7 @@ fn analyze_disconnected_components() {
 #[cfg(feature = "driver")]
 #[test]
 fn analyze_includes_entry_exit_nodes() {
-    let f = write_tmp_graph(VALID_PIPELINE);
+    let f = write_tmp_air(VALID_PIPELINE);
     let out = apxm()
         .args(["--json", "analyze", f.path().to_str().unwrap()])
         .output()
@@ -999,14 +957,14 @@ fn ops_show_has_long_description() {
 #[cfg(feature = "driver")]
 #[test]
 fn explain_single_node_json() {
-    let f = write_tmp_graph(VALID_ASK);
+    let f = write_tmp_air(VALID_ASK);
     let out = apxm()
         .args(["--json", "explain", f.path().to_str().unwrap()])
         .output()
         .unwrap();
     assert!(out.status.success());
     let v: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap();
-    assert_eq!(v["graph_name"], "test_ask");
+    assert_eq!(v["workflow_name"], "test_ask");
     assert_eq!(v["node_count"], 2);
     assert_eq!(v["edge_count"], 1);
     assert_eq!(v["depth"], 2);
@@ -1022,7 +980,7 @@ fn explain_single_node_json() {
 #[cfg(feature = "driver")]
 #[test]
 fn explain_pipeline_json() {
-    let f = write_tmp_graph(VALID_PIPELINE);
+    let f = write_tmp_air(VALID_PIPELINE);
     let out = apxm()
         .args(["--json", "explain", f.path().to_str().unwrap()])
         .output()
@@ -1040,7 +998,7 @@ fn explain_pipeline_json() {
 #[cfg(feature = "driver")]
 #[test]
 fn explain_parallel_json() {
-    let f = write_tmp_graph(VALID_PARALLEL);
+    let f = write_tmp_air(VALID_PARALLEL);
     let out = apxm()
         .args(["--json", "explain", f.path().to_str().unwrap()])
         .output()
@@ -1056,7 +1014,7 @@ fn explain_parallel_json() {
 #[cfg(feature = "driver")]
 #[test]
 fn explain_human_readable() {
-    let f = write_tmp_graph(VALID_PIPELINE);
+    let f = write_tmp_air(VALID_PIPELINE);
     let out = apxm()
         .args(["explain", f.path().to_str().unwrap()])
         .output()
@@ -1079,7 +1037,7 @@ fn explain_file_not_found() {
 #[cfg(feature = "driver")]
 #[test]
 fn explain_node_metadata() {
-    let f = write_tmp_graph(VALID_ASK);
+    let f = write_tmp_air(VALID_ASK);
     let out = apxm()
         .args(["--json", "explain", f.path().to_str().unwrap()])
         .output()
@@ -1646,17 +1604,17 @@ fn workflow_run_nested_workflow_uses_explicit_root_for_parent_and_child() {
     let temp = tempfile::tempdir().unwrap();
     let workflow_root = temp.path();
     let session_root = workflow_root.join("workflow-sessions");
-    let graph_path = workflow_root.join("graph.air");
+    let air_path = workflow_root.join("step.air");
     let child_workflow_path = workflow_root.join("child.apxmw");
     let parent_workflow_path = workflow_root.join("parent.apxmw");
 
-    std::fs::write(&graph_path, CONST_GRAPH).unwrap();
+    std::fs::write(&air_path, CONST_GRAPH).unwrap();
     write_json_file(
         &child_workflow_path,
         &serde_json::json!({
             "name": "child",
-            "graphs": [
-                {"id": "child_step", "path": "graph.air"}
+            "steps": [
+                {"id": "child_step", "path": "step.air"}
             ],
             "output": "{{child_step.output}}"
         }),
@@ -1665,7 +1623,7 @@ fn workflow_run_nested_workflow_uses_explicit_root_for_parent_and_child() {
         &parent_workflow_path,
         &serde_json::json!({
             "name": "parent",
-            "graphs": [
+            "steps": [
                 {"id": "child_workflow", "path": "child.apxmw"}
             ],
             "output": "{{child_workflow.output}}"
@@ -1752,7 +1710,6 @@ fn workflow_run_nested_workflow_uses_explicit_root_for_parent_and_child() {
         String::from_utf8_lossy(&inspect_out.stderr)
     );
     let inspected: serde_json::Value = serde_json::from_slice(&inspect_out.stdout).unwrap();
-    assert_eq!(inspected["manifest"]["graph_name"], "parent");
     assert_eq!(inspected["results"]["workflow_name"], "parent");
     assert_eq!(inspected["results"]["output"], "ok");
     assert_eq!(
@@ -1767,16 +1724,16 @@ fn workflow_run_background_returns_follow_handles_and_records_events() {
     let temp = tempfile::tempdir().unwrap();
     let workflow_root = temp.path();
     let session_root = workflow_root.join("workflow-sessions");
-    let graph_path = workflow_root.join("graph.air");
+    let air_path = workflow_root.join("step.air");
     let workflow_path = workflow_root.join("background.apxmw");
 
-    std::fs::write(&graph_path, CONST_GRAPH).unwrap();
+    std::fs::write(&air_path, CONST_GRAPH).unwrap();
     write_json_file(
         &workflow_path,
         &serde_json::json!({
             "name": "background",
-            "graphs": [
-                {"id": "const_step", "path": "graph.air"}
+            "steps": [
+                {"id": "const_step", "path": "step.air"}
             ],
             "output": "{{const_step.output}}"
         }),

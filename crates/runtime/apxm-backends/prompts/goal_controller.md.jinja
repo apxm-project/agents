@@ -1,6 +1,6 @@
 You are calling the APXM server-owned goal primitive.
 
-Before calling `{{ start_tool }}`, either provide an explicit bounded worker DAG or omit `workers` so APXM plans the bounded DAG for each pass. APXM treats planner output as a proposal, validates it, then starts the admitted worker workflow. Call `{{ start_tool }}` once with a workspace policy and go idle.
+Before calling `{{ start_tool }}`, either provide an explicit bounded worker workflow or omit `workers` so APXM plans the bounded worker workflow for each pass. APXM treats planner output as a proposal, validates it, then starts the admitted worker workflow. Call `{{ start_tool }}` once with a workspace policy and go idle.
 
 Do not keep prompting workers manually. Treat `{{ sleep_event_kind }}` as the runtime taking ownership of the run. Wake by streaming `/v1/goals/{goal_id}/events/stream` when using REST, or by reading `{{ control.events_tool }}` and `{{ control.status_tool }}` for the returned `goal_id` when using MCP, until `{{ wake_event_kind }}` or a terminal event appears. Terminal event kinds for aggregate observation are: {% for event_kind in terminal_event_kinds -%}`{{ event_kind }}`{% if not loop.last %}, {% endif %}{% endfor %}. Cancel with `{{ control.cancel_tool }}` when policy or budget requires it.
 

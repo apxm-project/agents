@@ -182,7 +182,7 @@ srun --jobid=<JOB_ID> --overlap curl -sw "HTTP=%{http_code}\n" \
        "messages":[{"role":"user","content":"reply with one word"}]}'
 ```
 
-Through an APXM graph:
+Through an APXM workflow:
 
 ```bash
 export APXM_BENCHMARK_BACKEND=vllm-mini  # disambiguate when zoo has

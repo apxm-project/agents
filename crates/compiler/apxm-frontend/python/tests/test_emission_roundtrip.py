@@ -1,13 +1,4 @@
-"""Round-trip tests: Python to_air() -> Rust compiler parse.
-
-Every op that previously had broken emission (spawn_agent, communicate,
-register_capability, spawn_team, autonomous, checkpoint) is emitted via
-Python, and the resulting .air text is validated for MLIR compliance.
-
-For the three most common ops (spawn_agent, communicate, register_capability),
-we additionally invoke `dekk apxm compile` to prove the Rust parser accepts
-the emitted text.
-"""
+"""Python AIR emission and compiler round-trip checks."""
 
 import os
 import shutil
@@ -51,10 +42,9 @@ from apxm._generated.emission import (
     emit_workflow_spawn,
 )
 
-from .mocks import MOCK_AGENT_PROFILE, MOCK_AGENT_PROFILE_ALT
+from .mocks import MOCK_AGENT_PROFILE
 
 MOCK_AGENT_PROFILE_NAME = MOCK_AGENT_PROFILE.name
-MOCK_AGENT_PROFILE_ALT_NAME = MOCK_AGENT_PROFILE_ALT.name
 
 # ---------------------------------------------------------------------------
 # Unit tests: emitter functions produce correct MLIR fragments
@@ -164,12 +154,12 @@ class TestEmitterFunctions:
         assert f'"{checkpoint_id}"' in result
 
     def test_emit_workflow_spawn_primary_and_keywords(self):
-        target_path = "tests/quality_fixtures/qa_factual/graph.air"
+        target_path = "tests/quality_fixtures/qa_factual/workflow.air"
         session_root = ".apxm/child-sessions"
         result = emit_workflow_spawn(
             "%child",
             {
-                TARGET_KIND: WorkflowTargetKind.GRAPH_PATH.value,
+                TARGET_KIND: WorkflowTargetKind.AIR_PATH.value,
                 TARGET: target_path,
                 AWAIT_RESULT: True,
                 SESSION_ROOT: session_root,
@@ -177,7 +167,7 @@ class TestEmitterFunctions:
             [],
         )
         assert result.startswith("%child = ais.workflow_spawn")
-        assert f'"{WorkflowTargetKind.GRAPH_PATH.value}"' in result
+        assert f'"{WorkflowTargetKind.AIR_PATH.value}"' in result
         assert f'"{target_path}"' in result
         assert f'{AWAIT_RESULT} = true' in result
         assert f'{SESSION_ROOT} = "{session_root}"' in result
@@ -214,7 +204,7 @@ def _compile_air(air_text: str, tmp_dir: str, name: str) -> subprocess.Completed
 
 
 class TestGraphToAirRoundTrip:
-    """Build graphs with Python, emit .air, verify text shape."""
+    """Build workflows with Python, emit .air, and verify text shape."""
 
     def test_spawn_agent_air(self):
         g = GraphRecorder("spawn_test")
@@ -272,15 +262,15 @@ class TestGraphToAirRoundTrip:
         g = GraphRecorder("spawn_child_test")
         g.workflow_spawn(
             name="child",
-            target_kind=WorkflowTargetKind.GRAPH_PATH,
-            target="tests/quality_fixtures/qa_factual/graph.air",
+            target_kind=WorkflowTargetKind.AIR_PATH,
+            target="tests/quality_fixtures/qa_factual/workflow.air",
             session_root=".apxm/child-sessions",
         )
         air = g.to_air()
 
         assert (
-            f'ais.workflow_spawn "{WorkflowTargetKind.GRAPH_PATH.value}" '
-            '"tests/quality_fixtures/qa_factual/graph.air"'
+            f'ais.workflow_spawn "{WorkflowTargetKind.AIR_PATH.value}" '
+            '"tests/quality_fixtures/qa_factual/workflow.air"'
         ) in air
         assert 'session_root = ".apxm/child-sessions"' in air
         assert "await_result = true" in air
@@ -291,42 +281,17 @@ class TestGraphToAirRoundTrip:
     reason="dekk not available — skipping compile round-trip",
 )
 class TestCompileRoundTrip:
-    """Emit .air from Python, pass to Rust compiler, verify it parses."""
+    """Emit representative .air from Python and verify the Rust compiler parses it."""
 
-    def test_compile_spawn_agent(self, tmp_air_dir):
-        g = GraphRecorder("rt_spawn")
+    def test_compile_representative_workflow(self, tmp_air_dir):
+        g = GraphRecorder("rt_representative")
         g.spawn_agent(
             "alice",
             agent_name="alice",
             profile=MOCK_AGENT_PROFILE,
             mode="architect",
         )
-        air = g.to_air()
-        result = _compile_air(air, tmp_air_dir, "rt_spawn")
-        assert result.returncode == 0, f"Compile failed:\n{result.stderr}"
-
-    def test_compile_communicate(self, tmp_air_dir):
-        g = GraphRecorder("rt_comm")
-        g.spawn_agent("bob", agent_name="bob", profile=MOCK_AGENT_PROFILE_ALT)
-        g.communicate(name="msg", target_agent="bob", message="Analyze this")
-        air = g.to_air()
-        result = _compile_air(air, tmp_air_dir, "rt_comm")
-        assert result.returncode == 0, f"Compile failed:\n{result.stderr}"
-
-    def test_compile_register_capability(self, tmp_air_dir):
-        g = GraphRecorder("rt_regcap")
-        g.register_capability(
-            name="reg",
-            capability_name="my_tool",
-            description="Test tool",
-            python_handler_id="sha256:0000000000000000000000000000000000000000000000000000000000000000",
-        )
-        air = g.to_air()
-        result = _compile_air(air, tmp_air_dir, "rt_regcap")
-        assert result.returncode == 0, f"Compile failed:\n{result.stderr}"
-
-    def test_compile_inv_tool(self, tmp_air_dir):
-        g = GraphRecorder("rt_inv_tool")
+        g.communicate(name="hello", target_agent="alice", message="Start work")
         g.register_capability(
             name="reg",
             capability_name="my_tool",
@@ -334,19 +299,5 @@ class TestCompileRoundTrip:
         )
         g.invoke(name="call", capability="my_tool", params={"value": 42})
         air = g.to_air()
-        result = _compile_air(air, tmp_air_dir, "rt_inv_tool")
-        assert result.returncode == 0, f"Compile failed:\n{result.stderr}"
-
-    def test_compile_mixed_ops(self, tmp_air_dir):
-        """Graph with spawn_agent + communicate + register_capability."""
-        g = GraphRecorder("rt_mixed")
-        g.spawn_agent("alice", agent_name="alice", profile=MOCK_AGENT_PROFILE)
-        g.communicate(name="hello", target_agent="alice", message="Start work")
-        g.register_capability(
-            name="reg_tool",
-            capability_name="analyzer",
-            description="Analysis capability",
-        )
-        air = g.to_air()
-        result = _compile_air(air, tmp_air_dir, "rt_mixed")
+        result = _compile_air(air, tmp_air_dir, "rt_representative")
         assert result.returncode == 0, f"Compile failed:\n{result.stderr}"

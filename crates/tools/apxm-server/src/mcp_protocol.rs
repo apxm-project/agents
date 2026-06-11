@@ -59,6 +59,7 @@ pub(crate) mod tool_result {
     pub(crate) const AAM: &str = "aam";
     pub(crate) const AIR_CONTRACT: &str = "air_contract";
     pub(crate) const AIR_HASH: &str = "air_hash";
+    pub(crate) const AIR_PATH: &str = "air_path";
     pub(crate) const AIR_TEXT: &str = "air";
     pub(crate) const ARTIFACT_BYTES: &str = "artifact_bytes";
     pub(crate) const ARTIFACT_HASH: &str = "artifact_hash";
@@ -91,7 +92,6 @@ pub(crate) mod tool_result {
     pub(crate) const EXIT_NODES: &str = "exit_nodes";
     pub(crate) const FAILED_NODES: &str = "failed_nodes";
     pub(crate) const FILES: &str = "files";
-    pub(crate) const GRAPH_NAME: &str = "graph_name";
     pub(crate) const GOALS: &str = "goals";
     pub(crate) const GOAL_CHANGES: &str = "goal_changes";
     pub(crate) const HEALTH: &str = "health";
@@ -127,6 +127,7 @@ pub(crate) mod tool_result {
     pub(crate) const PARALLELISM_DEGREE: &str = "parallelism_degree";
     pub(crate) const PARAMETER_TYPES: &str = "parameter_types";
     pub(crate) const WORKFLOW: &str = "workflow";
+    pub(crate) const WORKFLOW_NAME: &str = "workflow_name";
     pub(crate) const PHASE: &str = "phase";
     pub(crate) const PREVIEW: &str = "preview";
     pub(crate) const PRODUCES_OUTPUT: &str = "produces_output";
@@ -159,31 +160,6 @@ pub(crate) mod tool_result {
     pub(crate) const CAPABILITY_CHANGES: &str = "capability_changes";
 }
 
-pub(crate) mod plan_field {
-    pub(crate) const AGENT: &str = "agent";
-    pub(crate) const ARGS: &str = "args";
-    pub(crate) const CAPABILITY: &str = "capability";
-    pub(crate) const CWD: &str = "cwd";
-    pub(crate) const BACKEND: &str = "backend";
-    pub(crate) const DEPENDENCY: &str = "dependency";
-    pub(crate) const DEPENDS_ON: &str = "depends_on";
-    pub(crate) const EFFORT: &str = "effort";
-    pub(crate) const ENTRY: &str = "entry";
-    pub(crate) const ID: &str = "id";
-    pub(crate) const MAX_TOKENS: &str = "max_tokens";
-    pub(crate) const MODEL: &str = "model";
-    pub(crate) const NAME: &str = "name";
-    pub(crate) const NODE: &str = "node";
-    pub(crate) const NODES: &str = "nodes";
-    pub(crate) const OP: &str = "op";
-    pub(crate) const PARAMETERS: &str = "parameters";
-    pub(crate) const PROFILE: &str = "profile";
-    pub(crate) const PROMPT: &str = "prompt";
-    pub(crate) const REQUIRED: &str = "required";
-    pub(crate) const TASK: &str = "task";
-    pub(crate) const TYPE: &str = "type";
-}
-
 pub(crate) mod status {
     pub(crate) const COMPILED: &str = "compiled";
     pub(crate) const EXECUTED: &str = "executed";
@@ -192,12 +168,12 @@ pub(crate) mod status {
     pub(crate) const UNAVAILABLE: &str = "unavailable";
 }
 
-pub(crate) mod plan_skill {
+pub(crate) mod workflow_skill {
     pub(crate) const ID: &str = "prompt-as-workflow";
     pub(crate) const VERSION: &str = "0.1.0";
     pub(crate) const ENTRY_FLOW: &str = "prompt_as_workflow";
-    pub(crate) const TRACE_PREFIX: &str = "apxm-plan";
-    pub(crate) const EMISSION_CAPABILITY: &str = "plan_emission_v1";
+    pub(crate) const TRACE_PREFIX: &str = "apxm-workflow";
+    pub(crate) const EMISSION_CAPABILITY: &str = "workflow_emission_v1";
     pub(crate) const REQUEST_CAPABILITY_KEY: &str = "capability";
     pub(crate) const SESSION_DIR_KIND: &str = "skills";
 }
@@ -212,8 +188,7 @@ pub(crate) mod evidence_path {
 }
 
 pub(crate) mod defaults {
-    pub(crate) const ARTIFACT_GRAPH_NAME: &str = "artifact";
-    pub(crate) const INPUT_NAME: &str = "input";
+    pub(crate) const ARTIFACT_WORKFLOW_NAME: &str = "artifact";
 }
 
 pub(crate) mod admission_error {
@@ -397,7 +372,7 @@ impl Tier3Tool {
 pub(crate) mod tool_description {
     use super::Tier3Tool;
 
-    pub(crate) const PROMPT_AS_WORKFLOW: &str = "Emit an APXM workflow via the model router, validate and repair the workflow JSON, compile it, optionally execute it, and return a compact summary with trace_id.";
+    pub(crate) const PROMPT_AS_WORKFLOW: &str = "Emit canonical APXM AIR via the model router, repair it with compiler feedback, compile it, optionally execute it, and return a compact summary with trace_id.";
     pub(crate) const TRACE_FETCH: &str =
         "Fetch a compact execution trace summary by trace_id; pass full=true for detailed records.";
     pub(crate) const AAM_RECALL: &str =

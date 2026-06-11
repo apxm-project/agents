@@ -40,13 +40,13 @@ class JsonRpcField(enum.StrEnum):
     IS_ERROR = "isError"
 
 
-class PlanArg(enum.StrEnum):
+class WorkflowArg(enum.StrEnum):
     TASK = "task"
     EXECUTE = "execute"
     TRACE_ID = "trace_id"
 
 
-class PlanResult(enum.StrEnum):
+class WorkflowResult(enum.StrEnum):
     STATUS = "status"
     TRACE_ID = "trace_id"
     AIR_HASH = "air_hash"
@@ -60,39 +60,15 @@ DEFAULT_SERVICE = "gptoss120b"
 DEFAULT_SERVER_BIN = "target/release/apxm-mcp-server"
 DEFAULT_TIMEOUT_SECONDS = 600
 DEFAULT_SCENARIO = "mcp-server-prompt-as-workflow-dogfood"
+DEFAULT_SUCCESS_THRESHOLD = 1.0
 UTC_SUFFIX = "Z"
 
 DOGFOOD_TASKS: tuple[str, ...] = (
     "Create an APXM workflow to inspect README changes, identify user-facing risk, and summarize the result.",
-    "Create an APXM workflow to review Cargo.toml and Cargo.lock changes for dependency or feature risk.",
     "Create an APXM workflow to audit MCP server changes for protocol compatibility and missing tests.",
     "Create an APXM workflow to inspect the prompt_as_workflow implementation and summarize validation risks.",
-    "Create an APXM workflow to review query tool behavior for trace, memory, evidence, and capability lookup.",
     "Create an APXM workflow to check HTTP MCP parity with stdio MCP for all Tier-3 tools.",
-    "Create an APXM workflow to inspect the Dekk MCP installer and summarize config-writer risk.",
-    "Create an APXM workflow to verify stale Python/FastMCP framing has been removed from active docs.",
-    "Create an APXM workflow to audit the bundled prompt-as-workflow skill resources for completeness.",
-    "Create an APXM workflow to inspect schema.json and summarize contract gaps for generated workflows.",
-    "Create an APXM workflow to review prompt.md for ambiguous instructions that could cause invalid JSON.",
-    "Create an APXM workflow to inspect generated-workflow admission rules and summarize side-effect risks.",
-    "Create an APXM workflow to review sandbox preflight handling for generated INV_TOOL nodes.",
-    "Create an APXM workflow to inspect trace_id validation and summarize path traversal risk.",
-    "Create an APXM workflow to review skill:// resource resolution for traversal and duplicate-id behavior.",
-    "Create an APXM workflow to audit startup runtime setup for model-router initialization risk.",
-    "Create an APXM workflow to inspect execution-record persistence for HTTP MCP generated workflows.",
-    "Create an APXM workflow to review README documentation for new MCP tools and missing caveats.",
-    "Create an APXM workflow to inspect docs/design updates for consistency with the Rust MCP direction.",
-    "Create an APXM workflow to review tests/mcp.rs for gaps in prompt-as-workflow coverage.",
-    "Create an APXM workflow to inspect mcp_protocol.rs and summarize scattered string risk.",
-    "Create an APXM workflow to review mcp/schema.rs for accurate input schemas for new tools.",
-    "Create an APXM workflow to inspect mcp/dispatch.rs for safe argument handling across query tools.",
     "Create an APXM workflow to review capability_list output and summarize model-router health visibility.",
-    "Create an APXM workflow to inspect evidence_lookup allowed roots and summarize evidence exposure risk.",
-    "Create an APXM workflow to review aam_recall output size controls and summarize context-bloat risk.",
-    "Create an APXM workflow to inspect trace_fetch summary/full behavior and summarize default safety.",
-    "Create an APXM workflow to review release build readiness for apxm-mcp-server across Claude and Codex.",
-    "Create an APXM workflow to inspect generated docs for remaining placeholders before commit.",
-    "Create an APXM workflow to summarize final ship readiness, residual risks, and verification steps.",
 )
 
 
@@ -133,9 +109,9 @@ def build_request(index: int, task: str, trace_prefix: str, execute: bool) -> di
         JsonRpcField.PARAMS: {
             JsonRpcField.NAME: McpTool.PROMPT_AS_WORKFLOW,
             JsonRpcField.ARGUMENTS: {
-                PlanArg.TASK: task,
-                PlanArg.EXECUTE: execute,
-                PlanArg.TRACE_ID: trace_id,
+                WorkflowArg.TASK: task,
+                WorkflowArg.EXECUTE: execute,
+                WorkflowArg.TRACE_ID: trace_id,
             },
         },
     }
@@ -234,7 +210,7 @@ def run_task(
     timeout_seconds: int,
 ) -> TaskOutcome:
     request = build_request(index, task, trace_prefix, execute)
-    trace_id = request[JsonRpcField.PARAMS][JsonRpcField.ARGUMENTS][PlanArg.TRACE_ID]
+    trace_id = request[JsonRpcField.PARAMS][JsonRpcField.ARGUMENTS][WorkflowArg.TRACE_ID]
     start = time.monotonic()
     response, command_error = invoke_task(
         repo=repo,
@@ -263,7 +239,7 @@ def run_task(
     assert response is not None
     parsed_ok, payload, tool_error = parse_tool_text(response)
     expected_status = "executed" if execute else "compiled"
-    status = payload.get(PlanResult.STATUS) if payload else None
+    status = payload.get(WorkflowResult.STATUS) if payload else None
     ok = parsed_ok and status == expected_status
     if parsed_ok and not ok:
         tool_error = f"expected status {expected_status!r}, got {status!r}"
@@ -275,10 +251,10 @@ def run_task(
         ok=ok,
         elapsed_ms=elapsed_ms,
         status=status if isinstance(status, str) else None,
-        air_hash=payload.get(PlanResult.AIR_HASH) if payload else None,
-        artifact_hash=payload.get(PlanResult.ARTIFACT_HASH) if payload else None,
-        stats=payload.get(PlanResult.STATS) if payload else None,
-        summary=payload.get(PlanResult.SUMMARY) if payload else None,
+        air_hash=payload.get(WorkflowResult.AIR_HASH) if payload else None,
+        artifact_hash=payload.get(WorkflowResult.ARTIFACT_HASH) if payload else None,
+        stats=payload.get(WorkflowResult.STATS) if payload else None,
+        summary=payload.get(WorkflowResult.SUMMARY) if payload else None,
         error=tool_error,
         raw_response=response,
     )
@@ -378,8 +354,8 @@ def main(argv: list[str]) -> int:
         "passed": passed,
         "failed": total - passed,
         "pass_rate": pass_rate,
-        "success_threshold": 0.60,
-        "threshold_passed": pass_rate >= 0.60,
+        "success_threshold": DEFAULT_SUCCESS_THRESHOLD,
+        "threshold_passed": pass_rate >= DEFAULT_SUCCESS_THRESHOLD,
         "task_indices": selected_indices,
         "tasks": list(selected_tasks),
     }

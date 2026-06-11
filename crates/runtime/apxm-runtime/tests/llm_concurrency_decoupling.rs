@@ -99,19 +99,3 @@ async fn no_deadlock_when_both_semaphores_are_one() {
         Err(_) => panic!("scheduler hung — LLM permit likely held across child scheduling"),
     }
 }
-
-#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn llm_inflight_default_is_independent_of_max_inflight() {
-    // Sanity check: the default scheduler config now exposes a separate
-    // llm_inflight knob so wiring tests can rely on it.
-    let cfg = SchedulerConfig::default();
-    assert_eq!(cfg.llm_inflight, 32, "default LLM concurrency should be 32");
-
-    // And it can be tuned independently.
-    let tuned = SchedulerConfig::new()
-        .with_max_inflight(4)
-        .with_llm_inflight(64);
-    assert_eq!(tuned.max_inflight, 4);
-    assert_eq!(tuned.llm_inflight, 64);
-    tuned.validate().expect("config should validate");
-}

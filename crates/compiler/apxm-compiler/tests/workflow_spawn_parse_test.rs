@@ -7,7 +7,7 @@ fn pipeline_compiles_workflow_spawn_air() {
     let air = r#"
 module {
   func.func @workflow_spawn_parse() -> !ais.token attributes {ais.entry} {
-    %child = ais.workflow_spawn "graph_path" "tests/quality_fixtures/qa_factual/graph.air"
+    %child = ais.workflow_spawn "workflow_path" "workflows/review.apxmw"
       {await_result = true, session_root = ".apxm/child-sessions"} : !ais.token
     func.return %child : !ais.token
   }

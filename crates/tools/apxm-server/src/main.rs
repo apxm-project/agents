@@ -1,7 +1,7 @@
 //! APXM Server — HTTP gateway for the APXM agent runtime.
 //!
 //! Exposes the runtime's capabilities over a REST+SSE API with support for:
-//! - **Graph execution**: `POST /v1/execute`, `POST /v1/execute/stream`
+//! - **Workflow execution**: `POST /v1/execute`, `POST /v1/execute/stream`
 //! - **Skill library**: inventory, validation, REST/SSE execution, and
 //!   execution-record lookup through `/v1/skills/*` and `/v1/executions/*`
 //! - **Goals**: `POST /v1/goals`, `GET /v1/goals/{goal_id}`, retained
@@ -26,7 +26,7 @@
 //!
 //! # Architecture
 //! `main.rs` only wires modules and process startup. Request handlers live in
-//! focused modules, with graph execution delegated to `apxm-runtime` and
+//! focused modules, with workflow execution delegated to `apxm-runtime` and
 //! `apxm-compiler`, and static skill execution using `apxm-skill` manifests plus
 //! `apxm-artifact` containers.
 
@@ -71,6 +71,7 @@ mod state;
 mod tasks;
 mod types;
 mod webhook;
+mod workflow_source;
 
 #[cfg(test)]
 mod tests;

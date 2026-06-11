@@ -18,7 +18,10 @@ async fn goal_routes_expose_status_events_list_and_cancel() {
         Some("/tmp/session-1".to_string()),
         "/tmp/workflow.apxmw".to_string(),
         "/tmp/goal-bundle".to_string(),
-        serde_json::json!({ "plan_json": "/tmp/goal-bundle/plan.json" }),
+        serde_json::json!({
+            "tracking_doc": "/tmp/goal-bundle/goal.md",
+            "worker_air_dir": "/tmp/goal-bundle/workers"
+        }),
         serde_json::json!({
             "task": "ship the goal routes",
             "workers": []

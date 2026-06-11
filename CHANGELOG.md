@@ -89,15 +89,15 @@ contract is committed to.
 - `docs/backends/model-zoo.md` — operator reference (schema table,
   daily flow, failure-mode glossary).
 
-### Added — plans-as-graphs
+### Added — plan workflows
 - LLM PLAN prompt teaches the `inner_plan.task_dag` schema with three
   worked examples (fan-out, diamond, linear). The canonical `task_dag`
   shape is the supported plan payload.
-- `PLAN_GRAPH_EMITTED` event + `PlanGraphEmittedPayload`
+- `PLAN_WORKFLOW_EMITTED` event + `PlanWorkflowEmittedPayload`
   (`plan_id`, `generating_model`, `node_count`, `task_ids`,
   `parallel_fanout_max`) — lets trace consumers tell apart
   "LLM produced free-text steps" from "LLM produced an executable
-  graph" and quantifies the extracted parallelism.
+  workflow" and quantifies the extracted parallelism.
 - `TaskDag::validate()` is now called up-front in the PLAN handler so
   malformed LLM-emitted DAGs (cycles, dangling `depends_on`, dup ids)
   fail at the PLAN node context with an actionable error.

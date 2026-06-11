@@ -38,7 +38,7 @@ pub fn write_workflow_session_started(
         session_dir,
         &SessionManifest {
             execution_id,
-            graph_name: Some(workflow_name.to_string()),
+            workflow_name: Some(workflow_name.to_string()),
             timestamp,
             status: SessionStatus::Running,
             duration_ms: 0,
@@ -216,7 +216,7 @@ pub fn write_workflow_session_finished(session_dir: &Path, result: &WorkflowResu
         session_dir,
         &SessionManifest {
             execution_id: execution_id.clone(),
-            graph_name: Some(result.workflow_name.clone()),
+            workflow_name: Some(result.workflow_name.clone()),
             timestamp,
             status,
             duration_ms: result.duration_ms as u128,

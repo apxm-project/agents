@@ -94,7 +94,7 @@ pub fn session_list_command(
             .map(|(m, p, s)| {
                 serde_json::json!({
                     "execution_id": m.execution_id,
-                    "graph_name": m.graph_name,
+                    "workflow_name": m.workflow_name,
                     "timestamp": m.timestamp,
                     "status": m.status,
                     "duration_ms": m.duration_ms,
@@ -132,8 +132,8 @@ pub fn session_list_command(
                 manifest.node_count,
                 size_mb
             );
-            if let Some(ref name) = manifest.graph_name {
-                println!("   Graph: {}", name);
+            if let Some(ref name) = manifest.workflow_name {
+                println!("   Workflow: {}", name);
             }
             println!("   Path: {}", path.display());
             println!();
@@ -199,8 +199,8 @@ pub fn session_inspect_command(session_id: String, json: bool) -> Result<()> {
         println!("{}", serde_json::to_string_pretty(&output)?);
     } else {
         println!("Session: {}", manifest.execution_id);
-        if let Some(ref name) = manifest.graph_name {
-            println!("Graph: {}", name);
+        if let Some(ref name) = manifest.workflow_name {
+            println!("Workflow: {}", name);
         }
         println!("Status: {}", manifest.status);
         println!("Duration: {:.2}s", manifest.duration_ms as f64 / 1000.0);

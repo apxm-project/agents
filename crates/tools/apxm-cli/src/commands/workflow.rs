@@ -106,7 +106,7 @@ pub fn workflow_validate_command(file: PathBuf, json: bool) -> Result<()> {
                 apxm_core::constants::ui::icons::SUCCESS
             );
             println!("  Name: {}", def.name);
-            println!("  Steps: {}", def.graphs.len());
+            println!("  Steps: {}", def.steps.len());
             println!(
                 "  Parameters: {}",
                 def.parameters
@@ -144,12 +144,12 @@ pub fn workflow_analyze_command(file: PathBuf, json: bool) -> Result<()> {
         ));
     }
 
-    let phases = execution_phases(&def.graphs)?;
+    let phases = execution_phases(&def.steps)?;
 
     if json {
         let output = serde_json::json!({
             "name": def.name,
-            "total_steps": def.graphs.len(),
+            "total_steps": def.steps.len(),
             "phases": phases.len(),
             "max_parallelism": phases.iter().map(|p| p.len()).max().unwrap_or(0),
             "execution_plan": phases,
@@ -158,7 +158,7 @@ pub fn workflow_analyze_command(file: PathBuf, json: bool) -> Result<()> {
     } else {
         println!("Workflow: {}", def.name.bold());
         println!();
-        println!("  Total steps: {}", def.graphs.len());
+        println!("  Total steps: {}", def.steps.len());
         println!("  Execution phases: {}", phases.len());
         println!(
             "  Max parallelism: {}",
@@ -169,7 +169,7 @@ pub fn workflow_analyze_command(file: PathBuf, json: bool) -> Result<()> {
         for (i, phase) in phases.iter().enumerate() {
             println!("  Phase {}: {} step(s) in parallel", i, phase.len());
             for step_id in phase {
-                let step = def.graphs.iter().find(|s| &s.id == step_id).unwrap();
+                let step = def.steps.iter().find(|s| &s.id == step_id).unwrap();
                 println!("    - {} ({})", step_id, step.path);
             }
         }
@@ -290,7 +290,7 @@ async fn workflow_run_background_command(
     apxm_runtime::workflow::write_workflow_session_started(
         &session_dir,
         &def.name,
-        def.graphs.len(),
+        def.steps.len(),
     )?;
 
     let log_file = session_dir.join("background.log");
@@ -452,7 +452,7 @@ fn execute_workflow_file<'a>(
             .parent()
             .ok_or_else(|| anyhow::anyhow!("Failed to get parent directory"))?
             .to_path_buf();
-        let phases = execution_phases(&def.graphs)?;
+        let phases = execution_phases(&def.steps)?;
         let workflow_session_dir = if let Some(session_dir) = explicit_session_dir {
             std::fs::create_dir_all(session_dir)?;
             session_dir.to_path_buf()
@@ -462,7 +462,7 @@ fn execute_workflow_file<'a>(
         apxm_runtime::workflow::write_workflow_session_started(
             &workflow_session_dir,
             &def.name,
-            def.graphs.len(),
+            def.steps.len(),
         )?;
 
         let start = Instant::now();
@@ -477,12 +477,12 @@ fn execute_workflow_file<'a>(
             let mut phase_jobs = Vec::new();
             for step_id in phase {
                 let step_index = def
-                    .graphs
+                    .steps
                     .iter()
                     .position(|s| &s.id == step_id)
                     .unwrap_or(step_results.len());
                 let step = def
-                    .graphs
+                    .steps
                     .iter()
                     .find(|s| &s.id == step_id)
                     .ok_or_else(|| anyhow::anyhow!("Unknown step id '{}'", step_id))?;
@@ -505,7 +505,7 @@ fn execute_workflow_file<'a>(
                         apxm_runtime::workflow::StepStatus::Skipped,
                         0,
                         step_results.len() + 1,
-                        def.graphs.len(),
+                        def.steps.len(),
                         start.elapsed().as_millis(),
                     )?;
                     step_results.insert(
@@ -547,7 +547,7 @@ fn execute_workflow_file<'a>(
                     step_id,
                     step_index,
                     step_results.len(),
-                    def.graphs.len(),
+                    def.steps.len(),
                     start.elapsed().as_millis(),
                 )?;
 
@@ -586,7 +586,7 @@ fn execute_workflow_file<'a>(
                             .await?
                         }
                         _ => {
-                            execute_graph_step(
+                            execute_workflow_step(
                                 linker,
                                 &step_id,
                                 &step_path,
@@ -641,7 +641,7 @@ fn execute_workflow_file<'a>(
                     completed.result.status,
                     completed.result.duration_ms,
                     step_results.len() + 1,
-                    def.graphs.len(),
+                    def.steps.len(),
                     start.elapsed().as_millis(),
                 )?;
 
@@ -849,16 +849,16 @@ fn workflow_step_result_from_nested(
 }
 
 #[cfg(feature = "driver")]
-async fn execute_graph_step(
+async fn execute_workflow_step(
     linker: &Linker,
     step_id: &str,
-    graph_path: &Path,
+    air_path: &Path,
     resolved_params: &HashMap<String, String>,
     step_session_dir: &Path,
     step_start: Instant,
 ) -> Result<apxm_runtime::workflow::StepResult> {
-    let graph_args = load_graph_step_args(graph_path, resolved_params)?;
-    let input_graph = load_graph_for_session(graph_path).ok();
+    let step_args = load_workflow_step_args(air_path, resolved_params)?;
+    let input_graph = load_graph_for_session(air_path).ok();
     let (writer, emitter, ticker_handle) = create_step_session_capture(
         linker,
         step_session_dir.parent().unwrap_or(step_session_dir),
@@ -867,8 +867,8 @@ async fn execute_graph_step(
     )?;
     let result = linker
         .run_graph(
-            graph_path,
-            graph_args,
+            air_path,
+            step_args,
             Some(emitter.clone() as Arc<dyn apxm_runtime::ExecutionEventEmitter>),
             Some(writer.session_dir()),
         )
@@ -882,14 +882,14 @@ async fn execute_graph_step(
                 &writer,
                 &emitter,
                 step_id,
-                graph_path.file_stem().and_then(|s| s.to_str()),
+                air_path.file_stem().and_then(|s| s.to_str()),
                 duration_ms,
                 &link_result.execution,
                 Some(
                     link_result.execution.stats.executed_nodes
                         + link_result.execution.stats.failed_nodes,
                 ),
-                build_graph_metrics_json(graph_path, &link_result),
+                build_graph_metrics_json(air_path, &link_result),
                 ticker_handle,
             )
             .await?;
@@ -907,7 +907,7 @@ async fn execute_graph_step(
                 &writer,
                 &emitter,
                 step_id,
-                graph_path.file_stem().and_then(|s| s.to_str()),
+                air_path.file_stem().and_then(|s| s.to_str()),
                 ticker_handle,
             )?;
             Ok(apxm_runtime::workflow::StepResult {
@@ -1027,8 +1027,8 @@ fn create_step_session_capture(
         .context("Failed to write step manifest")?;
     if let Some(graph) = input_graph {
         writer
-            .write_input_graph(graph)
-            .context("Failed to write step input graph")?;
+            .write_input_air(graph)
+            .context("Failed to write step input AIR")?;
     }
 
     let project_root = std::env::current_dir().ok();
@@ -1059,11 +1059,11 @@ fn create_step_session_capture(
 
 #[cfg(feature = "driver")]
 fn build_graph_metrics_json(
-    graph_path: &Path,
+    air_path: &Path,
     result: &apxm_driver::LinkResult,
 ) -> serde_json::Value {
     let mut metrics_json = serde_json::json!({
-        "input": graph_path.display().to_string(),
+        "input": air_path.display().to_string(),
         "execution": {
             "nodes_executed": result.execution.stats.executed_nodes,
             "nodes_failed": result.execution.stats.failed_nodes,
@@ -1162,7 +1162,7 @@ async fn finish_step_session(
     writer: &apxm_driver::session_output::SessionOutputWriter,
     emitter: &apxm_driver::session_output::SessionEventEmitter,
     execution_id: &str,
-    graph_name: Option<&str>,
+    workflow_name: Option<&str>,
     duration_ms: u64,
     execution: &apxm_runtime::RuntimeExecutionResult,
     node_count: Option<usize>,
@@ -1179,7 +1179,7 @@ async fn finish_step_session(
     writer
         .finalize(
             execution_id,
-            graph_name,
+            workflow_name,
             duration_ms as u128,
             node_count.unwrap_or(execution.stats.executed_nodes + execution.stats.failed_nodes),
             execution.stats.failed_nodes == 0,
@@ -1202,12 +1202,12 @@ fn fail_step_session(
     writer: &apxm_driver::session_output::SessionOutputWriter,
     emitter: &apxm_driver::session_output::SessionEventEmitter,
     execution_id: &str,
-    graph_name: Option<&str>,
+    workflow_name: Option<&str>,
     ticker_handle: tokio::task::JoinHandle<()>,
 ) -> Result<()> {
     ticker_handle.abort();
     writer
-        .finalize_live_with_id(false, Some(execution_id), graph_name)
+        .finalize_live_with_id(false, Some(execution_id), workflow_name)
         .context("Failed to mark step session as failed")?;
     emitter
         .finalize_live(false)
@@ -1216,11 +1216,11 @@ fn fail_step_session(
 }
 
 #[cfg(feature = "driver")]
-fn load_graph_step_args(
-    graph_path: &Path,
+fn load_workflow_step_args(
+    air_path: &Path,
     resolved_params: &HashMap<String, String>,
 ) -> Result<Vec<String>> {
-    let graph = air_graph_from_source(graph_path)?;
+    let graph = air_graph_from_source(air_path)?;
     Ok(graph
         .parameters
         .iter()

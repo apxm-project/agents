@@ -9,10 +9,10 @@
     +--> [duplicate / denied] -> [record ignored]
     |
     v
-[planner/controller builds one bounded worker DAG]
+[planner/controller builds one bounded worker workflow]
     |
     v
-[APXM validates graph + worker policy]
+[APXM validates workflow + worker policy]
     |
     v
 [goal_start for server-owned goal]

@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
-"""autofix_workflow.py - Autofix as APXM Graph
+"""autofix_workflow.py - Autofix as APXM Workflow
 
-The autofix loop we built, but as a native APXM workflow graph.
+The autofix loop we built, but as a native APXM workflow.
 
-Graph structure:
+Workflow structure:
 - exc: run validation (apxm-autofix.py --report-only)
 - think: classify — parse output, identify failure clusters
 - branch: if all pass → done, else → fix

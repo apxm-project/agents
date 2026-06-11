@@ -1,7 +1,7 @@
 {
   "name": "cancel_parked",
   "description": "Park on a checkpoint so workflow_cancel can interrupt the workflow.",
-  "graphs": [
+  "steps": [
     {
       "id": "wait_for_cancel",
       "path": "wait_for_cancel.air"

@@ -11,12 +11,14 @@ fn mock_profile() -> AcpAgentProfile {
 
     AcpAgentProfile {
         command: format!("bash {}", mock_script.display()),
+        description: None,
         close_grace_ms: 100,
         session_create_timeout_ms: 5_000,
         permission_mode: PermissionMode::ApproveAll,
         env: BTreeMap::new(),
         default_mode: None,
         default_model: None,
+        route_capabilities: apxm_acp::default_route_capabilities(),
         system_prompt: None,
         skip_preamble: false,
         capabilities: Vec::new(),

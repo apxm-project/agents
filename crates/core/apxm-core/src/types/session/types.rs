@@ -47,7 +47,7 @@ impl SessionStatus {
 pub struct SessionManifest {
     pub execution_id: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub graph_name: Option<String>,
+    pub workflow_name: Option<String>,
     pub timestamp: String,
     pub status: SessionStatus,
     pub duration_ms: u128,

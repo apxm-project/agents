@@ -413,7 +413,7 @@ mod tests {
             "/home/user/.local/bin/dekk",
             "apxm",
             "execute",
-            "graph.air",
+            "workflow.air",
         ])));
     }
 

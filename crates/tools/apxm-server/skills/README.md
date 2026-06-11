@@ -10,8 +10,8 @@ The scan recurses, so both flat skill dirs and pack-layout dirs
 
 - `prompt-as-workflow/` — prompt-as-workflow dispatcher: NL → AIR → compile → dispatch
   → trace. The flagship operating skill, a **source skill** (`SKILL.md` +
-  `prompt.md` + `schema.json` + `examples/`) — no `.apxmobj` by design; the
-  server runs it via its dispatcher path. Output contract: `summary` (json).
+  `prompt.md` + `examples/`) — no `.apxmobj` by design; the server runs it via
+  its dispatcher path. Output contract: `summary`.
 
 ## Boundary
 

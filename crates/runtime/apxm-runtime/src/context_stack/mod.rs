@@ -214,12 +214,11 @@ impl ContextStack {
             self.session_dir.display()
         );
 
-        // Include graph summary if available
+        // Include workflow summary if available.
         if let Some(summary) = load_graph_summary(&self.session_dir) {
-            // Parse summary JSON to extract key fields
             if let Ok(summary_json) = serde_json::from_str::<serde_json::Value>(&summary) {
                 if let Some(name) = summary_json.get("name").and_then(|v| v.as_str()) {
-                    content.push_str(&format!("\n- Graph: {}", name));
+                    content.push_str(&format!("\n- Workflow: {}", name));
                 }
                 if let Some(node_count) = summary_json.get("node_count").and_then(|v| v.as_u64()) {
                     content.push_str(&format!("\n- Nodes: {}", node_count));

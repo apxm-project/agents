@@ -35,8 +35,8 @@ call:
 goal_start({ task, context, event, trigger, planning, workspace, ... })
 ```
 
-When `workers` is omitted, `goal_start` creates a bounded worker DAG for each
-pass; when `workers` is present, that explicit DAG is used. If the gate returns
+When `workers` is omitted, `goal_start` creates a bounded worker workflow for each
+pass; when `workers` is present, that explicit worker workflow is used. If the gate returns
 `needs_more`, APXM server starts the next pass while iteration budget remains;
 it does not recursively prompt hidden workers outside APXM. The deterministic
 AIR files label these transitions for testing. APXM server owns goal IDs,
@@ -64,7 +64,7 @@ start-pass action, eval, and feedback decision.
 
 Use `deterministic_pass_request.json` as a no-agent `goal_start`
 request. Use `acp_git_worktree_pass_request.json` after replacing the profile
-IDs with registered APXM worker profiles and granting:
+names with resolvable APXM ACP profiles and granting:
 
 ```json
 ["SPAWN_AGENT"]
@@ -72,14 +72,14 @@ IDs with registered APXM worker profiles and granting:
 
 The schema in `pass_request.schema.json` documents the expected shape for one
 bounded pass. Omit `workers` for server auto-planning, or provide it to pin the
-DAG manually. `goal_loop.policy.json` documents the outer loop limits:
+workflow manually. `goal_loop.policy.json` documents the outer loop limits:
 iteration budget, timeout, budget, cancellation, and checkpoint behavior that
 the controller declares while APXM server executes the admitted goal.
 
 ## Boundary
 
 - APXM skills/plugins are triggers and instructions, not the runtime.
-- Worker-authored graphs are proposals until APXM validates and admits them.
+- Worker-authored workflows are proposals until APXM validates and admits them.
 - `goal_start` starts a server-owned goal and returns `goal_id` plus
   `goal_status/events/cancel` handles.
 - APXM OS owns external event listeners, trigger sidecars, dedupe, retry, and

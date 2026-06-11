@@ -700,11 +700,8 @@ fn emit_node(
                 ],
             )
             .unwrap_or_else(|| "{input}".to_string());
-            let recipient = get_string_attr(
-                &node.attributes,
-                &[graph_attrs::RECIPIENT],
-            )
-            .unwrap_or_else(|| "default".to_string());
+            let recipient = get_string_attr(&node.attributes, &[graph_attrs::RECIPIENT])
+                .unwrap_or_else(|| "default".to_string());
             let attrs = extra_attr_dict(
                 &node.attributes,
                 &[

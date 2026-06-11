@@ -519,8 +519,8 @@ mod convergence_tests {
         assert!(GateVerdict::parse_json(passthrough).is_none());
         assert!(GateVerdict::parse(passthrough).is_none());
 
-        // A bare "status:" line is accepted by the lenient parser but NOT by the
-        // strict JSON-only parser the runtime uses to auto-detect an LLM verdict.
+        // A bare "status:" line is accepted by the lenient parser but not by the
+        // strict structured parser the runtime uses to auto-detect an LLM verdict.
         let loose = "status: blocked";
         assert!(GateVerdict::parse_json(loose).is_none());
         assert_eq!(

@@ -1,9 +1,9 @@
-//! Multi-graph workflow execution layer.
+//! Workflow-file execution layer.
 //!
-//! Composes multiple `.air` graphs into workflows where:
-//! - Graphs can depend on each other's outputs
-//! - Independent graphs run in parallel (tokio::spawn)
-//! - Each graph gets its own session/trace directory
+//! Composes multiple `.air` workflow steps into workflows where:
+//! - Workflow steps can depend on each other's outputs
+//! - Independent steps run in parallel (tokio::spawn)
+//! - Each step gets its own session/trace directory
 //! - Users declare this with a `.apxmw` file
 
 pub mod def;
@@ -12,7 +12,7 @@ pub mod session;
 pub mod template;
 pub mod topo;
 
-pub use def::{GraphStep, WorkflowDef, WorkflowParam};
+pub use def::{WorkflowDef, WorkflowParam, WorkflowStep};
 pub use runner::{StepResult, StepStatus, WorkflowResult, WorkflowRunner, WorkflowStatus};
 pub use session::{
     write_workflow_background_started, write_workflow_session_finished,

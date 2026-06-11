@@ -44,6 +44,8 @@ mod mcp_tools;
 mod runtime_setup;
 #[path = "../skill_resources.rs"]
 mod skill_resources;
+#[path = "../workflow_source.rs"]
+mod workflow_source;
 
 use mcp_protocol::{
     ContentKind, McpMethod, OperationCategoryWire, StdioTool, Tier3Tool, args as mcp_args,
@@ -56,7 +58,6 @@ const SERVER_NAME: &str = server_name::STDIO;
 const SERVER_VERSION: &str = env!("CARGO_PKG_VERSION");
 const RAW_EXECUTE_ENV: &str = "APXM_MCP_ENABLE_RAW_EXECUTE";
 const RAW_EXECUTE_DISABLED_MESSAGE: &str = "execute is disabled by default in the stdio MCP server. Use the HTTP MCP skill_call tool for server-owned skills, or set APXM_MCP_ENABLE_RAW_EXECUTE=1 for explicit developer/debug raw AIR execution.";
-
 // JSON-RPC error codes
 const PARSE_ERROR: i64 = apxm_core::constants::jsonrpc::error_codes::PARSE_ERROR;
 const METHOD_NOT_FOUND: i64 = apxm_core::constants::jsonrpc::error_codes::METHOD_NOT_FOUND;
@@ -179,9 +180,13 @@ fn handle_tools_list(raw_execute_enabled: bool) -> Result<Value, Value> {
                     (mcp_args::AIR): {
                         (mcp_fields::TYPE): schema_type::STRING,
                         (mcp_fields::DESCRIPTION): "Canonical APXM AIR text"
+                    },
+                    (mcp_args::PATH): {
+                        (mcp_fields::TYPE): schema_type::STRING,
+                        (mcp_fields::DESCRIPTION): "Path to a .air file or Python frontend file that emits AIR"
                     }
                 },
-                (mcp_fields::REQUIRED): [mcp_args::AIR]
+                (mcp_fields::REQUIRED): []
             }
         }),
         json!({
@@ -194,6 +199,10 @@ fn handle_tools_list(raw_execute_enabled: bool) -> Result<Value, Value> {
                         (mcp_fields::TYPE): schema_type::STRING,
                         (mcp_fields::DESCRIPTION): "Canonical APXM AIR text"
                     },
+                    (mcp_args::PATH): {
+                        (mcp_fields::TYPE): schema_type::STRING,
+                        (mcp_fields::DESCRIPTION): "Path to a .air file or Python frontend file that emits AIR"
+                    },
                     (mcp_args::OPT_LEVEL): {
                         (mcp_fields::TYPE): schema_type::INTEGER,
                         (mcp_fields::DESCRIPTION): "Optimization level (0-3). 0=none, 1=basic, 2=standard, 3=aggressive. Default: 2",
@@ -201,7 +210,7 @@ fn handle_tools_list(raw_execute_enabled: bool) -> Result<Value, Value> {
                         (mcp_fields::MAXIMUM): 3
                     }
                 },
-                (mcp_fields::REQUIRED): [mcp_args::AIR]
+                (mcp_fields::REQUIRED): []
             }
         }),
         json!({
@@ -222,9 +231,13 @@ fn handle_tools_list(raw_execute_enabled: bool) -> Result<Value, Value> {
                     (mcp_args::AIR): {
                         (mcp_fields::TYPE): schema_type::STRING,
                         (mcp_fields::DESCRIPTION): "Canonical APXM AIR text"
+                    },
+                    (mcp_args::PATH): {
+                        (mcp_fields::TYPE): schema_type::STRING,
+                        (mcp_fields::DESCRIPTION): "Path to a .air file or Python frontend file that emits AIR"
                     }
                 },
-                (mcp_fields::REQUIRED): [mcp_args::AIR]
+                (mcp_fields::REQUIRED): []
             }
         }),
         json!({
@@ -325,13 +338,17 @@ fn handle_tools_list(raw_execute_enabled: bool) -> Result<Value, Value> {
                             (mcp_fields::TYPE): schema_type::STRING,
                             (mcp_fields::DESCRIPTION): "Canonical APXM AIR text"
                         },
+                        (mcp_args::PATH): {
+                            (mcp_fields::TYPE): schema_type::STRING,
+                            (mcp_fields::DESCRIPTION): "Path to a .air file or Python frontend file that emits AIR"
+                        },
                         (mcp_args::PARAMETERS): {
                             (mcp_fields::TYPE): schema_type::OBJECT,
-                            (mcp_fields::DESCRIPTION): "Runtime parameters to pass to the graph entry flow",
+                            (mcp_fields::DESCRIPTION): "Runtime parameters to pass to the workflow entry flow",
                             (mcp_fields::ADDITIONAL_PROPERTIES): { (mcp_fields::TYPE): schema_type::STRING }
                         }
                     },
-                    (mcp_fields::REQUIRED): [mcp_args::AIR]
+                    (mcp_fields::REQUIRED): []
                 }
             }),
         );
@@ -441,7 +458,7 @@ fn tool_validate(args: Value) -> Result<String, String> {
     let mut warnings: Vec<String> = Vec::new();
 
     let air = get_air_arg(&args)?;
-    match compile_air_to_artifact(air, OptimizationLevel::O1) {
+    match compile_air_to_artifact(&air, OptimizationLevel::O1) {
         Ok(artifact) => {
             if artifact.entry_dag().is_none() {
                 warnings.push("AIR compiled but produced no entry DAG".to_string());
@@ -478,7 +495,7 @@ fn tool_compile(args: Value) -> Result<String, String> {
     };
 
     let start = Instant::now();
-    let artifact = compile_air_to_artifact(air, opt_level)?;
+    let artifact = compile_air_to_artifact(&air, opt_level)?;
     let compile_ms = start.elapsed().as_millis();
     let artifact_bytes = artifact
         .to_bytes()
@@ -486,11 +503,11 @@ fn tool_compile(args: Value) -> Result<String, String> {
     let dag = artifact.entry_dag();
     let node_count = dag.map(|d| d.nodes.len()).unwrap_or(0);
     let edge_count = dag.map(|d| d.edges.len()).unwrap_or(0);
-    let graph_name = dag
+    let workflow_name = dag
         .and_then(|d| d.metadata.name.as_deref())
         .unwrap_or("artifact");
 
-    let artifact_path = std::env::temp_dir().join(format!("{graph_name}.apxmobj"));
+    let artifact_path = std::env::temp_dir().join(format!("{workflow_name}.apxmobj"));
     artifact
         .write_to_path(&artifact_path)
         .map_err(|e| format!("failed to write artifact: {e}"))?;
@@ -522,7 +539,7 @@ fn tool_execute(args: Value) -> Result<String, String> {
         .unwrap_or_default();
 
     let compile_start = Instant::now();
-    let artifact = compile_air_to_artifact(air, OptimizationLevel::O1)?;
+    let artifact = compile_air_to_artifact(&air, OptimizationLevel::O1)?;
     let compile_ms = compile_start.elapsed().as_millis();
 
     // Build args from parameters map
@@ -647,7 +664,7 @@ fn tool_get_contract() -> Result<String, String> {
         (tool_result::PARAMETER_TYPES): contract_value::PARAMETER_TYPES,
         (tool_result::AIR_CONTRACT): {
             (tool_result::REQUIRED_ARGUMENT): mcp_args::AIR,
-            (tool_result::DESCRIPTION): "Canonical APXM graph source as AIR text",
+            (tool_result::DESCRIPTION): "Canonical APXM workflow source as AIR text, or path to .air/.py",
         }
     });
     Ok(serde_json::to_string_pretty(&result).unwrap())
@@ -659,7 +676,7 @@ fn tool_get_contract() -> Result<String, String> {
 
 fn tool_analyze(args: Value) -> Result<String, String> {
     let air = get_air_arg(&args)?;
-    let artifact = compile_air_to_artifact(air, OptimizationLevel::O1)?;
+    let artifact = compile_air_to_artifact(&air, OptimizationLevel::O1)?;
     let graph = artifact
         .entry_dag()
         .ok_or_else(|| "compiled AIR produced no entry DAG".to_string())?;
@@ -814,7 +831,7 @@ fn tool_analyze(args: Value) -> Result<String, String> {
     let max_parallelism = phases.iter().map(|p| p.len()).max().unwrap_or(1);
 
     let result = json!({
-        (tool_result::GRAPH_NAME): graph.metadata.name.as_deref().unwrap_or("artifact"),
+        (tool_result::WORKFLOW_NAME): graph.metadata.name.as_deref().unwrap_or("artifact"),
         (tool_result::NODE_COUNT): graph.nodes.len(),
         (tool_result::EDGE_COUNT): graph.edges.len(),
         (tool_result::ENTRY_NODES): entry_nodes,
@@ -859,7 +876,7 @@ fn build_suggestions(
             parallel_phases, max_parallelism
         ));
     } else {
-        suggestions.push("Graph is fully sequential — no parallelism opportunities".to_string());
+        suggestions.push("Workflow is fully sequential; no parallelism opportunities".to_string());
     }
 
     if speedup > 1.2 {
@@ -958,15 +975,8 @@ where
 // Helpers
 // ---------------------------------------------------------------------------
 
-fn get_air_arg(args: &Value) -> Result<&str, String> {
-    let air = args
-        .get(mcp_args::AIR)
-        .and_then(Value::as_str)
-        .ok_or("missing required argument: air")?;
-    if air.trim().is_empty() {
-        return Err("air must not be empty".to_string());
-    }
-    Ok(air)
+fn get_air_arg(args: &Value) -> Result<String, String> {
+    workflow_source::air_from_args(args)
 }
 
 fn compile_air_to_artifact(air: &str, opt_level: OptimizationLevel) -> Result<Artifact, String> {

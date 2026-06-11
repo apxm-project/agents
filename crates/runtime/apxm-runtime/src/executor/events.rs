@@ -55,7 +55,7 @@ pub enum ExecutionEvent {
         step_index: usize,
         success: bool,
     },
-    PlanGraphEmitted {
+    PlanWorkflowEmitted {
         plan_id: String,
         generating_model: String,
         node_count: usize,
@@ -241,7 +241,7 @@ pub trait ExecutionEventEmitter: Send + Sync {
     fn emit_plan_created(&self, _plan_id: &str, _steps: usize) {}
     fn emit_plan_step_started(&self, _plan_id: &str, _step_index: usize) {}
     fn emit_plan_step_completed(&self, _plan_id: &str, _step_index: usize, _success: bool) {}
-    fn emit_plan_graph_emitted(
+    fn emit_plan_workflow_emitted(
         &self,
         _plan_id: &str,
         _generating_model: &str,

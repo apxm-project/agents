@@ -33,9 +33,9 @@ Optional, depending on the example:
 
 - A registered LLM backend for examples that execute `ask`, `think`, or
   `reason` nodes against a real model.
-- Generated ACP agent profiles for examples that spawn coding agents. Verify
+- Generated typed ACP profile imports for examples that spawn coding agents. Verify
   them with `dekk apxm agent list` and `dekk apxm agent test <name>`.
-- Node/npm plus the relevant authenticated agent CLI when using generated ACP
+- Node/npm plus the relevant authenticated agent CLI when using APXM ACP
   profiles. The checked-in `claude` profile launches
   `npx -y @agentclientprotocol/claude-agent-acp@^0.24.2`; the checked-in
   `codex` profile launches `npx @zed-industries/codex-acp@^0.10.0`.

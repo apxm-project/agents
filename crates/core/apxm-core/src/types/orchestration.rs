@@ -34,7 +34,7 @@ impl fmt::Display for OrchestrationStartStatus {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum OrchestrationTransport {
-    /// Spawn a registered ACP profile through the process table.
+    /// Spawn an APXM ACP profile through the process table.
     Acp,
     /// Use a deterministic fixture graph instead of spawning a host process.
     Deterministic,

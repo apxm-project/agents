@@ -173,14 +173,14 @@ class MiddlewareKind(str, Enum):
 
 class WorkflowTargetKind(str, Enum):
     REGISTERED_FLOW = graph_keys.WORKFLOW_TARGET_KIND_REGISTERED_FLOW
-    GRAPH_PATH = graph_keys.WORKFLOW_TARGET_KIND_GRAPH_PATH
+    AIR_PATH = graph_keys.WORKFLOW_TARGET_KIND_AIR_PATH
     ARTIFACT_PATH = graph_keys.WORKFLOW_TARGET_KIND_ARTIFACT_PATH
     WORKFLOW_PATH = graph_keys.WORKFLOW_TARGET_KIND_WORKFLOW_PATH
 
     @classmethod
     def spawn_path_kinds(cls) -> tuple["WorkflowTargetKind", ...]:
         return (
-            cls.GRAPH_PATH,
+            cls.AIR_PATH,
             cls.ARTIFACT_PATH,
             cls.WORKFLOW_PATH,
         )

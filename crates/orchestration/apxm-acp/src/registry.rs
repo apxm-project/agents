@@ -3,6 +3,7 @@ use std::collections::BTreeMap;
 use std::path::PathBuf;
 
 use apxm_core::apxm_acp;
+use apxm_runtime::{AGENT_ROUTE_CAPABILITIES, AgentRouteCandidate};
 
 use crate::constants::{registry as reg_consts, timeouts};
 
@@ -67,6 +68,8 @@ pub struct CapabilityServerConfig {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AcpAgentProfile {
     pub command: String,
+    #[serde(default)]
+    pub description: Option<String>,
     #[serde(default = "default_close_grace")]
     pub close_grace_ms: u64,
     #[serde(default = "default_session_timeout")]
@@ -79,6 +82,8 @@ pub struct AcpAgentProfile {
     pub default_mode: Option<String>,
     #[serde(default)]
     pub default_model: Option<String>,
+    #[serde(default)]
+    pub route_capabilities: Vec<String>,
     #[serde(default)]
     pub system_prompt: Option<String>,
     /// Skip the system preamble turn (turn 0). Use for agents that read context
@@ -103,38 +108,59 @@ fn default_session_timeout() -> u64 {
     timeouts::DEFAULT_SESSION_TIMEOUT_MS
 }
 
+pub fn default_route_capabilities() -> Vec<String> {
+    AGENT_ROUTE_CAPABILITIES
+        .iter()
+        .copied()
+        .map(str::to_string)
+        .collect()
+}
+
 /// Registry of ACP agent profiles.
 ///
 /// **Templates** are the 15 built-in profile definitions (read-only reference
-/// data with known commands and timeouts).
+/// data with known commands, descriptions, route capabilities, and timeouts).
 ///
-/// **Registered agents** are entries in `~/.apxm/agents.toml` — the only
-/// agents that are resolvable at runtime. `agent add claude` uses the template
-/// as defaults so users don't need to memorize npx commands.
+/// **User profiles** are entries in `~/.apxm/agents.toml`. Built-in templates
+/// are also resolvable by name, and user profiles override templates with the
+/// same name.
 pub struct AgentRegistry {
     templates: BTreeMap<String, AcpAgentProfile>,
-    registered: BTreeMap<String, AcpAgentProfile>,
+    user_profiles: BTreeMap<String, AcpAgentProfile>,
 }
 
 impl AgentRegistry {
-    /// Load registry: templates from built-ins, registered from agents.toml.
+    /// Load registry: built-in templates plus user profiles from agents.toml.
     pub fn load() -> Self {
         let templates = Self::build_templates();
-        let mut registered = BTreeMap::new();
+        let mut user_profiles = BTreeMap::new();
 
         if let Some(path) = Self::user_config_path() {
             if let Ok(content) = std::fs::read_to_string(&path) {
                 if let Ok(user) = toml::from_str::<UserAgentsFile>(&content) {
-                    registered = user.agents;
+                    user_profiles = user.agents;
                 } else {
                     apxm_acp!(warn, path = %path.display(), "failed to parse agent config");
                 }
             }
         }
 
+        for (name, profile) in user_profiles.iter_mut() {
+            if let Some(template) = templates.get(name) {
+                if profile.description.is_none() {
+                    profile.description = template.description.clone();
+                }
+                if profile.route_capabilities.is_empty() {
+                    profile.route_capabilities = template.route_capabilities.clone();
+                }
+            } else if profile.route_capabilities.is_empty() {
+                profile.route_capabilities = default_route_capabilities();
+            }
+        }
+
         Self {
             templates,
-            registered,
+            user_profiles,
         }
     }
 
@@ -144,50 +170,128 @@ impl AgentRegistry {
 
         let dg = timeouts::DEFAULT_CLOSE_GRACE_MS;
         let dt = timeouts::DEFAULT_SESSION_TIMEOUT_MS;
-        let entries: &[(&str, &str, u64, u64)] = &[
+        let default_route_capabilities = default_route_capabilities();
+        let entries: &[(&str, &str, &str, u64, u64)] = &[
             (
                 "claude",
                 "npx -y @agentclientprotocol/claude-agent-acp@^0.24.2",
+                "Claude Code ACP profile for repository analysis, edits, command execution, review, and workflow planning.",
                 dg,
                 timeouts::CLAUDE_SESSION_TIMEOUT_MS,
             ),
-            ("codex", "npx @zed-industries/codex-acp@^0.10.0", dg, dt),
+            (
+                "codex",
+                "npx @zed-industries/codex-acp@^0.10.0",
+                "Codex ACP profile for coding, tests, code review, and workflow implementation.",
+                dg,
+                dt,
+            ),
             (
                 "gemini",
                 "gemini --acp",
+                "Gemini ACP profile for codebase analysis, implementation, and verification.",
                 dg,
                 timeouts::GEMINI_SESSION_TIMEOUT_MS,
             ),
-            ("copilot", "copilot --acp --stdio", dg, dt),
-            ("pi", "npx pi-acp@^0.0.22", dg, dt),
-            ("cursor", "cursor-agent acp", dg, dt),
-            ("droid", "droid exec --output-format acp", dg, dt),
-            ("kilocode", "npx -y @kilocode/cli acp", dg, dt),
-            ("kimi", "kimi acp", dg, dt),
-            ("kiro", "kiro-cli-chat acp", dg, dt),
-            ("opencode", "npx -y opencode-ai acp", dg, dt),
+            (
+                "copilot",
+                "copilot --acp --stdio",
+                "GitHub Copilot ACP profile for coding assistance, repository edits, and review.",
+                dg,
+                dt,
+            ),
+            (
+                "pi",
+                "npx pi-acp@^0.0.22",
+                "Pi ACP profile for general reasoning and coding-agent tasks when the Pi CLI is installed.",
+                dg,
+                dt,
+            ),
+            (
+                "cursor",
+                "cursor-agent acp",
+                "Cursor agent ACP profile for codebase navigation, edits, and verification.",
+                dg,
+                dt,
+            ),
+            (
+                "droid",
+                "droid exec --output-format acp",
+                "Droid ACP profile for repository tasks exposed through Droid's ACP output mode.",
+                dg,
+                dt,
+            ),
+            (
+                "kilocode",
+                "npx -y @kilocode/cli acp",
+                "Kilo Code ACP profile for implementation, command execution, and verification tasks.",
+                dg,
+                dt,
+            ),
+            (
+                "kimi",
+                "kimi acp",
+                "Kimi ACP profile for coding, analysis, and review tasks.",
+                dg,
+                dt,
+            ),
+            (
+                "kiro",
+                "kiro-cli-chat acp",
+                "Kiro ACP profile for coding-agent tasks through kiro-cli-chat.",
+                dg,
+                dt,
+            ),
+            (
+                "opencode",
+                "npx -y opencode-ai acp",
+                "OpenCode ACP profile for implementation, command execution, and code review.",
+                dg,
+                dt,
+            ),
             (
                 "qoder",
                 "qodercli --acp",
+                "Qoder ACP profile for repository implementation and review workflows.",
                 timeouts::QODER_CLOSE_GRACE_MS,
                 dt,
             ),
-            ("qwen", "qwen --acp", dg, dt),
-            ("trae", "traecli acp serve", dg, dt),
-            ("iflow", "iflow --experimental-acp", dg, dt),
+            (
+                "qwen",
+                "qwen --acp",
+                "Qwen ACP profile for coding, analysis, workflow planning, and verification.",
+                dg,
+                dt,
+            ),
+            (
+                "trae",
+                "traecli acp serve",
+                "Trae ACP profile for codebase implementation and review tasks.",
+                dg,
+                dt,
+            ),
+            (
+                "iflow",
+                "iflow --experimental-acp",
+                "iFlow experimental ACP profile for repository analysis and implementation tasks.",
+                dg,
+                dt,
+            ),
         ];
 
-        for &(name, cmd, grace, timeout) in entries {
+        for &(name, cmd, description, grace, timeout) in entries {
             templates.insert(
                 name.to_string(),
                 AcpAgentProfile {
                     command: cmd.to_string(),
+                    description: Some(description.to_string()),
                     close_grace_ms: grace,
                     session_create_timeout_ms: timeout,
                     permission_mode: PermissionMode::default(),
                     env: BTreeMap::new(),
                     default_mode: None,
                     default_model: None,
+                    route_capabilities: default_route_capabilities.clone(),
                     system_prompt: None,
                     skip_preamble: false,
                     capabilities: Vec::new(),
@@ -204,33 +308,29 @@ impl AgentRegistry {
         Self::build_templates()
     }
 
-    /// Look up a registered agent. Only registered agents are resolvable.
     /// Look up an agent profile by name.
     ///
-    /// Checks registered agents first (user-configured), then falls through
-    /// to built-in templates. This allows `claude`, `codex`, etc. to work
-    /// out of the box without requiring explicit `apxm agent add` registration.
+    /// Checks user profiles first, then falls through to built-in templates.
+    /// This allows `claude`, `codex`, etc. to work out of the box.
     pub fn get(&self, name: &str) -> Option<&AcpAgentProfile> {
-        self.registered
+        self.user_profiles
             .get(name)
             .or_else(|| self.templates.get(name))
     }
 
-    /// List all agents: registered entries first (overrides), then any templates
-    /// not already overridden. The bool indicates whether the entry came from a template.
+    /// List all agent profiles: user profiles first, then templates not already
+    /// overridden. The bool indicates whether the returned entry is a built-in
+    /// template rather than a user profile.
     pub fn list(&self) -> Vec<(String, &AcpAgentProfile, bool)> {
         let mut entries: Vec<(String, &AcpAgentProfile, bool)> = self
-            .registered
+            .user_profiles
             .iter()
-            .map(|(name, profile)| {
-                let from_template = self.templates.contains_key(name.as_str());
-                (name.clone(), profile, from_template)
-            })
+            .map(|(name, profile)| (name.clone(), profile, false))
             .collect();
 
-        // Append templates not already overridden by a registered entry
+        // Append templates not already overridden by a user profile.
         for (name, profile) in &self.templates {
-            if !self.registered.contains_key(name.as_str()) {
+            if !self.user_profiles.contains_key(name.as_str()) {
                 entries.push((name.clone(), profile, true));
             }
         }
@@ -239,13 +339,12 @@ impl AgentRegistry {
         entries
     }
 
-    /// List only user-registered agents.
+    /// List only user profiles.
     ///
-    /// Built-in templates are spawnable through [`Self::get`], but callers that
-    /// auto-select real workers should prefer explicit user registrations. This
-    /// avoids treating every built-in template as an available local route.
-    pub fn registered(&self) -> Vec<(String, &AcpAgentProfile)> {
-        self.registered
+    /// Built-in templates are spawnable through [`Self::get`], while this
+    /// accessor returns only explicit user profile overrides and custom entries.
+    pub fn user_profiles(&self) -> Vec<(String, &AcpAgentProfile)> {
+        self.user_profiles
             .iter()
             .map(|(name, profile)| (name.clone(), profile))
             .collect()
@@ -269,15 +368,48 @@ impl AgentRegistry {
         self.templates.contains_key(name)
     }
 
-    /// Add or override a registered agent. Persists to `~/.apxm/agents.toml`.
+    /// Return resolvable ACP profiles as route candidates for APXM runtime selection.
+    pub fn route_candidates(&self) -> Vec<AgentRouteCandidate> {
+        self.list()
+            .into_iter()
+            .filter_map(|(name, profile, from_template)| {
+                let executable = resolvable_command_program(&profile.command)?;
+                if !profile_runtime_dependencies_available(&name) {
+                    return None;
+                }
+                Some(AgentRouteCandidate {
+                    profile: name,
+                    description: profile.description.clone(),
+                    source: Some(
+                        if from_template {
+                            reg_consts::sources::TEMPLATE
+                        } else {
+                            reg_consts::sources::USER_PROFILE
+                        }
+                        .to_string(),
+                    ),
+                    executable,
+                    capabilities: if profile.route_capabilities.is_empty() {
+                        default_route_capabilities()
+                    } else {
+                        profile.route_capabilities.clone()
+                    },
+                    default_mode: profile.default_mode.clone(),
+                    default_model: profile.default_model.clone(),
+                })
+            })
+            .collect()
+    }
+
+    /// Add or override a user profile. Persists to `~/.apxm/agents.toml`.
     pub fn add(&mut self, name: String, profile: AcpAgentProfile) -> Result<(), std::io::Error> {
-        self.registered.insert(name, profile);
+        self.user_profiles.insert(name, profile);
         self.persist_user_entries()
     }
 
-    /// Remove a registered agent.
+    /// Remove a user profile.
     pub fn remove(&mut self, name: &str) -> Result<bool, std::io::Error> {
-        if self.registered.remove(name).is_some() {
+        if self.user_profiles.remove(name).is_some() {
             self.persist_user_entries()?;
             Ok(true)
         } else {
@@ -289,7 +421,7 @@ impl AgentRegistry {
         dirs::home_dir().map(|h| h.join(".apxm").join(reg_consts::AGENTS_FILENAME))
     }
 
-    /// Persist all registered entries to user config.
+    /// Persist all user profiles to user config.
     fn persist_user_entries(&self) -> Result<(), std::io::Error> {
         let path = Self::user_config_path()
             .ok_or_else(|| std::io::Error::other("cannot determine home directory"))?;
@@ -298,7 +430,7 @@ impl AgentRegistry {
         }
 
         let file = UserAgentsFile {
-            agents: self.registered.clone(),
+            agents: self.user_profiles.clone(),
         };
         let content = toml::to_string_pretty(&file)
             .map_err(|e| std::io::Error::other(format!("serialize: {e}")))?;
@@ -306,6 +438,37 @@ impl AgentRegistry {
         std::fs::write(&path, format!("{}{content}", reg_consts::FILE_HEADER))?;
         Ok(())
     }
+}
+
+fn resolvable_command_program(command: &str) -> Option<String> {
+    let parts = shell_words::split(command).ok()?;
+    let program = parts
+        .iter()
+        .find(|part| !part.contains('=') && part.as_str() != "env")?;
+    resolvable_program(program)
+}
+
+fn resolvable_program(program: &str) -> Option<String> {
+    if program.contains('/') {
+        return std::path::Path::new(program)
+            .is_file()
+            .then(|| program.to_string());
+    }
+    std::env::var_os("PATH").and_then(|paths| {
+        std::env::split_paths(&paths)
+            .any(|path| path.join(program).is_file())
+            .then(|| program.to_string())
+    })
+}
+
+fn profile_runtime_dependencies_available(profile: &str) -> bool {
+    let dependencies = match profile {
+        "pi" => &["pi"][..],
+        _ => &[][..],
+    };
+    dependencies
+        .iter()
+        .all(|program| resolvable_program(program).is_some())
 }
 
 #[derive(Debug, Serialize, Deserialize, Default)]
@@ -321,7 +484,7 @@ mod tests {
     fn empty_registry() -> AgentRegistry {
         AgentRegistry {
             templates: AgentRegistry::build_templates(),
-            registered: BTreeMap::new(),
+            user_profiles: BTreeMap::new(),
         }
     }
 
@@ -341,8 +504,7 @@ mod tests {
             claude.session_create_timeout_ms,
             timeouts::CLAUDE_SESSION_TIMEOUT_MS
         );
-        // Templates ARE resolvable via get() — they work out of the box
-        // without requiring explicit `apxm agent add` registration.
+        // Templates are resolvable via get() so built-ins work out of the box.
         assert!(reg.get("claude").is_some());
     }
 
@@ -361,52 +523,54 @@ mod tests {
     }
 
     #[test]
-    fn list_returns_empty_without_registrations() {
+    fn list_includes_templates_without_user_profiles() {
         let reg = empty_registry();
         let list = reg.list();
         // list() includes templates so agents work out of the box.
         // An empty registry still has all 15 built-in templates.
         assert!(!list.is_empty());
         assert_eq!(list.len(), 15);
-        // All entries are from templates (none registered)
+        // All entries are templates because there are no user profiles.
         assert!(list.iter().all(|(_, _, from_template)| *from_template));
     }
 
     #[test]
-    fn register_from_template() {
+    fn user_profile_overrides_template() {
         let mut reg = empty_registry();
         let profile = reg.get_template("claude").unwrap().clone();
-        reg.registered.insert("claude".to_string(), profile);
+        reg.user_profiles.insert("claude".to_string(), profile);
         assert!(reg.get("claude").is_some());
         let list = reg.list();
-        // All 15 templates + claude override = still 15 total (override replaces template slot)
+        // All 15 templates + claude override = still 15 total.
         assert_eq!(list.len(), 15);
-        // claude entry should be marked as from_template=true since it was based on one
+        // The returned claude entry is the user profile overriding the template.
         let claude_entry = list.iter().find(|(name, _, _)| name == "claude");
         assert!(claude_entry.is_some());
-        assert!(claude_entry.unwrap().2);
+        assert!(!claude_entry.unwrap().2);
     }
 
     #[test]
-    fn register_custom() {
+    fn custom_user_profile_extends_list() {
         let mut reg = empty_registry();
         let profile = AcpAgentProfile {
             command: "my-agent --acp".to_string(),
+            description: None,
             close_grace_ms: 200,
             session_create_timeout_ms: 10_000,
             permission_mode: PermissionMode::DenyAll,
             env: BTreeMap::new(),
             default_mode: None,
             default_model: None,
+            route_capabilities: default_route_capabilities(),
             system_prompt: None,
             skip_preamble: false,
             capabilities: Vec::new(),
             sandbox: false,
         };
-        reg.registered.insert("custom".to_string(), profile);
+        reg.user_profiles.insert("custom".to_string(), profile);
         assert!(reg.get("custom").is_some());
         let list = reg.list();
-        // 15 built-in templates + 1 custom registered agent = 16
+        // 15 built-in templates + 1 custom user profile = 16
         assert_eq!(list.len(), 16);
         // Find the custom entry and verify it is NOT from a template
         let custom_entry = list.iter().find(|(name, _, _)| name == "custom");
@@ -415,14 +579,24 @@ mod tests {
     }
 
     #[test]
-    fn remove_registered() {
+    fn default_route_capabilities_use_workflow_vocabulary() {
+        let capabilities = default_route_capabilities();
+
+        assert_eq!(
+            capabilities,
+            ["read", "write", "execute", "critique", "workflow_author"]
+        );
+    }
+
+    #[test]
+    fn remove_user_profile_keeps_template_available() {
         let mut reg = empty_registry();
         let profile = reg.get_template("claude").unwrap().clone();
-        reg.registered.insert("claude".to_string(), profile);
+        reg.user_profiles.insert("claude".to_string(), profile);
         assert!(reg.get("claude").is_some());
-        reg.registered.remove("claude");
-        // After removing the registered override, get() still resolves via
-        // the built-in template (claude works out of the box).
+        reg.user_profiles.remove("claude");
+        // After removing the user override, get() still resolves via the
+        // built-in template.
         assert!(reg.get("claude").is_some());
         // Template still exists
         assert!(reg.get_template("claude").is_some());
@@ -432,12 +606,14 @@ mod tests {
     fn profile_toml_roundtrip() {
         let profile = AcpAgentProfile {
             command: "my-agent --acp".to_string(),
+            description: None,
             close_grace_ms: 200,
             session_create_timeout_ms: 10_000,
             permission_mode: PermissionMode::DenyAll,
             env: BTreeMap::new(),
             default_mode: None,
             default_model: None,
+            route_capabilities: default_route_capabilities(),
             system_prompt: None,
             skip_preamble: false,
             capabilities: Vec::new(),
@@ -447,5 +623,13 @@ mod tests {
         let parsed: AcpAgentProfile = toml::from_str(&toml_str).unwrap();
         assert_eq!(parsed.command, "my-agent --acp");
         assert_eq!(parsed.permission_mode, PermissionMode::DenyAll);
+    }
+
+    #[test]
+    fn route_candidate_command_resolution_uses_shell_words() {
+        let program = resolvable_command_program("env APXM_MODE=test '/bin/sh' -c true")
+            .expect("quoted command should resolve");
+
+        assert_eq!(program, "/bin/sh");
     }
 }

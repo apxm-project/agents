@@ -6,7 +6,7 @@ use std::path::Path;
 
 use apxm_core::types::{WorkflowInvocation, WorkflowInvocationKind, WorkflowTarget};
 
-/// A workflow that composes multiple graphs.
+/// A workflow that composes multiple workflow steps.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct WorkflowDef {
     /// Workflow name
@@ -17,8 +17,8 @@ pub struct WorkflowDef {
     /// Workflow-level parameters (passed via CLI)
     #[serde(default)]
     pub parameters: Vec<WorkflowParam>,
-    /// Graph steps to execute
-    pub graphs: Vec<GraphStep>,
+    /// Workflow steps to execute
+    pub steps: Vec<WorkflowStep>,
     /// Optional output template (e.g., "{{synthesize.output}}")
     #[serde(default)]
     pub output: Option<String>,
@@ -31,9 +31,9 @@ pub struct WorkflowParam {
     pub type_name: String,
 }
 
-/// A single graph step in the workflow.
+/// A single workflow step in the workflow.
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct GraphStep {
+pub struct WorkflowStep {
     /// Unique step ID
     pub id: String,
     /// Path to the .air file (relative to .apxmw file)
@@ -41,12 +41,12 @@ pub struct GraphStep {
     /// Step IDs this step depends on
     #[serde(default)]
     pub depends_on: Vec<String>,
-    /// Parameters to pass to the graph (param_name → template or literal)
+    /// Parameters to pass to the step (param_name -> template or literal).
     #[serde(default)]
     pub params: HashMap<String, String>,
 }
 
-impl GraphStep {
+impl WorkflowStep {
     /// Resolve this step into an explicit workflow-spawn target.
     pub fn resolved_target(&self, base_dir: &Path) -> WorkflowTarget {
         let path = base_dir.join(&self.path);
@@ -57,7 +57,7 @@ impl GraphStep {
             Some("apxmw") => WorkflowTarget::WorkflowPath {
                 path: path.display().to_string(),
             },
-            _ => WorkflowTarget::GraphPath {
+            _ => WorkflowTarget::AirPath {
                 path: path.display().to_string(),
             },
         }
@@ -100,15 +100,15 @@ impl WorkflowDef {
 
         // Check for duplicate step IDs
         let mut seen_ids = HashSet::new();
-        for step in &self.graphs {
+        for step in &self.steps {
             if !seen_ids.insert(&step.id) {
                 errors.push(format!("Duplicate step ID: {}", step.id));
             }
         }
 
         // Check for unknown dependencies
-        let valid_ids: HashSet<_> = self.graphs.iter().map(|s| &s.id).collect();
-        for step in &self.graphs {
+        let valid_ids: HashSet<_> = self.steps.iter().map(|s| &s.id).collect();
+        for step in &self.steps {
             for dep in &step.depends_on {
                 if !valid_ids.contains(&dep) {
                     errors.push(format!(
@@ -135,7 +135,7 @@ impl WorkflowDef {
         let mut visited = HashSet::new();
         let mut rec_stack = HashSet::new();
 
-        for step in &self.graphs {
+        for step in &self.steps {
             if !visited.contains(&step.id) {
                 if self.has_cycle(&step.id, &mut visited, &mut rec_stack)? {
                     return Err(format!("Cycle detected involving step '{}'", step.id));
@@ -156,7 +156,7 @@ impl WorkflowDef {
         rec_stack.insert(step_id.to_string());
 
         let step = self
-            .graphs
+            .steps
             .iter()
             .find(|s| s.id == step_id)
             .ok_or_else(|| format!("Step '{}' not found", step_id))?;
@@ -186,14 +186,14 @@ mod tests {
             name: "test".to_string(),
             description: None,
             parameters: vec![],
-            graphs: vec![
-                GraphStep {
+            steps: vec![
+                WorkflowStep {
                     id: "a".to_string(),
                     path: "a.air".to_string(),
                     depends_on: vec![],
                     params: HashMap::new(),
                 },
-                GraphStep {
+                WorkflowStep {
                     id: "a".to_string(),
                     path: "b.air".to_string(),
                     depends_on: vec![],
@@ -214,7 +214,7 @@ mod tests {
             name: "test".to_string(),
             description: None,
             parameters: vec![],
-            graphs: vec![GraphStep {
+            steps: vec![WorkflowStep {
                 id: "a".to_string(),
                 path: "a.air".to_string(),
                 depends_on: vec!["unknown".to_string()],
@@ -234,14 +234,14 @@ mod tests {
             name: "test".to_string(),
             description: None,
             parameters: vec![],
-            graphs: vec![
-                GraphStep {
+            steps: vec![
+                WorkflowStep {
                     id: "a".to_string(),
                     path: "a.air".to_string(),
                     depends_on: vec!["b".to_string()],
                     params: HashMap::new(),
                 },
-                GraphStep {
+                WorkflowStep {
                     id: "b".to_string(),
                     path: "b.air".to_string(),
                     depends_on: vec!["a".to_string()],
@@ -262,14 +262,14 @@ mod tests {
             name: "test".to_string(),
             description: None,
             parameters: vec![],
-            graphs: vec![
-                GraphStep {
+            steps: vec![
+                WorkflowStep {
                     id: "a".to_string(),
                     path: "a.air".to_string(),
                     depends_on: vec![],
                     params: HashMap::new(),
                 },
-                GraphStep {
+                WorkflowStep {
                     id: "b".to_string(),
                     path: "b.air".to_string(),
                     depends_on: vec!["a".to_string()],
@@ -284,21 +284,21 @@ mod tests {
     }
 
     #[test]
-    fn graph_step_resolves_air_to_graph_target() {
-        let step = GraphStep {
+    fn workflow_step_resolves_air_to_air_target() {
+        let step = WorkflowStep {
             id: "review".to_string(),
-            path: "graphs/reviewer.air".to_string(),
+            path: "steps/reviewer.air".to_string(),
             depends_on: vec![],
             params: HashMap::new(),
         };
         let target = step.resolved_target(Path::new("/tmp/project"));
-        assert!(matches!(target, WorkflowTarget::GraphPath { .. }));
-        assert_eq!(target.label(), "/tmp/project/graphs/reviewer.air");
+        assert!(matches!(target, WorkflowTarget::AirPath { .. }));
+        assert_eq!(target.label(), "/tmp/project/steps/reviewer.air");
     }
 
     #[test]
-    fn graph_step_spawn_invocation_uses_workflow_spawn_kind() {
-        let step = GraphStep {
+    fn workflow_step_spawn_invocation_uses_workflow_spawn_kind() {
+        let step = WorkflowStep {
             id: "review".to_string(),
             path: "flows/review.apxmw".to_string(),
             depends_on: vec![],

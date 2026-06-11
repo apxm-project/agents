@@ -10,7 +10,7 @@ teams with barrier synchronization and result merging.
 
 ## Requirements
 
-These examples import generated ACP profiles from `apxm._generated.agents`.
+These examples import typed APXM ACP profiles from `apxm._generated.agents`.
 Use `dekk apxm agent list` to confirm the profiles exist and
 `dekk apxm agent test <name>` before executing a graph. The checked-in
 profiles require Node/npm plus the corresponding authenticated agent setup:

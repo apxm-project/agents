@@ -8,8 +8,10 @@ use apxm_core::constants::defaults::{DEFAULT_MAX_PROCESSES, DEFAULT_MAX_SPAWN_DE
 use apxm_core::error::RuntimeError;
 use apxm_core::types::operations::AISOperationType;
 use dashmap::DashMap;
+use std::collections::HashMap;
 use std::sync::Arc;
 
+use crate::agent_router::AgentRouteCandidate;
 use crate::process::{AgentProcess, ProcessId, ProcessKind, ProcessState};
 use crate::thread::{AgentThread, ThreadId, ThreadState};
 
@@ -145,6 +147,9 @@ impl AgentPromptResponse {
 /// and injected into the ProcessTable by the driver during setup.
 #[async_trait::async_trait]
 pub trait AgentSpawner: Send + Sync {
+    /// Return APXM route candidates currently available to this spawner.
+    fn route_candidates(&self) -> Vec<AgentRouteCandidate>;
+
     /// Spawn an external agent subprocess.
     ///
     /// Returns the session handle (type-erased AcpSession) wrapped in Arc<Mutex>.
@@ -376,6 +381,21 @@ impl ProcessTable {
                 (p.id.clone(), p.name.clone(), is_running)
             })
             .collect()
+    }
+
+    /// Count active external processes by ACP profile name.
+    pub fn external_profile_counts(&self) -> HashMap<String, usize> {
+        let mut counts = HashMap::new();
+        for entry in self.processes.iter() {
+            let process = entry.value();
+            if !matches!(process.state, ProcessState::Running | ProcessState::Idle) {
+                continue;
+            }
+            if let ProcessKind::External { profile_name, .. } = &process.kind {
+                *counts.entry(profile_name.clone()).or_insert(0) += 1;
+            }
+        }
+        counts
     }
 
     /// List threads for a specific process.

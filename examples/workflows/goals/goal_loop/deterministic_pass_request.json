@@ -10,7 +10,7 @@
   "workers": [
     {
       "id": "planner",
-      "role": "Split the goal into one bounded worker DAG and identify acceptance checks.",
+      "role": "Split the goal into one bounded worker workflow and identify acceptance checks.",
       "transport": "deterministic"
     },
     {

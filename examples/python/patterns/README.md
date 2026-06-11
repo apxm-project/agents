@@ -9,9 +9,9 @@ and resilient delegation. They can be composed into larger workflows.
 
 ## Requirements
 
-Patterns that spawn agents use generated ACP profiles. Compile-only checks work
-without live agents, but execution requires the profile to be registered and
-its CLI/auth setup to pass `dekk apxm agent test <name>`. The checked-in
+Patterns that spawn agents use APXM ACP profile imports. Compile-only checks work
+without live agents, but execution requires the profile command and
+CLI/auth setup to pass `dekk apxm agent test <name>`. The checked-in
 `claude` profile runs
 `npx -y @agentclientprotocol/claude-agent-acp@^0.24.2` and needs Claude Code
 configured locally.
@@ -50,8 +50,8 @@ research = g.call(
 
 # Cross the execution boundary instead of inlining/calling a registered flow
 child = g.workflow_spawn(
-    target_kind=WorkflowTargetKind.GRAPH_PATH,
-    target="tests/quality_fixtures/qa_factual/graph.air",
+    target_kind=WorkflowTargetKind.AIR_PATH,
+    target="workflows/review.air",
     session_root=".apxm/child-sessions",
 )
 ```

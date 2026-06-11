@@ -213,7 +213,7 @@ impl SessionOutputWriter {
     pub fn write_manifest(
         &self,
         execution_id: &str,
-        graph_name: Option<&str>,
+        workflow_name: Option<&str>,
         status: SessionStatus,
         duration_ms: u128,
         node_count: usize,
@@ -221,7 +221,7 @@ impl SessionOutputWriter {
     ) -> io::Result<()> {
         self.write_manifest_with_provenance(
             execution_id,
-            graph_name,
+            workflow_name,
             status,
             duration_ms,
             node_count,
@@ -233,7 +233,7 @@ impl SessionOutputWriter {
     pub fn write_manifest_with_provenance(
         &self,
         execution_id: &str,
-        graph_name: Option<&str>,
+        workflow_name: Option<&str>,
         status: SessionStatus,
         duration_ms: u128,
         node_count: usize,
@@ -242,7 +242,7 @@ impl SessionOutputWriter {
     ) -> io::Result<()> {
         let manifest = SessionManifest {
             execution_id: execution_id.to_string(),
-            graph_name: graph_name.map(|s| s.to_string()),
+            workflow_name: workflow_name.map(|s| s.to_string()),
             timestamp: chrono::Utc::now().to_rfc3339(),
             status,
             duration_ms,
@@ -260,8 +260,8 @@ impl SessionOutputWriter {
         )
     }
 
-    /// Write the input graph in .air format for reproducibility.
-    pub fn write_input_graph(&self, module: &AirModule) -> io::Result<()> {
+    /// Write the input AIR in .air format for reproducibility.
+    pub fn write_input_air(&self, module: &AirModule) -> io::Result<()> {
         // Emit .air format using a simple inline emitter (to avoid circular dependency on Compiler)
         let air_text = emit_air_simple(module);
         fs::write(
@@ -334,7 +334,7 @@ impl SessionOutputWriter {
     pub fn finalize(
         &self,
         execution_id: &str,
-        graph_name: Option<&str>,
+        workflow_name: Option<&str>,
         duration_ms: u128,
         node_count: usize,
         success: bool,
@@ -347,7 +347,7 @@ impl SessionOutputWriter {
     ) -> io::Result<()> {
         self.finalize_with_provenance(
             execution_id,
-            graph_name,
+            workflow_name,
             duration_ms,
             node_count,
             success,
@@ -364,7 +364,7 @@ impl SessionOutputWriter {
     pub fn finalize_with_provenance(
         &self,
         execution_id: &str,
-        graph_name: Option<&str>,
+        workflow_name: Option<&str>,
         duration_ms: u128,
         node_count: usize,
         success: bool,
@@ -383,7 +383,7 @@ impl SessionOutputWriter {
         };
         self.write_manifest_with_provenance(
             execution_id,
-            graph_name,
+            workflow_name,
             status,
             duration_ms,
             node_count,
@@ -428,12 +428,12 @@ impl SessionOutputWriter {
         &self,
         success: bool,
         execution_id: Option<&str>,
-        graph_name: Option<&str>,
+        workflow_name: Option<&str>,
     ) -> io::Result<()> {
         self.finalize_live_with_id_and_provenance(
             success,
             execution_id,
-            graph_name,
+            workflow_name,
             &SessionProvenance::default(),
         )
     }
@@ -442,7 +442,7 @@ impl SessionOutputWriter {
         &self,
         success: bool,
         execution_id: Option<&str>,
-        graph_name: Option<&str>,
+        workflow_name: Option<&str>,
         provenance: &SessionProvenance,
     ) -> io::Result<()> {
         let status = if success {
@@ -470,7 +470,13 @@ impl SessionOutputWriter {
         // Also update manifest.json so it doesn't stay at "running"
         if let Some(exec_id) = execution_id {
             self.write_manifest_with_provenance(
-                exec_id, graph_name, status, 0, 0, success, provenance,
+                exec_id,
+                workflow_name,
+                status,
+                0,
+                0,
+                success,
+                provenance,
             )?;
         }
 

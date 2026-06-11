@@ -580,22 +580,21 @@ class CompiledFlow:
     # -- persistence --------------------------------------------------------
 
     def save(self, path: str | os.PathLike[str]) -> None:
-        envelope = {
-            graph_keys.AIR_PAYLOAD: self._air_text if self._air_text else self._graph.to_air(),
-            "mode": self.mode.value,
-            "opt_level": self._opt_level,
-        }
-        Path(path).write_text(json.dumps(envelope, indent=2), encoding="utf-8")
+        air_text = self._air_text if self._air_text else self._graph.to_air()
+        Path(path).write_text(air_text, encoding="utf-8")
 
     @classmethod
     def load(cls, path: str | os.PathLike[str]) -> "CompiledFlow":
         path = Path(path)
-        text = path.read_text(encoding="utf-8")
-        data = json.loads(text)
-        mode = ExecutionMode(data.get("mode", ExecutionMode.AOT.value))
-        opt_level = int(data.get("opt_level", 2))
-        air_text = data[graph_keys.AIR_PAYLOAD]
-        return cls(ApxmGraph(name=path.stem), mode=mode, opt_level=opt_level, air_text=air_text)
+        air_text = path.read_text(encoding="utf-8")
+        if not air_text.lstrip().startswith("module"):
+            raise ValueError("CompiledFlow.load expects canonical AIR text")
+        return cls(
+            ApxmGraph(name=path.stem),
+            mode=ExecutionMode.AOT,
+            opt_level=2,
+            air_text=air_text,
+        )
 
     def register_tool(self, tool: Any) -> "CompiledFlow":
         self._registered_tools.append(tool)

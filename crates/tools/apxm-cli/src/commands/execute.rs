@@ -66,10 +66,10 @@ fn setup_session(
     let w = SessionOutputWriter::new(&base_dir, &exec_id)
         .context("Failed to create session output directory")?;
 
-    let graph_name = input.file_stem().and_then(|s| s.to_str());
+    let workflow_name = input.file_stem().and_then(|s| s.to_str());
     w.write_manifest(
         &exec_id,
-        graph_name,
+        workflow_name,
         apxm_core::types::SessionStatus::Running,
         0,
         0,
@@ -78,8 +78,8 @@ fn setup_session(
     .context("Failed to write manifest")?;
 
     if let Some(graph) = input_graph {
-        w.write_input_graph(graph)
-            .context("Failed to write input graph")?;
+        w.write_input_air(graph)
+            .context("Failed to write input AIR")?;
     }
 
     if announce {
@@ -143,7 +143,7 @@ fn context_stack_config_from_graph(
 #[cfg(feature = "driver")]
 fn extract_profile_from_session(
     session_dir: &std::path::Path,
-    _graph_name: &str,
+    _workflow_name: &str,
 ) -> Result<apxm_compiler::passes::profile::ExecutionProfile> {
     use apxm_compiler::passes::profile::{ExecutionProfile, NodeProfile};
     use serde::Deserialize;
@@ -277,7 +277,7 @@ pub async fn execute_command(
             .collect_all_outputs = true;
     }
 
-    // Load input graph for session output
+    // Load input AIR for session output
     let input_graph = if emit_session.is_some() {
         load_graph_for_session(&graph_input).ok()
     } else {
@@ -337,8 +337,8 @@ pub async fn execute_command(
             }
             if let Some(ref w) = writer {
                 let exec_id = execution_id.as_deref();
-                let graph_name = input.file_stem().and_then(|s| s.to_str());
-                let _ = w.finalize_live_with_id(false, exec_id, graph_name);
+                let workflow_name = input.file_stem().and_then(|s| s.to_str());
+                let _ = w.finalize_live_with_id(false, exec_id, workflow_name);
             }
             // Also call emitter.finalize_live so elapsed/completed are preserved.
             if let Some(ref e) = emitter {
@@ -388,7 +388,7 @@ pub async fn execute_command(
 
     // Finalize session output after execution
     if let Some(writer) = writer {
-        let graph_name = input.file_stem().and_then(|s| s.to_str());
+        let workflow_name = input.file_stem().and_then(|s| s.to_str());
         let exec_id = execution_id.as_deref().unwrap_or("unknown");
         let stats = &result.execution.stats;
 
@@ -403,7 +403,7 @@ pub async fn execute_command(
         writer
             .finalize(
                 exec_id,
-                graph_name,
+                workflow_name,
                 stats.duration_ms,
                 stats.executed_nodes + stats.failed_nodes,
                 stats.failed_nodes == 0,
@@ -422,11 +422,11 @@ pub async fn execute_command(
 
         // Extract and emit execution profile if requested
         if let Some(profile_path) = emit_profile {
-            let graph_name = input
+            let workflow_name = input
                 .file_stem()
                 .and_then(|s| s.to_str())
                 .unwrap_or("unknown");
-            match extract_profile_from_session(writer.session_dir(), graph_name) {
+            match extract_profile_from_session(writer.session_dir(), workflow_name) {
                 Ok(profile) => {
                     profile.save_to_file(&profile_path).with_context(|| {
                         format!("Failed to save profile to {}", profile_path.display())
@@ -486,7 +486,7 @@ pub async fn run_command(
         != Some(apxm_core::constants::extensions::ARTIFACT)
     {
         return Err(anyhow::anyhow!(
-            "Expected .apxmobj artifact file. Use 'execute' command for graph source files."
+            "Expected .apxmobj artifact file. Use 'execute' command for workflow source files."
         ));
     }
 
@@ -573,8 +573,8 @@ pub async fn run_command(
             // Finalize live.json + manifest as failed.
             if let Some(ref w) = writer {
                 let exec_id = execution_id.as_deref();
-                let graph_name = input.file_stem().and_then(|s| s.to_str());
-                let _ = w.finalize_live_with_id(false, exec_id, graph_name);
+                let workflow_name = input.file_stem().and_then(|s| s.to_str());
+                let _ = w.finalize_live_with_id(false, exec_id, workflow_name);
             }
             return Err(anyhow::anyhow!("Execution failed: {}", e));
         }
@@ -616,7 +616,7 @@ pub async fn run_command(
 
     // Finalize session output after execution
     if let Some(writer) = writer {
-        let graph_name = input.file_stem().and_then(|s| s.to_str());
+        let workflow_name = input.file_stem().and_then(|s| s.to_str());
         let exec_id = execution_id.as_deref().unwrap_or("unknown");
         let stats = &result.stats;
 
@@ -626,7 +626,7 @@ pub async fn run_command(
         writer
             .finalize(
                 exec_id,
-                graph_name,
+                workflow_name,
                 stats.duration_ms,
                 stats.executed_nodes + stats.failed_nodes,
                 stats.failed_nodes == 0,
@@ -645,11 +645,11 @@ pub async fn run_command(
 
         // Extract and emit execution profile if requested
         if let Some(profile_path) = emit_profile {
-            let graph_name = input
+            let workflow_name = input
                 .file_stem()
                 .and_then(|s| s.to_str())
                 .unwrap_or("unknown");
-            match extract_profile_from_session(writer.session_dir(), graph_name) {
+            match extract_profile_from_session(writer.session_dir(), workflow_name) {
                 Ok(profile) => {
                     profile.save_to_file(&profile_path).with_context(|| {
                         format!("Failed to save profile to {}", profile_path.display())

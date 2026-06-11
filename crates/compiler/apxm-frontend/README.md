@@ -95,8 +95,8 @@ from apxm import GraphRecorder, NodePolicy, WorkflowTargetKind, compile
 @compile(default_policy=NodePolicy(timeout_ms=5_000))
 def parent(g: GraphRecorder):
     child = g.workflow_spawn(
-        target_kind=WorkflowTargetKind.GRAPH_PATH,
-        target=Path("tests/quality_fixtures/qa_factual/graph.air"),
+        target_kind=WorkflowTargetKind.AIR_PATH,
+        target=Path("workflows/review.air"),
         session_root=Path(".apxm/child-sessions"),
         node_policy=NodePolicy(timeout_ms=2_000),
     )

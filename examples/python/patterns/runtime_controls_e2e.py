@@ -48,7 +48,7 @@ def e2e_flow(g: GraphRecorder):
     )
     child = g.workflow_spawn(
         name="child_graph",
-        target_kind=WorkflowTargetKind.GRAPH_PATH,
+        target_kind=WorkflowTargetKind.AIR_PATH,
         target=CHILD_GRAPH,
         session_root=CHILD_SESSIONS_ROOT,
         node_policy=NodePolicy(

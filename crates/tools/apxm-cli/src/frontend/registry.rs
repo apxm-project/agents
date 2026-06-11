@@ -40,6 +40,9 @@ pub struct FrontendOperationSpec {
 pub struct FrontendAgentTemplate {
     pub name: String,
     pub command: String,
+    pub description: Option<String>,
+    pub route_capabilities: Vec<String>,
+    pub source: String,
     pub default_mode: Option<String>,
     pub default_model: Option<String>,
 }
@@ -209,6 +212,9 @@ pub fn agent_templates() -> Vec<FrontendAgentTemplate> {
         .map(|(name, profile)| FrontendAgentTemplate {
             name,
             command: profile.command,
+            description: profile.description,
+            route_capabilities: profile.route_capabilities,
+            source: "template".to_string(),
             default_mode: profile.default_mode,
             default_model: profile.default_model,
         })

@@ -201,7 +201,7 @@ pub(super) fn prepare_graph_input(
 
     if !input_format.is_air_source() {
         return Err(anyhow::anyhow!(
-            "Unsupported graph input '{}'. Use .air for canonical graph source, .py for a frontend source, or .apxmobj with 'dekk apxm run'.",
+            "Unsupported workflow input '{}'. Use .air for canonical workflow source, .py for a frontend source, or .apxmobj with 'dekk apxm run'.",
             input.display()
         ));
     }
@@ -211,7 +211,7 @@ pub(super) fn prepare_graph_input(
 
 #[cfg(feature = "driver")]
 fn resolve_directory_air_source(dir: &Path) -> Result<PathBuf> {
-    let mut graphs = Vec::new();
+    let mut workflows = Vec::new();
     let subdirs = ["flows", "nodes", ""];
 
     for subdir in &subdirs {
@@ -229,19 +229,19 @@ fn resolve_directory_air_source(dir: &Path) -> Result<PathBuf> {
         {
             let path = entry?.path();
             if ApxmPathFormat::from_path(&path).is_air_source() {
-                graphs.push(path);
+                workflows.push(path);
             }
         }
     }
 
-    match graphs.len() {
+    match workflows.len() {
         0 => Err(anyhow::anyhow!(
-            "No .air graph source found in directory '{}'",
+            "No .air workflow source found in directory '{}'",
             dir.display()
         )),
-        1 => Ok(graphs.remove(0)),
+        1 => Ok(workflows.remove(0)),
         count => Err(anyhow::anyhow!(
-            "Directory '{}' contains {count} .air graph sources. Provide a single .air file instead.",
+            "Directory '{}' contains {count} .air workflow sources. Provide a single .air file instead.",
             dir.display()
         )),
     }
@@ -556,7 +556,7 @@ skill_id = "demo"
 version = "0.1.0"
 entry_flow = "main"
 artifact_hash = "blake3:deadbeef"
-required_capabilities = ["plan_emission_v1"]
+required_capabilities = ["workflow_emission_v1"]
 "#;
         let stripped = strip_artifact_hash_for_embed(original).expect("strip");
         let parsed = apxm_skill::parse_manifest(std::str::from_utf8(&stripped).expect("utf8"))
@@ -565,7 +565,7 @@ required_capabilities = ["plan_emission_v1"]
         assert_eq!(parsed.version, "0.1.0");
         assert_eq!(parsed.entry_flow, "main");
         assert_eq!(parsed.artifact_hash, None);
-        assert_eq!(parsed.required_capabilities, vec!["plan_emission_v1"]);
+        assert_eq!(parsed.required_capabilities, vec!["workflow_emission_v1"]);
     }
 
     #[test]
@@ -576,7 +576,7 @@ required_capabilities = ["plan_emission_v1"]
 skill_id = "demo"
 version = "0.1.0"
 entry_flow = "main"
-required_capabilities = ["plan_emission_v1"]
+required_capabilities = ["workflow_emission_v1"]
 "#;
         let stripped = strip_artifact_hash_for_embed(manifest_toml).expect("strip");
 

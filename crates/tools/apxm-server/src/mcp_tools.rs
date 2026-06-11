@@ -1,23 +1,18 @@
-use std::collections::{HashMap, HashSet, VecDeque};
+use std::collections::{HashMap, VecDeque};
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-use apxm_ais::plan::{PlanDependencyKind, PlanGraph, PlanNode, PlanNodeOp};
 use apxm_artifact::Artifact;
 use apxm_backends::LLMRequest;
-use apxm_compiler::{
-    AirEdge, AirModule, AirNode, AirParam, Context as CompilerContext, Pipeline as CompilerPipeline,
-};
-use apxm_core::constants::graph::{attrs as graph_attrs, metadata as graph_meta};
+use apxm_compiler::{Context as CompilerContext, Pipeline as CompilerPipeline};
+use apxm_core::constants::graph::attrs as graph_attrs;
 use apxm_core::constants::{memory as memory_const, session::files as session_files};
 use apxm_core::events::{EventEmitter, EventSource, SkillEventProvenance};
 use apxm_core::paths::ApxmPaths;
 use apxm_core::types::Value as RuntimeValue;
-use apxm_core::types::{
-    AISOperationType, DependencyType, Number as RuntimeNumber, OptimizationLevel,
-};
+use apxm_core::types::{AISOperationType, OptimizationLevel};
 use apxm_driver::ServerMcpConfig;
 use apxm_runtime::capability::CapabilitySandboxPreflight;
 use apxm_runtime::{
@@ -26,32 +21,20 @@ use apxm_runtime::{
 use serde_json::{Value as JsonValue, json};
 
 use crate::mcp_protocol::{
-    admission_error, args as mcp_args, defaults as mcp_defaults, evidence_path, plan_field,
-    plan_skill, status as mcp_status, tool_result,
+    admission_error, args as mcp_args, defaults as mcp_defaults, evidence_path,
+    status as mcp_status, tool_result, workflow_skill,
 };
 
-const PLAN_PROMPT: &str = include_str!("../skills/prompt-as-workflow/prompt.md");
-const PLAN_SCHEMA: &str = include_str!("../skills/prompt-as-workflow/schema.json");
-// Three attempts cover the observed worst case where the first emission
-// violates the schema one way (e.g. an unknown wrapper field) and the
-// second-turn repair introduces a different violation (e.g. omits a
-// required top-level key); two attempts can exhaust before the second
-// class of error is corrected.
-const PLAN_REPAIR_FEEDBACK_HEADING: &str = "Compiler or validation feedback to repair:";
-const PLAN_REPAIR_FEEDBACK_PREFIX: &str =
-    "The previous response could not be converted into executable APXM AIR";
-const PLAN_REPAIRED_INVALID_PREFIX: &str = "repaired plan still invalid";
-const PLAN_CAPABILITY_GUIDANCE_HEADING: &str = "Registered APXM capabilities:";
-const PLAN_CAPABILITY_NONE_GUIDANCE: &str =
-    "none. Do not emit inv_tool nodes; use ask, think, wait_all, or yield nodes instead.";
-const PLAN_CAPABILITY_TRUNCATED_GUIDANCE: &str = "- additional capabilities omitted";
-const PLAN_INV_TOOL_CONTRACT: &str = "inv_tool nodes require a non-empty capability from the registered capability list and args as an object";
-const PLAN_PROMPT_CONTRACT: &str = "agent, ask, think, and yield nodes require a non-empty prompt";
-const PLAN_DEFAULT_NAME: &str = "generated_plan";
-const PLAN_DEFAULT_ENTRY: &str = "plan";
-const PLAN_DEFAULT_NODE_NAME_PREFIX: &str = "node";
+const WORKFLOW_PROMPT: &str = include_str!("../skills/prompt-as-workflow/prompt.md");
+const WORKFLOW_REPAIR_FEEDBACK_HEADING: &str = "Compiler feedback to repair AIR:";
+const WORKFLOW_REPAIR_FEEDBACK_PREFIX: &str =
+    "The previous response could not be compiled as executable APXM AIR";
+const WORKFLOW_REPAIRED_INVALID_PREFIX: &str = "repaired AIR still invalid";
+const WORKFLOW_CAPABILITY_GUIDANCE_HEADING: &str = "Registered APXM capabilities:";
+const WORKFLOW_CAPABILITY_NONE_GUIDANCE: &str = "none. Do not emit ais.inv_tool; use ais.ask, ais.think, ais.wait_all, and func.return instead.";
+const WORKFLOW_CAPABILITY_TRUNCATED_GUIDANCE: &str = "- additional capabilities omitted";
 #[allow(dead_code)]
-pub(crate) struct PlanExecutionStart {
+pub(crate) struct WorkflowExecutionStart {
     pub(crate) execution_id: String,
     pub(crate) session_id: String,
     pub(crate) session_dir: String,
@@ -59,13 +42,13 @@ pub(crate) struct PlanExecutionStart {
     pub(crate) artifact_hash: String,
 }
 
-pub(crate) struct PlanExecutionHandle {
+pub(crate) struct WorkflowExecutionHandle {
     pub(crate) execution_id: String,
     pub(crate) emitter: Arc<dyn EventEmitter>,
 }
 
-pub(crate) trait PlanExecutionRecorder: Send + Sync {
-    fn start(&self, start: PlanExecutionStart) -> PlanExecutionHandle;
+pub(crate) trait WorkflowExecutionRecorder: Send + Sync {
+    fn start(&self, start: WorkflowExecutionStart) -> WorkflowExecutionHandle;
     fn complete_success(
         &self,
         execution_id: &str,
@@ -75,22 +58,21 @@ pub(crate) trait PlanExecutionRecorder: Send + Sync {
     fn complete_failure(&self, execution_id: &str, error: String);
 }
 
-struct CompiledPlanGraph {
-    plan: PlanGraph,
-    normalized_plan: JsonValue,
+struct CompiledWorkflowAir {
+    air: String,
     artifact: Artifact,
     artifact_hash: String,
     air_hash: String,
     compile_ms: u128,
 }
 
-enum PlanCandidateError {
+enum WorkflowCandidateError {
     Emission(String),
     Timeout(String),
     InvalidCandidate(String),
 }
 
-impl PlanCandidateError {
+impl WorkflowCandidateError {
     fn into_message(self) -> String {
         match self {
             Self::Emission(message) | Self::Timeout(message) | Self::InvalidCandidate(message) => {
@@ -99,10 +81,6 @@ impl PlanCandidateError {
         }
     }
 }
-
-// Workflow wire DTO (`PlanGraph`/`PlanNode`/`PlanParameter`/`PlanDependency`/
-// `PlanNodeOp`/`PlanDependencyKind`) is defined once in `apxm_ais::plan` and
-// imported above — the single source of truth shared with authoring front-ends.
 
 #[allow(dead_code)]
 pub(crate) async fn prompt_as_workflow(
@@ -115,7 +93,7 @@ pub(crate) async fn prompt_as_workflow(
 pub(crate) async fn prompt_as_workflow_with_recorder(
     runtime: &Runtime,
     args: JsonValue,
-    recorder: Option<Arc<dyn PlanExecutionRecorder>>,
+    recorder: Option<Arc<dyn WorkflowExecutionRecorder>>,
     config: &ServerMcpConfig,
 ) -> Result<JsonValue, String> {
     let task = required_string_arg(&args, mcp_args::TASK)?;
@@ -135,33 +113,29 @@ pub(crate) async fn prompt_as_workflow_with_recorder(
         .and_then(JsonValue::as_str)
         .filter(|value| !value.trim().is_empty())
         .map(ToString::to_string)
-        .unwrap_or_else(|| format!("{}-{}", plan_skill::TRACE_PREFIX, uuid::Uuid::new_v4()));
+        .unwrap_or_else(|| format!("{}-{}", workflow_skill::TRACE_PREFIX, uuid::Uuid::new_v4()));
     validate_trace_id(&trace_id)?;
 
-    let schema: JsonValue = serde_json::from_str(PLAN_SCHEMA)
-        .map_err(|error| format!("bundled plan schema is invalid JSON: {error}"))?;
     let emission_start = Instant::now();
-    let compiled = match emit_plan_candidate(
+    let compiled = match emit_air_candidate(
         runtime,
         &task,
         context.as_deref(),
         constraints.as_ref(),
         None,
-        &schema,
         &trace_id,
         config,
     )
     .await
     {
-        Ok(candidate) => match build_compiled_plan_graph(candidate, Some(runtime)) {
+        Ok(candidate) => match build_compiled_workflow_air(candidate, Some(runtime)) {
             Ok(compiled) => compiled,
             Err(error) => {
-                repair_plan_candidate(
+                repair_air_candidate(
                     runtime,
                     &task,
                     context.as_deref(),
                     constraints.as_ref(),
-                    &schema,
                     &trace_id,
                     &error,
                     config,
@@ -169,43 +143,49 @@ pub(crate) async fn prompt_as_workflow_with_recorder(
                 .await?
             }
         },
-        Err(PlanCandidateError::InvalidCandidate(error)) => {
-            repair_plan_candidate(
+        Err(WorkflowCandidateError::InvalidCandidate(error)) => {
+            repair_air_candidate(
                 runtime,
                 &task,
                 context.as_deref(),
                 constraints.as_ref(),
-                &schema,
                 &trace_id,
                 &error,
                 config,
             )
             .await?
         }
-        Err(error @ PlanCandidateError::Emission(_))
-        | Err(error @ PlanCandidateError::Timeout(_)) => return Err(error.into_message()),
+        Err(error @ WorkflowCandidateError::Emission(_))
+        | Err(error @ WorkflowCandidateError::Timeout(_)) => return Err(error.into_message()),
     };
     let emission_ms = emission_start.elapsed().as_millis();
+    let session_dir = workflow_session_dir(&trace_id)?;
+    let air_path = write_generated_air(&session_dir, &compiled.air)?;
 
     let mut output = json!({
         (tool_result::STATUS): mcp_status::COMPILED,
         (tool_result::TRACE_ID): trace_id,
-        (tool_result::WORKFLOW): compiled.normalized_plan,
-        (tool_result::AIR_HASH): compiled.air_hash,
-        (tool_result::ARTIFACT_HASH): compiled.artifact_hash,
+        (tool_result::SESSION_DIR): session_dir,
+        (tool_result::AIR_PATH): air_path,
+        (tool_result::AIR_TEXT): compiled.air.clone(),
+        (tool_result::AIR_HASH): compiled.air_hash.clone(),
+        (tool_result::ARTIFACT_HASH): compiled.artifact_hash.clone(),
         (tool_result::STATS): compile_stats(&compiled.artifact, compiled.compile_ms, emission_ms),
     });
 
     if should_execute {
-        validate_generated_plan_admission(&compiled.artifact, runtime)?;
-        let runtime_args = runtime_args_for_plan(&compiled.plan, &parameters);
+        validate_generated_workflow_admission(&compiled.artifact, runtime)?;
+        let runtime_args = runtime_args_for_artifact(&compiled.artifact, &parameters);
         let session_id = output[tool_result::TRACE_ID]
             .as_str()
             .unwrap_or_default()
             .to_string();
-        let session_dir = plan_session_dir(&session_id)?;
+        let session_dir = output[tool_result::SESSION_DIR]
+            .as_str()
+            .unwrap_or_default()
+            .to_string();
         let execution_handle = recorder.as_ref().map(|recorder| {
-            recorder.start(PlanExecutionStart {
+            recorder.start(WorkflowExecutionStart {
                 execution_id: session_id.clone(),
                 session_id: session_id.clone(),
                 session_dir: session_dir.clone(),
@@ -228,11 +208,11 @@ pub(crate) async fn prompt_as_workflow_with_recorder(
                         &session_id,
                     )
                     .with_skill_provenance(SkillEventProvenance {
-                        skill_id: plan_skill::ID.to_string(),
-                        skill_version: plan_skill::VERSION.to_string(),
+                        skill_id: workflow_skill::ID.to_string(),
+                        skill_version: workflow_skill::VERSION.to_string(),
                         parent_skill_id: None,
                         parent_execution_id: None,
-                        flow_name: Some(plan_skill::ENTRY_FLOW.to_string()),
+                        flow_name: Some(workflow_skill::ENTRY_FLOW.to_string()),
                     }),
                 ) as Arc<dyn ExecutionEventEmitter>
             });
@@ -250,13 +230,13 @@ pub(crate) async fn prompt_as_workflow_with_recorder(
             Ok(execution) => execution,
             Err(error) => {
                 if let Some(handle) = execution_handle {
-                    let message = format!("plan execution failed: {error}");
+                    let message = format!("workflow execution failed: {error}");
                     if let Some(recorder) = recorder.as_ref() {
                         recorder.complete_failure(&handle.execution_id, message.clone());
                     }
                     return Err(message);
                 }
-                return Err(format!("plan execution failed: {error}"));
+                return Err(format!("workflow execution failed: {error}"));
             }
         };
         if let (Some(recorder), Some(handle)) = (recorder.as_ref(), execution_handle.as_ref()) {
@@ -281,7 +261,7 @@ pub(crate) async fn prompt_as_workflow_with_recorder(
                 .as_str()
                 .unwrap_or_default()
                 .to_string(),
-            plan_skill::ID,
+            workflow_skill::ID,
             RuntimeValue::try_from(output.clone()).unwrap_or(RuntimeValue::Null),
             None,
             None,
@@ -573,118 +553,70 @@ pub(crate) fn evidence_lookup_with_config(
     }))
 }
 
-async fn repair_plan_candidate(
+async fn repair_air_candidate(
     runtime: &Runtime,
     task: &str,
     context: Option<&str>,
     constraints: Option<&JsonValue>,
-    schema: &JsonValue,
     trace_id: &str,
     first_error: &str,
     config: &ServerMcpConfig,
-) -> Result<CompiledPlanGraph, String> {
+) -> Result<CompiledWorkflowAir, String> {
     let mut last_error = first_error.to_string();
-    for _ in 0..config.plan_repair_attempts.max(1) {
-        let feedback = format!("{PLAN_REPAIR_FEEDBACK_PREFIX}: {last_error}");
-        let repaired = match emit_plan_candidate(
+    for _ in 0..config.workflow_repair_attempts.max(1) {
+        let feedback = format!("{WORKFLOW_REPAIR_FEEDBACK_PREFIX}: {last_error}");
+        let repaired = match emit_air_candidate(
             runtime,
             task,
             context,
             constraints,
             Some(&feedback),
-            schema,
             trace_id,
             config,
         )
         .await
         {
             Ok(candidate) => candidate,
-            Err(PlanCandidateError::InvalidCandidate(error)) => {
+            Err(WorkflowCandidateError::InvalidCandidate(error)) => {
                 last_error = error;
                 continue;
             }
-            Err(error @ PlanCandidateError::Emission(_)) => {
+            Err(error @ WorkflowCandidateError::Emission(_)) => {
                 return Err(error.into_message());
             }
-            Err(error @ PlanCandidateError::Timeout(_)) => return Err(error.into_message()),
+            Err(error @ WorkflowCandidateError::Timeout(_)) => return Err(error.into_message()),
         };
-        match build_compiled_plan_graph(repaired, Some(runtime)) {
+        match build_compiled_workflow_air(repaired, Some(runtime)) {
             Ok(compiled) => return Ok(compiled),
             Err(error) => last_error = error,
         }
     }
-    Err(format!("{PLAN_REPAIRED_INVALID_PREFIX}: {last_error}"))
+    Err(format!("{WORKFLOW_REPAIRED_INVALID_PREFIX}: {last_error}"))
 }
 
-/// Lower a caller-supplied plan workflow straight to AIR text, bypassing the
-/// LLM emission path (`emit_plan_candidate`/ModelRouter). The payload must be
-/// the canonical workflow object with top-level `name`, `entry`, and `nodes`.
-/// The server then compiles this AIR through the shared raw-execute admission gate.
-//
-// Consumed by the `apxm-server` binary's `/v1/compile` handler; the sibling
-// `apxm-mcp-server` binary includes this module without the HTTP layer, so it
-// reads as dead there.
-#[allow(dead_code)]
-pub(crate) fn lower_plan_graph_to_air(value: JsonValue) -> Result<String, String> {
-    let plan_value = normalize_plan_value(decode_plan_graph(&value)?)?;
-    let (plan, _normalized_plan) = parse_plan_graph(plan_value)?;
-    let module = lower_plan_to_air_module(&plan)?;
-    module
-        .to_air()
-        .map_err(|error| format!("AIR emission failed: {error}"))
-}
-
-fn build_compiled_plan_graph(
-    value: JsonValue,
+fn build_compiled_workflow_air(
+    air: String,
     runtime: Option<&Runtime>,
-) -> Result<CompiledPlanGraph, String> {
-    let plan_value = normalize_plan_value(decode_plan_graph(&value)?)?;
-    let (plan, normalized_plan) = parse_plan_graph(plan_value)?;
-    if let Some(runtime) = runtime {
-        validate_generated_plan_graph_admission(&plan, runtime)?;
-    }
-    let module = lower_plan_to_air_module(&plan)?;
-    let air = module
-        .to_air()
-        .map_err(|error| format!("AIR emission failed: {error}"))?;
-
+) -> Result<CompiledWorkflowAir, String> {
     let compile_start = Instant::now();
     let artifact = compile_air_to_artifact(&air)?;
     let compile_ms = compile_start.elapsed().as_millis();
+    if let Some(runtime) = runtime {
+        validate_generated_workflow_admission(&artifact, runtime)?;
+    }
     let artifact_bytes = artifact
         .to_bytes()
         .map_err(|error| format!("artifact encode failed: {error}"))?;
     let artifact_hash = format!("blake3:{}", blake3::hash(&artifact_bytes).to_hex());
     let air_hash = format!("blake3:{}", blake3::hash(air.as_bytes()).to_hex());
 
-    Ok(CompiledPlanGraph {
-        plan,
-        normalized_plan,
+    Ok(CompiledWorkflowAir {
+        air,
         artifact,
         artifact_hash,
         air_hash,
         compile_ms,
     })
-}
-
-fn validate_generated_plan_graph_admission(
-    plan: &PlanGraph,
-    runtime: &Runtime,
-) -> Result<(), String> {
-    for node in &plan.nodes {
-        if node.op == PlanNodeOp::InvTool {
-            validate_generated_plan_inv_tool_node(node, runtime)?;
-        }
-    }
-    Ok(())
-}
-
-fn validate_generated_plan_inv_tool_node(node: &PlanNode, runtime: &Runtime) -> Result<(), String> {
-    let capability = node
-        .capability
-        .as_deref()
-        .ok_or_else(|| admission_error::INV_TOOL_MISSING_CAPABILITY.to_string())?;
-    check_generated_capability_admission(capability, || plan_inv_tool_args(node), runtime)
 }
 
 /// Admission rules for a side-effecting capability invoked by a generated workflow:
@@ -720,236 +652,6 @@ fn check_generated_capability_admission(
     }
 }
 
-fn plan_inv_tool_args(node: &PlanNode) -> Result<HashMap<String, RuntimeValue>, String> {
-    let Some(args) = node.args.as_ref() else {
-        return Ok(HashMap::new());
-    };
-    let Some(object) = args.as_object() else {
-        return Err(admission_error::INV_TOOL_PARAMS_NOT_OBJECT.to_string());
-    };
-
-    let mut out = HashMap::new();
-    for (key, value) in object {
-        let value = RuntimeValue::try_from(value.clone())
-            .map_err(|error| format!("invalid INV_TOOL arg '{key}': {error}"))?;
-        out.insert(key.clone(), value);
-    }
-    Ok(out)
-}
-
-fn normalize_plan_value(mut plan: JsonValue) -> Result<JsonValue, String> {
-    normalize_plan_top_level_defaults(&mut plan);
-    let generated_id_refs = normalize_plan_node_ids(&mut plan)?;
-    normalize_plan_node_names(&mut plan);
-
-    let node_refs = {
-        let Some(nodes) = plan.get(plan_field::NODES).and_then(JsonValue::as_array) else {
-            return Ok(plan);
-        };
-        let mut refs = generated_id_refs;
-        for node in nodes {
-            let Some(id) = node.get(plan_field::ID).and_then(JsonValue::as_u64) else {
-                continue;
-            };
-            refs.insert(id.to_string(), id);
-            if let Some(name) = node.get(plan_field::NAME).and_then(JsonValue::as_str) {
-                refs.insert(name.to_string(), id);
-                refs.insert(sanitize_input_name(name), id);
-            }
-        }
-        refs
-    };
-
-    let Some(nodes) = plan
-        .get_mut(plan_field::NODES)
-        .and_then(JsonValue::as_array_mut)
-    else {
-        return Ok(plan);
-    };
-    for node in nodes {
-        let Some(depends_on) = node
-            .get_mut(plan_field::DEPENDS_ON)
-            .and_then(JsonValue::as_array_mut)
-        else {
-            continue;
-        };
-        for dependency in depends_on {
-            match dependency {
-                JsonValue::Object(object) => {
-                    let Some(node_ref) = object.get_mut(plan_field::NODE) else {
-                        continue;
-                    };
-                    if let Some(name_ref) = node_ref.as_str() {
-                        let resolved = resolve_plan_node_ref(name_ref, &node_refs)?;
-                        *node_ref = JsonValue::Number(serde_json::Number::from(resolved));
-                    }
-                }
-                JsonValue::String(_) | JsonValue::Number(_) => {
-                    let resolved = resolve_plan_dependency_value(dependency, &node_refs)?;
-                    *dependency = json!({
-                        (plan_field::NODE): resolved,
-                        (plan_field::DEPENDENCY): DependencyType::Data,
-                    });
-                }
-                _ => {}
-            }
-        }
-    }
-
-    Ok(plan)
-}
-
-fn normalize_plan_top_level_defaults(plan: &mut JsonValue) {
-    let Some(object) = plan.as_object_mut() else {
-        return;
-    };
-    if object
-        .get(plan_field::NAME)
-        .and_then(JsonValue::as_str)
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-        .is_none()
-    {
-        object.insert(
-            plan_field::NAME.to_string(),
-            JsonValue::String(PLAN_DEFAULT_NAME.to_string()),
-        );
-    }
-    if object
-        .get(plan_field::ENTRY)
-        .and_then(JsonValue::as_str)
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-        .is_none()
-    {
-        object.insert(
-            plan_field::ENTRY.to_string(),
-            JsonValue::String(PLAN_DEFAULT_ENTRY.to_string()),
-        );
-    }
-}
-
-fn normalize_plan_node_names(plan: &mut JsonValue) {
-    let Some(nodes) = plan
-        .get_mut(plan_field::NODES)
-        .and_then(JsonValue::as_array_mut)
-    else {
-        return;
-    };
-    for (index, node) in nodes.iter_mut().enumerate() {
-        let Some(object) = node.as_object_mut() else {
-            continue;
-        };
-        if object
-            .get(plan_field::NAME)
-            .and_then(JsonValue::as_str)
-            .map(str::trim)
-            .filter(|value| !value.is_empty())
-            .is_some()
-        {
-            continue;
-        }
-        let id = object
-            .get(plan_field::ID)
-            .and_then(JsonValue::as_u64)
-            .unwrap_or((index + 1) as u64);
-        object.insert(
-            plan_field::NAME.to_string(),
-            JsonValue::String(format!("{PLAN_DEFAULT_NODE_NAME_PREFIX}_{id}")),
-        );
-    }
-}
-
-fn normalize_plan_node_ids(plan: &mut JsonValue) -> Result<HashMap<String, u64>, String> {
-    let Some(nodes) = plan
-        .get_mut(plan_field::NODES)
-        .and_then(JsonValue::as_array_mut)
-    else {
-        return Ok(HashMap::new());
-    };
-
-    let mut used_ids = HashSet::new();
-    for node in nodes.iter() {
-        let Some(id_value) = node.get(plan_field::ID) else {
-            continue;
-        };
-        if let Some(id) = id_value.as_u64().or_else(|| {
-            id_value
-                .as_str()
-                .and_then(|value| value.trim().parse().ok())
-        }) && id > 0
-        {
-            used_ids.insert(id);
-        }
-    }
-
-    let mut generated_refs = HashMap::new();
-    let mut next_id = 1u64;
-    for node in nodes {
-        let Some(id_value) = node.get_mut(plan_field::ID) else {
-            continue;
-        };
-        if let Some(id_ref) = id_value.as_str() {
-            let id = match parse_plan_node_id_ref(id_ref) {
-                Ok(id) => id,
-                Err(_) => {
-                    while used_ids.contains(&next_id) {
-                        next_id += 1;
-                    }
-                    let assigned = next_id;
-                    used_ids.insert(assigned);
-                    generated_refs.insert(id_ref.trim().to_string(), assigned);
-                    assigned
-                }
-            };
-            *id_value = JsonValue::Number(serde_json::Number::from(id));
-        }
-    }
-    Ok(generated_refs)
-}
-
-fn resolve_plan_dependency_value(
-    value: &JsonValue,
-    node_refs: &HashMap<String, u64>,
-) -> Result<u64, String> {
-    if let Some(id) = value.as_u64() {
-        if id == 0 {
-            return Err("node id reference must be >= 1".to_string());
-        }
-        return Ok(id);
-    }
-    if let Some(reference) = value.as_str() {
-        return resolve_plan_node_ref(reference, node_refs);
-    }
-    Err(format!(
-        "{} entries must be dependency objects or node references",
-        plan_field::DEPENDS_ON
-    ))
-}
-
-fn resolve_plan_node_ref(reference: &str, node_refs: &HashMap<String, u64>) -> Result<u64, String> {
-    let trimmed = reference.trim();
-    if let Ok(id) = parse_plan_node_id_ref(trimmed) {
-        return Ok(id);
-    }
-    node_refs
-        .get(trimmed)
-        .or_else(|| node_refs.get(&sanitize_input_name(trimmed)))
-        .copied()
-        .ok_or_else(|| format!("dependency references unknown node '{trimmed}'"))
-}
-
-fn parse_plan_node_id_ref(reference: &str) -> Result<u64, String> {
-    let trimmed = reference.trim();
-    let id = trimmed
-        .parse::<u64>()
-        .map_err(|_| format!("node id reference '{trimmed}' is not a positive integer"))?;
-    if id == 0 {
-        return Err("node id reference must be >= 1".to_string());
-    }
-    Ok(id)
-}
-
 fn emit_prompt(
     task: &str,
     context: Option<&str>,
@@ -957,7 +659,7 @@ fn emit_prompt(
     feedback: Option<&str>,
     capability_guidance: &str,
 ) -> String {
-    let mut prompt = String::from(PLAN_PROMPT);
+    let mut prompt = String::from(WORKFLOW_PROMPT);
     prompt.push_str("\n\n");
     prompt.push_str(capability_guidance);
     prompt.push_str("\n\nTask:\n");
@@ -974,22 +676,22 @@ fn emit_prompt(
     }
     if let Some(feedback) = feedback {
         prompt.push_str("\n\n");
-        prompt.push_str(PLAN_REPAIR_FEEDBACK_HEADING);
+        prompt.push_str(WORKFLOW_REPAIR_FEEDBACK_HEADING);
         prompt.push('\n');
         prompt.push_str(feedback);
     }
     prompt
 }
 
-fn plan_capability_guidance(runtime: &Runtime, config: &ServerMcpConfig) -> String {
+fn workflow_capability_guidance(runtime: &Runtime, config: &ServerMcpConfig) -> String {
     let mut capabilities = runtime.capability_system().list_capabilities();
     capabilities.sort_by(|left, right| left.name.cmp(&right.name));
-    let limit = config.plan_capability_guidance_limit.max(1);
+    let limit = config.workflow_capability_guidance_limit.max(1);
 
-    let mut guidance = String::from(PLAN_CAPABILITY_GUIDANCE_HEADING);
+    let mut guidance = String::from(WORKFLOW_CAPABILITY_GUIDANCE_HEADING);
     guidance.push('\n');
     if capabilities.is_empty() {
-        guidance.push_str(PLAN_CAPABILITY_NONE_GUIDANCE);
+        guidance.push_str(WORKFLOW_CAPABILITY_NONE_GUIDANCE);
         return guidance;
     }
 
@@ -1014,25 +716,24 @@ fn plan_capability_guidance(runtime: &Runtime, config: &ServerMcpConfig) -> Stri
         guidance.push('\n');
     }
     if capabilities.len() > limit {
-        guidance.push_str(PLAN_CAPABILITY_TRUNCATED_GUIDANCE);
+        guidance.push_str(WORKFLOW_CAPABILITY_TRUNCATED_GUIDANCE);
     }
     guidance
 }
 
-async fn emit_plan_candidate(
+async fn emit_air_candidate(
     runtime: &Runtime,
     task: &str,
     context: Option<&str>,
     constraints: Option<&JsonValue>,
     feedback: Option<&str>,
-    schema: &JsonValue,
     trace_id: &str,
     config: &ServerMcpConfig,
-) -> Result<JsonValue, PlanCandidateError> {
+) -> Result<String, WorkflowCandidateError> {
     let router = runtime
         .model_router()
-        .ok_or_else(|| PlanCandidateError::Emission("model router unavailable; initialize APXM server runtime with ModelRouter before calling prompt_as_workflow".to_string()))?;
-    let capability_guidance = plan_capability_guidance(runtime, config);
+        .ok_or_else(|| WorkflowCandidateError::Emission("model router unavailable; initialize APXM server runtime with ModelRouter before calling prompt_as_workflow".to_string()))?;
+    let capability_guidance = workflow_capability_guidance(runtime, config);
     let request = LLMRequest::new(emit_prompt(
         task,
         context,
@@ -1040,318 +741,56 @@ async fn emit_plan_candidate(
         feedback,
         &capability_guidance,
     ))
-    .with_output_schema(schema.clone())
-    .with_max_tokens(config.plan_max_tokens.max(1))
-    .with_temperature(config.plan_temperature.clamp(0.0, 2.0))
+    .with_max_tokens(config.workflow_max_tokens.max(1))
+    .with_temperature(config.workflow_temperature.clamp(0.0, 2.0))
     .with_operation_type(AISOperationType::Plan)
     .with_metadata_value(
-        plan_skill::REQUEST_CAPABILITY_KEY,
-        json!(plan_skill::EMISSION_CAPABILITY),
+        workflow_skill::REQUEST_CAPABILITY_KEY,
+        json!(workflow_skill::EMISSION_CAPABILITY),
     )
     .with_trace_id(trace_id.to_string());
-    let timeout_ms = config.plan_emit_timeout_ms.max(1);
+    let timeout_ms = config.workflow_emit_timeout_ms.max(1);
     let response =
         match tokio::time::timeout(Duration::from_millis(timeout_ms), router.generate(request))
             .await
         {
             Ok(Ok(response)) => response,
             Ok(Err(error)) => {
-                return Err(PlanCandidateError::Emission(format!(
-                    "model-router plan emission failed: {error}"
+                return Err(WorkflowCandidateError::Emission(format!(
+                    "model-router AIR emission failed: {error}"
                 )));
             }
             Err(_) => {
-                return Err(PlanCandidateError::Timeout(format!(
-                    "model-router plan emission timed out after {timeout_ms}ms"
+                return Err(WorkflowCandidateError::Timeout(format!(
+                    "model-router AIR emission timed out after {timeout_ms}ms"
                 )));
             }
         };
-    extract_json_document(&response.content).map_err(PlanCandidateError::InvalidCandidate)
+    extract_air_document(&response.content).map_err(WorkflowCandidateError::InvalidCandidate)
 }
 
-fn decode_plan_graph(value: &JsonValue) -> Result<JsonValue, String> {
-    if value.get(plan_field::NODES).is_some() {
-        return Ok(value.clone());
-    }
-    Err(format!("expected top-level '{}'", plan_field::NODES))
-}
-
-fn parse_plan_graph(value: JsonValue) -> Result<(PlanGraph, JsonValue), String> {
-    let plan: PlanGraph = serde_json::from_value(value.clone())
-        .map_err(|error| format!("workflow JSON does not satisfy schema: {error}"))?;
-    validate_plan_graph(&plan)?;
-    Ok((plan, value))
-}
-
-fn validate_plan_graph(plan: &PlanGraph) -> Result<(), String> {
-    if plan.name.trim().is_empty() {
-        return Err(format!("{} must not be empty", plan_field::NAME));
-    }
-    if plan.entry.trim().is_empty() {
-        return Err(format!("{} must not be empty", plan_field::ENTRY));
-    }
-    if plan.nodes.is_empty() {
-        return Err(format!(
-            "{} must contain at least one node",
-            plan_field::NODES
-        ));
-    }
-    let mut ids = HashSet::new();
-    for node in &plan.nodes {
-        if node.id == 0 {
-            return Err(format!("{} must be >= 1", plan_field::ID));
-        }
-        if !ids.insert(node.id) {
-            return Err(format!("duplicate node id {}", node.id));
-        }
-        if node.name.trim().is_empty() {
-            return Err(format!("node {} has empty {}", node.id, plan_field::NAME));
-        }
-        match node.op {
-            PlanNodeOp::InvTool => {
-                if node
-                    .capability
-                    .as_deref()
-                    .map(str::trim)
-                    .filter(|value| !value.is_empty())
-                    .is_none()
-                {
-                    return Err(format!(
-                        "node '{}' (id={}, op={}) is missing required attribute '{}'; {}",
-                        node.name,
-                        node.id,
-                        node.op.as_str(),
-                        plan_field::CAPABILITY,
-                        PLAN_INV_TOOL_CONTRACT
-                    ));
-                }
-                if !node
-                    .args
-                    .as_ref()
-                    .is_some_and(|value| value.as_object().is_some())
-                {
-                    return Err(format!(
-                        "node '{}' (id={}, op={}) is missing required object attribute '{}'; {}",
-                        node.name,
-                        node.id,
-                        node.op.as_str(),
-                        plan_field::ARGS,
-                        PLAN_INV_TOOL_CONTRACT
-                    ));
-                }
-            }
-            op if op.requires_prompt()
-                && node
-                    .prompt
-                    .as_deref()
-                    .map(str::trim)
-                    .filter(|value| !value.is_empty())
-                    .is_none() =>
-            {
-                return Err(format!(
-                    "node '{}' (id={}, op={}) is missing required attribute '{}'; {}",
-                    node.name,
-                    node.id,
-                    node.op.as_str(),
-                    plan_field::PROMPT,
-                    PLAN_PROMPT_CONTRACT
-                ));
-            }
-            _ => {}
-        }
-    }
-    for node in &plan.nodes {
-        for dep in &node.depends_on {
-            if !ids.contains(&dep.node) {
-                return Err(format!(
-                    "node {} depends on unknown node {}",
-                    node.id, dep.node
-                ));
-            }
-        }
-    }
-    Ok(())
-}
-
-fn lower_plan_to_air_module(plan: &PlanGraph) -> Result<AirModule, String> {
-    let source_names = plan
-        .nodes
-        .iter()
-        .map(|node| (node.id, sanitize_input_name(&node.name)))
-        .collect::<HashMap<_, _>>();
-    let nodes = plan
-        .nodes
-        .iter()
-        .map(|node| lower_plan_node(node, &source_names))
-        .collect::<Result<Vec<_>, _>>()?;
-    let edges = plan
-        .nodes
-        .iter()
-        .flat_map(|node| {
-            node.depends_on.iter().map(|dep| AirEdge {
-                from: dep.node,
-                to: node.id,
-                dependency: plan_dependency_to_runtime(dep.dependency),
-            })
-        })
-        .collect::<Vec<_>>();
-    let parameters = plan
-        .parameters
-        .iter()
-        .map(|param| AirParam {
-            name: param.name.clone(),
-            type_name: param.type_name.as_str().to_string(),
-        })
-        .collect::<Vec<_>>();
-    let module = AirModule {
-        name: plan.name.clone(),
-        nodes,
-        edges,
-        parameters,
-        metadata: HashMap::from([(graph_meta::IS_ENTRY.to_string(), RuntimeValue::Bool(true))]),
-    };
-    module
-        .validate()
-        .map_err(|error| format!("AIR graph validation failed: {error}"))?;
-    Ok(module)
-}
-
-/// Map the wire dependency kind to the runtime edge type.
-const fn plan_dependency_to_runtime(kind: PlanDependencyKind) -> DependencyType {
-    match kind {
-        PlanDependencyKind::Data => DependencyType::Data,
-        PlanDependencyKind::Control => DependencyType::Control,
-        PlanDependencyKind::Effect => DependencyType::Effect,
-    }
-}
-
-/// Map the wire op to the runtime operation type. (`apxm-core` regenerates its
-/// own `AISOperationType` from the `apxm-ais` source, so the two are nominally
-/// distinct; this bridges them at the one place the runtime type is needed.)
-const fn plan_op_to_runtime(op: PlanNodeOp) -> AISOperationType {
-    match op {
-        PlanNodeOp::Agent => AISOperationType::Agent,
-        PlanNodeOp::Ask => AISOperationType::Ask,
-        PlanNodeOp::Think => AISOperationType::Think,
-        PlanNodeOp::InvTool => AISOperationType::InvTool,
-        PlanNodeOp::WaitAll => AISOperationType::WaitAll,
-        PlanNodeOp::Yield => AISOperationType::Yield,
-    }
-}
-
-fn lower_plan_node(
-    node: &PlanNode,
-    source_names: &HashMap<u64, String>,
-) -> Result<AirNode, String> {
-    let mut attributes = HashMap::new();
-    if let Some(prompt) = &node.prompt {
-        attributes.insert(
-            graph_attrs::TEMPLATE_STR.to_string(),
-            RuntimeValue::String(prompt.clone()),
-        );
-    }
-    if let Some(agent) = &node.agent {
-        attributes.insert(
-            graph_attrs::AGENT_NAME.to_string(),
-            RuntimeValue::String(agent.clone()),
-        );
-    }
-    if let Some(profile) = &node.profile {
-        attributes.insert(
-            graph_attrs::PROFILE.to_string(),
-            RuntimeValue::String(profile.clone()),
-        );
-    }
-    if let Some(cwd) = &node.cwd {
-        attributes.insert(
-            graph_attrs::CWD.to_string(),
-            RuntimeValue::String(cwd.clone()),
-        );
-    }
-    if let Some(backend) = &node.backend {
-        attributes.insert(
-            graph_attrs::BACKEND.to_string(),
-            RuntimeValue::String(backend.clone()),
-        );
-    }
-    if let Some(model) = &node.model {
-        attributes.insert(
-            graph_attrs::MODEL.to_string(),
-            RuntimeValue::String(model.clone()),
-        );
-    }
-    if let Some(effort) = &node.effort {
-        attributes.insert(
-            graph_attrs::EFFORT.to_string(),
-            RuntimeValue::String(effort.clone()),
-        );
-    }
-    if let Some(capability) = &node.capability {
-        attributes.insert(
-            graph_attrs::CAPABILITY.to_string(),
-            RuntimeValue::String(capability.clone()),
-        );
-    }
-    if let Some(args) = &node.args {
-        attributes.insert(
-            graph_attrs::PARAMS_JSON.to_string(),
-            RuntimeValue::String(args.to_string()),
-        );
-    }
-    if let Some(max_tokens) = node.max_tokens {
-        attributes.insert(
-            graph_attrs::TOKEN_BUDGET.to_string(),
-            RuntimeValue::Number(RuntimeNumber::from(
-                i64::try_from(max_tokens).unwrap_or(i64::MAX),
-            )),
-        );
-    }
-
-    let data_input_names = node
-        .depends_on
-        .iter()
-        .filter(|dep| matches!(dep.dependency, PlanDependencyKind::Data))
-        .filter_map(|dep| source_names.get(&dep.node).cloned())
-        .map(RuntimeValue::String)
-        .collect::<Vec<_>>();
-    if !data_input_names.is_empty() {
-        attributes.insert(
-            graph_attrs::INPUT_NAMES.to_string(),
-            RuntimeValue::Array(data_input_names),
-        );
-    }
-
-    Ok(AirNode {
-        id: node.id,
-        name: node.name.clone(),
-        op: plan_op_to_runtime(node.op),
-        attributes,
-    })
-}
-
-fn runtime_args_for_plan(
-    plan: &PlanGraph,
+fn runtime_args_for_artifact(
+    artifact: &Artifact,
     parameters: &serde_json::Map<String, JsonValue>,
 ) -> Vec<String> {
-    plan.parameters
+    artifact
+        .entry_dag()
+        .map(|dag| dag.metadata.parameters.as_slice())
+        .unwrap_or(&[])
         .iter()
         .map(|parameter| {
             parameters
                 .get(&parameter.name)
                 .map(json_arg_to_string)
-                .or_else(|| {
-                    if parameter.required.unwrap_or(false) {
-                        Some(String::new())
-                    } else {
-                        None
-                    }
-                })
                 .unwrap_or_default()
         })
         .collect()
 }
 
-fn validate_generated_plan_admission(artifact: &Artifact, runtime: &Runtime) -> Result<(), String> {
+fn validate_generated_workflow_admission(
+    artifact: &Artifact,
+    runtime: &Runtime,
+) -> Result<(), String> {
     if artifact
         .sections()
         .iter()
@@ -1535,7 +974,7 @@ fn compile_air_to_artifact(air: &str) -> Result<Artifact, String> {
 fn compile_stats(artifact: &Artifact, compile_ms: u128, emission_ms: u128) -> JsonValue {
     let dag = artifact.entry_dag();
     json!({
-        (tool_result::GRAPH_NAME): dag.and_then(|dag| dag.metadata.name.as_deref()).unwrap_or(mcp_defaults::ARTIFACT_GRAPH_NAME),
+        (tool_result::WORKFLOW_NAME): dag.and_then(|dag| dag.metadata.name.as_deref()).unwrap_or(mcp_defaults::ARTIFACT_WORKFLOW_NAME),
         (tool_result::NODE_COUNT): dag.map(|dag| dag.nodes.len()).unwrap_or(0),
         (tool_result::EDGE_COUNT): dag.map(|dag| dag.edges.len()).unwrap_or(0),
         (tool_result::COMPILE_MS): compile_ms,
@@ -1571,30 +1010,26 @@ fn execution_summary(
     })
 }
 
-fn extract_json_document(content: &str) -> Result<JsonValue, String> {
+fn extract_air_document(content: &str) -> Result<String, String> {
     let trimmed = content.trim();
-    if let Ok(value) = serde_json::from_str::<JsonValue>(trimmed) {
-        return Ok(value);
+    if trimmed.is_empty() {
+        return Err("model response contained no AIR".to_string());
+    }
+    if trimmed.starts_with('{') || trimmed.starts_with('[') {
+        return Err("model response used JSON; expected canonical APXM AIR text".to_string());
+    }
+    if trimmed.starts_with("```") {
+        return Err("model response used a markdown fence; expected raw APXM AIR text".to_string());
     }
 
-    let unfenced = trimmed
-        .strip_prefix("```json")
-        .or_else(|| trimmed.strip_prefix("```"))
-        .and_then(|value| value.strip_suffix("```"))
-        .map(str::trim)
-        .unwrap_or(trimmed);
-    if let Ok(value) = serde_json::from_str::<JsonValue>(unfenced) {
-        return Ok(value);
+    let first_line = trimmed
+        .lines()
+        .map(str::trim_start)
+        .find(|line| !line.is_empty());
+    if !first_line.is_some_and(|line| line.starts_with("module")) {
+        return Err("model response must start with a canonical AIR module".to_string());
     }
-
-    let Some(start) = unfenced.find('{') else {
-        return Err("model response contained no JSON object".to_string());
-    };
-    let Some(end) = unfenced.rfind('}') else {
-        return Err("model response contained an unterminated JSON object".to_string());
-    };
-    serde_json::from_str(&unfenced[start..=end])
-        .map_err(|error| format!("failed to parse JSON object from model response: {error}"))
+    Ok(format!("{}\n", trimmed.trim_end()))
 }
 
 fn summarize_execution_record(record: JsonValue, node_id: Option<u64>, full: bool) -> JsonValue {
@@ -1957,19 +1392,30 @@ fn validate_trace_id(trace_id: &str) -> Result<(), String> {
     Ok(())
 }
 
-fn plan_session_dir(session_id: &str) -> Result<String, String> {
+fn workflow_session_dir(session_id: &str) -> Result<String, String> {
     validate_trace_id(session_id)?;
     let base = ApxmPaths::discover()
         .map_err(|error| format!("failed to discover APXM paths: {error}"))?
         .sessions_dir()
         .map_err(|error| format!("failed to resolve sessions dir: {error}"))?;
     let session_dir = base
-        .join(plan_skill::SESSION_DIR_KIND)
-        .join(plan_skill::ID)
+        .join(workflow_skill::SESSION_DIR_KIND)
+        .join(workflow_skill::ID)
         .join(session_id);
     fs::create_dir_all(&session_dir)
-        .map_err(|error| format!("failed to create plan session dir: {error}"))?;
+        .map_err(|error| format!("failed to create workflow session dir: {error}"))?;
     Ok(session_dir.to_string_lossy().to_string())
+}
+
+fn write_generated_air(session_dir: &str, air: &str) -> Result<String, String> {
+    let path = Path::new(session_dir).join("workflow.air");
+    fs::write(&path, air).map_err(|error| {
+        format!(
+            "failed to write generated AIR '{}': {error}",
+            path.display()
+        )
+    })?;
+    Ok(path.to_string_lossy().to_string())
 }
 
 fn json_arg_to_string(value: &JsonValue) -> String {
@@ -1977,26 +1423,6 @@ fn json_arg_to_string(value: &JsonValue) -> String {
         .as_str()
         .map(ToString::to_string)
         .unwrap_or_else(|| value.to_string())
-}
-
-fn sanitize_input_name(name: &str) -> String {
-    let mut out = String::with_capacity(name.len());
-    let mut last_separator = false;
-    for ch in name.chars() {
-        if ch.is_ascii_alphanumeric() {
-            out.push(ch.to_ascii_lowercase());
-            last_separator = false;
-        } else if !last_separator {
-            out.push('_');
-            last_separator = true;
-        }
-    }
-    let trimmed = out.trim_matches('_');
-    if trimmed.is_empty() {
-        mcp_defaults::INPUT_NAME.to_string()
-    } else {
-        trimmed.to_string()
-    }
 }
 
 fn display_path(path: &Path) -> String {
@@ -2034,51 +1460,5 @@ mod tests {
             bounded_usize_arg(&args, mcp_args::LIMIT, 6, 1, 30),
             Err("limit must be between 1 and 30".to_string())
         );
-    }
-
-    #[test]
-    fn lower_plan_graph_to_air_lowers_a_caller_supplied_graph() {
-        let graph = json!({
-            "name": "caller_plan",
-            "entry": "plan",
-            "nodes": [
-                { "id": 1, "name": "step", "op": "think", "prompt": "reflect" }
-            ]
-        });
-
-        let air = lower_plan_graph_to_air(graph).expect("graph lowers to AIR");
-        // The lowered module carries the plan name and the THINK op so the
-        // downstream compiler/admission path sees the same AIR an emitted plan
-        // would have produced.
-        assert!(
-            air.contains("caller_plan"),
-            "AIR should name the plan: {air}"
-        );
-        assert!(
-            air.contains("think"),
-            "AIR should contain the think op: {air}"
-        );
-    }
-
-    #[test]
-    fn lower_plan_graph_to_air_rejects_graph_wrapper_envelope() {
-        let graph = json!({
-            "graph": {
-                "name": "wrapped_plan",
-                "entry": "plan",
-                "nodes": [
-                    { "id": 1, "name": "step", "op": "think", "prompt": "reflect" }
-                ]
-            }
-        });
-
-        assert!(lower_plan_graph_to_air(graph).is_err());
-    }
-
-    #[test]
-    fn lower_plan_graph_to_air_rejects_an_empty_graph() {
-        let graph = json!({ "name": "empty", "entry": "plan", "nodes": [] });
-
-        assert!(lower_plan_graph_to_air(graph).is_err());
     }
 }

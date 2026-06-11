@@ -28,14 +28,25 @@ Trigger:
 {% endif %}{% if worker.workspace.base_commit %}- Base commit: `{{ worker.workspace.base_commit }}`
 {% endif %}- Cleanup: `{{ worker.workspace.cleanup }}`
 - Tracking doc: `{{ worker.tracking_doc }}`
-- Graph: `{{ worker.graph_json }}`
+- AIR: `{{ worker.air_path }}`
 - Prompt file: `{{ worker.prompt_path }}`
 - Report file: `{{ worker.report_path }}`
+
+## Agent Route
+
+- Transport: `{{ worker.transport }}`
+{% if worker.profile %}- Profile: `{{ worker.profile }}`
+{% endif %}{% if worker.profile_source %}- Profile source: `{{ worker.profile_source }}`
+{% endif %}{% if worker.profile_description %}- Profile description: {{ worker.profile_description }}
+{% endif %}- Required route capabilities: {{ worker.required_capabilities }}
+- Preferred profiles: {{ worker.preferred_profiles }}
+- Eligible profiles: {{ worker.eligible_profiles }}
+- Route decision: {{ worker.route_reason }}
 
 ## Read First
 
 - This prompt file.
-- The tracking doc and graph JSON listed above.
+- The tracking doc and AIR file listed above.
 - Repository instructions in the assigned workspace, such as `AGENTS.md` or local skill docs, when present.
 - Any documents named by the task, context, or worker instructions.
 
@@ -45,7 +56,7 @@ Trigger:
 - Keep the work bounded to the task, role, and worker instructions.
 - If the task needs a larger split, report the proposed follow-up pass instead of expanding hidden scope.
 
-## Dependency / Graph
+## Dependency / Workflow
 
 Upstream:
 {% if worker.has_upstream -%}

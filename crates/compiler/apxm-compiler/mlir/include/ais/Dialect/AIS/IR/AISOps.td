@@ -693,9 +693,9 @@ def AIS_FlowCallOp : AIS_Op<"flow_call",
 
 def AIS_WorkflowSpawnOp : AIS_Op<"workflow_spawn",
     [MemoryEffects<[MemRead<AIS_BeliefResource>, MemWrite<AIS_BeliefResource>]>]> {
-  let summary = "Spawn a child workflow, graph, or artifact execution";
+  let summary = "Spawn a child AIR file, artifact, or workflow execution";
   let description = [{
-    Invokes an external graph file, artifact, or workflow file as a child
+    Invokes an external AIR file, artifact, or workflow file as a child
     execution boundary. Arguments are passed through node attrs and the child
     execution writes into its own session directory.
 

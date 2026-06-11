@@ -1,7 +1,7 @@
 {
   "name": "approval_gate",
   "description": "Park on a checkpoint, wake from the APXM checkpoint endpoint, and return the resumed input.",
-  "graphs": [
+  "steps": [
     {
       "id": "wait_for_approval",
       "path": "approval_gate.air"

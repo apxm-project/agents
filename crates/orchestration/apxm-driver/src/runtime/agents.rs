@@ -82,21 +82,21 @@ fn is_unsupported_session_control(error: &apxm_acp::AcpError) -> bool {
 
 /// Spawns external ACP agent subprocesses.
 struct AcpAgentSpawner {
-    registry: AgentRegistry,
     sandbox_registry: Arc<SandboxRegistry>,
 }
 
 impl AcpAgentSpawner {
     fn new(sandbox_registry: Arc<SandboxRegistry>) -> Self {
-        Self {
-            registry: AgentRegistry::load(),
-            sandbox_registry,
-        }
+        Self { sandbox_registry }
     }
 }
 
 #[async_trait::async_trait]
 impl AgentSpawner for AcpAgentSpawner {
+    fn route_candidates(&self) -> Vec<apxm_runtime::AgentRouteCandidate> {
+        AgentRegistry::load().route_candidates()
+    }
+
     async fn spawn_external(
         &self,
         agent_name: &str,
@@ -107,12 +107,11 @@ impl AgentSpawner for AcpAgentSpawner {
         aam_context: &AamContext,
         extra_env: &std::collections::HashMap<String, String>,
     ) -> Result<Arc<tokio::sync::Mutex<dyn std::any::Any + Send + Sync>>, RuntimeError> {
-        let profile = self
-            .registry
+        let registry = AgentRegistry::load();
+        let profile = registry
             .get(profile_name)
             .ok_or_else(|| {
-                let available: Vec<String> = self
-                    .registry
+                let available: Vec<String> = registry
                     .list()
                     .into_iter()
                     .map(|(name, _, _)| name)
@@ -120,7 +119,7 @@ impl AgentSpawner for AcpAgentSpawner {
                 RuntimeError::Operation {
                     op_type: apxm_core::types::operations::AISOperationType::SpawnAgent,
                     message: format!(
-                        "Unknown agent profile '{}'. Register with: apxm agent add {}. Registered: [{}]",
+                        "Unknown agent profile '{}'. Add or fix the profile with: apxm agent add {}. Available profiles: [{}]",
                         profile_name,
                         profile_name,
                         available.join(", ")

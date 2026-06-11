@@ -12,11 +12,11 @@ use serde::{Deserialize, Serialize};
 use super::{Edge, Node};
 
 pub const WORKFLOW_TARGET_KIND_REGISTERED_FLOW: &str = "registered_flow";
-pub const WORKFLOW_TARGET_KIND_GRAPH_PATH: &str = "graph_path";
+pub const WORKFLOW_TARGET_KIND_AIR_PATH: &str = "air_path";
 pub const WORKFLOW_TARGET_KIND_ARTIFACT_PATH: &str = "artifact_path";
 pub const WORKFLOW_TARGET_KIND_WORKFLOW_PATH: &str = "workflow_path";
 pub const WORKFLOW_SPAWN_PATH_TARGET_KINDS: [&str; 3] = [
-    WORKFLOW_TARGET_KIND_GRAPH_PATH,
+    WORKFLOW_TARGET_KIND_AIR_PATH,
     WORKFLOW_TARGET_KIND_ARTIFACT_PATH,
     WORKFLOW_TARGET_KIND_WORKFLOW_PATH,
 ];
@@ -38,7 +38,7 @@ pub enum WorkflowTarget {
         agent_name: String,
         flow_name: String,
     },
-    GraphPath {
+    AirPath {
         path: String,
     },
     ArtifactPath {
@@ -53,7 +53,7 @@ impl WorkflowTarget {
     pub fn kind_name(&self) -> &'static str {
         match self {
             WorkflowTarget::RegisteredFlow { .. } => WORKFLOW_TARGET_KIND_REGISTERED_FLOW,
-            WorkflowTarget::GraphPath { .. } => WORKFLOW_TARGET_KIND_GRAPH_PATH,
+            WorkflowTarget::AirPath { .. } => WORKFLOW_TARGET_KIND_AIR_PATH,
             WorkflowTarget::ArtifactPath { .. } => WORKFLOW_TARGET_KIND_ARTIFACT_PATH,
             WorkflowTarget::WorkflowPath { .. } => WORKFLOW_TARGET_KIND_WORKFLOW_PATH,
         }
@@ -65,7 +65,7 @@ impl WorkflowTarget {
     ) -> Result<Self, String> {
         let path = path.into();
         match target_kind {
-            WORKFLOW_TARGET_KIND_GRAPH_PATH => Ok(WorkflowTarget::GraphPath { path }),
+            WORKFLOW_TARGET_KIND_AIR_PATH => Ok(WorkflowTarget::AirPath { path }),
             WORKFLOW_TARGET_KIND_ARTIFACT_PATH => Ok(WorkflowTarget::ArtifactPath { path }),
             WORKFLOW_TARGET_KIND_WORKFLOW_PATH => Ok(WorkflowTarget::WorkflowPath { path }),
             _ => Err(format!(
@@ -82,7 +82,7 @@ impl WorkflowTarget {
                 agent_name,
                 flow_name,
             } => format!("{agent_name}.{flow_name}"),
-            WorkflowTarget::GraphPath { path }
+            WorkflowTarget::AirPath { path }
             | WorkflowTarget::ArtifactPath { path }
             | WorkflowTarget::WorkflowPath { path } => path.clone(),
         }
@@ -282,8 +282,8 @@ mod tests {
         let wn = WorkflowNode::WorkflowSpawn {
             invocation: WorkflowInvocation {
                 kind: WorkflowInvocationKind::WorkflowSpawn,
-                target: WorkflowTarget::GraphPath {
-                    path: "graphs/reviewer.air".into(),
+                target: WorkflowTarget::AirPath {
+                    path: "steps/reviewer.air".into(),
                 },
                 args: HashMap::from([("topic".into(), serde_json::json!("apxm"))]),
                 await_result: true,
@@ -359,11 +359,11 @@ mod tests {
             WORKFLOW_TARGET_KIND_REGISTERED_FLOW
         );
         assert_eq!(
-            WorkflowTarget::GraphPath {
-                path: "graphs/reviewer.air".into(),
+            WorkflowTarget::AirPath {
+                path: "steps/reviewer.air".into(),
             }
             .kind_name(),
-            WORKFLOW_TARGET_KIND_GRAPH_PATH
+            WORKFLOW_TARGET_KIND_AIR_PATH
         );
         assert_eq!(
             WorkflowTarget::ArtifactPath {
@@ -385,10 +385,10 @@ mod tests {
     fn workflow_spawn_target_kind_parser_accepts_supported_kinds() {
         assert!(matches!(
             WorkflowTarget::from_path_target_kind(
-                WORKFLOW_TARGET_KIND_GRAPH_PATH,
-                "graphs/reviewer.air"
+                WORKFLOW_TARGET_KIND_AIR_PATH,
+                "steps/reviewer.air"
             ),
-            Ok(WorkflowTarget::GraphPath { .. })
+            Ok(WorkflowTarget::AirPath { .. })
         ));
         assert!(matches!(
             WorkflowTarget::from_path_target_kind(
@@ -410,7 +410,7 @@ mod tests {
     fn workflow_spawn_target_kind_parser_rejects_unknown_kind() {
         let error = WorkflowTarget::from_path_target_kind("registered_flow", "oops")
             .expect_err("registered_flow is not a supported WORKFLOW_SPAWN target kind");
-        assert!(error.contains(WORKFLOW_TARGET_KIND_GRAPH_PATH));
+        assert!(error.contains(WORKFLOW_TARGET_KIND_AIR_PATH));
         assert!(error.contains(WORKFLOW_TARGET_KIND_ARTIFACT_PATH));
         assert!(error.contains(WORKFLOW_TARGET_KIND_WORKFLOW_PATH));
     }

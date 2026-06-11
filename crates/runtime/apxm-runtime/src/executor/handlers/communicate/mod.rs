@@ -24,8 +24,7 @@ mod http;
 mod local;
 
 pub async fn execute(ctx: &ExecutionContext, node: &Node, inputs: Vec<Value>) -> Result<Value> {
-    let recipient = get_string_attribute(node, graph_attrs::RECIPIENT)
-        .unwrap_or_default();
+    let recipient = get_string_attribute(node, graph_attrs::RECIPIENT).unwrap_or_default();
     let protocol = match get_string_attribute(node, graph_attrs::PROTOCOL) {
         Ok(raw) => raw
             .parse::<CommunicateProtocol>()

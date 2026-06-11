@@ -1,6 +1,6 @@
 ---
 name: apxm-goal-orchestrator
-description: Use when an agent should turn a complex APXM goal into a bounded worker DAG or workflow, execute it through APXM, wait on goal events/status, and synthesize verified artifacts. Covers `dekk apxm goal`, `goal_start`, `goal_*`, workflow drill-down, and `prompt_as_workflow` selection.
+description: Use when an agent should turn a complex APXM goal into a bounded worker workflow, execute it through APXM, wait on goal events/status, and synthesize verified artifacts. Covers `dekk apxm goal`, `goal_start`, `goal_*`, workflow drill-down, and `prompt_as_workflow` selection.
 user-invocable: true
 ---
 
@@ -9,8 +9,8 @@ user-invocable: true
 Load `_shared/apxm-development-rules.md` before broad work.
 
 Use this skill when a human or agent wants APXM to own a complex goal instead
-of manually prompting subagents. `goal_start` can create bounded worker DAGs
-from the task, or accept an explicit DAG when the caller needs to pin it. APXM
+of manually prompting subagents. `goal_start` can create bounded worker workflows
+from the task, or accept explicit workers when the caller needs to pin it. APXM
 executes each pass, continues when the gate asks for more work, and wakes the
 caller through APXM events.
 
@@ -38,7 +38,7 @@ dekk apxm goal "Investigate and implement the bounded change" \
 ```
 
 By default the CLI omits `workers`, asks `goal_start` to auto-plan the bounded
-DAG, and requests APXM agent selection. Use repeatable `--worker` and
+worker workflow, and requests APXM agent selection. Use repeatable `--worker` and
 `--depends` only when the pass must be pinned manually. Profile IDs are
 examples; bind roles to whatever APXM-registered workers are ready, and do not
 assume Claude, Codex, or any provider-specific host exists.
@@ -64,11 +64,11 @@ Use `--event` and `--trigger` when this pass comes from an external event, and
 5. Use `goal_cancel` for interruption. Do not invent a second cancel or
    process-control path for server-owned runs.
 
-## Worker DAG Rules
+## Worker Workflow Rules
 
 - Split by independent artifacts: research, implementation, critique,
   verification, and synthesis are roles, not provider names.
-- Let `goal_start` create the DAG unless the phase order must be pinned. Use
+- Let `goal_start` create the worker workflow unless the phase order must be pinned. Use
   `--depends` or `depends_on` to create manual phases. Keep each pass bounded;
   APXM starts the next pass when the gate asks for more work and the goal still
   has iteration budget.

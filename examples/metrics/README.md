@@ -7,8 +7,8 @@ This example shows the APXM metrics hierarchy:
 - `graph_metrics.aggregates`: derived rollups computed from node records.
 
 Run the live graph with a configured ACP profile. The graph uses
-`example-acp-profile` as a placeholder; replace it with any profile registered
-by the frontend you are testing.
+`example-acp-profile` as a placeholder; replace it with any APXM ACP profile
+resolvable by the runtime, for example one shown by `dekk apxm agent list`.
 
 ```sh
 dekk apxm execute examples/metrics/spawn-agent-graph-metrics.air \

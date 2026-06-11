@@ -2,14 +2,14 @@
 
 A conversational agent in APXM is **two layers**:
 
-1. **The agent body** — an APXM graph authored in this frontend, run *once per
+1. **The agent body** — an APXM workflow authored in this frontend, run *once per
    user message*. The runtime is single-shot by design ("one DAG = one turn"):
    it handles the full per-turn lifetime automatically (pre/post hooks via
    dispatcher middleware, the internal model→tool→model loop, response parsing,
    token accounting).
 2. **The host turn-loop** — `apxm chat`, which owns the open-ended conversation:
    it threads a stable `session_id` (so server-side memory accrues across turns)
-   and the running transcript back into the graph as the `conversation`
+   and the running transcript back into the workflow as the `conversation`
    parameter each turn.
 
 ## Run it
@@ -20,7 +20,7 @@ dekk apxm execute examples/python/conversational/chat_agent.py --emit-air > chat
 
 # Start a server, then drive the agent conversationally
 apxm chat --air chat.air
-# or with the built-in single-ASK chat graph:
+# or with the built-in single-ASK chat workflow:
 apxm chat
 ```
 
@@ -62,15 +62,15 @@ crash):
 
 - `g.delegate(target_agent="researcher", …)` dispatches to a sub-agent *flow*.
   `g.spawn_agent` only registers the name; the runtime resolves the flow from a
-  second function in the artifact named `Agent.flow` (e.g. `@researcher.main` —
-  see `parse_flow_name`). A self-contained runnable multi-agent graph therefore
+  second function in the artifact named `Agent.flow` (e.g. `@researcher.main`;
+  see `parse_flow_name`). A self-contained runnable multi-agent workflow therefore
   defines that second function; emit one with hand-written AIR, or register the
   sub-agent before the turn.
 - `g.call_skill("summarize", …)` resolves an *installed* skill by id. Install a
   skill named `summarize` (or point the call at one that is installed) for this
   step to run; otherwise it returns `call_skill:not_found:summarize`.
 
-For a bounded in-graph refinement loop, use the `g.loop(count=N)` context
+For a bounded in-workflow refinement loop, use the `g.loop(count=N)` context
 manager (see `apxm.Loop`). Open-ended iteration belongs in the host turn-loop.
 
 ## End-to-end (mock backend, no GPU)
@@ -93,14 +93,14 @@ Every op the conversational agent uses now round-trips and passes
 (carrying `max_iterations`), `plan`, `fence`, and `negotiate` were reconciled
 across `AISOps.td` + the C++ verifiers + the Rust reverse emitter
 (`air_builder/emit.rs`) + the generated Python emitter. The one structural
-caveat: in-graph `loop` iteration is single-pass (the scheduler is fire-once) —
+caveat: in-workflow `loop` iteration is single-pass (the scheduler is fire-once);
 use the host turn-loop or `AUTONOMOUS` for real iteration.
 
 ## Context compaction (host post-hook)
 
 The REPL compacts the transcript after each turn when it exceeds a token budget:
 the oldest turns are folded into a running `summary` (cumulative) while the most
-recent turns stay verbatim, via the shared summarize graph
+recent turns stay verbatim, via the shared summarize workflow
 (`apxm_ais::chat::SUMMARIZE_AIR`). `/compact` forces it. Durable detail can be persisted to session memory (`umem`) before
 dropping. This is the runtime's `on_graph_finished` post-hook concept realized at
 the host level (where the transcript actually lives).
@@ -117,21 +117,21 @@ handlers as the REST API:
 - `run` (side-effecting): compile + run canonical AIR; writes require
   `admit_capabilities`.
 - `goal_start` (side-effecting): execute one explicit bounded
-  worker DAG through the native workflow control plane, returning
+  worker workflow through the native workflow control plane, returning
   `execution_id`, workflow events/status/cancel handles, session directories,
   and goal artifacts.
 - `workflow_start/status/events/cancel` (side-effecting): launch, observe,
   and stop checked-in `.apxmw` workflows through server-owned control handles.
-- `prompt_as_workflow`: synthesize workflow proposals from natural language. Treat
-  generated workflows as proposals until APXM validates and admits them; do not use
-  it to bypass worker admission.
-- `skill_call` (pre-existing): invoke a vetted installed skill by id.
+- `prompt_as_workflow`: synthesize canonical AIR workflows from natural language.
+  Treat generated workflows as proposals until APXM validates and admits them;
+  do not use it to bypass worker admission.
+- `skill_call`: invoke a vetted installed skill by id.
 
 ### Security: one no-widen boundary, enforced at the invoke chokepoint
 
 The write boundary is enforced at the runtime `inv_tool` invoke site (not only
 the server's static pre-flight), so it holds for **every** path — raw execute,
-`CALL_SKILL` child DAGs, workflow starts, and `SPAWN_AGENT`. The effective grant
+`CALL_SKILL` child workflows, workflow starts, and `SPAWN_AGENT`. The effective grant
 (`SIDE_EFFECT_POLICY`) is seeded from `admit_capabilities` at the top level and
 propagated to children with no-widen (`child ⊆ parent`). Read-only and sandboxed
 capabilities are always allowed; a Direct write runs only if the execution's

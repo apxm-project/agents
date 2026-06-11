@@ -117,8 +117,8 @@ pub const PLAN_STEP_STARTED: EventKind =
     EventKind::new("plan_step_started", EventCategory::Lifecycle, false);
 pub const PLAN_STEP_COMPLETED: EventKind =
     EventKind::new("plan_step_completed", EventCategory::Lifecycle, false);
-pub const PLAN_GRAPH_EMITTED: EventKind =
-    EventKind::new("plan_graph_emitted", EventCategory::Lifecycle, false);
+pub const PLAN_WORKFLOW_EMITTED: EventKind =
+    EventKind::new("plan_workflow_emitted", EventCategory::Lifecycle, false);
 pub const WORKFLOW_STARTED: EventKind =
     EventKind::new("workflow_started", EventCategory::Lifecycle, false);
 pub const WORKFLOW_STEP_STARTED: EventKind =
@@ -246,7 +246,7 @@ pub const CORE_EVENT_KINDS: &[EventKind] = &[
     PLAN_CREATED,
     PLAN_STEP_STARTED,
     PLAN_STEP_COMPLETED,
-    PLAN_GRAPH_EMITTED,
+    PLAN_WORKFLOW_EMITTED,
     WORKFLOW_STARTED,
     WORKFLOW_STEP_STARTED,
     WORKFLOW_STEP_COMPLETED,

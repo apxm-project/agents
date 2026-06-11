@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Autofix Loop - APXM workflow for automated issue fixing.
 
-This is the "ultrathink" version of autofix — a workflow graph that coordinates
+This is the "ultrathink" version of autofix — a workflow that coordinates
 multiple agents to analyze, fix, and verify issues in the APXM codebase.
 
 The workflow:

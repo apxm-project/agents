@@ -8,8 +8,10 @@ use serde_json::Value as JsonValue;
 use crate::execute::to_execute_response;
 use crate::executions::{ExecutionRecordingEmitter, ExecutionStore};
 use crate::helpers::mcp_tool_result;
-use crate::mcp_protocol::{args as mcp_args, plan_skill};
-use crate::mcp_tools::{self, PlanExecutionHandle, PlanExecutionRecorder, PlanExecutionStart};
+use crate::mcp_protocol::{args as mcp_args, workflow_skill};
+use crate::mcp_tools::{
+    self, WorkflowExecutionHandle, WorkflowExecutionRecorder, WorkflowExecutionStart,
+};
 use crate::skills::{SkillExecuteRequest, SkillLookupError, execute_skill_by_id};
 use crate::state::AppState;
 
@@ -73,7 +75,7 @@ pub(crate) async fn call_skill_tool(
             match mcp_tools::prompt_as_workflow_with_recorder(
                 &state.runtime,
                 tool_args.clone(),
-                Some(Arc::new(HttpPlanExecutionRecorder::new(
+                Some(Arc::new(HttpWorkflowExecutionRecorder::new(
                     state.execution_store.clone(),
                 ))),
                 &state.server_config.mcp,
@@ -146,26 +148,26 @@ pub(crate) async fn call_skill_tool(
     }
 }
 
-struct HttpPlanExecutionRecorder {
+struct HttpWorkflowExecutionRecorder {
     execution_store: ExecutionStore,
 }
 
-impl HttpPlanExecutionRecorder {
+impl HttpWorkflowExecutionRecorder {
     fn new(execution_store: ExecutionStore) -> Self {
         Self { execution_store }
     }
 }
 
-impl PlanExecutionRecorder for HttpPlanExecutionRecorder {
-    fn start(&self, start: PlanExecutionStart) -> PlanExecutionHandle {
+impl WorkflowExecutionRecorder for HttpWorkflowExecutionRecorder {
+    fn start(&self, start: WorkflowExecutionStart) -> WorkflowExecutionHandle {
         let record = self
             .execution_store
             .start_skill_execution_with_provenance_and_execution_id(
                 start.execution_id,
                 apxm_skill::SkillExecutionProvenance {
-                    skill_id: plan_skill::ID.to_string(),
-                    skill_version: plan_skill::VERSION.to_string(),
-                    entry_flow: Some(plan_skill::ENTRY_FLOW.to_string()),
+                    skill_id: workflow_skill::ID.to_string(),
+                    skill_version: workflow_skill::VERSION.to_string(),
+                    entry_flow: Some(workflow_skill::ENTRY_FLOW.to_string()),
                     source_hash: None,
                     air_hash: Some(start.air_hash),
                     artifact_hash: Some(start.artifact_hash),
@@ -177,7 +179,7 @@ impl PlanExecutionRecorder for HttpPlanExecutionRecorder {
                 &start.session_id,
                 &start.session_dir,
             );
-        PlanExecutionHandle {
+        WorkflowExecutionHandle {
             execution_id: record.execution_id.clone(),
             emitter: Arc::new(ExecutionRecordingEmitter::new(
                 self.execution_store.clone(),

@@ -4,7 +4,7 @@ Agent Client Protocol (ACP) client for spawning and communicating with coding ag
 
 ## Overview
 
-`apxm-acp` spawns coding agents (Claude, Codex, Gemini CLI, Copilot, Cursor, and 11 others) as subprocesses, speaks JSON-RPC 2.0 over stdin/stdout, and integrates agent sessions with the APXM runtime's AAM memory and capability systems.
+`apxm-acp` spawns coding agents (Claude, Codex, Gemini CLI, Copilot, Cursor, and 10 others) as subprocesses, speaks JSON-RPC 2.0 over stdin/stdout, and integrates agent sessions with the APXM runtime's AAM memory and capability systems.
 
 ## Module Structure
 
@@ -26,12 +26,12 @@ Agent Client Protocol (ACP) client for spawning and communicating with coding ag
 
 - `AcpSession` -- single agent session over JSON-RPC stdio
 - `AgentRegistry` -- discovers, registers, and manages agent profiles
-- `AgentProfile` -- spawn command, timeouts, permission mode for one agent
+- `AcpAgentProfile` -- spawn command, route metadata, timeouts, permission mode for one agent
 - `PermissionMode` -- `ApproveAll`, `ApproveReads`, `DenyAll`
 - `CapabilityServerConfig` -- MCP server config provisioned to agent sessions
 - `AcpError` -- error type covering spawn, protocol, timeout, and permission failures
 
-## Built-in Agent Templates (16)
+## Built-in Agent Templates (15)
 
 claude, codex, gemini, copilot, cursor, pi, droid, kilocode, kimi, kiro, opencode, qoder, qwen, trae, iflow.
 

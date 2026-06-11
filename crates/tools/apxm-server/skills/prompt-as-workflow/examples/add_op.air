@@ -1,0 +1,10 @@
+module {
+  func.func @add_op(%op_name: !ais.token {ais.param_name = "op_name", ais.param_type = "str"}, %op_description: !ais.token {ais.param_name = "op_description", ais.param_type = "str"}) -> !ais.token attributes {ais.entry} {
+    %plan = ais.ask "Create the operation implementation plan for {op_name}: wire index, attributes, MLIR mnemonic, runtime handler behavior, and tests. Description: {op_description}" : !ais.token
+    %compiler = ais.ask "Implement compiler-side changes from {plan}." [%plan : !ais.token] {input_names = ["plan"]} : !ais.token
+    %runtime = ais.ask "Implement runtime handler, dispatcher wiring, and handler tests from {plan}." [%plan : !ais.token] {input_names = ["plan"]} : !ais.token
+    %wait = ais.wait_all %compiler, %runtime : !ais.token, !ais.token -> !ais.token
+    %review = ais.ask "Review compiler and runtime changes for consistency, run focused tests, and report readiness." [%wait : !ais.token] {input_names = ["wait"]} : !ais.token
+    func.return %review : !ais.token
+  }
+}

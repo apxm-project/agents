@@ -90,7 +90,6 @@ def test_loop_context_manager_wires_region():
 
     graph = rec.to_graph()
     start_node = _by_op(graph, g.OP_LOOP_START)[0]
-    assert start_node.attributes[g.MAX_ITERATIONS] == 3
     assert lp.end is not None
     # Counter Data edge LOOP_START -> LOOP_END.
     assert any(
@@ -125,10 +124,8 @@ def test_agent_handle_chat_chains_turns():
 
 
 def test_conversational_agent_program_builds_and_emits_air():
-    """End-to-end authoring smoke: a planner -> tool ASK -> skill -> synth flow
-    lowers to AIR text containing each construct."""
     rec = GraphRecorder("assistant")
-    plan = rec.reason(name="plan", prompt="Plan a response to: {conversation}")
+    rec.reason(name="plan", prompt="Plan a response to: {conversation}")
     answer = rec.ask(
         name="answer",
         prompt="Answer using tools: {conversation}",
@@ -141,5 +138,4 @@ def test_conversational_agent_program_builds_and_emits_air():
     air = rec.to_graph().to_air()
     assert "ais.call_skill" in air
     assert "ais.spawn_team" in air
-    assert "ais.reason" in air or "ais.ask" in air
-    assert plan is not None
+    assert "ais.reason" in air

@@ -43,8 +43,8 @@ pub use execution::{
     NodeMetrics, NodeProcessMetrics, NodeStatus, ObservedCriticalPath, ObservedGraphMetrics,
     ObservedQueueWait, OpStatus, OperationMetric, OperationMetricTotals, ProcessMetricTotals,
     ProcessPromptMetric, ProcessSpawnMetric, SpawnedProcessKind, Task, TaskDag, TaskId,
-    TaskMetadata, WORKFLOW_SPAWN_PATH_TARGET_KINDS, WORKFLOW_TARGET_KIND_ARTIFACT_PATH,
-    WORKFLOW_TARGET_KIND_GRAPH_PATH, WORKFLOW_TARGET_KIND_REGISTERED_FLOW,
+    TaskMetadata, WORKFLOW_SPAWN_PATH_TARGET_KINDS, WORKFLOW_TARGET_KIND_AIR_PATH,
+    WORKFLOW_TARGET_KIND_ARTIFACT_PATH, WORKFLOW_TARGET_KIND_REGISTERED_FLOW,
     WORKFLOW_TARGET_KIND_WORKFLOW_PATH, WorkflowInvocation, WorkflowInvocationKind, WorkflowNode,
     WorkflowTarget,
 };

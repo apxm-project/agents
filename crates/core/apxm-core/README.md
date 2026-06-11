@@ -28,7 +28,7 @@ Shared graph contract, types, error definitions, event system, and constants use
 | `constants` | graph attributes, JSON-RPC, protocol, and diagnostic constants |
 | `agent_profile` | `AgentProfile` type for agent configuration |
 | `model_profiles` | Model capability profiles and token limits |
-| `plan` | `Plan`, `PlanStep`, `InnerPlanPayload` for dynamic sub-graphs |
+| `plan` | `Plan`, `PlanStep`, `InnerPlanPayload` for dynamic sub-workflows |
 | `paths` | Path utilities for `~/.apxm/` directory layout |
 | `logging` | Logging macros and configuration |
 | `utils/build` | Build-script helpers for native toolchain detection |

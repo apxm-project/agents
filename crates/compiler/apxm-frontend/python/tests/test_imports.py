@@ -11,7 +11,7 @@ def test_import_constants():
         SESSION_ROOT,
         TARGET_KIND,
         TEMPLATE_STR,
-        WORKFLOW_TARGET_KIND_GRAPH_PATH,
+        WORKFLOW_TARGET_KIND_AIR_PATH,
         WORKFLOW_SPAWN_PATH_TARGET_KINDS,
     )
     assert MODEL == public_constants.MODEL
@@ -20,8 +20,8 @@ def test_import_constants():
     assert TARGET_KIND == public_constants.TARGET_KIND
     assert SESSION_ROOT == public_constants.SESSION_ROOT
     assert AWAIT_RESULT == public_constants.AWAIT_RESULT
-    assert WORKFLOW_TARGET_KIND_GRAPH_PATH == WorkflowTargetKind.GRAPH_PATH.value
-    assert WORKFLOW_TARGET_KIND_GRAPH_PATH in WORKFLOW_SPAWN_PATH_TARGET_KINDS
+    assert WORKFLOW_TARGET_KIND_AIR_PATH == WorkflowTargetKind.AIR_PATH.value
+    assert WORKFLOW_TARGET_KIND_AIR_PATH in WORKFLOW_SPAWN_PATH_TARGET_KINDS
 
 
 def test_import_operations():
@@ -61,7 +61,7 @@ def test_graph_imports():
     assert GraphRecorder is not None
     assert NodeRef is not None
     assert ApxmGraph is not None
-    assert WorkflowTargetKind.GRAPH_PATH.value is not None
+    assert WorkflowTargetKind.AIR_PATH.value is not None
     assert compile is not None
     assert AgentHandle is not None
     assert BackendRoute is not None

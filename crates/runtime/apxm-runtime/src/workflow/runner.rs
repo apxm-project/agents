@@ -1,6 +1,6 @@
 //! Workflow execution engine.
 
-use super::{WorkflowDef, def::GraphStep, template, topo};
+use super::{WorkflowDef, def::WorkflowStep, template, topo};
 use apxm_core::log_info;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -59,7 +59,7 @@ pub enum StepStatus {
 
 /// Workflow execution engine.
 ///
-/// Orchestrates parallel execution of graph steps with dependency resolution.
+/// Orchestrates parallel execution of workflow steps with dependency resolution.
 pub struct WorkflowRunner {
     pub def: WorkflowDef,
     pub base_dir: PathBuf,
@@ -85,7 +85,7 @@ impl WorkflowRunner {
         let start = Instant::now();
 
         // Compute execution phases
-        let phases = topo::execution_phases(&self.def.graphs)?;
+        let phases = topo::execution_phases(&self.def.steps)?;
 
         log_info!(
             "workflow",
@@ -157,12 +157,12 @@ impl WorkflowRunner {
                 );
 
                 let _step_session_dir = workflow_session_dir.join(&step.id);
-                let graph_path = self.base_dir.join(&step.path);
+                let air_path = self.base_dir.join(&step.path);
 
                 log_info!(
                     "workflow",
                     step = %step_id,
-                    graph = %graph_path.display(),
+                    air = %air_path.display(),
                     target = %invocation.target.label(),
                     "Starting step"
                 );
@@ -198,8 +198,8 @@ impl WorkflowRunner {
 }
 
 /// Find a step by ID in the workflow definition.
-fn find_step<'a>(def: &'a WorkflowDef, step_id: &str) -> anyhow::Result<&'a GraphStep> {
-    def.graphs
+fn find_step<'a>(def: &'a WorkflowDef, step_id: &str) -> anyhow::Result<&'a WorkflowStep> {
+    def.steps
         .iter()
         .find(|s| s.id == step_id)
         .ok_or_else(|| anyhow::anyhow!("Step '{}' not found in workflow", step_id))
@@ -300,7 +300,7 @@ mod tests {
             name: "test".to_string(),
             description: None,
             parameters: vec![],
-            graphs: vec![GraphStep {
+            steps: vec![WorkflowStep {
                 id: "a".to_string(),
                 path: "a.air".to_string(),
                 depends_on: vec![],

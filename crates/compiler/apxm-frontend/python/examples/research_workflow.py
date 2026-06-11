@@ -55,7 +55,7 @@ def main():
     # Access the compiled graph
     graph = research_workflow._graph
 
-    print("Generated Workflow Graph:")
+    print("Generated Workflow AIR:")
     print("=" * 60)
     print(f"Name: {graph.name}")
     print(f"Parameters: {[(p.name, p.type_name) for p in graph.parameters]}")

@@ -36,7 +36,7 @@ pub enum Commands {
     },
     /// Compile canonical AIR source to an artifact
     Compile {
-        /// Input graph source (.py frontend, .air, or directory containing one .air)
+        /// Input workflow source (.py frontend, .air, or directory containing one .air)
         input: PathBuf,
         /// Output artifact path
         #[arg(short, long)]
@@ -91,7 +91,7 @@ pub enum Commands {
     /// Compile and execute AIR source through the runtime
     #[command(trailing_var_arg = true)]
     Execute {
-        /// Input graph source (.py frontend, .air, or directory containing one .air)
+        /// Input workflow source (.py frontend, .air, or directory containing one .air)
         input: PathBuf,
         /// Arguments to pass to the entry flow
         #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
@@ -106,7 +106,7 @@ pub enum Commands {
         #[arg(long)]
         emit_metrics: Option<PathBuf>,
         /// Metrics emission tier (basic = aggregates only;
-        /// detailed = adds in-flight observers like per-graph pin-peak polling)
+        /// detailed = adds in-flight observers like per-workflow pin-peak polling)
         #[arg(long, default_value_t = MetricsLevel::default())]
         emit_metrics_level: MetricsLevel,
         /// Emit session output folder with all node results, events, metrics.
@@ -136,7 +136,7 @@ pub enum Commands {
         #[arg(long)]
         emit_metrics: Option<PathBuf>,
         /// Metrics emission tier (basic = aggregates only;
-        /// detailed = adds in-flight observers like per-graph pin-peak polling)
+        /// detailed = adds in-flight observers like per-workflow pin-peak polling)
         #[arg(long, default_value_t = MetricsLevel::default())]
         emit_metrics_level: MetricsLevel,
         /// Emit session output folder with all node results, events, metrics.
@@ -180,25 +180,25 @@ pub enum Commands {
     },
     /// Validate canonical AIR source against the AIS contract
     Validate {
-        /// Input graph source (.air)
+        /// Input workflow source (.air)
         input: PathBuf,
         /// Skip Tier 2 environment checks (registered backends, profiles, etc.)
         #[arg(long)]
         no_check_resources: bool,
     },
-    /// Analyze an AirModule for parallelism, critical path, and execution phases
+    /// Analyze an AIR workflow for parallelism, critical path, and execution phases
     Analyze {
-        /// Input graph source (.air)
+        /// Input workflow source (.air)
         input: PathBuf,
     },
-    /// Browse graph templates (starter patterns)
+    /// Browse workflow templates (starter patterns)
     Template {
         #[command(subcommand)]
         action: TemplateAction,
     },
-    /// Explain what a graph does OR explain an error code
+    /// Explain what a workflow does OR explain an error code
     Explain {
-        /// Error code (e.g., E511) or path to graph source (.air)
+        /// Error code (e.g., E511) or path to workflow source (.air)
         target: String,
     },
     /// Generate frontend assets from Rust-owned registries
@@ -372,15 +372,15 @@ pub struct GoalArgs {
     #[arg(long = "depends", value_name = "WORKER=DEP1,DEP2")]
     pub depends: Vec<String>,
 
-    /// Bind unprofiled explicit workers to registered ACP agents selected by APXM.
+    /// Bind unprofiled explicit workers to resolvable ACP profiles selected by APXM.
     #[arg(long = "use-agents")]
     pub use_agents: bool,
 
-    /// Registered profile for the default planner worker.
+    /// ACP profile for the default planner worker.
     #[arg(long = "planner", value_name = "PROFILE")]
     pub planner_profile: Option<String>,
 
-    /// Registered profile for the default executor worker.
+    /// ACP profile for the default executor worker.
     #[arg(long = "executor", value_name = "PROFILE")]
     pub executor_profile: Option<String>,
 
@@ -392,11 +392,11 @@ pub struct GoalArgs {
     #[arg(long = "reviewer", value_name = "PROFILE|ID[:ROLE[:PROFILE]]")]
     pub reviewers: Vec<String>,
 
-    /// Registered profile for the default verifier worker.
+    /// ACP profile for the default verifier worker.
     #[arg(long = "verifier", value_name = "PROFILE")]
     pub verifier_profile: Option<String>,
 
-    /// Registered profile for the final gate/eval supervisor.
+    /// ACP profile for the final gate/eval supervisor.
     #[arg(long = "supervisor", value_name = "PROFILE")]
     pub supervisor_profile: Option<String>,
 
@@ -485,7 +485,7 @@ pub enum RolloutAction {
 
 #[derive(Subcommand)]
 pub enum TemplateAction {
-    /// List available graph templates
+    /// List available workflow templates
     List,
     /// Show a specific template
     Show {
@@ -929,7 +929,7 @@ pub enum ToolAction {
 
 #[derive(Subcommand)]
 pub enum AgentAction {
-    /// List registered ACP agents
+    /// List available ACP agent profiles
     List,
     /// Register an agent profile (from template or custom command)
     Add {
@@ -953,7 +953,7 @@ pub enum AgentAction {
         #[arg(long)]
         no_test: bool,
     },
-    /// Remove a registered agent profile
+    /// Remove a user agent profile
     Remove {
         /// Agent profile name to remove
         name: String,

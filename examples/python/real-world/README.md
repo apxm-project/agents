@@ -9,7 +9,7 @@ optimization) into end-to-end workflows that solve real problems.
 
 ## Requirements
 
-Most workflows in this directory spawn generated ACP profiles such as
+Most workflows in this directory spawn APXM ACP profiles such as
 `claude` and `codex`. Verify the profiles with `dekk apxm agent list` and
 test the local CLI/auth setup with `dekk apxm agent test <name>` before
 executing them.

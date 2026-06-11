@@ -166,8 +166,8 @@ fn boxed_core_payload_from_json(
         boxed!(PlanStepStartedPayload)
     } else if kind_name == kind::PLAN_STEP_COMPLETED.name() {
         boxed!(PlanStepCompletedPayload)
-    } else if kind_name == kind::PLAN_GRAPH_EMITTED.name() {
-        boxed!(PlanGraphEmittedPayload)
+    } else if kind_name == kind::PLAN_WORKFLOW_EMITTED.name() {
+        boxed!(PlanWorkflowEmittedPayload)
     } else if kind_name == kind::WORKFLOW_STARTED.name() {
         boxed!(WorkflowStartedPayload)
     } else if kind_name == kind::WORKFLOW_STEP_STARTED.name() {
@@ -698,15 +698,15 @@ pub struct PlanStepCompletedPayload {
 impl_event_payload!(PlanStepCompletedPayload, kind::PLAN_STEP_COMPLETED);
 
 /// An LLM-emitted plan included a structured task DAG that the runtime
-/// is about to compile and splice into the live execution graph.
+/// is about to lower into AIR and splice into the live execution DAG.
 ///
 /// Emitted from the PLAN handler after the planner LLM response is
 /// parsed and before the inner-plan linker compiles the DAG. Lets
 /// observers tell apart the "LLM produced free-text steps" path from
-/// the "LLM produced an executable graph" path, and captures the
-/// shape of that graph for trace analysis.
+/// the "LLM produced an executable workflow" path, and captures the
+/// workflow shape for trace analysis.
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct PlanGraphEmittedPayload {
+pub struct PlanWorkflowEmittedPayload {
     /// Plan identifier (the outer PLAN node's id).
     pub plan_id: String,
     /// Model that emitted the task DAG.
@@ -722,7 +722,7 @@ pub struct PlanGraphEmittedPayload {
     /// parallelism.
     pub parallel_fanout_max: usize,
 }
-impl_event_payload!(PlanGraphEmittedPayload, kind::PLAN_GRAPH_EMITTED);
+impl_event_payload!(PlanWorkflowEmittedPayload, kind::PLAN_WORKFLOW_EMITTED);
 
 /// A `.apxmw` workflow session started.
 #[derive(Debug, Clone, Serialize, Deserialize)]

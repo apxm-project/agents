@@ -26,8 +26,8 @@ use apxm_core::types::{
     OrchestrationWakeOutcome, OrchestrationWorkspaceCleanup, OrchestrationWorkspaceMode,
 };
 use apxm_runtime::{
-    AgentRouteCandidate, AgentRouteDecision, AgentRouteSource, AgentRouteTarget, AgentRouter,
-    AgentRoutingError,
+    AGENT_ROUTE_CAPABILITIES, AgentRouteCandidate, AgentRouteDecision, AgentRouteSource,
+    AgentRouteTarget, AgentRouter, AgentRoutingError,
 };
 use axum::Json;
 use axum::extract::State;
@@ -64,7 +64,6 @@ const TEMPLATE_GOAL_DEFAULT_SUPERVISOR: &str = "goal_default_supervisor_instruct
 const DEFAULT_AUTO_PLAN_MAX_WORKERS: usize = 8;
 const GOAL_PLANNER_TIMEOUT_MS: u64 = 30_000;
 const GOAL_PLANNER_MAX_TOKENS: usize = 4096;
-
 #[derive(Debug, Clone, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct GoalStartArgs {
@@ -156,6 +155,10 @@ struct WorkerSpec {
     mode: Option<String>,
     #[serde(default)]
     model: Option<String>,
+    #[serde(default)]
+    required_capabilities: Vec<String>,
+    #[serde(default)]
+    preferred_profiles: Vec<String>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -232,8 +235,9 @@ struct GoalPlanningSummary {
 #[derive(Debug, Clone, Serialize)]
 struct GoalArtifacts {
     tracking_doc: String,
-    graph_json: String,
-    plan_json: String,
+    worker_air_dir: String,
+    gate_air: String,
+    feedback_air: String,
     prompts_dir: String,
     reports_dir: String,
     worker_prompts: Vec<WorkerPromptArtifact>,
@@ -255,6 +259,19 @@ struct WorkerPlanSummary {
     transport: OrchestrationTransport,
     #[serde(skip_serializing_if = "Option::is_none")]
     profile: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    mode: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    model: Option<String>,
+    required_capabilities: Vec<String>,
+    preferred_profiles: Vec<String>,
+    route_source: String,
+    route_reason: String,
+    eligible_profiles: Vec<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    profile_source: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    profile_description: Option<String>,
     depends_on: Vec<String>,
     cwd: String,
     workspace: WorkspaceBindingSummary,
@@ -337,9 +354,17 @@ struct WorkerSelectionSummary {
     profile: Option<String>,
     source: &'static str,
     #[serde(skip_serializing_if = "Option::is_none")]
+    profile_source: Option<String>,
+    required_capabilities: Vec<String>,
+    preferred_profiles: Vec<String>,
+    eligible_profiles: Vec<String>,
+    reason: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
     mode: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     model: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    profile_description: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -382,9 +407,16 @@ struct WorkerPlan {
     depends_on: Vec<String>,
     mode: Option<String>,
     model: Option<String>,
+    required_capabilities: Vec<String>,
+    preferred_profiles: Vec<String>,
+    route_source: String,
+    route_reason: String,
+    eligible_profiles: Vec<String>,
+    profile_source: Option<String>,
+    profile_description: Option<String>,
     cwd: PathBuf,
     tracking_doc_path: PathBuf,
-    graph_path: PathBuf,
+    air_path: PathBuf,
     prompt_path: PathBuf,
     report_path: PathBuf,
     workspace: WorkspaceBinding,
@@ -400,7 +432,7 @@ struct SupervisorPlan {
     model: Option<String>,
     cwd: Option<PathBuf>,
     tracking_doc_path: PathBuf,
-    graph_path: PathBuf,
+    air_path: PathBuf,
     prompt_path: PathBuf,
     report_path: PathBuf,
 }
@@ -438,7 +470,7 @@ pub(crate) fn goal_start_input_schema() -> JsonValue {
                 "type": "array",
                 "minItems": 1,
                 "maxItems": MAX_WORKERS,
-                "description": "Optional bounded worker graph. When omitted, APXM creates a bounded worker DAG from task/context/event/trigger before admission. Independent workers run in parallel; depends_on creates fan-in/fan-out phases.",
+                "description": "Optional bounded worker workflow. When omitted, APXM creates a bounded worker workflow from task/context/event/trigger before admission. Independent workers run in parallel; depends_on creates fan-in/fan-out phases.",
                 "items": {
                     "type": "object",
                     "additionalProperties": false,
@@ -449,16 +481,29 @@ pub(crate) fn goal_start_input_schema() -> JsonValue {
                         "prompt": { "type": "string" },
                         "profile": {
                             "type": "string",
-                            "description": "Optional ACP profile from the APXM agent registry"
+                            "description": "Optional ACP profile from the APXM agent profile registry"
                         },
                         "transport": {
                             "type": "string",
                             "enum": OrchestrationTransport::WIRE_VALUES,
-                            "description": "acp spawns a real registered profile; deterministic writes a local fixture worker"
+                            "description": "acp spawns a real APXM profile; deterministic writes a local fixture worker"
                         },
                         "depends_on": { "type": "array", "items": { "type": "string" } },
                         "mode": { "type": "string" },
-                        "model": { "type": "string" }
+                        "model": { "type": "string" },
+                        "required_capabilities": {
+                            "type": "array",
+                            "items": {
+                                "type": "string",
+                                "enum": AGENT_ROUTE_CAPABILITIES
+                            },
+                            "description": "Abstract route capabilities this worker needs"
+                        },
+                        "preferred_profiles": {
+                            "type": "array",
+                            "items": { "type": "string" },
+                            "description": "Optional APXM profile preferences; APXM validates capability fit before binding"
+                        }
                     }
                 }
             },
@@ -504,12 +549,12 @@ pub(crate) fn goal_start_input_schema() -> JsonValue {
             "selection": {
                 "type": "object",
                 "additionalProperties": false,
-                "description": "Optional APXM-native worker selection policy. The server binds from registered ACP agents and reports current backend health before materializing the workflow.",
+                "description": "Optional APXM-native worker selection policy. The server binds from resolvable ACP profiles and reports current backend health before materializing the workflow.",
                 "properties": {
                     "agents": {
                         "type": "string",
                         "enum": ["auto"],
-                        "description": "auto binds workers without explicit profiles to registered APXM agents"
+                        "description": "auto binds workers without explicit profiles to resolvable APXM profiles"
                     },
                     "require_agents": {
                         "type": "boolean",
@@ -708,7 +753,8 @@ async fn start_goal_pass(
     goal_id: &str,
 ) -> Result<GoalPassStart, ApiError> {
     let planning = apply_goal_planning(state, &mut request).await?;
-    let selection = apply_goal_selection(state, &mut request)?;
+    normalize_goal_routing_fields(&mut request)?;
+    let selection = apply_goal_selection(state, &mut request).await?;
     let uses_process_spawns = goal_uses_process_spawns(&request);
     if uses_process_spawns
         && !request
@@ -722,7 +768,7 @@ async fn start_goal_pass(
         )));
     }
 
-    let bundle = materialize_goal_bundle(&request, &planning)?;
+    let bundle = materialize_goal_bundle(&request, selection.as_ref())?;
     let plan_summary = bundle.plan.summary();
     let artifacts = goal_artifacts(&bundle.bundle_dir, &bundle.plan);
     let control = goal_control();
@@ -1435,7 +1481,7 @@ fn record_goal_run_event(state: &AppState, goal_id: &str, event: ApxmEvent) {
 
 fn materialize_goal_bundle(
     request: &GoalStartArgs,
-    planning: &GoalPlanningSummary,
+    selection: Option<&GoalSelectionSummary>,
 ) -> Result<GoalBundle, ApiError> {
     validate_request(request)?;
     let session_id = request
@@ -1464,8 +1510,14 @@ fn materialize_goal_bundle(
     })?;
 
     let workspace_policy = WorkspacePolicy::from_spec(request.workspace.as_ref(), &bundle_dir)?;
-    let plan = build_plan(request, &session_id, &bundle_dir, &workspace_policy)?;
-    write_bundle_files(&bundle_dir, request, planning, &plan)?;
+    let plan = build_plan(
+        request,
+        &session_id,
+        &bundle_dir,
+        &workspace_policy,
+        selection,
+    )?;
+    write_bundle_files(&bundle_dir, request, &plan)?;
 
     Ok(GoalBundle {
         session_id,
@@ -1504,6 +1556,15 @@ fn validate_request(request: &GoalStartArgs) -> Result<(), ApiError> {
         validate_optional_text(worker.prompt.as_deref(), "worker.prompt")?;
         validate_optional_text(worker.mode.as_deref(), "worker.mode")?;
         validate_optional_text(worker.model.as_deref(), "worker.model")?;
+        validate_text_list(
+            &worker.required_capabilities,
+            "worker.required_capabilities",
+        )?;
+        normalize_route_capabilities(
+            &worker.required_capabilities,
+            "worker.required_capabilities",
+        )?;
+        validate_text_list(&worker.preferred_profiles, "worker.preferred_profiles")?;
     }
     if let Some(supervisor) = &request.supervisor {
         validate_component_id(&supervisor.id, "supervisor.id")?;
@@ -1526,6 +1587,17 @@ fn validate_request(request: &GoalStartArgs) -> Result<(), ApiError> {
     Ok(())
 }
 
+fn normalize_goal_routing_fields(request: &mut GoalStartArgs) -> Result<(), ApiError> {
+    for worker in request.workers_mut() {
+        worker.required_capabilities = normalize_route_capabilities(
+            &worker.required_capabilities,
+            "worker.required_capabilities",
+        )?;
+        worker.preferred_profiles = normalize_profile_names(&worker.preferred_profiles);
+    }
+    Ok(())
+}
+
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct GoalPlannerProposal {
@@ -1543,6 +1615,10 @@ struct GoalPlannerWorkerProposal {
     prompt: Option<String>,
     #[serde(default)]
     depends_on: Vec<String>,
+    #[serde(default)]
+    required_capabilities: Vec<String>,
+    #[serde(default)]
+    preferred_profiles: Vec<String>,
 }
 
 struct PlannedWorkers {
@@ -1630,7 +1706,7 @@ async fn apply_goal_planning(
         generated: false,
         worker_count: workers.len(),
         max_workers,
-        reason: "caller supplied an explicit bounded worker DAG".to_string(),
+        reason: "caller supplied an explicit bounded worker workflow".to_string(),
     })
 }
 
@@ -1642,7 +1718,7 @@ fn static_goal_planning(
     Ok(PlannedWorkers {
         workers,
         planner: "static",
-        reason: "workers were omitted; APXM generated a bounded static DAG from task context"
+        reason: "workers were omitted; APXM generated a bounded static worker workflow from task context"
             .to_string(),
     })
 }
@@ -1663,13 +1739,15 @@ async fn model_goal_planning(
         ));
     }
 
+    let agent_candidates = discover_goal_agent_candidates(state).await;
     let planning = request.planning.as_ref();
-    let mut llm_request = LLMRequest::new(goal_planner_prompt(request, max_workers))
-        .with_output_schema(goal_planner_output_schema(max_workers))
-        .with_max_tokens(GOAL_PLANNER_MAX_TOKENS)
-        .with_temperature(0.1)
-        .with_operation_type(AISOperationType::Plan)
-        .with_trace_id(format!("goal-plan-{}", uuid::Uuid::new_v4()));
+    let mut llm_request =
+        LLMRequest::new(goal_planner_prompt(request, max_workers, &agent_candidates))
+            .with_output_schema(goal_planner_output_schema(max_workers))
+            .with_max_tokens(GOAL_PLANNER_MAX_TOKENS)
+            .with_temperature(0.1)
+            .with_operation_type(AISOperationType::Plan)
+            .with_trace_id(format!("goal-plan-{}", uuid::Uuid::new_v4()));
     if let Some(model) = planning
         .and_then(|planning| planning.model.as_deref())
         .map(str::trim)
@@ -1704,9 +1782,9 @@ async fn model_goal_planning(
         }
     };
 
-    let value = extract_goal_planner_json(&response.content).map_err(|error| {
+    let value = extract_goal_planner_value(&response.content).map_err(|error| {
         ApiError::bad_request(format!(
-            "goal_start model planner returned invalid JSON: {error}"
+            "goal_start model planner returned an invalid structured proposal: {error}"
         ))
     })?;
     let proposal: GoalPlannerProposal = serde_json::from_value(value).map_err(|error| {
@@ -1714,31 +1792,54 @@ async fn model_goal_planning(
             "goal_start model planner proposal does not match schema: {error}"
         ))
     })?;
-    let workers = model_planner_workers(proposal.workers, max_workers)?;
+    let allowed_profiles = agent_candidates
+        .iter()
+        .map(|candidate| candidate.profile.clone())
+        .collect::<HashSet<_>>();
+    let workers = model_planner_workers(proposal.workers, max_workers, &allowed_profiles)?;
     Ok(PlannedWorkers {
         workers,
         planner: "model_router",
         reason: proposal.reason.unwrap_or_else(|| {
-            "workers were omitted; APXM model planner proposed a bounded DAG".to_string()
+            "workers were omitted; APXM model planner proposed a bounded worker workflow"
+                .to_string()
         }),
     })
 }
 
-fn goal_planner_prompt(request: &GoalStartArgs, max_workers: usize) -> String {
+fn goal_planner_prompt(
+    request: &GoalStartArgs,
+    max_workers: usize,
+    agent_candidates: &[AgentRouteCandidate],
+) -> String {
     let mut prompt = format!(
-        "You are the APXM goal planner. Analyze the user task and propose one bounded worker DAG for the next APXM goal pass.\n\
-         Return JSON only. APXM will validate the proposal before execution.\n\n\
+        "You are the APXM goal planner. Analyze the user task and propose one bounded worker workflow for the next APXM goal pass.\n\
+         Return only the structured proposal requested by the runtime. APXM will validate the proposal before execution.\n\n\
          Rules:\n\
          - Use between 1 and {max_workers} workers.\n\
          - Worker ids must be stable ASCII identifiers using letters, digits, '_' or '-'.\n\
          - Keep every worker focused and independently executable.\n\
          - Use depends_on only for true ordering requirements; independent workers should be parallel.\n\
-         - Do not include profiles, transports, credentials, shell commands, or tool calls.\n\
+         - Do not include transports, credentials, shell commands, or tool calls.\n\
+         - Use required_capabilities for abstract needs such as read, write, execute, critique, workflow_author.\n\
+         - preferred_profiles is optional. When used, choose only profile names from the APXM inventory below; APXM still validates capabilities before binding.\n\
          - Include verification/review work when the task requires changes or high confidence.\n\
          - If the task needs another pass later, workers should report concrete remaining work to the gate.\n\n\
          Task:\n{}\n",
         request.task
     );
+    if !agent_candidates.is_empty() {
+        prompt.push_str("\nAPXM agent inventory (sanitized; no commands or credentials):\n");
+        for candidate in agent_candidates {
+            prompt.push_str(&format!(
+                "- profile={} source={} route_capabilities=[{}] description={}\n",
+                candidate.profile,
+                candidate.source.as_deref().unwrap_or("unknown"),
+                candidate.capabilities.join(", "),
+                candidate.description.as_deref().unwrap_or("")
+            ));
+        }
+    }
     if let Some(context) = request
         .context
         .as_deref()
@@ -1806,6 +1907,19 @@ fn goal_planner_output_schema(max_workers: usize) -> JsonValue {
                         "depends_on": {
                             "type": "array",
                             "items": { "type": "string" }
+                        },
+                        "required_capabilities": {
+                            "type": "array",
+                            "items": {
+                                "type": "string",
+                                "enum": AGENT_ROUTE_CAPABILITIES
+                            },
+                            "description": "Abstract worker route capabilities needed for this role"
+                        },
+                        "preferred_profiles": {
+                            "type": "array",
+                            "items": { "type": "string" },
+                            "description": "Optional APXM profile names from the sanitized inventory"
                         }
                     }
                 }
@@ -1817,6 +1931,7 @@ fn goal_planner_output_schema(max_workers: usize) -> JsonValue {
 fn model_planner_workers(
     proposed: Vec<GoalPlannerWorkerProposal>,
     max_workers: usize,
+    allowed_profiles: &HashSet<String>,
 ) -> Result<Vec<WorkerSpec>, ApiError> {
     if proposed.is_empty() {
         return Err(ApiError::bad_request(
@@ -1834,6 +1949,26 @@ fn model_planner_workers(
         validate_component_id(&worker.id, "planner worker.id")?;
         validate_optional_text(Some(worker.role.as_str()), "planner worker.role")?;
         validate_optional_text(worker.prompt.as_deref(), "planner worker.prompt")?;
+        validate_text_list(
+            &worker.required_capabilities,
+            "planner worker.required_capabilities",
+        )?;
+        let required_capabilities = normalize_route_capabilities(
+            &worker.required_capabilities,
+            "planner worker.required_capabilities",
+        )?;
+        validate_text_list(
+            &worker.preferred_profiles,
+            "planner worker.preferred_profiles",
+        )?;
+        let preferred_profiles = normalize_profile_names(&worker.preferred_profiles);
+        for profile in &preferred_profiles {
+            if !allowed_profiles.contains(profile) {
+                return Err(ApiError::bad_request(format!(
+                    "goal_start model planner preferred unknown APXM profile '{profile}'"
+                )));
+            }
+        }
         workers.push(WorkerSpec {
             id: worker.id,
             role: Some(worker.role),
@@ -1843,13 +1978,15 @@ fn model_planner_workers(
             depends_on: worker.depends_on,
             mode: None,
             model: None,
+            required_capabilities,
+            preferred_profiles,
         });
     }
     validate_dependencies(&workers)?;
     Ok(workers)
 }
 
-fn extract_goal_planner_json(content: &str) -> Result<JsonValue, String> {
+fn extract_goal_planner_value(content: &str) -> Result<JsonValue, String> {
     let trimmed = content.trim();
     if let Ok(value) = serde_json::from_str::<JsonValue>(trimmed) {
         return Ok(value);
@@ -1866,13 +2003,13 @@ fn extract_goal_planner_json(content: &str) -> Result<JsonValue, String> {
     }
 
     let Some(start) = unfenced.find('{') else {
-        return Err("model response contained no JSON object".to_string());
+        return Err("model response contained no structured object".to_string());
     };
     let Some(end) = unfenced.rfind('}') else {
-        return Err("model response contained an unterminated JSON object".to_string());
+        return Err("model response contained an unterminated structured object".to_string());
     };
     serde_json::from_str(&unfenced[start..=end])
-        .map_err(|error| format!("failed to parse JSON object from model response: {error}"))
+        .map_err(|error| format!("failed to parse structured object from model response: {error}"))
 }
 
 fn auto_goal_workers(
@@ -1958,6 +2095,8 @@ fn auto_goal_worker(id: &'static str, included: &HashSet<&str>) -> Result<Worker
         depends_on: auto_worker_dependencies(id, included),
         mode: None,
         model: None,
+        required_capabilities: Vec::new(),
+        preferred_profiles: Vec::new(),
     })
 }
 
@@ -2077,7 +2216,7 @@ fn validate_transport(
     Ok(())
 }
 
-fn apply_goal_selection(
+async fn apply_goal_selection(
     state: &AppState,
     request: &mut GoalStartArgs,
 ) -> Result<Option<GoalSelectionSummary>, ApiError> {
@@ -2097,7 +2236,14 @@ fn apply_goal_selection(
             workers: request
                 .workers()
                 .iter()
-                .map(|worker| worker_selection_summary(worker, "explicit"))
+                .map(|worker| {
+                    let source = if worker.profile.is_some() {
+                        "explicit"
+                    } else {
+                        "deterministic"
+                    };
+                    worker_selection_summary(worker, None, &HashMap::new(), source)
+                })
                 .collect(),
             backends: backend_selection_summary(state),
         }));
@@ -2108,12 +2254,16 @@ fn apply_goal_selection(
         ));
     }
 
-    let candidates = discover_goal_agent_candidates();
+    let candidates = discover_goal_agent_candidates(state).await;
     let decisions = bind_goal_agent_selection(request, &candidates, selection.require_agents)?;
     let decisions_by_id: HashMap<String, AgentRouteDecision> = decisions
         .into_iter()
         .map(|decision| (decision.id.clone(), decision))
         .collect();
+    let candidates_by_profile = candidates
+        .iter()
+        .map(|candidate| (candidate.profile.clone(), candidate.clone()))
+        .collect::<HashMap<_, _>>();
 
     Ok(Some(GoalSelectionSummary {
         agents: "auto".to_string(),
@@ -2122,11 +2272,12 @@ fn apply_goal_selection(
             .workers()
             .iter()
             .map(|worker| {
-                let source = decisions_by_id
-                    .get(&worker.id)
-                    .map(|decision| decision.source.as_str())
-                    .unwrap_or("deterministic");
-                worker_selection_summary(worker, source)
+                worker_selection_summary(
+                    worker,
+                    decisions_by_id.get(&worker.id),
+                    &candidates_by_profile,
+                    "deterministic",
+                )
             })
             .collect(),
         backends: backend_selection_summary(state),
@@ -2146,7 +2297,8 @@ fn bind_goal_agent_selection(
             profile: worker.profile.clone(),
             mode: worker.mode.clone(),
             model: worker.model.clone(),
-            required_capabilities: Vec::new(),
+            required_capabilities: goal_worker_required_capabilities(worker),
+            preferred_profiles: worker.preferred_profiles.clone(),
         })
         .collect::<Vec<_>>();
     let decisions = AgentRouter::new(candidates.to_vec())
@@ -2157,6 +2309,10 @@ fn bind_goal_agent_selection(
         .cloned()
         .map(|decision| (decision.id.clone(), decision))
         .collect();
+    let candidates_by_profile = candidates
+        .iter()
+        .map(|candidate| (candidate.profile.clone(), candidate))
+        .collect::<HashMap<_, _>>();
     for worker in request.workers_mut().iter_mut() {
         let Some(decision) = decisions_by_id.get(&worker.id) else {
             continue;
@@ -2166,6 +2322,28 @@ fn bind_goal_agent_selection(
             worker.transport = Some(OrchestrationTransport::Acp);
             worker.mode = decision.mode.clone();
             worker.model = decision.model.clone();
+        } else if decision.source == AgentRouteSource::Explicit {
+            let Some(profile) = worker.profile.as_deref() else {
+                continue;
+            };
+            let Some(candidate) = candidates_by_profile.get(profile) else {
+                return Err(ApiError::bad_request(format!(
+                    "goal_start explicit APXM profile '{profile}' for worker '{}' is not resolvable; run `dekk apxm agent list` or fix the profile",
+                    worker.id
+                )));
+            };
+            if worker.mode.is_none() {
+                worker.mode = decision
+                    .mode
+                    .clone()
+                    .or_else(|| candidate.default_mode.clone());
+            }
+            if worker.model.is_none() {
+                worker.model = decision
+                    .model
+                    .clone()
+                    .or_else(|| candidate.default_model.clone());
+            }
         }
     }
     Ok(decisions)
@@ -2174,35 +2352,147 @@ fn bind_goal_agent_selection(
 fn goal_agent_routing_error(error: AgentRoutingError) -> ApiError {
     match error {
         AgentRoutingError::NoCandidates { target_id } => ApiError::bad_request(format!(
-            "goal_start selection.agents=auto found no registered APXM agents with resolvable commands for worker '{target_id}'; run `dekk apxm agent add <name>` or omit selection for deterministic workers"
+            "goal_start selection.agents=auto found no APXM agent profiles with resolvable commands for worker '{target_id}'; run `dekk apxm agent list`, add or fix an agent profile, or omit selection for deterministic workers"
+        )),
+        AgentRoutingError::UnknownProfile { target_id, profile } => ApiError::bad_request(format!(
+            "goal_start worker '{target_id}' requested APXM profile '{profile}', but that profile is not resolvable; run `dekk apxm agent list` or fix the profile"
+        )),
+        AgentRoutingError::ProfileCapabilityMismatch {
+            target_id,
+            profile,
+            required_capabilities,
+            candidate_capabilities,
+        } => ApiError::bad_request(format!(
+            "goal_start worker '{target_id}' requested APXM profile '{profile}', but it does not provide required capabilities [{}]; profile capabilities are [{}]",
+            required_capabilities.join(", "),
+            candidate_capabilities.join(", ")
+        )),
+        AgentRoutingError::NoMatchingCandidates {
+            target_id,
+            required_capabilities,
+            candidate_count,
+        } => ApiError::bad_request(format!(
+            "goal_start selection.agents=auto found {candidate_count} APXM agent profile(s), but none matched worker '{target_id}' required capabilities [{}]",
+            required_capabilities.join(", ")
         )),
     }
 }
 
-fn discover_goal_agent_candidates() -> Vec<AgentRouteCandidate> {
-    apxm_acp::AgentRegistry::load()
-        .registered()
-        .into_iter()
-        .filter_map(|(name, profile)| {
-            let executable = resolvable_command_program(&profile.command)?;
-            Some(AgentRouteCandidate {
-                profile: name,
-                executable,
-                capabilities: Vec::new(),
-                default_mode: profile.default_mode.clone(),
-                default_model: profile.default_model.clone(),
-            })
-        })
-        .collect()
+async fn discover_goal_agent_candidates(state: &AppState) -> Vec<AgentRouteCandidate> {
+    let Some(spawner) = state.runtime.process_table().agent_spawner().await else {
+        return Vec::new();
+    };
+    spawner.route_candidates()
 }
 
-fn worker_selection_summary(worker: &WorkerSpec, source: &'static str) -> WorkerSelectionSummary {
+fn goal_worker_required_capabilities(worker: &WorkerSpec) -> Vec<String> {
+    if !worker.required_capabilities.is_empty() {
+        return normalize_route_capabilities(
+            &worker.required_capabilities,
+            "worker.required_capabilities",
+        )
+        .expect("worker route capabilities are validated before planning");
+    }
+    let role = worker
+        .role
+        .as_deref()
+        .unwrap_or_default()
+        .to_ascii_lowercase();
+    let prompt = worker
+        .prompt
+        .as_deref()
+        .unwrap_or_default()
+        .to_ascii_lowercase();
+    let text = format!("{} {} {}", worker.id.to_ascii_lowercase(), role, prompt);
+    let mut capabilities = Vec::<String>::new();
+    if contains_any(
+        &text,
+        &[
+            "planner",
+            "plan",
+            "graph",
+            "architecture",
+            "dag",
+            "workflow",
+        ],
+    ) {
+        push_capability(&mut capabilities, "read");
+        push_capability(&mut capabilities, "workflow_author");
+    }
+    if contains_any(
+        &text,
+        &["critic", "critique", "adversarial", "risk", "review"],
+    ) {
+        push_capability(&mut capabilities, "read");
+        push_capability(&mut capabilities, "critique");
+    }
+    if contains_any(
+        &text,
+        &[
+            "implement",
+            "executor",
+            "write",
+            "edit",
+            "fix",
+            "migrate",
+            "migration",
+            "docs",
+            "documentation",
+        ],
+    ) {
+        push_capability(&mut capabilities, "write");
+        push_capability(&mut capabilities, "execute");
+    }
+    if contains_any(
+        &text,
+        &["execute", "verify", "verifier", "test", "release", "ship"],
+    ) {
+        push_capability(&mut capabilities, "execute");
+    }
+    if capabilities.is_empty() {
+        push_capability(&mut capabilities, "read");
+    }
+    capabilities
+}
+
+fn push_capability(capabilities: &mut Vec<String>, capability: &str) {
+    if !capabilities.iter().any(|value| value == capability) {
+        capabilities.push(capability.to_string());
+    }
+}
+
+fn worker_selection_summary(
+    worker: &WorkerSpec,
+    decision: Option<&AgentRouteDecision>,
+    candidates: &HashMap<String, AgentRouteCandidate>,
+    default_source: &'static str,
+) -> WorkerSelectionSummary {
+    let profile_candidate = worker
+        .profile
+        .as_ref()
+        .and_then(|profile| candidates.get(profile));
     WorkerSelectionSummary {
         id: worker.id.clone(),
         profile: worker.profile.clone(),
-        source,
+        source: decision
+            .map(|decision| decision.source.as_str())
+            .unwrap_or(default_source),
+        profile_source: profile_candidate.and_then(|candidate| candidate.source.clone()),
+        required_capabilities: decision
+            .map(|decision| decision.required_capabilities.clone())
+            .unwrap_or_else(|| goal_worker_required_capabilities(worker)),
+        preferred_profiles: decision
+            .map(|decision| decision.preferred_profiles.clone())
+            .unwrap_or_else(|| worker.preferred_profiles.clone()),
+        eligible_profiles: decision
+            .map(|decision| decision.eligible_profiles.clone())
+            .unwrap_or_default(),
+        reason: decision
+            .map(|decision| decision.reason.clone())
+            .unwrap_or_else(|| "selection disabled".to_string()),
         mode: worker.mode.clone(),
         model: worker.model.clone(),
+        profile_description: profile_candidate.and_then(|candidate| candidate.description.clone()),
     }
 }
 
@@ -2227,23 +2517,6 @@ fn health_status_label(status: HealthStatus) -> &'static str {
     }
 }
 
-fn resolvable_command_program(command: &str) -> Option<String> {
-    let parts = shell_words::split(command).ok()?;
-    let program = parts
-        .iter()
-        .find(|part| !part.contains('=') && part.as_str() != "env")?;
-    if program.contains('/') {
-        return Path::new(program.as_str())
-            .is_file()
-            .then(|| program.to_string());
-    }
-    std::env::var_os("PATH").and_then(|paths| {
-        std::env::split_paths(&paths)
-            .any(|path| path.join(program.as_str()).is_file())
-            .then(|| program.to_string())
-    })
-}
-
 fn validate_optional_text(value: Option<&str>, field: &str) -> Result<(), ApiError> {
     if value.is_some_and(|text| text.contains('\0')) {
         return Err(ApiError::bad_request(format!(
@@ -2251,6 +2524,45 @@ fn validate_optional_text(value: Option<&str>, field: &str) -> Result<(), ApiErr
         )));
     }
     Ok(())
+}
+
+fn validate_text_list(values: &[String], field: &str) -> Result<(), ApiError> {
+    for value in values {
+        validate_optional_text(Some(value.as_str()), field)?;
+    }
+    Ok(())
+}
+
+fn normalize_route_capabilities(values: &[String], field: &str) -> Result<Vec<String>, ApiError> {
+    let mut normalized = values
+        .iter()
+        .map(|value| value.trim().to_ascii_lowercase())
+        .filter(|value| !value.is_empty())
+        .collect::<Vec<_>>();
+    normalized.sort();
+    normalized.dedup();
+    for capability in &normalized {
+        if !AGENT_ROUTE_CAPABILITIES.contains(&capability.as_str()) {
+            return Err(ApiError::bad_request(format!(
+                "{field} contains unsupported route capability '{capability}'. Use one of: {}",
+                AGENT_ROUTE_CAPABILITIES.join(", ")
+            )));
+        }
+    }
+    Ok(normalized)
+}
+
+fn normalize_profile_names(values: &[String]) -> Vec<String> {
+    let mut seen = HashSet::new();
+    let mut normalized = Vec::new();
+    for value in values {
+        let value = value.trim();
+        if value.is_empty() || !seen.insert(value.to_string()) {
+            continue;
+        }
+        normalized.push(value.to_string());
+    }
+    normalized
 }
 
 fn validate_dependencies(workers: &[WorkerSpec]) -> Result<(), ApiError> {
@@ -2414,13 +2726,30 @@ fn build_plan(
     session_id: &str,
     bundle_dir: &Path,
     workspace_policy: &WorkspacePolicy,
+    selection: Option<&GoalSelectionSummary>,
 ) -> Result<GoalPlan, ApiError> {
     let mut workers = Vec::with_capacity(request.workers().len());
     let tracking_doc_path = bundle_dir.join("goal.md");
-    let graph_path = bundle_dir.join("graph.json");
+    let workers_dir = bundle_dir.join("workers");
     for worker in request.workers() {
         let (cwd, workspace) = workspace_policy.allocate(&worker.id)?;
         let transport = effective_transport(worker.transport, worker.profile.as_deref());
+        let default_source = if worker.profile.is_some() {
+            "explicit"
+        } else {
+            "deterministic"
+        };
+        let route = selection
+            .and_then(|selection| {
+                selection
+                    .workers
+                    .iter()
+                    .find(|summary| summary.id == worker.id)
+            })
+            .cloned()
+            .unwrap_or_else(|| {
+                worker_selection_summary(worker, None, &HashMap::new(), default_source)
+            });
         workers.push(WorkerPlan {
             id: worker.id.clone(),
             agent_name: agent_name(session_id, &worker.id),
@@ -2437,9 +2766,16 @@ fn build_plan(
             depends_on: worker.depends_on.clone(),
             mode: worker.mode.clone(),
             model: worker.model.clone(),
+            required_capabilities: route.required_capabilities,
+            preferred_profiles: route.preferred_profiles,
+            route_source: route.source.to_string(),
+            route_reason: route.reason,
+            eligible_profiles: route.eligible_profiles,
+            profile_source: route.profile_source,
+            profile_description: route.profile_description,
             cwd,
             tracking_doc_path: tracking_doc_path.clone(),
-            graph_path: graph_path.clone(),
+            air_path: workers_dir.join(format!("{}.air", worker.id)),
             prompt_path: bundle_dir.join("prompts").join(format!("{}.md", worker.id)),
             report_path: bundle_dir.join("reports").join(format!("{}.md", worker.id)),
             workspace,
@@ -2489,7 +2825,7 @@ fn build_plan(
             model: supervisor_spec.model,
             cwd: supervisor_cwd,
             tracking_doc_path,
-            graph_path,
+            air_path: bundle_dir.join("gate.air"),
             prompt_path: bundle_dir
                 .join("prompts")
                 .join(format!("{supervisor_id}.md")),
@@ -2504,7 +2840,6 @@ fn build_plan(
 fn write_bundle_files(
     bundle_dir: &Path,
     request: &GoalStartArgs,
-    planning: &GoalPlanningSummary,
     plan: &GoalPlan,
 ) -> Result<(), ApiError> {
     let workers_dir = bundle_dir.join("workers");
@@ -2530,9 +2865,9 @@ fn write_bundle_files(
     })?;
     for worker in &plan.workers {
         let air = worker_air(request, worker)?;
-        std::fs::write(workers_dir.join(format!("{}.air", worker.id)), air).map_err(|error| {
+        std::fs::write(&worker.air_path, air).map_err(|error| {
             ApiError::internal_message(format!(
-                "failed to write worker graph '{}': {error}",
+                "failed to write worker AIR '{}': {error}",
                 worker.id
             ))
         })?;
@@ -2548,33 +2883,23 @@ fn write_bundle_files(
                 "worker",
                 &worker.prompt_path,
                 &worker.tracking_doc_path,
-                &worker.graph_path,
+                &worker.air_path,
             )?,
             "worker report stub",
         )?;
     }
 
     std::fs::write(bundle_dir.join("gate.air"), gate_air(request, plan)?).map_err(|error| {
-        ApiError::internal_message(format!("failed to write gate graph: {error}"))
+        ApiError::internal_message(format!("failed to write gate AIR: {error}"))
     })?;
     std::fs::write(bundle_dir.join("feedback.air"), feedback_air()).map_err(|error| {
-        ApiError::internal_message(format!("failed to write feedback graph: {error}"))
+        ApiError::internal_message(format!("failed to write feedback AIR: {error}"))
     })?;
     std::fs::write(
         bundle_dir.join("workflow.apxmw"),
-        workflow_json(request, plan)?,
+        workflow_manifest(request, plan)?,
     )
     .map_err(|error| ApiError::internal_message(format!("failed to write workflow: {error}")))?;
-    write_json_file(
-        &bundle_dir.join("plan.json"),
-        &plan_packet_json(request, planning, plan, bundle_dir)?,
-        "goal plan packet",
-    )?;
-    write_json_file(
-        &bundle_dir.join("graph.json"),
-        &graph_packet_json(plan),
-        "goal graph packet",
-    )?;
     write_text_file(
         &bundle_dir.join("goal.md"),
         &tracking_doc(request, plan, bundle_dir)?,
@@ -2592,7 +2917,7 @@ fn write_bundle_files(
             "gate",
             &plan.supervisor.prompt_path,
             &plan.supervisor.tracking_doc_path,
-            &plan.supervisor.graph_path,
+            &plan.supervisor.air_path,
         )?,
         "supervisor report stub",
     )?;
@@ -2611,144 +2936,12 @@ fn write_text_file(path: &Path, contents: &str, label: &str) -> Result<(), ApiEr
     })
 }
 
-fn write_json_file(path: &Path, value: &JsonValue, label: &str) -> Result<(), ApiError> {
-    let contents = serde_json::to_vec_pretty(value).map_err(|error| {
-        ApiError::internal_message(format!("failed to serialize {label}: {error}"))
-    })?;
-    std::fs::write(path, contents).map_err(|error| {
-        ApiError::internal_message(format!(
-            "failed to write {label} '{}': {error}",
-            path.display()
-        ))
-    })
-}
-
-fn plan_packet_json(
-    request: &GoalStartArgs,
-    planning: &GoalPlanningSummary,
-    plan: &GoalPlan,
-    bundle_dir: &Path,
-) -> Result<JsonValue, ApiError> {
-    Ok(serde_json::json!({
-        "task": request.task.as_str(),
-        "context": request.context.as_deref().unwrap_or(""),
-        "event": request.event.as_deref().unwrap_or(""),
-        "trigger": request.trigger.as_deref().unwrap_or(""),
-        "workspace_mode": plan.workspace_mode.as_str(),
-        "bundle_dir": path_string(bundle_dir),
-        "workflow_path": path_string(&bundle_dir.join("workflow.apxmw")),
-        "tracking_doc": path_string(&bundle_dir.join("goal.md")),
-        "graph_json": path_string(&bundle_dir.join("graph.json")),
-        "control": goal_control(),
-        "planning": planning,
-        "workers": plan
-            .workers
-            .iter()
-            .map(worker_packet_json)
-            .collect::<Vec<_>>(),
-        "supervisor": supervisor_packet_json(&plan.supervisor)
-    }))
-}
-
-fn worker_packet_json(worker: &WorkerPlan) -> JsonValue {
-    serde_json::json!({
-        "id": worker.id.as_str(),
-        "role": worker.role.as_str(),
-        "transport": worker.transport.as_str(),
-        "profile": worker.profile.as_deref(),
-        "depends_on": &worker.depends_on,
-        "cwd": path_string(&worker.cwd),
-        "prompt_path": path_string(&worker.prompt_path),
-        "report_path": path_string(&worker.report_path),
-        "tracking_doc": path_string(&worker.tracking_doc_path),
-        "graph_json": path_string(&worker.graph_path),
-        "workspace": workspace_binding_json(&worker.workspace)
-    })
-}
-
-fn supervisor_packet_json(supervisor: &SupervisorPlan) -> JsonValue {
-    serde_json::json!({
-        "id": supervisor.id.as_str(),
-        "transport": supervisor.transport.as_str(),
-        "profile": supervisor.profile.as_deref(),
-        "cwd": supervisor.cwd.as_ref().map(|path| path_string(path)),
-        "prompt_path": path_string(&supervisor.prompt_path),
-        "report_path": path_string(&supervisor.report_path),
-        "tracking_doc": path_string(&supervisor.tracking_doc_path),
-        "graph_json": path_string(&supervisor.graph_path)
-    })
-}
-
-fn graph_packet_json(plan: &GoalPlan) -> JsonValue {
-    let mut nodes = plan
-        .workers
-        .iter()
-        .map(|worker| {
-            serde_json::json!({
-                "id": worker.id.as_str(),
-                "kind": "worker",
-                "depends_on": &worker.depends_on,
-                "prompt_path": path_string(&worker.prompt_path),
-                "report_path": path_string(&worker.report_path),
-                "cwd": path_string(&worker.cwd)
-            })
-        })
-        .collect::<Vec<_>>();
-    let worker_ids = plan
-        .workers
-        .iter()
-        .map(|worker| worker.id.clone())
-        .collect::<Vec<_>>();
-    nodes.push(serde_json::json!({
-        "id": plan.supervisor.id.as_str(),
-        "kind": "gate",
-        "depends_on": worker_ids,
-        "prompt_path": path_string(&plan.supervisor.prompt_path),
-        "report_path": path_string(&plan.supervisor.report_path)
-    }));
-    nodes.push(serde_json::json!({
-        "id": "feedback",
-        "kind": "feedback",
-        "depends_on": [plan.supervisor.id.clone()]
-    }));
-
-    serde_json::json!({
-        "description": "event -> trigger -> parallel workers -> gate/eval -> feedback",
-        "workspace_mode": plan.workspace_mode.as_str(),
-        "nodes": nodes,
-        "edges": graph_edges(plan)
-    })
-}
-
-fn graph_edges(plan: &GoalPlan) -> Vec<JsonValue> {
-    let mut edges = Vec::new();
-    for worker in &plan.workers {
-        for dep in &worker.depends_on {
-            edges.push(serde_json::json!({
-                "from": dep,
-                "to": worker.id.as_str(),
-                "reason": "depends_on"
-            }));
-        }
-        edges.push(serde_json::json!({
-            "from": worker.id.as_str(),
-            "to": plan.supervisor.id.as_str(),
-            "reason": "gate fan-in"
-        }));
-    }
-    edges.push(serde_json::json!({
-        "from": plan.supervisor.id.as_str(),
-        "to": "feedback",
-        "reason": "gate decision"
-    }));
-    edges
-}
-
 fn goal_artifacts(bundle_dir: &Path, plan: &GoalPlan) -> GoalArtifacts {
     GoalArtifacts {
         tracking_doc: path_string(&bundle_dir.join("goal.md")),
-        graph_json: path_string(&bundle_dir.join("graph.json")),
-        plan_json: path_string(&bundle_dir.join("plan.json")),
+        worker_air_dir: path_string(&bundle_dir.join("workers")),
+        gate_air: path_string(&bundle_dir.join("gate.air")),
+        feedback_air: path_string(&bundle_dir.join("feedback.air")),
         prompts_dir: path_string(&bundle_dir.join("prompts")),
         reports_dir: path_string(&bundle_dir.join("reports")),
         worker_prompts: plan
@@ -2808,8 +3001,9 @@ fn tracking_doc(
             "trigger": request.trigger.as_deref().unwrap_or(""),
             "bundle_dir": path_string(bundle_dir),
             "workflow_path": path_string(&bundle_dir.join("workflow.apxmw")),
-            "plan_json": path_string(&bundle_dir.join("plan.json")),
-            "graph_json": path_string(&bundle_dir.join("graph.json")),
+            "worker_air_dir": path_string(&bundle_dir.join("workers")),
+            "gate_air": path_string(&bundle_dir.join("gate.air")),
+            "feedback_air": path_string(&bundle_dir.join("feedback.air")),
             "control": goal_control(),
             "workers": worker_prompt_rows(plan),
             "supervisor": supervisor_tracking_row(plan)
@@ -2853,7 +3047,7 @@ fn render_report_stub(
     owner_kind: &str,
     prompt_path: &Path,
     tracking_doc_path: &Path,
-    graph_path: &Path,
+    air_path: &Path,
 ) -> Result<String, ApiError> {
     render_goal_template(
         TEMPLATE_GOAL_REPORT_STUB,
@@ -2863,7 +3057,7 @@ fn render_report_stub(
                 "kind": owner_kind,
                 "prompt_path": path_string(prompt_path),
                 "tracking_doc": path_string(tracking_doc_path),
-                "graph_json": path_string(graph_path)
+                "air_path": path_string(air_path)
             }
         }),
     )
@@ -2873,12 +3067,23 @@ fn worker_prompt_context(worker: &WorkerPlan) -> JsonValue {
     serde_json::json!({
         "id": worker.id.as_str(),
         "role": worker.role.as_str(),
+        "transport": worker.transport.as_str(),
+        "profile": worker.profile.as_deref(),
         "cwd": path_string(&worker.cwd),
         "tracking_doc": path_string(&worker.tracking_doc_path),
-        "graph_json": path_string(&worker.graph_path),
+        "air_path": path_string(&worker.air_path),
         "prompt_path": path_string(&worker.prompt_path),
         "report_path": path_string(&worker.report_path),
         "depends_on": &worker.depends_on,
+        "required_capabilities": &worker.required_capabilities,
+        "preferred_profiles": &worker.preferred_profiles,
+        "route_source": worker.route_source.as_str(),
+        "route_reason": worker.route_reason.as_str(),
+        "eligible_profiles": &worker.eligible_profiles,
+        "profile_source": worker.profile_source.as_deref(),
+        "profile_description": worker.profile_description.as_deref(),
+        "mode": worker.mode.as_deref(),
+        "model": worker.model.as_deref(),
         "depends_label": depends_label(&worker.depends_on),
         "has_upstream": !worker.depends_on.is_empty(),
         "instructions": worker.prompt.as_str(),
@@ -2895,6 +3100,16 @@ fn worker_prompt_rows(plan: &GoalPlan) -> Vec<JsonValue> {
                 "role": worker.role.as_str(),
                 "role_cell": markdown_cell(&worker.role),
                 "depends_label": depends_label(&worker.depends_on),
+                "profile": worker.profile.as_deref().unwrap_or("deterministic"),
+                "mode": worker.mode.as_deref().unwrap_or(""),
+                "model": worker.model.as_deref().unwrap_or(""),
+                "required_capabilities": worker.required_capabilities.join(", "),
+                "preferred_profiles": worker.preferred_profiles.join(", "),
+                "route_source": worker.route_source.as_str(),
+                "route_reason": worker.route_reason.as_str(),
+                "eligible_profiles": worker.eligible_profiles.join(", "),
+                "profile_source": worker.profile_source.as_deref().unwrap_or(""),
+                "profile_description": worker.profile_description.as_deref().unwrap_or(""),
                 "cwd": path_string(&worker.cwd),
                 "prompt_path": path_string(&worker.prompt_path),
                 "report_path": path_string(&worker.report_path)
@@ -2907,7 +3122,7 @@ fn supervisor_prompt_context(supervisor: &SupervisorPlan, worker_summary: &str) 
     serde_json::json!({
         "id": supervisor.id.as_str(),
         "tracking_doc": path_string(&supervisor.tracking_doc_path),
-        "graph_json": path_string(&supervisor.graph_path),
+        "air_path": path_string(&supervisor.air_path),
         "prompt_path": path_string(&supervisor.prompt_path),
         "report_path": path_string(&supervisor.report_path),
         "worker_summary": worker_summary,
@@ -2956,6 +3171,8 @@ fn acp_worker_air(request: &GoalStartArgs, worker: &WorkerPlan) -> Result<String
         Some(&worker.cwd),
         worker.mode.as_deref(),
         worker.model.as_deref(),
+        &worker.required_capabilities,
+        &worker.preferred_profiles,
     );
     let protocol = quote_air(CommunicateProtocol::Acp.as_str());
     Ok(format!(
@@ -3003,6 +3220,8 @@ fn gate_air(request: &GoalStartArgs, plan: &GoalPlan) -> Result<String, ApiError
             cwd,
             supervisor.mode.as_deref(),
             supervisor.model.as_deref(),
+            &[],
+            &[],
         );
         let message = runtime_message_with_summary_placeholder(&render_supervisor_prompt(
             request,
@@ -3053,11 +3272,11 @@ fn feedback_air() -> String {
     )
 }
 
-fn workflow_json(request: &GoalStartArgs, plan: &GoalPlan) -> Result<Vec<u8>, ApiError> {
-    let mut graphs = Vec::with_capacity(plan.workers.len() + 2);
+fn workflow_manifest(request: &GoalStartArgs, plan: &GoalPlan) -> Result<Vec<u8>, ApiError> {
+    let mut steps = Vec::with_capacity(plan.workers.len() + 2);
     for worker in &plan.workers {
         let upstream = upstream_template(&worker.depends_on);
-        graphs.push(serde_json::json!({
+        steps.push(serde_json::json!({
             "id": worker.id,
             "path": format!("workers/{}.air", worker.id),
             "depends_on": worker.depends_on,
@@ -3081,7 +3300,7 @@ fn workflow_json(request: &GoalStartArgs, plan: &GoalPlan) -> Result<Vec<u8>, Ap
         .iter()
         .map(|worker| worker.id.clone())
         .collect::<Vec<_>>();
-    graphs.push(serde_json::json!({
+    steps.push(serde_json::json!({
         "id": plan.supervisor.id,
         "path": "gate.air",
         "depends_on": worker_ids,
@@ -3089,7 +3308,7 @@ fn workflow_json(request: &GoalStartArgs, plan: &GoalPlan) -> Result<Vec<u8>, Ap
             "summary": worker_summary
         }
     }));
-    graphs.push(serde_json::json!({
+    steps.push(serde_json::json!({
         "id": "feedback",
         "path": "feedback.air",
         "depends_on": [plan.supervisor.id.clone()],
@@ -3101,7 +3320,7 @@ fn workflow_json(request: &GoalStartArgs, plan: &GoalPlan) -> Result<Vec<u8>, Ap
     serde_json::to_vec_pretty(&serde_json::json!({
         "name": "goal_pass",
         "description": "Generated by goal_start: event -> trigger -> parallel workers -> gate/eval -> feedback.",
-        "graphs": graphs,
+        "steps": steps,
         "output": "{{feedback.output}}"
     }))
     .map_err(|error| ApiError::internal_message(format!("failed to serialize workflow: {error}")))
@@ -3120,10 +3339,24 @@ fn spawn_attrs(
     cwd: Option<&Path>,
     mode: Option<&str>,
     model: Option<&str>,
+    required_capabilities: &[String],
+    preferred_profiles: &[String],
 ) -> String {
     let mut attrs = Vec::new();
     if let Some(profile) = profile {
         attrs.push(format!("profile = {}", quote_air(profile)));
+    }
+    if !required_capabilities.is_empty() {
+        attrs.push(format!(
+            "required_capabilities = {}",
+            quote_air_string_array(required_capabilities)
+        ));
+    }
+    if !preferred_profiles.is_empty() {
+        attrs.push(format!(
+            "preferred_profiles = {}",
+            quote_air_string_array(preferred_profiles)
+        ));
     }
     if let Some(cwd) = cwd {
         attrs.push(format!("cwd = {}", quote_air(&cwd.to_string_lossy())));
@@ -3139,6 +3372,15 @@ fn spawn_attrs(
     } else {
         format!(" {{{}}}", attrs.join(", "))
     }
+}
+
+fn quote_air_string_array(values: &[String]) -> String {
+    let items = values
+        .iter()
+        .map(|value| quote_air(value))
+        .collect::<Vec<_>>()
+        .join(", ");
+    format!("[{items}]")
 }
 
 fn worker_message(request: &GoalStartArgs, worker: &WorkerPlan) -> Result<String, ApiError> {
@@ -3322,6 +3564,15 @@ impl GoalPlan {
                     role: worker.role.clone(),
                     transport: worker.transport.clone(),
                     profile: worker.profile.clone(),
+                    mode: worker.mode.clone(),
+                    model: worker.model.clone(),
+                    required_capabilities: worker.required_capabilities.clone(),
+                    preferred_profiles: worker.preferred_profiles.clone(),
+                    route_source: worker.route_source.clone(),
+                    route_reason: worker.route_reason.clone(),
+                    eligible_profiles: worker.eligible_profiles.clone(),
+                    profile_source: worker.profile_source.clone(),
+                    profile_description: worker.profile_description.clone(),
                     depends_on: worker.depends_on.clone(),
                     cwd: worker.cwd.to_string_lossy().to_string(),
                     workspace: WorkspaceBindingSummary {
@@ -3484,6 +3735,8 @@ mod tests {
             depends_on: Vec::new(),
             mode: None,
             model: None,
+            required_capabilities: Vec::new(),
+            preferred_profiles: Vec::new(),
         }
     }
 
@@ -3497,17 +3750,38 @@ mod tests {
         let candidates = vec![
             AgentRouteCandidate {
                 profile: "agent-a".to_string(),
+                description: None,
+                source: None,
                 executable: "agent-a".to_string(),
-                capabilities: Vec::new(),
+                capabilities: vec![
+                    "read".to_string(),
+                    "workflow_author".to_string(),
+                    "execute".to_string(),
+                ],
                 default_mode: Some("architect".to_string()),
                 default_model: Some("model-a".to_string()),
             },
             AgentRouteCandidate {
                 profile: "agent-b".to_string(),
+                description: None,
+                source: None,
                 executable: "agent-b".to_string(),
-                capabilities: Vec::new(),
+                capabilities: vec![
+                    "read".to_string(),
+                    "workflow_author".to_string(),
+                    "execute".to_string(),
+                ],
                 default_mode: None,
                 default_model: Some("model-b".to_string()),
+            },
+            AgentRouteCandidate {
+                profile: "explicit".to_string(),
+                description: None,
+                source: None,
+                executable: "explicit".to_string(),
+                capabilities: apxm_acp::default_route_capabilities(),
+                default_mode: None,
+                default_model: None,
             },
         ];
 
@@ -3532,7 +3806,7 @@ mod tests {
         assert!(
             error
                 .message
-                .contains("found no registered APXM agents with resolvable commands")
+                .contains("found no APXM agent profiles with resolvable commands")
         );
 
         let decisions =
@@ -3542,10 +3816,143 @@ mod tests {
     }
 
     #[test]
-    fn goal_agent_selection_command_resolution_uses_shell_words() {
-        let program = resolvable_command_program("env APXM_MODE=test '/bin/sh' -c true")
-            .expect("quoted command should resolve");
+    fn goal_agent_selection_routes_by_worker_capability() {
+        let mut request = request_with_workers(vec![
+            WorkerSpec {
+                id: "planner".to_string(),
+                role: Some("Plan the workflow".to_string()),
+                prompt: None,
+                profile: None,
+                transport: None,
+                depends_on: Vec::new(),
+                mode: None,
+                model: None,
+                required_capabilities: Vec::new(),
+                preferred_profiles: Vec::new(),
+            },
+            WorkerSpec {
+                id: "verifier".to_string(),
+                role: Some("Run tests".to_string()),
+                prompt: None,
+                profile: None,
+                transport: None,
+                depends_on: Vec::new(),
+                mode: None,
+                model: None,
+                required_capabilities: Vec::new(),
+                preferred_profiles: Vec::new(),
+            },
+        ]);
+        let candidates = vec![
+            AgentRouteCandidate {
+                profile: "reader".to_string(),
+                description: None,
+                source: None,
+                executable: "reader".to_string(),
+                capabilities: vec!["read".to_string(), "workflow_author".to_string()],
+                default_mode: None,
+                default_model: None,
+            },
+            AgentRouteCandidate {
+                profile: "executor".to_string(),
+                description: None,
+                source: None,
+                executable: "executor".to_string(),
+                capabilities: vec!["read".to_string(), "execute".to_string()],
+                default_mode: None,
+                default_model: None,
+            },
+        ];
 
-        assert_eq!(program, "/bin/sh");
+        bind_goal_agent_selection(&mut request, &candidates, true).expect("selection");
+
+        assert_eq!(request.workers()[0].profile.as_deref(), Some("reader"));
+        assert_eq!(request.workers()[1].profile.as_deref(), Some("executor"));
+    }
+
+    #[test]
+    fn goal_agent_selection_rejects_explicit_profile_without_required_capabilities() {
+        let mut request = request_with_workers(vec![WorkerSpec {
+            id: "writer".to_string(),
+            role: Some("Implement the patch".to_string()),
+            prompt: None,
+            profile: Some("reader".to_string()),
+            transport: None,
+            depends_on: Vec::new(),
+            mode: None,
+            model: None,
+            required_capabilities: Vec::new(),
+            preferred_profiles: Vec::new(),
+        }]);
+        let candidates = vec![AgentRouteCandidate {
+            profile: "reader".to_string(),
+            description: None,
+            source: None,
+            executable: "reader".to_string(),
+            capabilities: vec!["read".to_string()],
+            default_mode: None,
+            default_model: None,
+        }];
+
+        let error =
+            bind_goal_agent_selection(&mut request, &candidates, true).expect_err("mismatch");
+
+        assert!(
+            error
+                .message
+                .contains("does not provide required capabilities")
+        );
+        assert!(error.message.contains("write"));
+        assert!(error.message.contains("execute"));
+    }
+
+    #[test]
+    fn goal_agent_selection_honors_preferred_profiles_after_capability_filtering() {
+        let mut preferred_worker = worker("verifier", None);
+        preferred_worker.role = Some("Verify the change".to_string());
+        preferred_worker.preferred_profiles = vec!["executor-b".to_string()];
+        let mut request = request_with_workers(vec![preferred_worker]);
+        let candidates = vec![
+            AgentRouteCandidate {
+                profile: "executor-a".to_string(),
+                description: None,
+                source: None,
+                executable: "executor-a".to_string(),
+                capabilities: vec!["execute".to_string()],
+                default_mode: None,
+                default_model: None,
+            },
+            AgentRouteCandidate {
+                profile: "executor-b".to_string(),
+                description: None,
+                source: None,
+                executable: "executor-b".to_string(),
+                capabilities: vec!["execute".to_string()],
+                default_mode: None,
+                default_model: None,
+            },
+        ];
+
+        let decisions =
+            bind_goal_agent_selection(&mut request, &candidates, true).expect("selection");
+
+        assert_eq!(request.workers()[0].profile.as_deref(), Some("executor-b"));
+        assert_eq!(
+            decisions[0].preferred_profiles,
+            vec!["executor-b".to_string()]
+        );
+        assert!(decisions[0].reason.contains("preferred eligible"));
+    }
+
+    #[test]
+    fn spawn_attrs_carries_route_constraints_into_air() {
+        let required = vec!["execute".to_string(), "write".to_string()];
+        let preferred = vec!["codex".to_string()];
+
+        let attrs = spawn_attrs(Some("codex"), None, None, None, &required, &preferred);
+
+        assert!(attrs.contains("profile = \"codex\""));
+        assert!(attrs.contains("required_capabilities = [\"execute\", \"write\"]"));
+        assert!(attrs.contains("preferred_profiles = [\"codex\"]"));
     }
 }

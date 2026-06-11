@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Spawn a child graph as a separate execution with its own session root."""
+"""Spawn a child AIR workflow as a separate execution with its own session root."""
 
 from apxm import (
     GraphRecorder,
@@ -10,15 +10,15 @@ from apxm import (
     repo_path,
 )
 
-CHILD_GRAPH = repo_path("tests", "quality_fixtures", "qa_factual", "graph.air")
+CHILD_AIR = repo_path("workflows", "review.air")
 
 
 @compile(default_policy=NodePolicy(timeout_ms=5_000))
 def parent(g: GraphRecorder):
     child = g.workflow_spawn(
         name="child_review",
-        target_kind=WorkflowTargetKind.GRAPH_PATH,
-        target=CHILD_GRAPH,
+        target_kind=WorkflowTargetKind.AIR_PATH,
+        target=CHILD_AIR,
         session_root=local_apxm_path("child-sessions"),
         node_policy=NodePolicy(timeout_ms=2_000),
     )

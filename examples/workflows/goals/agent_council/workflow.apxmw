@@ -7,7 +7,7 @@
       "type_name": "str"
     }
   ],
-  "graphs": [
+  "steps": [
     {
       "id": "planner",
       "path": "planner.air",

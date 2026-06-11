@@ -24,7 +24,7 @@ pub fn validate_command(
 
     if !ApxmPathFormat::from_path(&input).is_air_source() {
         errors.push(
-            "graph source must be canonical .air; JSON is reserved for structured data outputs"
+            "workflow source must be canonical .air; JSON is reserved for structured data outputs"
                 .to_string(),
         );
     } else {
@@ -287,7 +287,7 @@ impl<'a> GraphAnalysis<'a> {
 pub fn analyze_command(input: PathBuf, json_output: bool) -> Result<()> {
     if !ApxmPathFormat::from_path(&input).is_air_source() {
         return Err(anyhow::anyhow!(
-            "Analyze accepts canonical .air graph source. JSON is reserved for structured data outputs."
+            "Analyze accepts canonical .air workflow source. JSON is reserved for structured data outputs."
         ));
     }
     let graph = load_air_graph_for_analysis(&input)?;
@@ -314,7 +314,7 @@ pub fn analyze_command(input: PathBuf, json_output: bool) -> Result<()> {
             parallel_phases, max_parallelism
         ));
     } else {
-        suggestions.push("Graph is fully sequential — no parallelism opportunities".to_string());
+        suggestions.push("Workflow is fully sequential; no parallelism opportunities".to_string());
     }
     if speedup > 1.2 {
         suggestions.push(format!(
@@ -352,7 +352,7 @@ pub fn analyze_command(input: PathBuf, json_output: bool) -> Result<()> {
 
         let result = serde_json::json!({
             "file": input.display().to_string(),
-            "graph_name": ga.graph.name,
+            "workflow_name": ga.graph.name,
             "node_count": ga.graph.nodes.len(),
             "edge_count": ga.edge_count,
             "entry_nodes": ga.entry_nodes,
@@ -552,11 +552,11 @@ pub fn explain_command(target: &str, json_output: bool) -> Result<()> {
         return Ok(());
     }
 
-    // Otherwise, treat as a graph file path
+    // Otherwise, treat as a workflow file path
     let file = PathBuf::from(target);
     if !ApxmPathFormat::from_path(&file).is_air_source() {
         return Err(anyhow::anyhow!(
-            "Explain accepts an error code or canonical .air graph source. JSON is reserved for structured data outputs."
+            "Explain accepts an error code or canonical .air workflow source. JSON is reserved for structured data outputs."
         ));
     }
     let graph = load_air_graph_for_analysis(&file)?;
@@ -655,7 +655,7 @@ pub fn explain_command(target: &str, json_output: bool) -> Result<()> {
 
         let result = serde_json::json!({
             "file": file.display().to_string(),
-            "graph_name": ga.graph.name,
+            "workflow_name": ga.graph.name,
             "node_count": ga.graph.nodes.len(),
             "edge_count": ga.edge_count,
             "depth": depth,
@@ -669,7 +669,7 @@ pub fn explain_command(target: &str, json_output: bool) -> Result<()> {
         println!("{}", serde_json::to_string_pretty(&result).unwrap());
     } else {
         println!();
-        println!("  {} {}", "Graph:".bold().cyan(), ga.graph.name.bold(),);
+        println!("  {} {}", "Workflow:".bold().cyan(), ga.graph.name.bold(),);
         println!(
             "  Nodes: {} | Edges: {} | Depth: {}",
             ga.graph.nodes.len(),

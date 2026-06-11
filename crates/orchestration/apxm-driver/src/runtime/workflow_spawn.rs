@@ -52,8 +52,8 @@ impl DriverWorkflowSpawner {
         Box::pin(async move {
             let session_base_dir = resolve_session_base_dir(invocation.session_root.as_deref())?;
             match &invocation.target {
-                WorkflowTarget::GraphPath { path } => {
-                    self.execute_graph_path(
+                WorkflowTarget::AirPath { path } => {
+                    self.execute_air_path(
                         Path::new(&path),
                         &invocation.args,
                         &session_base_dir,
@@ -95,9 +95,9 @@ impl DriverWorkflowSpawner {
         })
     }
 
-    async fn execute_graph_path(
+    async fn execute_air_path(
         &self,
-        graph_path: &Path,
+        air_path: &Path,
         args: &HashMap<String, serde_json::Value>,
         session_base_dir: &Path,
         invocation: &WorkflowInvocation,
@@ -108,23 +108,23 @@ impl DriverWorkflowSpawner {
             let compiler = Compiler::new()
                 .map_err(|e| RuntimeError::State(format!("Failed to initialize compiler: {e}")))?;
             let module = compiler
-                .compile(graph_path)
-                .map_err(|e| RuntimeError::State(format!("Failed to compile graph: {e}")))?;
+                .compile(air_path)
+                .map_err(|e| RuntimeError::State(format!("Failed to compile AIR: {e}")))?;
             let artifact_bytes = module
                 .generate_artifact_bytes()
-                .map_err(|e| RuntimeError::State(format!("Failed to emit graph artifact: {e}")))?;
+                .map_err(|e| RuntimeError::State(format!("Failed to emit AIR artifact: {e}")))?;
             Artifact::from_bytes(&artifact_bytes)
-                .map_err(|e| RuntimeError::State(format!("Failed to load graph artifact: {e}")))?
+                .map_err(|e| RuntimeError::State(format!("Failed to load AIR artifact: {e}")))?
         };
 
         let ordered_args = ordered_args_from_artifact(&artifact, args)?;
-        let input_graph = load_graph_for_session(graph_path).ok();
-        let execution_id = child_execution_id("graph", graph_path);
+        let input_graph = load_graph_for_session(air_path).ok();
+        let execution_id = child_execution_id("air", air_path);
         let provenance = provenance_from_invocation(invocation);
         let writer = create_session_writer(
             session_base_dir,
             &execution_id,
-            graph_path.file_stem().and_then(|s| s.to_str()),
+            air_path.file_stem().and_then(|s| s.to_str()),
             input_graph.as_ref(),
             &provenance,
         )?;
@@ -168,7 +168,7 @@ impl DriverWorkflowSpawner {
         finalize_child_session(
             &writer,
             &execution_id,
-            graph_path.file_stem().and_then(|s| s.to_str()),
+            air_path.file_stem().and_then(|s| s.to_str()),
             execution.as_ref(),
             &provenance,
         )?;
@@ -294,17 +294,17 @@ impl DriverWorkflowSpawner {
         apxm_runtime::workflow::write_workflow_session_started(
             &workflow_session_dir,
             &def.name,
-            def.graphs.len(),
+            def.steps.len(),
         )
         .map_err(|e| {
             RuntimeError::State(format!("Failed to write workflow session start files: {e}"))
         })?;
         let workflow_session_dir_text = workflow_session_dir.to_string_lossy().to_string();
         if let Some(emitter) = parent_emitter.as_ref() {
-            emitter.emit_workflow_started(&def.name, &workflow_session_dir_text, def.graphs.len());
+            emitter.emit_workflow_started(&def.name, &workflow_session_dir_text, def.steps.len());
         }
         let step_index_by_id: HashMap<String, usize> = def
-            .graphs
+            .steps
             .iter()
             .enumerate()
             .map(|(index, step)| (step.id.clone(), index))
@@ -313,7 +313,7 @@ impl DriverWorkflowSpawner {
         let mut step_results = HashMap::new();
         let workflow_start = std::time::Instant::now();
 
-        for phase in execution_phases(&def.graphs)
+        for phase in execution_phases(&def.steps)
             .map_err(|e| RuntimeError::State(format!("Workflow planning failed: {e}")))?
         {
             if cancellation_token
@@ -326,7 +326,7 @@ impl DriverWorkflowSpawner {
 
             for step_id in phase {
                 let step = def
-                    .graphs
+                    .steps
                     .iter()
                     .find(|candidate| candidate.id == step_id)
                     .ok_or_else(|| {
@@ -353,7 +353,7 @@ impl DriverWorkflowSpawner {
                         apxm_runtime::workflow::StepStatus::Skipped,
                         0,
                         step_results.len() + 1,
-                        def.graphs.len(),
+                        def.steps.len(),
                         workflow_start.elapsed().as_millis(),
                     )
                     .map_err(|e| {
@@ -409,7 +409,7 @@ impl DriverWorkflowSpawner {
                     &step_id,
                     step_index,
                     step_results.len(),
-                    def.graphs.len(),
+                    def.steps.len(),
                     workflow_start.elapsed().as_millis(),
                 )
                 .map_err(|e| {
@@ -423,7 +423,7 @@ impl DriverWorkflowSpawner {
                         &workflow_session_dir_text,
                         &step_id,
                         step_index,
-                        def.graphs.len(),
+                        def.steps.len(),
                     );
                 }
 
@@ -463,7 +463,7 @@ impl DriverWorkflowSpawner {
                             apxm_runtime::workflow::StepStatus::Success,
                             completed.duration_ms,
                             step_results.len() + 1,
-                            def.graphs.len(),
+                            def.steps.len(),
                             workflow_start.elapsed().as_millis(),
                         )
                         .map_err(|e| {
@@ -514,7 +514,7 @@ impl DriverWorkflowSpawner {
                             apxm_runtime::workflow::StepStatus::Failed,
                             completed.duration_ms,
                             step_results.len() + 1,
-                            def.graphs.len(),
+                            def.steps.len(),
                             workflow_start.elapsed().as_millis(),
                         )
                         .map_err(|e| {
@@ -801,7 +801,7 @@ fn create_workflow_session_dir(
 fn create_session_writer(
     session_base_dir: &Path,
     execution_id: &str,
-    graph_name: Option<&str>,
+    workflow_name: Option<&str>,
     input_graph: Option<&apxm_compiler::AirModule>,
     provenance: &SessionProvenance,
 ) -> Result<SessionOutputWriter, RuntimeError> {
@@ -814,7 +814,7 @@ fn create_session_writer(
     writer
         .write_manifest_with_provenance(
             execution_id,
-            graph_name,
+            workflow_name,
             SessionStatus::Running,
             0,
             input_graph
@@ -826,7 +826,7 @@ fn create_session_writer(
         .map_err(|e| RuntimeError::State(format!("Failed to write child session manifest: {e}")))?;
     if let Some(graph) = input_graph {
         writer
-            .write_input_graph(graph)
+            .write_input_air(graph)
             .map_err(|e| RuntimeError::State(format!("Failed to write child input graph: {e}")))?;
     }
     Ok(writer)
@@ -865,7 +865,7 @@ fn create_session_emitter(
 fn finalize_child_session(
     writer: &SessionOutputWriter,
     execution_id: &str,
-    graph_name: Option<&str>,
+    workflow_name: Option<&str>,
     execution: Result<&RuntimeExecutionResult, &RuntimeError>,
     provenance: &SessionProvenance,
 ) -> Result<(), RuntimeError> {
@@ -873,7 +873,7 @@ fn finalize_child_session(
         Ok(execution) => writer
             .finalize_with_provenance(
                 execution_id,
-                graph_name,
+                workflow_name,
                 execution.stats.duration_ms as u128,
                 execution.stats.executed_nodes + execution.stats.failed_nodes,
                 execution.stats.failed_nodes == 0,
@@ -887,7 +887,12 @@ fn finalize_child_session(
             )
             .map_err(|e| RuntimeError::State(format!("Failed to finalize child session: {e}"))),
         Err(_) => writer
-            .finalize_live_with_id_and_provenance(false, Some(execution_id), graph_name, provenance)
+            .finalize_live_with_id_and_provenance(
+                false,
+                Some(execution_id),
+                workflow_name,
+                provenance,
+            )
             .map_err(|e| RuntimeError::State(format!("Failed to mark child session failed: {e}"))),
     }
 }

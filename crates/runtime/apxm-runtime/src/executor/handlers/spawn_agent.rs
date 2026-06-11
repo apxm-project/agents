@@ -6,9 +6,9 @@
 //!
 //! ## Attributes
 //! - `agent_name`    (required): name for the new agent
-//! - `profile`       (optional): ACP agent profile registered by the frontend.
-//!   When present, spawns a real ACP subprocess via the ProcessTable's
-//!   `AgentSpawner`.
+//! - `profile`       (optional): explicit APXM ACP agent profile.
+//! - `agent_route`   (optional): set to "auto" to let APXM select a profile.
+//! - `required_capabilities` / `preferred_profiles` (optional): route hints.
 //! - `mode`          (optional): agent mode to set after spawn (e.g. "architect")
 //! - `model`         (optional): model override (e.g. "claude-sonnet-4")
 //! - `cwd`           (optional): working directory for the agent subprocess
@@ -19,6 +19,7 @@ use super::{
     ExecutionContext, Node, Result, Value, get_optional_string_attribute, get_string_attribute,
 };
 use crate::aam::TransitionLabel;
+use crate::agent_router::{AgentRouteDecision, AgentRouteTarget, AgentRouter};
 use crate::constants::env as runtime_env;
 use crate::metadata_keys as metadata;
 use apxm_core::apxm_op;
@@ -34,12 +35,22 @@ use std::path::PathBuf;
 
 pub async fn execute(ctx: &ExecutionContext, node: &Node, _inputs: Vec<Value>) -> Result<Value> {
     let agent_name = get_string_attribute(node, graph_attrs::AGENT_NAME)?;
-    let profile = get_optional_string_attribute(node, graph_attrs::PROFILE)?;
+    let initial_profile = get_optional_string_attribute(node, graph_attrs::PROFILE)?;
+    let route_mode = get_optional_string_attribute(node, graph_attrs::AGENT_ROUTE)?;
+    let required_capabilities =
+        get_optional_string_list_attribute(node, graph_attrs::REQUIRED_CAPABILITIES)?;
+    let preferred_profiles =
+        get_optional_string_list_attribute(node, graph_attrs::PREFERRED_PROFILES)?;
+    let wants_route = route_mode.is_some()
+        || initial_profile.is_some()
+        || !required_capabilities.is_empty()
+        || !preferred_profiles.is_empty();
 
     apxm_op!(info,
         execution_id = %ctx.execution_id,
         agent_name = %agent_name,
-        profile = ?profile,
+        profile = ?initial_profile,
+        agent_route = ?route_mode,
         "Executing SPAWN_AGENT operation"
     );
 
@@ -104,7 +115,28 @@ pub async fn execute(ctx: &ExecutionContext, node: &Node, _inputs: Vec<Value>) -
         agent_info.insert(response_keys::MODEL.to_string(), Value::String(m));
     }
 
-    // When profile is present, spawn an ACP subprocess
+    let route = if wants_route {
+        Some(
+            resolve_spawn_agent_route(
+                ctx,
+                node,
+                &agent_name,
+                initial_profile.clone(),
+                route_mode.as_deref(),
+                required_capabilities.clone(),
+                preferred_profiles.clone(),
+            )
+            .await?,
+        )
+    } else {
+        None
+    };
+    let profile = route
+        .as_ref()
+        .and_then(|decision| decision.profile.clone())
+        .or(initial_profile);
+
+    // When profile is present or APXM selected one, spawn an ACP subprocess.
     if let Some(profile_name) = &profile {
         let spawn_start = std::time::Instant::now();
         let spawner = match ctx.process_table.agent_spawner().await {
@@ -129,8 +161,23 @@ pub async fn execute(ctx: &ExecutionContext, node: &Node, _inputs: Vec<Value>) -
             }
         };
 
-        let mode = get_optional_string_attribute(node, graph_attrs::MODE)?;
-        let model = get_optional_string_attribute(node, graph_attrs::MODEL)?;
+        let mode = route
+            .as_ref()
+            .and_then(|decision| decision.mode.clone())
+            .or(get_optional_string_attribute(node, graph_attrs::MODE)?);
+        let model = route
+            .as_ref()
+            .and_then(|decision| decision.model.clone())
+            .or(get_optional_string_attribute(node, graph_attrs::MODEL)?);
+        if let Some(mode) = &mode {
+            agent_info.insert(graph_attrs::MODE.to_string(), Value::String(mode.clone()));
+        }
+        if let Some(model) = &model {
+            agent_info.insert(
+                response_keys::MODEL.to_string(),
+                Value::String(model.clone()),
+            );
+        }
         // Determine node workspace folder for APXM context files. The spawned
         // agent adapter may read this generic APXM-owned path while cwd stays
         // at the project root for normal build/test workflows.
@@ -167,7 +214,7 @@ pub async fn execute(ctx: &ExecutionContext, node: &Node, _inputs: Vec<Value>) -
         let aam_context = project_aam_context(ctx, node.id, profile_name);
 
         // Build generic APXM-owned env for the agent subprocess. Adapter-specific
-        // environment belongs in the registered ACP profile, not in runtime.
+        // environment belongs in the APXM ACP profile, not in runtime.
         let mut extra_env = std::collections::HashMap::new();
         if let Some(ref ws) = node_workspace {
             let ws_str = ws.to_string_lossy().into_owned();
@@ -230,6 +277,49 @@ pub async fn execute(ctx: &ExecutionContext, node: &Node, _inputs: Vec<Value>) -
             response_keys::PROFILE.to_string(),
             Value::String(profile_name.clone()),
         );
+        if let Some(decision) = &route {
+            agent_info.insert(
+                response_keys::ROUTE_SOURCE.to_string(),
+                Value::String(decision.source.as_str().to_string()),
+            );
+            agent_info.insert(
+                response_keys::ROUTE_REASON.to_string(),
+                Value::String(decision.reason.clone()),
+            );
+            agent_info.insert(
+                response_keys::ELIGIBLE_PROFILES.to_string(),
+                Value::Array(
+                    decision
+                        .eligible_profiles
+                        .iter()
+                        .cloned()
+                        .map(Value::String)
+                        .collect(),
+                ),
+            );
+            agent_info.insert(
+                graph_attrs::REQUIRED_CAPABILITIES.to_string(),
+                Value::Array(
+                    decision
+                        .required_capabilities
+                        .iter()
+                        .cloned()
+                        .map(Value::String)
+                        .collect(),
+                ),
+            );
+            agent_info.insert(
+                graph_attrs::PREFERRED_PROFILES.to_string(),
+                Value::Array(
+                    decision
+                        .preferred_profiles
+                        .iter()
+                        .cloned()
+                        .map(Value::String)
+                        .collect(),
+                ),
+            );
+        }
         agent_info.insert(
             response_keys::PROCESS_ID.to_string(),
             Value::String(process_id),
@@ -369,6 +459,84 @@ pub async fn execute(ctx: &ExecutionContext, node: &Node, _inputs: Vec<Value>) -
     Ok(Value::Object(agent_info))
 }
 
+async fn resolve_spawn_agent_route(
+    ctx: &ExecutionContext,
+    node: &Node,
+    agent_name: &str,
+    profile: Option<String>,
+    route_mode: Option<&str>,
+    required_capabilities: Vec<String>,
+    preferred_profiles: Vec<String>,
+) -> Result<AgentRouteDecision> {
+    if let Some(mode) = route_mode {
+        if mode != "auto" {
+            return Err(RuntimeError::Operation {
+                op_type: node.op_type,
+                message: format!("SPAWN_AGENT agent_route must be 'auto', got '{mode}'"),
+            });
+        }
+    }
+
+    let Some(spawner) = ctx.process_table.agent_spawner().await else {
+        return Err(RuntimeError::Operation {
+            op_type: node.op_type,
+            message: "No AgentSpawner configured. Cannot route ACP agent.".to_string(),
+        });
+    };
+    let candidates = spawner.route_candidates();
+    if candidates.is_empty() {
+        return Err(RuntimeError::Operation {
+            op_type: node.op_type,
+            message: "SPAWN_AGENT routing found no APXM agent route candidates".to_string(),
+        });
+    }
+    let target = AgentRouteTarget {
+        id: agent_name.to_string(),
+        profile,
+        mode: get_optional_string_attribute(node, graph_attrs::MODE)?,
+        model: get_optional_string_attribute(node, graph_attrs::MODEL)?,
+        required_capabilities,
+        preferred_profiles,
+    };
+    let profile_counts = ctx.process_table.external_profile_counts();
+    AgentRouter::new(candidates)
+        .route_targets_with_counts(&[target], true, &profile_counts)
+        .map_err(|error| RuntimeError::Operation {
+            op_type: node.op_type,
+            message: format!("SPAWN_AGENT routing failed: {error}"),
+        })?
+        .into_iter()
+        .next()
+        .ok_or_else(|| RuntimeError::Operation {
+            op_type: node.op_type,
+            message: "SPAWN_AGENT routing returned no decision".to_string(),
+        })
+}
+
+fn get_optional_string_list_attribute(node: &Node, key: &str) -> Result<Vec<String>> {
+    let Some(value) = node.attributes.get(key) else {
+        return Ok(Vec::new());
+    };
+    match value {
+        Value::Array(items) => items
+            .iter()
+            .map(|item| {
+                item.as_string()
+                    .cloned()
+                    .ok_or_else(|| RuntimeError::Operation {
+                        op_type: node.op_type,
+                        message: format!("Attribute {key} must be an array of strings"),
+                    })
+            })
+            .collect(),
+        Value::String(value) => Ok(vec![value.clone()]),
+        _ => Err(RuntimeError::Operation {
+            op_type: node.op_type,
+            message: format!("Attribute {key} must be an array of strings"),
+        }),
+    }
+}
+
 /// Project the current AAM state into an `AamContext` for transmission to a spawned agent.
 ///
 /// Filters out internal beliefs (prefixed with `_`) and only includes active goals.
@@ -432,6 +600,7 @@ mod tests {
     use crate::capability::flow_registry::FlowRegistry;
     use crate::context_stack::{ContextStack, NodeMetadata as ContextNodeMetadata};
     use crate::memory::{MemoryConfig, MemorySystem};
+    use crate::process_table::AgentSpawner;
     use apxm_backends::LLMRegistry;
     use apxm_core::constants::graph::attrs as graph_attrs;
     use apxm_core::constants::runtime::{belief_keys, response_keys};
@@ -457,6 +626,33 @@ mod tests {
             Value::String(agent_name.to_string()),
         );
         node
+    }
+
+    struct RoutingTestSpawner {
+        candidates: Vec<crate::agent_router::AgentRouteCandidate>,
+    }
+
+    #[async_trait::async_trait]
+    impl AgentSpawner for RoutingTestSpawner {
+        fn route_candidates(&self) -> Vec<crate::agent_router::AgentRouteCandidate> {
+            self.candidates.clone()
+        }
+
+        async fn spawn_external(
+            &self,
+            _agent_name: &str,
+            _profile_name: &str,
+            _cwd: &std::path::Path,
+            _mode: Option<&str>,
+            _model: Option<&str>,
+            _aam_context: &AamContext,
+            _extra_env: &std::collections::HashMap<String, String>,
+        ) -> std::result::Result<
+            Arc<tokio::sync::Mutex<dyn std::any::Any + Send + Sync>>,
+            RuntimeError,
+        > {
+            Ok(Arc::new(tokio::sync::Mutex::new(())))
+        }
     }
 
     #[tokio::test]
@@ -563,6 +759,272 @@ mod tests {
         let top = ctx.agent_scope_stack.peek().unwrap();
         assert_eq!(top.agent_code, "crm");
         assert_eq!(top.parent_span_id.as_deref(), Some(outer_span.as_str()));
+    }
+
+    #[tokio::test]
+    async fn spawn_agent_can_route_to_acp_profile_without_goal() {
+        let memory = Arc::new(
+            MemorySystem::new(MemoryConfig::in_memory_ltm())
+                .await
+                .unwrap(),
+        );
+        let llm_registry = Arc::new(LLMRegistry::new());
+        let capability_system = Arc::new(CapabilitySystem::new());
+        let ctx = ExecutionContext::new(
+            memory,
+            llm_registry,
+            capability_system,
+            crate::aam::Aam::new(),
+        );
+        ctx.process_table
+            .set_agent_spawner(Arc::new(RoutingTestSpawner {
+                candidates: vec![
+                    crate::agent_router::AgentRouteCandidate {
+                        profile: "reader".to_string(),
+                        description: None,
+                        source: Some("test".to_string()),
+                        executable: "reader".to_string(),
+                        capabilities: vec!["read".to_string()],
+                        default_mode: None,
+                        default_model: None,
+                    },
+                    crate::agent_router::AgentRouteCandidate {
+                        profile: "executor".to_string(),
+                        description: None,
+                        source: Some("test".to_string()),
+                        executable: "executor".to_string(),
+                        capabilities: vec!["read".to_string(), "execute".to_string()],
+                        default_mode: Some("code".to_string()),
+                        default_model: Some("test-model".to_string()),
+                    },
+                ],
+            }))
+            .await;
+
+        let mut node = make_spawn_node("worker");
+        node.attributes.insert(
+            graph_attrs::AGENT_ROUTE.to_string(),
+            Value::String("auto".to_string()),
+        );
+        node.attributes.insert(
+            graph_attrs::REQUIRED_CAPABILITIES.to_string(),
+            Value::Array(vec![Value::String("execute".to_string())]),
+        );
+
+        let result = execute(&ctx, &node, vec![]).await.unwrap();
+
+        let Value::Object(obj) = result else {
+            panic!("expected object");
+        };
+        assert_eq!(
+            obj.get(response_keys::PROFILE),
+            Some(&Value::String("executor".to_string()))
+        );
+        assert_eq!(
+            obj.get(response_keys::ROUTE_SOURCE),
+            Some(&Value::String("selected".to_string()))
+        );
+        assert_eq!(
+            obj.get(response_keys::ELIGIBLE_PROFILES),
+            Some(&Value::Array(vec![Value::String("executor".to_string())]))
+        );
+        assert_eq!(
+            obj.get(response_keys::MODEL),
+            Some(&Value::String("test-model".to_string()))
+        );
+    }
+
+    #[tokio::test]
+    async fn spawn_agent_rejects_invalid_route_mode() {
+        let memory = Arc::new(
+            MemorySystem::new(MemoryConfig::in_memory_ltm())
+                .await
+                .unwrap(),
+        );
+        let llm_registry = Arc::new(LLMRegistry::new());
+        let capability_system = Arc::new(CapabilitySystem::new());
+        let ctx = ExecutionContext::new(
+            memory,
+            llm_registry,
+            capability_system,
+            crate::aam::Aam::new(),
+        );
+        let mut node = make_spawn_node("worker");
+        node.attributes.insert(
+            graph_attrs::AGENT_ROUTE.to_string(),
+            Value::String("manual".to_string()),
+        );
+
+        let error = execute(&ctx, &node, vec![])
+            .await
+            .expect_err("invalid route mode should fail");
+
+        match error {
+            RuntimeError::Operation { message, .. } => {
+                assert!(message.contains("agent_route must be 'auto'"));
+            }
+            other => panic!("unexpected error: {other:?}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn spawn_agent_rejects_empty_route_candidate_inventory() {
+        let memory = Arc::new(
+            MemorySystem::new(MemoryConfig::in_memory_ltm())
+                .await
+                .unwrap(),
+        );
+        let llm_registry = Arc::new(LLMRegistry::new());
+        let capability_system = Arc::new(CapabilitySystem::new());
+        let ctx = ExecutionContext::new(
+            memory,
+            llm_registry,
+            capability_system,
+            crate::aam::Aam::new(),
+        );
+        ctx.process_table
+            .set_agent_spawner(Arc::new(RoutingTestSpawner {
+                candidates: Vec::new(),
+            }))
+            .await;
+        let mut node = make_spawn_node("worker");
+        node.attributes.insert(
+            graph_attrs::PROFILE.to_string(),
+            Value::String("fixture-profile".to_string()),
+        );
+
+        let error = execute(&ctx, &node, vec![])
+            .await
+            .expect_err("empty route inventory should fail");
+
+        match error {
+            RuntimeError::Operation { message, .. } => {
+                assert!(message.contains("no APXM agent route candidates"));
+            }
+            other => panic!("unexpected error: {other:?}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn spawn_agent_validates_explicit_profile_capabilities() {
+        let memory = Arc::new(
+            MemorySystem::new(MemoryConfig::in_memory_ltm())
+                .await
+                .unwrap(),
+        );
+        let llm_registry = Arc::new(LLMRegistry::new());
+        let capability_system = Arc::new(CapabilitySystem::new());
+        let ctx = ExecutionContext::new(
+            memory,
+            llm_registry,
+            capability_system,
+            crate::aam::Aam::new(),
+        );
+        ctx.process_table
+            .set_agent_spawner(Arc::new(RoutingTestSpawner {
+                candidates: vec![crate::agent_router::AgentRouteCandidate {
+                    profile: "reader".to_string(),
+                    description: None,
+                    source: Some("test".to_string()),
+                    executable: "reader".to_string(),
+                    capabilities: vec!["read".to_string()],
+                    default_mode: None,
+                    default_model: None,
+                }],
+            }))
+            .await;
+        let mut node = make_spawn_node("worker");
+        node.attributes.insert(
+            graph_attrs::PROFILE.to_string(),
+            Value::String("reader".to_string()),
+        );
+        node.attributes.insert(
+            graph_attrs::REQUIRED_CAPABILITIES.to_string(),
+            Value::Array(vec![Value::String("execute".to_string())]),
+        );
+
+        let error = execute(&ctx, &node, vec![])
+            .await
+            .expect_err("capability mismatch should fail");
+
+        match error {
+            RuntimeError::Operation { message, .. } => {
+                assert!(message.contains("without required capabilities"));
+                assert!(message.contains("execute"));
+            }
+            other => panic!("unexpected error: {other:?}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn spawn_agent_seeds_routing_with_active_profile_counts() {
+        let memory = Arc::new(
+            MemorySystem::new(MemoryConfig::in_memory_ltm())
+                .await
+                .unwrap(),
+        );
+        let llm_registry = Arc::new(LLMRegistry::new());
+        let capability_system = Arc::new(CapabilitySystem::new());
+        let ctx = ExecutionContext::new(
+            memory,
+            llm_registry,
+            capability_system,
+            crate::aam::Aam::new(),
+        );
+        ctx.process_table
+            .set_agent_spawner(Arc::new(RoutingTestSpawner {
+                candidates: vec![
+                    crate::agent_router::AgentRouteCandidate {
+                        profile: "first".to_string(),
+                        description: None,
+                        source: Some("test".to_string()),
+                        executable: "first".to_string(),
+                        capabilities: vec!["read".to_string()],
+                        default_mode: None,
+                        default_model: None,
+                    },
+                    crate::agent_router::AgentRouteCandidate {
+                        profile: "second".to_string(),
+                        description: None,
+                        source: Some("test".to_string()),
+                        executable: "second".to_string(),
+                        capabilities: vec!["read".to_string()],
+                        default_mode: None,
+                        default_model: None,
+                    },
+                ],
+            }))
+            .await;
+
+        let mut first = make_spawn_node("worker_one");
+        first.attributes.insert(
+            graph_attrs::AGENT_ROUTE.to_string(),
+            Value::String("auto".to_string()),
+        );
+        let mut second = make_spawn_node("worker_two");
+        second.id = 2;
+        second.attributes.insert(
+            graph_attrs::AGENT_ROUTE.to_string(),
+            Value::String("auto".to_string()),
+        );
+
+        let first_result = execute(&ctx, &first, vec![]).await.unwrap();
+        let second_result = execute(&ctx, &second, vec![]).await.unwrap();
+
+        let Value::Object(first_obj) = first_result else {
+            panic!("expected object");
+        };
+        let Value::Object(second_obj) = second_result else {
+            panic!("expected object");
+        };
+        assert_eq!(
+            first_obj.get(response_keys::PROFILE),
+            Some(&Value::String("first".to_string()))
+        );
+        assert_eq!(
+            second_obj.get(response_keys::PROFILE),
+            Some(&Value::String("second".to_string()))
+        );
     }
 
     #[tokio::test]

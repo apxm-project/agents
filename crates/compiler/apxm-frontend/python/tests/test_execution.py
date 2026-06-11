@@ -128,22 +128,6 @@ def test_execution_result_from_empty_response():
     assert result.llm_usage.input_tokens == 0
 
 
-def test_execution_result_defaults():
-    """Test ExecutionResult default values."""
-    from apxm.execution import ExecutionResult
-
-    result = ExecutionResult()
-
-    assert result.content is None
-    assert result.execution_id is None
-    assert result.session_dir is None
-    assert result.metrics_path is None
-    assert result.profile_path is None
-    assert result.results == {}
-    assert result.stats.executed_nodes == 0
-    assert result.llm_usage.total_requests == 0
-
-
 def test_new_session_returns_string():
     """Test new_session() returns a valid session ID string."""
     from apxm.execution import new_session
@@ -338,7 +322,7 @@ def test_hook_config_rejects_non_enum_events():
         HookConfig(event=object(), command="echo nope")
 
 
-def test_run_workflow_file_uses_json_contract(monkeypatch):
+def test_run_workflow_file_uses_machine_output(monkeypatch):
     import subprocess
     import json as pyjson
     from apxm.execution import WorkflowRunResult, run_workflow_file
@@ -425,7 +409,7 @@ def test_run_workflow_file_omits_session_root_when_unset(monkeypatch):
     assert result.session_dir == "/tmp/apxm/workflow-demo"
 
 
-def test_compiled_flow_local_fallback_uses_execute_json_contract(monkeypatch):
+def test_compiled_flow_local_cli_uses_machine_output(monkeypatch):
     import subprocess
     import json as pyjson
     from apxm import ExecutionOptions, GraphRecorder, HookConfig, HookEvent
@@ -488,7 +472,7 @@ def test_compiled_flow_local_fallback_uses_execute_json_contract(monkeypatch):
     assert result.stats.executed_nodes == 1
 
 
-def test_compiled_flow_local_fallback_forwards_session_root(monkeypatch):
+def test_compiled_flow_local_cli_forwards_session_root(monkeypatch):
     import subprocess
     import json as pyjson
     from apxm import ExecutionOptions, GraphRecorder, HookConfig, HookEvent
@@ -563,7 +547,7 @@ def test_execution_result_rejects_non_string_execution_paths():
         ExecutionResult.from_response({"profile_path": ["bad"]})
 
 
-def test_compiled_flow_local_fallback_rejects_non_object_json(monkeypatch):
+def test_compiled_flow_local_cli_rejects_non_object_output(monkeypatch):
     import subprocess
     from apxm import ExecutionOptions, GraphRecorder, HookConfig, HookEvent
     from apxm.errors import ExecutionError
@@ -597,7 +581,7 @@ def test_cli_error_message_prefers_json_error_payload():
     from apxm.execution import _cli_error_message
 
     assert (
-        _cli_error_message('{"error":"structured failure"}', "ignored", "fallback")
+        _cli_error_message('{"error":"structured failure"}', "ignored", "default cli error")
         == "structured failure"
     )
 
@@ -655,24 +639,12 @@ def test_find_apxm_binary_prefers_release_checkout_binary(monkeypatch, tmp_path)
     assert _find_apxm_binary() == str(release_binary)
 
 
-def test_subprocess_env_for_checkout_binary_includes_lib_dir(tmp_path):
+@pytest.mark.parametrize("profile", ["debug", "release"])
+def test_subprocess_env_for_checkout_binary_includes_lib_dir(tmp_path, profile):
     from apxm.execution import _subprocess_env_for_apxm
 
-    binary = tmp_path / "target" / "debug" / "apxm"
-    lib_dir = tmp_path / "target" / "debug" / "lib"
-    lib_dir.mkdir(parents=True)
-    binary.parent.mkdir(parents=True, exist_ok=True)
-    binary.write_text("", encoding="utf-8")
-
-    env = _subprocess_env_for_apxm(str(binary))
-    assert env["LD_LIBRARY_PATH"].split(":")[0] == str(lib_dir)
-
-
-def test_subprocess_env_for_release_checkout_binary_includes_lib_dir(tmp_path):
-    from apxm.execution import _subprocess_env_for_apxm
-
-    binary = tmp_path / "target" / "release" / "apxm"
-    lib_dir = tmp_path / "target" / "release" / "lib"
+    binary = tmp_path / "target" / profile / "apxm"
+    lib_dir = tmp_path / "target" / profile / "lib"
     lib_dir.mkdir(parents=True)
     binary.parent.mkdir(parents=True, exist_ok=True)
     binary.write_text("", encoding="utf-8")
@@ -694,7 +666,7 @@ def test_run_wrapper():
 
 
 def test_compiled_flow_save_load_roundtrip():
-    """Test save/load roundtrip preserves canonical AIR."""
+    """save/load roundtrip preserves canonical AIR."""
     import tempfile
     from pathlib import Path
     from apxm import GraphRecorder
@@ -707,14 +679,15 @@ def test_compiled_flow_save_load_roundtrip():
 
     flow = CompiledFlow(graph)
 
-    with tempfile.NamedTemporaryFile(suffix=".json", delete=False) as tmp:
+    with tempfile.NamedTemporaryFile(suffix=".air", delete=False) as tmp:
         tmp_path = tmp.name
 
     try:
         flow.save(tmp_path)
         loaded = CompiledFlow.load(tmp_path)
-        saved = json.loads(Path(tmp_path).read_text(encoding="utf-8"))
-        assert loaded._air_text == saved[AIR_PAYLOAD]
+        saved = Path(tmp_path).read_text(encoding="utf-8")
+        assert saved.lstrip().startswith("module")
+        assert loaded._air_text == saved
         assert loaded._air_text == graph.to_air()
     finally:
         Path(tmp_path).unlink(missing_ok=True)

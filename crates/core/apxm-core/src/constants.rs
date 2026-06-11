@@ -77,16 +77,16 @@ pub mod env {
     /// Maximum parallel tool calls admitted within one LLM tool-call turn.
     pub const APXM_RUNTIME_MAX_PARALLEL_TOOL_CALLS: &str = "APXM_RUNTIME_MAX_PARALLEL_TOOL_CALLS";
     /// Maximum tokens requested for MCP workflow emission.
-    pub const APXM_MCP_PLAN_MAX_TOKENS: &str = "APXM_MCP_PLAN_MAX_TOKENS";
+    pub const APXM_MCP_WORKFLOW_MAX_TOKENS: &str = "APXM_MCP_WORKFLOW_MAX_TOKENS";
     /// Temperature used for MCP workflow emission.
-    pub const APXM_MCP_PLAN_TEMPERATURE: &str = "APXM_MCP_PLAN_TEMPERATURE";
+    pub const APXM_MCP_WORKFLOW_TEMPERATURE: &str = "APXM_MCP_WORKFLOW_TEMPERATURE";
     /// Maximum wall-clock time, in milliseconds, for one MCP workflow emission request.
-    pub const APXM_MCP_PLAN_EMIT_TIMEOUT_MS: &str = "APXM_MCP_PLAN_EMIT_TIMEOUT_MS";
+    pub const APXM_MCP_WORKFLOW_EMIT_TIMEOUT_MS: &str = "APXM_MCP_WORKFLOW_EMIT_TIMEOUT_MS";
     /// Repair attempts for invalid MCP workflow emissions.
-    pub const APXM_MCP_PLAN_REPAIR_ATTEMPTS: &str = "APXM_MCP_PLAN_REPAIR_ATTEMPTS";
+    pub const APXM_MCP_WORKFLOW_REPAIR_ATTEMPTS: &str = "APXM_MCP_WORKFLOW_REPAIR_ATTEMPTS";
     /// Capability entries included in MCP workflow prompt guidance.
-    pub const APXM_MCP_PLAN_CAPABILITY_GUIDANCE_LIMIT: &str =
-        "APXM_MCP_PLAN_CAPABILITY_GUIDANCE_LIMIT";
+    pub const APXM_MCP_WORKFLOW_CAPABILITY_GUIDANCE_LIMIT: &str =
+        "APXM_MCP_WORKFLOW_CAPABILITY_GUIDANCE_LIMIT";
     /// Default top-k for MCP recall style tools.
     pub const APXM_MCP_DEFAULT_TOP_K: &str = "APXM_MCP_DEFAULT_TOP_K";
     /// Maximum top-k accepted by MCP recall style tools.
@@ -241,6 +241,9 @@ pub mod runtime {
         pub const GOALS: &str = "goals";
         pub const PROCESS_ID: &str = "process_id";
         pub const PROFILE: &str = "profile";
+        pub const ROUTE_SOURCE: &str = "route_source";
+        pub const ROUTE_REASON: &str = "route_reason";
+        pub const ELIGIBLE_PROFILES: &str = "eligible_profiles";
         pub const SYSTEM_PROMPT: &str = "system_prompt";
         pub const BACKEND: &str = "backend";
         pub const MODEL: &str = "model";

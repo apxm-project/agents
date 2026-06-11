@@ -451,7 +451,6 @@ def test_graph_to_dict():
 
 
 def test_graph_to_air_preserves_full_literals():
-    """Test .air serialization emits valid MLIR with proper string escaping."""
     from apxm import GraphRecorder
 
     long_prompt = (
@@ -461,40 +460,26 @@ def test_graph_to_air_preserves_full_literals():
 
     g = GraphRecorder("air_test")
     g.ask(name="emit", prompt=long_prompt)
-    g.spawn_agent("alice", agent_name="alice", profile=MOCK_AGENT_PROFILE, mode="auto")
 
     air = g.to_air()
 
-    # Check new MLIR format where template is a positional arg
     assert 'ais.ask "Line 1 says \\"hello\\".\\nLine 2 keeps going past sixty characters to verify the emitter never truncates values."' in air
-
-    # Check that spawn_agent emits known attributes
-    assert 'ais.spawn_agent "alice"' in air
-    assert f'profile = "{MOCK_AGENT_PROFILE.name}"' in air
-    assert 'mode = "auto"' in air
-
-    # Verify it's valid MLIR structure
     assert "module {" in air
     assert "func.func @air_test" in air
     assert "func.return" in air
 
 
-def test_spawn_agent_rejects_raw_profile_string():
+@pytest.mark.parametrize("method_name", ["spawn_agent", "spawn"])
+def test_spawn_rejects_raw_profile_string(method_name):
     from apxm import GraphRecorder
 
     g = GraphRecorder("strict_profile")
 
     with pytest.raises(TypeError, match="AgentRef"):
-        g.spawn_agent("alice", agent_name="alice", profile=MOCK_AGENT_PROFILE.name)
-
-
-def test_spawn_sugar_rejects_raw_profile_string():
-    from apxm import GraphRecorder
-
-    g = GraphRecorder("strict_spawn_profile")
-
-    with pytest.raises(TypeError, match="AgentRef"):
-        g.spawn("alice", profile=MOCK_AGENT_PROFILE.name)
+        if method_name == "spawn_agent":
+            g.spawn_agent("alice", agent_name="alice", profile=MOCK_AGENT_PROFILE.name)
+        else:
+            g.spawn("alice", profile=MOCK_AGENT_PROFILE.name)
 
 
 def test_graph_validation():
@@ -619,8 +604,8 @@ def test_workflow_spawn_applies_node_policy_and_session_root():
     session_root = ".apxm/custom"
     g = GraphRecorder(MAIN_FLOW_NAME)
     node = g.workflow_spawn(
-        target_kind=WorkflowTargetKind.GRAPH_PATH,
-        target="graphs/review.air",
+        target_kind=WorkflowTargetKind.AIR_PATH,
+        target="steps/review.air",
         session_root=session_root,
         node_policy=NodePolicy(timeout_ms=2_500, token_budget=64),
     )
@@ -645,7 +630,7 @@ def test_workflow_spawn_rejects_invalid_kind_and_detached_mode():
 
     with pytest.raises(ValueError, match="await_result=True"):
         g.workflow_spawn(
-            target_kind=WorkflowTargetKind.GRAPH_PATH,
+            target_kind=WorkflowTargetKind.AIR_PATH,
             target="foo.air",
             await_result=False,
         )

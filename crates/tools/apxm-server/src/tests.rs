@@ -57,8 +57,8 @@ use crate::mcp::{
     MCP_TOOL_PARAM_ARGUMENTS as MCP_PARAM_ARGUMENTS, MCP_TOOL_PARAM_NAME as MCP_PARAM_NAME,
 };
 use crate::mcp_protocol::{
-    admission_error, args as mcp_args, fields as mcp_fields, plan_field, plan_skill,
-    status as mcp_status, tool_result,
+    admission_error, args as mcp_args, fields as mcp_fields, status as mcp_status, tool_result,
+    workflow_skill,
 };
 use crate::routes;
 use crate::skill_resources::{prepend_builtin_skill_root, skill_uri as skill_resource_uri};
@@ -72,7 +72,6 @@ mod basic;
 mod call_skill_isolation;
 mod checkpoints;
 mod execute;
-mod execution_index_bench;
 mod goals;
 mod helpers;
 mod mcp;
@@ -130,25 +129,13 @@ const FIXTURE_AAM_KEY: &str = "fixture_mcp_belief";
 const FIXTURE_AAM_VALUE: &str = "mcp memory ready";
 const FIXTURE_AAM_QUERY: &str = "fixture_mcp";
 const FIXTURE_EVIDENCE_QUERY: &str = "rust implementation";
-const FIXTURE_PLAN_BACKEND: &str = "mock-plan";
-const FIXTURE_PLAN_NAME: &str = "fixture_generated_plan";
-const FIXTURE_PLAN_NODE_NAME: &str = "final";
-const FIXTURE_PLAN_INSPECT_NODE_NAME: &str = "inspect_readme";
-const FIXTURE_PLAN_SUMMARY_NODE_NAME: &str = "summarize_risk";
-const FIXTURE_PLAN_TASK: &str = "summarize release risk";
-const FIXTURE_PLAN_TRACE_ID: &str = "plan-record-test";
-const FIXTURE_PLAN_SANDBOX_TRACE_ID: &str = "plan-sandbox-test";
-const FIXTURE_PLAN_INVALID_TRACE_ID: &str = "../bad";
-const FIXTURE_PLAN_REPAIR_MARKER: &str = "Compiler or validation feedback to repair:";
-const FIXTURE_PLAN_OP_YIELD: &str = "yield";
-const FIXTURE_PLAN_OP_ASK: &str = "ask";
-const FIXTURE_PLAN_OP_INV_TOOL: &str = "inv_tool";
-const FIXTURE_PLAN_OP_UNKNOWN: &str = "unknown_op";
-const FIXTURE_WORKER_PROFILE: &str = "codex";
-const FIXTURE_WORKER_CWD: &str = "/tmp/apxm-worker";
-const FIXTURE_BACKEND: &str = "local";
-const FIXTURE_MODEL: &str = "test-model";
-const FIXTURE_EFFORT: &str = "medium";
+const FIXTURE_WORKFLOW_BACKEND: &str = "mock-workflow";
+const FIXTURE_WORKFLOW_NODE_NAME: &str = "final";
+const FIXTURE_WORKFLOW_TASK: &str = "summarize release risk";
+const FIXTURE_WORKFLOW_TRACE_ID: &str = "workflow-record-test";
+const FIXTURE_WORKFLOW_SANDBOX_TRACE_ID: &str = "workflow-sandbox-test";
+const FIXTURE_WORKFLOW_INVALID_TRACE_ID: &str = "../bad";
+const FIXTURE_WORKFLOW_REPAIR_MARKER: &str = "Compiler feedback to repair AIR:";
 const FIXTURE_WRITE_TOOL: &str = apxm_core::constants::capabilities::WRITE;
 const FIXTURE_NODE_ID: u64 = 1;
 const FIXTURE_COMPILER_VERSION: &str = "test-compiler";
@@ -351,31 +338,31 @@ fn const_only_air() -> String {
 
 /// Build a test AppState backed by a real (but unconfigured) Runtime.
 ///
-/// The runtime has no LLM backends registered, so any graph that calls
-/// ASK/THINK/REASON will error.  Tests that need execution should use
-/// graphs composed entirely of CONST_STR and synchronisation ops.
+/// The runtime has no LLM backends registered, so any workflow that calls
+/// ASK/THINK/REASON will error. Tests that need execution should use AIR
+/// composed entirely of CONST_STR and synchronisation ops.
 async fn test_state() -> AppState {
     test_state_with_skill_roots(Vec::new()).await
 }
 
-async fn test_state_with_mock_plan_response(plan_response: serde_json::Value) -> AppState {
+async fn test_state_with_mock_workflow_response(plan_response: impl Into<String>) -> AppState {
     let runtime =
-        runtime_with_mock_plan_backend(MockLLMBackend::static_response(plan_response.to_string()))
+        runtime_with_mock_workflow_backend(MockLLMBackend::static_response(plan_response.into()))
             .await;
     test_state_with_runtime_and_skill_roots(runtime, Vec::new()).await
 }
 
-async fn runtime_with_mock_plan_backend(backend: MockLLMBackend) -> Runtime {
+async fn runtime_with_mock_workflow_backend(backend: MockLLMBackend) -> Runtime {
     let mut runtime = Runtime::new(RuntimeConfig::in_memory())
         .await
         .expect("test runtime");
     runtime
         .llm_registry()
-        .register(FIXTURE_PLAN_BACKEND, backend)
+        .register(FIXTURE_WORKFLOW_BACKEND, backend)
         .expect("register mock plan backend");
     runtime
         .llm_registry()
-        .set_default(FIXTURE_PLAN_BACKEND)
+        .set_default(FIXTURE_WORKFLOW_BACKEND)
         .expect("set mock plan backend default");
     runtime
         .init_model_router(ModelRouterConfig::default())
@@ -564,89 +551,38 @@ async fn cancel_route_trips_in_flight_run_and_404s_unknown() {
     assert_eq!(status, StatusCode::NOT_FOUND);
 }
 
-fn mock_yield_plan_response() -> serde_json::Value {
-    serde_json::json!({
-        (plan_field::NAME): FIXTURE_PLAN_NAME,
-        (plan_field::ENTRY): FIXTURE_ENTRY_FLOW,
-        (plan_field::NODES): [
-            {
-                (plan_field::ID): FIXTURE_NODE_ID,
-                (plan_field::NAME): FIXTURE_PLAN_NODE_NAME,
-                (plan_field::OP): FIXTURE_PLAN_OP_YIELD,
-                (plan_field::PROMPT): FIXTURE_OUTPUT
-            }
-        ]
-    })
+fn mock_yield_air_response() -> String {
+    format!(
+        r#"module {{
+  func.func @{entry}() -> !ais.token attributes {{ais.entry}} {{
+    %{node} = ais.const_str "{output}" : !ais.token
+    func.return %{node} : !ais.token
+  }}
+}}
+"#,
+        entry = FIXTURE_ENTRY_FLOW,
+        node = FIXTURE_WORKFLOW_NODE_NAME,
+        output = FIXTURE_OUTPUT
+    )
 }
 
-fn mock_inv_tool_plan_response(capability: &str) -> serde_json::Value {
-    serde_json::json!({
-        (plan_field::NAME): FIXTURE_PLAN_NAME,
-        (plan_field::ENTRY): FIXTURE_ENTRY_FLOW,
-        (plan_field::NODES): [
-            {
-                (plan_field::ID): FIXTURE_NODE_ID,
-                (plan_field::NAME): FIXTURE_PLAN_NODE_NAME,
-                (plan_field::OP): FIXTURE_PLAN_OP_INV_TOOL,
-                (plan_field::CAPABILITY): capability,
-                (plan_field::ARGS): {}
-            }
-        ]
-    })
+fn mock_inv_tool_air_response(capability: &str) -> String {
+    format!(
+        r#"module {{
+  func.func @{entry}() -> !ais.token attributes {{ais.entry}} {{
+    %{node} = ais.inv_tool "{capability}" ("{{}}") : !ais.token
+    func.return %{node} : !ais.token
+  }}
+}}
+"#,
+        entry = FIXTURE_ENTRY_FLOW,
+        node = FIXTURE_WORKFLOW_NODE_NAME,
+        capability = capability
+    )
 }
 
-fn mock_named_dependency_plan_response() -> serde_json::Value {
-    serde_json::json!({
-        (plan_field::ENTRY): FIXTURE_ENTRY_FLOW,
-        (plan_field::NODES): [
-            {
-                (plan_field::ID): FIXTURE_PLAN_INSPECT_NODE_NAME,
-                (plan_field::NAME): FIXTURE_PLAN_INSPECT_NODE_NAME,
-                (plan_field::OP): FIXTURE_PLAN_OP_ASK,
-                (plan_field::PROMPT): "Inspect README changes and report notable diffs."
-            },
-            {
-                (plan_field::ID): FIXTURE_PLAN_SUMMARY_NODE_NAME,
-                (plan_field::OP): FIXTURE_PLAN_OP_YIELD,
-                (plan_field::PROMPT): "Summarize risk from the README inspection.",
-                (plan_field::DEPENDS_ON): [FIXTURE_PLAN_INSPECT_NODE_NAME]
-            }
-        ]
-    })
-}
-
-fn mock_routed_plan_response() -> serde_json::Value {
-    serde_json::json!({
-        (plan_field::NAME): FIXTURE_PLAN_NAME,
-        (plan_field::ENTRY): FIXTURE_ENTRY_FLOW,
-        (plan_field::NODES): [
-            {
-                (plan_field::ID): FIXTURE_NODE_ID,
-                (plan_field::NAME): FIXTURE_PLAN_NODE_NAME,
-                (plan_field::OP): FIXTURE_PLAN_OP_ASK,
-                (plan_field::PROMPT): FIXTURE_OUTPUT,
-                (plan_field::PROFILE): FIXTURE_WORKER_PROFILE,
-                (plan_field::CWD): FIXTURE_WORKER_CWD,
-                (plan_field::BACKEND): FIXTURE_BACKEND,
-                (plan_field::MODEL): FIXTURE_MODEL,
-                (plan_field::EFFORT): FIXTURE_EFFORT
-            }
-        ]
-    })
-}
-
-fn mock_invalid_plan_response() -> serde_json::Value {
-    serde_json::json!({
-        (plan_field::NAME): FIXTURE_PLAN_NAME,
-        (plan_field::ENTRY): FIXTURE_ENTRY_FLOW,
-        (plan_field::NODES): [
-            {
-                (plan_field::ID): FIXTURE_NODE_ID,
-                (plan_field::NAME): FIXTURE_PLAN_NODE_NAME,
-                (plan_field::OP): FIXTURE_PLAN_OP_UNKNOWN
-            }
-        ]
-    })
+fn mock_invalid_air_response() -> String {
+    "module { func.func @main() -> !ais.token attributes {ais.entry} { %bad = ais.unknown_op : !ais.token func.return %bad : !ais.token } }".to_string()
 }
 
 fn write_valid_skill(root: &std::path::Path, name: &str) -> std::path::PathBuf {
@@ -1146,6 +1082,24 @@ fn tool_text(body: &serde_json::Value) -> &str {
     body["result"]["content"][0]["text"]
         .as_str()
         .expect("MCP text content")
+}
+
+fn tool_json(body: &serde_json::Value) -> serde_json::Value {
+    serde_json::from_str(tool_text(body)).expect("MCP tool JSON")
+}
+
+async fn successful_mcp_tool_json(
+    app: Router,
+    tool_name: &str,
+    arguments: serde_json::Value,
+) -> serde_json::Value {
+    let (status, body) = post_json(app, routes::MCP, mcp_call(tool_name, arguments)).await;
+    assert_eq!(status, StatusCode::OK, "MCP tool call failed: {body}");
+    assert_eq!(
+        body["result"]["isError"], false,
+        "MCP tool returned error: {body}"
+    );
+    tool_json(&body)
 }
 
 fn mcp_call(tool_name: &str, arguments: serde_json::Value) -> serde_json::Value {

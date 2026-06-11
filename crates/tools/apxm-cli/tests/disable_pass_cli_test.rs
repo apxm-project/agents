@@ -1,14 +1,9 @@
 //! Smoke-test the --disable-pass / --pass-list CLI plumbing for ablation studies.
 //!
-//! Compiles a small inline AIR graph at O1 with a named pass dropped, then reads
+//! Compiles a small AIR workflow at O1 with a named pass dropped, then reads
 //! the `--emit-diagnostics` JSON and confirms the disabled pass is absent from the
 //! `pass_metrics` array. A second case exercises `--pass-list` to confirm the
 //! override replaces the default selection wholesale.
-//!
-//! Note: as of Task 8 the only emitted-metrics path on the compile subcommand is
-//! `--emit-diagnostics`; Task 9 may introduce a richer `--emit-metrics` artifact,
-//! at which point the `metrics.json` schema described in the parent plan can be
-//! asserted directly.
 //!
 //! Gated on the `driver` feature because the `compile` subcommand is itself
 //! gated there. `dekk apxm test-cli` builds with `--features driver,metrics`
@@ -27,7 +22,7 @@ fn apxm() -> Command {
     cmd
 }
 
-/// Two-ASK pipeline. The graph compiles cleanly at O1 and lets the test inspect
+/// Two-ASK workflow. The AIR compiles cleanly at O1 and lets the test inspect
 /// which pass names appear in diagnostics.
 const SMALL_PIPELINE: &str = r#"module {
   func.func @disable_pass_test() -> !ais.token attributes {ais.entry} {
@@ -38,8 +33,8 @@ const SMALL_PIPELINE: &str = r#"module {
 }
 "#;
 
-/// The explicit --pass-list case intentionally omits prompt-building passes,
-/// so use a local graph that does not need the prompt/input-name contract.
+/// The explicit --pass-list case intentionally omits prompt-building passes, so
+/// use local AIR that does not need the prompt/input-name contract.
 const LOCAL_CONST_GRAPH: &str = r#"module {
   func.func @disable_pass_test() -> !ais.token attributes {ais.entry} {
     %value = ais.const_str "ok" : !ais.token
@@ -48,7 +43,7 @@ const LOCAL_CONST_GRAPH: &str = r#"module {
 }
 "#;
 
-fn write_tmp_graph(content: &str) -> tempfile::NamedTempFile {
+fn write_tmp_air(content: &str) -> tempfile::NamedTempFile {
     let mut f = tempfile::Builder::new().suffix(".air").tempfile().unwrap();
     f.write_all(content.as_bytes()).unwrap();
     f.flush().unwrap();
@@ -73,7 +68,7 @@ fn pass_names_from_diagnostics(diag_path: &std::path::Path) -> Vec<String> {
 
 #[test]
 fn disable_pass_removes_pass_from_diagnostics() {
-    let graph = write_tmp_graph(SMALL_PIPELINE);
+    let workflow = write_tmp_air(SMALL_PIPELINE);
     let tmp = tempfile::tempdir().unwrap();
     let out = tmp.path().join("out.apxmobj");
     let diag = tmp.path().join("diag.json");
@@ -81,7 +76,7 @@ fn disable_pass_removes_pass_from_diagnostics() {
     let status = apxm()
         .args([
             "compile",
-            graph.path().to_str().unwrap(),
+            workflow.path().to_str().unwrap(),
             "--opt-level",
             "1",
             "--disable-pass",
@@ -110,7 +105,7 @@ fn disable_pass_removes_pass_from_diagnostics() {
 
 #[test]
 fn pass_list_override_replaces_default_selection() {
-    let graph = write_tmp_graph(LOCAL_CONST_GRAPH);
+    let workflow = write_tmp_air(LOCAL_CONST_GRAPH);
     let tmp = tempfile::tempdir().unwrap();
     let out = tmp.path().join("out.apxmobj");
     let diag = tmp.path().join("diag.json");
@@ -121,7 +116,7 @@ fn pass_list_override_replaces_default_selection() {
     let status = apxm()
         .args([
             "compile",
-            graph.path().to_str().unwrap(),
+            workflow.path().to_str().unwrap(),
             "--opt-level",
             "1",
             "--pass-list",

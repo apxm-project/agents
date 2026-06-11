@@ -6,10 +6,10 @@
 
 ## What APXM is
 
-APXM (**A**gent **P**rogram e**X**ecution **M**odel) treats an agent graph the
+APXM (**A**gent **P**rogram e**X**ecution **M**odel) treats an agent workflow the
 way a programming language treats a function: the author describes *what*, and the
-system decides *how* to run it. You write a graph of agent operations in Python; APXM
-lowers it to MLIR, optimizes it, and executes the result deterministically across LLM
+system decides *how* to run it. You write agent operations in Python or AIR; APXM
+lowers them to MLIR, optimizes them, and executes the result deterministically across LLM
 backends, Python tools, and sub-agents.
 
 This documentation is the conceptual entry point. For installable, runnable code,
@@ -28,7 +28,7 @@ document the implementation details and stay close to the code.
                                    ▼
                      ┌──────────────────────────┐
                      │   AIR text  (.air)       │  human-readable
-                     └─────────────┬────────────┘  graph IR
+                     └─────────────┬────────────┘  workflow IR
                                    │  parse + lower
                                    ▼
                      ┌──────────────────────────┐
@@ -97,7 +97,7 @@ The compiler turns AIR into a runnable artifact through a deterministic optimiza
 pipeline. It runs as MLIR transforms (the `ais` dialect) plus a few Rust-side passes
 that do bookkeeping the MLIR side can't easily express, such as tool binding.
 Backend-specific behavior stays in backend adapters; the compiler emits typed
-graph metadata and optimization hints, not vLLM-specific runtime policy.
+workflow metadata and optimization hints, not vLLM-specific runtime policy.
 
 → [compiler/pipeline.md](compiler/pipeline.md) — pipeline diagram and pass-by-pass
 purpose. The live ordering is in
@@ -119,7 +119,7 @@ purpose. The live ordering is in
 ```
 dekk apxm doctor          # verify environment
 dekk apxm ops list        # browse the live AIS surface
-dekk apxm execute …       # run an .air graph end-to-end
+dekk apxm execute …       # run an .air workflow end-to-end
 ```
 
 Runnable demos live in [`examples/python/`](../examples/python/). The
@@ -137,5 +137,5 @@ APXM environment.
 
 **Topology is policy outside the runtime.** Agent hierarchy and reachability are
 authored by higher layers and enforced before execution is lowered into concrete
-APXM operations. The runtime executes admitted graphs; it does not interpret
+APXM operations. The runtime executes admitted workflows; it does not interpret
 company/org relationships. See [agent topology boundary](agent-topology-boundary.md).

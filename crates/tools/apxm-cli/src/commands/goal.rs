@@ -874,11 +874,11 @@ fn print_start_summary(base: &str, started: &JsonValue) {
         if let Some(tracking_doc) = artifacts.get("tracking_doc").and_then(JsonValue::as_str) {
             println!("tracking: {tracking_doc}");
         }
-        if let Some(plan_json) = artifacts.get("plan_json").and_then(JsonValue::as_str) {
-            println!("plan: {plan_json}");
+        if let Some(worker_air_dir) = artifacts.get("worker_air_dir").and_then(JsonValue::as_str) {
+            println!("worker AIR: {worker_air_dir}");
         }
-        if let Some(graph_json) = artifacts.get("graph_json").and_then(JsonValue::as_str) {
-            println!("graph: {graph_json}");
+        if let Some(gate_air) = artifacts.get("gate_air").and_then(JsonValue::as_str) {
+            println!("gate AIR: {gate_air}");
         }
         if let Some(prompts_dir) = artifacts.get("prompts_dir").and_then(JsonValue::as_str) {
             println!("prompts: {prompts_dir}");
@@ -1182,7 +1182,7 @@ mod tests {
         assert_eq!(
             request.get("workers"),
             None,
-            "CLI should let goal_start own default DAG planning"
+            "CLI should let goal_start own default worker workflow planning"
         );
         assert_eq!(request["planning"], json!({ "mode": "auto" }));
         assert_eq!(

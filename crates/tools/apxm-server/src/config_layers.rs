@@ -29,20 +29,20 @@ pub(crate) fn apply_server_env_overrides(config: &mut ServerConfig) {
     if let Some(value) = env_usize(apxm_env::APXM_RUNTIME_MAX_PARALLEL_TOOL_CALLS) {
         config.runtime.max_parallel_tool_calls = value;
     }
-    if let Some(value) = env_usize(apxm_env::APXM_MCP_PLAN_MAX_TOKENS) {
-        config.mcp.plan_max_tokens = value;
+    if let Some(value) = env_usize(apxm_env::APXM_MCP_WORKFLOW_MAX_TOKENS) {
+        config.mcp.workflow_max_tokens = value;
     }
-    if let Some(value) = env_f64(apxm_env::APXM_MCP_PLAN_TEMPERATURE) {
-        config.mcp.plan_temperature = value;
+    if let Some(value) = env_f64(apxm_env::APXM_MCP_WORKFLOW_TEMPERATURE) {
+        config.mcp.workflow_temperature = value;
     }
-    if let Some(value) = env_u64(apxm_env::APXM_MCP_PLAN_EMIT_TIMEOUT_MS) {
-        config.mcp.plan_emit_timeout_ms = value;
+    if let Some(value) = env_u64(apxm_env::APXM_MCP_WORKFLOW_EMIT_TIMEOUT_MS) {
+        config.mcp.workflow_emit_timeout_ms = value;
     }
-    if let Some(value) = env_usize(apxm_env::APXM_MCP_PLAN_REPAIR_ATTEMPTS) {
-        config.mcp.plan_repair_attempts = value;
+    if let Some(value) = env_usize(apxm_env::APXM_MCP_WORKFLOW_REPAIR_ATTEMPTS) {
+        config.mcp.workflow_repair_attempts = value;
     }
-    if let Some(value) = env_usize(apxm_env::APXM_MCP_PLAN_CAPABILITY_GUIDANCE_LIMIT) {
-        config.mcp.plan_capability_guidance_limit = value;
+    if let Some(value) = env_usize(apxm_env::APXM_MCP_WORKFLOW_CAPABILITY_GUIDANCE_LIMIT) {
+        config.mcp.workflow_capability_guidance_limit = value;
     }
     if let Some(value) = env_usize(apxm_env::APXM_MCP_DEFAULT_TOP_K) {
         config.mcp.default_top_k = value;

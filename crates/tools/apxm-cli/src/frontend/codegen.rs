@@ -8,8 +8,8 @@ use anyhow::Result;
 use apxm_core::constants::graph::attrs as graph_attrs;
 use apxm_core::constants::mlir::types as mlir_types;
 use apxm_core::types::{
-    AISOperationType, WORKFLOW_SPAWN_PATH_TARGET_KINDS, WORKFLOW_TARGET_KIND_ARTIFACT_PATH,
-    WORKFLOW_TARGET_KIND_GRAPH_PATH, WORKFLOW_TARGET_KIND_REGISTERED_FLOW,
+    AISOperationType, WORKFLOW_SPAWN_PATH_TARGET_KINDS, WORKFLOW_TARGET_KIND_AIR_PATH,
+    WORKFLOW_TARGET_KIND_ARTIFACT_PATH, WORKFLOW_TARGET_KIND_REGISTERED_FLOW,
     WORKFLOW_TARGET_KIND_WORKFLOW_PATH,
 };
 
@@ -103,8 +103,8 @@ fn render_constants_module() -> String {
         py_string(WORKFLOW_TARGET_KIND_REGISTERED_FLOW)
     ));
     buf.push_str(&format!(
-        "WORKFLOW_TARGET_KIND_GRAPH_PATH: Final[str] = {}\n",
-        py_string(WORKFLOW_TARGET_KIND_GRAPH_PATH)
+        "WORKFLOW_TARGET_KIND_AIR_PATH: Final[str] = {}\n",
+        py_string(WORKFLOW_TARGET_KIND_AIR_PATH)
     ));
     buf.push_str(&format!(
         "WORKFLOW_TARGET_KIND_ARTIFACT_PATH: Final[str] = {}\n",
@@ -276,6 +276,9 @@ fn render_agents_module() -> String {
     buf.push_str("class AgentRef:\n");
     buf.push_str("    name: str\n");
     buf.push_str("    command: str\n");
+    buf.push_str("    description: str | None\n");
+    buf.push_str("    route_capabilities: tuple[str, ...]\n");
+    buf.push_str("    source: str\n");
     buf.push_str("    default_mode: str | None\n");
     buf.push_str("    default_model: str | None\n\n");
 
@@ -783,6 +786,16 @@ fn render_agent_ref(buf: &mut String, ident: &str, item: &FrontendAgentTemplate)
     buf.push_str(&format!("    name={},\n", py_string(&item.name)));
     buf.push_str(&format!("    command={},\n", py_string(&item.command)));
     buf.push_str(&format!(
+        "    description={},\n",
+        py_optional_string(item.description.as_deref())
+    ));
+    buf.push_str("    route_capabilities=(\n");
+    for capability in &item.route_capabilities {
+        buf.push_str(&format!("        {},\n", py_string(capability)));
+    }
+    buf.push_str("    ),\n");
+    buf.push_str(&format!("    source={},\n", py_string(&item.source)));
+    buf.push_str(&format!(
         "    default_mode={},\n",
         py_optional_string(item.default_mode.as_deref())
     ));
@@ -1039,7 +1052,7 @@ mod tests {
         assert!(
             rendered
                 .constants_py
-                .contains("WORKFLOW_TARGET_KIND_GRAPH_PATH: Final[str] = \"graph_path\"")
+                .contains("WORKFLOW_TARGET_KIND_AIR_PATH: Final[str] = \"air_path\"")
         );
         assert!(
             rendered

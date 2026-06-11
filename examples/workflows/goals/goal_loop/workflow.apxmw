@@ -15,7 +15,7 @@
       "type_name": "str"
     }
   ],
-  "graphs": [
+  "steps": [
     {
       "id": "event",
       "path": "event.air",

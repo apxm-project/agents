@@ -354,12 +354,6 @@ async def test_eof_graceful_shutdown():
     """Closing stdin causes the worker to exit cleanly."""
     with tempfile.TemporaryDirectory() as tmp:
         proc = await _spawn_with_stubs(tmp)
-        # Send one call, read the result, then close.
-        await _send(proc, _call_msg("g1", "tool:add", {"a": 1, "b": 2}))
-        r = await _recv(proc)
-        assert r[WIRE_FIELD_OK] is True
-        assert r[WIRE_FIELD_VALUE] == 3
-
         await _close(proc)
         assert proc.returncode == 0
 

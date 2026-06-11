@@ -16,7 +16,10 @@ pub mod terminal;
 
 pub mod aam_bridge;
 
-pub use registry::{AcpAgentProfile, AgentRegistry, CapabilityServerConfig, PermissionMode};
+pub use registry::{
+    AcpAgentProfile, AgentRegistry, CapabilityServerConfig, PermissionMode,
+    default_route_capabilities,
+};
 pub use session::AcpSession;
 
 #[derive(Debug, thiserror::Error)]

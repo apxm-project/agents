@@ -224,15 +224,19 @@ pub mod registry {
     pub mod json_keys {
         pub const NAME: &str = "name";
         pub const COMMAND: &str = "command";
+        pub const DESCRIPTION: &str = "description";
+        pub const ROUTE_CAPABILITIES: &str = "route_capabilities";
+        pub const DEFAULT_MODE: &str = "default_mode";
+        pub const DEFAULT_MODEL: &str = "default_model";
         pub const SOURCE: &str = "source";
         pub const CLOSE_GRACE_MS: &str = "close_grace_ms";
         pub const SESSION_CREATE_TIMEOUT_MS: &str = "session_create_timeout_ms";
     }
 
-    /// Source labels for registered agents.
+    /// Source labels for agent profile lists.
     pub mod sources {
         pub const TEMPLATE: &str = "template";
-        pub const CUSTOM: &str = "custom";
+        pub const USER_PROFILE: &str = "user_profile";
     }
 }
 

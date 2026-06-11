@@ -332,7 +332,7 @@ mod tests {
                     "role": "Plan the work.",
                     "cwd": "/tmp/apxm-worker",
                     "tracking_doc": "/tmp/goal.md",
-                    "graph_json": "/tmp/graph.json",
+                    "air_path": "/tmp/workers/planner.air",
                     "prompt_path": "/tmp/prompts/planner.md",
                     "report_path": "/tmp/reports/planner.md",
                     "upstream_note": "No upstream worker dependencies.",
@@ -359,7 +359,7 @@ mod tests {
                     "kind": "worker",
                     "prompt_path": "/tmp/prompts/planner.md",
                     "tracking_doc": "/tmp/goal.md",
-                    "graph_json": "/tmp/graph.json"
+                    "air_path": "/tmp/workers/planner.air"
                 }
             }),
         )
@@ -377,8 +377,9 @@ mod tests {
                 "trigger": "",
                 "bundle_dir": "/tmp/bundle",
                 "workflow_path": "/tmp/bundle/workflow.apxmw",
-                "plan_json": "/tmp/bundle/plan.json",
-                "graph_json": "/tmp/bundle/graph.json",
+                "worker_air_dir": "/tmp/bundle/workers",
+                "gate_air": "/tmp/bundle/gate.air",
+                "feedback_air": "/tmp/bundle/feedback.air",
                 "control": {
                     "status_tool": "goal_status",
                     "events_tool": "goal_events",

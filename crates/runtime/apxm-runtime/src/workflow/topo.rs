@@ -1,6 +1,6 @@
 //! Topological sort for workflow execution phases.
 
-use super::def::GraphStep;
+use super::def::WorkflowStep;
 use std::collections::{HashMap, VecDeque};
 
 /// Compute execution phases using Kahn's algorithm.
@@ -10,7 +10,7 @@ use std::collections::{HashMap, VecDeque};
 /// are all satisfied in previous phases go in subsequent phases.
 ///
 /// Returns an error if a cycle is detected.
-pub fn execution_phases(steps: &[GraphStep]) -> anyhow::Result<Vec<Vec<String>>> {
+pub fn execution_phases(steps: &[WorkflowStep]) -> anyhow::Result<Vec<Vec<String>>> {
     if steps.is_empty() {
         return Ok(vec![]);
     }
@@ -89,8 +89,8 @@ pub fn execution_phases(steps: &[GraphStep]) -> anyhow::Result<Vec<Vec<String>>>
 mod tests {
     use super::*;
 
-    fn make_step(id: &str, deps: Vec<&str>) -> GraphStep {
-        GraphStep {
+    fn make_step(id: &str, deps: Vec<&str>) -> WorkflowStep {
+        WorkflowStep {
             id: id.to_string(),
             path: format!("{}.air", id),
             depends_on: deps.into_iter().map(|s| s.to_string()).collect(),

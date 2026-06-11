@@ -1,6 +1,6 @@
 {
   "task": "Implement a bounded repository change and verify it end to end.",
-  "context": "Each worker gets an APXM-owned detached Git worktree. Replace profile IDs with registered APXM profiles in this runtime.",
+  "context": "Each worker gets an APXM-owned detached Git worktree. Replace profile names with resolvable APXM ACP profiles in this runtime.",
   "event": "repository goal requested",
   "trigger": "goal-loop policy admitted one bounded ACP worker pass",
   "workspace": {

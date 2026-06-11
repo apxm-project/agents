@@ -434,11 +434,11 @@ impl Default for ServerRolloutConfig {
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq)]
 #[serde(default)]
 pub struct ServerMcpConfig {
-    pub plan_max_tokens: usize,
-    pub plan_temperature: f64,
-    pub plan_emit_timeout_ms: u64,
-    pub plan_repair_attempts: usize,
-    pub plan_capability_guidance_limit: usize,
+    pub workflow_max_tokens: usize,
+    pub workflow_temperature: f64,
+    pub workflow_emit_timeout_ms: u64,
+    pub workflow_repair_attempts: usize,
+    pub workflow_capability_guidance_limit: usize,
     pub default_top_k: usize,
     pub max_top_k: usize,
     pub default_evidence_limit: usize,
@@ -452,11 +452,11 @@ pub struct ServerMcpConfig {
 impl Default for ServerMcpConfig {
     fn default() -> Self {
         Self {
-            plan_max_tokens: 8192,
-            plan_temperature: 0.0,
-            plan_emit_timeout_ms: 120_000,
-            plan_repair_attempts: 3,
-            plan_capability_guidance_limit: 32,
+            workflow_max_tokens: 8192,
+            workflow_temperature: 0.0,
+            workflow_emit_timeout_ms: 120_000,
+            workflow_repair_attempts: 3,
+            workflow_capability_guidance_limit: 32,
             default_top_k: 10,
             max_top_k: 100,
             default_evidence_limit: 10,
@@ -1135,11 +1135,11 @@ mod tests {
             spill_threshold_bytes = 1048576
 
             [server.mcp]
-            plan_max_tokens = 4096
-            plan_temperature = 0.2
-            plan_emit_timeout_ms = 12345
-            plan_repair_attempts = 2
-            plan_capability_guidance_limit = 16
+            workflow_max_tokens = 4096
+            workflow_temperature = 0.2
+            workflow_emit_timeout_ms = 12345
+            workflow_repair_attempts = 2
+            workflow_capability_guidance_limit = 16
             default_top_k = 8
             max_top_k = 50
             default_evidence_limit = 6
@@ -1235,11 +1235,11 @@ mod tests {
         assert_eq!(config.server.webhook.timeout_secs, 7);
         assert_eq!(config.server.rollout.event_buffer, 4096);
         assert_eq!(config.server.rollout.spill_threshold_bytes, Some(1048576));
-        assert_eq!(config.server.mcp.plan_max_tokens, 4096);
-        assert_eq!(config.server.mcp.plan_temperature, 0.2);
-        assert_eq!(config.server.mcp.plan_emit_timeout_ms, 12345);
-        assert_eq!(config.server.mcp.plan_repair_attempts, 2);
-        assert_eq!(config.server.mcp.plan_capability_guidance_limit, 16);
+        assert_eq!(config.server.mcp.workflow_max_tokens, 4096);
+        assert_eq!(config.server.mcp.workflow_temperature, 0.2);
+        assert_eq!(config.server.mcp.workflow_emit_timeout_ms, 12345);
+        assert_eq!(config.server.mcp.workflow_repair_attempts, 2);
+        assert_eq!(config.server.mcp.workflow_capability_guidance_limit, 16);
         assert_eq!(config.server.mcp.default_top_k, 8);
         assert_eq!(config.server.mcp.max_top_k, 50);
         assert_eq!(config.server.mcp.default_evidence_limit, 6);

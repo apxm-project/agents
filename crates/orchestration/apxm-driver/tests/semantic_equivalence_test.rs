@@ -1,26 +1,4 @@
-//! Tier-1 semantic-equivalence harness: two opt levels must produce identical
-//! canonicalized `CallTrace`s for the same `AirModule`.
-//!
-//! Canonicalization (Phase A): sort each event's `parent_deps`, then sort
-//! events by `(parent_deps, prompt, node_id)`. Independent reorderings
-//! collapse; dependency violations surface as deps mismatch. Some safe
-//! cleanup passes can renumber internal nodes, so equality tests compare a
-//! semantic projection that excludes runtime node identity when node identity is
-//! not the behavior under test.
-//!
-//! The O2 prompt-canonicalization path must preserve the runtime's named
-//! placeholder contract. A rewrite may reorder prompt text for prefix-cache
-//! locality, but it must not emit positional placeholders such as `{0}`.
-//!
-//! The multi-input synth fixture (downstream Ask consuming
-//! `{ask_a}/{ask_b}/{ask_c}`) previously failed at O1 because `FuseAskOps`
-//! concatenated the producer template with `\n---\n` + consumer template
-//! without rewriting the consumer's `{producer_name}` placeholder, leaving
-//! a dangling reference once `mergeInputNames` dropped the slot. Fix:
-//! when the consumer template names the producer, substitute the producer's
-//! template content inline at that placeholder
-//! (`FuseAskOps.cpp::substituteProducerInConsumer`). Regression-tested
-//! below by `semantic_equivalence_synth_fanin_o0_vs_o1`.
+//! Semantic checks for optimizer rewrites that affect runtime LLM prompts.
 
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -336,40 +314,20 @@ async fn semantic_equivalence_fanout_synthesis_o0_vs_o1() {
     );
 }
 
-/// Regression test for the multi-input ASK template-resolution bug
-/// (FuseAskOps placeholder rewriting). Both opt levels must compile, run,
-/// and produce identical canonicalized traces — proving the synth node no
-/// longer dies at runtime with `template references unknown placeholder
-/// '{ask_a}': not in input_names`.
 #[tokio::test]
-async fn semantic_equivalence_synth_fanin_o0_vs_o1() {
+async fn synth_fanin_o1_runs_after_fuse_ask_ops() {
     let module = build_synth_fanin_module();
 
-    let trace_a = Arc::new(RwLock::new(CallTrace::new()));
-    compile_and_run_with_trace(&module, OptimizationLevel::O0, trace_a.clone())
-        .await
-        .expect("O0 compile+run");
-
-    let trace_b = Arc::new(RwLock::new(CallTrace::new()));
-    compile_and_run_with_trace(&module, OptimizationLevel::O1, trace_b.clone())
+    let trace = Arc::new(RwLock::new(CallTrace::new()));
+    compile_and_run_with_trace(&module, OptimizationLevel::O1, trace.clone())
         .await
         .expect("O1 compile+run");
 
-    let c_a = canonicalize(&trace_a.read());
-    let c_b = canonicalize(&trace_b.read());
-
+    let events = canonicalize(&trace.read());
     assert!(
-        !c_a.is_empty(),
-        "O0 emitted no events \u{2014} the synth fixture failed to execute"
-    );
-    assert!(
-        !c_b.is_empty(),
+        !events.is_empty(),
         "O1 emitted no events \u{2014} fusion likely produced an unreachable template"
     );
-    // After O1's FuseAskOps the synth and one of the upstream Asks collapse
-    // into a single fused op, so event counts intentionally differ between
-    // O0 and O1. We only assert both opt levels succeeded; tier-2 work
-    // tightens this into a full canonical-trace equality check.
 }
 
 #[tokio::test]

@@ -286,7 +286,7 @@ impl ExecutionEventEmitter for EmitterAdapter {
         });
     }
 
-    fn emit_plan_graph_emitted(
+    fn emit_plan_workflow_emitted(
         &self,
         plan_id: &str,
         generating_model: &str,
@@ -294,7 +294,7 @@ impl ExecutionEventEmitter for EmitterAdapter {
         task_ids: &[u64],
         parallel_fanout_max: usize,
     ) {
-        self.emit(PlanGraphEmittedPayload {
+        self.emit(PlanWorkflowEmittedPayload {
             plan_id: plan_id.to_string(),
             generating_model: generating_model.to_string(),
             node_count,

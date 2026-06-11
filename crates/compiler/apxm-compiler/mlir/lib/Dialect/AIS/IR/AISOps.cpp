@@ -912,9 +912,9 @@ LogicalResult WorkflowSpawnOp::verify() {
     return emitOpError("target cannot be empty");
 
   auto targetKind = getTargetKind();
-  if (targetKind != "graph_path" && targetKind != "artifact_path" &&
+  if (targetKind != "air_path" && targetKind != "artifact_path" &&
       targetKind != "workflow_path")
-    return emitOpError("target_kind must be one of: graph_path, artifact_path, workflow_path");
+    return emitOpError("target_kind must be one of: air_path, artifact_path, workflow_path");
 
   if (getAwaitResult().has_value() && !*getAwaitResult())
     return emitOpError("await_result=false is not supported");

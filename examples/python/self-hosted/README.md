@@ -1,12 +1,12 @@
 # Self-Hosted APXM Workflows
 
 This directory contains APXM workflows that use APXM to build APXM itself. They
-coordinate registered coding agents and optional self-hosted vLLM routes.
+coordinate APXM ACP agent profiles and optional self-hosted vLLM routes.
 
 ## Requirements
 
 - Run through Dekk: `dekk apxm execute ...`.
-- Agent workflows require generated ACP profiles and authenticated local CLIs.
+- Agent workflows require APXM ACP profile imports and authenticated local CLIs.
   Check them with `dekk apxm agent list` and `dekk apxm agent test <name>`.
 - The checked-in `claude` profile uses
   `npx -y @agentclientprotocol/claude-agent-acp@^0.24.2`; the checked-in
@@ -68,7 +68,7 @@ Refactors a module/crate:
 
 **Parameters:** `target` (str), `goal` (str)
 
-### 6. `autofix_workflow.py` — Autofix as APXM Graph
+### 6. `autofix_workflow.py` — Autofix as APXM Workflow
 
 The autofix loop as a native APXM workflow:
 - Runs autofix validation, classifies failures
@@ -133,11 +133,11 @@ jq '.nodes[] | select(.name == "print_review")' \
 ## How It Works
 
 These workflows use the Python `@compile` decorator. The decorator:
-1. Records graph construction operations (spawn, ask, think, etc.)
-2. Builds an in-memory graph representation
-3. Hands the graph to the APXM compiler
+1. Records workflow construction operations (spawn, ask, think, etc.)
+2. Builds an in-memory workflow representation
+3. Hands the workflow to the APXM compiler
 
-The graph is then lowered to AIS operations, optimized, emitted as an
+The workflow is then lowered to AIS operations, optimized, emitted as an
 `.apxmobj` artifact, and executed by the APXM runtime scheduler.
 
 During execution:

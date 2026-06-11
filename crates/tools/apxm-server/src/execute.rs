@@ -57,15 +57,16 @@ pub(crate) struct ExecuteRequest {
     pub(crate) imports: Vec<String>,
 }
 
-/// A caller-supplied workflow plus the same execution controls as
-/// [`ExecuteRequest`]. The `graph` is an `apxm_ais::plan::PlanGraph` envelope
-/// (`{ name, entry, parameters, nodes }`, or wrapped as `{ graph: { ... } }`);
-/// the server lowers it to AIR server-side — bypassing the LLM emission path —
-/// then routes it through the identical admission gate and runtime as
-/// `/v1/execute`.
+/// A caller-supplied workflow source plus the same execution controls as
+/// [`ExecuteRequest`]. The source must be canonical AIR text or a server-local
+/// `.air` / Python frontend path that emits AIR.
 #[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub(crate) struct CompileRequest {
-    pub(crate) graph: JsonValue,
+    #[serde(default)]
+    pub(crate) air: Option<String>,
+    #[serde(default)]
+    pub(crate) path: Option<String>,
     #[serde(default)]
     pub(crate) args: Vec<String>,
     #[serde(default)]
@@ -79,12 +80,11 @@ pub(crate) struct CompileRequest {
 }
 
 impl CompileRequest {
-    /// Lower the caller-supplied workflow to AIR and fold it into an
-    /// [`ExecuteRequest`] so the compile route shares the execute path verbatim
-    /// (admission gate, credential injection, runtime, session handling).
+    /// Resolve the caller-supplied workflow source to AIR and fold it into an
+    /// [`ExecuteRequest`] so this route shares the execute path verbatim.
     fn into_execute_request(self) -> Result<ExecuteRequest, ApiError> {
-        let air = crate::mcp_tools::lower_plan_graph_to_air(self.graph)
-            .map_err(|error| ApiError::bad_request(format!("workflow lowering failed: {error}")))?;
+        let air = crate::workflow_source::air_from_parts(self.air.as_deref(), self.path.as_deref())
+            .map_err(ApiError::bad_request)?;
         Ok(ExecuteRequest {
             air,
             args: self.args,
@@ -96,14 +96,14 @@ impl CompileRequest {
     }
 }
 
-pub(crate) async fn compile_graph(
+pub(crate) async fn compile_workflow(
     state: State<AppState>,
     Json(req): Json<CompileRequest>,
 ) -> Result<Json<ExecuteResponse>, ApiError> {
     execute(state, Json(req.into_execute_request()?)).await
 }
 
-pub(crate) async fn compile_graph_stream(
+pub(crate) async fn compile_workflow_stream(
     state: State<AppState>,
     Json(req): Json<CompileRequest>,
 ) -> Result<Sse<impl Stream<Item = Result<Event, std::convert::Infallible>>>, ApiError> {
@@ -425,11 +425,11 @@ fn validate_session_id(session_id: String) -> Result<String, ApiError> {
     Ok(session_id)
 }
 
-pub(crate) fn air_module_to_artifact(graph: AirModule) -> Result<Artifact, ApiError> {
-    let air_text = graph.to_air().map_err(|error| {
+pub(crate) fn air_module_to_artifact(module: AirModule) -> Result<Artifact, ApiError> {
+    let air_text = module.to_air().map_err(|error| {
         ApiError::bad_request(format!(
-            "failed to lower graph '{}' to AIR: {error}",
-            graph.name
+            "failed to lower workflow '{}' to AIR: {error}",
+            module.name
         ))
     })?;
     air_to_artifact(&air_text)
@@ -533,7 +533,7 @@ fn validate_raw_spawn_op_admission(
 fn validate_workflow_spawn_node(node: &Node) -> Result<(), String> {
     if node.attributes.contains_key(graph_attrs::SESSION_ROOT) {
         return Err(
-            "WORKFLOW_SPAWN session_root is server-controlled and may not be supplied by a graph"
+            "WORKFLOW_SPAWN session_root is server-controlled and may not be supplied by a workflow"
                 .to_string(),
         );
     }

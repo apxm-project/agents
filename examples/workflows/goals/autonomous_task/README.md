@@ -2,7 +2,7 @@
 
 `goal_start` lets an agent stop manually prompting subagents. The
 controller submits a task, optionally with an explicit bounded worker plan.
-When `workers` is omitted, APXM creates the bounded worker DAG for the pass.
+When `workers` is omitted, APXM creates the bounded worker workflow for the pass.
 APXM materializes a workflow, starts it in the background, and the controller sleeps until
 `goal_status`, `goal_events`, or `goal_cancel` wakes
 it.
@@ -35,13 +35,14 @@ it.
 
 Use `deterministic_request.json` when you want to exercise the workflow shape
 without any external agent profiles. Use `acp_git_worktree_request.json` when
-the runtime has registered ACP profiles such as `codex`, `claude`, or any
-custom worker profile. APXM is profile-name agnostic; those names are examples.
+the runtime has resolvable ACP profiles. Built-in names such as `codex` and
+`claude` work when their commands are installed; custom profiles can be added
+with `apxm agent add`. APXM is profile-name agnostic; those names are examples.
 
 For CLI callers, `dekk apxm goal` is the high-level wrapper around this native
 MCP path. By default it lets the server plan the bounded worker request, calls
 `goal_start`, and follows the goal event stream unless `--no-follow` is set.
-Pass repeatable `--worker` and `--depends` only when the worker DAG must be
+Pass repeatable `--worker` and `--depends` only when the worker workflow must be
 pinned manually.
 
 The returned JSON includes:
@@ -49,11 +50,11 @@ The returned JSON includes:
 - `goal_id` for `goal_status/events/cancel`.
 - `execution_id` for workflow drill-down.
 - `workflow_path` and `bundle_dir` for the generated workflow bundle.
-- `artifacts.tracking_doc`, `artifacts.graph_json`, `artifacts.plan_json`,
-  `artifacts.worker_prompts[*].prompt`, and initialized report files for the
-  generated goal packet.
+- `artifacts.tracking_doc`, `artifacts.worker_air_dir`, `artifacts.gate_air`,
+  `artifacts.worker_prompts[*].prompt`, and initialized
+  report files for the generated goal packet.
 - `plan.workers[*].cwd` showing each worker's assigned workspace.
-- `planning` showing whether APXM generated the worker DAG or the caller
+- `planning` showing whether APXM generated the worker workflow or the caller
   provided it explicitly.
 - `goal.next_events_args` with the first `goal_events` cursor for MCP paging.
 - `goal.sleep_event_kind = "orchestrator_sleep"` and

@@ -243,14 +243,14 @@ async fn execute_plan_once(
             );
         }
 
-        // Plans-as-graphs: validate the LLM-emitted task DAG up-front so
-        // a malformed graph (cycle, dangling depends_on, dup ids) fails
+        // Validate the LLM-emitted task DAG up-front so a malformed workflow
+        // (cycle, dangling depends_on, dup ids) fails
         // with an actionable error tied to the PLAN node, not buried
         // inside link_task_dag → compile. validate() is also called by
         // task_dag_to_air_module, so this is defence-in-depth + better
         // UX, not a correctness change. Telemetry follows: emit the
-        // PlanGraphEmitted event with the extracted parallel fan-out so
-        // trace consumers can tell "LLM produced an executable graph"
+        // PlanWorkflowEmitted event with the extracted parallel fan-out so
+        // trace consumers can tell "LLM produced an executable workflow"
         // from "LLM produced free-text steps."
         if let Some(task_dag) = plan.inner_plan.as_ref().and_then(|ip| ip.task_dag.as_ref()) {
             if let Err(err) = task_dag.validate() {
@@ -279,7 +279,7 @@ async fn execute_plan_once(
                 } else {
                     response.model.as_str()
                 };
-                emitter.emit_plan_graph_emitted(
+                emitter.emit_plan_workflow_emitted(
                     &ctx.execution_id,
                     generating_model,
                     task_dag.tasks.len(),
@@ -290,9 +290,9 @@ async fn execute_plan_once(
         }
 
         // Store plan in memory
-        let plan_json = serde_json::to_value(&plan.steps)
+        let serialized_steps = serde_json::to_value(&plan.steps)
             .map_err(|e| RuntimeError::Serialization(format!("Failed to serialize plan: {}", e)))?;
-        let plan_value: Value = plan_json
+        let plan_value: Value = serialized_steps
             .try_into()
             .unwrap_or(Value::String("<invalid plan>".into()));
 
@@ -478,7 +478,7 @@ async fn generate_inner_plan(
         }
     })?;
 
-    // Load system prompt for graph-JSON generation from template.
+    // Load the system prompt for AIR generation from template.
     // No fallback prompt is used; template load failures are explicit.
     let system_prompt = apxm_backends::render_prompt("plan_inner_system", &serde_json::json!({}))
         .map_err(|e| RuntimeError::LLM {
@@ -686,7 +686,7 @@ Done."#;
     }
 
     /// Verifies the parallel-fanout calculation that
-    /// PlanGraphEmittedPayload reports. Tasks sharing the same
+    /// PlanWorkflowEmittedPayload reports. Tasks sharing the same
     /// `depends_on` set fan out in parallel after that set completes;
     /// the max bucket count is the extracted parallelism width.
     #[test]

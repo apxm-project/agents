@@ -1,26 +1,24 @@
 #!/usr/bin/env python3
-"""dispatch_open_ended.py — the plans-as-graphs user-facing demo.
+"""dispatch_open_ended.py — open-ended workflow dispatch demo.
 
-A 1-PLAN-node graph: the user's free-form request becomes the PLAN
+A 1-PLAN-node workflow: the user's free-form request becomes the PLAN
 node's `goal`. When the planner LLM responds with a structured
 `inner_plan.task_dag`, the runtime's PLAN handler:
 
   1. Validates the DAG up-front (TaskDag::validate — rejects cycles,
      dangling depends_on, dup ids with an actionable error).
-  2. Emits the `PlanGraphEmitted` event with `parallel_fanout_max` so
+  2. Emits the `PlanWorkflowEmitted` event with `parallel_fanout_max` so
      trace consumers can quantify the extracted parallelism.
   3. Links the task DAG through `task_dag_to_air_module` → compile →
-     splice into the live ExecutionDag (the `inner_plan` path).
-  4. Runs the spliced sub-graph end-to-end and returns the result.
+     splice into the live execution DAG (the `inner_plan` path).
+  4. Runs the spliced workflow end-to-end and returns the result.
 
-Equivalent to the Rust `dispatch_open_ended()` helper
-calls out, but built from existing primitives — no new runtime module,
-no SkillResolver shim. The wedge (commit a0054a3c) + validator (commit
-84e179ac) already plumbed every part except this one Python entry.
+Built from the PLAN primitive and existing Python frontend workflow
+authoring.
 
 Usage:
     APXM_BENCHMARK_BACKEND=<your-backend> python3 \\
-        examples/python/demos/plans-as-graphs/dispatch_open_ended.py \\
+        examples/python/demos/plan-workflows/dispatch_open_ended.py \\
         "research the prefix-cache literature and produce a 3-section brief"
 
 Backend selection: the PLAN node honors `backend=` / `model=` /
@@ -66,8 +64,8 @@ def _build_dispatch_graph(request: str):
         # The PLAN handler's runtime behaviour (see
         # crates/runtime/apxm-runtime/src/executor/handlers/plan.rs):
         # when the LLM response includes inner_plan.task_dag, the
-        # handler validates → links → splices → executes the sub-graph
-        # automatically. No additional graph nodes are needed here.
+        # handler validates -> links -> splices -> executes the inner workflow
+        # automatically. No additional workflow nodes are needed here.
         plan_node = g.plan(name="open_ended_plan", goal=request)
         g.done(plan_node)
 

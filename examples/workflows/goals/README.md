@@ -1,31 +1,30 @@
 # Native Goal Workflows
 
 These examples exercise APXM's native workflow coordination surface for
-agent-agnostic worker graphs. The checked-in workers are deterministic AIR
-graphs, so they run without Claude, Codex, API keys, ACP profiles, or network
-access. Replace any deterministic worker with a graph, artifact, or workflow
-that calls a registered agent when you want the same shape to drive real
-workers.
+agent-agnostic worker workflows. The checked-in workers are deterministic AIR,
+so they run without Claude, Codex, API keys, ACP profiles, or network access.
+Replace any deterministic worker with AIR, an artifact, or a workflow that calls
+a resolvable ACP profile when you want the same shape to drive real workers.
 
 ## Three Ways To Run Complex Work
 
 Use the smallest surface that matches the job:
 
 - `dekk apxm goal`: an agent or user starts a server-owned goal, APXM
-  materializes bounded worker DAG passes, continues until the gate converges or
+  materializes bounded worker workflow passes, continues until the gate converges or
   the iteration budget ends, and wakes the caller through the goal event stream
   and `goal_status`.
 - `dekk apxm workflow run`: run a checked-in
   `.apxmw` workflow file after `validate` and `analyze`.
-- `prompt_as_workflow`: ask MCP to synthesize a typed APXM workflow from natural
-  language. It is workflow-oriented; worker-spawning goal execution should still go
-  through `goal` or `goal_start`.
+- `prompt_as_workflow`: ask MCP to synthesize canonical APXM AIR from natural
+  language. It is workflow-oriented; worker-spawning goal execution should still
+  go through `goal` or `goal_start`.
 
 ```text
 [goal or event]
        |
        v
-[planner/controller creates bounded DAG]
+[planner/controller creates bounded worker workflow]
        |
        v
 [APXM starts goal + records goal_id]
@@ -43,7 +42,7 @@ Use the smallest surface that matches the job:
 ## Autonomous Task
 
 `autonomous_task/` shows the native MCP path for an controller agent that
-creates a bounded parallel worker graph, assigns each worker a workspace or Git
+creates a bounded parallel worker workflow, assigns each worker a workspace or Git
 worktree, starts the goal in the background, and then sleeps until APXM
 goal status/events/cancel wakes it.
 
@@ -55,7 +54,7 @@ goal status/events/cancel wakes it.
 ```
 
 Use `autonomous_task/deterministic_request.json` for a no-agent smoke test, or
-`autonomous_task/acp_git_worktree_request.json` with registered ACP profiles.
+`autonomous_task/acp_git_worktree_request.json` with resolvable ACP profiles.
 
 ## Goal Loop
 

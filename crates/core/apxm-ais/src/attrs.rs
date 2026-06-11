@@ -9,6 +9,9 @@ pub const AGENT_NAME: &str = "agent_name";
 pub const TEAM_NAME: &str = "team_name";
 pub const FLOW_NAME: &str = "flow_name";
 pub const PROFILE: &str = "profile";
+pub const AGENT_ROUTE: &str = "agent_route";
+pub const REQUIRED_CAPABILITIES: &str = "required_capabilities";
+pub const PREFERRED_PROFILES: &str = "preferred_profiles";
 pub const NODE_NAME: &str = "node_name";
 pub const MODE: &str = "mode";
 pub const CWD: &str = "cwd";
@@ -258,6 +261,9 @@ pub const ALL_ATTR_NAMES: &[&str] = &[
     TEAM_NAME,
     FLOW_NAME,
     PROFILE,
+    AGENT_ROUTE,
+    REQUIRED_CAPABILITIES,
+    PREFERRED_PROFILES,
     NODE_NAME,
     MODE,
     CWD,

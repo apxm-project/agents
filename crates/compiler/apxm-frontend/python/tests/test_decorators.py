@@ -52,14 +52,12 @@ aliases = ["default"]
 
 
 def test_compile_decorator_basic():
-    """Test basic @compile decorator."""
     from apxm import GraphRecorder, compile
 
     @compile()
     def simple_workflow(g: GraphRecorder):
         g.ask(name="step1", prompt="Do something")
 
-    # Verify the decorated function has the right metadata
     assert hasattr(simple_workflow, "_graph")
     graph = simple_workflow._graph
 
@@ -68,7 +66,7 @@ def test_compile_decorator_basic():
 
 
 def test_compiled_flow_emits_air_when_requested(monkeypatch, capsys):
-    """Python graph files emit AIR for the Dekk compiler driver."""
+    """Python workflow files emit AIR for the Dekk compiler driver."""
     from apxm import GraphRecorder, compile, run
 
     @compile()
@@ -82,10 +80,11 @@ def test_compiled_flow_emits_air_when_requested(monkeypatch, capsys):
 
     assert result.content == ""
     assert "module" in captured.out
+    assert "func.func @emit_workflow" in captured.out
 
 
 def test_compiled_function_to_air_includes_python_tool_sidecar():
-    """Compiled graph AIR includes Python tool metadata when tools are registered."""
+    """Compiled workflow AIR includes Python tool metadata when tools are registered."""
     from apxm import GraphRecorder, compile, tool
     from apxm.constants import PYTHON_HANDLER_ID, PYTHON_TOOL_MANIFEST_MODULE
     from apxm.constants import PYTHON_TOOLS_AIR_COMMENT_PREFIX

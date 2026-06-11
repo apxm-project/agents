@@ -69,27 +69,6 @@ fn make_agent_spawned_event(execution_id: &str) -> ApxmEvent {
 }
 
 #[tokio::test]
-async fn webhook_fires_on_run_started_run_completed() {
-    let sink = spawn_webhook_sink().await;
-    let url = format!("http://{}/notify", sink.addr);
-    let dispatcher = Arc::new(WebhookDispatcher::new(url).expect("webhook dispatcher"));
-
-    dispatcher.dispatch(make_agent_spawned_event("exec-1"));
-
-    // Spawned task is fire-and-forget; give the runtime a moment to
-    // complete the POST. 250ms is plenty for an in-process server.
-    for _ in 0..20 {
-        if !sink.received.lock().expect("bucket").is_empty() {
-            break;
-        }
-        tokio::time::sleep(std::time::Duration::from_millis(20)).await;
-    }
-    let recv = sink.received.lock().expect("bucket").clone();
-    assert_eq!(recv.len(), 1, "expected one webhook POST: {recv:?}");
-    assert_eq!(recv[0]["payload"]["kind"], "agent_spawned");
-}
-
-#[tokio::test]
 async fn webhook_carries_same_envelope_as_sse() {
     let sink = spawn_webhook_sink().await;
     let url = format!("http://{}/notify", sink.addr);

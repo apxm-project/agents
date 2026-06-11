@@ -306,7 +306,7 @@ mod tests {
     use std::sync::atomic::{AtomicUsize, Ordering};
     use tokio::sync::Notify;
 
-    const CONST_GRAPH: &str = r#"module {
+    const CONST_AIR: &str = r#"module {
   func.func @const_graph() -> !ais.token attributes {ais.entry} {
     %value = ais.const_str "ok" : !ais.token
     func.return %value : !ais.token
@@ -315,16 +315,16 @@ mod tests {
 "#;
 
     #[tokio::test]
-    async fn installed_workflow_spawner_executes_workflow_spawn_graph() {
+    async fn installed_workflow_spawner_executes_workflow_spawn_air() {
         let temp = tempfile::tempdir().expect("tempdir");
-        let graph_path = temp.path().join("child.air");
+        let air_path = temp.path().join("child.air");
         let workflow_path = temp.path().join("child.apxmw");
-        std::fs::write(&graph_path, CONST_GRAPH).expect("write graph");
+        std::fs::write(&air_path, CONST_AIR).expect("write AIR");
         std::fs::write(
             &workflow_path,
             serde_json::to_vec_pretty(&serde_json::json!({
                 "name": "child",
-                "graphs": [
+                "steps": [
                     {"id": "const_step", "path": "child.air"}
                 ],
                 "output": "{{const_step.output}}"
@@ -399,18 +399,18 @@ mod tests {
             temp.path().join("left.air"),
             tool_graph("fixture_phase_left"),
         )
-        .expect("write left graph");
+        .expect("write left AIR");
         std::fs::write(
             temp.path().join("right.air"),
             tool_graph("fixture_phase_right"),
         )
-        .expect("write right graph");
+        .expect("write right AIR");
         let workflow_path = temp.path().join("parallel.apxmw");
         std::fs::write(
             &workflow_path,
             serde_json::to_vec_pretty(&serde_json::json!({
                 "name": "parallel_phase",
-                "graphs": [
+                "steps": [
                     {"id": "left", "path": "left.air"},
                     {"id": "right", "path": "right.air"}
                 ],

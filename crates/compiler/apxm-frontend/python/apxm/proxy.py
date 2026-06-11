@@ -822,7 +822,7 @@ class GraphRecorder:
         node_policy: NodePolicy | dict[str, Any] | None = None,
         **attributes: Any,
     ) -> NodeRef:
-        """Spawn a child graph, artifact, or workflow execution."""
+        """Spawn a child AIR file, artifact, or workflow execution."""
         if name is None:
             name = self._auto_name(graph_keys.OP_WORKFLOW_SPAWN)
         if target_kind is None:
@@ -1345,8 +1345,11 @@ class GraphRecorder:
         *,
         agent_name: str | None = None,
         profile: AgentRef | None = None,
+        agent_route: str | None = None,
+        required_capabilities: list[str] | None = None,
+        preferred_profiles: list[AgentRef | str] | None = None,
         mode: str | None = None,
-        model: ModelId | None = None,
+        model: ModelId | str | None = None,
         cwd: str | None = None,
         capabilities: list[str] | None = None,
         goals: list[str] | None = None,
@@ -1358,8 +1361,11 @@ class GraphRecorder:
             name: Node name (auto-generated if not provided)
             agent_name: Name of the agent instance
             profile: Agent profile from apxm._generated.agents
+            agent_route: Set to "auto" to let APXM select an ACP profile
+            required_capabilities: Abstract capabilities required from the selected profile
+            preferred_profiles: Preferred profile names or AgentRef values
             mode: Agent mode (e.g., "ask", "explore")
-            model: Model name
+            model: Agent-specific model hint
             cwd: Working directory for the agent
             capabilities: List of capabilities
             goals: List of goals
@@ -1371,10 +1377,16 @@ class GraphRecorder:
         attrs: dict[str, Any] = {graph_keys.AGENT_NAME: agent_name}
         if profile is not None:
             attrs[graph_keys.PROFILE] = _agent_profile_name(profile)
+        if agent_route is not None:
+            attrs[graph_keys.AGENT_ROUTE] = agent_route
+        if required_capabilities is not None:
+            attrs[graph_keys.REQUIRED_CAPABILITIES] = _normalize_value(required_capabilities)
+        if preferred_profiles is not None:
+            attrs[graph_keys.PREFERRED_PROFILES] = _agent_profile_names(preferred_profiles)
         if mode is not None:
             attrs[graph_keys.MODE] = mode
         if model is not None:
-            attrs[graph_keys.MODEL] = _normalize_model_id(model)
+            attrs[graph_keys.MODEL] = str(model)
         if cwd is not None:
             attrs[graph_keys.CWD] = cwd
         if capabilities is not None:
@@ -1612,6 +1624,16 @@ def _agent_profile_name(profile: Any) -> str:
     raise TypeError(
         "agent profile must be an AgentRef imported from apxm._generated.agents"
     )
+
+
+def _agent_profile_names(profiles: list[Any]) -> list[str]:
+    names: list[str] = []
+    for profile in profiles:
+        if isinstance(profile, str):
+            names.append(profile)
+        else:
+            names.append(_agent_profile_name(profile))
+    return names
 
 
 def _apply_routing_attrs(

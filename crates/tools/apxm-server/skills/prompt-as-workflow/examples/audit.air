@@ -1,0 +1,10 @@
+module {
+  func.func @audit(%scope: !ais.token {ais.param_name = "scope", ais.param_type = "str"}) -> !ais.token attributes {ais.entry} {
+    %build = ais.ask "Run the APXM build for {scope}; summarize warnings and errors." : !ais.token
+    %tests = ais.ask "Run the test suite for {scope}; summarize pass/fail counts." : !ais.token
+    %policy = ais.ask "Run policy checks for {scope}; summarize violations." : !ais.token
+    %todo = ais.ask "Count TODO, FIXME, stub, and unimplemented markers in core crates." : !ais.token
+    %summary = ais.think "Synthesize {build}, {tests}, {policy}, and {todo} into status, prioritized issues, and concrete next actions." [%build, %tests, %policy, %todo : !ais.token, !ais.token, !ais.token, !ais.token] {input_names = ["build", "tests", "policy", "todo"]} : !ais.token
+    func.return %summary : !ais.token
+  }
+}

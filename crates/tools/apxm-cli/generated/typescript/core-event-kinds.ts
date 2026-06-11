@@ -42,7 +42,7 @@ export const TOOL_END = kind("tool_end", "lifecycle");
 export const PLAN_CREATED = kind("plan_created", "lifecycle");
 export const PLAN_STEP_STARTED = kind("plan_step_started", "lifecycle");
 export const PLAN_STEP_COMPLETED = kind("plan_step_completed", "lifecycle");
-export const PLAN_GRAPH_EMITTED = kind("plan_graph_emitted", "lifecycle");
+export const PLAN_WORKFLOW_EMITTED = kind("plan_workflow_emitted", "lifecycle");
 export const WORKFLOW_STARTED = kind("workflow_started", "lifecycle");
 export const WORKFLOW_STEP_STARTED = kind("workflow_step_started", "lifecycle");
 export const WORKFLOW_STEP_COMPLETED = kind("workflow_step_completed", "lifecycle");
@@ -111,7 +111,7 @@ export const CORE_EVENT_KINDS = [
   PLAN_CREATED,
   PLAN_STEP_STARTED,
   PLAN_STEP_COMPLETED,
-  PLAN_GRAPH_EMITTED,
+  PLAN_WORKFLOW_EMITTED,
   WORKFLOW_STARTED,
   WORKFLOW_STEP_STARTED,
   WORKFLOW_STEP_COMPLETED,

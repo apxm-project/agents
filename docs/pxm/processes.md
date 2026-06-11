@@ -24,15 +24,17 @@ must not infer those relationships from the ProcessTable or scheduler state. See
 
 ### Phase 1: Spawn
 
-When `SPAWN_AGENT` includes a registered `profile` attribute, the runtime
-spawns a real ACP subprocess:
+When `SPAWN_AGENT` includes a `profile` attribute or `agent_route = "auto"`,
+the runtime spawns a real ACP subprocess:
 
 1. **Profile lookup**: the agent registry resolves the profile to a command and configuration.
+   With `agent_route = "auto"`, APXM first selects a profile from host-supplied
+   route candidates using `required_capabilities` and `preferred_profiles`.
 2. **Process spawn**: an OS child process is created with stdin/stdout pipes and its own address space.
 3. **ACP handshake**: the initialize/authenticate/session-create protocol establishes a live session.
 4. **Registration**: the process is recorded in the ProcessTable, and AAM beliefs are updated to reflect the child agent's existence.
 
-Without `profile`, SPAWN_AGENT performs metadata-only registration for local flow agents.
+Without `profile` or `agent_route`, SPAWN_AGENT performs metadata-only registration for local flow agents.
 
 #### AAM scoping at spawn (today)
 
@@ -80,13 +82,13 @@ Graceful shutdown proceeds through: transport close (EOF signal), grace period, 
 | | AgentProcess | AgentThread |
 |---|---|---|
 | **What** | An agent (local or external) | An operation within an agent |
-| **Isolation** | Own AAM scope + own OS process | Shares process AAM |
+| **Isolation** | Own OS process for ACP; AAM view selected by `ScopePolicy` | Shares the execution AAM view |
 | **Identity** | Named in ProcessTable | Node ID in DAG |
 | **Lifetime** | Spawn to terminate | Node start to complete |
 | **Communication** | Via COMMUNICATE op | Via dataflow tokens |
 | **Example** | External code reviewer | An ASK node querying the LLM |
 
-An `AgentProcess` is the A-PXM equivalent of an OS process. It encapsulates the agent's session, profile, lifecycle state, and parent relationship. All threads within a process share the process's [AAM](aam.md) state (beliefs, goals, capabilities) and capability system -- analogous to how OS threads share the process address space.
+An `AgentProcess` is the A-PXM equivalent of an OS process. It encapsulates the agent's session, profile, lifecycle state, and parent relationship. Today, all threads in one server execution share the same underlying [AAM](aam.md) instance; `ScopePolicy` controls the spawned agent's view of that AAM.
 
 An `AgentThread` tracks a single node execution. Threads are created when a node fires in the [dataflow scheduler](scheduling.md) and completed when the node finishes.
 

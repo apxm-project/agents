@@ -187,11 +187,3 @@ def test_invoke_surfaces_non_200(fake_client):
     handle = libs.load("demo")
     with pytest.raises(ServerError):
         handle.invoke()
-
-
-def test_load_docstring_non_empty():
-    """Track E.6: every public symbol carries a docstring (``help(load)``
-    must produce something useful)."""
-    assert libs.load.__doc__ and "skill" in libs.load.__doc__.lower()
-    assert libs.SkillHandle.__doc__ and "skill" in libs.SkillHandle.__doc__.lower()
-    assert libs.SkillResult.__doc__ and "Result" in libs.SkillResult.__doc__

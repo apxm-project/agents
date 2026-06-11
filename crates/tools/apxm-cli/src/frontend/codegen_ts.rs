@@ -202,6 +202,9 @@ fn render_ts_agents(buf: &mut String) {
     buf.push_str("export type AgentTemplate = {\n");
     buf.push_str("  readonly name: string;\n");
     buf.push_str("  readonly command: string;\n");
+    buf.push_str("  readonly description: string | null;\n");
+    buf.push_str("  readonly routeCapabilities: readonly string[];\n");
+    buf.push_str("  readonly source: string;\n");
     buf.push_str("  readonly defaultMode: string | null;\n");
     buf.push_str("  readonly defaultModel: string | null;\n");
     buf.push_str("};\n\n");
@@ -212,6 +215,16 @@ fn render_ts_agents(buf: &mut String) {
         buf.push_str("  {\n");
         buf.push_str(&format!("    name: {},\n", ts_string(&t.name)));
         buf.push_str(&format!("    command: {},\n", ts_string(&t.command)));
+        buf.push_str(&format!(
+            "    description: {},\n",
+            ts_optional_string(t.description.as_deref())
+        ));
+        buf.push_str("    routeCapabilities: [\n");
+        for capability in &t.route_capabilities {
+            buf.push_str(&format!("      {},\n", ts_string(capability)));
+        }
+        buf.push_str("    ],\n");
+        buf.push_str(&format!("    source: {},\n", ts_string(&t.source)));
         buf.push_str(&format!(
             "    defaultMode: {},\n",
             ts_optional_string(t.default_mode.as_deref())

@@ -14,28 +14,29 @@ use serde_json::Value as JsonValue;
 use crate::execute::{air_to_artifact_with_caps, registered_capability_names};
 use crate::helpers::mcp_tool_result;
 use crate::state::AppState;
+use crate::workflow_source;
 
 pub(crate) const MCP_TOOL_APXM_COMPILE: &str = "compile";
 pub(crate) const MCP_TOOL_APXM_VALIDATE: &str = "validate";
 pub(crate) const MCP_TOOL_APXM_OPS_LIST: &str = "ops_list";
 pub(crate) const MCP_TOOL_APXM_RUN: &str = "run";
 
-/// JSON Schema for `run` ({air, args?, session_id?, admit_capabilities?}).
+/// Input schema for `run`.
 pub(crate) fn run_input_schema() -> JsonValue {
     serde_json::json!({
         "type": "object",
         "additionalProperties": false,
-        "required": ["air"],
         "properties": {
             "air": { "type": "string", "description": "APXM AIR (MLIR) source to run" },
-            "args": { "type": "array", "items": { "type": "string" }, "description": "positional string args bound to graph parameters" },
+            "path": { "type": "string", "description": "Path to a .air file or Python frontend file that emits AIR" },
+            "args": { "type": "array", "items": { "type": "string" }, "description": "positional string args bound to workflow parameters" },
             "session_id": { "type": "string" },
             "admit_capabilities": { "type": "array", "items": { "type": "string" }, "description": "write capabilities the caller grants this run" }
         }
     })
 }
 
-/// Side-effecting MCP tool: compile + run an AIR graph, returning the
+/// Side-effecting MCP tool: compile + run AIR, returning the
 /// `ExecuteResponse`. This is the safe "agent writes IR -> dispatch" path —
 /// writes are gated by `admit_capabilities` (static pre-flight) AND the runtime
 /// invoke-site write boundary. Returns `Some(response)` if `tool_name` is it.
@@ -48,9 +49,13 @@ pub(crate) async fn call_run_tool(
     if tool_name != MCP_TOOL_APXM_RUN {
         return None;
     }
+    let args = match args_with_air_source(args) {
+        Ok(args) => args,
+        Err(error) => return Some(mcp_tool_result(id.clone(), error, true)),
+    };
     // Parse the arguments object directly into ExecuteRequest (air/args/
     // session_id/admit_capabilities) — not the Value->HashMap coercion path.
-    let req: crate::execute::ExecuteRequest = match serde_json::from_value(args.clone()) {
+    let req: crate::execute::ExecuteRequest = match serde_json::from_value(args) {
         Ok(req) => req,
         Err(error) => {
             return Some(mcp_tool_result(
@@ -70,13 +75,15 @@ pub(crate) async fn call_run_tool(
     }
 }
 
-/// JSON Schema for the `{air: string}` input shared by compile + validate.
+/// Input schema shared by compile + validate.
 pub(crate) fn air_input_schema() -> JsonValue {
     serde_json::json!({
         "type": "object",
         "additionalProperties": false,
-        "required": ["air"],
-        "properties": { "air": { "type": "string", "description": "APXM AIR (MLIR) source text" } }
+        "properties": {
+            "air": { "type": "string", "description": "APXM AIR (MLIR) source text" },
+            "path": { "type": "string", "description": "Path to a .air file or Python frontend file that emits AIR" }
+        }
     })
 }
 
@@ -102,14 +109,15 @@ fn compile_tool(
     args: &JsonValue,
     validate_only: bool,
 ) -> Json<JsonValue> {
-    let Some(air) = args.get("air").and_then(|v| v.as_str()) else {
-        return mcp_tool_result(id, "missing required argument 'air'".to_string(), true);
+    let air = match air_source_from_args(args) {
+        Ok(air) => air,
+        Err(error) => return mcp_tool_result(id, error, true),
     };
     let known = registered_capability_names(state);
     // A compile failure is a valid tool RESULT (ok:false + diagnostics), not a
     // JSON-RPC protocol error — so isError stays false and the agent can read
     // the diagnostics and repair the AIR in its loop.
-    let payload = match air_to_artifact_with_caps(air, &known) {
+    let payload = match air_to_artifact_with_caps(&air, &known) {
         Ok(_artifact) => serde_json::json!({
             "ok": true,
             "diagnostics": [],
@@ -122,6 +130,21 @@ fn compile_tool(
         }),
     };
     mcp_tool_result(id, payload.to_string(), false)
+}
+
+fn args_with_air_source(args: &JsonValue) -> Result<JsonValue, String> {
+    let mut args = args.clone();
+    let air = air_source_from_args(&args)?;
+    let Some(object) = args.as_object_mut() else {
+        return Err("tool arguments must be an object".to_string());
+    };
+    object.insert("air".to_string(), JsonValue::String(air));
+    object.remove("path");
+    Ok(args)
+}
+
+fn air_source_from_args(args: &JsonValue) -> Result<String, String> {
+    workflow_source::air_from_args(args)
 }
 
 fn ops_list_tool(id: JsonValue) -> Json<JsonValue> {

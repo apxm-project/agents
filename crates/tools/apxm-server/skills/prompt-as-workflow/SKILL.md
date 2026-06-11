@@ -1,11 +1,10 @@
 ---
 name: prompt-as-workflow
-description: Use for complex coding-agent work that should be emitted as APXM AIR, compiled, dispatched, and summarized instead of executed as an untyped linear plan.
+description: Use for complex coding-agent work that should be emitted as APXM AIR, compiled, dispatched, and summarized instead of executed as an untyped checklist.
 mcp_server: apxm-mcp-server
 mcp_tool: prompt_as_workflow
 resources:
   prompt: skill://prompt-as-workflow/prompt.md
-  schema: skill://prompt-as-workflow/schema.json
 ---
 
 # APXM Prompt As Workflow
@@ -18,19 +17,19 @@ scheduled explicitly.
 
 ## Contract
 
-The skill asks APXM to emit typed workflow JSON for the requested task, validates it
-against `schema.json`, compiles it through the APXM compiler, and dispatches the
-result through the runtime. The calling agent receives a compact summary and a
-`trace_id`. Intermediate node outputs remain outside the agent context unless
-the agent explicitly fetches them with a trace query tool.
+The skill asks APXM to emit canonical AIR for the requested task, compiles it
+through the APXM compiler, and dispatches the result through the runtime. The
+calling agent receives a compact summary, a `trace_id`, and the emitted `.air`
+path. Intermediate node outputs remain outside the agent context unless the
+agent explicitly fetches them with a trace query tool.
 
 ## Inputs
 
 - `task`: required natural-language task.
 - `context`: optional compact context, such as relevant files, constraints, or
   repository state.
-- `constraints`: optional JSON object for budget, model policy, sandbox policy,
-  or maximum workflow size.
+- `constraints`: optional structured object for budget, model policy, sandbox
+  policy, or maximum workflow size.
 
 ## Output Discipline
 
@@ -39,7 +38,8 @@ Return only:
 - `status`
 - `summary`
 - `trace_id`
-- `workflow`
+- `air_path`
+- `air_hash`
 - `node_count`
 - `edge_count`
 - `warnings`
