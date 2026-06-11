@@ -89,7 +89,7 @@ The HTTP MCP endpoint also exposes APXM skill library tools:
 - `workflow_status` -- fetch the current status, result, error, and event totals for a workflow run by `execution_id`
 - `workflow_events` -- page retained run events for a workflow run with `since` and `limit`
 - `workflow_cancel` -- interrupt an in-flight workflow run by server-owned `execution_id`
-- `goal_start` -- start a server-owned goal run, auto-plan bounded workflow passes when `workers` is omitted, allocate worker workspaces or Git worktrees, and return a stable `goal_id`
+- `goal_start` -- start a server-owned goal run, ask the APXM planner route for a bounded worker DAG when `workers` is omitted, validate that DAG, allocate worker workspaces or Git worktrees, and return a stable `goal_id`
 - `goal_status` -- fetch aggregate goal state, the current pass, task plan, verdict, and totals by `goal_id`
 - `goal_events` -- page retained goal events with `goal_id`, `since`, and `limit`; includes aggregate lifecycle events plus mirrored events from the current workflow pass. REST clients can use `/v1/goals/{goal_id}/events/stream` for SSE replay and live wake-up.
 - `goal_cancel` -- interrupt an in-flight goal run by `goal_id`
@@ -110,8 +110,9 @@ does not accept `session_root`; workflow session roots are derived by APXM.
 
 Native goal starts are server-owned goal runs. A caller, CLI, frontend, or APXM
 OS trigger can either `POST /v1/goals` or call `goal_start`. Both paths use the
-same request and response shape. Omit `workers` to let APXM create the bounded
-DAG for each pass, or provide an explicit `workers` array to pin that DAG.
+same request and response shape. Omit `workers` to let APXM ask the planner
+route for a bounded worker DAG, validate it, and run the admitted pass, or
+provide an explicit `workers` array to pin that DAG.
 After start, keep the returned `goal_id`, then go idle on
 `/v1/goals/{goal_id}/events/stream` until an aggregate wake/error/cancel event,
 or page `goal_events` and confirm terminal state with `goal_status` over MCP.

@@ -1,7 +1,10 @@
 [event/task]
     |
     v
-[trigger + auto-planned or explicit worker DAG]
+[planner route or explicit worker DAG]
+    |
+    v
+[validate bounded worker DAG]
     |
     v
 [allocate per-worker workspace/worktree]

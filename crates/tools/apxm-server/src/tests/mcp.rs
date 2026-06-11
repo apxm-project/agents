@@ -453,6 +453,71 @@ async fn mcp_goal_start_auto_plans_when_workers_are_omitted() {
 }
 
 #[tokio::test]
+async fn mcp_goal_start_model_planner_proposes_worker_dag() {
+    let app = build_app(
+        test_state_with_mock_plan_response(serde_json::json!({
+            "reason": "split inspection, implementation, and verification",
+            "workers": [
+                {
+                    "id": "survey",
+                    "role": "Inspect the current goal architecture and report constraints."
+                },
+                {
+                    "id": "implement",
+                    "role": "Implement the admitted architecture change.",
+                    "depends_on": ["survey"]
+                },
+                {
+                    "id": "verify",
+                    "role": "Run focused checks and report any residual failures.",
+                    "depends_on": ["implement"]
+                }
+            ]
+        }))
+        .await,
+    );
+    let session_id = format!("mcp-goal-model-plan-{}", uuid::Uuid::new_v4());
+
+    let (status, body) = post_json(
+        app,
+        routes::MCP,
+        mcp_call(
+            MCP_TOOL_APXM_GOAL_START,
+            serde_json::json!({
+                "task": "revise goal architecture e2e",
+                "session_id": session_id,
+                "dry_run": true,
+                "planning": { "mode": "model", "max_workers": 4 }
+            }),
+        ),
+    )
+    .await;
+
+    assert_eq!(status, StatusCode::OK, "goal call failed: {body}");
+    assert_eq!(body[tool_result::RESULT][mcp_fields::IS_ERROR], false);
+    let planned: serde_json::Value =
+        serde_json::from_str(tool_text(&body)).expect("goal response JSON");
+    assert_eq!(planned["planning"]["mode"], "model");
+    assert_eq!(planned["planning"]["planner"], "model_router");
+    assert_eq!(planned["planning"]["worker_count"], 3);
+
+    let workers = planned["plan"]["workers"].as_array().expect("plan workers");
+    assert_eq!(workers[0]["id"], "survey");
+    assert_eq!(workers[1]["id"], "implement");
+    assert_eq!(
+        workers[1]["depends_on"]
+            .as_array()
+            .expect("implement deps")
+            .first()
+            .and_then(serde_json::Value::as_str),
+        Some("survey")
+    );
+
+    let bundle_dir = std::path::PathBuf::from(planned["bundle_dir"].as_str().expect("bundle_dir"));
+    let _ = std::fs::remove_dir_all(bundle_dir);
+}
+
+#[tokio::test]
 async fn mcp_goal_start_rejects_explicit_empty_workers() {
     let app = build_app(test_state().await);
 

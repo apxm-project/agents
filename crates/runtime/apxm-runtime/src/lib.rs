@@ -24,6 +24,7 @@
 
 pub mod aam;
 pub mod agent_pool;
+pub mod agent_router;
 pub mod capability;
 mod constants;
 pub mod context_stack;
@@ -55,6 +56,10 @@ pub use aam::{
     session::SessionManager,
 };
 pub use agent_pool::{AgentPool, PoolStats, ProfileStats};
+pub use agent_router::{
+    AgentRouteCandidate, AgentRouteDecision, AgentRouteSource, AgentRouteTarget, AgentRouter,
+    AgentRoutingError,
+};
 pub use capability::{
     CapabilitySystem,
     flow_registry::FlowRegistry,
