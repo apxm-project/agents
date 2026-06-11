@@ -49,7 +49,7 @@ Trigger:
 
 Upstream:
 {% if worker.has_upstream -%}
-This worker is ordered after: {{ worker.depends_label }}. Use workflow events and upstream outputs for context when needed.
+This worker is ordered after: {{ worker.depends_label }}. Use upstream outputs and workflow events for pass-level context when needed.
 {% else -%}
 No upstream worker dependencies. This worker can run in the first parallel phase.
 {% endif %}
@@ -60,7 +60,7 @@ No upstream worker dependencies. This worker can run in the first parallel phase
 - Preserve unrelated dirty work and shared setup artifacts.
 - Stage or report only intended files.
 - Do not merge, push, update integration refs, update pins, or remove worktrees unless explicitly authorized.
-- Do not ask the human to manually prompt other agents; hand off through reports, workflow events, and the gate.
+- Do not ask the human to manually prompt other agents; hand off through reports, goal/workflow events, and the gate.
 - When blocked, report the exact blocker, evidence, and the smallest next action.
 
 ## Validation / Evidence

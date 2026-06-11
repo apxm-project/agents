@@ -49,7 +49,8 @@ use crate::mcp::{
     MCP_METHOD_INITIALIZE, MCP_METHOD_RESOURCES_LIST, MCP_METHOD_RESOURCES_READ,
     MCP_METHOD_TOOLS_CALL, MCP_METHOD_TOOLS_LIST, MCP_RESOURCE_PARAM_URI as MCP_PARAM_URI,
     MCP_TOOL_APXM_AAM_RECALL, MCP_TOOL_APXM_CAPABILITY_LIST, MCP_TOOL_APXM_EVIDENCE_LOOKUP,
-    MCP_TOOL_APXM_GOAL_START, MCP_TOOL_APXM_PROMPT_AS_WORKFLOW, MCP_TOOL_APXM_SKILL_CALL,
+    MCP_TOOL_APXM_GOAL_CANCEL, MCP_TOOL_APXM_GOAL_EVENTS, MCP_TOOL_APXM_GOAL_START,
+    MCP_TOOL_APXM_GOAL_STATUS, MCP_TOOL_APXM_PROMPT_AS_WORKFLOW, MCP_TOOL_APXM_SKILL_CALL,
     MCP_TOOL_APXM_SKILL_GET, MCP_TOOL_APXM_SKILL_VALIDATE, MCP_TOOL_APXM_SKILLS_LIST,
     MCP_TOOL_APXM_TRACE_FETCH, MCP_TOOL_APXM_WORKFLOW_CANCEL, MCP_TOOL_APXM_WORKFLOW_EVENTS,
     MCP_TOOL_APXM_WORKFLOW_START, MCP_TOOL_APXM_WORKFLOW_STATUS,
@@ -72,6 +73,7 @@ mod call_skill_isolation;
 mod checkpoints;
 mod execute;
 mod execution_index_bench;
+mod goals;
 mod helpers;
 mod mcp;
 mod runs;
@@ -422,6 +424,7 @@ async fn test_state_with_skill_roots_and_execution_store(
         inference_limiter: crate::state::InferenceLimiter::unlimited_for_tests(),
         server_config: apxm_driver::ServerConfig::default(),
         cancel_registry: Arc::new(DashMap::new()),
+        goal_runs: crate::goal_runs::GoalRunRegistry::new(),
     }
 }
 
@@ -456,6 +459,7 @@ async fn test_state_with_runtime_and_skill_roots(
         inference_limiter: crate::state::InferenceLimiter::unlimited_for_tests(),
         server_config: apxm_driver::ServerConfig::default(),
         cancel_registry: Arc::new(DashMap::new()),
+        goal_runs: crate::goal_runs::GoalRunRegistry::new(),
     }
 }
 

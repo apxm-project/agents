@@ -12,6 +12,7 @@ use crate::a2a::A2aTaskRecord;
 use crate::agent::AgentRegistration;
 use crate::checkpoints::CheckpointStore;
 use crate::executions::ExecutionStore;
+use crate::goal_runs::GoalRunRegistry;
 use crate::rollout::RolloutRegistry;
 use crate::runs::RunEventBus;
 use crate::skills::SkillLibrary;
@@ -53,6 +54,8 @@ pub(crate) struct AppState {
     /// `Notify` that `POST /v1/runs/{id}/cancel` trips to abort the run at the
     /// next await boundary. Entries are removed when the execution settles.
     pub(crate) cancel_registry: Arc<DashMap<String, Arc<Notify>>>,
+    /// Server-owned multi-pass goal runs keyed by `goal_id`.
+    pub(crate) goal_runs: GoalRunRegistry,
 }
 
 #[derive(Clone)]

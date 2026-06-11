@@ -4,6 +4,8 @@
 //! - **Graph execution**: `POST /v1/execute`, `POST /v1/execute/stream`
 //! - **Skill library**: inventory, validation, REST/SSE execution, and
 //!   execution-record lookup through `/v1/skills/*` and `/v1/executions/*`
+//! - **Goals**: `POST /v1/goals`, `GET /v1/goals/{goal_id}`, retained
+//!   events, cancellation, and task-plan state for clients
 //! - **LLM generation**: `POST /v1/generate`, `POST /v1/generate-stream`,
 //!   `GET /v1/schema`
 //! - **Memory**: `GET|POST /v1/memory`
@@ -48,6 +50,8 @@ mod execute;
 mod execution_index;
 mod executions;
 mod generate;
+mod goal_runs;
+mod goals;
 mod health;
 mod helpers;
 mod mcp;

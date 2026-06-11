@@ -31,14 +31,15 @@ capabilities.
   `skill_call`.
 - Workflow control: `workflow_start`, `workflow_status`,
   `workflow_events`, `workflow_cancel`.
-- Native orchestration: `goal_start`.
+- Native orchestration: `goal_start`, `goal_status`, `goal_events`,
+  `goal_cancel`.
 
 `goal_start` compiles a bounded task/worker plan into a
 server-owned workflow. The orchestrator agent calls it once, records the
-returned `execution_id`, then sleeps until `workflow_events` returns
-`orchestrator_wake`, `execute_complete`, `error`, or `turn_aborted`, or
-`workflow_status` reports a terminal state. Real ACP workers require
-`admit_capabilities: ["SPAWN_AGENT"]`.
+returned `goal_id`, then sleeps until `goal_events` returns aggregate
+`orchestrator_wake`, `error`, or `turn_aborted`, or `goal_status` reports a
+terminal state. Use the current `execution_id` only for workflow drill-down.
+Real ACP workers require `admit_capabilities: ["SPAWN_AGENT"]`.
 
 ## Stdio MCP Tools
 
@@ -87,8 +88,7 @@ handler literals.
 - Putting business logic in the MCP server. It is a thin shim.
 - Accepting secrets as tool arguments.
 - Adding a second orchestration status/events/cancel control plane. Use
-  `workflow_status/events/cancel` for runs started by
-  `goal_start`.
+  `goal_status/events/cancel` for runs started by `goal_start`.
 - Server middleware using Starlette `BaseHTTPMiddleware` — use raw ASGI. Its
   receive-queue treats disconnect polls as disconnects and silently nulls chat
   responses (`feedback_basehttpmiddleware_breaks_chat`).

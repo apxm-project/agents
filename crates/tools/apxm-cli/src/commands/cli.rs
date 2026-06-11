@@ -332,16 +332,16 @@ pub struct GoalArgs {
     #[arg(value_name = "TASK")]
     pub task: Option<String>,
 
-    /// Print status for an existing goal execution id.
-    #[arg(long, value_name = "EXECUTION_ID")]
+    /// Print status for an existing goal id.
+    #[arg(long, value_name = "GOAL_ID")]
     pub status: Option<String>,
 
-    /// Print retained workflow events for an existing goal execution id.
-    #[arg(long, value_name = "EXECUTION_ID")]
+    /// Print retained events for an existing goal id.
+    #[arg(long, value_name = "GOAL_ID")]
     pub events: Option<String>,
 
-    /// Cancel an in-flight goal execution id.
-    #[arg(long, value_name = "EXECUTION_ID")]
+    /// Cancel an in-flight goal id.
+    #[arg(long, value_name = "GOAL_ID")]
     pub cancel: Option<String>,
 
     /// apxm-server base URL (default $APXM_SERVER_BASE or http://127.0.0.1:18800).
@@ -428,13 +428,12 @@ pub struct GoalArgs {
     #[arg(long = "dry-run")]
     pub dry_run: bool,
 
-    /// Maximum bounded passes to run the goal until the gate verdict converges.
-    /// Each pass is admitted independently; the runtime decides convergence.
+    /// Maximum server-owned passes to run until the gate verdict converges.
     /// Defaults to 1 (a single pass).
     #[arg(long = "max-iterations", value_name = "N")]
     pub max_iterations: Option<usize>,
 
-    /// Start the goal but do not poll workflow events.
+    /// Start the goal but do not poll aggregate goal events.
     #[arg(long = "no-follow")]
     pub no_follow: bool,
 

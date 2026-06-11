@@ -320,6 +320,9 @@ pub mod mcp {
 
     pub mod tools {
         pub const APXM_GOAL_START: &str = "goal_start";
+        pub const APXM_GOAL_STATUS: &str = "goal_status";
+        pub const APXM_GOAL_EVENTS: &str = "goal_events";
+        pub const APXM_GOAL_CANCEL: &str = "goal_cancel";
         pub const APXM_WORKFLOW_START: &str = "workflow_start";
         pub const APXM_WORKFLOW_STATUS: &str = "workflow_status";
         pub const APXM_WORKFLOW_EVENTS: &str = "workflow_events";

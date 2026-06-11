@@ -49,8 +49,8 @@ Command-line interface for the APXM graph compiler and runtime toolchain.
 
 ## Complex Work Paths
 
-Use `goal` when an agent or human wants APXM to plan one bounded worker DAG,
-start it through the server, and wait on workflow events:
+Use `goal` when an agent or human wants APXM to own a task, plan bounded worker
+passes, and supervise the run through the server:
 
 ```bash
 dekk apxm goal "Investigate and implement the scoped change" \
@@ -58,12 +58,13 @@ dekk apxm goal "Investigate and implement the scoped change" \
   --repo-root /path/to/repo
 ```
 
-`goal` calls the server-owned goal-start path and follows
-`workflow_events`/`workflow_status` unless `--no-follow` is set. By default the
-CLI omits `workers`, so the server auto-plans the bounded DAG and binds
-registered agents. Use repeatable `--worker` plus `--depends` only when the DAG
-must be pinned manually. Use `--status`, `--events`, or `--cancel` with the
-returned execution id to inspect or stop a run later.
+`goal` calls `goal_start` once and follows `goal_events`/`goal_status` by the
+returned `goal_id` unless `--no-follow` is set. By default the CLI omits
+`workers`, so the server auto-plans the bounded DAG and binds registered
+agents. Use repeatable `--worker` plus `--depends` only when the DAG must be
+pinned manually. Use `--status`, `--events`, or `--cancel` with the returned
+`goal_id` to inspect or stop a run later. Status responses expose the task
+ledger as `task.description`, `task.plan`, and `task.planning`.
 
 Use `chat` for a conversational loop over `apxm-server`. By default it runs a
 direct server-side ASK turn. Pass `--agent claude` to make each turn spawn and

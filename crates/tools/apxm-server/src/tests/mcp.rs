@@ -286,6 +286,9 @@ async fn mcp_tools_list_includes_skill_inventory_tools() {
         "tools: {body}"
     );
     assert!(names.contains(&MCP_TOOL_APXM_GOAL_START), "tools: {body}");
+    assert!(names.contains(&MCP_TOOL_APXM_GOAL_STATUS), "tools: {body}");
+    assert!(names.contains(&MCP_TOOL_APXM_GOAL_EVENTS), "tools: {body}");
+    assert!(names.contains(&MCP_TOOL_APXM_GOAL_CANCEL), "tools: {body}");
 }
 
 #[tokio::test]
@@ -344,6 +347,39 @@ async fn mcp_goal_start_rejects_unknown_goal_planning_fields() {
         text.contains("unknown field") && text.contains("goal"),
         "expected unknown-field diagnostic for goal-planning args: {body}"
     );
+}
+
+#[tokio::test]
+async fn mcp_goal_start_rejects_public_internal_goal_fields() {
+    let app = build_app(test_state().await);
+
+    for (field, value) in [
+        ("goal_id", serde_json::json!("caller-picked")),
+        ("iteration", serde_json::json!(1)),
+    ] {
+        let mut args = serde_json::json!({
+            "task": "server owns goal internals",
+            "workers": [
+                { "id": "planner", "role": "plan one pass" }
+            ]
+        });
+        args.as_object_mut()
+            .expect("args object")
+            .insert(field.to_string(), value);
+        let (status, body) = post_json(
+            app.clone(),
+            routes::MCP,
+            mcp_call(MCP_TOOL_APXM_GOAL_START, args),
+        )
+        .await;
+
+        assert_eq!(status, StatusCode::OK, "goal call failed: {body}");
+        assert_eq!(body[tool_result::RESULT][mcp_fields::IS_ERROR], true);
+        assert!(
+            tool_text(&body).contains("server-owned"),
+            "expected server-owned diagnostic for {field}: {body}"
+        );
+    }
 }
 
 #[tokio::test]
@@ -747,10 +783,7 @@ async fn mcp_goal_start_spawns_parallel_workers_with_session_cwds() {
     assert_eq!(started[tool_result::STATUS], STATUS_RUNNING);
     assert_eq!(started["planning"]["mode"], "explicit");
     assert_eq!(started["planning"]["generated"], false);
-    assert_eq!(
-        started["control"]["events_tool"],
-        MCP_TOOL_APXM_WORKFLOW_EVENTS
-    );
+    assert_eq!(started["control"]["events_tool"], MCP_TOOL_APXM_GOAL_EVENTS);
     assert_eq!(started["sleep_wake"]["sleep_after_start"], true);
     assert_eq!(
         started["goal"]["sleep_event_kind"],
@@ -786,7 +819,7 @@ async fn mcp_goal_start_spawns_parallel_workers_with_session_cwds() {
     assert!(plan_json.is_file(), "plan json should exist: {started}");
     let tracking_text = std::fs::read_to_string(&tracking_doc).expect("tracking doc text");
     assert!(
-        tracking_text.contains(MCP_TOOL_APXM_WORKFLOW_EVENTS)
+        tracking_text.contains(MCP_TOOL_APXM_GOAL_EVENTS)
             && tracking_text.contains("planner")
             && tracking_text.contains("executor")
             && !tracking_text.contains("{{"),
@@ -899,15 +932,15 @@ async fn mcp_goal_start_spawns_parallel_workers_with_session_cwds() {
         "response should expose workspace bindings: {started}"
     );
 
-    let events = workflow_events(app, &execution_id, 0, 200).await;
+    let events = workflow_events(app.clone(), &execution_id, 0, 200).await;
     let event_items = events["events"].as_array().expect("events array");
     let sleep_event = event_items
         .iter()
         .find(|event| payload_kind_is(event, event_kind::ORCHESTRATOR_SLEEP))
         .expect("orchestrator_sleep event");
     assert_eq!(
-        sleep_event["payload"]["control"]["events_tool"], MCP_TOOL_APXM_WORKFLOW_EVENTS,
-        "orchestrator_sleep should carry workflow control handles: {events}"
+        sleep_event["payload"]["control"]["events_tool"], MCP_TOOL_APXM_GOAL_EVENTS,
+        "orchestrator_sleep should carry goal control handles: {events}"
     );
     assert_eq!(
         sleep_event["payload"]["plan"]["workers"]
@@ -952,6 +985,34 @@ async fn mcp_goal_start_spawns_parallel_workers_with_session_cwds() {
         .expect("workflow_started event");
     assert_eq!(workflow_started["payload"]["workflow_name"], "goal_pass");
     assert_eq!(workflow_started["payload"]["step_count"], 5);
+    let goal_id = started["goal_id"].as_str().expect("goal_id");
+    let aggregate_events = wait_for_goal_events_matching(app.clone(), goal_id, |items| {
+        items
+            .iter()
+            .any(|event| payload_kind_is(event, event_kind::WORKFLOW_STARTED))
+            && items
+                .iter()
+                .any(|event| payload_kind_is(event, event_kind::EXECUTE_COMPLETE))
+            && items
+                .iter()
+                .any(|event| payload_kind_is(event, event_kind::ORCHESTRATOR_WAKE))
+    })
+    .await;
+    let aggregate_items = aggregate_events["events"].as_array().expect("goal events");
+    assert!(
+        aggregate_items.iter().any(|event| {
+            payload_kind_is(event, event_kind::WORKFLOW_STARTED)
+                && event["meta"]["trace_id"].as_str() == Some(execution_id.as_str())
+        }),
+        "goal_events should mirror current pass events: {aggregate_events}"
+    );
+    assert!(
+        aggregate_items.iter().any(|event| {
+            payload_kind_is(event, event_kind::ORCHESTRATOR_WAKE)
+                && event["meta"]["trace_id"].as_str() == Some(goal_id)
+        }),
+        "goal_events should include aggregate wake: {aggregate_events}"
+    );
     let workflow_session_dir = workflow_started["payload"]["session_dir"]
         .as_str()
         .expect("workflow session_dir");
@@ -3823,6 +3884,46 @@ async fn workflow_events(
     assert_eq!(status, StatusCode::OK, "workflow events failed: {body}");
     assert_eq!(body[tool_result::RESULT][mcp_fields::IS_ERROR], false);
     serde_json::from_str(tool_text(&body)).expect("workflow events response JSON")
+}
+
+async fn goal_events(app: Router, goal_id: &str, since: u64, limit: usize) -> serde_json::Value {
+    let (status, body) = post_json(
+        app,
+        routes::MCP,
+        mcp_call(
+            MCP_TOOL_APXM_GOAL_EVENTS,
+            serde_json::json!({
+                "goal_id": goal_id,
+                "since": since,
+                "limit": limit
+            }),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "goal events failed: {body}");
+    assert_eq!(body[tool_result::RESULT][mcp_fields::IS_ERROR], false);
+    serde_json::from_str(tool_text(&body)).expect("goal events response JSON")
+}
+
+async fn wait_for_goal_events_matching<F>(
+    app: Router,
+    goal_id: &str,
+    predicate: F,
+) -> serde_json::Value
+where
+    F: Fn(&[serde_json::Value]) -> bool,
+{
+    let mut last = serde_json::Value::Null;
+    for _ in 0..100 {
+        let events = goal_events(app.clone(), goal_id, 0, 200).await;
+        let items = events["events"].as_array().expect("events array");
+        if predicate(items) {
+            return events;
+        }
+        last = events;
+        tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+    }
+    panic!("goal events did not match predicate: {last}");
 }
 
 async fn wait_for_workflow_events_matching<F>(

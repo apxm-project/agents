@@ -1,36 +1,53 @@
-//! Native goal-start MCP entry point.
+//! Native goal MCP entry point.
 //!
-//! This layer is intentionally a compiler/materializer, not a second runtime:
-//! it turns a bounded worker plan into a generated workflow bundle and then
-//! starts that bundle through `workflow_start`, so status/events/cancel
-//! stay on the existing workflow control plane.
+//! A goal is a server-owned sequence of bounded workflow passes. This layer
+//! tracks aggregate goal state and lets the existing workflow runtime execute
+//! each pass.
 
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::process::Command;
+use std::time::Duration;
 
 use apxm_backends::HealthStatus;
 use apxm_core::constants::mcp::tools as mcp_tool_names;
 use apxm_core::constants::orchestration::admission as goal_admission;
 use apxm_core::events::kind;
+use apxm_core::events::payload::{
+    ErrorPayload, ExecutionStartedPayload, GoalConvergedPayload, GoalGateVerdictPayload,
+    GoalHaltedPayload, GoalNeedsAnotherPassPayload, OrchestratorSleepPayload,
+    OrchestratorWakePayload,
+};
+use apxm_core::events::{ApxmEvent, EventSource};
 use apxm_core::paths::ApxmPaths;
 use apxm_core::types::{
     CommunicateProtocol, OrchestrationStartStatus, OrchestrationTransport,
-    OrchestrationWorkspaceCleanup, OrchestrationWorkspaceMode,
+    OrchestrationWakeOutcome, OrchestrationWorkspaceCleanup, OrchestrationWorkspaceMode,
 };
 use axum::Json;
+use axum::extract::State;
 use serde::{Deserialize, Serialize};
 use serde_json::{Map as JsonMap, Value as JsonValue};
 
 use crate::error::ApiError;
+use crate::executions::{ExecutionRecord, ExecutionStatus};
+use crate::goal_runs::GoalRunStatus;
+use crate::goals::{
+    GoalCancelResponse, GoalEventsResponse, GoalStatusResponse, goal_cancel_for_state,
+    goal_events_for_state, goal_status_for_state,
+};
 use crate::helpers::mcp_tool_result;
 use crate::state::AppState;
 
 use super::workflow::{WorkflowOrchestrationContract, WorkflowStartArgs, start_workflow_from_args};
 
 pub(crate) const MCP_TOOL_APXM_GOAL_START: &str = mcp_tool_names::APXM_GOAL_START;
+pub(crate) const MCP_TOOL_APXM_GOAL_STATUS: &str = mcp_tool_names::APXM_GOAL_STATUS;
+pub(crate) const MCP_TOOL_APXM_GOAL_EVENTS: &str = mcp_tool_names::APXM_GOAL_EVENTS;
+pub(crate) const MCP_TOOL_APXM_GOAL_CANCEL: &str = mcp_tool_names::APXM_GOAL_CANCEL;
 
 const MAX_WORKERS: usize = 16;
+const GOAL_POLL_INTERVAL_MS: u64 = 50;
 const TEMPLATE_GOAL_WORKER: &str = "goal_worker";
 const TEMPLATE_GOAL_SUPERVISOR: &str = "goal_supervisor";
 const TEMPLATE_GOAL_TRACKING: &str = "goal_tracking";
@@ -42,7 +59,7 @@ const TEMPLATE_GOAL_DEFAULT_WORKER: &str = "goal_default_worker_instructions";
 const TEMPLATE_GOAL_DEFAULT_SUPERVISOR: &str = "goal_default_supervisor_instructions";
 const DEFAULT_AUTO_PLAN_MAX_WORKERS: usize = 8;
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Clone, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct GoalStartArgs {
     task: String,
@@ -68,8 +85,9 @@ struct GoalStartArgs {
     admit_capabilities: Vec<String>,
     #[serde(default)]
     imports: Vec<String>,
-    /// Zero-based index of this bounded pass within a goal. Callers running a
-    /// multi-pass goal increment this on each admitted pass.
+    /// Zero-based index of this bounded pass within a goal. Public callers
+    /// always start at zero; the server-owned supervisor increments this for
+    /// follow-up passes.
     #[serde(default)]
     iteration: usize,
     /// Hard ceiling on the number of bounded passes for the goal. Defaults to a
@@ -160,9 +178,10 @@ struct WorkspaceSpec {
     cleanup: Option<OrchestrationWorkspaceCleanup>,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Clone, Serialize)]
 struct GoalStartResponse {
     status: OrchestrationStartStatus,
+    goal_id: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     execution_id: Option<String>,
     session_id: String,
@@ -182,7 +201,7 @@ struct GoalStartResponse {
     flowchart: String,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Clone, Serialize)]
 struct GoalPlanSummary {
     task: String,
     workers: Vec<WorkerPlanSummary>,
@@ -218,7 +237,7 @@ struct WorkerPromptArtifact {
     report: String,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Clone, Serialize)]
 struct WorkerPlanSummary {
     id: String,
     role: String,
@@ -230,7 +249,7 @@ struct WorkerPlanSummary {
     workspace: WorkspaceBindingSummary,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Clone, Serialize)]
 struct SupervisorPlanSummary {
     id: String,
     transport: OrchestrationTransport,
@@ -238,7 +257,7 @@ struct SupervisorPlanSummary {
     profile: Option<String>,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Clone, Serialize)]
 struct WorkspaceBindingSummary {
     mode: OrchestrationWorkspaceMode,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -248,15 +267,16 @@ struct WorkspaceBindingSummary {
     cleanup: OrchestrationWorkspaceCleanup,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Clone, Serialize)]
 struct GoalControl {
     status_tool: &'static str,
     events_tool: &'static str,
     cancel_tool: &'static str,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Clone, Serialize)]
 struct GoalRuntimeContract {
+    goal_id: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     execution_id: Option<String>,
     initial_since: u64,
@@ -269,11 +289,27 @@ struct GoalRuntimeContract {
     wake_event_kind: &'static str,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Clone, Serialize)]
 struct SleepWakeContract {
     sleep_after_start: bool,
     wake_on: Vec<String>,
     event_loop: &'static str,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct GoalIdArgs {
+    goal_id: String,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct GoalEventsArgs {
+    goal_id: String,
+    #[serde(default)]
+    since: Option<u64>,
+    #[serde(default)]
+    limit: Option<usize>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -316,6 +352,16 @@ struct GoalBundle {
     bundle_dir: PathBuf,
     workflow_path: PathBuf,
     plan: GoalPlan,
+}
+
+struct GoalPassStart {
+    iteration: usize,
+    response: GoalStartResponse,
+    artifacts_value: JsonValue,
+    plan_value: JsonValue,
+    planning_value: JsonValue,
+    selection_value: Option<JsonValue>,
+    control_value: JsonValue,
 }
 
 struct GoalPlan {
@@ -373,7 +419,7 @@ pub(crate) fn goal_start_input_schema() -> JsonValue {
         "properties": {
             "task": {
                 "type": "string",
-                "description": "Task label and instructions for one bounded goal pass"
+                "description": "Task label and instructions for the server-owned goal run"
             },
             "context": {
                 "type": "string",
@@ -391,7 +437,7 @@ pub(crate) fn goal_start_input_schema() -> JsonValue {
                 "type": "array",
                 "minItems": 1,
                 "maxItems": MAX_WORKERS,
-                "description": "Optional bounded worker graph for one goal pass. When omitted, APXM creates a bounded worker DAG from task/context/event/trigger before admission. Independent workers run in parallel; depends_on creates fan-in/fan-out phases.",
+                "description": "Optional bounded worker graph. When omitted, APXM creates a bounded worker DAG from task/context/event/trigger before admission. Independent workers run in parallel; depends_on creates fan-in/fan-out phases.",
                 "items": {
                     "type": "object",
                     "additionalProperties": false,
@@ -484,11 +530,6 @@ pub(crate) fn goal_start_input_schema() -> JsonValue {
                 "description": "Must include SPAWN_AGENT when any worker/supervisor uses transport=acp"
             },
             "imports": { "type": "array", "items": { "type": "string" } },
-            "iteration": {
-                "type": "integer",
-                "minimum": 0,
-                "description": "Zero-based index of this bounded pass within a goal (default 0)"
-            },
             "max_iterations": {
                 "type": "integer",
                 "minimum": 1,
@@ -502,27 +543,162 @@ pub(crate) fn goal_start_input_schema() -> JsonValue {
     })
 }
 
+pub(crate) fn goal_status_input_schema() -> JsonValue {
+    goal_id_input_schema()
+}
+
+pub(crate) fn goal_cancel_input_schema() -> JsonValue {
+    goal_id_input_schema()
+}
+
+pub(crate) fn goal_events_input_schema() -> JsonValue {
+    serde_json::json!({
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["goal_id"],
+        "properties": {
+            "goal_id": { "type": "string" },
+            "since": {
+                "type": "integer",
+                "minimum": 0,
+                "description": "Return goal-run events whose run-local sequence is >= since"
+            },
+            "limit": {
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 1000,
+                "description": "Maximum events to return"
+            }
+        }
+    })
+}
+
+fn goal_id_input_schema() -> JsonValue {
+    serde_json::json!({
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["goal_id"],
+        "properties": {
+            "goal_id": { "type": "string" }
+        }
+    })
+}
+
 pub(crate) async fn call_goal_tool(
     state: &AppState,
     id: &JsonValue,
     tool_name: &str,
     tool_args: &JsonValue,
 ) -> Option<Json<JsonValue>> {
-    if tool_name != MCP_TOOL_APXM_GOAL_START {
-        return None;
+    match tool_name {
+        MCP_TOOL_APXM_GOAL_START => Some(match goal_start(state, tool_args).await {
+            Ok(response) => mcp_json_tool_result(id.clone(), response),
+            Err(error) => mcp_tool_result(id.clone(), error.message, true),
+        }),
+        MCP_TOOL_APXM_GOAL_STATUS => Some(match goal_status(state, tool_args) {
+            Ok(response) => mcp_json_tool_result(id.clone(), response),
+            Err(error) => mcp_tool_result(id.clone(), error.message, true),
+        }),
+        MCP_TOOL_APXM_GOAL_EVENTS => Some(match goal_events(state, tool_args) {
+            Ok(response) => mcp_json_tool_result(id.clone(), response),
+            Err(error) => mcp_tool_result(id.clone(), error.message, true),
+        }),
+        MCP_TOOL_APXM_GOAL_CANCEL => Some(match goal_cancel(state, tool_args) {
+            Ok(response) => mcp_json_tool_result(id.clone(), response),
+            Err(error) => mcp_tool_result(id.clone(), error.message, true),
+        }),
+        _ => None,
     }
-    Some(match goal_start(state, tool_args).await {
-        Ok(response) => mcp_json_tool_result(id.clone(), response),
-        Err(error) => mcp_tool_result(id.clone(), error.message, true),
-    })
+}
+
+pub(crate) async fn post_goal(
+    State(state): State<AppState>,
+    Json(tool_args): Json<JsonValue>,
+) -> Result<Json<JsonValue>, ApiError> {
+    let response = goal_start(&state, &tool_args).await?;
+    let value = serde_json::to_value(response).map_err(|error| {
+        ApiError::internal_message(format!("failed to serialize goal response: {error}"))
+    })?;
+    Ok(Json(value))
 }
 
 async fn goal_start(
     state: &AppState,
     tool_args: &JsonValue,
 ) -> Result<GoalStartResponse, ApiError> {
-    let mut request: GoalStartArgs = serde_json::from_value(tool_args.clone())
+    reject_public_goal_internal_fields(tool_args)?;
+    let request: GoalStartArgs = serde_json::from_value(tool_args.clone())
         .map_err(|error| ApiError::bad_request(format!("invalid goal_start arguments: {error}")))?;
+    let goal_id = format!("goal-{}", uuid::Uuid::new_v4());
+    validate_component_id(&goal_id, "goal_id")?;
+    if request.iteration >= request.max_iterations.unwrap_or(1).max(1) {
+        return Err(ApiError::bad_request(
+            "goal_start iteration must be less than max_iterations",
+        ));
+    }
+    let max_iterations = request.max_iterations.unwrap_or(1).max(1);
+
+    if !request.dry_run {
+        if state.goal_runs.get(&goal_id).is_some() {
+            return Err(ApiError::bad_request(format!(
+                "goal run already exists: {goal_id}"
+            )));
+        }
+        state
+            .goal_runs
+            .insert_running(goal_id.clone(), request.task.clone(), max_iterations);
+        record_goal_run_event(
+            state,
+            &goal_id,
+            ApxmEvent::root(
+                ExecutionStartedPayload {
+                    execution_id: goal_id.clone(),
+                },
+                EventSource::Server,
+                &goal_id,
+            ),
+        );
+    }
+
+    let pass = match start_goal_pass(state, request.clone(), &goal_id).await {
+        Ok(pass) => pass,
+        Err(error) => {
+            if !request.dry_run {
+                finish_goal_run_failure(state, &goal_id, None, error.message.clone());
+            }
+            return Err(error);
+        }
+    };
+    if !request.dry_run {
+        register_goal_pass(state, &goal_id, &pass);
+        record_goal_pass_sleep(state, &goal_id, &pass.response);
+        if let Some(execution_id) = pass.response.execution_id.clone() {
+            spawn_goal_event_mirror(state.clone(), goal_id.clone(), execution_id.clone());
+            spawn_goal_run_supervisor(state.clone(), goal_id, request, execution_id);
+        }
+    }
+    Ok(pass.response)
+}
+
+fn reject_public_goal_internal_fields(tool_args: &JsonValue) -> Result<(), ApiError> {
+    let Some(args) = tool_args.as_object() else {
+        return Ok(());
+    };
+    for field in ["goal_id", "iteration"] {
+        if args.contains_key(field) {
+            return Err(ApiError::bad_request(format!(
+                "goal_start field '{field}' is server-owned"
+            )));
+        }
+    }
+    Ok(())
+}
+
+async fn start_goal_pass(
+    state: &AppState,
+    mut request: GoalStartArgs,
+    goal_id: &str,
+) -> Result<GoalPassStart, ApiError> {
     let planning = apply_goal_planning(&mut request)?;
     let selection = apply_goal_selection(state, &mut request)?;
     let uses_process_spawns = goal_uses_process_spawns(&request);
@@ -584,8 +760,29 @@ async fn goal_start(
     } else {
         OrchestrationStartStatus::Planned
     };
+    let artifacts_value = serde_json::to_value(&artifacts).map_err(|error| {
+        ApiError::internal_message(format!("failed to serialize goal artifacts: {error}"))
+    })?;
+    let plan_value = serde_json::to_value(&plan_summary).map_err(|error| {
+        ApiError::internal_message(format!("failed to serialize goal plan: {error}"))
+    })?;
+    let planning_value = serde_json::to_value(&planning).map_err(|error| {
+        ApiError::internal_message(format!("failed to serialize goal planning: {error}"))
+    })?;
+    let selection_value = selection
+        .as_ref()
+        .map(serde_json::to_value)
+        .transpose()
+        .map_err(|error| {
+            ApiError::internal_message(format!("failed to serialize goal selection: {error}"))
+        })?;
+    let control_value = serde_json::to_value(&control).map_err(|error| {
+        ApiError::internal_message(format!("failed to serialize goal control: {error}"))
+    })?;
+
     let response = GoalStartResponse {
         status,
+        goal_id: goal_id.to_string(),
         execution_id: started
             .as_ref()
             .map(|response| response.execution_id.clone()),
@@ -601,6 +798,7 @@ async fn goal_start(
         selection,
         control,
         goal: goal_runtime_contract(
+            goal_id,
             started
                 .as_ref()
                 .map(|response| response.execution_id.clone()),
@@ -614,7 +812,558 @@ async fn goal_start(
         goal_prompt: goal_prompt()?,
         flowchart: goal_flowchart()?,
     };
-    Ok(response)
+    Ok(GoalPassStart {
+        iteration: request.iteration,
+        response,
+        artifacts_value,
+        plan_value,
+        planning_value,
+        selection_value,
+        control_value,
+    })
+}
+
+fn goal_status(state: &AppState, tool_args: &JsonValue) -> Result<GoalStatusResponse, ApiError> {
+    let args: GoalIdArgs = serde_json::from_value(tool_args.clone()).map_err(|error| {
+        ApiError::bad_request(format!("invalid goal_status arguments: {error}"))
+    })?;
+    goal_status_for_state(state, &args.goal_id)
+}
+
+fn goal_events(state: &AppState, tool_args: &JsonValue) -> Result<GoalEventsResponse, ApiError> {
+    let args: GoalEventsArgs = serde_json::from_value(tool_args.clone()).map_err(|error| {
+        ApiError::bad_request(format!("invalid goal_events arguments: {error}"))
+    })?;
+    let since = args.since.unwrap_or(0);
+    let limit = args.limit.unwrap_or(100).clamp(1, 1000);
+    goal_events_for_state(state, &args.goal_id, since, limit)
+}
+
+fn goal_cancel(state: &AppState, tool_args: &JsonValue) -> Result<GoalCancelResponse, ApiError> {
+    let args: GoalIdArgs = serde_json::from_value(tool_args.clone()).map_err(|error| {
+        ApiError::bad_request(format!("invalid goal_cancel arguments: {error}"))
+    })?;
+    goal_cancel_for_state(state, &args.goal_id)
+}
+
+fn register_goal_pass(state: &AppState, goal_id: &str, pass: &GoalPassStart) {
+    let response = &pass.response;
+    if let Some(execution_id) = &response.execution_id {
+        state.goal_runs.set_current_pass(
+            goal_id,
+            pass.iteration,
+            execution_id.clone(),
+            response.session_id.clone(),
+            response.session_dir.clone(),
+            response.workflow_path.clone(),
+            response.bundle_dir.clone(),
+            pass.artifacts_value.clone(),
+            pass.plan_value.clone(),
+            pass.planning_value.clone(),
+            pass.selection_value.clone(),
+            pass.control_value.clone(),
+        );
+    }
+}
+
+fn spawn_goal_run_supervisor(
+    state: AppState,
+    goal_id: String,
+    base_request: GoalStartArgs,
+    first_execution_id: String,
+) {
+    tokio::spawn(async move {
+        run_goal_supervisor(state, goal_id, base_request, first_execution_id).await;
+    });
+}
+
+async fn run_goal_supervisor(
+    state: AppState,
+    goal_id: String,
+    base_request: GoalStartArgs,
+    mut execution_id: String,
+) {
+    loop {
+        let Some(record) = wait_for_goal_pass(&state, &execution_id).await else {
+            finish_goal_run_failure(
+                &state,
+                &goal_id,
+                None,
+                format!("goal pass disappeared before settlement: {execution_id}"),
+            );
+            return;
+        };
+        let goal = record.goal.clone();
+        if let Some(goal) = &goal {
+            state.goal_runs.set_goal_outcome(&goal_id, goal.clone());
+            record_goal_outcome_events(&state, &goal_id, &execution_id, goal);
+        }
+
+        if state
+            .goal_runs
+            .get(&goal_id)
+            .is_some_and(|run| run.cancel_requested)
+        {
+            finish_goal_run_cancelled(&state, &goal_id, goal);
+            return;
+        }
+
+        match goal_decision_kind(goal.as_ref()) {
+            Some("iterate") => {
+                let Some(next_iteration) = goal
+                    .as_ref()
+                    .and_then(|goal| goal.get("decision"))
+                    .and_then(|decision| decision.get("next_iteration"))
+                    .and_then(JsonValue::as_u64)
+                    .map(|value| value as usize)
+                else {
+                    finish_goal_run_failure(
+                        &state,
+                        &goal_id,
+                        goal,
+                        "goal iterate decision omitted next_iteration".to_string(),
+                    );
+                    return;
+                };
+                let mut next_request = base_request.clone();
+                next_request.iteration = next_iteration;
+                next_request.max_iterations = Some(base_request.max_iterations.unwrap_or(1).max(1));
+                next_request.session_id =
+                    goal_pass_session_id(base_request.session_id.as_deref(), next_iteration);
+                next_request.context = Some(next_pass_context(
+                    base_request.context.as_deref(),
+                    &execution_id,
+                    &record,
+                    goal.as_ref(),
+                ));
+
+                match start_goal_pass(&state, next_request, &goal_id).await {
+                    Ok(pass) => {
+                        register_goal_pass(&state, &goal_id, &pass);
+                        record_goal_pass_sleep(&state, &goal_id, &pass.response);
+                        if let Some(next_execution_id) = pass.response.execution_id {
+                            spawn_goal_event_mirror(
+                                state.clone(),
+                                goal_id.clone(),
+                                next_execution_id.clone(),
+                            );
+                            execution_id = next_execution_id;
+                            continue;
+                        }
+                        finish_goal_run_failure(
+                            &state,
+                            &goal_id,
+                            goal,
+                            "next goal pass did not return an execution_id".to_string(),
+                        );
+                        return;
+                    }
+                    Err(error) => {
+                        finish_goal_run_failure(&state, &goal_id, goal, error.message);
+                        return;
+                    }
+                }
+            }
+            Some("converged") => {
+                finish_goal_run_success(&state, &goal_id, goal);
+                return;
+            }
+            Some("halted") => {
+                finish_goal_run_failure(
+                    &state,
+                    &goal_id,
+                    goal,
+                    record
+                        .error
+                        .clone()
+                        .or_else(|| goal_halt_reason(record.goal.as_ref()))
+                        .unwrap_or_else(|| "goal halted".to_string()),
+                );
+                return;
+            }
+            _ => {
+                let message = record
+                    .error
+                    .clone()
+                    .unwrap_or_else(|| "goal pass settled without a runtime decision".to_string());
+                finish_goal_run_failure(&state, &goal_id, goal, message);
+                return;
+            }
+        }
+    }
+}
+
+fn spawn_goal_event_mirror(state: AppState, goal_id: String, execution_id: String) {
+    tokio::spawn(async move {
+        mirror_goal_pass_events(state, goal_id, execution_id).await;
+    });
+}
+
+async fn mirror_goal_pass_events(state: AppState, goal_id: String, execution_id: String) {
+    let mut next_source_seq = 0u64;
+    loop {
+        let events = state.run_event_bus.snapshot(&execution_id);
+        let mut advanced = false;
+        for event in events.into_iter() {
+            if event.meta.seq < next_source_seq {
+                continue;
+            }
+            next_source_seq = event.meta.seq.saturating_add(1);
+            record_goal_run_event(&state, &goal_id, event);
+            advanced = true;
+        }
+
+        let settled = state
+            .execution_store
+            .get(&execution_id)
+            .is_some_and(|record| record.status != ExecutionStatus::Running);
+        if settled && !advanced {
+            return;
+        }
+        tokio::time::sleep(Duration::from_millis(GOAL_POLL_INTERVAL_MS)).await;
+    }
+}
+
+async fn wait_for_goal_pass(state: &AppState, execution_id: &str) -> Option<ExecutionRecord> {
+    let mut terminal_without_goal = 0usize;
+    loop {
+        let record = state.execution_store.get(execution_id)?;
+        if record.status != ExecutionStatus::Running {
+            if record.goal.is_some() {
+                return Some(record);
+            }
+            terminal_without_goal += 1;
+            if terminal_without_goal > 200 {
+                return Some(record);
+            }
+        }
+        tokio::time::sleep(Duration::from_millis(GOAL_POLL_INTERVAL_MS)).await;
+    }
+}
+
+fn goal_decision_kind(goal: Option<&JsonValue>) -> Option<&str> {
+    goal.and_then(|goal| goal.get("decision"))
+        .and_then(|decision| decision.get("decision"))
+        .and_then(JsonValue::as_str)
+}
+
+fn goal_halt_reason(goal: Option<&JsonValue>) -> Option<String> {
+    goal.and_then(|goal| goal.get("decision"))
+        .and_then(|decision| decision.get("reason"))
+        .and_then(JsonValue::as_str)
+        .filter(|reason| !reason.trim().is_empty())
+        .map(str::to_string)
+}
+
+fn next_pass_context(
+    base_context: Option<&str>,
+    previous_execution_id: &str,
+    record: &ExecutionRecord,
+    goal: Option<&JsonValue>,
+) -> String {
+    let mut parts = Vec::new();
+    if let Some(base) = base_context.and_then(non_empty) {
+        parts.push(base.to_string());
+    }
+
+    let mut previous = vec![format!(
+        "Previous pass:\n- execution_id: {previous_execution_id}"
+    )];
+    previous.push(format!("- workflow_status: {:?}", record.status));
+    previous.push(format!("- session_dir: {}", record.session_dir));
+    if let Some(goal) = goal {
+        if let Some(iteration) = goal.get("iteration").and_then(JsonValue::as_u64) {
+            previous.push(format!("- completed_iteration: {iteration}"));
+        }
+        if let Some(decision) = goal_decision_kind(Some(goal)) {
+            previous.push(format!("- runtime_decision: {decision}"));
+        }
+        if let Some(reason) = goal
+            .get("decision")
+            .and_then(|decision| decision.get("reason"))
+            .or_else(|| {
+                goal.get("verdict")
+                    .and_then(|verdict| verdict.get("reason"))
+            })
+            .and_then(JsonValue::as_str)
+            .and_then(non_empty)
+        {
+            previous.push(format!("- reason: {reason}"));
+        }
+        if let Some(remaining) = goal
+            .get("verdict")
+            .and_then(|verdict| verdict.get("remaining"))
+            .and_then(JsonValue::as_array)
+        {
+            let remaining = remaining
+                .iter()
+                .filter_map(JsonValue::as_str)
+                .collect::<Vec<_>>();
+            if !remaining.is_empty() {
+                previous.push(format!("- remaining:\n  - {}", remaining.join("\n  - ")));
+            }
+        }
+    }
+    parts.push(previous.join("\n"));
+    parts.join("\n\n")
+}
+
+fn goal_pass_session_id(base_session_id: Option<&str>, iteration: usize) -> Option<String> {
+    let base = base_session_id.and_then(non_empty)?;
+    if iteration == 0 {
+        return Some(base.to_string());
+    }
+    let suffix = format!("-pass-{}", iteration + 1);
+    let max_base_len = 96usize.saturating_sub(suffix.len()).max(1);
+    let mut prefix = base.to_string();
+    if prefix.len() > max_base_len {
+        prefix = prefix.chars().take(max_base_len).collect();
+    }
+    Some(format!("{prefix}{suffix}"))
+}
+
+fn non_empty(value: &str) -> Option<&str> {
+    let trimmed = value.trim();
+    if trimmed.is_empty() {
+        None
+    } else {
+        Some(trimmed)
+    }
+}
+
+fn finish_goal_run_success(state: &AppState, goal_id: &str, goal: Option<JsonValue>) {
+    state
+        .goal_runs
+        .finish(goal_id, GoalRunStatus::Succeeded, goal, None);
+    record_goal_terminal_wake(
+        state,
+        goal_id,
+        kind::GOAL_CONVERGED,
+        OrchestrationWakeOutcome::Succeeded,
+        "goal converged",
+    );
+}
+
+fn finish_goal_run_cancelled(state: &AppState, goal_id: &str, goal: Option<JsonValue>) {
+    state.goal_runs.finish(
+        goal_id,
+        GoalRunStatus::Cancelled,
+        goal,
+        Some("cancelled".to_string()),
+    );
+    record_goal_terminal_wake(
+        state,
+        goal_id,
+        kind::TURN_ABORTED,
+        OrchestrationWakeOutcome::Cancelled,
+        "goal cancelled",
+    );
+}
+
+fn finish_goal_run_failure(
+    state: &AppState,
+    goal_id: &str,
+    goal: Option<JsonValue>,
+    message: String,
+) {
+    state
+        .goal_runs
+        .finish(goal_id, GoalRunStatus::Failed, goal, Some(message.clone()));
+    record_goal_run_event(
+        state,
+        goal_id,
+        ApxmEvent::root(
+            ErrorPayload {
+                message: message.clone(),
+                status: None,
+                recoverable: false,
+            },
+            EventSource::Server,
+            goal_id,
+        ),
+    );
+    record_goal_terminal_wake(
+        state,
+        goal_id,
+        kind::ERROR,
+        OrchestrationWakeOutcome::Failed,
+        &message,
+    );
+}
+
+fn record_goal_pass_sleep(state: &AppState, goal_id: &str, response: &GoalStartResponse) {
+    let Some(execution_id) = response.execution_id.as_ref() else {
+        return;
+    };
+    record_goal_run_event(
+        state,
+        goal_id,
+        ApxmEvent::root(
+            OrchestratorSleepPayload {
+                execution_id: execution_id.clone(),
+                session_id: response.session_id.clone(),
+                session_dir: response.session_dir.clone().unwrap_or_default(),
+                workflow_path: response.workflow_path.clone(),
+                bundle_dir: response.bundle_dir.clone(),
+                artifacts: serde_json::to_value(&response.artifacts).unwrap_or(JsonValue::Null),
+                plan: serde_json::to_value(&response.plan).unwrap_or(JsonValue::Null),
+                control: serde_json::to_value(&response.control).unwrap_or(JsonValue::Null),
+                wake_on: response.sleep_wake.wake_on.clone(),
+                event_loop: response.sleep_wake.event_loop.to_string(),
+            },
+            EventSource::Server,
+            goal_id,
+        ),
+    );
+}
+
+fn record_goal_outcome_events(
+    state: &AppState,
+    goal_id: &str,
+    execution_id: &str,
+    goal: &JsonValue,
+) {
+    let iteration = goal
+        .get("iteration")
+        .and_then(JsonValue::as_u64)
+        .unwrap_or_default() as usize;
+    let max_iterations = goal
+        .get("max_iterations")
+        .and_then(JsonValue::as_u64)
+        .unwrap_or(1) as usize;
+    if let Some(verdict) = goal.get("verdict") {
+        record_goal_run_event(
+            state,
+            goal_id,
+            ApxmEvent::root(
+                GoalGateVerdictPayload {
+                    execution_id: execution_id.to_string(),
+                    iteration,
+                    max_iterations,
+                    status: verdict
+                        .get("status")
+                        .and_then(JsonValue::as_str)
+                        .unwrap_or("blocked")
+                        .to_string(),
+                    reason: verdict
+                        .get("reason")
+                        .and_then(JsonValue::as_str)
+                        .unwrap_or_default()
+                        .to_string(),
+                    remaining: verdict
+                        .get("remaining")
+                        .and_then(JsonValue::as_array)
+                        .map(|items| {
+                            items
+                                .iter()
+                                .filter_map(|item| item.as_str().map(str::to_string))
+                                .collect()
+                        })
+                        .unwrap_or_default(),
+                },
+                EventSource::Server,
+                goal_id,
+            ),
+        );
+    }
+
+    let Some(decision) = goal.get("decision") else {
+        return;
+    };
+    match decision.get("decision").and_then(JsonValue::as_str) {
+        Some("converged") => record_goal_run_event(
+            state,
+            goal_id,
+            ApxmEvent::root(
+                GoalConvergedPayload {
+                    execution_id: execution_id.to_string(),
+                    iteration,
+                    reason: decision
+                        .get("reason")
+                        .and_then(JsonValue::as_str)
+                        .unwrap_or("goal converged")
+                        .to_string(),
+                },
+                EventSource::Server,
+                goal_id,
+            ),
+        ),
+        Some("iterate") => record_goal_run_event(
+            state,
+            goal_id,
+            ApxmEvent::root(
+                GoalNeedsAnotherPassPayload {
+                    execution_id: execution_id.to_string(),
+                    iteration,
+                    next_iteration: decision
+                        .get("next_iteration")
+                        .and_then(JsonValue::as_u64)
+                        .unwrap_or(iteration.saturating_add(1) as u64)
+                        as usize,
+                    reason: decision
+                        .get("reason")
+                        .and_then(JsonValue::as_str)
+                        .unwrap_or("goal needs another pass")
+                        .to_string(),
+                },
+                EventSource::Server,
+                goal_id,
+            ),
+        ),
+        Some("halted") => record_goal_run_event(
+            state,
+            goal_id,
+            ApxmEvent::root(
+                GoalHaltedPayload {
+                    execution_id: execution_id.to_string(),
+                    iteration,
+                    reason: decision
+                        .get("reason")
+                        .and_then(JsonValue::as_str)
+                        .unwrap_or("goal halted")
+                        .to_string(),
+                    exhausted: decision
+                        .get("exhausted")
+                        .and_then(JsonValue::as_bool)
+                        .unwrap_or(false),
+                },
+                EventSource::Server,
+                goal_id,
+            ),
+        ),
+        _ => {}
+    }
+}
+
+fn record_goal_terminal_wake(
+    state: &AppState,
+    goal_id: &str,
+    terminal_event: apxm_core::events::EventKind,
+    outcome: OrchestrationWakeOutcome,
+    reason: &str,
+) {
+    record_goal_run_event(
+        state,
+        goal_id,
+        ApxmEvent::root(
+            OrchestratorWakePayload {
+                execution_id: goal_id.to_string(),
+                session_id: goal_id.to_string(),
+                terminal_event: terminal_event.name().to_string(),
+                outcome: outcome.as_str().to_string(),
+                reason: reason.to_string(),
+            },
+            EventSource::Server,
+            goal_id,
+        ),
+    );
+}
+
+fn record_goal_run_event(state: &AppState, goal_id: &str, event: ApxmEvent) {
+    let event = state.run_event_bus.record(goal_id, event);
+    if let Some(dispatcher) = &state.webhook_dispatcher {
+        dispatcher.dispatch(event);
+    }
 }
 
 fn materialize_goal_bundle(
@@ -2230,16 +2979,15 @@ fn default_supervisor_prompt() -> Result<String, ApiError> {
 
 fn goal_control() -> GoalControl {
     GoalControl {
-        status_tool: super::workflow::MCP_TOOL_APXM_WORKFLOW_STATUS,
-        events_tool: super::workflow::MCP_TOOL_APXM_WORKFLOW_EVENTS,
-        cancel_tool: super::workflow::MCP_TOOL_APXM_WORKFLOW_CANCEL,
+        status_tool: MCP_TOOL_APXM_GOAL_STATUS,
+        events_tool: MCP_TOOL_APXM_GOAL_EVENTS,
+        cancel_tool: MCP_TOOL_APXM_GOAL_CANCEL,
     }
 }
 
 fn goal_terminal_event_kinds() -> Vec<&'static str> {
     vec![
         kind::ORCHESTRATOR_WAKE.name(),
-        kind::EXECUTE_COMPLETE.name(),
         kind::ERROR.name(),
         kind::TURN_ABORTED.name(),
     ]
@@ -2249,23 +2997,19 @@ fn goal_wake_on() -> Vec<String> {
     vec![
         format!(
             "{} returns {}",
-            super::workflow::MCP_TOOL_APXM_WORKFLOW_EVENTS,
+            MCP_TOOL_APXM_GOAL_EVENTS,
             kind::ORCHESTRATOR_WAKE.name()
         ),
         format!(
-            "{} returns {}, {}, or {}",
-            super::workflow::MCP_TOOL_APXM_WORKFLOW_EVENTS,
-            kind::EXECUTE_COMPLETE.name(),
+            "{} returns {} or {}",
+            MCP_TOOL_APXM_GOAL_EVENTS,
             kind::ERROR.name(),
             kind::TURN_ABORTED.name()
         ),
-        format!(
-            "{} reports succeeded or failed",
-            super::workflow::MCP_TOOL_APXM_WORKFLOW_STATUS
-        ),
+        format!("{MCP_TOOL_APXM_GOAL_STATUS} reports succeeded, failed, or cancelled"),
         format!(
             "{} is called by the supervisor/client",
-            super::workflow::MCP_TOOL_APXM_WORKFLOW_CANCEL
+            MCP_TOOL_APXM_GOAL_CANCEL
         ),
     ]
 }
@@ -2274,15 +3018,18 @@ fn goal_event_loop() -> &'static str {
     "event -> trigger -> parallel worker actions -> gate/eval -> feedback -> next event"
 }
 
-fn goal_runtime_contract(execution_id: Option<String>, gate_step_id: &str) -> GoalRuntimeContract {
-    let next_events_args = execution_id.as_ref().map(|execution_id| {
-        serde_json::json!({
-            "execution_id": execution_id,
-            "since": 0,
-            "limit": 100
-        })
-    });
+fn goal_runtime_contract(
+    goal_id: &str,
+    execution_id: Option<String>,
+    gate_step_id: &str,
+) -> GoalRuntimeContract {
+    let next_events_args = Some(serde_json::json!({
+        "goal_id": goal_id,
+        "since": 0,
+        "limit": 100
+    }));
     GoalRuntimeContract {
+        goal_id: goal_id.to_string(),
         execution_id,
         initial_since: 0,
         gate_step_id: gate_step_id.to_string(),

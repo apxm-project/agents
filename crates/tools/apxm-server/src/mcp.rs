@@ -21,7 +21,10 @@ mod schema;
 mod workflow;
 
 #[allow(unused_imports)]
-pub(crate) use goal::MCP_TOOL_APXM_GOAL_START;
+pub(crate) use goal::{
+    MCP_TOOL_APXM_GOAL_CANCEL, MCP_TOOL_APXM_GOAL_EVENTS, MCP_TOOL_APXM_GOAL_START,
+    MCP_TOOL_APXM_GOAL_STATUS, post_goal,
+};
 #[allow(unused_imports)]
 pub(crate) use schema::{
     MCP_METHOD_INITIALIZE, MCP_METHOD_RESOURCES_LIST, MCP_METHOD_RESOURCES_READ,
@@ -133,8 +136,26 @@ pub(crate) async fn mcp_jsonrpc(
             });
             tools.push(ToolEntry {
                 name: goal::MCP_TOOL_APXM_GOAL_START.to_string(),
-                description: "Start one server-owned goal pass, auto-planning a bounded worker DAG when workers are omitted, allocating worker workspaces/worktrees, and returning workflow status/events/cancel handles".to_string(),
+                description: "Start a server-owned goal run, auto-planning bounded workflow passes when workers are omitted, and returning a stable goal_id for status/events/cancel".to_string(),
                 input_schema: goal::goal_start_input_schema(),
+            });
+            tools.push(ToolEntry {
+                name: goal::MCP_TOOL_APXM_GOAL_STATUS.to_string(),
+                description: "Fetch aggregate state for a server-owned goal run by goal_id"
+                    .to_string(),
+                input_schema: goal::goal_status_input_schema(),
+            });
+            tools.push(ToolEntry {
+                name: goal::MCP_TOOL_APXM_GOAL_EVENTS.to_string(),
+                description:
+                    "Fetch retained aggregate events for a server-owned goal run by goal_id"
+                        .to_string(),
+                input_schema: goal::goal_events_input_schema(),
+            });
+            tools.push(ToolEntry {
+                name: goal::MCP_TOOL_APXM_GOAL_CANCEL.to_string(),
+                description: "Cancel an in-flight server-owned goal run by goal_id".to_string(),
+                input_schema: goal::goal_cancel_input_schema(),
             });
             tools.extend(
                 state

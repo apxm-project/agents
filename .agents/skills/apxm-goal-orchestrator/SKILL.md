@@ -1,6 +1,6 @@
 ---
 name: apxm-goal-orchestrator
-description: Use when an agent should turn a complex APXM goal into a bounded worker DAG or workflow, execute it through APXM, wait on workflow events/status, and synthesize verified artifacts. Covers `dekk apxm goal`, `goal_start`, `workflow_*`, and `prompt_as_workflow` selection.
+description: Use when an agent should turn a complex APXM goal into a bounded worker DAG or workflow, execute it through APXM, wait on goal events/status, and synthesize verified artifacts. Covers `dekk apxm goal`, `goal_start`, `goal_*`, workflow drill-down, and `prompt_as_workflow` selection.
 user-invocable: true
 ---
 
@@ -52,13 +52,15 @@ Use `--event` and `--trigger` when this pass comes from an external event, and
    optional `supervisor`, and workspace policy. Omit `workers` for server-owned
    auto-planning. Include `admit_capabilities: ["SPAWN_AGENT"]` for real
    ACP/headless workers.
-2. Store `execution_id`, `session_id`, `session_dir`, `workflow_path`,
-   `bundle_dir`, and returned artifact paths.
-3. Stop prompting workers manually. Page `workflow_events` with
-   `since = next_seq`; wake on `orchestrator_wake` or terminal events.
-4. Confirm the terminal result with `workflow_status`.
-5. Use `workflow_cancel` for interruption. Do not invent a second cancel
-   or process-control path for server-owned runs.
+2. Store `goal_id`, `session_id`, `session_dir`, `workflow_path`,
+   `bundle_dir`, and returned artifact paths. Use the current `execution_id`
+   only for workflow drill-down.
+3. Stop prompting workers manually. Page `goal_events` with
+   `since = next_seq`; wake on aggregate `orchestrator_wake` or terminal
+   goal status.
+4. Confirm the terminal result with `goal_status`.
+5. Use `goal_cancel` for interruption. Do not invent a second cancel or
+   process-control path for server-owned runs.
 
 ## Worker DAG Rules
 
@@ -85,6 +87,6 @@ Use `--event` and `--trigger` when this pass comes from an external event, and
 
 ## Done condition
 
-Return the execution id, status, worker roles/profiles used, workflow/session
+Return the goal id, status, worker roles/profiles used, workflow/session
 paths, generated artifacts, verification evidence, warnings, and the next
 bounded pass only if feedback requires one.

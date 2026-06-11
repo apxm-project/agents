@@ -49,6 +49,10 @@ pub(crate) const RUN_EVENTS_STREAM: &str = "/v1/runs/{execution_id}/events/strea
 // Phase 14.8.E — rollout blob endpoint.
 pub(crate) const RUN_BLOB: &str = "/v1/runs/{execution_id}/blobs/{blob_ref}";
 pub(crate) const RUN_CANCEL: &str = "/v1/runs/{execution_id}/cancel";
+pub(crate) const GOALS: &str = "/v1/goals";
+pub(crate) const GOAL_DETAIL: &str = "/v1/goals/{goal_id}";
+pub(crate) const GOAL_EVENTS: &str = "/v1/goals/{goal_id}/events";
+pub(crate) const GOAL_CANCEL: &str = "/v1/goals/{goal_id}/cancel";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum ServerRoute {
@@ -99,6 +103,10 @@ pub(crate) enum ServerRoute {
     RunEventsStream,
     RunBlob,
     RunCancel,
+    Goals,
+    GoalDetail,
+    GoalEvents,
+    GoalCancel,
 }
 
 impl ServerRoute {
@@ -151,6 +159,10 @@ impl ServerRoute {
             Self::RunEventsStream => RUN_EVENTS_STREAM,
             Self::RunBlob => RUN_BLOB,
             Self::RunCancel => RUN_CANCEL,
+            Self::Goals => GOALS,
+            Self::GoalDetail => GOAL_DETAIL,
+            Self::GoalEvents => GOAL_EVENTS,
+            Self::GoalCancel => GOAL_CANCEL,
         }
     }
 }
@@ -229,6 +241,21 @@ pub(crate) fn run_graph_path(execution_id: impl Display) -> String {
 #[allow(dead_code)]
 pub(crate) fn run_cancel_path(execution_id: impl Display) -> String {
     format!("{RUNS}/{execution_id}/cancel")
+}
+
+#[allow(dead_code)]
+pub(crate) fn goal_detail_path(goal_id: impl Display) -> String {
+    format!("{GOALS}/{goal_id}")
+}
+
+#[allow(dead_code)]
+pub(crate) fn goal_events_path(goal_id: impl Display) -> String {
+    format!("{GOALS}/{goal_id}/events")
+}
+
+#[allow(dead_code)]
+pub(crate) fn goal_cancel_path(goal_id: impl Display) -> String {
+    format!("{GOALS}/{goal_id}/cancel")
 }
 
 #[allow(dead_code)]

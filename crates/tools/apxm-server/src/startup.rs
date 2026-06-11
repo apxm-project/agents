@@ -14,6 +14,7 @@ use tracing::{info, warn};
 use crate::app::build_app;
 use crate::checkpoints::CheckpointStore;
 use crate::executions::ExecutionStore;
+use crate::goal_runs::GoalRunRegistry;
 use crate::observability::{self, warn_init_failure};
 use crate::rollout::RolloutRegistry;
 use crate::runs::RunEventBus;
@@ -141,6 +142,7 @@ pub(crate) async fn run_server_with_config(server_config: ServerConfig) -> anyho
         inference_limiter: InferenceLimiter::from_config(&server_config.inference),
         server_config: server_config.clone(),
         cancel_registry: Arc::new(DashMap::new()),
+        goal_runs: GoalRunRegistry::new(),
     };
 
     let app = build_app(state);

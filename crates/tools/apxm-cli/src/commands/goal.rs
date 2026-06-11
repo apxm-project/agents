@@ -1,8 +1,7 @@
-//! `apxm goal` - user-facing bounded goal execution over APXM server MCP.
+//! `apxm goal` - user-facing goal execution over APXM server MCP.
 //!
-//! The CLI stays thin: it builds a bounded worker plan, calls the server-owned
-//! `goal_start` tool, then follows the existing workflow
-//! status/events/cancel tools by `execution_id`.
+//! The CLI stays thin: it calls the server-owned `goal_start` tool once, then
+//! follows aggregate goal status/events by `goal_id`.
 
 use std::collections::{BTreeSet, HashMap};
 use std::path::PathBuf;
@@ -55,57 +54,26 @@ pub async fn goal_command(args: GoalArgs, json_output: bool) -> Result<()> {
 
     match mode {
         GoalMode::Start(task) => {
-            // A goal is a bounded sequence of admitted passes. Each pass is an
-            // ultracode-style fan-out; after it settles the runtime emits a
-            // typed convergence decision, and this loop runs another admitted
-            // pass only while the runtime asks for one (`iterate`). The runtime
-            // bounds the loop via `max_iterations`, so it always terminates.
             let max_iterations = args.max_iterations.unwrap_or(1).max(1);
-            let mut iteration = 0usize;
-            let mut context_override: Option<String> = None;
-            let mut passes: Vec<JsonValue> = Vec::new();
+            let request = build_start_arguments(&args, &task, max_iterations)?;
+            let started =
+                call_mcp_tool(&client, &base, mcp_tools::APXM_GOAL_START, request).await?;
+            if !json_output {
+                print_start_summary(&base, &started);
+            }
 
-            loop {
-                let request = build_start_arguments(
-                    &args,
-                    &task,
-                    iteration,
-                    max_iterations,
-                    context_override.as_deref(),
-                )?;
-                let started =
-                    call_mcp_tool(&client, &base, mcp_tools::APXM_GOAL_START, request).await?;
-                if !json_output {
-                    if max_iterations > 1 {
-                        println!("== goal pass {}/{} ==", iteration + 1, max_iterations);
-                    }
-                    print_start_summary(&base, &started);
-                }
-
-                let should_follow = !args.no_follow
-                    && !args.dry_run
-                    && started
-                        .get("execution_id")
-                        .and_then(JsonValue::as_str)
-                        .is_some();
-                if !should_follow {
-                    if json_output {
-                        passes.push(json!({ "start": started }));
-                    }
-                    break;
-                }
-
-                let execution_id = started
-                    .get("execution_id")
+            let should_follow = !args.no_follow
+                && !args.dry_run
+                && started.get("goal_id").and_then(JsonValue::as_str).is_some();
+            let follow = if should_follow {
+                let goal_id = started
+                    .get("goal_id")
                     .and_then(JsonValue::as_str)
-                    .expect("checked execution_id")
-                    .to_string();
-                let terminal_kinds = terminal_kinds(&started);
+                    .expect("checked goal_id");
                 let follow = follow_goal(
                     &client,
                     &base,
-                    &execution_id,
-                    terminal_kinds,
+                    goal_id,
                     args.limit,
                     Duration::from_millis(args.poll_ms),
                     args.timeout_secs.map(Duration::from_secs),
@@ -115,47 +83,26 @@ pub async fn goal_command(args: GoalArgs, json_output: bool) -> Result<()> {
                 if !json_output {
                     print_final_status(&follow.status);
                 }
-                if json_output {
-                    passes.push(json!({
-                        "start": started,
-                        "events_seen": follow.events_seen,
-                        "terminal_event_kind": follow.terminal_event_kind,
-                        "status": follow.status,
-                    }));
-                }
-
-                match goal_loop_step(&follow.status, max_iterations) {
-                    GoalLoopStep::Iterate {
-                        next_iteration,
-                        remaining,
-                    } => {
-                        if !json_output {
-                            println!(
-                                "goal: runtime requested another pass ({} item(s) remaining)",
-                                remaining.len()
-                            );
-                        }
-                        iteration = next_iteration;
-                        context_override =
-                            Some(next_pass_context(args.context.as_deref(), &remaining));
-                    }
-                    GoalLoopStep::Stop => break,
-                }
-            }
-
+                Some(follow)
+            } else {
+                None
+            };
             if json_output {
-                println!(
-                    "{}",
-                    serde_json::to_string_pretty(&json!({ "passes": passes }))?
-                );
+                let mut output = json!({ "start": started });
+                if let Some(follow) = follow {
+                    output["events_seen"] = json!(follow.events_seen);
+                    output["terminal_event_kind"] = json!(follow.terminal_event_kind);
+                    output["status"] = follow.status;
+                }
+                println!("{}", serde_json::to_string_pretty(&output)?);
             }
         }
-        GoalMode::Status(execution_id) => {
-            let status = workflow_status(&client, &base, &execution_id).await?;
+        GoalMode::Status(goal_id) => {
+            let status = goal_status(&client, &base, &goal_id).await?;
             print_json_or_status(json_output, status)?;
         }
-        GoalMode::Events(execution_id) => {
-            let events = workflow_events(&client, &base, &execution_id, 0, args.limit).await?;
+        GoalMode::Events(goal_id) => {
+            let events = goal_events(&client, &base, &goal_id, 0, args.limit).await?;
             if json_output {
                 println!("{}", serde_json::to_string_pretty(&events)?);
             } else {
@@ -171,12 +118,12 @@ pub async fn goal_command(args: GoalArgs, json_output: bool) -> Result<()> {
                 }
             }
         }
-        GoalMode::Cancel(execution_id) => {
+        GoalMode::Cancel(goal_id) => {
             let cancelled = call_mcp_tool(
                 &client,
                 &base,
-                mcp_tools::APXM_WORKFLOW_CANCEL,
-                json!({ "execution_id": execution_id }),
+                mcp_tools::APXM_GOAL_CANCEL,
+                json!({ "goal_id": goal_id }),
             )
             .await?;
             if json_output {
@@ -185,7 +132,7 @@ pub async fn goal_command(args: GoalArgs, json_output: bool) -> Result<()> {
                 println!(
                     "cancelled: {}",
                     cancelled
-                        .get("execution_id")
+                        .get("goal_id")
                         .and_then(JsonValue::as_str)
                         .unwrap_or("<unknown>")
                 );
@@ -226,7 +173,7 @@ fn resolve_mode(args: &GoalArgs) -> Result<GoalMode> {
     match modes.len() {
         1 => Ok(modes.remove(0)),
         0 => bail!(
-            "provide a goal task, or use exactly one of --status, --events, or --cancel with an execution id"
+            "provide a goal task, or use exactly one of --status, --events, or --cancel with a goal id"
         ),
         _ => bail!("use exactly one goal mode: TASK, --status, --events, or --cancel"),
     }
@@ -239,13 +186,7 @@ fn resolve_server_base(server: Option<&str>) -> String {
         .unwrap_or_else(|| DEFAULT_SERVER_BASE.to_string())
 }
 
-fn build_start_arguments(
-    args: &GoalArgs,
-    task: &str,
-    iteration: usize,
-    max_iterations: usize,
-    context_override: Option<&str>,
-) -> Result<JsonValue> {
+fn build_start_arguments(args: &GoalArgs, task: &str, max_iterations: usize) -> Result<JsonValue> {
     let auto_plan = should_auto_plan(args);
     let workers = if auto_plan {
         Vec::new()
@@ -257,19 +198,19 @@ fn build_start_arguments(
 
     let mut root = JsonMap::new();
     root.insert("task".to_string(), JsonValue::String(task.to_string()));
-    insert_optional_string(
-        &mut root,
-        "context",
-        context_override.or(args.context.as_deref()),
-    );
-    root.insert("iteration".to_string(), JsonValue::from(iteration as u64));
+    insert_optional_string(&mut root, "context", args.context.as_deref());
     root.insert(
         "max_iterations".to_string(),
         JsonValue::from(max_iterations as u64),
     );
     insert_optional_string(&mut root, "event", args.event.as_deref());
     insert_optional_string(&mut root, "trigger", args.trigger.as_deref());
-    insert_optional_string(&mut root, "session_id", args.session_id.as_deref());
+    if let Some(session_id) = args.session_id.as_deref().and_then(non_empty) {
+        root.insert(
+            "session_id".to_string(),
+            JsonValue::String(session_id.to_string()),
+        );
+    }
     if auto_plan {
         root.insert("planning".to_string(), json!({ "mode": "auto" }));
     } else {
@@ -687,33 +628,29 @@ async fn call_mcp_tool(
     serde_json::from_str(text).with_context(|| format!("{tool_name} returned non-JSON text"))
 }
 
-async fn workflow_status(
-    client: &reqwest::Client,
-    base: &str,
-    execution_id: &str,
-) -> Result<JsonValue> {
+async fn goal_status(client: &reqwest::Client, base: &str, goal_id: &str) -> Result<JsonValue> {
     call_mcp_tool(
         client,
         base,
-        mcp_tools::APXM_WORKFLOW_STATUS,
-        json!({ "execution_id": execution_id }),
+        mcp_tools::APXM_GOAL_STATUS,
+        json!({ "goal_id": goal_id }),
     )
     .await
 }
 
-async fn workflow_events(
+async fn goal_events(
     client: &reqwest::Client,
     base: &str,
-    execution_id: &str,
+    goal_id: &str,
     since: u64,
     limit: usize,
 ) -> Result<JsonValue> {
     call_mcp_tool(
         client,
         base,
-        mcp_tools::APXM_WORKFLOW_EVENTS,
+        mcp_tools::APXM_GOAL_EVENTS,
         json!({
-            "execution_id": execution_id,
+            "goal_id": goal_id,
             "since": since,
             "limit": limit,
         }),
@@ -724,8 +661,7 @@ async fn workflow_events(
 async fn follow_goal(
     client: &reqwest::Client,
     base: &str,
-    execution_id: &str,
-    terminal_kinds: BTreeSet<String>,
+    goal_id: &str,
     limit: usize,
     poll_interval: Duration,
     timeout: Option<Duration>,
@@ -737,21 +673,21 @@ async fn follow_goal(
     let started_at = Instant::now();
 
     if render {
-        println!("following events: {execution_id}");
+        println!("following goal: {goal_id}");
     }
 
     loop {
         if let Some(timeout) = timeout {
             if started_at.elapsed() > timeout {
-                let status = workflow_status(client, base, execution_id).await?;
+                let status = goal_status(client, base, goal_id).await?;
                 bail!(
-                    "timed out while following {execution_id}; latest status: {}",
+                    "timed out while following {goal_id}; latest status: {}",
                     status["status"]
                 );
             }
         }
 
-        let page = workflow_events(client, base, execution_id, since, limit).await?;
+        let page = goal_events(client, base, goal_id, since, limit).await?;
         let events = page
             .get("events")
             .and_then(JsonValue::as_array)
@@ -765,10 +701,8 @@ async fn follow_goal(
                         println!("{line}");
                     }
                 }
-                if let Some(kind) = event_kind(event) {
-                    if terminal_kinds.contains(kind) {
-                        terminal_event_kind = Some(kind.to_string());
-                    }
+                if event_is_goal_terminal(event, goal_id) {
+                    terminal_event_kind = event_kind(event).map(str::to_string);
                 }
             }
             since = page
@@ -777,7 +711,7 @@ async fn follow_goal(
                 .unwrap_or_else(|| next_since_from_events(since, &events));
         }
 
-        let status = workflow_status(client, base, execution_id).await?;
+        let status = goal_status(client, base, goal_id).await?;
         if terminal_event_kind.is_some() || status_is_terminal(&status) {
             return Ok(FollowResult {
                 events_seen,
@@ -790,74 +724,6 @@ async fn follow_goal(
     }
 }
 
-/// One step of the bounded goal loop, derived from the runtime convergence
-/// decision attached to a settled pass's status.
-#[derive(Debug, PartialEq, Eq)]
-enum GoalLoopStep {
-    /// Run another admitted pass at `next_iteration`, carrying `remaining`.
-    Iterate {
-        next_iteration: usize,
-        remaining: Vec<String>,
-    },
-    /// Stop: the goal converged, halted, or reported no decision.
-    Stop,
-}
-
-/// Read the runtime goal decision off a terminal status and decide whether to
-/// run another bounded pass. The runtime only emits `iterate` while the pass
-/// budget allows it, but this also guards `next_iteration` against the ceiling
-/// so the loop terminates even if the server contract drifts.
-fn goal_loop_step(status: &JsonValue, max_iterations: usize) -> GoalLoopStep {
-    let Some(goal) = status.get("goal") else {
-        return GoalLoopStep::Stop;
-    };
-    let decision = goal.get("decision");
-    let decision_kind = decision
-        .and_then(|d| d.get("decision"))
-        .and_then(JsonValue::as_str);
-    if decision_kind != Some("iterate") {
-        return GoalLoopStep::Stop;
-    }
-    let next_iteration = decision
-        .and_then(|d| d.get("next_iteration"))
-        .and_then(JsonValue::as_u64)
-        .map(|value| value as usize);
-    let Some(next_iteration) = next_iteration.filter(|next| *next < max_iterations) else {
-        return GoalLoopStep::Stop;
-    };
-    let remaining = goal
-        .get("verdict")
-        .and_then(|verdict| verdict.get("remaining"))
-        .and_then(JsonValue::as_array)
-        .map(|items| {
-            items
-                .iter()
-                .filter_map(|item| item.as_str().map(str::to_string))
-                .collect()
-        })
-        .unwrap_or_default();
-    GoalLoopStep::Iterate {
-        next_iteration,
-        remaining,
-    }
-}
-
-/// Build the context for the next bounded pass: the original context plus the
-/// remaining work items the gate verdict reported.
-fn next_pass_context(base_context: Option<&str>, remaining: &[String]) -> String {
-    let mut parts = Vec::new();
-    if let Some(base) = base_context.and_then(non_empty) {
-        parts.push(base.to_string());
-    }
-    if !remaining.is_empty() {
-        parts.push(format!(
-            "Remaining from the previous pass:\n- {}",
-            remaining.join("\n- ")
-        ));
-    }
-    parts.join("\n\n")
-}
-
 fn next_since_from_events(current: u64, events: &[JsonValue]) -> u64 {
     events
         .iter()
@@ -866,29 +732,22 @@ fn next_since_from_events(current: u64, events: &[JsonValue]) -> u64 {
         .map_or(current, |seq| seq.saturating_add(1))
 }
 
-fn terminal_kinds(started: &JsonValue) -> BTreeSet<String> {
-    started
-        .get("goal")
-        .and_then(|value| value.get("terminal_event_kinds"))
-        .and_then(JsonValue::as_array)
-        .map(|items| {
-            items
-                .iter()
-                .filter_map(JsonValue::as_str)
-                .map(str::to_string)
-                .collect()
-        })
-        .unwrap_or_else(|| {
-            [
-                event_kind_constants::ORCHESTRATOR_WAKE.name(),
-                event_kind_constants::EXECUTE_COMPLETE.name(),
-                event_kind_constants::ERROR.name(),
-                event_kind_constants::TURN_ABORTED.name(),
-            ]
-            .into_iter()
-            .map(str::to_string)
-            .collect()
-        })
+fn event_is_goal_terminal(event: &JsonValue, goal_id: &str) -> bool {
+    let is_aggregate_event = event
+        .get("meta")
+        .and_then(|meta| meta.get("trace_id"))
+        .and_then(JsonValue::as_str)
+        == Some(goal_id);
+    if !is_aggregate_event {
+        return false;
+    }
+    matches!(
+        event_kind(event),
+        Some(name)
+            if name == event_kind_constants::ORCHESTRATOR_WAKE.name()
+                || name == event_kind_constants::ERROR.name()
+                || name == event_kind_constants::TURN_ABORTED.name()
+    )
 }
 
 fn status_is_terminal(status: &JsonValue) -> bool {
@@ -897,7 +756,7 @@ fn status_is_terminal(status: &JsonValue) -> bool {
             .get("status")
             .and_then(JsonValue::as_str)
             .unwrap_or_default(),
-        goal_execution_status::SUCCEEDED | goal_execution_status::FAILED
+        goal_execution_status::SUCCEEDED | goal_execution_status::FAILED | "cancelled"
     )
 }
 
@@ -907,8 +766,11 @@ fn print_start_summary(base: &str, started: &JsonValue) {
         .and_then(JsonValue::as_str)
         .unwrap_or("unknown");
     println!("goal status: {status}");
+    if let Some(goal_id) = started.get("goal_id").and_then(JsonValue::as_str) {
+        println!("goal: {goal_id}");
+    }
     if let Some(execution_id) = started.get("execution_id").and_then(JsonValue::as_str) {
-        println!("execution: {execution_id}");
+        println!("current execution: {execution_id}");
     }
     if let Some(session_id) = started.get("session_id").and_then(JsonValue::as_str) {
         println!("session: {session_id}");
@@ -963,9 +825,9 @@ fn print_start_summary(base: &str, started: &JsonValue) {
     println!(
         "control: {base}{} ({}/{}/{})",
         mcp_constants::ROUTE,
-        mcp_tools::APXM_WORKFLOW_STATUS,
-        mcp_tools::APXM_WORKFLOW_EVENTS,
-        mcp_tools::APXM_WORKFLOW_CANCEL
+        mcp_tools::APXM_GOAL_STATUS,
+        mcp_tools::APXM_GOAL_EVENTS,
+        mcp_tools::APXM_GOAL_CANCEL
     );
 }
 
@@ -979,25 +841,37 @@ fn print_json_or_status(json_output: bool, status: JsonValue) -> Result<()> {
 }
 
 fn print_final_status(status: &JsonValue) {
-    let execution_id = status
-        .get("execution_id")
+    let goal_id = status
+        .get("goal_id")
         .and_then(JsonValue::as_str)
         .unwrap_or("<unknown>");
     let status_text = status
         .get("status")
         .and_then(JsonValue::as_str)
         .unwrap_or("unknown");
-    println!("final status: {status_text} ({execution_id})");
+    println!("final status: {status_text} ({goal_id})");
+    if let Some(execution_id) = status
+        .get("current_execution_id")
+        .and_then(JsonValue::as_str)
+    {
+        println!("current execution: {execution_id}");
+    }
     if let Some(session_dir) = status.get("session_dir").and_then(JsonValue::as_str) {
         println!("session dir: {session_dir}");
     }
-    if let Some(content) = status
-        .get("result")
-        .and_then(|result| result.get("content"))
-        .and_then(JsonValue::as_str)
-        .filter(|content| !content.is_empty())
-    {
-        println!("result: {content}");
+    if let Some(goal) = status.get("goal") {
+        if let Some(reason) = goal
+            .get("decision")
+            .and_then(|decision| decision.get("reason"))
+            .or_else(|| {
+                goal.get("verdict")
+                    .and_then(|verdict| verdict.get("reason"))
+            })
+            .and_then(JsonValue::as_str)
+            .filter(|reason| !reason.is_empty())
+        {
+            println!("reason: {reason}");
+        }
     }
     if let Some(error) = status
         .get("error")
@@ -1019,7 +893,7 @@ fn summarize_event(event: &JsonValue) -> Option<String> {
             "{seq}goal pass sleeping; runtime owns the workflow until wake"
         )),
         name if name == event_kind_constants::ORCHESTRATOR_WAKE.name() => Some(format!(
-            "{seq}goal pass wake: {} via {}",
+            "{seq}goal wake: {} via {}",
             payload_str(payload, "outcome").unwrap_or("unknown"),
             payload_str(payload, "terminal_event").unwrap_or("terminal event")
         )),
@@ -1216,7 +1090,7 @@ mod tests {
     #[test]
     fn default_goal_requests_server_auto_planning() {
         let args = args_with_task();
-        let request = build_start_arguments(&args, "ship the thing", 0, 1, None).expect("request");
+        let request = build_start_arguments(&args, "ship the thing", 1).expect("request");
         assert_eq!(
             request.get("workers"),
             None,
@@ -1237,60 +1111,27 @@ mod tests {
     }
 
     #[test]
-    fn build_start_arguments_carries_iteration_budget() {
-        let args = args_with_task();
-        let request =
-            build_start_arguments(&args, "ship it", 2, 5, Some("carry")).expect("request");
-        assert_eq!(request["iteration"], json!(2));
+    fn build_start_arguments_carries_pass_budget_without_client_iteration() {
+        let mut args = args_with_task();
+        args.context = Some("carry".to_string());
+        let request = build_start_arguments(&args, "ship it", 5).expect("request");
+        assert!(request.get("iteration").is_none());
         assert_eq!(request["max_iterations"], json!(5));
         assert_eq!(request["context"], json!("carry"));
     }
 
     #[test]
-    fn goal_loop_iterates_on_runtime_iterate_decision() {
-        let status = json!({
-            "goal": {
-                "decision": { "decision": "iterate", "reason": "more", "next_iteration": 1 },
-                "verdict": { "status": "needs_more", "remaining": ["finish auth", "rerun lint"] }
-            }
-        });
-        assert_eq!(
-            goal_loop_step(&status, 3),
-            GoalLoopStep::Iterate {
-                next_iteration: 1,
-                remaining: vec!["finish auth".to_string(), "rerun lint".to_string()],
-            }
-        );
-    }
-
-    #[test]
-    fn goal_loop_stops_on_converged_or_halted() {
-        for decision in ["converged", "halted"] {
-            let status = json!({ "goal": { "decision": { "decision": decision } } });
-            assert_eq!(goal_loop_step(&status, 5), GoalLoopStep::Stop);
+    fn status_terminal_accepts_all_goal_terminal_states() {
+        for status in [
+            goal_execution_status::SUCCEEDED,
+            goal_execution_status::FAILED,
+            "cancelled",
+        ] {
+            assert!(status_is_terminal(&json!({ "status": status })));
         }
-        // No goal block at all (non-goal run) also stops.
-        assert_eq!(goal_loop_step(&json!({}), 5), GoalLoopStep::Stop);
-    }
-
-    #[test]
-    fn goal_loop_stops_when_next_iteration_hits_ceiling() {
-        // Defensive: even if the runtime says iterate, never exceed the ceiling.
-        let status = json!({
-            "goal": { "decision": { "decision": "iterate", "next_iteration": 3 } }
-        });
-        assert_eq!(goal_loop_step(&status, 3), GoalLoopStep::Stop);
-    }
-
-    #[test]
-    fn next_pass_context_appends_remaining() {
-        let ctx = next_pass_context(Some("repo: /x"), &["do A".to_string(), "do B".to_string()]);
-        assert!(ctx.contains("repo: /x"));
-        assert!(ctx.contains("Remaining from the previous pass"));
-        assert!(ctx.contains("- do A"));
-        assert!(ctx.contains("- do B"));
-        // No base context, no remaining → empty.
-        assert_eq!(next_pass_context(None, &[]), "");
+        assert!(!status_is_terminal(
+            &json!({ "status": goal_execution_status::RUNNING })
+        ));
     }
 
     #[test]
@@ -1301,7 +1142,7 @@ mod tests {
             "security:Security review:profile-sec".to_string(),
         ];
 
-        let request = build_start_arguments(&args, "ship the thing", 0, 1, None).expect("request");
+        let request = build_start_arguments(&args, "ship the thing", 1).expect("request");
         let workers = request["workers"].as_array().expect("workers");
         assert_eq!(
             workers
@@ -1326,7 +1167,7 @@ mod tests {
         args.planner_profile = Some("profile-a".to_string());
         args.executor_profile = Some("profile-b".to_string());
 
-        let request = build_start_arguments(&args, "ship the thing", 0, 1, None).expect("request");
+        let request = build_start_arguments(&args, "ship the thing", 1).expect("request");
         assert_eq!(
             request["workers"][0]["transport"],
             OrchestrationTransport::Acp.as_str()
@@ -1344,7 +1185,7 @@ mod tests {
         let mut args = args_with_task();
         args.use_agents = true;
 
-        let request = build_start_arguments(&args, "ship the thing", 0, 1, None).expect("request");
+        let request = build_start_arguments(&args, "ship the thing", 1).expect("request");
 
         assert_eq!(
             request["selection"],
@@ -1368,20 +1209,13 @@ mod tests {
                 mcp_tools::APXM_GOAL_START,
                 Some(json!({ "task": "ship" })),
                 json!({
-                    "execution_id": "exec-1",
-                    "goal": {
-                        "terminal_event_kinds": [
-                            event_kind_constants::ORCHESTRATOR_WAKE.name(),
-                            event_kind_constants::EXECUTE_COMPLETE.name(),
-                            event_kind_constants::ERROR.name(),
-                            event_kind_constants::TURN_ABORTED.name()
-                        ]
-                    }
+                    "goal_id": "goal-1",
+                    "execution_id": "exec-1"
                 }),
             ),
             ExpectedMcpCall::new(
-                mcp_tools::APXM_WORKFLOW_EVENTS,
-                Some(json!({ "execution_id": "exec-1", "since": 0, "limit": 100 })),
+                mcp_tools::APXM_GOAL_EVENTS,
+                Some(json!({ "goal_id": "goal-1", "since": 0, "limit": 100 })),
                 json!({
                     "events": [
                         { "meta": { "seq": 0 }, "payload": { "kind": event_kind_constants::WORKFLOW_STARTED.name(), "workflow_name": "goal", "step_count": 1 } }
@@ -1390,24 +1224,24 @@ mod tests {
                 }),
             ),
             ExpectedMcpCall::new(
-                mcp_tools::APXM_WORKFLOW_STATUS,
-                Some(json!({ "execution_id": "exec-1" })),
-                json!({ "execution_id": "exec-1", "status": goal_execution_status::RUNNING }),
+                mcp_tools::APXM_GOAL_STATUS,
+                Some(json!({ "goal_id": "goal-1" })),
+                json!({ "goal_id": "goal-1", "status": goal_execution_status::RUNNING }),
             ),
             ExpectedMcpCall::new(
-                mcp_tools::APXM_WORKFLOW_EVENTS,
-                Some(json!({ "execution_id": "exec-1", "since": 1, "limit": 100 })),
+                mcp_tools::APXM_GOAL_EVENTS,
+                Some(json!({ "goal_id": "goal-1", "since": 1, "limit": 100 })),
                 json!({
                     "events": [
-                        { "meta": { "seq": 1 }, "payload": { "kind": event_kind_constants::ORCHESTRATOR_WAKE.name(), "outcome": "done", "terminal_event": event_kind_constants::WORKFLOW_FINISHED.name() } }
+                        { "meta": { "seq": 1, "trace_id": "goal-1" }, "payload": { "kind": event_kind_constants::ORCHESTRATOR_WAKE.name(), "outcome": "done", "terminal_event": event_kind_constants::WORKFLOW_FINISHED.name() } }
                     ],
                     "next_seq": 2
                 }),
             ),
             ExpectedMcpCall::new(
-                mcp_tools::APXM_WORKFLOW_STATUS,
-                Some(json!({ "execution_id": "exec-1" })),
-                json!({ "execution_id": "exec-1", "status": goal_execution_status::SUCCEEDED }),
+                mcp_tools::APXM_GOAL_STATUS,
+                Some(json!({ "goal_id": "goal-1" })),
+                json!({ "goal_id": "goal-1", "status": goal_execution_status::SUCCEEDED }),
             ),
         ])
         .await;
@@ -1421,11 +1255,11 @@ mod tests {
         )
         .await
         .expect("start");
+        assert_eq!(started["goal_id"], "goal-1");
         let follow = follow_goal(
             &client,
             &server.base,
-            "exec-1",
-            terminal_kinds(&started),
+            "goal-1",
             100,
             Duration::from_millis(1),
             Some(Duration::from_secs(2)),
@@ -1487,44 +1321,44 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn goal_status_events_and_cancel_call_native_workflow_tools() {
+    async fn goal_status_events_and_cancel_call_native_goal_tools() {
         let server = MockMcpServer::start(vec![
             ExpectedMcpCall::new(
-                mcp_tools::APXM_WORKFLOW_STATUS,
-                Some(json!({ "execution_id": "exec-2" })),
-                json!({ "execution_id": "exec-2", "status": goal_execution_status::RUNNING }),
+                mcp_tools::APXM_GOAL_STATUS,
+                Some(json!({ "goal_id": "goal-2" })),
+                json!({ "goal_id": "goal-2", "status": goal_execution_status::RUNNING }),
             ),
             ExpectedMcpCall::new(
-                mcp_tools::APXM_WORKFLOW_EVENTS,
-                Some(json!({ "execution_id": "exec-2", "since": 0, "limit": 50 })),
-                json!({ "events": [], "next_seq": 0 }),
+                mcp_tools::APXM_GOAL_EVENTS,
+                Some(json!({ "goal_id": "goal-2", "since": 0, "limit": 50 })),
+                json!({ "goal_id": "goal-2", "events": [], "next_seq": 0 }),
             ),
             ExpectedMcpCall::new(
-                mcp_tools::APXM_WORKFLOW_CANCEL,
-                Some(json!({ "execution_id": "exec-2" })),
-                json!({ "execution_id": "exec-2", "status": "cancelling" }),
+                mcp_tools::APXM_GOAL_CANCEL,
+                Some(json!({ "goal_id": "goal-2" })),
+                json!({ "goal_id": "goal-2", "cancelled": true }),
             ),
         ])
         .await;
         let client = reqwest::Client::builder().build().expect("client");
 
-        let status = workflow_status(&client, &server.base, "exec-2")
+        let status = goal_status(&client, &server.base, "goal-2")
             .await
             .expect("status");
         assert_eq!(status["status"], goal_execution_status::RUNNING);
-        let events = workflow_events(&client, &server.base, "exec-2", 0, 50)
+        let events = goal_events(&client, &server.base, "goal-2", 0, 50)
             .await
             .expect("events");
         assert_eq!(events["events"], json!([]));
         let cancelled = call_mcp_tool(
             &client,
             &server.base,
-            mcp_tools::APXM_WORKFLOW_CANCEL,
-            json!({ "execution_id": "exec-2" }),
+            mcp_tools::APXM_GOAL_CANCEL,
+            json!({ "goal_id": "goal-2" }),
         )
         .await
         .expect("cancel");
-        assert_eq!(cancelled["status"], "cancelling");
+        assert_eq!(cancelled["cancelled"], true);
         server.finish().await;
     }
 
