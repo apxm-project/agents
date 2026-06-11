@@ -25,7 +25,7 @@ use tokio::sync::Notify;
 
 use crate::error::ApiError;
 use crate::execute::{
-    ExecuteRequest, PreparedRequest, acquire_admission, admit_grant_metadata,
+    ExecuteRequest, ExecuteResponse, PreparedRequest, acquire_admission, admit_grant_metadata,
     air_to_artifact_with_caps, inject_resolved_credentials, prepare_request,
     registered_capability_names, to_execute_response, validate_raw_execute_admission,
 };
@@ -521,11 +521,10 @@ async fn run_prepared_workflow(
                     // The gate node is the terminal node, so its output is the
                     // run's content. Prefer a parsed (LLM) verdict; fall back to
                     // the structural verdict from the pass outcome.
-                    let verdict = response
-                        .content
-                        .as_deref()
-                        .and_then(GateVerdict::parse_json)
-                        .unwrap_or_else(|| GateVerdict::from_pass_outcome(failed_nodes, Vec::new()));
+                    let verdict =
+                        goal_verdict_from_response(&response).unwrap_or_else(|| {
+                            GateVerdict::from_pass_outcome(failed_nodes, Vec::new())
+                        });
                     record_goal_outcome(
                         &state,
                         &prepared.execution_id,
@@ -739,6 +738,34 @@ fn record_orchestrator_wake_event(
             execution_id,
         ),
     );
+}
+
+fn goal_verdict_from_response(response: &ExecuteResponse) -> Option<GateVerdict> {
+    response
+        .content
+        .as_deref()
+        .and_then(GateVerdict::parse_json)
+        .or_else(|| {
+            response
+                .results
+                .values()
+                .find_map(goal_verdict_from_json_value)
+        })
+}
+
+fn goal_verdict_from_json_value(value: &JsonValue) -> Option<GateVerdict> {
+    if let Ok(verdict) = serde_json::from_value::<GateVerdict>(value.clone()) {
+        return Some(verdict);
+    }
+    match value {
+        JsonValue::String(text) => GateVerdict::parse_json(text),
+        JsonValue::Array(items) => items.iter().find_map(goal_verdict_from_json_value),
+        JsonValue::Object(map) => map
+            .get("result")
+            .and_then(goal_verdict_from_json_value)
+            .or_else(|| map.values().find_map(goal_verdict_from_json_value)),
+        _ => None,
+    }
 }
 
 /// Evaluate a goal pass: emit the typed gate verdict, run the runtime

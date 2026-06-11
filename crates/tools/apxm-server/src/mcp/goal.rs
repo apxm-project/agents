@@ -7,7 +7,6 @@
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::process::Command;
-use std::time::Duration;
 
 use apxm_backends::HealthStatus;
 use apxm_core::constants::mcp::tools as mcp_tool_names;
@@ -47,7 +46,6 @@ pub(crate) const MCP_TOOL_APXM_GOAL_EVENTS: &str = mcp_tool_names::APXM_GOAL_EVE
 pub(crate) const MCP_TOOL_APXM_GOAL_CANCEL: &str = mcp_tool_names::APXM_GOAL_CANCEL;
 
 const MAX_WORKERS: usize = 16;
-const GOAL_POLL_INTERVAL_MS: u64 = 50;
 const TEMPLATE_GOAL_WORKER: &str = "goal_worker";
 const TEMPLATE_GOAL_SUPERVISOR: &str = "goal_supervisor";
 const TEMPLATE_GOAL_TRACKING: &str = "goal_tracking";
@@ -673,7 +671,6 @@ async fn goal_start(
         register_goal_pass(state, &goal_id, &pass);
         record_goal_pass_sleep(state, &goal_id, &pass.response);
         if let Some(execution_id) = pass.response.execution_id.clone() {
-            spawn_goal_event_mirror(state.clone(), goal_id.clone(), execution_id.clone());
             spawn_goal_run_supervisor(state.clone(), goal_id, request, execution_id);
         }
     }
@@ -884,7 +881,7 @@ async fn run_goal_supervisor(
     mut execution_id: String,
 ) {
     loop {
-        let Some(record) = wait_for_goal_pass(&state, &execution_id).await else {
+        let Some(record) = watch_goal_pass(&state, &goal_id, &execution_id).await else {
             finish_goal_run_failure(
                 &state,
                 &goal_id,
@@ -942,11 +939,6 @@ async fn run_goal_supervisor(
                         register_goal_pass(&state, &goal_id, &pass);
                         record_goal_pass_sleep(&state, &goal_id, &pass.response);
                         if let Some(next_execution_id) = pass.response.execution_id {
-                            spawn_goal_event_mirror(
-                                state.clone(),
-                                goal_id.clone(),
-                                next_execution_id.clone(),
-                            );
                             execution_id = next_execution_id;
                             continue;
                         }
@@ -993,52 +985,116 @@ async fn run_goal_supervisor(
     }
 }
 
-fn spawn_goal_event_mirror(state: AppState, goal_id: String, execution_id: String) {
-    tokio::spawn(async move {
-        mirror_goal_pass_events(state, goal_id, execution_id).await;
-    });
-}
-
-async fn mirror_goal_pass_events(state: AppState, goal_id: String, execution_id: String) {
+async fn watch_goal_pass(
+    state: &AppState,
+    goal_id: &str,
+    execution_id: &str,
+) -> Option<ExecutionRecord> {
     let mut next_source_seq = 0u64;
-    loop {
-        let events = state.run_event_bus.snapshot(&execution_id);
-        let mut advanced = false;
-        for event in events.into_iter() {
-            if event.meta.seq < next_source_seq {
-                continue;
-            }
-            next_source_seq = event.meta.seq.saturating_add(1);
-            record_goal_run_event(&state, &goal_id, event);
-            advanced = true;
-        }
+    let mut terminal_event_seen = false;
+    let mut pass_events = state.run_event_bus.subscribe(execution_id);
 
-        let settled = state
-            .execution_store
-            .get(&execution_id)
-            .is_some_and(|record| record.status != ExecutionStatus::Running);
-        if settled && !advanced {
-            return;
+    if state.execution_store.get(execution_id).is_none() {
+        return None;
+    }
+
+    replay_goal_pass_events(
+        state,
+        goal_id,
+        execution_id,
+        &mut next_source_seq,
+        &mut terminal_event_seen,
+    );
+    if let Some(record) = settled_goal_pass_record(state, execution_id, terminal_event_seen) {
+        return Some(record);
+    }
+
+    loop {
+        match pass_events.recv().await {
+            Ok(event) => {
+                mirror_goal_pass_event(
+                    state,
+                    goal_id,
+                    event,
+                    &mut next_source_seq,
+                    &mut terminal_event_seen,
+                );
+                if let Some(record) =
+                    settled_goal_pass_record(state, execution_id, terminal_event_seen)
+                {
+                    return Some(record);
+                }
+            }
+            Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => {
+                replay_goal_pass_events(
+                    state,
+                    goal_id,
+                    execution_id,
+                    &mut next_source_seq,
+                    &mut terminal_event_seen,
+                );
+                if let Some(record) =
+                    settled_goal_pass_record(state, execution_id, terminal_event_seen)
+                {
+                    return Some(record);
+                }
+            }
+            Err(tokio::sync::broadcast::error::RecvError::Closed) => {
+                return state.execution_store.get(execution_id);
+            }
         }
-        tokio::time::sleep(Duration::from_millis(GOAL_POLL_INTERVAL_MS)).await;
     }
 }
 
-async fn wait_for_goal_pass(state: &AppState, execution_id: &str) -> Option<ExecutionRecord> {
-    let mut terminal_without_goal = 0usize;
-    loop {
-        let record = state.execution_store.get(execution_id)?;
-        if record.status != ExecutionStatus::Running {
-            if record.goal.is_some() {
-                return Some(record);
-            }
-            terminal_without_goal += 1;
-            if terminal_without_goal > 200 {
-                return Some(record);
-            }
-        }
-        tokio::time::sleep(Duration::from_millis(GOAL_POLL_INTERVAL_MS)).await;
+fn replay_goal_pass_events(
+    state: &AppState,
+    goal_id: &str,
+    execution_id: &str,
+    next_source_seq: &mut u64,
+    terminal_event_seen: &mut bool,
+) {
+    for event in state.run_event_bus.snapshot(execution_id) {
+        mirror_goal_pass_event(state, goal_id, event, next_source_seq, terminal_event_seen);
     }
+}
+
+fn mirror_goal_pass_event(
+    state: &AppState,
+    goal_id: &str,
+    event: ApxmEvent,
+    next_source_seq: &mut u64,
+    terminal_event_seen: &mut bool,
+) {
+    if event.meta.seq < *next_source_seq {
+        return;
+    }
+    *next_source_seq = event.meta.seq.saturating_add(1);
+    if is_goal_pass_terminal_event(&event) {
+        *terminal_event_seen = true;
+    }
+    record_goal_run_event(state, goal_id, event);
+}
+
+fn settled_goal_pass_record(
+    state: &AppState,
+    execution_id: &str,
+    terminal_event_seen: bool,
+) -> Option<ExecutionRecord> {
+    let record = state.execution_store.get(execution_id)?;
+    if record.status == ExecutionStatus::Running {
+        return None;
+    }
+    if terminal_event_seen {
+        return Some(record);
+    }
+    None
+}
+
+fn is_goal_pass_terminal_event(event: &ApxmEvent) -> bool {
+    let kind = event.kind();
+    [kind::EXECUTE_COMPLETE, kind::ERROR, kind::TURN_ABORTED]
+        .iter()
+        .any(|terminal| kind == *terminal)
 }
 
 fn goal_decision_kind(goal: Option<&JsonValue>) -> Option<&str> {
@@ -2795,11 +2851,24 @@ fn escape_runtime_template_literals(value: &str) -> String {
 }
 
 fn agent_name(session_id: &str, id: &str) -> String {
-    let suffix = session_id
+    let compact = session_id
         .chars()
         .filter(|ch| ch.is_ascii_alphanumeric())
-        .take(12)
         .collect::<String>();
+    let suffix = if compact.chars().count() > 24 {
+        let head = compact.chars().take(12).collect::<String>();
+        let tail = compact
+            .chars()
+            .rev()
+            .take(12)
+            .collect::<Vec<_>>()
+            .into_iter()
+            .rev()
+            .collect::<String>();
+        format!("{head}{tail}")
+    } else {
+        compact
+    };
     if suffix.is_empty() {
         format!("goal_worker_{id}")
     } else {

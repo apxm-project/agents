@@ -13,7 +13,7 @@ Use the smallest surface that matches the job:
 
 - `dekk apxm goal`: an agent or user creates one bounded worker DAG, APXM
   materializes the workflow bundle, starts it in the background, and wakes the
-  caller through `workflow_events` and `workflow_status`.
+  caller through `goal_events` and `goal_status`.
 - `dekk apxm workflow run`: run a checked-in
   `.apxmw` workflow file after `validate` and `analyze`.
 - `prompt_as_workflow`: ask MCP to synthesize a typed APXM workflow from natural
@@ -27,7 +27,7 @@ Use the smallest surface that matches the job:
 [planner/controller creates bounded DAG]
        |
        v
-[APXM starts workflow + records execution_id]
+[APXM starts goal + records goal_id]
        |
        v
 [caller sleeps]
@@ -36,21 +36,21 @@ Use the smallest surface that matches the job:
 [workers finish -> gate/eval -> feedback]
        |
        v
-[events/status wake caller]
+[goal events/status wake caller]
 ```
 
 ## Autonomous Task
 
 `autonomous_task/` shows the native MCP path for an controller agent that
 creates a bounded parallel worker graph, assigns each worker a workspace or Git
-worktree, starts the workflow in the background, and then sleeps until APXM
-status/events/cancel wakes it.
+worktree, starts the goal in the background, and then sleeps until APXM
+goal status/events/cancel wakes it.
 
 ```text
 [event/task] -> [trigger] -> [parallel workers] -> [gate/eval] -> [feedback]
                                       |
                                       v
- [workflow_status + workflow_events + workflow_cancel]
+        [goal_status + goal_events + goal_cancel]
 ```
 
 Use `autonomous_task/deterministic_request.json` for a no-agent smoke test, or

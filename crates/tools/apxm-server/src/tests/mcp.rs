@@ -784,6 +784,8 @@ async fn mcp_goal_start_spawns_parallel_workers_with_session_cwds() {
     assert_eq!(started["planning"]["mode"], "explicit");
     assert_eq!(started["planning"]["generated"], false);
     assert_eq!(started["control"]["events_tool"], MCP_TOOL_APXM_GOAL_EVENTS);
+    assert_eq!(started["control"]["status_tool"], MCP_TOOL_APXM_GOAL_STATUS);
+    assert_eq!(started["control"]["cancel_tool"], MCP_TOOL_APXM_GOAL_CANCEL);
     assert_eq!(started["sleep_wake"]["sleep_after_start"], true);
     assert_eq!(
         started["goal"]["sleep_event_kind"],
@@ -796,6 +798,19 @@ async fn mcp_goal_start_spawns_parallel_workers_with_session_cwds() {
     assert_eq!(
         started["goal"]["next_events_args"]["since"], 0,
         "goal response should include the first event cursor: {started}"
+    );
+    assert_eq!(
+        started["goal"]["next_events_args"]["goal_id"],
+        started["goal_id"]
+    );
+    assert_eq!(started["goal"]["next_events_args"]["limit"], 100);
+    assert!(
+        started["goal"]["terminal_event_kinds"]
+            .as_array()
+            .expect("terminal_event_kinds")
+            .iter()
+            .any(|kind| kind == event_kind::ORCHESTRATOR_WAKE.name()),
+        "goal should publish aggregate wake as a terminal event: {started}"
     );
     let artifacts = &started["artifacts"];
     let bundle_dir = std::path::PathBuf::from(started["bundle_dir"].as_str().expect("bundle_dir"));
@@ -1006,12 +1021,20 @@ async fn mcp_goal_start_spawns_parallel_workers_with_session_cwds() {
         }),
         "goal_events should mirror current pass events: {aggregate_events}"
     );
-    assert!(
-        aggregate_items.iter().any(|event| {
+    let aggregate_wake = aggregate_items
+        .iter()
+        .find(|event| {
             payload_kind_is(event, event_kind::ORCHESTRATOR_WAKE)
                 && event["meta"]["trace_id"].as_str() == Some(goal_id)
-        }),
-        "goal_events should include aggregate wake: {aggregate_events}"
+        })
+        .unwrap_or_else(|| panic!("goal_events should include aggregate wake: {aggregate_events}"));
+    assert_eq!(
+        aggregate_wake["payload"]["outcome"],
+        OrchestrationWakeOutcome::Succeeded.as_str()
+    );
+    assert_eq!(
+        aggregate_wake["payload"]["terminal_event"],
+        event_kind::GOAL_CONVERGED.name()
     );
     let workflow_session_dir = workflow_started["payload"]["session_dir"]
         .as_str()
@@ -1165,6 +1188,112 @@ async fn mcp_goal_acp_gatekeeper_receives_worker_summary() {
 }
 
 #[tokio::test]
+async fn mcp_goal_supervisor_continues_until_gate_converges() {
+    let state = test_state().await;
+    let spawns = Arc::new(Mutex::new(Vec::new()));
+    let gate = Arc::new(SequentialGateVerdictPrompter::new());
+    state
+        .runtime
+        .process_table()
+        .set_agent_spawner(Arc::new(RecordingAgentSpawner::new(Arc::clone(&spawns))))
+        .await;
+    state
+        .runtime
+        .process_table()
+        .set_agent_prompter(Arc::clone(&gate) as Arc<dyn AgentPrompter>)
+        .await;
+    let app = build_app(state);
+    let session_id = format!("mcp-goal-iterate-{}", uuid::Uuid::new_v4());
+
+    let (status, body) = post_json(
+        app.clone(),
+        routes::MCP,
+        mcp_call(
+            MCP_TOOL_APXM_GOAL_START,
+            serde_json::json!({
+                "task": "iterate once then converge",
+                "session_id": session_id,
+                "max_iterations": 2,
+                "admit_capabilities": [goal_admission::SPAWN_AGENT],
+                "workers": [
+                    { "id": "implement", "role": "produce deterministic pass output" }
+                ],
+                "supervisor": {
+                    "profile": "fixture-profile",
+                    "transport": "acp",
+                    "prompt": "Return only a JSON gate verdict."
+                }
+            }),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "goal start failed: {body}");
+    assert_eq!(body[tool_result::RESULT][mcp_fields::IS_ERROR], false);
+    let started: serde_json::Value =
+        serde_json::from_str(tool_text(&body)).expect("goal response JSON");
+    let goal_id = started["goal_id"].as_str().expect("goal_id").to_string();
+
+    let final_status = wait_for_goal_status(app.clone(), &goal_id, STATUS_SUCCEEDED).await;
+    assert_eq!(final_status["iteration"], 1, "final status: {final_status}");
+    assert_eq!(final_status["max_iterations"], 2);
+    assert_eq!(
+        final_status["pass_execution_ids"]
+            .as_array()
+            .expect("pass ids")
+            .len(),
+        2,
+        "goal should run exactly two passes: {final_status}"
+    );
+    assert_eq!(
+        gate.calls(),
+        2,
+        "gate should be prompted once per pass: {final_status}"
+    );
+    assert_eq!(
+        spawns.lock().expect("spawns lock").len(),
+        2,
+        "supervisor ACP process should be spawned once per pass"
+    );
+
+    let events = wait_for_goal_events_matching(app.clone(), &goal_id, |items| {
+        let aggregate_sleeps = items
+            .iter()
+            .filter(|event| {
+                payload_kind_is(event, event_kind::ORCHESTRATOR_SLEEP)
+                    && event["meta"]["trace_id"].as_str() == Some(goal_id.as_str())
+            })
+            .count();
+        aggregate_sleeps == 2
+            && items.iter().any(|event| {
+                payload_kind_is(event, event_kind::GOAL_NEEDS_ANOTHER_PASS)
+                    && event["meta"]["trace_id"].as_str() == Some(goal_id.as_str())
+                    && event["payload"]["next_iteration"] == 1
+            })
+            && items.iter().any(|event| {
+                payload_kind_is(event, event_kind::ORCHESTRATOR_WAKE)
+                    && event["meta"]["trace_id"].as_str() == Some(goal_id.as_str())
+                    && event["payload"]["outcome"] == OrchestrationWakeOutcome::Succeeded.as_str()
+                    && event["payload"]["terminal_event"] == event_kind::GOAL_CONVERGED.name()
+            })
+    })
+    .await;
+    let items = events["events"].as_array().expect("goal events");
+    let pass_ids = final_status["pass_execution_ids"]
+        .as_array()
+        .expect("pass ids");
+    for pass_id in pass_ids {
+        let pass_id = pass_id.as_str().expect("pass id");
+        assert!(
+            items.iter().any(|event| {
+                payload_kind_is(event, event_kind::WORKFLOW_STARTED)
+                    && event["meta"]["trace_id"].as_str() == Some(pass_id)
+            }),
+            "goal_events should mirror workflow_started for pass {pass_id}: {events}"
+        );
+    }
+}
+
+#[tokio::test]
 async fn mcp_goal_cancel_stops_waiting_and_drops_late_worker_events() {
     let state = test_state().await;
     let spawns = Arc::new(Mutex::new(Vec::new()));
@@ -1208,6 +1337,7 @@ async fn mcp_goal_cancel_stops_waiting_and_drops_late_worker_events() {
         .as_str()
         .expect("execution_id")
         .to_string();
+    let goal_id = started["goal_id"].as_str().expect("goal_id").to_string();
 
     hold.wait_for_prompts(2).await;
     assert_eq!(
@@ -1219,13 +1349,17 @@ async fn mcp_goal_cancel_stops_waiting_and_drops_late_worker_events() {
         app.clone(),
         routes::MCP,
         mcp_call(
-            MCP_TOOL_APXM_WORKFLOW_CANCEL,
-            serde_json::json!({ "execution_id": execution_id }),
+            MCP_TOOL_APXM_GOAL_CANCEL,
+            serde_json::json!({ "goal_id": goal_id }),
         ),
     )
     .await;
-    assert_eq!(status, StatusCode::OK, "workflow cancel failed: {body}");
+    assert_eq!(status, StatusCode::OK, "goal cancel failed: {body}");
     assert_eq!(body[tool_result::RESULT][mcp_fields::IS_ERROR], false);
+    let cancel_response: serde_json::Value =
+        serde_json::from_str(tool_text(&body)).expect("goal cancel response JSON");
+    assert_eq!(cancel_response["cancelled"], true);
+    assert_eq!(cancel_response["current_execution_id"], execution_id);
     let status_body = wait_for_workflow_status(app.clone(), &execution_id, STATUS_FAILED).await;
     let workflow_status: serde_json::Value =
         serde_json::from_str(tool_text(&status_body)).expect("workflow status response JSON");
@@ -1250,6 +1384,26 @@ async fn mcp_goal_cancel_stops_waiting_and_drops_late_worker_events() {
     assert_eq!(
         wake_event["payload"]["terminal_event"],
         event_kind::TURN_ABORTED.name()
+    );
+    let aggregate_events = wait_for_goal_events_matching(app.clone(), &goal_id, |items| {
+        items.iter().any(|event| {
+            payload_kind_is(event, event_kind::ORCHESTRATOR_WAKE)
+                && event["meta"]["trace_id"].as_str() == Some(goal_id.as_str())
+                && event["payload"]["outcome"] == OrchestrationWakeOutcome::Cancelled.as_str()
+                && event["payload"]["terminal_event"] == event_kind::TURN_ABORTED.name()
+        })
+    })
+    .await;
+    assert!(
+        aggregate_events["events"]
+            .as_array()
+            .expect("goal events")
+            .iter()
+            .any(|event| {
+                payload_kind_is(event, event_kind::TURN_ABORTED)
+                    && event["meta"]["trace_id"].as_str() == Some(execution_id.as_str())
+            }),
+        "goal_events should mirror pass abort before aggregate wake: {aggregate_events}"
     );
     let abort_seq = cancelled_items
         .iter()
@@ -3905,6 +4059,34 @@ async fn goal_events(app: Router, goal_id: &str, since: u64, limit: usize) -> se
     serde_json::from_str(tool_text(&body)).expect("goal events response JSON")
 }
 
+async fn goal_status(app: Router, goal_id: &str) -> serde_json::Value {
+    let (status, body) = post_json(
+        app,
+        routes::MCP,
+        mcp_call(
+            MCP_TOOL_APXM_GOAL_STATUS,
+            serde_json::json!({ "goal_id": goal_id }),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "goal status failed: {body}");
+    assert_eq!(body[tool_result::RESULT][mcp_fields::IS_ERROR], false);
+    serde_json::from_str(tool_text(&body)).expect("goal status response JSON")
+}
+
+async fn wait_for_goal_status(app: Router, goal_id: &str, expected: &str) -> serde_json::Value {
+    let mut last = serde_json::Value::Null;
+    for _ in 0..100 {
+        let status = goal_status(app.clone(), goal_id).await;
+        if status["status"] == expected {
+            return status;
+        }
+        last = status;
+        tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+    }
+    panic!("goal status did not become {expected}: {last}");
+}
+
 async fn wait_for_goal_events_matching<F>(
     app: Router,
     goal_id: &str,
@@ -4084,6 +4266,46 @@ impl AgentPrompter for BarrierAgentPrompter {
             process.name,
             truncate_for_fixture(message)
         )))
+    }
+}
+
+struct SequentialGateVerdictPrompter {
+    calls: AtomicUsize,
+}
+
+impl SequentialGateVerdictPrompter {
+    fn new() -> Self {
+        Self {
+            calls: AtomicUsize::new(0),
+        }
+    }
+
+    fn calls(&self) -> usize {
+        self.calls.load(Ordering::SeqCst)
+    }
+}
+
+#[async_trait]
+impl AgentPrompter for SequentialGateVerdictPrompter {
+    async fn prompt(
+        &self,
+        _process: &AgentProcess,
+        _message: &str,
+    ) -> Result<AgentPromptResponse, RuntimeError> {
+        let call = self.calls.fetch_add(1, Ordering::SeqCst);
+        let verdict = if call == 0 {
+            serde_json::json!({
+                "status": "needs_more",
+                "reason": "first pass needs one more bounded pass",
+                "remaining": ["confirm the implementation in pass two"]
+            })
+        } else {
+            serde_json::json!({
+                "status": "done",
+                "reason": "second pass converged"
+            })
+        };
+        Ok(AgentPromptResponse::text(verdict.to_string()))
     }
 }
 

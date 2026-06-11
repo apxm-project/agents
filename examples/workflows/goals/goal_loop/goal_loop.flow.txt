@@ -15,7 +15,7 @@
 [APXM validates graph + worker policy]
     |
     v
-[goal_start for one bounded pass]
+[goal_start for server-owned goal]
     |
     v
 [orchestrator_sleep]
@@ -24,14 +24,14 @@
 [APXM workflow owns worker spawn + fan-in + gate/eval + feedback]
     |
     v
-[workflow events/status]
+[goal events/status]
     |
     v
 [eval]
     |
     +--> [pass]       -> [record evidence + done]
     |
-    +--> [needs_more] -> [feedback event/task] -> [next admitted pass]
+    +--> [needs_more] -> [server starts next admitted pass]
     |
     +--> [blocked]    -> [checkpoint / human resume]
     |

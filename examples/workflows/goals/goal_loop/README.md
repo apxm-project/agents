@@ -79,9 +79,9 @@ the controller must enforce while APXM server executes each admitted pass.
 
 - APXM skills/plugins are triggers and instructions, not the runtime.
 - Worker-authored graphs are proposals until APXM validates and admits them.
-- `goal_start` executes one bounded pass and returns workflow
-  status/events/cancel handles.
+- `goal_start` starts a server-owned goal and returns `goal_id` plus
+  `goal_status/events/cancel` handles.
 - APXM OS owns external event listeners, trigger sidecars, dedupe, retry, and
   re-arm behavior.
-- APXM server owns execution IDs, session IDs, retained events, cancellation,
-  worker admission, and evidence.
+- APXM server owns goal IDs, execution IDs, session IDs, retained events,
+  cancellation, worker admission, and evidence.
