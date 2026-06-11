@@ -248,10 +248,7 @@ fn apply_vllm_request_overrides_from_node(
         }
     }
 
-    let reuse_group = match get_optional_string_attribute(node, graph_attrs::REUSE_GROUP)? {
-        Some(g) => Some(g),
-        None => get_optional_string_attribute(node, graph_attrs::REUSE_GROUP_LEGACY)?,
-    }
+    let reuse_group = get_optional_string_attribute(node, graph_attrs::REUSE_GROUP)?
     .map(|g| g.trim().to_owned())
     .filter(|g| !g.is_empty());
     if let Some(group) = reuse_group {
@@ -1007,14 +1004,14 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_vllm_cache_salt_honors_python_reuse_group_kwarg() {
+    async fn test_vllm_cache_salt_honors_shared_prefix_group() {
         let ctx = test_ctx_with_grouped_tools()
             .await
             .with_execution_id("exec-iter-10".to_string())
             .with_graph_id("review-synthesis-graph".to_string());
         let mut node = Node::new(4, AISOperationType::Ask);
         node.attributes.insert(
-            graph_attrs::REUSE_GROUP_LEGACY.to_string(),
+            graph_attrs::REUSE_GROUP.to_string(),
             Value::String("apxm_review_council_shared_context".to_string()),
         );
 
@@ -1022,7 +1019,7 @@ mod tests {
 
         let request =
             apply_vllm_request_overrides_from_node(&ctx, &node, LLMRequest::new("prompt"))
-                .expect("python reuse_group kwarg should apply graph-scoped salt");
+                .expect("shared_prefix_group should apply graph-scoped salt");
 
         assert_eq!(
             request
@@ -1031,7 +1028,7 @@ mod tests {
                 .and_then(|body| body.get(extra_body_keys::CACHE_SALT_KEY))
                 .and_then(JsonValue::as_str),
             Some("review-synthesis-graph:apxm_review_council_shared_context"),
-            "explicit Python `reuse_group=` must match compiler-stamped shared prefix salting"
+            "shared_prefix_group must match compiler-stamped shared prefix salting"
         );
     }
 

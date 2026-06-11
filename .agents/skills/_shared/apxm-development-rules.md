@@ -7,9 +7,8 @@ configure backends.
 
 - `dekk apxm` is the only sanctioned entry point for build, test,
   compile, execute, codegen, doctor, backend, vLLM, MCP, processes.
-- Never invoke `cargo`, `docker`, `srun`, `sbatch`,
-  `python tools/scripts/cargo.py`, `service-start`, `service-adopt`, or
-  `run-vllm-slurm.sh` directly. Going through Dekk preserves the env
+- Never invoke `cargo`, `docker`, `srun`, `sbatch`, or
+  `python tools/scripts/cargo.py` directly. Going through Dekk preserves the env
   contract (`CARGO_TARGET_DIR`, `MLIR_DIR`, `LD_LIBRARY_PATH`, etc.).
 - If a needed action isn't wrapped, add a Dekk command in `.dekk.toml`
   rather than shelling out.
@@ -56,7 +55,7 @@ configure backends.
   `apxm.contract.build_layout()`.
 - Before adding a new script, look in `tools/scripts/` — many entrypoints
   already exist (`cargo.py`, `vllm.py`, `release.py`,
-  `check_no_legacy_vllm.py`, `apxm_mcp_install.py`). Keep public names in
+  `apxm_mcp_install.py`). Keep public names in
   `.dekk.toml`; put larger implementations in a script-local package.
   The shared APXM/vLLM operational names live in the `apxm` Python package at
   `crates/compiler/apxm-frontend/python/`.

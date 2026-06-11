@@ -645,7 +645,7 @@ pub mod session {
         ///
         /// Each constant is derived from `apxm_core::types::GraphStatusKey`,
         /// which is the typed source of truth. Prefer the enum at new call
-        /// sites; these constants exist for legacy consumers.
+        /// sites.
         pub mod graph_status_keys {
             use crate::types::metrics::GraphStatusKey;
 

@@ -25,11 +25,11 @@
     },
     {
       "name": "apxm-backend-add",
-      "description": "Use when registering a new APXM inference backend (cloud, on-prem, or local). Enforces hard-fail-at-config-time and the no-legacy / no-fallback contract on resolver behavior."
+      "description": "Use when registering a new APXM inference backend (cloud, on-prem, or local). Enforces hard-fail-at-config-time resolver behavior."
     },
     {
       "name": "apxm-commit",
-      "description": "Commit gate \u2014 runs apxm-simplify + apxm-finish first, drafts message in repo log style, lints it, and commits only with explicit user approval. Pushes to main only with explicit approval; never --force; never --no-verify. Does not open PRs."
+      "description": "Commit gate \u2014 runs apxm-simplify + apxm-finish first, drafts message in repo log style, lints it with dekk apxm commit-lint, commits at a clean stopping point, and pushes only when authorized. Never --force. Does not open PRs."
     },
     {
       "name": "apxm-compile-and-execute",
@@ -49,7 +49,7 @@
     },
     {
       "name": "apxm-finish",
-      "description": "Pre-claim gate \u2014 runs focused dekk apxm test, doctor, no-legacy lint, secrets scan, and artifact-placement check before any claim of completion. Refuses to claim done until all pass."
+      "description": "Pre-claim gate \u2014 runs focused dekk apxm test, doctor, release checks when relevant, secrets scan, and artifact-placement check before any claim of completion. Refuses to claim done until all pass."
     },
     {
       "name": "apxm-fork-vllm-rebase",
@@ -69,7 +69,7 @@
     },
     {
       "name": "apxm-model-zoo-operate",
-      "description": "Use when adding, scaling, or probing models in the vLLM zoo (deploy/vllm/zoo*.toml). Enforces docker-load then cache-warm then zoo-apply then service-exec/status; never use legacy service-start."
+      "description": "Use when adding, scaling, or probing models in the vLLM zoo (deploy/vllm/zoo*.toml). Enforces docker-load then cache-warm then zoo-apply then service-exec/status; use the zoo surface only."
     },
     {
       "name": "apxm-plan",

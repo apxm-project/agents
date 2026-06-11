@@ -65,11 +65,11 @@ checkpoints, not new bodies of content — the rules live under
    abstractions, referential comments, and over-large skill bodies before
    declaring done.
 5. `apxm-finish` — pre-claim gate: focused `dekk apxm test`,
-   `dekk apxm doctor`, `check_no_legacy_vllm.py --strict`, secrets scan,
+   `dekk apxm doctor`, release checks, secrets scan, and
    artifact-placement check.
-6. `apxm-commit` — pre-commit and pre-push gate: no auto-commit,
+6. `apxm-commit` — commit and push gate: no auto-commit,
    no push without explicit approval, PRs only for pushed work, push to
-   `main` only when explicitly authorized, never `--no-verify`.
+   `main` only when explicitly authorized.
 
 Skip `apxm-context` and `apxm-plan` only for typos or single-line edits.
 Never skip `apxm-finish` or `apxm-commit`.
@@ -79,15 +79,8 @@ Never skip `apxm-finish` or `apxm-commit`.
 Commit subjects follow the rules at
 [`.agents/skills/_shared/apxm-commit-message-rules.md`](.agents/skills/_shared/apxm-commit-message-rules.md):
 allowed types, no AI attribution, no `planNN` scope outside
-`prereg(...)`/`eval(...)`, no `wip` or `fix stuff` subjects. The
-`commit-msg` hook enforces them locally:
-
-```bash
-dekk apxm install-hooks         # installs the commit-msg hook
-```
-
-If a hook fails, fix the root cause — never re-stage and bypass with
-`--no-verify`.
+`prereg(...)`/`eval(...)`, no `wip` or `fix stuff` subjects. Use
+`dekk apxm commit-lint` when you want the repository checker explicitly.
 
 ## Submitting a change
 
@@ -115,8 +108,8 @@ dekk apxm release publish --yes
 ```
 
 `release check` validates git sync, version consistency, changelog coverage,
-tag availability, the no-legacy vLLM lint, bundled skill manifests, Dekk
-doctor, generated bindings, Python tests, release notes, and release builds.
+tag availability, bundled skill manifests, Dekk doctor, generated bindings,
+Python tests, release notes, and release builds.
 `release dist` writes Python, binary, and source archives plus `SHA256SUMS`
 under `.apxm/releases/vX.Y.Z`. `release publish` uses `gh`; without `--yes`
 it prints the exact release assets and exits without changing GitHub. PyPI
@@ -147,8 +140,8 @@ Configure `.apxm/config.toml` so `data.vllm.hf_cache` and
 `data.vllm.model_roots` point at shared storage every Slurm compute node
 can read at the same path. `APXM_VLLM_HF_HOME` and
 `APXM_VLLM_MODEL_ROOTS` are one-shell overrides, not an invitation to put
-large model weights in `$HOME`. The zoo manifest is the only operator
-surface — `service-start` and `service-adopt` are not public CLI. See
+large model weights in `$HOME`. The zoo manifest is the operator
+surface. See
 [`docs/backends/storage-layout.md`](docs/backends/storage-layout.md) for
 the placement rules.
 

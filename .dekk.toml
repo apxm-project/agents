@@ -69,7 +69,6 @@ doctor = { run = "apxm doctor", description = "Diagnose the real APXM compiler/r
 server = { run = "apxm-server", description = "Launch the APXM HTTP server", group = "Configuration" }
 build-server = { run = "python tools/scripts/cargo.py build -p apxm-server --release", description = "Build the apxm-server release binary (mirrors to target/release)", group = "Build & Test" }
 commit-lint = { run = "python tools/scripts/check_commit_message.py", description = "Lint a commit message file, --current (HEAD), or --range REV1..REV2", group = "Configuration" }
-install-hooks = { run = "python tools/scripts/install_git_hooks.py", description = "Install APXM git hooks (commit-msg + prepare-commit-msg); idempotent", group = "Configuration" }
 
 gui = { run = "apxm gui", description = "Launch the web-based GUI dashboard", skill = true, group = "Authoring" }
 watch = { run = "apxm watch", description = "Stream a live run's dispatch tree from apxm-server (Phase 14.8.F)", group = "Observability" }
@@ -127,7 +126,6 @@ zoo-status = { run = "python tools/scripts/vllm.py zoo-status", description = "P
 zoo-scale = { run = "python tools/scripts/vllm.py zoo-scale", description = "Scale a zoo-managed service's replica count" }
 zoo-cache-warm = { run = "python tools/scripts/vllm.py zoo-cache-warm", description = "Warm the HF cache for every model in the manifest" }
 zoo-logs = { run = "python tools/scripts/vllm.py zoo-logs", description = "Tail container logs for a zoo-managed service" }
-check-no-legacy = { run = "python tools/scripts/check_no_legacy_vllm.py", description = "Lint for legacy CLI / fallback patterns removed by the model-zoo migration" }
 
 [commands.mcp]
 description = "Install the APXM MCP server into supported coding-agent configs"

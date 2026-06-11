@@ -172,9 +172,8 @@ impl CompilerHints {
 /// Backend support surface for graph-aware APXM execution.
 ///
 /// These booleans describe what APXM can rely on for one configured backend.
-/// The runtime may still lower internal `DispatchIrV1` into legacy backend
-/// controls, but unsupported capability bits make that fallback explicit in
-/// metrics and claim evidence.
+/// Unsupported capability bits are reported explicitly in metrics and claim
+/// evidence.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
 pub struct BackendGraphCapabilities {
     pub supports_graph_registration: bool,
@@ -377,16 +376,8 @@ impl ApxmGraphHints {
             })
             .unwrap_or_default();
 
-        // The canonical attribute name is `shared_prefix_group` (what MLIR's
-        // PromptCanonicalization pass emits, propagated into apxm-core via
-        // build.rs from apxm-ais::attrs::REUSE_GROUP). The Python frontend
-        // historically lets users pass a `reuse_group=...` kwarg, which
-        // ends up as a node attribute under the literal key "reuse_group".
-        // Look up both so explicit user-set hints land regardless of which
-        // name was used.
         let reuse_group = attrs_map
             .get(attrs::REUSE_GROUP)
-            .or_else(|| attrs_map.get(attrs::REUSE_GROUP_LEGACY))
             .and_then(|value| value.as_string())
             .map(ToOwned::to_owned);
 
@@ -734,20 +725,11 @@ mod tests {
         assert_eq!(hints.graph_metrics.stage_index, Some(1));
     }
 
-    /// Regression for the 2026-05 silent-pin-skip bug: the Python frontend
-    /// passes `g.ask(reuse_group=...)` kwargs through verbatim, so the literal
-    /// key `"reuse_group"` shows up in node attributes. The runtime's canonical
-    /// constant is `attrs::REUSE_GROUP = "shared_prefix_group"` (matching
-    /// MLIR's `PromptCanonicalization` pass output). For 5+ paired benchmark
-    /// runs the runtime looked up only the canonical name, missed the legacy
-    /// kwarg name, and `pin_policy.mode` collapsed to `None` — pin never
-    /// engaged. The fix accepts both names. This test pins that contract so
-    /// future refactors of the Python frontend or runtime can't regress it.
     #[test]
-    fn from_node_attrs_accepts_python_kwarg_legacy_reuse_group_name() {
+    fn from_node_attrs_uses_shared_prefix_group_name() {
         let mut attrs_map: HashMap<String, Value> = HashMap::new();
         attrs_map.insert(
-            attrs::REUSE_GROUP_LEGACY.to_owned(),
+            attrs::REUSE_GROUP.to_owned(),
             Value::String("pin_demo_cohort".to_owned()),
         );
 
@@ -757,12 +739,12 @@ mod tests {
         assert_eq!(
             hints.reuse_group.as_deref(),
             Some("pin_demo_cohort"),
-            "legacy kwarg name `reuse_group` must be accepted alongside canonical `shared_prefix_group`"
+            "`shared_prefix_group` must apply graph-scoped pinning"
         );
         assert_eq!(
             hints.pin_policy.mode,
             PinMode::Prefix,
-            "pin_policy must engage when reuse_group is set under EITHER name"
+            "pin_policy must engage when shared_prefix_group is set"
         );
     }
 

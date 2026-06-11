@@ -7,7 +7,6 @@ user-invocable: true
 # APXM-vLLM Service
 
 Load `_shared/apxm-development-rules.md`,
-`_shared/apxm-no-legacy-rules.md`, and
 `_shared/apxm-storage-layout-rules.md` before broad work.
 
 Use the Dekk-controlled APXM-vLLM service path for graph-aware vLLM
@@ -84,8 +83,6 @@ Priority-latency claims require `/v1/apxm/scheduler` to report
 
 ## Anti-patterns
 
-- `dekk apxm vllm service-start` / `service-adopt` — both lint as
-  `legacy-*` rules. Use `zoo apply` against a `zoo*.toml` manifest.
 - A new Slurm job per benchmark iteration.
 - Graph-aware claims from a stock vLLM server, or from an APXM-vLLM
   server whose scheduler probe is missing.

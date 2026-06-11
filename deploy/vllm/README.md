@@ -25,14 +25,12 @@ not the operator runbook.** All operational procedures live in
    blocks on `sleep infinity` until the Slurm job is cancelled.
 
 Direct CLI invocations of `docker-*` are internal to the wrapper; operators
-should not call them by hand. `service-start` is not a public CLI surface;
-invoking it prints a migration message pointing at `zoo-apply` and exits
-non-zero.
+should not call them by hand.
 
 ## Builder policy
 
 `dekk apxm vllm docker-build` uses Docker BuildKit through
-`docker buildx build --load`. Docker's legacy builder is not allowed.
+`docker buildx build --load`. Docker's classic builder is not allowed.
 `dekk apxm vllm doctor` must report `docker_buildx_ready=true` before
 image builds are considered ready.
 

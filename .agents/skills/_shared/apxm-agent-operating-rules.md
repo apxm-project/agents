@@ -14,8 +14,8 @@ project conventions and skill defaults.
 - **Push to `main` only when explicitly authorized by the user.**
 - **No `git push --force`** anywhere. Even on a feature branch, ask
   first.
-- **No `--no-verify`.** If a hook fails, fix the root cause; never
-  re-stage and bypass.
+- **Do not skip commit/release checks.** Run the relevant `dekk apxm`
+  gate and fix the root cause when it fails.
 - **No `git commit --amend`** on pushed commits. New commit instead.
 - **No `git add -A` / `git add .`** — name files explicitly so secrets
   and generated artifacts don't slip in.

@@ -26,8 +26,6 @@ for typo fixes or single-line edits.
      - Touching `~/.apxm/config.toml`, HF cache, zoo manifests, build
        paths → `_shared/apxm-storage-layout-rules.md`
      - Anything with a git mutation → `_shared/apxm-agent-operating-rules.md`
-     - About to invent or invoke a vLLM CLI pattern →
-       `_shared/apxm-no-legacy-rules.md`
    - For benchmark / evaluation / preregistration workflows, see the
      companion repo `apxm-project/apxm-eval`.
 4. **Read the closest subsystem doc**:
@@ -39,7 +37,6 @@ for typo fixes or single-line edits.
    `apxm_*`, `feedback_*`. Especially:
    - `apxm_positioning` (don't call APXM "an agent framework")
    - `apxm_phase_status` (what's actually shipped)
-   - `feedback_no_legacy_no_fallback`
    - `feedback_no_referential_comments`
    - `feedback_no_kill_user_slurm`
 6. **Confirm subsystem ownership**:

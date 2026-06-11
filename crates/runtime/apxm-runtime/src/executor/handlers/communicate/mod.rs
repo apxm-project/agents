@@ -24,10 +24,7 @@ mod http;
 mod local;
 
 pub async fn execute(ctx: &ExecutionContext, node: &Node, inputs: Vec<Value>) -> Result<Value> {
-    // Accept both the historical "target" attribute and the current "recipient"
-    // emitted by the compiler.
     let recipient = get_string_attribute(node, graph_attrs::RECIPIENT)
-        .or_else(|_| get_string_attribute(node, graph_attrs::TARGET))
         .unwrap_or_default();
     let protocol = match get_string_attribute(node, graph_attrs::PROTOCOL) {
         Ok(raw) => raw

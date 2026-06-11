@@ -83,11 +83,7 @@ fn operation_start_context(node: &Node) -> Option<serde_json::Value> {
         }
         AISOperationType::Communicate => {
             let mut ctx = serde_json::Map::new();
-            // COMMUNICATE uses `recipient` (current) or `target` (legacy);
-            // mirror handlers/communicate/mod.rs and accept both.
-            if let Some(target) =
-                attr(node, graph_attrs::RECIPIENT).or_else(|| attr(node, graph_attrs::TARGET))
-            {
+            if let Some(target) = attr(node, graph_attrs::RECIPIENT) {
                 ctx.insert("target_agent".to_string(), target.into());
             }
             if let Some(protocol) = attr(node, graph_attrs::PROTOCOL) {

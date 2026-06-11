@@ -702,7 +702,7 @@ fn emit_node(
             .unwrap_or_else(|| "{input}".to_string());
             let recipient = get_string_attr(
                 &node.attributes,
-                &[graph_attrs::RECIPIENT, graph_attrs::TARGET],
+                &[graph_attrs::RECIPIENT],
             )
             .unwrap_or_else(|| "default".to_string());
             let attrs = extra_attr_dict(
@@ -712,7 +712,6 @@ fn emit_node(
                     graph_attrs::TEMPLATE_STR,
                     graph_attrs::PROMPT,
                     graph_attrs::RECIPIENT,
-                    graph_attrs::TARGET,
                 ],
             );
             let result = format!("%n{}", node.id);

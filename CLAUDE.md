@@ -19,9 +19,9 @@ new contributors. The correct anchor is: *graph-aware dispatch for vLLM*.
 ## 2. Authority CLI
 
 `dekk apxm` is the only sanctioned entry point. Never invoke `cargo`,
-`docker`, `srun`, `sbatch`, `python tools/scripts/cargo.py`, `service-start`,
-`service-adopt`, or `run-vllm-slurm.sh` directly. Always go through Dekk so
-the env contract, target dir, and process accounting stay consistent.
+`docker`, `srun`, `sbatch`, or `python tools/scripts/cargo.py` directly.
+Always go through Dekk so the env contract, target dir, and process
+accounting stay consistent.
 
 Command groups (see `dekk apxm --help` for the live list):
 
@@ -33,13 +33,12 @@ Command groups (see `dekk apxm --help` for the live list):
   `goal_start`, `workflow_start`, `workflow_status`,
   `workflow_events`, `workflow_cancel`, and `prompt_as_workflow`
 - **Configuration**: `doctor`, `backend`, `vllm`, `agent`, `tool`, `cache`,
-  `process`, `mcp`, `server`, `commit-lint`, `install-hooks`
+  `process`, `mcp`, `server`, `commit-lint`
 - **Discovery**: `ops`, `template`
 - **Release**: `release {check, dist, publish, pypi}`
 - **vLLM operate**: `dekk apxm vllm {doctor, probe, cache-warm,
   docker-build, docker-save, docker-load, zoo-apply, zoo-status, zoo-scale,
-  zoo-cache-warm, service-list, service-status, service-exec, service-stop,
-  check-no-legacy}`
+  zoo-cache-warm, service-list, service-status, service-exec, service-stop}`
 
 If a needed action isn't yet wrapped, **add a Dekk command** in `.dekk.toml`
 rather than shelling out — that is the project-wide pattern.
@@ -73,13 +72,12 @@ content themselves; they point at `_shared/` rules.
    abstractions, referential comments, and over-large skill bodies before
    declaring done.
 5. **`apxm-finish`** — pre-claim gate: run focused
-   `dekk apxm test`, `dekk apxm doctor`, `check_no_legacy_vllm.py
-   --strict`, secrets scan, artifact-placement check. Refuse to claim
-   "done" until all pass.
-6. **`apxm-commit`** — pre-commit/pre-push gate: enforce the
+   `dekk apxm test`, `dekk apxm doctor`, release checks, secrets scan,
+   artifact-placement check. Refuse to claim "done" until all pass.
+6. **`apxm-commit`** — commit/push gate: enforce the
    user's commit rules — no auto-commit, no push without explicit
    approval, PRs only for pushed work, push to `main` only when explicitly
-   authorized, never `--no-verify`.
+   authorized.
 
 This is the *ironbear pattern* — each skill is a checkpoint, not a body of
 new content. Skills inside the lifecycle can invoke domain skills (e.g.
@@ -102,15 +100,14 @@ new content. Skills inside the lifecycle can invoke domain skills (e.g.
   `apxm-project/vllm`). Never edit upstream files there directly without a
   cherry-pick plan.
 - **`tools/scripts/`** — Python entrypoints Dekk calls into (`cargo.py`,
-  `vllm.py`, `release.py`, `check_no_legacy_vllm.py`,
-  `apxm_mcp_install.py`). Larger command implementations live in a
+  `vllm.py`, `release.py`, `apxm_mcp_install.py`). Larger command implementations live in a
   script-local package such as `apxm_release/`.
 - **`crates/compiler/apxm-frontend/python/apxm/`** — installable `apxm`
   Python package. `apxm.contract` owns the APXM/vLLM operational names
   (env vars, routes, dataclasses, `build_layout()`); `apxm.data_config`
   resolves the `.apxm/` data buckets.
 - **`deploy/vllm/`** — `zoo.toml` manifests (operator state) and
-  `run-vllm.sh` (the unified deploy script — never `run-vllm-slurm.sh`).
+  `run-vllm.sh` (the deploy script used by zoo services).
 - **`docs/`** — design docs for the core runtime.
 - **`.agents/`** — this SSOT plus `_shared/` rules, lifecycle skills,
   domain skills, and `domains/` navigation README-only directories.
@@ -139,7 +136,7 @@ Required env (set by `dekk apxm doctor` + the conda env):
 Standard cadences:
 
 ```bash
-dekk apxm doctor                # always run on session start (or via hook)
+dekk apxm doctor                # always run on session start
 dekk apxm build                 # release build of apxm-cli (driver+metrics)
 dekk apxm build-dialect         # rebuild MLIR after .td or C++ shim edits
 dekk apxm codegen               # regen Python frontend bindings after .td edits
@@ -182,38 +179,13 @@ If you find a generated artifact under `examples/` or `docs/`, move it to
 the matching `.apxm` location and patch whatever script wrote it there —
 do **not** add an ignore guard to mask the bug.
 
-## 7. No-legacy / no-fallback contract
+## 7. vLLM operating contract
 
-Hard-fail at config time, never `or env or default` chains. The lint at
-`tools/scripts/check_no_legacy_vllm.py` enforces 12 rules — all are
-project policy:
+Hard-fail at config time, never `or env or default` chains. Use the zoo
+manifest as the operator surface and keep service state explicit.
 
-1. **`legacy-service-start`** — `dekk apxm vllm service-start` is removed.
-   Use `zoo apply` against a `deploy/vllm/zoo*.toml` manifest.
-2. **`legacy-service-adopt`** — `service-adopt` removed. Write a `zoo.toml`
-   entry, `zoo apply`.
-3. **`legacy-run-vllm-slurm`** — `run-vllm-slurm.sh` deleted. Use
-   `deploy/vllm/run-vllm.sh`.
-4. **`hardcoded-port-8916`** — never literal `8916` outside the allocator
-   range default; use `_allocate_port()` or a manifest-supplied port.
-5. **`apxm-endpoints-available-flag`** — no
-   `apxm_endpoints_available`-style flags that paper over a missing fork.
-6. **`resolver-last-resort`** — no resolver "last resort" branches.
-7. **`resolver-rr-fallback`** — no silent round-robin fallback in the
-   resolver.
-8. **`scheduling-policy-fcfs`** — no FCFS scheduling literal in code that
-   should consume the configured policy.
-9. **`or-env-or-default-chain`** — no `cfg or env or "default"` chains
-   that hide missing required config.
-10. **`already-exists-skipping`** — no silent "skipping, already exists"
-    branches; hard-fail or surface explicitly.
-11. **`shell-model-specific-default`** — no model-specific defaults baked
-    into shell wrappers.
-12. **`hardcoded-dispatch-field-literal`** — promote dispatch field names
-    to `graph_attrs::*` constants; never literal strings in handlers.
-
-Run before any PR: `python3 tools/scripts/check_no_legacy_vllm.py --strict`
-(or `dekk apxm vllm check-no-legacy`).
+Run `dekk apxm release check` before release work; use focused tests for
+ordinary development changes.
 
 Promote contract strings (env var names, route paths, response markers)
 to constants. The `metrics_keys::*` and `graph_attrs::*` modules are the
@@ -283,12 +255,8 @@ supported migration procedure.
 - **`git push --force`** anywhere without explicit approval.
 - **`gh pr create`** unless the user explicitly asks for a PR. The
   commit + push gate stops at push.
-- **`--no-verify`** to bypass hooks. If a hook fails, fix the root
-  cause; never re-stage and bypass. The `commit-msg` hook installed
-  by `dekk apxm install-hooks` enforces
-  `_shared/apxm-commit-message-rules.md` (allowed types, no AI
-  attribution, no `planNN` scope outside `prereg(...)`/`eval(...)`,
-  no `wip`/`fix stuff` subjects).
+- **Skipping commit checks**. Use `dekk apxm commit-lint` when a commit
+  message needs explicit validation.
 - **`scancel`** a Slurm job owned by `apxm`. Always allocate a
   fresh service job alongside.
 - **Commit secrets**: `LLM_GATEWAY_KEY`, OAuth tokens, HF tokens.
@@ -327,18 +295,18 @@ push, an overwritten branch, or a tainted benchmark.
 | Skill | Description | Path |
 | --- | --- | --- |
 | `apxm-ais-op-design` | Use before adding or modifying an AIS op in apxm-core. Enforces the design-before-code gate, the canonical-attribute rule, and the build-dialect + codegen cadence. | `.agents/skills/apxm-ais-op-design/SKILL.md` |
-| `apxm-backend-add` | Use when registering a new APXM inference backend (cloud, on-prem, or local). Enforces hard-fail-at-config-time and the no-legacy / no-fallback contract on resolver behavior. | `.agents/skills/apxm-backend-add/SKILL.md` |
-| `apxm-commit` | Commit gate — runs apxm-simplify + apxm-finish first, drafts message in repo log style, lints it, and commits only with explicit user approval. Pushes to main only with explicit approval; never --force; never --no-verify. Does not open PRs. | `.agents/skills/apxm-commit/SKILL.md` |
+| `apxm-backend-add` | Use when registering a new APXM inference backend (cloud, on-prem, or local). Enforces hard-fail-at-config-time resolver behavior. | `.agents/skills/apxm-backend-add/SKILL.md` |
+| `apxm-commit` | Commit gate — runs apxm-simplify + apxm-finish first, drafts message in repo log style, lints it with dekk apxm commit-lint, commits at a clean stopping point, and pushes only when authorized. Never --force. Does not open PRs. | `.agents/skills/apxm-commit/SKILL.md` |
 | `apxm-compile-and-execute` | Use when compiling APXM graphs, running .apxmobj artifacts, or executing AIR/IR through the runtime. Enforces dekk apxm as the authority CLI and correct artifact placement under .apxm/. | `.agents/skills/apxm-compile-and-execute/SKILL.md` |
 | `apxm-context` | Prime an APXM session before broad work — runs doctor, reads project.md and the relevant _shared rules, surfaces subsystem ownership, and recalls APXM memory. Run at the start of any session that will touch >1 file or any non-trivial change. | `.agents/skills/apxm-context/SKILL.md` |
 | `apxm-design-docs` | Use when editing conceptual docs under docs/design/. Gates two shipped failure modes — overclaim (present-tense prose about unwired behaviour) and citation drift (claims with no anchor to shipped code). | `.agents/skills/apxm-design-docs/SKILL.md` |
 | `apxm-execute-plan` | Drive an APXM plan to completion without scope creep. Tracks phases with the harness's task tracker, runs focused per-phase verification, refuses to add features beyond the plan, and surfaces blockers immediately. Invoke only after apxm-plan produces an approved plan. | `.agents/skills/apxm-execute-plan/SKILL.md` |
-| `apxm-finish` | Pre-claim gate — runs focused dekk apxm test, doctor, no-legacy lint, secrets scan, and artifact-placement check before any claim of completion. Refuses to claim done until all pass. | `.agents/skills/apxm-finish/SKILL.md` |
+| `apxm-finish` | Pre-claim gate — runs focused dekk apxm test, doctor, release checks when relevant, secrets scan, and artifact-placement check before any claim of completion. Refuses to claim done until all pass. | `.agents/skills/apxm-finish/SKILL.md` |
 | `apxm-fork-vllm-rebase` | Use when rebasing the external/vllm fork onto a new upstream tag, cherry-picking APXM commits, or resolving conflicts in the fork. Covers the G1 build/smoke gate. | `.agents/skills/apxm-fork-vllm-rebase/SKILL.md` |
 | `apxm-goal-orchestrator` | Use when an agent should turn a complex APXM goal into a bounded worker DAG or workflow, execute it through APXM, wait on workflow events/status, and synthesize verified artifacts. Covers `dekk apxm goal`, `goal_start`, `workflow_*`, and `prompt_as_workflow` selection. | `.agents/skills/apxm-goal-orchestrator/SKILL.md` |
 | `apxm-mcp-server` | Use when working on APXM MCP surfaces: the Rust HTTP `/v1/mcp` endpoint, the Rust stdio `apxm-mcp-server` binary, or cross-agent MCP registration. Prefer server-owned HTTP MCP for workflow/orchestration control. | `.agents/skills/apxm-mcp-server/SKILL.md` |
 | `apxm-mlir-pass-development` | Use when adding, modifying, or reordering MLIR passes in the APXM compiler pipeline. Enforces the single pass-list source of truth, the AIS-core ownership rule, and the build-dialect + codegen cadence after .td edits. | `.agents/skills/apxm-mlir-pass-development/SKILL.md` |
-| `apxm-model-zoo-operate` | Use when adding, scaling, or probing models in the vLLM zoo (deploy/vllm/zoo*.toml). Enforces docker-load then cache-warm then zoo-apply then service-exec/status; never use legacy service-start. | `.agents/skills/apxm-model-zoo-operate/SKILL.md` |
+| `apxm-model-zoo-operate` | Use when adding, scaling, or probing models in the vLLM zoo (deploy/vllm/zoo*.toml). Enforces docker-load then cache-warm then zoo-apply then service-exec/status; use the zoo surface only. | `.agents/skills/apxm-model-zoo-operate/SKILL.md` |
 | `apxm-plan` | Produce a written plan before non-trivial APXM implementation. Required for changes touching >3 files, modifying a public API or AIS op, or needing Slurm GPU allocation. Enforces APXM-specific gates (AIS-op-vs-compose decision, dialect-codegen impact). | `.agents/skills/apxm-plan/SKILL.md` |
 | `apxm-simplify` | Pre-finish review pass — remove copied _shared text, weak abstractions, referential comments, and over-large skill bodies before claiming completion. Mandatory before apxm-finish and any commit. | `.agents/skills/apxm-simplify/SKILL.md` |
 | `apxm-vllm-service` | Use when building, launching, probing, or running APXM workloads against the Dockerized APXM-vLLM backend, especially on Slurm compute nodes. Enforces Dekk as the authority CLI, persistent service allocations, image-store reuse, and service-exec for commands that need the vLLM endpoint. | `.agents/skills/apxm-vllm-service/SKILL.md` |

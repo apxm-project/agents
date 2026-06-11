@@ -463,7 +463,7 @@ mod tests {
     }
 
     #[test]
-    fn dispatch_ir_registration_metadata_matches_legacy_metadata() {
+    fn dispatch_ir_registration_metadata_matches_graph_metadata() {
         let mut dag = ExecutionDag::new();
         let mut root = node(1, 90);
         root.set_attribute(
@@ -480,13 +480,13 @@ mod tests {
         dag.add_edge(Edge::new(1, 2, 12, DependencyType::Data))
             .unwrap();
 
-        let legacy = graph_metadata_from_dag("graph", "exec", &dag);
+        let metadata = graph_metadata_from_dag("graph", "exec", &dag);
         let dispatch = graph_dispatch_ir_from_dag("graph", "exec", &dag);
         let lowered = graph_metadata_from_dispatch_ir(&dispatch);
 
         assert_eq!(
             serde_json::to_value(&lowered).unwrap(),
-            serde_json::to_value(&legacy).unwrap()
+            serde_json::to_value(&metadata).unwrap()
         );
     }
 }

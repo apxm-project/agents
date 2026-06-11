@@ -71,7 +71,7 @@ impl std::fmt::Display for MetricsLevel {
 ///
 /// Each variant is the single source of truth for one JSON field name.
 /// Constants in `constants::session::metrics_keys::graph_status_keys` re-export
-/// these values so legacy call sites continue to compile.
+/// these values for shared metric serialization.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum GraphStatusKey {
     Object,

@@ -1488,7 +1488,7 @@ pub static AIS_OPERATIONS: &[OperationSpec] = &[
             received via input tokens from upstream edges. Supports four protocol dispatch modes: \
             'local' (default, in-process sub-flow), 'http'/'https' (external APXM agent), \
             'acp' (ACP subprocess via ProcessTable), and 'broadcast' (fan-out to all agents). \
-            The recipient attribute accepts 'recipient' or 'target' as key.",
+            The recipient attribute key is 'recipient'.",
         latency: OperationLatency::Medium,
         example_json: Some(
             r#"{"id": 3, "op": "COMMUNICATE", "attributes": {"recipient": "reviewer", "protocol": "acp"}}"#,

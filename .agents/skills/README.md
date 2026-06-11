@@ -22,8 +22,8 @@ Run in order for any non-trivial session:
 2. `apxm-plan` — design before implementing.
 3. `apxm-execute-plan` — execute the approved plan.
 4. `apxm-simplify` — remove avoidable complexity.
-5. `apxm-finish` — pre-claim gate (tests, doctor, lint, secrets).
-6. `apxm-commit` — pre-commit/pre-push gate; push to `main` only with
+5. `apxm-finish` — pre-claim gate (tests, doctor, release checks, secrets).
+6. `apxm-commit` — commit/push gate; push to `main` only with
    explicit user authorization.
 
 ## Domain skills
@@ -49,8 +49,6 @@ skills live in the companion repo `apxm-project/apxm-eval`.
   Slurm safety, secrets, no referential comments.
 - `_shared/apxm-development-rules.md` — authority CLI, build env,
   ownership, codegen cadence, reuse-first.
-- `_shared/apxm-no-legacy-rules.md` — the 12 lint rules (no fallbacks,
-  no `service-start`/`-adopt`, no `apxm_endpoints_available`-flag).
 - `_shared/apxm-storage-layout-rules.md` — `/home` is shared WekaFS,
   config-resolver first-wins, HF cache deletion.
 

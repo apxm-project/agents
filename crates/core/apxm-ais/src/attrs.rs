@@ -184,17 +184,6 @@ pub const BATCH_GROUP: &str = "batch_group";
 pub const STAGE_INDEX: &str = "stage_index";
 pub const ESTIMATED_DYNAMIC_TOKENS: &str = "estimated_dynamic_tokens";
 pub const REUSE_GROUP: &str = "shared_prefix_group";
-/// Legacy alias produced by the Python frontend when the user passes
-/// `g.ask(reuse_group=...)` directly. The MLIR PromptCanonicalization
-/// pass emits the canonical `REUSE_GROUP` ("shared_prefix_group") name;
-/// explicit user-authored kwargs land under this literal key. The
-/// runtime accepts both to preserve backward compatibility with
-/// workloads that explicitly tag `reuse_group=` (e.g.
-/// `examples/python/benchmarks/workloads/pin_demo.py`). The long-term
-/// resolution is to define a single canonical attribute enum that
-/// every layer (Python kwarg, MLIR pass, Rust runtime) shares — see
-/// the followup tracked in the dispatch honesty claim.
-pub const REUSE_GROUP_LEGACY: &str = "reuse_group";
 pub const EST_TEMPLATE_TOKENS: &str = "est_template_tokens";
 
 // -- Graph-aware backend hints --

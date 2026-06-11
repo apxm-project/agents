@@ -1,13 +1,12 @@
 ---
 name: apxm-backend-add
-description: Use when registering a new APXM inference backend (cloud, on-prem, or local). Enforces hard-fail-at-config-time and the no-legacy / no-fallback contract on resolver behavior.
+description: Use when registering a new APXM inference backend (cloud, on-prem, or local). Enforces hard-fail-at-config-time resolver behavior.
 user-invocable: true
 ---
 
 # APXM Backend Add
 
-Load `_shared/apxm-development-rules.md` and
-`_shared/apxm-no-legacy-rules.md` before broad work.
+Load `_shared/apxm-development-rules.md` before broad work.
 
 ## Authority commands
 
@@ -27,8 +26,7 @@ dekk apxm backend migrate               # one-shot credentials.toml migrate
 
 - **No fallback chains.** No `cfg or env or "default"`, no
   `apxm_endpoints_available`-style flags, no resolver "last resort"
-  branches, no silent round-robin fallback. All lint as `--strict`
-  failures. See `_shared/apxm-no-legacy-rules.md`.
+  branches, no silent round-robin fallback.
 - **Hard-fail at config time.** If a required field is missing, error
   loudly at load — never paper over with a default.
 - **`model.id` must match the backend's `served_model_name` exactly.**
@@ -52,7 +50,7 @@ dekk apxm backend add
 dekk apxm backend test <name>
 dekk apxm backend add-model <name> <model.id>
 
-# Migrate from a legacy credentials.toml:
+# Migrate from credentials.toml:
 dekk apxm backend migrate
 
 # vLLM:

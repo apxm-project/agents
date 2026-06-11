@@ -22,7 +22,6 @@ pub enum LoadError {
 pub struct LoadStats {
     pub total_lines: usize,
     pub parse_errors: usize,
-    pub skipped_legacy: usize,
 }
 
 /// Load a rollout file from disk in arrival order. Unparseable lines are
@@ -38,12 +37,6 @@ pub async fn load_rollout(path: &Path) -> Result<(Vec<RolloutLine>, LoadStats), 
             continue;
         }
         stats.total_lines += 1;
-        // Legacy-record skip: any line carrying `record_type=state` is a
-        // Codex/Claude Code legacy variant that doesn't fit RolloutLine.
-        if raw.contains("\"record_type\":\"state\"") {
-            stats.skipped_legacy += 1;
-            continue;
-        }
         match serde_json::from_str::<RolloutLine>(&raw) {
             Ok(line) => out.push(line),
             Err(error) => {

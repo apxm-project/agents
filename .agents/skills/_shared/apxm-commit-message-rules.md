@@ -87,8 +87,7 @@ Right: `prereg(plan09): J/req cell — telecom N=20`.
 - `docs(<scope>)`: when touching `.agents/` SSOT, remember to
   `dekk apxm skills generate --target all` so generated agent files stay synced.
 
-## Bypass policy
+## Enforcement
 
-The `commit-msg` hook is installed by `dekk apxm install-hooks`. The
-user's operating rules forbid `--no-verify`. If the lint blocks a
-message, fix the message — don't bypass.
+Run `dekk apxm commit-lint <message-file>` before committing. If the
+lint blocks a message, fix the message and re-run the lint.

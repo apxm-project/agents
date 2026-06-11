@@ -49,8 +49,8 @@ Use the smallest correct command:
 - Touched `.td`? `build-dialect && codegen` *then* the test commands.
 - Touched a zoo manifest? `dekk apxm vllm zoo-status`.
 - Touched anything that lint might care about?
-  `dekk apxm vllm check-no-legacy` or `python3
-  tools/scripts/check_no_legacy_vllm.py --strict`.
+  Run the relevant focused check, or `dekk apxm release check` when the
+  change is release-facing.
 
 ## Anti-patterns
 
@@ -58,7 +58,8 @@ Use the smallest correct command:
 - Marking a task completed when verification failed.
 - "Bonus" edits not in the plan ("while I'm in this file I'll also
   fix…"). Even good ideas wait for the next plan.
-- Continuing past a hook warning without addressing or acknowledging it.
+- Continuing past a failed Dekk check without addressing or
+  acknowledging it.
 - Skipping `build-dialect`/`codegen` after `.td` edits and then being
   confused by phantom type errors.
 

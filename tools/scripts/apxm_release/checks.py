@@ -133,15 +133,6 @@ def _check_rust_publish_guards() -> CheckResult:
     return CheckResult("rust publish guards", True, "all workspace crates are publish=false")
 
 
-def _check_no_legacy() -> CheckResult:
-    check = run(
-        [sys.executable, "tools/scripts/check_no_legacy_vllm.py", "--strict"],
-        capture=True,
-    )
-    detail = "strict lint passed" if check.returncode == 0 else last_line(check)
-    return CheckResult("no legacy vLLM", check.returncode == 0, detail)
-
-
 def _check_skillpack() -> CheckResult:
     check = run(
         [sys.executable, "tools/scripts/validate_pack.py", "crates/tools/apxm-server/skills"],
@@ -225,7 +216,6 @@ def run_checks(args: argparse.Namespace) -> int:
         _check_release_notes(),
         _check_tag_available(),
         _check_rust_publish_guards(),
-        _check_no_legacy(),
         _check_skillpack(),
         _check_dekk_doctor(),
         _check_codegen_current(args.skip_codegen),

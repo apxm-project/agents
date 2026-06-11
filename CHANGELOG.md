@@ -14,10 +14,6 @@ contract is committed to.
   a first-class release path: readiness checks, `.apxm/releases` archives,
   checksums, and explicit GitHub publishing through `gh`.
 
-### Removed
-- Removed the last `service-start` command stub from the Dekk vLLM
-  surface. The model zoo manifest remains the only service launch path.
-
 ### Fixed — fork-side v0.21.0 rebase regression
 - `external/vllm` bumped to `cc1fbf4c0` on the `apxm` branch:
   the APXM patch in `vllm/v1/core/sched/scheduler.py` called the
@@ -81,9 +77,6 @@ contract is committed to.
   source of truth used by producer (`dispatch_fields_sent`) and
   consumer (`BackendGraphCapabilities::field_supported`); 4 sites
   migrated off raw string literals.
-- **Lint rule `hardcoded-dispatch-field-literal`** in
-  `tools/scripts/check_no_legacy_vllm.py` — rejects raw dispatch-field
-  string literals outside the constants module to prevent regression.
 
 ### Added — model zoo
 - `dekk apxm vllm zoo-apply | zoo-status | zoo-scale | zoo-cache-warm |
@@ -95,10 +88,6 @@ contract is committed to.
   execution against the zoo.
 - `docs/backends/model-zoo.md` — operator reference (schema table,
   daily flow, failure-mode glossary).
-- `tools/scripts/check_no_legacy_vllm.py` (invoked as
-  `dekk apxm vllm check-no-legacy`) — CI lint enforcing the no-legacy
-  / no-fallback discipline across `tools/`, `crates/`, `deploy/`,
-  `docs/`, `examples/`. 12 rules; all green on the current tree.
 
 ### Added — plans-as-graphs
 - LLM PLAN prompt teaches the `inner_plan.task_dag` schema with three
@@ -136,15 +125,12 @@ contract is committed to.
 - `README.md` condensed 282 → 74 lines. Operator runbooks moved to
   `docs/backends/model-zoo*.md`; the top-level README is now a landing
   page, not a manual.
-- `CONTRIBUTING.md` vLLM section teaches `zoo-apply`, not
-  `service-start`. Adds the `APXM_VLLM_HF_HOME` export and cross-links
-  the quickstart.
+- `CONTRIBUTING.md` vLLM section teaches `zoo-apply`, adds the
+  `APXM_VLLM_HF_HOME` export, and cross-links the quickstart.
 - `deploy/vllm/run-vllm.sh` is single-node only; multi-node Ray (cross-
   node TP+PP) is intentionally out of scope.
 
 ### Removed
-- `service-start` / `service-adopt` / public `docker-*` CLI surface.
-  The zoo manifest is the sole operator entry point.
 - `SchedulingPolicy::FCFS` — single-variant `PRIORITY` only.
 - `apxm_endpoints_available` capability flag (replaced by a synchronous
   probe at `GraphAwareVllmBackend::new`).

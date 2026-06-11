@@ -995,7 +995,7 @@ def docker_build_cmd(args: argparse.Namespace) -> int:
     if not _docker_buildx_available():
         _print(
             "Docker BuildKit/buildx is required; refusing to use Docker's "
-            "legacy builder. Install the docker-buildx package/plugin."
+            "classic builder. Install the docker-buildx package/plugin."
         )
         return 1
     if not _verify_fork_source(verbose=True):
@@ -1249,7 +1249,7 @@ def cache_warm_cmd(args: argparse.Namespace) -> int:
     Path(hf_home).mkdir(parents=True, exist_ok=True)
 
     # The APXM-vLLM image's ENTRYPOINT is the vLLM OpenAI API server.
-    # Override it with `hf` (the modern Hugging Face Hub CLI; the legacy
+    # Override it with `hf` (the Hugging Face Hub CLI; the old
     # `huggingface-cli` is deprecated and no longer works in this image).
     docker_cmd: list[str] = [
         "docker", "run", "--rm",

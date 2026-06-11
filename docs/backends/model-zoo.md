@@ -1,8 +1,8 @@
 # APXM vLLM model zoo — operator guide
 
 The zoo is the **sole** operator surface for deploying vLLM services
-under APXM. `service-start` and `service-adopt` do not exist — every
-running vLLM service is owned by an entry in your zoo manifest.
+under APXM. Every running vLLM service is owned by an entry in your zoo
+manifest.
 
 This document is the getting-started guide. The conceptual contract
 (`/v1/apxm/*` routes, the role of the fork) lives in
@@ -23,8 +23,6 @@ This document is the getting-started guide. The conceptual contract
   out of scope — keep one service per node.
 - Round-robin dispatch across replicas of the same `served_model_name`,
   baked into the APXM resolver.
-- A lint gate that prevents legacy CLI surface and fallback patterns
-  from reappearing (`dekk apxm vllm check-no-legacy`).
 
 ---
 
@@ -209,9 +207,6 @@ requests through the dispatcher.
   service or another tenant. The allocator (when used by single-entry
   CLI) picks the next free port in `8916–8999`; manifest ports are
   required to be explicit.
-- **`hardcoded-port-8916`** or other lint failures — the CI lint
-  (`dekk apxm vllm check-no-legacy`) refuses any legacy CLI surface,
-  silent fallback chain, or capability flag in non-excluded paths.
 
 ---
 
@@ -238,4 +233,3 @@ automatically. Stale entries should never accumulate.
 - [`storage-layout.md`](storage-layout.md) — where the HF cache, the saved image store, and runtime artifacts live on disk (and how to relocate them).
 - [`../../deploy/vllm/zoo.example.toml`](../../deploy/vllm/zoo.example.toml) — bootstrap template.
 - [`../../deploy/vllm/run-vllm.sh`](../../deploy/vllm/run-vllm.sh) — the Slurm wrapper invoked by every service.
-- `dekk apxm vllm check-no-legacy` — CI lint gate that enforces the no-legacy / no-fallback rule.

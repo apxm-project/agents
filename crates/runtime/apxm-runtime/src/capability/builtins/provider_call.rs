@@ -413,7 +413,7 @@ mod tests {
         cap.base = Some(format!("http://127.0.0.1:{port}"));
         let mut args = HashMap::new();
         args.insert("credential".to_string(), Value::String("conn-1".into()));
-        args.insert("ig_user_id".to_string(), Value::String("ME".into()));
+        args.insert("account_id".to_string(), Value::String("ME".into()));
         args.insert(
             "image_url".to_string(),
             Value::String("https://x/a.jpg".into()),
@@ -424,7 +424,7 @@ mod tests {
         let line = req.lines().find(|l| l.contains("\"url\"")).unwrap_or("");
         // url template was filled (path param consumed, not in body)…
         assert!(
-            req.contains("v25.0/ME/media"),
+            req.contains("v1/ME/media"),
             "url should be templated: {line}"
         );
         // …and the body carries the loose args (decoded from body_b64).
@@ -436,7 +436,7 @@ mod tests {
         assert_eq!(body["image_url"], "https://x/a.jpg");
         assert_eq!(body["caption"], "hi");
         assert!(
-            body.get("ig_user_id").is_none(),
+            body.get("account_id").is_none(),
             "path param must not leak into body"
         );
         assert!(

@@ -9,7 +9,7 @@ Enforces `.agents/skills/_shared/apxm-commit-message-rules.md`:
 - body: no AI-attribution lines, no referential phrasing.
 
 Modes:
-  python3 check_commit_message.py <FILE>           # commit-msg hook mode
+  python3 check_commit_message.py <FILE>           # message file mode
   python3 check_commit_message.py --current        # HEAD's message
   python3 check_commit_message.py --range A..B     # every commit in range
 
@@ -91,8 +91,8 @@ class Finding:
 
 
 def _strip_comments(message: str) -> str:
-    # Mirrors git's behaviour for the commit-msg hook: lines starting
-    # with '#' are stripped before the message is recorded.
+    # Mirrors git's commit message cleanup: lines starting with '#'
+    # are stripped before the message is recorded.
     return "\n".join(
         line for line in message.splitlines() if not line.startswith("#")
     ).strip("\n")
@@ -245,7 +245,7 @@ def _messages_in_range(rev_range: str) -> list[tuple[str, str]]:
 def main(argv: list[str]) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     src = parser.add_mutually_exclusive_group()
-    src.add_argument("file", nargs="?", help="path to commit-msg file (hook mode)")
+    src.add_argument("file", nargs="?", help="path to commit message file")
     src.add_argument("--current", action="store_true", help="lint HEAD's message")
     src.add_argument("--range", dest="rev_range", help="lint commits in REV1..REV2")
     args = parser.parse_args(argv)

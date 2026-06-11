@@ -46,5 +46,4 @@ fresh service job alongside. See `feedback_no_kill_user_slurm`.
 ## Related rules
 
 - `_shared/apxm-development-rules.md`
-- `_shared/apxm-no-legacy-rules.md`
 - `_shared/apxm-storage-layout-rules.md`

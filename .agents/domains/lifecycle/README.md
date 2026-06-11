@@ -11,11 +11,10 @@ routes through these:
    tracker, focused verification, no scope creep.
 4. **apxm-simplify** — remove copied `_shared/` text, weak
    abstractions, referential comments before claiming done.
-5. **apxm-finish** — focused tests, doctor, no-legacy lint, secrets
+5. **apxm-finish** — focused tests, doctor, release checks, secrets
    scan, artifact placement.
-6. **apxm-commit** — pre-commit/pre-push gate; no push without
-   approval, push to `main` only when explicitly authorized, no
-   `--no-verify`.
+6. **apxm-commit** — commit/push gate; no push without approval, push to
+   `main` only when explicitly authorized.
 
 ## When to skip the workflow
 

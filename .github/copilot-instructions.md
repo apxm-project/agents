@@ -19,9 +19,9 @@ new contributors. The correct anchor is: *graph-aware dispatch for vLLM*.
 ## 2. Authority CLI
 
 `dekk apxm` is the only sanctioned entry point. Never invoke `cargo`,
-`docker`, `srun`, `sbatch`, `python tools/scripts/cargo.py`, `service-start`,
-`service-adopt`, or `run-vllm-slurm.sh` directly. Always go through Dekk so
-the env contract, target dir, and process accounting stay consistent.
+`docker`, `srun`, `sbatch`, or `python tools/scripts/cargo.py` directly.
+Always go through Dekk so the env contract, target dir, and process
+accounting stay consistent.
 
 Command groups (see `dekk apxm --help` for the live list):
 
@@ -33,13 +33,12 @@ Command groups (see `dekk apxm --help` for the live list):
   `goal_start`, `workflow_start`, `workflow_status`,
   `workflow_events`, `workflow_cancel`, and `prompt_as_workflow`
 - **Configuration**: `doctor`, `backend`, `vllm`, `agent`, `tool`, `cache`,
-  `process`, `mcp`, `server`, `commit-lint`, `install-hooks`
+  `process`, `mcp`, `server`, `commit-lint`
 - **Discovery**: `ops`, `template`
 - **Release**: `release {check, dist, publish, pypi}`
 - **vLLM operate**: `dekk apxm vllm {doctor, probe, cache-warm,
   docker-build, docker-save, docker-load, zoo-apply, zoo-status, zoo-scale,
-  zoo-cache-warm, service-list, service-status, service-exec, service-stop,
-  check-no-legacy}`
+  zoo-cache-warm, service-list, service-status, service-exec, service-stop}`
 
 If a needed action isn't yet wrapped, **add a Dekk command** in `.dekk.toml`
 rather than shelling out — that is the project-wide pattern.
@@ -73,13 +72,12 @@ content themselves; they point at `_shared/` rules.
    abstractions, referential comments, and over-large skill bodies before
    declaring done.
 5. **`apxm-finish`** — pre-claim gate: run focused
-   `dekk apxm test`, `dekk apxm doctor`, `check_no_legacy_vllm.py
-   --strict`, secrets scan, artifact-placement check. Refuse to claim
-   "done" until all pass.
-6. **`apxm-commit`** — pre-commit/pre-push gate: enforce the
+   `dekk apxm test`, `dekk apxm doctor`, release checks, secrets scan,
+   artifact-placement check. Refuse to claim "done" until all pass.
+6. **`apxm-commit`** — commit/push gate: enforce the
    user's commit rules — no auto-commit, no push without explicit
    approval, PRs only for pushed work, push to `main` only when explicitly
-   authorized, never `--no-verify`.
+   authorized.
 
 This is the *ironbear pattern* — each skill is a checkpoint, not a body of
 new content. Skills inside the lifecycle can invoke domain skills (e.g.
@@ -102,15 +100,14 @@ new content. Skills inside the lifecycle can invoke domain skills (e.g.
   `apxm-project/vllm`). Never edit upstream files there directly without a
   cherry-pick plan.
 - **`tools/scripts/`** — Python entrypoints Dekk calls into (`cargo.py`,
-  `vllm.py`, `release.py`, `check_no_legacy_vllm.py`,
-  `apxm_mcp_install.py`). Larger command implementations live in a
+  `vllm.py`, `release.py`, `apxm_mcp_install.py`). Larger command implementations live in a
   script-local package such as `apxm_release/`.
 - **`crates/compiler/apxm-frontend/python/apxm/`** — installable `apxm`
   Python package. `apxm.contract` owns the APXM/vLLM operational names
   (env vars, routes, dataclasses, `build_layout()`); `apxm.data_config`
   resolves the `.apxm/` data buckets.
 - **`deploy/vllm/`** — `zoo.toml` manifests (operator state) and
-  `run-vllm.sh` (the unified deploy script — never `run-vllm-slurm.sh`).
+  `run-vllm.sh` (the deploy script used by zoo services).
 - **`docs/`** — design docs for the core runtime.
 - **`.agents/`** — this SSOT plus `_shared/` rules, lifecycle skills,
   domain skills, and `domains/` navigation README-only directories.
@@ -139,7 +136,7 @@ Required env (set by `dekk apxm doctor` + the conda env):
 Standard cadences:
 
 ```bash
-dekk apxm doctor                # always run on session start (or via hook)
+dekk apxm doctor                # always run on session start
 dekk apxm build                 # release build of apxm-cli (driver+metrics)
 dekk apxm build-dialect         # rebuild MLIR after .td or C++ shim edits
 dekk apxm codegen               # regen Python frontend bindings after .td edits
@@ -182,38 +179,13 @@ If you find a generated artifact under `examples/` or `docs/`, move it to
 the matching `.apxm` location and patch whatever script wrote it there —
 do **not** add an ignore guard to mask the bug.
 
-## 7. No-legacy / no-fallback contract
+## 7. vLLM operating contract
 
-Hard-fail at config time, never `or env or default` chains. The lint at
-`tools/scripts/check_no_legacy_vllm.py` enforces 12 rules — all are
-project policy:
+Hard-fail at config time, never `or env or default` chains. Use the zoo
+manifest as the operator surface and keep service state explicit.
 
-1. **`legacy-service-start`** — `dekk apxm vllm service-start` is removed.
-   Use `zoo apply` against a `deploy/vllm/zoo*.toml` manifest.
-2. **`legacy-service-adopt`** — `service-adopt` removed. Write a `zoo.toml`
-   entry, `zoo apply`.
-3. **`legacy-run-vllm-slurm`** — `run-vllm-slurm.sh` deleted. Use
-   `deploy/vllm/run-vllm.sh`.
-4. **`hardcoded-port-8916`** — never literal `8916` outside the allocator
-   range default; use `_allocate_port()` or a manifest-supplied port.
-5. **`apxm-endpoints-available-flag`** — no
-   `apxm_endpoints_available`-style flags that paper over a missing fork.
-6. **`resolver-last-resort`** — no resolver "last resort" branches.
-7. **`resolver-rr-fallback`** — no silent round-robin fallback in the
-   resolver.
-8. **`scheduling-policy-fcfs`** — no FCFS scheduling literal in code that
-   should consume the configured policy.
-9. **`or-env-or-default-chain`** — no `cfg or env or "default"` chains
-   that hide missing required config.
-10. **`already-exists-skipping`** — no silent "skipping, already exists"
-    branches; hard-fail or surface explicitly.
-11. **`shell-model-specific-default`** — no model-specific defaults baked
-    into shell wrappers.
-12. **`hardcoded-dispatch-field-literal`** — promote dispatch field names
-    to `graph_attrs::*` constants; never literal strings in handlers.
-
-Run before any PR: `python3 tools/scripts/check_no_legacy_vllm.py --strict`
-(or `dekk apxm vllm check-no-legacy`).
+Run `dekk apxm release check` before release work; use focused tests for
+ordinary development changes.
 
 Promote contract strings (env var names, route paths, response markers)
 to constants. The `metrics_keys::*` and `graph_attrs::*` modules are the
@@ -283,12 +255,8 @@ supported migration procedure.
 - **`git push --force`** anywhere without explicit approval.
 - **`gh pr create`** unless the user explicitly asks for a PR. The
   commit + push gate stops at push.
-- **`--no-verify`** to bypass hooks. If a hook fails, fix the root
-  cause; never re-stage and bypass. The `commit-msg` hook installed
-  by `dekk apxm install-hooks` enforces
-  `_shared/apxm-commit-message-rules.md` (allowed types, no AI
-  attribution, no `planNN` scope outside `prereg(...)`/`eval(...)`,
-  no `wip`/`fix stuff` subjects).
+- **Skipping commit checks**. Use `dekk apxm commit-lint` when a commit
+  message needs explicit validation.
 - **`scancel`** a Slurm job owned by `apxm`. Always allocate a
   fresh service job alongside.
 - **Commit secrets**: `LLM_GATEWAY_KEY`, OAuth tokens, HF tokens.

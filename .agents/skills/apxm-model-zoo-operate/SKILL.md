@@ -1,13 +1,12 @@
 ---
 name: apxm-model-zoo-operate
-description: Use when adding, scaling, or probing models in the vLLM zoo (deploy/vllm/zoo*.toml). Enforces docker-load then cache-warm then zoo-apply then service-exec/status; never use legacy service-start.
+description: Use when adding, scaling, or probing models in the vLLM zoo (deploy/vllm/zoo*.toml). Enforces docker-load then cache-warm then zoo-apply then service-exec/status; use the zoo surface only.
 user-invocable: true
 ---
 
 # APXM Model Zoo Operate
 
 Load `_shared/apxm-development-rules.md`,
-`_shared/apxm-no-legacy-rules.md`, and
 `_shared/apxm-storage-layout-rules.md` before broad work.
 
 ## Deploy order (non-negotiable)
@@ -40,8 +39,7 @@ dekk apxm vllm service-stop <name>       # cancel a service job
 
 ## Rules
 
-- **`zoo apply` is the way** — never `service-start` or
-  `service-adopt` directly (both lint as `legacy-*`).
+- **`zoo apply` is the way** — it reconciles services from the manifest.
 - `model.id` in APXM config must match the vLLM `served_model_name`
   exactly. Bare name (`gpt-oss-120b`), not HF repo
   (`openai/gpt-oss-120b`). See `feedback_apxm_model_id_must_match_served`.
@@ -57,8 +55,7 @@ dekk apxm vllm service-stop <name>       # cancel a service job
 
 ## Anti-patterns
 
-- Letting `service-start` (or any GPU-allocating step) trigger an HF
-  download. Cache-warm first.
+- Letting a GPU-allocating step trigger an HF download. Cache-warm first.
 - Editing `~/.apxm/config.toml` with a stray `data-dir` only — silently
   shadows the backend block. See `apxm_config_resolver_does_not_merge`.
 - Committing `deploy/vllm/zoo.toml` (the operator manifest).
