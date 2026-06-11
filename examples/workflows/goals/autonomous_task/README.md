@@ -40,7 +40,7 @@ custom worker profile. APXM is profile-name agnostic; those names are examples.
 
 For CLI callers, `dekk apxm goal` is the high-level wrapper around this native
 MCP path. By default it lets the server plan the bounded worker request, calls
-`goal_start`, and follows `goal_events/status` unless `--no-follow` is set.
+`goal_start`, and follows the goal event stream unless `--no-follow` is set.
 Pass repeatable `--worker` and `--depends` only when the worker DAG must be
 pinned manually.
 
@@ -55,16 +55,18 @@ The returned JSON includes:
 - `plan.workers[*].cwd` showing each worker's assigned workspace.
 - `planning` showing whether APXM generated the worker DAG or the caller
   provided it explicitly.
-- `goal.next_events_args` with the first `goal_events` cursor.
+- `goal.next_events_args` with the first `goal_events` cursor for MCP paging.
 - `goal.sleep_event_kind = "orchestrator_sleep"` and
   `goal.wake_event_kind = "orchestrator_wake"`.
 - `goal_prompt` describing the autonomous sleep/wake loop.
 
 The goal event stream includes aggregate `orchestrator_sleep`/`orchestrator_wake`
 events and mirrored workflow-pass events. The controller agent should not prompt
-workers manually after start; it should page `goal_events` with
-`since = next_seq`, confirm the terminal state with `goal_status`, and let the
-server start another bounded pass when the gate asks for one.
+workers manually after start; it should stream
+`/v1/goals/{goal_id}/events/stream`, or page `goal_events` with
+`since = next_seq` when using MCP. Confirm the terminal state with
+`goal_status`, and let the server start another bounded pass when the gate asks
+for one.
 
 Worker, supervisor, tracking, default-instruction, and goal prompt text
 is rendered from Markdown templates in `apxm-backends/prompts/`, not hardcoded

@@ -75,7 +75,6 @@ pub async fn goal_command(args: GoalArgs, json_output: bool) -> Result<()> {
                     &base,
                     goal_id,
                     args.limit,
-                    Duration::from_millis(args.poll_ms),
                     args.timeout_secs.map(Duration::from_secs),
                     !json_output,
                 )
@@ -663,11 +662,9 @@ async fn follow_goal(
     base: &str,
     goal_id: &str,
     limit: usize,
-    poll_interval: Duration,
     timeout: Option<Duration>,
     render: bool,
 ) -> Result<FollowResult> {
-    let mut since = 0;
     let mut events_seen = 0usize;
     let mut terminal_event_kind = None;
     let started_at = Instant::now();
@@ -676,9 +673,79 @@ async fn follow_goal(
         println!("following goal: {goal_id}");
     }
 
+    let mut response = client
+        .get(goal_events_stream_url(base, goal_id, 0, limit))
+        .header("Accept", "text/event-stream")
+        .send()
+        .await
+        .context("failed to open goal event stream")?;
+    if !response.status().is_success() {
+        bail!(
+            "goal event stream returned {} for {goal_id}",
+            response.status()
+        );
+    }
+
+    let mut parser = GoalSseParser::default();
     loop {
-        if let Some(timeout) = timeout {
-            if started_at.elapsed() > timeout {
+        let chunk =
+            next_goal_stream_chunk(&mut response, timeout, started_at, client, base, goal_id)
+                .await?;
+        let Some(chunk) = chunk else {
+            let status = goal_status(client, base, goal_id).await?;
+            if status_is_terminal(&status) {
+                return Ok(FollowResult {
+                    events_seen,
+                    terminal_event_kind,
+                    status,
+                });
+            }
+            bail!("goal event stream ended before terminal status for {goal_id}");
+        };
+
+        for frame in parser.feed(&chunk) {
+            if let Some(event) = decode_goal_sse_frame(&frame) {
+                events_seen += 1;
+                if render {
+                    if let Some(line) = summarize_event(&event) {
+                        println!("{line}");
+                    }
+                }
+                if event_is_goal_terminal(&event, goal_id) {
+                    terminal_event_kind = event_kind(&event).map(str::to_string);
+                    let status = goal_status(client, base, goal_id).await?;
+                    return Ok(FollowResult {
+                        events_seen,
+                        terminal_event_kind,
+                        status,
+                    });
+                }
+            }
+        }
+    }
+}
+
+async fn next_goal_stream_chunk(
+    response: &mut reqwest::Response,
+    timeout: Option<Duration>,
+    started_at: Instant,
+    client: &reqwest::Client,
+    base: &str,
+    goal_id: &str,
+) -> Result<Option<Vec<u8>>> {
+    if let Some(timeout) = timeout {
+        let Some(remaining) = timeout.checked_sub(started_at.elapsed()) else {
+            let status = goal_status(client, base, goal_id).await?;
+            bail!(
+                "timed out while following {goal_id}; latest status: {}",
+                status["status"]
+            );
+        };
+        match tokio::time::timeout(remaining, response.chunk()).await {
+            Ok(chunk) => chunk
+                .map(|maybe_chunk| maybe_chunk.map(|chunk| chunk.to_vec()))
+                .context("goal event stream read failed"),
+            Err(_) => {
                 let status = goal_status(client, base, goal_id).await?;
                 bail!(
                     "timed out while following {goal_id}; latest status: {}",
@@ -686,50 +753,72 @@ async fn follow_goal(
                 );
             }
         }
-
-        let page = goal_events(client, base, goal_id, since, limit).await?;
-        let events = page
-            .get("events")
-            .and_then(JsonValue::as_array)
-            .cloned()
-            .unwrap_or_default();
-        if !events.is_empty() {
-            for event in &events {
-                events_seen += 1;
-                if render {
-                    if let Some(line) = summarize_event(event) {
-                        println!("{line}");
-                    }
-                }
-                if event_is_goal_terminal(event, goal_id) {
-                    terminal_event_kind = event_kind(event).map(str::to_string);
-                }
-            }
-            since = page
-                .get("next_seq")
-                .and_then(JsonValue::as_u64)
-                .unwrap_or_else(|| next_since_from_events(since, &events));
-        }
-
-        let status = goal_status(client, base, goal_id).await?;
-        if terminal_event_kind.is_some() || status_is_terminal(&status) {
-            return Ok(FollowResult {
-                events_seen,
-                terminal_event_kind,
-                status,
-            });
-        }
-
-        tokio::time::sleep(poll_interval).await;
+    } else {
+        response
+            .chunk()
+            .await
+            .map(|maybe_chunk| maybe_chunk.map(|chunk| chunk.to_vec()))
+            .context("goal event stream read failed")
     }
 }
 
-fn next_since_from_events(current: u64, events: &[JsonValue]) -> u64 {
-    events
-        .iter()
-        .filter_map(event_seq)
-        .max()
-        .map_or(current, |seq| seq.saturating_add(1))
+fn goal_events_stream_url(base: &str, goal_id: &str, since: u64, limit: usize) -> String {
+    format!(
+        "{}/v1/goals/{}/events/stream?since={}&limit={}",
+        base.trim_end_matches('/'),
+        goal_id,
+        since,
+        limit
+    )
+}
+
+#[derive(Debug, Clone, Default)]
+struct GoalSseFrame {
+    data: String,
+}
+
+#[derive(Debug, Default)]
+struct GoalSseParser {
+    buf: String,
+    current: GoalSseFrame,
+    has_current: bool,
+}
+
+impl GoalSseParser {
+    fn feed(&mut self, bytes: &[u8]) -> Vec<GoalSseFrame> {
+        let s = String::from_utf8_lossy(bytes);
+        self.buf.push_str(&s);
+        let mut out = Vec::new();
+        while let Some(line_end) = self.buf.find('\n') {
+            let raw_line = self.buf[..line_end].trim_end_matches('\r').to_string();
+            self.buf.drain(..=line_end);
+            if raw_line.is_empty() {
+                if self.has_current {
+                    out.push(std::mem::take(&mut self.current));
+                    self.has_current = false;
+                }
+                continue;
+            }
+            if let Some((field, value)) = raw_line.split_once(':') {
+                self.has_current = true;
+                if field == "data" {
+                    let value = value.strip_prefix(' ').unwrap_or(value);
+                    if !self.current.data.is_empty() {
+                        self.current.data.push('\n');
+                    }
+                    self.current.data.push_str(value);
+                }
+            }
+        }
+        out
+    }
+}
+
+fn decode_goal_sse_frame(frame: &GoalSseFrame) -> Option<JsonValue> {
+    if frame.data.is_empty() {
+        return None;
+    }
+    serde_json::from_str(&frame.data).ok()
 }
 
 fn event_is_goal_terminal(event: &JsonValue, goal_id: &str) -> bool {
@@ -1069,7 +1158,6 @@ mod tests {
             max_iterations: None,
             no_follow: false,
             limit: 100,
-            poll_ms: 500,
             timeout_secs: None,
         }
     }
@@ -1203,65 +1291,33 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn goal_follow_pages_events_until_wake() {
-        let server = MockMcpServer::start(vec![
-            ExpectedMcpCall::new(
-                mcp_tools::APXM_GOAL_START,
-                Some(json!({ "task": "ship" })),
+    async fn goal_follow_streams_events_until_wake() {
+        let server = MockGoalStreamServer::start(
+            "goal-1",
+            vec![
                 json!({
-                    "goal_id": "goal-1",
-                    "execution_id": "exec-1"
+                    "meta": { "seq": 0, "trace_id": "exec-1" },
+                    "payload": { "kind": event_kind_constants::WORKFLOW_STARTED.name(), "workflow_name": "goal", "step_count": 1 }
                 }),
-            ),
-            ExpectedMcpCall::new(
-                mcp_tools::APXM_GOAL_EVENTS,
-                Some(json!({ "goal_id": "goal-1", "since": 0, "limit": 100 })),
                 json!({
-                    "events": [
-                        { "meta": { "seq": 0 }, "payload": { "kind": event_kind_constants::WORKFLOW_STARTED.name(), "workflow_name": "goal", "step_count": 1 } }
-                    ],
-                    "next_seq": 1
+                    "meta": { "seq": 1, "trace_id": "goal-1" },
+                    "payload": {
+                        "kind": event_kind_constants::ORCHESTRATOR_WAKE.name(),
+                        "outcome": "done",
+                        "terminal_event": event_kind_constants::GOAL_CONVERGED.name()
+                    }
                 }),
-            ),
-            ExpectedMcpCall::new(
-                mcp_tools::APXM_GOAL_STATUS,
-                Some(json!({ "goal_id": "goal-1" })),
-                json!({ "goal_id": "goal-1", "status": goal_execution_status::RUNNING }),
-            ),
-            ExpectedMcpCall::new(
-                mcp_tools::APXM_GOAL_EVENTS,
-                Some(json!({ "goal_id": "goal-1", "since": 1, "limit": 100 })),
-                json!({
-                    "events": [
-                        { "meta": { "seq": 1, "trace_id": "goal-1" }, "payload": { "kind": event_kind_constants::ORCHESTRATOR_WAKE.name(), "outcome": "done", "terminal_event": event_kind_constants::WORKFLOW_FINISHED.name() } }
-                    ],
-                    "next_seq": 2
-                }),
-            ),
-            ExpectedMcpCall::new(
-                mcp_tools::APXM_GOAL_STATUS,
-                Some(json!({ "goal_id": "goal-1" })),
-                json!({ "goal_id": "goal-1", "status": goal_execution_status::SUCCEEDED }),
-            ),
-        ])
+            ],
+            json!({ "goal_id": "goal-1", "status": goal_execution_status::SUCCEEDED }),
+        )
         .await;
         let client = reqwest::Client::builder().build().expect("client");
 
-        let started = call_mcp_tool(
-            &client,
-            &server.base,
-            mcp_tools::APXM_GOAL_START,
-            json!({ "task": "ship" }),
-        )
-        .await
-        .expect("start");
-        assert_eq!(started["goal_id"], "goal-1");
         let follow = follow_goal(
             &client,
             &server.base,
             "goal-1",
             100,
-            Duration::from_millis(1),
             Some(Duration::from_secs(2)),
             false,
         )
@@ -1445,6 +1501,76 @@ mod tests {
         async fn finish(self) {
             self.task.await.expect("mock server task");
         }
+    }
+
+    struct MockGoalStreamServer {
+        base: String,
+        task: tokio::task::JoinHandle<()>,
+    }
+
+    impl MockGoalStreamServer {
+        async fn start(goal_id: &'static str, events: Vec<JsonValue>, status: JsonValue) -> Self {
+            let listener = TcpListener::bind("127.0.0.1:0").await.expect("bind");
+            let base = format!("http://{}", listener.local_addr().expect("local addr"));
+            let task = tokio::spawn(async move {
+                let (mut stream, _) = listener.accept().await.expect("accept stream request");
+                let head = read_http_head(&mut stream).await;
+                assert!(
+                    head.starts_with(&format!(
+                        "GET /v1/goals/{goal_id}/events/stream?since=0&limit=100 "
+                    )),
+                    "unexpected stream request: {head}"
+                );
+                write_sse_response(&mut stream, events).await;
+
+                let (mut stream, _) = listener.accept().await.expect("accept status request");
+                let request = read_http_json(&mut stream).await;
+                assert_eq!(request["params"]["name"], mcp_tools::APXM_GOAL_STATUS);
+                assert_eq!(
+                    request["params"]["arguments"],
+                    json!({ "goal_id": goal_id })
+                );
+                write_mcp_response(&mut stream, status).await;
+            });
+            Self { base, task }
+        }
+
+        async fn finish(self) {
+            self.task.await.expect("mock goal stream server task");
+        }
+    }
+
+    async fn read_http_head(stream: &mut tokio::net::TcpStream) -> String {
+        let mut buffer = Vec::new();
+        let mut chunk = [0u8; 1024];
+        loop {
+            let read = stream.read(&mut chunk).await.expect("read request");
+            assert!(read > 0, "connection closed before complete request");
+            buffer.extend_from_slice(&chunk[..read]);
+            if let Some(header_end) = http_header_end(&buffer) {
+                return String::from_utf8_lossy(&buffer[..header_end]).to_string();
+            }
+        }
+    }
+
+    async fn write_sse_response(stream: &mut tokio::net::TcpStream, events: Vec<JsonValue>) {
+        let body = events
+            .into_iter()
+            .map(|event| {
+                let seq = event["meta"]["seq"].as_u64().unwrap_or_default();
+                let kind = event["payload"]["kind"].as_str().unwrap_or("message");
+                format!("id: {seq}\nevent: {kind}\ndata: {event}\n\n")
+            })
+            .collect::<String>();
+        let response = format!(
+            "HTTP/1.1 200 OK\r\ncontent-type: text/event-stream\r\ncontent-length: {}\r\nconnection: close\r\n\r\n{}",
+            body.len(),
+            body
+        );
+        stream
+            .write_all(response.as_bytes())
+            .await
+            .expect("write SSE response");
     }
 
     async fn read_http_json(stream: &mut tokio::net::TcpStream) -> JsonValue {

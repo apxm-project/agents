@@ -36,6 +36,7 @@ HTTP/SSE gateway exposing the APXM agent runtime over REST, MCP, and A2A protoco
 | `/v1/goals` | GET | List server-owned goal runs |
 | `/v1/goals/:goal_id` | GET | Get aggregate goal status, task plan, current pass, and progress |
 | `/v1/goals/:goal_id/events` | GET | Page retained goal and mirrored pass events |
+| `/v1/goals/:goal_id/events/stream` | GET | Stream retained and live goal events with SSE replay |
 | `/v1/goals/:goal_id/cancel` | POST | Cancel an in-flight goal run |
 | `/v1/tasks` | POST | Submit task to queue (CLAIM op) |
 | `/v1/tasks/:queue` | GET | List tasks in queue |
@@ -90,7 +91,7 @@ The HTTP MCP endpoint also exposes APXM skill library tools:
 - `workflow_cancel` -- interrupt an in-flight workflow run by server-owned `execution_id`
 - `goal_start` -- start a server-owned goal run, auto-plan bounded workflow passes when `workers` is omitted, allocate worker workspaces or Git worktrees, and return a stable `goal_id`
 - `goal_status` -- fetch aggregate goal state, the current pass, task plan, verdict, and totals by `goal_id`
-- `goal_events` -- page retained goal events with `goal_id`, `since`, and `limit`; includes aggregate lifecycle events plus mirrored events from the current workflow pass
+- `goal_events` -- page retained goal events with `goal_id`, `since`, and `limit`; includes aggregate lifecycle events plus mirrored events from the current workflow pass. REST clients can use `/v1/goals/{goal_id}/events/stream` for SSE replay and live wake-up.
 - `goal_cancel` -- interrupt an in-flight goal run by `goal_id`
 
 Skill inventory prepends the bundled server skill root and then appends roots
@@ -111,13 +112,14 @@ Native goal starts are server-owned goal runs. A caller, CLI, frontend, or APXM
 OS trigger can either `POST /v1/goals` or call `goal_start`. Both paths use the
 same request and response shape. Omit `workers` to let APXM create the bounded
 DAG for each pass, or provide an explicit `workers` array to pin that DAG.
-After start, keep the returned `goal_id`, then go idle until `goal_events`
-returns an aggregate wake/error/cancel event or `goal_status` reports
-`succeeded`, `failed`, or `cancelled`. `goal_events` also mirrors workflow-pass
-events so a frontend can render progress from one stream. `goal_status` exposes
-`task.description`, `task.plan`, and `task.planning` as the frontend task
-ledger, plus `latest_pass` and the current workflow `execution_id` for drilling
-into `/v1/runs` or the `workflow_*` MCP tools when per-step detail is needed.
+After start, keep the returned `goal_id`, then go idle on
+`/v1/goals/{goal_id}/events/stream` until an aggregate wake/error/cancel event,
+or page `goal_events` and confirm terminal state with `goal_status` over MCP.
+Goal events also mirror workflow-pass events so a frontend can render progress
+from one stream. `goal_status` exposes `task.description`, `task.plan`, and
+`task.planning` as the frontend task ledger, plus `latest_pass` and the current
+workflow `execution_id` for drilling into `/v1/runs` or the `workflow_*` MCP
+tools when per-step detail is needed.
 Real ACP workers require the caller to grant `admit_capabilities:
 ["SPAWN_AGENT"]`.
 

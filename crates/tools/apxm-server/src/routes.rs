@@ -52,6 +52,7 @@ pub(crate) const RUN_CANCEL: &str = "/v1/runs/{execution_id}/cancel";
 pub(crate) const GOALS: &str = "/v1/goals";
 pub(crate) const GOAL_DETAIL: &str = "/v1/goals/{goal_id}";
 pub(crate) const GOAL_EVENTS: &str = "/v1/goals/{goal_id}/events";
+pub(crate) const GOAL_EVENTS_STREAM: &str = "/v1/goals/{goal_id}/events/stream";
 pub(crate) const GOAL_CANCEL: &str = "/v1/goals/{goal_id}/cancel";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -106,6 +107,7 @@ pub(crate) enum ServerRoute {
     Goals,
     GoalDetail,
     GoalEvents,
+    GoalEventsStream,
     GoalCancel,
 }
 
@@ -162,6 +164,7 @@ impl ServerRoute {
             Self::Goals => GOALS,
             Self::GoalDetail => GOAL_DETAIL,
             Self::GoalEvents => GOAL_EVENTS,
+            Self::GoalEventsStream => GOAL_EVENTS_STREAM,
             Self::GoalCancel => GOAL_CANCEL,
         }
     }
@@ -251,6 +254,11 @@ pub(crate) fn goal_detail_path(goal_id: impl Display) -> String {
 #[allow(dead_code)]
 pub(crate) fn goal_events_path(goal_id: impl Display) -> String {
     format!("{GOALS}/{goal_id}/events")
+}
+
+#[allow(dead_code)]
+pub(crate) fn goal_events_stream_path(goal_id: impl Display) -> String {
+    format!("{GOALS}/{goal_id}/events/stream")
 }
 
 #[allow(dead_code)]

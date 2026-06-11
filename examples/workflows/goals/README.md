@@ -11,9 +11,10 @@ workers.
 
 Use the smallest surface that matches the job:
 
-- `dekk apxm goal`: an agent or user creates one bounded worker DAG, APXM
-  materializes the workflow bundle, starts it in the background, and wakes the
-  caller through `goal_events` and `goal_status`.
+- `dekk apxm goal`: an agent or user starts a server-owned goal, APXM
+  materializes bounded worker DAG passes, continues until the gate converges or
+  the iteration budget ends, and wakes the caller through the goal event stream
+  and `goal_status`.
 - `dekk apxm workflow run`: run a checked-in
   `.apxmw` workflow file after `validate` and `analyze`.
 - `prompt_as_workflow`: ask MCP to synthesize a typed APXM workflow from natural
@@ -58,16 +59,16 @@ Use `autonomous_task/deterministic_request.json` for a no-agent smoke test, or
 
 ## Goal Loop
 
-`goal_loop/` shows the APXM-owned control envelope for a long-running goal
-without pretending `.apxmw` has recursive scheduler loops. It turns one admitted
-goal event into one bounded goal pass, then records feedback that can
-trigger another admitted pass through APXM OS or an MCP client.
+`goal_loop/` shows the APXM-owned control envelope for external trigger and
+policy checks. Native `goal_start` owns the pass loop after admission: it starts
+bounded worker passes, records feedback, and continues while the gate asks for
+more work and the iteration budget allows it.
 
 ```text
 [goal/event] -> [trigger + policy gate] -> [bounded pass request]
                                              |
                                              v
-                                      [start one pass]
+                                      [start native goal]
                                              |
                                              v
                                     [eval] -> [feedback]
@@ -155,7 +156,7 @@ MCP clients should use the native workflow tools:
 
 ```text
 workflow_start  -> starts a background workflow and returns execution_id
-workflow_status -> polls or inspects status by execution_id
+workflow_status -> reads status by execution_id
 workflow_events -> reads ordered run events with since/limit paging
 workflow_cancel -> interrupts a running or parked workflow
 ```

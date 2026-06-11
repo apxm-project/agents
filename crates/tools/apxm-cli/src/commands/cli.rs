@@ -433,17 +433,13 @@ pub struct GoalArgs {
     #[arg(long = "max-iterations", value_name = "N")]
     pub max_iterations: Option<usize>,
 
-    /// Start the goal but do not poll aggregate goal events.
+    /// Start the goal but do not follow the goal event stream.
     #[arg(long = "no-follow")]
     pub no_follow: bool,
 
     /// Event page size while following.
     #[arg(long = "limit", default_value_t = 100, hide = true)]
     pub limit: usize,
-
-    /// Poll interval while following.
-    #[arg(long = "poll-ms", default_value_t = 500, hide = true)]
-    pub poll_ms: u64,
 
     /// Stop following after this many seconds without cancelling the run.
     #[arg(long = "timeout-secs")]

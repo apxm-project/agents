@@ -58,9 +58,9 @@ dekk apxm goal "Investigate and implement the scoped change" \
   --repo-root /path/to/repo
 ```
 
-`goal` calls `goal_start` once and follows `goal_events`/`goal_status` by the
-returned `goal_id` unless `--no-follow` is set. By default the CLI omits
-`workers`, so the server auto-plans the bounded DAG and binds registered
+`goal` calls `goal_start` once and follows the goal event stream by the returned
+`goal_id` unless `--no-follow` is set. By default the CLI omits `workers`, so
+the server auto-plans the bounded DAG and binds registered
 agents. Use repeatable `--worker` plus `--depends` only when the DAG must be
 pinned manually. Use `--status`, `--events`, or `--cancel` with the returned
 `goal_id` to inspect or stop a run later. Status responses expose the task

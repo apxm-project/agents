@@ -8,10 +8,11 @@ user-invocable: true
 
 Load `_shared/apxm-development-rules.md` before broad work.
 
-Use this skill when a human or agent wants APXM to own a complex pass instead
-of manually prompting subagents. `goal_start` can create one bounded worker DAG
+Use this skill when a human or agent wants APXM to own a complex goal instead
+of manually prompting subagents. `goal_start` can create bounded worker DAGs
 from the task, or accept an explicit DAG when the caller needs to pin it. APXM
-executes the pass, and the caller waits through APXM events.
+executes each pass, continues when the gate asks for more work, and wakes the
+caller through APXM events.
 
 ## Choose the Surface
 
@@ -55,9 +56,10 @@ Use `--event` and `--trigger` when this pass comes from an external event, and
 2. Store `goal_id`, `session_id`, `session_dir`, `workflow_path`,
    `bundle_dir`, and returned artifact paths. Use the current `execution_id`
    only for workflow drill-down.
-3. Stop prompting workers manually. Page `goal_events` with
-   `since = next_seq`; wake on aggregate `orchestrator_wake` or terminal
-   goal status.
+3. Stop prompting workers manually. Stream
+   `/v1/goals/{goal_id}/events/stream`, or page `goal_events` with
+   `since = next_seq` when using MCP; wake on aggregate `orchestrator_wake` or
+   terminal goal status.
 4. Confirm the terminal result with `goal_status`.
 5. Use `goal_cancel` for interruption. Do not invent a second cancel or
    process-control path for server-owned runs.
@@ -68,7 +70,8 @@ Use `--event` and `--trigger` when this pass comes from an external event, and
   verification, and synthesis are roles, not provider names.
 - Let `goal_start` create the DAG unless the phase order must be pinned. Use
   `--depends` or `depends_on` to create manual phases. Keep each pass bounded;
-  if feedback requires more work, start another admitted pass.
+  APXM starts the next pass when the gate asks for more work and the goal still
+  has iteration budget.
 - In `git_worktree` mode, provide `--repo-root`; APXM assigns per-worker
   detached worktrees and records them in the orchestration packet.
 - Keep worker briefs compact: objective, relevant paths, constraints, expected
@@ -88,5 +91,5 @@ Use `--event` and `--trigger` when this pass comes from an external event, and
 ## Done condition
 
 Return the goal id, status, worker roles/profiles used, workflow/session
-paths, generated artifacts, verification evidence, warnings, and the next
-bounded pass only if feedback requires one.
+paths, generated artifacts, verification evidence, warnings, and any remaining
+bounded next action if the goal did not converge.

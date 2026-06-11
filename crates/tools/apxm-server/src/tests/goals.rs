@@ -1,6 +1,6 @@
 use super::*;
 use crate::routes;
-use apxm_core::events::payload::ExecutionStartedPayload;
+use apxm_core::events::payload::{ErrorPayload, ExecutionStartedPayload};
 use apxm_core::events::{ApxmEvent, EventSource};
 
 #[tokio::test]
@@ -127,4 +127,86 @@ async fn goal_routes_start_goal_with_same_plan_contract_as_mcp() {
 
     let bundle_dir = std::path::PathBuf::from(body["bundle_dir"].as_str().expect("bundle_dir"));
     let _ = std::fs::remove_dir_all(bundle_dir);
+}
+
+#[tokio::test]
+async fn goal_events_stream_replays_and_tails_live_events() {
+    let state = test_state().await;
+    let goal_id = format!("goal-stream-{}", uuid::Uuid::new_v4());
+    state
+        .goal_runs
+        .insert_running(goal_id.clone(), "stream goal events".to_string(), 1);
+    state.run_event_bus.record(
+        &goal_id,
+        ApxmEvent::root(
+            ExecutionStartedPayload {
+                execution_id: goal_id.clone(),
+            },
+            EventSource::Server,
+            &goal_id,
+        ),
+    );
+    let app = build_app(state.clone());
+
+    let req = Request::builder()
+        .method("GET")
+        .uri(&routes::goal_events_stream_path(&goal_id))
+        .body(Body::empty())
+        .unwrap();
+    let resp = app.oneshot(req).await.unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+
+    use http_body_util::BodyStream;
+    let mut body_stream = BodyStream::new(resp.into_body());
+    let mut buf = Vec::new();
+    read_sse_bytes_until(&mut body_stream, &mut buf, "event: execution_started").await;
+
+    state.run_event_bus.record(
+        &goal_id,
+        ApxmEvent::root(
+            ErrorPayload {
+                message: "wake the caller".to_string(),
+                status: None,
+                recoverable: false,
+            },
+            EventSource::Server,
+            &goal_id,
+        ),
+    );
+    read_sse_bytes_until(&mut body_stream, &mut buf, "event: error").await;
+
+    let text = String::from_utf8_lossy(&buf);
+    assert!(
+        text.contains("id: 0\n") && text.contains("event: execution_started"),
+        "stream should replay retained goal events: {text}"
+    );
+    assert!(
+        text.contains("id: 1\n") && text.contains("event: error"),
+        "stream should tail live goal events: {text}"
+    );
+}
+
+async fn read_sse_bytes_until(
+    body_stream: &mut http_body_util::BodyStream<Body>,
+    buf: &mut Vec<u8>,
+    needle: &str,
+) {
+    use futures::StreamExt as _;
+
+    for _ in 0..20 {
+        let next =
+            tokio::time::timeout(std::time::Duration::from_millis(500), body_stream.next()).await;
+        if let Ok(Some(Ok(frame))) = next
+            && let Some(data) = frame.data_ref()
+        {
+            buf.extend_from_slice(data);
+            if String::from_utf8_lossy(buf).contains(needle) {
+                return;
+            }
+        }
+    }
+    panic!(
+        "SSE stream did not contain {needle}: {}",
+        String::from_utf8_lossy(buf)
+    );
 }

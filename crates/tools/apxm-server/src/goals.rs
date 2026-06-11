@@ -1,13 +1,25 @@
+use std::convert::Infallible;
+use std::time::Duration;
+
+use apxm_core::events::{ApxmEvent, kind as event_kind};
 use apxm_driver::RunEventsConfig;
 use axum::Json;
 use axum::extract::{Path, Query, State};
+use axum::http::HeaderMap;
+use axum::response::sse::{Event, KeepAlive, Sse};
+use futures::{Stream, StreamExt as _};
 use serde::{Deserialize, Serialize};
 use serde_json::Value as JsonValue;
+use tokio_stream::wrappers::BroadcastStream;
+use tokio_stream::wrappers::errors::BroadcastStreamRecvError;
 
 use crate::error::ApiError;
 use crate::executions::ExecutionRecord;
 use crate::goal_runs::{GoalRunRecord, GoalRunStatus};
 use crate::state::AppState;
+
+const LAST_EVENT_ID_HEADER: &str = "Last-Event-ID";
+const LAST_EVENT_ID_HEADER_LOWER: &str = "last-event-id";
 
 #[derive(Debug, Deserialize)]
 pub(crate) struct GoalsListQuery {
@@ -23,6 +35,36 @@ pub(crate) struct GoalEventsQuery {
     since: Option<u64>,
     #[serde(default)]
     limit: Option<usize>,
+}
+
+#[derive(Debug, Clone, Copy)]
+enum GoalEventReplayCursor {
+    FromSeq(u64),
+    AfterSeq(u64),
+}
+
+impl GoalEventReplayCursor {
+    fn from_request(headers: &HeaderMap, query: &GoalEventsQuery) -> Self {
+        headers
+            .get(LAST_EVENT_ID_HEADER)
+            .or_else(|| headers.get(LAST_EVENT_ID_HEADER_LOWER))
+            .and_then(|value| value.to_str().ok())
+            .and_then(|value| value.parse::<u64>().ok())
+            .map(Self::AfterSeq)
+            .unwrap_or_else(|| Self::FromSeq(query.since.unwrap_or(0)))
+    }
+
+    fn accepts(self, seq: u64) -> bool {
+        match self {
+            Self::FromSeq(since) => seq >= since,
+            Self::AfterSeq(last_event_id) => seq > last_event_id,
+        }
+    }
+}
+
+enum GoalSseItem {
+    Event(ApxmEvent),
+    Lagged(u64),
 }
 
 #[derive(Debug, Serialize)]
@@ -160,6 +202,86 @@ pub(crate) async fn get_goal_events_bulk(
     let since = query.since.unwrap_or(0);
     let limit = events_limit(&state.server_config.run_events, query.limit);
     goal_events_for_state(&state, &goal_id, since, limit).map(Json)
+}
+
+pub(crate) async fn stream_goal_events(
+    State(state): State<AppState>,
+    Path(goal_id): Path<String>,
+    headers: HeaderMap,
+    Query(query): Query<GoalEventsQuery>,
+) -> Result<Sse<impl Stream<Item = Result<Event, Infallible>>>, ApiError> {
+    validate_goal_id(&goal_id)?;
+    let cursor = GoalEventReplayCursor::from_request(&headers, &query);
+
+    let rx = state.run_event_bus.subscribe(&goal_id);
+    let snapshot = state.run_event_bus.snapshot(&goal_id);
+    if snapshot.is_empty() && state.goal_runs.get(&goal_id).is_none() {
+        return Err(ApiError::not_found(format!(
+            "goal run not found: {goal_id}"
+        )));
+    }
+
+    let mut replay = snapshot
+        .into_iter()
+        .filter(|event| cursor.accepts(event.meta.seq))
+        .collect::<Vec<_>>();
+    replay.sort_by_key(|event| event.meta.seq);
+    let replay_high_water = replay.iter().map(|event| event.meta.seq).max();
+
+    let live = BroadcastStream::new(rx).filter_map(move |item| async move {
+        match item {
+            Ok(event)
+                if cursor.accepts(event.meta.seq)
+                    && replay_high_water.is_none_or(|seq| event.meta.seq > seq) =>
+            {
+                Some(GoalSseItem::Event(event))
+            }
+            Ok(_) => None,
+            Err(BroadcastStreamRecvError::Lagged(missed)) => Some(GoalSseItem::Lagged(missed)),
+        }
+    });
+    let combined = futures::stream::iter(replay.into_iter().map(GoalSseItem::Event))
+        .chain(live)
+        .scan(false, |closed, item| {
+            let emit = if *closed {
+                None
+            } else {
+                if matches!(item, GoalSseItem::Lagged(_)) {
+                    *closed = true;
+                }
+                Some(item)
+            };
+            async move { emit }
+        });
+
+    let stream = combined.map(|item| {
+        let event = match item {
+            GoalSseItem::Event(event) => {
+                let id = event.meta.seq.to_string();
+                let data = serde_json::to_string(&event).unwrap_or_else(|_| "{}".to_string());
+                Event::default()
+                    .event(event.kind().name())
+                    .id(id)
+                    .data(data)
+            }
+            GoalSseItem::Lagged(missed) => Event::default()
+                .event(event_kind::ERROR.sse_event_type())
+                .data(
+                    serde_json::json!({
+                        "message": "goal event stream lagged; reconnect with Last-Event-ID to replay retained events and call goal_status",
+                        "missed": missed,
+                    })
+                    .to_string(),
+                ),
+        };
+        Ok(event)
+    });
+
+    Ok(
+        Sse::new(stream).keep_alive(KeepAlive::new().interval(Duration::from_secs(
+            state.server_config.run_events.keep_alive_secs.max(1),
+        ))),
+    )
 }
 
 pub(crate) async fn cancel_goal(

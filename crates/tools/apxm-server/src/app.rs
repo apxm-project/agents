@@ -13,7 +13,7 @@ use crate::checkpoints::{create_checkpoint, get_checkpoint, resume_checkpoint};
 use crate::execute::{compile_graph, compile_graph_stream, execute, execute_stream};
 use crate::executions::{get_execution, get_execution_node, list_executions};
 use crate::generate::{handle_generate, handle_generate_stream, handle_schema};
-use crate::goals::{cancel_goal, get_goal, get_goal_events_bulk, list_goals};
+use crate::goals::{cancel_goal, get_goal, get_goal_events_bulk, list_goals, stream_goal_events};
 use crate::health::{health, list_backends, list_models};
 use crate::mcp::{mcp_jsonrpc, post_goal};
 use crate::memory::{delete_fact, search_facts, store_fact};
@@ -126,6 +126,10 @@ pub(crate) fn build_app(state: AppState) -> Router {
         .route(ServerRoute::Goals.path(), get(list_goals).post(post_goal))
         .route(ServerRoute::GoalDetail.path(), get(get_goal))
         .route(ServerRoute::GoalEvents.path(), get(get_goal_events_bulk))
+        .route(
+            ServerRoute::GoalEventsStream.path(),
+            get(stream_goal_events),
+        )
         .route(ServerRoute::GoalCancel.path(), post(cancel_goal))
         // F04: opt-in, fail-closed bearer auth on mutating routes. The layer
         // is always installed but is a transparent pass-through unless

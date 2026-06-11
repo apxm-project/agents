@@ -18,9 +18,7 @@ APXM has two Rust MCP surfaces:
 - `apxm-mcp-server` exposes stdio MCP for compile/query/debug tools. It does
   not own background workflow sessions or orchestration state.
 
-Do not resurrect the old FastMCP `mcp/apxm_server.py` design unless the repo
-reintroduces it. MCP should stay a thin interface over APXM server/runtime
-capabilities.
+MCP should stay a thin interface over APXM server/runtime capabilities.
 
 ## HTTP MCP Tools
 
@@ -34,12 +32,12 @@ capabilities.
 - Native orchestration: `goal_start`, `goal_status`, `goal_events`,
   `goal_cancel`.
 
-`goal_start` compiles a bounded task/worker plan into a
-server-owned workflow. The orchestrator agent calls it once, records the
-returned `goal_id`, then sleeps until `goal_events` returns aggregate
-`orchestrator_wake`, `error`, or `turn_aborted`, or `goal_status` reports a
-terminal state. Use the current `execution_id` only for workflow drill-down.
-Real ACP workers require `admit_capabilities: ["SPAWN_AGENT"]`.
+`goal_start` compiles a bounded task/worker plan into a server-owned goal run.
+The orchestrator agent calls it once, records the returned `goal_id`, then
+sleeps until `/v1/goals/{goal_id}/events/stream` or `goal_events` returns
+aggregate `orchestrator_wake`, `error`, or `turn_aborted`, or `goal_status`
+reports a terminal state. Use the current `execution_id` only for workflow
+drill-down. Real ACP workers require `admit_capabilities: ["SPAWN_AGENT"]`.
 
 ## Stdio MCP Tools
 
@@ -89,6 +87,3 @@ handler literals.
 - Accepting secrets as tool arguments.
 - Adding a second orchestration status/events/cancel control plane. Use
   `goal_status/events/cancel` for runs started by `goal_start`.
-- Server middleware using Starlette `BaseHTTPMiddleware` — use raw ASGI. Its
-  receive-queue treats disconnect polls as disconnects and silently nulls chat
-  responses (`feedback_basehttpmiddleware_breaks_chat`).
