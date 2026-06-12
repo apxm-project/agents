@@ -57,8 +57,10 @@ pub use aam::{
 };
 pub use agent_pool::{AgentPool, PoolStats, ProfileStats};
 pub use agent_router::{
-    AGENT_ROUTE_CAPABILITIES, AgentRouteCandidate, AgentRouteDecision, AgentRouteSource,
-    AgentRouteTarget, AgentRouter, AgentRoutingError,
+    AGENT_ROUTE_CAPABILITIES, AgentRouteAction, AgentRouteCandidate, AgentRouteDecision,
+    AgentRouteIntent, AgentRouteOperation, AgentRoutePolicy, AgentRouteRejection,
+    AgentRouteRequest, AgentRouteRequirements, AgentRouteScore, AgentRouteSelector,
+    AgentRouteSource, AgentRouter, AgentRoutingError,
 };
 pub use capability::{
     CapabilitySystem,

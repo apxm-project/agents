@@ -19,7 +19,7 @@ use super::{
     ExecutionContext, Node, Result, Value, get_optional_string_attribute, get_string_attribute,
 };
 use crate::aam::TransitionLabel;
-use crate::agent_router::{AgentRouteDecision, AgentRouteTarget, AgentRouter};
+use crate::agent_router::{AgentRouteDecision, AgentRouteRequest, AgentRouter};
 use crate::constants::env as runtime_env;
 use crate::metadata_keys as metadata;
 use apxm_core::apxm_op;
@@ -29,7 +29,7 @@ use apxm_core::constants::runtime::{belief_keys, response_keys};
 use apxm_core::error::RuntimeError;
 use apxm_core::types::aam::{AamContext, CapabilityProjection, GoalProjection};
 use apxm_core::types::goal::GoalStatus;
-use apxm_core::types::{ProcessSpawnMetric, SpawnedProcessKind};
+use apxm_core::types::{Number, ProcessSpawnMetric, SpawnedProcessKind};
 use std::collections::HashMap;
 use std::path::PathBuf;
 
@@ -283,8 +283,20 @@ pub async fn execute(ctx: &ExecutionContext, node: &Node, _inputs: Vec<Value>) -
                 Value::String(decision.source.as_str().to_string()),
             );
             agent_info.insert(
+                response_keys::ROUTE_ACTION.to_string(),
+                Value::String(decision.action.as_str().to_string()),
+            );
+            agent_info.insert(
+                response_keys::ROUTE_POLICY.to_string(),
+                Value::String(decision.policy.selector.as_str().to_string()),
+            );
+            agent_info.insert(
                 response_keys::ROUTE_REASON.to_string(),
                 Value::String(decision.reason.clone()),
+            );
+            agent_info.insert(
+                response_keys::ROUTE_CANDIDATE_SNAPSHOT.to_string(),
+                Value::String(decision.candidate_snapshot_hash.clone()),
             );
             agent_info.insert(
                 response_keys::ELIGIBLE_PROFILES.to_string(),
@@ -296,6 +308,20 @@ pub async fn execute(ctx: &ExecutionContext, node: &Node, _inputs: Vec<Value>) -
                         .map(Value::String)
                         .collect(),
                 ),
+            );
+            agent_info.insert(
+                response_keys::REJECTED_PROFILES.to_string(),
+                Value::Array(
+                    decision
+                        .rejected_candidates
+                        .iter()
+                        .map(|rejection| Value::String(rejection.profile.clone()))
+                        .collect(),
+                ),
+            );
+            agent_info.insert(
+                response_keys::ROUTE_SCORES.to_string(),
+                route_scores_value(decision),
             );
             agent_info.insert(
                 graph_attrs::REQUIRED_CAPABILITIES.to_string(),
@@ -490,17 +516,18 @@ async fn resolve_spawn_agent_route(
             message: "SPAWN_AGENT routing found no APXM agent route candidates".to_string(),
         });
     }
-    let target = AgentRouteTarget {
-        id: agent_name.to_string(),
+    let request = AgentRouteRequest::spawn_agent(
+        agent_name.to_string(),
         profile,
-        mode: get_optional_string_attribute(node, graph_attrs::MODE)?,
-        model: get_optional_string_attribute(node, graph_attrs::MODEL)?,
+        get_optional_string_attribute(node, graph_attrs::MODE)?,
+        get_optional_string_attribute(node, graph_attrs::MODEL)?,
         required_capabilities,
         preferred_profiles,
-    };
+        true,
+    );
     let profile_counts = ctx.process_table.external_profile_counts();
     AgentRouter::new(candidates)
-        .route_targets_with_counts(&[target], true, &profile_counts)
+        .route_requests_with_counts(&[request], &profile_counts)
         .map_err(|error| RuntimeError::Operation {
             op_type: node.op_type,
             message: format!("SPAWN_AGENT routing failed: {error}"),
@@ -511,6 +538,53 @@ async fn resolve_spawn_agent_route(
             op_type: node.op_type,
             message: "SPAWN_AGENT routing returned no decision".to_string(),
         })
+}
+
+fn route_scores_value(decision: &AgentRouteDecision) -> Value {
+    Value::Array(
+        decision
+            .candidate_scores
+            .iter()
+            .map(|score| {
+                let mut fields = HashMap::new();
+                fields.insert("profile".to_string(), Value::String(score.profile.clone()));
+                fields.insert("eligible".to_string(), Value::Bool(score.eligible));
+                fields.insert(
+                    "matched_capabilities".to_string(),
+                    string_array_value(&score.matched_capabilities),
+                );
+                fields.insert(
+                    "missing_capabilities".to_string(),
+                    string_array_value(&score.missing_capabilities),
+                );
+                fields.insert(
+                    "selected_count".to_string(),
+                    Value::Number(Number::Integer(score.selected_count as i64)),
+                );
+                fields.insert(
+                    "capability_fit_score".to_string(),
+                    Value::Number(Number::Integer(score.capability_fit_score as i64)),
+                );
+                fields.insert(
+                    "preference_rank".to_string(),
+                    score
+                        .preference_rank
+                        .map(|rank| Value::Number(Number::Integer(rank as i64)))
+                        .unwrap_or(Value::Null),
+                );
+                fields.insert(
+                    "registry_index".to_string(),
+                    Value::Number(Number::Integer(score.registry_index as i64)),
+                );
+                fields.insert("reason".to_string(), Value::String(score.reason.clone()));
+                Value::Object(fields)
+            })
+            .collect(),
+    )
+}
+
+fn string_array_value(values: &[String]) -> Value {
+    Value::Array(values.iter().cloned().map(Value::String).collect())
 }
 
 fn get_optional_string_list_attribute(node: &Node, key: &str) -> Result<Vec<String>> {
@@ -825,8 +899,38 @@ mod tests {
             Some(&Value::String("selected".to_string()))
         );
         assert_eq!(
+            obj.get(response_keys::ROUTE_ACTION),
+            Some(&Value::String("spawn".to_string()))
+        );
+        assert_eq!(
+            obj.get(response_keys::ROUTE_POLICY),
+            Some(&Value::String("deterministic".to_string()))
+        );
+        assert!(matches!(
+            obj.get(response_keys::ROUTE_CANDIDATE_SNAPSHOT),
+            Some(Value::String(value)) if value.starts_with("fnv1a64:")
+        ));
+        assert_eq!(
             obj.get(response_keys::ELIGIBLE_PROFILES),
             Some(&Value::Array(vec![Value::String("executor".to_string())]))
+        );
+        assert_eq!(
+            obj.get(response_keys::REJECTED_PROFILES),
+            Some(&Value::Array(vec![Value::String("reader".to_string())]))
+        );
+        let Some(Value::Array(route_scores)) = obj.get(response_keys::ROUTE_SCORES) else {
+            panic!("expected route_scores array");
+        };
+        assert_eq!(route_scores.len(), 2);
+        assert!(
+            route_scores.iter().any(|score| {
+                let Value::Object(fields) = score else {
+                    return false;
+                };
+                fields.get("profile") == Some(&Value::String("executor".to_string()))
+                    && fields.get("eligible") == Some(&Value::Bool(true))
+            }),
+            "expected eligible executor score: {route_scores:?}"
         );
         assert_eq!(
             obj.get(response_keys::MODEL),

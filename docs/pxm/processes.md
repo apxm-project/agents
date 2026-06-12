@@ -36,6 +36,28 @@ the runtime spawns a real ACP subprocess:
 
 Without `profile` or `agent_route`, SPAWN_AGENT performs metadata-only registration for local flow agents.
 
+#### Runtime Agent Routing
+
+Agent routing is a runtime binding step, not a goal-only planner feature.
+Any workflow can set `agent_route = "auto"` on `SPAWN_AGENT` and leave
+`profile` unset. The runtime then evaluates host-discovered route candidates
+from the configured `AgentSpawner`, applies the request requirements, and
+records an explainable route decision.
+
+The default selector is deterministic:
+
+1. honor an explicit `profile` after validating required capabilities;
+2. filter candidates by `required_capabilities`;
+3. prefer lower active profile counts, closer capability fit, caller
+   `preferred_profiles`, then registry order.
+
+The `SPAWN_AGENT` result includes route metadata for frontends and traces:
+`route_source`, `route_action`, `route_policy`, `route_reason`,
+`route_candidate_snapshot`, `route_scores`, `eligible_profiles`, and
+`rejected_profiles`.
+For a runnable example, see
+[`runtime_agent_routing.py`](../../examples/python/multi-agent/runtime_agent_routing.py).
+
 #### AAM scoping at spawn (today)
 
 The child does **not** get an isolated AAM instance. The runtime maintains

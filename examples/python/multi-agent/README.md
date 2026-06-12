@@ -10,9 +10,10 @@ teams with barrier synchronization and result merging.
 
 ## Requirements
 
-These examples import typed APXM ACP profiles from `apxm._generated.agents`.
-Use `dekk apxm agent list` to confirm the profiles exist and
-`dekk apxm agent test <name>` before executing a graph. The checked-in
+Some examples import typed APXM ACP profiles from `apxm._generated.agents`.
+Others use `agent_route="auto"` and let the runtime choose a profile from the
+same inventory. Use `dekk apxm agent list` to confirm the profiles exist and
+`dekk apxm agent test <name>` before executing a workflow. The checked-in
 profiles require Node/npm plus the corresponding authenticated agent setup:
 
 - `claude` runs `npx -y @agentclientprotocol/claude-agent-acp@^0.24.2` and
@@ -23,6 +24,7 @@ profiles require Node/npm plus the corresponding authenticated agent setup:
 ## Examples
 
 - **spawn_and_communicate.py** -- Basic spawn + communicate, then two-agent pipeline. `dekk apxm execute examples/python/multi-agent/spawn_and_communicate.py`
+- **runtime_agent_routing.py** -- Leave the profile unpinned and let APXM route to a resolvable ACP profile by capability/preference. `dekk apxm execute examples/python/multi-agent/runtime_agent_routing.py`
 - **parallel_agents.py** -- Multiple agents working in parallel. `dekk apxm execute examples/python/multi-agent/parallel_agents.py`
 - **negotiation.py** -- Multi-agent negotiation to consensus. `dekk apxm execute examples/python/multi-agent/negotiation.py`
 - **team_coordination.py** -- Team sugar: g.team(), add(), wait_all(), merge(). `dekk apxm execute examples/python/multi-agent/team_coordination.py`
@@ -35,6 +37,15 @@ from apxm._generated.agents import claude, codex
 # Spawn and communicate
 agent = g.spawn("coder", profile=codex, cwd=cwd)
 result = agent.ask("Implement this feature")
+
+# Runtime routing chooses a concrete ACP profile at execution time
+worker = g.spawn(
+    "routed_worker",
+    agent_route="auto",
+    required_capabilities=["execute"],
+    preferred_profiles=["codex"],
+    cwd=cwd,
+)
 
 # Team coordination
 team = g.team("dev_team")

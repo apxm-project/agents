@@ -26,8 +26,8 @@ use apxm_core::types::{
     OrchestrationWakeOutcome, OrchestrationWorkspaceCleanup, OrchestrationWorkspaceMode,
 };
 use apxm_runtime::{
-    AGENT_ROUTE_CAPABILITIES, AgentRouteCandidate, AgentRouteDecision, AgentRouteSource,
-    AgentRouteTarget, AgentRouter, AgentRoutingError,
+    AGENT_ROUTE_CAPABILITIES, AgentRouteCandidate, AgentRouteDecision, AgentRouteRequest,
+    AgentRouteScore, AgentRouteSource, AgentRouter, AgentRoutingError,
 };
 use axum::Json;
 use axum::extract::State;
@@ -268,6 +268,14 @@ struct WorkerPlanSummary {
     route_source: String,
     route_reason: String,
     eligible_profiles: Vec<String>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    rejected_profiles: Vec<String>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    route_scores: Vec<AgentRouteScore>,
+    route_action: String,
+    route_policy: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    route_candidate_snapshot: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     profile_source: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -358,6 +366,14 @@ struct WorkerSelectionSummary {
     required_capabilities: Vec<String>,
     preferred_profiles: Vec<String>,
     eligible_profiles: Vec<String>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    rejected_profiles: Vec<String>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    route_scores: Vec<AgentRouteScore>,
+    route_action: String,
+    route_policy: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    route_candidate_snapshot: Option<String>,
     reason: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     mode: Option<String>,
@@ -412,6 +428,11 @@ struct WorkerPlan {
     route_source: String,
     route_reason: String,
     eligible_profiles: Vec<String>,
+    rejected_profiles: Vec<String>,
+    route_scores: Vec<AgentRouteScore>,
+    route_action: String,
+    route_policy: String,
+    route_candidate_snapshot: Option<String>,
     profile_source: Option<String>,
     profile_description: Option<String>,
     cwd: PathBuf,
@@ -2289,20 +2310,23 @@ fn bind_goal_agent_selection(
     candidates: &[AgentRouteCandidate],
     require_agents: bool,
 ) -> Result<Vec<AgentRouteDecision>, ApiError> {
-    let targets = request
+    let route_requests = request
         .workers()
         .iter()
-        .map(|worker| AgentRouteTarget {
-            id: worker.id.clone(),
-            profile: worker.profile.clone(),
-            mode: worker.mode.clone(),
-            model: worker.model.clone(),
-            required_capabilities: goal_worker_required_capabilities(worker),
-            preferred_profiles: worker.preferred_profiles.clone(),
+        .map(|worker| {
+            AgentRouteRequest::spawn_agent(
+                worker.id.clone(),
+                worker.profile.clone(),
+                worker.mode.clone(),
+                worker.model.clone(),
+                goal_worker_required_capabilities(worker),
+                worker.preferred_profiles.clone(),
+                require_agents,
+            )
         })
         .collect::<Vec<_>>();
     let decisions = AgentRouter::new(candidates.to_vec())
-        .route_targets(&targets, require_agents)
+        .route_requests(&route_requests)
         .map_err(goal_agent_routing_error)?;
     let decisions_by_id: HashMap<String, AgentRouteDecision> = decisions
         .iter()
@@ -2351,28 +2375,31 @@ fn bind_goal_agent_selection(
 
 fn goal_agent_routing_error(error: AgentRoutingError) -> ApiError {
     match error {
-        AgentRoutingError::NoCandidates { target_id } => ApiError::bad_request(format!(
-            "goal_start selection.agents=auto found no APXM agent profiles with resolvable commands for worker '{target_id}'; run `dekk apxm agent list`, add or fix an agent profile, or omit selection for deterministic workers"
+        AgentRoutingError::NoCandidates { request_id } => ApiError::bad_request(format!(
+            "goal_start selection.agents=auto found no APXM agent profiles with resolvable commands for worker '{request_id}'; run `dekk apxm agent list`, add or fix an agent profile, or omit selection for deterministic workers"
         )),
-        AgentRoutingError::UnknownProfile { target_id, profile } => ApiError::bad_request(format!(
-            "goal_start worker '{target_id}' requested APXM profile '{profile}', but that profile is not resolvable; run `dekk apxm agent list` or fix the profile"
+        AgentRoutingError::UnknownProfile {
+            request_id,
+            profile,
+        } => ApiError::bad_request(format!(
+            "goal_start worker '{request_id}' requested APXM profile '{profile}', but that profile is not resolvable; run `dekk apxm agent list` or fix the profile"
         )),
         AgentRoutingError::ProfileCapabilityMismatch {
-            target_id,
+            request_id,
             profile,
             required_capabilities,
             candidate_capabilities,
         } => ApiError::bad_request(format!(
-            "goal_start worker '{target_id}' requested APXM profile '{profile}', but it does not provide required capabilities [{}]; profile capabilities are [{}]",
+            "goal_start worker '{request_id}' requested APXM profile '{profile}', but it does not provide required capabilities [{}]; profile capabilities are [{}]",
             required_capabilities.join(", "),
             candidate_capabilities.join(", ")
         )),
         AgentRoutingError::NoMatchingCandidates {
-            target_id,
+            request_id,
             required_capabilities,
             candidate_count,
         } => ApiError::bad_request(format!(
-            "goal_start selection.agents=auto found {candidate_count} APXM agent profile(s), but none matched worker '{target_id}' required capabilities [{}]",
+            "goal_start selection.agents=auto found {candidate_count} APXM agent profile(s), but none matched worker '{request_id}' required capabilities [{}]",
             required_capabilities.join(", ")
         )),
     }
@@ -2487,6 +2514,31 @@ fn worker_selection_summary(
         eligible_profiles: decision
             .map(|decision| decision.eligible_profiles.clone())
             .unwrap_or_default(),
+        rejected_profiles: decision
+            .map(|decision| {
+                decision
+                    .rejected_candidates
+                    .iter()
+                    .map(|rejection| rejection.profile.clone())
+                    .collect()
+            })
+            .unwrap_or_default(),
+        route_scores: decision
+            .map(|decision| decision.candidate_scores.clone())
+            .unwrap_or_default(),
+        route_action: decision
+            .map(|decision| decision.action.as_str().to_string())
+            .unwrap_or_else(|| {
+                if worker.profile.is_some() {
+                    "spawn".to_string()
+                } else {
+                    "deterministic".to_string()
+                }
+            }),
+        route_policy: decision
+            .map(|decision| decision.policy.selector.as_str().to_string())
+            .unwrap_or_else(|| "disabled".to_string()),
+        route_candidate_snapshot: decision.map(|decision| decision.candidate_snapshot_hash.clone()),
         reason: decision
             .map(|decision| decision.reason.clone())
             .unwrap_or_else(|| "selection disabled".to_string()),
@@ -2771,6 +2823,11 @@ fn build_plan(
             route_source: route.source.to_string(),
             route_reason: route.reason,
             eligible_profiles: route.eligible_profiles,
+            rejected_profiles: route.rejected_profiles,
+            route_scores: route.route_scores,
+            route_action: route.route_action,
+            route_policy: route.route_policy,
+            route_candidate_snapshot: route.route_candidate_snapshot,
             profile_source: route.profile_source,
             profile_description: route.profile_description,
             cwd,
@@ -3080,6 +3137,11 @@ fn worker_prompt_context(worker: &WorkerPlan) -> JsonValue {
         "route_source": worker.route_source.as_str(),
         "route_reason": worker.route_reason.as_str(),
         "eligible_profiles": &worker.eligible_profiles,
+        "rejected_profiles": &worker.rejected_profiles,
+        "route_scores": &worker.route_scores,
+        "route_action": worker.route_action.as_str(),
+        "route_policy": worker.route_policy.as_str(),
+        "route_candidate_snapshot": worker.route_candidate_snapshot.as_deref(),
         "profile_source": worker.profile_source.as_deref(),
         "profile_description": worker.profile_description.as_deref(),
         "mode": worker.mode.as_deref(),
@@ -3108,6 +3170,10 @@ fn worker_prompt_rows(plan: &GoalPlan) -> Vec<JsonValue> {
                 "route_source": worker.route_source.as_str(),
                 "route_reason": worker.route_reason.as_str(),
                 "eligible_profiles": worker.eligible_profiles.join(", "),
+                "rejected_profiles": worker.rejected_profiles.join(", "),
+                "route_action": worker.route_action.as_str(),
+                "route_policy": worker.route_policy.as_str(),
+                "route_candidate_snapshot": worker.route_candidate_snapshot.as_deref().unwrap_or(""),
                 "profile_source": worker.profile_source.as_deref().unwrap_or(""),
                 "profile_description": worker.profile_description.as_deref().unwrap_or(""),
                 "cwd": path_string(&worker.cwd),
@@ -3571,6 +3637,11 @@ impl GoalPlan {
                     route_source: worker.route_source.clone(),
                     route_reason: worker.route_reason.clone(),
                     eligible_profiles: worker.eligible_profiles.clone(),
+                    rejected_profiles: worker.rejected_profiles.clone(),
+                    route_scores: worker.route_scores.clone(),
+                    route_action: worker.route_action.clone(),
+                    route_policy: worker.route_policy.clone(),
+                    route_candidate_snapshot: worker.route_candidate_snapshot.clone(),
                     profile_source: worker.profile_source.clone(),
                     profile_description: worker.profile_description.clone(),
                     depends_on: worker.depends_on.clone(),
@@ -3942,6 +4013,99 @@ mod tests {
             vec!["executor-b".to_string()]
         );
         assert!(decisions[0].reason.contains("preferred eligible"));
+    }
+
+    #[test]
+    fn goal_plan_summary_carries_agent_route_evidence() {
+        let mut request = request_with_workers(vec![WorkerSpec {
+            id: "planner".to_string(),
+            role: Some("Plan the workflow".to_string()),
+            prompt: Some("Plan the workflow".to_string()),
+            profile: None,
+            transport: None,
+            depends_on: Vec::new(),
+            mode: None,
+            model: None,
+            required_capabilities: Vec::new(),
+            preferred_profiles: Vec::new(),
+        }]);
+        let candidates = vec![
+            AgentRouteCandidate {
+                profile: "claude".to_string(),
+                description: Some("Planner profile".to_string()),
+                source: Some("test".to_string()),
+                executable: "claude".to_string(),
+                capabilities: apxm_acp::default_route_capabilities(),
+                default_mode: None,
+                default_model: None,
+            },
+            AgentRouteCandidate {
+                profile: "codex".to_string(),
+                description: Some("Executor profile".to_string()),
+                source: Some("test".to_string()),
+                executable: "codex".to_string(),
+                capabilities: apxm_acp::default_route_capabilities(),
+                default_mode: None,
+                default_model: None,
+            },
+        ];
+
+        let decisions =
+            bind_goal_agent_selection(&mut request, &candidates, true).expect("selection");
+        let decisions_by_id = decisions
+            .iter()
+            .map(|decision| (decision.id.clone(), decision.clone()))
+            .collect::<HashMap<_, _>>();
+        let candidates_by_profile = candidates
+            .iter()
+            .map(|candidate| (candidate.profile.clone(), candidate.clone()))
+            .collect::<HashMap<_, _>>();
+        let selection = GoalSelectionSummary {
+            agents: "auto".to_string(),
+            candidates,
+            workers: request
+                .workers()
+                .iter()
+                .map(|worker| {
+                    worker_selection_summary(
+                        worker,
+                        decisions_by_id.get(&worker.id),
+                        &candidates_by_profile,
+                        "deterministic",
+                    )
+                })
+                .collect(),
+            backends: Vec::new(),
+        };
+        let tempdir = tempfile::tempdir().expect("tempdir");
+        let workspace_policy =
+            WorkspacePolicy::from_spec(None, tempdir.path()).expect("workspace policy");
+
+        let plan = build_plan(
+            &request,
+            "goal-route-test",
+            tempdir.path(),
+            &workspace_policy,
+            Some(&selection),
+        )
+        .expect("plan");
+        let worker = &plan.summary().workers[0];
+
+        assert_eq!(worker.route_action, "spawn");
+        assert_eq!(worker.route_policy, "deterministic");
+        assert_eq!(worker.route_source, "selected");
+        assert!(
+            worker
+                .route_candidate_snapshot
+                .as_deref()
+                .is_some_and(|value| { value.starts_with("fnv1a64:") })
+        );
+        assert_eq!(worker.route_scores.len(), 2);
+        assert_eq!(worker.profile_source.as_deref(), Some("test"));
+        assert_eq!(
+            worker.profile_description.as_deref(),
+            Some("Planner profile")
+        );
     }
 
     #[test]

@@ -118,7 +118,7 @@ class Agent:
         """
         # -- 1. SPAWN_AGENT --
         spawn_attrs: dict[str, Any] = {graph_keys.AGENT_NAME: self.name}
-        _apply_agent_route_attrs(spawn_attrs, self.route, self.model, self.provider)
+        _apply_backend_route_attrs(spawn_attrs, self.route, self.model, self.provider)
         if self.instructions is not None:
             spawn_attrs[graph_keys.SYSTEM_PROMPT] = self.instructions
         spawn_node = g._add_node(
@@ -158,7 +158,7 @@ class Agent:
         ask_attrs: dict[str, Any] = {graph_keys.TEMPLATE_STR: resolved}
         if auto_pairs:
             ask_attrs[graph_keys.INPUT_NAMES] = [n for n, _ in auto_pairs]
-        _apply_agent_route_attrs(ask_attrs, self.route, self.model, self.provider)
+        _apply_backend_route_attrs(ask_attrs, self.route, self.model, self.provider)
         if self.instructions is not None:
             ask_attrs[graph_keys.SYSTEM_PROMPT] = self.instructions
         if self.output_schema is not None:
@@ -219,7 +219,7 @@ class BoundAgent:
         # can dispatch HANDOFF/COMMUNICATE against this agent without it being
         # registered as its own compiled flow.
         spawn_attrs: dict[str, Any] = {graph_keys.AGENT_NAME: agent.name}
-        _apply_agent_route_attrs(spawn_attrs, agent.route, agent.model, agent.provider)
+        _apply_backend_route_attrs(spawn_attrs, agent.route, agent.model, agent.provider)
         if agent.instructions is not None:
             spawn_attrs[graph_keys.SYSTEM_PROMPT] = agent.instructions
         self._spawn_node = g._add_node(
@@ -268,7 +268,7 @@ class BoundAgent:
         ask_attrs: dict[str, Any] = {graph_keys.TEMPLATE_STR: resolved}
         if auto_pairs:
             ask_attrs[graph_keys.INPUT_NAMES] = [n for n, _ in auto_pairs]
-        _apply_agent_route_attrs(ask_attrs, agent.route, agent.model, agent.provider)
+        _apply_backend_route_attrs(ask_attrs, agent.route, agent.model, agent.provider)
         if agent.instructions is not None:
             ask_attrs[graph_keys.SYSTEM_PROMPT] = agent.instructions
         if agent.output_schema is not None:
@@ -354,7 +354,7 @@ class BoundAgent:
         return f"BoundAgent(name={self._agent.name!r})"
 
 
-def _apply_agent_route_attrs(
+def _apply_backend_route_attrs(
     attrs: dict[str, Any],
     route: Any | None,
     model: Any | None,

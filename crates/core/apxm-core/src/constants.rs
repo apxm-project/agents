@@ -242,8 +242,13 @@ pub mod runtime {
         pub const PROCESS_ID: &str = "process_id";
         pub const PROFILE: &str = "profile";
         pub const ROUTE_SOURCE: &str = "route_source";
+        pub const ROUTE_ACTION: &str = "route_action";
+        pub const ROUTE_POLICY: &str = "route_policy";
         pub const ROUTE_REASON: &str = "route_reason";
+        pub const ROUTE_CANDIDATE_SNAPSHOT: &str = "route_candidate_snapshot";
+        pub const ROUTE_SCORES: &str = "route_scores";
         pub const ELIGIBLE_PROFILES: &str = "eligible_profiles";
+        pub const REJECTED_PROFILES: &str = "rejected_profiles";
         pub const SYSTEM_PROMPT: &str = "system_prompt";
         pub const BACKEND: &str = "backend";
         pub const MODEL: &str = "model";

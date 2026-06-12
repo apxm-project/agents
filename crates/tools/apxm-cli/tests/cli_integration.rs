@@ -309,6 +309,100 @@ module {
 
 #[cfg(feature = "driver")]
 #[test]
+fn compile_runtime_agent_routing_example_preserves_route_attrs() {
+    if !python3_available() {
+        return;
+    }
+
+    let tmp = tempfile::tempdir().unwrap();
+    let artifact = tmp.path().join("runtime_agent_routing.apxmobj");
+    let example = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../../../examples/python/multi-agent/runtime_agent_routing.py");
+
+    let compile = apxm()
+        .args([
+            "compile",
+            example.to_str().unwrap(),
+            "--opt-level",
+            "0",
+            "-o",
+            artifact.to_str().unwrap(),
+        ])
+        .output()
+        .expect("apxm compile must run");
+    assert!(
+        compile.status.success(),
+        "compile failed:\nstdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&compile.stdout),
+        String::from_utf8_lossy(&compile.stderr)
+    );
+
+    let decompile = apxm()
+        .args(["decompile", artifact.to_str().unwrap()])
+        .output()
+        .expect("apxm decompile must run");
+    assert!(
+        decompile.status.success(),
+        "decompile failed:\nstdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&decompile.stdout),
+        String::from_utf8_lossy(&decompile.stderr)
+    );
+
+    let air = String::from_utf8_lossy(&decompile.stdout);
+    assert!(air.contains("ais.spawn_agent \"routed_worker\""));
+    assert!(air.contains("\"agent_route\" = \"auto\""));
+    assert!(air.contains("\"required_capabilities\" = [\"execute\"]"));
+    assert!(air.contains("\"preferred_profiles\" = [\"codex\"]"));
+    assert!(air.contains("ais.return %n1"));
+}
+
+#[cfg(feature = "driver")]
+#[test]
+fn compile_air_runtime_agent_routing_example_preserves_route_attrs() {
+    let tmp = tempfile::tempdir().unwrap();
+    let artifact = tmp.path().join("runtime_agent_routing_air.apxmobj");
+    let example = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../../../examples/workflows/agent-routing/runtime_agent_routing.air");
+
+    let compile = apxm()
+        .args([
+            "compile",
+            example.to_str().unwrap(),
+            "--opt-level",
+            "0",
+            "-o",
+            artifact.to_str().unwrap(),
+        ])
+        .output()
+        .expect("apxm compile must run");
+    assert!(
+        compile.status.success(),
+        "compile failed:\nstdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&compile.stdout),
+        String::from_utf8_lossy(&compile.stderr)
+    );
+
+    let decompile = apxm()
+        .args(["decompile", artifact.to_str().unwrap()])
+        .output()
+        .expect("apxm decompile must run");
+    assert!(
+        decompile.status.success(),
+        "decompile failed:\nstdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&decompile.stdout),
+        String::from_utf8_lossy(&decompile.stderr)
+    );
+
+    let air = String::from_utf8_lossy(&decompile.stdout);
+    assert!(air.contains("ais.spawn_agent \"routed_worker\""));
+    assert!(air.contains("\"agent_route\" = \"auto\""));
+    assert!(air.contains("\"required_capabilities\" = [\"execute\"]"));
+    assert!(air.contains("\"preferred_profiles\" = [\"codex\"]"));
+    assert!(air.contains("ais.return %"));
+}
+
+#[cfg(feature = "driver")]
+#[test]
 fn compile_saved_python_air_sidecar_preserves_tool_data_edges() {
     let source = r##"; __apxm_python_tools__ []
 module {
