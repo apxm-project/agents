@@ -8,7 +8,7 @@ use std::{
 use apxm_ais::{
     ARTIFACT_OPERATION_KIND_CASES_FILE, ARTIFACT_OPERATION_KIND_ENTRIES_FILE,
     generate_artifact_operation_kind_cases, generate_artifact_operation_kind_entries,
-    generate_pass_descriptors, generate_pass_dispatch, generate_passes_tablegen, generate_tablegen,
+    generate_pass_descriptors, generate_pass_dispatch, generate_passes_tablegen,
 };
 use apxm_core::toolchain_env;
 use apxm_core::utils::build::{
@@ -115,27 +115,6 @@ fn emit_rerun_if_changed_recursive(path: &Path) {
             println!("cargo:rerun-if-changed={}", path.display());
         }
     }
-}
-
-/// Generate TableGen (.td) file from Rust definitions.
-///
-/// This makes Rust the single source of truth for AIS operations.
-/// The generated file is written to OUT_DIR and can be used by CMake.
-fn generate_tablegen_file(out_dir: &Path) -> Result<PathBuf> {
-    let tablegen_content = generate_tablegen();
-    let tablegen_path = out_dir.join("AISOps.generated.td");
-
-    fs::write(&tablegen_path, &tablegen_content)
-        .with_context(|| format!("Failed to write TableGen file: {}", tablegen_path.display()))?;
-
-    log_info!(
-        "apxm-compiler-build",
-        "Generated TableGen file: {} ({} bytes)",
-        tablegen_path.display(),
-        tablegen_content.len()
-    );
-
-    Ok(tablegen_path)
 }
 
 /// Generate pass-related files from Rust definitions.
@@ -878,14 +857,7 @@ fn build() -> Result<()> {
     let config = BuildConfig::from_env()?;
     config.ensure_directories()?;
 
-    // ═══ STEP 1: Generate TableGen from Rust (Single Source of Truth) ═══
-    log_info!(
-        "apxm-compiler-build",
-        "Generating TableGen from Rust definitions..."
-    );
-    let _tablegen_path = generate_tablegen_file(&config.out_dir)?;
-
-    // ═══ STEP 1b: Generate Pass files from Rust (Single Source of Truth) ═══
+    // ═══ STEP 1: Generate Pass files from Rust (Single Source of Truth) ═══
     log_info!(
         "apxm-compiler-build",
         "Generating Pass files from Rust definitions..."

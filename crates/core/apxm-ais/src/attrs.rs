@@ -162,6 +162,10 @@ pub const PROPOSAL: &str = "proposal";
 pub const MAX_ROUNDS: &str = "max_rounds";
 pub const ARGS: &str = "args";
 pub const SESSION_ROOT: &str = "session_root";
+/// Flow name on the structural flow-definition op.
+pub const NAME: &str = "name";
+/// Optional session id scoping a memory query (QMEM).
+pub const SID: &str = "sid";
 
 // -- Skill linkage (CALL_SKILL) --
 /// Canonical skill identifier on a `CALL_SKILL` op (`"id"` or `"id@version"`).
@@ -424,6 +428,8 @@ pub const ALL_ATTR_NAMES: &[&str] = &[
     "ordering",
     "payload",
     "error_handler",
+    NAME,
+    SID,
 ];
 
 #[cfg(test)]

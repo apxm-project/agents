@@ -1,8 +1,15 @@
-//! AIS Operation Definitions - Single Source of Truth
+//! AIS Operation Definitions - source of truth
 //!
 //! This module contains the complete specification for all 44 AIS operations
 //! (41 public + 1 metadata + 2 internal). Both the compiler and runtime use
 //! these definitions to ensure consistent semantics.
+//!
+//! The artifact wire format and the C++ `OperationKind` enum are *generated*
+//! from `WIRE_INDEXED_OPERATIONS` (via `artifact_wire.rs`), and the enum
+//! formatters and runtime dispatcher are exhaustive matches — none can drift.
+//! The MLIR dialect (`AISOps.td`) is a hand-maintained mirror; its attribute
+//! names are tied back to the canonical `attrs` registry by the
+//! `tablegen_attrs_are_canonical` test below.
 
 use super::category::OperationCategory;
 use crate::attrs;
@@ -2166,6 +2173,31 @@ mod tests {
             .collect()
     }
 
+    /// Every attribute (`*Attr:$name`) declared in AISOps.td. Operands
+    /// (`AIS_...:$name`, `Variadic<...>:$name`) are excluded because their type
+    /// token does not contain `Attr`.
+    fn tablegen_attr_names(source: &str) -> HashSet<String> {
+        let mut out = HashSet::new();
+        for (idx, _) in source.match_indices(":$") {
+            let prefix = &source[..idx];
+            let type_start = prefix
+                .rfind(|c: char| c.is_whitespace() || c == '(' || c == ',' || c == '<')
+                .map(|p| p + 1)
+                .unwrap_or(0);
+            if !prefix[type_start..idx].contains("Attr") {
+                continue;
+            }
+            let name: String = source[idx + 2..]
+                .chars()
+                .take_while(|c| c.is_alphanumeric() || *c == '_')
+                .collect();
+            if !name.is_empty() {
+                out.insert(name);
+            }
+        }
+        out
+    }
+
     #[test]
     fn test_all_ops_have_specs() {
         for op_type in AISOperationType::all_operations() {
@@ -2353,6 +2385,27 @@ mod tests {
                 );
             }
         }
+    }
+
+    /// CA-09 parity guard: the MLIR dialect (AISOps.td) is hand-maintained, so
+    /// nothing else ties its attribute names to the canonical `attrs` registry.
+    /// Every `*Attr:$name` in the dialect must be a known `attrs::ALL_ATTR_NAMES`
+    /// constant — this is what catches spec/handler/TableGen attribute drift
+    /// (e.g. a TableGen `$trace_id` when the spec field is `trace_query`).
+    #[test]
+    fn tablegen_attrs_are_canonical() {
+        let source = ais_ops_td_source();
+        let all: HashSet<&str> = attrs::ALL_ATTR_NAMES.iter().copied().collect();
+        let mut unknown: Vec<String> = tablegen_attr_names(&source)
+            .into_iter()
+            .filter(|name| !all.contains(name.as_str()))
+            .collect();
+        unknown.sort();
+        assert!(
+            unknown.is_empty(),
+            "AISOps.td declares attributes absent from attrs::ALL_ATTR_NAMES \
+             (add the const or fix the drift): {unknown:?}"
+        );
     }
 
     #[test]
