@@ -53,6 +53,9 @@ test = { run = "python tools/scripts/cargo.py test --workspace --exclude apxm-co
 test-all = { run = "python tools/scripts/cargo.py test --workspace", description = "All tests (requires MLIR)", group = "Build & Test" }
 test-cli = { run = "python tools/scripts/cargo.py test -p apxm-cli --features driver,metrics --release", description = "Run CLI tests with driver (preserves MLIR-linked binary)", group = "Build & Test" }
 test-python-frontend = { run = "python -m pytest crates/compiler/apxm-frontend/python/tests -q", description = "Run Python frontend tests", group = "Build & Test" }
+check = { run = "python tools/scripts/cargo.py check --workspace", description = "Type-check the workspace without producing binaries", group = "Build & Test" }
+fmt = { run = "python tools/scripts/cargo.py fmt", description = "Format Rust sources (cargo fmt)", group = "Build & Test" }
+clippy = { run = "python tools/scripts/cargo.py clippy -- -D warnings", description = "Lint Rust sources, denying warnings (cargo clippy)", group = "Build & Test" }
 clean = { run = "python tools/scripts/cargo.py clean", description = "Clean", group = "Build & Test" }
 scrub-rustc-cache = { run = "python tools/scripts/cargo.py scrub-sigbus-cache", description = "Remove stale rustc SIGBUS diagnostics from Cargo caches", group = "Build & Test" }
 stop = { run = "apxm process stop", description = "Stop APXM compile/run/execute/workflow jobs", group = "Configuration" }
