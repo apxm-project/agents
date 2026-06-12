@@ -19,7 +19,6 @@ dekk apxm backend start <name>          # local backends only
 dekk apxm backend stop <name>
 dekk apxm backend status <name>
 dekk apxm backend add-model <name> <model-id>
-dekk apxm backend migrate               # one-shot credentials.toml migrate
 ```
 
 ## Rules
@@ -49,9 +48,6 @@ dekk apxm backend add
 # (from env, never literal).
 dekk apxm backend test <name>
 dekk apxm backend add-model <name> <model.id>
-
-# Migrate from credentials.toml:
-dekk apxm backend migrate
 
 # vLLM:
 # Use the zoo path instead — see apxm-model-zoo-operate.

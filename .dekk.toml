@@ -97,7 +97,6 @@ add = { run = "apxm backend add", description = "Add backend", skill = true }
 list = { run = "apxm backend list", description = "List backends" }
 remove = { run = "apxm backend remove", description = "Remove backend" }
 test = { run = "apxm backend test", description = "Test connectivity" }
-migrate = { run = "apxm backend migrate", description = "Migrate from credentials.toml" }
 start = { run = "apxm backend start", description = "Start local backend" }
 stop = { run = "apxm backend stop", description = "Stop local backend" }
 status = { run = "apxm backend status", description = "Show backend status" }
