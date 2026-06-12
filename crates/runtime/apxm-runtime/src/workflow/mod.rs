@@ -13,7 +13,7 @@ pub mod template;
 pub mod topo;
 
 pub use def::{WorkflowDef, WorkflowParam, WorkflowStep};
-pub use runner::{StepResult, StepStatus, WorkflowResult, WorkflowRunner, WorkflowStatus};
+pub use runner::{StepResult, StepStatus, WorkflowResult, WorkflowStatus};
 pub use session::{
     write_workflow_background_started, write_workflow_session_finished,
     write_workflow_session_started, write_workflow_step_finished, write_workflow_step_started,

@@ -223,7 +223,7 @@ impl<C: Clock> RateLimiter<C> {
     ///
     /// # Arguments
     /// * `backend` - The backend name
-    /// * `cost` - The token cost to consume (defaults to 1.0 for backward compatibility)
+    /// * `cost` - The token cost to consume
     pub fn check_and_consume(&self, backend: &str, cost: f64) -> Result<(), RateLimitError> {
         let now = self.clock.now();
         let mut guard = self.buckets.lock().expect("rate limiter mutex poisoned");
