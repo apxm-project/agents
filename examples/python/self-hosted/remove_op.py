@@ -142,7 +142,7 @@ Run the verification steps:
    dekk apxm build
 
 2. Run all tests:
-   cargo test
+   dekk apxm test
 
 3. Run autofix to catch any missed references:
    python3 scripts/apxm-autofix.py

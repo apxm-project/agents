@@ -47,7 +47,7 @@ Operation name: {op_name}
 Description: {op_description}
 
 Read the following files to understand the pattern:
-- crates/core/apxm-ais/src/definitions.rs (AISOperationType enum)
+- crates/core/apxm-ais/src/operations/definitions.rs (AISOperationType enum)
 - crates/compiler/apxm-compiler/src/lower/ArtifactEmitter.cpp (MLIR lowering)
 - crates/compiler/apxm-compiler/mlir/AISOps.td (TableGen definitions)
 - crates/runtime/apxm-runtime/src/executor/handlers/spawn_agent.rs (example handler)
@@ -75,7 +75,7 @@ Plan:
 {architect_plan}
 
 You need to modify:
-1. crates/core/apxm-ais/src/definitions.rs
+1. crates/core/apxm-ais/src/operations/definitions.rs
    - Add variant to AISOperationType enum
    - Add to from_wire_index() match
 
@@ -148,7 +148,7 @@ Check:
 
 Then run:
   dekk apxm build
-  cargo test -p apxm-runtime
+  dekk apxm test
 
 Report:
 - What's correct

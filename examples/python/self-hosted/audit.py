@@ -6,7 +6,7 @@ Self-hosted workflow that audits the APXM project for issues.
 Graph structure:
 - spawn architect (claude)
 - exc: run build check (dekk apxm build 2>&1)
-- exc: run test check (cargo test --workspace --quiet 2>&1)
+- exc: run test check (dekk apxm test-all --quiet 2>&1)
 - exc: run autofix check (python3 scripts/apxm-autofix.py --report-only)
 - exc: run policy check (python3 scripts/apxm-policy-check.py)
 - exc: count TODOs/FIXMEs/stubs
@@ -68,7 +68,7 @@ Output JSON:
     test_result = architect.ask(prompt="""Run APXM test suite and report results:
 
 Execute:
-  cargo test --workspace --quiet 2>&1
+  dekk apxm test-all --quiet 2>&1
 
 Parse the output and report:
 - Test status (all pass/some failures)

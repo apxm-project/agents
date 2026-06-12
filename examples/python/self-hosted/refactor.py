@@ -82,7 +82,7 @@ Analysis: {analysis}
 
 Follow the step-by-step plan. For each step:
 1. Make the change
-2. Ensure the code still compiles (cargo check)
+2. Ensure the code still compiles (dekk apxm check)
 3. Move to the next step
 
 Key guidelines:
@@ -92,8 +92,8 @@ Key guidelines:
 - Use rust-analyzer or clippy to catch broken references
 
 After all changes:
-- Run cargo fmt
-- Run cargo clippy
+- Run dekk apxm fmt
+- Run dekk apxm clippy
 - Report what was changed (file paths, line counts, moved items)
 
 Be methodical. If something doesn't compile, fix it before moving on.
@@ -118,13 +118,13 @@ Run the test suite:
    dekk apxm build
 
 2. Run all tests:
-   cargo test
+   dekk apxm test
 
 3. Run autofix to check examples:
    python3 scripts/apxm-autofix.py
 
 4. Check for warnings:
-   cargo clippy -- -D warnings
+   dekk apxm clippy
 
 Report:
 - Build status (success/failure)
