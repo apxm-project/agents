@@ -338,7 +338,7 @@ impl ModelRouter {
             .unwrap_or(self.config.target);
 
         if target == RoutingTarget::Balanced {
-            // Balanced preserves the legacy tag-preference behaviour.
+            // Balanced preserves the tag-preference behaviour.
             for tag in &routing.prefer_tags {
                 if let Some(decision) = self.find_by_tag(tag) {
                     return Ok(decision);
@@ -1171,7 +1171,7 @@ mod tests {
 
     #[test]
     fn test_balanced_preserves_prefer_tags() {
-        // No target ⇒ Balanced ⇒ legacy prefer_tags wins over cost: the
+        // No target ⇒ Balanced ⇒ prefer_tags wins over cost: the
         // preferred (expensive) model is chosen, not the cheaper untagged one.
         let toml = r#"
 [routing]

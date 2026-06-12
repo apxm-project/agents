@@ -45,7 +45,7 @@
 //! # Optional global optimization target for the pool: "cost" | "latency"
 //! # | "quality" | "balanced". When set (and no per-operation policy
 //! # applies), the router ranks the price/capability table by this target.
-//! # When omitted (or "balanced") the legacy prefer_tags/fallback_tags
+//! # When omitted (or "balanced") the prefer_tags/fallback_tags
 //! # behaviour is used.
 //! target = "cost"
 //! prefer_tags = ["production"]
@@ -158,7 +158,7 @@ pub struct RoutingConfig {
     /// Optional global optimization target for the pool. When set (and no
     /// per-operation policy applies), the router ranks the price/capability
     /// table by this target instead of using `prefer_tags`. `None` (or
-    /// `Balanced`) keeps the legacy tag-based behaviour.
+    /// `Balanced`) keeps the tag-based behaviour.
     #[serde(default)]
     pub target: Option<RoutingTarget>,
     /// Tags to prefer when selecting a model (ordered by priority).
