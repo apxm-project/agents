@@ -27,7 +27,7 @@ from dataclasses import dataclass
 
 ALLOWED_TYPES: frozenset[str] = frozenset({
     "feat", "fix", "perf", "refactor", "docs", "test",
-    "chore", "bench", "eval", "prereg",
+    "chore", "bench", "eval", "prereg", "sec", "style",
 })
 
 DEPRECATED_TYPES: dict[str, str] = {
