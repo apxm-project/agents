@@ -2,9 +2,9 @@
 
 A one-page orientation for coding agents and humans dropping into this
 repository for the first time. For the agent-facing SSOT, read
-[`AGENTS.md`](AGENTS.md) (Codex/Aider/Cursor) or
-[`CLAUDE.md`](CLAUDE.md) (Claude Code). They are generated from
-[`.agents/project.md`](.agents/project.md).
+[`AGENTS.md`](AGENTS.md) or [`CODEX.md`](CODEX.md) (same body; portable /
+Codex-named) or [`CLAUDE.md`](CLAUDE.md) (Claude Code). They are generated
+from [`.agents/project.md`](.agents/project.md).
 
 ## What APXM is
 

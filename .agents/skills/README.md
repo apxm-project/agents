@@ -12,7 +12,9 @@ that points at one or more shared rules in `_shared/`.
 
 The generated files (`AGENTS.md`, `CLAUDE.md`, `CODEX.md`, `.agents.json`,
 `.cursorrules`, `.github/copilot-instructions.md`) come from running
-`dekk apxm skills generate --target all`. Never edit them by hand.
+`dekk apxm skills generate --target all`. Never edit them by hand. Today
+`AGENTS.md` and `CODEX.md` share the same body; Codex CLI is configured on
+`AGENTS.md` in `.agents.json` (see `.agents/domains/meta/README.md`).
 
 ## Lifecycle skills (the workflow backbone)
 

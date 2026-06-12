@@ -33,7 +33,7 @@
     },
     {
       "name": "apxm-compile-and-execute",
-      "description": "Use when compiling APXM graphs, running .apxmobj artifacts, or executing AIR/IR through the runtime. Enforces dekk apxm as the authority CLI and correct artifact placement under .apxm/."
+      "description": "Use when compiling APXM AIR workflows, running .apxmobj artifacts, or executing AIR/IR through the runtime. Enforces dekk apxm as the authority CLI and correct artifact placement under .apxm/."
     },
     {
       "name": "apxm-context",
@@ -57,7 +57,7 @@
     },
     {
       "name": "apxm-goal-orchestrator",
-      "description": "Use when an agent should turn a complex APXM goal into a bounded worker DAG or workflow, execute it through APXM, wait on workflow events/status, and synthesize verified artifacts. Covers `dekk apxm goal`, `goal_start`, `workflow_*`, and `prompt_as_workflow` selection."
+      "description": "Use when an agent should turn a complex APXM goal into a bounded worker workflow, execute it through APXM, wait on goal events/status, and synthesize verified artifacts. Covers `dekk apxm goal`, `goal_start`, `goal_*`, workflow drill-down, and `prompt_as_workflow` selection."
     },
     {
       "name": "apxm-mcp-server",

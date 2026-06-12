@@ -2,8 +2,20 @@
 
 The `.agents/` tree is the single source of truth (SSOT) for every coding
 agent that enters this repository (Claude Code, Codex CLI, Cursor, Aider,
-Gemini, etc.). Repo-root agent files are generated from `.agents/project.md`
-by `dekk apxm skills generate`; edit `.agents/` sources, then regenerate.
+Gemini, etc.).
+
+Repo-root instruction files are generated from `.agents/project.md` (plus
+skill registration under `.agents/skills/`) by `dekk apxm skills generate`.
+Edit `.agents/` sources, then run `dekk apxm skills generate --target all`.
+Do not edit generated roots (`AGENTS.md`, `CLAUDE.md`, `CODEX.md`,
+`.cursorrules`, `.github/copilot-instructions.md`, `.agents.json`) by hand.
+
+**Which file for which tool:** `CLAUDE.md` is the Claude Code entrypoint.
+`AGENTS.md` is the canonical portable instructions file (Codex CLI uses it
+per `.agents.json`; ACP session output for the `codex` profile also writes
+`AGENTS.md` into per-node dirs). `CODEX.md` duplicates the `AGENTS.md` body for
+workflows that look for a Codex-named file. Cursor reads `.cursorrules`;
+GitHub Copilot reads `.github/copilot-instructions.md`.
 
 ## 1. What APXM is
 
@@ -30,9 +42,8 @@ Command groups (see `dekk apxm --help` for the live list):
 - **Compilation**: `compile`, `execute`, `run`, `decompile`
 - **Authoring**: `validate`, `analyze`, `explain`, `gui`, `tokenize`
 - **Goals & Workflows**: `goal`, `workflow`; MCP callers use
-  `goal_start`, `goal_status`, `goal_events`, `goal_cancel`,
-  `workflow_start`, `workflow_status`, `workflow_events`, `workflow_cancel`,
-  and `prompt_as_workflow`
+  `goal_start`, `workflow_start`, `workflow_status`,
+  `workflow_events`, `workflow_cancel`, and `prompt_as_workflow`
 - **Configuration**: `doctor`, `backend`, `vllm`, `agent`, `tool`, `cache`,
   `process`, `mcp`, `server`, `commit-lint`
 - **Discovery**: `ops`, `template`
@@ -47,8 +58,8 @@ rather than shelling out — that is the project-wide pattern.
 For complex bounded work, prefer the native APXM control plane instead of
 manual subagent prompting. Use `dekk apxm goal` for role-based fan-out/fan-in
 with worker admission and sleep/wake events. MCP callers call `goal_start`
-once, then observe or stop the run with `goal_status`, `goal_events`, and
-`goal_cancel`. Checked-in `.apxmw` workflows use
+once, then observe or stop the run with `workflow_status`,
+`workflow_events`, and `workflow_cancel`. Checked-in `.apxmw` workflows use
 `dekk apxm workflow` or `workflow_start`; natural-language workflow drafts use
 `prompt_as_workflow` and remain proposals until APXM validates and admits
 them.
@@ -304,7 +315,7 @@ push, an overwritten branch, or a tainted benchmark.
 | `apxm-execute-plan` | Drive an APXM plan to completion without scope creep. Tracks phases with the harness's task tracker, runs focused per-phase verification, refuses to add features beyond the plan, and surfaces blockers immediately. Invoke only after apxm-plan produces an approved plan. | `.agents/skills/apxm-execute-plan/SKILL.md` |
 | `apxm-finish` | Pre-claim gate — runs focused dekk apxm test, doctor, release checks when relevant, secrets scan, and artifact-placement check before any claim of completion. Refuses to claim done until all pass. | `.agents/skills/apxm-finish/SKILL.md` |
 | `apxm-fork-vllm-rebase` | Use when rebasing the external/vllm fork onto a new upstream tag, cherry-picking APXM commits, or resolving conflicts in the fork. Covers the G1 build/smoke gate. | `.agents/skills/apxm-fork-vllm-rebase/SKILL.md` |
-| `apxm-goal-orchestrator` | Use when an agent should turn a complex APXM goal into a bounded worker workflow, execute it through APXM, wait on goal events/status, and synthesize verified artifacts. Covers `dekk apxm goal`, `goal_*`, `workflow_*`, and `prompt_as_workflow` selection. | `.agents/skills/apxm-goal-orchestrator/SKILL.md` |
+| `apxm-goal-orchestrator` | Use when an agent should turn a complex APXM goal into a bounded worker workflow, execute it through APXM, wait on goal events/status, and synthesize verified artifacts. Covers `dekk apxm goal`, `goal_start`, `goal_*`, workflow drill-down, and `prompt_as_workflow` selection. | `.agents/skills/apxm-goal-orchestrator/SKILL.md` |
 | `apxm-mcp-server` | Use when working on APXM MCP surfaces: the Rust HTTP `/v1/mcp` endpoint, the Rust stdio `apxm-mcp-server` binary, or cross-agent MCP registration. Prefer server-owned HTTP MCP for workflow/orchestration control. | `.agents/skills/apxm-mcp-server/SKILL.md` |
 | `apxm-mlir-pass-development` | Use when adding, modifying, or reordering MLIR passes in the APXM compiler pipeline. Enforces the single pass-list source of truth, the AIS-core ownership rule, and the build-dialect + codegen cadence after .td edits. | `.agents/skills/apxm-mlir-pass-development/SKILL.md` |
 | `apxm-model-zoo-operate` | Use when adding, scaling, or probing models in the vLLM zoo (deploy/vllm/zoo*.toml). Enforces docker-load then cache-warm then zoo-apply then service-exec/status; use the zoo surface only. | `.agents/skills/apxm-model-zoo-operate/SKILL.md` |

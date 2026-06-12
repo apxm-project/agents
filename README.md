@@ -112,7 +112,9 @@ rules. Released under the [MIT License](LICENSE); the bundled vLLM fork at
 [`external/vllm`](external/vllm) is Apache-2.0.
 
 For coding agents (Claude Code, Codex CLI, Cursor, Aider, Gemini): read
-[`AGENTS.md`](AGENTS.md) (or [`CLAUDE.md`](CLAUDE.md)) before doing any work.
+[`AGENTS.md`](AGENTS.md) or [`CODEX.md`](CODEX.md) (same text; Codex CLI is
+wired to `AGENTS.md` in `.agents.json`) or [`CLAUDE.md`](CLAUDE.md) (Claude
+Code) before doing any work.
 The 6-skill lifecycle — `apxm-context` → `apxm-plan` →
 `apxm-execute-plan` → `apxm-simplify` → `apxm-finish` → `apxm-commit` — is
 the project-wide pattern.

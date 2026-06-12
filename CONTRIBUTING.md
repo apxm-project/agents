@@ -165,12 +165,14 @@ The SSOT for skill content is `.agents/`. To add a skill:
    `apxm-skill-authoring` skill.
 2. Run `dekk apxm skills status` to confirm registration.
 3. Run `dekk apxm skills generate --target all` to regenerate
-   `AGENTS.md`, `CLAUDE.md`, `.agents.json`, `.cursorrules`, and
-   `.github/copilot-instructions.md`.
+   `AGENTS.md`, `CLAUDE.md`, `CODEX.md`, `.agents.json`, `.cursorrules`,
+   `.github/copilot-instructions.md`, and other generated agent surfaces
+   (see `.agents/skills/README.md`).
 4. Commit the skill file and the regenerated outputs in one commit.
 
-Never edit `AGENTS.md`, `CLAUDE.md`, `.agents.json`, `.cursorrules`, or
-`.github/copilot-instructions.md` by hand — they are generated.
+Never edit `AGENTS.md`, `CLAUDE.md`, `CODEX.md`, `.agents.json`,
+`.cursorrules`, or `.github/copilot-instructions.md` by hand — they are
+generated from `.agents/`.
 
 ## Code of conduct
 

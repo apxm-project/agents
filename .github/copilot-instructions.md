@@ -2,8 +2,20 @@
 
 The `.agents/` tree is the single source of truth (SSOT) for every coding
 agent that enters this repository (Claude Code, Codex CLI, Cursor, Aider,
-Gemini, etc.). Repo-root agent files are generated from `.agents/project.md`
-by `dekk apxm skills generate`; edit `.agents/` sources, then regenerate.
+Gemini, etc.).
+
+Repo-root instruction files are generated from `.agents/project.md` (plus
+skill registration under `.agents/skills/`) by `dekk apxm skills generate`.
+Edit `.agents/` sources, then run `dekk apxm skills generate --target all`.
+Do not edit generated roots (`AGENTS.md`, `CLAUDE.md`, `CODEX.md`,
+`.cursorrules`, `.github/copilot-instructions.md`, `.agents.json`) by hand.
+
+**Which file for which tool:** `CLAUDE.md` is the Claude Code entrypoint.
+`AGENTS.md` is the canonical portable instructions file (Codex CLI uses it
+per `.agents.json`; ACP session output for the `codex` profile also writes
+`AGENTS.md` into per-node dirs). `CODEX.md` duplicates the `AGENTS.md` body for
+workflows that look for a Codex-named file. Cursor reads `.cursorrules`;
+GitHub Copilot reads `.github/copilot-instructions.md`.
 
 ## 1. What APXM is
 
