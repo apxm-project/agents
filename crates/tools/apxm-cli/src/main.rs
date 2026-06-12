@@ -226,6 +226,13 @@ async fn run_cli(cli: Cli) -> Result<()> {
             agent_model,
             tree,
             monitor_url,
+            max_turns,
+            max_events,
+            tool_budget,
+            tool_cap,
+            tool_auth,
+            owner,
+            author,
         } => {
             commands::chat::chat_command(commands::chat::ChatOptions {
                 air,
@@ -241,6 +248,13 @@ async fn run_cli(cli: Cli) -> Result<()> {
                 agent_model,
                 tree,
                 monitor_url,
+                max_turns,
+                max_events,
+                tool_budget,
+                tool_cap,
+                tool_auth,
+                owner,
+                author,
             })
             .await
         }

@@ -310,7 +310,7 @@ async fn execute_tool_call(
         }
     }
 
-    match ctx.capability_system.invoke(&tool_call.name, args).await {
+    match ctx.invoke_tool(&tool_call.name, args).await {
         Ok(result) => {
             let content = match result {
                 Value::String(s) => s,

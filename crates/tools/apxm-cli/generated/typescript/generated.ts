@@ -903,6 +903,7 @@ export const ATTR = {
   TOOLS_ENABLED: "tools_enabled",
   TOOLS: "tools",
   TOOL_GROUPS: "tool_groups",
+  TOOL_CALL_BUDGETS: "tool_call_budgets",
   CODE: "code",
   INTERPRETER: "interpreter",
   CAPABILITY_NAME: "capability_name",

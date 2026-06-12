@@ -64,7 +64,7 @@ pub use agent_router::{
 pub use capability::{
     CapabilitySystem,
     flow_registry::FlowRegistry,
-    interceptor::{CapabilityInterceptor, InterceptDecision},
+    interceptor::{CapabilityInterceptor, InterceptDecision, PermissionInterceptor},
 };
 pub use context_stack::{
     ContextAssembly, ContextFrame, ContextScope, ContextStack, ContextStackConfig,

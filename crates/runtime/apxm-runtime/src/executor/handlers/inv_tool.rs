@@ -196,8 +196,7 @@ pub async fn execute(ctx: &ExecutionContext, node: &Node, inputs: Vec<Value>) ->
             None
         };
         let outcome = ctx
-            .capability_system
-            .invoke_with_timeout(&capability_name, args, timeout)
+            .invoke_tool_with_timeout(&capability_name, args, timeout)
             .await
             .map_err(|e| {
                 tracing::error!(

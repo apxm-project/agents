@@ -42,6 +42,31 @@ pub(crate) async fn build_runtime_with_router(
     runtime.add_middleware(std::sync::Arc::new(
         apxm_runtime::ConversationMemoryMiddleware::new(),
     ));
+
+    // Production permission gate (Control 3): a generic always-invoked PEP at the
+    // capability chokepoint, complementing the in-handler write boundary. It
+    // activates the `requires_auth` capability-metadata flag — advisory by
+    // default, denying when APXM_REQUIRE_AUTH_STRICT is set. Composed here by the
+    // trusted host (capabilities are already registered above); the AIR program
+    // can neither add, remove, nor reorder it.
+    {
+        let strict = std::env::var("APXM_REQUIRE_AUTH_STRICT")
+            .map(|v| !v.is_empty() && v != "0")
+            .unwrap_or(false);
+        let requires_auth: std::collections::HashSet<String> = runtime
+            .capability_system()
+            .list_capabilities()
+            .into_iter()
+            .filter(|meta| meta.requires_auth)
+            .map(|meta| meta.name)
+            .collect();
+        runtime
+            .capability_system()
+            .register_interceptor(std::sync::Arc::new(
+                apxm_runtime::PermissionInterceptor::new(requires_auth, strict),
+            ));
+    }
+
     Ok(runtime)
 }
 
@@ -50,9 +75,9 @@ pub(crate) async fn build_runtime_with_router(
 /// this the system starts empty and every tool node is rejected.
 fn register_builtin_capabilities(runtime: &Runtime, schedule_on_fire: Option<OnFire>) {
     use apxm_runtime::capability::builtins::{
-        BashCapability, CountTokensCapability, HttpGetCapability, HttpPostCapability,
-        ManageTaskCapability, McpBridgeCapability, ProviderCallCapability, ReadCapability,
-        ScheduleCapability, ToolsStore, WriteCapability,
+        BashCapability, ComposeWorkflowCapability, CountTokensCapability, HttpGetCapability,
+        HttpPostCapability, ManageTaskCapability, McpBridgeCapability, ProviderCallCapability,
+        ReadCapability, RunWorkflowCapability, ScheduleCapability, ToolsStore, WriteCapability,
     };
     use apxm_runtime::capability::executor::CapabilityExecutor;
     use std::sync::Arc;
@@ -80,6 +105,11 @@ fn register_builtin_capabilities(runtime: &Runtime, schedule_on_fire: Option<OnF
         Arc::new(ProviderCallCapability::new()),
         Arc::new(McpBridgeCapability::new()),
         Arc::new(CountTokensCapability::new()),
+        // Workflow authoring (Goal 1): write-class, in the `authoring` group so
+        // the conversational agent can create + run workflows under admit-gated,
+        // staging-confined, workflow-scoped admission.
+        Arc::new(ComposeWorkflowCapability::new()),
+        Arc::new(RunWorkflowCapability::new()),
     ];
 
     // Durable agent-management tools (schedule + manage_task). These are always

@@ -963,6 +963,7 @@ fn fixture_execute_response(session_dir: Option<String>) -> ExecuteResponse {
             output_tokens: 0,
             total_requests: 0,
         },
+        tool_call_counts: HashMap::new(),
     }
 }
 

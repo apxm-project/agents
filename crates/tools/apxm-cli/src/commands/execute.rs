@@ -1150,6 +1150,7 @@ mod tests {
             graph_status_snapshots: vec![],
             backend_graph_capabilities: HashMap::new(),
             dispatch_ir_metrics: serde_json::Value::Null,
+            tool_call_counts: HashMap::new(),
         }
     }
 

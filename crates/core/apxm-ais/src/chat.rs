@@ -107,6 +107,10 @@ pub struct ChatAirOptions<'a> {
     /// Expose the `skills` tool group so the agent can call `search_skills` to
     /// discover relevant skills by description (scoped to its visible set).
     pub skills: bool,
+    /// Expose the `authoring` tool group (`compose_workflow` / `run_workflow`) so
+    /// the agent can create and run workflows. These are write-class but
+    /// admit-gated and staging-confined (workflow-scoped admission).
+    pub authoring: bool,
 }
 
 /// Per-turn routing options for a conversational ACP agent graph.
@@ -157,6 +161,9 @@ pub fn chat_air(opts: &ChatAirOptions) -> String {
     }
     if opts.skills {
         groups.push("skills");
+    }
+    if opts.authoring {
+        groups.push("authoring");
     }
     if !groups.is_empty() {
         let list = groups
@@ -320,6 +327,7 @@ mod tests {
             effort: Some("medium"),
             tools: true,
             skills: false,
+            authoring: false,
         });
         assert!(air.contains("backend = \"amd\""));
         assert!(air.contains("model = \"claude-sonnet-4-6\""));

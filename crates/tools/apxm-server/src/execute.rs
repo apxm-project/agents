@@ -55,6 +55,23 @@ pub(crate) struct ExecuteRequest {
     /// Visible skill set (lib / lib::skill / skill ids). Empty means only shared skills.
     #[serde(default)]
     pub(crate) imports: Vec<String>,
+    /// Per-tool call-count budget (Control 2): `{capability_name: max_calls}`.
+    /// Declared by the caller; enforced by the runtime's trusted `invoke_tool`
+    /// seam, shared across the execution tree. Each value is clamped to the
+    /// operator ceiling `$APXM_TOOL_CALL_BUDGET_CEILING` when set (a request can
+    /// only lower it).
+    #[serde(default)]
+    pub(crate) tool_call_budgets: HashMap<String, usize>,
+    /// Per-tool auth binding (Control 5): `{capability_name: connection_id}`. The
+    /// server resolves each connection id (owner-scoped) to a bearer token and
+    /// the runtime injects it at the tool's invoke seam — the secret never enters
+    /// the AIR or the prompt; only the connection id travels on the wire.
+    #[serde(default)]
+    pub(crate) tool_credentials: HashMap<String, String>,
+    /// Tenant/owner scope for credential resolution (Control 5). Passed to the
+    /// credential resolver so a tool's token is scoped to this owner.
+    #[serde(default)]
+    pub(crate) owner: Option<String>,
 }
 
 /// A caller-supplied workflow source plus the same execution controls as
@@ -77,6 +94,12 @@ pub(crate) struct CompileRequest {
     pub(crate) admit_capabilities: Vec<String>,
     #[serde(default)]
     pub(crate) imports: Vec<String>,
+    #[serde(default)]
+    pub(crate) tool_call_budgets: HashMap<String, usize>,
+    #[serde(default)]
+    pub(crate) tool_credentials: HashMap<String, String>,
+    #[serde(default)]
+    pub(crate) owner: Option<String>,
 }
 
 impl CompileRequest {
@@ -92,6 +115,9 @@ impl CompileRequest {
             session_root: self.session_root,
             admit_capabilities: self.admit_capabilities,
             imports: self.imports,
+            tool_call_budgets: self.tool_call_budgets,
+            tool_credentials: self.tool_credentials,
+            owner: self.owner,
         })
     }
 }
@@ -117,6 +143,10 @@ pub(crate) struct ExecuteResponse {
     pub(crate) session_dir: Option<String>,
     pub(crate) stats: ExecutionStats,
     pub(crate) llm_usage: LlmUsageSummary,
+    /// Consumed per-tool call counts (Control 2), so a host can maintain a
+    /// cross-turn session budget. Empty when no per-tool budget was set.
+    #[serde(default)]
+    pub(crate) tool_call_counts: HashMap<String, usize>,
 }
 
 /// Build the top-level execution metadata seeding the effective capability grant
@@ -183,26 +213,37 @@ pub(crate) async fn run_air_inner(
         session_dir,
         admit,
         imports,
+        tool_call_budgets,
+        tool_credentials,
+        owner,
     } = prepare_request(req)?;
     let known_caps = registered_capability_names(state);
     let mut artifact = air_to_artifact_with_caps(&air, &known_caps)?;
     validate_raw_execute_admission(&artifact, state, &admit)?;
-    inject_resolved_credentials(&mut artifact).await?;
+    inject_resolved_credentials(&mut artifact, owner.as_deref()).await?;
+    let resolved_credentials =
+        resolve_tool_credentials(&tool_credentials, owner.as_deref()).await?;
+    let tool_call_budgets =
+        merge_tool_budgets(tool_call_budgets, air_declared_tool_budgets(&artifact));
     let admission_id = acquire_admission(state).await?;
     let mut metadata = admit_grant_metadata(&admit, &imports);
     metadata.insert(
         apxm_runtime::metadata_keys::ADMISSION_ID.to_string(),
         admission_id.clone(),
     );
+    if let Some((key, value)) = tool_call_budgets_metadata(&tool_call_budgets) {
+        metadata.insert(key, value);
+    }
     let execution = state
         .runtime
-        .execute_artifact_with_session_emitter_and_metadata(
+        .execute_artifact_with_session_emitter_metadata_and_credentials(
             artifact,
             args,
             session_id,
             None,
             session_dir.clone(),
             metadata,
+            resolved_credentials,
         )
         .await;
     apxm_runtime::scheduler::admission_registry::unregister(&admission_id);
@@ -221,11 +262,18 @@ pub(crate) async fn execute_stream(
         session_dir,
         admit,
         imports,
+        tool_call_budgets,
+        tool_credentials,
+        owner,
     } = prepare_request(req)?;
     let known_caps = registered_capability_names(&state);
     let mut artifact = air_to_artifact_with_caps(&air, &known_caps)?;
     validate_raw_execute_admission(&artifact, &state, &admit)?;
-    inject_resolved_credentials(&mut artifact).await?;
+    inject_resolved_credentials(&mut artifact, owner.as_deref()).await?;
+    let resolved_credentials =
+        resolve_tool_credentials(&tool_credentials, owner.as_deref()).await?;
+    let tool_call_budgets =
+        merge_tool_budgets(tool_call_budgets, air_declared_tool_budgets(&artifact));
     let admission_id = acquire_admission(&state).await?;
     let stream_config = state.server_config.execution_stream;
     let (tx, mut rx) = mpsc::channel::<ApxmEvent>(stream_config.channel_capacity.max(1));
@@ -235,6 +283,9 @@ pub(crate) async fn execute_stream(
         apxm_runtime::metadata_keys::ADMISSION_ID.to_string(),
         admission_id.clone(),
     );
+    if let Some((key, value)) = tool_call_budgets_metadata(&tool_call_budgets) {
+        grant_metadata.insert(key, value);
+    }
     let trace_id = session_id
         .clone()
         .unwrap_or_else(|| uuid::Uuid::new_v4().to_string());
@@ -266,13 +317,14 @@ pub(crate) async fn execute_stream(
             EventSource::Runtime,
             &trace_id,
         ));
-        let execution = runtime.execute_artifact_with_session_emitter_and_metadata(
+        let execution = runtime.execute_artifact_with_session_emitter_metadata_and_credentials(
             artifact,
             args,
             session_id,
             Some(emitter),
             session_dir.clone(),
             grant_metadata,
+            resolved_credentials,
         );
         tokio::select! {
             outcome = execution => match outcome {
@@ -348,6 +400,9 @@ pub(crate) struct PreparedRequest {
     pub(crate) session_dir: Option<String>,
     pub(crate) admit: std::collections::HashSet<String>,
     pub(crate) imports: Vec<String>,
+    pub(crate) tool_call_budgets: HashMap<String, usize>,
+    pub(crate) tool_credentials: HashMap<String, String>,
+    pub(crate) owner: Option<String>,
 }
 
 pub(crate) fn prepare_request(mut req: ExecuteRequest) -> Result<PreparedRequest, ApiError> {
@@ -363,6 +418,110 @@ pub(crate) fn prepare_request(mut req: ExecuteRequest) -> Result<PreparedRequest
         session_dir,
         admit: req.admit_capabilities.into_iter().collect(),
         imports: req.imports,
+        tool_call_budgets: clamp_tool_call_budgets(req.tool_call_budgets),
+        tool_credentials: req.tool_credentials,
+        owner: req.owner,
+    })
+}
+
+/// Resolve a per-tool auth binding (Control 5) — `{capability: connection_id}` —
+/// into `{capability: "Bearer <token>"}`, scoped to `owner`. The resolved bearer
+/// is handed to the runtime out-of-band (a context field, not the AIR), so the
+/// secret never enters the program. Returns `None` when nothing is bound.
+async fn resolve_tool_credentials(
+    tool_credentials: &HashMap<String, String>,
+    owner: Option<&str>,
+) -> Result<Option<HashMap<String, String>>, ApiError> {
+    if tool_credentials.is_empty() {
+        return Ok(None);
+    }
+    let resolver = crate::credentials::CredentialResolver::from_env();
+    let mut resolved = HashMap::new();
+    for (capability, connection_id) in tool_credentials {
+        let token = resolver.resolve(connection_id, owner).await.map_err(|e| {
+            ApiError::internal_message(format!(
+                "credential resolve failed for `{connection_id}`: {e}"
+            ))
+        })?;
+        resolved.insert(capability.clone(), format!("Bearer {token}"));
+    }
+    Ok(Some(resolved))
+}
+
+/// Operator ceiling for per-tool call budgets (Control 2). When
+/// `$APXM_TOOL_CALL_BUDGET_CEILING` is set, every requested budget is clamped to
+/// at most that value — a caller can only *lower* the operator bound, never raise
+/// it. Unset = no ceiling.
+fn clamp_tool_call_budgets(mut budgets: HashMap<String, usize>) -> HashMap<String, usize> {
+    if let Some(ceiling) = std::env::var("APXM_TOOL_CALL_BUDGET_CEILING")
+        .ok()
+        .and_then(|v| v.parse::<usize>().ok())
+    {
+        for value in budgets.values_mut() {
+            *value = (*value).min(ceiling);
+        }
+    }
+    budgets
+}
+
+/// Read per-tool call budgets DECLARED in the AIR (any node's `tool_call_budgets`
+/// attribute, a JSON object string). The trusted host reads the program's
+/// declaration; the program never self-enforces. The most restrictive value wins
+/// across nodes.
+fn air_declared_tool_budgets(artifact: &Artifact) -> HashMap<String, usize> {
+    let mut declared: HashMap<String, usize> = HashMap::new();
+    for dag in artifact.dags() {
+        for node in &dag.nodes {
+            let Some(raw) = node
+                .attributes
+                .get(graph_attrs::TOOL_CALL_BUDGETS)
+                .and_then(|v| v.as_string())
+            else {
+                continue;
+            };
+            if let Ok(map) = serde_json::from_str::<HashMap<String, usize>>(raw) {
+                for (cap, limit) in map {
+                    declared
+                        .entry(cap)
+                        .and_modify(|e| *e = (*e).min(limit))
+                        .or_insert(limit);
+                }
+            }
+        }
+    }
+    declared
+}
+
+/// Merge request budgets with AIR-declared budgets — most restrictive (min) per
+/// tool wins — then clamp the union to the operator ceiling.
+fn merge_tool_budgets(
+    request: HashMap<String, usize>,
+    declared: HashMap<String, usize>,
+) -> HashMap<String, usize> {
+    let mut merged = request;
+    for (cap, limit) in declared {
+        merged
+            .entry(cap)
+            .and_modify(|e| *e = (*e).min(limit))
+            .or_insert(limit);
+    }
+    clamp_tool_call_budgets(merged)
+}
+
+/// Serialize the per-tool call budget into the execution metadata channel so the
+/// runtime can seed `ExecutionContext::tool_call_budgets`. Returns `None` for an
+/// empty budget so the metadata key is omitted.
+pub(crate) fn tool_call_budgets_metadata(
+    budgets: &HashMap<String, usize>,
+) -> Option<(String, String)> {
+    if budgets.is_empty() {
+        return None;
+    }
+    serde_json::to_string(budgets).ok().map(|json| {
+        (
+            apxm_runtime::metadata_keys::TOOL_CALL_BUDGETS.to_string(),
+            json,
+        )
     })
 }
 
@@ -594,6 +753,19 @@ fn validate_raw_llm_tool_exposure(node: &Node, state: &AppState) -> Result<(), A
     validate_read_only_tool_names(&requested_tools, state)
 }
 
+/// The authoring tool group (Goal 1): write-class capabilities SAFE to *expose*
+/// on an ASK node because their *execution* is still gated by the write boundary
+/// (admit_capabilities) and confined to a staging area — workflow-scoped
+/// admission. Exposing them lets the conversational agent propose authoring and
+/// running a workflow; doing so still needs an explicit grant.
+const AUTHORING_GROUP: &str = "authoring";
+
+/// An ASK node may expose a capability if it is read-only OR an admit-gated
+/// authoring capability.
+fn ask_exposable_groups(groups: &[String]) -> bool {
+    groups.iter().any(|g| g == AUTHORING_GROUP)
+}
+
 fn validate_raw_ask_group_or_all_tools(node: &Node, state: &AppState) -> Result<(), ApiError> {
     let tools_enabled = node
         .attributes
@@ -612,7 +784,7 @@ fn validate_raw_ask_group_or_all_tools(node: &Node, state: &AppState) -> Result<
             .capability_system()
             .list_capabilities_by_groups(&groups);
         for metadata in grouped_tools {
-            if !metadata.read_only {
+            if !metadata.read_only && !ask_exposable_groups(&metadata.groups) {
                 return Err(ApiError::bad_request(format!(
                     "{ERROR_ASK_REQUIRES_READ_ONLY_TOOLS}; capability '{}' is not read-only",
                     metadata.name
@@ -623,7 +795,7 @@ fn validate_raw_ask_group_or_all_tools(node: &Node, state: &AppState) -> Result<
     }
 
     for metadata in state.runtime.capability_system().list_capabilities() {
-        if !metadata.read_only {
+        if !metadata.read_only && !ask_exposable_groups(&metadata.groups) {
             return Err(ApiError::bad_request(format!(
                 "ASK tools_enabled=true would expose non-read-only capability '{}'",
                 metadata.name
@@ -641,7 +813,7 @@ fn validate_read_only_tool_names(tool_names: &[String], state: &AppState) -> Res
                 "raw execute capability '{tool_name}' is not registered"
             )));
         };
-        if !metadata.read_only {
+        if !metadata.read_only && !ask_exposable_groups(&metadata.groups) {
             return Err(ApiError::bad_request(format!(
                 "{ERROR_ASK_REQUIRES_READ_ONLY_TOOLS}; capability '{tool_name}' is not read-only"
             )));
@@ -668,7 +840,10 @@ fn parse_string_array_attr(node: &Node, attr_name: &str) -> Option<Vec<String>> 
 /// `headers.Authorization = "Bearer <token>"` (dropping the bare id) so the
 /// dispatched HTTP capability authenticates. Off by default → a stack without
 /// apxm-auth is unaffected. The resolved token is never logged.
-pub(crate) async fn inject_resolved_credentials(artifact: &mut Artifact) -> Result<(), ApiError> {
+pub(crate) async fn inject_resolved_credentials(
+    artifact: &mut Artifact,
+    owner: Option<&str>,
+) -> Result<(), ApiError> {
     let enabled = std::env::var("APXM_RESOLVE_CREDENTIALS")
         .map(|v| !v.is_empty() && v != "0")
         .unwrap_or(false);
@@ -700,7 +875,7 @@ pub(crate) async fn inject_resolved_credentials(artifact: &mut Artifact) -> Resu
                 continue;
             };
             let r = resolver.get_or_insert_with(crate::credentials::CredentialResolver::from_env);
-            let token = r.resolve(&conn_id, None).await.map_err(|e| {
+            let token = r.resolve(&conn_id, owner).await.map_err(|e| {
                 ApiError::internal_message(format!(
                     "credential resolve failed for `{conn_id}`: {e}"
                 ))
@@ -784,5 +959,28 @@ pub(crate) fn to_execute_response(
             output_tokens: result.llm_metrics.total_output_tokens,
             total_requests: result.llm_metrics.total_requests,
         },
+        tool_call_counts: result.tool_call_counts,
+    }
+}
+
+#[cfg(test)]
+mod budget_tests {
+    use super::*;
+
+    #[test]
+    fn merge_tool_budgets_takes_most_restrictive_per_tool() {
+        let request = HashMap::from([
+            ("web.fetch".to_string(), 5usize),
+            ("bash".to_string(), 9usize),
+        ]);
+        // AIR declares a tighter web.fetch and a new tool not in the request.
+        let declared = HashMap::from([
+            ("web.fetch".to_string(), 3usize),
+            ("slack.post".to_string(), 2usize),
+        ]);
+        let merged = merge_tool_budgets(request, declared);
+        assert_eq!(merged.get("web.fetch").copied(), Some(3)); // min(5, 3)
+        assert_eq!(merged.get("bash").copied(), Some(9)); // request only
+        assert_eq!(merged.get("slack.post").copied(), Some(2)); // declared only
     }
 }

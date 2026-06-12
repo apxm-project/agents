@@ -323,6 +323,42 @@ pub enum Commands {
         /// events without a human typing — the REPL stays interactive too.
         #[arg(long = "monitor-url", value_name = "URL")]
         monitor_url: Option<String>,
+        /// Bound the conversation to at most N substantive turns. A stdin turn at
+        /// the cap is soft-blocked (warns; `/continue` extends by N); an
+        /// event-driven turn at the cap is dropped. Clamped to the operator
+        /// ceiling $APXM_CHAT_MAX_TURNS_CEILING when set.
+        #[arg(long = "max-turns", value_name = "N")]
+        max_turns: Option<usize>,
+        /// Bound event-driven (monitor cue) turns to at most N; events past the
+        /// cap are dropped while stdin stays interactive. Clamped to
+        /// $APXM_CHAT_MAX_EVENTS_CEILING when set.
+        #[arg(long = "max-events", value_name = "N")]
+        max_events: Option<usize>,
+        /// Per-tool call budget for one turn's whole execution tree, as `CAP=N`
+        /// (repeatable). Enforced by the runtime's trusted invoke seam; a
+        /// spawned-agent fan-out cannot exceed it. Each N is clamped to the
+        /// operator ceiling $APXM_TOOL_CALL_BUDGET_CEILING when set.
+        #[arg(long = "tool-budget", value_name = "CAP=N")]
+        tool_budget: Vec<String>,
+        /// Per-tool call cap for the whole conversation, as `CAP=N` (repeatable).
+        /// Tracked across turns by the host; the per-turn budget sent to the
+        /// runtime is the lower of this remaining cap and any --tool-budget.
+        #[arg(long = "tool-cap", value_name = "CAP=N")]
+        tool_cap: Vec<String>,
+        /// Bind a tool to an apxm-auth connection for its auth token, as
+        /// `CAP=CONNECTION_ID` (repeatable). The server resolves the token
+        /// (scoped to --owner) and the runtime injects it at the tool's invoke
+        /// seam; the secret never enters the AIR or the prompt.
+        #[arg(long = "tool-auth", value_name = "CAP=CONNECTION_ID")]
+        tool_auth: Vec<String>,
+        /// Tenant/owner scope for --tool-auth credential resolution.
+        #[arg(long = "owner", value_name = "OWNER")]
+        owner: Option<String>,
+        /// Let the agent create and run workflows: exposes + admits the
+        /// `compose_workflow`/`run_workflow` tools (write-class but
+        /// staging-confined and admit-gated). Ignored when `--air`/`--agent` set.
+        #[arg(long = "author")]
+        author: bool,
     },
 }
 

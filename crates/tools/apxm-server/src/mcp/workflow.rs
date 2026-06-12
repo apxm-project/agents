@@ -27,7 +27,8 @@ use crate::error::ApiError;
 use crate::execute::{
     ExecuteRequest, ExecuteResponse, PreparedRequest, acquire_admission, admit_grant_metadata,
     air_to_artifact_with_caps, inject_resolved_credentials, prepare_request,
-    registered_capability_names, to_execute_response, validate_raw_execute_admission,
+    registered_capability_names, to_execute_response, tool_call_budgets_metadata,
+    validate_raw_execute_admission,
 };
 use crate::executions::{ExecutionRecord, ExecutionStatus};
 use crate::helpers::mcp_tool_result;
@@ -372,6 +373,9 @@ async fn prepare_workflow_run(
         session_root: None,
         admit_capabilities: request.admit_capabilities,
         imports: request.imports,
+        tool_call_budgets: std::collections::HashMap::new(),
+        tool_credentials: std::collections::HashMap::new(),
+        owner: None,
     };
     let PreparedRequest {
         air,
@@ -380,6 +384,9 @@ async fn prepare_workflow_run(
         session_dir,
         admit,
         imports,
+        tool_call_budgets,
+        tool_credentials: _,
+        owner,
     } = prepare_request(execute_request)?;
     debug_assert!(args.is_empty(), "workflow wrapper takes no positional args");
     let session_id = session_id.expect("workflow_start always supplies a session_id");
@@ -387,13 +394,16 @@ async fn prepare_workflow_run(
     let known_caps = registered_capability_names(state);
     let mut artifact = air_to_artifact_with_caps(&air, &known_caps)?;
     validate_raw_execute_admission(&artifact, state, &admit)?;
-    inject_resolved_credentials(&mut artifact).await?;
+    inject_resolved_credentials(&mut artifact, owner.as_deref()).await?;
     let admission_id = acquire_admission(state).await?;
     let mut metadata = admit_grant_metadata(&admit, &imports);
     metadata.insert(
         apxm_runtime::metadata_keys::ADMISSION_ID.to_string(),
         admission_id.clone(),
     );
+    if let Some((key, value)) = tool_call_budgets_metadata(&tool_call_budgets) {
+        metadata.insert(key, value);
+    }
 
     let execution_id = uuid::Uuid::new_v4().to_string();
     state

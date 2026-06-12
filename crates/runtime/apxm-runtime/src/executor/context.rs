@@ -76,6 +76,21 @@ pub struct ExecutionContext {
     /// steady-state aggregates only.
     pub metrics_level: MetricsLevel,
     pub consumed_tokens: Arc<std::sync::atomic::AtomicU64>,
+    /// Per-tool call-count budget (Control 2): max calls allowed per capability
+    /// name for this execution tree. `None` = unbounded. Declared by the
+    /// program/request; enforced by [`Self::charge_tool_call`] at the trusted
+    /// invoke seam — never by the AIR program itself.
+    pub tool_call_budgets: Option<Arc<std::collections::HashMap<String, usize>>>,
+    /// Consumed per-tool call counts. Shared (`Arc`) into child contexts so a
+    /// spawned-agent / called-skill fan-out cannot multiply the budget — mirrors
+    /// `consumed_tokens`.
+    pub tool_call_counts: Arc<std::sync::Mutex<std::collections::HashMap<String, usize>>>,
+    /// Per-tool credential headers (Control 5): capability name → an
+    /// `Authorization` header value (e.g. `"Bearer …"`), pre-resolved by the
+    /// trusted host from a connection id. Injected into a tool's args at the
+    /// `invoke_tool` seam so a tool acquires its auth token without the secret
+    /// ever entering the AIR program or the prompt. `None` = no per-tool auth.
+    pub tool_credentials: Option<Arc<std::collections::HashMap<String, String>>>,
     pub warmup_config: WarmupConfig,
     pub warmup_metrics: Arc<WarmupMetrics>,
     pub event_emitter: Option<Arc<dyn ExecutionEventEmitter>>,
@@ -187,6 +202,9 @@ impl ExecutionContext {
             optimization_target: OptimizationTarget::Balanced,
             metrics_level: MetricsLevel::default(),
             consumed_tokens: Arc::new(std::sync::atomic::AtomicU64::new(0)),
+            tool_call_budgets: None,
+            tool_call_counts: Arc::new(std::sync::Mutex::new(std::collections::HashMap::new())),
+            tool_credentials: None,
             warmup_config: WarmupConfig::default(),
             warmup_metrics: Arc::new(WarmupMetrics::new()),
             event_emitter: None,
@@ -286,6 +304,119 @@ impl ExecutionContext {
         self
     }
 
+    /// Set the per-tool call-count budget for this execution (Control 2). An
+    /// empty map is treated as no budget.
+    pub fn with_tool_call_budgets(
+        mut self,
+        budgets: Option<std::collections::HashMap<String, usize>>,
+    ) -> Self {
+        self.tool_call_budgets = budgets.filter(|m| !m.is_empty()).map(Arc::new);
+        self
+    }
+
+    /// Set pre-resolved per-tool credential headers (Control 5): capability name
+    /// → `Authorization` header value. An empty map is treated as no credentials.
+    pub fn with_tool_credentials(
+        mut self,
+        credentials: Option<std::collections::HashMap<String, String>>,
+    ) -> Self {
+        self.tool_credentials = credentials.filter(|m| !m.is_empty()).map(Arc::new);
+        self
+    }
+
+    /// Inject the per-tool credential (Control 5) into a call's args as
+    /// `headers.Authorization`, unless the program already supplied one (never
+    /// overwrite an explicit credential). No-op when the tool has no bound
+    /// credential.
+    fn inject_tool_credential(
+        &self,
+        name: &str,
+        args: &mut std::collections::HashMap<String, apxm_core::types::values::Value>,
+    ) {
+        use apxm_core::types::values::Value;
+        let Some(creds) = &self.tool_credentials else {
+            return;
+        };
+        let Some(header) = creds.get(name) else {
+            return;
+        };
+        let headers = args
+            .entry("headers".to_string())
+            .or_insert_with(|| Value::Object(std::collections::HashMap::new()));
+        if let Value::Object(map) = headers
+            && !map.keys().any(|k| k.eq_ignore_ascii_case("authorization"))
+        {
+            map.insert("Authorization".to_string(), Value::String(header.clone()));
+        }
+    }
+
+    /// Invoke a capability through the per-tool call budget (Control 2), using the
+    /// capability system's default timeout. Both tool-call paths — the graph
+    /// `INV_TOOL` handler and the in-`ASK`-node model loop — route through here so
+    /// the budget is the single trusted enforcement seam; the `ASK`-node calls are
+    /// invisible to node-level middleware, which is why this is a ctx helper rather
+    /// than an `OperationMiddleware`.
+    pub async fn invoke_tool(
+        &self,
+        name: &str,
+        mut args: std::collections::HashMap<String, apxm_core::types::values::Value>,
+    ) -> Result<apxm_core::types::values::Value, apxm_core::error::RuntimeError> {
+        self.charge_tool_call(name)?;
+        self.inject_tool_credential(name, &mut args);
+        self.capability_system.invoke(name, args).await
+    }
+
+    /// Like [`Self::invoke_tool`] but with an explicit timeout.
+    pub async fn invoke_tool_with_timeout(
+        &self,
+        name: &str,
+        mut args: std::collections::HashMap<String, apxm_core::types::values::Value>,
+        timeout: std::time::Duration,
+    ) -> Result<apxm_core::types::values::Value, apxm_core::error::RuntimeError> {
+        self.charge_tool_call(name)?;
+        self.inject_tool_credential(name, &mut args);
+        self.capability_system
+            .invoke_with_timeout(name, args, timeout)
+            .await
+    }
+
+    /// Budget-check and increment the per-tool call counter. Fail-closed: an
+    /// exhausted budget denies before the capability executes. A tool with no
+    /// configured budget is unbounded. The counter is shared across child
+    /// contexts, so the bound spans spawned agents and called skills.
+    fn charge_tool_call(&self, name: &str) -> Result<(), apxm_core::error::RuntimeError> {
+        let Some(budgets) = &self.tool_call_budgets else {
+            return Ok(());
+        };
+        let Some(&cap) = budgets.get(name) else {
+            return Ok(());
+        };
+        let mut counts = self
+            .tool_call_counts
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        let used = counts.entry(name.to_string()).or_insert(0);
+        if *used >= cap {
+            return Err(apxm_core::error::RuntimeError::Capability {
+                capability: name.to_string(),
+                message: format!(
+                    "tool call budget exhausted: {used}/{cap} calls for '{name}' in this execution"
+                ),
+            });
+        }
+        *used += 1;
+        Ok(())
+    }
+
+    /// Snapshot of consumed per-tool call counts, for host-side session
+    /// accounting (the per-conversation cap is tracked by the chat host).
+    pub fn tool_call_counts_snapshot(&self) -> std::collections::HashMap<String, usize> {
+        self.tool_call_counts
+            .lock()
+            .map(|m| m.clone())
+            .unwrap_or_default()
+    }
+
     /// Set an execution event emitter.
     pub fn with_event_emitter(mut self, emitter: Option<Arc<dyn ExecutionEventEmitter>>) -> Self {
         self.event_emitter = emitter;
@@ -381,6 +512,9 @@ impl ExecutionContext {
             optimization_target: self.optimization_target,
             metrics_level: self.metrics_level,
             consumed_tokens: Arc::clone(&self.consumed_tokens),
+            tool_call_budgets: self.tool_call_budgets.clone(),
+            tool_call_counts: Arc::clone(&self.tool_call_counts),
+            tool_credentials: self.tool_credentials.clone(),
             warmup_config: self.warmup_config.clone(),
             warmup_metrics: Arc::clone(&self.warmup_metrics),
             event_emitter: self.event_emitter.as_ref().map(Arc::clone),
@@ -686,5 +820,98 @@ mod tests {
 
         assert_eq!(parent.middlewares.len(), 1);
         assert_eq!(child.middlewares.len(), 1);
+    }
+
+    #[tokio::test]
+    async fn tool_call_budget_denies_after_cap_and_is_shared_with_children() {
+        let memory = Arc::new(
+            MemorySystem::new(MemoryConfig::in_memory_ltm())
+                .await
+                .unwrap(),
+        );
+        let llm_registry = Arc::new(LLMRegistry::new());
+        let capability_system = Arc::new(CapabilitySystem::new());
+
+        let budgets = std::collections::HashMap::from([("web.fetch".to_string(), 2usize)]);
+        let parent = ExecutionContext::new(memory, llm_registry, capability_system, Aam::new())
+            .with_tool_call_budgets(Some(budgets));
+
+        // First call consumes 1/2.
+        assert!(parent.charge_tool_call("web.fetch").is_ok());
+
+        // A child shares the SAME counter (Arc), so a spawned-agent / called-skill
+        // fan-out cannot multiply the budget: the child consumes the 2nd unit…
+        let child = parent.child();
+        assert!(child.charge_tool_call("web.fetch").is_ok());
+
+        // …and the 3rd call is denied from either context (fail-closed).
+        assert!(child.charge_tool_call("web.fetch").is_err());
+        assert!(parent.charge_tool_call("web.fetch").is_err());
+
+        // A tool with no configured budget is unbounded.
+        assert!(parent.charge_tool_call("unbudgeted.tool").is_ok());
+        assert!(parent.charge_tool_call("unbudgeted.tool").is_ok());
+
+        // The snapshot reflects exactly the budgeted consumption.
+        assert_eq!(
+            parent.tool_call_counts_snapshot().get("web.fetch").copied(),
+            Some(2)
+        );
+    }
+
+    #[tokio::test]
+    async fn tool_credential_injected_as_authorization_header_unless_present() {
+        use apxm_core::types::values::Value;
+
+        let memory = Arc::new(
+            MemorySystem::new(MemoryConfig::in_memory_ltm())
+                .await
+                .unwrap(),
+        );
+        let creds = std::collections::HashMap::from([(
+            "slack.post".to_string(),
+            "Bearer secret-token".to_string(),
+        )]);
+        let ctx = ExecutionContext::new(
+            memory,
+            Arc::new(LLMRegistry::new()),
+            Arc::new(CapabilitySystem::new()),
+            Aam::new(),
+        )
+        .with_tool_credentials(Some(creds));
+
+        // A bound tool gets its Authorization header injected.
+        let mut args = std::collections::HashMap::new();
+        ctx.inject_tool_credential("slack.post", &mut args);
+        match args.get("headers") {
+            Some(Value::Object(h)) => {
+                assert_eq!(
+                    h.get("Authorization"),
+                    Some(&Value::String("Bearer secret-token".to_string()))
+                );
+            }
+            other => panic!("expected headers object, got {other:?}"),
+        }
+
+        // An explicit, program-supplied credential is never overwritten.
+        let mut existing = std::collections::HashMap::new();
+        let mut headers = std::collections::HashMap::new();
+        headers.insert(
+            "authorization".to_string(),
+            Value::String("Bearer mine".to_string()),
+        );
+        existing.insert("headers".to_string(), Value::Object(headers));
+        ctx.inject_tool_credential("slack.post", &mut existing);
+        if let Some(Value::Object(h)) = existing.get("headers") {
+            assert_eq!(
+                h.get("authorization"),
+                Some(&Value::String("Bearer mine".to_string()))
+            );
+        }
+
+        // An unbound tool is untouched.
+        let mut other = std::collections::HashMap::new();
+        ctx.inject_tool_credential("read", &mut other);
+        assert!(other.get("headers").is_none());
     }
 }

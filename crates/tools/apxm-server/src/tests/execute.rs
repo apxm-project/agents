@@ -357,6 +357,9 @@ fn prepare_request_rejects_client_session_root() {
         session_root: Some(session_root.to_string_lossy().to_string()),
         admit_capabilities: vec![],
         imports: vec![],
+        tool_call_budgets: Default::default(),
+        tool_credentials: Default::default(),
+        owner: None,
     };
 
     let error = prepare_request(request).expect_err("client session_root should be rejected");
@@ -477,6 +480,149 @@ fn inv_tool_air(capability: &str) -> String {
     )
 }
 
+/// A single tool call whose per-tool budget is DECLARED in the AIR (a
+/// `tool_call_budgets` attribute) — exercises the server reading the program's
+/// declaration and the runtime enforcing it (Control 2 / Phase 7).
+fn inv_tool_air_with_declared_budget(capability: &str, limit: usize) -> String {
+    let budget_json = format!("{{\\\"{capability}\\\":{limit}}}");
+    format!(
+        r#"module {{
+  func.func @main() -> !ais.token attributes {{ais.entry}} {{
+    %reg = ais.register_capability "{capability}" {{description = "fixture tool"}} : !ais.token
+    %tool = ais.inv_tool "{capability}" ("{{}}") {{tool_call_budgets = "{budget_json}"}} : !ais.token
+    func.return %tool : !ais.token
+  }}
+}}
+"#
+    )
+}
+
+#[tokio::test]
+async fn tool_call_budget_zero_denies_the_call() {
+    let state = test_state().await;
+    state
+        .runtime
+        .capability_system()
+        .register(Arc::new(FixtureReadCapability::new(FIXTURE_TOOL)))
+        .expect("register fixture capability");
+    let app = build_app(state);
+
+    // A budget of 0 denies even the first call (0 >= 0), unambiguously proving
+    // the request -> metadata -> ctx -> invoke_tool enforcement path.
+    let (status, body) = post_json(
+        app,
+        routes::EXECUTE,
+        serde_json::json!({
+            "air": inv_tool_air(FIXTURE_TOOL),
+            "tool_call_budgets": { FIXTURE_TOOL: 0 },
+        }),
+    )
+    .await;
+
+    assert_ne!(status, StatusCode::OK, "expected budget denial: {body}");
+    assert!(
+        body.to_string().contains("budget exhausted"),
+        "expected budget-exhausted error: {body}"
+    );
+}
+
+#[tokio::test]
+async fn tool_call_budget_allows_call_within_limit_and_reports_count() {
+    let state = test_state().await;
+    state
+        .runtime
+        .capability_system()
+        .register(Arc::new(FixtureReadCapability::new(FIXTURE_TOOL)))
+        .expect("register fixture capability");
+    let app = build_app(state);
+
+    let (status, body) = post_json(
+        app,
+        routes::EXECUTE,
+        serde_json::json!({
+            "air": inv_tool_air(FIXTURE_TOOL),
+            "tool_call_budgets": { FIXTURE_TOOL: 1 },
+        }),
+    )
+    .await;
+
+    assert_eq!(status, StatusCode::OK, "one call within budget 1: {body}");
+    assert_eq!(body["content"], FIXTURE_OUTPUT);
+    // Report-back surfaces the consumed count for host session accounting.
+    assert_eq!(body["tool_call_counts"][FIXTURE_TOOL], 1);
+}
+
+#[tokio::test]
+async fn ask_may_expose_authoring_group_despite_not_read_only() {
+    // Phase 8 workflow-scoped admission: a write-class capability in the
+    // `authoring` group is ALLOWED on an ASK node (exposure), even though a
+    // non-authoring write tool is rejected — execution stays admit-gated. We
+    // assert the request is NOT rejected with the read-only error.
+    let state = test_state().await;
+    state
+        .runtime
+        .capability_system()
+        .register(Arc::new(FixtureGroupedSideEffectCapability::new(
+            FIXTURE_TOOL,
+            "authoring",
+        )))
+        .expect("register grouped authoring fixture capability");
+    let app = build_app(state);
+
+    let (status, body) = post_json(
+        app,
+        routes::EXECUTE,
+        serde_json::json!({
+            "air": ask_air(&grouped_tools_attrs("authoring"))
+        }),
+    )
+    .await;
+
+    // Exposure is permitted: the read-only rejection must NOT fire. (The run may
+    // still fail later for lack of a configured backend; that's fine.)
+    let rejected_read_only = status == StatusCode::BAD_REQUEST
+        && body["error"]
+            .as_str()
+            .unwrap_or_default()
+            .contains(ERROR_NOT_READ_ONLY);
+    assert!(
+        !rejected_read_only,
+        "authoring group should be ASK-exposable: {body}"
+    );
+}
+
+#[tokio::test]
+async fn air_declared_tool_call_budget_is_enforced_by_the_trusted_host() {
+    let state = test_state().await;
+    state
+        .runtime
+        .capability_system()
+        .register(Arc::new(FixtureReadCapability::new(FIXTURE_TOOL)))
+        .expect("register fixture capability");
+    let app = build_app(state);
+
+    // No request budget — the bound (0) is DECLARED in the AIR; the server reads
+    // it and the runtime enforces it.
+    let (status, body) = post_json(
+        app,
+        routes::EXECUTE,
+        serde_json::json!({
+            "air": inv_tool_air_with_declared_budget(FIXTURE_TOOL, 0),
+        }),
+    )
+    .await;
+
+    assert_ne!(
+        status,
+        StatusCode::OK,
+        "expected AIR-declared denial: {body}"
+    );
+    assert!(
+        body.to_string().contains("budget exhausted"),
+        "expected budget-exhausted error from AIR declaration: {body}"
+    );
+}
+
 fn python_handler_inv_tool_air(capability: &str) -> String {
     format!(
         r#"module {{
@@ -531,6 +677,9 @@ fn prepare_request_rejects_unsafe_session_id() {
             session_root: None,
             admit_capabilities: vec![],
             imports: vec![],
+            tool_call_budgets: Default::default(),
+            tool_credentials: Default::default(),
+            owner: None,
         };
 
         let error = prepare_request(request).expect_err("unsafe session id should be rejected");
@@ -552,6 +701,9 @@ fn prepare_request_rejects_session_root_without_session_id() {
         session_root: Some(session_root.to_string_lossy().to_string()),
         admit_capabilities: vec![],
         imports: vec![],
+        tool_call_budgets: Default::default(),
+        tool_credentials: Default::default(),
+        owner: None,
     };
 
     let error = prepare_request(request).expect_err("client session_root should be rejected");
