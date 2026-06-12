@@ -8,6 +8,6 @@ dekk apxm agent test codex
 dekk apxm execute examples/workflows/agent-routing/runtime_agent_routing.air
 ```
 
-The `SPAWN_AGENT` result includes the selected `profile`, `route_source`,
-`route_action`, `route_policy`, `route_reason`, `route_scores`,
-`eligible_profiles`, and `rejected_profiles`.
+The `SPAWN_AGENT` result includes the selected `profile` and route explanation
+metadata. See [processes.md](../../../docs/pxm/processes.md) for the complete
+field list.

@@ -29,6 +29,8 @@ profiles require Node/npm plus the corresponding authenticated agent setup:
 - **negotiation.py** -- Multi-agent negotiation to consensus. `dekk apxm execute examples/python/multi-agent/negotiation.py`
 - **team_coordination.py** -- Team sugar: g.team(), add(), wait_all(), merge(). `dekk apxm execute examples/python/multi-agent/team_coordination.py`
 
+Native AIR companion: `dekk apxm execute examples/workflows/agent-routing/runtime_agent_routing.air`
+
 ## Key API
 
 ```python
@@ -39,8 +41,9 @@ agent = g.spawn("coder", profile=codex, cwd=cwd)
 result = agent.ask("Implement this feature")
 
 # Runtime routing chooses a concrete ACP profile at execution time
-worker = g.spawn(
-    "routed_worker",
+routed_worker = g.spawn_agent(
+    "spawn_routed_worker",
+    agent_name="routed_worker",
     agent_route="auto",
     required_capabilities=["execute"],
     preferred_profiles=["codex"],

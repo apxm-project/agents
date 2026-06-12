@@ -19,7 +19,10 @@ use super::{
     ExecutionContext, Node, Result, Value, get_optional_string_attribute, get_string_attribute,
 };
 use crate::aam::TransitionLabel;
-use crate::agent_router::{AgentRouteDecision, AgentRouteRequest, AgentRouter};
+use crate::agent_router::{
+    AGENT_ROUTE_CAPABILITIES, AGENT_ROUTE_SELECTOR_DETERMINISTIC, AgentRouteDecision,
+    AgentRouteRequest, AgentRouter,
+};
 use crate::constants::env as runtime_env;
 use crate::metadata_keys as metadata;
 use apxm_core::apxm_op;
@@ -41,10 +44,8 @@ pub async fn execute(ctx: &ExecutionContext, node: &Node, _inputs: Vec<Value>) -
         get_optional_string_list_attribute(node, graph_attrs::REQUIRED_CAPABILITIES)?;
     let preferred_profiles =
         get_optional_string_list_attribute(node, graph_attrs::PREFERRED_PROFILES)?;
-    let wants_route = route_mode.is_some()
-        || initial_profile.is_some()
-        || !required_capabilities.is_empty()
-        || !preferred_profiles.is_empty();
+    let wants_route =
+        route_mode.is_some() || !required_capabilities.is_empty() || !preferred_profiles.is_empty();
 
     apxm_op!(info,
         execution_id = %ctx.execution_id,
@@ -288,7 +289,7 @@ pub async fn execute(ctx: &ExecutionContext, node: &Node, _inputs: Vec<Value>) -
             );
             agent_info.insert(
                 response_keys::ROUTE_POLICY.to_string(),
-                Value::String(decision.policy.selector.as_str().to_string()),
+                Value::String(AGENT_ROUTE_SELECTOR_DETERMINISTIC.to_string()),
             );
             agent_info.insert(
                 response_keys::ROUTE_REASON.to_string(),
@@ -502,6 +503,7 @@ async fn resolve_spawn_agent_route(
             });
         }
     }
+    validate_route_capabilities(node, &required_capabilities)?;
 
     let Some(spawner) = ctx.process_table.agent_spawner().await else {
         return Err(RuntimeError::Operation {
@@ -538,6 +540,25 @@ async fn resolve_spawn_agent_route(
             op_type: node.op_type,
             message: "SPAWN_AGENT routing returned no decision".to_string(),
         })
+}
+
+fn validate_route_capabilities(node: &Node, capabilities: &[String]) -> Result<()> {
+    for capability in capabilities {
+        let capability = capability.trim().to_ascii_lowercase();
+        if capability.is_empty() {
+            continue;
+        }
+        if !AGENT_ROUTE_CAPABILITIES.contains(&capability.as_str()) {
+            return Err(RuntimeError::Operation {
+                op_type: node.op_type,
+                message: format!(
+                    "SPAWN_AGENT required_capabilities contains unsupported route capability '{capability}'. Use one of: {}",
+                    AGENT_ROUTE_CAPABILITIES.join(", ")
+                ),
+            });
+        }
+    }
+    Ok(())
 }
 
 fn route_scores_value(decision: &AgentRouteDecision) -> Value {
@@ -993,8 +1014,8 @@ mod tests {
             .await;
         let mut node = make_spawn_node("worker");
         node.attributes.insert(
-            graph_attrs::PROFILE.to_string(),
-            Value::String("fixture-profile".to_string()),
+            graph_attrs::AGENT_ROUTE.to_string(),
+            Value::String("auto".to_string()),
         );
 
         let error = execute(&ctx, &node, vec![])
@@ -1007,6 +1028,45 @@ mod tests {
             }
             other => panic!("unexpected error: {other:?}"),
         }
+    }
+
+    #[tokio::test]
+    async fn spawn_agent_explicit_profile_does_not_require_route_inventory() {
+        let memory = Arc::new(
+            MemorySystem::new(MemoryConfig::in_memory_ltm())
+                .await
+                .unwrap(),
+        );
+        let llm_registry = Arc::new(LLMRegistry::new());
+        let capability_system = Arc::new(CapabilitySystem::new());
+        let ctx = ExecutionContext::new(
+            memory,
+            llm_registry,
+            capability_system,
+            crate::aam::Aam::new(),
+        );
+        ctx.process_table
+            .set_agent_spawner(Arc::new(RoutingTestSpawner {
+                candidates: Vec::new(),
+            }))
+            .await;
+        let mut node = make_spawn_node("worker");
+        node.attributes.insert(
+            graph_attrs::PROFILE.to_string(),
+            Value::String("fixture-profile".to_string()),
+        );
+
+        let value = execute(&ctx, &node, vec![])
+            .await
+            .expect("explicit profile should spawn without route inventory");
+        let Value::Object(obj) = value else {
+            panic!("expected spawn object");
+        };
+        assert_eq!(
+            obj.get(response_keys::PROFILE),
+            Some(&Value::String("fixture-profile".to_string()))
+        );
+        assert!(obj.get(response_keys::ROUTE_SOURCE).is_none());
     }
 
     #[tokio::test]

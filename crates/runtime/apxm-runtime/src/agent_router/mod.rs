@@ -11,6 +11,7 @@ use thiserror::Error;
 /// Abstract capabilities used by APXM agent routing.
 pub const AGENT_ROUTE_CAPABILITIES: &[&str] =
     &["read", "write", "execute", "critique", "workflow_author"];
+pub const AGENT_ROUTE_SELECTOR_DETERMINISTIC: &str = "deterministic";
 
 /// Candidate route discovered by a host from its agent registry.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -29,36 +30,11 @@ pub struct AgentRouteCandidate {
     pub default_model: Option<String>,
 }
 
-/// Runtime operation that needs an agent route decision.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum AgentRouteOperation {
-    SpawnAgent,
-    Communicate,
-    Handoff,
-    Delegate,
-    CallSkill,
-}
-
-/// Ownership semantics for a routed agent operation.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum AgentRouteIntent {
-    SpawnOnly,
-    Message,
-    CallAsTool,
-    TransferOwnership,
-}
-
 /// Concrete runtime action selected for a route request.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum AgentRouteAction {
     Spawn,
-    Send,
-    SpawnThenSend,
-    Handoff,
-    UseExisting,
     Deterministic,
 }
 
@@ -66,71 +42,26 @@ impl AgentRouteAction {
     pub fn as_str(self) -> &'static str {
         match self {
             Self::Spawn => "spawn",
-            Self::Send => "send",
-            Self::SpawnThenSend => "spawn_then_send",
-            Self::Handoff => "handoff",
-            Self::UseExisting => "use_existing",
             Self::Deterministic => "deterministic",
         }
     }
 }
 
-/// Selector used by the runtime route policy.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
-#[serde(rename_all = "snake_case")]
-pub enum AgentRouteSelector {
-    #[default]
-    Deterministic,
-}
-
-impl AgentRouteSelector {
-    pub fn as_str(self) -> &'static str {
-        match self {
-            Self::Deterministic => "deterministic",
-        }
-    }
-}
-
-/// Runtime policy for one route request.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-pub struct AgentRoutePolicy {
-    pub require_agent: bool,
-    pub selector: AgentRouteSelector,
-}
-
-impl AgentRoutePolicy {
-    pub fn deterministic(require_agent: bool) -> Self {
-        Self {
-            require_agent,
-            selector: AgentRouteSelector::Deterministic,
-        }
-    }
-}
-
-/// Capability and preference requirements for an agent route.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
-pub struct AgentRouteRequirements {
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub capabilities: Vec<String>,
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub preferred_profiles: Vec<String>,
-}
-
-/// Runtime-level request for an agent binding.
+/// Runtime-level request for a spawned agent profile binding.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct AgentRouteRequest {
     pub id: String,
-    pub operation: AgentRouteOperation,
-    pub intent: AgentRouteIntent,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub profile: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub mode: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub model: Option<String>,
-    #[serde(default)]
-    pub requirements: AgentRouteRequirements,
-    pub policy: AgentRoutePolicy,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub required_capabilities: Vec<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub preferred_profiles: Vec<String>,
+    pub require_agent: bool,
 }
 
 impl AgentRouteRequest {
@@ -145,16 +76,12 @@ impl AgentRouteRequest {
     ) -> Self {
         Self {
             id,
-            operation: AgentRouteOperation::SpawnAgent,
-            intent: AgentRouteIntent::SpawnOnly,
             profile,
             mode,
             model,
-            requirements: AgentRouteRequirements {
-                capabilities: required_capabilities,
-                preferred_profiles,
-            },
-            policy: AgentRoutePolicy::deterministic(require_agent),
+            required_capabilities,
+            preferred_profiles,
+            require_agent,
         }
     }
 }
@@ -211,8 +138,6 @@ pub struct AgentRouteDecision {
     pub profile: Option<String>,
     pub mode: Option<String>,
     pub model: Option<String>,
-    pub operation: AgentRouteOperation,
-    pub intent: AgentRouteIntent,
     pub action: AgentRouteAction,
     pub source: AgentRouteSource,
     pub required_capabilities: Vec<String>,
@@ -220,7 +145,6 @@ pub struct AgentRouteDecision {
     pub eligible_profiles: Vec<String>,
     pub candidate_scores: Vec<AgentRouteScore>,
     pub rejected_candidates: Vec<AgentRouteRejection>,
-    pub policy: AgentRoutePolicy,
     pub candidate_snapshot_hash: String,
     pub reason: String,
 }
@@ -294,8 +218,8 @@ impl AgentRouter {
         let mut selected_counts = initial_selected_counts.clone();
         let mut decisions = Vec::with_capacity(requests.len());
         for request in requests {
-            let required_capabilities = normalize_capabilities(&request.requirements.capabilities);
-            let preferred_profiles = normalize_profiles(&request.requirements.preferred_profiles);
+            let required_capabilities = normalize_capabilities(&request.required_capabilities);
+            let preferred_profiles = normalize_profiles(&request.preferred_profiles);
             let scores = score_candidates(
                 &normalized_candidates,
                 &required_capabilities,
@@ -331,16 +255,13 @@ impl AgentRouter {
                         .model
                         .clone()
                         .or_else(|| candidate.default_model.clone()),
-                    operation: request.operation,
-                    intent: request.intent,
-                    action: route_action(request, AgentRouteSource::Explicit, true),
+                    action: AgentRouteAction::Spawn,
                     source: AgentRouteSource::Explicit,
                     required_capabilities,
                     preferred_profiles,
                     eligible_profiles: vec![profile.clone()],
                     candidate_scores: scores,
                     rejected_candidates,
-                    policy: request.policy,
                     candidate_snapshot_hash: candidate_snapshot_hash.clone(),
                     reason: "caller supplied an explicit eligible profile".to_string(),
                 });
@@ -349,7 +270,7 @@ impl AgentRouter {
 
             let eligible = matching_candidates(&normalized_candidates, &required_capabilities);
             if eligible.is_empty() {
-                if request.policy.require_agent {
+                if request.require_agent {
                     if self.candidates.is_empty() {
                         return Err(AgentRoutingError::NoCandidates {
                             request_id: request.id.clone(),
@@ -366,8 +287,6 @@ impl AgentRouter {
                     profile: None,
                     mode: request.mode.clone(),
                     model: request.model.clone(),
-                    operation: request.operation,
-                    intent: request.intent,
                     action: AgentRouteAction::Deterministic,
                     source: AgentRouteSource::Deterministic,
                     required_capabilities,
@@ -375,7 +294,6 @@ impl AgentRouter {
                     eligible_profiles: Vec::new(),
                     candidate_scores: scores,
                     rejected_candidates,
-                    policy: request.policy,
                     candidate_snapshot_hash: candidate_snapshot_hash.clone(),
                     reason: "no APXM agent profile matched; deterministic execution allowed"
                         .to_string(),
@@ -411,16 +329,13 @@ impl AgentRouter {
                     .model
                     .clone()
                     .or_else(|| candidate.default_model.clone()),
-                operation: request.operation,
-                intent: request.intent,
-                action: route_action(request, AgentRouteSource::Selected, true),
+                action: AgentRouteAction::Spawn,
                 source: AgentRouteSource::Selected,
                 required_capabilities,
                 preferred_profiles,
                 eligible_profiles,
                 candidate_scores: scores,
                 rejected_candidates,
-                policy: request.policy,
                 candidate_snapshot_hash: candidate_snapshot_hash.clone(),
                 reason: format!(
                     "selected {}eligible profile '{}' with capability fit score {}",
@@ -574,23 +489,6 @@ fn capability_fit_score(candidate: &NormalizedCandidate, required_count: usize) 
     candidate.capabilities.len().saturating_sub(required_count)
 }
 
-fn route_action(
-    request: &AgentRouteRequest,
-    source: AgentRouteSource,
-    has_profile: bool,
-) -> AgentRouteAction {
-    if source == AgentRouteSource::Deterministic || !has_profile {
-        return AgentRouteAction::Deterministic;
-    }
-    match (request.operation, request.intent) {
-        (AgentRouteOperation::SpawnAgent, AgentRouteIntent::SpawnOnly) => AgentRouteAction::Spawn,
-        (AgentRouteOperation::SpawnAgent, _) => AgentRouteAction::SpawnThenSend,
-        (_, AgentRouteIntent::TransferOwnership) => AgentRouteAction::Handoff,
-        (_, AgentRouteIntent::CallAsTool | AgentRouteIntent::Message) => AgentRouteAction::Send,
-        _ => AgentRouteAction::UseExisting,
-    }
-}
-
 fn normalize_capabilities(capabilities: &[String]) -> Vec<String> {
     let mut normalized = capabilities
         .iter()
@@ -701,13 +599,10 @@ mod tests {
             .expect("route request");
 
         let decision = &decisions[0];
-        assert_eq!(decision.operation, AgentRouteOperation::SpawnAgent);
-        assert_eq!(decision.intent, AgentRouteIntent::SpawnOnly);
         assert_eq!(decision.action, AgentRouteAction::Spawn);
         assert_eq!(decision.profile.as_deref(), Some("executor"));
         assert_eq!(decision.mode.as_deref(), Some("code"));
         assert_eq!(decision.model.as_deref(), Some("model-exec"));
-        assert_eq!(decision.policy, AgentRoutePolicy::deterministic(true));
         assert!(decision.candidate_snapshot_hash.starts_with("fnv1a64:"));
         assert_eq!(decision.candidate_scores.len(), 2);
         assert_eq!(decision.rejected_candidates.len(), 1);
@@ -716,32 +611,6 @@ mod tests {
             decision.rejected_candidates[0].missing_capabilities,
             vec!["execute".to_string()]
         );
-    }
-
-    #[test]
-    fn route_requests_keep_handoff_intent_independent_of_goal() {
-        let mut specialist = candidate("specialist", None, None);
-        specialist.capabilities = vec!["critique".to_string()];
-        let router = AgentRouter::new(vec![specialist]);
-
-        let request = AgentRouteRequest {
-            id: "handoff-review".to_string(),
-            operation: AgentRouteOperation::Handoff,
-            intent: AgentRouteIntent::TransferOwnership,
-            profile: None,
-            mode: None,
-            model: None,
-            requirements: AgentRouteRequirements {
-                capabilities: vec!["critique".to_string()],
-                preferred_profiles: Vec::new(),
-            },
-            policy: AgentRoutePolicy::deterministic(true),
-        };
-        let decisions = router.route_requests(&[request]).expect("route handoff");
-
-        assert_eq!(decisions[0].profile.as_deref(), Some("specialist"));
-        assert_eq!(decisions[0].action, AgentRouteAction::Handoff);
-        assert_eq!(decisions[0].source, AgentRouteSource::Selected);
     }
 
     #[test]

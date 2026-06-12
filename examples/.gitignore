@@ -1,5 +1,4 @@
 *.apxmobj
 *.apxmw
-*.air
 __pycache__/
 *.pyc

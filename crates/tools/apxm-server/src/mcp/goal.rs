@@ -26,8 +26,9 @@ use apxm_core::types::{
     OrchestrationWakeOutcome, OrchestrationWorkspaceCleanup, OrchestrationWorkspaceMode,
 };
 use apxm_runtime::{
-    AGENT_ROUTE_CAPABILITIES, AgentRouteCandidate, AgentRouteDecision, AgentRouteRequest,
-    AgentRouteScore, AgentRouteSource, AgentRouter, AgentRoutingError,
+    AGENT_ROUTE_CAPABILITIES, AGENT_ROUTE_SELECTOR_DETERMINISTIC, AgentRouteCandidate,
+    AgentRouteDecision, AgentRouteRequest, AgentRouteScore, AgentRouteSource, AgentRouter,
+    AgentRoutingError,
 };
 use axum::Json;
 use axum::extract::State;
@@ -351,9 +352,19 @@ struct GoalEventsArgs {
 #[derive(Debug, Clone, Serialize)]
 struct GoalSelectionSummary {
     agents: String,
-    candidates: Vec<AgentRouteCandidate>,
+    candidates: Vec<AgentRouteCandidateSummary>,
     workers: Vec<WorkerSelectionSummary>,
     backends: Vec<BackendSelectionSummary>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+struct AgentRouteCandidateSummary {
+    profile: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    description: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    source: Option<String>,
+    capabilities: Vec<String>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -433,6 +444,7 @@ struct WorkerPlan {
     route_action: String,
     route_policy: String,
     route_candidate_snapshot: Option<String>,
+    agent_route: Option<String>,
     profile_source: Option<String>,
     profile_description: Option<String>,
     cwd: PathBuf,
@@ -2288,7 +2300,10 @@ async fn apply_goal_selection(
 
     Ok(Some(GoalSelectionSummary {
         agents: "auto".to_string(),
-        candidates,
+        candidates: candidates
+            .iter()
+            .map(agent_route_candidate_summary)
+            .collect(),
         workers: request
             .workers()
             .iter()
@@ -2303,6 +2318,15 @@ async fn apply_goal_selection(
             .collect(),
         backends: backend_selection_summary(state),
     }))
+}
+
+fn agent_route_candidate_summary(candidate: &AgentRouteCandidate) -> AgentRouteCandidateSummary {
+    AgentRouteCandidateSummary {
+        profile: candidate.profile.clone(),
+        description: candidate.description.clone(),
+        source: candidate.source.clone(),
+        capabilities: candidate.capabilities.clone(),
+    }
 }
 
 fn bind_goal_agent_selection(
@@ -2536,7 +2560,7 @@ fn worker_selection_summary(
                 }
             }),
         route_policy: decision
-            .map(|decision| decision.policy.selector.as_str().to_string())
+            .map(|_| AGENT_ROUTE_SELECTOR_DETERMINISTIC.to_string())
             .unwrap_or_else(|| "disabled".to_string()),
         route_candidate_snapshot: decision.map(|decision| decision.candidate_snapshot_hash.clone()),
         reason: decision
@@ -2828,6 +2852,11 @@ fn build_plan(
             route_action: route.route_action,
             route_policy: route.route_policy,
             route_candidate_snapshot: route.route_candidate_snapshot,
+            agent_route: if route.source == AgentRouteSource::Selected.as_str() {
+                Some("auto".to_string())
+            } else {
+                None
+            },
             profile_source: route.profile_source,
             profile_description: route.profile_description,
             cwd,
@@ -3232,13 +3261,26 @@ fn worker_air(request: &GoalStartArgs, worker: &WorkerPlan) -> Result<String, Ap
 
 fn acp_worker_air(request: &GoalStartArgs, worker: &WorkerPlan) -> Result<String, ApiError> {
     let message = worker_message(request, worker)?;
+    let route_auto = worker.agent_route.as_deref() == Some("auto");
+    let mut preferred_profiles = worker.preferred_profiles.clone();
+    if route_auto {
+        if let Some(profile) = worker.profile.as_ref() {
+            preferred_profiles.retain(|candidate| candidate != profile);
+            preferred_profiles.insert(0, profile.clone());
+        }
+    }
     let spawn_attrs = spawn_attrs(
-        worker.profile.as_deref(),
+        if route_auto {
+            None
+        } else {
+            worker.profile.as_deref()
+        },
+        worker.agent_route.as_deref(),
         Some(&worker.cwd),
         worker.mode.as_deref(),
         worker.model.as_deref(),
         &worker.required_capabilities,
-        &worker.preferred_profiles,
+        &preferred_profiles,
     );
     let protocol = quote_air(CommunicateProtocol::Acp.as_str());
     Ok(format!(
@@ -3283,6 +3325,7 @@ fn gate_air(request: &GoalStartArgs, plan: &GoalPlan) -> Result<String, ApiError
         let cwd = supervisor.cwd.as_deref();
         let attrs = spawn_attrs(
             supervisor.profile.as_deref(),
+            None,
             cwd,
             supervisor.mode.as_deref(),
             supervisor.model.as_deref(),
@@ -3402,6 +3445,7 @@ fn upstream_template(depends_on: &[String]) -> String {
 
 fn spawn_attrs(
     profile: Option<&str>,
+    agent_route: Option<&str>,
     cwd: Option<&Path>,
     mode: Option<&str>,
     model: Option<&str>,
@@ -3411,6 +3455,9 @@ fn spawn_attrs(
     let mut attrs = Vec::new();
     if let Some(profile) = profile {
         attrs.push(format!("profile = {}", quote_air(profile)));
+    }
+    if let Some(agent_route) = agent_route {
+        attrs.push(format!("agent_route = {}", quote_air(agent_route)));
     }
     if !required_capabilities.is_empty() {
         attrs.push(format!(
@@ -4062,7 +4109,10 @@ mod tests {
             .collect::<HashMap<_, _>>();
         let selection = GoalSelectionSummary {
             agents: "auto".to_string(),
-            candidates,
+            candidates: candidates
+                .iter()
+                .map(agent_route_candidate_summary)
+                .collect(),
             workers: request
                 .workers()
                 .iter()
@@ -4089,6 +4139,7 @@ mod tests {
             Some(&selection),
         )
         .expect("plan");
+        let worker_air = worker_air(&request, &plan.workers[0]).expect("worker air");
         let worker = &plan.summary().workers[0];
 
         assert_eq!(worker.route_action, "spawn");
@@ -4106,6 +4157,8 @@ mod tests {
             worker.profile_description.as_deref(),
             Some("Planner profile")
         );
+        assert!(worker_air.contains("agent_route = \"auto\""));
+        assert!(!worker_air.contains("profile ="));
     }
 
     #[test]
@@ -4113,10 +4166,22 @@ mod tests {
         let required = vec!["execute".to_string(), "write".to_string()];
         let preferred = vec!["codex".to_string()];
 
-        let attrs = spawn_attrs(Some("codex"), None, None, None, &required, &preferred);
+        let attrs = spawn_attrs(Some("codex"), None, None, None, None, &required, &preferred);
 
         assert!(attrs.contains("profile = \"codex\""));
         assert!(attrs.contains("required_capabilities = [\"execute\", \"write\"]"));
+        assert!(attrs.contains("preferred_profiles = [\"codex\"]"));
+    }
+
+    #[test]
+    fn spawn_attrs_can_request_runtime_agent_routing() {
+        let required = vec!["execute".to_string()];
+        let preferred = vec!["codex".to_string()];
+
+        let attrs = spawn_attrs(None, Some("auto"), None, None, None, &required, &preferred);
+
+        assert!(!attrs.contains("profile ="));
+        assert!(attrs.contains("agent_route = \"auto\""));
         assert!(attrs.contains("preferred_profiles = [\"codex\"]"));
     }
 }
