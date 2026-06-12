@@ -6,27 +6,27 @@ use serde::{Deserialize, Serialize};
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum OperationCategory {
-    /// Metadata operations: AGENT
+    /// Metadata operations.
     Metadata,
-    /// Memory operations: QMEM, UMEM, UPDATE_GOAL
+    /// Memory operations.
     Memory,
-    /// Reasoning operations: ASK, THINK, REASON, PLAN, REFLECT, VERIFY
+    /// Reasoning operations.
     Reasoning,
-    /// Tool operations: INV_TOOL, EXC, PRINT
+    /// Tool operations.
     Tools,
-    /// Control flow operations: JUMP, BRANCH_ON_VALUE, LOOP_START, LOOP_END, RETURN, SWITCH, FLOW_CALL, GUARD, RESUME
+    /// Control flow operations.
     ControlFlow,
-    /// Synchronization operations: MERGE, FENCE, WAIT_ALL
+    /// Synchronization operations.
     Synchronization,
-    /// Error handling operations: TRY_CATCH, ERR
+    /// Error handling operations.
     ErrorHandling,
-    /// Communication operations: COMMUNICATE, CLAIM, PAUSE
+    /// Communication operations.
     Communication,
-    /// Coordination operations: DELEGATE, NEGOTIATE, SPAWN_AGENT, REGISTER_CAPABILITY, AUTONOMOUS
+    /// Coordination operations.
     Coordination,
-    /// Identity operations: NOP, IDENTITY
+    /// Identity operations.
     Identity,
-    /// Internal operations: CONST_STR, YIELD
+    /// Internal operations.
     Internal,
 }
 

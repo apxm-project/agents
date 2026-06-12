@@ -26,7 +26,7 @@ pub enum AISOperationType {
     /// Agent metadata declaration (memory, beliefs, goals, capabilities).
     Agent,
 
-    // Memory Operations (2)
+    // Memory Operations
     /// Query memory (read from memory system).
     #[serde(rename = "QMEM")]
     QMem,
@@ -34,7 +34,7 @@ pub enum AISOperationType {
     #[serde(rename = "UMEM")]
     UMem,
 
-    // LLM Operations (3) - Compiler markers for critical path analysis
+    // LLM Operations - Compiler markers for critical path analysis
     /// Simple Q&A (no extended thinking) - LOW latency marker.
     Ask,
     /// Extended thinking with budget - HIGH latency marker.
@@ -42,7 +42,7 @@ pub enum AISOperationType {
     /// Structured reasoning with beliefs/goals - MEDIUM latency marker.
     Reason,
 
-    // Planning & Analysis Operations (3)
+    // Planning & Analysis Operations
     /// Planning operation (generate a plan using LLM).
     Plan,
     /// Reflection operation (analyze execution trace).
@@ -50,7 +50,7 @@ pub enum AISOperationType {
     /// Verification operation (fact-check against evidence).
     Verify,
 
-    // Tool Operations (3)
+    // Tool Operations
     /// Invoke a tool/capability (NOT for agents — use SPAWN_AGENT).
     InvTool,
     /// Execute code in sandbox.
@@ -58,7 +58,7 @@ pub enum AISOperationType {
     /// Print output to stdout.
     Print,
 
-    // Control Flow Operations (7)
+    // Control Flow Operations
     /// Unconditional jump to label.
     Jump,
     /// Branch based on value comparison.
@@ -81,7 +81,7 @@ pub enum AISOperationType {
     /// the parent's provenance.
     CallSkill,
 
-    // Synchronization Operations (3)
+    // Synchronization Operations
     /// Merge multiple tokens into one.
     Merge,
     /// Memory fence (synchronization barrier).
@@ -89,13 +89,13 @@ pub enum AISOperationType {
     /// Wait for all input tokens to be ready.
     WaitAll,
 
-    // Error Handling Operations (2)
+    // Error Handling Operations
     /// Try-catch exception handling.
     TryCatch,
     /// Error handler invocation.
     Err,
 
-    // Communication Operations (2)
+    // Communication Operations
     /// Communication between agents.
     Communicate,
     /// Hand off execution from one agent to another with optional state transfer.
@@ -772,7 +772,7 @@ pub static AIS_OPERATIONS: &[OperationSpec] = &[
         produces_output: false,
         emission: EMISSION_VOID_NONE,
     },
-    // ========== Memory Operations (2) ==========
+    // ========== Memory Operations ==========
     OperationSpec {
         op_type: AISOperationType::QMem,
         name: "QueryMemory",
@@ -837,7 +837,7 @@ pub static AIS_OPERATIONS: &[OperationSpec] = &[
             syntactic_keywords: &[],
         },
     },
-    // ========== LLM Operations (3) ==========
+    // ========== LLM Operations ==========
     OperationSpec {
         op_type: AISOperationType::Ask,
         name: "Ask",
@@ -966,7 +966,7 @@ pub static AIS_OPERATIONS: &[OperationSpec] = &[
             syntactic_keywords: &[],
         },
     },
-    // ========== Planning & Analysis Operations (3) ==========
+    // ========== Planning & Analysis Operations ==========
     OperationSpec {
         op_type: AISOperationType::Plan,
         name: "Plan",
@@ -1045,7 +1045,7 @@ pub static AIS_OPERATIONS: &[OperationSpec] = &[
         produces_output: true,
         emission: EMISSION_TOKEN_BRACKETED,
     },
-    // ========== Tool Operations (3) ==========
+    // ========== Tool Operations ==========
     OperationSpec {
         op_type: AISOperationType::InvTool,
         name: "InvokeTool",
@@ -1135,7 +1135,7 @@ pub static AIS_OPERATIONS: &[OperationSpec] = &[
             syntactic_keywords: &[],
         },
     },
-    // ========== Control Flow Operations (7) ==========
+    // ========== Control Flow Operations ==========
     OperationSpec {
         op_type: AISOperationType::Jump,
         name: "Jump",
@@ -1369,7 +1369,7 @@ pub static AIS_OPERATIONS: &[OperationSpec] = &[
             syntactic_keywords: &[],
         },
     },
-    // ========== Synchronization Operations (3) ==========
+    // ========== Synchronization Operations ==========
     OperationSpec {
         op_type: AISOperationType::Merge,
         name: "Merge",
@@ -1435,7 +1435,7 @@ pub static AIS_OPERATIONS: &[OperationSpec] = &[
             syntactic_keywords: &[],
         },
     },
-    // ========== Error Handling Operations (2) ==========
+    // ========== Error Handling Operations ==========
     OperationSpec {
         op_type: AISOperationType::TryCatch,
         name: "TryCatch",
@@ -1478,7 +1478,7 @@ pub static AIS_OPERATIONS: &[OperationSpec] = &[
         produces_output: true,
         emission: EMISSION_TOKEN_BRACKETED,
     },
-    // ========== Communication Operations (1) ==========
+    // ========== Communication Operations ==========
     OperationSpec {
         op_type: AISOperationType::Communicate,
         name: "Communicate",
@@ -1762,7 +1762,7 @@ pub static AIS_OPERATIONS: &[OperationSpec] = &[
         produces_output: true,
         emission: EMISSION_NEGOTIATE,
     },
-    // ========== Identity Operations (2) ==========
+    // ========== Identity Operations ==========
     OperationSpec {
         op_type: AISOperationType::Nop,
         name: "Nop",
@@ -1795,7 +1795,7 @@ pub static AIS_OPERATIONS: &[OperationSpec] = &[
         produces_output: true,
         emission: EMISSION_TOKEN_BRACKETED,
     },
-    // ========== Self-Organization Operations (2) ==========
+    // ========== Self-Organization Operations ==========
     OperationSpec {
         op_type: AISOperationType::SpawnAgent,
         name: "SpawnAgent",
@@ -2059,7 +2059,7 @@ pub static AIS_OPERATIONS: &[OperationSpec] = &[
             syntactic_keywords: &[],
         },
     },
-    // ========== Internal Operations (2) ==========
+    // ========== Internal Operations ==========
     OperationSpec {
         op_type: AISOperationType::ConstStr,
         name: "ConstStr",
