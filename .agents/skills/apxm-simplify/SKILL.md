@@ -48,24 +48,19 @@ premature abstraction.
 If the change spans subsystems (compiler + runtime + zoo), ask
 whether two smaller PRs would be more reviewable.
 
-### 7. No referential comments
+### 7. Comments follow the comment rule
 
-Per `feedback_no_referential_comments`: no `// for plan04`,
-`// from issue #123`, `// per the user's request`, `// added by
-apxm-execute-plan`, or `// see X.md`. The commit message owns "why
-now" and "by whom".
+Comments must match `_shared/apxm-comment-rules.md`: default to none,
+justify *why* not *what*, and no referential comments (no `// for
+plan04`, `// from issue #123`, `// see X.md`, ticket refs). Strip any
+that crept in — the commit message owns "why now" and "by whom".
 
-### 8. Comment discipline
-
-Default to no comments. Only justify *why*, never *what*. If the
-identifier name is good, a comment usually isn't needed.
-
-### 9. `.agents.json` contract
+### 8. `.agents.json` contract
 
 If the change adds or changes any skill, run
 `dekk apxm skills status` to confirm generated agent surfaces resolve.
 
-### 10. Generated artifact placement
+### 9. Generated artifact placement
 
 Confirm any new artifact path is under `.apxm/`. See
 `_shared/apxm-evaluation-rules.md`.

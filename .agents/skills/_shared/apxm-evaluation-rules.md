@@ -39,6 +39,7 @@ A run is *claim-bearing* if its output backs:
 - A claim card under `docs/claims/`.
 - A benchmark number cited in a PR description, README, or `docs/`.
 - A "X is faster than Y" / "X matches Y in quality" assertion.
+- Any external write-up consuming this harness's evidence.
 
 Claim-bearing runs require **all** of:
 

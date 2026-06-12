@@ -6,7 +6,9 @@ user-invocable: true
 
 # APXM Goal Orchestrator
 
-Load `_shared/apxm-development-rules.md` before broad work.
+Load `_shared/apxm-development-rules.md` before broad work. When the goal
+authors or edits a self-hosted dev workflow, also load
+`_shared/apxm-self-host-rules.md`.
 
 Use this skill when a human or agent wants APXM to own a complex goal instead
 of manually prompting subagents. `goal_start` can create bounded worker workflows

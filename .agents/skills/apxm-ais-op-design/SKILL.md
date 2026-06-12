@@ -78,6 +78,13 @@ dekk apxm ops list | grep <new-op>
 - No referential comments in the `.td` ("for plan04", "added by
   task #N"). See `_shared/apxm-agent-operating-rules.md`.
 
+## Self-hosted workflow
+
+Once the design is settled, APXM can run the add-op procedure itself:
+`dekk apxm execute examples/python/self-hosted/add_op.py` (architect →
+parallel compiler/runtime impl → reviewer). Execute it, then verify the
+result against this skill's rules. See `_shared/apxm-self-host-rules.md`.
+
 ## Anti-patterns
 
 - Adding an op for "future flexibility" with no current consumer.

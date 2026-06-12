@@ -6,6 +6,9 @@ user-invocable: true
 
 # APXM Execute Plan
 
+Load `_shared/apxm-development-rules.md` before broad work (it points at
+the comment and test rules).
+
 Execute against an approved plan with disciplined progress and no scope
 creep. Invoke only after `apxm-plan` and an explicit user approval.
 

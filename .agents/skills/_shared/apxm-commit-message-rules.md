@@ -18,10 +18,11 @@ file is the spec.
 ## Allowed types
 
 `feat`, `fix`, `perf`, `refactor`, `docs`, `test`, `chore`, `bench`,
-`eval`, `prereg`.
+`eval`, `prereg`, `sec`, `style`.
 
-Exactly these. Deprecated spellings the lint will reject with a
-suggestion:
+`sec` is for security fixes/hardening; `style` is for formatting-only
+changes (e.g. `cargo fmt`). Exactly these. Deprecated spellings the lint
+will reject with a suggestion:
 
 - `pre-reg`, `preregister`, `preregistration` → `prereg`
 - `Add …`, `Update …`, `Harden …` (no type prefix) → `<type>(<scope>): …`
@@ -89,5 +90,9 @@ Right: `prereg(plan09): J/req cell — telecom N=20`.
 
 ## Enforcement
 
-Run `dekk apxm commit-lint <message-file>` before committing. If the
-lint blocks a message, fix the message and re-run the lint.
+`dekk apxm commit-lint` is the gate (`<message-file>`, `--current` for
+HEAD, or `--range A..B` for a series). The `apxm-commit` skill runs it on
+the drafted message as a **blocking** step before every commit — this is
+what catches the banned AI-attribution trailers and untyped subjects. If
+the lint blocks a message, fix the message — never `--no-verify`, never
+bypass.

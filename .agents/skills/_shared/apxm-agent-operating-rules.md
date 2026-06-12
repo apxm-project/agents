@@ -6,14 +6,17 @@ project conventions and skill defaults.
 
 ## Commit & push discipline
 
-- **Auto-commit is allowed.** When work is at a clean stopping point
-  (apxm-finish gate passed, message drafted in repo style), commit
-  without an extra approval round-trip.
-- **Push directly to a feature branch is allowed by default** once the
-  local commit is sound. No PR step is required unless the user asks.
-- **Push to `main` only when explicitly authorized by the user.**
+- **No auto-commits.** Always ask for explicit user approval before
+  every `git commit`, even if the user said "commit this" in a previous
+  turn. Approval is per-action, not per-session.
+- **No push without explicit approval.** The user must explicitly ask
+  for the push.
+- **No push to `main`.** Always push to a feature branch; PRs are how
+  pushed work reaches `main`.
 - **No `git push --force`** anywhere. Even on a feature branch, ask
   first.
+- **No `--no-verify`.** If a hook fails, fix the root cause; never
+  re-stage and bypass.
 - **Do not skip commit/release checks.** Run the relevant `dekk apxm`
   gate and fix the root cause when it fails.
 - **No `git commit --amend`** on pushed commits. New commit instead.
@@ -40,10 +43,8 @@ project conventions and skill defaults.
 
 ## Code style (operating discipline)
 
-- Default to no comments; only justify *why*, never *what*.
-- **No referential comments**: never reference plans, tickets, prior
-  conversations, or "fix for X" in code. The commit message and PR
-  description own that context.
+- **Comments**: see `_shared/apxm-comment-rules.md` — default to no
+  comments, justify *why* not *what*, no referential comments.
 - Promote contract strings (env-var names, route paths, response
   markers) to constants. The `metrics_keys::*` and `graph_attrs::*`
   modules are the source of truth.

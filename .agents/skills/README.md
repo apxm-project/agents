@@ -47,12 +47,31 @@ skills live in the companion repo `apxm-project/apxm-eval`.
 
 ## Shared rules
 
-- `_shared/apxm-agent-operating-rules.md` — commit & push discipline,
-  Slurm safety, secrets, no referential comments.
-- `_shared/apxm-development-rules.md` — authority CLI, build env,
-  ownership, codegen cadence, reuse-first.
+`.agents/skills/_shared/` here is the **canonical source** for shared
+rules. The cross-repo subset is mirrored byte-for-byte into
+`apxm-eval/.agents/skills/_shared/`; the rest are repo-local.
+
+Synced across apxm and apxm-eval (edit here, copy to eval):
+
+- `_shared/apxm-agent-operating-rules.md` — commit & push discipline
+  (no auto-commit, no push without approval), Slurm safety, secrets.
+- `_shared/apxm-commit-message-rules.md` — type/scope/subject format,
+  banned trailers, `dekk apxm commit-lint` enforcement.
+- `_shared/apxm-comment-rules.md` — per-language comment conventions.
+- `_shared/apxm-test-rules.md` — test authoring (placement, what to pin).
+- `_shared/apxm-evaluation-rules.md` — claim-bearing-run discipline.
+- `_shared/apxm-preregistration-rules.md` — preregistration discipline.
 - `_shared/apxm-storage-layout-rules.md` — `/home` is shared WekaFS,
   config-resolver first-wins, HF cache deletion.
+
+Repo-local (not synced):
+
+- `_shared/apxm-development-rules.md` — authority CLI, build env,
+  ownership, codegen cadence, reuse-first. (apxm only)
+- `_shared/apxm-self-host-rules.md` — contract for self-hosted dev
+  workflows (APXM builds itself). (apxm only)
+- `apxm-eval/.agents/skills/_shared/apxm-no-legacy-rules.md` — eval-only
+  no-legacy lint discipline. (apxm-eval only)
 
 ## How to add a skill
 

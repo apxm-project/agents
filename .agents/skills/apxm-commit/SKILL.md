@@ -23,11 +23,12 @@ any commit or push. Both are non-negotiable.
 5. **Confirm no unrelated changes staged**. Unstage with
    `git reset HEAD -- <path>` if needed.
 6. **Draft the commit message** per `_shared/apxm-commit-message-rules.md`.
-   Allowed types: `feat fix perf refactor docs test chore bench eval prereg`.
-   `planNN` scope is valid only for `prereg(...)` / `eval(...)`.
-7. **Lint the draft**:
+   Allowed types: `feat fix perf refactor docs test chore bench eval prereg sec style`.
+   `planNN` scope is valid only for `prereg(...)` / `eval(...)`. No
+   AI-attribution trailers (`Co-Authored-By: Claude`, `Generated with …`).
+7. **Lint the draft (blocking, always)**:
    `echo "<message>" > /tmp/apxm-commit-msg && dekk apxm commit-lint /tmp/apxm-commit-msg`.
-   Fix any finding before proceeding.
+   Fix every finding before proceeding — never bypass.
 8. **Commit** with a HEREDOC:
    ```bash
    git commit -m "$(cat <<'EOF'
@@ -39,10 +40,11 @@ any commit or push. Both are non-negotiable.
    ```
 9. **If commit creation fails**: fix the underlying issue, re-stage,
    re-run the relevant Dekk check, then create a new commit.
-10. **If pushing**: push to `main` only when explicitly authorized by
-    the user; otherwise push the current feature branch with
-    `git push -u origin <branch>` (first push) or `git push`.
-    Never `--force` without explicit user request.
+10. **Pushing requires explicit approval.** Do not push as part of
+    committing. Push only when the user explicitly asks; then push the
+    current feature branch (`git push -u origin <branch>` first time,
+    else `git push`). Push to `main` only with explicit authorization.
+    Never `--force`.
 
 ## Out of scope
 
@@ -51,11 +53,11 @@ any commit or push. Both are non-negotiable.
 
 ## Anti-patterns
 
-- `git add -A` / `git add .`. Always name files.
-- `git commit --amend` on a pushed commit.
-- Skipping `dekk apxm commit-lint` for a non-trivial message.
-- Pushing to `main` without explicit user authorization.
-- `git push --force` without explicit approval.
+See `_shared/apxm-agent-operating-rules.md` for the git list (no
+`git add -A`, no `--amend` on pushed commits, no push to `main` or
+`--force` without approval). Skill-specific: never skip
+`dekk apxm commit-lint`; never leave an AI-attribution trailer in the
+message.
 
 ## Prerequisite gates
 

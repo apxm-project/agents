@@ -1,7 +1,8 @@
 # Shared rule — APXM development rules
 
 Load before any session that will edit code, run builds, run tests, or
-configure backends.
+configure backends. When writing code load `_shared/apxm-comment-rules.md`;
+when writing tests load `_shared/apxm-test-rules.md`.
 
 ## Authority CLI
 
