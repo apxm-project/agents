@@ -1,5 +1,6 @@
 ---
 name: apxm-compile-and-execute
+group: Domain
 description: Use when compiling APXM AIR workflows, running .apxmobj artifacts, or executing AIR/IR through the runtime. Enforces dekk apxm as the authority CLI and correct artifact placement under .apxm/.
 user-invocable: true
 ---

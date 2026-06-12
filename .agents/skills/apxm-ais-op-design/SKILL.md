@@ -1,5 +1,6 @@
 ---
 name: apxm-ais-op-design
+group: Domain
 description: Use before adding or modifying an AIS op in apxm-core. Enforces the design-before-code gate, the canonical-attribute rule, the definitions.rs source-of-truth layer map, and the build-dialect + codegen cadence.
 user-invocable: true
 ---

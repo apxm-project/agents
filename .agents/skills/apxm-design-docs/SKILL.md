@@ -1,5 +1,6 @@
 ---
 name: apxm-design-docs
+group: Domain
 description: Use when editing conceptual docs under docs/design/. Gates two shipped failure modes — overclaim (present-tense prose about unwired behaviour) and citation drift (claims with no anchor to shipped code).
 user-invocable: true
 ---

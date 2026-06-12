@@ -1,5 +1,6 @@
 ---
 name: apxm-mcp-server
+group: Domain
 description: Use when working on APXM MCP surfaces: the Rust HTTP `/v1/mcp` endpoint, the Rust stdio `apxm-mcp-server` binary, or cross-agent MCP registration. Prefer server-owned HTTP MCP for workflow/orchestration control.
 user-invocable: true
 ---

@@ -1,5 +1,6 @@
 ---
 name: apxm-fork-vllm-rebase
+group: Domain
 description: Use when rebasing the external/vllm fork onto a new upstream tag, cherry-picking APXM commits, or resolving conflicts in the fork. Covers the G1 build/smoke gate.
 user-invocable: true
 ---

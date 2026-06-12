@@ -1,5 +1,6 @@
 ---
 name: apxm-model-zoo-operate
+group: Domain
 description: Use when adding, scaling, or probing models in the vLLM zoo (deploy/vllm/zoo*.toml). Enforces docker-load then cache-warm then zoo-apply then service-exec/status; use the zoo surface only.
 user-invocable: true
 ---

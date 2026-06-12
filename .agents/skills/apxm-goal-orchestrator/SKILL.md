@@ -1,5 +1,6 @@
 ---
 name: apxm-goal-orchestrator
+group: Orchestration
 description: Use when an agent should turn a complex APXM goal into a bounded worker workflow, execute it through APXM, wait on goal events/status, and synthesize verified artifacts. Covers `dekk apxm goal`, `goal_start`, `goal_*`, workflow drill-down, and `prompt_as_workflow` selection.
 user-invocable: true
 ---

@@ -1,5 +1,6 @@
 ---
 name: apxm-backend-add
+group: Domain
 description: Use when registering a new APXM inference backend (cloud, on-prem, or local). Enforces hard-fail-at-config-time resolver behavior.
 user-invocable: true
 ---

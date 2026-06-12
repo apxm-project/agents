@@ -1,5 +1,6 @@
 ---
 name: apxm-finish
+group: Lifecycle
 description: Pre-claim gate — runs focused dekk apxm test, doctor, release checks when relevant, secrets scan, and artifact-placement check before any claim of completion. Refuses to claim done until all pass.
 user-invocable: true
 ---

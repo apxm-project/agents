@@ -1,5 +1,6 @@
 ---
 name: apxm-mlir-pass-development
+group: Domain
 description: Use when adding, modifying, or reordering MLIR passes in the APXM compiler pipeline. Enforces the single pass-list source of truth, the AIS-core ownership rule, and the build-dialect + codegen cadence after .td edits.
 user-invocable: true
 ---

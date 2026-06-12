@@ -1,5 +1,6 @@
 ---
 name: apxm-execute-plan
+group: Lifecycle
 description: Drive an APXM plan to completion without scope creep. Tracks phases with the harness's task tracker, runs focused per-phase verification, refuses to add features beyond the plan, and surfaces blockers immediately. Invoke only after apxm-plan produces an approved plan.
 user-invocable: true
 ---

@@ -1,5 +1,6 @@
 ---
 name: apxm-plan
+group: Lifecycle
 description: Produce a written plan before non-trivial APXM implementation. Required for changes touching >3 files, modifying a public API or AIS op, or needing Slurm GPU allocation. Enforces APXM-specific gates (AIS-op-vs-compose decision, dialect-codegen impact).
 user-invocable: true
 ---

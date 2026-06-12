@@ -1,5 +1,6 @@
 ---
 name: apxm-context
+group: Lifecycle
 description: Prime an APXM session before broad work — runs doctor, reads project.md and the relevant _shared rules, surfaces subsystem ownership, and recalls APXM memory. Run at the start of any session that will touch >1 file or any non-trivial change.
 user-invocable: true
 ---

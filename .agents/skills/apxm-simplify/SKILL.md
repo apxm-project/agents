@@ -1,5 +1,6 @@
 ---
 name: apxm-simplify
+group: Lifecycle
 description: Pre-finish review pass — remove copied _shared text, weak abstractions, referential comments, and over-large skill bodies before claiming completion. Mandatory before apxm-finish and any commit.
 user-invocable: true
 ---

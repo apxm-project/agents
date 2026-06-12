@@ -1,5 +1,6 @@
 ---
 name: apxm-commit
+group: Lifecycle
 description: Commit gate — runs apxm-simplify + apxm-finish first, drafts message in repo log style, lints it with dekk apxm commit-lint, commits at a clean stopping point, and pushes only when authorized. Never --force. Does not open PRs.
 user-invocable: true
 ---
