@@ -499,6 +499,11 @@ pub struct OperationRouteConfig {
     pub backend: Option<String>,
     /// Preferred model or model alias for this operation.
     pub model: Option<String>,
+    /// Optional optimization target for this operation: `cost`, `latency`,
+    /// `quality`, or `balanced` (default). Drives price/capability-aware
+    /// model selection when no explicit backend/model is pinned.
+    #[serde(default)]
+    pub target: Option<String>,
 }
 
 /// Named model alias with an optional preferred backend binding.

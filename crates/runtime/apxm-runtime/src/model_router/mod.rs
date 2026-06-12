@@ -38,14 +38,22 @@ pub use rate_limit::{RateLimitConfig, RateLimitConfigError, RateLimitError};
 pub use registry::{ModelEntry, ModelRegistry, RoutingConfig};
 
 use self::rate_limit::{RateLimiter, SystemClock};
-use apxm_backends::{LLMRegistry, LLMRequest, LLMResponse};
+use apxm_backends::{ContentPart, LLMRegistry, LLMRequest, LLMResponse};
 use apxm_core::types::AISOperationType;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use std::time::Duration;
 
+/// Default assumed output-token budget when a request does not set
+/// `max_tokens`, used for context-fit and cost estimation.
+const DEFAULT_OUTPUT_TOKENS: usize = 1024;
+
 /// Optimization target that influences model selection.
+///
+/// Serialized in `snake_case` ("cost", "latency", "quality", "balanced") so it
+/// reads naturally in `models.toml`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "snake_case")]
 pub enum RoutingTarget {
     /// Optimize for cost (prefer cheapest models).
     Cost,
@@ -112,6 +120,81 @@ pub struct RoutingDecision {
     pub was_failover: bool,
 }
 
+/// Hard constraints derived from a request, used to prune the candidate pool
+/// before ranking by [`RoutingTarget`].
+///
+/// Every field is read from a concrete `LLMRequest` field (no inference):
+/// `needs_tools` ← `request.tools`, `needs_json` ← `request.output_schema`,
+/// `needs_thinking` ← `enable_thinking`/`thinking_token_budget`,
+/// `needs_vision` ← an image content part in `messages`, `needs_local` ← a
+/// truthy `metadata["require_local"]`.
+#[derive(Debug, Clone, Default)]
+struct RoutingRequirements {
+    /// Estimated input tokens (prompt + system + message text).
+    est_input: usize,
+    /// Estimated output tokens (`max_tokens` or [`DEFAULT_OUTPUT_TOKENS`]).
+    est_output: usize,
+    needs_tools: bool,
+    needs_json: bool,
+    needs_thinking: bool,
+    needs_vision: bool,
+    needs_local: bool,
+}
+
+impl RoutingRequirements {
+    fn from_request(request: &LLMRequest) -> Self {
+        RoutingRequirements {
+            est_input: estimate_input_tokens(request),
+            est_output: request.max_tokens.unwrap_or(DEFAULT_OUTPUT_TOKENS),
+            needs_tools: request.tools.as_ref().is_some_and(|t| !t.is_empty()),
+            needs_json: request.output_schema.is_some(),
+            needs_thinking: request.enable_thinking == Some(true)
+                || request.thinking_token_budget.is_some(),
+            needs_vision: request_needs_vision(request),
+            needs_local: request
+                .metadata
+                .get("require_local")
+                .and_then(|v| v.as_bool())
+                .unwrap_or(false),
+        }
+    }
+
+    /// Returns true if `entry` satisfies every hard constraint.
+    fn satisfied_by(&self, entry: &ModelEntry) -> bool {
+        entry.fits_context(self.est_input, self.est_output)
+            && (!self.needs_tools || entry.supports_tools)
+            && (!self.needs_json || entry.supports_json)
+            && (!self.needs_thinking || entry.supports_thinking)
+            && (!self.needs_vision || entry.supports_vision)
+            && (!self.needs_local || entry.local)
+    }
+}
+
+/// Rough token estimate from request text (≈4 chars/token). Deliberately
+/// cheap and provider-agnostic; only relative magnitude matters for routing.
+fn estimate_input_tokens(request: &LLMRequest) -> usize {
+    let mut chars = request.prompt.len();
+    if let Some(system) = &request.system_prompt {
+        chars += system.len();
+    }
+    for message in &request.messages {
+        for part in &message.content {
+            if let ContentPart::Text { text } = part {
+                chars += text.len();
+            }
+        }
+    }
+    (chars / 4).max(1)
+}
+
+/// True if any message carries an image content part (vision required).
+fn request_needs_vision(request: &LLMRequest) -> bool {
+    request
+        .messages
+        .iter()
+        .any(|m| m.content.iter().any(|p| matches!(p, ContentPart::Image { .. })))
+}
+
 /// The ModelRouter — dynamic model and backend selector.
 ///
 /// Wraps `LLMRegistry` + `ModelRegistry` + `CircuitBreakerRegistry` to provide
@@ -145,8 +228,28 @@ impl ModelRouter {
     ) -> anyhow::Result<Self> {
         let circuit_breakers =
             Arc::new(CircuitBreakerRegistry::new(config.circuit_breaker.clone()));
-        for name in llm_registry.backend_names() {
-            circuit_breakers.register(&name);
+        let known_backends: std::collections::HashSet<String> =
+            llm_registry.backend_names().into_iter().collect();
+        for name in &known_backends {
+            circuit_breakers.register(name);
+        }
+
+        // Reconciliation: warn about price-table rows that reference a backend
+        // no `LLMRegistry` knows about. Such a model can never be routed (its
+        // breaker is never registered, so `is_available` will never pass via
+        // the table), and today this divergence is otherwise silent until
+        // dispatch. Skip the warning when no backends are registered (the
+        // common case in unit tests that wire breakers up by hand).
+        if !known_backends.is_empty() {
+            for entry in model_registry.list() {
+                if !known_backends.contains(&entry.backend) {
+                    tracing::warn!(
+                        model = %entry.name,
+                        backend = %entry.backend,
+                        "models.toml references an unregistered backend; this model can never be routed"
+                    );
+                }
+            }
         }
 
         let rate_limiter = Arc::new(RateLimiter::new(config.rate_limit.clone().unwrap_or(
@@ -223,12 +326,29 @@ impl ModelRouter {
             }
         }
 
-        // 4. Tag-based routing from RoutingConfig.
+        // 4. Policy-driven selection from the price/capability table.
+        //
+        // Effective target precedence: per-operation policy → `[routing]
+        // target` in models.toml → global `ModelRouterConfig.target`.
         let routing = self.model_registry.routing();
-        for tag in &routing.prefer_tags {
-            if let Some(decision) = self.find_by_tag(tag) {
-                return Ok(decision);
+        let target = op_policy
+            .as_ref()
+            .map(|p| p.target)
+            .or(routing.target)
+            .unwrap_or(self.config.target);
+
+        if target == RoutingTarget::Balanced {
+            // Balanced preserves the legacy tag-preference behaviour.
+            for tag in &routing.prefer_tags {
+                if let Some(decision) = self.find_by_tag(tag) {
+                    return Ok(decision);
+                }
             }
+        } else if let Some(decision) = self.select_from_table(request, target) {
+            // Cost / Quality / Latency rank the feasible pool. A `None` here
+            // means no candidate satisfied the hard constraints, so we fall
+            // through to default / first-available routing below.
+            return Ok(decision);
         }
 
         // 5. Default model/backend from ModelRegistry config.
@@ -436,6 +556,69 @@ impl ModelRouter {
         }
         None
     }
+
+    /// Price/capability-aware selection: prune the pool to the candidates that
+    /// satisfy the request's hard constraints (context fit, required
+    /// capabilities, breaker availability), then rank the survivors by
+    /// `target`. Returns `None` when no candidate is feasible, letting the
+    /// caller fall through to default / first-available routing.
+    ///
+    /// This is a deterministic rule over a static table — every input is a
+    /// config column or current breaker state, not a learned signal. Results
+    /// are reproducible: candidates are sorted by name so ties resolve
+    /// identically across runs.
+    fn select_from_table(
+        &self,
+        request: &LLMRequest,
+        target: RoutingTarget,
+    ) -> Option<RoutingDecision> {
+        let reqs = RoutingRequirements::from_request(request);
+
+        let mut feasible: Vec<ModelEntry> = self
+            .model_registry
+            .list()
+            .into_iter()
+            .filter(|m| self.circuit_breakers.is_available(&m.backend))
+            .filter(|m| reqs.satisfied_by(m))
+            .collect();
+
+        if feasible.is_empty() {
+            return None;
+        }
+
+        // Deterministic ordering so equal-keyed candidates break ties by name.
+        feasible.sort_by(|a, b| a.name.cmp(&b.name));
+
+        let chosen = match target {
+            // Cheapest at the request's operating point.
+            RoutingTarget::Cost => feasible.iter().min_by(|a, b| {
+                let ca = a.estimate_cost(reqs.est_input, reqs.est_output);
+                let cb = b.estimate_cost(reqs.est_input, reqs.est_output);
+                ca.partial_cmp(&cb).unwrap_or(std::cmp::Ordering::Equal)
+            }),
+            // Strongest operator-supplied quality prior (first on ties).
+            RoutingTarget::Quality => {
+                feasible.iter().min_by_key(|m| std::cmp::Reverse(m.quality_tier))
+            }
+            // No live latency signal exists yet (the EWMA latency profile is
+            // unwired), so Latency uses the same cost-minimizing proxy as Cost
+            // rather than pretending to rank by speed.
+            RoutingTarget::Latency => feasible.iter().min_by(|a, b| {
+                let ca = a.estimate_cost(reqs.est_input, reqs.est_output);
+                let cb = b.estimate_cost(reqs.est_input, reqs.est_output);
+                ca.partial_cmp(&cb).unwrap_or(std::cmp::Ordering::Equal)
+            }),
+            // Balanced is handled by the caller (tag preference); never reaches
+            // here, but map it to the first candidate defensively.
+            RoutingTarget::Balanced => feasible.first(),
+        }?;
+
+        Some(RoutingDecision {
+            backend: chosen.backend.clone(),
+            model: Some(chosen.name.clone()),
+            was_failover: false,
+        })
+    }
 }
 
 #[cfg(test)]
@@ -498,6 +681,7 @@ mod tests {
             tags: vec!["fast".to_string()],
             supports_thinking: false,
             max_output_tokens: None,
+            ..Default::default()
         });
 
         let router = ModelRouter::with_model_registry(
@@ -529,6 +713,7 @@ mod tests {
             tags: vec!["primary".to_string()],
             supports_thinking: false,
             max_output_tokens: None,
+            ..Default::default()
         });
 
         let config = ModelRouterConfig {
@@ -760,5 +945,296 @@ mod tests {
                 .await
                 .is_ok()
         );
+    }
+
+    // ── price/capability table routing ──────────────────────────────────
+
+    use apxm_backends::{Message, Role};
+    use std::io::Write as _;
+
+    /// Build a router over the given entries with `target` as the global
+    /// routing target, registering a circuit breaker per backend.
+    fn table_router(entries: Vec<ModelEntry>, target: RoutingTarget) -> ModelRouter {
+        let llm_registry = Arc::new(LLMRegistry::new());
+        let model_registry = Arc::new(ModelRegistry::new());
+        for e in &entries {
+            model_registry.register(e.clone());
+        }
+        let config = ModelRouterConfig {
+            target,
+            ..Default::default()
+        };
+        let router =
+            ModelRouter::with_model_registry(llm_registry, model_registry, config).unwrap();
+        for e in &entries {
+            router.circuit_breakers.register(&e.backend);
+        }
+        router
+    }
+
+    fn router_from_toml(toml: &str) -> ModelRouter {
+        let llm_registry = Arc::new(LLMRegistry::new());
+        let model_registry = Arc::new(ModelRegistry::new());
+        let mut tmp = tempfile::NamedTempFile::new().unwrap();
+        tmp.write_all(toml.as_bytes()).unwrap();
+        model_registry.load_from_path(tmp.path()).unwrap();
+        let router = ModelRouter::with_model_registry(
+            llm_registry,
+            model_registry,
+            ModelRouterConfig::default(),
+        )
+        .unwrap();
+        for e in router.model_registry.list() {
+            router.circuit_breakers.register(&e.backend);
+        }
+        router
+    }
+
+    #[test]
+    fn test_table_cost_picks_cheapest_feasible() {
+        let entries = vec![
+            ModelEntry {
+                name: "pricey".into(),
+                backend: "b1".into(),
+                cost_per_1k_input: 0.01,
+                cost_per_1k_output: 0.03,
+                context_window: 200_000,
+                quality_tier: 9,
+                ..Default::default()
+            },
+            ModelEntry {
+                name: "cheap".into(),
+                backend: "b2".into(),
+                cost_per_1k_input: 0.0001,
+                cost_per_1k_output: 0.0003,
+                context_window: 200_000,
+                quality_tier: 1,
+                ..Default::default()
+            },
+        ];
+        let router = table_router(entries, RoutingTarget::Cost);
+        let decision = router.select(&LLMRequest::new("hello")).unwrap();
+        assert_eq!(decision.model.as_deref(), Some("cheap"));
+        assert_eq!(decision.backend, "b2");
+    }
+
+    #[test]
+    fn test_table_quality_picks_highest_tier() {
+        let entries = vec![
+            ModelEntry {
+                name: "pricey".into(),
+                backend: "b1".into(),
+                cost_per_1k_output: 0.03,
+                context_window: 200_000,
+                quality_tier: 9,
+                ..Default::default()
+            },
+            ModelEntry {
+                name: "cheap".into(),
+                backend: "b2".into(),
+                cost_per_1k_output: 0.0003,
+                context_window: 200_000,
+                quality_tier: 1,
+                ..Default::default()
+            },
+        ];
+        let router = table_router(entries, RoutingTarget::Quality);
+        let decision = router.select(&LLMRequest::new("hello")).unwrap();
+        assert_eq!(decision.model.as_deref(), Some("pricey"));
+    }
+
+    #[test]
+    fn test_capability_filter_excludes_incapable() {
+        // Cost target, but the cheapest model lacks JSON support and must be
+        // filtered out when the request demands structured output.
+        let entries = vec![
+            ModelEntry {
+                name: "nojson-cheap".into(),
+                backend: "b1".into(),
+                cost_per_1k_output: 0.0001,
+                context_window: 100_000,
+                supports_json: false,
+                ..Default::default()
+            },
+            ModelEntry {
+                name: "json-pricey".into(),
+                backend: "b2".into(),
+                cost_per_1k_output: 0.05,
+                context_window: 100_000,
+                supports_json: true,
+                ..Default::default()
+            },
+        ];
+        let router = table_router(entries, RoutingTarget::Cost);
+        let req = LLMRequest::new("x").with_output_schema(serde_json::Value::Bool(true));
+        let decision = router.select(&req).unwrap();
+        assert_eq!(decision.model.as_deref(), Some("json-pricey"));
+    }
+
+    #[test]
+    fn test_table_none_when_no_capable_model() {
+        // Request needs vision; the only model is text-only → table yields None.
+        let entries = vec![ModelEntry {
+            name: "text".into(),
+            backend: "b1".into(),
+            context_window: 100_000,
+            supports_vision: false,
+            ..Default::default()
+        }];
+        let router = table_router(entries, RoutingTarget::Cost);
+        let req = LLMRequest::new("describe").with_messages(vec![Message {
+            role: Role::User,
+            content: vec![ContentPart::Image {
+                url: "data:image/png;base64,xx".into(),
+                detail: None,
+            }],
+            tool_call_id: None,
+            name: None,
+        }]);
+        assert!(router.select_from_table(&req, RoutingTarget::Cost).is_none());
+    }
+
+    #[test]
+    fn test_context_filter_excludes_too_small() {
+        // Cheapest model has a tiny context window and must be skipped for a
+        // large request.
+        let entries = vec![
+            ModelEntry {
+                name: "tiny-cheap".into(),
+                backend: "b1".into(),
+                cost_per_1k_output: 0.0001,
+                context_window: 100,
+                ..Default::default()
+            },
+            ModelEntry {
+                name: "big-pricey".into(),
+                backend: "b2".into(),
+                cost_per_1k_output: 0.05,
+                context_window: 200_000,
+                ..Default::default()
+            },
+        ];
+        let router = table_router(entries, RoutingTarget::Cost);
+        // ~25 chars → ~6 input tokens, but default output budget is 1024,
+        // which overflows the 100-token window of tiny-cheap.
+        let decision = router.select(&LLMRequest::new("a moderately sized prompt")).unwrap();
+        assert_eq!(decision.model.as_deref(), Some("big-pricey"));
+    }
+
+    #[test]
+    fn test_op_policy_target_overrides_global() {
+        let entries = vec![
+            ModelEntry {
+                name: "pricey".into(),
+                backend: "b1".into(),
+                cost_per_1k_output: 0.03,
+                context_window: 200_000,
+                quality_tier: 9,
+                ..Default::default()
+            },
+            ModelEntry {
+                name: "cheap".into(),
+                backend: "b2".into(),
+                cost_per_1k_output: 0.0003,
+                context_window: 200_000,
+                quality_tier: 1,
+                ..Default::default()
+            },
+        ];
+        // Global target is Quality (→ pricey), but the Ask op policy forces Cost.
+        let mut config = ModelRouterConfig {
+            target: RoutingTarget::Quality,
+            ..Default::default()
+        };
+        config.operation_policies = vec![OperationPolicy {
+            operation: AISOperationType::Ask,
+            model: None,
+            backend: None,
+            target: RoutingTarget::Cost,
+        }];
+        let llm_registry = Arc::new(LLMRegistry::new());
+        let model_registry = Arc::new(ModelRegistry::new());
+        for e in &entries {
+            model_registry.register(e.clone());
+        }
+        let router =
+            ModelRouter::with_model_registry(llm_registry, model_registry, config).unwrap();
+        for e in &entries {
+            router.circuit_breakers.register(&e.backend);
+        }
+
+        let mut req = LLMRequest::new("hi");
+        req.operation_type = Some(AISOperationType::Ask);
+        let decision = router.select(&req).unwrap();
+        assert_eq!(decision.model.as_deref(), Some("cheap"));
+    }
+
+    #[test]
+    fn test_balanced_preserves_prefer_tags() {
+        // No target ⇒ Balanced ⇒ legacy prefer_tags wins over cost: the
+        // preferred (expensive) model is chosen, not the cheaper untagged one.
+        let toml = r#"
+[routing]
+prefer_tags = ["preferred"]
+
+[[models]]
+name = "cheapo"
+backend = "b1"
+cost_per_1k_output = 0.0001
+context_window = 100000
+tags = ["other"]
+
+[[models]]
+name = "preferred-model"
+backend = "b2"
+cost_per_1k_output = 0.5
+context_window = 100000
+tags = ["preferred"]
+"#;
+        let router = router_from_toml(toml);
+        let decision = router.select(&LLMRequest::new("hi")).unwrap();
+        assert_eq!(decision.model.as_deref(), Some("preferred-model"));
+    }
+
+    #[test]
+    fn test_routing_target_from_toml_overrides_prefer_tags() {
+        // [routing] target = "cost" ⇒ rank whole pool by cost, ignoring the
+        // prefer_tags preference, so the cheaper untagged model wins.
+        let toml = r#"
+[routing]
+target = "cost"
+prefer_tags = ["preferred"]
+
+[[models]]
+name = "cheapo"
+backend = "b1"
+cost_per_1k_output = 0.0001
+context_window = 100000
+tags = ["other"]
+
+[[models]]
+name = "preferred-model"
+backend = "b2"
+cost_per_1k_output = 0.5
+context_window = 100000
+tags = ["preferred"]
+"#;
+        let router = router_from_toml(toml);
+        let decision = router.select(&LLMRequest::new("hi")).unwrap();
+        assert_eq!(decision.model.as_deref(), Some("cheapo"));
+    }
+
+    #[test]
+    fn test_routing_requirements_from_request() {
+        let req = LLMRequest::new("hello world")
+            .with_output_schema(serde_json::Value::Bool(true))
+            .with_enable_thinking(true);
+        let reqs = RoutingRequirements::from_request(&req);
+        assert!(reqs.needs_json);
+        assert!(reqs.needs_thinking);
+        assert!(!reqs.needs_vision);
+        assert!(!reqs.needs_local);
+        assert_eq!(reqs.est_output, DEFAULT_OUTPUT_TOKENS);
+        assert!(reqs.est_input >= 1);
     }
 }
