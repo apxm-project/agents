@@ -189,10 +189,11 @@ fn estimate_input_tokens(request: &LLMRequest) -> usize {
 
 /// True if any message carries an image content part (vision required).
 fn request_needs_vision(request: &LLMRequest) -> bool {
-    request
-        .messages
-        .iter()
-        .any(|m| m.content.iter().any(|p| matches!(p, ContentPart::Image { .. })))
+    request.messages.iter().any(|m| {
+        m.content
+            .iter()
+            .any(|p| matches!(p, ContentPart::Image { .. }))
+    })
 }
 
 /// The ModelRouter — dynamic model and backend selector.
@@ -597,9 +598,9 @@ impl ModelRouter {
                 ca.partial_cmp(&cb).unwrap_or(std::cmp::Ordering::Equal)
             }),
             // Strongest operator-supplied quality prior (first on ties).
-            RoutingTarget::Quality => {
-                feasible.iter().min_by_key(|m| std::cmp::Reverse(m.quality_tier))
-            }
+            RoutingTarget::Quality => feasible
+                .iter()
+                .min_by_key(|m| std::cmp::Reverse(m.quality_tier)),
             // No live latency signal exists yet (the EWMA latency profile is
             // unwired), so Latency uses the same cost-minimizing proxy as Cost
             // rather than pretending to rank by speed.
@@ -1091,7 +1092,11 @@ mod tests {
             tool_call_id: None,
             name: None,
         }]);
-        assert!(router.select_from_table(&req, RoutingTarget::Cost).is_none());
+        assert!(
+            router
+                .select_from_table(&req, RoutingTarget::Cost)
+                .is_none()
+        );
     }
 
     #[test]
@@ -1117,7 +1122,9 @@ mod tests {
         let router = table_router(entries, RoutingTarget::Cost);
         // ~25 chars → ~6 input tokens, but default output budget is 1024,
         // which overflows the 100-token window of tiny-cheap.
-        let decision = router.select(&LLMRequest::new("a moderately sized prompt")).unwrap();
+        let decision = router
+            .select(&LLMRequest::new("a moderately sized prompt"))
+            .unwrap();
         assert_eq!(decision.model.as_deref(), Some("big-pricey"));
     }
 
