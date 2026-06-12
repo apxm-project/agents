@@ -242,7 +242,7 @@ pub enum Commands {
         #[arg(long)]
         model: Option<String>,
     },
-    /// Phase 14.8.F — stream a run's dispatch tree from
+    ///.F — stream a run's dispatch tree from
     /// `/v1/runs/<thread>/events/stream` and render it as monospace.
     Watch {
         /// Thread id (execution id) to attach to. Same id surfaced by
@@ -253,7 +253,7 @@ pub enum Commands {
         #[arg(long)]
         expand: Option<u64>,
     },
-    /// Phase 14.8.F — inspect, replay, and archive on-disk rollouts.
+    ///.F — inspect, replay, and archive on-disk rollouts.
     Rollout {
         #[command(subcommand)]
         action: RolloutAction,

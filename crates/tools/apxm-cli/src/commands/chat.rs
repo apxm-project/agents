@@ -68,19 +68,19 @@ pub struct ChatOptions {
     /// Events past the cap are dropped while stdin stays interactive. Clamped to
     /// `APXM_CHAT_MAX_EVENTS_CEILING` if set.
     pub max_events: Option<usize>,
-    /// Per-tool, per-turn call budget as raw `CAP=N` strings (Control 2). Sent as
+    /// Per-tool, per-turn call budget as raw `CAP=N` strings. Sent as
     /// `tool_call_budgets` each turn; the runtime enforces it across the turn's
     /// whole execution tree.
     pub tool_budget: Vec<String>,
-    /// Per-tool, per-conversation call cap as raw `CAP=N` strings (Control 2).
+    /// Per-tool, per-conversation call cap as raw `CAP=N` strings.
     /// Tracked host-side across turns; the effective per-turn budget sent to the
     /// runtime is `min(tool_budget, session_cap − consumed)`.
     pub tool_cap: Vec<String>,
-    /// Per-tool auth binding as raw `CAP=CONNECTION_ID` strings (Control 5). The
+    /// Per-tool auth binding as raw `CAP=CONNECTION_ID` strings. The
     /// server resolves each to a bearer token (scoped to `owner`) and the runtime
     /// injects it at the tool's invoke seam; only the connection id is sent.
     pub tool_auth: Vec<String>,
-    /// Tenant/owner scope for per-tool credential resolution (Control 5).
+    /// Tenant/owner scope for per-tool credential resolution.
     pub owner: Option<String>,
     /// Expose + auto-admit the workflow-authoring tools (`compose_workflow`,
     /// `run_workflow`) so the agent can create and run workflows (Goal 1).
@@ -317,7 +317,7 @@ pub async fn chat_command(opts: ChatOptions) -> Result<()> {
     // Running ceiling on `turns_used`; `/continue` raises it by `max_turns`.
     let mut turn_budget = max_turns;
 
-    // Per-tool call budgets (Control 2). The per-turn budget rides the execute
+    // Per-tool call budgets. The per-turn budget rides the execute
     // request and is enforced by the runtime across the turn's execution tree;
     // the per-conversation cap is tracked here and folded into each turn's budget.
     let tool_turn_budget = parse_kv_usize(&opts.tool_budget);
@@ -371,7 +371,7 @@ pub async fn chat_command(opts: ChatOptions) -> Result<()> {
                     continue;
                 }
                 if meta.split(' ').next() == Some("continue") {
-                    // Extend the soft turn budget (Control 1) by the configured
+                    // Extend the soft turn budget by the configured
                     // increment so the operator can keep going past the cap.
                     match max_turns {
                         Some(n) => {
@@ -446,7 +446,7 @@ pub async fn chat_command(opts: ChatOptions) -> Result<()> {
             }
         }
 
-        // Enforce the turn budget (Control 1). An event-driven turn at the cap is
+        // Enforce the turn budget. An event-driven turn at the cap is
         // dropped (no human to confirm); a stdin turn is soft-blocked so the
         // operator can `/continue`. Both stdin and event turns share `turns_used`.
         if from_event {
@@ -545,7 +545,7 @@ fn parse_kv_string(items: &[String]) -> HashMap<String, String> {
     map
 }
 
-/// Compute the per-tool budget to send for the next turn (Control 2). For each
+/// Compute the per-tool budget to send for the next turn. For each
 /// tool with a per-turn and/or per-conversation cap, the effective budget is the
 /// lower of the per-turn budget and the session cap's remaining headroom. An
 /// exhausted session cap yields 0 — a hard deny at the runtime's invoke seam.
@@ -599,7 +599,7 @@ async fn handle_user_turn(
 ) {
     let prompt = convo.render(user_text);
     // The per-tool budget for THIS turn folds the per-turn budget with the
-    // remaining per-conversation cap (Control 2).
+    // remaining per-conversation cap.
     let turn_budgets =
         effective_turn_budgets(tool_turn_budget, tool_session_cap, tool_session_consumed);
     // On a refused write capability, prompt the operator; on approval grant it
@@ -823,7 +823,7 @@ async fn summarize_quiet(
 }
 
 /// Print the per-tool call budgets and remaining per-conversation headroom
-/// (Control 2), for the `/budget` meta-command.
+///, for the `/budget` meta-command.
 fn print_budget(
     turn: &HashMap<String, usize>,
     session_cap: &HashMap<String, usize>,
@@ -984,7 +984,7 @@ async fn run_turn(
     tool_call_budgets: &HashMap<String, usize>,
 ) -> Result<TurnOutcome> {
     let url = format!("{}/v1/execute/stream", base.trim_end_matches('/'));
-    // Per-tool auth bindings: capability -> apxm-auth connection id (Control 5).
+    // Per-tool auth bindings: capability -> apxm-auth connection id.
     // Only the connection id travels; the server resolves the token.
     let tool_credentials = parse_kv_string(&opts.tool_auth);
     // Args bind POSITIONALLY to graph parameters — the bare transcript is the

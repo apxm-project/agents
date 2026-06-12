@@ -1,4 +1,4 @@
-//! Phase 14.8.F — shared monospace render contract for `apxm watch` and
+//!.F — shared monospace render contract for `apxm watch` and
 //! `apxm rollout replay`.
 //!
 //! The chat panel and the TUI both consume the same per-specialist event

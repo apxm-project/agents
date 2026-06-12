@@ -168,7 +168,7 @@ pub const MEMOIZATION_HIT: EventKind =
     EventKind::new("memoization_hit", EventCategory::Observability, false);
 pub const ERROR: EventKind = EventKind::new("error", EventCategory::Error, true);
 
-// Multi-agent / topology event kinds (Phase 14.8.A — per-graph-node
+// Multi-agent / topology event kinds ( — per-graph-node
 // enrichment). These are emitted in addition to OPERATION_START so
 // observers can reconstruct an agent/tool tree without rederiving it.
 pub const AGENT_SPAWNED: EventKind = EventKind::new("agent_spawned", EventCategory::Agent, true);

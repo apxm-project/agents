@@ -32,7 +32,7 @@ pub trait CapabilityInterceptor: Send + Sync {
     async fn post_invoke(&self, _name: &str, _result: &Value) {}
 }
 
-/// Production permission gate (Control 3), registered by the host at the trusted
+/// Production permission gate, registered by the host at the trusted
 /// invoke chokepoint to complement the in-handler write boundary. It activates
 /// the `requires_auth` capability-metadata flag: a capability that declares it
 /// needs authentication but is invoked without a resolved credential is denied in

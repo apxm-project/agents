@@ -36,7 +36,7 @@ pub async fn execute(ctx: &ExecutionContext, node: &Node, inputs: Vec<Value>) ->
     };
     let message = local::resolve_message(node, protocol, &inputs)?;
 
-    // Phase 14.8.A — Emit a typed COMMUNICATE_DISPATCHED event so
+    // Emit a typed COMMUNICATE_DISPATCHED event so
     // observers can render the inter-agent edge without scraping the
     // op attributes. Excerpt is capped to ~240 chars (Codex pattern).
     if let Some(emitter) = &ctx.event_emitter {

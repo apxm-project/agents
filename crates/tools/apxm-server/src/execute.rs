@@ -55,20 +55,20 @@ pub(crate) struct ExecuteRequest {
     /// Visible skill set (lib / lib::skill / skill ids). Empty means only shared skills.
     #[serde(default)]
     pub(crate) imports: Vec<String>,
-    /// Per-tool call-count budget (Control 2): `{capability_name: max_calls}`.
+    /// Per-tool call-count budget: `{capability_name: max_calls}`.
     /// Declared by the caller; enforced by the runtime's trusted `invoke_tool`
     /// seam, shared across the execution tree. Each value is clamped to the
     /// operator ceiling `$APXM_TOOL_CALL_BUDGET_CEILING` when set (a request can
     /// only lower it).
     #[serde(default)]
     pub(crate) tool_call_budgets: HashMap<String, usize>,
-    /// Per-tool auth binding (Control 5): `{capability_name: connection_id}`. The
+    /// Per-tool auth binding: `{capability_name: connection_id}`. The
     /// server resolves each connection id (owner-scoped) to a bearer token and
     /// the runtime injects it at the tool's invoke seam — the secret never enters
     /// the AIR or the prompt; only the connection id travels on the wire.
     #[serde(default)]
     pub(crate) tool_credentials: HashMap<String, String>,
-    /// Tenant/owner scope for credential resolution (Control 5). Passed to the
+    /// Tenant/owner scope for credential resolution. Passed to the
     /// credential resolver so a tool's token is scoped to this owner.
     #[serde(default)]
     pub(crate) owner: Option<String>,
@@ -143,7 +143,7 @@ pub(crate) struct ExecuteResponse {
     pub(crate) session_dir: Option<String>,
     pub(crate) stats: ExecutionStats,
     pub(crate) llm_usage: LlmUsageSummary,
-    /// Consumed per-tool call counts (Control 2), so a host can maintain a
+    /// Consumed per-tool call counts, so a host can maintain a
     /// cross-turn session budget. Empty when no per-tool budget was set.
     #[serde(default)]
     pub(crate) tool_call_counts: HashMap<String, usize>,
@@ -424,7 +424,7 @@ pub(crate) fn prepare_request(mut req: ExecuteRequest) -> Result<PreparedRequest
     })
 }
 
-/// Resolve a per-tool auth binding (Control 5) — `{capability: connection_id}` —
+/// Resolve a per-tool auth binding — `{capability: connection_id}` —
 /// into `{capability: "Bearer <token>"}`, scoped to `owner`. The resolved bearer
 /// is handed to the runtime out-of-band (a context field, not the AIR), so the
 /// secret never enters the program. Returns `None` when nothing is bound.
@@ -448,7 +448,7 @@ async fn resolve_tool_credentials(
     Ok(Some(resolved))
 }
 
-/// Operator ceiling for per-tool call budgets (Control 2). When
+/// Operator ceiling for per-tool call budgets. When
 /// `$APXM_TOOL_CALL_BUDGET_CEILING` is set, every requested budget is clamped to
 /// at most that value — a caller can only *lower* the operator bound, never raise
 /// it. Unset = no ceiling.

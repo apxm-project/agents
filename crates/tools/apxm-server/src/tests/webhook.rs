@@ -1,4 +1,4 @@
-//! Phase 14.8.C — tests for the outbound run-lifecycle webhook.
+//! tests for the outbound run-lifecycle webhook.
 //!
 //! These verify the fire-and-forget contract end-to-end:
 //!   - The dispatcher POSTs to the configured URL.

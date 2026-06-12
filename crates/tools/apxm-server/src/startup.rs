@@ -85,11 +85,11 @@ pub(crate) async fn run_server_with_config(server_config: ServerConfig) -> anyho
     skill_resolver.attach_runtime(&runtime);
     workflow_spawner.attach_runtime(&runtime);
 
-    // Phase 14.8.C — wire the outbound lifecycle webhook if configured.
+    // wire the outbound lifecycle webhook if configured.
     // Optional + fire-and-forget.
     let webhook_dispatcher = WebhookDispatcher::from_config(&server_config.webhook);
 
-    // Phase 14.8.D — bring up the OTEL exporter if env-configured.
+    // bring up the OTEL exporter if env-configured.
     // Initialization failures are logged + ignored: the in-process
     // tracing-subscriber keeps working.
     match observability::init(&server_config.observability) {
@@ -97,7 +97,7 @@ pub(crate) async fn run_server_with_config(server_config: ServerConfig) -> anyho
         Err(error) => warn_init_failure(&error),
     }
 
-    // Phase 14.8.E — bring up the rollout layer. The index db is rebuilt
+    // bring up the rollout layer. The index db is rebuilt
     // lazily from disk on first read if missing/corrupt; opening here is
     // fast and surfaces permission/path issues at boot.
     let rollout_paths = Arc::new(RolloutPaths::from_env());

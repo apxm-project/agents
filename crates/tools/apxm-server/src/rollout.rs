@@ -1,4 +1,4 @@
-//! Phase 14.8.E — rollout writer wiring.
+//! rollout writer wiring.
 //!
 //! Lives alongside [`crate::runs`]: every event that lands on `RunEventBus`
 //! also gets persisted via a parallel JSONL line per execution. The recorder

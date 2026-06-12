@@ -1,4 +1,4 @@
-//! Phase 14.8.D — OpenTelemetry OTLP exporter.
+//! OpenTelemetry OTLP exporter.
 //!
 //! When configured, every `ApxmEvent` is translated to a tracing span that the
 //! global tracing-opentelemetry pipeline forwards to the configured OTLP

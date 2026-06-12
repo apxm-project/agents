@@ -76,7 +76,7 @@ pub struct ExecutionContext {
     /// steady-state aggregates only.
     pub metrics_level: MetricsLevel,
     pub consumed_tokens: Arc<std::sync::atomic::AtomicU64>,
-    /// Per-tool call-count budget (Control 2): max calls allowed per capability
+    /// Per-tool call-count budget: max calls allowed per capability
     /// name for this execution tree. `None` = unbounded. Declared by the
     /// program/request; enforced by [`Self::charge_tool_call`] at the trusted
     /// invoke seam — never by the AIR program itself.
@@ -85,7 +85,7 @@ pub struct ExecutionContext {
     /// spawned-agent / called-skill fan-out cannot multiply the budget — mirrors
     /// `consumed_tokens`.
     pub tool_call_counts: Arc<std::sync::Mutex<std::collections::HashMap<String, usize>>>,
-    /// Per-tool credential headers (Control 5): capability name → an
+    /// Per-tool credential headers: capability name → an
     /// `Authorization` header value (e.g. `"Bearer …"`), pre-resolved by the
     /// trusted host from a connection id. Injected into a tool's args at the
     /// `invoke_tool` seam so a tool acquires its auth token without the secret
@@ -304,7 +304,7 @@ impl ExecutionContext {
         self
     }
 
-    /// Set the per-tool call-count budget for this execution (Control 2). An
+    /// Set the per-tool call-count budget for this execution. An
     /// empty map is treated as no budget.
     pub fn with_tool_call_budgets(
         mut self,
@@ -314,7 +314,7 @@ impl ExecutionContext {
         self
     }
 
-    /// Set pre-resolved per-tool credential headers (Control 5): capability name
+    /// Set pre-resolved per-tool credential headers: capability name
     /// → `Authorization` header value. An empty map is treated as no credentials.
     pub fn with_tool_credentials(
         mut self,
@@ -324,7 +324,7 @@ impl ExecutionContext {
         self
     }
 
-    /// Inject the per-tool credential (Control 5) into a call's args as
+    /// Inject the per-tool credential into a call's args as
     /// `headers.Authorization`, unless the program already supplied one (never
     /// overwrite an explicit credential). No-op when the tool has no bound
     /// credential.
@@ -350,7 +350,7 @@ impl ExecutionContext {
         }
     }
 
-    /// Invoke a capability through the per-tool call budget (Control 2), using the
+    /// Invoke a capability through the per-tool call budget, using the
     /// capability system's default timeout. Both tool-call paths — the graph
     /// `INV_TOOL` handler and the in-`ASK`-node model loop — route through here so
     /// the budget is the single trusted enforcement seam; the `ASK`-node calls are

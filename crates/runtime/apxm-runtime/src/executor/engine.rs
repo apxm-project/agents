@@ -254,7 +254,7 @@ impl ExecutorEngine {
                             node.metadata.name.as_deref(),
                             &value,
                         );
-                        // Phase 14.8.A — Emit GRAPH_EDGE for every static
+                        // Emit GRAPH_EDGE for every static
                         // downstream consumer that just became eligible.
                         // The edge kind is derived from the consumer's op
                         // type so observers can color the graph without

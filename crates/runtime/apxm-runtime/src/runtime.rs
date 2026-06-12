@@ -63,7 +63,7 @@ pub struct RuntimeExecutionResult {
     pub backend_graph_capabilities: HashMap<String, BackendGraphCapabilities>,
     /// Runtime-owned Dispatch IR accounting projected to JSON for metrics.
     pub dispatch_ir_metrics: serde_json::Value,
-    /// Consumed per-tool call counts for this execution tree (Control 2). Lets a
+    /// Consumed per-tool call counts for this execution tree. Lets a
     /// host (e.g. the chat REPL) maintain a cross-turn session budget. Empty when
     /// no per-tool budget was set.
     pub tool_call_counts: HashMap<String, usize>,
@@ -454,7 +454,7 @@ impl Runtime {
         let token_accountant = Arc::clone(&context.token_accountant);
         let fields_honored = Arc::clone(&context.fields_honored);
         let graph_metrics = Arc::clone(&context.graph_metrics);
-        // Shared per-tool call counter (Control 2): snapshot after execution for
+        // Shared per-tool call counter: snapshot after execution for
         // the host's cross-turn session budget. Empty unless a budget was set.
         let tool_call_counts = Arc::clone(&context.tool_call_counts);
 
@@ -559,7 +559,7 @@ impl Runtime {
         let token_accountant = Arc::clone(&context.token_accountant);
         let fields_honored = Arc::clone(&context.fields_honored);
         let graph_metrics = Arc::clone(&context.graph_metrics);
-        // Shared per-tool call counter (Control 2): snapshot after execution for
+        // Shared per-tool call counter: snapshot after execution for
         // the host's cross-turn session budget. Empty unless a budget was set.
         let tool_call_counts = Arc::clone(&context.tool_call_counts);
         let hook_context = ExecutionHookContext::new(
@@ -683,7 +683,7 @@ impl Runtime {
     }
 
     /// Execute a top-level artifact, seeding metadata AND pre-resolved per-tool
-    /// credentials (Control 5). The host resolves connection ids to bearer
+    /// credentials. The host resolves connection ids to bearer
     /// headers and passes them here; the runtime injects them at the trusted
     /// `invoke_tool` seam so the secret never enters the AIR or the prompt.
     #[allow(clippy::too_many_arguments)]
@@ -813,7 +813,7 @@ impl Runtime {
         for (key, value) in extra_metadata {
             context.metadata.insert(key, value);
         }
-        // Seed the per-tool call budget (Control 2) from metadata. The program /
+        // Seed the per-tool call budget from metadata. The program /
         // request DECLARES the budget as data; enforcement is the trusted
         // `ctx.invoke_tool` seam. Child contexts share the counter, so the bound
         // spans the in-process execution tree (called skills, inner DAGs).
@@ -824,7 +824,7 @@ impl Runtime {
         {
             context = context.with_tool_call_budgets(Some(budgets));
         }
-        // Pre-resolved per-tool credentials (Control 5) ride a dedicated context
+        // Pre-resolved per-tool credentials ride a dedicated context
         // field (NOT the metadata map) so the secret is never serialized into the
         // propagated metadata or events; the runtime injects it at `invoke_tool`.
         if tool_credentials.is_some() {
@@ -847,7 +847,7 @@ impl Runtime {
         let token_accountant = Arc::clone(&context.token_accountant);
         let fields_honored = Arc::clone(&context.fields_honored);
         let graph_metrics = Arc::clone(&context.graph_metrics);
-        // Shared per-tool call counter (Control 2): snapshot after execution for
+        // Shared per-tool call counter: snapshot after execution for
         // the host's cross-turn session budget. Empty unless a budget was set.
         let tool_call_counts = Arc::clone(&context.tool_call_counts);
         let hook_context = ExecutionHookContext::new(

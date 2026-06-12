@@ -1,8 +1,8 @@
-//! Phase 14.8.F — `apxm rollout {list, archive, replay}` subcommands.
+//!.F — `apxm rollout {list, archive, replay}` subcommands.
 //!
 //! Offline counterparts to `apxm watch`: read directly from
 //! `APXM_ROLLOUT_HOME/sessions/rollouts/...` via the durability layer
-//! shipped in Phase 14.8.E. No apxm-server required — these work in
+//! shipped in. No apxm-server required — these work in
 //! airgapped/regulatory-replay scenarios.
 
 use std::fs::File;
@@ -153,7 +153,7 @@ async fn lookup_thread(paths: &RolloutPaths, thread_id: &str) -> Result<ThreadIn
 /// `apxm rollout archive <thread_id>` — bundle the rollout JSONL +
 /// referenced blobs + (optionally) the source skill into a `.tar.gz`.
 /// The output is the air-gapped reproducibility envelope described in
-/// Phase 14.8.E.1 of the plan.
+///.1 of the plan.
 pub async fn rollout_archive_command(opts: RolloutArchiveOptions) -> Result<PathBuf> {
     let paths = resolve_paths(opts.home);
     let entry = lookup_thread(&paths, &opts.thread_id).await?;

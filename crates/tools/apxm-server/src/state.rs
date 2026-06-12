@@ -36,11 +36,11 @@ pub(crate) struct AppState {
     pub(crate) skill_library: SkillLibrary,
     /// In-memory execution records for server-owned skill runs.
     pub(crate) execution_store: ExecutionStore,
-    /// Per-execution event log + live broadcast (Phase 14.8.B).
+    /// Per-execution event log + live broadcast.
     pub(crate) run_event_bus: RunEventBus,
-    /// Optional outbound lifecycle webhook dispatcher (Phase 14.8.C).
+    /// Optional outbound lifecycle webhook dispatcher.
     pub(crate) webhook_dispatcher: Option<Arc<WebhookDispatcher>>,
-    /// Filesystem resolver for rollout JSONL transcripts (Phase 14.8.E).
+    /// Filesystem resolver for rollout JSONL transcripts.
     pub(crate) rollout_paths: Arc<RolloutPaths>,
     /// Thread index sidecar — derived view, fast list+lookup.
     pub(crate) rollout_index: Arc<Mutex<IndexDb>>,

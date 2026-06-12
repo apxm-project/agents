@@ -43,7 +43,7 @@ pub(crate) async fn build_runtime_with_router(
         apxm_runtime::ConversationMemoryMiddleware::new(),
     ));
 
-    // Production permission gate (Control 3): a generic always-invoked PEP at the
+    // Production permission gate: a generic always-invoked PEP at the
     // capability chokepoint, complementing the in-handler write boundary. It
     // activates the `requires_auth` capability-metadata flag — advisory by
     // default, denying when APXM_REQUIRE_AUTH_STRICT is set. Composed here by the

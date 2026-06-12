@@ -63,7 +63,7 @@ pub const PARAMS_JSON: &str = "params_json";
 pub const TOOLS_ENABLED: &str = "tools_enabled";
 pub const TOOLS: &str = "tools";
 pub const TOOL_GROUPS: &str = "tool_groups";
-/// Self-declared per-tool call-count budget (Control 2), a JSON object string
+/// Self-declared per-tool call-count budget, a JSON object string
 /// `{"capability": max_calls}`. A DECLARATION the trusted host reads and folds
 /// into the enforced budget — never self-enforced by the program.
 pub const TOOL_CALL_BUDGETS: &str = "tool_call_budgets";

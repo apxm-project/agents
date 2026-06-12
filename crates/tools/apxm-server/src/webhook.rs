@@ -1,4 +1,4 @@
-//! Phase 14.8.C — Outbound run-lifecycle webhook dispatcher.
+//! Outbound run-lifecycle webhook dispatcher.
 //!
 //! Fires fire-and-forget POSTs to a configured URL on every event the
 //! `RunEventBus` records. The payload mirrors the SSE envelope used

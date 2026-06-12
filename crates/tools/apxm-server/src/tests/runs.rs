@@ -1,4 +1,4 @@
-//! Phase 14.8.B — tests for the observer endpoints under `/v1/runs/...`.
+//! tests for the observer endpoints under `/v1/runs/...`.
 //!
 //! These exercise the full chain: a skill execution records events
 //! into `RunEventBus`, then the read-only HTTP surface serves them
@@ -407,7 +407,7 @@ async fn get_run_returns_404_for_unknown_execution() {
 }
 
 // ─────────────────────────────────────────────────────────────────────
-// Phase 14.8.E — rollout-backed read-path tests.
+// rollout-backed read-path tests.
 // ─────────────────────────────────────────────────────────────────────
 
 async fn write_synthetic_rollout(

@@ -1,4 +1,4 @@
-//! Phase 14.8.F — `apxm watch <thread_id>` SSE watcher.
+//!.F — `apxm watch <thread_id>` SSE watcher.
 //!
 //! Opens `GET /v1/runs/<thread_id>/events/stream` and renders the same
 //! per-specialist tree the chat panel renders, refreshed line-by-line as

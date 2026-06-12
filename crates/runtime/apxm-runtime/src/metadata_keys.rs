@@ -27,7 +27,7 @@ pub const SIDE_EFFECT_POLICY: &str = "side_effect_policy";
 /// `imports`, propagated to children. Absent = unrestricted (back-compat).
 pub const VISIBLE_SKILLS: &str = "visible_skills";
 /// JSON object `{capability_name: max_calls}` declaring the per-tool call-count
-/// budget (Control 2). Seeded by the program/request at the top-level execution
+/// budget. Seeded by the program/request at the top-level execution
 /// and parsed into `ExecutionContext::tool_call_budgets`; the shared per-tool
 /// counter then propagates to children so a fan-out cannot multiply the budget.
 pub const TOOL_CALL_BUDGETS: &str = "tool_call_budgets";

@@ -605,7 +605,7 @@ pub struct ToolEndPayload {
 impl_event_payload!(ToolEndPayload, kind::TOOL_END);
 
 // ───────────────────────────────────────────────────────────────────
-// Phase 14.8.A — Multi-agent / topology enrichment payloads.
+// Multi-agent / topology enrichment payloads.
 //
 // Emitted alongside OPERATION_START/OPERATION_END so observers can
 // reconstruct an agent/tool dispatch tree without scraping op

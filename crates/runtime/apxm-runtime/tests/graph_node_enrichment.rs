@@ -1,4 +1,4 @@
-//! Phase 14.8.A — Per-graph-node event enrichment.
+//! Per-graph-node event enrichment.
 //!
 //! These tests exercise the additional event kinds (`agent_spawned`,
 //! `communicate_dispatched`, `graph_edge`) and the new `context` field on

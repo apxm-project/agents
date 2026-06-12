@@ -206,7 +206,7 @@ impl OperationDispatcher {
 
         // Emit OperationStart event, enriched with op-specific context so
         // observer UIs can render a labeled tree without re-parsing
-        // attributes. Context populated here (Phase 14.8.A):
+        // attributes. Context populated here:
         //   - SPAWN_AGENT → { agent_code, profile }
         //   - COMMUNICATE → { target_agent, protocol }
         //   - ASK/THINK/REASON → { model, backend, tool_names, tool_choice }

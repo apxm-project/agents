@@ -428,7 +428,7 @@ pub async fn execute(ctx: &ExecutionContext, node: &Node, _inputs: Vec<Value>) -
         );
     }
 
-    // Phase 14.8.A — Emit a typed AGENT_SPAWNED event so observers can
+    // Emit a typed AGENT_SPAWNED event so observers can
     // attach an agent label to this node without scraping STM.
     if let Some(emitter) = &ctx.event_emitter {
         let process_id = agent_info

@@ -2387,7 +2387,7 @@ mod tests {
         }
     }
 
-    /// CA-09 parity guard: the MLIR dialect (AISOps.td) is hand-maintained, so
+    /// Parity guard: the MLIR dialect (AISOps.td) is hand-maintained, so
     /// nothing else ties its attribute names to the canonical `attrs` registry.
     /// Every `*Attr:$name` in the dialect must be a known `attrs::ALL_ATTR_NAMES`
     /// constant — this is what catches spec/handler/TableGen attribute drift

@@ -111,14 +111,14 @@ pub(crate) fn build_app(state: AppState) -> Router {
         .route(ServerRoute::Schema.path(), get(handle_schema))
         // MCP 2025-11-25 - JSON-RPC tools endpoint
         .route(ServerRoute::Mcp.path(), post(mcp_jsonrpc))
-        // Phase 14.8.B - observer endpoints
+        // observer endpoints
         .route(ServerRoute::Runs.path(), get(list_runs))
         .route(ServerRoute::RunDetail.path(), get(get_run))
         .route(ServerRoute::RunGraph.path(), get(get_run_graph))
         .route(ServerRoute::RunNodeDetail.path(), get(get_run_node))
         .route(ServerRoute::RunEvents.path(), get(get_run_events_bulk))
         .route(ServerRoute::RunEventsStream.path(), get(stream_run_events))
-        // Phase 14.8.E - rollout blob fetch
+        // rollout blob fetch
         .route(ServerRoute::RunBlob.path(), get(get_run_blob))
         // Mid-flight cancellation — trips the run's abort signal.
         .route(ServerRoute::RunCancel.path(), post(cancel_run))

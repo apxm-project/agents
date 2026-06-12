@@ -1,4 +1,4 @@
-//! Phase 14.8.B — Observer endpoints (`/v1/runs/...`).
+//! Observer endpoints (`/v1/runs/...`).
 //!
 //! Read-only consumer-facing surface that turns the apxm event bus into:
 //!   - a listing of recent runs
@@ -405,7 +405,7 @@ pub(crate) async fn list_runs(
         .map(|record| record_to_summary(&state, record))
         .take(limit)
         .collect();
-    // Phase 14.8.E — fall back to the SQLite index when the in-memory
+    // fall back to the SQLite index when the in-memory
     // execution store has nothing for this filter. Useful after a
     // restart: the rollout JSONLs survive and the index points at them.
     if runs.is_empty() {
@@ -912,7 +912,7 @@ fn assign_layers(nodes: &mut HashMap<u64, RunGraphNode>, edges: &[RunGraphEdge])
 }
 
 // ────────────────────────────────────────────────────────────────────
-// Phase 14.8.E — rollout-backed read paths.
+// rollout-backed read paths.
 //
 // When the in-memory `RunEventBus` has aged out (server restart, ring
 // rolled), we fall through to the rollout JSONL on disk. The rollout is
@@ -978,7 +978,7 @@ pub(crate) async fn events_for_run_since(
     events_from_disk(state, execution_id).await
 }
 
-/// Phase 14.8.E — blob endpoint. Returns the original spilled blob from disk.
+/// blob endpoint. Returns the original spilled blob from disk.
 pub(crate) async fn get_run_blob(
     State(state): State<AppState>,
     Path((execution_id, blob_ref)): Path<(String, String)>,

@@ -525,7 +525,7 @@ pub(crate) fn build_skill_event_sinks(
     channel: Option<Arc<dyn apxm_core::events::EventEmitter>>,
 ) -> Vec<Arc<dyn apxm_core::events::EventEmitter>> {
     let mut normalized_sinks: Vec<Arc<dyn apxm_core::events::EventEmitter>> = vec![
-        // Phase 14.8.E — durable JSONL mirror. Failures are logged
+        // durable JSONL mirror. Failures are logged
         // inside the emitter, never propagated, so a write error
         // doesn't tear the run.
         Arc::new(RolloutEmitter::new(

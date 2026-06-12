@@ -1,7 +1,7 @@
 //! Per-thread JSONL rollout transcript storage for the apxm runtime.
 //!
 //! See `docs/observability/rollouts.md` for the schema spec. This crate is the
-//! foundational durability layer Phase 14.8 builds on top of: every event
+//! foundational durability layer this layer builds on top of: every event
 //! the in-memory `RunEventBus` records is mirrored here so `/v1/runs/...`
 //! survives a restart and the regulatory replay story has a source of
 //! truth.
