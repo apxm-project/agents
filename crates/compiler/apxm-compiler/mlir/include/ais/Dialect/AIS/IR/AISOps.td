@@ -296,12 +296,12 @@ def AIS_ReflectOp : AIS_Op<"reflect",
     ```
   }];
   let arguments = (ins
-    StrAttr:$trace_id,
+    StrAttr:$trace_query,
     Variadic<AIS_AnyTokenHandleOrGoal>:$context
   );
   let results = (outs AIS_TokenType:$result);
   let assemblyFormat = [{
-    $trace_id (`(` $context^ `:` type($context) `)`)? attr-dict `:` type($result)
+    $trace_query (`(` $context^ `:` type($context) `)`)? attr-dict `:` type($result)
   }];
   let hasVerifier = 1;
 }

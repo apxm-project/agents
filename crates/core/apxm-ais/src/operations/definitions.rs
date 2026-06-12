@@ -1240,10 +1240,10 @@ pub static AIS_OPERATIONS: &[OperationSpec] = &[
             r#"{"id": 3, "op": "SWITCH", "attributes": {"discriminant": "topic_kind", "cases": [{"label": "math", "node_id": 4}, {"label": "code", "node_id": 5}], "default": "6"}}"#,
         ),
         fields: &[
-            OperationField::required("discriminant", "Token to match against case labels"),
+            OperationField::required(attrs::DISCRIMINANT, "Token to match against case labels"),
             OperationField::required("cases", "Array of case label/destination pairs"),
             OperationField::optional("default", "Default destination if no case matches"),
-        ], // structural field names
+        ], // cases/default are structural array fields, not attrs
         needs_submission: false,
         min_inputs: 1,
         produces_output: true,
@@ -1467,11 +1467,11 @@ pub static AIS_OPERATIONS: &[OperationSpec] = &[
             strategy. Typically used inside TRY_CATCH catch subgraphs.",
         latency: OperationLatency::Medium,
         example_json: Some(
-            r#"{"id": 4, "op": "ERR", "attributes": {"error_handler": "retry_with_fallback"}}"#,
+            r#"{"id": 4, "op": "ERR", "attributes": {"recovery_template": "retry_with_fallback"}}"#,
         ),
         fields: &[OperationField::required(
-            "error_handler", // structural
-            "Error handler to invoke",
+            attrs::RECOVERY_TEMPLATE,
+            "Error handler / recovery template to invoke",
         )],
         needs_submission: true,
         min_inputs: 0,

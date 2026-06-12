@@ -646,9 +646,9 @@ fn emit_node(
             state,
             node,
             &inputs,
-            &[graph_attrs::TRACE_ID, graph_attrs::TRACE],
+            &[graph_attrs::TRACE_QUERY],
             graph_attrs::TRACE,
-            &[graph_attrs::TRACE_ID, graph_attrs::TRACE],
+            &[graph_attrs::TRACE_QUERY],
             Some(('(', ')')),
         ),
         AISOperationType::Verify => {

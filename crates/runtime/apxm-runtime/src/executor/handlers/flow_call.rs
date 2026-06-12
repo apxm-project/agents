@@ -609,7 +609,7 @@ mod tests {
             metadata: NodeMetadata::default(),
         };
         err_node.attributes.insert(
-            graph_attrs::MESSAGE.to_string(),
+            graph_attrs::RECOVERY_TEMPLATE.to_string(),
             Value::String("scoped child error".to_string()),
         );
 

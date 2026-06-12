@@ -5,7 +5,7 @@ use apxm_core::constants::graph::attrs as graph_attrs;
 use apxm_core::constants::runtime::belief_keys;
 
 pub async fn execute(ctx: &ExecutionContext, node: &Node, _inputs: Vec<Value>) -> Result<Value> {
-    let message = get_string_attribute(node, graph_attrs::MESSAGE)?;
+    let message = get_string_attribute(node, graph_attrs::RECOVERY_TEMPLATE)?;
 
     // Record error creation in AAM
     let label = crate::aam::TransitionLabel::operation(node.id, node.op_type);
@@ -43,7 +43,7 @@ mod tests {
             metadata: apxm_core::types::execution::NodeMetadata::default(),
         };
         node.attributes.insert(
-            graph_attrs::MESSAGE.to_string(),
+            graph_attrs::RECOVERY_TEMPLATE.to_string(),
             Value::String(message.to_string()),
         );
         node
@@ -103,7 +103,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_err_missing_message_attribute() {
+    async fn test_err_missing_recovery_template() {
         let memory = Arc::new(
             MemorySystem::new(MemoryConfig::in_memory_ltm())
                 .await

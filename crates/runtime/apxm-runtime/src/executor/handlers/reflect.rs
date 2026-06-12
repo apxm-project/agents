@@ -81,13 +81,7 @@ fn load_execution_trace(ctx: &ExecutionContext) -> std::result::Result<String, S
 /// ```
 pub async fn execute(ctx: &ExecutionContext, node: &Node, inputs: Vec<Value>) -> Result<Value> {
     // Get prompt and trace_query attributes
-    let prompt = get_optional_string_attribute(node, graph_attrs::PROMPT)?
-        .or_else(|| {
-            get_optional_string_attribute(node, graph_attrs::TRACE_ID)
-                .ok()
-                .flatten()
-        })
-        .unwrap_or_default();
+    let prompt = get_optional_string_attribute(node, graph_attrs::PROMPT)?.unwrap_or_default();
 
     let trace_query = get_optional_string_attribute(node, graph_attrs::TRACE_QUERY)?;
 
