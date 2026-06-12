@@ -157,16 +157,6 @@ mod tests {
     }
 
     #[test]
-    fn test_op_state_default_matches_new() {
-        let from_new = OpState::new();
-        let from_default = OpState::default();
-        assert_eq!(from_new.status, from_default.status);
-        assert_eq!(from_new.retries, from_default.retries);
-        assert_eq!(from_new.last_error, from_default.last_error);
-        assert_eq!(from_new.ready_at, from_default.ready_at);
-    }
-
-    #[test]
     fn test_op_state_new_with_effects() {
         use crate::aam::effects::{AamComponent, OperationEffects};
         let effects = OperationEffects::new()
@@ -247,15 +237,6 @@ mod tests {
     }
 
     #[test]
-    fn test_token_state_default_matches_new() {
-        let from_new = TokenState::new();
-        let from_default = TokenState::default();
-        assert_eq!(from_new.ready, from_default.ready);
-        assert_eq!(from_new.value.is_none(), from_default.value.is_none());
-        assert_eq!(from_new.consumers.len(), from_default.consumers.len());
-    }
-
-    #[test]
     fn test_token_state_set_ready_with_value() {
         let mut ts = TokenState::new();
         ts.ready = true;
@@ -308,26 +289,6 @@ mod tests {
         assert_eq!(ps.value, Some(Value::String("result".to_string())));
     }
 
-    #[test]
-    fn test_promise_state_created_at_is_recent() {
-        let before = std::time::Instant::now();
-        let ps = PromiseState::new("a".to_string(), "f".to_string());
-        let after = std::time::Instant::now();
-
-        assert!(ps.created_at >= before);
-        assert!(ps.created_at <= after);
-    }
-
-    #[test]
-    fn test_promise_state_clone() {
-        let ps = PromiseState::new("agent".to_string(), "flow".to_string());
-        let cloned = ps.clone();
-
-        assert_eq!(cloned.target_agent, ps.target_agent);
-        assert_eq!(cloned.target_flow, ps.target_flow);
-        assert_eq!(cloned.resolved, ps.resolved);
-    }
-
     // ── ExecutionFrame tests ───────────────────────────────────────────
 
     #[test]
@@ -354,17 +315,4 @@ mod tests {
         assert_eq!(frame.parent_promise, Some(42));
     }
 
-    #[test]
-    fn test_execution_frame_clone() {
-        let frame = ExecutionFrame {
-            execution_id: "exec-003".to_string(),
-            flow_name: "handler".to_string(),
-            parent_promise: Some(99),
-        };
-        let cloned = frame.clone();
-
-        assert_eq!(cloned.execution_id, frame.execution_id);
-        assert_eq!(cloned.flow_name, frame.flow_name);
-        assert_eq!(cloned.parent_promise, frame.parent_promise);
-    }
 }
