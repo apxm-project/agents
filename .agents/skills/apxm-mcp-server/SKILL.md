@@ -69,7 +69,7 @@ Do not bypass it.
 
 ## Diagnostics
 
-- `cargo check -p apxm-server` — compile the HTTP and stdio MCP binaries.
+- `dekk apxm build-server` — compile the HTTP and stdio MCP binaries.
 - `dekk apxm mcp install` — register; surfaces config errors.
 
 ## Cross-surface registration (REST + MCP + A2A)

@@ -20,6 +20,15 @@ dekk apxm explain <workflow.air>       # human-readable summary
 dekk apxm decompile <out.apxmobj>      # reverse-map back to AIR
 ```
 
+For multi-step `.apxmw` workflow files:
+
+```bash
+dekk apxm workflow validate <wf.apxmw>           # validate the workflow file
+dekk apxm workflow analyze <wf.apxmw>            # step graph + parallelism
+dekk apxm workflow run <wf.apxmw> --session-root <dir> --json
+dekk apxm workflow run <wf.apxmw> --background --session-root <dir> --json
+```
+
 ## Rules
 
 - Compiled artifacts (`*.apxmobj`) belong under `.apxm/`, never under

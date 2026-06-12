@@ -31,8 +31,8 @@ when writing tests load `_shared/apxm-test-rules.md`.
   building the Rust workspace or running Python frontend tests.
 - Iterating? Prefer focused commands:
   `dekk apxm test -p <crate>` over `dekk apxm test-all`.
-  `cargo check` equivalent only via `dekk apxm build` (release) or
-  per-crate test.
+  `dekk apxm check` for a fast type-check, `dekk apxm fmt` to format,
+  `dekk apxm clippy` to lint (deny-warnings).
 - Pre-PR? `dekk apxm test-all` + `dekk apxm test-cli` (CLI requires the
   MLIR-linked binary, hence the separate command).
 
@@ -65,6 +65,7 @@ when writing tests load `_shared/apxm-test-rules.md`.
 
 After each phase of work, run the smallest correct check:
 
+- Need a fast compile-only signal? `dekk apxm check`.
 - Touched one crate's source? `dekk apxm test -p <crate>`.
 - Touched the CLI? `dekk apxm test-cli`.
 - Touched a `.td`? `dekk apxm build-dialect && dekk apxm codegen`,
