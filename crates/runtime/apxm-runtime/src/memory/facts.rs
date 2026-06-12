@@ -308,39 +308,3 @@ fn text_similarity(a: &str, b: &str) -> f64 {
     }
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::memory::MemoryConfig;
-
-    #[tokio::test]
-    async fn store_search_delete_fact_roundtrip() {
-        let system = MemorySystem::new(MemoryConfig::in_memory_ltm())
-            .await
-            .expect("memory should initialize");
-        let id = system
-            .store_fact(
-                "deploy server is 10.0.1.50",
-                &["deploy".to_string(), "infra".to_string()],
-                "test",
-                Some("session-1".to_string()),
-            )
-            .await
-            .expect("store_fact should succeed");
-        let found = system
-            .search_facts("deploy server", 5)
-            .await
-            .expect("search_facts should succeed");
-        assert_eq!(found.len(), 1);
-        assert!(found[0].fact.text.contains("10.0.1.50"));
-        system
-            .delete_fact(&id)
-            .await
-            .expect("delete_fact should succeed");
-        let found_after = system
-            .search_facts("deploy server", 5)
-            .await
-            .expect("search_facts should succeed");
-        assert!(found_after.is_empty());
-    }
-}

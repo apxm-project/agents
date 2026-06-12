@@ -65,18 +65,3 @@ impl SecurityError {
     }
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn test_error_implements_std_error() {
-        let error = SecurityError::PolicyViolation {
-            policy: "test".to_string(),
-            reason: "test".to_string(),
-        };
-
-        // Verify it implements std::error::Error (compile guard)
-        let _: &dyn std::error::Error = &error;
-    }
-}

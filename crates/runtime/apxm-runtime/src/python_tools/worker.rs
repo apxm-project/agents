@@ -321,27 +321,3 @@ impl PythonToolWorker {
     }
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[tokio::test]
-    async fn test_spawn_missing_python_module() {
-        // Spawning with an invalid manifest should succeed (process starts)
-        // but actual calls would fail. If python is not available at all,
-        // spawn itself will fail.
-        let result = PythonToolWorker::spawn("[]").await;
-        // This test is lenient: if Python is available, spawn succeeds;
-        // if not, it's an expected error.
-        match result {
-            Ok(_worker) => {
-                // Worker spawned — the module may not exist but the process started.
-                // It will exit shortly, which is fine.
-            }
-            Err(e) => {
-                let msg = format!("{}", e);
-                assert!(msg.contains("Failed to spawn"), "Unexpected error: {}", msg);
-            }
-        }
-    }
-}

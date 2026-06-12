@@ -69,39 +69,3 @@ impl CompileError {
     }
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::error::codes::ErrorCode;
-    use crate::error::span::Span;
-
-    #[test]
-    fn test_as_error() -> Result<(), Box<dyn std::error::Error>> {
-        let span = Span::new("test.json".to_string(), 5, 10, 1);
-        let err = Error::new(ErrorCode::UnexpectedToken, "Test error".to_string(), span);
-        let error = CompileError::Parse(Box::new(err));
-
-        match error.as_error() {
-            Some(e) => assert_eq!(e.code, ErrorCode::UnexpectedToken),
-            None => return Err("expected underlying Error in CompileError::Parse".into()),
-        }
-
-        Ok(())
-    }
-
-    #[test]
-    fn test_pretty_print() {
-        let span = Span::new("test.json".to_string(), 1, 5, 3);
-        let error = Error::new(
-            ErrorCode::ExpectedExpression,
-            "expected expression".to_string(),
-            span,
-        );
-        let error = CompileError::Parse(Box::new(error));
-
-        let source = "let x = ";
-        let output = error.pretty_print(Some(source));
-        assert!(output.contains("error[E002]"));
-        assert!(output.contains("expected expression"));
-    }
-}

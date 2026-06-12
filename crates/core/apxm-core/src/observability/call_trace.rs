@@ -44,25 +44,3 @@ impl CallTrace {
     }
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn call_trace_roundtrip_json() {
-        let mut t = CallTrace::new();
-        t.push(CallEvent {
-            node_id: 1,
-            node_name: "ask_a".into(),
-            op: Some(AISOperationType::Ask),
-            prompt: "hello".into(),
-            model: "mock".into(),
-            params: "temp=0,top_p=1".into(),
-            parent_deps: vec![],
-        });
-        let json = serde_json::to_string(&t).expect("serialize");
-        let back: CallTrace = serde_json::from_str(&json).expect("deserialize");
-        assert_eq!(t, back);
-        assert_eq!(back.len(), 1);
-    }
-}

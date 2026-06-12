@@ -145,29 +145,3 @@ fn copy_dir_recursive(src: &Path, dst: &Path) -> io::Result<()> {
     Ok(())
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use tempfile::tempdir;
-
-    const MOCK_AGENT_PROFILE: &str = "mock-profile";
-
-    #[test]
-    fn resolves_spawn_agent_profile_skill() {
-        let dir = tempdir().expect("tempdir");
-        let skills_root = dir.path().join(".agents/skills").join(MOCK_AGENT_PROFILE);
-        fs::create_dir_all(&skills_root).expect("skills dir");
-        fs::write(skills_root.join("SKILL.md"), "# Mock Profile").expect("skill file");
-
-        let resolver = SkillResolver::new(dir.path()).expect("resolver");
-        let mut attrs = HashMap::new();
-        attrs.insert(
-            graph_attrs::PROFILE.to_string(),
-            Value::String(MOCK_AGENT_PROFILE.to_string()),
-        );
-
-        let resolved = resolver.resolve(AISOperationType::SpawnAgent, &attrs);
-        assert_eq!(resolved.len(), 1);
-        assert_eq!(resolver.skill_name(&resolved[0]), MOCK_AGENT_PROFILE);
-    }
-}

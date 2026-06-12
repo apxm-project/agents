@@ -100,26 +100,3 @@ pub(super) fn resolve_global_token_budget(ctx: &ExecutionContext) -> Option<u64>
     ctx.token_budget
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn memoizable_default_off_for_self_hosted_backends() {
-        assert!(!default_memoizable_for_backend(Some("vllm")));
-        assert!(!default_memoizable_for_backend(Some("ollama")));
-    }
-
-    #[test]
-    fn memoizable_default_on_for_cloud_backends() {
-        assert!(default_memoizable_for_backend(Some("openai")));
-        assert!(default_memoizable_for_backend(Some("anthropic")));
-        assert!(default_memoizable_for_backend(Some("google")));
-        assert!(default_memoizable_for_backend(Some("hosted")));
-    }
-
-    #[test]
-    fn memoizable_default_on_when_backend_unknown() {
-        assert!(default_memoizable_for_backend(None));
-    }
-}

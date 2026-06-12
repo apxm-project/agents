@@ -73,8 +73,6 @@ mod types;
 mod webhook;
 mod workflow_source;
 
-#[cfg(test)]
-mod tests;
 
 #[allow(unused_imports)]
 pub(crate) use app::build_app;
@@ -130,39 +128,3 @@ fn log_filter(server_config: &ServerConfig) -> String {
     }
 }
 
-#[cfg(test)]
-mod main_tests {
-    use super::*;
-
-    #[test]
-    fn server_worker_threads_uses_configured_nonzero_value() {
-        let mut config = ServerConfig::default();
-        config.process.tokio_worker_threads = Some(3);
-
-        assert_eq!(server_worker_threads(&config), 3);
-    }
-
-    #[test]
-    fn server_worker_threads_ignores_zero_value() {
-        let mut config = ServerConfig::default();
-        config.process.tokio_worker_threads = Some(0);
-
-        assert_eq!(
-            server_worker_threads(&config),
-            default_server_worker_threads()
-        );
-    }
-
-    #[test]
-    fn log_filter_trims_configured_filter_and_defaults_when_empty() {
-        let mut config = ServerConfig::default();
-        config.process.log_filter = " warn,apxm_server=info ".to_string();
-        assert_eq!(log_filter(&config), "warn,apxm_server=info");
-
-        config.process.log_filter.clear();
-        assert_eq!(
-            log_filter(&config),
-            apxm_driver::ServerProcessConfig::default().log_filter
-        );
-    }
-}

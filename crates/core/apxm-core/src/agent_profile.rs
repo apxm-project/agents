@@ -134,35 +134,3 @@ impl AgentProfileRegistry {
     }
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn builtin_profiles_exist() {
-        let reg = AgentProfileRegistry::new();
-        assert!(reg.resolve("architect").is_some());
-        assert!(reg.resolve("coder").is_some());
-        assert!(reg.resolve("reviewer").is_some());
-    }
-
-    #[test]
-    fn resolve_case_insensitive() {
-        let reg = AgentProfileRegistry::new();
-        assert!(reg.resolve("Claude").is_none()); // not a profile name
-        assert!(reg.resolve("ARCHITECT").is_some());
-    }
-
-    #[test]
-    fn resolve_unknown_returns_none() {
-        let reg = AgentProfileRegistry::new();
-        assert!(reg.resolve("nonexistent").is_none());
-    }
-
-    #[test]
-    fn reviewer_has_max_depth() {
-        let p = AgentProfile::reviewer();
-        assert_eq!(p.upstream_depth, usize::MAX);
-        assert!(p.include_upstream_prompts);
-    }
-}

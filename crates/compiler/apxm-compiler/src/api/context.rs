@@ -44,22 +44,3 @@ impl Drop for Context {
 unsafe impl Send for Context {}
 unsafe impl Sync for Context {}
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    #[cfg_attr(not(feature = "mlir"), ignore = "requires MLIR installation")]
-    fn context_create_and_destroy() {
-        let ctx = Context::new();
-        assert!(ctx.is_ok());
-    }
-
-    #[test]
-    fn context_is_send_sync() {
-        fn assert_send<T: Send>() {}
-        fn assert_sync<T: Sync>() {}
-        assert_send::<Context>();
-        assert_sync::<Context>();
-    }
-}

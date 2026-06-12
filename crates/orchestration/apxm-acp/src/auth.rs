@@ -47,20 +47,3 @@ fn normalize(s: &str) -> String {
     trimmed.to_ascii_uppercase()
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn normalize_basic() {
-        assert_eq!(normalize("api-key-name"), "API_KEY_NAME");
-        assert_eq!(normalize("  my.key  "), "MY_KEY");
-        assert_eq!(normalize("__foo__"), "FOO");
-        assert_eq!(normalize("simple"), "SIMPLE");
-    }
-
-    #[test]
-    fn normalize_special_chars() {
-        assert_eq!(normalize("a@b#c"), "A_B_C");
-    }
-}

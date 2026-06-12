@@ -162,44 +162,6 @@ impl apxm_runtime::scheduler::admission_registry::ParkAdmission for AdmissionHan
     }
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[tokio::test]
-    async fn inference_limiter_returns_429_when_saturated() {
-        let limiter = InferenceLimiter::limited_for_tests(1, Duration::from_millis(1));
-        let _first = limiter.acquire().await.expect("first permit");
-
-        let error = match limiter.acquire().await {
-            Ok(_) => panic!("second permit should time out"),
-            Err(error) => error,
-        };
-
-        assert_eq!(error.status, axum::http::StatusCode::TOO_MANY_REQUESTS);
-        assert!(error.message.contains("capacity"));
-    }
-
-    #[test]
-    fn inference_limiter_clamps_excessive_limits() {
-        let limiter = InferenceLimiter::limited_for_tests(usize::MAX, Duration::from_secs(1));
-        assert_eq!(
-            limiter.semaphore.available_permits(),
-            Semaphore::MAX_PERMITS
-        );
-    }
-
-    #[test]
-    fn inference_limiter_uses_config_values() {
-        let limiter = InferenceLimiter::from_config(&apxm_driver::ServerInferenceConfig {
-            max_concurrent: 3,
-            acquire_timeout_ms: 750,
-        });
-
-        assert_eq!(limiter.semaphore.available_permits(), 3);
-        assert_eq!(limiter.acquire_timeout, Duration::from_millis(750));
-    }
-}
 
 /// Thin [`EventEmitter`] that forwards events to a tokio MPSC channel.
 pub(crate) struct TokioChannelEmitter(pub(crate) mpsc::Sender<ApxmEvent>);

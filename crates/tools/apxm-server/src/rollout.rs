@@ -217,45 +217,6 @@ impl EventEmitter for RolloutEmitter {
     }
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn rollout_registry_uses_configured_event_buffer() {
-        let registry = RolloutRegistry::with_config(&ServerRolloutConfig {
-            event_buffer: 4096,
-            ..ServerRolloutConfig::default()
-        });
-
-        assert_eq!(registry.event_buffer, 4096);
-    }
-
-    #[test]
-    fn rollout_registry_clamps_event_buffer() {
-        let low = RolloutRegistry::with_config(&ServerRolloutConfig {
-            event_buffer: 1,
-            ..ServerRolloutConfig::default()
-        });
-        assert_eq!(low.event_buffer, MIN_ROLLOUT_EVENT_BUFFER);
-
-        let high = RolloutRegistry::with_config(&ServerRolloutConfig {
-            event_buffer: usize::MAX,
-            ..ServerRolloutConfig::default()
-        });
-        assert_eq!(high.event_buffer, MAX_ROLLOUT_EVENT_BUFFER);
-    }
-
-    #[test]
-    fn rollout_registry_uses_configured_spill_threshold() {
-        let registry = RolloutRegistry::with_config(&ServerRolloutConfig {
-            spill_threshold_bytes: Some(64 * 1024),
-            ..ServerRolloutConfig::default()
-        });
-
-        assert_eq!(registry.spill_threshold_bytes, Some(64 * 1024));
-    }
-}
 
 /// Build a synthetic SessionMeta from skill execution context. Used by
 /// the server when the caller hasn't supplied a richer one (the

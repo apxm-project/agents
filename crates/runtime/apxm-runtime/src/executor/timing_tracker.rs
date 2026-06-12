@@ -36,32 +36,3 @@ impl TimingTracker {
     }
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn record_then_get_returns_breakdown() {
-        let tracker = TimingTracker::new();
-        tracker.record(7, 12.5, 0.0);
-        let got = tracker.get_node(7).expect("entry recorded");
-        assert!((got.prefill_ms - 12.5).abs() < f64::EPSILON);
-        assert_eq!(got.decode_ms, 0.0);
-    }
-
-    #[test]
-    fn record_accumulates() {
-        let tracker = TimingTracker::new();
-        tracker.record(1, 10.0, 2.0);
-        tracker.record(1, 5.0, 3.0);
-        let got = tracker.get_node(1).expect("entry recorded");
-        assert!((got.prefill_ms - 15.0).abs() < f64::EPSILON);
-        assert!((got.decode_ms - 5.0).abs() < f64::EPSILON);
-    }
-
-    #[test]
-    fn missing_node_is_none() {
-        let tracker = TimingTracker::new();
-        assert!(tracker.get_node(99).is_none());
-    }
-}

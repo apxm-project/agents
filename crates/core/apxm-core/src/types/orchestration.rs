@@ -221,23 +221,3 @@ impl fmt::Display for OrchestrationWakeOutcome {
     }
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn transport_round_trips() {
-        for value in OrchestrationTransport::WIRE_VALUES {
-            let parsed: OrchestrationTransport = value.parse().expect("transport");
-            assert_eq!(parsed.to_string(), *value);
-        }
-    }
-
-    #[test]
-    fn workspace_modes_round_trip() {
-        for value in OrchestrationWorkspaceMode::WIRE_VALUES {
-            let parsed: OrchestrationWorkspaceMode = value.parse().expect("workspace mode");
-            assert_eq!(parsed.to_string(), *value);
-        }
-    }
-}

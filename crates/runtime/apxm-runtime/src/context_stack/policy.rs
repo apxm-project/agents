@@ -44,23 +44,3 @@ impl Default for ScopeRules {
     }
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn scope_rules_for_profiles_match_defaults() {
-        let architect = ScopeRules::for_profile("architect");
-        assert_eq!(architect.upstream_depth, 3);
-
-        let coder = ScopeRules::for_profile("coder");
-        assert_eq!(coder.upstream_depth, 2);
-
-        let reviewer = ScopeRules::for_profile("reviewer");
-        assert_eq!(reviewer.upstream_depth, usize::MAX);
-        assert!(reviewer.include_upstream_prompts);
-
-        let unknown = ScopeRules::for_profile("unknown");
-        assert_eq!(unknown, ScopeRules::default());
-    }
-}

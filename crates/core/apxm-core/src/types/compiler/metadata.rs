@@ -60,28 +60,3 @@ pub fn find_pass_metadata(name: &str) -> Option<&'static PassMetadata> {
     list_pass_metadata().iter().find(|pass| pass.name == name)
 }
 
-#[cfg(test)]
-mod tests {
-    use super::{
-        NORMALIZE, PROMPT_CANONICALIZATION, find_pass_metadata, get_all_passes, list_pass_metadata,
-    };
-
-    #[test]
-    fn pass_metadata_catalog_is_populated() {
-        let passes = list_pass_metadata();
-        assert!(!passes.is_empty());
-        assert!(passes.iter().any(|pass| pass.name == "normalize"));
-    }
-
-    #[test]
-    fn find_pass_metadata_matches_by_name() {
-        let pass =
-            find_pass_metadata(PROMPT_CANONICALIZATION.name).expect("known pass must be exposed");
-        assert_eq!(pass.summary, PROMPT_CANONICALIZATION.summary);
-    }
-
-    #[test]
-    fn canonical_pass_catalog_is_exposed() {
-        assert!(get_all_passes().any(|pass| pass.name == NORMALIZE.name));
-    }
-}

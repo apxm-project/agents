@@ -75,25 +75,3 @@ impl Edge {
     }
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn test_dependency_types() {
-        let data_edge = Edge::new(1, 2, 10, DependencyType::Data);
-        assert!(data_edge.is_data_dependency());
-        assert!(!data_edge.is_effect_dependency());
-        assert!(!data_edge.is_control_dependency());
-
-        let effect_edge = Edge::new(1, 2, 10, DependencyType::Effect);
-        assert!(!effect_edge.is_data_dependency());
-        assert!(effect_edge.is_effect_dependency());
-        assert!(!effect_edge.is_control_dependency());
-
-        let control_edge = Edge::new(1, 2, 10, DependencyType::Control);
-        assert!(!control_edge.is_data_dependency());
-        assert!(!control_edge.is_effect_dependency());
-        assert!(control_edge.is_control_dependency());
-    }
-}

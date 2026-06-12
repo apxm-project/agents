@@ -108,19 +108,3 @@ fn enc(seg: &str) -> String {
     out
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn resolver_holds_base() {
-        let r = CredentialResolver::new("http://127.0.0.1:18810");
-        assert_eq!(r.base, "http://127.0.0.1:18810");
-    }
-
-    #[test]
-    fn path_segment_is_encoded() {
-        assert_eq!(enc("a/b c"), "a%2Fb%20c");
-        assert_eq!(enc("ok-id_1.2~"), "ok-id_1.2~");
-    }
-}

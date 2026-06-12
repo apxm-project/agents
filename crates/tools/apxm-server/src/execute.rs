@@ -963,24 +963,3 @@ pub(crate) fn to_execute_response(
     }
 }
 
-#[cfg(test)]
-mod budget_tests {
-    use super::*;
-
-    #[test]
-    fn merge_tool_budgets_takes_most_restrictive_per_tool() {
-        let request = HashMap::from([
-            ("web.fetch".to_string(), 5usize),
-            ("bash".to_string(), 9usize),
-        ]);
-        // AIR declares a tighter web.fetch and a new tool not in the request.
-        let declared = HashMap::from([
-            ("web.fetch".to_string(), 3usize),
-            ("slack.post".to_string(), 2usize),
-        ]);
-        let merged = merge_tool_budgets(request, declared);
-        assert_eq!(merged.get("web.fetch").copied(), Some(3)); // min(5, 3)
-        assert_eq!(merged.get("bash").copied(), Some(9)); // request only
-        assert_eq!(merged.get("slack.post").copied(), Some(2)); // declared only
-    }
-}

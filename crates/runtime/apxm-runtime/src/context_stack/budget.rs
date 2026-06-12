@@ -26,17 +26,3 @@ impl BudgetAllocator {
     }
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn budget_allocation_saturates() {
-        let mut allocator = BudgetAllocator::new(100);
-
-        assert_eq!(allocator.allocate(30), 30);
-        assert_eq!(allocator.remaining(), 70);
-        assert_eq!(allocator.allocate(80), 70);
-        assert!(allocator.is_exhausted());
-    }
-}

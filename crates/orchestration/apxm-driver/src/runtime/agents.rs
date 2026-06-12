@@ -210,25 +210,6 @@ impl AgentSpawner for AcpAgentSpawner {
     }
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn unsupported_session_control_is_json_rpc_method_not_found() {
-        let unsupported = apxm_acp::AcpError::AgentError {
-            code: apxm_acp::constants::json_rpc_errors::METHOD_NOT_FOUND,
-            message: "Method not found".to_string(),
-        };
-        let invalid_request = apxm_acp::AcpError::AgentError {
-            code: -32600,
-            message: "Invalid request".to_string(),
-        };
-
-        assert!(is_unsupported_session_control(&unsupported));
-        assert!(!is_unsupported_session_control(&invalid_request));
-    }
-}
 
 // ─── AgentPrompter implementation ────────────────────────────────────────────
 

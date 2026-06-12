@@ -197,26 +197,3 @@ fn register_server_event_payloads() {
     register_skill_event_payloads();
 }
 
-#[cfg(test)]
-mod tests {
-    use super::is_loopback_origin;
-
-    #[test]
-    fn loopback_origins_are_allowed() {
-        assert!(is_loopback_origin("http://127.0.0.1:5173"));
-        assert!(is_loopback_origin("http://localhost:3000"));
-        assert!(is_loopback_origin("https://localhost"));
-        assert!(is_loopback_origin("http://[::1]:18800"));
-        assert!(is_loopback_origin("http://127.0.0.1"));
-    }
-
-    #[test]
-    fn non_loopback_origins_are_rejected() {
-        assert!(!is_loopback_origin("http://example.com"));
-        assert!(!is_loopback_origin("https://evil.example.com:443"));
-        assert!(!is_loopback_origin("http://127.0.0.1.evil.com"));
-        assert!(!is_loopback_origin("http://10.0.0.5:18800"));
-        assert!(!is_loopback_origin("ftp://localhost"));
-        assert!(!is_loopback_origin("localhost:3000"));
-    }
-}

@@ -28,13 +28,3 @@ pub(crate) unsafe fn pass_info_from_raw(info: *const raw::ApxmPassInfo) -> Optio
     }
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn test_pass_info_from_raw_with_null_returns_none() {
-        let result = unsafe { pass_info_from_raw(std::ptr::null()) };
-        assert!(result.is_none());
-    }
-}

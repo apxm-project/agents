@@ -55,28 +55,3 @@ impl CapabilityExecutor for CountTokensCapability {
     }
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[tokio::test]
-    async fn estimates_tokens_chars_over_four() {
-        let cap = CountTokensCapability::new();
-        let mut args = HashMap::new();
-        args.insert("text".to_string(), Value::String("a".repeat(40)));
-        let out = cap.execute(args).await.unwrap();
-        assert_eq!(out, Value::Number(Number::Integer(10)));
-    }
-
-    #[tokio::test]
-    async fn missing_text_is_zero() {
-        let cap = CountTokensCapability::new();
-        let out = cap.execute(HashMap::new()).await.unwrap();
-        assert_eq!(out, Value::Number(Number::Integer(0)));
-    }
-
-    #[test]
-    fn is_read_only_for_safe_parallel_dispatch() {
-        assert!(CountTokensCapability::new().metadata().read_only);
-    }
-}

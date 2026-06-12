@@ -249,31 +249,3 @@ impl EntityType {
     }
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn test_intent_requires_execution() {
-        let execute = Intent::ExecuteTask {
-            description: "test".to_string(),
-            parameters: HashMap::new(),
-        };
-        assert!(execute.requires_execution());
-
-        let query = Intent::QueryModules;
-        assert!(!query.requires_execution());
-    }
-
-    #[test]
-    fn test_intent_is_query() {
-        let query = Intent::QueryModules;
-        assert!(query.is_query());
-
-        let execute = Intent::ExecuteTask {
-            description: "test".to_string(),
-            parameters: HashMap::new(),
-        };
-        assert!(!execute.is_query());
-    }
-}

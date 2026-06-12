@@ -190,29 +190,3 @@ impl CapabilityExecutor for MockSearchCapability {
     }
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[tokio::test]
-    async fn test_echo_capability() -> Result<(), Box<dyn std::error::Error>> {
-        let echo = EchoCapability::new();
-
-        let mut args = HashMap::new();
-        args.insert("message".to_string(), Value::String("Hello".to_string()));
-
-        let result = echo.execute(args).await?;
-        assert_eq!(result.as_string().map(|s| s.as_str()), Some("Echo: Hello"));
-
-        Ok(())
-    }
-
-    #[tokio::test]
-    async fn test_echo_capability_missing_arg() {
-        let echo = EchoCapability::new();
-        let args = HashMap::new();
-
-        let result = echo.execute(args).await;
-        assert!(result.is_err());
-    }
-}

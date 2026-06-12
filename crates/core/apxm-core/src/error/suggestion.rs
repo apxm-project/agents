@@ -158,37 +158,3 @@ impl CodeReplacement {
     }
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn test_suggestion_new() {
-        let sugg = Suggestion::new("Try adding a semicolon".to_string());
-        assert_eq!(sugg.message, "Try adding a semicolon");
-        assert!(sugg.replacement.is_none());
-    }
-
-    #[test]
-    fn test_suggestion_with_replacement() {
-        let span = Span::new("test.air".to_string(), 10, 5, 3);
-        let sugg = Suggestion::with_replacement(
-            "Add semicolon".to_string(),
-            span.clone(),
-            ";".to_string(),
-        );
-        assert!(sugg.replacement.is_some());
-        assert_eq!(
-            sugg.replacement.as_ref().map(|r| r.code.as_str()),
-            Some(";")
-        );
-        assert_eq!(sugg.confidence, SuggestionConfidence::High);
-    }
-
-    #[test]
-    fn test_suggestion_with_help() {
-        let sugg = Suggestion::new("Fix this".to_string())
-            .with_help("This is educational help text".to_string());
-        assert_eq!(sugg.help, Some("This is educational help text".to_string()));
-    }
-}

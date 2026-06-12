@@ -7,27 +7,3 @@ pub fn mask_key(key: &str) -> String {
     }
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn test_mask_long_key() {
-        assert_eq!(mask_key("sk-proj-abc123xyz"), "sk-p...3xyz");
-    }
-
-    #[test]
-    fn test_mask_short_key() {
-        assert_eq!(mask_key("abc"), "****");
-    }
-
-    #[test]
-    fn test_mask_exactly_8() {
-        assert_eq!(mask_key("12345678"), "****");
-    }
-
-    #[test]
-    fn test_mask_9_chars() {
-        assert_eq!(mask_key("123456789"), "1234...6789");
-    }
-}

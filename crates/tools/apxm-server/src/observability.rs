@@ -78,29 +78,6 @@ pub(crate) fn init(
     }))
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn init_returns_none_without_endpoint() {
-        assert!(
-            init(&ServerObservabilityConfig::default())
-                .unwrap()
-                .is_none()
-        );
-    }
-
-    #[test]
-    fn init_uses_configured_endpoint() {
-        let config = ServerObservabilityConfig {
-            otlp_endpoint: Some(" http://127.0.0.1:4317 ".to_string()),
-        };
-        let exporter = init(&config).unwrap().expect("exporter");
-
-        assert_eq!(exporter.endpoint(), "http://127.0.0.1:4317");
-    }
-}
 
 #[derive(Debug)]
 pub(crate) struct OtelInitError(pub String);

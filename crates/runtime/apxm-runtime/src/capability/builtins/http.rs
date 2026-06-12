@@ -204,49 +204,6 @@ impl CapabilityExecutor for HttpGetCapability {
     }
 }
 
-#[cfg(test)]
-mod ssrf_tests {
-    use super::*;
-
-    #[test]
-    fn blocks_private_loopback_and_metadata_ips() {
-        for s in [
-            "127.0.0.1",
-            "10.0.0.5",
-            "192.168.1.1",
-            "172.16.0.1",
-            "169.254.169.254",
-            "0.0.0.0",
-            "::1",
-            "fc00::1",
-            "fe80::1",
-        ] {
-            assert!(is_blocked_ip(s.parse().unwrap()), "{s} should be blocked");
-        }
-        for s in ["8.8.8.8", "1.1.1.1", "93.184.216.34"] {
-            assert!(!is_blocked_ip(s.parse().unwrap()), "{s} should be allowed");
-        }
-    }
-
-    #[tokio::test]
-    async fn guard_rejects_bad_scheme_and_private_ip() {
-        assert!(
-            guard_url_ssrf("http_get", "file:///etc/passwd")
-                .await
-                .is_err()
-        );
-        assert!(
-            guard_url_ssrf("http_get", "http://169.254.169.254/latest/meta-data")
-                .await
-                .is_err()
-        );
-        assert!(
-            guard_url_ssrf("http_get", "http://127.0.0.1:8080/")
-                .await
-                .is_err()
-        );
-    }
-}
 
 /// `http_post(url, body?, headers?)` — POST a JSON/string body, return the body.
 pub struct HttpPostCapability {

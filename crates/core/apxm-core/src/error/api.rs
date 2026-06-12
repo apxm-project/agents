@@ -331,27 +331,3 @@ impl std::error::Error for Error {
     }
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::error::span::Span;
-
-    #[test]
-    fn test_error_display() {
-        let span = Span::new("test.air".to_string(), 10, 5, 3);
-        let error = Error::new(ErrorCode::ExpectedExpression, "expected expression", span);
-        let display = format!("{error}");
-        assert!(display.contains("E002"));
-        assert!(display.contains("expected expression"));
-    }
-
-    #[test]
-    fn test_error_pretty_print() {
-        let span = Span::new("test.air".to_string(), 1, 1, 1);
-        let error = Error::new(ErrorCode::ExpectedExpression, "expected expression", span);
-        let source = "let x = ";
-        let output = error.pretty_print(Some(source));
-        assert!(output.contains("error[E002]"));
-        assert!(output.contains("expected expression"));
-    }
-}

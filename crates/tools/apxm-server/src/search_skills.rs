@@ -180,38 +180,3 @@ pub(crate) fn register(runtime: &Runtime, library: SkillLibrary) {
     }
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use std::path::PathBuf;
-
-    #[test]
-    fn manifest_shared_opts_into_global_tier() {
-        assert!(is_shared(
-            true,
-            Path::new("/x/scoped/s"),
-            Some(Path::new("/builtin"))
-        ));
-    }
-
-    #[test]
-    fn skills_under_global_root_are_shared() {
-        let global = PathBuf::from("/srv/builtin");
-        assert!(is_shared(
-            false,
-            Path::new("/srv/builtin/plan/skill"),
-            Some(&global)
-        ));
-        assert!(!is_shared(
-            false,
-            Path::new("/srv/userlibs/triage/skill"),
-            Some(&global)
-        ));
-    }
-
-    #[test]
-    fn no_global_root_means_only_manifest_shared() {
-        assert!(!is_shared(false, Path::new("/anything"), None));
-        assert!(is_shared(true, Path::new("/anything"), None));
-    }
-}

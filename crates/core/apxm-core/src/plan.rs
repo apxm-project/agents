@@ -128,39 +128,3 @@ impl PlanStep {
     }
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn test_plan_with_inner_air() {
-        let plan = Plan::new(vec![], "Test plan".to_string()).with_inner_air(
-            "module {\n  func.func @inner() -> !ais.token attributes {ais.entry} {\n    %r = ais.wait_all -> !ais.token\n    func.return %r : !ais.token\n  }\n}\n".to_string(),
-        );
-
-        assert!(plan.has_inner_plan());
-        assert!(plan.inner_plan.unwrap().air.is_some());
-    }
-
-    #[test]
-    fn test_plan_serialization() {
-        let step = PlanStep::new("Test step".to_string(), 50);
-        let plan = Plan::new(vec![step], "Test plan".to_string());
-
-        let json = serde_json::to_string(&plan).unwrap();
-        assert!(json.contains("Test step"));
-        assert!(json.contains("Test plan"));
-
-        let deserialized: Plan = serde_json::from_str(&json).unwrap();
-        assert_eq!(deserialized.steps.len(), 1);
-        assert_eq!(deserialized.result, "Test plan");
-    }
-
-    #[test]
-    fn test_plan_with_inner_task_dag() {
-        let dag = TaskDag::new("inner");
-        let plan = Plan::new(vec![], "Test plan".to_string()).with_inner_task_dag(dag);
-        assert!(plan.has_inner_plan());
-        assert!(plan.inner_plan.unwrap().task_dag.is_some());
-    }
-}

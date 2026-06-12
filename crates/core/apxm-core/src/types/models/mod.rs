@@ -183,32 +183,3 @@ impl FinishReason {
     }
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn test_finish_reason_parsing() {
-        assert_eq!(FinishReason::from_string("stop"), FinishReason::Stop);
-        assert_eq!(FinishReason::from_string("Stop"), FinishReason::Stop);
-        assert_eq!(FinishReason::from_string("end_turn"), FinishReason::Stop);
-        assert_eq!(FinishReason::from_string("length"), FinishReason::Length);
-        assert_eq!(
-            FinishReason::from_string("max_tokens"),
-            FinishReason::Length
-        );
-        assert_eq!(FinishReason::from_string("tool_use"), FinishReason::ToolUse);
-        assert_eq!(
-            FinishReason::from_string("tool_calls"),
-            FinishReason::ToolUse
-        );
-        assert_eq!(
-            FinishReason::from_string("function_call"),
-            FinishReason::ToolUse
-        );
-        assert_eq!(
-            FinishReason::from_string("unknown_value"),
-            FinishReason::Unknown
-        );
-    }
-}

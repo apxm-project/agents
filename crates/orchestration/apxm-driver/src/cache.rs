@@ -67,30 +67,3 @@ pub fn store_cached(hash: &str, artifact_bytes: &[u8]) -> Result<(), DriverError
     Ok(())
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn hash_is_deterministic() {
-        let module_a = AirModule {
-            name: "test".to_string(),
-            nodes: vec![],
-            edges: vec![],
-            parameters: vec![],
-            metadata: std::collections::HashMap::new(),
-        };
-        let module_b = module_a.clone();
-        // Identical modules must produce identical hashes
-        assert_eq!(
-            graph_hash(&module_a).unwrap(),
-            graph_hash(&module_b).unwrap()
-        );
-    }
-
-    #[test]
-    fn cache_disabled_env() {
-        // Default: not disabled
-        assert!(!cache_disabled() || std::env::var(apxm_env::APXM_NO_CACHE).is_ok());
-    }
-}

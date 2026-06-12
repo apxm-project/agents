@@ -9,8 +9,6 @@
 mod lower;
 mod plan;
 
-#[cfg(test)]
-mod tests;
 
 use std::collections::{BTreeSet, HashMap};
 

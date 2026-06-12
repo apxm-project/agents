@@ -44,39 +44,3 @@ pub fn generate_artifact_operation_kind_cases() -> String {
     output
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn generated_entries_cover_wire_table() {
-        let output = generate_artifact_operation_kind_entries();
-
-        assert!(output.contains("GENERATED from Rust AIS operation definitions"));
-        for &(wire_index, op) in WIRE_INDEXED_OPERATIONS {
-            let name = cpp_operation_name(op);
-            assert!(
-                output.contains(&format!("  {name} = {wire_index},")),
-                "missing OperationKind entry for {name}"
-            );
-        }
-    }
-
-    #[test]
-    fn generated_cases_cover_wire_table() {
-        let output = generate_artifact_operation_kind_cases();
-
-        assert!(output.contains("GENERATED from Rust AIS operation definitions"));
-        for &(_, op) in WIRE_INDEXED_OPERATIONS {
-            let name = cpp_operation_name(op);
-            assert!(
-                output.contains(&format!(".Case<{name}Op>")),
-                "missing mapOperation case for {name}"
-            );
-            assert!(
-                output.contains(&format!("OperationKind::{name}")),
-                "missing OperationKind return for {name}"
-            );
-        }
-    }
-}

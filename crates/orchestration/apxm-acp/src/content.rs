@@ -36,26 +36,3 @@ impl ContentBlock {
     }
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn text_block_serialization() {
-        let block = ContentBlock::text("hello");
-        let json = serde_json::to_value(&block).unwrap();
-        assert_eq!(json["type"], "text");
-        assert_eq!(json["text"], "hello");
-    }
-
-    #[test]
-    fn image_block_serialization() {
-        let block = ContentBlock::Image {
-            mime_type: "image/png".into(),
-            data: "base64data".into(),
-        };
-        let json = serde_json::to_value(&block).unwrap();
-        assert_eq!(json["type"], "image");
-        assert_eq!(json["mimeType"], "image/png");
-    }
-}

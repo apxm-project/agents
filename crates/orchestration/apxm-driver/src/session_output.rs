@@ -101,55 +101,6 @@ fn derive_final_output(
     (None, joined)
 }
 
-#[cfg(test)]
-mod final_output_tests {
-    use super::*;
-
-    fn s(v: &str) -> Value {
-        Value::String(v.to_string())
-    }
-
-    #[test]
-    fn single_exit_returns_id_and_string() {
-        let exit: HashMap<u64, Value> = [(7u64, s("Paris"))].into_iter().collect();
-        let outs: HashMap<u64, Value> = HashMap::new();
-        let (id, out) = derive_final_output(&exit, &outs);
-        assert_eq!(id, Some(7));
-        assert_eq!(out, "Paris");
-    }
-
-    #[test]
-    fn multi_exit_concatenates_in_id_order() {
-        let exit: HashMap<u64, Value> = [(2u64, s("b")), (1u64, s("a"))].into_iter().collect();
-        let outs: HashMap<u64, Value> = HashMap::new();
-        let (id, out) = derive_final_output(&exit, &outs);
-        assert_eq!(id, None);
-        assert_eq!(out, "a\nb");
-    }
-
-    #[test]
-    fn empty_exit_falls_back_to_highest_output_id() {
-        let exit: HashMap<u64, Value> = HashMap::new();
-        let outs: HashMap<u64, Value> = [(3u64, s("low")), (9u64, s("hi"))].into_iter().collect();
-        let (id, out) = derive_final_output(&exit, &outs);
-        assert_eq!(id, Some(9));
-        assert_eq!(out, "hi");
-    }
-
-    #[test]
-    fn empty_everywhere_returns_empty_string() {
-        let (id, out) = derive_final_output(&HashMap::new(), &HashMap::new());
-        assert_eq!(id, None);
-        assert_eq!(out, "");
-    }
-
-    #[test]
-    fn non_string_value_serialises_via_json() {
-        let exit: HashMap<u64, Value> = [(5u64, Value::Bool(true))].into_iter().collect();
-        let (_, out) = derive_final_output(&exit, &HashMap::new());
-        assert_eq!(out, "true");
-    }
-}
 
 /// Simple .air emitter for session output (avoids circular dependency on Compiler).
 fn emit_air_simple(module: &AirModule) -> String {

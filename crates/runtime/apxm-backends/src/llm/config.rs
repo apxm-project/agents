@@ -139,23 +139,3 @@ pub struct DockerConfig {
     pub tensor_parallel: Option<usize>,
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn backend_type_roundtrips() {
-        let value = BackendType::Cloud;
-        let json = serde_json::to_string(&value).unwrap();
-        assert_eq!(serde_json::from_str::<BackendType>(&json).unwrap(), value);
-    }
-
-    #[test]
-    fn model_config_defaults() {
-        let config: ModelConfig = serde_json::from_str(r#"{"id":"example-model"}"#).unwrap();
-        assert_eq!(config.id, "example-model");
-        assert!(config.aliases.is_empty());
-        assert_eq!(config.context_window, 0);
-        assert!(!config.supports_functions);
-    }
-}

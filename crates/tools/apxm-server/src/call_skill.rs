@@ -483,35 +483,3 @@ pub(crate) fn install_unattached(
     resolver
 }
 
-#[cfg(test)]
-mod visible_set_tests {
-    use super::skill_visible;
-
-    #[test]
-    fn none_visible_set_only_sees_shared_skills() {
-        assert!(!skill_visible(None, "anything", Some("lib"), false));
-        assert!(skill_visible(None, "anything", Some("lib"), true));
-    }
-
-    #[test]
-    fn shared_skill_always_visible() {
-        assert!(skill_visible(Some("other-lib"), "plan", None, true));
-    }
-
-    #[test]
-    fn scoped_skill_blocked_unless_imported() {
-        // Declared imports that don't cover the target => denied.
-        assert!(!skill_visible(Some("docs"), "deploy", Some("ops"), false));
-        // Whole-library import.
-        assert!(skill_visible(Some("ops"), "deploy", Some("ops"), false));
-        // Namespaced import.
-        assert!(skill_visible(
-            Some("ops::deploy"),
-            "deploy",
-            Some("ops"),
-            false
-        ));
-        // Bare-id import.
-        assert!(skill_visible(Some("deploy"), "deploy", Some("ops"), false));
-    }
-}

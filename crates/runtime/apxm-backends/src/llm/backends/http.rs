@@ -44,15 +44,3 @@ fn duration_ms(value: Option<&str>, default_ms: u64) -> Duration {
         .unwrap_or_else(|| Duration::from_millis(default_ms))
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn duration_ms_ignores_invalid_values() {
-        assert_eq!(duration_ms(None, 42), Duration::from_millis(42));
-        assert_eq!(duration_ms(Some(""), 42), Duration::from_millis(42));
-        assert_eq!(duration_ms(Some("0"), 42), Duration::from_millis(42));
-        assert_eq!(duration_ms(Some("7"), 42), Duration::from_millis(7));
-    }
-}

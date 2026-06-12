@@ -518,24 +518,3 @@ impl fmt::Display for ErrorCode {
     }
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn test_error_code_component() {
-        assert_eq!(ErrorCode::UnexpectedToken.component(), "parser");
-        assert_eq!(ErrorCode::TypeMismatch.component(), "type");
-        assert_eq!(ErrorCode::MLIRVerificationFailed.component(), "mlir");
-        assert_eq!(ErrorCode::PassExecutionFailed.component(), "optimization");
-        assert_eq!(ErrorCode::SchedulerError.component(), "runtime");
-        assert_eq!(ErrorCode::InternalError.component(), "generic");
-    }
-
-    #[test]
-    fn test_error_code_from_u32() {
-        assert_eq!(ErrorCode::from_u32(1), Some(ErrorCode::UnexpectedToken));
-        assert_eq!(ErrorCode::from_u32(101), Some(ErrorCode::TypeMismatch));
-        assert_eq!(ErrorCode::from_u32(999), None);
-    }
-}

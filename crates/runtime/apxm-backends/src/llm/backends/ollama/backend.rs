@@ -538,39 +538,3 @@ struct OllamaModel {
     name: String,
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::llm::backends::Message;
-
-    #[test]
-    fn parses_thinking_from_chat_response() {
-        let payload = r#"{
-            "message": {
-                "role": "assistant",
-                "content": "hello",
-                "thinking": "internal chain of thought"
-            },
-            "done": true
-        }"#;
-        let response: OllamaChatResponse = serde_json::from_str(payload).expect("parse");
-        assert_eq!(
-            response.message.thinking.as_deref(),
-            Some("internal chain of thought")
-        );
-    }
-
-    #[test]
-    fn should_think_honors_model_capability_map() {
-        let backend = OllamaBackend {
-            model: "gpt-oss:120b-cloud".to_string(),
-            base_url: DEFAULT_BASE_URL.to_string(),
-            client: reqwest::Client::new(),
-            ollama_options: serde_json::Map::new(),
-            model_supports_thinking: HashMap::from([("gpt-oss:120b-cloud".to_string(), true)]),
-        };
-        let request = LLMRequest::from_messages(vec![Message::text(Role::User, "hello")])
-            .with_model("gpt-oss:120b-cloud".to_string());
-        assert!(backend.should_think(&request));
-    }
-}

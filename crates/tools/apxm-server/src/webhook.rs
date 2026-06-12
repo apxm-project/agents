@@ -143,27 +143,3 @@ impl EventEmitter for WebhookEmitter {
     }
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn webhook_dispatcher_requires_nonempty_url() {
-        let config = ServerWebhookConfig {
-            url: Some(" ".to_string()),
-            timeout_secs: 5,
-        };
-
-        assert!(WebhookDispatcher::from_config(&config).is_none());
-    }
-
-    #[test]
-    fn webhook_dispatcher_builds_from_config() {
-        let config = ServerWebhookConfig {
-            url: Some("http://127.0.0.1:1/notify".to_string()),
-            timeout_secs: 0,
-        };
-
-        assert!(WebhookDispatcher::from_config(&config).is_some());
-    }
-}

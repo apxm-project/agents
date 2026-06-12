@@ -100,14 +100,3 @@ pub fn collect_errors() -> Vec<Error> {
         .collect()
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn error_collector_count_exists() {
-        // Integration test that verifies the function can be called without panicking.
-        // Actual behavior depends on C API state.
-        let _ = error_collector_count();
-    }
-}

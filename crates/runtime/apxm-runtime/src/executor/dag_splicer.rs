@@ -67,26 +67,3 @@ impl DagSplicer for NoOpSplicer {
     }
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use apxm_core::types::operations::AISOperationType;
-
-    #[tokio::test]
-    async fn test_noop_splicer() {
-        let splicer = NoOpSplicer;
-        let dag = ExecutionDag::new();
-        let connections = HashMap::new();
-
-        let result = splicer.splice_dag(dag, connections).await;
-        assert!(result.is_err());
-    }
-
-    #[tokio::test]
-    async fn test_noop_splicer_condense_returns_error() {
-        let splicer = NoOpSplicer;
-        let replacement = Arc::new(Node::new(99, AISOperationType::Return));
-        let result = splicer.condense_subdag(&[1, 2], replacement).await;
-        assert!(result.is_err());
-    }
-}

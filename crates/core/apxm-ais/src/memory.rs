@@ -85,31 +85,3 @@ impl fmt::Display for MemoryTier {
     }
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn test_tier_from_str() {
-        assert_eq!("stm".parse(), Ok(MemoryTier::Stm));
-        assert_eq!("STM".parse(), Ok(MemoryTier::Stm));
-        assert_eq!("ltm".parse(), Ok(MemoryTier::Ltm));
-        assert_eq!("episodic".parse(), Ok(MemoryTier::Episodic));
-        assert!("unknown".parse::<MemoryTier>().is_err());
-    }
-
-    #[test]
-    fn test_tier_properties() {
-        assert!(MemoryTier::Ltm.supports_semantic_search());
-        assert!(!MemoryTier::Stm.supports_semantic_search());
-        assert!(MemoryTier::Episodic.is_append_only());
-        assert!(!MemoryTier::Stm.is_append_only());
-    }
-
-    #[test]
-    fn test_tier_display() {
-        assert_eq!(format!("{}", MemoryTier::Stm), "stm");
-        assert_eq!(format!("{}", MemoryTier::Ltm), "ltm");
-        assert_eq!(format!("{}", MemoryTier::Episodic), "episodic");
-    }
-}

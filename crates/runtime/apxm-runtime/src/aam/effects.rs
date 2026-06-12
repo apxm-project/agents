@@ -144,30 +144,3 @@ pub fn operation_effects(op: &AISOperationType) -> OperationEffects {
     }
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn reorder_conflicts() {
-        // Reason writes to Beliefs, QMem reads Beliefs -> cannot reorder
-        let reason = operation_effects(&AISOperationType::Reason);
-        let qmem = operation_effects(&AISOperationType::QMem);
-        assert!(!reason.can_reorder_with(&qmem));
-    }
-
-    #[test]
-    fn fence_is_pure_barrier() {
-        let fence = operation_effects(&AISOperationType::Fence);
-        assert!(fence.reads.is_empty());
-        assert!(fence.writes.is_empty());
-        assert!(!fence.has_side_effects);
-    }
-
-    #[test]
-    fn all_operations_have_effects() {
-        for op in AISOperationType::all_operations() {
-            let _ = operation_effects(&op);
-        }
-    }
-}

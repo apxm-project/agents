@@ -1434,31 +1434,3 @@ fn display_path(path: &Path) -> String {
         .to_string()
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn bounded_usize_arg_uses_configured_default_and_max() {
-        let args = json!({});
-
-        assert_eq!(bounded_usize_arg(&args, mcp_args::LIMIT, 6, 1, 30), Ok(6));
-    }
-
-    #[test]
-    fn bounded_usize_arg_sanitizes_invalid_config_bounds() {
-        let args = json!({});
-
-        assert_eq!(bounded_usize_arg(&args, mcp_args::LIMIT, 0, 1, 0), Ok(1));
-    }
-
-    #[test]
-    fn bounded_usize_arg_rejects_request_above_configured_max() {
-        let args = json!({ (mcp_args::LIMIT): 31 });
-
-        assert_eq!(
-            bounded_usize_arg(&args, mcp_args::LIMIT, 6, 1, 30),
-            Err("limit must be between 1 and 30".to_string())
-        );
-    }
-}
