@@ -1,0 +1,6 @@
+module {
+  func.func @runtime_agent_routing_air() -> !ais.token attributes {ais.entry} {
+    %worker = ais.spawn_agent "routed_worker" {"agent_route" = "auto", "preferred_profiles" = ["codex"], "required_capabilities" = ["execute"]} : !ais.token
+    ais.return %worker : !ais.token
+  }
+}
