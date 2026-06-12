@@ -12,7 +12,7 @@ Graph structure:
 
 Usage:
     dekk apxm execute examples/python/self-hosted/add_op.py \
-      "CHECKPOINT" "Save execution state for later resume"
+      "SUMMARIZE" "Summarize input text"
 """
 
 from apxm import GraphRecorder, agent_cwd, compile
@@ -24,7 +24,7 @@ def add_op_workflow(g: GraphRecorder):
     """Add a new AIS operation to APXM.
 
     Parameters:
-        op_name (str): Name of the operation (e.g., "CHECKPOINT")
+        op_name (str): Name of the operation (e.g., "SUMMARIZE")
         op_description (str): What the operation does
     """
     # Add parameters
@@ -46,19 +46,21 @@ for adding a new AIS operation to the APXM codebase.
 Operation name: {op_name}
 Description: {op_description}
 
-Read the following files to understand the pattern:
-- crates/core/apxm-ais/src/operations/definitions.rs (AISOperationType enum)
-- crates/compiler/apxm-compiler/src/lower/ArtifactEmitter.cpp (MLIR lowering)
-- crates/compiler/apxm-compiler/mlir/AISOps.td (TableGen definitions)
+definitions.rs is the source of truth: the wire enum + C++ lowering cases
+are generated from it; AISOps.td is a hand-maintained mirror. Read:
+- crates/core/apxm-ais/src/operations/definitions.rs (AISOperationType enum,
+  WIRE_INDEXED_OPERATIONS table, the AIS_OPERATIONS OperationSpec list)
+- crates/core/apxm-ais/src/operations/attrs.rs (attribute-name constants)
+- crates/compiler/apxm-compiler/mlir/include/ais/Dialect/AIS/IR/AISOps.td (hand-written dialect)
 - crates/runtime/apxm-runtime/src/executor/handlers/spawn_agent.rs (example handler)
-- crates/runtime/apxm-runtime/src/executor/mod.rs (dispatcher)
+- crates/runtime/apxm-runtime/src/executor/dispatcher.rs (op -> handler dispatch)
 
 Create a structured plan with:
-1. Wire index (next available after checking definitions.rs)
-2. Required and optional node attributes
-3. MLIR mnemonic (should be lowercase, e.g., "ais.checkpoint")
-4. Handler pseudo-code (what should the runtime do)
-5. TableGen definition structure
+1. Wire index (next free index in WIRE_INDEXED_OPERATIONS; append-only, 30 reserved)
+2. OperationSpec: category, required/optional attribute fields, example_json, emission
+3. Attribute names (each a new attrs.rs constant in ALL_ATTR_NAMES)
+4. MLIR mnemonic (lowercase, e.g. "ais.checkpoint") and AISOps.td arguments
+5. Handler pseudo-code (what the runtime does)
 6. Test strategy
 
 Keep the plan under 400 words but be specific about attribute names and types.
@@ -76,17 +78,23 @@ Plan:
 
 You need to modify:
 1. crates/core/apxm-ais/src/operations/definitions.rs
-   - Add variant to AISOperationType enum
-   - Add to from_wire_index() match
+   - Add the AISOperationType variant
+   - Append (N, AISOperationType::<OpName>) to WIRE_INDEXED_OPERATIONS (append-only, 30 reserved)
+   - Add the OperationSpec entry to AIS_OPERATIONS (category, field schema, example_json, emission)
+   - The Display / FromStr / mlir_mnemonic / to_tablegen_name matches are
+     exhaustive and will fail to compile until you add each arm — follow the compiler.
 
-2. crates/compiler/apxm-compiler/mlir/AISOps.td
-   - Add def AIS_<OpName>Op block following the pattern of other ops
+2. crates/core/apxm-ais/src/operations/attrs.rs
+   - Add each attribute name as a const and list it in ALL_ATTR_NAMES (no string literals).
 
-3. crates/compiler/apxm-compiler/src/lower/ArtifactEmitter.cpp
-   - Add case to the switch in emitAISOperation()
+3. crates/compiler/apxm-compiler/mlir/include/ais/Dialect/AIS/IR/AISOps.td
+   - Hand-write the AIS_<OpName>Op def; its `arguments` mirror the spec fields
+     by the SAME attr names (typed OptionalAttr<...>, not bare attr-dict).
+   - Do NOT edit ArtifactEmitter.cpp: its lowering cases are generated from
+     WIRE_INDEXED_OPERATIONS unless the op needs bespoke lowering.
 
-Make sure the wire index matches the plan. Use the same attribute names.
-Only modify what's necessary — don't refactor surrounding code.
+Make sure the wire index matches the plan. Use the same attribute names across
+spec, attrs.rs, and AISOps.td. Only modify what's necessary.
 """
     )
 
@@ -104,9 +112,10 @@ You need to:
    - Execute the operation logic
    - Return a ResultToken
 
-2. Modify crates/runtime/apxm-runtime/src/executor/mod.rs
-   - Add mod <op_name> in the handlers module section
-   - Add a new arm to the execute_node() match statement
+2. Wire up dispatch:
+   - Add `pub mod <op_name>;` to crates/runtime/apxm-runtime/src/executor/handlers/mod.rs
+   - Add a dispatch arm to the `match node.op_type` in
+     crates/runtime/apxm-runtime/src/executor/dispatcher.rs
 
 3. Add tests in the handler file
    - Basic success case
