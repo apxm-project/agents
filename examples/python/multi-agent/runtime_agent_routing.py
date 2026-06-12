@@ -15,7 +15,7 @@ from apxm import GraphRecorder, agent_cwd, compile
 
 @compile()
 def runtime_agent_routing(g: GraphRecorder):
-    """Route one worker through the runtime AgentRouter, then return metadata."""
+    """Route one worker at execution time, then return metadata."""
     routed_worker = g.spawn_agent(
         "spawn_routed_worker",
         agent_name="routed_worker",

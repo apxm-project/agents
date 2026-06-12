@@ -48,10 +48,8 @@ The default selector is deterministic: it validates explicit profiles, filters
 automatic candidates by `required_capabilities`, then uses active load,
 capability fit, caller `preferred_profiles`, and registry order as tie-breakers.
 
-The `SPAWN_AGENT` result includes route metadata for frontends and traces:
-`route_source`, `route_action`, `route_policy`, `route_reason`,
-`route_candidate_snapshot`, `route_scores`, `eligible_profiles`, and
-`rejected_profiles`.
+The `SPAWN_AGENT` result includes the selected `profile`, `route_source`,
+`route_selector`, `route_reason`, and compact route diagnostics for traces.
 For a runnable example, see
 [`runtime_agent_routing.py`](../../examples/python/multi-agent/runtime_agent_routing.py)
 or the native AIR companion

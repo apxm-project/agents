@@ -35,12 +35,12 @@ Trigger:
 ## Agent Route
 
 - Transport: `{{ worker.transport }}`
-{% if worker.profile %}- Profile: `{{ worker.profile }}`
-{% endif %}{% if worker.profile_source %}- Profile source: `{{ worker.profile_source }}`
-{% endif %}{% if worker.profile_description %}- Profile description: {{ worker.profile_description }}
+{% if worker.agent_route %}- Agent route: `{{ worker.agent_route }}`
+{% elif worker.profile %}- Profile: `{{ worker.profile }}`
+{% endif %}{% if worker.selected_profile_hint %}- Selected profile hint: `{{ worker.selected_profile_hint }}`
 {% endif %}- Required route capabilities: {{ worker.required_capabilities }}
 - Preferred profiles: {{ worker.preferred_profiles }}
-- Eligible profiles: {{ worker.eligible_profiles }}
+- Route selector: `{{ worker.route_selector }}`
 - Route decision: {{ worker.route_reason }}
 
 ## Read First

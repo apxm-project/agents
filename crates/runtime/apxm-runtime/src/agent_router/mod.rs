@@ -30,23 +30,6 @@ pub struct AgentRouteCandidate {
     pub default_model: Option<String>,
 }
 
-/// Concrete runtime action selected for a route request.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum AgentRouteAction {
-    Spawn,
-    Deterministic,
-}
-
-impl AgentRouteAction {
-    pub fn as_str(self) -> &'static str {
-        match self {
-            Self::Spawn => "spawn",
-            Self::Deterministic => "deterministic",
-        }
-    }
-}
-
 /// Runtime-level request for a spawned agent profile binding.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct AgentRouteRequest {
@@ -138,7 +121,6 @@ pub struct AgentRouteDecision {
     pub profile: Option<String>,
     pub mode: Option<String>,
     pub model: Option<String>,
-    pub action: AgentRouteAction,
     pub source: AgentRouteSource,
     pub required_capabilities: Vec<String>,
     pub preferred_profiles: Vec<String>,
@@ -255,7 +237,6 @@ impl AgentRouter {
                         .model
                         .clone()
                         .or_else(|| candidate.default_model.clone()),
-                    action: AgentRouteAction::Spawn,
                     source: AgentRouteSource::Explicit,
                     required_capabilities,
                     preferred_profiles,
@@ -287,7 +268,6 @@ impl AgentRouter {
                     profile: None,
                     mode: request.mode.clone(),
                     model: request.model.clone(),
-                    action: AgentRouteAction::Deterministic,
                     source: AgentRouteSource::Deterministic,
                     required_capabilities,
                     preferred_profiles,
@@ -329,7 +309,6 @@ impl AgentRouter {
                     .model
                     .clone()
                     .or_else(|| candidate.default_model.clone()),
-                action: AgentRouteAction::Spawn,
                 source: AgentRouteSource::Selected,
                 required_capabilities,
                 preferred_profiles,
@@ -599,7 +578,6 @@ mod tests {
             .expect("route request");
 
         let decision = &decisions[0];
-        assert_eq!(decision.action, AgentRouteAction::Spawn);
         assert_eq!(decision.profile.as_deref(), Some("executor"));
         assert_eq!(decision.mode.as_deref(), Some("code"));
         assert_eq!(decision.model.as_deref(), Some("model-exec"));

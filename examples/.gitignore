@@ -1,4 +1,3 @@
 *.apxmobj
-*.apxmw
 __pycache__/
 *.pyc

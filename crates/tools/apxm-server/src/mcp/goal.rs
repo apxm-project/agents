@@ -9,7 +9,6 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::time::Duration;
 
-use apxm_backends::HealthStatus;
 use apxm_backends::LLMRequest;
 use apxm_core::constants::mcp::tools as mcp_tool_names;
 use apxm_core::constants::orchestration::admission as goal_admission;
@@ -27,8 +26,7 @@ use apxm_core::types::{
 };
 use apxm_runtime::{
     AGENT_ROUTE_CAPABILITIES, AGENT_ROUTE_SELECTOR_DETERMINISTIC, AgentRouteCandidate,
-    AgentRouteDecision, AgentRouteRequest, AgentRouteScore, AgentRouteSource, AgentRouter,
-    AgentRoutingError,
+    AgentRouteDecision, AgentRouteRequest, AgentRouteSource, AgentRouter, AgentRoutingError,
 };
 use axum::Json;
 use axum::extract::State;
@@ -268,19 +266,11 @@ struct WorkerPlanSummary {
     preferred_profiles: Vec<String>,
     route_source: String,
     route_reason: String,
-    eligible_profiles: Vec<String>,
-    #[serde(skip_serializing_if = "Vec::is_empty")]
-    rejected_profiles: Vec<String>,
-    #[serde(skip_serializing_if = "Vec::is_empty")]
-    route_scores: Vec<AgentRouteScore>,
-    route_action: String,
-    route_policy: String,
+    route_selector: String,
     #[serde(skip_serializing_if = "Option::is_none")]
-    route_candidate_snapshot: Option<String>,
+    agent_route: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    profile_source: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    profile_description: Option<String>,
+    selected_profile_hint: Option<String>,
     depends_on: Vec<String>,
     cwd: String,
     workspace: WorkspaceBindingSummary,
@@ -352,52 +342,25 @@ struct GoalEventsArgs {
 #[derive(Debug, Clone, Serialize)]
 struct GoalSelectionSummary {
     agents: String,
-    candidates: Vec<AgentRouteCandidateSummary>,
     workers: Vec<WorkerSelectionSummary>,
-    backends: Vec<BackendSelectionSummary>,
-}
-
-#[derive(Debug, Clone, Serialize)]
-struct AgentRouteCandidateSummary {
-    profile: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    description: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    source: Option<String>,
-    capabilities: Vec<String>,
 }
 
 #[derive(Debug, Clone, Serialize)]
 struct WorkerSelectionSummary {
     id: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
     profile: Option<String>,
     source: &'static str,
     #[serde(skip_serializing_if = "Option::is_none")]
-    profile_source: Option<String>,
+    selected_profile_hint: Option<String>,
     required_capabilities: Vec<String>,
     preferred_profiles: Vec<String>,
-    eligible_profiles: Vec<String>,
-    #[serde(skip_serializing_if = "Vec::is_empty")]
-    rejected_profiles: Vec<String>,
-    #[serde(skip_serializing_if = "Vec::is_empty")]
-    route_scores: Vec<AgentRouteScore>,
-    route_action: String,
-    route_policy: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    route_candidate_snapshot: Option<String>,
+    route_selector: String,
     reason: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     mode: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     model: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    profile_description: Option<String>,
-}
-
-#[derive(Debug, Clone, Serialize)]
-struct BackendSelectionSummary {
-    name: String,
-    health: String,
 }
 
 struct GoalBundle {
@@ -438,15 +401,8 @@ struct WorkerPlan {
     preferred_profiles: Vec<String>,
     route_source: String,
     route_reason: String,
-    eligible_profiles: Vec<String>,
-    rejected_profiles: Vec<String>,
-    route_scores: Vec<AgentRouteScore>,
-    route_action: String,
-    route_policy: String,
-    route_candidate_snapshot: Option<String>,
+    route_selector: String,
     agent_route: Option<String>,
-    profile_source: Option<String>,
-    profile_description: Option<String>,
     cwd: PathBuf,
     tracking_doc_path: PathBuf,
     air_path: PathBuf,
@@ -2265,7 +2221,6 @@ async fn apply_goal_selection(
         }
         return Ok(Some(GoalSelectionSummary {
             agents: "disabled".to_string(),
-            candidates: Vec::new(),
             workers: request
                 .workers()
                 .iter()
@@ -2275,10 +2230,9 @@ async fn apply_goal_selection(
                     } else {
                         "deterministic"
                     };
-                    worker_selection_summary(worker, None, &HashMap::new(), source)
+                    worker_selection_summary(worker, None, source)
                 })
                 .collect(),
-            backends: backend_selection_summary(state),
         }));
     }
     if agents_mode != "auto" {
@@ -2293,40 +2247,16 @@ async fn apply_goal_selection(
         .into_iter()
         .map(|decision| (decision.id.clone(), decision))
         .collect();
-    let candidates_by_profile = candidates
-        .iter()
-        .map(|candidate| (candidate.profile.clone(), candidate.clone()))
-        .collect::<HashMap<_, _>>();
-
     Ok(Some(GoalSelectionSummary {
         agents: "auto".to_string(),
-        candidates: candidates
-            .iter()
-            .map(agent_route_candidate_summary)
-            .collect(),
         workers: request
             .workers()
             .iter()
             .map(|worker| {
-                worker_selection_summary(
-                    worker,
-                    decisions_by_id.get(&worker.id),
-                    &candidates_by_profile,
-                    "deterministic",
-                )
+                worker_selection_summary(worker, decisions_by_id.get(&worker.id), "deterministic")
             })
             .collect(),
-        backends: backend_selection_summary(state),
     }))
-}
-
-fn agent_route_candidate_summary(candidate: &AgentRouteCandidate) -> AgentRouteCandidateSummary {
-    AgentRouteCandidateSummary {
-        profile: candidate.profile.clone(),
-        description: candidate.description.clone(),
-        source: candidate.source.clone(),
-        capabilities: candidate.capabilities.clone(),
-    }
 }
 
 fn bind_goal_agent_selection(
@@ -2515,81 +2445,39 @@ fn push_capability(capabilities: &mut Vec<String>, capability: &str) {
 fn worker_selection_summary(
     worker: &WorkerSpec,
     decision: Option<&AgentRouteDecision>,
-    candidates: &HashMap<String, AgentRouteCandidate>,
     default_source: &'static str,
 ) -> WorkerSelectionSummary {
-    let profile_candidate = worker
-        .profile
-        .as_ref()
-        .and_then(|profile| candidates.get(profile));
+    let source = decision
+        .map(|decision| decision.source.as_str())
+        .unwrap_or(default_source);
+    let selected_profile_hint = if source == AgentRouteSource::Selected.as_str() {
+        worker.profile.clone()
+    } else {
+        None
+    };
     WorkerSelectionSummary {
         id: worker.id.clone(),
-        profile: worker.profile.clone(),
-        source: decision
-            .map(|decision| decision.source.as_str())
-            .unwrap_or(default_source),
-        profile_source: profile_candidate.and_then(|candidate| candidate.source.clone()),
+        profile: if source == AgentRouteSource::Selected.as_str() {
+            None
+        } else {
+            worker.profile.clone()
+        },
+        source,
+        selected_profile_hint,
         required_capabilities: decision
             .map(|decision| decision.required_capabilities.clone())
             .unwrap_or_else(|| goal_worker_required_capabilities(worker)),
         preferred_profiles: decision
             .map(|decision| decision.preferred_profiles.clone())
             .unwrap_or_else(|| worker.preferred_profiles.clone()),
-        eligible_profiles: decision
-            .map(|decision| decision.eligible_profiles.clone())
-            .unwrap_or_default(),
-        rejected_profiles: decision
-            .map(|decision| {
-                decision
-                    .rejected_candidates
-                    .iter()
-                    .map(|rejection| rejection.profile.clone())
-                    .collect()
-            })
-            .unwrap_or_default(),
-        route_scores: decision
-            .map(|decision| decision.candidate_scores.clone())
-            .unwrap_or_default(),
-        route_action: decision
-            .map(|decision| decision.action.as_str().to_string())
-            .unwrap_or_else(|| {
-                if worker.profile.is_some() {
-                    "spawn".to_string()
-                } else {
-                    "deterministic".to_string()
-                }
-            }),
-        route_policy: decision
+        route_selector: decision
             .map(|_| AGENT_ROUTE_SELECTOR_DETERMINISTIC.to_string())
             .unwrap_or_else(|| "disabled".to_string()),
-        route_candidate_snapshot: decision.map(|decision| decision.candidate_snapshot_hash.clone()),
         reason: decision
             .map(|decision| decision.reason.clone())
             .unwrap_or_else(|| "selection disabled".to_string()),
         mode: worker.mode.clone(),
         model: worker.model.clone(),
-        profile_description: profile_candidate.and_then(|candidate| candidate.description.clone()),
-    }
-}
-
-fn backend_selection_summary(state: &AppState) -> Vec<BackendSelectionSummary> {
-    let registry = state.runtime.llm_registry();
-    registry
-        .backend_names()
-        .into_iter()
-        .map(|name| BackendSelectionSummary {
-            health: health_status_label(registry.backend_health(&name)).to_string(),
-            name,
-        })
-        .collect()
-}
-
-fn health_status_label(status: HealthStatus) -> &'static str {
-    match status {
-        HealthStatus::Healthy => "healthy",
-        HealthStatus::Degraded => "degraded",
-        HealthStatus::Unhealthy => "unhealthy",
-        HealthStatus::Unknown => "unknown",
     }
 }
 
@@ -2823,9 +2711,7 @@ fn build_plan(
                     .find(|summary| summary.id == worker.id)
             })
             .cloned()
-            .unwrap_or_else(|| {
-                worker_selection_summary(worker, None, &HashMap::new(), default_source)
-            });
+            .unwrap_or_else(|| worker_selection_summary(worker, None, default_source));
         workers.push(WorkerPlan {
             id: worker.id.clone(),
             agent_name: agent_name(session_id, &worker.id),
@@ -2846,19 +2732,12 @@ fn build_plan(
             preferred_profiles: route.preferred_profiles,
             route_source: route.source.to_string(),
             route_reason: route.reason,
-            eligible_profiles: route.eligible_profiles,
-            rejected_profiles: route.rejected_profiles,
-            route_scores: route.route_scores,
-            route_action: route.route_action,
-            route_policy: route.route_policy,
-            route_candidate_snapshot: route.route_candidate_snapshot,
+            route_selector: route.route_selector,
             agent_route: if route.source == AgentRouteSource::Selected.as_str() {
                 Some("auto".to_string())
             } else {
                 None
             },
-            profile_source: route.profile_source,
-            profile_description: route.profile_description,
             cwd,
             tracking_doc_path: tracking_doc_path.clone(),
             air_path: workers_dir.join(format!("{}.air", worker.id)),
@@ -3165,14 +3044,13 @@ fn worker_prompt_context(worker: &WorkerPlan) -> JsonValue {
         "preferred_profiles": &worker.preferred_profiles,
         "route_source": worker.route_source.as_str(),
         "route_reason": worker.route_reason.as_str(),
-        "eligible_profiles": &worker.eligible_profiles,
-        "rejected_profiles": &worker.rejected_profiles,
-        "route_scores": &worker.route_scores,
-        "route_action": worker.route_action.as_str(),
-        "route_policy": worker.route_policy.as_str(),
-        "route_candidate_snapshot": worker.route_candidate_snapshot.as_deref(),
-        "profile_source": worker.profile_source.as_deref(),
-        "profile_description": worker.profile_description.as_deref(),
+        "route_selector": worker.route_selector.as_str(),
+        "agent_route": worker.agent_route.as_deref(),
+        "selected_profile_hint": if worker.agent_route.as_deref() == Some("auto") {
+            worker.profile.as_deref()
+        } else {
+            None
+        },
         "mode": worker.mode.as_deref(),
         "model": worker.model.as_deref(),
         "depends_label": depends_label(&worker.depends_on),
@@ -3198,13 +3076,13 @@ fn worker_prompt_rows(plan: &GoalPlan) -> Vec<JsonValue> {
                 "preferred_profiles": worker.preferred_profiles.join(", "),
                 "route_source": worker.route_source.as_str(),
                 "route_reason": worker.route_reason.as_str(),
-                "eligible_profiles": worker.eligible_profiles.join(", "),
-                "rejected_profiles": worker.rejected_profiles.join(", "),
-                "route_action": worker.route_action.as_str(),
-                "route_policy": worker.route_policy.as_str(),
-                "route_candidate_snapshot": worker.route_candidate_snapshot.as_deref().unwrap_or(""),
-                "profile_source": worker.profile_source.as_deref().unwrap_or(""),
-                "profile_description": worker.profile_description.as_deref().unwrap_or(""),
+                "route_selector": worker.route_selector.as_str(),
+                "agent_route": worker.agent_route.as_deref().unwrap_or(""),
+                "selected_profile_hint": if worker.agent_route.as_deref() == Some("auto") {
+                    worker.profile.as_deref().unwrap_or("")
+                } else {
+                    ""
+                },
                 "cwd": path_string(&worker.cwd),
                 "prompt_path": path_string(&worker.prompt_path),
                 "report_path": path_string(&worker.report_path)
@@ -3676,21 +3554,24 @@ impl GoalPlan {
                     id: worker.id.clone(),
                     role: worker.role.clone(),
                     transport: worker.transport.clone(),
-                    profile: worker.profile.clone(),
+                    profile: if worker.agent_route.as_deref() == Some("auto") {
+                        None
+                    } else {
+                        worker.profile.clone()
+                    },
                     mode: worker.mode.clone(),
                     model: worker.model.clone(),
                     required_capabilities: worker.required_capabilities.clone(),
                     preferred_profiles: worker.preferred_profiles.clone(),
                     route_source: worker.route_source.clone(),
                     route_reason: worker.route_reason.clone(),
-                    eligible_profiles: worker.eligible_profiles.clone(),
-                    rejected_profiles: worker.rejected_profiles.clone(),
-                    route_scores: worker.route_scores.clone(),
-                    route_action: worker.route_action.clone(),
-                    route_policy: worker.route_policy.clone(),
-                    route_candidate_snapshot: worker.route_candidate_snapshot.clone(),
-                    profile_source: worker.profile_source.clone(),
-                    profile_description: worker.profile_description.clone(),
+                    route_selector: worker.route_selector.clone(),
+                    agent_route: worker.agent_route.clone(),
+                    selected_profile_hint: if worker.agent_route.as_deref() == Some("auto") {
+                        worker.profile.clone()
+                    } else {
+                        None
+                    },
                     depends_on: worker.depends_on.clone(),
                     cwd: worker.cwd.to_string_lossy().to_string(),
                     workspace: WorkspaceBindingSummary {
@@ -4103,16 +3984,8 @@ mod tests {
             .iter()
             .map(|decision| (decision.id.clone(), decision.clone()))
             .collect::<HashMap<_, _>>();
-        let candidates_by_profile = candidates
-            .iter()
-            .map(|candidate| (candidate.profile.clone(), candidate.clone()))
-            .collect::<HashMap<_, _>>();
         let selection = GoalSelectionSummary {
             agents: "auto".to_string(),
-            candidates: candidates
-                .iter()
-                .map(agent_route_candidate_summary)
-                .collect(),
             workers: request
                 .workers()
                 .iter()
@@ -4120,12 +3993,10 @@ mod tests {
                     worker_selection_summary(
                         worker,
                         decisions_by_id.get(&worker.id),
-                        &candidates_by_profile,
                         "deterministic",
                     )
                 })
                 .collect(),
-            backends: Vec::new(),
         };
         let tempdir = tempfile::tempdir().expect("tempdir");
         let workspace_policy =
@@ -4142,21 +4013,11 @@ mod tests {
         let worker_air = worker_air(&request, &plan.workers[0]).expect("worker air");
         let worker = &plan.summary().workers[0];
 
-        assert_eq!(worker.route_action, "spawn");
-        assert_eq!(worker.route_policy, "deterministic");
+        assert_eq!(worker.route_selector, "deterministic");
         assert_eq!(worker.route_source, "selected");
-        assert!(
-            worker
-                .route_candidate_snapshot
-                .as_deref()
-                .is_some_and(|value| { value.starts_with("fnv1a64:") })
-        );
-        assert_eq!(worker.route_scores.len(), 2);
-        assert_eq!(worker.profile_source.as_deref(), Some("test"));
-        assert_eq!(
-            worker.profile_description.as_deref(),
-            Some("Planner profile")
-        );
+        assert_eq!(worker.agent_route.as_deref(), Some("auto"));
+        assert_eq!(worker.selected_profile_hint.as_deref(), Some("claude"));
+        assert!(worker.profile.is_none());
         assert!(worker_air.contains("agent_route = \"auto\""));
         assert!(!worker_air.contains("profile ="));
     }

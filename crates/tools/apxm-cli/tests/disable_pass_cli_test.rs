@@ -35,7 +35,7 @@ const SMALL_PIPELINE: &str = r#"module {
 
 /// The explicit --pass-list case intentionally omits prompt-building passes, so
 /// use local AIR that does not need the prompt/input-name contract.
-const LOCAL_CONST_GRAPH: &str = r#"module {
+const LOCAL_CONST_WORKFLOW_AIR: &str = r#"module {
   func.func @disable_pass_test() -> !ais.token attributes {ais.entry} {
     %value = ais.const_str "ok" : !ais.token
     func.return %value : !ais.token
@@ -105,7 +105,7 @@ fn disable_pass_removes_pass_from_diagnostics() {
 
 #[test]
 fn pass_list_override_replaces_default_selection() {
-    let workflow = write_tmp_air(LOCAL_CONST_GRAPH);
+    let workflow = write_tmp_air(LOCAL_CONST_WORKFLOW_AIR);
     let tmp = tempfile::tempdir().unwrap();
     let out = tmp.path().join("out.apxmobj");
     let diag = tmp.path().join("diag.json");

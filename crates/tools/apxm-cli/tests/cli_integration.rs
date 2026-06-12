@@ -527,8 +527,8 @@ const VALID_PARALLEL: &str = r#"module {
 "#;
 
 #[cfg(feature = "driver")]
-const CONST_GRAPH: &str = r#"module {
-  func.func @const_graph() -> !ais.token attributes {ais.entry} {
+const CONST_WORKFLOW_AIR: &str = r#"module {
+  func.func @const_workflow() -> !ais.token attributes {ais.entry} {
     %value = ais.const_str "ok" : !ais.token
     func.return %value : !ais.token
   }
@@ -606,7 +606,7 @@ fn execute_json_errors_are_emitted_as_json() {
 #[cfg(feature = "driver")]
 #[test]
 fn execute_air_with_local_controls_succeeds_end_to_end() {
-    let workflow = write_tmp_file_named(".air", CONST_GRAPH);
+    let workflow = write_tmp_file_named(".air", CONST_WORKFLOW_AIR);
     let temp = tempfile::tempdir().unwrap();
     let hook_log = temp.path().join("hook.log");
     let sessions_root = temp.path().join("sessions");
@@ -1675,7 +1675,7 @@ fn workflow_run_nested_workflow_uses_explicit_root_for_parent_and_child() {
     let child_workflow_path = workflow_root.join("child.apxmw");
     let parent_workflow_path = workflow_root.join("parent.apxmw");
 
-    std::fs::write(&air_path, CONST_GRAPH).unwrap();
+    std::fs::write(&air_path, CONST_WORKFLOW_AIR).unwrap();
     write_json_file(
         &child_workflow_path,
         &serde_json::json!({
@@ -1794,7 +1794,7 @@ fn workflow_run_background_returns_follow_handles_and_records_events() {
     let air_path = workflow_root.join("step.air");
     let workflow_path = workflow_root.join("background.apxmw");
 
-    std::fs::write(&air_path, CONST_GRAPH).unwrap();
+    std::fs::write(&air_path, CONST_WORKFLOW_AIR).unwrap();
     write_json_file(
         &workflow_path,
         &serde_json::json!({

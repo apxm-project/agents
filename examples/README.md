@@ -7,7 +7,7 @@ imperative coordination code, you declare *what* your agents should do and the
 compiler figures out *how* to run it efficiently:
 
 - **Implicit parallelism** -- independent nodes run concurrently without manual threading
-- **Compiler optimizations** -- prompt construction, dead context elimination, template specialization, scheduling hints, and graph metrics
+- **Compiler optimizations** -- prompt construction, dead context elimination, template specialization, scheduling hints, and execution metrics
 - **Multi-agent coordination** -- native spawn, communicate, and team primitives
 - **Multi-provider routing** -- assign the right model to each task (fast, powerful, local)
 
@@ -63,7 +63,7 @@ dekk apxm run hello.apxmobj
 
 1. **[getting-started/](python/getting-started/)** -- First contact: hello world, tool use
 2. **[parallelism/](python/parallelism/)** -- Fan-out patterns, implicit DAG scheduling
-3. **[optimization/](python/optimization/)** -- Compiler passes, graph hints, and metrics
+3. **[optimization/](python/optimization/)** -- Compiler passes, scheduling/backend hints, and metrics
 4. **[multi-agent/](python/multi-agent/)** -- Spawn, communicate, team coordination
 5. **[multi-provider/](python/multi-provider/)** -- Route tasks to different models
 6. **[memory/](python/memory/)** -- Three-tier memory and RAG

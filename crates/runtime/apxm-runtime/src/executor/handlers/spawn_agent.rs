@@ -284,11 +284,7 @@ pub async fn execute(ctx: &ExecutionContext, node: &Node, _inputs: Vec<Value>) -
                 Value::String(decision.source.as_str().to_string()),
             );
             agent_info.insert(
-                response_keys::ROUTE_ACTION.to_string(),
-                Value::String(decision.action.as_str().to_string()),
-            );
-            agent_info.insert(
-                response_keys::ROUTE_POLICY.to_string(),
+                response_keys::ROUTE_SELECTOR.to_string(),
                 Value::String(AGENT_ROUTE_SELECTOR_DETERMINISTIC.to_string()),
             );
             agent_info.insert(
@@ -920,11 +916,7 @@ mod tests {
             Some(&Value::String("selected".to_string()))
         );
         assert_eq!(
-            obj.get(response_keys::ROUTE_ACTION),
-            Some(&Value::String("spawn".to_string()))
-        );
-        assert_eq!(
-            obj.get(response_keys::ROUTE_POLICY),
+            obj.get(response_keys::ROUTE_SELECTOR),
             Some(&Value::String("deterministic".to_string()))
         );
         assert!(matches!(
