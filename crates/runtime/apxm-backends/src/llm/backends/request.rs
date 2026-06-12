@@ -122,7 +122,7 @@ impl Message {
 /// Request to send to an LLM backend.
 #[derive(Debug, Clone)]
 pub struct LLMRequest {
-    /// The main prompt/input text (backward-compatible single-string field).
+    /// The main prompt/input text (the canonical single-string field).
     ///
     /// When `messages` is empty, backends use this field as a single User message.
     /// When `messages` is non-empty, backends prefer `messages` and ignore `prompt`.
@@ -173,7 +173,7 @@ pub struct LLMRequest {
 impl LLMRequest {
     /// Create a new request with just a prompt.
     ///
-    /// The prompt is stored in the `prompt` field for backward compatibility.
+    /// The text is stored in the `prompt` field — the dominant executor path.
     /// Backends auto-wrap it as a single User message when `messages` is empty.
     pub fn new(prompt: impl Into<String>) -> Self {
         LLMRequest {
