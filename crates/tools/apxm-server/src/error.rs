@@ -30,6 +30,13 @@ impl ApiError {
         }
     }
 
+    pub(crate) fn unprocessable(message: impl Into<String>) -> Self {
+        Self {
+            status: axum::http::StatusCode::UNPROCESSABLE_ENTITY,
+            message: message.into(),
+        }
+    }
+
     pub(crate) fn runtime(error: RuntimeError) -> Self {
         error!(error = %error, "runtime error");
         Self {

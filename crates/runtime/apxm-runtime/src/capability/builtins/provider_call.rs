@@ -149,6 +149,34 @@ impl ProviderCallCapability {
         cap
     }
 
+    /// Mark the capability's `requires_auth` metadata flag. A provider-backed
+    /// connector block needs a bound connection, so the install-gated catalog
+    /// gates the block on a connection when this is set. Additive and chainable.
+    pub fn with_requires_auth(mut self, requires_auth: bool) -> Self {
+        if requires_auth {
+            self.metadata = self.take_metadata().with_auth();
+        }
+        self
+    }
+
+    /// Mark the capability read-only (safe for parallel raw-execute admission).
+    /// Additive and chainable; used when a pack declares `read_only = true`.
+    pub fn with_read_only(mut self, read_only: bool) -> Self {
+        if read_only {
+            self.metadata = self.take_metadata().with_read_only();
+        }
+        self
+    }
+
+    /// Move `metadata` out for a chained `with_*` rebuild, leaving a cheap
+    /// placeholder behind (immediately overwritten by the caller).
+    fn take_metadata(&mut self) -> CapabilityMetadata {
+        std::mem::replace(
+            &mut self.metadata,
+            CapabilityMetadata::new("", "", serde_json::Value::Null),
+        )
+    }
+
     pub fn new() -> Self {
         Self {
             base: None,

@@ -611,6 +611,7 @@ async fn handle_user_turn(
             air,
             session_id,
             &prompt,
+            user_text,
             session_grants,
             opts,
             &turn_budgets,
@@ -973,12 +974,14 @@ fn prompt_grant(capability: &str) -> Result<bool> {
 
 /// Run one conversational turn: POST the graph + transcript, stream the SSE,
 /// and return the assistant's text.
+#[allow(clippy::too_many_arguments)]
 async fn run_turn(
     client: &reqwest::Client,
     base: &str,
     air: &str,
     session_id: &str,
     prompt: &str,
+    user_text: &str,
     admit: &[String],
     opts: &ChatOptions,
     tool_call_budgets: &HashMap<String, usize>,
@@ -993,6 +996,9 @@ async fn run_turn(
         "air": air,
         "args": [prompt],
         "session_id": session_id,
+        // The verbatim user input recorded as the faithful transcript user turn
+        // (the model-facing prompt is redacted on the runtime side).
+        "user_text": user_text,
         "admit_capabilities": admit,
         "imports": opts.import,
         "tool_call_budgets": tool_call_budgets,

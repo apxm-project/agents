@@ -62,6 +62,12 @@ pub(crate) struct ExecutionRecord {
     pub(crate) node_outputs: Vec<NodeOutputRecord>,
     #[serde(default)]
     pub(crate) node_metrics: Vec<NodeMetricsRecord>,
+    /// Real (unredacted) token values captured on a successful run, keyed by
+    /// token id. Persisted so a later `rerun-from-node` can seed the replay
+    /// boundary with the prior run's upstream outputs. Empty when the run did
+    /// not complete successfully or output capture was unavailable.
+    #[serde(default, skip_serializing_if = "std::collections::HashMap::is_empty")]
+    pub(crate) token_values: std::collections::HashMap<u64, serde_json::Value>,
     /// Goal-convergence outcome for a goal pass: the typed gate
     /// verdict and the runtime decision derived from it. Absent for
     /// non-goal runs.
@@ -231,6 +237,7 @@ impl ExecutionStore {
             error: None,
             node_outputs: Vec::new(),
             node_metrics: Vec::new(),
+            token_values: std::collections::HashMap::new(),
             goal: None,
         };
         self.inner
@@ -267,6 +274,27 @@ impl ExecutionStore {
         entry.completed_at_ms = Some(now_ms());
         entry.result = None;
         entry.error = Some(error);
+        let record = entry.clone();
+        drop(entry);
+        persist_record_snapshot(&record);
+        self.index.upsert_from_record(&record);
+        Some(record)
+    }
+
+    /// Persist the run's real token values (keyed by token id) so a later
+    /// `rerun-from-node` can seed the replay boundary. Called after
+    /// `complete_success` when the runtime collected per-token outputs. No-op
+    /// (returns `None`) when the record is unknown or `values` is empty.
+    pub(crate) fn record_token_values(
+        &self,
+        execution_id: &str,
+        values: std::collections::HashMap<u64, serde_json::Value>,
+    ) -> Option<ExecutionRecord> {
+        if values.is_empty() {
+            return None;
+        }
+        let mut entry = self.inner.get_mut(execution_id)?;
+        entry.token_values = values;
         let record = entry.clone();
         drop(entry);
         persist_record_snapshot(&record);

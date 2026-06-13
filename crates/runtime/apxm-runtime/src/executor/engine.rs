@@ -1,6 +1,6 @@
 //! Executor engine - Main coordinator for DAG execution
 
-use super::{ExecutionContext, Result, dispatcher::OperationDispatcher};
+use super::{ExecutionContext, ExecutionHookContext, Result, dispatcher::OperationDispatcher};
 use crate::graph_lifecycle::{graph_dispatch_ir_from_dag, graph_metadata_from_dispatch_ir};
 use crate::scheduler::{DataflowScheduler, SchedulerConfig};
 use apxm_core::types::{
@@ -175,8 +175,23 @@ impl ExecutorEngine {
 
         let executor = Arc::new(ExecutorEngine::new(self.context.clone()));
 
+        // Partial replay (`rerun-from-node`): honor the same replay-seed metadata
+        // the server path (`Runtime::execute_artifact_inner`) reads, so this
+        // fallback scheduler entry pre-completes upstream nodes from the prior
+        // run and re-executes only `from_node` and its descendants instead of
+        // re-running the whole graph.
+        let replay_seed =
+            crate::scheduler::ReplaySeed::from_metadata(&self.context.metadata, &dag);
+
         let (results, stats, _scheduler_metrics, _, _) = scheduler
-            .execute(dag, executor, self.context.clone(), vec![])
+            .execute_with_hooks_and_seed(
+                dag,
+                executor,
+                self.context.clone(),
+                vec![],
+                ExecutionHookContext::default(),
+                replay_seed.as_ref(),
+            )
             .await?;
 
         Ok(ExecutionResult {
@@ -482,5 +497,119 @@ pub struct ExecutionResult {
     pub token_snapshot: crate::executor::token_accounting::TokenAccountingSnapshot,
     /// Backend graph status snapshots captured before graph release.
     pub graph_status_snapshots: Vec<GraphStatusSnapshot>,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::aam::Aam;
+    use crate::capability::CapabilitySystem;
+    use crate::memory::{MemoryConfig, MemorySystem};
+    use apxm_backends::LLMRegistry;
+    use apxm_core::types::{DependencyType, Edge, Node, NodeMetadata};
+    use std::collections::HashMap as Map;
+
+    fn nop_node(id: u64, inputs: Vec<u64>, outputs: Vec<u64>) -> Node {
+        Node {
+            id,
+            op_type: AISOperationType::Nop,
+            attributes: Map::new(),
+            input_tokens: inputs,
+            output_tokens: outputs,
+            metadata: NodeMetadata::default(),
+        }
+    }
+
+    /// Linear chain `1 --t10--> 2 --t20--> 3` of NOP passthrough nodes.
+    ///
+    /// NOP returns its first input verbatim (or `Null` for an input-less entry
+    /// node). That makes re-execution observable: if upstream node 1 is *not*
+    /// re-run, the seeded value for token 10 flows through nodes 2 and 3 to the
+    /// exit token; if node 1 *were* re-run, token 10 would become `Null` (it has
+    /// no inputs) and the exit value would be `Null` instead.
+    fn nop_chain() -> ExecutionDag {
+        let mut dag = ExecutionDag::new();
+        dag.add_node(nop_node(1, vec![], vec![10])).unwrap();
+        dag.add_node(nop_node(2, vec![10], vec![20])).unwrap();
+        dag.add_node(nop_node(3, vec![20], vec![30])).unwrap();
+        dag.add_edge(Edge::new(1, 2, 10, DependencyType::Data))
+            .unwrap();
+        dag.add_edge(Edge::new(2, 3, 20, DependencyType::Data))
+            .unwrap();
+        dag.entry_nodes = dag.find_entry_nodes();
+        dag.exit_nodes = dag.find_exit_nodes();
+        dag
+    }
+
+    async fn test_context() -> ExecutionContext {
+        let memory = Arc::new(
+            MemorySystem::new(MemoryConfig::in_memory_ltm())
+                .await
+                .expect("in-memory memory system"),
+        );
+        let aam = Aam::new();
+        let capability_system = Arc::new(CapabilitySystem::with_aam(aam.clone()));
+        ExecutionContext::new(memory, Arc::new(LLMRegistry::new()), capability_system, aam)
+    }
+
+    /// RESIDUAL 1 regression: the `ExecutorEngine` fallback scheduler entry
+    /// (`execute_dag_parallel`, reached through `execute_dag` for multi-node
+    /// graphs) must honor the same replay-seed metadata as the server path. With
+    /// `replay_from_node`/`replay_token_values` stamped, only `from_node` and its
+    /// descendants execute; the upstream node is pre-completed from the prior
+    /// run's boundary value and is never re-invoked.
+    #[tokio::test]
+    async fn fallback_path_honors_replay_seed() {
+        let dag = nop_chain();
+
+        let mut ctx = test_context().await;
+        // Replay from node 2: node 1 is upstream and must be pre-completed.
+        ctx.metadata
+            .insert(crate::metadata_keys::REPLAY_FROM_NODE.to_string(), "2".to_string());
+        // Prior run's captured value for the boundary token 10 (node 1's output).
+        let prior = serde_json::json!({ "10": "seeded-upstream" }).to_string();
+        ctx.metadata
+            .insert(crate::metadata_keys::REPLAY_TOKEN_VALUES.to_string(), prior);
+
+        let engine = ExecutorEngine::new(ctx);
+        let result = engine.execute_dag(dag).await.expect("replay execution");
+
+        // Only nodes 2 and 3 re-execute; node 1 is pre-completed, not counted.
+        assert_eq!(
+            result.stats.executed_nodes, 2,
+            "fallback path must re-execute from_node + descendants only, not the upstream node"
+        );
+
+        // The exit token (30) carries the seeded upstream value passed through
+        // nodes 2 and 3. Had node 1 been re-run, token 10 would be Null and the
+        // exit value would be Null — proving node 1's handler was not re-invoked.
+        assert_eq!(
+            result.results.get(&30),
+            Some(&Value::String("seeded-upstream".to_string())),
+            "upstream node must NOT be re-executed; its prior output must flow through"
+        );
+    }
+
+    /// Control: without replay metadata, the same fallback path runs the whole
+    /// graph. The input-less entry NOP produces `Null`, which flows to the exit —
+    /// distinct from the seeded-replay result above, confirming the assertion in
+    /// `fallback_path_honors_replay_seed` is load-bearing.
+    #[tokio::test]
+    async fn fallback_path_full_run_without_seed_executes_all_nodes() {
+        let dag = nop_chain();
+        let ctx = test_context().await;
+        let engine = ExecutorEngine::new(ctx);
+        let result = engine.execute_dag(dag).await.expect("full execution");
+
+        assert_eq!(
+            result.stats.executed_nodes, 3,
+            "without a replay seed every node executes"
+        );
+        assert_eq!(
+            result.results.get(&30),
+            Some(&Value::Null),
+            "the input-less entry NOP produces Null on a full re-run"
+        );
+    }
 }
 

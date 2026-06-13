@@ -72,6 +72,16 @@ pub(crate) struct ExecuteRequest {
     /// credential resolver so a tool's token is scoped to this owner.
     #[serde(default)]
     pub(crate) owner: Option<String>,
+    /// The verbatim user prompt to record in the durable transcript. The
+    /// runtime emits the model-facing prompt REDACTED (a blake3 hash + char
+    /// summary), so on the streaming path we additionally write one typed
+    /// `UserMessage` rollout line carrying this text — that is what
+    /// `GET /v1/sessions/{id}/history` returns as the user turn. Absent or
+    /// empty ⇒ no extra line is written and history falls back to the redacted
+    /// summary (prior behavior). Only honored when `session_id` is present and
+    /// rollout recording is active.
+    #[serde(default)]
+    pub(crate) user_text: Option<String>,
 }
 
 /// A caller-supplied workflow source plus the same execution controls as
@@ -100,6 +110,8 @@ pub(crate) struct CompileRequest {
     pub(crate) tool_credentials: HashMap<String, String>,
     #[serde(default)]
     pub(crate) owner: Option<String>,
+    #[serde(default)]
+    pub(crate) user_text: Option<String>,
 }
 
 impl CompileRequest {
@@ -118,6 +130,7 @@ impl CompileRequest {
             tool_call_budgets: self.tool_call_budgets,
             tool_credentials: self.tool_credentials,
             owner: self.owner,
+            user_text: self.user_text,
         })
     }
 }
@@ -134,6 +147,35 @@ pub(crate) async fn compile_workflow_stream(
     Json(req): Json<CompileRequest>,
 ) -> Result<Sse<impl Stream<Item = Result<Event, std::convert::Infallible>>>, ApiError> {
     execute_stream(state, Json(req.into_execute_request()?)).await
+}
+
+#[derive(Debug, Deserialize)]
+pub(crate) struct CompileArtifactRequest {
+    /// Canonical AIR (`.air` MLIR text) to compile.
+    pub(crate) air: String,
+}
+
+/// `POST /v1/compile-artifact` — compile AIR to an installable `.apxmobj`
+/// artifact and return its raw bytes (`application/octet-stream`). Unlike
+/// `/v1/compile` (which compiles+executes), this only emits the artifact, and it
+/// compiles WITH the runtime's registered capabilities so provider/pack tool
+/// nodes pass the tool-binding check (E712). This is the registry-aware compile
+/// the studio's compile-on-deploy posts to so a deployed skill can run.
+pub(crate) async fn compile_artifact(
+    State(state): State<AppState>,
+    Json(req): Json<CompileArtifactRequest>,
+) -> Result<axum::response::Response, ApiError> {
+    use axum::response::IntoResponse;
+    let caps = registered_capability_names(&state);
+    let bytes = air_to_artifact_bytes_with_caps(&req.air, &caps)?;
+    Ok((
+        [(
+            axum::http::header::CONTENT_TYPE,
+            "application/octet-stream",
+        )],
+        bytes,
+    )
+        .into_response())
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -216,6 +258,9 @@ pub(crate) async fn run_air_inner(
         tool_call_budgets,
         tool_credentials,
         owner,
+        // Only the streaming path records a durable transcript; the raw
+        // execute path has no rollout, so the verbatim prompt is unused here.
+        user_text: _,
     } = prepare_request(req)?;
     let known_caps = registered_capability_names(state);
     let mut artifact = air_to_artifact_with_caps(&air, &known_caps)?;
@@ -265,6 +310,7 @@ pub(crate) async fn execute_stream(
         tool_call_budgets,
         tool_credentials,
         owner,
+        user_text,
     } = prepare_request(req)?;
     let known_caps = registered_capability_names(&state);
     let mut artifact = air_to_artifact_with_caps(&air, &known_caps)?;
@@ -299,6 +345,59 @@ pub(crate) async fn execute_stream(
         .cancel_registry
         .insert(execution_id.clone(), Arc::clone(&cancel));
     let cancel_registry = Arc::clone(&state.cancel_registry);
+
+    // Durably record this turn ONLY when a session_id is present: the
+    // session_id is the cross-turn key that lets `GET /v1/sessions/{id}/history`
+    // reassemble the visible conversation that both `apxm chat` and the studio
+    // Chat stream through this endpoint. Absent a session_id there is nothing
+    // to retrieve by, so we preserve the prior no-rollout behavior.
+    //
+    // The recorder is opened BEFORE the spawn so the JSONL file (and its
+    // SessionMeta seq=0 line) exists before the first runtime event lands.
+    // `thread_id` is the per-turn execution_id; `session_id` ties the turns
+    // together. Mirrors the skill path's `ensure_rollout_open`.
+    let rollout_session_id = session_id.clone();
+    let rollout_recording = if let Some(sid) = rollout_session_id.as_deref() {
+        let session_meta =
+            crate::rollout::session_meta_from_chat(&execution_id, sid, args.clone());
+        let recorder = state
+            .rollout_registry
+            .open_for_run(
+                state.rollout_paths.clone(),
+                Some(state.rollout_index.clone()),
+                &execution_id,
+                sid,
+                session_meta,
+            )
+            .await;
+        // Record the verbatim user prompt as ONE typed UserMessage line at turn
+        // start — before any runtime event lands — so the transcript reads
+        // user-then-assistant. The runtime separately emits the model-facing
+        // prompt as a REDACTED `llm_prompt` event; the history mapper skips that
+        // redacted user line once a typed UserMessage is present for the turn,
+        // so this faithful text replaces (not duplicates) the redacted summary.
+        if let (Some(recorder), Some(text)) = (recorder.as_ref(), user_text.as_deref())
+            && !text.is_empty()
+        {
+            let payload =
+                apxm_rollout::RolloutPayload::UserMessage(apxm_rollout::UserMessagePayload {
+                    content: vec![apxm_rollout::ContentBlock::Text {
+                        text: text.to_string(),
+                    }],
+                });
+            if let Err(error) = recorder
+                .write_line(payload, apxm_rollout::PartialMeta::default())
+                .await
+            {
+                tracing::warn!(%error, execution_id, "failed to record user_text rollout line");
+            }
+        }
+        recorder.is_some()
+    } else {
+        false
+    };
+    let rollout_registry = state.rollout_registry.clone();
+
     tokio::spawn(async move {
         // The admission slot is owned by the registered handle (released while
         // parked, reacquired on wake); unregister after the run settles.
@@ -312,11 +411,23 @@ pub(crate) async fn execute_stream(
                 &trace_id,
             ))
             .await;
-        let emitter = Arc::new(EmitterAdapter::new(
-            Arc::new(TokioChannelEmitter(tx.clone())),
-            EventSource::Runtime,
-            &trace_id,
-        ));
+        // Runtime conversation events flow to the SSE channel and, when this
+        // turn is being recorded, are mirrored into the rollout JSONL so the
+        // assistant tokens/tool activity survive the hop and a restart.
+        let channel_sink: Arc<dyn apxm_core::events::EventEmitter> =
+            Arc::new(TokioChannelEmitter(tx.clone()));
+        let sink: Arc<dyn apxm_core::events::EventEmitter> = if rollout_recording {
+            Arc::new(apxm_core::events::FanOutEmitter::new(vec![
+                channel_sink,
+                Arc::new(crate::rollout::RolloutEmitter::new(
+                    rollout_registry.clone(),
+                    execution_id.clone(),
+                )),
+            ]))
+        } else {
+            channel_sink
+        };
+        let emitter = Arc::new(EmitterAdapter::new(sink, EventSource::Runtime, &trace_id));
         let execution = runtime.execute_artifact_with_session_emitter_metadata_and_credentials(
             artifact,
             args,
@@ -374,6 +485,12 @@ pub(crate) async fn execute_stream(
                     .await;
             }
         }
+        // Flush + close the rollout recorder so the turn's tail (last tokens,
+        // llm_done) is durable before the index row is finalized. Idempotent
+        // and a no-op when no recorder was opened.
+        if rollout_recording {
+            rollout_registry.close(&execution_id).await;
+        }
         apxm_runtime::scheduler::admission_registry::unregister(&admission_id);
         cancel_registry.remove(&execution_id);
     });
@@ -403,6 +520,8 @@ pub(crate) struct PreparedRequest {
     pub(crate) tool_call_budgets: HashMap<String, usize>,
     pub(crate) tool_credentials: HashMap<String, String>,
     pub(crate) owner: Option<String>,
+    /// Verbatim user prompt for the durable transcript (streaming path only).
+    pub(crate) user_text: Option<String>,
 }
 
 pub(crate) fn prepare_request(mut req: ExecuteRequest) -> Result<PreparedRequest, ApiError> {
@@ -421,6 +540,7 @@ pub(crate) fn prepare_request(mut req: ExecuteRequest) -> Result<PreparedRequest
         tool_call_budgets: clamp_tool_call_budgets(req.tool_call_budgets),
         tool_credentials: req.tool_credentials,
         owner: req.owner,
+        user_text: req.user_text,
     })
 }
 
@@ -569,7 +689,7 @@ fn resolve_session_request(
     ))
 }
 
-fn validate_session_id(session_id: String) -> Result<String, ApiError> {
+pub(crate) fn validate_session_id(session_id: String) -> Result<String, ApiError> {
     if session_id.is_empty()
         || session_id == "."
         || session_id == ".."
@@ -605,6 +725,19 @@ pub(crate) fn air_to_artifact_with_caps(
     air_text: &str,
     known_caps: &std::collections::HashSet<String>,
 ) -> Result<Artifact, ApiError> {
+    let artifact_bytes = air_to_artifact_bytes_with_caps(air_text, known_caps)?;
+    Artifact::from_bytes(&artifact_bytes)
+        .map_err(|error| ApiError::internal_message(format!("failed to decode artifact: {error}")))
+}
+
+/// Compile AIR to the raw `.apxmobj` artifact bytes, declaring `known_caps` so
+/// the tool-binding check accepts runtime-registered provider/pack capabilities
+/// (not just compiler builtins). This is what the studio's compile-on-deploy
+/// needs: a registry-aware compile that yields an installable artifact.
+pub(crate) fn air_to_artifact_bytes_with_caps(
+    air_text: &str,
+    known_caps: &std::collections::HashSet<String>,
+) -> Result<Vec<u8>, ApiError> {
     let context = CompilerContext::new().map_err(|error| {
         ApiError::internal_message(format!(
             "failed to initialize APXM compiler context: {error}"
@@ -615,11 +748,9 @@ pub(crate) fn air_to_artifact_with_caps(
     let module = pipeline
         .compile(&air_text)
         .map_err(|error| ApiError::bad_request(format!("failed to compile AIR: {error}")))?;
-    let artifact_bytes = module
+    module
         .generate_artifact_bytes_with_known_caps(known_caps)
-        .map_err(|error| ApiError::internal_message(format!("failed to emit artifact: {error}")))?;
-    Artifact::from_bytes(&artifact_bytes)
-        .map_err(|error| ApiError::internal_message(format!("failed to decode artifact: {error}")))
+        .map_err(|error| ApiError::internal_message(format!("failed to emit artifact: {error}")))
 }
 
 /// The names of every capability registered in the runtime — handed to the

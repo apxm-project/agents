@@ -987,6 +987,222 @@ pub(crate) async fn get_run_blob(
     )))
 }
 
+// ────────────────────────────────────────────────────────────────────
+// Session transcript history.
+//
+// `GET /v1/sessions/{id}/history` reassembles the visible conversation for
+// a chat session from the durable rollout JSONLs. Every chat turn (CLI or
+// studio) is one `/v1/execute/stream` execution that records under a shared
+// `session_id`; this gathers all those per-turn rollouts and maps their
+// event lines to an ordered, role-tagged message list.
+// ────────────────────────────────────────────────────────────────────
+
+/// One role-tagged message in a reconstructed conversation.
+#[derive(Debug, Serialize, PartialEq, Eq)]
+pub(crate) struct HistoryMessage {
+    /// `"user"`, `"assistant"`, or `"system"`.
+    pub(crate) role: String,
+    /// The message text. For the user side this is the redaction summary of
+    /// the prompt (the raw prompt is never retained on the raw-execute path —
+    /// see the handler docs); for the assistant side it is the model's reply.
+    pub(crate) content: String,
+}
+
+#[derive(Debug, Serialize)]
+pub(crate) struct SessionHistoryResponse {
+    pub(crate) messages: Vec<HistoryMessage>,
+}
+
+/// Map the rollout lines of a single turn to role-tagged messages.
+///
+/// The server's raw-execute rollout sink records the runtime event stream as
+/// `RolloutPayload::Event` lines (it does not synthesize typed
+/// `UserMessage`/`AssistantMessage` lines). We therefore reconstruct roles
+/// from event kinds:
+///
+/// - `llm_prompt` → a `user` turn. The prompt text is redacted at the source
+///   (`RedactedContent`), so `content` is the redaction summary.
+/// - `llm_done` → an `assistant` turn carrying the full reply `content`
+///   (authoritative; preferred over the streamed token fragments).
+/// - `token` → assistant text fragments, concatenated only when no `llm_done`
+///   line is present for the turn (streaming-only fallback).
+///
+/// Tool and lifecycle events are not part of the visible conversation and are
+/// skipped. Typed `UserMessage`/`AssistantMessage` payloads are also honored
+/// if a future writer emits them.
+fn turn_messages_from_lines(
+    lines: &[apxm_rollout::RolloutLine],
+    out: &mut Vec<HistoryMessage>,
+) {
+    use apxm_rollout::RolloutPayload;
+
+    let mut token_buf = String::new();
+    let mut have_assistant_done = false;
+    // When an explicit typed `UserMessage` line is present for this turn (the
+    // streaming path writes one carrying the verbatim prompt), the runtime's own
+    // redacted `llm_prompt` event would otherwise add a SECOND, redacted user
+    // turn. Detect the typed line up front and skip the redacted prompt so the
+    // faithful text appears exactly once.
+    let has_typed_user_message = lines
+        .iter()
+        .any(|line| matches!(line.payload, RolloutPayload::UserMessage(_)));
+
+    let flush_tokens = |buf: &mut String, out: &mut Vec<HistoryMessage>| {
+        if !buf.is_empty() {
+            out.push(HistoryMessage {
+                role: "assistant".to_string(),
+                content: std::mem::take(buf),
+            });
+        }
+    };
+
+    for line in lines {
+        match &line.payload {
+            RolloutPayload::UserMessage(msg) => {
+                flush_tokens(&mut token_buf, out);
+                out.push(HistoryMessage {
+                    role: "user".to_string(),
+                    content: content_blocks_to_text(&msg.content),
+                });
+            }
+            RolloutPayload::AssistantMessage(msg) => {
+                flush_tokens(&mut token_buf, out);
+                out.push(HistoryMessage {
+                    role: "assistant".to_string(),
+                    content: content_blocks_to_text(&msg.content),
+                });
+                have_assistant_done = true;
+            }
+            RolloutPayload::Event(ev) => match ev.event_kind.as_str() {
+                k if k == event_kind::LLM_PROMPT.name() => {
+                    // A typed UserMessage line already carries the faithful user
+                    // turn; don't also emit the redacted summary (no duplicate).
+                    if has_typed_user_message {
+                        continue;
+                    }
+                    flush_tokens(&mut token_buf, out);
+                    let summary = ev
+                        .event
+                        .pointer("/payload/prompt/summary")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("user prompt")
+                        .to_string();
+                    out.push(HistoryMessage {
+                        role: "user".to_string(),
+                        content: summary,
+                    });
+                }
+                k if k == event_kind::LLM_DONE.name() => {
+                    // Authoritative assistant reply — discard any streamed
+                    // token fragments for this turn to avoid duplication.
+                    token_buf.clear();
+                    let content = ev
+                        .event
+                        .pointer("/payload/content")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("")
+                        .to_string();
+                    out.push(HistoryMessage {
+                        role: "assistant".to_string(),
+                        content,
+                    });
+                    have_assistant_done = true;
+                }
+                k if k == event_kind::TOKEN.name() => {
+                    if let Some(text) = ev
+                        .event
+                        .pointer("/payload/text")
+                        .and_then(|v| v.as_str())
+                    {
+                        token_buf.push_str(text);
+                    }
+                }
+                _ => {}
+            },
+            _ => {}
+        }
+    }
+
+    // Streaming-only turn (no llm_done / AssistantMessage): emit the
+    // accumulated token text as the assistant reply. Otherwise the buffer was
+    // already superseded by an authoritative assistant message.
+    if have_assistant_done {
+        token_buf.clear();
+    } else {
+        flush_tokens(&mut token_buf, out);
+    }
+}
+
+/// Flatten an Anthropic-style content block list to plain text (Text blocks
+/// only — the visible transcript is text, not tool plumbing).
+fn content_blocks_to_text(blocks: &[apxm_rollout::ContentBlock]) -> String {
+    use apxm_rollout::ContentBlock;
+    let mut s = String::new();
+    for block in blocks {
+        if let ContentBlock::Text { text } = block {
+            if !s.is_empty() {
+                s.push('\n');
+            }
+            s.push_str(text);
+        }
+    }
+    s
+}
+
+pub(crate) async fn get_session_history(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+) -> Result<Json<SessionHistoryResponse>, ApiError> {
+    // Same charset/traversal validation the execute path enforces. Invalid
+    // ids are a 400; an unknown-but-valid id is a 200 with no messages.
+    let session_id = crate::execute::validate_session_id(id)?;
+
+    let entries = {
+        let index = state.rollout_index.lock().await;
+        index.list_by_session(&session_id).unwrap_or_default()
+    };
+
+    // `list_by_session` returns newest-first; replay oldest-first so the
+    // turns read in conversation order.
+    let mut ordered = entries;
+    ordered.sort_by(|a, b| a.started_at.cmp(&b.started_at));
+
+    let mut messages: Vec<HistoryMessage> = Vec::new();
+    for entry in ordered {
+        let path = std::path::PathBuf::from(&entry.file_path);
+        let Ok((items, _)) = load_rollout(&path).await else {
+            continue;
+        };
+        // Collapse any compaction marker to its baseline + replay the suffix.
+        let tree = apxm_rollout::reconstruct_history(&items);
+        if !tree.baseline.is_empty() {
+            // Baseline payloads carry no meta; wrap mapping over them.
+            baseline_messages(&tree.baseline, &mut messages);
+        }
+        turn_messages_from_lines(&tree.suffix, &mut messages);
+    }
+
+    Ok(Json(SessionHistoryResponse { messages }))
+}
+
+/// Map a compaction baseline (bare payloads, no line meta) to messages.
+fn baseline_messages(payloads: &[apxm_rollout::RolloutPayload], out: &mut Vec<HistoryMessage>) {
+    use apxm_rollout::RolloutPayload;
+    for payload in payloads {
+        match payload {
+            RolloutPayload::UserMessage(msg) => out.push(HistoryMessage {
+                role: "user".to_string(),
+                content: content_blocks_to_text(&msg.content),
+            }),
+            RolloutPayload::AssistantMessage(msg) => out.push(HistoryMessage {
+                role: "assistant".to_string(),
+                content: content_blocks_to_text(&msg.content),
+            }),
+            _ => {}
+        }
+    }
+}
+
 fn build_node_detail(
     execution_id: &str,
     node_id: u64,

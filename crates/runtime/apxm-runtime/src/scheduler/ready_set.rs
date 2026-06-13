@@ -57,17 +57,27 @@ impl ReadySet {
     /// Initialize readiness tracking for all nodes in the graph.
     ///
     /// Returns the set of immediately ready nodes (those with no pending inputs).
-    pub(crate) fn initialize(
+    /// Initialize readiness tracking for all nodes; nodes in `skip` are neither
+    /// enqueued nor tracked for readiness. Returns the set of immediately ready
+    /// nodes. `skip` is used by partial replay (`rerun-from-node`): the
+    /// pre-completed upstream nodes are skipped so their handlers are never
+    /// re-invoked, while their seeded output tokens still satisfy the readiness
+    /// of the replayed sub-DAG. Pass `None` for an ordinary full run.
+    pub(crate) fn initialize_with_skip(
         &self,
         nodes: &[Node],
         tokens: &DashMap<TokenId, TokenState>,
         priorities: &DashMap<NodeId, Priority>,
         op_states: &DashMap<NodeId, OpState>,
         queue: &PriorityQueue,
+        skip: Option<&std::collections::HashSet<NodeId>>,
     ) -> RuntimeResult<Vec<NodeId>> {
         let mut ready_nodes = Vec::new();
 
         for node in nodes {
+            if skip.is_some_and(|s| s.contains(&node.id)) {
+                continue;
+            }
             let needed = self.count_missing_inputs(node, tokens)?;
 
             if needed == 0 {

@@ -49,6 +49,7 @@ mod error;
 mod execute;
 mod execution_index;
 mod executions;
+mod fleet;
 mod generate;
 mod goal_runs;
 mod goals;
@@ -59,6 +60,7 @@ mod mcp_protocol;
 mod mcp_tools;
 mod memory;
 mod observability;
+mod rerun;
 mod rollout;
 mod routes;
 mod runs;
@@ -72,6 +74,9 @@ mod tasks;
 mod types;
 mod webhook;
 mod workflow_source;
+
+#[cfg(test)]
+mod tests;
 
 
 #[allow(unused_imports)]

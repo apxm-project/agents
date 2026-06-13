@@ -287,78 +287,10 @@ impl OperationDispatcher {
         // `current_exception_handler()` can resolve TryCatch scopes.
         ctx.aam.enter_operation(node.id);
 
-        let result = match node.op_type {
-            // Memory operations
-            AISOperationType::QMem => qmem::execute(ctx, node, inputs).await,
-            AISOperationType::UMem => umem::execute(ctx, node, inputs).await,
-
-            // LLM operations (Ask/Think/Reason → unified llm handler)
-            AISOperationType::Ask | AISOperationType::Think | AISOperationType::Reason => {
-                llm::execute(ctx, node, inputs).await
-            }
-
-            // Planning & analysis operations
-            AISOperationType::Plan => plan::execute(ctx, node, inputs).await,
-            AISOperationType::Reflect => reflect::execute(ctx, node, inputs).await,
-            AISOperationType::Verify => verify::execute(ctx, node, inputs).await,
-
-            // Invocation operations
-            AISOperationType::InvTool => inv_tool::execute(ctx, node, inputs).await,
-
-            // Synchronization operations
-            AISOperationType::WaitAll => wait_all::execute(ctx, node, inputs).await,
-            AISOperationType::Merge => merge::execute(ctx, node, inputs).await,
-            AISOperationType::Fence => fence::execute(ctx, node, inputs).await,
-            AISOperationType::Checkpoint => checkpoint::execute(ctx, node, inputs).await,
-
-            // Control flow operations
-            AISOperationType::BranchOnValue => branch::execute(ctx, node, inputs).await,
-            AISOperationType::Jump => jump::execute(ctx, node, inputs).await,
-            AISOperationType::LoopStart => loop_start::execute(ctx, node, inputs).await,
-            AISOperationType::LoopEnd => loop_end::execute(ctx, node, inputs).await,
-            AISOperationType::Return => return_op::execute(ctx, node, inputs).await,
-            AISOperationType::Switch => switch::execute(ctx, node, inputs).await,
-            AISOperationType::FlowCall => flow_call::execute(ctx, node, inputs).await,
-            AISOperationType::WorkflowSpawn => workflow_spawn::execute(ctx, node, inputs).await,
-            AISOperationType::CallSkill => call_skill::execute(ctx, node, inputs).await,
-
-            // Error handling operations
-            AISOperationType::TryCatch => try_catch::execute(ctx, node, inputs).await,
-            AISOperationType::Err => err::execute(ctx, node, inputs).await,
-            AISOperationType::Exc => exc::execute(ctx, node, inputs).await,
-
-            // Output operations
-            AISOperationType::Print => print::execute(ctx, node, inputs).await,
-
-            // Communication operations
-            AISOperationType::Communicate => communicate::execute(ctx, node, inputs).await,
-            AISOperationType::Handoff => handoff::execute(ctx, node, inputs).await,
-
-            // Coordination operations
-            AISOperationType::UpdateGoal => update_goal::execute(ctx, node, inputs).await,
-            AISOperationType::Guard => guard::execute(ctx, node, inputs).await,
-            AISOperationType::Claim => claim::execute(ctx, node, inputs).await,
-            AISOperationType::Pause => pause::execute(ctx, node, inputs).await,
-            AISOperationType::Resume => resume::execute(ctx, node, inputs).await,
-
-            // Multi-agent operations
-            AISOperationType::Delegate => delegate::execute(ctx, node, inputs).await,
-            AISOperationType::Negotiate => negotiate::execute(ctx, node, inputs).await,
-            AISOperationType::Nop => nop::execute(ctx, node, inputs).await,
-            AISOperationType::Identity => identity::execute(ctx, node, inputs).await,
-            AISOperationType::SpawnAgent => spawn_agent::execute(ctx, node, inputs).await,
-            AISOperationType::SpawnTeam => spawn_team::execute(ctx, node, inputs).await,
-            AISOperationType::RegisterCapability => {
-                register_capability::execute(ctx, node, inputs).await
-            }
-            AISOperationType::Autonomous => autonomous::execute(ctx, node, inputs).await,
-
-            // Literal operations
-            AISOperationType::ConstStr => const_str::execute(ctx, node, inputs).await,
-
-            // No-op: Agent is metadata, Yield is handled within sub-DAG execution
-            AISOperationType::Agent | AISOperationType::Yield => Ok(Value::Null),
-        };
+        // Run the op-specific handler, applying the generic declarative
+        // retry/backoff + continue-on-error primitive (additive node attributes;
+        // a no-op for nodes that declare none). See `run_handler_with_retry`.
+        let result = Self::run_handler_with_retry(ctx, node, inputs).await;
 
         // Pop the call stack frame (must happen regardless of success/failure).
         ctx.aam.exit_operation();
@@ -494,6 +426,275 @@ impl OperationDispatcher {
         }
 
         result
+    }
+
+    /// Apply the generic declarative retry/backoff + continue-on-error primitive
+    /// around the op-specific handler. The contract is additive: a node that
+    /// declares none of `retry_max` / `retry_backoff_ms` / `continue_on_error`
+    /// behaves exactly as before (one attempt, error halts).
+    ///
+    /// - `retry_max` (≥1)         : re-run the handler up to N more times after a
+    ///   failure, sleeping `retry_backoff_ms * 2^(attempt-1)` between tries.
+    /// - `continue_on_error=true` : a node that still fails does NOT propagate the
+    ///   error; it emits a structured error value (`{ "__apxm_error": {...} }`)
+    ///   downstream so an error edge can consume it. The run continues.
+    ///
+    /// Cancellation always wins: a `SchedulerCancelled` error is never retried or
+    /// swallowed (it must propagate to abort the run promptly).
+    async fn run_handler_with_retry(
+        ctx: &ExecutionContext,
+        node: &Node,
+        inputs: Vec<Value>,
+    ) -> Result<Value> {
+        let retry_max = node
+            .attributes
+            .get(graph_attrs::RETRY_MAX)
+            .and_then(Self::attr_as_u64)
+            .unwrap_or(0);
+        let continue_on_error = node
+            .attributes
+            .get(graph_attrs::CONTINUE_ON_ERROR)
+            .and_then(|v| v.as_bool())
+            .unwrap_or(false);
+
+        // Fast path: no retry, no continue — the common case, zero overhead.
+        if retry_max == 0 && !continue_on_error {
+            return Self::run_handler(ctx, node, inputs).await;
+        }
+
+        let backoff_base_ms = node
+            .attributes
+            .get(graph_attrs::RETRY_BACKOFF_MS)
+            .and_then(Self::attr_as_u64)
+            .unwrap_or(graph_attrs::DEFAULT_RETRY_BACKOFF_MS);
+
+        let mut last_err: Option<RuntimeError> = None;
+        for attempt in 0..=retry_max {
+            if ctx.cancellation_token.is_cancelled() {
+                return Err(RuntimeError::SchedulerCancelled);
+            }
+            match Self::run_handler(ctx, node, inputs.clone()).await {
+                Ok(value) => return Ok(value),
+                // Never retry or swallow a cancellation — propagate immediately.
+                Err(RuntimeError::SchedulerCancelled) => {
+                    return Err(RuntimeError::SchedulerCancelled);
+                }
+                Err(e) => {
+                    if attempt < retry_max {
+                        let backoff_ms = backoff_base_ms.saturating_mul(1u64 << attempt);
+                        apxm_op!(warn,
+                            op_type = ?node.op_type,
+                            node_id = node.id,
+                            attempt = attempt + 1,
+                            retry_max,
+                            backoff_ms,
+                            error = %e,
+                            "Handler failed; retrying after backoff"
+                        );
+                        if backoff_ms > 0 {
+                            tokio::time::sleep(std::time::Duration::from_millis(backoff_ms)).await;
+                        }
+                    }
+                    last_err = Some(e);
+                }
+            }
+        }
+
+        let err = last_err.unwrap_or_else(|| RuntimeError::Operation {
+            op_type: node.op_type,
+            message: "handler failed with no error captured".to_string(),
+        });
+
+        if continue_on_error {
+            apxm_op!(warn,
+                op_type = ?node.op_type,
+                node_id = node.id,
+                error = %err,
+                "Handler failed after retries; continuing (continue_on_error) with error output"
+            );
+            Ok(Self::error_output_value(node, &err))
+        } else {
+            Err(err)
+        }
+    }
+
+    /// Build the structured error-output value a continue-on-error node emits
+    /// downstream. The `__apxm_error` key lets a downstream node detect the
+    /// failure and branch on it (the "error edge"), while keeping the value a
+    /// plain object the rest of the graph can carry.
+    fn error_output_value(node: &Node, err: &RuntimeError) -> Value {
+        use apxm_core::types::values::Number;
+        let mut error_obj: std::collections::HashMap<String, Value> =
+            std::collections::HashMap::new();
+        error_obj.insert("message".to_string(), Value::String(err.to_string()));
+        error_obj.insert(
+            "op_type".to_string(),
+            Value::String(format!("{:?}", node.op_type)),
+        );
+        error_obj.insert(
+            "node_id".to_string(),
+            Value::Number(Number::Integer(i64::try_from(node.id).unwrap_or(i64::MAX))),
+        );
+        let mut map: std::collections::HashMap<String, Value> = std::collections::HashMap::new();
+        map.insert(
+            graph_attrs::ERROR_OUTPUT_KEY.to_string(),
+            Value::Object(error_obj),
+        );
+        Value::Object(map)
+    }
+
+    /// Parse a node attribute as a u64, accepting either an integer or a numeric
+    /// string (AIR attributes are often serialized as strings).
+    fn attr_as_u64(value: &Value) -> Option<u64> {
+        if let Some(i) = value.as_i64() {
+            return u64::try_from(i).ok();
+        }
+        value.as_string().and_then(|s| s.trim().parse::<u64>().ok())
+    }
+
+    /// Route a node to its op-specific handler. Extracted from `dispatch_inner`
+    /// so the generic retry primitive can re-invoke it per attempt.
+    async fn run_handler(ctx: &ExecutionContext, node: &Node, inputs: Vec<Value>) -> Result<Value> {
+        match node.op_type {
+            // Memory operations
+            AISOperationType::QMem => qmem::execute(ctx, node, inputs).await,
+            AISOperationType::UMem => umem::execute(ctx, node, inputs).await,
+
+            // LLM operations (Ask/Think/Reason → unified llm handler)
+            AISOperationType::Ask | AISOperationType::Think | AISOperationType::Reason => {
+                llm::execute(ctx, node, inputs).await
+            }
+
+            // Planning & analysis operations
+            AISOperationType::Plan => plan::execute(ctx, node, inputs).await,
+            AISOperationType::Reflect => reflect::execute(ctx, node, inputs).await,
+            AISOperationType::Verify => verify::execute(ctx, node, inputs).await,
+
+            // Invocation operations
+            AISOperationType::InvTool => inv_tool::execute(ctx, node, inputs).await,
+
+            // Synchronization operations
+            AISOperationType::WaitAll => wait_all::execute(ctx, node, inputs).await,
+            AISOperationType::Merge => merge::execute(ctx, node, inputs).await,
+            AISOperationType::Fence => fence::execute(ctx, node, inputs).await,
+            AISOperationType::Checkpoint => checkpoint::execute(ctx, node, inputs).await,
+
+            // Control flow operations
+            AISOperationType::BranchOnValue => branch::execute(ctx, node, inputs).await,
+            AISOperationType::Jump => jump::execute(ctx, node, inputs).await,
+            AISOperationType::LoopStart => loop_start::execute(ctx, node, inputs).await,
+            AISOperationType::LoopEnd => loop_end::execute(ctx, node, inputs).await,
+            AISOperationType::Return => return_op::execute(ctx, node, inputs).await,
+            AISOperationType::Switch => switch::execute(ctx, node, inputs).await,
+            AISOperationType::FlowCall => flow_call::execute(ctx, node, inputs).await,
+            AISOperationType::WorkflowSpawn => workflow_spawn::execute(ctx, node, inputs).await,
+            AISOperationType::CallSkill => call_skill::execute(ctx, node, inputs).await,
+
+            // Error handling operations
+            AISOperationType::TryCatch => try_catch::execute(ctx, node, inputs).await,
+            AISOperationType::Err => err::execute(ctx, node, inputs).await,
+            AISOperationType::Exc => exc::execute(ctx, node, inputs).await,
+
+            // Output operations
+            AISOperationType::Print => print::execute(ctx, node, inputs).await,
+
+            // Communication operations
+            AISOperationType::Communicate => communicate::execute(ctx, node, inputs).await,
+            AISOperationType::Handoff => handoff::execute(ctx, node, inputs).await,
+
+            // Coordination operations
+            AISOperationType::UpdateGoal => update_goal::execute(ctx, node, inputs).await,
+            AISOperationType::Guard => guard::execute(ctx, node, inputs).await,
+            AISOperationType::Claim => claim::execute(ctx, node, inputs).await,
+            AISOperationType::Pause => pause::execute(ctx, node, inputs).await,
+            AISOperationType::Resume => resume::execute(ctx, node, inputs).await,
+
+            // Multi-agent operations
+            AISOperationType::Delegate => delegate::execute(ctx, node, inputs).await,
+            AISOperationType::Negotiate => negotiate::execute(ctx, node, inputs).await,
+            AISOperationType::Nop => nop::execute(ctx, node, inputs).await,
+            AISOperationType::Identity => identity::execute(ctx, node, inputs).await,
+            AISOperationType::SpawnAgent => spawn_agent::execute(ctx, node, inputs).await,
+            AISOperationType::SpawnTeam => spawn_team::execute(ctx, node, inputs).await,
+            AISOperationType::RegisterCapability => {
+                register_capability::execute(ctx, node, inputs).await
+            }
+            AISOperationType::Autonomous => autonomous::execute(ctx, node, inputs).await,
+
+            // Literal operations
+            AISOperationType::ConstStr => const_str::execute(ctx, node, inputs).await,
+
+            // No-op: Agent is metadata, Yield is handled within sub-DAG execution
+            AISOperationType::Agent | AISOperationType::Yield => Ok(Value::Null),
+        }
+    }
+}
+
+#[cfg(test)]
+mod retry_primitive_tests {
+    use super::*;
+    use apxm_core::types::values::Number;
+
+    fn node(op: AISOperationType) -> Node {
+        let mut n = Node::new(7, op);
+        n.metadata.name = Some("retry-test".to_string());
+        n
+    }
+
+    #[test]
+    fn attr_as_u64_accepts_int_and_numeric_string() {
+        assert_eq!(
+            OperationDispatcher::attr_as_u64(&Value::Number(Number::Integer(3))),
+            Some(3)
+        );
+        assert_eq!(
+            OperationDispatcher::attr_as_u64(&Value::String(" 5 ".to_string())),
+            Some(5)
+        );
+        assert_eq!(
+            OperationDispatcher::attr_as_u64(&Value::String("not-a-number".to_string())),
+            None
+        );
+        // A negative integer cannot be a retry count / backoff.
+        assert_eq!(
+            OperationDispatcher::attr_as_u64(&Value::Number(Number::Integer(-1))),
+            None
+        );
+    }
+
+    #[test]
+    fn error_output_value_carries_structured_error_under_well_known_key() {
+        let node = node(AISOperationType::InvTool);
+        let err = RuntimeError::Operation {
+            op_type: AISOperationType::InvTool,
+            message: "boom".to_string(),
+        };
+        let value = OperationDispatcher::error_output_value(&node, &err);
+        let Value::Object(map) = value else {
+            panic!("error output must be an object");
+        };
+        let inner = map
+            .get(graph_attrs::ERROR_OUTPUT_KEY)
+            .expect("error output keyed under the well-known error key");
+        let Value::Object(error_obj) = inner else {
+            panic!("error payload must be an object");
+        };
+        assert!(
+            error_obj
+                .get("message")
+                .and_then(|v| v.as_string())
+                .is_some_and(|m| m.contains("boom")),
+            "error output carries the failing handler's message"
+        );
+        assert_eq!(
+            error_obj.get("node_id").and_then(|v| v.as_i64()),
+            Some(7),
+            "error output records the failing node id for the error edge"
+        );
+        assert!(
+            error_obj.contains_key("op_type"),
+            "error output records the failing op type"
+        );
     }
 }
 

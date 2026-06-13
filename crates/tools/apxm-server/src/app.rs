@@ -8,10 +8,12 @@ use crate::a2a::{a2a_get_task, a2a_jsonrpc, a2a_send_task};
 use crate::agent::{
     agent_card, deregister_agent, get_agent, list_agents, receive_message, register_agent,
 };
-use crate::capability::{list_capabilities, register_capability};
+use crate::capability::{invoke_capability, list_capabilities, register_capability};
 use crate::checkpoints::{create_checkpoint, get_checkpoint, resume_checkpoint};
-use crate::execute::{compile_workflow, compile_workflow_stream, execute, execute_stream};
+use crate::execute::{compile_artifact, compile_workflow, compile_workflow_stream, execute, execute_stream};
 use crate::executions::{get_execution, get_execution_node, list_executions};
+use crate::fleet::get_fleet;
+use crate::rerun::{rerun_from_node, rerun_run};
 use crate::generate::{handle_generate, handle_generate_stream, handle_schema};
 use crate::goals::{cancel_goal, get_goal, get_goal_events_bulk, list_goals, stream_goal_events};
 use crate::health::{health, list_backends, list_models};
@@ -19,8 +21,8 @@ use crate::mcp::{mcp_jsonrpc, post_goal};
 use crate::memory::{delete_fact, search_facts, store_fact};
 use crate::routes::ServerRoute;
 use crate::runs::{
-    cancel_run, get_run, get_run_blob, get_run_events_bulk, get_run_graph, get_run_node, list_runs,
-    stream_run_events,
+    cancel_run, get_run, get_run_blob, get_run_events_bulk, get_run_graph, get_run_node,
+    get_session_history, list_runs, stream_run_events,
 };
 use crate::skills::{
     execute_skill, execute_skill_stream, get_skill, list_skills, register_skill_event_payloads,
@@ -46,6 +48,7 @@ pub(crate) fn build_app(state: AppState) -> Router {
         .route(ServerRoute::ExecuteStream.path(), post(execute_stream))
         // Caller-supplied workflow source: resolve AIR, then apply the same
         // raw-execute admission gate.
+        .route(ServerRoute::CompileArtifact.path(), post(compile_artifact))
         .route(ServerRoute::Compile.path(), post(compile_workflow))
         .route(
             ServerRoute::CompileStream.path(),
@@ -60,6 +63,12 @@ pub(crate) fn build_app(state: AppState) -> Router {
         .route(
             ServerRoute::CapabilitiesRegister.path(),
             post(register_capability),
+        )
+        // Invoke a single read-only capability once (no graph) so the studio
+        // can populate dynamic "load options" dropdowns.
+        .route(
+            ServerRoute::CapabilityInvoke.path(),
+            post(invoke_capability),
         )
         // Server-owned skill inventory and static skill execution
         .route(ServerRoute::Skills.path(), get(list_skills))
@@ -122,6 +131,17 @@ pub(crate) fn build_app(state: AppState) -> Router {
         .route(ServerRoute::RunBlob.path(), get(get_run_blob))
         // Mid-flight cancellation — trips the run's abort signal.
         .route(ServerRoute::RunCancel.path(), post(cancel_run))
+        // Re-execute a prior run (optionally from a specific node).
+        .route(ServerRoute::RunRerun.path(), post(rerun_run))
+        .route(
+            ServerRoute::RunRerunFromNode.path(),
+            post(rerun_from_node),
+        )
+        // Fleet observability rollup for the studio Fleet/observability views.
+        .route(ServerRoute::ObservabilityFleet.path(), get(get_fleet))
+        // Durable, role-tagged chat transcript by session_id (shared across
+        // the `apxm chat` CLI and studio Chat hop).
+        .route(ServerRoute::SessionHistory.path(), get(get_session_history))
         // Goal aggregate observer endpoints for frontend/client state.
         .route(ServerRoute::Goals.path(), get(list_goals).post(post_goal))
         .route(ServerRoute::GoalDetail.path(), get(get_goal))

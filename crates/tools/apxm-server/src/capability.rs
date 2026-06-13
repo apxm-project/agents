@@ -8,8 +8,8 @@ use apxm_runtime::capability::executor::{CapabilityExecutor, CapabilityResult};
 use apxm_runtime::capability::metadata::CapabilityMetadata;
 use async_trait::async_trait;
 use axum::Json;
-use axum::extract::State;
-use serde::Deserialize;
+use axum::extract::{Path, State};
+use serde::{Deserialize, Serialize};
 use serde_json::Value as JsonValue;
 use tracing::info;
 
@@ -177,6 +177,12 @@ struct PackToolDecl {
     endpoint_pattern: Option<String>,
     #[serde(default)]
     read_only: bool,
+    /// Whether the block must be bound to a connection before it can run, so the
+    /// studio install-gate renders a "connect" prompt on the block. Defaults to
+    /// `true` for `kind = "provider"` (a connector action always needs a
+    /// connection) and `false` otherwise; set explicitly to override.
+    #[serde(default)]
+    requires_auth: Option<bool>,
     /// Optional typed input schema; defaults to the provider.call arg shape.
     #[serde(default)]
     schema: JsonValue,
@@ -186,6 +192,12 @@ struct PackToolDecl {
     /// MCP tool name for kind=mcp (defaults to the capability id).
     #[serde(default)]
     mcp_tool: Option<String>,
+    /// Optional declared tool version (typeVersion). Metadata-only for now:
+    /// decoded for forward-compat (catalog/frontend), not yet threaded into
+    /// dispatch — so it is intentionally unread on this path.
+    #[serde(default)]
+    #[allow(dead_code)]
+    version: Option<u32>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -238,25 +250,37 @@ fn capability_from_tool(t: &PackToolDecl) -> Option<Arc<dyn CapabilityExecutor>>
         // A REST template (method + url) makes the block self-contained: the node
         // carries only loose args, the cap fills the url + body. Without a url it
         // falls back to the bare named cap (the node must supply `url`).
-        "provider" => Some(Arc::new(match t.url.clone() {
-            Some(url) => apxm_runtime::capability::builtins::ProviderCallCapability::named_rest(
-                t.capability.clone(),
-                metadata.description.clone(),
-                schema,
-                t.method.clone().unwrap_or_else(|| "POST".to_string()),
-                url,
-            ),
-            None => apxm_runtime::capability::builtins::ProviderCallCapability::named(
-                t.capability.clone(),
-                metadata.description.clone(),
-                schema,
-            ),
-        })),
+        "provider" => {
+            // Provider-backed connector blocks need a bound connection, so the
+            // install-gate gates them on a connection. Default the flag to true
+            // unless the pack overrides it explicitly.
+            let requires_auth = t.requires_auth.unwrap_or(true);
+            let cap = match t.url.clone() {
+                Some(url) => apxm_runtime::capability::builtins::ProviderCallCapability::named_rest(
+                    t.capability.clone(),
+                    metadata.description.clone(),
+                    schema,
+                    t.method.clone().unwrap_or_else(|| "POST".to_string()),
+                    url,
+                ),
+                None => apxm_runtime::capability::builtins::ProviderCallCapability::named(
+                    t.capability.clone(),
+                    metadata.description.clone(),
+                    schema,
+                ),
+            }
+            .with_requires_auth(requires_auth)
+            .with_read_only(t.read_only);
+            Some(Arc::new(cap) as Arc<dyn CapabilityExecutor>)
+        }
         "http" => t.endpoint_pattern.clone().map(|endpoint| {
             let client = reqwest::Client::builder()
                 .redirect(reqwest::redirect::Policy::none())
                 .build()
                 .unwrap_or_default();
+            if t.requires_auth.unwrap_or(false) {
+                metadata = metadata.with_auth();
+            }
             Arc::new(HttpCapability {
                 metadata,
                 endpoint,
@@ -452,4 +476,340 @@ pub(crate) async fn register_capability(
         .register_or_replace(capability)
         .map_err(ApiError::runtime)?;
     Ok(Json(OkAckName::new(req.name)))
+}
+
+/// Request body for `POST /v1/capabilities/{capability_id}/invoke`.
+///
+/// `connection` is the apxm-auth connection id (`provider/conn`) the studio
+/// node is bound to; it is threaded into the provider.call invocation as the
+/// `credential` arg exactly like an inv_tool node, so the secret is resolved
+/// server-side by apxm-auth and never reaches the studio. `owner` is accepted
+/// for parity with the rest of the surface but the provider.call backing scopes
+/// the tenant from `APXM_AUTH_OWNER` server-side.
+#[derive(Debug, Default, Deserialize)]
+pub(crate) struct InvokeCapabilityRequest {
+    #[serde(default)]
+    args: serde_json::Map<String, JsonValue>,
+    #[serde(default)]
+    connection: Option<String>,
+    #[serde(default)]
+    owner: Option<String>,
+}
+
+/// Response body for a single capability invocation. `result` is the raw value
+/// the capability returned (a JSON array/object/string), which the studio's
+/// load-options proxy maps into `{value,label}` options.
+#[derive(Debug, Serialize)]
+pub(crate) struct InvokeCapabilityResponse {
+    result: JsonValue,
+    status: &'static str,
+}
+
+/// Invoke a SINGLE read-only capability once and return its result, so the
+/// studio can populate dynamic "load options" dropdowns (e.g. list a provider's
+/// channels/repos for a node-config select).
+///
+/// This reuses the same invocation seam the runtime drives for an inv_tool node
+/// ([`CapabilitySystem::invoke`]) rather than building a graph: load-options is
+/// a read, not a workflow. The capability MUST be marked `read_only` — a
+/// dropdown population must be side-effect-free — otherwise the call is rejected
+/// with `400`. The credential is resolved server-side via apxm-auth exactly like
+/// a normal provider.call (the studio never sees the secret).
+pub(crate) async fn invoke_capability(
+    State(state): State<AppState>,
+    Path(capability_id): Path<String>,
+    Json(req): Json<InvokeCapabilityRequest>,
+) -> Result<Json<InvokeCapabilityResponse>, ApiError> {
+    let cap_sys = state.runtime.capability_system();
+
+    if !cap_sys.has_capability(&capability_id) {
+        return Err(ApiError::not_found(format!(
+            "capability '{capability_id}' is not registered"
+        )));
+    }
+
+    // Load-options must be side-effect-free: refuse anything that is not
+    // explicitly read-only so this endpoint can never be used to drive a write.
+    if !cap_sys.is_read_only(&capability_id) {
+        return Err(ApiError::bad_request(format!(
+            "capability '{capability_id}' is not read_only; only read-only capabilities may be invoked for load-options"
+        )));
+    }
+
+    // Convert the JSON args to runtime values, injecting the bound connection id
+    // as the `credential` arg the provider.call backing forwards to apxm-auth.
+    let mut args: HashMap<String, Value> = HashMap::with_capacity(req.args.len() + 1);
+    if let Some(connection) = req.connection {
+        args.insert("credential".to_string(), Value::String(connection));
+    }
+    for (key, value) in req.args {
+        let value = Value::try_from(value)
+            .map_err(|e| ApiError::bad_request(format!("invalid arg '{key}': {e}")))?;
+        args.insert(key, value);
+    }
+
+    info!(
+        capability = %capability_id,
+        owner = ?req.owner,
+        "invoking read-only capability for load-options"
+    );
+
+    let result = cap_sys
+        .invoke(&capability_id, args)
+        .await
+        .map_err(ApiError::runtime)?;
+    let result_json = result
+        .to_json()
+        .unwrap_or_else(|_| JsonValue::String(result.to_string()));
+
+    Ok(Json(InvokeCapabilityResponse {
+        result: result_json,
+        status: "ok",
+    }))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn pack_tool_decl_version_defaults_to_none() {
+        // An existing-style tools.toml with no `version` key parses unchanged
+        // and leaves `version` at its additive default of None.
+        let raw = r#"
+            [[tool]]
+            capability = "provider.write"
+            name = "Write thing"
+            kind = "provider"
+            url = "https://api.example.com/write"
+        "#;
+        let file: PackToolsFile = toml::from_str(raw).expect("parse tools.toml without version");
+        assert_eq!(file.tool.len(), 1);
+        assert_eq!(file.tool[0].capability, "provider.write");
+        assert_eq!(file.tool[0].version, None);
+    }
+
+    #[test]
+    fn pack_tool_decl_version_round_trips() {
+        let raw = r#"
+            [[tool]]
+            capability = "provider.write"
+            version = 2
+        "#;
+        let file: PackToolsFile = toml::from_str(raw).expect("parse tools.toml with version");
+        assert_eq!(file.tool.len(), 1);
+        assert_eq!(file.tool[0].version, Some(2));
+    }
+
+    #[test]
+    fn provider_tool_defaults_to_requires_auth() {
+        // A provider-kind block with no explicit `requires_auth` is gated on a
+        // connection so the install-gate renders a connect prompt.
+        let raw = r#"
+            [[tool]]
+            capability = "slack.post_message"
+            kind = "provider"
+            url = "https://slack.com/api/chat.postMessage"
+        "#;
+        let file: PackToolsFile = toml::from_str(raw).expect("parse provider tools.toml");
+        let cap = capability_from_tool(&file.tool[0]).expect("provider cap builds");
+        assert!(
+            cap.metadata().requires_auth,
+            "provider blocks default to requires_auth=true"
+        );
+    }
+
+    /// A packs directory containing a `tools.toml` registers its `[[tool]]`
+    /// entries as runtime capabilities, so `/v1/capabilities` lists them and the
+    /// studio install-gate sees the blocks as AVAILABLE.
+    #[tokio::test]
+    async fn packs_dir_tools_toml_registers_capabilities() {
+        use apxm_runtime::{Runtime, RuntimeConfig};
+
+        let root = tempfile::tempdir().expect("packs root");
+        let pack_dir = root.path().join("slack-connector");
+        std::fs::create_dir_all(&pack_dir).expect("create pack dir");
+        std::fs::write(
+            pack_dir.join("tools.toml"),
+            r#"
+                [[tool]]
+                capability = "slack.post_message"
+                name = "Post Slack message"
+                description = "Send a message to a Slack channel"
+                kind = "provider"
+                method = "POST"
+                url = "https://slack.com/api/chat.postMessage"
+
+                [[tool]]
+                capability = "weather.lookup"
+                kind = "provider"
+                read_only = true
+                requires_auth = false
+            "#,
+        )
+        .expect("write tools.toml");
+
+        let runtime = Runtime::new(RuntimeConfig::in_memory())
+            .await
+            .expect("build in-memory runtime");
+        register_pack_tools(&runtime, &[root.path().to_path_buf()]);
+
+        let sys = runtime.capability_system();
+        assert!(
+            sys.has_capability("slack.post_message"),
+            "provider block registered as a capability"
+        );
+        assert!(
+            sys.has_capability("weather.lookup"),
+            "second provider block registered as a capability"
+        );
+
+        let listed = sys.list_capabilities();
+        let slack = listed
+            .iter()
+            .find(|m| m.name == "slack.post_message")
+            .expect("slack capability listed");
+        assert!(slack.requires_auth, "auth-gated provider block");
+        let weather = listed
+            .iter()
+            .find(|m| m.name == "weather.lookup")
+            .expect("weather capability listed");
+        assert!(
+            !weather.requires_auth,
+            "explicit requires_auth=false overrides the provider default"
+        );
+        assert!(weather.read_only, "read_only flag honored");
+    }
+
+    use crate::state::AppState;
+    use apxm_runtime::{Runtime, RuntimeConfig};
+    use dashmap::DashMap;
+
+    /// Minimal in-memory `AppState` for invoking the capability handler directly
+    /// (no TCP port). Mirrors the field set assembled at startup with volatile
+    /// in-memory stores so parallel tests do not contend on SQLite files.
+    async fn test_state() -> AppState {
+        let runtime = Arc::new(
+            Runtime::new(RuntimeConfig::in_memory())
+                .await
+                .expect("in-memory runtime"),
+        );
+        AppState {
+            runtime,
+            agent_registry: Arc::new(DashMap::new()),
+            task_manager: crate::tasks::TaskQueueManager::new(),
+            checkpoint_store: crate::checkpoints::CheckpointStore::new(),
+            start_time: std::time::SystemTime::now(),
+            a2a_tasks: Arc::new(DashMap::new()),
+            skill_library: crate::skills::SkillLibrary::new(Vec::new()),
+            execution_store: crate::executions::ExecutionStore::new(),
+            run_event_bus: crate::runs::RunEventBus::new(),
+            webhook_dispatcher: None,
+            rollout_paths: Arc::new(apxm_rollout::RolloutPaths::new({
+                // Forget the tempdir so its lifetime spans the AppState; the test
+                // process exits and the OS reclaims /tmp on its own.
+                let dir = tempfile::tempdir().expect("rollout home");
+                let path = dir.path().to_path_buf();
+                std::mem::forget(dir);
+                path
+            })),
+            rollout_index: Arc::new(tokio::sync::Mutex::new(
+                apxm_rollout::IndexDb::open_in_memory().expect("rollout index"),
+            )),
+            rollout_registry: crate::rollout::RolloutRegistry::new(),
+            inference_limiter: crate::state::InferenceLimiter::unlimited_for_tests(),
+            server_config: apxm_driver::ServerConfig::default(),
+            cancel_registry: Arc::new(DashMap::new()),
+            goal_runs: crate::goal_runs::GoalRunRegistry::new(),
+        }
+    }
+
+    /// A read-only capability returns a static option list — exactly what the
+    /// studio load-options dropdown consumes — and the handler returns it under
+    /// the `{ result, status }` envelope.
+    #[tokio::test]
+    async fn invoke_read_only_capability_returns_result() {
+        let state = test_state().await;
+        let options = serde_json::json!([
+            { "value": "C123", "label": "#general" },
+            { "value": "C456", "label": "#random" }
+        ]);
+        let metadata = CapabilityMetadata::new(
+            "slack.list_channels",
+            "List Slack channels for a load-options dropdown",
+            serde_json::json!({ "type": "object", "properties": {} }),
+        )
+        .with_read_only();
+        state
+            .runtime
+            .capability_system()
+            .register(Arc::new(StaticCapability {
+                metadata,
+                static_response: Value::try_from(options.clone()).expect("static value"),
+            }))
+            .expect("register read-only capability");
+
+        let resp = invoke_capability(
+            State(state),
+            Path("slack.list_channels".to_string()),
+            Json(InvokeCapabilityRequest {
+                connection: Some("slack/acme".to_string()),
+                ..Default::default()
+            }),
+        )
+        .await
+        .expect("invoke succeeds");
+
+        assert_eq!(resp.0.status, "ok");
+        assert_eq!(resp.0.result, options, "raw capability result is returned");
+    }
+
+    /// A capability that is NOT read-only is rejected: load-options must be
+    /// side-effect-free, so a write capability can never be driven through it.
+    #[tokio::test]
+    async fn invoke_non_read_only_capability_is_refused() {
+        let state = test_state().await;
+        let metadata = CapabilityMetadata::new(
+            "slack.post_message",
+            "Send a Slack message (side-effecting)",
+            serde_json::json!({ "type": "object", "properties": {} }),
+        );
+        state
+            .runtime
+            .capability_system()
+            .register(Arc::new(StaticCapability {
+                metadata,
+                static_response: Value::String("sent".to_string()),
+            }))
+            .expect("register write capability");
+
+        let err = invoke_capability(
+            State(state),
+            Path("slack.post_message".to_string()),
+            Json(InvokeCapabilityRequest::default()),
+        )
+        .await
+        .expect_err("non-read-only capability is refused");
+
+        assert_eq!(err.status, axum::http::StatusCode::BAD_REQUEST);
+        assert!(
+            err.message.contains("read_only"),
+            "rejection explains the read-only requirement: {}",
+            err.message
+        );
+    }
+
+    /// An unregistered capability id yields a 404 rather than a generic error.
+    #[tokio::test]
+    async fn invoke_unknown_capability_is_not_found() {
+        let state = test_state().await;
+        let err = invoke_capability(
+            State(state),
+            Path("nope.missing".to_string()),
+            Json(InvokeCapabilityRequest::default()),
+        )
+        .await
+        .expect_err("unknown capability is rejected");
+        assert_eq!(err.status, axum::http::StatusCode::NOT_FOUND);
+    }
 }

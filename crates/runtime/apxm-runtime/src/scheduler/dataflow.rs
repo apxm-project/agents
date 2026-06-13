@@ -59,9 +59,32 @@ impl DataflowScheduler {
         &self,
         dag: ExecutionDag,
         executor: Arc<ExecutorEngine>,
+        ctx: ExecutionContext,
+        inputs: Vec<Value>,
+        hooks: ExecutionHookContext,
+    ) -> RuntimeResult<(
+        std::collections::HashMap<u64, Value>,
+        ExecutionStats,
+        SchedulerMetrics,
+        Option<std::collections::HashMap<u64, Value>>,
+        Option<std::collections::HashMap<u64, Vec<u64>>>,
+    )> {
+        self.execute_with_hooks_and_seed(dag, executor, ctx, inputs, hooks, None)
+            .await
+    }
+
+    /// Partial replay (`rerun-from-node`): execute only `replay_seed.from_node`
+    /// and its descendants, reusing the prior run's boundary token values for the
+    /// pre-completed upstream nodes. When `replay_seed` is `None` this is an
+    /// ordinary full run.
+    pub async fn execute_with_hooks_and_seed(
+        &self,
+        dag: ExecutionDag,
+        executor: Arc<ExecutorEngine>,
         mut ctx: ExecutionContext,
         inputs: Vec<Value>,
         hooks: ExecutionHookContext,
+        replay_seed: Option<&crate::scheduler::replay::ReplaySeed>,
     ) -> RuntimeResult<(
         std::collections::HashMap<u64, Value>,
         ExecutionStats,
@@ -98,13 +121,14 @@ impl DataflowScheduler {
         let metrics = Arc::new(MetricsCollector::new());
 
         // Build shared scheduler state
-        let (mut state, workers) = SchedulerState::new_with_hooks(
+        let (mut state, workers) = SchedulerState::new_with_replay(
             dag,
             self.config.clone(),
             metrics.clone(),
             start,
             inputs,
             hooks.clone(),
+            replay_seed,
         )?;
         // Carry the host admission key (if any) so a parked execution releases its
         // cross-execution admission slot and reacquires it on wake.

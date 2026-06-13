@@ -7,11 +7,13 @@ pub(crate) const EXECUTE: &str = "/v1/execute";
 pub(crate) const EXECUTE_STREAM: &str = "/v1/execute/stream";
 pub(crate) const COMPILE: &str = "/v1/compile";
 pub(crate) const COMPILE_STREAM: &str = "/v1/compile/stream";
+pub(crate) const COMPILE_ARTIFACT: &str = "/v1/compile-artifact";
 pub(crate) const MEMORY_FACTS_STORE: &str = "/v1/memory/facts/store";
 pub(crate) const MEMORY_FACTS_SEARCH: &str = "/v1/memory/facts/search";
 pub(crate) const MEMORY_FACTS_DELETE: &str = "/v1/memory/facts/delete";
 pub(crate) const CAPABILITIES: &str = "/v1/capabilities";
 pub(crate) const CAPABILITIES_REGISTER: &str = "/v1/capabilities/register";
+pub(crate) const CAPABILITY_INVOKE: &str = "/v1/capabilities/{capability_id}/invoke";
 pub(crate) const SKILLS: &str = "/v1/skills";
 pub(crate) const SKILL_DETAIL: &str = "/v1/skills/{id}";
 pub(crate) const SKILL_VALIDATE: &str = "/v1/skills/{id}/validate";
@@ -49,6 +51,14 @@ pub(crate) const RUN_EVENTS_STREAM: &str = "/v1/runs/{execution_id}/events/strea
 // rollout blob endpoint.
 pub(crate) const RUN_BLOB: &str = "/v1/runs/{execution_id}/blobs/{blob_ref}";
 pub(crate) const RUN_CANCEL: &str = "/v1/runs/{execution_id}/cancel";
+pub(crate) const RUN_RERUN: &str = "/v1/runs/{execution_id}/rerun";
+pub(crate) const RUN_RERUN_FROM_NODE: &str = "/v1/runs/{execution_id}/rerun-from-node";
+// fleet observability rollup for studio Fleet views.
+pub(crate) const OBSERVABILITY_FLEET: &str = "/v1/observability/fleet";
+// durable, role-tagged conversation transcript keyed by session_id. Both the
+// `apxm chat` CLI and the studio Chat POST turns through `/v1/execute/stream`;
+// this reassembles the visible conversation across the hop.
+pub(crate) const SESSION_HISTORY: &str = "/v1/sessions/{id}/history";
 pub(crate) const GOALS: &str = "/v1/goals";
 pub(crate) const GOAL_DETAIL: &str = "/v1/goals/{goal_id}";
 pub(crate) const GOAL_EVENTS: &str = "/v1/goals/{goal_id}/events";
@@ -64,11 +74,13 @@ pub(crate) enum ServerRoute {
     ExecuteStream,
     Compile,
     CompileStream,
+    CompileArtifact,
     MemoryFactsStore,
     MemoryFactsSearch,
     MemoryFactsDelete,
     Capabilities,
     CapabilitiesRegister,
+    CapabilityInvoke,
     Skills,
     SkillDetail,
     SkillValidate,
@@ -104,6 +116,10 @@ pub(crate) enum ServerRoute {
     RunEventsStream,
     RunBlob,
     RunCancel,
+    RunRerun,
+    RunRerunFromNode,
+    ObservabilityFleet,
+    SessionHistory,
     Goals,
     GoalDetail,
     GoalEvents,
@@ -121,11 +137,13 @@ impl ServerRoute {
             Self::ExecuteStream => EXECUTE_STREAM,
             Self::Compile => COMPILE,
             Self::CompileStream => COMPILE_STREAM,
+            Self::CompileArtifact => COMPILE_ARTIFACT,
             Self::MemoryFactsStore => MEMORY_FACTS_STORE,
             Self::MemoryFactsSearch => MEMORY_FACTS_SEARCH,
             Self::MemoryFactsDelete => MEMORY_FACTS_DELETE,
             Self::Capabilities => CAPABILITIES,
             Self::CapabilitiesRegister => CAPABILITIES_REGISTER,
+            Self::CapabilityInvoke => CAPABILITY_INVOKE,
             Self::Skills => SKILLS,
             Self::SkillDetail => SKILL_DETAIL,
             Self::SkillValidate => SKILL_VALIDATE,
@@ -161,6 +179,10 @@ impl ServerRoute {
             Self::RunEventsStream => RUN_EVENTS_STREAM,
             Self::RunBlob => RUN_BLOB,
             Self::RunCancel => RUN_CANCEL,
+            Self::RunRerun => RUN_RERUN,
+            Self::RunRerunFromNode => RUN_RERUN_FROM_NODE,
+            Self::ObservabilityFleet => OBSERVABILITY_FLEET,
+            Self::SessionHistory => SESSION_HISTORY,
             Self::Goals => GOALS,
             Self::GoalDetail => GOAL_DETAIL,
             Self::GoalEvents => GOAL_EVENTS,
@@ -244,6 +266,11 @@ pub(crate) fn run_graph_path(execution_id: impl Display) -> String {
 #[allow(dead_code)]
 pub(crate) fn run_cancel_path(execution_id: impl Display) -> String {
     format!("{RUNS}/{execution_id}/cancel")
+}
+
+#[allow(dead_code)]
+pub(crate) fn session_history_path(id: impl Display) -> String {
+    format!("/v1/sessions/{id}/history")
 }
 
 #[allow(dead_code)]

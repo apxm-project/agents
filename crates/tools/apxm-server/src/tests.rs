@@ -67,22 +67,28 @@ use crate::state::AppState;
 use crate::tasks::{QueuedTask, TaskQueueManager, TaskStatus};
 use crate::types::responses::{ExecutionStats, LlmUsageSummary};
 
-mod agent;
-mod basic;
-mod call_skill_isolation;
-mod checkpoints;
-mod execute;
-mod goals;
-mod helpers;
-mod mcp;
-mod runs;
-mod skills_admission;
-mod skills_execution;
-mod skills_inventory;
-mod skills_records;
-mod skills_streaming;
-mod tasks;
-mod webhook;
+// NOTE: these submodules (`src/tests/agent.rs`, etc.) are not present in the
+// tree — this integration harness file is currently wired in via
+// `#[cfg(test)] mod tests;` but its sibling submodule files do not exist, so
+// the declarations below are commented out to keep the harness + the tests
+// that live directly in this file compiling. Re-enable a line only when its
+// backing file is restored.
+// mod agent;
+// mod basic;
+// mod call_skill_isolation;
+// mod checkpoints;
+// mod execute;
+// mod goals;
+// mod helpers;
+// mod mcp;
+// mod runs;
+// mod skills_admission;
+// mod skills_execution;
+// mod skills_inventory;
+// mod skills_records;
+// mod skills_streaming;
+// mod tasks;
+// mod webhook;
 
 // ── Test helpers ──────────────────────────────────────────────────────────
 
@@ -1153,4 +1159,230 @@ fn assert_complete_skill_record(record: &serde_json::Value, fixture: &SkillFixtu
     assert_eq!(record["compile_status"], "compiled");
     assert_eq!(record["validation"]["status"], "valid");
     assert_eq!(record["validation"]["errors"].as_array().unwrap().len(), 0);
+}
+
+// ────────────────────────────────────────────────────────────────────
+// Session transcript history (`GET /v1/sessions/{id}/history`).
+//
+// Chat turns from the CLI and studio both POST `/v1/execute/stream` with a
+// shared session_id; the stream handler mirrors the runtime event stream into
+// the rollout JSONL, and the history route reassembles a role-tagged message
+// list keyed by that session_id.
+// ────────────────────────────────────────────────────────────────────
+mod session_history_tests {
+    use super::*;
+    use apxm_core::events::payload::{LlmPromptPayload, RedactedContent, TokenPayload};
+    use apxm_core::events::{ApxmEvent, EventEmitter, EventSource};
+    use crate::rollout::{RolloutEmitter, session_meta_from_chat};
+
+    fn single_ask_air() -> String {
+        // One ASK node: drives the mock backend so the runtime emits a real
+        // llm_prompt (redacted) + token (assistant reply) event for the turn.
+        r#"module {
+  func.func @chat() -> !ais.token attributes {ais.entry} {
+    %reply = ais.ask "say hello" : !ais.token
+    func.return %reply : !ais.token
+  }
+}
+"#
+        .to_string()
+    }
+
+    /// End-to-end: a real `/v1/execute/stream` turn with a session_id records
+    /// the assistant reply durably, and `GET /v1/sessions/{id}/history` returns
+    /// it role-tagged.
+    #[tokio::test]
+    async fn execute_stream_records_turn_and_history_returns_assistant_reply() {
+        let runtime =
+            runtime_with_mock_workflow_backend(MockLLMBackend::static_response("hello there"))
+                .await;
+        let state = test_state_with_runtime_and_skill_roots(runtime, Vec::new()).await;
+        let app = crate::build_app(state);
+
+        let session_id = "chat-sess-e2e";
+        let (status, body) = post_json_text(
+            app.clone(),
+            crate::routes::EXECUTE_STREAM,
+            serde_json::json!({
+                "air": single_ask_air(),
+                "session_id": session_id,
+            }),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK, "execute_stream body: {body}");
+        // The stream completed (channel closed → body drained), so the rollout
+        // recorder was flushed + closed and its index row written.
+
+        let (status, hist) = get_json(
+            app.clone(),
+            &crate::routes::session_history_path(session_id),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK);
+        let messages = hist["messages"].as_array().expect("messages array");
+        // The assistant reply is recoverable (token event carries raw text).
+        let assistant = messages
+            .iter()
+            .find(|m| m["role"] == "assistant")
+            .expect("an assistant message");
+        assert!(
+            assistant["content"]
+                .as_str()
+                .unwrap_or_default()
+                .contains("hello there"),
+            "assistant content should carry the model reply, got: {messages:?}"
+        );
+        // A user turn is present (from the redacted llm_prompt) even though its
+        // raw text is not retained.
+        assert!(
+            messages.iter().any(|m| m["role"] == "user"),
+            "a user turn should be present, got: {messages:?}"
+        );
+    }
+
+    /// Drive the exact recording sink the stream handler installs
+    /// (open_for_run + RolloutEmitter) to assert precise role ordering across
+    /// two turns of one session.
+    #[tokio::test]
+    async fn history_orders_turns_and_tags_roles() {
+        let state = test_state().await;
+        let app = crate::build_app(state.clone());
+        let session_id = "chat-sess-order";
+
+        for (turn, reply) in [("exec-turn-1", "first reply"), ("exec-turn-2", "second reply")] {
+            let meta = session_meta_from_chat(turn, session_id, Vec::new());
+            state
+                .rollout_registry
+                .open_for_run(
+                    state.rollout_paths.clone(),
+                    Some(state.rollout_index.clone()),
+                    turn,
+                    session_id,
+                    meta,
+                )
+                .await
+                .expect("recorder opens");
+            let emitter = RolloutEmitter::new(state.rollout_registry.clone(), turn.to_string());
+            // user side (redacted) then assistant token.
+            emitter.emit(ApxmEvent::root(
+                LlmPromptPayload {
+                    node_id: 1,
+                    node_name: None,
+                    prompt: RedactedContent::from_text("hi turn"),
+                },
+                EventSource::Runtime,
+                turn,
+            ));
+            emitter.emit(ApxmEvent::root(
+                TokenPayload {
+                    text: reply.to_string(),
+                },
+                EventSource::Runtime,
+                turn,
+            ));
+            state.rollout_registry.close(turn).await;
+        }
+
+        let (status, hist) =
+            get_json(app, &crate::routes::session_history_path(session_id)).await;
+        assert_eq!(status, StatusCode::OK);
+        let messages = hist["messages"].as_array().expect("messages array");
+        // Expect: user, assistant(first), user, assistant(second) — in turn order.
+        let roles: Vec<&str> = messages
+            .iter()
+            .map(|m| m["role"].as_str().unwrap_or_default())
+            .collect();
+        assert_eq!(roles, vec!["user", "assistant", "user", "assistant"], "{messages:?}");
+        let assistant_contents: Vec<&str> = messages
+            .iter()
+            .filter(|m| m["role"] == "assistant")
+            .map(|m| m["content"].as_str().unwrap_or_default())
+            .collect();
+        assert_eq!(assistant_contents, vec!["first reply", "second reply"]);
+    }
+
+    /// With `user_text` supplied, the recorded user turn carries the REAL
+    /// prompt (a typed UserMessage line), not the redacted "text(chars=N)"
+    /// summary, and it appears exactly once (no duplicate from the runtime's
+    /// redacted llm_prompt event).
+    #[tokio::test]
+    async fn execute_stream_with_user_text_records_faithful_user_turn() {
+        let runtime =
+            runtime_with_mock_workflow_backend(MockLLMBackend::static_response("hello there"))
+                .await;
+        let state = test_state_with_runtime_and_skill_roots(runtime, Vec::new()).await;
+        let app = crate::build_app(state);
+
+        let session_id = "chat-sess-usertext";
+        let real_prompt = "please summarize the quarterly report";
+        let (status, body) = post_json_text(
+            app.clone(),
+            crate::routes::EXECUTE_STREAM,
+            serde_json::json!({
+                "air": single_ask_air(),
+                "session_id": session_id,
+                "user_text": real_prompt,
+            }),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK, "execute_stream body: {body}");
+
+        let (status, hist) =
+            get_json(app.clone(), &crate::routes::session_history_path(session_id)).await;
+        assert_eq!(status, StatusCode::OK);
+        let messages = hist["messages"].as_array().expect("messages array");
+
+        let user_turns: Vec<&str> = messages
+            .iter()
+            .filter(|m| m["role"] == "user")
+            .map(|m| m["content"].as_str().unwrap_or_default())
+            .collect();
+        // Exactly one user turn, carrying the real text — not a redaction summary.
+        assert_eq!(
+            user_turns.len(),
+            1,
+            "expected exactly one user turn (no duplicate), got: {messages:?}"
+        );
+        assert_eq!(user_turns[0], real_prompt, "user turn must be the real text");
+        assert!(
+            !user_turns[0].contains("text(chars="),
+            "user turn must not be the redaction summary, got: {messages:?}"
+        );
+        // Assistant reply is still faithful.
+        assert!(
+            messages
+                .iter()
+                .any(|m| m["role"] == "assistant"
+                    && m["content"].as_str().unwrap_or_default().contains("hello there")),
+            "assistant reply should still be present, got: {messages:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn history_unknown_session_is_empty_200() {
+        let state = test_state().await;
+        let app = crate::build_app(state);
+        let (status, hist) = get_json(
+            app,
+            &crate::routes::session_history_path("never-seen-session"),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(
+            hist["messages"].as_array().map(|a| a.len()),
+            Some(0),
+            "unknown session must be an empty 200, not a 404"
+        );
+    }
+
+    #[tokio::test]
+    async fn history_invalid_session_id_is_400() {
+        let state = test_state().await;
+        let app = crate::build_app(state);
+        // A single path segment containing an out-of-charset character (an
+        // encoded space) decodes to one id `bad id` that the validator rejects
+        // with 400 — distinct from the 200-empty unknown-session case.
+        let (status, _hist) = get_json(app, "/v1/sessions/bad%20id/history").await;
+        assert_eq!(status, StatusCode::BAD_REQUEST);
+    }
 }

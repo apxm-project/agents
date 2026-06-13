@@ -260,3 +260,42 @@ pub(crate) fn session_meta_from_skill(
         tool_use_id_in_parent: None,
     }
 }
+
+/// Build a synthetic SessionMeta for a raw `/v1/execute/stream` turn (the
+/// path the conversational `apxm chat` CLI and the studio Chat both POST to).
+///
+/// Each chat turn is a fresh execution, so `thread_id` is the per-turn
+/// `execution_id`; the durable, cross-turn key is `session_id`, which lets
+/// `IndexDb::list_by_session` gather every turn of one conversation. There is
+/// no skill manifest behind a raw execute, so the reproducibility-pin hashes
+/// are left empty (the line shape stays uniform with the skill path).
+pub(crate) fn session_meta_from_chat(
+    execution_id: &str,
+    session_id: &str,
+    args: Vec<String>,
+) -> SessionMetaPayload {
+    SessionMetaPayload {
+        thread_id: execution_id.to_string(),
+        parent_thread_id: None,
+        session_id: session_id.to_string(),
+        started_at: now_rfc3339(),
+        cwd: std::env::current_dir()
+            .map(|p| p.to_string_lossy().into_owned())
+            .unwrap_or_default(),
+        apxm_version: env!("CARGO_PKG_VERSION").to_string(),
+        agent_role: "chat".to_string(),
+        agent_code: None,
+        skill_id: String::new(),
+        skill_version: String::new(),
+        artifact_hash: String::new(),
+        source_hash: String::new(),
+        air_hash: String::new(),
+        compiler_version: None,
+        runtime_version: None,
+        args,
+        model_provider: None,
+        model_id: None,
+        backend_endpoint: None,
+        tool_use_id_in_parent: None,
+    }
+}

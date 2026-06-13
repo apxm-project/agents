@@ -465,9 +465,21 @@ impl Runtime {
             self.execution_hooks.clone(),
         );
 
+        // Partial replay (`rerun-from-node`): when the host stamped a replay seed
+        // into execution metadata, compute it against this (recompiled) DAG so
+        // only `from_node` and its descendants re-execute; the upstream nodes are
+        // pre-completed from the prior run's boundary token values.
+        let replay_seed = replay_seed_from_metadata(&context, &dag);
         let exec_result = self
             .scheduler
-            .execute_with_hooks(dag, executor, context, vec![], hook_context)
+            .execute_with_hooks_and_seed(
+                dag,
+                executor,
+                context,
+                vec![],
+                hook_context,
+                replay_seed.as_ref(),
+            )
             .await;
 
         let graph_status_snapshots = release_graph_lifecycles(&lifecycles).await;
@@ -856,9 +868,21 @@ impl Runtime {
             self.execution_hooks.clone(),
         );
 
+        // Partial replay (`rerun-from-node`): when the host stamped a replay seed
+        // into execution metadata, only `from_node` and its descendants
+        // re-execute; the upstream nodes are pre-completed from the prior run's
+        // boundary token values.
+        let replay_seed = replay_seed_from_metadata(&context, &entry_dag);
         let exec_result = self
             .scheduler
-            .execute_with_hooks(entry_dag, executor, context, arg_values, hook_context)
+            .execute_with_hooks_and_seed(
+                entry_dag,
+                executor,
+                context,
+                arg_values,
+                hook_context,
+                replay_seed.as_ref(),
+            )
             .await;
 
         let graph_status_snapshots = release_graph_lifecycles(&lifecycles).await;
@@ -1041,6 +1065,27 @@ async fn release_graph_lifecycles(
         }
     }
     graph_status_snapshots
+}
+
+/// Decode a [`crate::scheduler::ReplaySeed`] from execution metadata for a
+/// partial replay (`rerun-from-node`). The host stamps `replay_from_node` +
+/// `replay_token_values` (JSON `{token_id: Value}`); the seed is computed
+/// against the recompiled `dag`. Returns `None` (full run) when the keys are
+/// absent, malformed, or `from_node` is not a node in `dag`.
+fn replay_seed_from_metadata(
+    context: &ExecutionContext,
+    dag: &ExecutionDag,
+) -> Option<crate::scheduler::ReplaySeed> {
+    let seed = crate::scheduler::ReplaySeed::from_metadata(&context.metadata, dag)?;
+    log_info!(
+        "runtime",
+        execution_id = %context.execution_id,
+        from_node = seed.from_node,
+        replayed = seed.replayed_count(),
+        completed = seed.completed_nodes.len(),
+        "partial replay: re-executing from_node + descendants only"
+    );
+    Some(seed)
 }
 
 fn graph_id_from_dag(dag: &ExecutionDag) -> String {

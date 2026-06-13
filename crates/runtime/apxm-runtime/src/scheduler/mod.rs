@@ -16,6 +16,7 @@ pub mod lane_queue;
 pub mod park_registry;
 pub mod queue;
 pub mod ready_set;
+pub mod replay;
 pub mod snapshot;
 pub mod splicing;
 pub mod state;
@@ -30,6 +31,7 @@ pub use config::SchedulerConfig;
 pub use dataflow::DataflowScheduler;
 pub use lane_queue::SessionLaneGuard;
 pub use queue::{Priority, PriorityQueue};
+pub use replay::ReplaySeed;
 pub use snapshot::{
     SchedulerSnapshot, SchedulerSnapshotCounters, SchedulerSnapshotDelegatedToken,
     SchedulerSnapshotExecutionFrame, SchedulerSnapshotNodeOutputs, SchedulerSnapshotOp,

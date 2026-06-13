@@ -69,7 +69,15 @@ pub(crate) async fn run_server_with_config(server_config: ServerConfig) -> anyho
         Some(crate::tasks::scheduled_prompt_on_fire(task_manager.clone())),
     )
     .await?;
-    crate::capability::register_pack_tools(&runtime, &skill_roots);
+    // Register pack action blocks as capabilities from two on-disk sources:
+    //   1. the skill roots (a pack colocated with its skills), and
+    //   2. `~/.apxm/libs/<pack>/` — the connector-pack library the studio seeds
+    //      `pack.toml` + `tools.toml` into. Scanning the libs roots is the
+    //      companion hop that makes an installed connector pack show up in
+    //      `/v1/capabilities` so the studio install-gate sees its blocks as
+    //      AVAILABLE without any per-provider Rust.
+    let pack_scan_roots = pack_capability_roots(&skill_roots);
+    crate::capability::register_pack_tools(&runtime, &pack_scan_roots);
     crate::search_skills::register(&runtime, skill_library.clone());
     let mut runtime = Arc::new(runtime);
     let (skill_resolver, workflow_spawner) = {
@@ -156,6 +164,27 @@ pub(crate) async fn run_server_with_config(server_config: ServerConfig) -> anyho
     Ok(())
 }
 
+/// Build the set of directories scanned for pack `tools.toml` action blocks:
+/// the skill roots plus the connector-pack library roots (`~/.apxm/libs`). Libs
+/// roots are resolved from `ApxmPaths`; a discovery failure degrades to scanning
+/// only the skill roots (the libs hop is additive, never fatal).
+fn pack_capability_roots(skill_roots: &[std::path::PathBuf]) -> Vec<std::path::PathBuf> {
+    let mut roots = skill_roots.to_vec();
+    match ApxmPaths::discover() {
+        Ok(paths) => {
+            for lib_root in paths.libs_dirs() {
+                if !roots.contains(&lib_root) {
+                    roots.push(lib_root);
+                }
+            }
+        }
+        Err(error) => {
+            warn!(%error, "failed to discover APXM paths for connector-pack libs scan");
+        }
+    }
+    roots
+}
+
 fn server_runtime_config(server_config: &ServerConfig) -> RuntimeConfig {
     let mut config = RuntimeConfig::default();
     let cores = std::thread::available_parallelism()
@@ -175,7 +204,10 @@ fn server_runtime_config(server_config: &ServerConfig) -> RuntimeConfig {
     config.scheduler_config = SchedulerConfig::default()
         .with_max_concurrency(max_concurrency)
         .with_max_inflight(max_inflight)
-        .with_llm_inflight(server_config.runtime.llm_inflight);
+        .with_llm_inflight(server_config.runtime.llm_inflight)
+        // Capture per-token outputs so a later `rerun-from-node` can recover this
+        // run's values and seed a partial replay (the upstream-node boundary).
+        .with_collect_all_outputs(true);
     config.llm_tool_dispatch.max_parallel_tool_calls =
         server_config.runtime.max_parallel_tool_calls;
     config

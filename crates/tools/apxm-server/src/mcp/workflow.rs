@@ -376,6 +376,7 @@ async fn prepare_workflow_run(
         tool_call_budgets: std::collections::HashMap::new(),
         tool_credentials: std::collections::HashMap::new(),
         owner: None,
+        user_text: None,
     };
     let PreparedRequest {
         air,
@@ -387,6 +388,7 @@ async fn prepare_workflow_run(
         tool_call_budgets,
         tool_credentials: _,
         owner,
+        user_text: _,
     } = prepare_request(execute_request)?;
     debug_assert!(args.is_empty(), "workflow wrapper takes no positional args");
     let session_id = session_id.expect("workflow_start always supplies a session_id");

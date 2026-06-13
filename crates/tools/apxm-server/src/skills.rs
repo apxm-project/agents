@@ -232,6 +232,12 @@ pub(crate) struct SkillExecuteRequest {
     /// caller asked for. Accepted: `none`, `bubblewrap`, `docker`, `wasm`.
     #[serde(default)]
     pub(crate) sandbox_hint: Option<String>,
+    /// Internal-only execution metadata merged into the runtime context (NOT
+    /// caller-settable — `#[serde(skip)]`). Used by `rerun-from-node` to stamp the
+    /// partial-replay seed keys (`replay_from_node`, `replay_token_values`) so the
+    /// runtime re-executes only the chosen node and its descendants.
+    #[serde(skip)]
+    pub(crate) extra_metadata: std::collections::HashMap<String, String>,
 }
 
 /// Map a caller's sandbox hint to the minimum [`IsolationLevel`] it implies, or
@@ -325,6 +331,9 @@ struct PreparedCompiledExecution {
     /// into the top-level execution metadata so CALL_SKILL admission compares a
     /// child against this real grant instead of the conservative default.
     side_effect_policy: Option<String>,
+    /// Internal-only execution metadata (e.g. the partial-replay seed for
+    /// `rerun-from-node`). Merged into the runtime context metadata at launch.
+    extra_metadata: std::collections::HashMap<String, String>,
 }
 
 impl PreparedCompiledExecution {
@@ -351,6 +360,35 @@ fn side_effect_policy_metadata(policy: Option<&str>) -> std::collections::HashMa
             policy.to_string(),
         );
     }
+    map
+}
+
+/// Project a completed run's per-token outputs to JSON, keyed by token id, for
+/// durable persistence on the [`crate::executions::ExecutionRecord`]. A later
+/// `rerun-from-node` reloads this map to seed the partial-replay boundary.
+/// Empty when the runtime did not collect per-token outputs.
+fn token_values_for_replay(
+    result: &apxm_runtime::RuntimeExecutionResult,
+) -> std::collections::HashMap<u64, serde_json::Value> {
+    let Some(all_outputs) = result.all_outputs.as_ref() else {
+        return std::collections::HashMap::new();
+    };
+    all_outputs
+        .iter()
+        .map(|(token_id, value)| {
+            let json = value
+                .to_json()
+                .unwrap_or_else(|_| serde_json::Value::String(value.to_string()));
+            (*token_id, json)
+        })
+        .collect()
+}
+
+/// Full launch metadata for a prepared execution: the side-effect-policy seed
+/// plus any internal `extra_metadata` (e.g. the `rerun-from-node` replay seed).
+fn launch_metadata(prepared: &PreparedCompiledExecution) -> std::collections::HashMap<String, String> {
+    let mut map = side_effect_policy_metadata(prepared.side_effect_policy.as_deref());
+    map.extend(prepared.extra_metadata.iter().map(|(k, v)| (k.clone(), v.clone())));
     map
 }
 
@@ -446,6 +484,7 @@ async fn execute_compiled_skill(
         )
         .with_skill_provenance(prepared.skill_provenance()),
     );
+    let metadata = launch_metadata(&prepared);
     let runtime_execution = state
         .runtime
         .execute_artifact_with_session_emitter_and_metadata(
@@ -454,7 +493,7 @@ async fn execute_compiled_skill(
             Some(prepared.session_id),
             Some(emitter),
             Some(prepared.session_dir.clone()),
-            side_effect_policy_metadata(prepared.side_effect_policy.as_deref()),
+            metadata,
         );
     let result = await_skill_execution(
         state,
@@ -464,10 +503,14 @@ async fn execute_compiled_skill(
     )
     .await?;
 
+    let token_values = token_values_for_replay(&result);
     let response = to_execute_response(result, Some(prepared.session_dir));
     state
         .execution_store
         .complete_success(&prepared.execution_id, response.clone());
+    state
+        .execution_store
+        .record_token_values(&prepared.execution_id, token_values);
     let complete_event = ApxmEvent::root(
         SkillExecuteCompletePayload {
             execution_id: prepared.execution_id.clone(),
@@ -647,13 +690,14 @@ pub(crate) async fn execute_skill_stream(
             )
             .with_skill_provenance(prepared.skill_provenance()),
         );
+        let metadata = launch_metadata(&prepared);
         let runtime_execution = runtime.execute_artifact_with_session_emitter_and_metadata(
             prepared.artifact,
             prepared.args,
             Some(prepared.session_id),
             Some(emitter),
             Some(prepared.session_dir.clone()),
-            side_effect_policy_metadata(prepared.side_effect_policy.as_deref()),
+            metadata,
         );
         let result = if let Some(timeout_ms) = prepared.timeout_ms {
             match tokio::time::timeout(Duration::from_millis(timeout_ms), runtime_execution).await {
@@ -685,8 +729,10 @@ pub(crate) async fn execute_skill_stream(
 
         match result {
             Ok(result) => {
+                let token_values = token_values_for_replay(&result);
                 let response = to_execute_response(result, Some(prepared.session_dir));
                 execution_store.complete_success(&prepared.execution_id, response.clone());
+                execution_store.record_token_values(&prepared.execution_id, token_values);
                 send_recorded_run_event(
                     &state,
                     &tx_task,
@@ -792,6 +838,7 @@ fn prepare_skill_execution(
         skill_version: manifest.version.clone(),
         entry_flow: manifest.entry_flow.clone(),
         side_effect_policy: manifest.side_effect_policy.clone(),
+        extra_metadata: req.extra_metadata,
     })
 }
 

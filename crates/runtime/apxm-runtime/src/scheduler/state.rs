@@ -134,6 +134,25 @@ impl SchedulerState {
         inputs: Vec<Value>,
         hooks: ExecutionHookContext,
     ) -> RuntimeResult<(Self, Vec<Worker<NodeId>>)> {
+        Self::new_with_replay(dag, cfg, metrics, start, inputs, hooks, None)
+    }
+
+    /// Create scheduler state for a partial replay (`rerun-from-node`).
+    ///
+    /// When `replay_seed` is `Some`, the upstream nodes it names are pre-completed
+    /// (never enqueued, so their handlers are never re-invoked) and their boundary
+    /// output tokens are seeded ready with the prior run's values. Only the seed's
+    /// `from_node` and its descendants are scheduled to execute. When `None`, this
+    /// is an ordinary full run.
+    pub fn new_with_replay(
+        dag: ExecutionDag,
+        cfg: SchedulerConfig,
+        metrics: Arc<MetricsCollector>,
+        start: Instant,
+        inputs: Vec<Value>,
+        hooks: ExecutionHookContext,
+        replay_seed: Option<&crate::scheduler::replay::ReplaySeed>,
+    ) -> RuntimeResult<(Self, Vec<Worker<NodeId>>)> {
         // Validate configuration
         cfg.validate().map_err(|msg| RuntimeError::Scheduler {
             message: format!("Invalid scheduler config: {}", msg),
@@ -229,6 +248,27 @@ impl SchedulerState {
         let op_states = Arc::new(DashMap::new());
         materialize_graph_state(&dag, &tokens, &op_states, input_map.as_ref())?;
 
+        // Partial-replay seeding (rerun-from-node): pre-fill the prior run's
+        // boundary token values and mark the upstream nodes Completed so they are
+        // never enqueued (their handlers are never re-invoked). `remaining` then
+        // starts at the count of nodes that actually replay, preserving the
+        // finish-count invariant.
+        let mut precompleted = 0usize;
+        if let Some(seed) = replay_seed {
+            for (&token_id, value) in &seed.seed_tokens {
+                let mut entry = tokens.entry(token_id).or_insert_with(TokenState::new);
+                entry.ready = true;
+                entry.value = Some(value.clone());
+            }
+            for &node_id in &seed.completed_nodes {
+                if let Some(mut op) = op_states.get_mut(&node_id) {
+                    op.status = OpStatus::Completed;
+                }
+                precompleted += 1;
+            }
+        }
+        let initial_remaining = dag.nodes.len().saturating_sub(precompleted);
+
         // Create priority queue and work-stealing scheduler
         let queue = Arc::new(PriorityQueue::new());
         let worker_count = cfg.max_concurrency.max(cfg.llm_inflight);
@@ -272,7 +312,7 @@ impl SchedulerState {
 
             executed: Arc::new(AtomicUsize::new(0)),
             failed: Arc::new(AtomicUsize::new(0)),
-            remaining: Arc::new(AtomicUsize::new(dag.nodes.len())),
+            remaining: Arc::new(AtomicUsize::new(initial_remaining)),
             parked: Arc::new(AtomicUsize::new(0)),
             admission_id: None,
             notify_done: Arc::new(Notify::new()),
@@ -288,13 +328,15 @@ impl SchedulerState {
             delegated_tokens: Arc::new(DashSet::new()),
         };
 
-        // Initialize readiness tracking and seed ready nodes
-        let ready_nodes = state.ready_set.initialize(
+        // Initialize readiness tracking and seed ready nodes. On a partial replay
+        // the pre-completed upstream nodes are skipped so they are never enqueued.
+        let ready_nodes = state.ready_set.initialize_with_skip(
             &dag.nodes,
             &state.tokens,
             &state.priorities,
             &state.op_states,
             &state.queue,
+            replay_seed.map(|seed| &seed.completed_nodes),
         )?;
         state.emit_node_ready_batch(&ready_nodes);
         if !ready_nodes.is_empty() {
@@ -937,6 +979,128 @@ mod tests {
         assert!(state.tokens.contains_key(&20));
         // Workers should be sized to the configured concurrency.
         assert_eq!(workers.len(), 2);
+    }
+
+    // ── Partial replay (rerun-from-node) seeding ──────────────────────────
+
+    /// Linear 3-node chain: 1 --t10--> 2 --t20--> 3 (--t30 exit).
+    fn three_node_chain() -> ExecutionDag {
+        let mut dag = ExecutionDag::new();
+        dag.add_node(make_node(1, vec![], vec![10])).unwrap();
+        dag.add_node(make_node(2, vec![10], vec![20])).unwrap();
+        dag.add_node(make_node(3, vec![20], vec![30])).unwrap();
+        dag.add_edge(Edge::new(1, 2, 10, DependencyType::Data))
+            .unwrap();
+        dag.add_edge(Edge::new(2, 3, 20, DependencyType::Data))
+            .unwrap();
+        dag.entry_nodes = dag.find_entry_nodes();
+        dag.exit_nodes = dag.find_exit_nodes();
+        dag
+    }
+
+    /// Drain every queued node id (across all priority levels) for assertions.
+    fn drain_queue(state: &SchedulerState) -> std::collections::HashSet<NodeId> {
+        let mut queued = std::collections::HashSet::new();
+        for injector in state.queue.injectors() {
+            loop {
+                match injector.steal() {
+                    crossbeam_deque::Steal::Success(node_id) => {
+                        queued.insert(node_id);
+                    }
+                    crossbeam_deque::Steal::Empty => break,
+                    crossbeam_deque::Steal::Retry => {}
+                }
+            }
+        }
+        queued
+    }
+
+    /// THE load-bearing partial-replay invariant: when state is built with a
+    /// replay seed rooted at the middle node, the upstream node is pre-completed
+    /// and NEVER enqueued (so a worker can never re-invoke it), its boundary
+    /// output token is seeded with the prior value, `remaining` counts only the
+    /// replayed nodes, and only `from_node` is initially ready/enqueued.
+    #[test]
+    fn replay_seed_precompletes_upstream_and_only_enqueues_from_node() {
+        use crate::scheduler::replay::ReplaySeed;
+
+        let dag = three_node_chain();
+        let mut prior = HashMap::new();
+        // Node 1's prior output (token 10) feeds the replay boundary.
+        prior.insert(10u64, Value::String("prior-output-of-node-1".into()));
+        let seed = ReplaySeed::compute(&dag, 2, &prior).expect("seed for known node");
+
+        let metrics = Arc::new(MetricsCollector::new());
+        let (state, _workers) = SchedulerState::new_with_replay(
+            dag,
+            test_config().with_llm_inflight(2),
+            metrics,
+            Instant::now(),
+            vec![],
+            ExecutionHookContext::default(),
+            Some(&seed),
+        )
+        .unwrap();
+
+        // Upstream node 1 is pre-completed, NOT ready, and never enqueued.
+        assert_eq!(
+            state.op_states.get(&1).unwrap().status,
+            OpStatus::Completed,
+            "upstream node must be marked completed"
+        );
+        let queued = drain_queue(&state);
+        assert!(
+            !queued.contains(&1),
+            "upstream node must NOT be enqueued (so its handler is never re-invoked)"
+        );
+
+        // from_node (2) is ready/enqueued; node 3 waits on node 2's output.
+        assert!(queued.contains(&2), "from_node must be enqueued to replay");
+        assert!(!queued.contains(&3), "descendant waits on from_node output");
+        assert_eq!(state.op_states.get(&2).unwrap().status, OpStatus::Ready);
+
+        // The boundary token is seeded ready with the prior value.
+        let t10 = state.tokens.get(&10).unwrap();
+        assert!(t10.ready, "boundary token must be pre-seeded ready");
+        assert_eq!(
+            t10.value,
+            Some(Value::String("prior-output-of-node-1".into()))
+        );
+
+        // remaining counts only the replayed nodes (2 and 3), not the completed one.
+        assert_eq!(
+            state.remaining.load(Ordering::SeqCst),
+            2,
+            "remaining must exclude pre-completed upstream nodes"
+        );
+    }
+
+    /// Replaying from the entry node is equivalent to a full run: nothing is
+    /// pre-completed, all nodes count toward `remaining`.
+    #[test]
+    fn replay_seed_from_entry_node_is_full_run() {
+        use crate::scheduler::replay::ReplaySeed;
+
+        let dag = three_node_chain();
+        let seed = ReplaySeed::compute(&dag, 1, &HashMap::new()).unwrap();
+        assert!(seed.completed_nodes.is_empty());
+
+        let metrics = Arc::new(MetricsCollector::new());
+        let (state, _workers) = SchedulerState::new_with_replay(
+            dag,
+            test_config().with_llm_inflight(2),
+            metrics,
+            Instant::now(),
+            vec![],
+            ExecutionHookContext::default(),
+            Some(&seed),
+        )
+        .unwrap();
+
+        assert_eq!(state.remaining.load(Ordering::SeqCst), 3);
+        // Only the entry node is initially ready.
+        let queued = drain_queue(&state);
+        assert_eq!(queued, std::collections::HashSet::from([1]));
     }
 
     // ── Park/wake (event-driven continuation) ─────────────────────────────

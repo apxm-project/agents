@@ -35,3 +35,13 @@ pub const TARGET_AGENT: &str = "target_agent";
 pub const TARGET_FLOW: &str = "target_flow";
 pub const TARGET_SKILL_ID: &str = "target_skill_id";
 pub const TARGET_SKILL_VERSION: &str = "target_skill_version";
+
+/// Partial replay (`rerun-from-node`): the node id in the recompiled graph to
+/// restart execution from. When present (with [`REPLAY_TOKEN_VALUES`]), the
+/// engine pre-completes the upstream nodes — reusing the prior run's boundary
+/// token values — and re-executes only this node and its descendants.
+pub const REPLAY_FROM_NODE: &str = "replay_from_node";
+/// Partial replay (`rerun-from-node`): JSON object `{token_id: Value}` of the
+/// prior run's captured token values, used to seed the replay boundary. Paired
+/// with [`REPLAY_FROM_NODE`].
+pub const REPLAY_TOKEN_VALUES: &str = "replay_token_values";

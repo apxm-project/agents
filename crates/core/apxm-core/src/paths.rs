@@ -23,6 +23,7 @@ const COMPILER_DIR: &str = "compiler";
 const LOGS_DIR: &str = "logs";
 const SESSIONS_DIR: &str = "sessions";
 const MEMORY_DIR: &str = "memory";
+const LIBS_DIR: &str = "libs";
 
 /// Resolved APXM directories for the current process.
 #[derive(Debug, Clone)]
@@ -124,6 +125,26 @@ impl ApxmPaths {
     /// created on demand.
     pub fn memory_dir(&self) -> io::Result<PathBuf> {
         Self::ensure_subdir_at(&self.state_dir, MEMORY_DIR)
+    }
+
+    /// Connector-pack library roots ordered by precedence (`<project>/.apxm/libs`
+    /// then `<home>/.apxm/libs`). Studio seeds each installed connector pack into
+    /// `<root>/<pack>/` (`pack.toml` + `tools.toml`); the server scans these at
+    /// startup to register the packs' declared action blocks as capabilities.
+    ///
+    /// This is a *read* surface: roots that do not exist are still returned (the
+    /// scanner tolerates a missing directory), so a fresh install with no packs
+    /// is a no-op rather than an error.
+    pub fn libs_dirs(&self) -> Vec<PathBuf> {
+        let mut dirs = Vec::with_capacity(2);
+        if self.project_dir.is_dir() {
+            dirs.push(self.project_dir.join(LIBS_DIR));
+        }
+        let home_libs = self.home_dir.join(LIBS_DIR);
+        if !dirs.contains(&home_libs) {
+            dirs.push(home_libs);
+        }
+        dirs
     }
 
     /// Path to the project-scoped configuration file.

@@ -3,7 +3,7 @@
 //! agent registry.
 
 use super::super::{ExecutionContext, Node, Result, Value};
-use crate::capability::builtins::guard_url_ssrf;
+use crate::capability::builtins::{client_for, guard_url_ssrf_pinned, shared_client};
 use apxm_core::error::RuntimeError;
 
 /// Dispatch COMMUNICATE over HTTP to an external APXM agent.
@@ -27,12 +27,11 @@ pub(super) async fn execute_http(
     } else {
         let server_url = apxm_core::env::server_url();
         let lookup_url = format!("{}/v1/agents/{}", server_url, recipient);
-        let client = reqwest::Client::builder()
-            .timeout(std::time::Duration::from_secs(10))
-            .build()
-            .map_err(|e| op_err(format!("Failed to build HTTP client: {e}")))?;
-        let resp = client
+        // Shared hardened client (caps redirects + drops blocked-IP-literal
+        // hops). Keep the lookup snappy with a per-request 10s timeout.
+        let resp = shared_client()
             .get(&lookup_url)
+            .timeout(std::time::Duration::from_secs(10))
             .send()
             .await
             .map_err(|e| op_err(format!("Agent registry lookup failed: {e}")))?;
@@ -52,20 +51,18 @@ pub(super) async fn execute_http(
             .ok_or_else(|| op_err(format!("Agent '{}' has no 'url' field", recipient)))?
             .to_string()
     };
-    guard_url_ssrf("communicate.http", &base_url)
-        .await
-        .map_err(|error| op_err(error.to_string()))?;
-
     let msg_json = message
         .to_json()
         .map_err(|e| op_err(format!("Failed to serialize message: {e}")))?;
 
-    let client = reqwest::Client::builder()
-        .timeout(std::time::Duration::from_secs(30))
-        .build()
-        .map_err(|e| op_err(format!("Failed to build HTTP client: {e}")))?;
-
     let receive_url = format!("{}/v1/receive", base_url.trim_end_matches('/'));
+    // Resolve + vet the recipient host ONCE, then pin the connect to those exact
+    // addresses so a name rebound to a blocked IP between the guard and the send
+    // cannot be reached (DNS-rebind TOCTOU). The guard runs against the full
+    // receive URL so the vetted host matches the host we actually connect to.
+    let pinned = guard_url_ssrf_pinned("communicate.http", &receive_url)
+        .await
+        .map_err(|error| op_err(error.to_string()))?;
     tracing::info!(
         execution_id = %ctx.execution_id,
         recipient = %recipient,
@@ -73,6 +70,7 @@ pub(super) async fn execute_http(
         "COMMUNICATE HTTP dispatch"
     );
 
+    let client = client_for(&receive_url, &pinned);
     let resp = client
         .post(&receive_url)
         .json(&serde_json::json!({

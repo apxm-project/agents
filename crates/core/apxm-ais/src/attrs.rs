@@ -119,6 +119,28 @@ pub const REGION: &str = "region";
 // -- Error handling --
 pub const ON_FAIL: &str = "on_fail";
 pub const ERROR_MESSAGE: &str = "error_message";
+/// Declarative per-node retry/backoff + error-output primitive (additive,
+/// back-compatible). The runtime honors these on ANY node generically:
+///
+/// - [`RETRY_MAX`]        : max retry attempts after the first try (0 = no retry).
+/// - [`RETRY_BACKOFF_MS`] : base delay for exponential backoff between attempts
+///   (`base * 2^(attempt-1)` ms); defaults to [`DEFAULT_RETRY_BACKOFF_MS`].
+/// - [`CONTINUE_ON_ERROR`]: when `true`, a node that still fails after its retries
+///   does NOT halt the run — it emits a structured error value
+///   (see [`ERROR_OUTPUT_KEY`]) downstream so an error edge can consume it.
+///
+/// These are distinct from the op-specific `max_retries` some handlers already
+/// read; the generic primitive lives on the dispatcher so every op gets it
+/// without per-handler wiring. A node may set either or both.
+pub const RETRY_MAX: &str = "retry_max";
+pub const RETRY_BACKOFF_MS: &str = "retry_backoff_ms";
+pub const CONTINUE_ON_ERROR: &str = "continue_on_error";
+/// Default base backoff (ms) for the generic retry primitive when
+/// [`RETRY_BACKOFF_MS`] is unset.
+pub const DEFAULT_RETRY_BACKOFF_MS: u64 = 100;
+/// Object key under which a continue-on-error node emits its structured error
+/// value (so downstream "error edge" consumers can detect + branch on it).
+pub const ERROR_OUTPUT_KEY: &str = "__apxm_error";
 
 // -- Synchronization --
 pub const SCOPE: &str = "scope";
@@ -342,6 +364,9 @@ pub const ALL_ATTR_NAMES: &[&str] = &[
     REGION,
     ON_FAIL,
     ERROR_MESSAGE,
+    RETRY_MAX,
+    RETRY_BACKOFF_MS,
+    CONTINUE_ON_ERROR,
     SCOPE,
     STORAGE,
     TTL_SECONDS,
