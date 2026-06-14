@@ -155,12 +155,57 @@ pub(crate) async fn run_server_with_config(server_config: ServerConfig) -> anyho
 
     let app = build_app(state);
     let addr = server_addr(&args, &server_config)?;
-    info!(%addr, "starting apxm-server");
     let listener = tokio::net::TcpListener::bind(addr).await?;
+    // Derive the announced address from the ACTUAL bound port: the configured
+    // port may be 0 (OS-assigned ephemeral) in worktree-parallel stacks.
+    let local = listener.local_addr()?;
+    info!(addr = %local, "starting apxm-server");
+    advertise_listen("apxm-server", local.port());
 
     axum::serve(listener, app)
         .with_graceful_shutdown(shutdown_signal())
         .await?;
+    Ok(())
+}
+
+/// Shared advertise contract: announce the actually-bound port so an external
+/// orchestrator can learn an OS-assigned ephemeral port. When `APXM_RUNTIME_DIR`
+/// is set, atomically write `<dir>/<name>.json` describing the listener; always
+/// print one `APXM_LISTEN <name> http://127.0.0.1:<port>` line to stdout.
+fn advertise_listen(name: &str, port: u16) {
+    use std::io::Write;
+
+    if let Ok(dir) = std::env::var("APXM_RUNTIME_DIR")
+        && !dir.is_empty()
+        && let Err(error) = write_listen_registry(&dir, name, port)
+    {
+        warn!(%error, "failed to write listen registry file");
+    }
+
+    let mut stdout = std::io::stdout();
+    let _ = writeln!(stdout, "APXM_LISTEN {name} http://127.0.0.1:{port}");
+    let _ = stdout.flush();
+}
+
+fn write_listen_registry(dir: &str, name: &str, port: u16) -> std::io::Result<()> {
+    let dir_path = std::path::Path::new(dir);
+    if !dir_path.exists() {
+        std::fs::create_dir_all(dir_path)?;
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            std::fs::set_permissions(dir_path, std::fs::Permissions::from_mode(0o700))?;
+        }
+    }
+
+    let pid = std::process::id();
+    let json = format!(
+        r#"{{"pid":{pid},"addr":"127.0.0.1","port":{port},"scheme":"http","ready":true}}"#
+    );
+    let tmp = dir_path.join(format!("{name}.json.tmp.{pid}"));
+    let final_path = dir_path.join(format!("{name}.json"));
+    std::fs::write(&tmp, json)?;
+    std::fs::rename(&tmp, &final_path)?;
     Ok(())
 }
 
