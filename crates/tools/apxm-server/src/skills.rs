@@ -19,13 +19,13 @@ use apxm_skill::{
 use axum::Json;
 use axum::extract::{Path as AxumPath, State};
 use axum::response::sse::{Event, KeepAlive, Sse};
-use futures::Stream;
+use futures::{FutureExt, Stream};
 use serde::{Deserialize, Serialize};
 use tokio::sync::mpsc;
 
 use crate::error::ApiError;
 use crate::execute::{ExecuteResponse, to_execute_response};
-use crate::executions::ExecutionRecordingEmitter;
+use crate::executions::{ExecutionRecordingEmitter, IdempotencyClaim};
 use crate::rollout::{RolloutEmitter, session_meta_from_skill};
 use crate::runs::RunBusFanOutEmitter;
 use crate::skill_resources::{
@@ -232,6 +232,19 @@ pub(crate) struct SkillExecuteRequest {
     /// caller asked for. Accepted: `none`, `bubblewrap`, `docker`, `wasm`.
     #[serde(default)]
     pub(crate) sandbox_hint: Option<String>,
+    /// Opt-in DETACHED mode: when `true`, the server mints an execution id,
+    /// spawns the compiled-skill body on a background task, and returns `202
+    /// Accepted` immediately instead of holding the request open until the run
+    /// finishes. The caller polls `GET /v1/executions/{id}` for the outcome.
+    /// Defaults to `false` (fully synchronous, unchanged behavior).
+    #[serde(default)]
+    pub(crate) detach: bool,
+    /// Optional dedup key for a DETACHED spawn. When set, a repeated detached
+    /// request with the same key returns the already-running execution id (202)
+    /// without spawning a second run — no double-spawn. Ignored when
+    /// `detach` is `false`.
+    #[serde(default)]
+    pub(crate) idempotency_key: Option<String>,
     /// Internal-only execution metadata merged into the runtime context (NOT
     /// caller-settable — `#[serde(skip)]`). Used by `rerun-from-node` to stamp the
     /// partial-replay seed keys (`replay_from_node`, `replay_token_values`) so the
@@ -282,6 +295,15 @@ pub(crate) struct SkillExecuteResponse {
     pub(crate) execution_id: String,
     #[serde(flatten)]
     pub(crate) response: ExecuteResponse,
+}
+
+/// `202 Accepted` body for a DETACHED spawn (or an idempotent re-hit): the run
+/// is in flight under `execution_id`; the caller polls
+/// `GET /v1/executions/{id}` for the terminal record.
+#[derive(Debug, Clone, Serialize)]
+pub(crate) struct AcceptedResponse {
+    pub(crate) execution_id: String,
+    pub(crate) status: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -422,8 +444,178 @@ pub(crate) async fn execute_skill(
     State(state): State<AppState>,
     AxumPath(id): AxumPath<String>,
     Json(req): Json<SkillExecuteRequest>,
-) -> Result<Json<SkillExecuteResponse>, ApiError> {
-    execute_skill_by_id(&state, &id, req).await.map(Json)
+) -> Result<axum::response::Response, ApiError> {
+    use axum::http::StatusCode;
+    use axum::response::IntoResponse;
+
+    if !req.detach {
+        // Unchanged synchronous path: hold the request open until the run
+        // settles and return 200 with the full result.
+        let response = execute_skill_by_id(&state, &id, req).await?;
+        return Ok((StatusCode::OK, Json(response)).into_response());
+    }
+
+    enforce_sandbox_hint(&state, &req)?;
+
+    // DETACHED: dedup first (atomically) when an idempotency key is present, so
+    // a repeated detached request never double-spawns.
+    let reserved_execution_id = match req.idempotency_key.as_deref() {
+        Some(key) => match state.execution_store.claim_idempotent(key) {
+            IdempotencyClaim::Existing(execution_id) => {
+                // A run already exists for this key — return it without spawning.
+                return Ok((
+                    StatusCode::ACCEPTED,
+                    Json(AcceptedResponse {
+                        execution_id,
+                        status: "running".to_string(),
+                    }),
+                )
+                    .into_response());
+            }
+            IdempotencyClaim::Claimed(execution_id) => Some(execution_id),
+        },
+        None => None,
+    };
+
+    let idempotency_key = req.idempotency_key.clone();
+    let prepared = prepare_skill_execution_with_reservation(
+        &state,
+        &id,
+        req,
+        reserved_execution_id,
+        idempotency_key,
+    )?;
+    let execution_id = prepared.execution_id.clone();
+    spawn_detached_skill_execution(state.clone(), prepared);
+
+    Ok((
+        StatusCode::ACCEPTED,
+        Json(AcceptedResponse {
+            execution_id,
+            status: "running".to_string(),
+        }),
+    )
+        .into_response())
+}
+
+/// Run a prepared compiled skill on a detached background task. Modeled on the
+/// streaming path's spawn: the inference permit is acquired INSIDE the task (so
+/// the request returns immediately and a saturated server does not block the
+/// caller), and the whole body is panic-guarded so the record is always driven
+/// to a terminal state — a saturation/closed acquire error or a panic both call
+/// `complete_failure`, never leaving the record stuck `Running`.
+fn spawn_detached_skill_execution(state: AppState, prepared: PreparedCompiledExecution) {
+    let execution_id = prepared.execution_id.clone();
+    tokio::spawn(async move {
+        let task = run_detached_skill_body(state.clone(), prepared);
+        if std::panic::AssertUnwindSafe(task)
+            .catch_unwind()
+            .await
+            .is_err()
+        {
+            state.execution_store.complete_failure(
+                &execution_id,
+                "detached skill execution panicked".to_string(),
+            );
+            state.rollout_registry.close(&execution_id).await;
+        }
+    });
+}
+
+/// The detached task body: acquire the permit, then run the compiled skill and
+/// settle the record. Acquire failure (saturation/closed) settles the record as
+/// failed so it never stays `Running` forever.
+async fn run_detached_skill_body(state: AppState, prepared: PreparedCompiledExecution) {
+    let _permit = match state.inference_limiter.acquire().await {
+        Ok(permit) => permit,
+        Err(error) => {
+            state
+                .execution_store
+                .complete_failure(&prepared.execution_id, error.message);
+            state.rollout_registry.close(&prepared.execution_id).await;
+            return;
+        }
+    };
+
+    ensure_rollout_open(
+        &state,
+        &prepared.execution_id,
+        &prepared.session_id,
+        &prepared.skill_id,
+        &prepared.skill_version,
+        None,
+        None,
+        None,
+        prepared.args.clone(),
+    )
+    .await;
+
+    let started_event = ApxmEvent::root(
+        SkillExecuteStartedPayload {
+            execution_id: prepared.execution_id.clone(),
+            skill_id: prepared.skill_id.clone(),
+            skill_version: prepared.skill_version.clone(),
+            session_id: prepared.session_id.clone(),
+        },
+        EventSource::Server,
+        &prepared.execution_id,
+    );
+    emit_recorded_run_event(&state, &prepared.execution_id, started_event);
+
+    let event_sinks =
+        build_skill_event_sinks(&state, &prepared.execution_id, /*include_channel*/ None);
+    let emitter = Arc::new(
+        apxm_runtime::EmitterAdapter::new(
+            Arc::new(apxm_core::events::FanOutEmitter::new(event_sinks)),
+            EventSource::Runtime,
+            &prepared.execution_id,
+        )
+        .with_skill_provenance(prepared.skill_provenance()),
+    );
+    let metadata = launch_metadata(&prepared);
+    let session_dir = prepared.session_dir.clone();
+    let execution_id = prepared.execution_id.clone();
+    let timeout_ms = prepared.timeout_ms;
+    let runtime_execution = state
+        .runtime
+        .execute_artifact_with_session_emitter_and_metadata(
+            prepared.artifact,
+            prepared.args,
+            Some(prepared.session_id),
+            Some(emitter),
+            Some(prepared.session_dir.clone()),
+            metadata,
+        );
+
+    let result = match await_skill_execution(&state, &execution_id, timeout_ms, runtime_execution)
+        .await
+    {
+        Ok(result) => result,
+        Err(_) => {
+            // `await_skill_execution` already settled the record as failed.
+            state.rollout_registry.close(&execution_id).await;
+            return;
+        }
+    };
+
+    let token_values = token_values_for_replay(&result);
+    let response = to_execute_response(result, Some(session_dir));
+    state
+        .execution_store
+        .complete_success(&execution_id, response.clone());
+    state
+        .execution_store
+        .record_token_values(&execution_id, token_values);
+    let complete_event = ApxmEvent::root(
+        SkillExecuteCompletePayload {
+            execution_id: execution_id.clone(),
+            result: response,
+        },
+        EventSource::Server,
+        &execution_id,
+    );
+    emit_recorded_run_event(&state, &execution_id, complete_event);
+    state.rollout_registry.close(&execution_id).await;
 }
 
 pub(crate) async fn execute_skill_by_id(
@@ -788,6 +980,21 @@ fn prepare_skill_execution(
     id: &str,
     req: SkillExecuteRequest,
 ) -> Result<PreparedCompiledExecution, ApiError> {
+    prepare_skill_execution_with_reservation(state, id, req, None, None)
+}
+
+/// Prepare a compiled execution, optionally binding it to a pre-reserved
+/// `execution_id` (e.g. one minted by [`ExecutionStore::claim_idempotent`]) and
+/// stamping a detached-spawn `idempotency_key` on the persisted record. With
+/// both `None`, behaves exactly like the synchronous path: the store mints a
+/// fresh id and the record carries no key.
+fn prepare_skill_execution_with_reservation(
+    state: &AppState,
+    id: &str,
+    req: SkillExecuteRequest,
+    reserved_execution_id: Option<String>,
+    idempotency_key: Option<String>,
+) -> Result<PreparedCompiledExecution, ApiError> {
     let executable = state
         .skill_library
         .find_executable(id)
@@ -811,22 +1018,32 @@ fn prepare_skill_execution(
         .transpose()?
         .unwrap_or_else(|| uuid::Uuid::new_v4().to_string());
     let session_dir = skill_session_dir(&manifest.skill_id, &session_id)?;
-    let execution = state.execution_store.start_skill_execution_with_provenance(
-        SkillExecutionProvenance {
-            skill_id: manifest.skill_id.clone(),
-            skill_version: manifest.version.clone(),
-            entry_flow: Some(manifest.entry_flow.clone()),
-            source_hash: executable.record.hashes.source_hash.clone(),
-            air_hash: executable.record.hashes.air_hash.clone(),
-            artifact_hash: executable.record.hashes.artifact_hash.clone(),
-            parent_execution_id: None,
-            parent_skill_id: None,
-            parent_skill_version: None,
-            scope_id: None,
-        },
-        &session_id,
-        &session_dir,
-    );
+    let provenance = SkillExecutionProvenance {
+        skill_id: manifest.skill_id.clone(),
+        skill_version: manifest.version.clone(),
+        entry_flow: Some(manifest.entry_flow.clone()),
+        source_hash: executable.record.hashes.source_hash.clone(),
+        air_hash: executable.record.hashes.air_hash.clone(),
+        artifact_hash: executable.record.hashes.artifact_hash.clone(),
+        parent_execution_id: None,
+        parent_skill_id: None,
+        parent_skill_version: None,
+        scope_id: None,
+    };
+    let execution = match reserved_execution_id {
+        Some(execution_id) => state
+            .execution_store
+            .start_skill_execution_with_provenance_execution_id_and_idempotency_key(
+                execution_id,
+                provenance,
+                &session_id,
+                &session_dir,
+                idempotency_key,
+            ),
+        None => state
+            .execution_store
+            .start_skill_execution_with_provenance(provenance, &session_id, &session_dir),
+    };
     Ok(PreparedCompiledExecution {
         artifact,
         args: req.args,

@@ -199,6 +199,8 @@ async fn rerun_skill(
         args,
         session_id: req.session_id.clone(),
         sandbox_hint: req.sandbox_hint.clone(),
+        detach: false,
+        idempotency_key: None,
         extra_metadata: req.extra_metadata.clone(),
     };
     execute_skill_by_id(state, &skill_ref, skill_req).await

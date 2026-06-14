@@ -277,6 +277,7 @@ mod tests {
             scope_id: None,
             session_id: "s".to_string(),
             session_dir: "/tmp/s".to_string(),
+            idempotency_key: None,
             status,
             started_at_ms: started,
             completed_at_ms: completed,

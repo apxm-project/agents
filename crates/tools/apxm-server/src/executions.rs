@@ -50,6 +50,13 @@ pub(crate) struct ExecutionRecord {
     pub(crate) scope_id: Option<String>,
     pub(crate) session_id: String,
     pub(crate) session_dir: String,
+    /// Caller-supplied idempotency key for a DETACHED spawn. When set, the
+    /// store's in-memory idempotency index maps this key to `execution_id` so a
+    /// repeated detached request for the same key returns the existing run
+    /// instead of spawning a duplicate. Persisted so the index is rebuilt across
+    /// a restart. Absent for sync runs and detached runs without a key.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) idempotency_key: Option<String>,
     pub(crate) status: ExecutionStatus,
     pub(crate) started_at_ms: u64,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -109,6 +116,18 @@ pub(crate) struct NodeExecutionDetail {
 pub(crate) struct ExecutionStore {
     inner: Arc<DashMap<String, ExecutionRecord>>,
     index: ExecutionIndex,
+    /// Maps a detached run's idempotency key -> execution_id. Populated on
+    /// insert and on rehydration from disk so a restart rebuilds it; used by
+    /// [`ExecutionStore::claim_idempotent`] to atomically dedup detached spawns.
+    idempotency_index: Arc<DashMap<String, String>>,
+}
+
+/// Outcome of an atomic idempotency claim. `Claimed` means the caller reserved
+/// the slot and owns the returned (freshly minted) execution id; `Existing`
+/// means a run already exists for the key and the caller must NOT spawn.
+pub(crate) enum IdempotencyClaim {
+    Claimed(String),
+    Existing(String),
 }
 
 impl ExecutionStore {
@@ -125,6 +144,25 @@ impl ExecutionStore {
         Self {
             inner: Arc::new(DashMap::new()),
             index,
+            idempotency_index: Arc::new(DashMap::new()),
+        }
+    }
+
+    /// Atomically claim an idempotency key for a detached spawn. Uses the
+    /// DashMap [`Entry`](dashmap::mapref::entry::Entry) API so the
+    /// check-and-reserve is a single locked operation with no TOCTOU window: if
+    /// the key is already present, the existing execution id is returned and the
+    /// caller must not spawn; otherwise a fresh execution id is reserved under
+    /// the key and returned for the caller to own.
+    pub(crate) fn claim_idempotent(&self, key: &str) -> IdempotencyClaim {
+        use dashmap::mapref::entry::Entry;
+        match self.idempotency_index.entry(key.to_string()) {
+            Entry::Occupied(entry) => IdempotencyClaim::Existing(entry.get().clone()),
+            Entry::Vacant(entry) => {
+                let execution_id = uuid::Uuid::new_v4().to_string();
+                entry.insert(execution_id.clone());
+                IdempotencyClaim::Claimed(execution_id)
+            }
         }
     }
 
@@ -216,6 +254,28 @@ impl ExecutionStore {
         session_id: &str,
         session_dir: &str,
     ) -> ExecutionRecord {
+        self.start_skill_execution_with_provenance_execution_id_and_idempotency_key(
+            execution_id,
+            provenance,
+            session_id,
+            session_dir,
+            None,
+        )
+    }
+
+    /// Like [`Self::start_skill_execution_with_provenance_and_execution_id`] but
+    /// stamps the record with a detached-spawn `idempotency_key`. The key is
+    /// already reserved in the idempotency index by a prior
+    /// [`Self::claim_idempotent`]; recording it here lets a restart rebuild the
+    /// index from the persisted snapshot.
+    pub(crate) fn start_skill_execution_with_provenance_execution_id_and_idempotency_key(
+        &self,
+        execution_id: String,
+        provenance: SkillExecutionProvenance,
+        session_id: &str,
+        session_dir: &str,
+        idempotency_key: Option<String>,
+    ) -> ExecutionRecord {
         let record = ExecutionRecord {
             execution_id,
             skill_id: provenance.skill_id,
@@ -230,6 +290,7 @@ impl ExecutionStore {
             scope_id: provenance.scope_id,
             session_id: session_id.to_string(),
             session_dir: session_dir.to_string(),
+            idempotency_key,
             status: ExecutionStatus::Running,
             started_at_ms: now_ms(),
             completed_at_ms: None,
@@ -240,11 +301,21 @@ impl ExecutionStore {
             token_values: std::collections::HashMap::new(),
             goal: None,
         };
+        self.index_idempotency_key(&record);
         self.inner
             .insert(record.execution_id.clone(), record.clone());
         persist_record_snapshot(&record);
         self.index.upsert_from_record(&record);
         record
+    }
+
+    /// Record a loaded/created record's idempotency key -> execution_id mapping
+    /// in the in-memory index. No-op when the record carries no key. Idempotent.
+    fn index_idempotency_key(&self, record: &ExecutionRecord) {
+        if let Some(key) = record.idempotency_key.as_ref() {
+            self.idempotency_index
+                .insert(key.clone(), record.execution_id.clone());
+        }
     }
 
     pub(crate) fn complete_success(
@@ -328,6 +399,7 @@ impl ExecutionStore {
         let entry: IndexEntry = self.index.get(execution_id)?;
         let path = entry.snapshot_path(execution_id);
         let record = read_execution_record_snapshot(&path)?;
+        self.index_idempotency_key(&record);
         self.inner
             .insert(record.execution_id.clone(), record.clone());
         Some(record)
@@ -472,6 +544,7 @@ impl ExecutionStore {
                 continue;
             }
             self.index.upsert_from_record(&record);
+            self.index_idempotency_key(&record);
             self.inner.insert(record.execution_id.clone(), record);
             loaded += 1;
         }
