@@ -22,6 +22,13 @@ use std::sync::OnceLock;
 const DEFAULT_TIMEOUT_SECS: u64 = 30;
 const MAX_BODY_BYTES: usize = 1_000_000;
 
+/// Bounded inline retry on a rate-limited provider response (429 / 503+Retry-After).
+const MAX_RETRY_ATTEMPTS: u32 = 3;
+/// Upper bound on how long a single retry will wait, regardless of Retry-After.
+const MAX_RETRY_WAIT_SECS: u64 = 30;
+/// Backoff used when the provider rate-limits without a usable Retry-After.
+const DEFAULT_RETRY_WAIT_SECS: u64 = 1;
+
 /// Lazily-built shared client (never at construction — see http.rs note).
 fn shared_client() -> &'static Client {
     static CLIENT: OnceLock<Client> = OnceLock::new();
@@ -73,6 +80,50 @@ fn enc(seg: &str) -> String {
                 out.push(HEX[(b & 0x0f) as usize] as char);
             }
         }
+    }
+    out
+}
+
+/// Percent-encode a query component (key or value). Like [`enc`] but also
+/// escapes characters that are reserved inside a query string.
+fn enc_query(s: &str) -> String {
+    const HEX: &[u8; 16] = b"0123456789ABCDEF";
+    let mut out = String::with_capacity(s.len());
+    for b in s.bytes() {
+        match b {
+            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'_' | b'.' | b'~' => {
+                out.push(b as char)
+            }
+            _ => {
+                out.push('%');
+                out.push(HEX[(b >> 4) as usize] as char);
+                out.push(HEX[(b & 0x0f) as usize] as char);
+            }
+        }
+    }
+    out
+}
+
+/// GET and DELETE carry no request body; their loose args belong in the query
+/// string instead. Case-insensitive.
+fn method_has_no_body(method: &str) -> bool {
+    method.eq_ignore_ascii_case("GET") || method.eq_ignore_ascii_case("DELETE")
+}
+
+/// Append `pairs` to `url` as url-encoded query parameters, choosing `?` or `&`
+/// based on whether the url already has a query string.
+fn append_query(url: &str, pairs: &[(&String, &Value)]) -> String {
+    if pairs.is_empty() {
+        return url.to_string();
+    }
+    let mut out = url.to_string();
+    let mut sep = if url.contains('?') { '&' } else { '?' };
+    for (k, v) in pairs {
+        out.push(sep);
+        out.push_str(&enc_query(k));
+        out.push('=');
+        out.push_str(&enc_query(&value_to_str(v)));
+        sep = '&';
     }
     out
 }
@@ -201,6 +252,26 @@ impl ProviderCallCapability {
             .with_latency(500),
         }
     }
+
+    /// Test-only: a named-REST capability pinned to an explicit apxm-auth base
+    /// (a mock proxy) so the request-building + retry paths can be exercised
+    /// without touching `APXM_AUTH_URL` or a live apxm-auth.
+    #[cfg(test)]
+    fn rest_with_base(
+        base: impl Into<String>,
+        method: impl Into<String>,
+        url: impl Into<String>,
+    ) -> Self {
+        let mut cap = Self::named_rest(
+            "provider.test",
+            "test",
+            serde_json::Value::Null,
+            method,
+            url,
+        );
+        cap.base = Some(base.into());
+        cap
+    }
 }
 
 #[async_trait]
@@ -244,19 +315,37 @@ impl CapabilityExecutor for ProviderCallCapability {
                 let method = as_json("method")
                     .and_then(|j| j.as_str().map(String::from))
                     .unwrap_or_else(|| rest.method.clone());
-                // Explicit `body` wins; else assemble it from the loose args that are
-                // neither reserved nor consumed as url path params.
-                let body = as_json("body").or_else(|| {
-                    let obj: serde_json::Map<String, JsonValue> = args
-                        .iter()
-                        .filter(|(k, _)| {
-                            !RESERVED_ARGS.contains(&k.as_str()) && !path_params.contains(k)
-                        })
-                        .filter_map(|(k, v)| serde_json::to_value(v).ok().map(|j| (k.clone(), j)))
-                        .collect();
-                    (!obj.is_empty()).then_some(JsonValue::Object(obj))
-                });
-                (method, url, body)
+                // The loose args that are neither reserved nor consumed as url path
+                // params. GET/DELETE have no body, so these become query parameters;
+                // POST/PUT/PATCH carry them as the JSON body.
+                let loose: Vec<(&String, &Value)> = args
+                    .iter()
+                    .filter(|(k, _)| {
+                        !RESERVED_ARGS.contains(&k.as_str()) && !path_params.contains(k)
+                    })
+                    .map(|(k, v)| (k, v))
+                    .collect();
+                if method_has_no_body(&method) {
+                    // Append loose args to the query string (url-encoded). An
+                    // explicit `body` is ignored for body-less methods.
+                    let mut pairs: Vec<(&String, &Value)> = loose;
+                    // Stable order so the url is deterministic (tests, caching).
+                    pairs.sort_by(|a, b| a.0.cmp(b.0));
+                    url = append_query(&url, &pairs);
+                    (method, url, None)
+                } else {
+                    // Explicit `body` wins; else assemble it from the loose args.
+                    let body = as_json("body").or_else(|| {
+                        let obj: serde_json::Map<String, JsonValue> = loose
+                            .iter()
+                            .filter_map(|(k, v)| {
+                                serde_json::to_value(v).ok().map(|j| ((*k).clone(), j))
+                            })
+                            .collect();
+                        (!obj.is_empty()).then_some(JsonValue::Object(obj))
+                    });
+                    (method, url, body)
+                }
             } else {
                 let url = as_json("url")
                     .and_then(|j| j.as_str().map(String::from))
@@ -284,25 +373,47 @@ impl CapabilityExecutor for ProviderCallCapability {
             enc(&credential),
             enc(&auth_owner())
         );
-        let mut req = shared_client().post(&endpoint).json(&payload);
-        if let Some(b) = auth_bearer() {
-            req = req.bearer_auth(b);
-        }
-        let resp = req
-            .send()
-            .await
-            .map_err(|e| cap_err(format!("apxm-auth proxy request failed: {e}")))?;
-        if !resp.status().is_success() {
-            let s = resp.status();
-            return Err(cap_err(format!(
-                "apxm-auth proxy returned {s}: {}",
-                resp.text().await.unwrap_or_default()
-            )));
-        }
-        let pr: ProxyResp = resp
-            .json()
-            .await
-            .map_err(|e| cap_err(format!("proxy response parse: {e}")))?;
+        let bearer = auth_bearer();
+
+        // Forward to apxm-auth, retrying inline on a rate-limited provider
+        // response (429, or 503 carrying Retry-After). Bounded: at most
+        // MAX_RETRY_ATTEMPTS tries, honouring the upstream Retry-After when
+        // present (capped) else a small backoff. Never busy-loops.
+        let pr: ProxyResp = {
+            let mut attempt: u32 = 0;
+            loop {
+                let mut req = shared_client().post(&endpoint).json(&payload);
+                if let Some(b) = &bearer {
+                    req = req.bearer_auth(b);
+                }
+                let resp = req
+                    .send()
+                    .await
+                    .map_err(|e| cap_err(format!("apxm-auth proxy request failed: {e}")))?;
+                if !resp.status().is_success() {
+                    let s = resp.status();
+                    return Err(cap_err(format!(
+                        "apxm-auth proxy returned {s}: {}",
+                        resp.text().await.unwrap_or_default()
+                    )));
+                }
+                let pr: ProxyResp = resp
+                    .json()
+                    .await
+                    .map_err(|e| cap_err(format!("proxy response parse: {e}")))?;
+
+                let retryable = pr.status == 429
+                    || (pr.status == 503 && pr.retry_after.is_some());
+                if retryable && attempt + 1 < MAX_RETRY_ATTEMPTS {
+                    let wait = retry_after_delay(pr.retry_after.as_deref());
+                    tokio::time::sleep(wait).await;
+                    attempt += 1;
+                    continue;
+                }
+                break pr;
+            }
+        };
+
         let mut bytes = b64
             .decode(pr.body_b64.unwrap_or_default())
             .map_err(|e| cap_err(format!("body_b64 decode: {e}")))?;
@@ -372,5 +483,234 @@ struct ProxyResp {
     status: u16,
     #[serde(default)]
     body_b64: Option<String>,
+    /// Upstream `Retry-After` mirrored by apxm-auth: delta-seconds or HTTP-date.
+    #[serde(default)]
+    retry_after: Option<String>,
+}
+
+/// Decide how long to wait before a retry from an upstream `Retry-After` value.
+/// Accepts delta-seconds (`"120"`) or an HTTP-date; falls back to a small
+/// default when absent/unparseable; always capped at [`MAX_RETRY_WAIT_SECS`].
+fn retry_after_delay(retry_after: Option<&str>) -> std::time::Duration {
+    let secs = retry_after
+        .and_then(parse_retry_after_secs)
+        .unwrap_or(DEFAULT_RETRY_WAIT_SECS)
+        .min(MAX_RETRY_WAIT_SECS);
+    std::time::Duration::from_secs(secs)
+}
+
+/// Parse a `Retry-After` header value into seconds-from-now. Supports
+/// delta-seconds and the IMF-fixdate / RFC1123 HTTP-date form. Returns `None`
+/// when the value cannot be interpreted (caller substitutes a default).
+fn parse_retry_after_secs(raw: &str) -> Option<u64> {
+    let raw = raw.trim();
+    if let Ok(secs) = raw.parse::<u64>() {
+        return Some(secs);
+    }
+    // HTTP-date (RFC 7231 IMF-fixdate, e.g. "Wed, 21 Oct 2015 07:28:00 GMT").
+    let when = chrono::DateTime::parse_from_rfc2822(raw).ok()?;
+    let delta = when.timestamp() - chrono::Utc::now().timestamp();
+    // A past date means retry immediately (0s).
+    Some(delta.max(0) as u64)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use base64::engine::general_purpose::STANDARD;
+    use serde_json::json;
+    use wiremock::matchers::{method as m_method, path};
+    use wiremock::{Mock, MockServer, Request, ResponseTemplate};
+
+    fn arg(s: &str) -> Value {
+        Value::String(s.to_string())
+    }
+
+    /// The inner request the kernel posts to apxm-auth's `/proxy`: it carries the
+    /// provider method/url and (for body methods) a base64 body.
+    #[derive(serde::Deserialize)]
+    struct InnerReq {
+        url: String,
+        #[serde(default)]
+        body_b64: Option<String>,
+    }
+
+    fn inner(req: &Request) -> InnerReq {
+        serde_json::from_slice(&req.body).expect("inner proxy payload is JSON")
+    }
+
+    // (A) GET: loose args go to the query string, never the body.
+    #[tokio::test]
+    async fn get_loose_args_go_to_query_string_not_body() {
+        let server = MockServer::start().await;
+        Mock::given(m_method("POST"))
+            .and(path("/v1/connections/conn1/proxy"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+                "status": 200,
+                "body_b64": STANDARD.encode(b"ok"),
+            })))
+            .mount(&server)
+            .await;
+
+        let cap = ProviderCallCapability::rest_with_base(
+            server.uri(),
+            "GET",
+            "https://api.example.com/repos/{owner}/issues",
+        );
+        let mut args = HashMap::new();
+        args.insert("credential".into(), arg("conn1"));
+        args.insert("owner".into(), arg("octocat")); // url placeholder
+        args.insert("state".into(), arg("open")); // loose -> query
+        args.insert("labels".into(), arg("a b")); // needs url-encoding
+
+        let out = cap.execute(args).await.expect("GET succeeds");
+        assert_eq!(out.as_str(), Some("ok"));
+
+        let reqs = server.received_requests().await.unwrap();
+        let inner = inner(&reqs[0]);
+        assert!(
+            inner.body_b64.is_none(),
+            "GET must not send a body, got {:?}",
+            inner.body_b64
+        );
+        // Placeholder filled; loose args appended as query, url-encoded, sorted.
+        assert_eq!(
+            inner.url,
+            "https://api.example.com/repos/octocat/issues?labels=a%20b&state=open"
+        );
+    }
+
+    // (A) POST: loose args become the JSON body, not the query string.
+    #[tokio::test]
+    async fn post_loose_args_go_to_body_not_query() {
+        let server = MockServer::start().await;
+        Mock::given(m_method("POST"))
+            .and(path("/v1/connections/conn1/proxy"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+                "status": 200,
+                "body_b64": STANDARD.encode(b"created"),
+            })))
+            .mount(&server)
+            .await;
+
+        let cap = ProviderCallCapability::rest_with_base(
+            server.uri(),
+            "POST",
+            "https://api.example.com/repos/{owner}/issues",
+        );
+        let mut args = HashMap::new();
+        args.insert("credential".into(), arg("conn1"));
+        args.insert("owner".into(), arg("octocat"));
+        args.insert("title".into(), arg("bug"));
+
+        cap.execute(args).await.expect("POST succeeds");
+
+        let reqs = server.received_requests().await.unwrap();
+        let inner = inner(&reqs[0]);
+        assert_eq!(
+            inner.url, "https://api.example.com/repos/octocat/issues",
+            "POST url keeps no query string"
+        );
+        let body = inner.body_b64.expect("POST sends a body");
+        let decoded = String::from_utf8(STANDARD.decode(body).unwrap()).unwrap();
+        let v: JsonValue = serde_json::from_str(&decoded).unwrap();
+        assert_eq!(v["title"], json!("bug"));
+        assert!(v.get("owner").is_none(), "url placeholder is not in the body");
+    }
+
+    // (B) A 429 with Retry-After triggers a bounded inline retry, then succeeds.
+    #[tokio::test]
+    async fn rate_limited_429_retries_then_succeeds() {
+        let server = MockServer::start().await;
+        // First reply: provider rate-limited (429) with an immediate Retry-After.
+        Mock::given(m_method("POST"))
+            .and(path("/v1/connections/conn1/proxy"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+                "status": 429,
+                "retry_after": "0",
+                "body_b64": STANDARD.encode(b"slow down"),
+            })))
+            .up_to_n_times(1)
+            .mount(&server)
+            .await;
+        // Subsequent reply: success.
+        Mock::given(m_method("POST"))
+            .and(path("/v1/connections/conn1/proxy"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+                "status": 200,
+                "body_b64": STANDARD.encode(b"done"),
+            })))
+            .mount(&server)
+            .await;
+
+        let cap = ProviderCallCapability::rest_with_base(
+            server.uri(),
+            "GET",
+            "https://api.example.com/thing",
+        );
+        let mut args = HashMap::new();
+        args.insert("credential".into(), arg("conn1"));
+
+        let out = cap.execute(args).await.expect("retry then success");
+        assert_eq!(out.as_str(), Some("done"));
+
+        let reqs = server.received_requests().await.unwrap();
+        assert_eq!(reqs.len(), 2, "one retry after the 429");
+    }
+
+    // (B) Persistent 429 returns the provider error after the bounded cap.
+    #[tokio::test]
+    async fn persistent_429_errors_after_cap() {
+        let server = MockServer::start().await;
+        Mock::given(m_method("POST"))
+            .and(path("/v1/connections/conn1/proxy"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+                "status": 429,
+                "retry_after": "0",
+                "body_b64": STANDARD.encode(b"slow down"),
+            })))
+            .mount(&server)
+            .await;
+
+        let cap = ProviderCallCapability::rest_with_base(
+            server.uri(),
+            "GET",
+            "https://api.example.com/thing",
+        );
+        let mut args = HashMap::new();
+        args.insert("credential".into(), arg("conn1"));
+
+        let err = cap.execute(args).await.expect_err("still rate-limited");
+        assert!(format!("{err}").contains("429"));
+
+        let reqs = server.received_requests().await.unwrap();
+        assert_eq!(
+            reqs.len(),
+            MAX_RETRY_ATTEMPTS as usize,
+            "bounded at MAX_RETRY_ATTEMPTS"
+        );
+    }
+
+    #[test]
+    fn retry_after_parsing_and_cap() {
+        assert_eq!(parse_retry_after_secs("5"), Some(5));
+        assert_eq!(parse_retry_after_secs("0"), Some(0));
+        assert_eq!(parse_retry_after_secs("garbage"), None);
+        // A past HTTP-date clamps to 0.
+        assert_eq!(
+            parse_retry_after_secs("Wed, 21 Oct 2015 07:28:00 GMT"),
+            Some(0)
+        );
+        // Honor header, but never exceed the cap.
+        assert_eq!(
+            retry_after_delay(Some("9999")).as_secs(),
+            MAX_RETRY_WAIT_SECS
+        );
+        // No/garbage header falls back to the small default.
+        assert_eq!(
+            retry_after_delay(None).as_secs(),
+            DEFAULT_RETRY_WAIT_SECS
+        );
+    }
 }
 
