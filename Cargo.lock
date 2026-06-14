@@ -325,7 +325,6 @@ dependencies = [
  "apxm-credentials",
  "apxm-runtime",
  "async-trait",
- "blake3",
  "chrono",
  "dirs 5.0.1",
  "futures",
