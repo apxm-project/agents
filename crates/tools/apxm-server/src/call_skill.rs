@@ -451,27 +451,6 @@ fn admit_child_policy(
     Ok(child_policy)
 }
 
-/// Install `library` as the runtime's [`SkillResolver`] on the supplied
-/// runtime and attach the runtime's [`Arc`] for child dispatch. Hosts
-/// call this once during startup after the library has been scanned and
-/// after the runtime has been wrapped in [`Arc`].
-///
-/// Order is load-bearing: the resolver is wired into the runtime via
-/// [`Arc::get_mut`] **before** any [`Weak`] reference is taken, because
-/// `get_mut` rejects an [`Arc`] that has any outstanding `Weak` peers.
-/// Once the resolver is in place we downgrade the now-shared runtime and
-/// thread the [`Weak`] into the resolver for child dispatch.
-#[allow(dead_code)]
-pub(crate) fn install(runtime: &mut Arc<Runtime>, library: SkillLibrary) {
-    let resolver = {
-        let runtime_mut = Arc::get_mut(runtime).expect(
-            "install must be called while the runtime Arc has no other strong or weak references",
-        );
-        install_unattached(runtime_mut, library)
-    };
-    resolver.attach_runtime(runtime);
-}
-
 pub(crate) fn install_unattached(
     runtime: &mut Runtime,
     library: SkillLibrary,

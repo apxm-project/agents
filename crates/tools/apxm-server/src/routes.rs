@@ -193,10 +193,12 @@ impl ServerRoute {
 }
 
 // Path constructors for the public REST surface. The release binary builds
-// URLs from string literals at request-handler registration time, so these
-// helpers look unused to `dead_code`; they are exercised by the in-crate
-// integration tests (see `tests/`) which use them as the single source of
-// truth for route shapes.
+// URLs from string literals at request-handler registration time, so the
+// `#[allow(dead_code)]` helpers below look unused to `dead_code`; they are the
+// single source of truth for route shapes in the in-crate integration tests
+// (`skill_*`, `execution_*`, `run_cancel_path`, `session_history_path`).
+// `checkpoint_detail_path` / `checkpoint_resume_path` additionally have a live
+// caller in `checkpoints.rs`.
 #[allow(dead_code)]
 pub(crate) fn skill_detail_path(id: impl Display) -> String {
     format!("{SKILLS}/{id}")
@@ -230,37 +232,12 @@ pub(crate) fn execution_node_detail_path(
     format!("{EXECUTIONS}/{execution_id}/nodes/{node_id}")
 }
 
-#[allow(dead_code)]
-pub(crate) fn task_queue_path(queue: impl Display) -> String {
-    format!("{TASKS}/{queue}")
-}
-
-#[allow(dead_code)]
-pub(crate) fn task_claim_path(queue: impl Display) -> String {
-    format!("{TASKS}/{queue}/claim")
-}
-
-#[allow(dead_code)]
-pub(crate) fn task_complete_path(id: impl Display) -> String {
-    format!("{TASKS}/{id}/complete")
-}
-
 pub(crate) fn checkpoint_detail_path(id: impl Display) -> String {
     format!("{CHECKPOINTS}/{id}")
 }
 
 pub(crate) fn checkpoint_resume_path(id: impl Display) -> String {
     format!("{CHECKPOINTS}/{id}/resume")
-}
-
-#[allow(dead_code)]
-pub(crate) fn run_detail_path(execution_id: impl Display) -> String {
-    format!("{RUNS}/{execution_id}")
-}
-
-#[allow(dead_code)]
-pub(crate) fn run_graph_path(execution_id: impl Display) -> String {
-    format!("{RUNS}/{execution_id}/graph")
 }
 
 #[allow(dead_code)]
@@ -271,44 +248,4 @@ pub(crate) fn run_cancel_path(execution_id: impl Display) -> String {
 #[allow(dead_code)]
 pub(crate) fn session_history_path(id: impl Display) -> String {
     format!("/v1/sessions/{id}/history")
-}
-
-#[allow(dead_code)]
-pub(crate) fn goal_detail_path(goal_id: impl Display) -> String {
-    format!("{GOALS}/{goal_id}")
-}
-
-#[allow(dead_code)]
-pub(crate) fn goal_events_path(goal_id: impl Display) -> String {
-    format!("{GOALS}/{goal_id}/events")
-}
-
-#[allow(dead_code)]
-pub(crate) fn goal_events_stream_path(goal_id: impl Display) -> String {
-    format!("{GOALS}/{goal_id}/events/stream")
-}
-
-#[allow(dead_code)]
-pub(crate) fn goal_cancel_path(goal_id: impl Display) -> String {
-    format!("{GOALS}/{goal_id}/cancel")
-}
-
-#[allow(dead_code)]
-pub(crate) fn run_node_detail_path(execution_id: impl Display, node_id: impl Display) -> String {
-    format!("{RUNS}/{execution_id}/nodes/{node_id}")
-}
-
-#[allow(dead_code)]
-pub(crate) fn run_events_path(execution_id: impl Display) -> String {
-    format!("{RUNS}/{execution_id}/events")
-}
-
-#[allow(dead_code)]
-pub(crate) fn run_events_stream_path(execution_id: impl Display) -> String {
-    format!("{RUNS}/{execution_id}/events/stream")
-}
-
-#[allow(dead_code)]
-pub(crate) fn run_blob_path(execution_id: impl Display, blob_ref: impl Display) -> String {
-    format!("{RUNS}/{execution_id}/blobs/{blob_ref}")
 }

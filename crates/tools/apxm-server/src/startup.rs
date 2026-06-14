@@ -47,15 +47,10 @@ pub(crate) fn execution_store_from_paths(config: &ServerExecutionsConfig) -> Exe
 
 // Default-config runtime constructor used exclusively by integration tests
 // (see `tests/execute.rs`). The release binary builds its runtime through
-// `run_server` with explicit CLI-derived configuration.
+// `run_server_with_config` with explicit CLI-derived configuration.
 #[allow(dead_code)]
 pub(crate) async fn build_server_runtime() -> Result<Runtime, apxm_core::error::RuntimeError> {
     build_runtime_without_router(server_runtime_config(&ServerConfig::default())).await
-}
-
-#[allow(dead_code)]
-pub(crate) async fn run_server() -> anyhow::Result<()> {
-    run_server_with_config(crate::config_layers::server_config_from_layers()?).await
 }
 
 pub(crate) async fn run_server_with_config(server_config: ServerConfig) -> anyhow::Result<()> {

@@ -132,12 +132,6 @@ impl RunEventBus {
         entry.tx.subscribe()
     }
 
-    /// Test helper: returns true if any events are recorded for the run.
-    #[cfg(test)]
-    #[allow(dead_code)]
-    pub(crate) fn has_run(&self, execution_id: &str) -> bool {
-        self.inner.contains_key(execution_id)
-    }
 }
 
 /// EventEmitter that funnels every event into the run bus, keyed by

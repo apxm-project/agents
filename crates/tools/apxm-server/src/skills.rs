@@ -1561,14 +1561,6 @@ fn parse_manifest_file(path: &Path) -> Result<SkillManifest, String> {
     apxm_skill::parse_manifest_file(path)
 }
 
-// String-form manifest parser used by the in-crate unit tests
-// (`parses_top_level_manifest`, `parses_nested_skill_manifest`). The release
-// binary parses manifests via `parse_manifest_file`.
-#[allow(dead_code)]
-fn parse_manifest(contents: &str) -> Result<SkillManifest, toml::de::Error> {
-    apxm_skill::parse_manifest(contents)
-}
-
 fn validate_declared_hash(
     field: &str,
     declared: Option<&str>,

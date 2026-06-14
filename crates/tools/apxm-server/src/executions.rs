@@ -166,18 +166,6 @@ impl ExecutionStore {
         }
     }
 
-    #[allow(dead_code)]
-    pub(crate) fn from_session_roots<I, P>(session_roots: I) -> Self
-    where
-        I: IntoIterator<Item = P>,
-        P: AsRef<FsPath>,
-    {
-        Self::from_session_roots_with_index_max_entries(
-            session_roots,
-            crate::execution_index::DEFAULT_MAX_ENTRIES,
-        )
-    }
-
     pub(crate) fn from_session_roots_with_index_max_entries<I, P>(
         session_roots: I,
         index_max_entries: usize,
@@ -209,28 +197,6 @@ impl ExecutionStore {
             loaded += self.load_records_from_tree(root);
         }
         loaded
-    }
-
-    // Convenience overload (no provenance) used by in-crate tests
-    // (`tests/skills_records.rs`, `tests/mcp.rs`). Production code paths
-    // call `start_skill_execution_with_provenance{,_and_execution_id}`.
-    #[allow(dead_code)]
-    pub(crate) fn start_skill_execution(
-        &self,
-        skill_id: &str,
-        skill_version: &str,
-        session_id: &str,
-        session_dir: &str,
-    ) -> ExecutionRecord {
-        self.start_skill_execution_with_provenance(
-            SkillExecutionProvenance {
-                skill_id: skill_id.to_string(),
-                skill_version: skill_version.to_string(),
-                ..SkillExecutionProvenance::default()
-            },
-            session_id,
-            session_dir,
-        )
     }
 
     pub(crate) fn start_skill_execution_with_provenance(

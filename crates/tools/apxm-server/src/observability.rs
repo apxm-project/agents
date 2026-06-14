@@ -1,36 +1,16 @@
 //! OpenTelemetry OTLP exporter.
 //!
-//! When configured, every `ApxmEvent` is translated to a tracing span that the
-//! global tracing-opentelemetry pipeline forwards to the configured OTLP
-//! collector. The mapping is
-//! deliberately thin:
-//!
-//!   - `agent_spawned` / `subagent_spawned` → root span for the agent
-//!   - `operation_start` / `operation_end`  → child span scoped to the
-//!     graph node
-//!   - `tool_start` / `tool_end`            → child span scoped to the
-//!     tool call
-//!   - everything else                     → an event on the current span
-//!
-//! `meta.trace_id`, `meta.span_id`, `meta.parent_span_id` are already
-//! W3C Trace Context strings (the runtime stamps them per spec), so
-//! the exporter passes them straight through. The exporter is
-//! configured through layered APXM server config, with the standard OTLP env
+//! When configured, APXM events flow to the global tracing-opentelemetry
+//! pipeline, which forwards them to the configured OTLP collector. The exporter
+//! is configured through layered APXM server config, with the standard OTLP env
 //! var applied as a startup override.
 //!
-//! If the env var is unset, `init` returns `Ok(None)` and
-//! `OtelEmitter::dispatch` is a no-op.
+//! If the env var is unset, `init` returns `Ok(None)` and no exporter is wired.
 
 use std::sync::Arc;
 
-use apxm_core::events::kind;
-use apxm_core::events::payload::{
-    AgentSpawnedPayload, OperationEndPayload, OperationStartPayload, ToolEndPayload,
-    ToolStartPayload,
-};
-use apxm_core::events::{ApxmEvent, EventEmitter};
 use apxm_driver::ServerObservabilityConfig;
-use tracing::{Span, debug, info_span, warn};
+use tracing::{debug, warn};
 
 /// Lightweight handle representing a configured OTLP exporter. The
 /// real OpenTelemetry pipeline lives behind the `tracing` global
@@ -78,7 +58,6 @@ pub(crate) fn init(
     }))
 }
 
-
 #[derive(Debug)]
 pub(crate) struct OtelInitError(pub String);
 
@@ -89,124 +68,6 @@ impl std::fmt::Display for OtelInitError {
 }
 
 impl std::error::Error for OtelInitError {}
-
-/// Emit an event into the tracing fabric so the global OTLP exporter
-/// (when wired) translates it into an OTLP span. The mapping
-/// preserves `meta.trace_id` / `meta.span_id` / `meta.parent_span_id`
-/// by writing them as field values — that's the convention
-/// `tracing-opentelemetry` follows.
-#[allow(dead_code)]
-pub(crate) fn map_event_to_tracing(event: &ApxmEvent) {
-    match event.kind() {
-        kind::AGENT_SPAWNED => {
-            let Some(payload) = event.payload.downcast_ref::<AgentSpawnedPayload>() else {
-                return;
-            };
-            let span = info_span!(
-                "apxm.agent",
-                trace_id = %event.meta.trace_id,
-                span_id = %event.meta.span_id,
-                parent_span_id = ?event.meta.parent_span_id,
-                agent_code = %payload.agent_code,
-                profile = ?payload.profile,
-            );
-            attach_meta(&span);
-        }
-        kind::OPERATION_START => {
-            let Some(payload) = event.payload.downcast_ref::<OperationStartPayload>() else {
-                return;
-            };
-            let span = info_span!(
-                "apxm.operation",
-                trace_id = %event.meta.trace_id,
-                span_id = %event.meta.span_id,
-                parent_span_id = ?event.meta.parent_span_id,
-                node_id = payload.node_id,
-                op_type = ?payload.op_type,
-            );
-            attach_meta(&span);
-        }
-        kind::OPERATION_END => {
-            let Some(payload) = event.payload.downcast_ref::<OperationEndPayload>() else {
-                return;
-            };
-            let span = info_span!(
-                "apxm.operation.end",
-                trace_id = %event.meta.trace_id,
-                span_id = %event.meta.span_id,
-                parent_span_id = ?event.meta.parent_span_id,
-                node_id = payload.node_id,
-                duration_ms = payload.duration_ms,
-                success = payload.success,
-            );
-            attach_meta(&span);
-        }
-        kind::TOOL_START => {
-            let Some(payload) = event.payload.downcast_ref::<ToolStartPayload>() else {
-                return;
-            };
-            let span = info_span!(
-                "apxm.tool",
-                trace_id = %event.meta.trace_id,
-                span_id = %event.meta.span_id,
-                parent_span_id = ?event.meta.parent_span_id,
-                name = %payload.name,
-            );
-            attach_meta(&span);
-        }
-        kind::TOOL_END => {
-            let Some(payload) = event.payload.downcast_ref::<ToolEndPayload>() else {
-                return;
-            };
-            let span = info_span!(
-                "apxm.tool.end",
-                trace_id = %event.meta.trace_id,
-                span_id = %event.meta.span_id,
-                parent_span_id = ?event.meta.parent_span_id,
-                name = %payload.name,
-            );
-            attach_meta(&span);
-        }
-        other => {
-            // Non-lifecycle events surface as a field on the current
-            // span — they're observability metadata, not new spans.
-            tracing::trace!(
-                kind = %other.name(),
-                trace_id = %event.meta.trace_id,
-                "apxm.event"
-            );
-        }
-    }
-}
-
-/// Touch a freshly-built span so `tracing` actually records it even
-/// when no sink is attached; this is what `info_span!` expects when
-/// the span itself is the entire payload.
-#[allow(dead_code)]
-fn attach_meta(span: &Span) {
-    let _enter = span.enter();
-}
-
-/// EventEmitter adapter that funnels every event through the OTLP
-/// mapping above. Wired on `AppState` when `init` returns Some.
-#[allow(dead_code)]
-pub(crate) struct OtelEmitter {
-    exporter: OtelExporter,
-}
-
-impl OtelEmitter {
-    #[allow(dead_code)]
-    pub(crate) fn new(exporter: OtelExporter) -> Self {
-        Self { exporter }
-    }
-}
-
-impl EventEmitter for OtelEmitter {
-    fn emit(&self, event: ApxmEvent) {
-        let _ = &self.exporter; // keeps the exporter alive for the emitter lifetime
-        map_event_to_tracing(&event);
-    }
-}
 
 /// Stand-alone helper used by `init` callers when initialization
 /// itself fails — emit one warn rather than aborting startup.
