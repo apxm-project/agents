@@ -1031,6 +1031,20 @@ fn emit_node(
             &[graph_attrs::CAPABILITY_NAME, graph_attrs::CAPABILITY],
             None,
         ),
+        AISOperationType::RegisterHook => emit_simple_op(
+            state,
+            node,
+            &inputs,
+            &[graph_attrs::HOOK_EVENT],
+            "hook",
+            &[
+                graph_attrs::HOOK_EVENT,
+                graph_attrs::HOOK_MATCH,
+                graph_attrs::HOOK_MODE,
+                graph_attrs::PYTHON_HOOK_HANDLER_ID,
+            ],
+            None,
+        ),
         AISOperationType::Autonomous => emit_simple_op(
             state,
             node,

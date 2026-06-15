@@ -45,6 +45,11 @@ PYTHON_TOOL_MANIFEST_SCHEMA = "schema"
 PYTHON_TOOL_MANIFEST_SOURCE_FILE = "source_file"
 PYTHON_TOOLS_AIR_COMMENT_PREFIX = "; __apxm_python_tools__ "
 
+# Reserved `input_names` entry carrying the system prompt as a dataflow value.
+# Mirrors `apxm-core` `graph::attrs::SYSTEM_PROMPT_INPUT`; when an ASK operand is
+# bound to this name the runtime uses it as the system prompt (FR-005/FR-009).
+SYSTEM_PROMPT_INPUT = "__system"
+
 _g = globals()
 for _spec in _ops.ALL_OPERATIONS:
     _g[f"OP_{_spec.op}"] = _spec.op

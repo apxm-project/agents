@@ -432,6 +432,7 @@ fn to_tablegen_name(op_type: AISOperationType) -> String {
         AISOperationType::SpawnAgent => "SpawnAgent",
         AISOperationType::SpawnTeam => "SpawnTeam",
         AISOperationType::RegisterCapability => "RegisterCapability",
+        AISOperationType::RegisterHook => "RegisterHook",
         AISOperationType::Autonomous => "Autonomous",
         AISOperationType::Checkpoint => "Checkpoint",
         AISOperationType::ConstStr => "ConstStr",

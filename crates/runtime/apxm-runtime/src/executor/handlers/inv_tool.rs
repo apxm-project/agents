@@ -172,8 +172,19 @@ pub async fn execute(ctx: &ExecutionContext, node: &Node, inputs: Vec<Value>) ->
 
     let timeout = std::time::Duration::from_millis(timeout_ms);
 
+    // pre_tool hooks run for EVERY tool — Python-bridge AND native/builtin
+    // capabilities (FR-004, constitution #5). A deny / gate failure does NOT
+    // fail the node: the turn continues gracefully with a denial message (m4,
+    // matching the LLM tool-loop's graceful `ToolResult::error`).
+    let args = match crate::executor::hook_driver::run_pre_tool_hooks(ctx, &capability_name, args)
+        .await
+    {
+        Ok(edited) => edited,
+        Err(e) => return Ok(Value::String(format!("[tool '{capability_name}' blocked: {e}]"))),
+    };
+
     // Python branch is taken iff `bind-tool-handlers` stamped a handler id.
-    let result = if let Some(handler_id) = python_handler_id {
+    let raw = if let Some(handler_id) = python_handler_id {
         execute_python_tool(ctx, &capability_name, &handler_id, &args, timeout).await?
     } else {
         // Invoke-site write boundary: enforce the no-widen grant for EVERY tool
@@ -212,6 +223,8 @@ pub async fn execute(ctx: &ExecutionContext, node: &Node, inputs: Vec<Value>) ->
         }
         outcome
     };
+    // post_tool hooks (replace_result) for both paths.
+    let result = crate::executor::hook_driver::run_post_tool_hooks(ctx, &capability_name, raw).await;
 
     tracing::info!(
         capability = %capability_name,

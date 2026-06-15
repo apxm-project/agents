@@ -168,5 +168,9 @@ pub fn register_standard_tools(
             config.search_web.clone(),
         )))?;
     }
+    // `count_tokens` is pure/read-only and host-independent; register it on
+    // non-server runtimes too so in-program compaction (count_tokens → guard →
+    // summarize) has transport parity with the server path (constitution #1).
+    capability_system.register(Arc::new(CountTokensCapability::new()))?;
     Ok(())
 }

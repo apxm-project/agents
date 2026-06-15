@@ -271,6 +271,118 @@ impl SchedulerState {
         Ok(token_remap)
     }
 
+    /// Re-arm the in-graph conversation loop after a `recv` node woke with a
+    /// user message — the native-loop keystone (US1/T022).
+    ///
+    /// Splices a fresh turn sub-DAG whose `turn_input_token` is connected to the
+    /// woken `message_token`, plus a `fresh_recv` node (no inputs → becomes ready
+    /// and re-parks for the next message), into the live execution in ONE splice.
+    /// Consequences:
+    /// - each user turn runs its OWN spliced sub-DAG; prior turns are never
+    ///   re-executed (SC-007 / FR-012);
+    /// - the loop continues because the fresh recv re-arms;
+    /// - it is pure composition over [`Self::splice_dag`], so the fire-once and
+    ///   `remaining`-count invariants (the park/wake suite) are preserved — no new
+    ///   scheduler primitive is required.
+    ///
+    /// `fresh_recv` MUST carry a node id unique within `turn_dag`; both are
+    /// offset away from live IDs by the splice.
+    ///
+    /// `carry_connections` carries per-turn session state across re-arms (T023):
+    /// each entry maps an inner turn-body input token → a live token holding
+    /// prior state (e.g. the running history/summary token produced by the
+    /// previous turn). This threads cross-turn memory through spliced token
+    /// connections without re-running prior turns.
+    pub fn splice_turn_and_rearm(
+        &self,
+        message_token: TokenId,
+        turn_input_token: TokenId,
+        carry_connections: HashMap<TokenId, TokenId>,
+        mut turn_dag: ExecutionDag,
+        fresh_recv: Node,
+    ) -> Result<HashMap<TokenId, TokenId>, RuntimeError> {
+        // Fold the fresh recv into the same inner DAG so the turn body and the
+        // re-arm graft atomically in one splice.
+        turn_dag.add_node(fresh_recv)?;
+        let mut connections = carry_connections;
+        connections.insert(turn_input_token, message_token);
+        self.splice_dag(SpliceConfig {
+            inner_dag: turn_dag,
+            token_connections: connections,
+            node_id_offset: None,
+            token_id_offset: None,
+        })
+    }
+
+    /// Re-arm one conversation turn from a woken session recv (the production
+    /// driver for [`Self::splice_turn_and_rearm`], wired on the worker park path).
+    ///
+    /// Builds, in one splice: (1) a FLOW_CALL node that dispatches the author
+    /// turn flow (`<turn_agent>.<turn_flow>`) with the woken user message bound
+    /// to its reserved `turn_param` (constitution #6), and (2) a fresh recv node
+    /// (a clone of `recv_node`) that re-parks on the session key — so the next
+    /// user message drives another turn. Prior turns are never re-run (SC-007).
+    pub fn rearm_session_turn(
+        &self,
+        message_token: TokenId,
+        recv_node: &Node,
+        turn_agent: &str,
+        turn_flow: &str,
+        turn_param: &str,
+    ) -> Result<(), RuntimeError> {
+        use apxm_core::constants::graph::attrs as ga;
+        use apxm_core::types::execution::NodeMetadata;
+        use apxm_core::types::operations::AISOperationType;
+
+        // FLOW_CALL node: dispatch the turn flow, binding the message (inner
+        // input token 1) to the reserved turn param via args + input_names.
+        let mut fc_attrs = std::collections::HashMap::new();
+        fc_attrs.insert(
+            ga::AGENT_NAME.to_string(),
+            Value::String(turn_agent.to_string()),
+        );
+        fc_attrs.insert(
+            ga::FLOW_NAME.to_string(),
+            Value::String(turn_flow.to_string()),
+        );
+        let mut args = std::collections::HashMap::new();
+        args.insert(
+            turn_param.to_string(),
+            Value::String(format!("{{{turn_param}}}")),
+        );
+        fc_attrs.insert(ga::ARGS.to_string(), Value::Object(args));
+        fc_attrs.insert(
+            ga::INPUT_NAMES.to_string(),
+            Value::Array(vec![Value::String(turn_param.to_string())]),
+        );
+        let flow_call = Node {
+            id: 1,
+            op_type: AISOperationType::FlowCall,
+            attributes: fc_attrs,
+            input_tokens: vec![1],
+            output_tokens: vec![2],
+            metadata: NodeMetadata::default(),
+        };
+        let mut turn_dag = ExecutionDag::new();
+        turn_dag.add_node(flow_call)?;
+
+        // Fresh recv: same attrs as the woken recv (so it re-arms again on the
+        // next wake), no inputs (ready immediately → parks), fresh output token.
+        let mut fresh_recv = recv_node.clone();
+        fresh_recv.id = 2;
+        fresh_recv.input_tokens = vec![];
+        fresh_recv.output_tokens = vec![3];
+
+        self.splice_turn_and_rearm(
+            message_token,
+            1, // the FLOW_CALL's inner input token, connected to message_token
+            std::collections::HashMap::new(),
+            turn_dag,
+            fresh_recv,
+        )?;
+        Ok(())
+    }
+
     /// Condense a set of nodes in the live DAG into a single replacement node.
     ///
     /// This is the reverse of `splice_dag`. It removes the specified nodes and

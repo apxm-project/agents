@@ -234,6 +234,114 @@ fn initial_session_grants(opts: &ChatOptions) -> Vec<String> {
     grants
 }
 
+/// True when the artifact carries its OWN in-graph conversation loop: a
+/// re-arming `recv` anchor (AUTONOMOUS `mode = "recv"`, `recv_once = "false"`),
+/// the signature a `ConversationalAgent(loop="in_graph")` emits. Such artifacts
+/// own the loop, so the host is a dumb pipe (constitution #2).
+fn air_has_in_program_loop(air: &str) -> bool {
+    air.contains("mode = \"recv\"") && air.contains("recv_once = \"false\"")
+}
+
+/// Dumb-pipe host (constitution #2): POST the artifact ONCE, pipe stdin lines to
+/// the turn-input endpoint, render streamed tokens. No transcript, no
+/// compaction, no budgets host-side — all of that lives in the program/runtime.
+async fn run_dumb_pipe(
+    client: &reqwest::Client,
+    base: &str,
+    session_id: &str,
+    air: &str,
+    opts: &ChatOptions,
+) -> Result<()> {
+    let base = base.trim_end_matches('/');
+    let exec_url = format!("{base}/v1/execute/stream");
+    // Self-contained sub-agent spawns are auto-admitted server-side; any extra
+    // write grants the operator passed still ride the one-time start request.
+    let admit = initial_session_grants(opts);
+    let body = serde_json::json!({
+        "air": air,
+        "session_id": session_id,
+        "admit_capabilities": admit,
+        "imports": opts.import,
+        "owner": opts.owner,
+    });
+    let resp = client
+        .post(&exec_url)
+        .header("Accept", "text/event-stream")
+        .json(&body)
+        .send()
+        .await
+        .with_context(|| format!("failed to POST {exec_url}"))?;
+    if !resp.status().is_success() {
+        let status = resp.status();
+        let text = resp.text().await.unwrap_or_default();
+        return Err(anyhow!("server returned {status} for {exec_url}: {text}"));
+    }
+
+    // Render the session's long-lived SSE in the background; tokens for EVERY
+    // turn stream over this one connection (streaming from any depth).
+    let render = tokio::spawn(render_session_stream(resp));
+
+    // Foreground: pipe each stdin line to the turn-input endpoint. The reply
+    // streams back over the open SSE above — the host never threads a transcript.
+    use tokio::io::AsyncBufReadExt as _;
+    let mut stdin_lines = tokio::io::BufReader::new(tokio::io::stdin()).lines();
+    let msg_url = format!("{base}/v1/conversations/{session_id}/message");
+    loop {
+        eprint!("\nuser> ");
+        let _ = std::io::stderr().flush();
+        let line = match stdin_lines.next_line().await.context("stdin read failed")? {
+            Some(l) => l.trim().to_string(),
+            None => break, // EOF (Ctrl-D)
+        };
+        if line.is_empty() {
+            continue;
+        }
+        if matches!(line.as_str(), "/exit" | "/quit") {
+            break;
+        }
+        let r = client
+            .post(&msg_url)
+            .json(&serde_json::json!({ "message": line }))
+            .send()
+            .await
+            .with_context(|| format!("failed to POST {msg_url}"))?;
+        if !r.status().is_success() {
+            let status = r.status();
+            let text = r.text().await.unwrap_or_default();
+            eprintln!("turn-input failed: {status}: {text}");
+        }
+    }
+
+    render.abort();
+    Ok(())
+}
+
+/// Render tokens from the session's long-lived SSE stream (dumb-pipe path). The
+/// host only renders; it adds no conversational behavior.
+async fn render_session_stream(resp: reqwest::Response) {
+    let mut stream = resp.bytes_stream();
+    let mut parser = SseParser::default();
+    while let Some(chunk) = stream.next().await {
+        let Ok(chunk) = chunk else { break };
+        for frame in parser.feed(&chunk) {
+            let Ok(v) = serde_json::from_str::<JsonValue>(&frame.data) else {
+                continue;
+            };
+            let kind = v.pointer("/payload/kind").and_then(|k| k.as_str());
+            if kind == Some("token")
+                && let Some(tok) = v.pointer("/payload/text").and_then(|t| t.as_str())
+            {
+                print!("{tok}");
+                let _ = std::io::stdout().flush();
+            } else if kind == Some("error")
+                && let Some(m) = v.pointer("/payload/message").and_then(|m| m.as_str())
+            {
+                eprintln!("\n[error] {m}");
+            }
+        }
+    }
+}
+
 /// Entry point dispatched from `main.rs`.
 pub async fn chat_command(opts: ChatOptions) -> Result<()> {
     let base = opts
@@ -274,6 +382,20 @@ pub async fn chat_command(opts: ChatOptions) -> Result<()> {
     let client = reqwest::Client::builder()
         .build()
         .context("failed to build HTTP client")?;
+
+    // Dumb-pipe routing (constitution #2): when the artifact carries its OWN
+    // conversation loop (a `ConversationalAgent` multi-flow artifact with an
+    // in-graph re-arming recv), the host adds ZERO conversational behavior — it
+    // POSTs the artifact once, pipes stdin to the turn-input endpoint, and
+    // renders streamed tokens. The legacy host-driven loop below is preserved
+    // for single-shot / host-driven artifacts (back-compat).
+    if air_has_in_program_loop(&air) {
+        eprintln!(
+            "apxm chat — in-program loop detected; host is a dumb pipe (session {session_id} @ {base})"
+        );
+        eprintln!("type a message; /exit to quit");
+        return run_dumb_pipe(&client, &base, &session_id, &air, &opts).await;
+    }
 
     eprintln!("apxm chat — session {session_id} @ {base}");
     eprintln!("type a message, or /help for meta-commands; /exit to quit");

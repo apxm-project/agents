@@ -25,12 +25,30 @@ pub async fn execute(ctx: &ExecutionContext, node: &Node, _inputs: Vec<Value>) -
         None => MemorySpace::Stm, // Default to STM
     };
 
-    // Search memory. Scope by session (when present) so a later turn's QMEM
-    // reads the memory an earlier turn's UMEM wrote; falls back to scope_id.
-    let results = ctx
-        .memory
-        .search_scoped(space, ctx.memory_scope(), &query, limit)
-        .await?;
+    // Recency-window recall (`recall_mode=recent`, `recent=N`): return the last
+    // N session turns in temporal order (transcript-as-memory), bypassing
+    // relevance ranking. Defaults to the `conversation:turn:` prefix the
+    // conversation middleware writes; an explicit `recall_prefix` overrides it.
+    let recall_mode = get_optional_string_attribute(node, "recall_mode")?;
+    let results = if recall_mode.as_deref() == Some("recent") {
+        let n = node
+            .attributes
+            .get("recent")
+            .and_then(|v| v.as_u64())
+            .map(|v| v as usize)
+            .unwrap_or(limit);
+        let prefix = get_optional_string_attribute(node, "recall_prefix")?
+            .unwrap_or_else(|| "conversation:turn:".to_string());
+        ctx.memory
+            .recent_scoped(space, ctx.memory_scope(), &prefix, n)
+            .await?
+    } else {
+        // Search memory. Scope by session (when present) so a later turn's QMEM
+        // reads the memory an earlier turn's UMEM wrote; falls back to scope_id.
+        ctx.memory
+            .search_scoped(space, ctx.memory_scope(), &query, limit)
+            .await?
+    };
 
     // Emit memory-read event
     if let Some(emitter) = &ctx.event_emitter {

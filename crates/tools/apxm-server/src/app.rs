@@ -8,8 +8,9 @@ use crate::a2a::{a2a_get_task, a2a_jsonrpc, a2a_send_task};
 use crate::agent::{
     agent_card, deregister_agent, get_agent, list_agents, receive_message, register_agent,
 };
-use crate::capability::{invoke_capability, list_capabilities, register_capability};
+use crate::capability::{invoke_capability, list_capabilities, register_capability, rescan_capabilities};
 use crate::checkpoints::{create_checkpoint, get_checkpoint, resume_checkpoint};
+use crate::conversations::post_conversation_message;
 use crate::execute::{compile_artifact, compile_workflow, compile_workflow_stream, execute, execute_stream};
 use crate::executions::{get_execution, get_execution_node, list_executions};
 use crate::fleet::get_fleet;
@@ -64,6 +65,10 @@ pub(crate) fn build_app(state: AppState) -> Router {
             ServerRoute::CapabilitiesRegister.path(),
             post(register_capability),
         )
+        .route(
+            ServerRoute::CapabilitiesRescan.path(),
+            post(rescan_capabilities),
+        )
         // Invoke a single read-only capability once (no graph) so the studio
         // can populate dynamic "load options" dropdowns.
         .route(
@@ -99,6 +104,12 @@ pub(crate) fn build_app(state: AppState) -> Router {
         .route(ServerRoute::TaskQueue.path(), get(list_tasks))
         .route(ServerRoute::TaskClaim.path(), post(claim_task))
         .route(ServerRoute::TaskComplete.path(), post(complete_task))
+        // Turn-input seam: deliver one user message to a session's parked recv
+        // node (dumb-pipe contract; reply streams over the session's open SSE).
+        .route(
+            ServerRoute::ConversationMessage.path(),
+            post(post_conversation_message),
+        )
         // Checkpoints (PAUSE/RESUME HITL)
         .route(ServerRoute::Checkpoints.path(), post(create_checkpoint))
         .route(ServerRoute::CheckpointDetail.path(), get(get_checkpoint))

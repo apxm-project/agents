@@ -14,7 +14,7 @@ Validate without a server:
         python3 examples/python/conversational/conversational_agent.py --validate
 """
 
-from apxm import GraphRecorder, compile, tool
+from apxm import GraphRecorder, compile
 
 PERSONA = (
     "You are APXM Assistant, a precise, helpful conversational agent. "
@@ -22,19 +22,6 @@ PERSONA = (
     "fits, use tools only when they add information, and keep replies concise "
     "and well-structured. If you are unsure, say so."
 )
-
-
-@tool
-def find_skill(request: str) -> str:
-    """Find the installed skill most relevant to a request.
-
-    Ranks installed skills by their *description* (embedder-backed similarity
-    over the skill catalogue) and returns the best match's id + summary, or an
-    empty result if none fit. This is description-based discovery: the agent
-    never hard-codes a skill id.
-    """
-    # Stub: the real capability queries /v1/skills and ranks by description.
-    return f"[best skill for: {request}]"
 
 
 @compile()
@@ -50,8 +37,10 @@ def conversational_agent(g: GraphRecorder, conversation: str):
     # Recall relevant facts from task memory (deliberate program decision).
     history = g.query_memory(name="recall", query="relevant prior facts", space="stm")
 
-    # Description-based skill discovery (not a hard-coded id).
-    skill = g.invoke_tool(find_skill, request="the latest user message")
+    # Description-based skill discovery via the real `search_skills` capability —
+    # ranks installed skills by their description (lexical match over the skill
+    # catalogue), so the agent never hard-codes a skill id.
+    skill = g.skill_search(name="discover_skill", query="the latest user message")
 
     # Tool-using ASK; `{history}` and `{skill}` auto-wire data edges above.
     answer = g.ask(

@@ -129,6 +129,7 @@ pub fn operation_effects(op: &AISOperationType) -> OperationEffects {
         AISOperationType::SpawnAgent => OperationEffects::new().write(Capabilities),
         AISOperationType::SpawnTeam => OperationEffects::new().write(Capabilities),
         AISOperationType::RegisterCapability => OperationEffects::new().write(Capabilities),
+        AISOperationType::RegisterHook => OperationEffects::new().write(Capabilities),
 
         // Autonomous Execution
         AISOperationType::Autonomous => OperationEffects::new()

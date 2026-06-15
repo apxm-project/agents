@@ -22,7 +22,7 @@ from .normalize import normalize_value as _normalize_value
 from .ir import ApxmGraph, GraphEdge, GraphNode, Parameter
 from .tools import FunctionTool
 
-_TEMPLATE_PLACEHOLDER_RE = re.compile(r"\{(\w+)\}")
+_TEMPLATE_PLACEHOLDER_RE = re.compile(r"\{([a-zA-Z_][\w.]*)\}")
 _MAX_TEMPLATE_SCOPE_DEPTH = 32
 
 
@@ -129,9 +129,10 @@ class GraphRecorder:
                 continue
             seen.add(var_name)
 
-            # Compile parameters are resolved at execute time against
-            # module.parameters, not via input_names — skip wiring.
-            if var_name in self._param_names:
+            # Compile parameters and runtime-resolved dotted paths (e.g.
+            # `{data.event.subject}`) are resolved at execute time against
+            # module.parameters / the `data` envelope — skip wiring.
+            if var_name in self._param_names or var_name.startswith("data."):
                 continue
 
             val = self._resolve_name_from_scope_chain(var_name, scope_chain)
@@ -245,6 +246,7 @@ class GraphRecorder:
         provider: ProviderSpec | None = None,
         route: BackendRoute | None = None,
         backend: str | None = None,
+        system_prompt_input: NodeRef | None = None,
         **attributes: Any,
     ) -> NodeRef:
         if name is None:
@@ -255,9 +257,16 @@ class GraphRecorder:
         # Auto-wire: resolve {var_name} to NodeRef
         resolved, auto_pairs = self._resolve_template_refs(prompt)
 
+        # A NodeRef bound to `system_prompt_input` becomes a dataflow operand
+        # under the reserved `__system` input name; the runtime then uses its
+        # value as the system prompt instead of the static attribute (FR-005).
+        input_names = [n for n, _ in auto_pairs]
+        if system_prompt_input is not None:
+            input_names.append(graph_keys.SYSTEM_PROMPT_INPUT)
+
         attrs: dict[str, Any] = {graph_keys.TEMPLATE_STR: resolved}
-        if auto_pairs:
-            attrs[graph_keys.INPUT_NAMES] = [n for n, _ in auto_pairs]
+        if input_names:
+            attrs[graph_keys.INPUT_NAMES] = input_names
         _apply_routing_attrs(attrs, route=route, model=model, provider=provider, backend=backend)
         attrs.update(_compose_system_prompt(agent, graph_keys.OP_ASK))
         attrs = self._apply_policy(attrs, attributes)
@@ -266,6 +275,8 @@ class GraphRecorder:
         # Create auto-wire edges (in input_names order)
         for _name, ref in auto_pairs:
             self.add_edge(ref, node)
+        if system_prompt_input is not None:
+            self.add_edge(system_prompt_input, node)
 
         return node
 
@@ -344,17 +355,29 @@ class GraphRecorder:
         query: str | None = None,
         space: str | None = None,
         limit: int | None = None,
+        recall_mode: str | None = None,
+        recent: int | None = None,
+        recall_prefix: str | None = None,
         **attributes: Any,
     ) -> NodeRef:
         if name is None:
             name = self._auto_name(graph_keys.OP_QMEM)
-        if query is None:
+        if query is None and recall_mode != "recent":
             raise ValueError("query_memory() missing required keyword argument: 'query'")
-        attrs: dict[str, Any] = {graph_keys.QUERY: query}
+        # `recall_mode="recent"` returns the last-N session entries in temporal
+        # order (transcript-as-memory) instead of a relevance search;
+        # `recall_prefix` selects which ordered key series to read.
+        attrs: dict[str, Any] = {graph_keys.QUERY: query or ""}
         if space is not None:
             attrs[graph_keys.MEMORY_TIER] = space
         if limit is not None:
             attrs[graph_keys.LIMIT] = limit
+        if recall_mode is not None:
+            attrs["recall_mode"] = recall_mode
+        if recent is not None:
+            attrs["recent"] = recent
+        if recall_prefix is not None:
+            attrs["recall_prefix"] = recall_prefix
         attrs = self._apply_policy(attrs, attributes)
         return self._add_node(name, graph_keys.OP_QMEM, attrs)
 
@@ -410,6 +433,97 @@ class GraphRecorder:
         for _name, ref in auto_pairs:
             self.add_edge(ref, node)
         return node
+
+    def register_hook(
+        self,
+        name: str | None = None,
+        *,
+        event: str | None = None,
+        handler_id: str | None = None,
+        fn: Any | None = None,
+        match: str = "*",
+        mode: str = "observe",
+        **attributes: Any,
+    ) -> NodeRef:
+        """Register an author lifecycle hook (REGISTER_HOOK).
+
+        Emits a belief-style registration node binding a lifecycle ``event`` to a
+        Python ``handler_id`` (dispatched via the same tool bridge as ``@tool`` —
+        constitution #4). The binding travels inside the artifact (AIR-portable —
+        constitution #3) and is installed into the runtime hook registry.
+
+        Pass either a ``@hook``-decorated ``HookFn`` (or its raw handler) as ``fn``
+        — its handler is registered into the artifact's python-tools sidecar so
+        the runtime bridge can resolve and dispatch it — or, for the advanced
+        case where the sidecar is supplied separately, just a ``handler_id``.
+        """
+        if event is None:
+            raise ValueError("register_hook() missing required keyword argument: 'event'")
+        if fn is not None:
+            # Accept a HookFn (has .handler_id + .fn) or a raw callable.
+            raw = getattr(fn, "fn", fn)
+            if handler_id is None:
+                handler_id = getattr(fn, "handler_id", None)
+            self._register_hook_handler_sidecar(handler_id, raw, getattr(fn, "name", None))
+        if handler_id is None:
+            raise ValueError(
+                "register_hook() needs 'handler_id' or a 'fn' that carries one"
+            )
+        if name is None:
+            name = self._auto_name(graph_keys.OP_REGISTER_HOOK)
+        attrs: dict[str, Any] = {
+            graph_keys.HOOK_EVENT: event,
+            graph_keys.HOOK_MATCH: match,
+            graph_keys.HOOK_MODE: mode,
+            graph_keys.PYTHON_HOOK_HANDLER_ID: handler_id,
+        }
+        attrs = self._apply_policy(attrs, attributes)
+        return self._add_node(name, graph_keys.OP_REGISTER_HOOK, attrs)
+
+    def _register_hook_handler_sidecar(
+        self, handler_id: str | None, raw_fn: Any, hook_name: str | None
+    ) -> None:
+        """Add a hook handler to the python-tools sidecar so the bridge resolves
+        it (hooks share the @tool dispatch path — constitution #4)."""
+        if handler_id is None or handler_id in self._python_tool_ids:
+            return
+        self._python_tool_ids.add(handler_id)
+        module = getattr(raw_fn, "__module__", "__unknown__") or "__unknown__"
+        qualname = getattr(raw_fn, "__qualname__", getattr(raw_fn, "__name__", "hook"))
+        descriptor: dict[str, Any] = {
+            graph_keys.PYTHON_TOOL_MANIFEST_HANDLER_ID: handler_id,
+            graph_keys.PYTHON_TOOL_MANIFEST_MODULE: module,
+            graph_keys.PYTHON_TOOL_MANIFEST_QUALNAME: qualname,
+            graph_keys.PYTHON_TOOL_MANIFEST_NAME: hook_name or qualname,
+            graph_keys.PYTHON_TOOL_MANIFEST_DESCRIPTION: "lifecycle hook",
+            graph_keys.PYTHON_TOOL_MANIFEST_SCHEMA: {},
+        }
+        source_file = inspect.getsourcefile(raw_fn)
+        if source_file:
+            descriptor[graph_keys.PYTHON_TOOL_MANIFEST_SOURCE_FILE] = source_file
+        self._python_tools.append(descriptor)
+
+    def skill_search(
+        self,
+        name: str | None = None,
+        *,
+        query: str | None = None,
+        imports: list[str] | None = None,
+        **attributes: Any,
+    ) -> NodeRef:
+        """Discover installed skills by description (the real ``search_skills``).
+
+        First-class wrapper over the runtime ``search_skills`` capability so
+        authors need not know the capability name. Ranks the visible skills by
+        their description and returns the matches. ``{name}`` placeholders in
+        ``query`` auto-wire as data operands exactly like :meth:`ask`.
+        """
+        if query is None:
+            raise ValueError("skill_search() missing required keyword argument: 'query'")
+        params: dict[str, Any] = {"query": query}
+        if imports is not None:
+            params["imports"] = imports
+        return self.invoke(name, capability="search_skills", params=params, **attributes)
 
     def register_tool(self, tool: FunctionTool, name: str | None = None, **attributes: Any) -> NodeRef:
         """Register a Python @tool function as a runtime capability."""

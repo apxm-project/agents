@@ -47,8 +47,13 @@ impl OperationMiddleware for ConversationMemoryMiddleware {
         inputs: Vec<Value>,
         next: Next<'_>,
     ) -> Result<Value> {
+        // pre_turn hooks fire before the turn's ask (gate-capable → fail-closed).
+        crate::executor::hook_driver::run_pre_turn_hooks(ctx).await?;
         let result = next.run(ctx, node, inputs).await;
         if let Ok(Value::String(answer)) = &result {
+            // post_ask + post_turn hooks fire with the reply (observe; FR-005).
+            crate::executor::hook_driver::run_post_ask_hooks(ctx, answer).await;
+            crate::executor::hook_driver::run_post_turn_hooks(ctx, answer).await;
             let scope = ctx.memory_scope().to_string();
             let mem = ctx.memory();
             let next_turn = mem

@@ -222,6 +222,30 @@ class ApxmGraph:
             lines.append("    %result = ais.const_str \"result\" : !ais.token")
             lines.append("    func.return %result : !ais.token")
 
+        return self._wrap_func_lines(lines)
+
+    def to_func_air(self) -> str:
+        """Emit just the `func.func @<name>(...) { ... }` block (no module wrapper).
+
+        Used by the multi-flow module emitter so several graphs can share one
+        `module { ... }` — a `ConversationalAgent` lowers to one entry loop flow,
+        one turn flow, and one flow per sub-agent, all inside a single module.
+        """
+        # `to_air()` builds the body lines then defers to `_wrap_func_lines`;
+        # re-run the body build here without the module wrapper by reusing the
+        # full emit and stripping the wrapper. Simpler: regenerate via to_air()
+        # and drop the first/last `module {`/`}` lines.
+        air = self.to_air()
+        body = air.split("\n")
+        # Drop leading "module {" and trailing "}"
+        if body and body[0].strip() == "module {":
+            body = body[1:]
+        if body and body[-1].strip() == "}":
+            body = body[:-1]
+        return "\n".join(body)
+
+    def _wrap_func_lines(self, body_lines: list[str]) -> str:
+        """Wrap emitted body lines in the func signature and a module."""
         # Build function signature
         func_name = self._sanitize_name(self.name)
         args = []
@@ -242,22 +266,28 @@ class ApxmGraph:
 
         attrs_str = " attributes {ais.entry}" if is_entry else ""
 
-        # Assemble module
         mlir_lines = ["module {"]
         mlir_lines.append(f"  func.func @{func_name}({args_str}) -> !ais.token{attrs_str} {{")
-        mlir_lines.extend(lines)
+        mlir_lines.extend(body_lines)
         mlir_lines.append("  }")
         mlir_lines.append("}")
 
         return "\n".join(mlir_lines)
 
     def _sanitize_name(self, name: str) -> str:
-        """Sanitize graph name for use as MLIR function name."""
-        # Replace spaces and special chars with underscores
+        """Sanitize graph name for use as MLIR function name.
+
+        A dot is preserved because `<Agent>.<flow>` is the canonical multi-flow
+        naming convention: `reconstruct_agents_from_artifact` splits on the dot
+        to register each flow under the right agent (DELEGATE/FLOW_CALL resolve
+        by name). MLIR bare identifiers permit `.`, so `@researcher.main` is a
+        valid symbol. Other special chars still collapse to `_`.
+        """
+        # Replace spaces and special chars with underscores, but keep dots.
         import re
-        sanitized = re.sub(r'[^a-zA-Z0-9_]', '_', name)
-        # Ensure it doesn't start with a digit
-        if sanitized and sanitized[0].isdigit():
+        sanitized = re.sub(r'[^a-zA-Z0-9_.]', '_', name)
+        # Ensure it doesn't start with a digit or a dot
+        if sanitized and (sanitized[0].isdigit() or sanitized[0] == "."):
             sanitized = f"flow_{sanitized}"
         return sanitized or "unnamed_flow"
 
@@ -373,6 +403,23 @@ class ApxmGraph:
         )
 
 
+def emit_multi_flow_module(graphs: list["ApxmGraph"]) -> str:
+    """Serialize N captured graphs into ONE `module { func.func @A … func.func @B }`.
+
+    This is the multi-flow artifact shape a `ConversationalAgent` lowers to: an
+    entry loop flow, the author turn flow, and one flow per sub-agent, all in a
+    single module. The runtime/artifact layer is already multi-DAG
+    (`reconstruct_agents_from_artifact` walks every `func.func`); this emitter is
+    the frontend half that was previously limited to one `func.func`.
+    """
+    if not graphs:
+        return "module {\n}"
+    func_blocks: list[str] = []
+    for graph in graphs:
+        func_blocks.append(graph.to_func_air())
+    return "module {\n" + "\n".join(func_blocks) + "\n}"
+
+
 # ============================================================================
 # APXM contract validation
 # ============================================================================
@@ -480,6 +527,7 @@ def validate_against_apxm(graph: ApxmGraph) -> ValidationResult:
 
     errors.extend(_validate_spawn_communicate_dependencies(graph))
     errors.extend(_validate_llm_operation_attributes(graph))
+    errors.extend(_validate_register_hook(graph))
 
     # --- parameter checks --------------------------------------------------
     param_names: set[str] = set()
@@ -515,6 +563,53 @@ def validate_against_apxm(graph: ApxmGraph) -> ValidationResult:
         errors=errors,
         warnings=warnings,
     )
+
+
+_HOOK_LIFECYCLE_EVENTS = frozenset(
+    {
+        "session_start",
+        "pre_turn",
+        "post_turn",
+        "pre_ask",
+        "post_ask",
+        "pre_tool",
+        "post_tool",
+    }
+)
+_HOOK_GATE_EVENTS = frozenset({"session_start", "pre_turn", "pre_ask", "pre_tool"})
+
+
+def _validate_register_hook(graph: ApxmGraph) -> list[str]:
+    """AIR validation for REGISTER_HOOK nodes (T042).
+
+    Flags: unknown ``hook_event``; ``gate`` mode on a non-pre event; missing
+    ``python_hook_handler_id``.
+    """
+    errors: list[str] = []
+    for node in graph.nodes:
+        if node.op != "REGISTER_HOOK":
+            continue
+        event = node.attributes.get(c.HOOK_EVENT)
+        if not isinstance(event, str) or event not in _HOOK_LIFECYCLE_EVENTS:
+            valid = ", ".join(sorted(_HOOK_LIFECYCLE_EVENTS))
+            errors.append(
+                f"node '{node.name}' (REGISTER_HOOK) has unknown hook_event "
+                f"{event!r}; expected one of {valid}"
+            )
+            continue
+        mode = node.attributes.get(c.HOOK_MODE, "observe")
+        if mode == "gate" and event not in _HOOK_GATE_EVENTS:
+            errors.append(
+                f"node '{node.name}' (REGISTER_HOOK) uses gate mode on non-pre "
+                f"event {event!r}; gate is only valid on pre-execution events"
+            )
+        handler = node.attributes.get(c.PYTHON_HOOK_HANDLER_ID)
+        if not isinstance(handler, str) or not handler:
+            errors.append(
+                f"node '{node.name}' (REGISTER_HOOK) is missing "
+                f"python_hook_handler_id"
+            )
+    return errors
 
 
 def _validate_llm_operation_attributes(graph: ApxmGraph) -> list[str]:

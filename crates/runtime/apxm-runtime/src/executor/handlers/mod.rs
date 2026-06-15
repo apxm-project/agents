@@ -30,6 +30,7 @@ pub mod print;
 pub mod qmem;
 pub mod reflect;
 pub mod register_capability;
+pub mod register_hook;
 pub mod resume; // RESUME handler
 pub mod return_op;
 pub mod spawn_agent;

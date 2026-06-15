@@ -299,6 +299,21 @@ impl Runtime {
         if let Some(bridge) = python_tool_bridge {
             ctx = ctx.with_python_tool_bridge(bridge);
         }
+        // Attach a per-artifact hook registry (lifetime = the python tool bridge,
+        // inherited by child contexts). REGISTER_HOOK nodes populate it; the
+        // interceptor/middleware/pre-step drivers read it. Empty when the
+        // artifact declares no hooks.
+        ctx = ctx.with_hook_registry(std::sync::Arc::new(
+            crate::executor::hooks::HookRegistry::new(),
+        ));
+        // Attach the per-session ledger (turn caps / tool budgets / grants),
+        // seeded by the server at execution start and keyed by session_id, so
+        // the runtime owns per-session limits rather than the host (T031).
+        if let Some(sid) = ctx.session_id.clone()
+            && let Some(ledger) = crate::executor::session_ledger::get(&sid)
+        {
+            ctx = ctx.with_session_ledger(ledger);
+        }
         ctx
     }
 
@@ -377,6 +392,27 @@ impl Runtime {
     /// Get a reference to the sandbox registry.
     pub fn sandbox_registry(&self) -> &SandboxRegistry {
         &self.sandbox_registry
+    }
+
+    /// Select an OS-isolating sandbox backend for the python tool/hook worker,
+    /// gated on the `APXM_SANDBOX_PYTHON` opt-in so default behavior is
+    /// unchanged. Returns `None` when the opt-in is unset or no isolating
+    /// backend (e.g. bubblewrap) is available — the worker then runs directly.
+    fn python_worker_sandbox(&self) -> Option<Arc<dyn crate::sandbox::SandboxBackend>> {
+        if !Self::python_sandbox_required() {
+            return None;
+        }
+        self.sandbox_registry
+            .select(crate::sandbox::IsolationLevel::OsLevel)
+            .ok()
+    }
+
+    /// Whether the operator requires the python worker to be sandboxed
+    /// (`APXM_SANDBOX_PYTHON`). When true the worker spawn fails closed if no
+    /// OS-isolating backend is available, so the trust gate's isolation
+    /// guarantee cannot silently fail open.
+    fn python_sandbox_required() -> bool {
+        std::env::var_os("APXM_SANDBOX_PYTHON").is_some()
     }
 
     /// Attach a ModelRouter to the runtime.
@@ -531,7 +567,7 @@ impl Runtime {
         &self,
         artifact: Artifact,
     ) -> Result<RuntimeExecutionResult, RuntimeError> {
-        let python_bridge = python_tool_bridge_from_artifact(&artifact)?;
+        let python_bridge = python_tool_bridge_from_artifact(&artifact, self.python_worker_sandbox(), Self::python_sandbox_required())?;
         let entry_dag = find_entry_dag(&artifact)?;
 
         let agents = reconstruct_agents_from_artifact(&artifact);
@@ -797,7 +833,7 @@ impl Runtime {
             None
         };
 
-        let python_bridge = python_tool_bridge_from_artifact(&artifact)?;
+        let python_bridge = python_tool_bridge_from_artifact(&artifact, self.python_worker_sandbox(), Self::python_sandbox_required())?;
         let entry_dag = find_entry_dag(&artifact)?;
         validate_args(&entry_dag, &args)?;
 
@@ -1108,6 +1144,8 @@ const PYTHON_TOOLS_SECTION_KIND: &str = python_tools::CAPABILITY_NAME;
 /// has no such section, or `Err` if the section is present but malformed.
 fn python_tool_bridge_from_artifact(
     artifact: &Artifact,
+    sandbox: Option<Arc<dyn crate::sandbox::SandboxBackend>>,
+    sandbox_required: bool,
 ) -> Result<Option<Arc<PythonToolBridge>>, RuntimeError> {
     let section = artifact
         .sections()
@@ -1128,7 +1166,7 @@ fn python_tool_bridge_from_artifact(
 
     let registry = PythonToolRegistry::from_json(json)?;
     let tool_count = registry.len();
-    let bridge = PythonToolBridge::new(registry);
+    let bridge = PythonToolBridge::new(registry).with_sandbox(sandbox, sandbox_required);
 
     log_info!(
         "runtime",
@@ -1154,9 +1192,30 @@ fn find_entry_dag(artifact: &Artifact) -> Result<ExecutionDag, RuntimeError> {
     })
 }
 
+/// True when `dag` is an in-graph conversation loop entry: it contains an
+/// AUTONOMOUS `recv` anchor that binds its reserved turn parameter from the
+/// server turn-input endpoint at runtime (park/wake), not from launch args.
+fn is_turn_input_entry(dag: &ExecutionDag) -> bool {
+    dag.nodes.iter().any(|node| {
+        node.op_type == apxm_core::types::operations::AISOperationType::Autonomous
+            && node
+                .attributes
+                .get("mode")
+                .and_then(|v| v.as_str())
+                .map(|m| m == "recv")
+                .unwrap_or(false)
+    })
+}
+
 fn validate_args(dag: &ExecutionDag, args: &[String]) -> Result<(), RuntimeError> {
     let params = &dag.metadata.parameters;
     if args.len() != params.len() {
+        // A turn-input (recv) loop entry binds its reserved turn parameter from
+        // the server turn-input endpoint at runtime, so launching it with zero
+        // args is valid — the recv anchor parks for each user message (T024).
+        if args.is_empty() && is_turn_input_entry(dag) {
+            return Ok(());
+        }
         let flow_name = dag.metadata.name.as_deref().unwrap_or("<unnamed>");
         let param_desc = if params.is_empty() {
             "no parameters".to_string()

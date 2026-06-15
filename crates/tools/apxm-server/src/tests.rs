@@ -418,6 +418,7 @@ async fn test_state_with_skill_roots_and_execution_store(
         server_config: apxm_driver::ServerConfig::default(),
         cancel_registry: Arc::new(DashMap::new()),
         goal_runs: crate::goal_runs::GoalRunRegistry::new(),
+        session_registry: crate::conversations::SessionRegistry::new(),
     }
 }
 
@@ -453,6 +454,7 @@ async fn test_state_with_runtime_and_skill_roots(
         server_config: apxm_driver::ServerConfig::default(),
         cancel_registry: Arc::new(DashMap::new()),
         goal_runs: crate::goal_runs::GoalRunRegistry::new(),
+        session_registry: crate::conversations::SessionRegistry::new(),
     }
 }
 

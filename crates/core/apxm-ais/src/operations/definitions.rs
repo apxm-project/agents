@@ -139,6 +139,8 @@ pub enum AISOperationType {
     SpawnTeam,
     /// Register a new capability in the runtime registry.
     RegisterCapability,
+    /// Register an author lifecycle hook into the per-artifact hook registry.
+    RegisterHook,
 
     // Autonomous Execution
     /// Run a goal-directed autonomous loop.
@@ -202,6 +204,7 @@ pub const WIRE_INDEXED_OPERATIONS: &[(u32, AISOperationType)] = &[
     (40, AISOperationType::Handoff),
     (41, AISOperationType::WorkflowSpawn),
     (42, AISOperationType::CallSkill),
+    (43, AISOperationType::RegisterHook),
 ];
 
 impl fmt::Display for AISOperationType {
@@ -260,6 +263,7 @@ impl fmt::Display for AISOperationType {
             AISOperationType::SpawnAgent => write!(f, "SPAWN_AGENT"),
             AISOperationType::SpawnTeam => write!(f, "SPAWN_TEAM"),
             AISOperationType::RegisterCapability => write!(f, "REGISTER_CAPABILITY"),
+            AISOperationType::RegisterHook => write!(f, "REGISTER_HOOK"),
             // Autonomous
             AISOperationType::Autonomous => write!(f, "AUTONOMOUS"),
             // Durable Execution
@@ -318,6 +322,7 @@ impl std::str::FromStr for AISOperationType {
             "spawn_agent" => Ok(AISOperationType::SpawnAgent),
             "spawn_team" => Ok(AISOperationType::SpawnTeam),
             "register_capability" => Ok(AISOperationType::RegisterCapability),
+            "register_hook" => Ok(AISOperationType::RegisterHook),
             "autonomous" => Ok(AISOperationType::Autonomous),
             "checkpoint" => Ok(AISOperationType::Checkpoint),
             "const_str" => Ok(AISOperationType::ConstStr),
@@ -371,6 +376,7 @@ impl AISOperationType {
             AISOperationType::SpawnAgent => "spawn_agent",
             AISOperationType::SpawnTeam => "spawn_team",
             AISOperationType::RegisterCapability => "register_capability",
+            AISOperationType::RegisterHook => "register_hook",
             AISOperationType::Autonomous => "autonomous",
             AISOperationType::Checkpoint => "checkpoint",
             AISOperationType::ConstStr => "const_str",
@@ -448,6 +454,7 @@ impl AISOperationType {
             AISOperationType::SpawnAgent,
             AISOperationType::SpawnTeam,
             AISOperationType::RegisterCapability,
+            AISOperationType::RegisterHook,
             AISOperationType::Autonomous,
             AISOperationType::Checkpoint,
             AISOperationType::ConstStr,
@@ -1959,6 +1966,49 @@ pub static AIS_OPERATIONS: &[OperationSpec] = &[
             syntactic_keywords: &[],
         },
     },
+    OperationSpec {
+        op_type: AISOperationType::RegisterHook,
+        name: "RegisterHook",
+        category: OperationCategory::Coordination,
+        description: "Register an author lifecycle hook into the artifact hook registry",
+        long_description: "Registers one author lifecycle hook (a Python handler bound to a \
+            lifecycle event) into the per-artifact hook registry. Mirrors REGISTER_CAPABILITY: \
+            the binding travels inside the artifact (AIR-portable) and the handler is dispatched \
+            via the same Python tool bridge as @tool. The runtime applies pre/post_tool hooks at \
+            the tool dispatch sites, pre/post_ask as Ask middleware, and session_start as an \
+            awaited pre-step.",
+        latency: OperationLatency::Low,
+        example_json: Some(
+            r#"{\"id\": 4, \"op\": \"REGISTER_HOOK\", \"attributes\": {\"hook_event\": \"pre_tool\", \"hook_match\": \"lookup\", \"hook_mode\": \"gate\", \"python_hook_handler_id\": \"sha256:...\"}}"#,
+        ),
+        fields: &[
+            OperationField::required(attrs::HOOK_EVENT, "Lifecycle event the hook binds to"),
+            OperationField::optional(
+                attrs::HOOK_MATCH,
+                "Glob over tool/op name the hook applies to (default *)",
+            ),
+            OperationField::optional(attrs::HOOK_MODE, "Hook mode: observe or gate"),
+            OperationField::required(
+                attrs::PYTHON_HOOK_HANDLER_ID,
+                "Stable content-addressed id (sha256:<hex64>) for the Python hook handler",
+            ),
+        ],
+        needs_submission: true,
+        min_inputs: 0,
+        produces_output: true,
+        emission: MlirEmissionSpec {
+            primary_attr: Some(attrs::HOOK_EVENT),
+            context_style: ContextStyle::None,
+            result_type: MlirResultType::Token,
+            positional_attrs: &[],
+            keywords: &[
+                attrs::HOOK_MATCH,
+                attrs::HOOK_MODE,
+                attrs::PYTHON_HOOK_HANDLER_ID,
+            ],
+            syntactic_keywords: &[],
+        },
+    },
     // ========== Autonomous Execution ==========
     OperationSpec {
         op_type: AISOperationType::Autonomous,
@@ -2210,13 +2260,13 @@ mod tests {
     fn test_operation_counts() {
         assert_eq!(
             AIS_OPERATIONS.len(),
-            44,
-            "Expected 44 total operations (1 metadata + 41 public + 2 internal)"
+            45,
+            "Expected 45 total operations (1 metadata + 42 public + 2 internal)"
         );
         assert_eq!(
             AISOperationType::all_operations().len(),
-            44,
-            "Expected 44 total operation types"
+            45,
+            "Expected 45 total operation types"
         );
     }
 

@@ -13,6 +13,7 @@ pub(crate) const MEMORY_FACTS_SEARCH: &str = "/v1/memory/facts/search";
 pub(crate) const MEMORY_FACTS_DELETE: &str = "/v1/memory/facts/delete";
 pub(crate) const CAPABILITIES: &str = "/v1/capabilities";
 pub(crate) const CAPABILITIES_REGISTER: &str = "/v1/capabilities/register";
+pub(crate) const CAPABILITIES_RESCAN: &str = "/v1/capabilities/rescan";
 pub(crate) const CAPABILITY_INVOKE: &str = "/v1/capabilities/{capability_id}/invoke";
 pub(crate) const SKILLS: &str = "/v1/skills";
 pub(crate) const SKILL_DETAIL: &str = "/v1/skills/{id}";
@@ -30,6 +31,7 @@ pub(crate) const TASKS: &str = "/v1/tasks";
 pub(crate) const TASK_QUEUE: &str = "/v1/tasks/{queue}";
 pub(crate) const TASK_CLAIM: &str = "/v1/tasks/{queue}/claim";
 pub(crate) const TASK_COMPLETE: &str = "/v1/tasks/{id}/complete";
+pub(crate) const CONVERSATION_MESSAGE: &str = "/v1/conversations/{session_id}/message";
 pub(crate) const CHECKPOINTS: &str = "/v1/checkpoints";
 pub(crate) const CHECKPOINT_DETAIL: &str = "/v1/checkpoints/{id}";
 pub(crate) const CHECKPOINT_RESUME: &str = "/v1/checkpoints/{id}/resume";
@@ -80,6 +82,7 @@ pub(crate) enum ServerRoute {
     MemoryFactsDelete,
     Capabilities,
     CapabilitiesRegister,
+    CapabilitiesRescan,
     CapabilityInvoke,
     Skills,
     SkillDetail,
@@ -97,6 +100,7 @@ pub(crate) enum ServerRoute {
     TaskQueue,
     TaskClaim,
     TaskComplete,
+    ConversationMessage,
     Checkpoints,
     CheckpointDetail,
     CheckpointResume,
@@ -143,6 +147,7 @@ impl ServerRoute {
             Self::MemoryFactsDelete => MEMORY_FACTS_DELETE,
             Self::Capabilities => CAPABILITIES,
             Self::CapabilitiesRegister => CAPABILITIES_REGISTER,
+            Self::CapabilitiesRescan => CAPABILITIES_RESCAN,
             Self::CapabilityInvoke => CAPABILITY_INVOKE,
             Self::Skills => SKILLS,
             Self::SkillDetail => SKILL_DETAIL,
@@ -160,6 +165,7 @@ impl ServerRoute {
             Self::TaskQueue => TASK_QUEUE,
             Self::TaskClaim => TASK_CLAIM,
             Self::TaskComplete => TASK_COMPLETE,
+            Self::ConversationMessage => CONVERSATION_MESSAGE,
             Self::Checkpoints => CHECKPOINTS,
             Self::CheckpointDetail => CHECKPOINT_DETAIL,
             Self::CheckpointResume => CHECKPOINT_RESUME,

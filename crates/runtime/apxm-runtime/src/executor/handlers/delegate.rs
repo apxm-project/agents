@@ -8,7 +8,11 @@
 //! - `task_spec`     (required): description of the task to delegate
 //! - `target_agent`  (required): name of the agent to delegate to
 
-use super::{ExecutionContext, Node, Result, Value, get_string_attribute};
+use super::{
+    ExecutionContext, Node, Result, Value, execute_llm_request_for_node, get_string_attribute,
+    read_stm_with_scope_fallback,
+};
+use apxm_backends::LLMRequest;
 use crate::aam::{ScopeSpec, TransitionLabel};
 use crate::executor::ExecutorEngine;
 use crate::flow_names::DELEGATE_FLOWS as DELEGATE_FLOW_NAMES;
@@ -46,17 +50,46 @@ pub async fn execute(ctx: &ExecutionContext, node: &Node, inputs: Vec<Value>) ->
             }
         }
         match found {
-            Some(dag) => dag,
-            None => {
-                return Err(RuntimeError::Operation {
-                    op_type: node.op_type,
-                    message: format!(
-                        "Agent '{}' not found or has no 'delegate'/'main' flow",
-                        target_agent
-                    ),
-                });
-            }
+            Some(dag) => Some(dag),
+            None => None,
         }
+    };
+
+    // Inline fallback (mirrors HANDOFF): when the target has no sibling
+    // `delegate`/`main` flow in the artifact, look up `agent_info:<target>` in
+    // STM (written by SPAWN_AGENT) and dispatch the task as a one-shot LLM ASK
+    // against that agent's config. This makes `delegate(researcher)` work for an
+    // inline-spawned sub-agent even before a multi-func flow is emitted (FR; US5).
+    let Some(sub_dag) = sub_dag else {
+        if let Some(response) =
+            delegate_inline_agent(ctx, node, &target_agent, &task_spec, inputs.first()).await?
+        {
+            ctx.aam.set_belief(
+                format!("{}{}", belief_keys::DELEGATE_PREFIX, target_agent),
+                Value::Null,
+                TransitionLabel::Custom(format!("delegate_completed:{}", target_agent)),
+            );
+            let task_handle = format!("delegate_{}_{}", target_agent, ctx.execution_id);
+            let mut result_obj = HashMap::new();
+            result_obj.insert(
+                response_keys::TASK_HANDLE.to_string(),
+                Value::String(task_handle),
+            );
+            result_obj.insert(response_keys::RESULT.to_string(), response);
+            let result = Value::Object(result_obj);
+            if let Some(emitter) = &ctx.event_emitter {
+                emitter.emit_node_output_with_name(node.id, node.metadata.name.as_deref(), &result);
+            }
+            return Ok(result);
+        }
+        return Err(RuntimeError::Operation {
+            op_type: node.op_type,
+            message: format!(
+                "Agent '{}' not found: no 'delegate'/'main' flow and no inline \
+                 SPAWN_AGENT agent_info in STM",
+                target_agent
+            ),
+        });
     };
 
     // Create a child context for sub-flow execution
@@ -146,5 +179,69 @@ pub async fn execute(ctx: &ExecutionContext, node: &Node, inputs: Vec<Value>) ->
     }
 
     Ok(result)
+}
+
+/// Inline fallback dispatch when the target sub-agent has no registered flow.
+///
+/// Mirrors `handoff_inline_agent`: reads `agent_info:<target>` from STM (written
+/// by SPAWN_AGENT) and, if it carries a `system_prompt`/`backend`/`model`,
+/// dispatches the task spec as a one-shot LLM ASK against that agent's config.
+/// Returns `Ok(None)` when no usable inline agent info is present so the caller
+/// can surface the original "not found" error.
+async fn delegate_inline_agent(
+    ctx: &ExecutionContext,
+    node: &Node,
+    target: &str,
+    task_spec: &str,
+    input: Option<&Value>,
+) -> Result<Option<Value>> {
+    let key = format!("{}{}", belief_keys::AGENT_INFO_PREFIX, target);
+    let agent_info = match read_stm_with_scope_fallback(ctx, &key).await {
+        Some(Value::Object(obj)) => obj,
+        _ => return Ok(None),
+    };
+
+    let system_prompt = agent_info
+        .get(response_keys::SYSTEM_PROMPT)
+        .and_then(|v| v.as_string())
+        .cloned();
+    let backend = agent_info
+        .get(response_keys::BACKEND)
+        .and_then(|v| v.as_string())
+        .cloned();
+    let model = agent_info
+        .get(response_keys::MODEL)
+        .and_then(|v| v.as_string())
+        .cloned();
+
+    // Metadata-only entries (e.g. ACP subprocess agents) shouldn't be auto-run.
+    if system_prompt.is_none() && backend.is_none() && model.is_none() {
+        return Ok(None);
+    }
+
+    let prompt = match input.and_then(|v| v.as_string()) {
+        Some(extra) if !extra.is_empty() => format!("{task_spec}\n\n{extra}"),
+        _ => task_spec.to_string(),
+    };
+
+    let mut request = LLMRequest::new(prompt).with_operation_type(node.op_type);
+    if let Some(sp) = system_prompt {
+        request = request.with_system_prompt(sp);
+    }
+    if let Some(b) = backend {
+        request = request.with_backend(b);
+    }
+    if let Some(m) = model {
+        request = request.with_model(m);
+    }
+
+    tracing::info!(
+        execution_id = %ctx.execution_id,
+        target = %target,
+        "DELEGATE dispatching to inline-spawned agent via LLM"
+    );
+
+    let response = execute_llm_request_for_node(ctx, node, "DELEGATE", &request).await?;
+    Ok(Some(Value::String(response.content)))
 }
 

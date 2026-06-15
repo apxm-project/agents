@@ -389,6 +389,8 @@ async fn prepare_workflow_run(
         tool_credentials: _,
         owner,
         user_text: _,
+        // MCP-generated workflows stay python-free (no author handlers here).
+        python_tools_sidecar: _,
     } = prepare_request(execute_request)?;
     debug_assert!(args.is_empty(), "workflow wrapper takes no positional args");
     let session_id = session_id.expect("workflow_start always supplies a session_id");

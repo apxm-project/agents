@@ -26,6 +26,8 @@ use super::cancellation::CancellationToken;
 use super::dag_splicer::{DagSplicer, NoOpSplicer};
 use super::events::ExecutionEventEmitter;
 use super::fields_honored::FieldsHonoredCollector;
+use super::hooks::HookRegistry;
+use super::session_ledger::SessionLedger;
 use super::graph_metrics::GraphMetricsTracker;
 use super::handlers::warmup::{WarmupConfig, WarmupMetrics};
 use super::inner_plan_linker::{InnerPlanLinker, NoOpLinker};
@@ -119,6 +121,17 @@ pub struct ExecutionContext {
     /// `@apxm.tool`-decorated Python handlers. `None` when no Python
     /// tools are registered in the artifact.
     pub python_tool_bridge: Option<Arc<PythonToolBridge>>,
+    /// Per-artifact registry of program-authored lifecycle hooks (`@hook`),
+    /// resolved at load from the hooks sidecar / `REGISTER_HOOK` nodes. Shares
+    /// the python tool bridge's lifetime and is inherited by child contexts so
+    /// spawned-agent / called-skill turns see the same author hooks. `None`
+    /// when the artifact declares no hooks.
+    pub hook_registry: Option<Arc<HookRegistry>>,
+    /// Per-session ledger (turn caps / per-tool budgets / grant set) keyed by
+    /// `session_id`, owned by the runtime rather than the host (constitution #2).
+    /// Inherited by child contexts so a one-execution-per-session conversation
+    /// enforces caps across re-armed turns. `None` for non-session executions.
+    pub session_ledger: Option<Arc<SessionLedger>>,
     /// Current span ID for hierarchical event nesting. Each node
     /// execution pushes a new child span; the parent is restored on
     /// completion.
@@ -223,6 +236,8 @@ impl ExecutionContext {
             model_router: None,
             agent_pool: Arc::new(AgentPool::new(4, std::time::Duration::from_secs(300))),
             python_tool_bridge: None,
+            hook_registry: None,
+            session_ledger: None,
             current_span_id: None,
             current_scope_id: None,
             agent_scope_stack: Arc::new(AgentScopeStack::new()),
@@ -532,6 +547,8 @@ impl ExecutionContext {
             model_router: self.model_router.as_ref().map(Arc::clone),
             agent_pool: Arc::clone(&self.agent_pool),
             python_tool_bridge: self.python_tool_bridge.as_ref().map(Arc::clone),
+            hook_registry: self.hook_registry.as_ref().map(Arc::clone),
+            session_ledger: self.session_ledger.as_ref().map(Arc::clone),
             current_span_id: self.current_span_id.clone(),
             current_scope_id: child_scope_id_for_events,
             // Share the agent-scope stack with the child so that
@@ -570,6 +587,29 @@ impl ExecutionContext {
     pub fn with_python_tool_bridge(mut self, bridge: Arc<PythonToolBridge>) -> Self {
         self.python_tool_bridge = Some(bridge);
         self
+    }
+
+    /// Attach the per-artifact author hook registry (`@hook` bindings). Shares
+    /// the python tool bridge's lifetime; inherited by child contexts.
+    pub fn with_hook_registry(mut self, registry: Arc<HookRegistry>) -> Self {
+        self.hook_registry = Some(registry);
+        self
+    }
+
+    /// Author hook registry for this execution, if the artifact declared hooks.
+    pub fn hook_registry(&self) -> Option<&Arc<HookRegistry>> {
+        self.hook_registry.as_ref()
+    }
+
+    /// Attach the per-session ledger (turn caps / tool budgets / grants).
+    pub fn with_session_ledger(mut self, ledger: Arc<SessionLedger>) -> Self {
+        self.session_ledger = Some(ledger);
+        self
+    }
+
+    /// Per-session ledger for this execution, if session-scoped.
+    pub fn session_ledger(&self) -> Option<&Arc<SessionLedger>> {
+        self.session_ledger.as_ref()
     }
 
     pub fn aam(&self) -> &Aam {

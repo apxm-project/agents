@@ -261,9 +261,11 @@ pub(crate) async fn run_air_inner(
         // Only the streaming path records a durable transcript; the raw
         // execute path has no rollout, so the verbatim prompt is unused here.
         user_text: _,
+        python_tools_sidecar,
     } = prepare_request(req)?;
     let known_caps = registered_capability_names(state);
     let mut artifact = air_to_artifact_with_caps(&air, &known_caps)?;
+    attach_trusted_python_section(&mut artifact, python_tools_sidecar);
     validate_raw_execute_admission(&artifact, state, &admit)?;
     inject_resolved_credentials(&mut artifact, owner.as_deref()).await?;
     let resolved_credentials =
@@ -311,9 +313,11 @@ pub(crate) async fn execute_stream(
         tool_credentials,
         owner,
         user_text,
+        python_tools_sidecar,
     } = prepare_request(req)?;
     let known_caps = registered_capability_names(&state);
     let mut artifact = air_to_artifact_with_caps(&air, &known_caps)?;
+    attach_trusted_python_section(&mut artifact, python_tools_sidecar);
     validate_raw_execute_admission(&artifact, &state, &admit)?;
     inject_resolved_credentials(&mut artifact, owner.as_deref()).await?;
     let resolved_credentials =
@@ -340,6 +344,22 @@ pub(crate) async fn execute_stream(
     // `POST /v1/runs/{execution_id}/cancel` abort this run at its next await
     // boundary; the entry is removed once the run settles either way.
     let execution_id = uuid::Uuid::new_v4().to_string();
+    // Seed the per-session runtime ledger (turn caps / tool budgets / grants)
+    // keyed by session_id and register the session→execution mapping, so the
+    // runtime owns per-session limits and the turn-input endpoint can find this
+    // session's long-lived execution (T014/T031, constitution #2). Idempotent
+    // across re-armed turns of the same session.
+    if let Some(sid) = &session_id {
+        apxm_runtime::executor::session_ledger::seed(
+            sid,
+            apxm_runtime::executor::session_ledger::SessionLedger::new(
+                None,
+                tool_call_budgets.clone(),
+                admit.iter().cloned().collect(),
+            ),
+        );
+        state.session_registry.register(sid.clone(), execution_id.clone());
+    }
     let cancel = Arc::new(Notify::new());
     state
         .cancel_registry
@@ -397,6 +417,10 @@ pub(crate) async fn execute_stream(
         false
     };
     let rollout_registry = state.rollout_registry.clone();
+    // Drop this session's registry record when its execution settles (only if it
+    // still points at this execution — a newer turn may have re-registered).
+    let session_registry = state.session_registry.clone();
+    let session_cleanup = session_id.clone();
 
     tokio::spawn(async move {
         // The admission slot is owned by the registered handle (released while
@@ -493,6 +517,9 @@ pub(crate) async fn execute_stream(
         }
         apxm_runtime::scheduler::admission_registry::unregister(&admission_id);
         cancel_registry.remove(&execution_id);
+        if let Some(sid) = &session_cleanup {
+            session_registry.remove_if_execution(sid, &execution_id);
+        }
     });
 
     let stream = async_stream::stream! {
@@ -522,6 +549,9 @@ pub(crate) struct PreparedRequest {
     pub(crate) owner: Option<String>,
     /// Verbatim user prompt for the durable transcript (streaming path only).
     pub(crate) user_text: Option<String>,
+    /// Captured `; __apxm_python_tools__` sidecar (stripped from the AIR text).
+    /// Injected as an artifact section only on the operator-trusted python path.
+    pub(crate) python_tools_sidecar: Option<Vec<u8>>,
 }
 
 pub(crate) fn prepare_request(mut req: ExecuteRequest) -> Result<PreparedRequest, ApiError> {
@@ -530,8 +560,12 @@ pub(crate) fn prepare_request(mut req: ExecuteRequest) -> Result<PreparedRequest
     }
     let (session_id, session_dir) =
         resolve_session_request(req.session_id.take(), req.session_root.take())?;
+    // Strip + capture the python-tools sidecar comment so the MLIR parser never
+    // sees a `;` line, and (on the trusted path) it can be re-attached to the
+    // compiled artifact as a section the runtime builds the python bridge from.
+    let (air, python_tools_sidecar) = crate::workflow_source::strip_python_tools_sidecar(&req.air);
     Ok(PreparedRequest {
-        air: req.air,
+        air,
         args: req.args,
         session_id,
         session_dir,
@@ -541,6 +575,7 @@ pub(crate) fn prepare_request(mut req: ExecuteRequest) -> Result<PreparedRequest
         tool_credentials: req.tool_credentials,
         owner: req.owner,
         user_text: req.user_text,
+        python_tools_sidecar,
     })
 }
 
@@ -765,32 +800,100 @@ pub(crate) fn registered_capability_names(state: &AppState) -> std::collections:
         .collect()
 }
 
+/// Single-tenant operator trust gate for running author python on the server.
+/// Per ADR 0001 the server stays python-free by default; python is admitted ONLY
+/// when the operator explicitly asserts trust AND the worker is sandboxed — both
+/// `APXM_TRUST_PYTHON_ARTIFACTS` and `APXM_SANDBOX_PYTHON` must be set. (Full
+/// multi-tenant provenance = cryptographic artifact signing, still future work.)
+pub(crate) fn python_artifacts_trusted() -> bool {
+    std::env::var_os("APXM_TRUST_PYTHON_ARTIFACTS").is_some()
+        && std::env::var_os("APXM_SANDBOX_PYTHON").is_some()
+}
+
+/// On the operator-trusted python path, re-attach the captured python-tools
+/// sidecar to the compiled artifact as a `python_tools` section so the runtime
+/// builds the (sandboxed) python bridge from it. No-op when untrusted or absent
+/// — the server then stays python-free and the admission guard rejects handlers.
+pub(crate) fn attach_trusted_python_section(
+    artifact: &mut Artifact,
+    sidecar: Option<Vec<u8>>,
+) {
+    if let Some(data) = sidecar
+        && python_artifacts_trusted()
+    {
+        artifact.add_section(apxm_artifact::ArtifactSection {
+            kind: apxm_runtime::python_tools::CAPABILITY_NAME.to_string(),
+            data,
+        });
+    }
+}
+
 pub(crate) fn validate_raw_execute_admission(
     artifact: &Artifact,
     state: &AppState,
     admit: &std::collections::HashSet<String>,
 ) -> Result<(), ApiError> {
-    if artifact
-        .sections()
-        .iter()
-        .any(|section| section.kind == apxm_runtime::python_tools::CAPABILITY_NAME)
+    let python_trusted = python_artifacts_trusted();
+    if !python_trusted
+        && artifact
+            .sections()
+            .iter()
+            .any(|section| section.kind == apxm_runtime::python_tools::CAPABILITY_NAME)
     {
         return Err(ApiError::bad_request(ERROR_RAW_PYTHON_TOOL_SECTIONS));
     }
 
+    // Agents declared as sibling flows in THIS artifact (`<name>.main` /
+    // `<name>.delegate`). Spawning them is self-contained — the program carries
+    // its own sub-agents — so it needs no external `--admit spawn_agent` grant
+    // (server-api admission; constitution #3). External/process spawns still do.
+    let in_artifact_agents: std::collections::HashSet<String> = artifact
+        .dags()
+        .iter()
+        .filter_map(|dag| dag.metadata.name.as_deref())
+        .filter_map(|name| name.split_once('.').map(|(agent, _flow)| agent.to_string()))
+        .collect();
+
+    // Capabilities the artifact provides itself (author @tools, python-backed),
+    // read from the python-tools section's manifest `name` fields. On the trusted
+    // python path an INV_TOOL of one of these is admitted (the sandboxed bridge
+    // serves it) even though it is not in the server registry. Section-based so it
+    // is independent of how the capability name is encoded on the node.
+    let in_artifact_caps: std::collections::HashSet<String> = artifact
+        .section_data(apxm_runtime::python_tools::CAPABILITY_NAME)
+        .and_then(|data| serde_json::from_slice::<serde_json::Value>(data).ok())
+        .and_then(|v| v.as_array().cloned())
+        .map(|tools| {
+            tools
+                .iter()
+                .filter_map(|t| t.get("name").and_then(|n| n.as_str()).map(String::from))
+                .collect()
+        })
+        .unwrap_or_default();
+
     for dag in artifact.dags() {
         for node in &dag.nodes {
-            if node.attributes.contains_key(graph_attrs::PYTHON_HANDLER_ID) {
+            if !python_trusted && node.attributes.contains_key(graph_attrs::PYTHON_HANDLER_ID) {
                 return Err(ApiError::bad_request(ERROR_RAW_PYTHON_TOOL_HANDLERS));
             }
 
             match node.op_type {
-                AISOperationType::InvTool => validate_raw_inv_tool_node(node, state, admit)?,
+                AISOperationType::InvTool => {
+                    validate_raw_inv_tool_node(node, state, admit, &in_artifact_caps)?
+                }
                 AISOperationType::Ask | AISOperationType::Think | AISOperationType::Reason => {
-                    validate_raw_llm_tool_exposure(node, state)?;
+                    validate_raw_llm_tool_exposure(node, state, &in_artifact_caps)?;
                 }
                 AISOperationType::SpawnAgent => {
-                    validate_raw_spawn_op_admission(ADMIT_SPAWN_AGENT, node, admit)?;
+                    let self_contained = node
+                        .attributes
+                        .get(graph_attrs::AGENT_NAME)
+                        .and_then(|v| v.as_string())
+                        .map(|name| in_artifact_agents.contains(name.as_str()))
+                        .unwrap_or(false);
+                    if !self_contained {
+                        validate_raw_spawn_op_admission(ADMIT_SPAWN_AGENT, node, admit)?;
+                    }
                 }
                 AISOperationType::SpawnTeam => {
                     validate_raw_spawn_op_admission(ADMIT_SPAWN_TEAM, node, admit)?;
@@ -834,6 +937,7 @@ fn validate_raw_inv_tool_node(
     node: &Node,
     state: &AppState,
     admit: &std::collections::HashSet<String>,
+    in_artifact_caps: &std::collections::HashSet<String>,
 ) -> Result<(), ApiError> {
     let capability = node
         .attributes
@@ -841,6 +945,13 @@ fn validate_raw_inv_tool_node(
         .and_then(|value| value.as_string())
         .ok_or_else(|| ApiError::bad_request(ERROR_INV_TOOL_MISSING_CAPABILITY))?;
     let capability_system = state.runtime.capability_system();
+
+    // On the operator-trusted python path, a capability the artifact declares
+    // itself via REGISTER_CAPABILITY (a python @tool) is provided by the
+    // sandboxed bridge, not the server registry — admit it.
+    if python_artifacts_trusted() && in_artifact_caps.contains(capability) {
+        return Ok(());
+    }
 
     if !capability_system.has_capability(capability) {
         return Err(ApiError::bad_request(format!(
@@ -874,14 +985,18 @@ fn validate_raw_inv_tool_node(
     }
 }
 
-fn validate_raw_llm_tool_exposure(node: &Node, state: &AppState) -> Result<(), ApiError> {
+fn validate_raw_llm_tool_exposure(
+    node: &Node,
+    state: &AppState,
+    in_artifact_caps: &std::collections::HashSet<String>,
+) -> Result<(), ApiError> {
     let Some(requested_tools) = parse_string_array_attr(node, graph_attrs::TOOLS) else {
         return validate_raw_ask_group_or_all_tools(node, state);
     };
     if requested_tools.is_empty() {
         return validate_raw_ask_group_or_all_tools(node, state);
     }
-    validate_read_only_tool_names(&requested_tools, state)
+    validate_read_only_tool_names(&requested_tools, state, in_artifact_caps)
 }
 
 /// The authoring tool group (Goal 1): write-class capabilities SAFE to *expose*
@@ -936,9 +1051,20 @@ fn validate_raw_ask_group_or_all_tools(node: &Node, state: &AppState) -> Result<
     Ok(())
 }
 
-fn validate_read_only_tool_names(tool_names: &[String], state: &AppState) -> Result<(), ApiError> {
+fn validate_read_only_tool_names(
+    tool_names: &[String],
+    state: &AppState,
+    in_artifact_caps: &std::collections::HashSet<String>,
+) -> Result<(), ApiError> {
     let capability_system = state.runtime.capability_system();
+    let python_trusted = python_artifacts_trusted();
     for tool_name in tool_names {
+        // An author @tool the artifact provides itself (python-backed) is served
+        // by the sandboxed bridge on the trusted path — exposing it on the ASK is
+        // fine even though it is not in the server registry.
+        if python_trusted && in_artifact_caps.contains(tool_name) {
+            continue;
+        }
         let Some(metadata) = capability_system.get_metadata(tool_name) else {
             return Err(ApiError::bad_request(format!(
                 "raw execute capability '{tool_name}' is not registered"

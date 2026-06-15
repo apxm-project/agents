@@ -217,6 +217,150 @@ def _write_line(obj: dict[str, Any]) -> None:
 # ---------------------------------------------------------------------------
 
 
+HOOK_PAYLOAD_KEY: Final[str] = "__apxm_hook__"
+
+
+class _HookCall:
+    """The guarded tool call passed to a pre/post_tool hook."""
+
+    def __init__(self, name: str, args: dict[str, Any]) -> None:
+        self.name = name
+        self.args = args or {}
+
+
+class _HookCtx:
+    """Lifecycle-hook context. Control helpers return a decision dict the runtime
+    applies; side-effect helpers are best-effort (the worker subprocess has no
+    direct runtime-memory access — those degrade predictably)."""
+
+    def __init__(self, payload: dict[str, Any]) -> None:
+        self.remaining_budget = payload.get("remaining_budget")
+        self._system = payload.get("system", "")
+        # Recent conversation window the runtime pre-loads into the payload, so a
+        # hook can recall context without a worker->runtime callback (the bridge
+        # is unidirectional). The runtime applies any accumulated writes after the
+        # hook returns (see `_writes`), so umem() works on the post_turn path.
+        self._window = payload.get("window") or []
+        self._writes: list[dict[str, Any]] = []
+
+    def log(self, *args: Any) -> None:
+        print("[hook]", *args, file=sys.stderr)
+        return None
+
+    def allow(self) -> dict[str, Any]:
+        return {"decision": "allow"}
+
+    def deny(self, reason: str = "") -> dict[str, Any]:
+        return {"decision": "deny", "reason": reason}
+
+    def edit_args(self, args: dict[str, Any]) -> dict[str, Any]:
+        return {"decision": "edit_args", "args": args}
+
+    def replace_result(self, result: Any) -> dict[str, Any]:
+        return {"decision": "replace_result", "result": result}
+
+    def prepend_system(self, text: str) -> dict[str, Any]:
+        return {"decision": "prepend_system", "text": text}
+
+    def set_system(self, text: str) -> dict[str, Any]:
+        return {"decision": "set_system", "text": text}
+
+    def read_agents_md(self) -> str:
+        for candidate in ("AGENTS.md", "CLAUDE.md"):
+            try:
+                return Path(candidate).read_text()
+            except OSError:
+                continue
+        return ""
+
+    def recall_window(self, n: int = 4) -> str:
+        # The runtime pre-loads the recent window into the payload (no callback
+        # needed). Return the last-n turns joined; empty if none pre-loaded.
+        if not self._window:
+            return ""
+        return "\n".join(str(t) for t in self._window[-n:])
+
+    def umem(self, key: str, value: Any) -> None:
+        # Accumulate a memory write; the runtime applies it after the hook
+        # returns (carried back in the decision's `writes` list).
+        self._writes.append({"key": key, "value": value})
+        return None
+
+    def summarize(self, text: Any) -> str:
+        # Default heuristic summary (author may override with their own logic).
+        return str(text)[:280]
+
+
+def _invoke_hook(fn: Any, event: str, payload: dict[str, Any]) -> Any:
+    ctx = _HookCtx(payload)
+    if event in ("session_start", "pre_ask"):
+        ret = fn(ctx)
+    elif event == "pre_tool":
+        call = payload.get("call", {})
+        ret = fn(ctx, _HookCall(call.get("name", ""), call.get("args", {})))
+    elif event == "post_tool":
+        call = payload.get("call", {})
+        ret = fn(ctx, _HookCall(call.get("name", ""), {}), payload.get("result"))
+    elif event == "post_turn":
+        ret = fn(ctx, payload.get("reply"))
+    else:  # pre_turn and any future ctx-only event
+        ret = fn(ctx)
+    # Normalize to a decision dict and attach any accumulated memory writes so
+    # side-effect helpers (ctx.umem) take effect even when the hook returns None.
+    decision = ret if isinstance(ret, dict) else {}
+    if ctx._writes and "writes" not in decision:
+        decision = {**decision, "writes": ctx._writes}
+    return decision
+
+
+async def _handle_hook_call(req_id: str, tool: Any, payload: dict[str, Any]) -> None:
+    """Invoke a lifecycle hook and emit its decision dict as the result value."""
+    if tool is None:
+        await _write_line_async(
+            {
+                WIRE_FIELD_VERSION: WIRE_VERSION,
+                WIRE_FIELD_TYPE: WIRE_TYPE_RESULT,
+                WIRE_FIELD_REQUEST_ID: req_id,
+                WIRE_FIELD_OK: False,
+                WIRE_FIELD_ERROR: {
+                    WIRE_FIELD_ERROR_KIND: WIRE_ERROR_UNKNOWN_HANDLER,
+                    WIRE_FIELD_MESSAGE: "no handler registered for hook",
+                    WIRE_FIELD_ERROR_TRACEBACK: "",
+                },
+            }
+        )
+        return
+    fn = tool.fn if hasattr(tool, "fn") else tool
+    event = payload.get("event", "")
+    try:
+        loop = asyncio.get_running_loop()
+        ret = await loop.run_in_executor(None, lambda: _invoke_hook(fn, event, payload))
+        value = ret if isinstance(ret, dict) else {"decision": "allow"}
+        await _write_line_async(
+            {
+                WIRE_FIELD_VERSION: WIRE_VERSION,
+                WIRE_FIELD_TYPE: WIRE_TYPE_RESULT,
+                WIRE_FIELD_REQUEST_ID: req_id,
+                WIRE_FIELD_OK: True,
+                WIRE_FIELD_VALUE: value,
+            }
+        )
+    except Exception as exc:
+        await _write_line_async(
+            {
+                WIRE_FIELD_VERSION: WIRE_VERSION,
+                WIRE_FIELD_TYPE: WIRE_TYPE_RESULT,
+                WIRE_FIELD_REQUEST_ID: req_id,
+                WIRE_FIELD_OK: False,
+                WIRE_FIELD_ERROR: {
+                    WIRE_FIELD_ERROR_KIND: type(exc).__name__,
+                    WIRE_FIELD_MESSAGE: str(exc),
+                    WIRE_FIELD_ERROR_TRACEBACK: traceback.format_exc(),
+                },
+            }
+        )
+
+
 async def _handle_call(msg: dict[str, Any]) -> None:
     """Execute a tool call and emit the result.
 
@@ -229,6 +373,12 @@ async def _handle_call(msg: dict[str, Any]) -> None:
 
     registry = _get_registry()
     tool = registry.get(tool_id)
+
+    # Lifecycle-hook invocation (shares the tool path; constitution #4). The
+    # payload carries the event + call/result; the hook returns a decision dict.
+    if isinstance(args, dict) and HOOK_PAYLOAD_KEY in args:
+        await _handle_hook_call(req_id, tool, args[HOOK_PAYLOAD_KEY])
+        return
 
     if tool is None:
         await _write_line_async(

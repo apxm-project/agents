@@ -44,6 +44,14 @@ use tokio::sync::OnceCell;
 pub struct PythonToolBridge {
     registry: PythonToolRegistry,
     worker: OnceCell<Arc<PythonToolWorker>>,
+    /// Optional OS sandbox backend. When set + available, the python tool/hook
+    /// worker is launched confined (bubblewrap): RO root, ephemeral /tmp, no
+    /// network. None = run the worker directly (trusted/local).
+    sandbox: Option<Arc<dyn crate::sandbox::SandboxBackend>>,
+    /// When true, sandboxing is REQUIRED: if no OS-isolating backend is available
+    /// the worker spawn fails closed instead of running unsandboxed (set on the
+    /// trusted server-python path so its isolation guarantee actually holds).
+    sandbox_required: bool,
 }
 
 impl PythonToolBridge {
@@ -52,7 +60,21 @@ impl PythonToolBridge {
         Self {
             registry,
             worker: OnceCell::new(),
+            sandbox: None,
+            sandbox_required: false,
         }
+    }
+
+    /// Attach an OS sandbox backend that confines the python worker process.
+    /// `required` makes the spawn fail closed when no isolating backend exists.
+    pub fn with_sandbox(
+        mut self,
+        sandbox: Option<Arc<dyn crate::sandbox::SandboxBackend>>,
+        required: bool,
+    ) -> Self {
+        self.sandbox = sandbox;
+        self.sandbox_required = required;
+        self
     }
 
     /// Build from a `tools.json` file path.
@@ -93,12 +115,35 @@ impl PythonToolBridge {
             .worker
             .get_or_try_init(|| async {
                 let manifest = self.registry.manifest_json()?;
-                let w = PythonToolWorker::spawn(&manifest).await?;
+                let w = PythonToolWorker::spawn_with_env(&manifest, &[], self.sandbox.as_ref(), self.sandbox_required).await?;
                 Ok::<_, RuntimeError>(Arc::new(w))
             })
             .await?;
 
         worker.call(&handler_id, args, deadline).await
+    }
+
+    /// Invoke a Python lifecycle hook handler directly by its `handler_id`.
+    ///
+    /// Hooks are not capabilities (no capability-name mapping); they are
+    /// dispatched by handler_id over the SAME worker as `@tool` (constitution
+    /// #4). `payload` carries the hook event + call/result and the worker
+    /// returns the hook's decision object.
+    pub async fn call_hook(
+        &self,
+        handler_id: &str,
+        payload: serde_json::Value,
+        deadline: Duration,
+    ) -> Result<serde_json::Value, RuntimeError> {
+        let worker = self
+            .worker
+            .get_or_try_init(|| async {
+                let manifest = self.registry.manifest_json()?;
+                let w = PythonToolWorker::spawn_with_env(&manifest, &[], self.sandbox.as_ref(), self.sandbox_required).await?;
+                Ok::<_, RuntimeError>(Arc::new(w))
+            })
+            .await?;
+        worker.call(handler_id, payload, deadline).await
     }
 
     /// Access the underlying registry.

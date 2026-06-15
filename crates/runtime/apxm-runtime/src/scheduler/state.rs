@@ -1150,6 +1150,257 @@ mod tests {
         assert_eq!(t.value.clone(), Some(Value::String("resumed".into())));
     }
 
+    /// T022 keystone spike: a parked recv, on wake, splices a fresh turn sub-DAG
+    /// (consuming the user message) AND re-arms a fresh recv — proving the native
+    /// conversation loop composes from `splice_turn_and_rearm` + `wake_parked_node`
+    /// with the park/wake invariants intact (no node re-execution; remaining and
+    /// parked counts exact). No new scheduler primitive is required.
+    #[test]
+    fn recv_wake_splice_rearm_keystone() {
+        // Anchor: a single recv node (id 1) whose output token (10) carries the
+        // delivered user message.
+        let mut dag = ExecutionDag::new();
+        dag.add_node(make_node(1, vec![], vec![10])).unwrap();
+        dag.entry_nodes = dag.find_entry_nodes();
+        dag.exit_nodes = dag.find_exit_nodes();
+        let state = new_state(dag);
+        assert_eq!(state.remaining.load(Ordering::SeqCst), 1);
+
+        // The worker picks up the entry recv; it PARKS (dequeued, parked, no
+        // finish_one) awaiting the next user message.
+        let initial = drain_queue(&state);
+        assert!(initial.contains(&1), "recv anchor is initially ready");
+        state.parked.fetch_add(1, Ordering::SeqCst);
+        assert_eq!(state.parked_count(), 1);
+
+        // Build the fresh turn sub-DAG (turn body consumes the message via inner
+        // token 1, produces reply token 2) and the fresh recv (re-arm; no inputs).
+        let mut turn_dag = ExecutionDag::new();
+        turn_dag.add_node(make_node(1, vec![1], vec![2])).unwrap();
+        let fresh_recv = make_node(2, vec![], vec![3]);
+
+        // Re-arm on wake: splice the turn body (input connected to message token
+        // 10) + the fresh recv into the live execution.
+        state
+            .splice_turn_and_rearm(10, 1, std::collections::HashMap::new(), turn_dag, fresh_recv)
+            .expect("re-arm splice succeeds");
+        assert_eq!(
+            state.remaining.load(Ordering::SeqCst),
+            3,
+            "splice adds turn body + fresh recv to remaining"
+        );
+
+        // Deliver the user message: wake the parked recv anchor.
+        state.wake_parked_node(&[10], Value::String("hello turn".into()));
+
+        // Invariants: the anchor's ONE compensating completion fires (3->2), the
+        // parked counter clears, and the message token is delivered.
+        assert_eq!(
+            state.remaining.load(Ordering::SeqCst),
+            2,
+            "wake decrements exactly once; turn + fresh recv remain"
+        );
+        assert_eq!(state.parked_count(), 0, "parked cleared on wake");
+        let msg_token = state.tokens.get(&10).expect("message token exists");
+        assert!(msg_token.ready);
+        assert_eq!(
+            msg_token.value.clone(),
+            Some(Value::String("hello turn".into()))
+        );
+
+        // The turn body (consuming the message) and the fresh recv (re-arm) are
+        // both scheduled; the completed anchor (node 1) is NOT re-enqueued
+        // (no prior-turn recompute — SC-007). Splice offsets ids by max+1 (=2):
+        // turn 1->3, fresh recv 2->4.
+        let queued = drain_queue(&state);
+        assert!(!queued.contains(&1), "completed recv anchor must not re-run");
+        assert!(queued.contains(&3), "turn body enqueued after message delivered");
+        assert!(queued.contains(&4), "fresh recv re-armed (ready)");
+    }
+
+    /// T023: per-turn session state (history/summary) carries across re-arms via
+    /// spliced token connections — the new turn body consumes a live state token
+    /// produced before the re-arm, without re-running anything.
+    #[test]
+    fn recv_rearm_carries_session_state() {
+        let mut dag = ExecutionDag::new();
+        dag.add_node(make_node(1, vec![], vec![10])).unwrap();
+        dag.entry_nodes = dag.find_entry_nodes();
+        dag.exit_nodes = dag.find_exit_nodes();
+        let state = new_state(dag);
+        let _ = drain_queue(&state);
+        state.parked.fetch_add(1, Ordering::SeqCst);
+
+        // A live "running summary" token from the prior turn, already ready.
+        {
+            let mut ts = TokenState::new();
+            ts.ready = true;
+            ts.value = Some(Value::String("prior summary".into()));
+            state.tokens.insert(11, ts);
+        }
+
+        // Turn body consumes BOTH the message (inner token 1 → live 10) and the
+        // carried summary (inner token 4 → live 11).
+        let mut turn_dag = ExecutionDag::new();
+        turn_dag.add_node(make_node(1, vec![1, 4], vec![2])).unwrap();
+        let fresh_recv = make_node(2, vec![], vec![3]);
+
+        let mut carry = std::collections::HashMap::new();
+        carry.insert(4u64, 11u64); // inner summary input ← live summary token
+
+        state
+            .splice_turn_and_rearm(10, 1, carry, turn_dag, fresh_recv)
+            .expect("re-arm with carried state splices");
+
+        // The carried summary token (11) is ready, so the turn body waits only on
+        // the message; wake delivers it and the turn becomes schedulable.
+        state.wake_parked_node(&[10], Value::String("turn 2 message".into()));
+
+        let queued = drain_queue(&state);
+        assert!(queued.contains(&3), "turn body schedulable with carried state + message");
+        // The turn node now consumes the live summary token 11 (carried, not re-run).
+        let turn = state.nodes.get(&3).expect("spliced turn node");
+        assert!(
+            turn.input_tokens.contains(&11),
+            "carried session-state token wired into the new turn body"
+        );
+        assert!(state.tokens.get(&11).unwrap().ready, "carried state stays ready");
+    }
+
+    /// C1 end-to-end-ish: a session-loop recv, woken via the PRODUCTION
+    /// re-arming `ParkWaker` (not a direct primitive call), splices a turn
+    /// flow-call (binding the message) + a fresh recv — proving the emitted
+    /// entry flow drives `splice_turn_and_rearm` through the real wake path.
+    #[test]
+    fn recv_wake_drives_rearm_via_production_waker() {
+        use crate::scheduler::park_registry::{self, ParkWaker, RearmSpec};
+        use apxm_core::types::operations::AISOperationType;
+
+        // The recv anchor (id 1, output token 10) carries the loop attrs the
+        // ConversationalAgent builder stamps.
+        let mut recv = make_node(1, vec![], vec![10]);
+        recv.op_type = AISOperationType::Autonomous;
+        for (k, v) in [
+            ("mode", "recv"),
+            ("recv_once", "false"),
+            ("turn_agent", "conversation"),
+            ("turn_flow", "turn"),
+            ("turn_param", "user_message"),
+        ] {
+            recv.attributes
+                .insert(k.to_string(), Value::String(v.to_string()));
+        }
+        let mut dag = ExecutionDag::new();
+        dag.add_node(recv.clone()).unwrap();
+        dag.entry_nodes = dag.find_entry_nodes();
+        dag.exit_nodes = dag.find_exit_nodes();
+        let state = Arc::new(new_state(dag));
+        let _ = drain_queue(&state);
+        state.parked.fetch_add(1, Ordering::SeqCst);
+
+        // Register the re-arming waker exactly as the worker park path does.
+        let spec = RearmSpec {
+            recv_node: Arc::new(recv),
+            turn_agent: "conversation".to_string(),
+            turn_flow: "turn".to_string(),
+            turn_param: "user_message".to_string(),
+        };
+        let key = "session_recv:rearm-prod-test-1";
+        park_registry::register(
+            key.to_string(),
+            ParkWaker::new_rearming(Arc::clone(&state), vec![10], spec),
+        );
+
+        // Wake with the user message (the turn-input endpoint's action).
+        let woken = park_registry::wake(key, Value::String("hello turn".into()));
+        assert_eq!(woken, 1);
+
+        // Message delivered to the recv output token.
+        assert_eq!(
+            state.tokens.get(&10).unwrap().value.clone(),
+            Some(Value::String("hello turn".into()))
+        );
+
+        // A FLOW_CALL (turn dispatch) + a fresh recv (re-arm) were spliced live.
+        let mut has_flow_call = false;
+        let mut has_fresh_recv = false;
+        for entry in state.nodes.iter() {
+            let n = entry.value();
+            if n.op_type == AISOperationType::FlowCall {
+                has_flow_call = true;
+            }
+            if n.op_type == AISOperationType::Autonomous && n.id != 1 {
+                has_fresh_recv = true;
+            }
+        }
+        assert!(has_flow_call, "turn flow-call spliced on wake");
+        assert!(has_fresh_recv, "fresh recv re-armed on wake");
+    }
+
+    /// Robustness lock-in (Audit minor 1): the production re-arming waker must
+    /// splice BEFORE waking, so a SOLE loop recv (remaining == 1) never drives
+    /// `remaining` to 0 — which would fire `notify_done` and signal completion.
+    /// This test registers a `notify_done` waiter and asserts it is NOT fired by
+    /// the wake; it FAILS under the old wake-then-splice ordering.
+    #[tokio::test]
+    async fn rearm_splices_before_wake_no_zero_remaining_window() {
+        use crate::scheduler::park_registry::{self, ParkWaker, RearmSpec};
+        use apxm_core::types::operations::AISOperationType;
+        use futures::poll;
+
+        let mut recv = make_node(1, vec![], vec![10]);
+        recv.op_type = AISOperationType::Autonomous;
+        for (k, v) in [
+            ("mode", "recv"),
+            ("recv_once", "false"),
+            ("turn_agent", "conversation"),
+            ("turn_flow", "turn"),
+            ("turn_param", "user_message"),
+        ] {
+            recv.attributes
+                .insert(k.to_string(), Value::String(v.to_string()));
+        }
+        let mut dag = ExecutionDag::new();
+        dag.add_node(recv.clone()).unwrap();
+        dag.entry_nodes = dag.find_entry_nodes();
+        dag.exit_nodes = dag.find_exit_nodes();
+        let state = Arc::new(new_state(dag));
+        let _ = drain_queue(&state);
+        state.parked.fetch_add(1, Ordering::SeqCst);
+        assert_eq!(state.remaining.load(Ordering::SeqCst), 1);
+
+        // Register a waiter on notify_done (fires only on the 1->0 remaining edge).
+        let notified = state.notify_done.notified();
+        futures::pin_mut!(notified);
+        assert!(poll!(&mut notified).is_pending(), "waiter registers pending");
+
+        let spec = RearmSpec {
+            recv_node: Arc::new(recv),
+            turn_agent: "conversation".to_string(),
+            turn_flow: "turn".to_string(),
+            turn_param: "user_message".to_string(),
+        };
+        let key = "session_recv:zero-window-test-1";
+        park_registry::register(
+            key.to_string(),
+            ParkWaker::new_rearming(Arc::clone(&state), vec![10], spec),
+        );
+
+        park_registry::wake(key, Value::String("hi".into()));
+
+        // Splice-then-wake never reaches remaining == 0, so notify_done is NOT
+        // fired (this assertion fails under wake-then-splice), and the loop lives.
+        assert!(
+            poll!(&mut notified).is_pending(),
+            "splice-then-wake must not signal done (no zero-remaining window)"
+        );
+        assert_eq!(
+            state.remaining.load(Ordering::SeqCst),
+            2,
+            "flow_call + fresh recv remain after the recv completes"
+        );
+    }
+
     #[test]
     fn park_registry_wake_resumes_parked_node() {
         use crate::scheduler::park_registry;

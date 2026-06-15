@@ -80,6 +80,18 @@ pub const PARAMETERS_SCHEMA: &str = "parameters_schema";
 /// id. Must match `^sha256:[0-9a-f]{64}$`.
 pub const PYTHON_HANDLER_ID: &str = "python_handler_id";
 
+// -- Lifecycle hooks (REGISTER_HOOK) --
+/// Lifecycle event a hook binds to (session_start, pre/post_turn,
+/// pre/post_ask, pre/post_tool).
+pub const HOOK_EVENT: &str = "hook_event";
+/// Glob over tool/op name the hook applies to (default `*`).
+pub const HOOK_MATCH: &str = "hook_match";
+/// Hook mode: `observe` or `gate`.
+pub const HOOK_MODE: &str = "hook_mode";
+/// Stable content-addressed id (sha256:<hex64>) for the Python hook handler,
+/// dispatched via the SAME tool bridge as `@tool` (one handler mechanism).
+pub const PYTHON_HOOK_HANDLER_ID: &str = "python_hook_handler_id";
+
 // -- Communication --
 pub const MESSAGE: &str = "message";
 pub const RECIPIENT: &str = "recipient";
@@ -337,6 +349,10 @@ pub const ALL_ATTR_NAMES: &[&str] = &[
     DESCRIPTION,
     PARAMETERS_SCHEMA,
     PYTHON_HANDLER_ID,
+    HOOK_EVENT,
+    HOOK_MATCH,
+    HOOK_MODE,
+    PYTHON_HOOK_HANDLER_ID,
     MESSAGE,
     RECIPIENT,
     TARGET,

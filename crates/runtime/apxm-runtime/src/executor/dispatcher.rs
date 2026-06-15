@@ -619,6 +619,7 @@ impl OperationDispatcher {
             AISOperationType::RegisterCapability => {
                 register_capability::execute(ctx, node, inputs).await
             }
+            AISOperationType::RegisterHook => register_hook::execute(ctx, node, inputs).await,
             AISOperationType::Autonomous => autonomous::execute(ctx, node, inputs).await,
 
             // Literal operations

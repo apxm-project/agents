@@ -72,7 +72,7 @@ pub(crate) async fn run_server_with_config(server_config: ServerConfig) -> anyho
     //      `/v1/capabilities` so the studio install-gate sees its blocks as
     //      AVAILABLE without any per-provider Rust.
     let pack_scan_roots = pack_capability_roots(&skill_roots);
-    crate::capability::register_pack_tools(&runtime, &pack_scan_roots);
+    crate::capability::rescan_pack_tools(&runtime, &pack_scan_roots);
     crate::search_skills::register(&runtime, skill_library.clone());
     let mut runtime = Arc::new(runtime);
     let (skill_resolver, workflow_spawner) = {
@@ -146,6 +146,7 @@ pub(crate) async fn run_server_with_config(server_config: ServerConfig) -> anyho
         server_config: server_config.clone(),
         cancel_registry: Arc::new(DashMap::new()),
         goal_runs: GoalRunRegistry::new(),
+        session_registry: crate::conversations::SessionRegistry::new(),
     };
 
     let app = build_app(state);
@@ -205,11 +206,14 @@ fn write_listen_registry(dir: &str, name: &str, port: u16) -> std::io::Result<()
 }
 
 /// Build the set of directories scanned for pack `tools.toml` action blocks:
-/// the skill roots plus the connector-pack library roots (`~/.apxm/libs`). Libs
-/// roots are resolved from `ApxmPaths`; a discovery failure degrades to scanning
-/// only the skill roots (the libs hop is additive, never fatal).
-fn pack_capability_roots(skill_roots: &[std::path::PathBuf]) -> Vec<std::path::PathBuf> {
+pub(crate) fn pack_capability_roots(skill_roots: &[std::path::PathBuf]) -> Vec<std::path::PathBuf> {
     let mut roots = skill_roots.to_vec();
+    if let Ok(root) = std::env::var("APXM_LIBS_ROOT") {
+        let root = std::path::PathBuf::from(root);
+        if !roots.contains(&root) {
+            roots.push(root);
+        }
+    }
     match ApxmPaths::discover() {
         Ok(paths) => {
             for lib_root in paths.libs_dirs() {

@@ -277,11 +277,37 @@ async fn execute_tool_call(
             let timeout = std::time::Duration::from_millis(
                 apxm_core::constants::defaults::DEFAULT_TIMEOUT_MS,
             );
-            let json_args = tool_call.args.clone();
+            // pre_tool hooks (allow/deny/edit_args) at the bridge dispatch site
+            // (constitution #5). A deny surfaces as a tool error to the model.
+            let edited_args = match crate::executor::hook_driver::run_pre_tool_hooks(
+                ctx,
+                &tool_call.name,
+                args.clone(),
+            )
+            .await
+            {
+                Ok(a) => a,
+                Err(e) => {
+                    if let Some(emitter) = &ctx.event_emitter {
+                        emitter.emit_tool_end(&tool_call.name, &Value::String(e.to_string()));
+                    }
+                    return ToolResult::error(&tool_call.id, e.to_string());
+                }
+            };
+            let json_args =
+                serde_json::to_value(&edited_args).unwrap_or_else(|_| tool_call.args.clone());
             return match bridge.call(&tool_call.name, json_args, timeout).await {
                 Ok(json_result) => {
-                    let content = match json_result {
-                        serde_json::Value::String(s) => s,
+                    // post_tool hooks (replace_result).
+                    let raw = Value::try_from(json_result).unwrap_or(Value::Null);
+                    let transformed = crate::executor::hook_driver::run_post_tool_hooks(
+                        ctx,
+                        &tool_call.name,
+                        raw,
+                    )
+                    .await;
+                    let content = match transformed {
+                        Value::String(s) => s,
                         other => other.to_string(),
                     };
                     if let Some(emitter) = &ctx.event_emitter {
@@ -310,8 +336,24 @@ async fn execute_tool_call(
         }
     }
 
+    // Native/builtin tool path also runs pre/post_tool hooks (FR-004: each tool
+    // use). A pre_tool deny continues the turn gracefully (m4).
+    let args = match crate::executor::hook_driver::run_pre_tool_hooks(ctx, &tool_call.name, args)
+        .await
+    {
+        Ok(edited) => edited,
+        Err(e) => {
+            if let Some(emitter) = &ctx.event_emitter {
+                emitter.emit_tool_end(&tool_call.name, &Value::String(e.to_string()));
+            }
+            return ToolResult::error(&tool_call.id, e.to_string());
+        }
+    };
     match ctx.invoke_tool(&tool_call.name, args).await {
         Ok(result) => {
+            let result =
+                crate::executor::hook_driver::run_post_tool_hooks(ctx, &tool_call.name, result)
+                    .await;
             let content = match result {
                 Value::String(s) => s,
                 other => other.to_string(),

@@ -213,6 +213,71 @@ impl MemorySystem {
         }
     }
 
+    /// Recency window: return the last `n` scoped entries whose logical key
+    /// starts with `key_prefix` and ends with a numeric suffix, in TRUE temporal
+    /// order. Backs `qmem(recall_mode="recent", recent=N)` — the
+    /// transcript-as-memory window.
+    ///
+    /// The conversation records the user message (`conversation:user:<n>`) and
+    /// the assistant reply (`conversation:turn:<n>`) under INDEPENDENT counters,
+    /// so both share the turn index `n`. Sorting by `n` alone leaves their
+    /// intra-turn order to `list_keys()` insertion order (which could surface the
+    /// reply before its prompting message). We therefore sort by
+    /// `(turn_index, role_rank)` with `user` before the assistant `turn`, so the
+    /// recalled transcript reads in conversational order (M2/M3).
+    pub async fn recent_scoped(
+        &self,
+        space: MemorySpace,
+        scope_id: &str,
+        key_prefix: &str,
+        n: usize,
+    ) -> Result<Vec<apxm_backends::SearchResult>> {
+        let all_keys = match space {
+            MemorySpace::Stm => self.stm.list_keys().await?,
+            MemorySpace::Ltm => self.ltm.list_keys().await?,
+            MemorySpace::Episodic => return Ok(Vec::new()),
+        };
+        let scoped_prefix = Self::scoped_key(scope_id, key_prefix);
+        let mut ordered: Vec<((i64, u8), String)> = all_keys
+            .into_iter()
+            .filter(|k| k.starts_with(&scoped_prefix))
+            .filter_map(|k| {
+                let logical = Self::strip_scope_prefix(scope_id, &k)?;
+                let sort_key = Self::transcript_sort_key(&logical)?;
+                Some((sort_key, logical))
+            })
+            .collect();
+        ordered.sort_by(|a, b| a.0.cmp(&b.0));
+        let start = ordered.len().saturating_sub(n);
+        let mut out = Vec::new();
+        for (_, logical) in &ordered[start..] {
+            if let Some(value) = self.read_scoped(space, scope_id, logical).await? {
+                out.push(apxm_backends::SearchResult {
+                    key: logical.clone(),
+                    value,
+                    score: 1.0,
+                });
+            }
+        }
+        Ok(out)
+    }
+
+    /// Temporal sort key for a transcript entry: `(turn_index, role_rank)` where
+    /// the trailing `:<n>` is the turn index and the segment before it is the
+    /// role — `user` (0) sorts before the assistant `turn` (1) within a turn so
+    /// the recalled window reads user-then-assistant. Returns `None` when the key
+    /// has no numeric suffix (e.g. the `..._count` counter keys), excluding it.
+    fn transcript_sort_key(logical: &str) -> Option<(i64, u8)> {
+        let mut segments = logical.rsplit(':');
+        let idx = segments.next()?.parse::<i64>().ok()?;
+        let role_rank = match segments.next() {
+            Some("user") => 0,
+            Some("turn") => 1,
+            _ => 2,
+        };
+        Some((idx, role_rank))
+    }
+
     /// Record an entry in episodic memory
     pub async fn record_episode(
         &self,
@@ -272,6 +337,53 @@ impl MemorySystem {
         self.ltm.clear().await?;
         self.episodic.clear().await?;
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod recent_window_tests {
+    use super::MemorySystem;
+
+    /// Audit minor 2: the recalled transcript window must read in TRUE
+    /// conversational order — user message before its assistant reply within a
+    /// turn, and turns in ascending order — regardless of `list_keys()` insertion
+    /// order. The sort key `(turn_index, role_rank)` guarantees this.
+    #[test]
+    fn transcript_sort_key_orders_user_before_assistant_then_by_turn() {
+        // Deliberately scrambled (assistant recorded before user; turn 2 first).
+        let mut keys = vec![
+            "conversation:turn:2".to_string(),
+            "conversation:turn:1".to_string(),
+            "conversation:user:2".to_string(),
+            "conversation:user:1".to_string(),
+        ];
+        keys.sort_by_key(|k| MemorySystem::transcript_sort_key(k).unwrap());
+        assert_eq!(
+            keys,
+            vec![
+                "conversation:user:1".to_string(), // turn 1: user before assistant
+                "conversation:turn:1".to_string(),
+                "conversation:user:2".to_string(), // turn 2
+                "conversation:turn:2".to_string(),
+            ],
+            "transcript must read user-then-assistant within a turn, turns ascending"
+        );
+    }
+
+    #[test]
+    fn transcript_sort_key_excludes_non_numeric_counter_keys() {
+        // The `*_count` counter keys have no numeric suffix → excluded.
+        assert!(MemorySystem::transcript_sort_key("conversation:user_count").is_none());
+        assert!(MemorySystem::transcript_sort_key("conversation:turn_count").is_none());
+        // A plain `<prefix><n>` series still orders by index (role_rank falls to 2).
+        assert_eq!(
+            MemorySystem::transcript_sort_key("conversation:turn:7"),
+            Some((7, 1))
+        );
+        assert_eq!(
+            MemorySystem::transcript_sort_key("conversation:user:7"),
+            Some((7, 0))
+        );
     }
 }
 

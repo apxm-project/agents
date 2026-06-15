@@ -16,12 +16,14 @@ mod events;
 pub mod fields_honored;
 pub mod graph_metrics;
 mod handlers;
+pub mod hook_driver;
 pub mod hooks;
 pub mod inner_plan_linker;
 pub mod memoization;
 mod middleware;
 pub mod middlewares;
 pub mod pipeline;
+pub mod session_ledger;
 pub mod skill_resolver;
 pub mod timing_tracker;
 pub mod token_accounting;
@@ -38,8 +40,8 @@ pub use events::{ExecutionEvent, ExecutionEventEmitter};
 pub use graph_metrics::GraphMetricsTracker;
 pub use handlers::warmup::{WarmupConfig, WarmupMetrics};
 pub use hooks::{
-    ExecutionHook, ExecutionHookContext, GraphFinishedEvent, GraphStartedEvent, NodeFinishedEvent,
-    NodeReadyEvent, NodeStartedEvent,
+    ExecutionHook, ExecutionHookContext, GraphFinishedEvent, GraphStartedEvent, HookBinding,
+    HookEvent, HookMode, HookRegistry, NodeFinishedEvent, NodeReadyEvent, NodeStartedEvent,
 };
 pub use inner_plan_linker::{InnerPlanLinker, NoOpLinker};
 pub use middleware::{Next, OperationMiddleware};

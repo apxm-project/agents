@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from . import _generated
-from .agent import Agent, AgentHooks, BoundAgent
+from .agent import Agent, BoundAgent
 from .backends import (
     BackendRegistryError,
     BackendRoute,
@@ -23,6 +23,12 @@ except ImportError:
     ModelId = None  # type: ignore[assignment,misc]
     OpenAI = None  # type: ignore[assignment,misc]
     Vllm = None  # type: ignore[assignment,misc]
+from .conversational import (
+    CompactionPolicy,
+    ConversationalAgent,
+    MultiFlowArtifact,
+)
+from .hooks import HookFn, hook
 from .config import (
     AgentConfig,
     BashConfig,
@@ -70,7 +76,6 @@ __all__ = [
     "Agent",
     "AgentConfig",
     "AgentHandle",
-    "AgentHooks",
     "Loop",
     "agent_cwd",
     "Anthropic",
@@ -82,8 +87,10 @@ __all__ = [
     "BoundAgent",
     "close",
     "compile",
+    "CompactionPolicy",
     "CompiledFlow",
     "CompilationError",
+    "ConversationalAgent",
     "ExecutionError",
     "ExecutionOptions",
     "ExecutionMode",
@@ -97,8 +104,11 @@ __all__ = [
     "GraphEdge",
     "GraphNode",
     "GraphRecorder",
+    "hook",
     "HookConfig",
     "HookEvent",
+    "HookFn",
+    "MultiFlowArtifact",
     "LLMUsage",
     "config_path",
     "get_backend",

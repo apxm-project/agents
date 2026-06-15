@@ -1016,6 +1016,20 @@ def AIS_RegisterCapabilityOp : AIS_Op<"register_capability"> {
   let hasVerifier = 1;
 }
 
+def AIS_RegisterHookOp : AIS_Op<"register_hook"> {
+  let summary = "Register an author lifecycle hook into the artifact hook registry";
+  let arguments = (ins
+    StrAttr:$hook_event,
+    OptionalAttr<StrAttr>:$hook_match,
+    OptionalAttr<StrAttr>:$hook_mode,
+    OptionalAttr<StrAttr>:$python_hook_handler_id
+  );
+  let results = (outs AIS_TokenType:$result);
+  let assemblyFormat = [{
+    $hook_event attr-dict `:` type($result)
+  }];
+}
+
 def AIS_AutonomousOp : AIS_Op<"autonomous"> {
   let summary = "Run a goal-directed autonomous loop";
   let arguments = (ins

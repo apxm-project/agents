@@ -91,7 +91,35 @@ impl From<&AISOperationType> for LlmMode {
     }
 }
 
-fn resolve_system_prompt(ctx: &ExecutionContext, node: &Node, mode: LlmMode) -> Result<String> {
+/// Reserved `input_names` entry that carries the system prompt as a dataflow
+/// value instead of the static `system_prompt` attribute. Mirrored by the
+/// Python frontend's `ask(system_prompt_input=...)` surface.
+pub(crate) const SYSTEM_PROMPT_INPUT: &str = "__system";
+
+/// Extract a dataflow system-prompt operand, if one is bound to the reserved
+/// `__system` input name. Enables in-program context injection (FR-005/FR-009):
+/// a `pre_ask` hook or an upstream node can supply the system prompt as a value
+/// rather than a static attribute.
+fn dataflow_system_prompt(node: &Node, inputs: &[Value]) -> Option<String> {
+    let input_names = input_names_from_node(node);
+    let idx = input_names
+        .iter()
+        .position(|n| n == SYSTEM_PROMPT_INPUT)?;
+    let value = inputs.get(idx)?;
+    Some(
+        value
+            .as_string()
+            .map(|s| s.to_string())
+            .unwrap_or_else(|| value.to_string()),
+    )
+}
+
+fn resolve_system_prompt(
+    ctx: &ExecutionContext,
+    node: &Node,
+    mode: LlmMode,
+    dataflow_prompt: Option<String>,
+) -> Result<String> {
     let (config_instruction, template_name, fallback) = match mode {
         LlmMode::Ask => (
             ctx.instruction_config.ask.as_ref(),
@@ -111,7 +139,15 @@ fn resolve_system_prompt(ctx: &ExecutionContext, node: &Node, mode: LlmMode) -> 
              and result (any type).",
         ),
     };
-    let prompt = get_optional_string_attribute(node, graph_attrs::SYSTEM_PROMPT)?
+    // A dataflow operand bound to `__system` takes precedence over the static
+    // attribute so authors can inject context per turn (constitution #5).
+    let prompt = dataflow_prompt
+        .filter(|s| !s.is_empty())
+        .or_else(|| {
+            get_optional_string_attribute(node, graph_attrs::SYSTEM_PROMPT)
+                .ok()
+                .flatten()
+        })
         .or_else(|| config_instruction.cloned())
         .or_else(|| apxm_backends::render_prompt(template_name, &serde_json::json!({})).ok())
         .unwrap_or_else(|| fallback.to_string());
@@ -343,7 +379,16 @@ pub async fn execute(ctx: &ExecutionContext, node: &Node, inputs: Vec<Value>) ->
         request = request.with_output_schema(schema.clone());
     }
 
-    let system_prompt = resolve_system_prompt(ctx, node, mode)?;
+    let dataflow_prompt = dataflow_system_prompt(node, &inputs);
+    let mut system_prompt = resolve_system_prompt(ctx, node, mode, dataflow_prompt)?;
+    // pre_ask hooks may prepend/replace the system prompt (in-program context
+    // injection; constitution #5). Ask mode only; gate hooks fail closed.
+    if mode == LlmMode::Ask
+        && let Some(overridden) =
+            crate::executor::hook_driver::run_pre_ask_hooks(ctx, &system_prompt).await?
+    {
+        system_prompt = overridden;
+    }
     request = request.with_system_prompt(system_prompt);
 
     // Tool configuration (Ask mode only). Tools are OPT-IN: a node only

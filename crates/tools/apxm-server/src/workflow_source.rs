@@ -6,6 +6,12 @@ use apxm_core::types::ApxmPathFormat;
 use serde_json::Value as JsonValue;
 
 const PYTHON_TOOLS_PREFIX: &str = "; __apxm_python_tools__ ";
+/// Any APXM sidecar comment line (e.g. `; __apxm_hooks__ ...`). These are
+/// `;`-prefixed metadata the MLIR parser cannot read, so they MUST be stripped
+/// before compile. Only the python-tools sidecar is captured for the bridge; the
+/// rest (hooks) travel inside the artifact as REGISTER_HOOK nodes + the tools
+/// manifest, so stripping the comment is sufficient.
+const SIDECAR_LINE_PREFIX: &str = "; __apxm_";
 
 pub(crate) fn air_from_args(args: &JsonValue) -> Result<String, String> {
     let air = args
@@ -50,6 +56,9 @@ pub(crate) fn strip_python_tools_sidecar(air: &str) -> (String, Option<Vec<u8>>)
     for line in air.lines() {
         if let Some(value) = line.strip_prefix(PYTHON_TOOLS_PREFIX) {
             sidecar = Some(value.as_bytes().to_vec());
+        } else if line.starts_with(SIDECAR_LINE_PREFIX) {
+            // Other APXM sidecar comment (e.g. __apxm_hooks__): strip so the
+            // MLIR parser never sees a `;` line; nothing to capture here.
         } else {
             if !filtered.is_empty() {
                 filtered.push('\n');

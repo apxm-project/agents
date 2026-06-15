@@ -30,6 +30,12 @@ fn is_python_graph_input(input: &Path) -> bool {
 /// `@tool`-decorated functions are registered via `Agent`.
 #[cfg(feature = "driver")]
 const PYTHON_TOOLS_PREFIX: &str = "; __apxm_python_tools__ ";
+/// Any APXM sidecar comment line (e.g. `; __apxm_hooks__ ...`). These `;`-lines
+/// are metadata the MLIR parser cannot read and MUST be stripped before compile.
+/// Only the python-tools sidecar is captured for the bridge; the rest (hooks)
+/// travel inside the artifact as REGISTER_HOOK nodes + the tools manifest.
+#[cfg(feature = "driver")]
+const SIDECAR_LINE_PREFIX: &str = "; __apxm_";
 
 /// Extract the `; __apxm_python_tools__ <json>` comment from AIR text.
 ///
@@ -41,6 +47,8 @@ fn extract_python_tools_sidecar(air: &str) -> (String, Option<Vec<u8>>) {
     for line in air.lines() {
         if let Some(json_str) = line.strip_prefix(PYTHON_TOOLS_PREFIX) {
             sidecar = Some(json_str.as_bytes().to_vec());
+        } else if line.starts_with(SIDECAR_LINE_PREFIX) {
+            // Other APXM sidecar comment (e.g. __apxm_hooks__): strip, don't capture.
         } else {
             if !filtered.is_empty() {
                 filtered.push('\n');

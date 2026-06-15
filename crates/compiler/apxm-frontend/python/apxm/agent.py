@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, Protocol, runtime_checkable
 
 from . import constants as graph_keys
@@ -32,15 +31,6 @@ class ToolLike(Protocol):
 
     @property
     def handler_id(self) -> str: ...
-
-
-@dataclass(slots=True)
-class AgentHooks:
-    """Lifecycle hooks for agent execution."""
-
-    on_start: Any | None = None
-    on_tool_call: Any | None = None
-    on_end: Any | None = None
 
 
 class Agent:
@@ -76,7 +66,6 @@ class Agent:
         provider: ProviderSpec | None = None,
         backend: str | None = None,
         output_schema: type | dict[str, Any] | None = None,
-        hooks: AgentHooks | None = None,
     ) -> None:
         self.name = name
         self.instructions = instructions
@@ -88,7 +77,6 @@ class Agent:
         self.model = model
         self.provider = provider
         self.output_schema = output_schema
-        self.hooks = hooks
 
         # Validate and store tools
         self._tools: list[ToolLike] = []
@@ -375,4 +363,4 @@ def _apply_backend_route_attrs(
         attrs[graph_keys.PROVIDER] = _normalize_provider_spec(provider)
 
 
-__all__ = ["Agent", "AgentHooks", "BoundAgent", "ToolLike"]
+__all__ = ["Agent", "BoundAgent", "ToolLike"]

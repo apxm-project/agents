@@ -44,6 +44,7 @@ mod call_skill;
 mod capability;
 mod checkpoints;
 mod config_layers;
+mod conversations;
 mod credentials;
 mod error;
 mod execute;

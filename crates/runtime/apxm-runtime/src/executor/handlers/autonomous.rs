@@ -372,12 +372,44 @@ async fn recv_loop(ctx: &ExecutionContext, node: &Node, inputs: Vec<Value>) -> R
         .or(get_optional_string_attribute(node, graph_attrs::PROMPT)?)
         .unwrap_or_else(|| "You are an agent reacting to external events.".to_string());
 
-    let recv_url = get_optional_string_attribute(node, "recv_url")?.ok_or_else(|| {
-        RuntimeError::Operation {
-            op_type: node.op_type,
-            message: "recv mode requires a `recv_url` attribute (event source endpoint)"
-                .to_string(),
+    let recv_url = get_optional_string_attribute(node, "recv_url")?;
+
+    // In-graph park mode (the no-poll keystone, constitution #9): when no
+    // `recv_url` is given and the execution has a session id, the recv node
+    // PARKS on the session recv key instead of HTTP-polling. The worker yields
+    // its lane + admission permit; the server's
+    // `POST /v1/conversations/{session}/message` endpoint wakes it with the user
+    // message (wake-before-register safe). The woken value becomes this node's
+    // output — the turn input — so a single turn flows with zero pinned compute.
+    //
+    // A seed event supplied as input 0 (e.g. the first user message) is handled
+    // without parking so the very first turn needs no extra round trip.
+    if recv_url.is_none() {
+        if let Some(session_id) = ctx.session_id.clone() {
+            if let Some(seed) = inputs
+                .first()
+                .and_then(|v| v.as_str())
+                .map(str::to_string)
+                .filter(|s| !s.is_empty())
+            {
+                return Ok(Value::String(seed));
+            }
+            let wait_key = crate::scheduler::park_registry::session_recv_key(&session_id);
+            tracing::info!(
+                execution_id = %ctx.execution_id,
+                node_id = node.id,
+                %session_id,
+                "RECV parking on session turn-input key (no-poll keystone)"
+            );
+            return Err(RuntimeError::OperationParked { wait_key });
         }
+    }
+
+    let recv_url = recv_url.ok_or_else(|| RuntimeError::Operation {
+        op_type: node.op_type,
+        message: "recv mode requires a `recv_url` attribute (event source endpoint) \
+                  unless the execution has a session id for in-graph turn-input parking"
+            .to_string(),
     })?;
 
     let once = get_optional_string_attribute(node, "recv_once")?.as_deref() != Some("false");

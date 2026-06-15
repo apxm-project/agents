@@ -56,6 +56,10 @@ pub(crate) struct AppState {
     pub(crate) cancel_registry: Arc<DashMap<String, Arc<Notify>>>,
     /// Server-owned multi-pass goal runs keyed by `goal_id`.
     pub(crate) goal_runs: GoalRunRegistry,
+    /// `session_id` → running conversation execution. Backs the turn-input
+    /// endpoint (`POST /v1/conversations/{id}/message`) so the host stays a
+    /// dumb pipe (constitution #2).
+    pub(crate) session_registry: crate::conversations::SessionRegistry,
 }
 
 #[derive(Clone)]

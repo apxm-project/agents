@@ -94,6 +94,13 @@ impl RuntimeExecutor {
 
         runtime.set_instruction_config(config.apxm_config.instruction.clone());
         runtime.set_middlewares(build_middlewares(&config.apxm_config.middlewares));
+        // Conversation-memory middleware fires the pre_turn/post_turn/post_ask
+        // lifecycle hooks and accrues the turn transcript. Register it on the
+        // driver/CLI path too (the server already does) so author hooks fire with
+        // transport parity (constitution #1), not only over the HTTP surface.
+        runtime.add_middleware(std::sync::Arc::new(
+            apxm_runtime::ConversationMemoryMiddleware::new(),
+        ));
 
         // Use CompilerInnerPlanLinker when MLIR is available, otherwise fall back to
         // NoOpLinker (graph-direct mode). Mirrors how Linker handles MLIR unavailability.

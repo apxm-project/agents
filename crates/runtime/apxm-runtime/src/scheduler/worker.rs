@@ -207,10 +207,20 @@ pub async fn worker_loop(
                 // they aren't using. The node is re-injected when
                 // park_registry::wake(wait_key) makes its output token ready.
                 state.enter_parked();
-                let waker = crate::scheduler::park_registry::ParkWaker::new(
-                    Arc::clone(&state),
-                    outputs.clone(),
-                );
+                // A session conversation-loop recv re-arms on wake: deliver the
+                // message, then splice a fresh turn flow-call + a fresh recv (the
+                // native loop keystone). Other parks use the plain waker.
+                let waker = match session_loop_rearm_spec(&node, &child_ctx) {
+                    Some(spec) => crate::scheduler::park_registry::ParkWaker::new_rearming(
+                        Arc::clone(&state),
+                        outputs.clone(),
+                        spec,
+                    ),
+                    None => crate::scheduler::park_registry::ParkWaker::new(
+                        Arc::clone(&state),
+                        outputs.clone(),
+                    ),
+                };
                 crate::scheduler::park_registry::register(wait_key, waker);
                 // Keep the watchdog from flagging this idle-by-design moment.
                 state.record_progress();
@@ -226,6 +236,34 @@ pub async fn worker_loop(
         drop(permit);
         local_metrics.maybe_flush();
     }
+}
+
+/// If `node` is a session conversation-loop recv (AUTONOMOUS `mode=recv`,
+/// `recv_once=false`, with the turn-flow attrs the `ConversationalAgent` builder
+/// stamps) and the execution has a session id, return the re-arm spec so its
+/// wake splices a fresh turn + recv. Otherwise `None` (a plain one-shot park).
+fn session_loop_rearm_spec(
+    node: &std::sync::Arc<apxm_core::types::Node>,
+    ctx: &crate::executor::ExecutionContext,
+) -> Option<crate::scheduler::park_registry::RearmSpec> {
+    use apxm_core::types::operations::AISOperationType;
+    if node.op_type != AISOperationType::Autonomous {
+        return None;
+    }
+    let attr = |k: &str| node.attributes.get(k).and_then(|v| v.as_str());
+    if attr("mode") != Some("recv") || attr("recv_once") != Some("false") {
+        return None;
+    }
+    ctx.session_id.as_ref()?;
+    let turn_flow = attr("turn_flow")?.to_string();
+    let turn_agent = attr("turn_agent")?.to_string();
+    let turn_param = attr("turn_param")?.to_string();
+    Some(crate::scheduler::park_registry::RearmSpec {
+        recv_node: std::sync::Arc::clone(node),
+        turn_agent,
+        turn_flow,
+        turn_param,
+    })
 }
 
 /// Collect input values for an operation.

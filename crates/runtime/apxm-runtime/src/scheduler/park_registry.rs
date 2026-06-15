@@ -15,22 +15,73 @@
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex, OnceLock};
 
-use apxm_core::types::{TokenId, Value};
+use apxm_core::types::{Node, TokenId, Value};
 
 use crate::scheduler::state::SchedulerState;
+
+/// Re-arm spec for a session conversation loop: on wake, after delivering the
+/// user message, splice a fresh turn flow-call + a fresh recv (the native loop
+/// keystone). Carried by the recv's [`ParkWaker`].
+pub(crate) struct RearmSpec {
+    pub(crate) recv_node: Arc<Node>,
+    pub(crate) turn_agent: String,
+    pub(crate) turn_flow: String,
+    pub(crate) turn_param: String,
+}
 
 /// Resumes one parked node by making its output tokens ready in its scheduler.
 pub struct ParkWaker {
     state: Arc<SchedulerState>,
     outputs: Vec<TokenId>,
+    /// When set, the parked node is a re-arming session recv: after delivering
+    /// the message, splice a fresh turn + recv to continue the loop.
+    rearm: Option<RearmSpec>,
 }
 
 impl ParkWaker {
     pub(crate) fn new(state: Arc<SchedulerState>, outputs: Vec<TokenId>) -> Self {
-        Self { state, outputs }
+        Self {
+            state,
+            outputs,
+            rearm: None,
+        }
+    }
+
+    /// A re-arming waker for a session conversation-loop recv node.
+    pub(crate) fn new_rearming(
+        state: Arc<SchedulerState>,
+        outputs: Vec<TokenId>,
+        rearm: RearmSpec,
+    ) -> Self {
+        Self {
+            state,
+            outputs,
+            rearm: Some(rearm),
+        }
     }
 
     fn fire(self, value: Value) {
+        // SPLICE-THEN-WAKE (robust by construction). For a session loop, splice
+        // the fresh turn flow-call (binding the message token) + a fresh recv
+        // FIRST, raising `remaining` before any decrement; only then wake the
+        // recv to deliver the message and do the single compensating completion.
+        // The inverse order (wake-then-splice) momentarily drives `remaining` to
+        // 0 — firing `notify_done` — between the decrement and the re-raise,
+        // which the scheduler's completion check could race; splicing first never
+        // opens that zero-`remaining` window (constitution #9/#10). Matches the
+        // proven `recv_wake_splice_rearm_keystone` ordering.
+        if let Some(spec) = &self.rearm
+            && let Some(message_token) = self.outputs.first().copied()
+            && let Err(error) = self.state.rearm_session_turn(
+                message_token,
+                &spec.recv_node,
+                &spec.turn_agent,
+                &spec.turn_flow,
+                &spec.turn_param,
+            )
+        {
+            tracing::error!(%error, "failed to re-arm session turn loop before recv wake");
+        }
         self.state.wake_parked_node(&self.outputs, value);
     }
 }
@@ -45,6 +96,16 @@ enum Entry {
 fn registry() -> &'static Mutex<HashMap<String, Entry>> {
     static R: OnceLock<Mutex<HashMap<String, Entry>>> = OnceLock::new();
     R.get_or_init(|| Mutex::new(HashMap::new()))
+}
+
+/// Canonical park `wait_key` for a conversation session's turn-input recv node.
+///
+/// The in-graph conversation loop's `recv` node parks under this key; the
+/// server's `POST /v1/conversations/{session_id}/message` endpoint wakes it with
+/// the user message. Both sides MUST derive the key the same way, so it lives
+/// here next to [`wake`]. Wake-before-register is handled by the registry.
+pub fn session_recv_key(session_id: &str) -> String {
+    format!("session_recv:{session_id}")
 }
 
 /// Register a parked node's waker under `wait_key`. If a wake already arrived
