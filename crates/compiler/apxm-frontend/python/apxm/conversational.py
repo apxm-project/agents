@@ -235,6 +235,12 @@ class ConversationalAgent:
         registrations = [turn.register_tool(t) for t in self.tools]
 
         ask_attrs: dict[str, Any] = {}
+        # Mark this ask as the top-level conversational turn. The runtime's
+        # ConversationMemoryMiddleware scopes turn accounting + lifecycle hooks
+        # (pre_turn/post_turn/post_ask) to the marked turn, so sub-agent asks
+        # (which share this session's memory scope) do not inflate the turn
+        # count, pollute the recall window, or re-fire turn hooks.
+        ask_attrs["conversational_turn"] = "true"
         tool_names = [t.name for t in self.tools]
         if tool_names:
             ask_attrs[graph_keys.TOOLS] = tool_names

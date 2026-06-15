@@ -17,6 +17,15 @@ use async_trait::async_trait;
 const TURN_COUNT_KEY: &str = "conversation:turn_count";
 /// Prefix for per-turn answer entries (`conversation:turn:<n>`).
 const TURN_PREFIX: &str = "conversation:turn:";
+/// Node attribute the frontend stamps on the *top-level* conversational turn
+/// `ASK` (`ConversationalAgent._build_turn_flow`). It scopes turn accounting
+/// and lifecycle hooks to the user-facing turn, so sub-agent `ASK`s (which
+/// inherit the parent `session_id`, and thus the same `memory_scope`) do not
+/// inflate `conversation:turn_count`, pollute the recall window, or fire
+/// `pre_turn`/`post_turn`/`post_ask` hooks. The program declares the turn
+/// (constitution #2: program owns cognition); absent the marker, the ask is
+/// not a conversational turn.
+const TURN_MARKER_KEY: &str = "conversational_turn";
 
 /// Records each ASK answer into session memory so conversation history accrues
 /// without the program threading a transcript.
@@ -35,9 +44,18 @@ impl OperationMiddleware for ConversationMemoryMiddleware {
         "conversation-memory"
     }
 
-    /// Only conversational ASK turns accrue history.
+    /// Only the top-level conversational ASK turn accrues history and fires
+    /// turn hooks. Sub-agent `ASK`s share the session `memory_scope` (they
+    /// inherit `session_id`), so without the marker gate they would inflate the
+    /// turn count and re-fire lifecycle hooks. The marker is stamped by the
+    /// frontend on the turn flow's ask.
     fn applies_to(&self, node: &Node) -> bool {
         node.op_type == AISOperationType::Ask
+            && node
+                .attributes
+                .get(TURN_MARKER_KEY)
+                .and_then(|v| v.as_str())
+                == Some("true")
     }
 
     async fn around(
@@ -83,6 +101,32 @@ impl OperationMiddleware for ConversationMemoryMiddleware {
                 .await;
         }
         result
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn ask(marked: bool) -> Node {
+        let mut node = Node::new(1, AISOperationType::Ask);
+        if marked {
+            node.set_attribute(TURN_MARKER_KEY.to_string(), Value::String("true".into()));
+        }
+        node
+    }
+
+    #[test]
+    fn applies_only_to_marked_conversational_turn() {
+        let mw = ConversationMemoryMiddleware::new();
+        // The top-level turn ask carries the marker the frontend stamps.
+        assert!(mw.applies_to(&ask(true)));
+        // A sub-agent ask shares the session scope but is unmarked: it must NOT
+        // accrue history or fire turn hooks (CONV-2).
+        assert!(!mw.applies_to(&ask(false)));
+        // Non-ask ops never apply.
+        let inv = Node::new(2, AISOperationType::InvTool);
+        assert!(!mw.applies_to(&inv));
     }
 }
 
