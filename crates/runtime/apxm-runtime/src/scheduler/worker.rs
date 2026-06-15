@@ -254,15 +254,24 @@ fn session_loop_rearm_spec(
     if attr("mode") != Some("recv") || attr("recv_once") != Some("false") {
         return None;
     }
-    ctx.session_id.as_ref()?;
+    let session_id = ctx.session_id.as_ref()?.to_string();
     let turn_flow = attr("turn_flow")?.to_string();
     let turn_agent = attr("turn_agent")?.to_string();
     let turn_param = attr("turn_param")?.to_string();
+    // Bound the loop to the recv node's max_iterations (default 100), so the
+    // park re-arm cannot splice turn+recv nodes without limit (CONV-1).
+    let max_turns = node
+        .attributes
+        .get(apxm_core::constants::graph::attrs::MAX_ITERATIONS)
+        .and_then(|v| v.as_u64())
+        .unwrap_or(100);
     Some(crate::scheduler::park_registry::RearmSpec {
         recv_node: std::sync::Arc::clone(node),
         turn_agent,
         turn_flow,
         turn_param,
+        session_id,
+        max_turns,
     })
 }
 

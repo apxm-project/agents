@@ -46,6 +46,13 @@ pub struct SchedulerState {
     pub(crate) tokens: Arc<DashMap<TokenId, TokenState>>,
     pub(crate) op_states: Arc<DashMap<NodeId, OpState>>,
 
+    /// Per-session re-arm turn counter for the in-graph conversation loop, keyed
+    /// by session id. The park-based recv re-arm increments this each turn and
+    /// stops re-arming once the recv node's `max_iterations` cap is reached, so a
+    /// long-lived session loop is bounded rather than splicing nodes forever
+    /// (CONV-1: bounds the previously-unbounded re-arm growth).
+    pub(crate) rearm_turns: Arc<DashMap<String, u64>>,
+
     // Work-stealing scheduler (encapsulated)
     pub work_stealing: Arc<WorkStealingScheduler>,
     pub queue: Arc<PriorityQueue>,
@@ -301,6 +308,7 @@ impl SchedulerState {
             ready_set,
             tokens,
             op_states,
+            rearm_turns: Arc::new(DashMap::new()),
 
             blocking_concurrency,
             cancellation_token: CancellationToken::new(),
@@ -354,6 +362,15 @@ impl SchedulerState {
     #[inline]
     pub fn elapsed_ms(&self) -> u128 {
         self.start.elapsed().as_millis()
+    }
+
+    /// Record one more delivered turn for an in-graph session loop and return the
+    /// running count. The park re-arm uses this to stop re-arming once the recv
+    /// node's `max_iterations` cap is reached (CONV-1: bound the loop).
+    pub(crate) fn next_rearm_turn(&self, session_id: &str) -> u64 {
+        let mut entry = self.rearm_turns.entry(session_id.to_string()).or_insert(0);
+        *entry += 1;
+        *entry
     }
 
     #[inline]
@@ -1304,6 +1321,8 @@ mod tests {
             turn_agent: "conversation".to_string(),
             turn_flow: "turn".to_string(),
             turn_param: "user_message".to_string(),
+            session_id: "test".to_string(),
+            max_turns: 100,
         };
         let key = "session_recv:rearm-prod-test-1";
         park_registry::register(
@@ -1379,6 +1398,8 @@ mod tests {
             turn_agent: "conversation".to_string(),
             turn_flow: "turn".to_string(),
             turn_param: "user_message".to_string(),
+            session_id: "test".to_string(),
+            max_turns: 100,
         };
         let key = "session_recv:zero-window-test-1";
         park_registry::register(

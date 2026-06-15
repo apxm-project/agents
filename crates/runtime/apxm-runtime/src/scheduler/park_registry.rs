@@ -27,6 +27,11 @@ pub(crate) struct RearmSpec {
     pub(crate) turn_agent: String,
     pub(crate) turn_flow: String,
     pub(crate) turn_param: String,
+    /// Session id keying the per-session turn counter, and the max turns to
+    /// re-arm (the recv node's `max_iterations`). Once the running count reaches
+    /// the cap the loop stops re-arming, so a session is bounded (CONV-1).
+    pub(crate) session_id: String,
+    pub(crate) max_turns: u64,
 }
 
 /// Resumes one parked node by making its output tokens ready in its scheduler.
@@ -72,15 +77,30 @@ impl ParkWaker {
         // proven `recv_wake_splice_rearm_keystone` ordering.
         if let Some(spec) = &self.rearm
             && let Some(message_token) = self.outputs.first().copied()
-            && let Err(error) = self.state.rearm_session_turn(
-                message_token,
-                &spec.recv_node,
-                &spec.turn_agent,
-                &spec.turn_flow,
-                &spec.turn_param,
-            )
         {
-            tracing::error!(%error, "failed to re-arm session turn loop before recv wake");
+            // Bound the loop (CONV-1): count this delivered turn and only re-arm
+            // while under the recv node's max_iterations cap. At the cap we skip
+            // the re-arm so the recv completes and the session loop ends, instead
+            // of splicing fresh turn+recv nodes forever.
+            let turn = self.state.next_rearm_turn(&spec.session_id);
+            if turn < spec.max_turns {
+                if let Err(error) = self.state.rearm_session_turn(
+                    message_token,
+                    &spec.recv_node,
+                    &spec.turn_agent,
+                    &spec.turn_flow,
+                    &spec.turn_param,
+                ) {
+                    tracing::error!(%error, "failed to re-arm session turn loop before recv wake");
+                }
+            } else {
+                tracing::info!(
+                    session_id = %spec.session_id,
+                    turn,
+                    max_turns = spec.max_turns,
+                    "session turn cap reached; not re-arming (in-graph loop ends)"
+                );
+            }
         }
         self.state.wake_parked_node(&self.outputs, value);
     }
