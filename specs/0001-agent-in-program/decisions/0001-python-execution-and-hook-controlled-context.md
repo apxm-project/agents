@@ -173,8 +173,19 @@ identifiers, no cruft) and these issues:
   `conversational_turn` marker the frontend stamps on the top-level turn ask
   (`ConversationalAgent._build_turn_flow`); the program declares the turn
   (constitution #2). Committed `b3c69558`.
-- **FOLLOW-UP — `__system` positional binding (low, CONV-4):** bind by name, not
-  positional index, to be robust to control-edge interleaving.
+- **RESOLVED (CONV-4) — `__system` positional binding is safe:** the concern was
+  that `dataflow_system_prompt` resolves `__system` by its position in
+  `input_names` and indexes `inputs` by it, which would misbind if control edges
+  interleaved value operands. Verified this cannot happen: control/effect edges
+  are scheduling-only and contribute NO value token to a node's operand list
+  (a compiled ask with a control edge still emits exactly one operand +
+  `input_names = ["history"]`). `input_names` is therefore strictly parallel to
+  `inputs` — a parity `render_named` enforces on the same node
+  (`input_names.len() == inputs.len()`, else error), and the scheduler's
+  `collect_inputs` builds a full-width operand vector (every input token ready or
+  the node does not run). So position-in-the-parallel-array IS name binding; no
+  code change. (The legacy `engine.rs` path skips missing operands and is not the
+  production scheduler path.)
 - **MAINTAINER SIGN-OFF — inference concurrency 2→16 (medium, WH-1):** the
   concurrent webhook change raised the default 8× deployment-wide; confirm vs
   rate-limited backends (overridable via `[server.inference]`).
