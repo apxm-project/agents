@@ -228,3 +228,43 @@ apxm chat --air /tmp/agent.air --server http://127.0.0.1:18800
 #    POST /v1/conversations/{session_id}/message  {"message": "<user line>"}
 #    Render the streamed reply. Verify SC-001..SC-007 (quickstart.md) on BOTH hosts.
 ```
+
+## Hardening pass (post-acceptance) — 2026-06-15
+
+Production-readiness follow-ups from the execution/context ADR, shipped on
+`feat/0001-agent-in-program` (each: build + targeted test + commit-lint, no AI
+trailer):
+
+- [X] CONV-1 — bound the in-graph session-loop re-arm by `MAX_ITERATIONS`
+  (`RearmSpec.session_id`/`max_turns` + `SchedulerState.next_rearm_turn` +
+  `ParkWaker::fire` cap). Residual: node GC of completed re-arm nodes. `7307384c`.
+- [X] CONV-2 — scope turn accounting + lifecycle hooks to the marked
+  `conversational_turn` ask so sub-agent asks (sharing the session scope) no
+  longer inflate the turn count or re-fire hooks. `b3c69558`.
+- [X] Deadline enforcement — the per-call python-tool deadline is now a real
+  resource limit (dropped `asyncio.shield`; Rust sends `Cancel` on timeout) with
+  a red/green-verified test. `ce9c9bc3`.
+- [X] CONV-4 — verified `__system` positional binding is architecturally safe
+  (control edges carry no value token; `input_names ⊥ inputs` is enforced). Doc
+  resolution, no code change. `04d161de`.
+
+### Compaction (T051/T053, SC-003) — characterized, needs a design decision
+
+Precisely scoped this session. The in-graph compaction subgraph (`count_tokens`
+→ guard/switch → summarize → fold) is NOT built; `CompactionPolicy` only sizes
+the `keep_recent` recall window (its `compact_at_tokens`/`strategy` are recorded
+but unenforced). SC-003 ("recall a turn-1 fact at turn 50") cannot pass on the
+current substrate because:
+1. `MemorySystem::recent_scoped` drops any key whose `transcript_sort_key` is
+   `None`, so a hook-folded `conversation:summary` is never recalled; and
+2. lifecycle hooks run in the worker subprocess, which has no LLM access, so
+   `ctx.summarize` is a heuristic truncation — LLM-quality summarization can only
+   happen inside the graph.
+
+Design fork (needs sign-off before building): (a) in-graph LLM-summarize subgraph
+in the turn flow (host-independent, AIR-portable, highest quality); (b)
+hook-driven fold + a recall change to always-surface a pinned summary key
+(heuristic quality, matches "controlled through hooks"); or (c) both — an
+in-graph default the author can override via a `post_turn` hook. SC-005
+(skill-by-description ≥8/10) is wired (`skills=True` → `search_skills`) and is a
+live eval campaign, not a code gap.
