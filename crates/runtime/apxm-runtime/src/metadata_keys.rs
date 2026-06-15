@@ -45,3 +45,5 @@ pub const REPLAY_FROM_NODE: &str = "replay_from_node";
 /// prior run's captured token values, used to seed the replay boundary. Paired
 /// with [`REPLAY_FROM_NODE`].
 pub const REPLAY_TOKEN_VALUES: &str = "replay_token_values";
+/// End-to-end delivery trace id minted at webhook ingress (apxm-os → apxm-server).
+pub const CORRELATION_ID: &str = "correlation_id";

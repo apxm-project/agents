@@ -57,6 +57,9 @@ pub(crate) struct ExecutionRecord {
     /// a restart. Absent for sync runs and detached runs without a key.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub(crate) idempotency_key: Option<String>,
+    /// Correlation/delivery id from webhook ingress (FR-016 observability).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) correlation_id: Option<String>,
     pub(crate) status: ExecutionStatus,
     pub(crate) started_at_ms: u64,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -226,6 +229,7 @@ impl ExecutionStore {
             session_id,
             session_dir,
             None,
+            None,
         )
     }
 
@@ -241,6 +245,7 @@ impl ExecutionStore {
         session_id: &str,
         session_dir: &str,
         idempotency_key: Option<String>,
+        correlation_id: Option<String>,
     ) -> ExecutionRecord {
         let record = ExecutionRecord {
             execution_id,
@@ -257,6 +262,7 @@ impl ExecutionStore {
             session_id: session_id.to_string(),
             session_dir: session_dir.to_string(),
             idempotency_key,
+            correlation_id,
             status: ExecutionStatus::Running,
             started_at_ms: now_ms(),
             completed_at_ms: None,

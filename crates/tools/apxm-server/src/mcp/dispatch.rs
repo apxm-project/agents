@@ -67,6 +67,7 @@ pub(crate) async fn call_skill_tool(
                 sandbox_hint: None,
                 detach: false,
                 idempotency_key: None,
+                correlation_id: None,
                 extra_metadata: Default::default(),
             };
             Some(match execute_skill_by_id(state, skill_id, request).await {

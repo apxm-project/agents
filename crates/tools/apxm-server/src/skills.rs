@@ -1,7 +1,7 @@
 use std::collections::{HashMap, HashSet};
 use std::fs;
 use std::path::{Path, PathBuf};
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use apxm_artifact::Artifact;
@@ -24,7 +24,7 @@ use serde::{Deserialize, Serialize};
 use tokio::sync::mpsc;
 
 use crate::error::ApiError;
-use crate::execute::{ExecuteResponse, to_execute_response};
+use crate::execute::{acquire_admission, ExecuteResponse, to_execute_response};
 use crate::executions::{ExecutionRecordingEmitter, IdempotencyClaim};
 use crate::rollout::{RolloutEmitter, session_meta_from_skill};
 use crate::runs::RunBusFanOutEmitter;
@@ -53,12 +53,27 @@ const SKILL_EXECUTE_COMPLETE: EventKind =
 #[derive(Debug, Clone)]
 pub(crate) struct SkillLibrary {
     roots: Arc<Vec<PathBuf>>,
+    /// Compiled artifact cache keyed by `(skill_id, artifact_hash)` so hot webhook
+    /// paths avoid re-reading and re-validating the on-disk blob every delivery.
+    artifact_cache: Arc<Mutex<HashMap<(String, String), Arc<Artifact>>>>,
+    /// Resolved-lookup cache keyed by the *requested id string* (so the version
+    /// pin `@x.y.z` and the `lib::` namespace are part of the key). Lets the
+    /// execution hot path skip the full multi-root `scan()` — which reads and
+    /// hashes every file of every skill — by reusing a previously resolved
+    /// [`SkillRecord`] when the resolved package's manifest `artifact_hash` is
+    /// unchanged (a single small TOML read). Invalidated on hash change
+    /// (redeploy) or when the package's manifest disappears. Only the execution
+    /// path (`find_executable`) consults it; inventory/get/validate always
+    /// re-scan so the authoring UI stays live.
+    resolved_cache: Arc<Mutex<HashMap<String, Arc<SkillRecord>>>>,
 }
 
 impl SkillLibrary {
     pub(crate) fn new(roots: Vec<PathBuf>) -> Self {
         Self {
             roots: Arc::new(roots),
+            artifact_cache: Arc::new(Mutex::new(HashMap::new())),
+            resolved_cache: Arc::new(Mutex::new(HashMap::new())),
         }
     }
 
@@ -104,12 +119,70 @@ impl SkillLibrary {
         &self,
         requested_id: &str,
     ) -> Result<ExecutableSkill, SkillLookupError> {
+        // Hot path: reuse the previously resolved record when the resolved
+        // package's manifest `artifact_hash` is unchanged, skipping the full
+        // skill-root scan. A redeploy rewrites that hash, which invalidates the
+        // entry below and forces a fresh scan.
+        if let Some(record) = self.cached_resolved_record(requested_id) {
+            let artifact_path = record.package_dir.join(ARTIFACT_FILE);
+            return Ok(ExecutableSkill {
+                record: (*record).clone(),
+                artifact_path,
+            });
+        }
         let record = self.find(requested_id)?;
+        self.store_resolved_record(requested_id, &record);
         let artifact_path = record.package_dir.join(ARTIFACT_FILE);
         Ok(ExecutableSkill {
             record,
             artifact_path,
         })
+    }
+
+    /// Return the cached resolved record for `requested_id` iff its package
+    /// manifest still declares the same `artifact_hash` (cheap single-file
+    /// read). A mismatch (redeploy) or a missing/invalid manifest drops the
+    /// stale entry and returns `None` so the caller re-scans.
+    fn cached_resolved_record(&self, requested_id: &str) -> Option<Arc<SkillRecord>> {
+        let cached = self
+            .resolved_cache
+            .lock()
+            .expect("resolved cache lock")
+            .get(requested_id)
+            .cloned()?;
+        let cached_hash = cached
+            .manifest
+            .as_ref()
+            .and_then(|m| m.artifact_hash.as_deref());
+        let current_hash = manifest_declared_artifact_hash(&cached.package_dir.join(MANIFEST_FILE));
+        match (cached_hash, current_hash.as_deref()) {
+            (Some(cached_hash), Some(current_hash)) if cached_hash == current_hash => Some(cached),
+            _ => {
+                self.resolved_cache
+                    .lock()
+                    .expect("resolved cache lock")
+                    .remove(requested_id);
+                None
+            }
+        }
+    }
+
+    /// Cache a freshly resolved record for `requested_id`. Only records that
+    /// declare an `artifact_hash` are cached — the freshness check keys on it,
+    /// so an entry without one could never be validated and is skipped.
+    fn store_resolved_record(&self, requested_id: &str, record: &SkillRecord) {
+        let has_hash = record
+            .manifest
+            .as_ref()
+            .and_then(|m| m.artifact_hash.as_deref())
+            .is_some();
+        if !has_hash {
+            return;
+        }
+        self.resolved_cache
+            .lock()
+            .expect("resolved cache lock")
+            .insert(requested_id.to_string(), Arc::new(record.clone()));
     }
 
     pub(crate) fn list_skill_resources(&self) -> Vec<SkillResource> {
@@ -245,6 +318,9 @@ pub(crate) struct SkillExecuteRequest {
     /// `detach` is `false`.
     #[serde(default)]
     pub(crate) idempotency_key: Option<String>,
+    /// Correlation/delivery id from the inbound cue event (webhook path).
+    #[serde(default)]
+    pub(crate) correlation_id: Option<String>,
     /// Internal-only execution metadata merged into the runtime context (NOT
     /// caller-settable — `#[serde(skip)]`). Used by `rerun-from-node` to stamp the
     /// partial-replay seed keys (`replay_from_node`, `replay_token_values`) so the
@@ -356,6 +432,9 @@ struct PreparedCompiledExecution {
     /// Internal-only execution metadata (e.g. the partial-replay seed for
     /// `rerun-from-node`). Merged into the runtime context metadata at launch.
     extra_metadata: std::collections::HashMap<String, String>,
+    /// Park-aware admission handle id; stamped into metadata so parked runs release
+    /// the inference slot (matches the `/v1/execute` path).
+    admission_id: Option<String>,
 }
 
 impl PreparedCompiledExecution {
@@ -406,10 +485,17 @@ fn token_values_for_replay(
         .collect()
 }
 
-/// Full launch metadata for a prepared execution: the side-effect-policy seed
-/// plus any internal `extra_metadata` (e.g. the `rerun-from-node` replay seed).
+/// Full launch metadata for a prepared execution: the side-effect-policy seed,
+/// optional admission id (releases the inference slot while parked), and any
+/// internal `extra_metadata` (e.g. the `rerun-from-node` replay seed).
 fn launch_metadata(prepared: &PreparedCompiledExecution) -> std::collections::HashMap<String, String> {
     let mut map = side_effect_policy_metadata(prepared.side_effect_policy.as_deref());
+    if let Some(admission_id) = &prepared.admission_id {
+        map.insert(
+            apxm_runtime::metadata_keys::ADMISSION_ID.to_string(),
+            admission_id.clone(),
+        );
+    }
     map.extend(prepared.extra_metadata.iter().map(|(k, v)| (k.clone(), v.clone())));
     map
 }
@@ -525,9 +611,9 @@ fn spawn_detached_skill_execution(state: AppState, prepared: PreparedCompiledExe
 /// The detached task body: acquire the permit, then run the compiled skill and
 /// settle the record. Acquire failure (saturation/closed) settles the record as
 /// failed so it never stays `Running` forever.
-async fn run_detached_skill_body(state: AppState, prepared: PreparedCompiledExecution) {
-    let _permit = match state.inference_limiter.acquire().await {
-        Ok(permit) => permit,
+async fn run_detached_skill_body(state: AppState, mut prepared: PreparedCompiledExecution) {
+    let admission_id = match acquire_admission(&state).await {
+        Ok(id) => id,
         Err(error) => {
             state
                 .execution_store
@@ -536,6 +622,7 @@ async fn run_detached_skill_body(state: AppState, prepared: PreparedCompiledExec
             return;
         }
     };
+    prepared.admission_id = Some(admission_id.clone());
 
     ensure_rollout_open(
         &state,
@@ -593,10 +680,13 @@ async fn run_detached_skill_body(state: AppState, prepared: PreparedCompiledExec
         Ok(result) => result,
         Err(_) => {
             // `await_skill_execution` already settled the record as failed.
+            apxm_runtime::scheduler::admission_registry::unregister(&admission_id);
             state.rollout_registry.close(&execution_id).await;
             return;
         }
     };
+
+    apxm_runtime::scheduler::admission_registry::unregister(&admission_id);
 
     let token_values = token_values_for_replay(&result);
     let response = to_execute_response(result, Some(session_dir));
@@ -630,9 +720,10 @@ pub(crate) async fn execute_skill_by_id(
 
 async fn execute_compiled_skill(
     state: &AppState,
-    prepared: PreparedCompiledExecution,
+    mut prepared: PreparedCompiledExecution,
 ) -> Result<SkillExecuteResponse, ApiError> {
-    let _permit = state.inference_limiter.acquire().await?;
+    let admission_id = acquire_admission(state).await?;
+    prepared.admission_id = Some(admission_id.clone());
     // Open the rollout recorder BEFORE any event lands on the in-memory
     // bus — the JSONL sink relies on the file being ready at first emit.
     ensure_rollout_open(
@@ -693,7 +784,9 @@ async fn execute_compiled_skill(
         prepared.timeout_ms,
         runtime_execution,
     )
-    .await?;
+    .await;
+    apxm_runtime::scheduler::admission_registry::unregister(&admission_id);
+    let result = result?;
 
     let token_values = token_values_for_replay(&result);
     let response = to_execute_response(result, Some(prepared.session_dir));
@@ -828,8 +921,9 @@ pub(crate) async fn execute_skill_stream(
 ) -> Result<Sse<impl Stream<Item = Result<Event, std::convert::Infallible>>>, ApiError> {
     let stream_config = state.server_config.execution_stream;
     let (tx, mut rx) = mpsc::channel::<ApxmEvent>(stream_config.channel_capacity.max(1));
-    let prepared = prepare_skill_execution(&state, &id, req)?;
-    let permit = state.inference_limiter.acquire().await?;
+    let mut prepared = prepare_skill_execution(&state, &id, req)?;
+    let admission_id = acquire_admission(&state).await?;
+    prepared.admission_id = Some(admission_id.clone());
     let runtime = Arc::clone(&state.runtime);
     let execution_store = state.execution_store.clone();
     let trace_id = prepared.execution_id.clone();
@@ -852,7 +946,6 @@ pub(crate) async fn execute_skill_stream(
     .await;
 
     tokio::spawn(async move {
-        let _permit = permit;
         send_recorded_run_event(
             &state,
             &tx_task,
@@ -912,6 +1005,8 @@ pub(crate) async fn execute_skill_stream(
                         ),
                     )
                     .await;
+                    apxm_runtime::scheduler::admission_registry::unregister(&admission_id);
+                    state.rollout_registry.close(&prepared.execution_id).await;
                     return;
                 }
             }
@@ -960,6 +1055,7 @@ pub(crate) async fn execute_skill_stream(
                 .await;
             }
         }
+        apxm_runtime::scheduler::admission_registry::unregister(&admission_id);
         state.rollout_registry.close(&prepared.execution_id).await;
     });
     drop(tx);
@@ -1018,6 +1114,14 @@ fn prepare_skill_execution_with_reservation(
         .transpose()?
         .unwrap_or_else(|| uuid::Uuid::new_v4().to_string());
     let session_dir = skill_session_dir(&manifest.skill_id, &session_id)?;
+    let mut extra_metadata = req.extra_metadata;
+    let correlation_id = req.correlation_id.filter(|s| !s.is_empty());
+    if let Some(correlation_id) = correlation_id.as_ref() {
+        extra_metadata.insert(
+            apxm_runtime::metadata_keys::CORRELATION_ID.to_string(),
+            correlation_id.clone(),
+        );
+    }
     let provenance = SkillExecutionProvenance {
         skill_id: manifest.skill_id.clone(),
         skill_version: manifest.version.clone(),
@@ -1039,10 +1143,18 @@ fn prepare_skill_execution_with_reservation(
                 &session_id,
                 &session_dir,
                 idempotency_key,
+                correlation_id.clone(),
             ),
         None => state
             .execution_store
-            .start_skill_execution_with_provenance(provenance, &session_id, &session_dir),
+            .start_skill_execution_with_provenance_execution_id_and_idempotency_key(
+                uuid::Uuid::new_v4().to_string(),
+                provenance,
+                &session_id,
+                &session_dir,
+                None,
+                correlation_id.clone(),
+            ),
     };
     Ok(PreparedCompiledExecution {
         artifact,
@@ -1055,7 +1167,8 @@ fn prepare_skill_execution_with_reservation(
         skill_version: manifest.version.clone(),
         entry_flow: manifest.entry_flow.clone(),
         side_effect_policy: manifest.side_effect_policy.clone(),
-        extra_metadata: req.extra_metadata,
+        extra_metadata,
+        admission_id: None,
     })
 }
 
@@ -1260,6 +1373,19 @@ fn load_static_skill_artifact(
         .artifact_hash
         .as_deref()
         .ok_or_else(|| ApiError::bad_request("manifest artifact_hash is required"))?;
+
+    let cache_key = (manifest.skill_id.clone(), declared_hash.to_string());
+    if let Some(cached) = state
+        .skill_library
+        .artifact_cache
+        .lock()
+        .expect("artifact cache lock")
+        .get(&cache_key)
+        .cloned()
+    {
+        return Ok((*cached).clone());
+    }
+
     if is_symlink(&executable.artifact_path) {
         return Err(ApiError::bad_request(
             "skill artifact must not be a symlink",
@@ -1279,6 +1405,12 @@ fn load_static_skill_artifact(
     validate_embedded_skill_manifest(&artifact, manifest)?;
     validate_artifact_entry_flow(&artifact, &manifest.entry_flow)?;
     validate_static_skill_admission(manifest, &artifact, state)?;
+    state
+        .skill_library
+        .artifact_cache
+        .lock()
+        .expect("artifact cache lock")
+        .insert(cache_key, Arc::new(artifact.clone()));
     Ok(artifact)
 }
 
@@ -1561,6 +1693,16 @@ fn parse_manifest_file(path: &Path) -> Result<SkillManifest, String> {
     apxm_skill::parse_manifest_file(path)
 }
 
+/// Cheap freshness probe for the resolution cache: read just the declared
+/// `artifact_hash` from a package manifest, returning `None` if the manifest is
+/// missing/unparseable or declares no hash. Parses one small `skill.toml`
+/// instead of re-scanning + re-hashing every skill in every root.
+fn manifest_declared_artifact_hash(manifest_path: &Path) -> Option<String> {
+    parse_manifest_file(manifest_path)
+        .ok()
+        .and_then(|manifest| manifest.artifact_hash)
+}
+
 fn validate_declared_hash(
     field: &str,
     declared: Option<&str>,
@@ -1756,6 +1898,121 @@ fn skill_lookup_error(error: SkillLookupError) -> ApiError {
         SkillLookupError::Ambiguous(id) => ApiError::bad_request(format!(
             "skill id has multiple versions; request {id}@<version>"
         )),
+    }
+}
+
+#[cfg(test)]
+mod scale_tests {
+    //! Unit coverage for the US4 (server scale) seams: the resolution cache that
+    //! lets a hot delivery skip the full skill-root scan (T026) and the
+    //! `ADMISSION_ID` stamping that lets a parked skill run release its inference
+    //! slot (T025).
+    use super::*;
+    use apxm_artifact::{Artifact, ArtifactMetadata};
+
+    /// Write a minimal compiled-skill package (`skill.toml` + `skill.apxmobj`)
+    /// whose manifest declares the hash of the written artifact bytes.
+    fn write_min_skill(root: &Path, package: &str, skill_id: &str, version: &str, bytes: &[u8]) {
+        let dir = root.join(package);
+        fs::create_dir_all(&dir).expect("skill dir");
+        fs::write(dir.join(ARTIFACT_FILE), bytes).expect("artifact");
+        let hash = tagged_blake3(bytes);
+        fs::write(
+            dir.join(MANIFEST_FILE),
+            format!(
+                "skill_id = \"{skill_id}\"\nversion = \"{version}\"\nentry_flow = \"main\"\nartifact_hash = \"{hash}\"\n"
+            ),
+        )
+        .expect("manifest");
+    }
+
+    #[test]
+    fn find_executable_serves_resolution_cache_and_invalidates_on_hash_change() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let root = tmp.path().to_path_buf();
+        let bytes_v1 = b"artifact-v1";
+        write_min_skill(&root, "pkg", "scale-skill", "0.1.0", bytes_v1);
+
+        let lib = SkillLibrary::new(vec![root.clone()]);
+
+        // First resolve scans the root and caches the result.
+        let first = lib.find_executable("scale-skill").expect("first resolve");
+        assert_eq!(first.record.version.as_deref(), Some("0.1.0"));
+
+        // Rewrite ONLY the manifest's non-hash field (version) while keeping the
+        // artifact (and therefore its declared hash) unchanged. A fresh scan
+        // would observe 0.2.0; the cache must serve the prior 0.1.0 because the
+        // freshness probe sees an unchanged artifact_hash — proving the scan was
+        // skipped.
+        let hash_v1 = tagged_blake3(bytes_v1);
+        fs::write(
+            root.join("pkg").join(MANIFEST_FILE),
+            format!(
+                "skill_id = \"scale-skill\"\nversion = \"0.2.0\"\nentry_flow = \"main\"\nartifact_hash = \"{hash_v1}\"\n"
+            ),
+        )
+        .expect("rewrite manifest");
+        let cached = lib.find_executable("scale-skill").expect("cached resolve");
+        assert_eq!(
+            cached.record.version.as_deref(),
+            Some("0.1.0"),
+            "unchanged artifact_hash must serve the cached resolution"
+        );
+
+        // Now change the artifact bytes (new hash) and bump the version. The hash
+        // mismatch must invalidate the cache and force a fresh scan.
+        let bytes_v2 = b"artifact-v2-different";
+        write_min_skill(&root, "pkg", "scale-skill", "0.3.0", bytes_v2);
+        let refreshed = lib.find_executable("scale-skill").expect("refreshed resolve");
+        assert_eq!(
+            refreshed.record.version.as_deref(),
+            Some("0.3.0"),
+            "changed artifact_hash must invalidate the cached resolution"
+        );
+        assert_eq!(
+            refreshed.record.hashes.artifact_hash.as_deref(),
+            Some(tagged_blake3(bytes_v2).as_str())
+        );
+    }
+
+    fn prepared_for_test(admission_id: Option<String>) -> PreparedCompiledExecution {
+        PreparedCompiledExecution {
+            artifact: Artifact::new(ArtifactMetadata::new(Some("k".to_string()), "test"), vec![]),
+            args: Vec::new(),
+            session_id: "s".to_string(),
+            session_dir: "d".to_string(),
+            timeout_ms: None,
+            execution_id: "e".to_string(),
+            skill_id: "k".to_string(),
+            skill_version: "0.1.0".to_string(),
+            entry_flow: "main".to_string(),
+            side_effect_policy: None,
+            extra_metadata: HashMap::new(),
+            admission_id,
+        }
+    }
+
+    #[test]
+    fn launch_metadata_stamps_admission_id_when_present() {
+        let prepared = prepared_for_test(Some("adm-xyz".to_string()));
+        let metadata = launch_metadata(&prepared);
+        assert_eq!(
+            metadata
+                .get(apxm_runtime::metadata_keys::ADMISSION_ID)
+                .map(String::as_str),
+            Some("adm-xyz"),
+            "an admitted skill run must stamp ADMISSION_ID so a parked run releases its slot"
+        );
+    }
+
+    #[test]
+    fn launch_metadata_omits_admission_id_when_absent() {
+        let prepared = prepared_for_test(None);
+        let metadata = launch_metadata(&prepared);
+        assert!(
+            !metadata.contains_key(apxm_runtime::metadata_keys::ADMISSION_ID),
+            "no admission id ⇒ no ADMISSION_ID metadata key"
+        );
     }
 }
 

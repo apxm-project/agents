@@ -1,7 +1,11 @@
-//! Per-session execution lane guard.
+//! Per-session execution lane guard ([`SessionLaneGuard`]).
 //!
-//! Ensures requests for the same session execute serially while allowing
-//! different sessions to run concurrently.
+//! Webhook/trigger connectivity relies on this for **same-chat serialization**:
+//! apxm-os mints `session_id = <agent>-<conversation-subject>`, so every delivery
+//! for one conversation queues on one lane while deliveries for other conversations
+//! proceed in parallel (subject to the server-wide inference limit and the agent's
+//! `max_concurrency`). Cross-conversation parallelism is intentional; within-lane
+//! ordering is a correctness property.
 
 use std::sync::Arc;
 

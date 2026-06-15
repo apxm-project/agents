@@ -280,6 +280,12 @@ impl Default for ServerRuntimeConfig {
 }
 
 /// Server-wide inference limiter configuration.
+///
+/// `max_concurrent` caps how many skill/AIR executions may hold an inference slot
+/// at once (process-wide). Override via `[server.inference]` in config or
+/// `APXM_SERVER_MAX_INFERENCE`. Per-conversation ordering is **not** governed
+/// here — the runtime's [`SessionLaneGuard`] serializes same-`session_id` work
+/// while different sessions run in parallel up to this limit.
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(default)]
 pub struct ServerInferenceConfig {
@@ -290,7 +296,9 @@ pub struct ServerInferenceConfig {
 impl Default for ServerInferenceConfig {
     fn default() -> Self {
         Self {
-            max_concurrent: 2,
+            // Raised from 2 so many concurrent cross-conversation webhook deliveries
+            // are not artificially starved; same-chat ordering stays in SessionLaneGuard.
+            max_concurrent: 16,
             acquire_timeout_ms: 250,
         }
     }

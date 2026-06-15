@@ -201,6 +201,7 @@ async fn rerun_skill(
         sandbox_hint: req.sandbox_hint.clone(),
         detach: false,
         idempotency_key: None,
+        correlation_id: None,
         extra_metadata: req.extra_metadata.clone(),
     };
     execute_skill_by_id(state, &skill_ref, skill_req).await
@@ -585,6 +586,7 @@ timeout_ms = 30000
                 server_config: apxm_driver::ServerConfig::default(),
                 cancel_registry: Arc::new(DashMap::new()),
                 goal_runs: crate::goal_runs::GoalRunRegistry::new(),
+                session_registry: crate::conversations::SessionRegistry::new(),
             }
         }
 

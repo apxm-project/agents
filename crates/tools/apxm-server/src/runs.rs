@@ -212,6 +212,8 @@ pub(crate) struct RunSummary {
     pub(crate) session_id: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub(crate) root_agent: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) correlation_id: Option<String>,
     pub(crate) totals: RunTotals,
 }
 
@@ -442,6 +444,7 @@ fn index_entry_to_summary(entry: apxm_rollout::ThreadIndexEntry) -> RunSummary {
         completed_at_ms: None,
         session_id: entry.session_id,
         root_agent: entry.agent_code,
+        correlation_id: None,
         totals: RunTotals::default(),
     }
 }
@@ -694,6 +697,7 @@ fn record_to_summary(state: &AppState, record: ExecutionRecord) -> RunSummary {
         completed_at_ms: record.completed_at_ms,
         session_id: record.session_id,
         root_agent,
+        correlation_id: record.correlation_id.clone(),
         totals,
     }
 }

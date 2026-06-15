@@ -11,7 +11,7 @@ use axum::Json;
 use axum::extract::{Path, State};
 use serde::{Deserialize, Serialize};
 use serde_json::Value as JsonValue;
-use tracing::info;
+use tracing::{info, warn};
 
 use crate::error::ApiError;
 use crate::state::AppState;
@@ -220,6 +220,24 @@ fn default_provider_schema() -> JsonValue {
     })
 }
 
+fn normalize_pack_schema(capability: &str, schema: &JsonValue) -> JsonValue {
+    match schema {
+        JsonValue::Null => default_provider_schema(),
+        JsonValue::String(raw) => match serde_json::from_str::<JsonValue>(raw) {
+            Ok(parsed) => parsed,
+            Err(error) => {
+                warn!(
+                    capability = %capability,
+                    %error,
+                    "pack tool schema string is not valid JSON; using default provider schema"
+                );
+                default_provider_schema()
+            }
+        },
+        other => other.clone(),
+    }
+}
+
 /// Auto-register the action blocks declared by every installed pack's pack-root
 /// `tools.toml`, so installing a connector pack makes its blocks real
 /// capabilities (listed in /v1/capabilities) with NO per-provider Rust. Each
@@ -230,11 +248,7 @@ fn default_provider_schema() -> JsonValue {
 /// registerable yet, e.g. `mcp`).
 fn capability_from_tool(t: &PackToolDecl) -> Option<Arc<dyn CapabilityExecutor>> {
     let kind = t.kind.as_deref().unwrap_or("provider");
-    let schema = if t.schema.is_null() {
-        default_provider_schema()
-    } else {
-        t.schema.clone()
-    };
+    let schema = normalize_pack_schema(&t.capability, &t.schema);
     let mut metadata = CapabilityMetadata::new(
         t.capability.clone(),
         t.description
@@ -322,6 +336,17 @@ fn pack_tools_in_dir(pack_dir: &std::path::Path) -> Vec<Arc<dyn CapabilityExecut
     file.tool.iter().filter_map(capability_from_tool).collect()
 }
 
+/// Rescan installed pack `tools.toml` files and register any new capabilities.
+/// Idempotent: already-registered capability ids are skipped. Called on deploy
+/// and via `POST /v1/capabilities/rescan` so freshly dropped packs show up
+/// without a server restart.
+pub(crate) fn rescan_pack_tools(runtime: &apxm_runtime::Runtime, roots: &[std::path::PathBuf]) -> u32 {
+    let before = runtime.capability_system().list_capabilities().len();
+    register_pack_tools(runtime, roots);
+    let after = runtime.capability_system().list_capabilities().len();
+    after.saturating_sub(before) as u32
+}
+
 /// Auto-register the action blocks declared by every installed pack's pack-root
 /// `tools.toml`, so installing a connector pack makes its blocks real
 /// capabilities (listed in /v1/capabilities) with NO per-provider Rust. Each
@@ -330,30 +355,46 @@ fn pack_tools_in_dir(pack_dir: &std::path::Path) -> Vec<Arc<dyn CapabilityExecut
 /// keystone that makes capabilities declarative the way skills already are.
 pub(crate) fn register_pack_tools(runtime: &apxm_runtime::Runtime, roots: &[std::path::PathBuf]) {
     let sys = runtime.capability_system();
-    let mut registered = 0u32;
+    let mut total_registered = 0u32;
     for root in roots {
-        let Ok(entries) = std::fs::read_dir(root) else {
-            continue;
+        let mut root_registered = 0u32;
+        let entries = match std::fs::read_dir(root) {
+            Ok(entries) => entries,
+            Err(error) => {
+                info!(root = %root.display(), %error, "skipping pack capability root");
+                continue;
+            }
         };
+        let mut root_seen = 0u32;
         for entry in entries.flatten() {
             let pack_dir = entry.path();
             if !pack_dir.is_dir() {
                 continue;
             }
+            root_seen += 1;
             for cap in pack_tools_in_dir(&pack_dir) {
                 // register() errors if already present (builtin / re-scan) — fine.
-                if sys.register(cap).is_ok() {
-                    registered += 1;
+                let name = cap.metadata().name.clone();
+                match sys.register(cap) {
+                    Ok(()) => {
+                        total_registered += 1;
+                        root_registered += 1;
+                        info!(capability = %name, pack_dir = %pack_dir.display(), "registered pack tool capability");
+                    }
+                    Err(error) => {
+                        warn!(capability = %name, pack_dir = %pack_dir.display(), %error, "failed to register pack tool capability");
+                    }
                 }
             }
         }
-    }
-    if registered > 0 {
         info!(
-            count = registered,
-            "registered pack tool capabilities from tools.toml"
+            root = %root.display(),
+            packs = root_seen,
+            count = root_registered,
+            "scanned pack tool capability root"
         );
     }
+    info!(count = total_registered, "completed pack tool capability scan");
 }
 
 
@@ -374,6 +415,21 @@ pub(crate) async fn list_capabilities(
         })
         .collect();
     Ok(Json(caps))
+}
+
+#[derive(Debug, Serialize)]
+pub(crate) struct RescanCapabilitiesResponse {
+    pub(crate) registered: u32,
+    pub(crate) total: usize,
+}
+
+pub(crate) async fn rescan_capabilities(
+    State(state): State<AppState>,
+) -> Result<Json<RescanCapabilitiesResponse>, ApiError> {
+    let roots = crate::startup::pack_capability_roots(state.skill_library.roots());
+    let registered = rescan_pack_tools(&state.runtime, &roots);
+    let total = state.runtime.capability_system().list_capabilities().len();
+    Ok(Json(RescanCapabilitiesResponse { registered, total }))
 }
 
 pub(crate) async fn register_capability(
@@ -619,6 +675,35 @@ mod tests {
         );
     }
 
+    #[test]
+    fn c5_capability_rescan_route_is_pinned() {
+        assert_eq!(
+            crate::routes::CAPABILITIES_RESCAN,
+            "/v1/capabilities/rescan"
+        );
+    }
+
+    /// Cross-plane contract C4: os-dispatch execute envelope + correlation id.
+    #[test]
+    fn c4_execute_envelope_accepts_correlation_and_data_arg() {
+        use crate::skills::SkillExecuteRequest;
+        let envelope = serde_json::json!({
+            "event": { "kind": "webhook", "correlation_id": "del-42", "payload": { "x": 1 } },
+            "agent_context": { "beliefs": {} }
+        });
+        let req: SkillExecuteRequest = serde_json::from_value(serde_json::json!({
+            "args": [envelope.to_string()],
+            "session_id": "agent-99",
+            "correlation_id": "del-42"
+        }))
+        .expect("SkillExecuteRequest deserializes");
+        assert_eq!(req.session_id.as_deref(), Some("agent-99"));
+        assert_eq!(req.correlation_id.as_deref(), Some("del-42"));
+        let parsed =
+            serde_json::from_str::<serde_json::Value>(&req.args[0]).expect("args[0] is JSON");
+        assert_eq!(parsed["event"]["correlation_id"], "del-42");
+    }
+
     /// A packs directory containing a `tools.toml` registers its `[[tool]]`
     /// entries as runtime capabilities, so `/v1/capabilities` lists them and the
     /// studio install-gate sees the blocks as AVAILABLE.
@@ -639,6 +724,7 @@ mod tests {
                 kind = "provider"
                 method = "POST"
                 url = "https://slack.com/api/chat.postMessage"
+                schema = """{"type":"object","required":["channel","text"],"properties":{"channel":{"type":"string"},"text":{"type":"string"}}}"""
 
                 [[tool]]
                 capability = "weather.lookup"
@@ -648,6 +734,27 @@ mod tests {
             "#,
         )
         .expect("write tools.toml");
+        std::fs::write(
+            pack_dir.join("connector.toml"),
+            r#"
+                schema_version = 1
+                profile_version = "connector-plugin/v1"
+                app_id = "slack"
+                provider = "slack"
+
+                [connection]
+                noun = "Workspace"
+
+                [[operation]]
+                id = "post_message"
+                kind = "action"
+                runtime_node = "tool"
+                source = "tools.toml:slack.post_message"
+                title = "Send message"
+                summary = "Slack message to {{args.channel|label}}: {{args.text|label}}"
+            "#,
+        )
+        .expect("write connector UI metadata");
 
         let runtime = Runtime::new(RuntimeConfig::in_memory())
             .await
@@ -670,6 +777,10 @@ mod tests {
             .find(|m| m.name == "slack.post_message")
             .expect("slack capability listed");
         assert!(slack.requires_auth, "auth-gated provider block");
+        assert!(
+            slack.metadata.is_empty(),
+            "apxm-server must not ingest Studio connector UI metadata"
+        );
         let weather = listed
             .iter()
             .find(|m| m.name == "weather.lookup")
@@ -721,6 +832,7 @@ mod tests {
             server_config: apxm_driver::ServerConfig::default(),
             cancel_registry: Arc::new(DashMap::new()),
             goal_runs: crate::goal_runs::GoalRunRegistry::new(),
+            session_registry: crate::conversations::SessionRegistry::new(),
         }
     }
 
