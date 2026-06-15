@@ -157,14 +157,22 @@ identifiers, no cruft) and these issues:
   **fail-closed**: `sandbox_required` (set by `APXM_SANDBOX_PYTHON`) is threaded
   to `spawn_with_env`, which returns an error rather than running author python
   unsandboxed when no OS-isolating backend is available.
-- **KNOWN-LIMITATION — re-arm memory growth (high, CONV-1):** each in-graph turn
-  splices a FLOW_CALL + recv node; completed nodes/tokens are not reclaimed
-  (`condense_subdag` has no caller on the wake path), so a very long session
-  grows the scheduler maps monotonically. Slow-manifesting; the GC fix is real
-  scheduler work — follow-up before long-running production sessions.
-- **FOLLOW-UP — turn hooks fire per Ask (medium, CONV-2):** `ConversationMemoryMiddleware`
-  fires pre_turn/post_turn/post_ask for every Ask node, so sub-agent asks inflate
-  turn_count and trigger turn hooks. Scope to the top-level turn ask.
+- **BOUNDED (CONV-1) — re-arm memory growth (was high):** each in-graph turn
+  spliced a FLOW_CALL + recv node with no upper bound. Now the re-arm is capped
+  by the recv node's `MAX_ITERATIONS` (default 100): `RearmSpec` carries
+  `session_id` + `max_turns`, `SchedulerState.next_rearm_turn(session_id)`
+  counts per-session re-arms, and `ParkWaker::fire()` stops re-arming once the
+  cap is reached. Residual follow-up: completed nodes/tokens are still not
+  reclaimed (`condense_subdag` has no caller on the wake path), so growth within
+  the cap is monotonic — full GC of completed re-arm nodes remains future work.
+  Committed `7307384c`.
+- **RESOLVED (CONV-2) — turn hooks fired per Ask:** `ConversationMemoryMiddleware`
+  applied to every Ask, so sub-agent asks (sharing the session `memory_scope` via
+  inherited `session_id`) inflated `conversation:turn_count`, polluted the recall
+  window, and re-fired pre_turn/post_turn/post_ask hooks. Now gated on a
+  `conversational_turn` marker the frontend stamps on the top-level turn ask
+  (`ConversationalAgent._build_turn_flow`); the program declares the turn
+  (constitution #2). Committed `b3c69558`.
 - **FOLLOW-UP — `__system` positional binding (low, CONV-4):** bind by name, not
   positional index, to be robust to control-edge interleaving.
 - **MAINTAINER SIGN-OFF — inference concurrency 2→16 (medium, WH-1):** the
@@ -176,6 +184,19 @@ identifiers, no cruft) and these issues:
 - **#3 FULL multi-tenant provenance:** cryptographic artifact signing (apxm-auth
   sign + server verify) to replace the operator-trust env gate for untrusted
   multi-tenant callers. The single-tenant operator-trust path (#3-lite) is done.
-- Resource limits (cgroup/timeout) on the sandboxed worker (bwrap gives fs+net,
-  not cpu/mem), then promote `APXM_SANDBOX_PYTHON` toward a policy default.
+- **TIMEOUT ENFORCED (was observe-only):** the per-call deadline is now a real
+  resource limit. The worker wrapped the handler in `asyncio.shield`, so a
+  timed-out (or externally cancelled) coroutine kept running to completion in
+  the background — the deadline reported but did not reclaim compute. Removed
+  the shield (`wait_for(coro, …)`) so async handlers are actually cancelled, and
+  the Rust bridge now sends a best-effort `Cancel` on timeout instead of merely
+  abandoning the response. Covered by `tests/test_tool_worker_deadline.py`
+  (red/green-verified against the shield).
+- **REMAINING — cpu/mem hard limits:** bwrap gives fs+net isolation, not
+  cpu/mem, and a runaway *sync* handler runs in an executor thread that Python
+  cannot cancel cooperatively. True per-call cpu/mem reclamation needs
+  process-level limits (a process-per-call worker or cgroup-v2 delegation), a
+  design change rather than a flag — not bolted on as a process-wide
+  `setrlimit`, which would destabilize the persistent multi-handler worker.
+  After that lands, promote `APXM_SANDBOX_PYTHON` toward a policy default.
 - T053/SC scale validations (50-turn compaction; skill-by-description 8/10).
