@@ -341,15 +341,22 @@ impl PythonToolWorker {
         }
 
         // Wait for response with timeout.
-        let resp = tokio::time::timeout(deadline, rx).await.map_err(|_| {
-            // Timeout — remove pending entry and send cancel.
-            self.pending.write().remove(&req_id);
-            cap_err(format!(
-                "Tool call {} timed out after {}ms",
-                req_id,
-                deadline.as_millis()
-            ))
-        })?;
+        let resp = match tokio::time::timeout(deadline, rx).await {
+            Ok(resp) => resp,
+            Err(_) => {
+                // Timeout — drop the pending entry and proactively cancel the
+                // in-flight worker task so its compute is reclaimed. The worker
+                // also enforces `deadline_ms` itself, but Rust's deadline can
+                // fire first under clock skew; the cancel is best-effort.
+                self.pending.write().remove(&req_id);
+                let _ = self.cancel(&req_id).await;
+                return Err(cap_err(format!(
+                    "Tool call {} timed out after {}ms",
+                    req_id,
+                    deadline.as_millis()
+                )));
+            }
+        };
 
         let call_resp = resp.map_err(|_| {
             cap_err(format!(

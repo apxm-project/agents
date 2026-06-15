@@ -414,7 +414,14 @@ async def _handle_call(msg: dict[str, Any]) -> None:
             coro = loop.run_in_executor(None, lambda: fn(**args))
 
         if timeout is not None:
-            value = await asyncio.wait_for(asyncio.shield(coro), timeout=timeout)
+            # No `shield`: the deadline is a RESOURCE limit, so a timed-out
+            # (or externally cancelled) handler must actually be cancelled and
+            # its compute reclaimed. `shield` would let the coroutine run to
+            # completion in the background while we report a timeout — the
+            # deadline would observe but not enforce. `wait_for` cancels `coro`
+            # on timeout; the `except` arms below still emit a structured
+            # result so cancellation never silently drops the request.
+            value = await asyncio.wait_for(coro, timeout=timeout)
         else:
             value = await coro
 
