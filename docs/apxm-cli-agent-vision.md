@@ -1,5 +1,12 @@
 # apxm-cli conversational agent — vision: the agent *is* an APXM program
 
+> **Spec & implementation:** this vision is realized by the *agent-in-program*
+> feature — see `specs/0001-agent-in-program/` (spec.md, plan.md, tasks.md,
+> quickstart.md). The acceptance fixture is
+> `examples/python/conversational/controllable_agent.py`: one
+> `ConversationalAgent(...)` program carrying the loop, turns, context/compaction,
+> `@hook` lifecycle control, skills, and sub-agents, with the host as a dumb pipe.
+
 Status: vision draft, multi-agent verified · 2026-06-03
 Principle (the brief): the chat agent must not be hardcoded Rust in `chat.rs`. It
 should **be an APXM program** — a turn body + composable middleware + dynamic

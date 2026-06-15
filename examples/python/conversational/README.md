@@ -1,5 +1,13 @@
 # Conversational agents
 
+> **The whole agent in one program.** `controllable_agent.py` is the acceptance
+> fixture for the *agent-in-program* feature — the conversation loop, each turn,
+> context/compaction, lifecycle hooks (`@hook`), skill discovery, and sub-agents
+> authored in ONE `ConversationalAgent(...)` program so the host is a dumb pipe.
+> See `specs/0001-agent-in-program/` (spec.md, quickstart.md) and
+> `docs/apxm-cli-agent-vision.md`. The two-layer model below is the original
+> host-driven shape (`loop="host"`), kept for backward compatibility.
+
 A conversational agent in APXM is **two layers**:
 
 1. **The agent body** — an APXM workflow authored in this frontend, run *once per
