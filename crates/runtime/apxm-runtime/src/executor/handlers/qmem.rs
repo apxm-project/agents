@@ -39,8 +39,19 @@ pub async fn execute(ctx: &ExecutionContext, node: &Node, _inputs: Vec<Value>) -
             .unwrap_or(limit);
         let prefix = get_optional_string_attribute(node, "recall_prefix")?
             .unwrap_or_else(|| "conversation:turn:".to_string());
+        // `recall_pin` (comma-separated) names exact keys to always surface ahead
+        // of the recency window — the PROGRAM's choice (e.g. its rolling
+        // compaction summary), set by the frontend, not a policy baked here.
+        let pins: Vec<String> = get_optional_string_attribute(node, "recall_pin")?
+            .map(|s| {
+                s.split(',')
+                    .map(|p| p.trim().to_string())
+                    .filter(|p| !p.is_empty())
+                    .collect()
+            })
+            .unwrap_or_default();
         ctx.memory
-            .recent_scoped(space, ctx.memory_scope(), &prefix, n)
+            .recent_scoped(space, ctx.memory_scope(), &prefix, n, &pins)
             .await?
     } else {
         // Search memory. Scope by session (when present) so a later turn's QMEM

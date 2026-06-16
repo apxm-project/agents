@@ -24,9 +24,6 @@ use super::ExecutionContext;
 use super::hooks::{HookEvent, HookMode};
 use crate::memory::MemorySpace;
 
-/// Durable rolling-compaction summary key (surfaced by `recent_scoped` ahead of
-/// the recent window, so folded early facts survive outside the last-`n` turns).
-const SUMMARY_KEY: &str = "conversation:summary";
 
 const HOOK_DEADLINE: Duration = Duration::from_secs(30);
 const HOOK_PAYLOAD_KEY: &str = "__apxm_hook__";
@@ -43,18 +40,105 @@ async fn dispatch_host_call(
 ) -> std::result::Result<JsonValue, String> {
     match method.as_str() {
         "llm.ask" => host_llm_ask(ctx, params).await,
+        "tool.call" => host_tool_call(ctx, params).await,
+        "mem.read" => host_mem_read(ctx, params).await,
+        "mem.recent" => host_mem_recent(ctx, params).await,
         other => Err(format!("unknown host method '{}'", other)),
     }
 }
 
-/// One-shot LLM ask for hooks. Builds an ephemeral ASK node and runs it through
-/// the normal LLM handler (backend resolution, retries, budget enforcement).
+/// Invoke a read-only apxm capability on behalf of a hook (e.g. `count_tokens`,
+/// `http_get`, `search_skills`). Writes are NOT serviced here — a hook that needs
+/// a write declares it via `ctx.umem`/the decision writes, which go through the
+/// audited memory path. This is apxm handing the user its TOOLS; the user's hook
+/// decides which to call and what to do with the result.
+async fn host_tool_call(
+    ctx: &ExecutionContext,
+    params: JsonValue,
+) -> std::result::Result<JsonValue, String> {
+    let name = params
+        .get("name")
+        .and_then(|v| v.as_str())
+        .ok_or("tool.call requires a 'name'")?;
+    if !ctx.capability_system.has_capability(name) {
+        return Err(format!("capability '{name}' is not registered"));
+    }
+    if !ctx.capability_system.is_read_only(name) {
+        return Err(format!(
+            "capability '{name}' is not read-only; hooks may only call read-only tools"
+        ));
+    }
+    let args: HashMap<String, Value> = params
+        .get("args")
+        .and_then(|v| v.as_object())
+        .map(|o| {
+            o.iter()
+                .map(|(k, v)| (k.clone(), json_to_value(v.clone())))
+                .collect()
+        })
+        .unwrap_or_default();
+    match ctx.capability_system.invoke(name, args).await {
+        Ok(value) => Ok(serde_json::to_value(&value).unwrap_or(JsonValue::Null)),
+        Err(e) => Err(format!("tool '{name}' failed: {e}")),
+    }
+}
+
+/// Return the recent transcript window (oldest-first) of size `n` over `prefix`
+/// for a hook. The hook chooses `n` — apxm does not cap how much context the
+/// user may compact over (the previous fixed payload window did).
+async fn host_mem_recent(
+    ctx: &ExecutionContext,
+    params: JsonValue,
+) -> std::result::Result<JsonValue, String> {
+    let prefix = params
+        .get("prefix")
+        .and_then(|v| v.as_str())
+        .unwrap_or("conversation:");
+    let n = params.get("n").and_then(|v| v.as_u64()).unwrap_or(8) as usize;
+    let items = ctx
+        .memory()
+        .recent_scoped(MemorySpace::Stm, ctx.memory_scope(), prefix, n, &[])
+        .await
+        .map_err(|e| format!("mem.recent failed: {e}"))?;
+    let texts: Vec<JsonValue> = items
+        .into_iter()
+        .filter_map(|r| r.value.as_string().map(|s| JsonValue::String(s.to_string())))
+        .collect();
+    Ok(JsonValue::Array(texts))
+}
+
+/// Read a session-scoped STM key for a hook. WHICH key is the user's choice
+/// (e.g. their rolling-summary key), so no key name is baked into the runtime.
+async fn host_mem_read(
+    ctx: &ExecutionContext,
+    params: JsonValue,
+) -> std::result::Result<JsonValue, String> {
+    let key = params
+        .get("key")
+        .and_then(|v| v.as_str())
+        .ok_or("mem.read requires a 'key'")?;
+    match ctx
+        .memory()
+        .read_scoped(MemorySpace::Stm, ctx.memory_scope(), key)
+        .await
+    {
+        Ok(Some(v)) => Ok(serde_json::to_value(&v).unwrap_or(JsonValue::Null)),
+        Ok(None) => Ok(JsonValue::Null),
+        Err(e) => Err(format!("mem.read '{key}' failed: {e}")),
+    }
+}
+
+/// One-shot LLM ask for hooks. Calls the backend DIRECTLY (non-streaming, no
+/// event emitter, no nested `pre_ask` hooks). This is deliberate:
+///   - no emitter → a hook's own LLM call (e.g. compaction's summarize) never
+///     leaks tokens into the USER's reply stream;
+///   - no nested hooks → no `pre_ask → llm → pre_ask` re-entrancy.
+/// Routes through the ModelRouter when present (circuit breakers + policy).
 async fn host_llm_ask(
     ctx: &ExecutionContext,
     params: JsonValue,
 ) -> std::result::Result<JsonValue, String> {
-    use apxm_core::constants::graph::attrs as graph_attrs;
-    use apxm_core::types::execution::Node;
+    use apxm_backends::LLMRequest;
     use apxm_core::types::operations::AISOperationType;
 
     let prompt = params
@@ -65,23 +149,17 @@ async fn host_llm_ask(
     if prompt.trim().is_empty() {
         return Err("llm.ask requires a non-empty 'prompt'".to_string());
     }
-    let mut node = Node::new(0, AISOperationType::Ask);
-    node.set_attribute(graph_attrs::PROMPT.to_string(), Value::String(prompt));
+    let mut request = LLMRequest::new(prompt).with_operation_type(AISOperationType::Ask);
     if let Some(system) = params.get("system").and_then(|v| v.as_str()) {
-        node.set_attribute(
-            graph_attrs::SYSTEM_PROMPT.to_string(),
-            Value::String(system.to_string()),
-        );
+        request = request.with_system_prompt(system.to_string());
     }
-    // Box the recursive edge: a `pre_ask` hook can call `llm.ask`, and
-    // `llm::execute` itself runs `pre_ask` hooks, so this is a (bounded) async
-    // recursion cycle that must be heap-allocated to have a finite-size future.
-    let fut = Box::pin(crate::executor::handlers::llm::execute(ctx, &node, Vec::new()));
-    match fut.await {
-        Ok(Value::String(s)) => Ok(JsonValue::String(s)),
-        Ok(other) => Ok(JsonValue::String(format!("{other:?}"))),
-        Err(e) => Err(format!("llm.ask failed: {e}")),
+    let response = if let Some(router) = &ctx.model_router {
+        router.generate(request).await
+    } else {
+        ctx.llm_registry.generate(request).await
     }
+    .map_err(|e| format!("llm.ask failed: {e}"))?;
+    Ok(JsonValue::String(response.content))
 }
 
 /// Decision returned by a `pre_tool` hook.
@@ -316,23 +394,14 @@ pub async fn run_post_turn_hooks(ctx: &ExecutionContext, reply: &str) {
         return;
     };
 
-    let window = recent_window(ctx, 8).await;
-    // Hand the current rolling summary IN so a compaction hook can fold
-    // (prior summary + recent turns) → new summary, carrying early facts
-    // forward rather than overwriting them.
-    let prior_summary = ctx
-        .memory()
-        .read_scoped(MemorySpace::Stm, ctx.memory_scope(), SUMMARY_KEY)
-        .await
-        .ok()
-        .flatten()
-        .and_then(|v| v.as_string().map(|s| s.to_string()));
+    // The hook reads whatever it wants on demand — the transcript window via
+    // `ctx.recall_window(n)` (mem.recent, user-chosen `n`) and any prior state
+    // via `ctx.recall(key)` (mem.read). The runtime bakes no window size or key;
+    // we hand IN only the reply and remaining budget.
     let base = json!({
         "event": "post_turn",
         "reply": reply,
         "remaining_budget": remaining_budget(ctx),
-        "window": window,
-        "summary": prior_summary,
     });
 
     for binding in bindings {
@@ -358,7 +427,7 @@ pub async fn run_post_turn_hooks(ctx: &ExecutionContext, reply: &str) {
 async fn recent_window(ctx: &ExecutionContext, n: i64) -> Vec<String> {
     let n = n.max(0) as usize;
     ctx.memory()
-        .recent_scoped(MemorySpace::Stm, ctx.memory_scope(), "conversation:", n)
+        .recent_scoped(MemorySpace::Stm, ctx.memory_scope(), "conversation:", n, &[])
         .await
         .unwrap_or_default()
         .into_iter()
@@ -429,9 +498,8 @@ pub async fn run_pre_ask_hooks(
         return Ok(None);
     };
 
-    // Pre-load the recent window so a pre_ask hook can recall context for
-    // injection (ctx.recall_window) without a worker->runtime callback.
-    let window = recent_window(ctx, 8).await;
+    // The hook recalls context on demand via `ctx.recall_window(n)` (mem.recent),
+    // choosing how much to pull — no fixed window is baked into the payload.
     let mut system = base_system.to_string();
     let mut changed = false;
     for binding in bindings {
@@ -440,7 +508,6 @@ pub async fn run_pre_ask_hooks(
                 "event": "pre_ask",
                 "remaining_budget": remaining_budget(ctx),
                 "system": system,
-                "window": window,
             }
         });
         match bridge

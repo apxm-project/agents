@@ -225,12 +225,18 @@ impl MemorySystem {
     /// reply before its prompting message). We therefore sort by
     /// `(turn_index, role_rank)` with `user` before the assistant `turn`, so the
     /// recalled transcript reads in conversational order (M2/M3).
+    /// Recency window over `key_prefix`, plus any `pins` (exact logical keys)
+    /// surfaced ahead of it. Pinning is a generic mechanism — WHICH key to pin
+    /// (e.g. a compaction summary) is a caller/program decision, not a policy
+    /// baked here. A pinned key with no numeric transcript sort order would
+    /// otherwise be dropped from the recency window.
     pub async fn recent_scoped(
         &self,
         space: MemorySpace,
         scope_id: &str,
         key_prefix: &str,
         n: usize,
+        pins: &[String],
     ) -> Result<Vec<apxm_backends::SearchResult>> {
         let all_keys = match space {
             MemorySpace::Stm => self.stm.list_keys().await?,
@@ -250,18 +256,19 @@ impl MemorySystem {
         ordered.sort_by(|a, b| a.0.cmp(&b.0));
         let start = ordered.len().saturating_sub(n);
         let mut out = Vec::new();
-        // Always surface a durable compaction summary (`<prefix>summary`) ahead
-        // of the recent window, if one exists. A folded summary has no numeric
-        // transcript sort key, so it is excluded from the recency ordering
-        // above; recalling it here is what lets compacted older history (e.g. a
-        // turn-1 fact) survive once it slides out of the last-`n` window.
-        let summary_logical = format!("{key_prefix}summary");
-        if let Some(value) = self.read_scoped(space, scope_id, &summary_logical).await? {
-            out.push(apxm_backends::SearchResult {
-                key: summary_logical,
-                value,
-                score: 1.0,
-            });
+        // Surface any caller-pinned keys ahead of the recency window. These have
+        // no numeric transcript sort order, so they would otherwise be dropped;
+        // pinning lets compacted older history (a program's rolling summary)
+        // survive once it slides out of the last-`n` window. The program decides
+        // which keys to pin (constitution #2), not this layer.
+        for pin in pins {
+            if let Some(value) = self.read_scoped(space, scope_id, pin).await? {
+                out.push(apxm_backends::SearchResult {
+                    key: pin.clone(),
+                    value,
+                    score: 1.0,
+                });
+            }
         }
         for (_, logical) in &ordered[start..] {
             if let Some(value) = self.read_scoped(space, scope_id, logical).await? {
@@ -390,12 +397,18 @@ mod recent_window_tests {
         .unwrap();
 
         let out = mem
-            .recent_scoped(MemorySpace::Stm, scope, "conversation:", 4)
+            .recent_scoped(
+                MemorySpace::Stm,
+                scope,
+                "conversation:",
+                4,
+                &["conversation:summary".to_string()],
+            )
             .await
             .unwrap();
 
-        // The summary is present and first, even though turn 1 is far outside
-        // the 4-turn recency window.
+        // The pinned summary is present and first, even though turn 1 is far
+        // outside the 4-turn recency window.
         assert_eq!(out.first().map(|r| r.key.as_str()), Some("conversation:summary"));
         assert!(
             out.iter().any(|r| r

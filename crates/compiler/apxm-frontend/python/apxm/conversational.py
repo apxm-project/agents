@@ -40,16 +40,23 @@ HOOKS_AIR_COMMENT_PREFIX = "; __apxm_hooks__ "
 
 @dataclass(slots=True)
 class CompactionPolicy:
-    """In-program context-compaction policy (authored, not host-resident).
+    """Author-owned compaction settings — plain values the USER's program reads.
 
-    Drives the in-graph compaction subgraph (count_tokens → guard/switch →
-    summarize → fold) added in US4. Recorded into the artifact so retention
-    policy travels with the program (constitution #3).
+    APXM enforces NO compaction policy. These fields are consumed by the user's
+    own code: `keep_recent` sizes the turn's recall window (the frontend builds
+    the recall), and a user `post_turn` hook closes over this object to decide
+    WHEN to compact (`compact_at_tokens`, measured via `ctx.count_tokens`), HOW
+    (`ctx.ask` with the user's own prompt), and WHERE to store the rolling
+    summary (`summary_key`). The frontend pins `summary_key` into the recall so
+    whatever the hook stores there is surfaced ahead of the recent window. APXM
+    only provides the primitives (`ctx.ask`/`ctx.call`/`ctx.count_tokens`/
+    `ctx.recall`/`ctx.umem`); the policy lives entirely in the program.
     """
 
     keep_recent: int = 4
     compact_at_tokens: int = 20_000
     strategy: str = "summarize"
+    summary_key: str = "conversation:summary"
 
 
 class MultiFlowArtifact:
@@ -222,12 +229,20 @@ class ConversationalAgent:
         # `conversation:` prefix reads BOTH sides in temporal order (M2/M3),
         # not a relevance search over a constant key.
         keep_recent = self.compaction.keep_recent if self.compaction else 4
+        # Pin the author's rolling-summary key so whatever a compaction hook
+        # stores there is surfaced ahead of the recent window (it has no numeric
+        # transcript order and would otherwise drop out). WHICH key is the
+        # program's choice (CompactionPolicy.summary_key), not a runtime default.
+        recall_kwargs: dict[str, Any] = {}
+        if self.compaction is not None:
+            recall_kwargs["recall_pin"] = self.compaction.summary_key
         history = turn.query_memory(
             name="recall",
             recall_mode="recent",
             recent=max(1, keep_recent) * 2,  # ~keep_recent turns (user+assistant)
             recall_prefix="conversation:",
             space=self.memory_space,
+            **recall_kwargs,
         )
 
         # Register author tools so they are runtime-registered + travel in the

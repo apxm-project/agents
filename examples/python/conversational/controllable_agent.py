@@ -59,15 +59,31 @@ def inject_context(ctx):
     ctx.prepend_system(ctx.read_agents_md() + "\n" + ctx.recall_window(n=4))
 
 
-@hook(on="post_turn")  # rolling compaction — entirely program-controlled
+# Author-owned compaction settings the hook below reads. compact_at_tokens is
+# deliberately small here so compaction triggers within a short demo session;
+# raise it for real use. APXM enforces none of this — the hook is the policy.
+COMPACTION = CompactionPolicy(keep_recent=4, compact_at_tokens=300)
+
+
+@hook(on="post_turn")  # rolling compaction — ALL policy is the user's, here
 def compact(ctx, reply):
-    # Fold the running summary with the recent window into a new summary so
-    # early facts survive once they slide out of `keep_recent`. `ctx.summarize`
-    # calls the runtime LLM (a host call back into the runtime), and the
-    # `conversation:summary` key is surfaced by recall ahead of recent turns.
-    combined = (ctx.prior_summary() + "\n" + ctx.recall_window(n=8)).strip()
-    if len(combined) > 600:  # proxy for CompactionPolicy.compact_at_tokens
-        ctx.umem("conversation:summary", ctx.summarize(combined))
+    # apxm hands the hook its primitives; the user decides everything:
+    #   - the context to compact         (ctx.recall + ctx.recall_window)
+    #   - WHEN to compact   (ctx.count_tokens vs the user's own threshold)
+    #   - HOW to compact                 (ctx.ask, with the user's own prompt)
+    #   - WHERE to keep it               (ctx.umem to the user's own key)
+    prior = ctx.recall(COMPACTION.summary_key) or ""
+    # Pull a wide window so a fact is folded into the summary before it slides
+    # out of the turn's keep_recent recall (the user chooses how far back).
+    context = (str(prior) + "\n" + ctx.recall_window(n=50)).strip()
+    if ctx.count_tokens(context) > COMPACTION.compact_at_tokens:
+        summary = ctx.ask(
+            "Update the running summary below so a later turn loses no important "
+            "fact, name, number, or decision. Return only the updated summary.\n\n"
+            f"{context}",
+            system="You maintain a compact, faithful running summary.",
+        )
+        ctx.umem(COMPACTION.summary_key, summary)
 
 
 # ---- the agent: declares the LOOP + the turn body, all in-program ------------
@@ -78,7 +94,7 @@ agent = ConversationalAgent(
     tool_groups=["web"],
     skills=True,  # real search_skills discovery
     sub_agents=[researcher],  # resolved in the SAME artifact
-    compaction=CompactionPolicy(keep_recent=4, compact_at_tokens=20_000),
+    compaction=COMPACTION,  # same object the compact() hook reads — keys agree
     hooks=[announce, guard_lookup, redact, inject_context, compact],
     loop="in_graph",  # the conversation loop lives in the .air
 )

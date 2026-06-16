@@ -1,21 +1,23 @@
-"""Hook host-calls: ctx.ask / ctx.summarize call the runtime LLM over the bridge.
+"""Hook host-calls: a hook receives apxm primitives (LLM, tools, memory) and
+decides what to do. ctx.ask / ctx.call / ctx.count_tokens / ctx.recall each emit
+a host_call that the runtime services with the hook's own ExecutionContext.
 
-A lifecycle hook runs in the worker subprocess, but it can still drive an
-`llm.ask` by emitting a `host_call` that the runtime services with the hook's
-own ExecutionContext. These tests drive the round-trip in-process by faking the
-runtime side (capture the host_call, feed back a host_result).
+Driven in-process by faking the runtime side (capture the host_call, feed back a
+host_result keyed by method).
 """
 
 from apxm import tool_worker as tw
 
 
-def _fake_runtime(monkeypatch, *, ok=True, value="SUMMARY", error=None):
-    """Replace _emit_line so a host_call is answered immediately, single-thread."""
-    captured: dict = {}
+def _fake_runtime(monkeypatch, by_method):
+    """Replace _emit_line so each host_call is answered immediately (single
+    thread). `by_method` maps method -> (ok, value, error)."""
+    captured: list[dict] = []
 
     def fake_emit(obj):
         if obj.get(tw.WIRE_FIELD_TYPE) == tw.WIRE_TYPE_HOST_CALL:
-            captured["call"] = obj
+            captured.append(obj)
+            ok, value, error = by_method[obj[tw.WIRE_FIELD_METHOD]]
             tw._deliver_host_result(
                 {
                     tw.WIRE_FIELD_REQUEST_ID: obj[tw.WIRE_FIELD_REQUEST_ID],
@@ -29,22 +31,49 @@ def _fake_runtime(monkeypatch, *, ok=True, value="SUMMARY", error=None):
     return captured
 
 
-def test_ctx_ask_roundtrips_host_call(monkeypatch):
-    captured = _fake_runtime(monkeypatch, value="the answer")
+def test_ctx_ask_roundtrips_llm(monkeypatch):
+    cap = _fake_runtime(monkeypatch, {tw.HOST_METHOD_LLM_ASK: (True, "the answer", None)})
     ctx = tw._HookCtx({}, req_id="r1")
 
     out = ctx.ask("hello", system="sys")
 
     assert out == "the answer"
-    call = captured["call"]
+    call = cap[0]
     assert call[tw.WIRE_FIELD_METHOD] == tw.HOST_METHOD_LLM_ASK
     assert call[tw.WIRE_FIELD_PARENT_REQUEST_ID] == "r1"
-    assert call[tw.WIRE_FIELD_PARAMS]["prompt"] == "hello"
-    assert call[tw.WIRE_FIELD_PARAMS]["system"] == "sys"
+    assert call[tw.WIRE_FIELD_PARAMS] == {"prompt": "hello", "system": "sys"}
 
 
-def test_ctx_ask_raises_on_host_error(monkeypatch):
-    _fake_runtime(monkeypatch, ok=False, error="backend down")
+def test_ctx_call_invokes_named_tool(monkeypatch):
+    cap = _fake_runtime(monkeypatch, {tw.HOST_METHOD_TOOL_CALL: (True, 42, None)})
+    ctx = tw._HookCtx({}, req_id="r1")
+
+    out = ctx.call("count_tokens", text="abc")
+
+    assert out == 42
+    assert cap[0][tw.WIRE_FIELD_METHOD] == tw.HOST_METHOD_TOOL_CALL
+    assert cap[0][tw.WIRE_FIELD_PARAMS] == {"name": "count_tokens", "args": {"text": "abc"}}
+
+
+def test_ctx_count_tokens_convenience(monkeypatch):
+    _fake_runtime(monkeypatch, {tw.HOST_METHOD_TOOL_CALL: (True, 7, None)})
+    ctx = tw._HookCtx({}, req_id="r1")
+    assert ctx.count_tokens("some text") == 7
+
+
+def test_ctx_recall_reads_user_key(monkeypatch):
+    cap = _fake_runtime(monkeypatch, {tw.HOST_METHOD_MEM_READ: (True, "prior summary", None)})
+    ctx = tw._HookCtx({}, req_id="r1")
+
+    out = ctx.recall("my:summary")
+
+    assert out == "prior summary"
+    assert cap[0][tw.WIRE_FIELD_METHOD] == tw.HOST_METHOD_MEM_READ
+    assert cap[0][tw.WIRE_FIELD_PARAMS] == {"key": "my:summary"}
+
+
+def test_host_call_raises_on_error(monkeypatch):
+    _fake_runtime(monkeypatch, {tw.HOST_METHOD_LLM_ASK: (False, None, "backend down")})
     ctx = tw._HookCtx({}, req_id="r1")
     try:
         ctx.ask("hello")
@@ -54,15 +83,12 @@ def test_ctx_ask_raises_on_host_error(monkeypatch):
         raise AssertionError("expected RuntimeError on host error")
 
 
-def test_summarize_uses_llm_when_available(monkeypatch):
-    _fake_runtime(monkeypatch, value="a tight summary")
-    ctx = tw._HookCtx({}, req_id="r1")
-    assert ctx.summarize("a very long conversation ...") == "a tight summary"
-
-
-def test_summarize_degrades_without_host():
-    # No req_id bound: ctx.ask is unavailable, so summarize falls back to a
-    # heuristic truncation rather than failing the turn.
+def test_host_call_unavailable_without_parent():
+    # No req_id bound (e.g. an offline unit context): host calls are unavailable.
     ctx = tw._HookCtx({})
-    long_text = "x" * 500
-    assert ctx.summarize(long_text) == long_text[:280]
+    try:
+        ctx.ask("hello")
+    except RuntimeError as exc:
+        assert "no parent request" in str(exc)
+    else:
+        raise AssertionError("expected RuntimeError without a parent request")

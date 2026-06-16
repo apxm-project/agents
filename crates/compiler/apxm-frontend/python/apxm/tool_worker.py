@@ -79,6 +79,9 @@ WIRE_FIELD_PARENT_REQUEST_ID: Final[str] = "parent_req_id"
 WIRE_FIELD_METHOD: Final[str] = "method"
 WIRE_FIELD_PARAMS: Final[str] = "params"
 HOST_METHOD_LLM_ASK: Final[str] = "llm.ask"
+HOST_METHOD_TOOL_CALL: Final[str] = "tool.call"
+HOST_METHOD_MEM_READ: Final[str] = "mem.read"
+HOST_METHOD_MEM_RECENT: Final[str] = "mem.recent"
 
 WIRE_LEVEL_ERROR: Final[str] = "error"
 
@@ -281,13 +284,8 @@ class _HookCtx:
         # The parent call's req_id, stamped on host_calls this hook raises.
         self._req_id = req_id
         self._system = payload.get("system", "")
-        # Recent conversation window the runtime pre-loads into the payload, so a
-        # hook can recall context without a worker->runtime callback (the bridge
-        # is unidirectional). The runtime applies any accumulated writes after the
-        # hook returns (see `_writes`), so umem() works on the post_turn path.
-        self._window = payload.get("window") or []
-        # The current rolling compaction summary, if any (post_turn payload).
-        self._summary = payload.get("summary") or ""
+        # Accumulated memory writes; the runtime applies them after the hook
+        # returns (carried in the decision's `writes`), so umem() works.
         self._writes: list[dict[str, Any]] = []
 
     def log(self, *args: Any) -> None:
@@ -320,18 +318,16 @@ class _HookCtx:
                 continue
         return ""
 
-    def prior_summary(self) -> str:
-        # The current rolling compaction summary the runtime pre-loaded (empty
-        # if none yet). A post_turn compaction hook folds this with the recent
-        # window so early facts carry forward.
-        return self._summary
-
-    def recall_window(self, n: int = 4) -> str:
-        # The runtime pre-loads the recent window into the payload (no callback
-        # needed). Return the last-n turns joined; empty if none pre-loaded.
-        if not self._window:
+    def recall_window(self, n: int = 4, prefix: str = "conversation:") -> str:
+        # Fetch the last-n transcript entries on demand (mem.recent) so the USER
+        # chooses how much context to pull — apxm caps nothing. Returns the
+        # entries joined oldest-first; "" if none or the host is unavailable.
+        if not self._req_id:
             return ""
-        return "\n".join(str(t) for t in self._window[-n:])
+        items = self._host_call(HOST_METHOD_MEM_RECENT, {"prefix": prefix, "n": n})
+        if not items:
+            return ""
+        return "\n".join(str(t) for t in items)
 
     def umem(self, key: str, value: Any) -> None:
         # Accumulate a memory write; the runtime applies it after the hook
@@ -339,55 +335,67 @@ class _HookCtx:
         self._writes.append({"key": key, "value": value})
         return None
 
-    def ask(self, prompt: str, system: str | None = None) -> str:
-        """Call the runtime's LLM from inside a hook (a host call back into the
-        runtime over the bridge). The same ExecutionContext that owns this hook
-        services the request, so it runs under the session's backend + budget.
-        Raises RuntimeError if the runtime is unavailable or declines."""
+    def _host_call(self, method: str, params: dict[str, Any]) -> Any:
+        """Call back into the runtime from inside a hook (the bridge becomes
+        bidirectional for the duration). The SAME ExecutionContext that owns this
+        hook services the call, so it runs under the session's backend, budget,
+        and cancellation. Blocks the hook thread until the runtime replies."""
         if not self._req_id:
-            raise RuntimeError("ctx.ask is unavailable: no parent request bound")
+            raise RuntimeError(f"ctx host call '{method}' unavailable: no parent request bound")
         cb_id = f"h-{next(_host_call_counter)}"
         q: "queue.Queue[tuple[bool, Any, str | None]]" = queue.Queue(maxsize=1)
         with _host_pending_lock:
             _host_pending[cb_id] = q
         try:
-            params: dict[str, Any] = {"prompt": prompt}
-            if system is not None:
-                params["system"] = system
             _emit_line(
                 {
                     WIRE_FIELD_VERSION: WIRE_VERSION,
                     WIRE_FIELD_TYPE: WIRE_TYPE_HOST_CALL,
                     WIRE_FIELD_REQUEST_ID: cb_id,
                     WIRE_FIELD_PARENT_REQUEST_ID: self._req_id,
-                    WIRE_FIELD_METHOD: HOST_METHOD_LLM_ASK,
+                    WIRE_FIELD_METHOD: method,
                     WIRE_FIELD_PARAMS: params,
                 }
             )
             try:
                 ok, value, error = q.get(timeout=_HOST_CALL_TIMEOUT_S)
             except queue.Empty as exc:
-                raise RuntimeError("ctx.ask timed out waiting for the runtime") from exc
+                raise RuntimeError(f"ctx host call '{method}' timed out") from exc
             if not ok:
-                raise RuntimeError(f"ctx.ask failed: {error or 'unknown error'}")
-            return value if isinstance(value, str) else str(value)
+                raise RuntimeError(f"ctx host call '{method}' failed: {error or 'unknown error'}")
+            return value
         finally:
             with _host_pending_lock:
                 _host_pending.pop(cb_id, None)
 
-    def summarize(self, text: Any) -> str:
-        """Summarize *text* with the runtime LLM. Degrades to a heuristic
-        truncation if the host LLM is unavailable, so hooks never hard-fail on
-        compaction. Authors may override with their own logic."""
+    # ---- apxm primitives the hook receives; the USER decides what to do ----
+
+    def ask(self, prompt: str, system: str | None = None) -> str:
+        """Call the runtime LLM. The user writes the prompt — apxm bakes no
+        policy. Use this to summarize, classify, route, score, etc."""
+        params: dict[str, Any] = {"prompt": prompt}
+        if system is not None:
+            params["system"] = system
+        value = self._host_call(HOST_METHOD_LLM_ASK, params)
+        return value if isinstance(value, str) else str(value)
+
+    def call(self, name: str, **args: Any) -> Any:
+        """Invoke any read-only apxm capability (e.g. count_tokens, http_get,
+        search_skills) and get its result. apxm hands the user its tools."""
+        return self._host_call(HOST_METHOD_TOOL_CALL, {"name": name, "args": args})
+
+    def count_tokens(self, text: str) -> int:
+        """Estimate the token size of *text* via the count_tokens tool, so the
+        user's hook can decide on a real measure rather than a char proxy."""
         try:
-            return self.ask(
-                "Summarize the following conversation concisely, preserving the "
-                "key facts, names, numbers, and decisions so a later turn can "
-                f"rely on it:\n\n{text}",
-                system="You are a precise conversation summarizer.",
-            )
-        except Exception:  # noqa: BLE001 — compaction must not break the turn
-            return str(text)[:280]
+            return int(self.call("count_tokens", text=text))
+        except (TypeError, ValueError):
+            return 0
+
+    def recall(self, key: str) -> Any:
+        """Read a session-memory key the hook itself chose (e.g. its own rolling
+        summary). Returns None if unset. Pairs with ctx.umem(key, value)."""
+        return self._host_call(HOST_METHOD_MEM_READ, {"key": key})
 
 
 def _invoke_hook(fn: Any, event: str, payload: dict[str, Any], req_id: str = "") -> Any:
