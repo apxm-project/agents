@@ -182,3 +182,126 @@ fn is_stopword(t: &str) -> bool {
     )
 }
 
+#[cfg(test)]
+mod tests {
+    use super::{SkillCard, VisibleSet, rank};
+
+    fn card(
+        skill_id: &str,
+        library: Option<&str>,
+        description: &str,
+        when_to_use: &str,
+        tags: &[&str],
+        shared: bool,
+    ) -> SkillCard {
+        SkillCard {
+            skill_id: skill_id.to_string(),
+            library: library.map(str::to_string),
+            description: description.to_string(),
+            when_to_use: when_to_use.to_string(),
+            tags: tags.iter().map(|tag| tag.to_string()).collect(),
+            shared,
+        }
+    }
+
+    fn catalogue() -> Vec<SkillCard> {
+        vec![
+            card(
+                "ticket_triage",
+                Some("support"),
+                "Classify incoming bug reports by product area, urgency, and owner.",
+                "Use when prioritizing GitHub issues, support tickets, incidents, and bug reports.",
+                &["github", "issues", "triage", "severity"],
+                false,
+            ),
+            card(
+                "architecture_review",
+                Some("engineering"),
+                "Review software architecture boundaries, module dependencies, and implementation structure.",
+                "Use for frontend composability, backend scalability, hooks, constants, enums, and module ownership.",
+                &["architecture", "frontend", "backend", "composability"],
+                false,
+            ),
+            card(
+                "security_scan",
+                Some("security"),
+                "Find vulnerabilities, unsafe inputs, secret leakage, and risky dependencies.",
+                "Use when reviewing authentication, authorization, dependency, sandbox, or data exposure risks.",
+                &["security", "vulnerability", "secrets", "dependencies"],
+                true,
+            ),
+            card(
+                "release_notes",
+                Some("docs"),
+                "Draft release notes, changelogs, and upgrade summaries from merged changes.",
+                "Use when summarizing pull requests, commits, milestones, and version changes for a release.",
+                &["release", "changelog", "commits", "summary"],
+                false,
+            ),
+            card(
+                "data_viz",
+                Some("analysis"),
+                "Create charts, graphs, tables, and visual explanations for numeric results.",
+                "Use when visualizing benchmark data, measurements, trends, latency, or evaluation outcomes.",
+                &["charts", "graphs", "benchmarks", "metrics"],
+                false,
+            ),
+        ]
+    }
+
+    #[test]
+    fn visible_set_includes_shared_and_imported_skills() {
+        let cards = catalogue();
+        let visible = VisibleSet::from_imports(["engineering", "docs::release_notes"]);
+
+        assert!(visible.sees(&cards[1]));
+        assert!(visible.sees(&cards[2]));
+        assert!(visible.sees(&cards[3]));
+        assert!(!visible.sees(&cards[0]));
+        assert!(!visible.sees(&cards[4]));
+    }
+
+    #[test]
+    fn rank_is_deterministic_and_scope_aware() {
+        let cards = catalogue();
+        let visible = VisibleSet::from_imports(["support", "engineering", "docs"]);
+
+        let matches = rank("review frontend hooks and module boundaries", &cards, &visible, 3);
+
+        assert_eq!(matches[0].skill_id, "architecture_review");
+        assert!(matches.iter().all(|m| m.skill_id != "data_viz"));
+    }
+
+    #[test]
+    fn representative_requests_select_expected_skill_by_description() {
+        let cards = catalogue();
+        let visible = VisibleSet::from_imports(["support", "engineering", "docs", "analysis"]);
+        let cases = [
+            ("prioritize incoming bug report by severity", "ticket_triage"),
+            ("review module boundaries and frontend composability", "architecture_review"),
+            ("look for vulnerabilities and unsafe inputs", "security_scan"),
+            ("write a changelog from merged commits", "release_notes"),
+            ("make a chart of latency measurements", "data_viz"),
+            ("check hooks composition and implementation structure", "architecture_review"),
+            ("classify GitHub issues into owner buckets", "ticket_triage"),
+            ("scan dependencies for secret handling risks", "security_scan"),
+            ("summarize pull requests for a release", "release_notes"),
+            ("visualize benchmark results as graphs", "data_viz"),
+        ];
+
+        let correct = cases
+            .iter()
+            .filter(|(query, expected)| {
+                rank(query, &cards, &visible, 1)
+                    .first()
+                    .map(|m| m.skill_id.as_str() == *expected)
+                    .unwrap_or(false)
+            })
+            .count();
+
+        assert!(
+            correct >= 8,
+            "expected at least 8/10 representative selections, got {correct}/10"
+        );
+    }
+}

@@ -10,7 +10,7 @@ unfinished dependency). `[US#]` tags story tasks.
 - [X] T001 Add the feature acceptance fixture stub `examples/python/conversational/controllable_agent.py` mirroring `spec.md` §2 (compiles, `--validate` passes once foundation lands).
 - [X] T002 [P] Register `count_tokens` in `register_standard_tools` for non-server runtimes — `crates/runtime/apxm-runtime/src/capability/builtins/count_tokens.rs` + registration site (parity).
 - [X] T003 [P] Delete decorative `AgentHooks` and its exports — `crates/compiler/apxm-frontend/python/apxm/agent.py`, `__init__.py`.
-- [ ] T004 (Optional) Run `spec-constitution` to formalize the "fully connected" invariants at `.spec/memory/constitution.md`; re-gate `plan.md`.
+- [X] T004 (Optional) Run `spec-constitution` to formalize the "fully connected" invariants at `.spec/memory/constitution.md`; re-gate `plan.md`. (`.spec/memory/constitution.md` v1.0.0 exists with the fully-connected agent invariants; `plan.md` Constitution Check cites and passes principles 1-10.)
 
 ## Phase 2 — Foundational (blocks all stories)
 
@@ -86,22 +86,23 @@ sub-agent's result lands in the reply.
 - [X] T063 [P] [US5] `skill_search()` helper + `skills=True` wires the real `search_skills` group into the turn — `proxy.py`, `agent.py`.
 - [X] T064 [P] [US5] Fix `conversational_agent.py` (delete stub `find_skill`) and `chat_agent.py` (working delegate) — `examples/python/conversational/`. (conversational_agent.py now uses `skill_search`; chat_agent.py already had a working spawn_agent+delegate.)
 - [X] T065 [US5] Correct the "embedder-backed" discovery docstring to "lexical" — `apxm-frontend` + capability docs.
-- [ ] **Checkpoint:** US5 — discovery + sub-agents work from one program.
+- [X] **Checkpoint:** US5 — discovery + sub-agents work from one program. (`controllable_agent.py` emits one artifact with `tool_groups = ["web", "skills"]` and `researcher.main`; `chat_agent.py` emits `spawn_agent` + `delegate`; `cargo test -p apxm-skill` proves lexical discovery scoping and ≥8/10 representative selection.)
 
 ## Phase 8 — Polish & Cross-Cutting
 
 - [X] T070 Op-count / tablegen parity guard updated and green for `REGISTER_HOOK`. (`definitions.rs::test_operation_counts` bumped 44→45; green in `dekk apxm test`.)
 - [X] T071 [P] Dead-surface sweep: no `requires_local_cli` dependence for delivered capabilities; remove leftover host-only paths superseded by the in-program loop. (Verified: in-program hooks/loop/context/sub-agents run on the server path via the bridge and do NOT use `requires_local_cli` — that flag is only the legacy `ExecutionOptions` subprocess-hook/middleware config, a separate surface kept for back-compat. Dead `AgentHooks` removed in T003.)
-- [~] T072 Full `cargo test` (runtime/server/compiler) + Python `--validate`; run the `quickstart.md` acceptance on both hosts (SC-001..SC-007). **OFFLINE PORTION DONE & GREEN:** `dekk apxm check`, `dekk apxm test` (runtime/server/core incl. op-count guard), `dekk apxm test-cli` (compiler/CLI incl. the new MLIR op round-trip), and `--validate` on both fixtures all pass. **LIVE PARTIAL:** SC-001/SC-002/SC-003/SC-004/SC-007 are proven. **Remaining:** SC-005 skill-selection eval and full SC-001..SC-007 quickstart sweep.
+- [~] T072 Full `cargo test` (runtime/server/compiler) + Python `--validate`; run the `quickstart.md` acceptance on both hosts (SC-001..SC-007). **OFFLINE PORTION DONE & GREEN:** `dekk apxm check`, `dekk apxm test` (runtime/server/core incl. op-count guard), `dekk apxm test-cli` (compiler/CLI incl. the new MLIR op round-trip), `cargo test -p apxm-skill` (lexical discovery scope/rank/representative 10-case guard), and `--validate` on both fixtures all pass. **LIVE PARTIAL:** SC-001/SC-002/SC-003/SC-004/SC-007 are proven. **Remaining:** full SC-001..SC-007 quickstart sweep on both hosts, including observing SC-005/SC-006 through the live agent.
 - [X] T073 [P] Update `examples/.../README.md` and `docs/apxm-cli-agent-vision.md` cross-reference to point at this spec.
 
 ## Backend-gated tasks (deferred per coordinator; ready to run)
 
 These require live inference and are left UNCHECKED until a backend is authorized:
-The remaining live inference gate is SC-005 / full SC-001..SC-007 acceptance
-(quickstart.md). T025, T032, T047, and T053 were live-proven on 2026-06-16. All
-non-inference work is implemented and verified green. Run command for the final
-sweep is documented at the bottom of this file.
+The remaining live inference gate is the full SC-001..SC-007 acceptance
+(quickstart.md), including observing skill selection and delegation through the
+live agent on both hosts. T025, T032, T047, and T053 were live-proven on
+2026-06-16. All non-inference work is implemented and verified green. Run command
+for the final sweep is documented at the bottom of this file.
 
 ## Dependencies & Execution Order
 
@@ -176,8 +177,9 @@ Verification-pass hardening (two MINOR items, both FIXED & green):
   `..._excludes_non_numeric_counter_keys`.
 
 Live backend smoke now proves the two-turn loop/parity path, all hook events on
-both hosts, and the SC-003 50-turn compaction recall. Still deferred: full
-quickstart acceptance for SC-005 skill-selection accuracy.
+both hosts, and the SC-003 50-turn compaction recall. The deterministic
+skill-discovery core now has a 10-case representative guard; still deferred:
+full quickstart acceptance on both hosts.
 
 ## Session status (autonomous run) — what landed, what remains
 
@@ -206,14 +208,14 @@ GREEN + verified (`dekk apxm check`, `dekk apxm test` runtime+server+core,
   (per-session runtime ledger), and T032 live CLI/server parity — done.
 
 REMAINING — live-backend acceptance only (no offline-verifiable work left):
-T072 full SC-005 / SC-001..SC-007 sweep. See the Deferred section for the exact
-run command. All offline-verifiable work is complete and green.
+T072 full SC-001..SC-007 sweep. See the Deferred section for the exact run
+command. All offline-verifiable work is complete and green.
 
 ## Deferred — live-backend acceptance (run once a backend is authorized)
 
-The remaining quickstart SC-005 / full SC-001..SC-007 sweep needs live
-inference. It is NOT inference-mockable. Run, with a backend configured (cloud
-gateway egress + `LLM_GATEWAY_KEY`, or an authorized Slurm/vLLM service):
+The remaining full SC-001..SC-007 quickstart sweep needs live inference. It is
+NOT inference-mockable. Run, with a backend configured (cloud gateway egress +
+`LLM_GATEWAY_KEY`, or an authorized Slurm/vLLM service):
 
 ```
 # 1. Validate + compile the one multi-flow artifact (no backend needed):
@@ -263,19 +265,18 @@ after lifting the two constraints that blocked it:
   `ctx.ask`. The window now includes user messages, not only replies.
 - [X] recall: `recent_scoped` surfaces the folded `conversation:summary` ahead of
   the recent window, so compacted early facts survive `keep_recent`.
-- [ ] **T053 / SC-003 50-turn scale check remains open.** A shorter live proof
-  over AMD exists: a user-stated turn-1 fact (project
-  codename BLUEHERON) is folded by the post_turn hook (`ctx.ask` → real
-  AMD LLM summary, observed: `summary head='The user confirmed their project
-  codename is BLUEHERON…'`), rolled forward, and correctly recalled at turn 6
-  after sliding out of `keep_recent=4`. The worker ran under bwrap throughout.
-  Do not mark T053 complete until the explicit ≥50-turn acceptance is rerun.
+- [X] **T053 / SC-003 50-turn scale check.** Live 2026-06-16 session
+  `live-t053-blueheron-50` drove 50 filler turns after a turn-1 user fact
+  (project codename BLUEHERON); final turn 51 replied `BLUEHERON` with 51 ASK
+  completions. Earlier short proofs also showed the fact folded into the
+  hook-owned rolling summary after sliding out of `keep_recent=4`.
 
 The alternative in-graph `count_tokens → guard → summarize → fold` subgraph
 remains a possible future addition (host-independent, no python), but is not
-required for the current program-owns-cognition goal. SC-005
-(skill-by-description ≥8/10) is wired (`skills=True` →
-`search_skills`) and remains a live eval campaign, not a code gap.
+required for the current program-owns-cognition goal. SC-005's deterministic
+ranking core is now guarded by `cargo test -p apxm-skill` with a 10-case
+representative selection suite; the remaining acceptance is live observation
+through the agent on both hosts as part of T072.
 
 **Realigned (2026-06-15) so the hook owns ALL policy.** The hook `ctx` now hands
 the user apxm's primitives — `ctx.ask` (LLM), `ctx.call`/`ctx.count_tokens`
