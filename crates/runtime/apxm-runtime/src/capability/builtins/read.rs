@@ -6,7 +6,7 @@ use crate::capability::{
     executor::{CapabilityExecutor, CapabilityResult},
     metadata::CapabilityMetadata,
 };
-use apxm_core::{error::RuntimeError, types::Value};
+use apxm_core::{constants::capabilities, error::RuntimeError, types::Value};
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 use std::{
@@ -90,9 +90,9 @@ impl ReadCapability {
             )
             .with_returns("string")
             .with_groups(vec![
-                "file".to_string(),
-                "file:read".to_string(),
-                "read".to_string(),
+                capabilities::groups::FILE.to_string(),
+                capabilities::groups::FILE_READ.to_string(),
+                capabilities::groups::READ.to_string(),
             ])
             // Reading a file is side-effect-free: mark read-only so it is not
             // gated as a write (path/extension policy still applies).
@@ -309,4 +309,3 @@ impl CapabilityExecutor for ReadCapability {
         &self.metadata
     }
 }
-

@@ -27,6 +27,8 @@ pub mod groups {
     pub const FILE: &str = "file";
     pub const FILE_READ: &str = "file:read";
     pub const FILE_WRITE: &str = "file:write";
+    pub const READ: &str = "read";
+    pub const WRITE: &str = "write";
     pub const HTTP: &str = "http";
     pub const WEB: &str = "web";
     pub const SEARCH: &str = "search";

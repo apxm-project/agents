@@ -1,4 +1,15 @@
-from apxm import DependencyType, GraphEdge, GraphRecorder, HookMode, LifecycleEvent, ToolGroup, hook
+from apxm import (
+    AgentConfig,
+    Capability,
+    DependencyType,
+    GraphEdge,
+    GraphRecorder,
+    HookMode,
+    LifecycleEvent,
+    NodePolicy,
+    ToolGroup,
+    hook,
+)
 from apxm.constants import (
     CAPABILITY,
     CAPABILITY_SEARCH_SKILLS,
@@ -6,6 +17,7 @@ from apxm.constants import (
     DEPENDENCY_DATA,
     PARAMS_JSON,
     TOOL_GROUPS,
+    TOOL_GROUP_FILE_READ,
     TOOL_GROUP_WEB,
 )
 from apxm.ir import validate_against_apxm
@@ -75,3 +87,29 @@ def test_tool_group_enum_normalizes_to_wire_value():
     graph = g.to_graph()
     attrs = graph.nodes[node._node_id - 1].attributes
     assert attrs[TOOL_GROUPS] == [TOOL_GROUP_WEB]
+
+
+def test_node_policy_accepts_tool_group_enums():
+    policy = NodePolicy(tool_groups=[ToolGroup.WEB, ToolGroup.FILE_READ])
+
+    attrs = policy.to_node_attributes()
+
+    assert attrs[TOOL_GROUPS] == [TOOL_GROUP_WEB, TOOL_GROUP_FILE_READ]
+
+
+def test_agent_config_accepts_tool_group_enums():
+    agent = AgentConfig(name="typed_agent", tool_groups=[ToolGroup.WEB])
+
+    attrs = agent.to_node_attributes()
+
+    assert attrs[TOOL_GROUPS] == [TOOL_GROUP_WEB]
+
+
+def test_invoke_accepts_capability_enum():
+    g = GraphRecorder("typed_capability")
+
+    node = g.invoke(capability=Capability.SEARCH_SKILLS, params={"request": "review"})
+
+    graph = g.to_graph()
+    attrs = graph.nodes[node._node_id - 1].attributes
+    assert attrs[CAPABILITY] == CAPABILITY_SEARCH_SKILLS

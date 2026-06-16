@@ -16,6 +16,8 @@ pub fn render_generated_typescript() -> String {
 
     render_ts_field_spec(&mut buf);
     render_ts_op_spec(&mut buf);
+    render_ts_dependency_types(&mut buf);
+    render_ts_tool_groups(&mut buf);
     render_ts_operations(&mut buf, &ops);
     render_ts_categories(&mut buf, &ops);
     render_ts_attr_constants(&mut buf);
@@ -33,6 +35,38 @@ pub fn write_generated_typescript(output_path: impl AsRef<Path>) -> Result<()> {
     }
     fs::write(output_path, render_generated_typescript())?;
     Ok(())
+}
+
+fn render_ts_dependency_types(buf: &mut String) {
+    buf.push_str("export enum DependencyType {\n");
+    buf.push_str("  DATA = \"Data\",\n");
+    buf.push_str("  CONTROL = \"Control\",\n");
+    buf.push_str("  EFFECT = \"Effect\",\n");
+    buf.push_str("}\n\n");
+}
+
+fn render_ts_tool_groups(buf: &mut String) {
+    use apxm_core::constants::capabilities::groups;
+
+    const TOOL_GROUPS: &[(&str, &str)] = &[
+        ("FILE", groups::FILE),
+        ("FILE_READ", groups::FILE_READ),
+        ("FILE_WRITE", groups::FILE_WRITE),
+        ("HTTP", groups::HTTP),
+        ("WEB", groups::WEB),
+        ("SEARCH", groups::SEARCH),
+        ("WEB_SEARCH", groups::WEB_SEARCH),
+        ("SKILLS", groups::SKILLS),
+        ("AUTHORING", groups::AUTHORING),
+        ("TASK", groups::TASK),
+        ("AGENT_MANAGEMENT", groups::AGENT_MANAGEMENT),
+    ];
+
+    buf.push_str("export enum ToolGroup {\n");
+    for (ident, value) in TOOL_GROUPS {
+        buf.push_str(&format!("  {ident} = {},\n", ts_string(value)));
+    }
+    buf.push_str("}\n\n");
 }
 
 fn render_ts_field_spec(buf: &mut String) {
@@ -252,4 +286,3 @@ fn ts_optional_string(value: Option<&str>) -> String {
 fn ts_bool(value: bool) -> &'static str {
     if value { "true" } else { "false" }
 }
-

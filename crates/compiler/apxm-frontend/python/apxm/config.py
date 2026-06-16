@@ -6,6 +6,7 @@ import os
 from typing import Any
 
 from apxm._generated import constants as graph_keys
+from apxm.constants import ToolGroup, normalize_tool_group
 from apxm.providers import resolve_provider
 
 _TOML_SECTION_HOOKS = "hooks"
@@ -106,7 +107,7 @@ class NodePolicy:
     system_prompt: str | None = None
     backend: str | None = None
     tools: list[str] | None = None
-    tool_groups: list[str] | None = None
+    tool_groups: list[ToolGroup | str] | None = None
     tools_enabled: bool | None = None
     tools_config: ToolsConfig | None = None
     token_budget: int | None = None
@@ -135,7 +136,7 @@ class NodePolicy:
             graph_keys.SYSTEM_PROMPT: self.system_prompt,
             graph_keys.BACKEND: self.backend,
             graph_keys.TOOLS: self.tools,
-            graph_keys.TOOL_GROUPS: self.tool_groups,
+            graph_keys.TOOL_GROUPS: _normalize_tool_groups(self.tool_groups),
             graph_keys.TOKEN_BUDGET: self.token_budget,
             graph_keys.OUTPUT_SCHEMA: self.output_schema,
             graph_keys.MAX_SCHEMA_RETRIES: self.max_schema_retries,
@@ -303,7 +304,7 @@ class AgentConfig:
     system_prompt: str | None = None
     operation_instructions: dict[str, str] | None = None
     tools: list[str] | None = None
-    tool_groups: list[str] | None = None
+    tool_groups: list[ToolGroup | str] | None = None
     tools_enabled: bool | None = None
     tools_config: ToolsConfig | None = None
     token_budget: int | None = None
@@ -348,3 +349,9 @@ def _toml_value(value: Any) -> str:
     if value is None:
         raise ValueError("None is not a valid TOML scalar")
     return str(value)
+
+
+def _normalize_tool_groups(groups: list[ToolGroup | str] | None) -> list[str] | None:
+    if groups is None:
+        return None
+    return [normalize_tool_group(group) for group in groups]

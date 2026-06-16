@@ -42,9 +42,31 @@ class DependencyType(str, Enum):
 
 
 class ToolGroup(str, Enum):
+    FILE = "file"
+    FILE_READ = "file:read"
+    FILE_WRITE = "file:write"
+    HTTP = "http"
     WEB = "web"
+    SEARCH = "search"
+    WEB_SEARCH = "web:search"
     SKILLS = "skills"
     AUTHORING = "authoring"
+    TASK = "task"
+    AGENT_MANAGEMENT = "agent_management"
+
+
+class Capability(str, Enum):
+    BASH = "bash"
+    READ = "read"
+    WRITE = "write"
+    SEARCH_WEB = "search_web"
+    HTTP_GET = "http_get"
+    HTTP_POST = "http_post"
+    SEARCH_SKILLS = "search_skills"
+    SCHEDULE = "schedule"
+    MANAGE_TASK = "manage_task"
+    MEMORY_STORE_FACT = "memory.store_fact"
+    MEMORY_SEARCH_FACTS = "memory.search_facts"
 
 
 def normalize_dependency_type(value: DependencyType | str) -> str:
@@ -63,15 +85,41 @@ def normalize_tool_group(value: ToolGroup | str) -> str:
     raise TypeError("tool group must be a ToolGroup or string")
 
 
+def normalize_capability(value: Capability | str) -> str:
+    if isinstance(value, Capability):
+        return value.value
+    if isinstance(value, str):
+        return value
+    raise TypeError("capability must be a Capability or string")
+
+
 DEPENDENCY_DATA = DependencyType.DATA.value
 DEPENDENCY_CONTROL = DependencyType.CONTROL.value
 DEPENDENCY_EFFECT = DependencyType.EFFECT.value
 
 TOOL_GROUP_WEB = ToolGroup.WEB.value
+TOOL_GROUP_FILE = ToolGroup.FILE.value
+TOOL_GROUP_FILE_READ = ToolGroup.FILE_READ.value
+TOOL_GROUP_FILE_WRITE = ToolGroup.FILE_WRITE.value
+TOOL_GROUP_HTTP = ToolGroup.HTTP.value
+TOOL_GROUP_SEARCH = ToolGroup.SEARCH.value
+TOOL_GROUP_WEB_SEARCH = ToolGroup.WEB_SEARCH.value
 TOOL_GROUP_SKILLS = ToolGroup.SKILLS.value
 TOOL_GROUP_AUTHORING = ToolGroup.AUTHORING.value
+TOOL_GROUP_TASK = ToolGroup.TASK.value
+TOOL_GROUP_AGENT_MANAGEMENT = ToolGroup.AGENT_MANAGEMENT.value
 
-CAPABILITY_SEARCH_SKILLS = "search_skills"
+CAPABILITY_BASH = Capability.BASH.value
+CAPABILITY_READ = Capability.READ.value
+CAPABILITY_WRITE = Capability.WRITE.value
+CAPABILITY_SEARCH_WEB = Capability.SEARCH_WEB.value
+CAPABILITY_HTTP_GET = Capability.HTTP_GET.value
+CAPABILITY_HTTP_POST = Capability.HTTP_POST.value
+CAPABILITY_SEARCH_SKILLS = Capability.SEARCH_SKILLS.value
+CAPABILITY_SCHEDULE = Capability.SCHEDULE.value
+CAPABILITY_MANAGE_TASK = Capability.MANAGE_TASK.value
+CAPABILITY_MEMORY_STORE_FACT = Capability.MEMORY_STORE_FACT.value
+CAPABILITY_MEMORY_SEARCH_FACTS = Capability.MEMORY_SEARCH_FACTS.value
 
 COMMUNICATE_PROTOCOL_ACP = "acp"
 

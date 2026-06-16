@@ -6,7 +6,7 @@ use crate::capability::{
     executor::{CapabilityExecutor, CapabilityResult},
     metadata::CapabilityMetadata,
 };
-use apxm_core::{error::RuntimeError, types::Value};
+use apxm_core::{constants::capabilities, error::RuntimeError, types::Value};
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 use std::{
@@ -122,9 +122,9 @@ impl WriteCapability {
             )
             .with_returns("string")
             .with_groups(vec![
-                "file".to_string(),
-                "file:write".to_string(),
-                "write".to_string(),
+                capabilities::groups::FILE.to_string(),
+                capabilities::groups::FILE_WRITE.to_string(),
+                capabilities::groups::WRITE.to_string(),
             ])
             .with_latency(30),
             config,
@@ -367,4 +367,3 @@ impl CapabilityExecutor for WriteCapability {
         &self.metadata
     }
 }
-

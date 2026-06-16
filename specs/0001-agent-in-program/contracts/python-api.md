@@ -9,7 +9,7 @@ resolved by the runtime bridge. Reused verbatim as the hook backing mechanism.
 
 ## `@hook` (new)
 ```
-@hook(on: HookEvent, match: str = "*", mode: "observe" | "gate" = "observe")
+@hook(on: LifecycleEvent, match: str = "*", mode: HookMode | str = HookMode.OBSERVE)
 def fn(ctx, ...): ...
 ```
 - `on ∈ {session_start, pre_turn, post_turn, pre_ask, post_ask, pre_tool, post_tool}`.
@@ -28,7 +28,7 @@ ConversationalAgent(
   persona: str,
   memory_space: str = "stm",
   tools: list = [],
-  tool_groups: list[str] = [],
+  tool_groups: list[ToolGroup | str] = [],
   skills: bool = False,
   sub_agents: list[Agent] = [],
   compaction: CompactionPolicy | None = None,
@@ -57,6 +57,17 @@ threshold, summarization prompt, and fold via `ctx.count_tokens`, `ctx.ask`, and
 ## `skill_search(query, imports=None)` (new helper)
 First-class wrapper over the real `search_skills` capability so authors need not
 know the capability name. Returns ranked `{id, description}` matches.
+
+## Exported wire enums
+- `DependencyType` owns graph edge values: `Data`, `Control`, `Effect`.
+- `LifecycleEvent` and `HookMode` own hook event/mode values.
+- `HookEvent`, `MiddlewareKind`, `WorkflowTargetKind`, and `SearchDepth` own
+  legacy execution option/runtime-control values.
+- `ToolGroup` owns canonical tool-group tags (`web`, `file:read`, `skills`,
+  `authoring`, etc.); `NodePolicy`, `AgentConfig`, and `ConversationalAgent`
+  accept these enum values and lower them to wire strings.
+- `Capability` owns canonical builtin capability ids, including
+  `search_skills`; `GraphRecorder.invoke()` accepts enum values.
 
 ## Removed
 - `AgentHooks(on_start/on_tool_call/on_end)` — deleted (decorative, never

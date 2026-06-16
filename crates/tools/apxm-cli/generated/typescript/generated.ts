@@ -21,6 +21,26 @@ export type OpSpec = {
   readonly exampleJson: string | null;
 };
 
+export enum DependencyType {
+  DATA = "Data",
+  CONTROL = "Control",
+  EFFECT = "Effect",
+}
+
+export enum ToolGroup {
+  FILE = "file",
+  FILE_READ = "file:read",
+  FILE_WRITE = "file:write",
+  HTTP = "http",
+  WEB = "web",
+  SEARCH = "search",
+  WEB_SEARCH = "web:search",
+  SKILLS = "skills",
+  AUTHORING = "authoring",
+  TASK = "task",
+  AGENT_MANAGEMENT = "agent_management",
+}
+
 export const AGENT: OpSpec = {
   op: "AGENT",
   name: "Agent",
@@ -457,12 +477,12 @@ export const ERR: OpSpec = {
   longDescription: "Handles an error by invoking a recovery template. The error handler can update the agent's goals and beliefs to reflect the failure and adapt the agent's strategy. Typically used inside TRY_CATCH catch subgraphs.",
   latency: "medium",
   fields: [
-    { name: "error_handler", description: "Error handler to invoke", required: true, refType: null },
+    { name: "recovery_template", description: "Error handler / recovery template to invoke", required: true, refType: null },
   ],
   producesOutput: true,
   needsSubmission: true,
   minInputs: 0,
-  exampleJson: "{\"id\": 4, \"op\": \"ERR\", \"attributes\": {\"error_handler\": \"retry_with_fallback\"}}",
+  exampleJson: "{\"id\": 4, \"op\": \"ERR\", \"attributes\": {\"recovery_template\": \"retry_with_fallback\"}}",
 } as const;
 
 export const COMMUNICATE: OpSpec = {
@@ -725,6 +745,25 @@ export const REGISTER_CAPABILITY: OpSpec = {
   exampleJson: "{\\\"id\\\": 3, \\\"op\\\": \\\"REGISTER_CAPABILITY\\\", \\\"attributes\\\": {\\\"capability_name\\\": \\\"custom_tool\\\", \\\"description\\\": \\\"A custom analysis tool\\\"}}",
 } as const;
 
+export const REGISTER_HOOK: OpSpec = {
+  op: "REGISTER_HOOK",
+  name: "RegisterHook",
+  category: "coordination" as OpCategory,
+  description: "Register an author lifecycle hook into the artifact hook registry",
+  longDescription: "Registers one author lifecycle hook (a Python handler bound to a lifecycle event) into the per-artifact hook registry. Mirrors REGISTER_CAPABILITY: the binding travels inside the artifact (AIR-portable) and the handler is dispatched via the same Python tool bridge as @tool. The runtime applies pre/post_tool hooks at the tool dispatch sites, pre/post_ask as Ask middleware, and session_start as an awaited pre-step.",
+  latency: "low",
+  fields: [
+    { name: "hook_event", description: "Lifecycle event the hook binds to", required: true, refType: null },
+    { name: "hook_match", description: "Glob over tool/op name the hook applies to (default *)", required: false, refType: null },
+    { name: "hook_mode", description: "Hook mode: observe or gate", required: false, refType: null },
+    { name: "python_hook_handler_id", description: "Stable content-addressed id (sha256:<hex64>) for the Python hook handler", required: true, refType: null },
+  ],
+  producesOutput: true,
+  needsSubmission: true,
+  minInputs: 0,
+  exampleJson: "{\\\"id\\\": 4, \\\"op\\\": \\\"REGISTER_HOOK\\\", \\\"attributes\\\": {\\\"hook_event\\\": \\\"pre_tool\\\", \\\"hook_match\\\": \\\"lookup\\\", \\\"hook_mode\\\": \\\"gate\\\", \\\"python_hook_handler_id\\\": \\\"sha256:...\\\"}}",
+} as const;
+
 export const AUTONOMOUS: OpSpec = {
   op: "AUTONOMOUS",
   name: "Autonomous",
@@ -840,6 +879,7 @@ export const ALL_OPERATIONS: readonly OpSpec[] = [
   SPAWN_AGENT,
   SPAWN_TEAM,
   REGISTER_CAPABILITY,
+  REGISTER_HOOK,
   AUTONOMOUS,
   CHECKPOINT,
   CONST_STR,
@@ -910,6 +950,10 @@ export const ATTR = {
   DESCRIPTION: "description",
   PARAMETERS_SCHEMA: "parameters_schema",
   PYTHON_HANDLER_ID: "python_handler_id",
+  HOOK_EVENT: "hook_event",
+  HOOK_MATCH: "hook_match",
+  HOOK_MODE: "hook_mode",
+  PYTHON_HOOK_HANDLER_ID: "python_hook_handler_id",
   MESSAGE: "message",
   RECIPIENT: "recipient",
   TARGET: "target",
@@ -937,6 +981,9 @@ export const ATTR = {
   REGION: "region",
   ON_FAIL: "on_fail",
   ERROR_MESSAGE: "error_message",
+  RETRY_MAX: "retry_max",
+  RETRY_BACKOFF_MS: "retry_backoff_ms",
+  CONTINUE_ON_ERROR: "continue_on_error",
   SCOPE: "scope",
   STORAGE: "storage",
   TTL_SECONDS: "ttl_seconds",
@@ -1022,6 +1069,8 @@ export const ATTR = {
   ORDERING: "ordering",
   PAYLOAD: "payload",
   ERROR_HANDLER: "error_handler",
+  NAME: "name",
+  SID: "sid",
 } as const;
 
 export const GRAPH_METRICS = {

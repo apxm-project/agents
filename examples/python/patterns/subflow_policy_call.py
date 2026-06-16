@@ -1,21 +1,21 @@
 #!/usr/bin/env python3
 """Attach a stricter policy to the FLOW_CALL node that invokes a subflow."""
 
-from apxm import GraphRecorder, NodePolicy, compile
+from apxm import GraphRecorder, NodePolicy, ToolGroup, compile
 
 
-@compile(default_policy=NodePolicy(tool_groups=["web"], token_budget=256))
+@compile(default_policy=NodePolicy(tool_groups=[ToolGroup.WEB], token_budget=256))
 def research_step(g: GraphRecorder, topic: str):
     notes = g.ask(name="notes", prompt=f"Collect notes about {{topic}}.")
     g.done(notes)
 
 
-@compile(default_policy=NodePolicy(tool_groups=["web"], token_budget=512))
+@compile(default_policy=NodePolicy(tool_groups=[ToolGroup.WEB], token_budget=512))
 def pipeline(g: GraphRecorder, topic: str):
     research = g.call(
         research_step,
         topic=topic,
-        node_policy=NodePolicy(tool_groups=["file:read"], token_budget=128),
+        node_policy=NodePolicy(tool_groups=[ToolGroup.FILE_READ], token_budget=128),
     )
     final = g.ask(
         name="final",

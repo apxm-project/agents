@@ -21,6 +21,7 @@ from apxm import (
     LoopGuardMiddlewareConfig,
     NodePolicy,
     TimeoutMiddlewareConfig,
+    ToolGroup,
     WorkflowTargetKind,
     compile,
     emit_air_if_requested,
@@ -35,12 +36,10 @@ DEFAULT_PARENT_SESSIONS_ROOT = local_apxm_path("sessions")
 CHILD_SESSIONS_ROOT = local_apxm_path("e2e-child-sessions")
 HOOK_LOG = local_apxm_path("e2e-hook.log")
 CHILD_GRAPH = Path(__file__).with_name("runtime_controls_child.air").resolve()
-WEB_TOOL_GROUP = "web"
-FILE_READ_TOOL_GROUP = "file:read"
 HOOK_FIELD_SEPARATOR = "|"
 
 
-@compile(default_policy=NodePolicy(tool_groups=[WEB_TOOL_GROUP], token_budget=128, timeout_ms=5_000))
+@compile(default_policy=NodePolicy(tool_groups=[ToolGroup.WEB], token_budget=128, timeout_ms=5_000))
 def e2e_flow(g: GraphRecorder):
     summary = g.ask(
         name="summary",
@@ -53,14 +52,14 @@ def e2e_flow(g: GraphRecorder):
         session_root=CHILD_SESSIONS_ROOT,
         node_policy=NodePolicy(
             timeout_ms=2_000,
-            tool_groups=[FILE_READ_TOOL_GROUP],
+            tool_groups=[ToolGroup.FILE_READ],
             token_budget=64,
         ),
     )
     final = g.ask(
         name="final",
         prompt="Combine this parent summary {summary} with this child result {child}.",
-        policy=NodePolicy(tool_groups=[WEB_TOOL_GROUP], token_budget=96),
+        policy=NodePolicy(tool_groups=[ToolGroup.WEB], token_budget=96),
     )
     g.done(final)
 

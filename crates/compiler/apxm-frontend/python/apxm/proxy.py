@@ -15,7 +15,12 @@ if TYPE_CHECKING:
 from apxm._generated import constants as c
 from . import constants as graph_keys
 from .config import AgentConfig, NodePolicy, WorkflowTargetKind
-from .constants import CAPABILITY_SEARCH_SKILLS, DependencyType, normalize_dependency_type
+from .constants import (
+    Capability,
+    DependencyType,
+    normalize_capability,
+    normalize_dependency_type,
+)
 from .hooks import HookMode, LifecycleEvent, normalize_hook_mode, normalize_lifecycle_event
 from .normalize import normalize_model_id as _normalize_model_id
 from .normalize import normalize_attributes as _normalize_attributes
@@ -410,7 +415,7 @@ class GraphRecorder:
         self,
         name: str | None = None,
         *,
-        capability: str | None = None,
+        capability: Capability | str | None = None,
         params: str | dict[str, Any] | None = None,
         **attributes: Any,
     ) -> NodeRef:
@@ -418,7 +423,7 @@ class GraphRecorder:
             name = self._auto_name(graph_keys.OP_INV_TOOL)
         if capability is None:
             raise ValueError("invoke() missing required keyword argument: 'capability'")
-        attrs: dict[str, Any] = {graph_keys.CAPABILITY: capability}
+        attrs: dict[str, Any] = {graph_keys.CAPABILITY: normalize_capability(capability)}
         params_str: str | None = None
         if isinstance(params, dict):
             params_str = json.dumps(params)
@@ -531,7 +536,7 @@ class GraphRecorder:
         params: dict[str, Any] = {"request": query}
         if imports is not None:
             params["imports"] = imports
-        return self.invoke(name, capability=CAPABILITY_SEARCH_SKILLS, params=params, **attributes)
+        return self.invoke(name, capability=Capability.SEARCH_SKILLS, params=params, **attributes)
 
     def register_tool(self, tool: FunctionTool, name: str | None = None, **attributes: Any) -> NodeRef:
         """Register a Python @tool function as a runtime capability."""
