@@ -70,9 +70,9 @@ WIRE_TYPE_CALL: Final[str] = "call"
 WIRE_TYPE_CANCEL: Final[str] = "cancel"
 WIRE_TYPE_LOG: Final[str] = "log"
 WIRE_TYPE_RESULT: Final[str] = "result"
-# Worker-initiated calls back into the runtime (e.g. a hook's ctx.summarize ->
-# llm.ask). The worker emits a host_call and blocks until the runtime replies
-# with a host_result correlated by the callback req_id.
+# Worker-initiated calls back into the runtime (e.g. a hook's ctx.ask -> llm.ask,
+# or ctx.count_tokens -> tool.call). The worker emits a host_call and blocks
+# until the runtime replies with a host_result correlated by the callback req_id.
 WIRE_TYPE_HOST_CALL: Final[str] = "host_call"
 WIRE_TYPE_HOST_RESULT: Final[str] = "host_result"
 WIRE_FIELD_PARENT_REQUEST_ID: Final[str] = "parent_req_id"
