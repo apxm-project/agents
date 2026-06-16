@@ -107,20 +107,26 @@ pub(crate) fn resolve_ask_tools(ctx: &ExecutionContext, node: &Node) -> Vec<Tool
         .and_then(|v| v.as_bool())
         .unwrap_or(false);
 
-    let mut tools = match (tool_names, tool_groups, tools_enabled_all) {
-        (Some(names), _, _) if !names.is_empty() => get_tools_by_names(ctx, &names),
-        // Naming a non-empty set of tool groups is itself a request to enable
-        // tools for this ASK — the author should not also have to set
-        // `tools_enabled`. An explicit tool list (above) is likewise
-        // self-enabling. Only the "enable everything" case still requires the
-        // explicit `tools_enabled` flag, to avoid silently exposing the full
-        // capability surface to the model.
-        (_, Some(groups), _) if !groups.is_empty() => {
-            get_tool_definitions_from_groups(ctx, &groups)
-        }
-        (_, _, true) => get_tool_definitions_from_capabilities(ctx),
-        _ => vec![],
-    };
+    let mut tools = Vec::new();
+    let mut explicitly_scoped = false;
+    if let Some(names) = tool_names.as_deref()
+        && !names.is_empty()
+    {
+        explicitly_scoped = true;
+        tools.extend(get_tools_by_names(ctx, names));
+    }
+    // Naming tool groups is additive with explicit tools. A conversational agent
+    // commonly has both Python tools and a capability group such as `skills`.
+    if let Some(groups) = tool_groups.as_deref()
+        && !groups.is_empty()
+    {
+        explicitly_scoped = true;
+        tools.extend(get_tool_definitions_from_groups(ctx, groups));
+    }
+    if !explicitly_scoped && tools_enabled_all {
+        tools.extend(get_tool_definitions_from_capabilities(ctx));
+    }
+    dedupe_tools_by_name(&mut tools);
     // Opt-in sub-agent fan-out: a coordinator with `enable_delegate` also gets
     // the synthetic `delegate` tool, letting it spawn focused specialist
     // sub-agents at runtime (the spawn/delegate AIS ops are compile-time only).
@@ -128,6 +134,11 @@ pub(crate) fn resolve_ask_tools(ctx: &ExecutionContext, node: &Node) -> Vec<Tool
         tools.push(delegate_tool_definition());
     }
     tools
+}
+
+fn dedupe_tools_by_name(tools: &mut Vec<ToolDefinition>) {
+    let mut seen = std::collections::HashSet::new();
+    tools.retain(|tool| seen.insert(tool.name.clone()));
 }
 
 fn delegate_enabled(node: &Node) -> bool {
@@ -338,17 +349,16 @@ async fn execute_tool_call(
 
     // Native/builtin tool path also runs pre/post_tool hooks (FR-004: each tool
     // use). A pre_tool deny continues the turn gracefully (m4).
-    let args = match crate::executor::hook_driver::run_pre_tool_hooks(ctx, &tool_call.name, args)
-        .await
-    {
-        Ok(edited) => edited,
-        Err(e) => {
-            if let Some(emitter) = &ctx.event_emitter {
-                emitter.emit_tool_end(&tool_call.name, &Value::String(e.to_string()));
+    let args =
+        match crate::executor::hook_driver::run_pre_tool_hooks(ctx, &tool_call.name, args).await {
+            Ok(edited) => edited,
+            Err(e) => {
+                if let Some(emitter) = &ctx.event_emitter {
+                    emitter.emit_tool_end(&tool_call.name, &Value::String(e.to_string()));
+                }
+                return ToolResult::error(&tool_call.id, e.to_string());
             }
-            return ToolResult::error(&tool_call.id, e.to_string());
-        }
-    };
+        };
     match ctx.invoke_tool(&tool_call.name, args).await {
         Ok(result) => {
             let result =
@@ -725,4 +735,3 @@ pub(crate) async fn execute_ask_with_tools(
         backend: None,
     })
 }
-
