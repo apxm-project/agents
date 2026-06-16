@@ -84,7 +84,7 @@ sub-agent's result lands in the reply.
 - [X] T061 [US5] `ConversationalAgent(sub_agents=[...])` emits sibling `<Agent>.main`/`.delegate` flows; build-time `delegate()` target validation — `agent.py`, `proxy.py`. (Builder `_build_sub_agent_flow` emits one `<name>.main` per sub-agent + duplicate-name validation; deeper `delegate()`-target checks can layer on.)
 - [X] T062 [US5] Self-contained spawn-grant admission for in-artifact sub-agents — `crates/tools/apxm-server/src/execute.rs`. (`validate_raw_execute_admission` auto-admits SPAWN_AGENT whose target is a sibling `<name>.*` flow in the same artifact; external spawns still require the grant.)
 - [X] T063 [P] [US5] `skill_search()` helper + `skills=True` wires the real `search_skills` group into the turn — `proxy.py`, `agent.py`. (`resolve_ask_tools` now merges explicit Python tools with `tool_groups`, so `tools=[lookup]` no longer hides the `skills` group; live session `live-sc005-search-import-272e3f5e` called `search_skills` and returned `prompt-as-workflow`.)
-- [X] T064 [P] [US5] Fix `conversational_agent.py` (delete stub `find_skill`) and `chat_agent.py` (working delegate) — `examples/python/conversational/`. (conversational_agent.py now uses `skill_search`; chat_agent.py already had a working spawn_agent+delegate.)
+- [X] T064 [P] [US5] Fix `conversational_agent.py` (delete stub `find_skill`) and `chat_agent.py` (working delegate) — `examples/python/conversational/`. (conversational_agent.py now uses `skill_search`; chat_agent.py now emits a self-contained inline `spawn_agent` + `delegate` path with `DependencyType.CONTROL`, no installed `summarize` skill prerequisite.)
 - [X] T065 [US5] Correct the "embedder-backed" discovery docstring to "lexical" — `apxm-frontend` + capability docs.
 - [X] **Checkpoint:** US5 — discovery + sub-agents work from one program. (`controllable_agent.py` emits one artifact with `tool_groups = ["web", "skills"]` and `researcher.main`; `chat_agent.py` emits `spawn_agent` + `delegate`; `cargo test -p apxm-skill` proves lexical discovery scoping and ≥8/10 representative selection.)
 
@@ -92,7 +92,7 @@ sub-agent's result lands in the reply.
 
 - [X] T070 Op-count / tablegen parity guard updated and green for `REGISTER_HOOK`. (`definitions.rs::test_operation_counts` bumped 44→45; green in `dekk apxm test`.)
 - [X] T071 [P] Dead-surface sweep: no `requires_local_cli` dependence for delivered capabilities; remove leftover host-only paths superseded by the in-program loop. (Verified: in-program hooks/loop/context/sub-agents run on the server path via the bridge and do NOT use `requires_local_cli` — that flag is only the legacy `ExecutionOptions` subprocess-hook/middleware config, a separate surface kept for back-compat. Dead `AgentHooks` removed in T003.)
-- [~] T072 Full `cargo test` (runtime/server/compiler) + Python `--validate`; run the `quickstart.md` acceptance on both hosts (SC-001..SC-007). **OFFLINE PORTION DONE & GREEN:** `dekk apxm check`, `dekk apxm test` (runtime/server/core incl. op-count guard), `dekk apxm test-cli` (compiler/CLI incl. the new MLIR op round-trip), `cargo test -p apxm-runtime --lib`, `cargo test -p apxm-skill` (lexical discovery scope/rank/representative 10-case guard), `dekk apxm test-python-frontend`, and `--validate` on both fixtures all pass. **LIVE PARTIAL:** SC-001/SC-002/SC-003/SC-004/SC-005 scoped `search_skills` call/SC-007 are proven. **Remaining:** full SC-001..SC-007 quickstart sweep on both hosts, including the full SC-005 8/10 live campaign and SC-006 delegation through the live agent.
+- [~] T072 Full `cargo test` (runtime/server/compiler) + Python `--validate`; run the `quickstart.md` acceptance on both hosts (SC-001..SC-007). **OFFLINE PORTION DONE & GREEN:** `dekk apxm check`, `dekk apxm test` (runtime/server/core incl. op-count guard), `dekk apxm test-cli` (compiler/CLI incl. the new MLIR op round-trip), `cargo test -p apxm-runtime --lib`, `cargo test -p apxm-skill` (lexical discovery scope/rank/representative 10-case guard), `dekk apxm test-python-frontend`, and `--validate` on both fixtures all pass. **LIVE PARTIAL:** SC-001/SC-002/SC-003/SC-004/SC-005 scoped `search_skills` call/SC-006/SC-007 are proven. **SC-006 LIVE 2026-06-16:** Host B `/v1/execute/stream` session `live-sc006-delegate-enum-18485a` executed `chat_agent.py` with inline `SPAWN_AGENT` + `DELEGATE`, `executed_nodes=10`, `failed_nodes=0`, `llm_usage.total_requests=4`, and the final result incorporated the delegated research; Host A CLI session `live-sc006-cli-enum-18485d` on a fresh isolated server completed the same artifact with `SPAWN_AGENT`, inline `DELEGATE`, and `executed=10 failed=0` (requires `--admit SPAWN_AGENT`). **Remaining:** full SC-001..SC-007 quickstart sweep on both hosts, including the full SC-005 8/10 live campaign.
 - [X] T073 [P] Update `examples/.../README.md` and `docs/apxm-cli-agent-vision.md` cross-reference to point at this spec.
 
 ## Backend-gated tasks (deferred per coordinator; ready to run)
@@ -102,9 +102,10 @@ The remaining live inference gate is the full SC-001..SC-007 acceptance
 (quickstart.md), including observing skill selection and delegation through the
 live agent on both hosts. T025, T032, T047, and T053 were live-proven on
 2026-06-16; a scoped live `search_skills` call was proven in
-`live-sc005-search-import-272e3f5e`. All non-inference work is implemented and
-verified green. Run command for the final sweep is documented at the bottom of
-this file.
+`live-sc005-search-import-272e3f5e`; SC-006 delegation was proven in
+`live-sc006-delegate-enum-18485a` and `live-sc006-cli-enum-18485d`. All
+non-inference work is implemented and verified green. Run command for the final
+sweep is documented at the bottom of this file.
 
 ## Dependencies & Execution Order
 
@@ -283,8 +284,10 @@ ranking core is now guarded by `cargo test -p apxm-skill` with a 10-case
 representative selection suite. The runtime also now merges explicit tools with
 tool groups so `skills=True` is not masked by Python tools; live session
 `live-sc005-search-import-272e3f5e` called `search_skills` and returned
-`prompt-as-workflow`. The remaining acceptance is the full 8/10 live campaign
-through the agent on both hosts as part of T072.
+`prompt-as-workflow`. SC-006 delegation is live-proven on Host B direct server
+(`live-sc006-delegate-enum-18485a`) and Host A CLI (`live-sc006-cli-enum-18485d`);
+the remaining acceptance is the full 8/10 live SC-005 campaign through the agent
+on both hosts as part of T072.
 
 **Realigned (2026-06-15) so the hook owns ALL policy.** The hook `ctx` now hands
 the user apxm's primitives — `ctx.ask` (LLM), `ctx.call`/`ctx.count_tokens`
