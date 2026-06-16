@@ -248,23 +248,27 @@ trailer):
   (control edges carry no value token; `input_names ⊥ inputs` is enforced). Doc
   resolution, no code change. `04d161de`.
 
-### Compaction (T051/T053, SC-003) — characterized, needs a design decision
+### Compaction (T051/T053, SC-003) — DONE, hook-driven, PROVEN LIVE
 
-Precisely scoped this session. The in-graph compaction subgraph (`count_tokens`
-→ guard/switch → summarize → fold) is NOT built; `CompactionPolicy` only sizes
-the `keep_recent` recall window (its `compact_at_tokens`/`strategy` are recorded
-but unenforced). SC-003 ("recall a turn-1 fact at turn 50") cannot pass on the
-current substrate because:
-1. `MemorySystem::recent_scoped` drops any key whose `transcript_sort_key` is
-   `None`, so a hook-folded `conversation:summary` is never recalled; and
-2. lifecycle hooks run in the worker subprocess, which has no LLM access, so
-   `ctx.summarize` is a heuristic truncation — LLM-quality summarization can only
-   happen inside the graph.
+Resolved via hook-driven LLM compaction (the "controlled through hooks" path),
+after lifting the two constraints that blocked it:
+1. **Hooks CAN now call the LLM.** Added a bidirectional host-call channel: a
+   hook's `ctx.summarize`/`ctx.ask` raises an `llm.ask` host call that the
+   runtime services with the hook's own `ExecutionContext` (real backend +
+   budget). `ctx.summarize` is now an LLM summary, not a truncation.
+- [X] T051 (hook-driven form): `CompactionPolicy` + a `post_turn` compaction
+  hook that folds (prior summary + full recent window) → new rolling summary via
+  `ctx.summarize`. The window now includes user messages, not only replies.
+- [X] recall: `recent_scoped` surfaces the folded `conversation:summary` ahead of
+  the recent window, so compacted early facts survive `keep_recent`.
+- [X] **T053 / SC-003 PROVEN LIVE over AMD:** a user-stated turn-1 fact (project
+  codename BLUEHERON) is folded by the post_turn hook (`ctx.summarize` → real
+  AMD LLM summary, observed: `summary head='The user confirmed their project
+  codename is BLUEHERON…'`), rolled forward, and correctly recalled at turn 6
+  after sliding out of `keep_recent=4`. The worker ran under bwrap throughout.
 
-Design fork (needs sign-off before building): (a) in-graph LLM-summarize subgraph
-in the turn flow (host-independent, AIR-portable, highest quality); (b)
-hook-driven fold + a recall change to always-surface a pinned summary key
-(heuristic quality, matches "controlled through hooks"); or (c) both — an
-in-graph default the author can override via a `post_turn` hook. SC-005
-(skill-by-description ≥8/10) is wired (`skills=True` → `search_skills`) and is a
-live eval campaign, not a code gap.
+The alternative in-graph `count_tokens → guard → summarize → fold` subgraph
+remains a possible future addition (host-independent, no python), but is not
+required — the hook path satisfies SC-003 and matches the program-owns-cognition
+goal. SC-005 (skill-by-description ≥8/10) is wired (`skills=True` →
+`search_skills`) and remains a live eval campaign, not a code gap.

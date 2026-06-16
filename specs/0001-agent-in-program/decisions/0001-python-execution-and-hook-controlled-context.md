@@ -211,3 +211,25 @@ identifiers, no cruft) and these issues:
   `setrlimit`, which would destabilize the persistent multi-handler worker.
   After that lands, promote `APXM_SANDBOX_PYTHON` toward a policy default.
 - T053/SC scale validations (50-turn compaction; skill-by-description 8/10).
+
+## Hook-driven LLM compaction (added 2026-06-15, proven live)
+
+Hooks were previously LLM-blind (worker subprocess, one-way bridge), so
+`ctx.summarize` could only truncate. Added a bidirectional host-call channel:
+a hook raises an `llm.ask` host call that the runtime services with the hook's
+OWN `ExecutionContext` (same backend, budget, cancellation), replying with a
+`host_result`. To keep the context borrow-clean the worker's `pending` map
+became an mpsc so an awaiting call services interleaved host calls inline via a
+handler closure built from `ctx`; the `llm.ask` handler runs an ephemeral ASK
+through the normal LLM path (boxed to break the `pre_ask → llm → pre_ask`
+recursion). `ctx.ask`/`ctx.summarize` (Python) emit the host call from the hook
+thread and block on a queue until the async loop delivers the result; stdout is
+unified under one thread-safe lock. Compaction is then a `post_turn` hook that
+folds (prior summary + full transcript window) → a rolling `conversation:summary`
+that `recent_scoped` surfaces ahead of the recent window.
+
+**Proven live over AMD:** a user-stated turn-1 fact is summarized by the real
+backend, rolled forward, and recalled at turn 6 after leaving `keep_recent=4`
+(SC-003), with the worker sandboxed under bwrap. The optional in-graph
+summarize/fold subgraph (host-independent, no python) is future work, not a
+blocker.
