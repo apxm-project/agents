@@ -107,8 +107,59 @@ campaign is 10/10 on `127.0.0.1:18918`, and Host A CLI smoke
 `live-sc005-cli-smoke-import-inherit` returned `architecture_review`; SC-006
 delegation was proven in `live-sc006-delegate-enum-18485a` and
 `live-sc006-cli-enum-18485d`. All non-inference work is implemented and
-verified green. Run command for the final sweep is documented at the bottom of
-this file.
+verified green.
+
+**T072 quickstart recheck (PARTIAL, fresh live run) — 2026-06-16T06:11:45Z.**
+Evidence note:
+`specs/0001-agent-in-program/evidence/t072-quickstart-20260616.md`; raw logs
+under `.apxm/evaluation/t072-quickstart-20260616T0556/`. The two reference hosts
+are Host A `dekk apxm chat` and Host B `/v1/execute/stream` +
+`/v1/conversations/{session}/message`. Fresh rebuilt trusted server
+`127.0.0.1:18922` was required because the stale/default servers either lacked
+the SC-005 fixture catalogue, rejected Python-backed AIR without
+`APXM_TRUST_PYTHON_ARTIFACTS=1 APXM_SANDBOX_PYTHON=1`, or had a stale
+`host_call` parser. Fresh Host B results: SC-001 pass (`OK`, AMD lookup,
+`BLUEHERON` recall), SC-004 pass (AMD edit + `FORBIDDEN` block), SC-005 pass
+10/10 through the conversational-agent path, and SC-007 pass smoke on the same
+long-lived execution. Fresh Host A results: CLI dumb-pipe pass for `OK`, AMD
+lookup, `BLUEHERON` recall, plus one SC-005 representative request returning
+`architecture_review`. Still missing from this recheck: SC-003 fresh 50-turn
+sweep on both hosts, full Host A SC-004/SC-005, and SC-006 after a fresh
+`chat_agent.py` run failed with `SPAWN_AGENT - Agent 'researcher' already exists
+in the flow registry`. T072 remains `[~]`.
+
+**T072 SC-006 blocker follow-up (PASS on Host B direct, still partial overall)
+— 2026-06-16T06:26:30Z.** Fixed runtime artifact flow registration so
+per-artifact flows are scoped to the execution context instead of leaking through
+the runtime-wide `FlowRegistry`, and stopped treating pre-registered sibling
+flows as `SPAWN_AGENT` duplicates. Focused regression
+`dekk apxm test -p apxm-runtime artifact_flow_registry_is_execution_scoped` and
+`dekk apxm build-server` passed. Fresh trusted server `127.0.0.1:18924` ran
+direct Host B `chat_agent.py` SC-006 session
+`t072-host-b-sc006-fixed-direct-20260616T0626` with `executed_nodes=10`,
+`failed_nodes=0`, `SAW_TOKEN True`, `SAW_ERROR False`, and no duplicate
+`researcher` error; raw log:
+`.apxm/evaluation/t072-quickstart-20260616T0556/host-b-sc006-delegate-fixed-direct-18924.log`.
+T072 remains `[~]`: SC-003 fresh 50-turn sweep on both hosts, full Host A
+SC-004/SC-005, and Host A SC-006 still need reruns.
+
+**Council routing evidence (PASS, focused dry-run) — 2026-06-16T06:08:23Z,
+host `d05u43`.** Current-checkout build `dekk apxm build` passed, then a fresh
+isolated APXM server on `127.0.0.1:18923` admitted a server-owned goal dry-run
+with explicit council workers `planner`, `reviewer`, `critic`, `verifier`, and
+`synthesizer` using `--use-agents --workspace shared --dry-run --no-follow
+--json`. Full output:
+`.apxm/evaluation/council-routing/runs/20260616T055915Z/goal-dry-run-18923.json`;
+bundle:
+`.apxm/cache/goals/goal-98c59397-c31a-4435-aafb-5f5afa42c601`; goal id:
+`goal-b5f228ec-52ab-4a0d-87fc-1e326776c22d`. Selection evidence: planner →
+`claude` with `planner,read,workflow_author`; reviewer → `codex` with
+`critique,read,reviewer`; critic → `cursor` with `critic,critique,read`;
+verifier → `kilocode` with `execute,verifier`; synthesizer → `opencode` with
+`read,synthesizer`; all `source=selected`, `route_selector=deterministic`,
+status `planned`. This proves current-code council role capability selection and
+goal-bundle admission only; it does NOT complete the full SC-001..SC-007
+quickstart/live conversational sweep.
 
 ## Dependencies & Execution Order
 
