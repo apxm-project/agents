@@ -71,8 +71,8 @@ policy changes retention.
 - [X] T050 [US4] `qmem` recent-window recall mode (`recall_mode=recent`, `recent=N`) — `crates/runtime/apxm-runtime/src/.../qmem.rs` + `proxy.py` surface. (`MemorySystem::recent_scoped` + qmem `recall_mode`/`recent`/`recall_prefix` + `query_memory(recall_mode=, recent=)`.)
 - [X] T051 [US4] `CompactionPolicy` lowering for hook-authored compaction (`recall_pin` + `ctx.count_tokens` → `ctx.ask` → `ctx.umem`) — `apxm-frontend/python/apxm/conversational.py`, `tool_worker.py`, `executor/hook_driver.rs`.
 - [X] T052 [US4] Record user message (not only assistant answer) per turn so the transcript is session memory — `crates/runtime/apxm-runtime/src/.../conversation_memory.rs`. (Recorded at the turn-input endpoint under `conversation:user:<n>` in session STM; assistant answers still recorded by `ConversationMemoryMiddleware`.)
-- [ ] T053 [US4] SC-003 check: ≥50-turn session stays within limit and recalls turn 1.
-- [ ] **Checkpoint:** US4 — context fully managed in-program; host owns no transcript.
+- [X] T053 [US4] SC-003 check: ≥50-turn session stays within limit and recalls turn 1. **LIVE 2026-06-16:** session `live-t053-blueheron-50` on an isolated current server drove 50 filler turns after turn-1 codename `BLUEHERON`; final turn 51 replied `BLUEHERON` with 51 ASK completions.
+- [X] **Checkpoint:** US4 — context fully managed in-program; host owns no transcript.
 
 ## Phase 7 — User Story 5: Skills & sub-agents in one program (P3)
 
@@ -92,16 +92,16 @@ sub-agent's result lands in the reply.
 
 - [X] T070 Op-count / tablegen parity guard updated and green for `REGISTER_HOOK`. (`definitions.rs::test_operation_counts` bumped 44→45; green in `dekk apxm test`.)
 - [X] T071 [P] Dead-surface sweep: no `requires_local_cli` dependence for delivered capabilities; remove leftover host-only paths superseded by the in-program loop. (Verified: in-program hooks/loop/context/sub-agents run on the server path via the bridge and do NOT use `requires_local_cli` — that flag is only the legacy `ExecutionOptions` subprocess-hook/middleware config, a separate surface kept for back-compat. Dead `AgentHooks` removed in T003.)
-- [~] T072 Full `cargo test` (runtime/server/compiler) + Python `--validate`; run the `quickstart.md` acceptance on both hosts (SC-001..SC-007). **OFFLINE PORTION DONE & GREEN:** `dekk apxm check`, `dekk apxm test` (runtime/server/core incl. op-count guard), `dekk apxm test-cli` (compiler/CLI incl. the new MLIR op round-trip), and `--validate` on both fixtures all pass. **LIVE PARTIAL:** SC-001/SC-002/SC-004/SC-007 are proven on Host A CLI and Host B stream. **Remaining:** SC-003 50-turn compaction, SC-005 skill-selection eval, and full SC-001..SC-007 quickstart sweep.
+- [~] T072 Full `cargo test` (runtime/server/compiler) + Python `--validate`; run the `quickstart.md` acceptance on both hosts (SC-001..SC-007). **OFFLINE PORTION DONE & GREEN:** `dekk apxm check`, `dekk apxm test` (runtime/server/core incl. op-count guard), `dekk apxm test-cli` (compiler/CLI incl. the new MLIR op round-trip), and `--validate` on both fixtures all pass. **LIVE PARTIAL:** SC-001/SC-002/SC-003/SC-004/SC-007 are proven. **Remaining:** SC-005 skill-selection eval and full SC-001..SC-007 quickstart sweep.
 - [X] T073 [P] Update `examples/.../README.md` and `docs/apxm-cli-agent-vision.md` cross-reference to point at this spec.
 
 ## Backend-gated tasks (deferred per coordinator; ready to run)
 
 These require live inference and are left UNCHECKED until a backend is authorized:
-T053 and the remaining SC-003 / SC-005 / full SC-001..SC-007 acceptance
-(quickstart.md). T025, T032, and T047 were live-proven on 2026-06-16. All
-non-inference work is implemented and verified green. Run command once a backend
-is available is documented at the bottom of this file.
+The remaining live inference gate is SC-005 / full SC-001..SC-007 acceptance
+(quickstart.md). T025, T032, T047, and T053 were live-proven on 2026-06-16. All
+non-inference work is implemented and verified green. Run command for the final
+sweep is documented at the bottom of this file.
 
 ## Dependencies & Execution Order
 
@@ -175,9 +175,9 @@ Verification-pass hardening (two MINOR items, both FIXED & green):
   `transcript_sort_key_orders_user_before_assistant_then_by_turn` and
   `..._excludes_non_numeric_counter_keys`.
 
-Live backend smoke now proves the two-turn loop/parity path and all hook events
-on both hosts. Still deferred: full quickstart acceptance for SC-003 50-turn
-compaction and SC-005 skill-selection accuracy.
+Live backend smoke now proves the two-turn loop/parity path, all hook events on
+both hosts, and the SC-003 50-turn compaction recall. Still deferred: full
+quickstart acceptance for SC-005 skill-selection accuracy.
 
 ## Session status (autonomous run) — what landed, what remains
 
@@ -197,7 +197,7 @@ GREEN + verified (`dekk apxm check`, `dekk apxm test` runtime+server+core,
   (T043–T046) via `executor/hook_driver.rs` + `bridge.call_hook` + `tool_worker.py`;
   live Host A + Host B hook markers for all lifecycle events.
 - US4 T050 (`qmem recall_mode=recent` + `MemorySystem::recent_scoped`) + T052
-  (record user message at the turn-input endpoint).
+  (record user message at the turn-input endpoint) + T053 live 50-turn recall.
 - US5 T060–T065 + T062 (delegate inline fallback, sub-agent flows, skill_search,
   example fixes, docstring, self-contained spawn-grant admission).
 - Polish T070, T071 (dead-surface sweep), T073 (docs), T072 offline portion.
@@ -206,16 +206,14 @@ GREEN + verified (`dekk apxm check`, `dekk apxm test` runtime+server+core,
   (per-session runtime ledger), and T032 live CLI/server parity — done.
 
 REMAINING — live-backend acceptance only (no offline-verifiable work left):
-T053 and T072 full SC-003 / SC-005 / SC-001..SC-007 sweep. See the Deferred
-section for the exact run command. All offline-verifiable work is complete and
-green.
+T072 full SC-005 / SC-001..SC-007 sweep. See the Deferred section for the exact
+run command. All offline-verifiable work is complete and green.
 
 ## Deferred — live-backend acceptance (run once a backend is authorized)
 
-T053 and the remaining quickstart SC-003 / SC-005 / full SC-001..SC-007 sweep
-need live inference. They are NOT inference-mockable. Run, with a backend
-configured (cloud gateway egress + `LLM_GATEWAY_KEY`, or an authorized
-Slurm/vLLM service):
+The remaining quickstart SC-005 / full SC-001..SC-007 sweep needs live
+inference. It is NOT inference-mockable. Run, with a backend configured (cloud
+gateway egress + `LLM_GATEWAY_KEY`, or an authorized Slurm/vLLM service):
 
 ```
 # 1. Validate + compile the one multi-flow artifact (no backend needed):
