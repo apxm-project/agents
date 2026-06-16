@@ -528,7 +528,7 @@ class GraphRecorder:
         """
         if query is None:
             raise ValueError("skill_search() missing required keyword argument: 'query'")
-        params: dict[str, Any] = {"query": query}
+        params: dict[str, Any] = {"request": query}
         if imports is not None:
             params["imports"] = imports
         return self.invoke(name, capability="search_skills", params=params, **attributes)

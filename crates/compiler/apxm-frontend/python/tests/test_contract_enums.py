@@ -1,5 +1,5 @@
 from apxm import DependencyType, GraphEdge, GraphRecorder, HookMode, LifecycleEvent, hook
-from apxm.constants import DEPENDENCY_CONTROL, DEPENDENCY_DATA
+from apxm.constants import DEPENDENCY_CONTROL, DEPENDENCY_DATA, PARAMS_JSON
 from apxm.ir import validate_against_apxm
 
 
@@ -46,3 +46,13 @@ def test_register_hook_accepts_lifecycle_enums():
 
     result = validate_against_apxm(g.to_graph())
     assert result.valid, result.errors
+
+
+def test_skill_search_lowers_query_to_search_skills_request():
+    g = GraphRecorder("skill_search_contract")
+
+    node = g.skill_search(query="review module boundaries")
+
+    graph = g.to_graph()
+    attrs = graph.nodes[node._node_id - 1].attributes
+    assert attrs[PARAMS_JSON] == '{"request": "review module boundaries"}'
