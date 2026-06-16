@@ -272,3 +272,13 @@ remains a possible future addition (host-independent, no python), but is not
 required — the hook path satisfies SC-003 and matches the program-owns-cognition
 goal. SC-005 (skill-by-description ≥8/10) is wired (`skills=True` →
 `search_skills`) and remains a live eval campaign, not a code gap.
+
+**Realigned (2026-06-15) so the hook owns ALL policy.** The hook `ctx` now hands
+the user apxm's primitives — `ctx.ask` (LLM), `ctx.call`/`ctx.count_tokens`
+(read-only tools), `ctx.recall`/`ctx.recall_window` (context, user-chosen depth),
+`ctx.umem` (memory) — and bakes no policy: `recent_scoped` takes generic `pins`
+the frontend supplies (`recall_pin` = `CompactionPolicy.summary_key`); the
+post_turn payload pre-loads no fixed window or summary key; `ctx.summarize`'s
+baked prompt is removed. `host_llm_ask` calls the backend directly, so a hook's
+LLM call neither leaks tokens into the user stream nor re-enters `pre_ask`.
+Re-proven live over AMD: single clean `BLUEHERON` recall at turn 7.
