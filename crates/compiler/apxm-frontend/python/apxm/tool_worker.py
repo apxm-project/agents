@@ -34,8 +34,11 @@ from __future__ import annotations
 import asyncio
 import importlib
 import importlib.util
+import itertools
 import json
+import queue
 import sys
+import threading
 import traceback
 from pathlib import Path
 from typing import Any, Final
@@ -67,6 +70,15 @@ WIRE_TYPE_CALL: Final[str] = "call"
 WIRE_TYPE_CANCEL: Final[str] = "cancel"
 WIRE_TYPE_LOG: Final[str] = "log"
 WIRE_TYPE_RESULT: Final[str] = "result"
+# Worker-initiated calls back into the runtime (e.g. a hook's ctx.summarize ->
+# llm.ask). The worker emits a host_call and blocks until the runtime replies
+# with a host_result correlated by the callback req_id.
+WIRE_TYPE_HOST_CALL: Final[str] = "host_call"
+WIRE_TYPE_HOST_RESULT: Final[str] = "host_result"
+WIRE_FIELD_PARENT_REQUEST_ID: Final[str] = "parent_req_id"
+WIRE_FIELD_METHOD: Final[str] = "method"
+WIRE_FIELD_PARAMS: Final[str] = "params"
+HOST_METHOD_LLM_ASK: Final[str] = "llm.ask"
 
 WIRE_LEVEL_ERROR: Final[str] = "error"
 
@@ -194,22 +206,53 @@ def _ensure_manifest_handler(module: Any, entry: dict[str, Any]) -> None:
 # I/O helpers
 # ---------------------------------------------------------------------------
 
-_stdout_lock = asyncio.Lock()
+# A single threading lock guards ALL stdout writes. Hooks run in worker threads
+# (run_in_executor) and may emit host_calls concurrently with the event loop's
+# result frames, so the lock must be thread-safe (not an asyncio.Lock).
+_stdout_thread_lock = threading.Lock()
 
 
-async def _write_line_async(obj: dict[str, Any]) -> None:
-    """Serialize *obj* as a single JSON line to stdout (async-safe)."""
+def _emit_line(obj: dict[str, Any]) -> None:
+    """Write *obj* as one NDJSON line to stdout, thread-safe across loop+threads."""
     line = json.dumps(obj, separators=(",", ":"), default=str) + "\n"
-    async with _stdout_lock:
+    with _stdout_thread_lock:
         sys.stdout.write(line)
         sys.stdout.flush()
 
 
+async def _write_line_async(obj: dict[str, Any]) -> None:
+    """Serialize *obj* as a single JSON line to stdout (async-safe)."""
+    _emit_line(obj)
+
+
 def _write_line(obj: dict[str, Any]) -> None:
     """Synchronous variant used during startup (before the event loop)."""
-    line = json.dumps(obj, separators=(",", ":"), default=str) + "\n"
-    sys.stdout.write(line)
-    sys.stdout.flush()
+    _emit_line(obj)
+
+
+# Pending host calls a hook raised, keyed by callback req_id. The hook thread
+# blocks on the queue; the async _run loop delivers the host_result.
+_host_pending: dict[str, "queue.Queue[tuple[bool, Any, str | None]]"] = {}
+_host_pending_lock = threading.Lock()
+_host_call_counter = itertools.count(1)
+# Safety cap so a hook thread never blocks forever if the runtime never replies
+# (the runtime also bounds the whole hook via HOOK_DEADLINE).
+_HOST_CALL_TIMEOUT_S: Final[float] = 120.0
+
+
+def _deliver_host_result(msg: dict[str, Any]) -> None:
+    """Route a host_result frame to the waiting hook thread."""
+    req_id = msg.get(WIRE_FIELD_REQUEST_ID)
+    if req_id is None:
+        return
+    with _host_pending_lock:
+        q = _host_pending.get(req_id)
+    if q is None:
+        return
+    ok = bool(msg.get(WIRE_FIELD_OK, False))
+    value = msg.get(WIRE_FIELD_VALUE)
+    error = (msg.get(WIRE_FIELD_ERROR) or {}).get(WIRE_FIELD_MESSAGE)
+    q.put((ok, value, error))
 
 
 # ---------------------------------------------------------------------------
@@ -233,8 +276,10 @@ class _HookCtx:
     applies; side-effect helpers are best-effort (the worker subprocess has no
     direct runtime-memory access — those degrade predictably)."""
 
-    def __init__(self, payload: dict[str, Any]) -> None:
+    def __init__(self, payload: dict[str, Any], req_id: str = "") -> None:
         self.remaining_budget = payload.get("remaining_budget")
+        # The parent call's req_id, stamped on host_calls this hook raises.
+        self._req_id = req_id
         self._system = payload.get("system", "")
         # Recent conversation window the runtime pre-loads into the payload, so a
         # hook can recall context without a worker->runtime callback (the bridge
@@ -286,13 +331,59 @@ class _HookCtx:
         self._writes.append({"key": key, "value": value})
         return None
 
+    def ask(self, prompt: str, system: str | None = None) -> str:
+        """Call the runtime's LLM from inside a hook (a host call back into the
+        runtime over the bridge). The same ExecutionContext that owns this hook
+        services the request, so it runs under the session's backend + budget.
+        Raises RuntimeError if the runtime is unavailable or declines."""
+        if not self._req_id:
+            raise RuntimeError("ctx.ask is unavailable: no parent request bound")
+        cb_id = f"h-{next(_host_call_counter)}"
+        q: "queue.Queue[tuple[bool, Any, str | None]]" = queue.Queue(maxsize=1)
+        with _host_pending_lock:
+            _host_pending[cb_id] = q
+        try:
+            params: dict[str, Any] = {"prompt": prompt}
+            if system is not None:
+                params["system"] = system
+            _emit_line(
+                {
+                    WIRE_FIELD_VERSION: WIRE_VERSION,
+                    WIRE_FIELD_TYPE: WIRE_TYPE_HOST_CALL,
+                    WIRE_FIELD_REQUEST_ID: cb_id,
+                    WIRE_FIELD_PARENT_REQUEST_ID: self._req_id,
+                    WIRE_FIELD_METHOD: HOST_METHOD_LLM_ASK,
+                    WIRE_FIELD_PARAMS: params,
+                }
+            )
+            try:
+                ok, value, error = q.get(timeout=_HOST_CALL_TIMEOUT_S)
+            except queue.Empty as exc:
+                raise RuntimeError("ctx.ask timed out waiting for the runtime") from exc
+            if not ok:
+                raise RuntimeError(f"ctx.ask failed: {error or 'unknown error'}")
+            return value if isinstance(value, str) else str(value)
+        finally:
+            with _host_pending_lock:
+                _host_pending.pop(cb_id, None)
+
     def summarize(self, text: Any) -> str:
-        # Default heuristic summary (author may override with their own logic).
-        return str(text)[:280]
+        """Summarize *text* with the runtime LLM. Degrades to a heuristic
+        truncation if the host LLM is unavailable, so hooks never hard-fail on
+        compaction. Authors may override with their own logic."""
+        try:
+            return self.ask(
+                "Summarize the following conversation concisely, preserving the "
+                "key facts, names, numbers, and decisions so a later turn can "
+                f"rely on it:\n\n{text}",
+                system="You are a precise conversation summarizer.",
+            )
+        except Exception:  # noqa: BLE001 — compaction must not break the turn
+            return str(text)[:280]
 
 
-def _invoke_hook(fn: Any, event: str, payload: dict[str, Any]) -> Any:
-    ctx = _HookCtx(payload)
+def _invoke_hook(fn: Any, event: str, payload: dict[str, Any], req_id: str = "") -> Any:
+    ctx = _HookCtx(payload, req_id)
     if event in ("session_start", "pre_ask"):
         ret = fn(ctx)
     elif event == "pre_tool":
@@ -334,7 +425,9 @@ async def _handle_hook_call(req_id: str, tool: Any, payload: dict[str, Any]) -> 
     event = payload.get("event", "")
     try:
         loop = asyncio.get_running_loop()
-        ret = await loop.run_in_executor(None, lambda: _invoke_hook(fn, event, payload))
+        ret = await loop.run_in_executor(
+            None, lambda: _invoke_hook(fn, event, payload, req_id)
+        )
         value = ret if isinstance(ret, dict) else {"decision": "allow"}
         await _write_line_async(
             {
@@ -526,6 +619,10 @@ async def _run(manifest_path: str | None = None) -> None:
             task = inflight.get(req_id)
             if task is not None and not task.done():
                 task.cancel()
+
+        elif msg_type == WIRE_TYPE_HOST_RESULT:
+            # A reply to a host_call a hook raised; unblock the waiting thread.
+            _deliver_host_result(msg)
 
     # Cancel any remaining in-flight tasks on shutdown.
     for task in inflight.values():

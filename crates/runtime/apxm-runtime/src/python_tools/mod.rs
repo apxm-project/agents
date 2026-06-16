@@ -146,6 +146,32 @@ impl PythonToolBridge {
         worker.call(handler_id, payload, deadline).await
     }
 
+    /// Invoke a lifecycle hook that may call back into the runtime (e.g.
+    /// `ctx.summarize` → `llm.ask`). `host` services each host call with the
+    /// caller's `ExecutionContext`; it is awaited inline by the worker bridge so
+    /// no `'static` context is needed.
+    pub async fn call_hook_with_host<F, Fut>(
+        &self,
+        handler_id: &str,
+        payload: serde_json::Value,
+        deadline: Duration,
+        host: F,
+    ) -> Result<serde_json::Value, RuntimeError>
+    where
+        F: Fn(String, serde_json::Value) -> Fut,
+        Fut: std::future::Future<Output = Result<serde_json::Value, String>>,
+    {
+        let worker = self
+            .worker
+            .get_or_try_init(|| async {
+                let manifest = self.registry.manifest_json()?;
+                let w = PythonToolWorker::spawn_with_env(&manifest, &[], self.sandbox.as_ref(), self.sandbox_required).await?;
+                Ok::<_, RuntimeError>(Arc::new(w))
+            })
+            .await?;
+        worker.call_with_host(handler_id, payload, deadline, host).await
+    }
+
     /// Access the underlying registry.
     pub fn registry(&self) -> &PythonToolRegistry {
         &self.registry

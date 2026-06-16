@@ -10,18 +10,19 @@ use super::constants::{
     WORKER_MODULE,
 };
 use super::protocol::{
-    CallRequest, CallResponse, CancelRequest, ErrorEnvelope, PROTOCOL_VERSION, WorkerRequest,
+    CallRequest, CancelRequest, ErrorEnvelope, HostResultResponse, PROTOCOL_VERSION, WorkerRequest,
     WorkerResponse,
 };
 use apxm_core::error::RuntimeError;
 use parking_lot::RwLock;
 use std::collections::HashMap;
+use std::future::Future;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::process::{Child, Command};
-use tokio::sync::oneshot;
+use tokio::sync::mpsc;
 
 /// Build a `RuntimeError::Capability` tagged with this module's capability
 /// name. Centralized so the capability label cannot drift between sites.
@@ -86,9 +87,11 @@ fn pythonpath_with_source_frontend() -> Option<std::ffi::OsString> {
 pub struct PythonToolWorker {
     /// Sender for writing NDJSON lines to worker stdin.
     stdin_tx: tokio::sync::Mutex<tokio::process::ChildStdin>,
-    /// Pending response channels, keyed by req_id.
+    /// Pending response channels, keyed by req_id. An awaiting call receives a
+    /// STREAM of frames (interleaved `host_call`s then a final `result`), so
+    /// this is an mpsc sender rather than a one-shot.
     /// Uses `parking_lot::RwLock` (never held across `.await`).
-    pending: Arc<RwLock<HashMap<String, oneshot::Sender<CallResponse>>>>,
+    pending: Arc<RwLock<HashMap<String, mpsc::UnboundedSender<WorkerResponse>>>>,
     /// Handle to the background demuxer task.
     _demuxer: tokio::task::JoinHandle<()>,
     /// Child process handle (held for Drop cleanup).
@@ -223,7 +226,7 @@ impl PythonToolWorker {
             .take()
             .ok_or_else(|| cap_err("Failed to capture worker stdout"))?;
 
-        let pending: Arc<RwLock<HashMap<String, oneshot::Sender<CallResponse>>>> =
+        let pending: Arc<RwLock<HashMap<String, mpsc::UnboundedSender<WorkerResponse>>>> =
             Arc::new(RwLock::new(HashMap::new()));
 
         if let Some(stderr) = child.stderr.take() {
@@ -254,23 +257,28 @@ impl PythonToolWorker {
                     }
                 };
 
-                match resp {
-                    WorkerResponse::Result(call_resp) => {
-                        // Clone req_id and remove sender under lock — never held across await.
-                        let sender = {
-                            let mut map = demux_pending.write();
-                            map.remove(&call_resp.req_id)
-                        };
-                        if let Some(tx) = sender {
-                            let _ = tx.send(call_resp);
-                        } else {
-                            tracing::warn!(
-                                target: TRACE_TARGET,
-                                "Received response for unknown req_id: {}",
-                                call_resp.req_id
-                            );
-                        }
+                // Route to the awaiting call's channel. A `result` is final and
+                // is keyed by its own req_id; a `host_call` is an intermediate
+                // frame keyed by the PARENT call it is raised within. Cleanup of
+                // the pending entry is the awaiting call's responsibility.
+                let (key, frame) = match resp {
+                    WorkerResponse::Result(r) => (r.req_id.clone(), WorkerResponse::Result(r)),
+                    WorkerResponse::HostCall(h) => {
+                        (h.parent_req_id.clone(), WorkerResponse::HostCall(h))
                     }
+                };
+                let sender = {
+                    let map = demux_pending.read();
+                    map.get(&key).cloned()
+                };
+                if let Some(tx) = sender {
+                    let _ = tx.send(frame);
+                } else {
+                    tracing::warn!(
+                        target: TRACE_TARGET,
+                        "Received worker frame for unknown req_id: {}",
+                        key
+                    );
                 }
             }
             tracing::info!(target: TRACE_TARGET, "Demuxer task exited (worker stdout closed)");
@@ -290,27 +298,64 @@ impl PythonToolWorker {
 
     /// Invoke a tool handler on the worker.
     ///
-    /// Sends a `call` request and waits for the matching response, subject
-    /// to `deadline`. Returns the tool's return value on success.
+    /// Sends a `call` request and waits for the matching response, subject to
+    /// `deadline`. Tool handlers do not raise host calls; any attempt is
+    /// rejected so the worker cannot stall.
     pub async fn call(
         &self,
         handler_id: &str,
         args: serde_json::Value,
         deadline: Duration,
     ) -> Result<serde_json::Value, RuntimeError> {
+        self.dispatch(handler_id, args, deadline, |method, _params| async move {
+            Err(format!(
+                "host call '{}' is not available on the tool path",
+                method
+            ))
+        })
+        .await
+    }
+
+    /// Invoke a handler that MAY raise host calls (e.g. a lifecycle hook calling
+    /// `ctx.summarize` → `llm.ask`). `host` services each host call with the
+    /// caller's `ExecutionContext` and is awaited inline, so no `'static` ctx is
+    /// required — the same context that owns the hook services its LLM calls.
+    pub async fn call_with_host<F, Fut>(
+        &self,
+        handler_id: &str,
+        args: serde_json::Value,
+        deadline: Duration,
+        host: F,
+    ) -> Result<serde_json::Value, RuntimeError>
+    where
+        F: Fn(String, serde_json::Value) -> Fut,
+        Fut: Future<Output = Result<serde_json::Value, String>>,
+    {
+        self.dispatch(handler_id, args, deadline, host).await
+    }
+
+    /// Core request loop: send a `call`, then consume frames until the final
+    /// `result`. Intermediate `host_call` frames are serviced by `host` and
+    /// answered with a `host_result`. `deadline` bounds the WHOLE exchange.
+    async fn dispatch<F, Fut>(
+        &self,
+        handler_id: &str,
+        args: serde_json::Value,
+        deadline: Duration,
+        host: F,
+    ) -> Result<serde_json::Value, RuntimeError>
+    where
+        F: Fn(String, serde_json::Value) -> Fut,
+        Fut: Future<Output = Result<serde_json::Value, String>>,
+    {
         let req_id = format!(
             "u-{}",
             self.next_id
                 .fetch_add(1, std::sync::atomic::Ordering::Relaxed)
         );
 
-        let (tx, rx) = oneshot::channel();
-
-        // Register pending sender (lock is NOT held across await).
-        {
-            let mut map = self.pending.write();
-            map.insert(req_id.clone(), tx);
-        }
+        let (tx, mut rx) = mpsc::unbounded_channel();
+        self.pending.write().insert(req_id.clone(), tx);
 
         let request = WorkerRequest::Call(CallRequest {
             v: PROTOCOL_VERSION,
@@ -319,62 +364,96 @@ impl PythonToolWorker {
             args,
             deadline_ms: deadline.as_millis() as u64,
         });
-
-        // Serialize and send.
-        let mut line = serde_json::to_string(&request).map_err(|e| {
-            // Clean up pending entry on serialization failure.
+        if let Err(e) = self.write_request(&request).await {
             self.pending.write().remove(&req_id);
-            RuntimeError::Serialization(e.to_string())
-        })?;
-        line.push('\n');
-
-        {
-            let mut stdin = self.stdin_tx.lock().await;
-            stdin.write_all(line.as_bytes()).await.map_err(|e| {
-                self.pending.write().remove(&req_id);
-                cap_err(format!("Failed to write to worker stdin: {}", e))
-            })?;
-            stdin.flush().await.map_err(|e| {
-                self.pending.write().remove(&req_id);
-                cap_err(format!("Failed to flush worker stdin: {}", e))
-            })?;
+            return Err(e);
         }
 
-        // Wait for response with timeout.
-        let resp = match tokio::time::timeout(deadline, rx).await {
-            Ok(resp) => resp,
-            Err(_) => {
-                // Timeout — drop the pending entry and proactively cancel the
-                // in-flight worker task so its compute is reclaimed. The worker
-                // also enforces `deadline_ms` itself, but Rust's deadline can
-                // fire first under clock skew; the cancel is best-effort.
-                self.pending.write().remove(&req_id);
-                let _ = self.cancel(&req_id).await;
-                return Err(cap_err(format!(
-                    "Tool call {} timed out after {}ms",
-                    req_id,
-                    deadline.as_millis()
-                )));
+        let deadline_at = tokio::time::Instant::now() + deadline;
+        loop {
+            match tokio::time::timeout_at(deadline_at, rx.recv()).await {
+                Err(_) => {
+                    // Overall deadline elapsed — drop the pending entry and
+                    // proactively cancel the in-flight worker task so its
+                    // compute is reclaimed (best-effort; the worker also
+                    // enforces `deadline_ms`).
+                    self.pending.write().remove(&req_id);
+                    let _ = self.cancel(&req_id).await;
+                    return Err(cap_err(format!(
+                        "Tool call {} timed out after {}ms",
+                        req_id,
+                        deadline.as_millis()
+                    )));
+                }
+                Ok(None) => {
+                    self.pending.write().remove(&req_id);
+                    return Err(cap_err(format!(
+                        "Worker dropped response channel for req_id {} (worker may have crashed)",
+                        req_id
+                    )));
+                }
+                Ok(Some(WorkerResponse::HostCall(h))) => {
+                    let outcome = host(h.method.clone(), h.params.clone()).await;
+                    let host_result = match outcome {
+                        Ok(value) => HostResultResponse {
+                            v: PROTOCOL_VERSION,
+                            req_id: h.req_id,
+                            ok: true,
+                            value: Some(value),
+                            error: None,
+                        },
+                        Err(message) => HostResultResponse {
+                            v: PROTOCOL_VERSION,
+                            req_id: h.req_id,
+                            ok: false,
+                            value: None,
+                            error: Some(ErrorEnvelope {
+                                kind: "host_error".into(),
+                                message,
+                                traceback: None,
+                            }),
+                        },
+                    };
+                    if let Err(e) = self
+                        .write_request(&WorkerRequest::HostResult(host_result))
+                        .await
+                    {
+                        self.pending.write().remove(&req_id);
+                        return Err(e);
+                    }
+                }
+                Ok(Some(WorkerResponse::Result(call_resp))) => {
+                    self.pending.write().remove(&req_id);
+                    return if call_resp.ok {
+                        Ok(call_resp.value.unwrap_or(serde_json::Value::Null))
+                    } else {
+                        let err = call_resp.error.unwrap_or_else(|| ErrorEnvelope {
+                            kind: "unknown".into(),
+                            message: "Tool returned ok=false with no error envelope".into(),
+                            traceback: None,
+                        });
+                        Err(cap_err(format!("[{}] {}", err.kind, err.message)))
+                    };
+                }
             }
-        };
-
-        let call_resp = resp.map_err(|_| {
-            cap_err(format!(
-                "Worker dropped response channel for req_id {} (worker may have crashed)",
-                req_id
-            ))
-        })?;
-
-        if call_resp.ok {
-            Ok(call_resp.value.unwrap_or(serde_json::Value::Null))
-        } else {
-            let err = call_resp.error.unwrap_or_else(|| ErrorEnvelope {
-                kind: "unknown".into(),
-                message: "Tool returned ok=false with no error envelope".into(),
-                traceback: None,
-            });
-            Err(cap_err(format!("[{}] {}", err.kind, err.message)))
         }
+    }
+
+    /// Serialize a request and write it to the worker's stdin under the lock.
+    async fn write_request(&self, request: &WorkerRequest) -> Result<(), RuntimeError> {
+        let mut line = serde_json::to_string(request)
+            .map_err(|e| RuntimeError::Serialization(e.to_string()))?;
+        line.push('\n');
+        let mut stdin = self.stdin_tx.lock().await;
+        stdin
+            .write_all(line.as_bytes())
+            .await
+            .map_err(|e| cap_err(format!("Failed to write to worker stdin: {}", e)))?;
+        stdin
+            .flush()
+            .await
+            .map_err(|e| cap_err(format!("Failed to flush worker stdin: {}", e)))?;
+        Ok(())
     }
 
     /// Send a cancel request for an in-flight call.

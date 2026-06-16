@@ -19,6 +19,26 @@ pub enum WorkerRequest {
     /// Cancel an in-flight call.
     #[serde(rename = "cancel")]
     Cancel(CancelRequest),
+
+    /// Reply to a worker-initiated host call (e.g. an `llm.ask` from a hook).
+    #[serde(rename = "host_result")]
+    HostResult(HostResultResponse),
+}
+
+/// Runtime's reply to a `host_call` the worker raised mid-handler. Correlated
+/// by the callback `req_id` the worker chose, NOT the parent call's req_id.
+#[derive(Debug, Clone, Serialize)]
+pub struct HostResultResponse {
+    /// Protocol version.
+    pub v: u32,
+    /// Callback identifier echoed from the originating `host_call`.
+    pub req_id: String,
+    /// Whether the host serviced the call.
+    pub ok: bool,
+    /// Return value on success.
+    pub value: Option<serde_json::Value>,
+    /// Error envelope on failure.
+    pub error: Option<ErrorEnvelope>,
 }
 
 /// Invoke a registered tool handler.
@@ -52,6 +72,29 @@ pub enum WorkerResponse {
     /// Successful or failed result.
     #[serde(rename = "result")]
     Result(CallResponse),
+
+    /// A worker-initiated call back into the runtime (e.g. a hook invoking
+    /// `llm.ask` via `ctx.summarize`). The runtime services it with the same
+    /// `ExecutionContext` that owns the parent call and replies with a
+    /// `host_result` correlated by this frame's `req_id`.
+    #[serde(rename = "host_call")]
+    HostCall(HostCallRequest),
+}
+
+/// A host call raised by the worker while servicing a parent call.
+#[derive(Debug, Clone, Deserialize)]
+pub struct HostCallRequest {
+    /// Protocol version.
+    #[allow(dead_code)]
+    pub v: u32,
+    /// Callback identifier the worker assigned; echoed in the `host_result`.
+    pub req_id: String,
+    /// The parent call (tool/hook) on whose behalf this host call is raised.
+    pub parent_req_id: String,
+    /// Host method to invoke (currently `llm.ask`).
+    pub method: String,
+    /// Method parameters as a JSON object.
+    pub params: serde_json::Value,
 }
 
 /// Result frame from the worker.

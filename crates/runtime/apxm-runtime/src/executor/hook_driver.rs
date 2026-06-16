@@ -32,6 +32,59 @@ const TURN_PREFIX: &str = "conversation:turn:";
 const HOOK_DEADLINE: Duration = Duration::from_secs(30);
 const HOOK_PAYLOAD_KEY: &str = "__apxm_hook__";
 
+/// Service a worker-initiated host call (e.g. `ctx.summarize` → `llm.ask`) with
+/// the SAME `ExecutionContext` that owns the hook, so the hook's LLM call runs
+/// under the session's backend, budget, and cancellation — not a detached one.
+/// This is what lets compaction (and any hook) summarize with a real model
+/// despite running in the sandboxed worker subprocess.
+async fn dispatch_host_call(
+    ctx: &ExecutionContext,
+    method: String,
+    params: JsonValue,
+) -> std::result::Result<JsonValue, String> {
+    match method.as_str() {
+        "llm.ask" => host_llm_ask(ctx, params).await,
+        other => Err(format!("unknown host method '{}'", other)),
+    }
+}
+
+/// One-shot LLM ask for hooks. Builds an ephemeral ASK node and runs it through
+/// the normal LLM handler (backend resolution, retries, budget enforcement).
+async fn host_llm_ask(
+    ctx: &ExecutionContext,
+    params: JsonValue,
+) -> std::result::Result<JsonValue, String> {
+    use apxm_core::constants::graph::attrs as graph_attrs;
+    use apxm_core::types::execution::Node;
+    use apxm_core::types::operations::AISOperationType;
+
+    let prompt = params
+        .get("prompt")
+        .and_then(|v| v.as_str())
+        .unwrap_or("")
+        .to_string();
+    if prompt.trim().is_empty() {
+        return Err("llm.ask requires a non-empty 'prompt'".to_string());
+    }
+    let mut node = Node::new(0, AISOperationType::Ask);
+    node.set_attribute(graph_attrs::PROMPT.to_string(), Value::String(prompt));
+    if let Some(system) = params.get("system").and_then(|v| v.as_str()) {
+        node.set_attribute(
+            graph_attrs::SYSTEM_PROMPT.to_string(),
+            Value::String(system.to_string()),
+        );
+    }
+    // Box the recursive edge: a `pre_ask` hook can call `llm.ask`, and
+    // `llm::execute` itself runs `pre_ask` hooks, so this is a (bounded) async
+    // recursion cycle that must be heap-allocated to have a finite-size future.
+    let fut = Box::pin(crate::executor::handlers::llm::execute(ctx, &node, Vec::new()));
+    match fut.await {
+        Ok(Value::String(s)) => Ok(JsonValue::String(s)),
+        Ok(other) => Ok(JsonValue::String(format!("{other:?}"))),
+        Err(e) => Err(format!("llm.ask failed: {e}")),
+    }
+}
+
 /// Decision returned by a `pre_tool` hook.
 pub enum PreToolDecision {
     Allow,
@@ -99,7 +152,7 @@ pub async fn run_pre_tool_hooks(
             }
         });
         match bridge
-            .call_hook(&binding.handler_id, payload, HOOK_DEADLINE)
+            .call_hook_with_host(&binding.handler_id, payload, HOOK_DEADLINE, |method, params| dispatch_host_call(ctx, method, params))
             .await
         {
             Ok(decision) => match parse_pre_tool_decision(decision) {
@@ -179,7 +232,7 @@ pub async fn run_post_tool_hooks(
             }
         });
         match bridge
-            .call_hook(&binding.handler_id, payload, HOOK_DEADLINE)
+            .call_hook_with_host(&binding.handler_id, payload, HOOK_DEADLINE, |method, params| dispatch_host_call(ctx, method, params))
             .await
         {
             Ok(decision) => {
@@ -220,7 +273,7 @@ async fn fire_lifecycle_hooks(
     };
     for binding in bindings {
         if let Err(e) = bridge
-            .call_hook(&binding.handler_id, payload.clone(), HOOK_DEADLINE)
+            .call_hook_with_host(&binding.handler_id, payload.clone(), HOOK_DEADLINE, |method, params| dispatch_host_call(ctx, method, params))
             .await
         {
             if binding.mode == HookMode::Gate {
@@ -275,7 +328,7 @@ pub async fn run_post_turn_hooks(ctx: &ExecutionContext, reply: &str) {
     for binding in bindings {
         let payload = json!({ HOOK_PAYLOAD_KEY: base.clone() });
         match bridge
-            .call_hook(&binding.handler_id, payload, HOOK_DEADLINE)
+            .call_hook_with_host(&binding.handler_id, payload, HOOK_DEADLINE, |method, params| dispatch_host_call(ctx, method, params))
             .await
         {
             Ok(decision) => apply_hook_writes(ctx, &decision).await,
@@ -393,7 +446,7 @@ pub async fn run_pre_ask_hooks(
             }
         });
         match bridge
-            .call_hook(&binding.handler_id, payload, HOOK_DEADLINE)
+            .call_hook_with_host(&binding.handler_id, payload, HOOK_DEADLINE, |method, params| dispatch_host_call(ctx, method, params))
             .await
         {
             Ok(decision) => {
