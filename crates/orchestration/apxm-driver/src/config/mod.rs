@@ -617,7 +617,6 @@ pub struct ToolConfig {
     pub max_default_lines: Option<usize>,
 }
 
-// Re-export InstructionConfig from apxm-core for consistency
 pub use apxm_core::InstructionConfig;
 
 fn default_true() -> bool {

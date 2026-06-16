@@ -32,7 +32,6 @@ pub mod passes;
 pub mod types;
 pub mod validation;
 
-// Re-export commonly used types
 pub use aam::{AAM, Beliefs, Capabilities, Goal, GoalId, GoalStatus, Goals};
 pub use memory::MemoryTier;
 pub use operations::tablegen::generate_tablegen;
@@ -49,5 +48,4 @@ pub use validation::{
     validate_operation_strict,
 };
 
-// Re-export pass generation functions for build.rs.
 pub use passes::{generate_pass_descriptors, generate_pass_dispatch, generate_passes_tablegen};

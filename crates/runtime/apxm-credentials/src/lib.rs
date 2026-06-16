@@ -9,5 +9,4 @@ pub mod docker;
 pub mod mask;
 pub mod validate;
 
-// Re-export the primary types from backend module
 pub use backend::{BackendError, BackendStore};

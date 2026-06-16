@@ -38,8 +38,12 @@ survive name sanitization so `reconstruct_agents_from_artifact` registers each
 flow under the right agent (DELEGATE resolves by name). Runtime/artifact already
 support multi-DAG; the carrier fix is the work.
 
-## Compaction subgraph (composition, no new op)
-Compaction is authored from existing ops: `count_tokens` (builtin) → `guard`/
-`switch` on the integer → `summarize` ASK → fold. `count_tokens` MUST be
-registered in `register_standard_tools` for non-server runtimes (parity).
-`branch()` labels are NOT routed by the scheduler — use `guard`/`switch`.
+## Compaction primitives (composition, no new op)
+Compaction is authored in-program from existing primitives. The shipped path is
+a `post_turn` hook that uses `ctx.count_tokens` to decide when to compact,
+`ctx.ask` to produce the author-defined summary, and `ctx.umem` to fold the
+summary into the author-owned key pinned by `CompactionPolicy.summary_key`.
+`count_tokens` MUST be registered in `register_standard_tools` for non-server
+runtimes (parity). An optional future host-independent form may lower to an
+AIR-only `count_tokens` → `guard`/`switch` → `ask` → `umem` graph; `branch()`
+labels are NOT routed by the scheduler.

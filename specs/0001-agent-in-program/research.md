@@ -92,9 +92,10 @@ def lookup(symbol: str) -> str:
     ...
 
 researcher = Agent(name="researcher", instructions="Gather supporting facts.")
+COMPACTION = CompactionPolicy(keep_recent=4, compact_at_tokens=20_000)
 
-# ---- hooks: pre / post / workflow-start, ALL python callables ----------------
-@hook(on="workflow_start")            # gate-capable; runs once at session start
+# ---- hooks: pre/post/session-start, all python callables ---------------------
+@hook(on="session_start")             # gate-capable; runs once at session start
 def announce(ctx):
     ctx.log(f"session start; budget={ctx.remaining_budget}")
 
@@ -114,7 +115,13 @@ def inject_context(ctx):
 
 @hook(on="post_turn")
 def remember(ctx, reply):
-    ctx.umem("session summary", ctx.summarize(reply))
+    context = ctx.recall_window(n=50)
+    if ctx.count_tokens(context) > COMPACTION.compact_at_tokens:
+        summary = ctx.ask(
+            f"Update the running summary with the important facts:\n\n{context}",
+            system="You maintain a compact, faithful running summary.",
+        )
+        ctx.umem(COMPACTION.summary_key, summary)
 
 # ---- the agent: declares the LOOP + the turn body, all in-program ------------
 agent = ConversationalAgent(
@@ -153,7 +160,8 @@ Three mechanisms compose into "one program."
   author's **turn sub-DAG** (not Rust `run_agent_turn`).
 - the **turn body** — author nodes: `recv(user_msg)` → pre_ask hooks → recall
   window → `ask(tools, skills)` with pre/post_tool hooks → optional
-  `delegate(researcher)` → `umem` remember → compaction subgraph → `done`.
+  `delegate(researcher)` → automatic transcript memory → `done`; author
+  `post_turn` hooks can compact with `ctx.count_tokens`/`ctx.ask`/`ctx.umem`.
 - one flow per sub-agent (`researcher.main` / `researcher.delegate`).
 
 The runtime/artifact layer already supports this (§1E); the work is a frontend
@@ -195,7 +203,7 @@ plumbing that already runs server-side.
        • pre_tool/post_tool → PythonHookInterceptor, wired into BOTH bridge sites
          (tool_dispatch.rs:281 AND inv_tool.rs:262 — both bypass interceptors today)
        • pre_ask/post_ask    → PythonHookMiddleware (OperationMiddleware applies_to=Ask)
-       • workflow_start/graph_* → awaited async pre-step in execute_artifact_inner
+       • session_start/graph_* → awaited async pre-step in execute_artifact_inner
          (NOT the sync, dead ExecutionHook trait — sync cannot await the bridge)
        • invocation          → PythonToolBridge.call_hook(handler_id, payload)
 ```
@@ -209,9 +217,9 @@ because the bridge and emitter already run there.
 
 - **Context:** `system_prompt` becomes dataflow-driven (small: `resolve_system_prompt`
   accepts an input operand); a `qmem(recent=N)` recency window makes the
-  transcript session memory; compaction is an in-graph subgraph
-  (`count_tokens` builtin → `guard`/`switch` on the integer → `summarize` ASK).
-  Note: `branch()` labels are not routed by the scheduler — use `guard`/`switch`.
+  transcript session memory; compaction is authored in `post_turn` hooks through
+  `ctx.count_tokens`, `ctx.ask`, and `ctx.umem`, with the summary key pinned by
+  `CompactionPolicy`.
 - **Skills:** `skills=True` enables the real `search_skills` group; add a
   first-class `skill_search()` helper. Delete the stub `find_skill`; correct the
   "embedder-backed" docstring (it is lexical).
@@ -266,7 +274,7 @@ Each states requirement, mechanism, the **exact** compiler + runtime work
   (all small–medium).
 - **Runtime:** per-artifact `HookRegistry` on `ExecutionContext` (medium);
   `PythonHookInterceptor` wired into **both** bridge sites (medium);
-  `PythonHookMiddleware` for pre/post_ask (medium); gate-capable `workflow_start`
+  `PythonHookMiddleware` for pre/post_ask (medium); gate-capable `session_start`
   as an awaited async pre-step (small — H3 refuted the "blocker").
 - **Acceptance:** the §2 fixture's `guard_lookup` deny, `redact` rewrite, and
   `inject_context` all observable under `/v1/execute/stream`.
@@ -315,8 +323,8 @@ scheduler work — making the host a dumb pipe.
 - **P2 — Hook keystone (medium):** `REGISTER_HOOK` + `@hook` + `HookRegistry` +
   interceptor/middleware/async-pre-step drivers wired into both bridge sites.
   *Gate: §2 fixture hooks fire on the server path.*
-- **P3 — Context fully in-program (medium):** `qmem(recent=N)` + in-graph
-  compaction subgraph (guard/switch); host stops owning the transcript.
+- **P3 — Context fully in-program (medium):** `qmem(recent=N)` +
+  hook-authored compaction; host stops owning the transcript.
 - **P4 — The loop in the program (large, capstone):** `recv` real-park + re-arm
   via splice + one long-lived per-session execution + turn-input wake seam +
   per-session budget/grant ledger. *Gate: host is POST-once + pipe + render.*
@@ -362,11 +370,11 @@ fixture is the whole-spec acceptance test.
 | DELEGATE has no inline fallback (`delegate.rs:48`) | hard | 4.5 / P0 |
 | `_sanitize_name` mangles `Agent.flow` (`ir.py:258`) | soft | 4.5 / P1 |
 | Spawn grant external, not self-contained | soft | 4.5 / P0 |
-| `branch()` labels never routed by scheduler | soft | 4.3 (use guard/switch) |
+| AIR-only branch/switch compaction not shipped | soft | optional future host-independent form |
 | `count_tokens` not in `register_standard_tools` | soft | 4.3 / P0 |
 
 Verification corrected two over-stated claims: the multi-func limit is confined
 to the **frontend** text emitter (runtime/artifact are already multi-DAG), and a
-gate-capable `workflow_start` is a **small** async-pre-step addition (the sync
+gate-capable `session_start` is a **small** async-pre-step addition (the sync
 `ExecutionHook` is not the right vehicle), not scheduler surgery.
 ```

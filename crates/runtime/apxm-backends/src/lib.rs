@@ -127,11 +127,6 @@ pub use storage::{
 #[cfg(feature = "embeddings")]
 pub use storage::LocalEmbedder;
 
-// ═══════════════════════════════════════════════════════════════════════════
-// Prompts Re-exports
-// ═══════════════════════════════════════════════════════════════════════════
-
 pub use prompts::{list_prompts, render_inline, render_prompt};
 
-// Re-export core types used across modules
 pub use apxm_core::{error::RuntimeError, types::values::Value};

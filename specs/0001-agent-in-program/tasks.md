@@ -69,7 +69,7 @@ observed on both hosts.
 policy changes retention.
 
 - [X] T050 [US4] `qmem` recent-window recall mode (`recall_mode=recent`, `recent=N`) — `crates/runtime/apxm-runtime/src/.../qmem.rs` + `proxy.py` surface. (`MemorySystem::recent_scoped` + qmem `recall_mode`/`recent`/`recall_prefix` + `query_memory(recall_mode=, recent=)`.)
-- [ ] T051 [US4] `CompactionPolicy` lowering + in-graph compaction subgraph (`count_tokens` → guard/switch → summarize → fold) in the turn flow — `apxm-frontend/python/apxm/config.py`/`agent.py`, `apxm-ais/src/chat.rs`.
+- [X] T051 [US4] `CompactionPolicy` lowering for hook-authored compaction (`recall_pin` + `ctx.count_tokens` → `ctx.ask` → `ctx.umem`) — `apxm-frontend/python/apxm/conversational.py`, `tool_worker.py`, `executor/hook_driver.rs`.
 - [X] T052 [US4] Record user message (not only assistant answer) per turn so the transcript is session memory — `crates/runtime/apxm-runtime/src/.../conversation_memory.rs`. (Recorded at the turn-input endpoint under `conversation:user:<n>` in session STM; assistant answers still recorded by `ConversationMemoryMiddleware`.)
 - [ ] T053 [US4] SC-003 check: ≥50-turn session stays within limit and recalls turn 1.
 - [ ] **Checkpoint:** US4 — context fully managed in-program; host owns no transcript.
@@ -248,29 +248,31 @@ trailer):
   (control edges carry no value token; `input_names ⊥ inputs` is enforced). Doc
   resolution, no code change. `04d161de`.
 
-### Compaction (T051/T053, SC-003) — DONE, hook-driven, PROVEN LIVE
+### Compaction (T051, SC-003 short proof) — hook-driven, live-proven
 
 Resolved via hook-driven LLM compaction (the "controlled through hooks" path),
 after lifting the two constraints that blocked it:
 1. **Hooks CAN now call the LLM.** Added a bidirectional host-call channel: a
-   hook's `ctx.summarize`/`ctx.ask` raises an `llm.ask` host call that the
+   hook's `ctx.ask` raises an `llm.ask` host call that the
    runtime services with the hook's own `ExecutionContext` (real backend +
-   budget). `ctx.summarize` is now an LLM summary, not a truncation.
+   budget).
 - [X] T051 (hook-driven form): `CompactionPolicy` + a `post_turn` compaction
   hook that folds (prior summary + full recent window) → new rolling summary via
-  `ctx.summarize`. The window now includes user messages, not only replies.
+  `ctx.ask`. The window now includes user messages, not only replies.
 - [X] recall: `recent_scoped` surfaces the folded `conversation:summary` ahead of
   the recent window, so compacted early facts survive `keep_recent`.
-- [X] **T053 / SC-003 PROVEN LIVE over AMD:** a user-stated turn-1 fact (project
-  codename BLUEHERON) is folded by the post_turn hook (`ctx.summarize` → real
+- [ ] **T053 / SC-003 50-turn scale check remains open.** A shorter live proof
+  over AMD exists: a user-stated turn-1 fact (project
+  codename BLUEHERON) is folded by the post_turn hook (`ctx.ask` → real
   AMD LLM summary, observed: `summary head='The user confirmed their project
   codename is BLUEHERON…'`), rolled forward, and correctly recalled at turn 6
   after sliding out of `keep_recent=4`. The worker ran under bwrap throughout.
+  Do not mark T053 complete until the explicit ≥50-turn acceptance is rerun.
 
 The alternative in-graph `count_tokens → guard → summarize → fold` subgraph
 remains a possible future addition (host-independent, no python), but is not
-required — the hook path satisfies SC-003 and matches the program-owns-cognition
-goal. SC-005 (skill-by-description ≥8/10) is wired (`skills=True` →
+required for the current program-owns-cognition goal. SC-005
+(skill-by-description ≥8/10) is wired (`skills=True` →
 `search_skills`) and remains a live eval campaign, not a code gap.
 
 **Realigned (2026-06-15) so the hook owns ALL policy.** The hook `ctx` now hands

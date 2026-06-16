@@ -39,5 +39,4 @@ pub use snapshot::{
 };
 pub use splicing::SpliceConfig;
 
-// Re-export execution types from apxm-core
 pub use apxm_core::types::{ExecutionStats, NodeStatus, OpStatus};

@@ -49,7 +49,10 @@ ConversationalAgent(
 CompactionPolicy(keep_recent: int = 4, compact_at_tokens: int = 20_000,
                  strategy: "summarize" = "summarize")
 ```
-Authored in-program (FR-008); drives the in-graph compaction subgraph.
+Authored in-program (FR-008). The builder uses `keep_recent` for the recent
+recall window and pins `summary_key`; the author's `post_turn` hook owns the
+threshold, summarization prompt, and fold via `ctx.count_tokens`, `ctx.ask`, and
+`ctx.umem`.
 
 ## `skill_search(query, imports=None)` (new helper)
 First-class wrapper over the real `search_skills` capability so authors need not

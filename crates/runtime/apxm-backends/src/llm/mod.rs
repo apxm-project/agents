@@ -212,7 +212,6 @@ pub use catalog::{
 pub use config::{BackendConfig, BackendType, DockerConfig, ModelConfig};
 pub use protocol::{ProviderProtocol, ProviderSpec, normalize_endpoint_for_protocol};
 
-// Re-export key public API types
 pub use assembler::{AssembledEvent, AssembledToolCall, StreamAssembler};
 pub use backends::{
     BackendFactory, ContentPart, FunctionCall, GenerationConfig, LLMBackend, LLMRequest,
