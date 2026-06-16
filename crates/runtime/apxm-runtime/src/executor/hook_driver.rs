@@ -24,10 +24,6 @@ use super::ExecutionContext;
 use super::hooks::{HookEvent, HookMode};
 use crate::memory::MemorySpace;
 
-/// Session-memory keys the ConversationMemoryMiddleware writes (mirrored here so
-/// post_turn hooks can be handed the recent transcript window).
-const TURN_COUNT_KEY: &str = "conversation:turn_count";
-const TURN_PREFIX: &str = "conversation:turn:";
 /// Durable rolling-compaction summary key (surfaced by `recent_scoped` ahead of
 /// the recent window, so folded early facts survive outside the last-`n` turns).
 const SUMMARY_KEY: &str = "conversation:summary";
@@ -353,33 +349,21 @@ pub async fn run_post_turn_hooks(ctx: &ExecutionContext, reply: &str) {
     }
 }
 
-/// Read the last-`n` recorded turn answers from session STM (the window the
-/// ConversationMemoryMiddleware accrues), oldest-first.
+/// Read the last-`n` recorded transcript entries from session STM, oldest-first
+/// — BOTH user messages (`conversation:user:<i>`) and assistant answers
+/// (`conversation:turn:<i>`), interleaved in true conversational order, plus any
+/// folded summary. A hook (e.g. compaction) must see user-stated facts, not only
+/// the assistant's replies, so this reads the whole `conversation:` prefix
+/// rather than the assistant-only series.
 async fn recent_window(ctx: &ExecutionContext, n: i64) -> Vec<String> {
-    let scope = ctx.memory_scope().to_string();
-    let mem = ctx.memory();
-    let count = mem
-        .read_scoped(MemorySpace::Stm, &scope, TURN_COUNT_KEY)
+    let n = n.max(0) as usize;
+    ctx.memory()
+        .recent_scoped(MemorySpace::Stm, ctx.memory_scope(), "conversation:", n)
         .await
-        .ok()
-        .flatten()
-        .and_then(|v| v.as_i64())
-        .unwrap_or(0);
-    if count <= 0 {
-        return Vec::new();
-    }
-    let start = (count - n + 1).max(1);
-    let mut out = Vec::new();
-    for i in start..=count {
-        if let Ok(Some(v)) = mem
-            .read_scoped(MemorySpace::Stm, &scope, &format!("{TURN_PREFIX}{i}"))
-            .await
-            && let Some(s) = v.as_string()
-        {
-            out.push(s.clone());
-        }
-    }
-    out
+        .unwrap_or_default()
+        .into_iter()
+        .filter_map(|r| r.value.as_string().map(|s| s.to_string()))
+        .collect()
 }
 
 /// Apply a hook decision's accumulated memory `writes` to session STM. Each entry
