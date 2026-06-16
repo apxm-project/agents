@@ -286,6 +286,8 @@ class _HookCtx:
         # is unidirectional). The runtime applies any accumulated writes after the
         # hook returns (see `_writes`), so umem() works on the post_turn path.
         self._window = payload.get("window") or []
+        # The current rolling compaction summary, if any (post_turn payload).
+        self._summary = payload.get("summary") or ""
         self._writes: list[dict[str, Any]] = []
 
     def log(self, *args: Any) -> None:
@@ -317,6 +319,12 @@ class _HookCtx:
             except OSError:
                 continue
         return ""
+
+    def prior_summary(self) -> str:
+        # The current rolling compaction summary the runtime pre-loaded (empty
+        # if none yet). A post_turn compaction hook folds this with the recent
+        # window so early facts carry forward.
+        return self._summary
 
     def recall_window(self, n: int = 4) -> str:
         # The runtime pre-loads the recent window into the payload (no callback

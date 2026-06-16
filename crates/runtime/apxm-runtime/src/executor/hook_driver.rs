@@ -28,6 +28,9 @@ use crate::memory::MemorySpace;
 /// post_turn hooks can be handed the recent transcript window).
 const TURN_COUNT_KEY: &str = "conversation:turn_count";
 const TURN_PREFIX: &str = "conversation:turn:";
+/// Durable rolling-compaction summary key (surfaced by `recent_scoped` ahead of
+/// the recent window, so folded early facts survive outside the last-`n` turns).
+const SUMMARY_KEY: &str = "conversation:summary";
 
 const HOOK_DEADLINE: Duration = Duration::from_secs(30);
 const HOOK_PAYLOAD_KEY: &str = "__apxm_hook__";
@@ -318,11 +321,22 @@ pub async fn run_post_turn_hooks(ctx: &ExecutionContext, reply: &str) {
     };
 
     let window = recent_window(ctx, 8).await;
+    // Hand the current rolling summary IN so a compaction hook can fold
+    // (prior summary + recent turns) → new summary, carrying early facts
+    // forward rather than overwriting them.
+    let prior_summary = ctx
+        .memory()
+        .read_scoped(MemorySpace::Stm, ctx.memory_scope(), SUMMARY_KEY)
+        .await
+        .ok()
+        .flatten()
+        .and_then(|v| v.as_string().map(|s| s.to_string()));
     let base = json!({
         "event": "post_turn",
         "reply": reply,
         "remaining_budget": remaining_budget(ctx),
         "window": window,
+        "summary": prior_summary,
     });
 
     for binding in bindings {

@@ -250,6 +250,19 @@ impl MemorySystem {
         ordered.sort_by(|a, b| a.0.cmp(&b.0));
         let start = ordered.len().saturating_sub(n);
         let mut out = Vec::new();
+        // Always surface a durable compaction summary (`<prefix>summary`) ahead
+        // of the recent window, if one exists. A folded summary has no numeric
+        // transcript sort key, so it is excluded from the recency ordering
+        // above; recalling it here is what lets compacted older history (e.g. a
+        // turn-1 fact) survive once it slides out of the last-`n` window.
+        let summary_logical = format!("{key_prefix}summary");
+        if let Some(value) = self.read_scoped(space, scope_id, &summary_logical).await? {
+            out.push(apxm_backends::SearchResult {
+                key: summary_logical,
+                value,
+                score: 1.0,
+            });
+        }
         for (_, logical) in &ordered[start..] {
             if let Some(value) = self.read_scoped(space, scope_id, logical).await? {
                 out.push(apxm_backends::SearchResult {
@@ -342,7 +355,59 @@ impl MemorySystem {
 
 #[cfg(test)]
 mod recent_window_tests {
-    use super::MemorySystem;
+    use super::{MemoryConfig, MemorySpace, MemorySystem};
+    use apxm_core::types::values::Value;
+
+    /// A folded compaction summary (`<prefix>summary`) must be recalled ahead of
+    /// the recent window even when there are far more turns than `n` — this is
+    /// what lets a turn-1 fact survive once it slides out of the last-`n` turns.
+    #[tokio::test]
+    async fn recent_scoped_surfaces_compaction_summary_outside_window() {
+        let mem = MemorySystem::new(MemoryConfig::in_memory_ltm())
+            .await
+            .expect("memory");
+        let scope = "sess-1";
+
+        // 20 assistant turns; the early ones are well outside a 4-turn window.
+        for i in 1..=20 {
+            mem.write_scoped(
+                MemorySpace::Stm,
+                scope,
+                format!("conversation:turn:{i}"),
+                Value::String(format!("answer {i}")),
+            )
+            .await
+            .unwrap();
+        }
+        // A folded summary capturing the turn-1 fact.
+        mem.write_scoped(
+            MemorySpace::Stm,
+            scope,
+            "conversation:summary".to_string(),
+            Value::String("user's name is Ada (from turn 1)".to_string()),
+        )
+        .await
+        .unwrap();
+
+        let out = mem
+            .recent_scoped(MemorySpace::Stm, scope, "conversation:", 4)
+            .await
+            .unwrap();
+
+        // The summary is present and first, even though turn 1 is far outside
+        // the 4-turn recency window.
+        assert_eq!(out.first().map(|r| r.key.as_str()), Some("conversation:summary"));
+        assert!(
+            out.iter().any(|r| r
+                .value
+                .as_string()
+                .is_some_and(|s| s.contains("Ada"))),
+            "folded turn-1 fact must be recalled"
+        );
+        // Plus the last 4 turns (summary + 4 = 5 results), not turn 1 directly.
+        assert_eq!(out.len(), 5);
+        assert!(out.iter().all(|r| r.key != "conversation:turn:1"));
+    }
 
     /// Audit minor 2: the recalled transcript window must read in TRUE
     /// conversational order — user message before its assistant reply within a

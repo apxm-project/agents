@@ -59,9 +59,15 @@ def inject_context(ctx):
     ctx.prepend_system(ctx.read_agents_md() + "\n" + ctx.recall_window(n=4))
 
 
-@hook(on="post_turn")
-def remember(ctx, reply):
-    ctx.umem("session summary", ctx.summarize(reply))
+@hook(on="post_turn")  # rolling compaction — entirely program-controlled
+def compact(ctx, reply):
+    # Fold the running summary with the recent window into a new summary so
+    # early facts survive once they slide out of `keep_recent`. `ctx.summarize`
+    # calls the runtime LLM (a host call back into the runtime), and the
+    # `conversation:summary` key is surfaced by recall ahead of recent turns.
+    combined = (ctx.prior_summary() + "\n" + ctx.recall_window(n=8)).strip()
+    if len(combined) > 600:  # proxy for CompactionPolicy.compact_at_tokens
+        ctx.umem("conversation:summary", ctx.summarize(combined))
 
 
 # ---- the agent: declares the LOOP + the turn body, all in-program ------------
@@ -73,7 +79,7 @@ agent = ConversationalAgent(
     skills=True,  # real search_skills discovery
     sub_agents=[researcher],  # resolved in the SAME artifact
     compaction=CompactionPolicy(keep_recent=4, compact_at_tokens=20_000),
-    hooks=[announce, guard_lookup, redact, inject_context, remember],
+    hooks=[announce, guard_lookup, redact, inject_context, compact],
     loop="in_graph",  # the conversation loop lives in the .air
 )
 
