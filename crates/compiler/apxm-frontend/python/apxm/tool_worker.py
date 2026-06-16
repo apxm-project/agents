@@ -408,7 +408,7 @@ def _invoke_hook(fn: Any, event: str, payload: dict[str, Any], req_id: str = "")
     elif event == "post_tool":
         call = payload.get("call", {})
         ret = fn(ctx, _HookCall(call.get("name", ""), {}), payload.get("result"))
-    elif event == "post_turn":
+    elif event in ("post_ask", "post_turn"):
         ret = fn(ctx, payload.get("reply"))
     else:  # pre_turn and any future ctx-only event
         ret = fn(ctx)

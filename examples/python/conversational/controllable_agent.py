@@ -42,8 +42,14 @@ def announce(ctx):
     ctx.log(f"session start; budget={ctx.remaining_budget}")
 
 
+@hook(on="pre_turn")
+def before_turn(ctx):
+    ctx.log("pre_turn")
+
+
 @hook(on="pre_tool", match="lookup", mode="gate")  # Allow / Deny / EditArgs
 def guard_lookup(ctx, call):
+    ctx.log("pre_tool:lookup")
     if call.args["symbol"] == "FORBIDDEN":
         return ctx.deny("symbol not permitted")
     return ctx.edit_args({**call.args, "symbol": call.args["symbol"].upper()})
@@ -51,12 +57,19 @@ def guard_lookup(ctx, call):
 
 @hook(on="post_tool", match="*")
 def redact(ctx, call, result):
+    ctx.log("post_tool")
     return ctx.replace_result(scrub_secrets(result))
 
 
 @hook(on="pre_ask")  # context injection (dataflow system prompt)
 def inject_context(ctx):
+    ctx.log("pre_ask")
     ctx.prepend_system(ctx.read_agents_md() + "\n" + ctx.recall_window(n=4))
+
+
+@hook(on="post_ask")
+def after_ask(ctx, reply):
+    ctx.log("post_ask")
 
 
 # Author-owned compaction settings the hook below reads. compact_at_tokens is
@@ -67,6 +80,7 @@ COMPACTION = CompactionPolicy(keep_recent=4, compact_at_tokens=300)
 
 @hook(on="post_turn")  # rolling compaction — ALL policy is the user's, here
 def compact(ctx, reply):
+    ctx.log("post_turn")
     # apxm hands the hook its primitives; the user decides everything:
     #   - the context to compact         (ctx.recall + ctx.recall_window)
     #   - WHEN to compact   (ctx.count_tokens vs the user's own threshold)
@@ -95,7 +109,7 @@ agent = ConversationalAgent(
     skills=True,  # real search_skills discovery
     sub_agents=[researcher],  # resolved in the SAME artifact
     compaction=COMPACTION,  # same object the compact() hook reads — keys agree
-    hooks=[announce, guard_lookup, redact, inject_context, compact],
+    hooks=[announce, before_turn, guard_lookup, redact, inject_context, after_ask, compact],
     loop="in_graph",  # the conversation loop lives in the .air
 )
 

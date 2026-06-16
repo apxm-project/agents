@@ -30,21 +30,21 @@ recalling turn 1, no host logic.
 
 - [X] T020 [US1] Assemble the author turn flow (recall → ask(tools) → remember → done) in the builder — `agent.py`, `apxm-ais/src/chat.rs`. (Builder `_build_turn_flow` assembles recall→ask(tools)→remember→done; `chat.rs` canonical-graph refinement pending with the runtime loop.)
 - [X] T021 [US1] Convert `recv` from poll to park: return `OperationParked{wait_key}` instead of `tokio::sleep` poll; route to blocking pool — `crates/runtime/apxm-runtime/src/executor/handlers/autonomous.rs`. (In-graph recv now parks on `session_recv_key` via the proven PAUSE substrate; legacy `recv_url` poll preserved.)
-- [X] T022 [US1] Native re-arm: on wake, splice a fresh turn-flow sub-DAG and re-arm the recv (the loop keystone) — `crates/runtime/apxm-runtime/src/scheduler/state.rs`, `scheduler/splicing.rs`. WIRED on the production wake path: the worker registers a re-arming `ParkWaker` for session-loop recv nodes → `rearm_session_turn` → `splice_turn_and_rearm` (Audit C1). Tests: `recv_wake_splice_rearm_keystone`, `recv_wake_drives_rearm_via_production_waker`. End-to-end multi-turn run is backend-gated (T025).
+- [X] T022 [US1] Native re-arm: on wake, splice a fresh turn-flow sub-DAG and re-arm the recv (the loop keystone) — `crates/runtime/apxm-runtime/src/scheduler/state.rs`, `scheduler/splicing.rs`. WIRED on the production wake path: the worker registers a re-arming `ParkWaker` for session-loop recv nodes → `rearm_session_turn` → `splice_turn_and_rearm` (Audit C1). Tests: `recv_wake_splice_rearm_keystone`, `recv_wake_drives_rearm_via_production_waker`. Live two-turn proof landed in T025.
 - [X] T023 [US1] Carry per-turn state (history/summary) across re-arms via spliced token connections — `scheduler/splicing.rs`, `executor/context.rs`. (`splice_turn_and_rearm` carry_connections + `recv_rearm_carries_session_state` test.)
 - [X] T024 [US1] AIR validation: accept a recv/turn-input entry + loop-back marker without tripping the acyclic-DAG check — compiler validation + `crates/runtime/apxm-runtime/src/runtime.rs` (`validate_args` zero-arg entry). (Python validator already accepts the recv entry, no cycle emitted; runtime `validate_args` now accepts zero launch args for a recv turn-input entry via `is_turn_input_entry`.)
-- [ ] T025 [US1] Make `controllable_agent.py` drive a real multi-turn session locally; SC-007 check (no recompute of prior turns). **DEFERRED — needs live LLM backend (see run command at end of file).**
-- [ ] **Checkpoint:** US1 runs a multi-turn conversation from one program on host A.
+- [X] T025 [US1] Make `controllable_agent.py` drive a real multi-turn session locally; SC-007 check (no recompute of prior turns). **LIVE 2026-06-16:** with a current isolated `apxm-server` on `127.0.0.1:18909`, the same generated AIR accepted two turns and returned `OK` then `The codename you gave me is BLUEHERON.` The HTTP stream recorded exactly two ASK completions for two turns.
+- [X] **Checkpoint:** US1 runs a multi-turn conversation from one program on host A. (`target/release/apxm chat --air /tmp/apxm-controllable-agent.air --server http://127.0.0.1:18909` returned the same two-turn `BLUEHERON` recall.)
 
 ## Phase 4 — User Story 2: Same agent on any host (P1)
 
 **Goal:** identical artifact, identical behavior on terminal and service.
 **Independent Test:** run one `agent.air` on both hosts; equivalent replies.
 
-- [X] T030 [US2] Shrink the CLI host to a dumb pipe: POST artifact once, pipe stdin to the turn-input endpoint, render streamed tokens — `crates/tools/apxm-cli/src/commands/chat.rs`. (Additive: `air_has_in_program_loop` routes in-program-loop artifacts to `run_dumb_pipe` — POST once + pipe stdin to `POST /v1/conversations/{session}/message` + `render_session_stream`; the legacy host-driven loop is preserved for single-shot/host-driven artifacts. Multi-turn behavior verification is backend-gated → T032.)
+- [X] T030 [US2] Shrink the CLI host to a dumb pipe: POST artifact once, pipe stdin to the turn-input endpoint, render streamed tokens — `crates/tools/apxm-cli/src/commands/chat.rs`. (Additive: `air_has_in_program_loop` routes in-program-loop artifacts to `run_dumb_pipe` — POST once + pipe stdin to `POST /v1/conversations/{session}/message` + `render_session_stream`; the legacy host-driven loop is preserved for single-shot/host-driven artifacts. Live behavior verification landed in T032.)
 - [X] T031 [US2] Move per-session turn caps / per-tool budgets / grant set from host into a runtime ledger keyed by `session_id` — `crates/runtime/apxm-runtime/src/executor/context.rs`, `crates/tools/apxm-server/src/execute.rs`. (`executor/session_ledger.rs` `SessionLedger` + process-global registry; threaded onto `ExecutionContext` (inherited by children); seeded in `execute.rs` from `admit`+`tool_call_budgets` keyed by session_id + session registered; 5 unit tests green.)
-- [ ] T032 [US2] Parity test: same artifact + inputs on CLI and `/v1/execute/stream` produce equivalent replies (SC-002).
-- [~] **Checkpoint:** US2 — host is a dumb pipe; behavior sourced from the program on both hosts. (Dumb-pipe CLI + runtime ledger landed & green offline; behavior-on-both-hosts is the backend-gated T032 acceptance.)
+- [X] T032 [US2] Parity test: same artifact + inputs on CLI and `/v1/execute/stream` produce equivalent replies (SC-002). **LIVE 2026-06-16:** Host A CLI and Host B direct `/v1/execute/stream` + `/v1/conversations/{session}/message` both returned `OK` then `The codename you gave me is BLUEHERON.` for the same AIR and inputs.
+- [X] **Checkpoint:** US2 — host is a dumb pipe; behavior sourced from the program on both hosts. (Dumb-pipe CLI + runtime ledger are live-proven on the current server.)
 
 ## Phase 5 — User Story 3: Lifecycle hooks control (P2)
 
@@ -59,8 +59,8 @@ observed on both hosts.
 - [X] T044 [US3] `PythonHookMiddleware` for `pre_ask`/`post_ask` (OperationMiddleware applies_to=Ask) — wired as `run_pre_ask_hooks` in the LLM handler's system-prompt resolution (Ask mode); prepend/set system.
 - [X] T045 [US3] Gate-capable `session_start`/`graph_*` as an awaited async pre-step (NOT the sync ExecutionHook) — invoked from the REGISTER_HOOK handler at session start (awaited via the bridge; gate fails closed).
 - [X] T046 [US3] Hook failure semantics: gate→fail-closed+surface, observe→surface+continue (FR-014) — `executor/hook_driver.rs` (+ register_hook session_start).
-- [ ] T047 [US3] Verify all hook events fire on both hosts (SC-004); wire fixture hooks. **DEFERRED — needs live backend (fixture hooks are wired; on-both-hosts verification needs inference).**
-- [ ] **Checkpoint:** US3 — author hooks control tools/turns on both hosts.
+- [X] T047 [US3] Verify all hook events fire on both hosts (SC-004); wire fixture hooks. **LIVE 2026-06-16:** `controllable_agent.py` now registers all lifecycle events (`session_start`, `pre_turn`, `pre_ask`, `pre_tool`, `post_tool`, `post_ask`, `post_turn`). Host A CLI and Host B `/v1/execute/stream` both ran a lookup-triggering turn; logs showed each hook marker and `tools_invoked=1`.
+- [X] **Checkpoint:** US3 — author hooks control tools/turns on both hosts.
 
 ## Phase 6 — User Story 4: In-program context management (P2)
 
@@ -92,13 +92,14 @@ sub-agent's result lands in the reply.
 
 - [X] T070 Op-count / tablegen parity guard updated and green for `REGISTER_HOOK`. (`definitions.rs::test_operation_counts` bumped 44→45; green in `dekk apxm test`.)
 - [X] T071 [P] Dead-surface sweep: no `requires_local_cli` dependence for delivered capabilities; remove leftover host-only paths superseded by the in-program loop. (Verified: in-program hooks/loop/context/sub-agents run on the server path via the bridge and do NOT use `requires_local_cli` — that flag is only the legacy `ExecutionOptions` subprocess-hook/middleware config, a separate surface kept for back-compat. Dead `AgentHooks` removed in T003.)
-- [~] T072 Full `cargo test` (runtime/server/compiler) + Python `--validate`; run the `quickstart.md` acceptance on both hosts (SC-001..SC-007). **OFFLINE PORTION DONE & GREEN:** `dekk apxm check`, `dekk apxm test` (runtime/server/core incl. op-count guard), `dekk apxm test-cli` (compiler/CLI incl. the new MLIR op round-trip), and `--validate` on both fixtures all pass. **Both-host SC-001..SC-007 acceptance DEFERRED — needs live backend.**
+- [~] T072 Full `cargo test` (runtime/server/compiler) + Python `--validate`; run the `quickstart.md` acceptance on both hosts (SC-001..SC-007). **OFFLINE PORTION DONE & GREEN:** `dekk apxm check`, `dekk apxm test` (runtime/server/core incl. op-count guard), `dekk apxm test-cli` (compiler/CLI incl. the new MLIR op round-trip), and `--validate` on both fixtures all pass. **LIVE PARTIAL:** SC-001/SC-002/SC-004/SC-007 are proven on Host A CLI and Host B stream. **Remaining:** SC-003 50-turn compaction, SC-005 skill-selection eval, and full SC-001..SC-007 quickstart sweep.
 - [X] T073 [P] Update `examples/.../README.md` and `docs/apxm-cli-agent-vision.md` cross-reference to point at this spec.
 
 ## Backend-gated tasks (deferred per coordinator; ready to run)
 
 These require live inference and are left UNCHECKED until a backend is authorized:
-T025, T032, T047, T053, and the SC-001..SC-007 acceptance (quickstart.md). All
+T053 and the remaining SC-003 / SC-005 / full SC-001..SC-007 acceptance
+(quickstart.md). T025, T032, and T047 were live-proven on 2026-06-16. All
 non-inference work is implemented and verified green. Run command once a backend
 is available is documented at the bottom of this file.
 
@@ -174,9 +175,9 @@ Verification-pass hardening (two MINOR items, both FIXED & green):
   `transcript_sort_key_orders_user_before_assistant_then_by_turn` and
   `..._excludes_non_numeric_counter_keys`.
 
-Still DEFERRED to the live-backend run: the end-to-end multi-turn proof
-(SC-001..SC-007 on both hosts) — the wiring + unit tests are in place; only real
-inference can exercise the full loop.
+Live backend smoke now proves the two-turn loop/parity path and all hook events
+on both hosts. Still deferred: full quickstart acceptance for SC-003 50-turn
+compaction and SC-005 skill-selection accuracy.
 
 ## Session status (autonomous run) — what landed, what remains
 
@@ -184,34 +185,37 @@ GREEN + verified (`dekk apxm check`, `dekk apxm test` runtime+server+core,
 `dekk apxm test-cli` compiler/CLI, both fixtures `--validate`):
 
 - Setup T001–T003; Foundational T010–T015 (+checkpoint).
-- US1 T020–T024 (recv park + native re-arm `splice_turn_and_rearm` + carry +
+- US1 T020–T025 (recv park + native re-arm `splice_turn_and_rearm` + carry +
   zero-arg recv-entry validation); the keystone is proven by
   `recv_wake_splice_rearm_keystone` + `recv_rearm_carries_session_state` with the
-  park/wake invariant suite green.
-- US3 T040–T046: the **`REGISTER_HOOK` op** (full dialect SSOT + `.td` +
+  park/wake invariant suite green, plus the live two-turn `BLUEHERON` recall.
+- US3 T040–T047: the **`REGISTER_HOOK` op** (full dialect SSOT + `.td` +
   `build-dialect`/`codegen`) with the **op-count parity guard green at 45** (T070);
   `@hook`/`g.register_hook()`/lowering (T041); AIR validation (T042); the hook
   drivers — pre/post_tool interceptor at BOTH bridge sites, pre_ask middleware,
   session_start awaited pre-step, fail-closed/observe-continue semantics
-  (T043–T046) via `executor/hook_driver.rs` + `bridge.call_hook` + `tool_worker.py`.
+  (T043–T046) via `executor/hook_driver.rs` + `bridge.call_hook` + `tool_worker.py`;
+  live Host A + Host B hook markers for all lifecycle events.
 - US4 T050 (`qmem recall_mode=recent` + `MemorySystem::recent_scoped`) + T052
   (record user message at the turn-input endpoint).
 - US5 T060–T065 + T062 (delegate inline fallback, sub-agent flows, skill_search,
   example fixes, docstring, self-contained spawn-grant admission).
 - Polish T070, T071 (dead-surface sweep), T073 (docs), T072 offline portion.
 
-- US2 T030 (CLI dumb-pipe, additive + back-compat-preserving) + T031 (per-session
-  runtime ledger) — done & green offline (`check`, `test`, `test-cli`).
+- US2 T030 (CLI dumb-pipe, additive + back-compat-preserving), T031
+  (per-session runtime ledger), and T032 live CLI/server parity — done.
 
 REMAINING — live-backend acceptance only (no offline-verifiable work left):
-T025, T032, T047, T053, T072 both-host SC-001..SC-007. See the Deferred section
-for the exact run command. All offline-verifiable work is complete and green.
+T053 and T072 full SC-003 / SC-005 / SC-001..SC-007 sweep. See the Deferred
+section for the exact run command. All offline-verifiable work is complete and
+green.
 
 ## Deferred — live-backend acceptance (run once a backend is authorized)
 
-T025, T032, T047, T053 and quickstart SC-001..SC-007 need live inference. They are
-NOT inference-mockable. Run, with a backend configured (cloud gateway egress +
-`LLM_GATEWAY_KEY`, or an authorized Slurm/vLLM service):
+T053 and the remaining quickstart SC-003 / SC-005 / full SC-001..SC-007 sweep
+need live inference. They are NOT inference-mockable. Run, with a backend
+configured (cloud gateway egress + `LLM_GATEWAY_KEY`, or an authorized
+Slurm/vLLM service):
 
 ```
 # 1. Validate + compile the one multi-flow artifact (no backend needed):

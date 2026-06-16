@@ -92,3 +92,15 @@ def test_host_call_unavailable_without_parent():
         assert "no parent request" in str(exc)
     else:
         raise AssertionError("expected RuntimeError without a parent request")
+
+
+def test_post_ask_hook_receives_reply():
+    seen = {}
+
+    def hook(ctx, reply):
+        seen["reply"] = reply
+
+    out = tw._invoke_hook(hook, "post_ask", {"reply": "answer"}, req_id="r1")
+
+    assert out == {}
+    assert seen == {"reply": "answer"}
