@@ -18,7 +18,7 @@ Usage:
       "Should we add distributed execution to APXM?"
 """
 
-from apxm import GraphRecorder, agent_cwd, compile
+from apxm import DependencyType, GraphRecorder, agent_cwd, compile
 from apxm._generated.agents import claude, codex
 
 
@@ -126,11 +126,11 @@ Think about real-world workflow authors using APXM. Keep under 300 words.
         res_result,
         user_result
     )
-    g.add_edge(print_arch, wait, dependency="Control")
-    g.add_edge(print_adv, wait, dependency="Control")
-    g.add_edge(print_impl, wait, dependency="Control")
-    g.add_edge(print_res, wait, dependency="Control")
-    g.add_edge(print_user, wait, dependency="Control")
+    g.add_edge(print_arch, wait, dependency=DependencyType.CONTROL)
+    g.add_edge(print_adv, wait, dependency=DependencyType.CONTROL)
+    g.add_edge(print_impl, wait, dependency=DependencyType.CONTROL)
+    g.add_edge(print_res, wait, dependency=DependencyType.CONTROL)
+    g.add_edge(print_user, wait, dependency=DependencyType.CONTROL)
 
     # Synthesis: merge all 5 perspectives, adversary wins on scope
     synthesis = g.think(
@@ -156,7 +156,7 @@ Let the adversary win on scope reduction — if they identified over-engineering
 Give a clear, definitive answer. Keep under 400 words.
 """
     )
-    g.add_edge(wait, synthesis, dependency="Control")
+    g.add_edge(wait, synthesis, dependency=DependencyType.CONTROL)
 
     print_synth = g.print(message="=== SYNTHESIS ===\n{synthesis}")
 
@@ -181,7 +181,7 @@ If the recommendation is NO or DIFFERENT-APPROACH:
 Output a structured action plan ready for execution. Keep under 300 words.
 """
     )
-    g.add_edge(print_synth, action_plan, dependency="Control")
+    g.add_edge(print_synth, action_plan, dependency=DependencyType.CONTROL)
 
     print_plan = g.print(message="=== ACTION PLAN ===\n{action_plan}")
 

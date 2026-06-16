@@ -6,7 +6,7 @@ Recall from LTM, answer with context, verify, and store.
 Usage: dekk apxm execute examples/python/memory/rag_pipeline.py
 """
 
-from apxm import compile, GraphRecorder
+from apxm import DependencyType, compile, GraphRecorder
 
 
 @compile()
@@ -29,7 +29,7 @@ def memory_rag_pipeline(g: GraphRecorder):
         "QUESTION:\n{query}\n\n"
         "Provide a thorough, accurate answer about Rust async runtimes."
     )
-    g.add_edge(recall_ltm, answer, dependency="Control")  # Ensure memory is queried first
+    g.add_edge(recall_ltm, answer, dependency=DependencyType.CONTROL)  # Ensure memory is queried first
 
     # Verify the answer
     verification = g.think(
@@ -51,8 +51,8 @@ def memory_rag_pipeline(g: GraphRecorder):
     print1 = g.print(message="=== ANSWER ===\n{answer}")
 
     print2 = g.print(message="=== VERIFICATION ===\n{verification}")
-    g.add_edge(print1, print2, dependency="Control")
-    g.add_edge(mem, print2, dependency="Control")
+    g.add_edge(print1, print2, dependency=DependencyType.CONTROL)
+    g.add_edge(mem, print2, dependency=DependencyType.CONTROL)
 
     g.done(print2)
     

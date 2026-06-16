@@ -28,7 +28,8 @@ from .conversational import (
     ConversationalAgent,
     MultiFlowArtifact,
 )
-from .hooks import HookFn, hook
+from .constants import DependencyType
+from .hooks import HookFn, HookMode, LifecycleEvent, hook
 from .config import (
     AgentConfig,
     BashConfig,
@@ -91,6 +92,7 @@ __all__ = [
     "CompiledFlow",
     "CompilationError",
     "ConversationalAgent",
+    "DependencyType",
     "ExecutionError",
     "ExecutionOptions",
     "ExecutionMode",
@@ -108,6 +110,7 @@ __all__ = [
     "HookConfig",
     "HookEvent",
     "HookFn",
+    "HookMode",
     "MultiFlowArtifact",
     "LLMUsage",
     "config_path",
@@ -115,6 +118,7 @@ __all__ = [
     "list_providers",
     "list_backends",
     "local_apxm_path",
+    "LifecycleEvent",
     "LoopGuardMiddlewareConfig",
     "MiddlewareKind",
     "ModelId",

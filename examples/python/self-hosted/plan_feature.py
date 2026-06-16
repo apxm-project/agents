@@ -17,7 +17,7 @@ Usage:
       "Add streaming support to LLM backends"
 """
 
-from apxm import GraphRecorder, agent_cwd, compile
+from apxm import DependencyType, GraphRecorder, agent_cwd, compile
 from apxm._generated.agents import claude, codex
 
 
@@ -87,7 +87,7 @@ Output a structured gap analysis with:
 - Missing pieces (critical vs nice-to-have)
 """
     )
-    g.add_edge(print1, gap_analysis, dependency="Control")
+    g.add_edge(print1, gap_analysis, dependency=DependencyType.CONTROL)
 
     print2 = g.print(message="=== GAP ANALYSIS ===\n{gap_analysis}")
 
@@ -121,7 +121,7 @@ For each risk, provide:
 - Mitigation strategy
 """
     )
-    g.add_edge(print1, risk_analysis, dependency="Control")
+    g.add_edge(print1, risk_analysis, dependency=DependencyType.CONTROL)
 
     print3 = g.print(message="=== RISK ANALYSIS ===\n{risk_analysis}")
 
@@ -149,7 +149,7 @@ Output the implementation order:
 - Estimated effort per crate (hours)
 """
     )
-    g.add_edge(print1, crate_ordering, dependency="Control")
+    g.add_edge(print1, crate_ordering, dependency=DependencyType.CONTROL)
 
     print4 = g.print(message="=== CRATE ORDERING ===\n{crate_ordering}")
 
@@ -161,9 +161,9 @@ Output the implementation order:
         risk_analysis,
         crate_ordering
     )
-    g.add_edge(print2, merge, dependency="Control")
-    g.add_edge(print3, merge, dependency="Control")
-    g.add_edge(print4, merge, dependency="Control")
+    g.add_edge(print2, merge, dependency=DependencyType.CONTROL)
+    g.add_edge(print3, merge, dependency=DependencyType.CONTROL)
+    g.add_edge(print4, merge, dependency=DependencyType.CONTROL)
 
     # Step 6: Final plan with everything integrated
     final_plan = g.think(
@@ -212,7 +212,7 @@ For each crate:
 Keep the plan actionable and specific. Include file paths and function names.
 """
     )
-    g.add_edge(merge, final_plan, dependency="Control")
+    g.add_edge(merge, final_plan, dependency=DependencyType.CONTROL)
 
     print5 = g.print(message="=== FINAL PLAN ===\n{final_plan}")
 

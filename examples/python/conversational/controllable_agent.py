@@ -16,7 +16,7 @@ Compile to one self-contained multi-flow artifact:
         --emit-air > agent.air
 """
 
-from apxm import ConversationalAgent, CompactionPolicy, hook, tool, Agent
+from apxm import Agent, CompactionPolicy, ConversationalAgent, HookMode, LifecycleEvent, hook, tool
 
 
 # ---- tools & sub-agents (server-path callable via PythonToolBridge) ----------
@@ -37,17 +37,17 @@ def scrub_secrets(text: str) -> str:
 
 
 # ---- hooks: pre / post / session-start, ALL python callables -----------------
-@hook(on="session_start")  # gate-capable; runs once at session start
+@hook(on=LifecycleEvent.SESSION_START)  # gate-capable; runs once at session start
 def announce(ctx):
     ctx.log(f"session start; budget={ctx.remaining_budget}")
 
 
-@hook(on="pre_turn")
+@hook(on=LifecycleEvent.PRE_TURN)
 def before_turn(ctx):
     ctx.log("pre_turn")
 
 
-@hook(on="pre_tool", match="lookup", mode="gate")  # Allow / Deny / EditArgs
+@hook(on=LifecycleEvent.PRE_TOOL, match="lookup", mode=HookMode.GATE)
 def guard_lookup(ctx, call):
     ctx.log("pre_tool:lookup")
     if call.args["symbol"] == "FORBIDDEN":
@@ -55,19 +55,19 @@ def guard_lookup(ctx, call):
     return ctx.edit_args({**call.args, "symbol": call.args["symbol"].upper()})
 
 
-@hook(on="post_tool", match="*")
+@hook(on=LifecycleEvent.POST_TOOL, match="*")
 def redact(ctx, call, result):
     ctx.log("post_tool")
     return ctx.replace_result(scrub_secrets(result))
 
 
-@hook(on="pre_ask")  # context injection (dataflow system prompt)
+@hook(on=LifecycleEvent.PRE_ASK)  # context injection (dataflow system prompt)
 def inject_context(ctx):
     ctx.log("pre_ask")
     ctx.prepend_system(ctx.read_agents_md() + "\n" + ctx.recall_window(n=4))
 
 
-@hook(on="post_ask")
+@hook(on=LifecycleEvent.POST_ASK)
 def after_ask(ctx, reply):
     ctx.log("post_ask")
 
@@ -78,7 +78,7 @@ def after_ask(ctx, reply):
 COMPACTION = CompactionPolicy(keep_recent=4, compact_at_tokens=300)
 
 
-@hook(on="post_turn")  # rolling compaction — ALL policy is the user's, here
+@hook(on=LifecycleEvent.POST_TURN)  # rolling compaction — ALL policy is the user's, here
 def compact(ctx, reply):
     ctx.log("post_turn")
     # apxm hands the hook its primitives; the user decides everything:

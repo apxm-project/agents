@@ -4,6 +4,10 @@ Re-exports attribute constants, operation constants, category constants,
 and LLM_OPS from the generated modules.
 """
 
+from __future__ import annotations
+
+from enum import Enum
+
 from apxm._generated.constants import *  # noqa: F401, F403
 from apxm._generated.operations import (  # noqa: F401
     CATEGORY_COMMUNICATION,
@@ -30,9 +34,24 @@ ENV_APXM_MOCK_BACKEND = "APXM_MOCK_BACKEND"
 ENV_APXM_SERVER_URL = "APXM_SERVER_URL"
 ENV_FLAG_ENABLED = "1"
 
-DEPENDENCY_DATA = "Data"
-DEPENDENCY_CONTROL = "Control"
-DEPENDENCY_EFFECT = "Effect"
+
+class DependencyType(str, Enum):
+    DATA = "Data"
+    CONTROL = "Control"
+    EFFECT = "Effect"
+
+
+def normalize_dependency_type(value: DependencyType | str) -> str:
+    if isinstance(value, DependencyType):
+        return value.value
+    if isinstance(value, str):
+        return value
+    raise TypeError("dependency must be a DependencyType or string")
+
+
+DEPENDENCY_DATA = DependencyType.DATA.value
+DEPENDENCY_CONTROL = DependencyType.CONTROL.value
+DEPENDENCY_EFFECT = DependencyType.EFFECT.value
 
 COMMUNICATE_PROTOCOL_ACP = "acp"
 

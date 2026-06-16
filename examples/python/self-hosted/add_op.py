@@ -15,7 +15,7 @@ Usage:
       "SUMMARIZE" "Summarize input text"
 """
 
-from apxm import GraphRecorder, agent_cwd, compile
+from apxm import DependencyType, GraphRecorder, agent_cwd, compile
 from apxm._generated.agents import claude, codex
 
 
@@ -135,8 +135,8 @@ Follow APXM conventions: use apxm-core types, proper error handling with context
 
     # Step 4: Wait for both to complete, then review
     wait = g.wait_all("wait_implementations", compiler_impl, runtime_impl)
-    g.add_edge(print2, wait, dependency="Control")
-    g.add_edge(print3, wait, dependency="Control")
+    g.add_edge(print2, wait, dependency=DependencyType.CONTROL)
+    g.add_edge(print3, wait, dependency=DependencyType.CONTROL)
 
     review_task = g.ask(
         name="build_review_task",
@@ -168,7 +168,7 @@ Report:
 If tests fail, suggest fixes.
 """
     )
-    g.add_edge(wait, review_task, dependency="Control")
+    g.add_edge(wait, review_task, dependency=DependencyType.CONTROL)
 
     review_result = reviewer.ask("{review_task}")
 
@@ -191,7 +191,7 @@ Summary:
 - Next steps (if any)
 """
     )
-    g.add_edge(print4, final, dependency="Control")
+    g.add_edge(print4, final, dependency=DependencyType.CONTROL)
 
     print5 = g.print(message="=== FINAL SUMMARY ===\n{final}")
 

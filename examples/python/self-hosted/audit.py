@@ -18,7 +18,7 @@ Usage:
     dekk apxm execute examples/python/self-hosted/audit.py "full"
 """
 
-from apxm import GraphRecorder, agent_cwd, compile
+from apxm import DependencyType, GraphRecorder, agent_cwd, compile
 from apxm._generated.agents import claude
 
 
@@ -86,7 +86,7 @@ Output JSON:
   "failed_tests": ["test1", "test2", ...]
 }}
 """)
-    g.add_edge(print1, test_result, dependency="Control")
+    g.add_edge(print1, test_result, dependency=DependencyType.CONTROL)
 
     print2 = g.print(message="=== TEST STATUS ===\n{test_result}")
 
@@ -116,7 +116,7 @@ Output JSON:
   }}
 }}
 """)
-    g.add_edge(print2, autofix_result, dependency="Control")
+    g.add_edge(print2, autofix_result, dependency=DependencyType.CONTROL)
 
     print3 = g.print(message="=== AUTOFIX STATUS ===\n{autofix_result}")
 
@@ -142,7 +142,7 @@ Output JSON:
   "critical": []
 }}
 """)
-    g.add_edge(print3, policy_result, dependency="Control")
+    g.add_edge(print3, policy_result, dependency=DependencyType.CONTROL)
 
     print4 = g.print(message="=== POLICY STATUS ===\n{policy_result}")
 
@@ -165,7 +165,7 @@ Output JSON:
   "high_priority": []
 }}
 """)
-    g.add_edge(print4, todo_result, dependency="Control")
+    g.add_edge(print4, todo_result, dependency=DependencyType.CONTROL)
 
     print5 = g.print(message="=== TODO/STUB STATUS ===\n{todo_result}")
 
@@ -190,7 +190,7 @@ Output JSON:
   "status": "complete" | "incomplete"
 }}
 """)
-    g.add_edge(print5, missing_ops_result, dependency="Control")
+    g.add_edge(print5, missing_ops_result, dependency=DependencyType.CONTROL)
 
     print6 = g.print(message="=== MISSING OPS STATUS ===\n{missing_ops_result}")
 
@@ -255,7 +255,7 @@ Generate structured audit report:
 <2-3 sentence summary of project health>
 """
     )
-    g.add_edge(print6, synthesize, dependency="Control")
+    g.add_edge(print6, synthesize, dependency=DependencyType.CONTROL)
 
     print7 = g.print(message="=== AUDIT REPORT ===\n{synthesize}")
 
@@ -293,7 +293,7 @@ Output recommendations sorted by (impact, effort):
 3. <area 3>: <rationale>
 """
     )
-    g.add_edge(print7, recommend, dependency="Control")
+    g.add_edge(print7, recommend, dependency=DependencyType.CONTROL)
 
     print8 = g.print(message="=== RECOMMENDATIONS ===\n{recommend}")
 

@@ -6,7 +6,7 @@ Workers process tasks in parallel, then aggregate results.
 Usage: dekk apxm execute examples/python/parallelism/worker_pool.py
 """
 
-from apxm import compile, GraphRecorder
+from apxm import DependencyType, compile, GraphRecorder
 
 
 @compile()
@@ -54,7 +54,7 @@ def worker_pool_parallel(g: GraphRecorder):
 
     # Print and return
     output = g.print(message="=== WORKER POOL RESULTS ===\n{aggregate}")
-    g.add_edge(mem, output, dependency="Control")
+    g.add_edge(mem, output, dependency=DependencyType.CONTROL)
 
     g.done(output)
     

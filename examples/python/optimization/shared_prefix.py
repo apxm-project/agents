@@ -8,7 +8,7 @@ cache behavior must be verified from emitted metrics.
 Usage: dekk apxm execute examples/python/optimization/shared_prefix.py
 """
 
-from apxm import compile, GraphRecorder
+from apxm import DependencyType, compile, GraphRecorder
 
 
 @compile()
@@ -31,7 +31,7 @@ def shared_prefix_demo(g: GraphRecorder):
     output = g.print(
         message="Security: {security}\nPerformance: {performance}\nReliability: {reliability}"
     )
-    g.add_edge(output, report, dependency="Control")
+    g.add_edge(output, report, dependency=DependencyType.CONTROL)
     g.done(report)
 
 

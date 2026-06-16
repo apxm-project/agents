@@ -13,7 +13,7 @@ Usage:
     dekk apxm execute examples/python/self-hosted/remove_op.py "OBSOLETE_OP"
 """
 
-from apxm import GraphRecorder, agent_cwd, compile
+from apxm import DependencyType, GraphRecorder, agent_cwd, compile
 from apxm._generated.agents import claude, codex
 
 
@@ -91,7 +91,7 @@ Be careful:
 - Update any operation count constants if they exist
 """
     )
-    g.add_edge(print1, compiler_task, dependency="Control")
+    g.add_edge(print1, compiler_task, dependency=DependencyType.CONTROL)
 
     runtime_task = g.ask(
         name="build_runtime_task",
@@ -114,7 +114,7 @@ Remove from:
 Be thorough but careful — don't break adjacent code.
 """
     )
-    g.add_edge(print1, runtime_task, dependency="Control")
+    g.add_edge(print1, runtime_task, dependency=DependencyType.CONTROL)
 
     # Step 3: Both devs work in parallel
     compiler_removal = compiler_dev.ask("{compiler_task}")
@@ -126,8 +126,8 @@ Be thorough but careful — don't break adjacent code.
 
     # Step 4: Verify nothing broke
     wait = g.wait_all("wait_removals", compiler_removal, runtime_removal)
-    g.add_edge(print2, wait, dependency="Control")
-    g.add_edge(print3, wait, dependency="Control")
+    g.add_edge(print2, wait, dependency=DependencyType.CONTROL)
+    g.add_edge(print3, wait, dependency=DependencyType.CONTROL)
 
     verify_task = g.ask(
         name="build_verify_task",
@@ -159,7 +159,7 @@ Report:
 If there are failures, identify what was missed and suggest fixes.
 """
     )
-    g.add_edge(wait, verify_task, dependency="Control")
+    g.add_edge(wait, verify_task, dependency=DependencyType.CONTROL)
 
     verification = verifier.ask("{verify_task}")
 
@@ -185,7 +185,7 @@ Summary:
 - Status: <complete/needs-fixes>
 """
     )
-    g.add_edge(print4, final, dependency="Control")
+    g.add_edge(print4, final, dependency=DependencyType.CONTROL)
 
     print5 = g.print(message="=== REMOVAL SUMMARY ===\n{final}")
 

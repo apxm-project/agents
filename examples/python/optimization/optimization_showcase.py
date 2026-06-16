@@ -12,7 +12,7 @@ Usage:
   dekk apxm execute examples/python/optimization/optimization_showcase.py -O2
 """
 
-from apxm import compile, GraphRecorder
+from apxm import DependencyType, compile, GraphRecorder
 
 
 @compile()
@@ -85,7 +85,7 @@ def optimization_showcase(g: GraphRecorder):
         message="TOPIC: {topic}\n\nSYNTHESIS:\n{synthesis}\n\n"
         "REVIEW:\n{review}\n\nVALIDATION:\n{validation}"
     )
-    g.add_edge(output, report, dependency="Control")
+    g.add_edge(output, report, dependency=DependencyType.CONTROL)
     g.done(report)
 
 

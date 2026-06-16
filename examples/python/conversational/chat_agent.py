@@ -17,11 +17,11 @@ local server):
 
 Pipeline per turn:
   recall (qmem) -> plan (reason) -> tool-using answer (ask) ->
-  delegate research (spawn_agent + delegate) -> skill post-process (call_skill) ->
-  synthesize (ask) -> remember (umem + fence).
+  delegate research (spawn_agent + delegate) -> synthesize (ask) ->
+  remember (umem + fence).
 """
 
-from apxm import GraphRecorder, compile
+from apxm import DependencyType, GraphRecorder, compile
 
 # Single source of truth for the assistant persona.
 PERSONA = (
@@ -64,25 +64,30 @@ def chat_agent(g: GraphRecorder, conversation: str):
         tool_groups=["web"],
     )
 
-    # 4. Multi-agent: spawn a researcher sub-agent and delegate a focused
-    #    subtask; its result (`research`) is woven into the final reply below.
-    g.spawn_agent(agent_name="researcher")
+    # 4. Multi-agent: spawn an inline researcher sub-agent and delegate a
+    #    focused subtask; its result (`research`) is woven into the final reply.
+    spawn = g.spawn_agent(
+        agent_name="researcher",
+        system_prompt=(
+            "You are a focused research sub-agent. Extract the most relevant "
+            "supporting facts from the delegated task and the supplied draft. "
+            "Return concise findings only."
+        ),
+    )
     research = g.delegate(
         name="research",
         target_agent="researcher",
         task_spec="Gather supporting facts for the latest user message.",
     )
-
-    # 5. Post-process the draft through an installed skill.
-    summary = g.call_skill("summarize", args={"text": answer})
+    g.add_edge(spawn, research, dependency=DependencyType.CONTROL)
+    g.add_edge(answer, research)
 
     # 6. Synthesize the user-facing reply.
     reply = g.ask(
         name="reply",
         prompt=(
             f"{PERSONA}\n\nWrite the final reply to the user, incorporating the "
-            "research and summary.\nAnswer: {answer}\nResearch: {research}\n"
-            "Summary: {summary}"
+            "research.\nAnswer: {answer}\nResearch: {research}"
         ),
     )
 
@@ -98,7 +103,7 @@ def chat_agent(g: GraphRecorder, conversation: str):
 
     g.done(source=reply)
     # Reference unused locals so linters see the full wiring.
-    _ = (history, plan, research, summary)
+    _ = (history, plan, research)
 
 
 if __name__ == "__main__":

@@ -15,7 +15,7 @@ Usage:
     dekk apxm execute examples/python/real-world/autofix_loop.py --emit-session
 """
 
-from apxm import GraphRecorder, agent_cwd, compile
+from apxm import DependencyType, GraphRecorder, agent_cwd, compile
 from apxm._generated.agents import claude, codex
 
 
@@ -59,7 +59,7 @@ def autofix_loop(g: GraphRecorder):
         "Report what you changed and verification results.\n\n"
         "Strategy:\n{strategy}"
     )
-    g.add_edge(print1, implement_task, dependency="Control")
+    g.add_edge(print1, implement_task, dependency=DependencyType.CONTROL)
 
     implementation = implementer.ask("{implement_task}")
 
@@ -79,7 +79,7 @@ def autofix_loop(g: GraphRecorder):
         'If everything passes, output: {{"status": "success"}}\n\n'
         "Implementation:\n{implementation}"
     )
-    g.add_edge(print2, review_task, dependency="Control")
+    g.add_edge(print2, review_task, dependency=DependencyType.CONTROL)
 
     review = reviewer.ask("{review_task}")
 
@@ -87,7 +87,7 @@ def autofix_loop(g: GraphRecorder):
 
     # Final report
     final = g.merge("final_report", strategy, implementation, review)
-    g.add_edge(print3, final, dependency="Control")
+    g.add_edge(print3, final, dependency=DependencyType.CONTROL)
 
     g.done(final)
 

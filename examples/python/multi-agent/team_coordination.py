@@ -7,9 +7,8 @@ and team.merge() for coordinating multiple agents.
 Usage: dekk apxm execute examples/python/multi-agent/team_coordination.py
 """
 
-from apxm import GraphRecorder, agent_cwd, compile
+from apxm import DependencyType, GraphRecorder, agent_cwd, compile
 from apxm._generated.agents import claude, codex
-from apxm.constants import DEPENDENCY_CONTROL
 
 
 @compile()
@@ -33,7 +32,7 @@ def team_coordination(g: GraphRecorder):
     # Wait for all to complete, then merge results
     sync = team.wait_all("sync")
     results = team.merge("results")
-    g.add_edge(sync, results, dependency=DEPENDENCY_CONTROL)
+    g.add_edge(sync, results, dependency=DependencyType.CONTROL)
 
     output = g.print(name="output", message="Team results merged: {results}")
     g.done(output)

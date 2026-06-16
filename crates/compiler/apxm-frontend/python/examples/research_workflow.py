@@ -9,9 +9,8 @@ This example demonstrates:
 - Graph serialization to canonical .air
 """
 
-from apxm import compile, GraphRecorder
+from apxm import DependencyType, compile, GraphRecorder
 from apxm._generated.agents import claude
-from apxm.constants import DEPENDENCY_CONTROL
 
 
 @compile()
@@ -44,7 +43,7 @@ def research_workflow(g: GraphRecorder, topic: str):
     )
 
     # Control flow: sync completes before synthesis
-    g.add_edge(sync, synthesis, dependency=DEPENDENCY_CONTROL)
+    g.add_edge(sync, synthesis, dependency=DependencyType.CONTROL)
 
     # Return final synthesis
     g.done(source=synthesis)

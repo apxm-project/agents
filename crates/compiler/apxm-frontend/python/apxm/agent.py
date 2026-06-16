@@ -5,6 +5,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, Any, Protocol, runtime_checkable
 
 from . import constants as graph_keys
+from .constants import DependencyType
 from .normalize import normalize_value as _normalize_value
 from .normalize import normalize_model_id as _normalize_model_id
 from .normalize import normalize_provider_spec as _normalize_provider_spec
@@ -134,7 +135,7 @@ class Agent:
                 graph_keys.OP_REGISTER_CAPABILITY,
                 cap_attrs,
             )
-            g.add_edge(prev_node, cap_node, dependency=graph_keys.DEPENDENCY_CONTROL)
+            g.add_edge(prev_node, cap_node, dependency=DependencyType.CONTROL)
             prev_node = cap_node
 
             # Register tool for artifact sidecar embedding
@@ -162,7 +163,7 @@ class Agent:
             graph_keys.OP_ASK,
             ask_attrs,
         )
-        g.add_edge(prev_node, ask_node, dependency=graph_keys.DEPENDENCY_CONTROL)
+        g.add_edge(prev_node, ask_node, dependency=DependencyType.CONTROL)
 
         # Auto-wire data edges from template references
         for _name, ref in auto_pairs:
@@ -234,7 +235,7 @@ class BoundAgent:
                 graph_keys.OP_REGISTER_CAPABILITY,
                 cap_attrs,
             )
-            g.add_edge(prev_node, cap_node, dependency=graph_keys.DEPENDENCY_CONTROL)
+            g.add_edge(prev_node, cap_node, dependency=DependencyType.CONTROL)
             prev_node = cap_node
 
             # Register tool for artifact sidecar embedding
@@ -272,7 +273,7 @@ class BoundAgent:
             graph_keys.OP_ASK,
             ask_attrs,
         )
-        g.add_edge(self._last_node, ask_node, dependency=graph_keys.DEPENDENCY_CONTROL)
+        g.add_edge(self._last_node, ask_node, dependency=DependencyType.CONTROL)
 
         for _name, ref in auto_pairs:
             g.add_edge(ref, ask_node)

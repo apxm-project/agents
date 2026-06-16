@@ -8,7 +8,7 @@ output as context, enforced by the compiler's data dependency analysis.
 Usage: dekk apxm execute examples/python/real-world/sdlc_pipeline.py
 """
 
-from apxm import GraphRecorder, agent_cwd, compile
+from apxm import DependencyType, GraphRecorder, agent_cwd, compile
 from apxm._generated.agents import claude, codex
 
 
@@ -41,7 +41,7 @@ def sdlc_pipeline(g: GraphRecorder):
         "Keep it compilable. Follow existing handler patterns.\n\n"
         "Design spec:\n{design}"
     )
-    g.add_edge(print1, implement_prompt, dependency="Control")
+    g.add_edge(print1, implement_prompt, dependency=DependencyType.CONTROL)
 
     coder_result = coder.ask("{implement_prompt}")
 
@@ -55,7 +55,7 @@ def sdlc_pipeline(g: GraphRecorder):
         "Does it match your spec? What's correct, what needs fixing?\n\n"
         "Implementation:\n{coder_result}"
     )
-    g.add_edge(print2, review_prompt, dependency="Control")
+    g.add_edge(print2, review_prompt, dependency=DependencyType.CONTROL)
 
     final_review = architect.ask("{review_prompt}")
 

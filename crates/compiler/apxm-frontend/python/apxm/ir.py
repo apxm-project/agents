@@ -8,7 +8,13 @@ from typing import Any
 from apxm._generated import constants as c
 from apxm._generated import operations
 from apxm._generated.emission import EMITTERS, TEMPLATE_ATTRS, VOID_OPS
-from apxm.constants import DEPENDENCY_CONTROL, DEPENDENCY_DATA, DEPENDENCY_EFFECT
+from apxm.constants import (
+    DEPENDENCY_CONTROL,
+    DEPENDENCY_DATA,
+    DEPENDENCY_EFFECT,
+    normalize_dependency_type,
+)
+from apxm.hooks import GATE_LIFECYCLE_EVENTS, HookMode, LIFECYCLE_EVENTS
 from apxm._generated.operations import ASK, COMMUNICATE, REASON, SPAWN_AGENT, THINK
 
 
@@ -45,9 +51,10 @@ class GraphNode:
 class GraphEdge:
     from_id: int
     to_id: int
-    dependency: str = "Data"
+    dependency: str = DEPENDENCY_DATA
 
     def __post_init__(self) -> None:
+        self.dependency = normalize_dependency_type(self.dependency)
         if self.dependency not in _DEPENDENCY_TYPES:
             allowed = ", ".join(sorted(_DEPENDENCY_TYPES))
             raise ValueError(f"invalid dependency '{self.dependency}', expected one of: {allowed}")
@@ -64,7 +71,7 @@ class GraphEdge:
         return cls(
             from_id=int(value.get("from", value.get("from_id"))),
             to_id=int(value.get("to", value.get("to_id"))),
-            dependency=str(value.get("dependency", "Data")),
+            dependency=normalize_dependency_type(value.get("dependency", DEPENDENCY_DATA)),
         )
 
 
@@ -131,7 +138,7 @@ class ApxmGraph:
         for edge in self.edges:
             if edge.from_id in incoming and edge.to_id in incoming:
                 # Only include Data edges as inputs (Control/Effect are for sequencing only)
-                if edge.dependency == "Data":
+                if edge.dependency == DEPENDENCY_DATA:
                     incoming[edge.to_id].append(edge.from_id)
                 outgoing[edge.from_id].append(edge.to_id)
 
@@ -391,7 +398,7 @@ class ApxmGraph:
         # Control edges from exit nodes to sync
         for exit_id in exit_ids:
             merged_edges.append(
-                GraphEdge(from_id=exit_id, to_id=wait_all_id, dependency="Control")
+                GraphEdge(from_id=exit_id, to_id=wait_all_id, dependency=DEPENDENCY_CONTROL)
             )
 
         return cls(
@@ -565,20 +572,6 @@ def validate_against_apxm(graph: ApxmGraph) -> ValidationResult:
     )
 
 
-_HOOK_LIFECYCLE_EVENTS = frozenset(
-    {
-        "session_start",
-        "pre_turn",
-        "post_turn",
-        "pre_ask",
-        "post_ask",
-        "pre_tool",
-        "post_tool",
-    }
-)
-_HOOK_GATE_EVENTS = frozenset({"session_start", "pre_turn", "pre_ask", "pre_tool"})
-
-
 def _validate_register_hook(graph: ApxmGraph) -> list[str]:
     """AIR validation for REGISTER_HOOK nodes (T042).
 
@@ -590,15 +583,15 @@ def _validate_register_hook(graph: ApxmGraph) -> list[str]:
         if node.op != "REGISTER_HOOK":
             continue
         event = node.attributes.get(c.HOOK_EVENT)
-        if not isinstance(event, str) or event not in _HOOK_LIFECYCLE_EVENTS:
-            valid = ", ".join(sorted(_HOOK_LIFECYCLE_EVENTS))
+        if not isinstance(event, str) or event not in LIFECYCLE_EVENTS:
+            valid = ", ".join(sorted(LIFECYCLE_EVENTS))
             errors.append(
                 f"node '{node.name}' (REGISTER_HOOK) has unknown hook_event "
                 f"{event!r}; expected one of {valid}"
             )
             continue
-        mode = node.attributes.get(c.HOOK_MODE, "observe")
-        if mode == "gate" and event not in _HOOK_GATE_EVENTS:
+        mode = node.attributes.get(c.HOOK_MODE, HookMode.OBSERVE.value)
+        if mode == HookMode.GATE.value and event not in GATE_LIFECYCLE_EVENTS:
             errors.append(
                 f"node '{node.name}' (REGISTER_HOOK) uses gate mode on non-pre "
                 f"event {event!r}; gate is only valid on pre-execution events"

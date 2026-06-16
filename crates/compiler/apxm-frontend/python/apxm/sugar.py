@@ -7,6 +7,7 @@ from typing import TYPE_CHECKING, Any, Mapping
 
 from . import constants as graph_keys
 from ._generated.operations import ASK, REASON, THINK, OpSpec
+from .constants import DependencyType
 from .proxy import GraphRecorder, NodeRef
 
 if TYPE_CHECKING:
@@ -374,7 +375,7 @@ class Loop:
 
     def step(self, node: NodeRef) -> NodeRef:
         """Chain a body node into the current iteration (Control edge)."""
-        self._g.add_edge(self._last, node, dependency=graph_keys.DEPENDENCY_CONTROL)
+        self._g.add_edge(self._last, node, dependency=DependencyType.CONTROL)
         self._last = node
         return node
 
@@ -387,7 +388,7 @@ class Loop:
         # sequences into LOOP_END via a Control edge from the last body node.
         self._g.add_edge(self._start, end, dependency=graph_keys.DEPENDENCY_DATA)
         if self._last is not self._start:
-            self._g.add_edge(self._last, end, dependency=graph_keys.DEPENDENCY_CONTROL)
+            self._g.add_edge(self._last, end, dependency=DependencyType.CONTROL)
         self.end = end
 
 

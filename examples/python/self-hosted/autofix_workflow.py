@@ -15,7 +15,7 @@ Usage:
     dekk apxm execute examples/python/self-hosted/autofix_workflow.py "examples/python"
 """
 
-from apxm import GraphRecorder, agent_cwd, compile
+from apxm import DependencyType, GraphRecorder, agent_cwd, compile
 from apxm._generated.agents import claude, codex
 
 
@@ -78,7 +78,7 @@ Output JSON:
 If status is "pass", output {{"status": "pass", "clusters": []}}.
 """
     )
-    g.add_edge(print1, classify, dependency="Control")
+    g.add_edge(print1, classify, dependency=DependencyType.CONTROL)
 
     print2 = g.print(message="=== FAILURE CLASSIFICATION ===\n{classify}")
 
@@ -111,7 +111,7 @@ If there are no import_error failures, output "No import errors to fix".
 Report what you fixed and verification results.
 """
     )
-    g.add_edge(print2, fix_import_task, dependency="Control")
+    g.add_edge(print2, fix_import_task, dependency=DependencyType.CONTROL)
 
     fix_mlir_task = g.ask(
         name="build_fix_mlir_task",
@@ -132,7 +132,7 @@ If there are no mlir_parse_error failures, output "No MLIR errors to fix".
 Report what you fixed and verification results.
 """
     )
-    g.add_edge(print2, fix_mlir_task, dependency="Control")
+    g.add_edge(print2, fix_mlir_task, dependency=DependencyType.CONTROL)
 
     fix_compile_task = g.ask(
         name="build_fix_compile_task",
@@ -153,7 +153,7 @@ If there are no compile_error failures, output "No compile errors to fix".
 Report what you fixed and verification results.
 """
     )
-    g.add_edge(print2, fix_compile_task, dependency="Control")
+    g.add_edge(print2, fix_compile_task, dependency=DependencyType.CONTROL)
 
     # All fixers work in parallel
     import_fixes = fixer1.ask("{fix_import_task}")
@@ -173,9 +173,9 @@ Report what you fixed and verification results.
         mlir_fixes,
         compile_fixes
     )
-    g.add_edge(print3, wait, dependency="Control")
-    g.add_edge(print4, wait, dependency="Control")
-    g.add_edge(print5, wait, dependency="Control")
+    g.add_edge(print3, wait, dependency=DependencyType.CONTROL)
+    g.add_edge(print4, wait, dependency=DependencyType.CONTROL)
+    g.add_edge(print5, wait, dependency=DependencyType.CONTROL)
 
     # Step 6: Run final verification
     verifier = g.spawn("verifier", profile=claude, cwd=cwd)
@@ -187,7 +187,7 @@ Execute:
 
 Report the results (pass/fail counts, any remaining issues).
 """)
-    g.add_edge(wait, verify_result, dependency="Control")
+    g.add_edge(wait, verify_result, dependency=DependencyType.CONTROL)
 
     print6 = g.print(message="=== VERIFICATION OUTPUT ===\n{verify_result}")
 
@@ -217,7 +217,7 @@ Report:
 If status is partial or failed, list remaining issues and suggested next steps.
 """
     )
-    g.add_edge(print6, report, dependency="Control")
+    g.add_edge(print6, report, dependency=DependencyType.CONTROL)
 
     print7 = g.print(message="=== AUTOFIX REPORT ===\n{report}")
 

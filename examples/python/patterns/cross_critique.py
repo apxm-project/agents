@@ -7,7 +7,7 @@ True diamond dataflow with cross-agent context passing.
 Usage: dekk apxm execute examples/python/patterns/cross_critique.py
 """
 
-from apxm import GraphRecorder, agent_cwd, compile
+from apxm import DependencyType, GraphRecorder, agent_cwd, compile
 from apxm._generated.agents import claude, codex
 
 
@@ -39,7 +39,7 @@ def cross_critique_pipeline(g: GraphRecorder):
         "Is it feasible? Is it truly the most impactful? What's missing? Under 100 words.\n\n"
         "Claude's proposal:\n{claude_proposal}"
     )
-    g.add_edge(print1, codex_critique_prompt, dependency="Control")
+    g.add_edge(print1, codex_critique_prompt, dependency=DependencyType.CONTROL)
 
     claude_critique_prompt = g.ask(
         name="build_claude_critique",
@@ -47,7 +47,7 @@ def cross_critique_pipeline(g: GraphRecorder):
         "Is it feasible? Is it truly the most impactful? What's missing? Under 100 words.\n\n"
         "Codex's proposal:\n{codex_proposal}"
     )
-    g.add_edge(print1, claude_critique_prompt, dependency="Control")
+    g.add_edge(print1, claude_critique_prompt, dependency=DependencyType.CONTROL)
 
     # Send cross-critiques
     codex_critiques = agent_b.ask("{codex_critique_prompt}")

@@ -23,6 +23,7 @@ from typing import Any
 
 from . import constants as graph_keys
 from .agent import Agent
+from .constants import DependencyType
 from .hooks import HookFn, hook_descriptor
 from .ir import ValidationResult, emit_multi_flow_module, validate_against_apxm
 from .proxy import GraphRecorder
@@ -275,7 +276,7 @@ class ConversationalAgent:
             **ask_attrs,
         )
         for reg in registrations:
-            turn.add_edge(reg, answer, dependency=graph_keys.DEPENDENCY_CONTROL)
+            turn.add_edge(reg, answer, dependency=DependencyType.CONTROL)
 
         # Cross-turn memory is genuine and automatic: the runtime records the
         # assistant answer per turn (ConversationMemoryMiddleware) and the user
@@ -334,7 +335,7 @@ class ConversationalAgent:
             # Hooks register before the loop arms (session_start can gate); the
             # recv anchor is the func exit (it re-arms for the session's life).
             for hn in hook_nodes:
-                entry.add_edge(hn, loop_node, dependency=graph_keys.DEPENDENCY_CONTROL)
+                entry.add_edge(hn, loop_node, dependency=DependencyType.CONTROL)
             _ = loop_node
         else:
             # loop="host": the thin host owns the outer loop; the entry IS the
@@ -345,7 +346,7 @@ class ConversationalAgent:
                 flow_name="turn",
             )
             for hn in hook_nodes:
-                entry.add_edge(hn, run_turn, dependency=graph_keys.DEPENDENCY_CONTROL)
+                entry.add_edge(hn, run_turn, dependency=DependencyType.CONTROL)
             entry.done(source=run_turn)
 
         return entry
@@ -371,7 +372,7 @@ class ConversationalAgent:
             **ask_attrs,
         )
         for reg in registrations:
-            rec.add_edge(reg, answer, dependency=graph_keys.DEPENDENCY_CONTROL)
+            rec.add_edge(reg, answer, dependency=DependencyType.CONTROL)
         rec.done(source=answer)
         return rec
 

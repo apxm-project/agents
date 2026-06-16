@@ -15,6 +15,8 @@ if TYPE_CHECKING:
 from apxm._generated import constants as c
 from . import constants as graph_keys
 from .config import AgentConfig, NodePolicy, WorkflowTargetKind
+from .constants import DependencyType, normalize_dependency_type
+from .hooks import HookMode, LifecycleEvent, normalize_hook_mode, normalize_lifecycle_event
 from .normalize import normalize_model_id as _normalize_model_id
 from .normalize import normalize_attributes as _normalize_attributes
 from .normalize import normalize_provider_spec as _normalize_provider_spec
@@ -87,10 +89,14 @@ class GraphRecorder:
         self,
         from_ref: NodeRef,
         to_ref: NodeRef,
-        dependency: str = graph_keys.DEPENDENCY_DATA,
+        dependency: DependencyType | str = DependencyType.DATA,
     ) -> None:
         self._edges.append(
-            GraphEdge(from_id=from_ref._node_id, to_id=to_ref._node_id, dependency=dependency)
+            GraphEdge(
+                from_id=from_ref._node_id,
+                to_id=to_ref._node_id,
+                dependency=normalize_dependency_type(dependency),
+            )
         )
 
     def _resolve_template_refs(
@@ -438,11 +444,11 @@ class GraphRecorder:
         self,
         name: str | None = None,
         *,
-        event: str | None = None,
+        event: LifecycleEvent | str | None = None,
         handler_id: str | None = None,
         fn: Any | None = None,
         match: str = "*",
-        mode: str = "observe",
+        mode: HookMode | str = HookMode.OBSERVE,
         **attributes: Any,
     ) -> NodeRef:
         """Register an author lifecycle hook (REGISTER_HOOK).
@@ -459,6 +465,8 @@ class GraphRecorder:
         """
         if event is None:
             raise ValueError("register_hook() missing required keyword argument: 'event'")
+        event_value = normalize_lifecycle_event(event)
+        mode_value = normalize_hook_mode(mode)
         if fn is not None:
             # Accept a HookFn (has .handler_id + .fn) or a raw callable.
             raw = getattr(fn, "fn", fn)
@@ -472,9 +480,9 @@ class GraphRecorder:
         if name is None:
             name = self._auto_name(graph_keys.OP_REGISTER_HOOK)
         attrs: dict[str, Any] = {
-            graph_keys.HOOK_EVENT: event,
+            graph_keys.HOOK_EVENT: event_value,
             graph_keys.HOOK_MATCH: match,
-            graph_keys.HOOK_MODE: mode,
+            graph_keys.HOOK_MODE: mode_value,
             graph_keys.PYTHON_HOOK_HANDLER_ID: handler_id,
         }
         attrs = self._apply_policy(attrs, attributes)
@@ -580,7 +588,7 @@ class GraphRecorder:
         self.add_edge(
             registration,
             invocation,
-            dependency=graph_keys.DEPENDENCY_CONTROL,
+            dependency=DependencyType.CONTROL,
         )
         return invocation
 

@@ -49,6 +49,7 @@ from apxm.constants import (
     PYTHON_TOOL_MANIFEST_QUALNAME,
     PYTHON_TOOL_MANIFEST_SOURCE_FILE,
 )
+from apxm.hooks import LifecycleEvent
 
 # Protocol version understood by this worker.
 WIRE_VERSION: Final[int] = 1
@@ -400,15 +401,15 @@ class _HookCtx:
 
 def _invoke_hook(fn: Any, event: str, payload: dict[str, Any], req_id: str = "") -> Any:
     ctx = _HookCtx(payload, req_id)
-    if event in ("session_start", "pre_ask"):
+    if event in (LifecycleEvent.SESSION_START.value, LifecycleEvent.PRE_ASK.value):
         ret = fn(ctx)
-    elif event == "pre_tool":
+    elif event == LifecycleEvent.PRE_TOOL.value:
         call = payload.get("call", {})
         ret = fn(ctx, _HookCall(call.get("name", ""), call.get("args", {})))
-    elif event == "post_tool":
+    elif event == LifecycleEvent.POST_TOOL.value:
         call = payload.get("call", {})
         ret = fn(ctx, _HookCall(call.get("name", ""), {}), payload.get("result"))
-    elif event in ("post_ask", "post_turn"):
+    elif event in (LifecycleEvent.POST_ASK.value, LifecycleEvent.POST_TURN.value):
         ret = fn(ctx, payload.get("reply"))
     else:  # pre_turn and any future ctx-only event
         ret = fn(ctx)

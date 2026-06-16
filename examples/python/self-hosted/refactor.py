@@ -15,7 +15,7 @@ Usage:
       "apxm-runtime" "Extract scheduler into its own module"
 """
 
-from apxm import GraphRecorder, agent_cwd, compile
+from apxm import DependencyType, GraphRecorder, agent_cwd, compile
 from apxm._generated.agents import claude, codex
 
 
@@ -99,7 +99,7 @@ After all changes:
 Be methodical. If something doesn't compile, fix it before moving on.
 """
     )
-    g.add_edge(print1, implementer_task, dependency="Control")
+    g.add_edge(print1, implementer_task, dependency=DependencyType.CONTROL)
 
     impl_result = implementer.ask("{implementer_task}")
 
@@ -142,7 +142,7 @@ If there are failures:
 Keep iterating until all tests pass.
 """
     )
-    g.add_edge(print2, test_task, dependency="Control")
+    g.add_edge(print2, test_task, dependency=DependencyType.CONTROL)
 
     test_result = test_runner.ask("{test_task}")
 
@@ -172,7 +172,7 @@ Summary:
 If status is incomplete or failed, list remaining issues.
 """
     )
-    g.add_edge(print3, summary, dependency="Control")
+    g.add_edge(print3, summary, dependency=DependencyType.CONTROL)
 
     print4 = g.print(message="=== REFACTORING SUMMARY ===\n{summary}")
 

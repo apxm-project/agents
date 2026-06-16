@@ -16,27 +16,51 @@ from __future__ import annotations
 
 import hashlib
 from dataclasses import dataclass, field
+from enum import Enum
 from typing import Any, Callable
 
-# Lifecycle events a `@hook` can bind to (data-model.md / contracts/python-api.md).
-LIFECYCLE_EVENTS: frozenset[str] = frozenset(
+
+class LifecycleEvent(str, Enum):
+    SESSION_START = "session_start"
+    PRE_TURN = "pre_turn"
+    POST_TURN = "post_turn"
+    PRE_ASK = "pre_ask"
+    POST_ASK = "post_ask"
+    PRE_TOOL = "pre_tool"
+    POST_TOOL = "post_tool"
+
+
+class HookMode(str, Enum):
+    OBSERVE = "observe"
+    GATE = "gate"
+
+
+LIFECYCLE_EVENTS: frozenset[str] = frozenset(event.value for event in LifecycleEvent)
+GATE_LIFECYCLE_EVENTS: frozenset[str] = frozenset(
     {
-        "session_start",
-        "pre_turn",
-        "post_turn",
-        "pre_ask",
-        "post_ask",
-        "pre_tool",
-        "post_tool",
+        LifecycleEvent.SESSION_START.value,
+        LifecycleEvent.PRE_TURN.value,
+        LifecycleEvent.PRE_ASK.value,
+        LifecycleEvent.PRE_TOOL.value,
     }
 )
+HOOK_MODES: frozenset[str] = frozenset(mode.value for mode in HookMode)
 
-# Only `pre_*` events can gate because later hooks observe after side effects.
-_GATE_EVENTS: frozenset[str] = frozenset(
-    {"session_start", "pre_turn", "pre_ask", "pre_tool"}
-)
 
-HOOK_MODES: frozenset[str] = frozenset({"observe", "gate"})
+def normalize_lifecycle_event(value: LifecycleEvent | str) -> str:
+    if isinstance(value, LifecycleEvent):
+        return value.value
+    if isinstance(value, str):
+        return value
+    raise TypeError("hook event must be a LifecycleEvent or string")
+
+
+def normalize_hook_mode(value: HookMode | str) -> str:
+    if isinstance(value, HookMode):
+        return value.value
+    if isinstance(value, str):
+        return value
+    raise TypeError("hook mode must be a HookMode or string")
 
 
 def _make_handler_id(fn: Callable[..., Any]) -> str:
@@ -74,9 +98,9 @@ class HookFn:
 
 def hook(
     *,
-    on: str,
+    on: LifecycleEvent | str,
     match: str = "*",
-    mode: str = "observe",
+    mode: HookMode | str = HookMode.OBSERVE,
 ) -> Callable[[Callable[..., Any]], HookFn]:
     """Bind a Python callable to a conversational lifecycle event.
 
@@ -85,16 +109,18 @@ def hook(
         match: Glob over the tool/op name the hook applies to (default ``*``).
         mode: ``observe`` (default) or ``gate`` (allow/deny/edit; ``pre_*`` only).
     """
-    if on not in LIFECYCLE_EVENTS:
+    event_value = normalize_lifecycle_event(on)
+    mode_value = normalize_hook_mode(mode)
+    if event_value not in LIFECYCLE_EVENTS:
         valid = ", ".join(sorted(LIFECYCLE_EVENTS))
-        raise ValueError(f"@hook(on={on!r}) is not a valid event; expected one of: {valid}")
-    if mode not in HOOK_MODES:
+        raise ValueError(f"@hook(on={event_value!r}) is not a valid event; expected one of: {valid}")
+    if mode_value not in HOOK_MODES:
         valid = ", ".join(sorted(HOOK_MODES))
-        raise ValueError(f"@hook(mode={mode!r}) invalid; expected one of: {valid}")
-    if mode == "gate" and on not in _GATE_EVENTS:
+        raise ValueError(f"@hook(mode={mode_value!r}) invalid; expected one of: {valid}")
+    if mode_value == HookMode.GATE.value and event_value not in GATE_LIFECYCLE_EVENTS:
         raise ValueError(
-            f"@hook(on={on!r}, mode='gate') is invalid; gate mode is only "
-            f"permitted on pre-execution events: {', '.join(sorted(_GATE_EVENTS))}"
+            f"@hook(on={event_value!r}, mode='gate') is invalid; gate mode is only "
+            f"permitted on pre-execution events: {', '.join(sorted(GATE_LIFECYCLE_EVENTS))}"
         )
 
     def _wrap(fn: Callable[..., Any]) -> HookFn:
@@ -106,9 +132,9 @@ def hook(
         _TOOL_REGISTRY[handler_id] = fn
         return HookFn(
             fn=fn,
-            event=on,
+            event=event_value,
             match=match,
-            mode=mode,
+            mode=mode_value,
             handler_id=handler_id,
             name=getattr(fn, "__name__", "hook"),
         )
@@ -137,4 +163,15 @@ def hook_descriptor(h: HookFn) -> dict[str, Any]:
     return descriptor
 
 
-__all__ = ["HookFn", "LIFECYCLE_EVENTS", "HOOK_MODES", "hook", "hook_descriptor"]
+__all__ = [
+    "GATE_LIFECYCLE_EVENTS",
+    "HookFn",
+    "HookMode",
+    "HOOK_MODES",
+    "LifecycleEvent",
+    "LIFECYCLE_EVENTS",
+    "hook",
+    "hook_descriptor",
+    "normalize_hook_mode",
+    "normalize_lifecycle_event",
+]

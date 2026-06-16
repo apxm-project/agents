@@ -10,7 +10,7 @@ Usage:
   dekk apxm execute examples/python/multi-provider/model_routing.py
 """
 
-from apxm import GraphRecorder, compile
+from apxm import DependencyType, GraphRecorder, compile
 from apxm.backends import select_backend
 
 
@@ -80,7 +80,7 @@ def model_routing(g: GraphRecorder):
         "SOLUTION:\n{solution}\n\n"
         "RESPONSE:\n{response}"
     )
-    g.add_edge(output, report, dependency="Control")
+    g.add_edge(output, report, dependency=DependencyType.CONTROL)
     g.done(report)
 
 
