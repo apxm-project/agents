@@ -61,6 +61,13 @@ def test_ctx_count_tokens_convenience(monkeypatch):
     assert ctx.count_tokens("some text") == 7
 
 
+def test_ctx_count_tokens_decodes_apxm_value_wrappers(monkeypatch):
+    for wrapped in ({"Integer": 7}, {"Number": {"Integer": 7}}, {"value": "7"}):
+        _fake_runtime(monkeypatch, {tw.HOST_METHOD_TOOL_CALL: (True, wrapped, None)})
+        ctx = tw._HookCtx({}, req_id="r1")
+        assert ctx.count_tokens("some text") == 7
+
+
 def test_ctx_recall_reads_user_key(monkeypatch):
     cap = _fake_runtime(monkeypatch, {tw.HOST_METHOD_MEM_READ: (True, "prior summary", None)})
     ctx = tw._HookCtx({}, req_id="r1")

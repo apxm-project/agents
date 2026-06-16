@@ -55,14 +55,10 @@ pub async fn execute(ctx: &ExecutionContext, node: &Node, _inputs: Vec<Value>) -
         "Executing SPAWN_AGENT operation"
     );
 
-    // Check if agent already exists in either the flow registry or process table
-    let existing_flows = ctx.flow_registry.flows_for_agent(&agent_name);
-    if !existing_flows.is_empty() {
-        return Err(RuntimeError::Operation {
-            op_type: node.op_type,
-            message: format!("Agent '{}' already exists in the flow registry", agent_name),
-        });
-    }
+    // The flow registry is seeded with compiled sibling flows before execution;
+    // those flows are not live processes, so they are allowed to share the
+    // SPAWN_AGENT name. The process table remains the live-process collision
+    // guard.
     if ctx.process_table.get_by_name(&agent_name).is_some() {
         return Err(RuntimeError::Operation {
             op_type: node.op_type,

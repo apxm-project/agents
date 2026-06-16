@@ -2397,6 +2397,7 @@ fn goal_worker_required_capabilities(worker: &WorkerSpec) -> Vec<String> {
             "workflow",
         ],
     ) {
+        push_capability(&mut capabilities, "planner");
         push_capability(&mut capabilities, "read");
         push_capability(&mut capabilities, "workflow_author");
     }
@@ -2404,6 +2405,11 @@ fn goal_worker_required_capabilities(worker: &WorkerSpec) -> Vec<String> {
         &text,
         &["critic", "critique", "adversarial", "risk", "review"],
     ) {
+        if contains_any(&text, &["critic", "critique", "adversarial", "risk"]) {
+            push_capability(&mut capabilities, "critic");
+        } else {
+            push_capability(&mut capabilities, "reviewer");
+        }
         push_capability(&mut capabilities, "read");
         push_capability(&mut capabilities, "critique");
     }
@@ -2428,7 +2434,21 @@ fn goal_worker_required_capabilities(worker: &WorkerSpec) -> Vec<String> {
         &text,
         &["execute", "verify", "verifier", "test", "release", "ship"],
     ) {
+        push_capability(&mut capabilities, "verifier");
         push_capability(&mut capabilities, "execute");
+    }
+    if contains_any(
+        &text,
+        &[
+            "synthesizer",
+            "synthesize",
+            "synthesis",
+            "summarize",
+            "summary",
+        ],
+    ) {
+        push_capability(&mut capabilities, "synthesizer");
+        push_capability(&mut capabilities, "read");
     }
     if capabilities.is_empty() {
         push_capability(&mut capabilities, "read");
@@ -3684,6 +3704,67 @@ fn goal_prompt() -> Result<String, ApiError> {
     )
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn worker(id: &str, role: &str) -> WorkerSpec {
+        WorkerSpec {
+            id: id.to_string(),
+            role: Some(role.to_string()),
+            prompt: None,
+            profile: None,
+            transport: None,
+            depends_on: Vec::new(),
+            mode: None,
+            model: None,
+            required_capabilities: Vec::new(),
+            preferred_profiles: Vec::new(),
+        }
+    }
+
+    #[test]
+    fn infers_council_worker_route_capabilities() {
+        assert_eq!(
+            goal_worker_required_capabilities(&worker("planner", "planner")),
+            vec!["planner", "read", "workflow_author"]
+        );
+        assert_eq!(
+            goal_worker_required_capabilities(&worker("reviewer", "reviewer")),
+            vec!["reviewer", "read", "critique"]
+        );
+        assert_eq!(
+            goal_worker_required_capabilities(&worker("critic", "critic")),
+            vec!["critic", "read", "critique"]
+        );
+        assert_eq!(
+            goal_worker_required_capabilities(&worker("verifier", "verifier")),
+            vec!["verifier", "execute"]
+        );
+        assert_eq!(
+            goal_worker_required_capabilities(&worker("synthesizer", "synthesizer")),
+            vec!["synthesizer", "read"]
+        );
+    }
+
+    #[test]
+    fn normalizes_registered_council_route_capabilities() {
+        let worker = WorkerSpec {
+            required_capabilities: vec![
+                " Planner ".to_string(),
+                "critic".to_string(),
+                "synthesizer".to_string(),
+            ],
+            ..worker("planner", "planner")
+        };
+
+        assert_eq!(
+            goal_worker_required_capabilities(&worker),
+            vec!["critic", "planner", "synthesizer"]
+        );
+    }
+}
+
 fn goal_flowchart() -> Result<String, ApiError> {
     render_goal_template(TEMPLATE_GOAL_FLOWCHART, &serde_json::json!({}))
 }
@@ -3699,4 +3780,3 @@ fn mcp_json_tool_result<T: serde::Serialize>(id: JsonValue, value: T) -> Json<Js
     });
     mcp_tool_result(id, text, false)
 }
-

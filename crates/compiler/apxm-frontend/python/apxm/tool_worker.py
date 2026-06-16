@@ -259,6 +259,22 @@ def _deliver_host_result(msg: dict[str, Any]) -> None:
     q.put((ok, value, error))
 
 
+def _coerce_token_count(value: Any) -> int:
+    """Decode count_tokens results from bare JSON or APXM Value wrappers."""
+    if isinstance(value, bool) or value is None:
+        return 0
+    if isinstance(value, (int, float, str)):
+        try:
+            return int(value)
+        except (TypeError, ValueError):
+            return 0
+    if isinstance(value, dict):
+        for key in ("Integer", "Float", "number", "value", "Number"):
+            if key in value:
+                return _coerce_token_count(value[key])
+    return 0
+
+
 # ---------------------------------------------------------------------------
 # Request dispatch
 # ---------------------------------------------------------------------------
@@ -388,10 +404,8 @@ class _HookCtx:
     def count_tokens(self, text: str) -> int:
         """Estimate the token size of *text* via the count_tokens tool, so the
         user's hook can decide on a real measure rather than a char proxy."""
-        try:
-            return int(self.call("count_tokens", text=text))
-        except (TypeError, ValueError):
-            return 0
+        value = self.call("count_tokens", text=text)
+        return _coerce_token_count(value)
 
     def recall(self, key: str) -> Any:
         """Read a session-memory key the hook itself chose (e.g. its own rolling

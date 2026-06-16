@@ -9,8 +9,19 @@ use std::collections::{HashMap, HashSet};
 use thiserror::Error;
 
 /// Abstract capabilities for APXM agent routing.
-pub const AGENT_ROUTE_CAPABILITIES: &[&str] =
-    &["read", "write", "execute", "critique", "workflow_author"];
+pub const AGENT_ROUTE_CAPABILITIES: &[&str] = &[
+    "read",
+    "write",
+    "execute",
+    "critique",
+    "workflow_author",
+    // Role-level worker capabilities used by APXM goal/council routing.
+    "planner",
+    "reviewer",
+    "critic",
+    "verifier",
+    "synthesizer",
+];
 pub const AGENT_ROUTE_SELECTOR_DETERMINISTIC: &str = "deterministic";
 
 /// Candidate route discovered by a host from its agent registry.

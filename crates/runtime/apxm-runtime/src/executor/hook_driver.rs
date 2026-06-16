@@ -17,7 +17,7 @@ use std::collections::HashMap;
 use std::time::Duration;
 
 use apxm_core::error::RuntimeError;
-use apxm_core::types::Value;
+use apxm_core::types::values::{Number, Value};
 use serde_json::{Value as JsonValue, json};
 
 use super::ExecutionContext;
@@ -78,7 +78,7 @@ async fn host_tool_call(
         })
         .unwrap_or_default();
     match ctx.capability_system.invoke(name, args).await {
-        Ok(value) => Ok(serde_json::to_value(&value).unwrap_or(JsonValue::Null)),
+        Ok(value) => Ok(value_to_json(value)),
         Err(e) => Err(format!("tool '{name}' failed: {e}")),
     }
 }
@@ -187,6 +187,26 @@ fn json_to_value(v: JsonValue) -> Value {
         JsonValue::Object(m) => {
             Value::Object(m.into_iter().map(|(k, v)| (k, json_to_value(v))).collect())
         }
+    }
+}
+
+fn value_to_json(v: Value) -> JsonValue {
+    match v {
+        Value::Null => JsonValue::Null,
+        Value::Bool(b) => JsonValue::Bool(b),
+        Value::Number(Number::Integer(i)) => JsonValue::Number(i.into()),
+        Value::Number(Number::Float(f)) => {
+            serde_json::Number::from_f64(f).map_or(JsonValue::Null, JsonValue::Number)
+        }
+        Value::String(s) => JsonValue::String(s),
+        Value::Array(values) => JsonValue::Array(values.into_iter().map(value_to_json).collect()),
+        Value::Object(values) => JsonValue::Object(
+            values
+                .into_iter()
+                .map(|(key, value)| (key, value_to_json(value)))
+                .collect(),
+        ),
+        other => serde_json::to_value(&other).unwrap_or(JsonValue::Null),
     }
 }
 

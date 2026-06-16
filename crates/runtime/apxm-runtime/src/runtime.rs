@@ -567,12 +567,17 @@ impl Runtime {
         &self,
         artifact: Artifact,
     ) -> Result<RuntimeExecutionResult, RuntimeError> {
-        let python_bridge = python_tool_bridge_from_artifact(&artifact, self.python_worker_sandbox(), Self::python_sandbox_required())?;
+        let python_bridge = python_tool_bridge_from_artifact(
+            &artifact,
+            self.python_worker_sandbox(),
+            Self::python_sandbox_required(),
+        )?;
         let entry_dag = find_entry_dag(&artifact)?;
 
         let agents = reconstruct_agents_from_artifact(&artifact);
         let num_registered_agents = agents.len();
         let num_registered_flows: usize = agents.iter().map(|agent| agent.flows.len()).sum();
+        let artifact_flow_registry = Arc::new(FlowRegistry::new());
         for agent in agents {
             log_info!(
                 "runtime",
@@ -580,7 +585,7 @@ impl Runtime {
                 flows = agent.flows.len(),
                 "Auto-registering agent from artifact"
             );
-            self.flow_registry.register_agent(agent);
+            artifact_flow_registry.register_agent(agent);
         }
 
         log_info!(
@@ -597,6 +602,7 @@ impl Runtime {
 
         let context = self
             .build_context_with_bridge(None, None, None, python_bridge)
+            .with_flow_registry(artifact_flow_registry)
             .with_graph_id(graph_id_from_dag(&entry_dag));
         let dispatch_ir =
             graph_dispatch_ir_from_dag(&context.graph_id, &context.execution_id, &entry_dag);
@@ -833,12 +839,17 @@ impl Runtime {
             None
         };
 
-        let python_bridge = python_tool_bridge_from_artifact(&artifact, self.python_worker_sandbox(), Self::python_sandbox_required())?;
+        let python_bridge = python_tool_bridge_from_artifact(
+            &artifact,
+            self.python_worker_sandbox(),
+            Self::python_sandbox_required(),
+        )?;
         let entry_dag = find_entry_dag(&artifact)?;
         validate_args(&entry_dag, &args)?;
 
+        let artifact_flow_registry = Arc::new(FlowRegistry::new());
         for agent in reconstruct_agents_from_artifact(&artifact) {
-            self.flow_registry.register_agent(agent);
+            artifact_flow_registry.register_agent(agent);
         }
 
         let arg_values: Vec<Value> = args.into_iter().map(Value::String).collect();
@@ -854,6 +865,7 @@ impl Runtime {
 
         let mut context = self
             .build_context_with_bridge(session_id, event_emitter, session_dir, python_bridge)
+            .with_flow_registry(artifact_flow_registry)
             .with_graph_id(graph_id_from_dag(&entry_dag));
         if let Some(cancellation_token) = cancellation_token {
             context = context.with_cancellation_token(cancellation_token);
@@ -1269,5 +1281,74 @@ fn parse_flow_name(name: &str) -> (String, String) {
         (agent.to_string(), flow.to_string())
     } else {
         ("default".to_string(), name.to_string())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use apxm_artifact::ArtifactMetadata;
+    use apxm_core::constants::graph::attrs as graph_attrs;
+    use apxm_core::types::{AISOperationType, DagMetadata, Node, Value};
+
+    fn artifact(dags: Vec<ExecutionDag>) -> Artifact {
+        Artifact::new(
+            ArtifactMetadata::new(Some("test".to_string()), "test"),
+            dags,
+        )
+    }
+
+    fn single_node_dag(name: &str, is_entry: bool, mut node: Node) -> ExecutionDag {
+        let node_id = node.id;
+        if node.output_tokens.is_empty() {
+            node.add_output_token(node_id);
+        }
+        ExecutionDag {
+            nodes: vec![node],
+            edges: Vec::new(),
+            entry_nodes: vec![node_id],
+            exit_nodes: vec![node_id],
+            metadata: DagMetadata {
+                name: Some(name.to_string()),
+                is_entry,
+                parameters: Vec::new(),
+            },
+        }
+    }
+
+    #[tokio::test]
+    async fn artifact_flow_registry_is_execution_scoped() {
+        let runtime = Runtime::new(RuntimeConfig::in_memory()).await.unwrap();
+
+        let stale_researcher_artifact = artifact(vec![
+            single_node_dag("main", true, Node::new(1, AISOperationType::Nop)),
+            single_node_dag(
+                "researcher.main",
+                false,
+                Node::new(2, AISOperationType::Nop),
+            ),
+        ]);
+        runtime
+            .execute_artifact_with_args(stale_researcher_artifact, Vec::new())
+            .await
+            .unwrap();
+        assert!(
+            runtime
+                .flow_registry()
+                .flows_for_agent("researcher")
+                .is_empty()
+        );
+
+        let mut spawn = Node::new(1, AISOperationType::SpawnAgent);
+        spawn.set_attribute(
+            graph_attrs::AGENT_NAME.to_string(),
+            Value::String("researcher".to_string()),
+        );
+        let spawn_artifact = artifact(vec![single_node_dag("main", true, spawn)]);
+
+        runtime
+            .execute_artifact_with_args(spawn_artifact, Vec::new())
+            .await
+            .unwrap();
     }
 }
