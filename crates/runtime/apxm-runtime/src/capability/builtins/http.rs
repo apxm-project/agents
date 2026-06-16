@@ -235,7 +235,10 @@ impl HttpGetCapability {
             )
             .with_returns("string")
             .with_read_only()
-            .with_groups(vec!["http".to_string(), "web".to_string()])
+            .with_groups(vec![
+                capabilities::groups::HTTP.to_string(),
+                capabilities::groups::WEB.to_string(),
+            ])
             .with_latency(300),
         }
     }
@@ -255,7 +258,6 @@ impl CapabilityExecutor for HttpGetCapability {
         &self.metadata
     }
 }
-
 
 /// `http_post(url, body?, headers?)` — POST a JSON/string body, return the body.
 pub struct HttpPostCapability {
@@ -285,7 +287,10 @@ impl HttpPostCapability {
                 }),
             )
             .with_returns("string")
-            .with_groups(vec!["http".to_string(), "web".to_string()])
+            .with_groups(vec![
+                capabilities::groups::HTTP.to_string(),
+                capabilities::groups::WEB.to_string(),
+            ])
             .with_latency(400),
         }
     }

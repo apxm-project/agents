@@ -999,17 +999,12 @@ fn validate_raw_llm_tool_exposure(
     validate_read_only_tool_names(&requested_tools, state, in_artifact_caps)
 }
 
-/// The authoring tool group (Goal 1): write-class capabilities SAFE to *expose*
-/// on an ASK node because their *execution* is still gated by the write boundary
-/// (admit_capabilities) and confined to a staging area — workflow-scoped
-/// admission. Exposing them lets the conversational agent propose authoring and
-/// running a workflow; doing so still needs an explicit grant.
-const AUTHORING_GROUP: &str = "authoring";
-
 /// An ASK node may expose a capability if it is read-only OR an admit-gated
 /// authoring capability.
 fn ask_exposable_groups(groups: &[String]) -> bool {
-    groups.iter().any(|g| g == AUTHORING_GROUP)
+    groups
+        .iter()
+        .any(|g| g == apxm_core::constants::capabilities::groups::AUTHORING)
 }
 
 fn validate_raw_ask_group_or_all_tools(node: &Node, state: &AppState) -> Result<(), ApiError> {

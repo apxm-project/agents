@@ -1,5 +1,13 @@
-from apxm import DependencyType, GraphEdge, GraphRecorder, HookMode, LifecycleEvent, hook
-from apxm.constants import DEPENDENCY_CONTROL, DEPENDENCY_DATA, PARAMS_JSON
+from apxm import DependencyType, GraphEdge, GraphRecorder, HookMode, LifecycleEvent, ToolGroup, hook
+from apxm.constants import (
+    CAPABILITY,
+    CAPABILITY_SEARCH_SKILLS,
+    DEPENDENCY_CONTROL,
+    DEPENDENCY_DATA,
+    PARAMS_JSON,
+    TOOL_GROUPS,
+    TOOL_GROUP_WEB,
+)
 from apxm.ir import validate_against_apxm
 
 
@@ -55,4 +63,15 @@ def test_skill_search_lowers_query_to_search_skills_request():
 
     graph = g.to_graph()
     attrs = graph.nodes[node._node_id - 1].attributes
+    assert attrs[CAPABILITY] == CAPABILITY_SEARCH_SKILLS
     assert attrs[PARAMS_JSON] == '{"request": "review module boundaries"}'
+
+
+def test_tool_group_enum_normalizes_to_wire_value():
+    g = GraphRecorder("tool_group_contract")
+
+    node = g.ask(prompt="hello", tool_groups=[ToolGroup.WEB])
+
+    graph = g.to_graph()
+    attrs = graph.nodes[node._node_id - 1].attributes
+    assert attrs[TOOL_GROUPS] == [TOOL_GROUP_WEB]

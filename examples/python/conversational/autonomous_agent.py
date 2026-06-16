@@ -13,7 +13,7 @@ Validate without a server:
         python3 examples/python/conversational/autonomous_agent.py --validate
 """
 
-from apxm import GraphRecorder, compile
+from apxm import GraphRecorder, ToolGroup, compile
 
 PERSONA = (
     "You are APXM Assistant, a precise, autonomous agent. Pursue the goal step "
@@ -28,7 +28,7 @@ def autonomous_agent(g: GraphRecorder, goal: str):
     result = g.autonomous(
         prompt=f"{PERSONA}\n\nGoal: {{goal}}",
         max_iterations=8,
-        tool_groups=["web", "skills"],
+        tool_groups=[ToolGroup.WEB, ToolGroup.SKILLS],
     )
     g.done(result)
 

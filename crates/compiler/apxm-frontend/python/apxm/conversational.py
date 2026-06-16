@@ -23,7 +23,7 @@ from typing import Any
 
 from . import constants as graph_keys
 from .agent import Agent
-from .constants import DependencyType
+from .constants import DependencyType, ToolGroup, normalize_tool_group
 from .hooks import HookFn, hook_descriptor
 from .ir import ValidationResult, emit_multi_flow_module, validate_against_apxm
 from .proxy import GraphRecorder
@@ -114,7 +114,7 @@ class ConversationalAgent:
         persona: str,
         memory_space: str = "stm",
         tools: list[FunctionTool] | None = None,
-        tool_groups: list[str] | None = None,
+        tool_groups: list[ToolGroup | str] | None = None,
         skills: bool = False,
         sub_agents: list[Agent] | None = None,
         compaction: CompactionPolicy | None = None,
@@ -126,7 +126,7 @@ class ConversationalAgent:
         self.persona = persona
         self.memory_space = memory_space
         self.tools = list(tools or [])
-        self.tool_groups = list(tool_groups or [])
+        self.tool_groups = [normalize_tool_group(group) for group in (tool_groups or [])]
         self.skills = skills
         self.sub_agents = list(sub_agents or [])
         self.compaction = compaction
@@ -265,7 +265,7 @@ class ConversationalAgent:
         # description (constitution: real capability, no stub).
         groups = list(self.tool_groups)
         if self.skills:
-            groups.append("skills")
+            groups.append(ToolGroup.SKILLS.value)
         if groups:
             ask_attrs["tool_groups"] = groups
 

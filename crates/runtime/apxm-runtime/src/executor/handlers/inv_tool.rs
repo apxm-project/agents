@@ -164,6 +164,11 @@ pub async fn execute(ctx: &ExecutionContext, node: &Node, inputs: Vec<Value>) ->
                 .to_string(),
         });
     }
+    super::llm::tool_dispatch::inject_visible_skill_imports(
+        &capability_name,
+        &mut args,
+        &ctx.metadata,
+    );
 
     // Check cancellation before expensive capability invocation
     if ctx.cancellation_token.is_cancelled() {
@@ -176,12 +181,15 @@ pub async fn execute(ctx: &ExecutionContext, node: &Node, inputs: Vec<Value>) ->
     // capabilities (FR-004, constitution #5). A deny / gate failure does NOT
     // fail the node: the turn continues gracefully with a denial message (m4,
     // matching the LLM tool-loop's graceful `ToolResult::error`).
-    let args = match crate::executor::hook_driver::run_pre_tool_hooks(ctx, &capability_name, args)
-        .await
-    {
-        Ok(edited) => edited,
-        Err(e) => return Ok(Value::String(format!("[tool '{capability_name}' blocked: {e}]"))),
-    };
+    let args =
+        match crate::executor::hook_driver::run_pre_tool_hooks(ctx, &capability_name, args).await {
+            Ok(edited) => edited,
+            Err(e) => {
+                return Ok(Value::String(format!(
+                    "[tool '{capability_name}' blocked: {e}]"
+                )));
+            }
+        };
 
     // Python branch is taken iff `bind-tool-handlers` stamped a handler id.
     let raw = if let Some(handler_id) = python_handler_id {
@@ -224,7 +232,8 @@ pub async fn execute(ctx: &ExecutionContext, node: &Node, inputs: Vec<Value>) ->
         outcome
     };
     // post_tool hooks (replace_result) for both paths.
-    let result = crate::executor::hook_driver::run_post_tool_hooks(ctx, &capability_name, raw).await;
+    let result =
+        crate::executor::hook_driver::run_post_tool_hooks(ctx, &capability_name, raw).await;
 
     tracing::info!(
         capability = %capability_name,
@@ -322,4 +331,3 @@ fn json_to_value(v: serde_json::Value) -> Result<Value> {
         }
     }
 }
-

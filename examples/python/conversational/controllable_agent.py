@@ -16,7 +16,16 @@ Compile to one self-contained multi-flow artifact:
         --emit-air > agent.air
 """
 
-from apxm import Agent, CompactionPolicy, ConversationalAgent, HookMode, LifecycleEvent, hook, tool
+from apxm import (
+    Agent,
+    CompactionPolicy,
+    ConversationalAgent,
+    HookMode,
+    LifecycleEvent,
+    ToolGroup,
+    hook,
+    tool,
+)
 
 
 # ---- tools & sub-agents (server-path callable via PythonToolBridge) ----------
@@ -105,7 +114,7 @@ agent = ConversationalAgent(
     persona="You are APXM Assistant. Be precise and concise.",
     memory_space="stm",
     tools=[lookup],
-    tool_groups=["web"],
+    tool_groups=[ToolGroup.WEB],
     skills=True,  # real search_skills discovery
     sub_agents=[researcher],  # resolved in the SAME artifact
     compaction=COMPACTION,  # same object the compact() hook reads — keys agree

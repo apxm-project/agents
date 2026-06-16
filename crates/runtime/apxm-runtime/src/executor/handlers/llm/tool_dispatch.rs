@@ -6,6 +6,7 @@ use super::{
 };
 use apxm_backends::{LLMRequest, ToolChoice, ToolDefinition};
 use apxm_core::apxm_llm;
+use apxm_core::constants::capabilities;
 use apxm_core::constants::graph::attrs as graph_attrs;
 use apxm_core::constants::runtime::belief_keys;
 use apxm_core::error::RuntimeError;
@@ -174,6 +175,28 @@ fn delegate_tool_definition() -> ToolDefinition {
     )
 }
 
+pub(crate) fn inject_visible_skill_imports(
+    tool_name: &str,
+    args: &mut HashMap<String, Value>,
+    metadata: &HashMap<String, String>,
+) {
+    if tool_name != capabilities::SEARCH_SKILLS || args.contains_key("imports") {
+        return;
+    }
+    let Some(visible) = metadata.get(crate::metadata_keys::VISIBLE_SKILLS) else {
+        return;
+    };
+    let imports: Vec<Value> = visible
+        .split(',')
+        .map(str::trim)
+        .filter(|item| !item.is_empty())
+        .map(|item| Value::String(item.to_string()))
+        .collect();
+    if !imports.is_empty() {
+        args.insert("imports".to_string(), Value::Array(imports));
+    }
+}
+
 /// Execute a single tool call.
 ///
 /// Dispatch order:
@@ -261,13 +284,14 @@ async fn execute_tool_call(
         "Executing tool call"
     );
 
-    let args: HashMap<String, Value> = match &tool_call.args {
+    let mut args: HashMap<String, Value> = match &tool_call.args {
         serde_json::Value::Object(obj) => obj
             .iter()
             .map(|(k, v)| (k.clone(), json_to_value(v)))
             .collect(),
         _ => HashMap::new(),
     };
+    inject_visible_skill_imports(&tool_call.name, &mut args, &ctx.metadata);
 
     if let Some(emitter) = &ctx.event_emitter {
         emitter.emit_tool_start(&tool_call.name, &args);
@@ -734,4 +758,64 @@ pub(crate) async fn execute_ask_with_tools(
         ),
         backend: None,
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn visible_metadata(value: &str) -> HashMap<String, String> {
+        HashMap::from([(
+            crate::metadata_keys::VISIBLE_SKILLS.to_string(),
+            value.to_string(),
+        )])
+    }
+
+    #[test]
+    fn search_skills_inherits_execution_visible_imports() {
+        let mut args = HashMap::from([("request".to_string(), Value::String("review".into()))]);
+
+        inject_visible_skill_imports(
+            capabilities::SEARCH_SKILLS,
+            &mut args,
+            &visible_metadata("support, engineering,,docs "),
+        );
+
+        assert_eq!(
+            args.get("imports"),
+            Some(&Value::Array(vec![
+                Value::String("support".into()),
+                Value::String("engineering".into()),
+                Value::String("docs".into()),
+            ]))
+        );
+    }
+
+    #[test]
+    fn explicit_search_skills_imports_are_preserved() {
+        let mut args = HashMap::from([(
+            "imports".to_string(),
+            Value::Array(vec![Value::String("security".into())]),
+        )]);
+
+        inject_visible_skill_imports(
+            capabilities::SEARCH_SKILLS,
+            &mut args,
+            &visible_metadata("support,engineering"),
+        );
+
+        assert_eq!(
+            args.get("imports"),
+            Some(&Value::Array(vec![Value::String("security".into())]))
+        );
+    }
+
+    #[test]
+    fn non_discovery_tools_do_not_receive_skill_imports() {
+        let mut args = HashMap::new();
+
+        inject_visible_skill_imports("http_get", &mut args, &visible_metadata("support"));
+
+        assert!(!args.contains_key("imports"));
+    }
 }

@@ -13,14 +13,12 @@ use crate::capability::{
     executor::{CapabilityExecutor, CapabilityResult},
     metadata::CapabilityMetadata,
 };
-use apxm_core::{error::RuntimeError, types::Value};
+use apxm_core::{constants::capabilities::groups, error::RuntimeError, types::Value};
 use async_trait::async_trait;
 use reqwest::Client;
 use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::OnceLock;
-
-const AUTHORING_GROUP: &str = "authoring";
 
 /// The confined staging directory for authored workflows: the `workflows/`
 /// subdirectory of the apxm state home (where other durable agent state lives).
@@ -96,7 +94,7 @@ impl ComposeWorkflowCapability {
                 }),
             )
             .with_returns("string (staged workflow path)")
-            .with_groups(vec![AUTHORING_GROUP.to_string(), "workflow".to_string()]),
+            .with_groups(vec![groups::AUTHORING.to_string(), "workflow".to_string()]),
         }
     }
 }
@@ -167,7 +165,7 @@ impl RunWorkflowCapability {
                 }),
             )
             .with_returns("string (workflow result)")
-            .with_groups(vec![AUTHORING_GROUP.to_string(), "workflow".to_string()]),
+            .with_groups(vec![groups::AUTHORING.to_string(), "workflow".to_string()]),
         }
     }
 }
@@ -224,4 +222,3 @@ impl CapabilityExecutor for RunWorkflowCapability {
         &self.metadata
     }
 }
-

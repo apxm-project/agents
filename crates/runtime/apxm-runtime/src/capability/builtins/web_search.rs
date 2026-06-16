@@ -3,7 +3,7 @@ use crate::capability::{
     executor::{CapabilityExecutor, CapabilityResult},
     metadata::CapabilityMetadata,
 };
-use apxm_core::{error::RuntimeError, types::Value};
+use apxm_core::{constants::capabilities, error::RuntimeError, types::Value};
 use async_trait::async_trait;
 use reqwest::Client;
 use serde::{Deserialize, Serialize};
@@ -121,9 +121,9 @@ impl SearchWebCapability {
             )
             .with_returns("string")
             .with_groups(vec![
-                "web".to_string(),
-                "search".to_string(),
-                "web:search".to_string(),
+                capabilities::groups::WEB.to_string(),
+                capabilities::groups::SEARCH.to_string(),
+                capabilities::groups::WEB_SEARCH.to_string(),
             ])
             // Web search retrieves information without mutating state: read-only.
             .with_read_only()

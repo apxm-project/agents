@@ -360,8 +360,8 @@ pub mod capabilities {
     pub use apxm_ais::capabilities::groups;
     pub use apxm_ais::capabilities::{
         AGENT_MANAGEMENT_BUILTINS, BASH, BUILTINS, HTTP_GET, HTTP_POST, MANAGE_TASK,
-        MEMORY_SEARCH_FACTS, MEMORY_STORE_FACT, READ, SCHEDULE, SEARCH_WEB, STANDARD_BUILTINS,
-        WRITE,
+        MEMORY_SEARCH_FACTS, MEMORY_STORE_FACT, READ, SCHEDULE, SEARCH_SKILLS, SEARCH_WEB,
+        STANDARD_BUILTINS, WRITE,
     };
 }
 

@@ -11,6 +11,7 @@ pub const WRITE: &str = "write";
 pub const SEARCH_WEB: &str = "search_web";
 pub const HTTP_GET: &str = "http_get";
 pub const HTTP_POST: &str = "http_post";
+pub const SEARCH_SKILLS: &str = "search_skills";
 
 /// Event-driven scheduling tool (durable one-shot / recurring wakeups).
 pub const SCHEDULE: &str = "schedule";
@@ -28,6 +29,10 @@ pub mod groups {
     pub const FILE_WRITE: &str = "file:write";
     pub const HTTP: &str = "http";
     pub const WEB: &str = "web";
+    pub const SEARCH: &str = "search";
+    pub const WEB_SEARCH: &str = "web:search";
+    pub const SKILLS: &str = "skills";
+    pub const AUTHORING: &str = "authoring";
     pub const TASK: &str = "task";
     pub const AGENT_MANAGEMENT: &str = "agent_management";
 }
@@ -46,6 +51,7 @@ pub const BUILTINS: &[&str] = &[
     READ,
     WRITE,
     SEARCH_WEB,
+    SEARCH_SKILLS,
     HTTP_GET,
     HTTP_POST,
     SCHEDULE,

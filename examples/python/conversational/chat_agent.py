@@ -21,7 +21,7 @@ Pipeline per turn:
   remember (umem + fence).
 """
 
-from apxm import DependencyType, GraphRecorder, compile
+from apxm import DependencyType, GraphRecorder, ToolGroup, compile
 
 # Single source of truth for the assistant persona.
 PERSONA = (
@@ -61,7 +61,7 @@ def chat_agent(g: GraphRecorder, conversation: str):
             f"{PERSONA}\n\nProduce a grounded answer to the latest user message, "
             "using tools if they help.\n{conversation}\n\nPlan:\n{plan}"
         ),
-        tool_groups=["web"],
+        tool_groups=[ToolGroup.WEB],
     )
 
     # 4. Multi-agent: spawn an inline researcher sub-agent and delegate a

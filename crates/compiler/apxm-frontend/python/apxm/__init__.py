@@ -28,7 +28,14 @@ from .conversational import (
     ConversationalAgent,
     MultiFlowArtifact,
 )
-from .constants import DependencyType
+from .constants import (
+    CAPABILITY_SEARCH_SKILLS,
+    TOOL_GROUP_AUTHORING,
+    TOOL_GROUP_SKILLS,
+    TOOL_GROUP_WEB,
+    DependencyType,
+    ToolGroup,
+)
 from .hooks import HookFn, HookMode, LifecycleEvent, hook
 from .config import (
     AgentConfig,
@@ -92,6 +99,7 @@ __all__ = [
     "CompiledFlow",
     "CompilationError",
     "ConversationalAgent",
+    "CAPABILITY_SEARCH_SKILLS",
     "DependencyType",
     "ExecutionError",
     "ExecutionOptions",
@@ -144,6 +152,10 @@ __all__ = [
     "TimeoutMiddlewareConfig",
     "tool",
     "ToolContext",
+    "ToolGroup",
+    "TOOL_GROUP_AUTHORING",
+    "TOOL_GROUP_SKILLS",
+    "TOOL_GROUP_WEB",
     "ToolsConfig",
     "validate_graph",
     "Vllm",

@@ -7,6 +7,7 @@ JSON-serializable primitives for the graph wire format.
 from __future__ import annotations
 
 from dataclasses import asdict, is_dataclass
+from enum import Enum
 from typing import Any
 
 
@@ -18,6 +19,8 @@ def normalize_value(value: Any) -> Any:
         ModelId = None  # type: ignore[assignment,misc]
     if ModelId is not None and isinstance(value, ModelId):
         return str(value)
+    if isinstance(value, Enum):
+        return value.value
     if hasattr(value, "to_dict") and callable(value.to_dict):
         return value.to_dict()
     if is_dataclass(value):

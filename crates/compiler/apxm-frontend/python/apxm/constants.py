@@ -41,6 +41,12 @@ class DependencyType(str, Enum):
     EFFECT = "Effect"
 
 
+class ToolGroup(str, Enum):
+    WEB = "web"
+    SKILLS = "skills"
+    AUTHORING = "authoring"
+
+
 def normalize_dependency_type(value: DependencyType | str) -> str:
     if isinstance(value, DependencyType):
         return value.value
@@ -49,9 +55,23 @@ def normalize_dependency_type(value: DependencyType | str) -> str:
     raise TypeError("dependency must be a DependencyType or string")
 
 
+def normalize_tool_group(value: ToolGroup | str) -> str:
+    if isinstance(value, ToolGroup):
+        return value.value
+    if isinstance(value, str):
+        return value
+    raise TypeError("tool group must be a ToolGroup or string")
+
+
 DEPENDENCY_DATA = DependencyType.DATA.value
 DEPENDENCY_CONTROL = DependencyType.CONTROL.value
 DEPENDENCY_EFFECT = DependencyType.EFFECT.value
+
+TOOL_GROUP_WEB = ToolGroup.WEB.value
+TOOL_GROUP_SKILLS = ToolGroup.SKILLS.value
+TOOL_GROUP_AUTHORING = ToolGroup.AUTHORING.value
+
+CAPABILITY_SEARCH_SKILLS = "search_skills"
 
 COMMUNICATE_PROTOCOL_ACP = "acp"
 

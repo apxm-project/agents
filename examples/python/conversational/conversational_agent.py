@@ -14,7 +14,7 @@ Validate without a server:
         python3 examples/python/conversational/conversational_agent.py --validate
 """
 
-from apxm import GraphRecorder, compile
+from apxm import GraphRecorder, ToolGroup, compile
 
 PERSONA = (
     "You are APXM Assistant, a precise, helpful conversational agent. "
@@ -51,7 +51,7 @@ def conversational_agent(g: GraphRecorder, conversation: str):
             "Most relevant skill (by description):\n{skill}"
         ),
         system_prompt=PERSONA,      # middleware may enrich this at runtime
-        tool_groups=["web"],        # self-enabling, least-privilege tool group
+        tool_groups=[ToolGroup.WEB],
     )
 
     # Record a fact for later turns, fenced so the write is ordered.

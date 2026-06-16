@@ -21,14 +21,16 @@ dekk apxm execute examples/python/conversational/controllable_agent.py --emit-ai
 
 ## Run on host A — interactive terminal
 ```
-apxm chat --air agent.air --server http://127.0.0.1:18800
+apxm chat --air agent.air --server http://127.0.0.1:18800 \
+  --import support --import engineering --import docs --import analysis
 ```
 The host should only pipe stdin and render tokens; all behavior comes from the
 program.
 
 ## Run on host B — hosted service (dumb pipe)
 1. Start the agent once: `POST /v1/execute/stream` with `agent.air` + a
-   `session_id`; keep the stream open.
+   `session_id` + `imports` for the visible skill libraries; keep the stream
+   open.
 2. Send turns: `POST /v1/conversations/{session_id}/message` with each user line.
 3. Render the streamed reply.
 
@@ -49,3 +51,11 @@ program.
 ## Tests to keep green
 `cargo test` for runtime / server / compiler (park/wake, op-invariants, security
 suites); Python `--validate`.
+
+## Skill catalogue for SC-005
+
+Use pack layout for imported libraries:
+`<skill-root>/<pack-id>/pack.toml` plus
+`<skill-root>/<pack-id>/skills/<skill-id>/skill.toml`. The `pack.toml`
+`pack_id` is what `--import <pack-id>` / request `imports` makes visible to
+`search_skills`; `shared = true` skills remain globally visible.

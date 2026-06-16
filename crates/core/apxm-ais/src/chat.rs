@@ -3,6 +3,8 @@
 //! the apxm-studio backend so they stay identical. (The TS frontend mirrors
 //! this contract; these values are the spec.)
 
+use crate::capabilities::groups;
+
 /// Turns kept verbatim during compaction; older turns fold into the summary.
 pub const KEEP_RECENT_TURNS: usize = 4;
 /// Transcript token budget (chars/4 estimate) above which compaction triggers.
@@ -157,13 +159,13 @@ pub fn chat_air(opts: &ChatAirOptions) -> String {
     }
     let mut groups: Vec<&str> = Vec::new();
     if opts.tools {
-        groups.push("web");
+        groups.push(groups::WEB);
     }
     if opts.skills {
-        groups.push("skills");
+        groups.push(groups::SKILLS);
     }
     if opts.authoring {
-        groups.push("authoring");
+        groups.push(groups::AUTHORING);
     }
     if !groups.is_empty() {
         let list = groups

@@ -25,7 +25,7 @@ use tracing::{info, warn};
 
 use crate::skills::SkillLibrary;
 
-const NAME: &str = "search_skills";
+const NAME: &str = apxm_core::constants::capabilities::SEARCH_SKILLS;
 const DEFAULT_K: usize = 5;
 
 /// Discovery capability backed by the live [`SkillLibrary`].
@@ -64,7 +64,9 @@ impl SearchSkillsCapability {
             }),
         )
         .with_returns("JSON array of {skill_id, library, when_to_use, description}")
-        .with_groups(vec!["skills".to_string()])
+        .with_groups(vec![
+            apxm_core::constants::capabilities::groups::SKILLS.to_string(),
+        ])
         .with_read_only();
         Self { metadata, library }
     }
@@ -179,4 +181,3 @@ pub(crate) fn register(runtime: &Runtime, library: SkillLibrary) {
         }
     }
 }
-
