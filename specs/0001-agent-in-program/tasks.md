@@ -92,47 +92,26 @@ sub-agent's result lands in the reply.
 
 - [X] T070 Op-count / tablegen parity guard updated and green for `REGISTER_HOOK`. (`definitions.rs::test_operation_counts` bumped 44→45; green in `dekk apxm test`.)
 - [X] T071 [P] Dead-surface sweep: no `requires_local_cli` dependence for delivered capabilities; remove leftover host-only paths superseded by the in-program loop. (Verified: in-program hooks/loop/context/sub-agents run on the server path via the bridge and do NOT use `requires_local_cli` — that flag is only the legacy `ExecutionOptions` subprocess-hook/middleware config, a separate surface kept for back-compat. Dead `AgentHooks` removed in T003.)
-- [~] T072 Full `cargo test` (runtime/server/compiler) + Python `--validate`; run the `quickstart.md` acceptance on both hosts (SC-001..SC-007). **OFFLINE PORTION DONE & GREEN:** `dekk apxm check`, `dekk apxm test` (runtime/server/core incl. op-count guard), `dekk apxm test-cli` (compiler/CLI incl. the new MLIR op round-trip), `cargo test -p apxm-runtime --lib`, `cargo test -p apxm-skill` (lexical discovery scope/rank/representative 10-case guard), `dekk apxm test-python-frontend`, and `--validate` on both fixtures all pass. **ENUM/CONTRACT REFRESH 2026-06-16:** Python frontend exports `Capability`, the full canonical `ToolGroup`, `DependencyType`, hook/runtime event enums, and normalization through `NodePolicy`, `AgentConfig`, `GraphRecorder.invoke()`, and examples; generated TypeScript now exports `DependencyType`, `ToolGroup`, `CoreEventKind`, and `EventCategoryKind`; Rust file read/write built-ins use AIS-owned group constants. Verified with `PYTHONPATH=. pytest -q` (19 passed), `cargo check -p apxm-runtime -p apxm-cli -p apxm-ais --features apxm-cli/driver`, `cargo run -q -p apxm-cli -- codegen event-kinds --check`, `cargo run -q -p apxm-cli -- codegen typescript --check`, `cargo test -p apxm-runtime search_skills --lib`, `cargo test -p apxm-cli codegen`, and `PYTHONPATH=crates/compiler/apxm-frontend/python python3 examples/python/conversational/controllable_agent.py --validate`. **LIVE PARTIAL:** SC-001/SC-002/SC-003/SC-004/SC-005 scoped `search_skills` call/SC-006/SC-007 are proven. **SC-005 LIVE 2026-06-16:** patched isolated server `127.0.0.1:18918` with a five-pack representative skill root returned 10/10 correct top-1 selections through `/v1/capabilities/search_skills/invoke`; `.apxm/sc005-import-inherit.air` validated/analyzed with the first-class `skill_search()` helper and executed as session `live-sc005-import-inherit-debug`, inheriting launch imports and returning `architecture_review` with `executed_nodes=2`, `failed_nodes=0`, `llm_usage.total_requests=0`; Host A CLI session `live-sc005-cli-smoke-import-inherit` called `search_skills` and replied `architecture_review`. **SC-005 HOST B RECHECK 2026-06-16:** the full conversational-agent campaign on isolated server `127.0.0.1:18919` failed to register/wake (`session did not register/wake`), so it is recorded as missing evidence, not a pass. **SC-006 LIVE 2026-06-16:** Host B `/v1/execute/stream` session `live-sc006-delegate-enum-18485a` executed `chat_agent.py` with inline `SPAWN_AGENT` + `DELEGATE`, `executed_nodes=10`, `failed_nodes=0`, `llm_usage.total_requests=4`, and the final result incorporated the delegated research; Host A CLI session `live-sc006-cli-enum-18485d` on a fresh isolated server completed the same artifact with `SPAWN_AGENT`, inline `DELEGATE`, and `executed=10 failed=0` (requires `--admit SPAWN_AGENT`). **Remaining:** full SC-001..SC-007 quickstart sweep on both hosts, including the full 10-request SC-005 campaign through the conversational agent path on both hosts.
+- [X] T072 Full `cargo test` (runtime/server/compiler) + Python `--validate`; run the `quickstart.md` acceptance on both hosts (SC-001..SC-007). **OFFLINE PORTION DONE & GREEN:** `dekk apxm check`, `dekk apxm test` (runtime/server/core incl. op-count guard), `dekk apxm test-cli` (compiler/CLI incl. the new MLIR op round-trip), `cargo test -p apxm-runtime --lib`, `cargo test -p apxm-skill` (lexical discovery scope/rank/representative 10-case guard), `dekk apxm test-python-frontend`, and `--validate` on both fixtures all pass. **ENUM/CONTRACT REFRESH 2026-06-16:** Python frontend exports `Capability`, the full canonical `ToolGroup`, `DependencyType`, hook/runtime event enums, and normalization through `NodePolicy`, `AgentConfig`, `GraphRecorder.invoke()`, and examples; generated TypeScript now exports `DependencyType`, `ToolGroup`, `CoreEventKind`, and `EventCategoryKind`; Rust file read/write built-ins use AIS-owned group constants. Verified with `PYTHONPATH=. pytest -q` (19 passed), `cargo check -p apxm-runtime -p apxm-cli -p apxm-ais --features apxm-cli/driver`, `cargo run -q -p apxm-cli -- codegen event-kinds --check`, `cargo run -q -p apxm-cli -- codegen typescript --check`, `cargo test -p apxm-runtime search_skills --lib`, `cargo test -p apxm-cli codegen`, and `PYTHONPATH=crates/compiler/apxm-frontend/python python3 examples/python/conversational/controllable_agent.py --validate`. **LIVE COMPLETE 2026-06-16T07:26Z:** evidence note `specs/0001-agent-in-program/evidence/t072-quickstart-20260616.md`; raw logs under `.apxm/evaluation/t072-quickstart-20260616T0556/` and `.apxm/evaluation/t072-quickstart-20260616T0638/`. Prior fresh evidence covered Host B SC-001/SC-004/SC-005/SC-007, Host A SC-001, Host B direct SC-006 after the duplicate-registration fix, and earlier parity/hook proofs. Final gap closure: Host B SC-003 51/51 with final `BLUEHERON` on `127.0.0.1:18927`; Host A SC-003 51/51 with final `BLUEHERON` on `127.0.0.1:18928`; Host A SC-004 edit/block pass and full Host A SC-005 10/10 on `127.0.0.1:18927`; strict Host A SC-006 pass on `127.0.0.1:18928`; corrected fresh Host B SC-006 rerun pass on `127.0.0.1:18930`; reconfirmed Host B SC-003, Host A SC-003, and Host A SC-004/SC-005 on fresh release server `127.0.0.1:19000`. Minimal code fix in final pass: normalize hook host-call capability results to plain JSON and make Python `ctx.count_tokens()` tolerate APXM numeric wrappers; verified with `dekk apxm test -p apxm-runtime hook_driver`, `dekk apxm test-python-frontend` (20 passed), `dekk apxm build-server`, and fresh quickstart reruns. Diagnostic runs with under-threshold filler, wrong direct `chat_agent.py` argument shape, or too-narrow CLI harness waits are recorded as non-acceptance evidence.
 - [X] T073 [P] Update `examples/.../README.md` and `docs/apxm-cli-agent-vision.md` cross-reference to point at this spec.
 
-## Backend-gated tasks (deferred per coordinator; ready to run)
+## Live-backend acceptance history
 
-These require live inference and are left UNCHECKED until a backend is authorized:
-The remaining live inference gate is the full SC-001..SC-007 acceptance
-(quickstart.md), including observing skill selection and delegation through the
-live agent on both hosts. T025, T032, T047, and T053 were live-proven on
-2026-06-16; a scoped live `search_skills` call was proven in
-`live-sc005-search-import-272e3f5e`, the patched direct SC-005 representative
-campaign is 10/10 on `127.0.0.1:18918`, and Host A CLI smoke
-`live-sc005-cli-smoke-import-inherit` returned `architecture_review`; SC-006
-delegation was proven in `live-sc006-delegate-enum-18485a` and
-`live-sc006-cli-enum-18485d`. All non-inference work is implemented and
-verified green.
+This section preserves the evidence sequence that led to T072 completion. The
+current authoritative status is the checked T072 line above and the evidence
+note at `specs/0001-agent-in-program/evidence/t072-quickstart-20260616.md`.
 
-**T072 quickstart recheck (PARTIAL, fresh live run) — 2026-06-16T06:11:45Z.**
-Evidence note:
-`specs/0001-agent-in-program/evidence/t072-quickstart-20260616.md`; raw logs
-under `.apxm/evaluation/t072-quickstart-20260616T0556/`. The two reference hosts
-are Host A `dekk apxm chat` and Host B `/v1/execute/stream` +
-`/v1/conversations/{session}/message`. Fresh rebuilt trusted server
-`127.0.0.1:18922` was required because the stale/default servers either lacked
-the SC-005 fixture catalogue, rejected Python-backed AIR without
-`APXM_TRUST_PYTHON_ARTIFACTS=1 APXM_SANDBOX_PYTHON=1`, or had a stale
-`host_call` parser. Fresh Host B results: SC-001 pass (`OK`, AMD lookup,
-`BLUEHERON` recall), SC-004 pass (AMD edit + `FORBIDDEN` block), SC-005 pass
-10/10 through the conversational-agent path, and SC-007 pass smoke on the same
-long-lived execution. Fresh Host A results: CLI dumb-pipe pass for `OK`, AMD
-lookup, `BLUEHERON` recall, plus one SC-005 representative request returning
-`architecture_review`. Still missing from this recheck: SC-003 fresh 50-turn
-sweep on both hosts, full Host A SC-004/SC-005, and SC-006 after a fresh
-`chat_agent.py` run failed with `SPAWN_AGENT - Agent 'researcher' already exists
-in the flow registry`. T072 remains `[~]`.
+**T072 quickstart recheck — 2026-06-16T06:11:45Z.** Raw logs under
+`.apxm/evaluation/t072-quickstart-20260616T0556/` captured a fresh rebuilt
+trusted server on `127.0.0.1:18922`. Host B passed SC-001, SC-004, SC-005 10/10
+through the conversational-agent path, and SC-007. Host A passed SC-001 and one
+representative SC-005 request. That run exposed two later-fixed gaps: SC-006
+duplicate flow registration and the then-open long-session/full Host A sweep.
 
-**T072 SC-006 blocker follow-up (PASS on Host B direct, still partial overall)
-— 2026-06-16T06:26:30Z.** Fixed runtime artifact flow registration so
-per-artifact flows are scoped to the execution context instead of leaking through
-the runtime-wide `FlowRegistry`, and stopped treating pre-registered sibling
-flows as `SPAWN_AGENT` duplicates. Focused regression
+**T072 SC-006 blocker follow-up — 2026-06-16T06:26:30Z.** Fixed runtime artifact
+flow registration so per-artifact flows are scoped to the execution context
+instead of leaking through the runtime-wide `FlowRegistry`, and stopped treating
+pre-registered sibling flows as `SPAWN_AGENT` duplicates. Focused regression
 `dekk apxm test -p apxm-runtime artifact_flow_registry_is_execution_scoped` and
 `dekk apxm build-server` passed. Fresh trusted server `127.0.0.1:18924` ran
 direct Host B `chat_agent.py` SC-006 session
@@ -140,8 +119,11 @@ direct Host B `chat_agent.py` SC-006 session
 `failed_nodes=0`, `SAW_TOKEN True`, `SAW_ERROR False`, and no duplicate
 `researcher` error; raw log:
 `.apxm/evaluation/t072-quickstart-20260616T0556/host-b-sc006-delegate-fixed-direct-18924.log`.
-T072 remains `[~]`: SC-003 fresh 50-turn sweep on both hosts, full Host A
-SC-004/SC-005, and Host A SC-006 still need reruns.
+
+**T072 final closure — 2026-06-16T07:26Z.** Follow-up trusted/sandboxed reruns
+closed SC-003 on both hosts, full Host A SC-004/SC-005, strict Host A SC-006,
+and corrected Host B SC-006. The final confirmation reran Host B SC-003, Host A
+SC-003, and Host A SC-004/SC-005 on fresh release server `127.0.0.1:19000`.
 
 **Council routing evidence (PASS, focused dry-run) — 2026-06-16T06:08:23Z,
 host `d05u43`.** Current-checkout build `dekk apxm build` passed, then a fresh
@@ -234,11 +216,10 @@ Verification-pass hardening (two MINOR items, both FIXED & green):
   `..._excludes_non_numeric_counter_keys`.
 
 Live backend smoke now proves the two-turn loop/parity path, all hook events on
-both hosts, the SC-003 50-turn compaction recall, and a scoped real-agent
-`search_skills` call. The deterministic skill-discovery core now has a 10-case
-representative guard, and the patched live capability path returns 10/10 for the
-same representative set; still deferred: full quickstart acceptance on both
-hosts.
+both hosts, the SC-003 50-turn compaction recall, full SC-004 hook behavior,
+full SC-005 representative skill selection, and SC-006 delegation. The
+deterministic skill-discovery core now has a 10-case representative guard, and
+the patched live capability path returns 10/10 for the same representative set.
 
 ## Session status (autonomous run) — what landed, what remains
 
@@ -267,17 +248,15 @@ GREEN + verified (`dekk apxm check`, `dekk apxm test` runtime+server+core,
 - US2 T030 (CLI dumb-pipe, additive + back-compat-preserving), T031
   (per-session runtime ledger), and T032 live CLI/server parity — done.
 
-REMAINING — live-backend acceptance only (no offline-verifiable work left):
-T072 full SC-001..SC-007 sweep. See the Deferred section for the exact run
-command. All offline-verifiable work is complete and green; the remaining live
-gap is completing the full campaign on both hosts, especially SC-006 delegation
-and the full SC-005 8/10 live selection run.
+ACCEPTED — live-backend quickstart:
+T072 full SC-001..SC-007 sweep is complete with raw evidence recorded in
+`.apxm/evaluation/t072-quickstart-20260616T0556/` and
+`.apxm/evaluation/t072-quickstart-20260616T0638/`.
 
-## Deferred — live-backend acceptance (run once a backend is authorized)
+## Completed live-backend acceptance runbook
 
-The remaining full SC-001..SC-007 quickstart sweep needs live inference. It is
-NOT inference-mockable. Run, with a backend configured (cloud gateway egress +
-`LLM_GATEWAY_KEY`, or an authorized Slurm/vLLM service):
+The full SC-001..SC-007 quickstart sweep uses live inference and is not
+inference-mockable. The accepted 2026-06-16 runs used this shape:
 
 ```
 # 1. Validate + compile the one multi-flow artifact (no backend needed):
@@ -290,7 +269,7 @@ dekk apxm execute examples/python/conversational/controllable_agent.py \
 apxm chat --air /tmp/agent.air --server http://127.0.0.1:18800
 
 # 3. Host B (server): POST /v1/execute/stream once with the artifact + a
-#    session_id (keep the SSE open), then per turn:
+#    session_id, then per turn:
 #    POST /v1/conversations/{session_id}/message  {"message": "<user line>"}
 #    Render the streamed reply. Verify SC-001..SC-007 (quickstart.md) on BOTH hosts.
 ```
@@ -347,10 +326,11 @@ capability campaign on `127.0.0.1:18918` returned 10/10, graph execution session
 session `live-sc005-cli-smoke-import-inherit` replied `architecture_review`.
 SC-006 delegation is live-proven on Host B direct server
 (`live-sc006-delegate-enum-18485a`) and Host A CLI
-(`live-sc006-cli-enum-18485d`); the remaining acceptance is the full 10-request
-SC-005 campaign through the conversational agent on both hosts as part of T072.
-The 2026-06-16 Host B recheck on `127.0.0.1:18919` failed to register/wake the
-session, so no additional SC-005 conversational-agent evidence was accepted.
+(`live-sc006-cli-enum-18485d`). T072 later closed the full 10-request SC-005
+campaign through the conversational agent path, including Host B 10/10 and Host A
+10/10 evidence. The 2026-06-16 Host B recheck on `127.0.0.1:18919` failed to
+register/wake the session, so that diagnostic run remains non-acceptance
+evidence.
 
 **Realigned (2026-06-15) so the hook owns ALL policy.** The hook `ctx` now hands
 the user apxm's primitives — `ctx.ask` (LLM), `ctx.call`/`ctx.count_tokens`
