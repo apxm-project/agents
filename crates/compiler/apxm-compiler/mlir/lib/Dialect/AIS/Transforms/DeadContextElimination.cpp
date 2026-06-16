@@ -102,7 +102,7 @@ struct DeadContextEliminationPass : impl::DeadContextEliminationBase<DeadContext
 
 private:
   /// Eliminate dead context from an LLM operation.
-  /// Returns the number of context values removed.
+/// Returns the number of context values deleted.
   template <typename LlmOpT>
   unsigned eliminateDeadContext(LlmOpT op) {
     StringRef templateStr = op.getTemplateStrAttr().getValue();

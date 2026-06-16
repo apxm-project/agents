@@ -28,8 +28,8 @@ pub async fn execute(ctx: &ExecutionContext, node: &Node, _inputs: Vec<Value>) -
             message: "RESUME requires a `checkpoint` attribute".to_string(),
         })?;
 
-    // Record the resume intent in AAM before parking (preserved from the old
-    // polling path; the wake delivers the value, this is just bookkeeping).
+    // Record the resume intent in AAM before parking; the wake delivers the
+    // value, this is just bookkeeping.
     let label = crate::aam::TransitionLabel::operation(node.id, node.op_type);
     ctx.aam.set_belief(
         format!("{}{}", belief_keys::RESUME_PREFIX, checkpoint_id),
@@ -49,4 +49,3 @@ pub async fn execute(ctx: &ExecutionContext, node: &Node, _inputs: Vec<Value>) -
         wait_key: checkpoint_id,
     })
 }
-

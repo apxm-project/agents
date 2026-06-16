@@ -81,7 +81,7 @@ struct LruInner {
     /// Monotonic access counter.
     counter: u64,
     /// Per-directory dirty flag, set whenever an entry under that directory
-    /// is inserted, updated, or removed in-memory.
+    /// is inserted, updated, or deleted in memory.
     dirty_dirs: HashMap<PathBuf, ()>,
     max_entries: usize,
 }
@@ -452,4 +452,3 @@ fn write_sidecar(dir: &Path, sidecar: &HashMap<String, SidecarEntry>) {
         );
     }
 }
-

@@ -317,8 +317,8 @@ pub trait ExecutionEventEmitter: Send + Sync {
     // All default to no-ops so out-of-tree emitters and existing tests
     // don't have to implement them. Concrete emitters (e.g. the
     // `EmitterAdapter` that bridges to `ApxmEvent`) should override
-    // the ones they care about. See CLAUDE.md §10 for the pairing
-    // rules between Layer 1 and Layer 2 events.
+    // the ones they care about. Layer 2 hooks must stay paired with the
+    // corresponding Layer 1 event when they describe the same lifecycle edge.
 
     /// The outermost executor entry began (top-level turn start).
     fn emit_turn_started(

@@ -11,9 +11,6 @@ use apxm_core::{
 };
 use std::collections::{HashMap, HashSet};
 
-// Note: InnerPlanPayload is now imported from apxm_core
-// This ensures consistency across the entire system
-
 /// Options controlling how the inner plan should be spliced into the outer DAG.
 #[derive(Debug, Clone, Copy)]
 pub struct InnerPlanOptions {
@@ -167,4 +164,3 @@ fn build_token_connections(
 
     connections
 }
-

@@ -1249,8 +1249,7 @@ def cache_warm_cmd(args: argparse.Namespace) -> int:
     Path(hf_home).mkdir(parents=True, exist_ok=True)
 
     # The APXM-vLLM image's ENTRYPOINT is the vLLM OpenAI API server.
-    # Override it with `hf` (the Hugging Face Hub CLI; the old
-    # `huggingface-cli` is deprecated and no longer works in this image).
+    # Override it with `hf`, the Hugging Face Hub CLI available in this image.
     docker_cmd: list[str] = [
         "docker", "run", "--rm",
         DockerFlag.NETWORK.value, DockerValue.HOST_NETWORK.value,

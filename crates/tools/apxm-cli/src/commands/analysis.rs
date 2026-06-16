@@ -103,7 +103,7 @@ fn load_air_graph_for_analysis(input: &PathBuf) -> Result<apxm_compiler::AirModu
     }
 }
 
-/// Parsed graph topology used by analyze and explain commands.
+/// Parsed graph topology for analyze and explain commands.
 pub(crate) struct GraphAnalysis<'a> {
     pub(crate) graph: &'a apxm_compiler::AirModule,
     pub(crate) node_index: HashMap<u64, usize>,
@@ -299,7 +299,7 @@ pub fn analyze_command(input: PathBuf, json_output: bool) -> Result<()> {
     let max_parallelism = ga.max_parallelism();
     let speedup = ga.speedup();
 
-    // Build suggestions (used by both JSON and human-readable output)
+    // Build suggestions shared by JSON and human-readable output.
     let mut suggestions: Vec<String> = Vec::new();
     if max_parallelism > 1 {
         let parallel_phases: Vec<usize> = ga

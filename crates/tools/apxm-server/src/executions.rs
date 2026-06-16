@@ -120,8 +120,8 @@ pub(crate) struct ExecutionStore {
     inner: Arc<DashMap<String, ExecutionRecord>>,
     index: ExecutionIndex,
     /// Maps a detached run's idempotency key -> execution_id. Populated on
-    /// insert and on rehydration from disk so a restart rebuilds it; used by
-    /// [`ExecutionStore::claim_idempotent`] to atomically dedup detached spawns.
+    /// insert and on rehydration from disk so a restart rebuilds atomic dedup
+    /// for detached spawns.
     idempotency_index: Arc<DashMap<String, String>>,
 }
 
@@ -701,4 +701,3 @@ impl EventEmitter for ExecutionRecordingEmitter {
         }
     }
 }
-

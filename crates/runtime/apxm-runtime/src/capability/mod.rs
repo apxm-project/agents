@@ -193,8 +193,8 @@ impl CapabilitySystem {
     }
 
     /// Register a capability, replacing any existing one of the same name.
-    /// Used by the HTTP registration endpoint so hosts can re-register a
-    /// context-scoped tool surface every turn without a duplicate error.
+    /// Hosts can re-register a context-scoped tool surface every turn without a
+    /// duplicate error.
     pub fn register_or_replace(
         &self,
         capability: Arc<dyn CapabilityExecutor>,
@@ -530,4 +530,3 @@ impl Default for CapabilitySystem {
         Self::new()
     }
 }
-

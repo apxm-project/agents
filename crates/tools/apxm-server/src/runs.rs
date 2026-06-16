@@ -93,7 +93,7 @@ impl RunEventBus {
 
     /// Record an event into the per-execution ring and fan out to live
     /// subscribers. The returned event has the bus-owned per-run sequence
-    /// number applied and should be used by durable/live downstream sinks.
+    /// number applied for durable/live downstream sinks.
     pub(crate) fn record(&self, execution_id: &str, mut event: ApxmEvent) -> ApxmEvent {
         let mut entry = self
             .inner
@@ -468,7 +468,7 @@ pub(crate) struct CancelResponse {
 
 /// `POST /v1/runs/{execution_id}/cancel` — trip the in-flight run's abort
 /// signal. Returns 404 if the run is unknown or already settled (its registry
-/// entry is removed on completion), so a cancel after the answer lands is a
+/// entry is deleted on completion), so a cancel after the answer lands is a
 /// no-op rather than an error the caller must special-case.
 pub(crate) async fn cancel_run(
     State(state): State<AppState>,

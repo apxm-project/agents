@@ -49,7 +49,7 @@ impl ReadySet {
 
     /// Remove a node from pending tracking.
     ///
-    /// Used during DAG condensation to clean up nodes that are being removed.
+/// Cleans up nodes during DAG condensation deletion.
     pub(crate) fn remove_pending(&self, node_id: NodeId) {
         self.pending_inputs.remove(&node_id);
     }
@@ -59,8 +59,8 @@ impl ReadySet {
     /// Returns the set of immediately ready nodes (those with no pending inputs).
     /// Initialize readiness tracking for all nodes; nodes in `skip` are neither
     /// enqueued nor tracked for readiness. Returns the set of immediately ready
-    /// nodes. `skip` is used by partial replay (`rerun-from-node`): the
-    /// pre-completed upstream nodes are skipped so their handlers are never
+    /// nodes. Partial replay (`rerun-from-node`) skips pre-completed upstream
+    /// nodes so their handlers are never
     /// re-invoked, while their seeded output tokens still satisfy the readiness
     /// of the replayed sub-DAG. Pass `None` for an ordinary full run.
     pub(crate) fn initialize_with_skip(
@@ -230,4 +230,3 @@ impl Default for ReadySet {
         Self::new()
     }
 }
-

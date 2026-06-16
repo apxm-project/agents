@@ -342,7 +342,7 @@ pub(crate) async fn execute_stream(
     // A unique per-execution handle: `session_id` is reused across turns, so it
     // cannot key cancellation. Registering a `Notify` lets
     // `POST /v1/runs/{execution_id}/cancel` abort this run at its next await
-    // boundary; the entry is removed once the run settles either way.
+    // boundary; the entry is deleted once the run settles either way.
     let execution_id = uuid::Uuid::new_v4().to_string();
     // Seed the per-session runtime ledger (turn caps / tool budgets / grants)
     // keyed by session_id and register the session→execution mapping, so the
@@ -1219,4 +1219,3 @@ pub(crate) fn to_execute_response(
         tool_call_counts: result.tool_call_counts,
     }
 }
-

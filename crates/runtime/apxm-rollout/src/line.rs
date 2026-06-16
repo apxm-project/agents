@@ -1,9 +1,8 @@
 //! Wire schema for the per-thread rollout JSONL files.
 //!
 //! Every line in `rollout-<thread_id>.jsonl` deserializes to a [`RolloutLine`].
-//! The shape is documented in `docs/observability/rollouts.md`; the Rust
-//! definitions here are the authoritative encoding the writer/reader pair
-//! agree on. Bump [`crate::SCHEMA_VERSION`] when this changes.
+//! The Rust definitions here are the authoritative encoding the writer/reader
+//! pair agree on. Bump [`crate::SCHEMA_VERSION`] when this changes.
 
 use apxm_core::events::{EventSource, SkillEventProvenance};
 use serde::{Deserialize, Serialize};

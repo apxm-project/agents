@@ -643,7 +643,7 @@ required_capabilities = ["workflow_emission_v1"]
     }
 }
 
-/// Convert an ExecutionDag back to an AirModule (used by decompile + session output).
+/// Convert an ExecutionDag back to an AirModule for decompile and session output.
 #[cfg(feature = "driver")]
 pub(super) fn graph_from_execution_dag(
     dag: &apxm_core::types::execution::ExecutionDag,

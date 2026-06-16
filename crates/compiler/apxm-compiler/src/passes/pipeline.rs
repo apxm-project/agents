@@ -264,7 +264,7 @@ pub fn build_pass_list(
 /// The warning pass is purely diagnostic — it produces no IR mutation — so it is
 /// always inserted at the very end of the pipeline regardless of opt level.
 /// It is opt-in via the CLI `--warn` flag and never appears in the default O1/O2/O3
-/// pipelines (see compiler-audit.md).
+/// pipelines.
 pub fn build_pass_list_with_warn(
     level: OptimizationLevel,
     no_cse_llm: bool,
@@ -286,7 +286,7 @@ pub fn build_pass_list_with_warn(
 /// 2. Otherwise, the base list comes from [`build_pass_list_with_warn`].
 /// 3. `no_cse_llm` and `disable_passes` filter the resulting list.
 ///
-/// Single source of truth used by both the MLIR-pass-manager build path
+/// Single source of truth for the MLIR-pass-manager build path
 /// ([`build_pipeline_with_config`]) and the diagnostics path
 /// (`process_module_with_diagnostics` in `api/pipeline.rs`).
 pub fn resolve_pass_list(config: &apxm_core::types::PipelineConfig) -> Vec<String> {
@@ -310,4 +310,3 @@ pub fn resolve_pass_list(config: &apxm_core::types::PipelineConfig) -> Vec<Strin
     }
     passes
 }
-

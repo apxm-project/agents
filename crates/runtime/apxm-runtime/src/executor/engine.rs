@@ -404,8 +404,8 @@ impl ExecutorEngine {
 
     /// Execute a sub-DAG identified by a flow registry label.
     ///
-    /// Used by `TRY_CATCH` to drive try/catch branches without circular
-    /// dependencies. Creates a child execution context and runs the
+    /// Drives `TRY_CATCH` branches without circular dependencies. Creates a
+    /// child execution context and runs the
     /// referenced sub-DAG, returning the first non-null exit value.
     pub async fn run_subgraph_by_label(&self, label: &str, inputs: Vec<Value>) -> Result<Value> {
         // Labels are stored as "AgentName.flowName" or just "flowName".
@@ -453,8 +453,8 @@ impl ExecutorEngine {
     }
 }
 
-/// Map a downstream op type to a GRAPH_EDGE `kind` label. Used by the
-/// engine to colour edges in the observer view.
+/// Map a downstream op type to a GRAPH_EDGE `kind` label for colouring edges in
+/// the observer view.
 ///
 /// - `tool_invocation` when the consumer is an INV_TOOL (the producer
 ///   feeds a tool call)
@@ -612,4 +612,3 @@ mod tests {
         );
     }
 }
-

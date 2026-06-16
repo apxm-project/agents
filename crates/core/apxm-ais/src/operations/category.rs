@@ -2,7 +2,7 @@
 
 use serde::{Deserialize, Serialize};
 
-/// Categories for AIS operations, used by the scheduler to determine behavior.
+/// Categories for AIS operations that drive scheduler behavior.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum OperationCategory {

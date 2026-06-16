@@ -21,9 +21,6 @@ use apxm_core::{InnerPlanPayload, Plan, error::RuntimeError};
 use serde::de::Error;
 use std::collections::HashMap;
 
-// Note: Plan, PlanStep, and InnerPlanPayload are now imported from apxm_core
-// This ensures consistency across the entire system (chat, runtime, compiler)
-
 /// Execute PLAN operation - LLM-based planning with inner/outer plan support
 ///
 /// The PLAN operation supports:
@@ -246,7 +243,7 @@ async fn execute_plan_once(
         // Validate the LLM-emitted task DAG up-front so a malformed workflow
         // (cycle, dangling depends_on, dup ids) fails
         // with an actionable error tied to the PLAN node, not buried
-        // inside link_task_dag → compile. validate() is also called by
+        // inside link_task_dag -> compile. validate() also runs from
         // task_dag_to_air_module, so this is defence-in-depth + better
         // UX, not a correctness change. Telemetry follows: emit the
         // PlanWorkflowEmitted event with the extracted parallel fan-out so
@@ -512,4 +509,3 @@ async fn generate_inner_plan(
 
     Ok(Some(trimmed.to_string()))
 }
-

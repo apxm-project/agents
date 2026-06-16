@@ -21,7 +21,7 @@ pub enum CompilationStage {
 pub enum EmitFormat {
     /// Binary artifact (`.apxmobj`).
     Artifact,
-    /// Generated Rust source (kept for debugging).
+    /// Generated Rust source retained for debugging.
     Rust,
 }
 

@@ -146,7 +146,7 @@ struct RestTemplate {
     url: String,
 }
 
-/// Arg keys consumed by the capability itself, never forwarded as body fields.
+/// Arg keys reserved for the capability itself, never forwarded as body fields.
 const RESERVED_ARGS: &[&str] = &[
     "credential",
     "result_path",
@@ -713,4 +713,3 @@ mod tests {
         );
     }
 }
-

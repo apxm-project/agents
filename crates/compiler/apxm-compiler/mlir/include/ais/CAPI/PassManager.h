@@ -43,7 +43,7 @@ void apxm_pass_manager_add_symbol_dce(ApxmPassManager *pm);
 // as IntegerAttr on the module op (the `ais.` prefix is required because
 // builtin.module rejects unprefixed attribute names). If either is present
 // its value is written to the corresponding out-parameter and the attribute
-// is removed; otherwise the out-parameter is set to 0.
+// is stripped; otherwise the out-parameter is set to 0.
 //
 // Returns 0 on success, non-zero if any pointer argument is null.
 int apxm_module_drain_pass_stats(ApxmModule *module,
@@ -52,7 +52,7 @@ int apxm_module_drain_pass_stats(ApxmModule *module,
                                  int64_t *ir_size_delta_out);
 
 // Remove every `ais.<pass>_fired_count` and `ais.<pass>_ir_size_delta`
-// attribute from the module op. Used by the non-diagnostic compile path
+// attribute from the module op. The non-diagnostic compile path strips these
 // so that pass stats do not leak into the serialized artifact (where they
 // would break golden-roundtrip and idempotency checks).
 //
@@ -61,8 +61,8 @@ int apxm_module_strip_all_pass_stats(ApxmModule *module);
 
 // Walk every op in the module and sum the `ais.est_template_tokens`
 // IntegerAttr value (treating absent attrs as 0). Returns the total in
-// `total_out`. Used by the pass runner to compute `tokens_saved` as the
-// pre/post delta around each pass.
+// `total_out`. The pass runner computes `tokens_saved` as the pre/post delta
+// around each pass.
 //
 // Returns 0 on success, non-zero if any pointer argument is null.
 int apxm_module_total_template_tokens(ApxmModule *module, uint64_t *total_out);

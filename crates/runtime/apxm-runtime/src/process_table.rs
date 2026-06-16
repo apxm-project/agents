@@ -222,12 +222,12 @@ impl ProcessTable {
         }
     }
 
-    /// Set the agent spawner (called by the driver during setup).
+    /// Set the agent spawner during driver setup.
     pub async fn set_agent_spawner(&self, spawner: Arc<dyn AgentSpawner>) {
         *self.agent_spawner.write().await = Some(spawner);
     }
 
-    /// Set the agent prompter (called by the driver during setup).
+    /// Set the agent prompter during driver setup.
     pub async fn set_agent_prompter(&self, prompter: Arc<dyn AgentPrompter>) {
         *self.agent_prompter.write().await = Some(prompter);
     }
@@ -347,7 +347,7 @@ impl ProcessTable {
 
     /// Close a named process (remove from both name index and process map).
     ///
-    /// The process entry is fully removed so that Arc references to the
+    /// The process entry is fully deleted so that Arc references to the
     /// session handle are dropped, allowing AcpSession's Drop impl to fire.
     pub fn close(&self, name: &str) -> bool {
         if let Some((_, id)) = self.name_index.remove(name) {
@@ -466,7 +466,7 @@ impl ProcessTable {
     ///
     /// Checks capacity, spawn depth, and name availability atomically.
     /// The returned `SpawnReservation` holds a placeholder in the name index.
-    /// If dropped without calling `commit()`, the placeholder is removed.
+    /// If dropped without calling `commit()`, the placeholder is deleted.
     pub fn reserve_spawn_slot(
         &self,
         name: String,
@@ -519,4 +519,3 @@ impl Default for ProcessTable {
         Self::new()
     }
 }
-

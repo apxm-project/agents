@@ -103,7 +103,7 @@ pub fn annotate_token_estimates(module: &mut AirModule) {
 ///
 /// Templates reference inputs by name (`{topic}`, `{question}`, …); the
 /// shared `template::parse_placeholder_names` helper defines the exact
-/// grammar (`\{(\w+)\}`). Anything that matches that grammar is removed;
+/// grammar (`\{(\w+)\}`). Anything that matches that grammar is stripped;
 /// braces around non-word content (e.g. `{a-b}`) are preserved as text.
 fn strip_placeholders(template: &str) -> String {
     let mut result = String::with_capacity(template.len());
@@ -192,4 +192,3 @@ fn is_llm_template_op(op: AISOperationType) -> bool {
         AISOperationType::Ask | AISOperationType::Think | AISOperationType::Reason
     )
 }
-

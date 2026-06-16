@@ -371,7 +371,7 @@ fn install_cmake(build_dir: &Path) -> Result<()> {
 
 // --- libclang discovery for bindgen / clang-sys (`toolchain_env::LIBCLANG_PATH`) ------------
 
-/// See [clang-sys `get_library_path`](https://docs.rs/clang-sys) — loadable `libclang` in this directory.
+/// Directory containing the loadable `libclang` shared library clang-sys expects.
 const LIBCLANG_FILE_DLL: &str = "libclang.dll";
 const LIBCLANG_FILE_SO: &str = "libclang.so";
 const LIBCLANG_FILE_DYLIB: &str = "libclang.dylib";

@@ -234,7 +234,7 @@ pub const EST_TEMPLATE_TOKENS: &str = "est_template_tokens";
 // -- Graph-aware backend hints --
 // Mirrors of MLIR Constants.h::attrs::* (with ais. prefix). Written by the
 // MLIR PromptCanonicalization + AssignPriority passes; ArtifactEmitter strips
-// the prefix into the bare graph attrs consumed by the runtime.
+// the prefix into the bare graph attrs the runtime accepts.
 pub const AIS_SHARED_PREFIX_GROUP: &str = "ais.shared_prefix_group";
 pub const AIS_SHARED_PREFIX_EST_TOKENS: &str = "ais.shared_prefix_est_tokens";
 pub const AIS_SHARED_PREFIX_GROUP_SIZE: &str = "ais.shared_prefix_group_size";
@@ -296,8 +296,7 @@ pub const TEMPLATE_BEARING_ATTRS: &[&str] = &[
 
 /// All attribute name values defined in this module.
 ///
-/// Used by the consistency test to verify that every OperationSpec field
-/// references a constant defined here.
+/// Verifies that every OperationSpec field references a constant defined here.
 pub const ALL_ATTR_NAMES: &[&str] = &[
     AGENT_NAME,
     TEAM_NAME,
@@ -472,4 +471,3 @@ pub const ALL_ATTR_NAMES: &[&str] = &[
     NAME,
     SID,
 ];
-

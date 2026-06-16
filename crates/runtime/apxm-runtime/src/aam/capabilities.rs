@@ -3,7 +3,7 @@
 pub use apxm_core::CapabilityRecord;
 use std::collections::HashMap;
 
-/// Concrete capability storage used by the runtime today.
+/// Concrete capability storage for the runtime.
 pub type CapabilityMap = HashMap<String, CapabilityRecord>;
 
 /// Capability-level changes recorded for one transition.

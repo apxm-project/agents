@@ -1,4 +1,4 @@
-//! Compiler wrapper used by the driver.
+//! Driver compiler wrapper.
 
 use apxm_compiler::AirModule;
 use apxm_compiler::{Context, Module, Pipeline, PipelineDiagnostics};
@@ -11,7 +11,7 @@ use std::path::Path;
 
 use crate::error::DriverError;
 
-/// Compiler wrapper used by the linker.
+/// Linker compiler wrapper.
 pub struct Compiler {
     context: Context,
     opt_level: OptimizationLevel,
@@ -69,8 +69,7 @@ impl Compiler {
 
     /// Compile a `.air` text source with a custom pipeline configuration.
     ///
-    /// Used by the CLI when the user passes `--disable-pass`, `--pass-list`,
-    /// `--target`, etc. on a `.air` file. Skips the AirModule lowering step.
+    /// Custom pipeline entry for `.air` inputs. Skips the AirModule lowering step.
     pub fn compile_air_with_config(
         &self,
         air_text: &str,
@@ -82,8 +81,8 @@ impl Compiler {
 
     /// Compile a `.air` text source with a custom config and collect diagnostics.
     ///
-    /// Used by the CLI's `--emit-diagnostics` flag and by the ablation harness
-    /// to record per-pass `fired_count` / `tokens_saved` on `.air` inputs.
+    /// Diagnostic compile entry that records per-pass `fired_count` /
+    /// `tokens_saved` on `.air` inputs.
     pub fn compile_air_with_config_and_diagnostics(
         &self,
         air_text: &str,

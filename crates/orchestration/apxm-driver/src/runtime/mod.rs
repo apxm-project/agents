@@ -1,4 +1,4 @@
-//! Runtime executor used by the driver to run compiled DAGs.
+//! Driver runtime executor for compiled DAGs.
 
 use std::sync::Arc;
 use std::time::Duration;
@@ -40,7 +40,7 @@ fn parse_routing_target(target: Option<&str>) -> apxm_runtime::RoutingTarget {
     }
 }
 
-/// Runtime executor used by the driver to run compiled DAGs.
+/// Driver runtime executor for compiled DAGs.
 pub struct RuntimeExecutor {
     runtime: Arc<Runtime>,
     configured_emitter: Option<Arc<dyn ExecutionEventEmitter>>,
@@ -311,4 +311,3 @@ fn build_middlewares(configs: &[MiddlewareConfig]) -> Vec<Arc<dyn OperationMiddl
         })
         .collect()
 }
-

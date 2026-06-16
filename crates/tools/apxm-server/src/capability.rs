@@ -109,7 +109,7 @@ pub(crate) struct RegisterCapabilityRequest {
     /// Optional tags for inventory and routing.
     #[serde(default)]
     tags: Vec<String>,
-    /// Endpoint used by `kind=http`.
+    /// Endpoint for `kind=http`.
     #[serde(default)]
     endpoint: Option<String>,
     /// Timeout in milliseconds for HTTP capability calls (default: 30 000).

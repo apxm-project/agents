@@ -1,6 +1,6 @@
 /**
  * @file  Error.cpp
- * @brief Thread-local error collector used by the C API.
+* @brief Thread-local error collector for the C API.
  *
  * All parse, verify or codegen errors are funnelled through this collector
  * so that C callers can inspect them after every call.  The implementation

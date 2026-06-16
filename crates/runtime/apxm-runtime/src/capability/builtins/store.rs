@@ -286,7 +286,7 @@ impl ToolsStore {
         Ok(())
     }
 
-    /// Delete a task row. Returns true if a row was removed.
+    /// Delete a task row. Returns true if a row was deleted.
     pub fn delete_task(&self, id: &str) -> Result<bool, String> {
         let conn = self.lock()?;
         let n = conn
@@ -346,4 +346,3 @@ pub fn now_ms() -> i64 {
         .duration_since(UNIX_EPOCH)
         .map_or(0, |d| d.as_millis() as i64)
 }
-

@@ -127,7 +127,7 @@ impl Conversation {
         self.turns.push((user, assistant));
     }
 
-    /// The most recent assistant reply, if any (used by `/save`).
+    /// The most recent assistant reply, if any.
     pub(crate) fn last_assistant(&self) -> Option<&str> {
         self.turns.last().map(|(_, assistant)| assistant.as_str())
     }
@@ -387,8 +387,8 @@ pub async fn chat_command(opts: ChatOptions) -> Result<()> {
     // conversation loop (a `ConversationalAgent` multi-flow artifact with an
     // in-graph re-arming recv), the host adds ZERO conversational behavior — it
     // POSTs the artifact once, pipes stdin to the turn-input endpoint, and
-    // renders streamed tokens. The legacy host-driven loop below is preserved
-    // for single-shot / host-driven artifacts (back-compat).
+    // renders streamed tokens. The host-driven loop below remains the path for
+    // single-shot artifacts and artifacts that rely on host-owned conversation.
     if air_has_in_program_loop(&air) {
         eprintln!(
             "apxm chat — in-program loop detected; host is a dumb pipe (session {session_id} @ {base})"
@@ -871,7 +871,7 @@ async fn record_and_compact(
 }
 
 /// Fold the oldest turns into the running summary via a quiet summarize turn.
-/// `force` compacts regardless of the token threshold (used by `/compact`).
+/// `force` compacts regardless of the token threshold.
 /// On any failure the transcript is left untouched (no turn is lost).
 async fn compact_if_needed(
     convo: &mut Conversation,
@@ -1318,4 +1318,3 @@ async fn print_list(client: &reqwest::Client, url: &str, label: &str) -> Result<
     }
     Ok(())
 }
-

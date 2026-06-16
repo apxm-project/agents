@@ -16,8 +16,8 @@ pub enum EventCategory {
     UserAction,
     /// Multi-agent lifecycle: spawn, dispatch, communicate.
     Agent,
-    /// Graph topology / edge resolution events (used by observers to
-    /// reconstruct the dispatch tree without re-deriving it).
+    /// Graph topology / edge resolution events for observers that reconstruct
+    /// the dispatch tree without re-deriving it.
     Topology,
 }
 

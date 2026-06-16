@@ -2,7 +2,7 @@
 //!
 //! Agents are the top-level runtime unit that own named flows. Each flow can
 //! preserve its original task DAG representation and its lowered execution
-//! DAG used by the scheduler.
+//! Scheduler execution DAG.
 
 use std::collections::HashMap;
 
@@ -68,7 +68,7 @@ pub struct AgentFlow {
     /// Optional original task DAG representation.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub task_dag: Option<TaskDag>,
-    /// Lowered execution DAG used by runtime scheduling.
+    /// Lowered execution DAG for runtime scheduling.
     pub execution_dag: ExecutionDag,
 }
 
@@ -129,4 +129,3 @@ pub struct CapabilityDeclaration {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub description: Option<String>,
 }
-

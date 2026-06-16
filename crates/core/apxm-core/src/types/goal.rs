@@ -184,8 +184,8 @@ impl GateVerdict {
     /// first balanced JSON object embedded in surrounding text (e.g. a fenced
     /// block). Returns `None` when there is no conforming JSON.
     ///
-    /// This is the strict path used by the runtime to auto-detect an LLM gate's
-    /// verdict, where a loose text match could false-positive on worker prose.
+    /// Strict runtime path for auto-detecting an LLM gate's verdict, where a
+    /// loose text match could false-positive on worker prose.
     pub fn parse_json(text: &str) -> Option<Self> {
         if let Ok(verdict) = serde_json::from_str::<GateVerdict>(text.trim()) {
             return Some(verdict);
@@ -391,4 +391,3 @@ fn extract_json_object(text: &str) -> Option<String> {
     }
     None
 }
-

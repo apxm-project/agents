@@ -48,7 +48,7 @@ def AISTierAttr : AIS_I32EnumAttr<"tier", AISTierKind> {
   let cppClassName = "AISTierAttr";
 }
 
-// Intent classification used by scheduling heuristics.
+// Intent classification for scheduling heuristics.
 def AISIntentKind : AIS_I32Enum<"AISIntentKind",
     "Agent intent classification",
     [
@@ -88,7 +88,7 @@ def AISMemorySpaceAttr : AIS_I32EnumAttr<"memory_space", AISMemorySpaceKind> {
   let cppClassName = "AISMemorySpaceAttr";
 }
 
-// Relative cost used by the scheduler.
+// Relative cost for scheduler decisions.
 def AISEstimatedCostAttr : AttrDef<AIS_Dialect, "estimated_cost"> {
   let summary = "Estimated relative cost (heuristic)";
   let parameters = (ins "int32_t":$value);

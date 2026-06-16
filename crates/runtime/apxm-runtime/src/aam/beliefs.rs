@@ -7,7 +7,7 @@
 use apxm_core::types::values::Value;
 use std::collections::HashMap;
 
-/// Concrete belief storage used by the runtime today.
+/// Concrete belief storage for the runtime.
 pub type BeliefMap = HashMap<String, Value>;
 
 /// Recorded belief-level changes for one transition.

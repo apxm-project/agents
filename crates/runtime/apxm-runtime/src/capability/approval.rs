@@ -49,7 +49,7 @@ impl ApprovalStore {
     /// Check if we have a cached decision for `capability`.
     ///
     /// Returns `None` if no cached decision exists. If a [`ApprovalScope::Once`]
-    /// decision is found it is consumed (removed) and returned.
+    /// decision is found it is consumed, deleted, and returned.
     pub fn check(&self, capability: &str) -> Option<InterceptDecision> {
         // Fast path: read-only check for Session/Always scopes.
         {
@@ -105,4 +105,3 @@ impl Default for ApprovalStore {
         Self::new()
     }
 }
-

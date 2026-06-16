@@ -9,7 +9,7 @@ use apxm_core::types::{execution::Node, values::Value};
 use async_trait::async_trait;
 use std::{future::Future, pin::Pin, sync::Arc};
 
-/// Boxed future used by the dispatcher and middleware chain.
+/// Boxed future for the dispatcher and middleware chain.
 pub type BoxFuture<'a, T> = Pin<Box<dyn Future<Output = T> + Send + 'a>>;
 
 pub(crate) type DispatchFn =
@@ -67,4 +67,3 @@ pub trait OperationMiddleware: Send + Sync {
         next: Next<'_>,
     ) -> Result<Value>;
 }
-

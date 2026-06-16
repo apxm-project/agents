@@ -50,7 +50,7 @@ impl IndexDb {
         Ok(Self { conn })
     }
 
-    /// Open or initialize an in-memory db; only used by tests.
+    /// Open or initialize a test-only in-memory db.
     pub fn open_in_memory() -> Result<Self, IndexError> {
         let conn = Connection::open_in_memory()?;
         conn.execute_batch(SCHEMA_SQL)?;

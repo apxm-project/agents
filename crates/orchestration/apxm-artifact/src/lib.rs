@@ -119,9 +119,8 @@ impl Artifact {
         &self.dags
     }
 
-    /// Mutable access to the DAGs — used by the server to inject
-    /// dispatch-time data (e.g. apxm-auth-resolved credential headers) into
-    /// `inv_tool` node attributes before execution.
+    /// Mutable access to DAGs for dispatch-time data injection, such as
+    /// apxm-auth-resolved credential headers on `inv_tool` node attributes.
     pub fn dags_mut(&mut self) -> &mut [ExecutionDag] {
         &mut self.dags
     }
@@ -286,4 +285,3 @@ impl Artifact {
 }
 
 pub type ArtifactResult<T> = std::result::Result<T, ArtifactError>;
-

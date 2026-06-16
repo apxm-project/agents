@@ -1,7 +1,7 @@
 //! Short-Term Memory (STM) - Fast, volatile working memory
 //!
 //! Uses in-memory backend for microsecond-latency operations.
-//! Ideal for temporary results, intermediate values, and caching.
+//! Ideal for short-lived results, intermediate values, and caching.
 
 use super::config::StmConfig;
 use apxm_backends::{InMemoryBackend, SearchResult, StorageBackend};
@@ -78,4 +78,3 @@ impl ShortTermMemory {
         self.backend.stats().await
     }
 }
-

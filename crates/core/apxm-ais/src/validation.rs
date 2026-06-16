@@ -1,6 +1,6 @@
 //! Operation Validation
 //!
-//! Provides shared validation logic used by both compiler and runtime to ensure
+//! Provides shared validation logic for compiler and runtime to ensure
 //! operations have all required fields and correct types.
 
 use crate::attrs;
@@ -174,4 +174,3 @@ fn is_valid_python_handler_id(s: &str) -> bool {
             .bytes()
             .all(|b| b.is_ascii_hexdigit() && !b.is_ascii_uppercase())
 }
-

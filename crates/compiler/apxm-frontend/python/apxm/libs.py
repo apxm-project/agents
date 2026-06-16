@@ -38,11 +38,9 @@ from typing import Any
 from . import execution as _execution
 from .errors import ServerError
 
-# Route paths must come from the server's canonical surface, never as
-# literal strings sprinkled in handler code (see CLAUDE.md §7,
-# `feedback_no_referential_comments`). The Rust side owns
-# `pub(crate) const SKILL_EXECUTE = "/v1/skills/{id}/execute"`; the
-# Python client mirrors the *shape* but resolves the id at call time.
+# Route paths stay centralized so Python skill calls do not drift from the
+# server-owned HTTP surface. The Python client mirrors the path shape but
+# resolves the skill id at call time.
 _SKILL_DETAIL_PATH = "/v1/skills/{id}"
 _SKILL_EXECUTE_PATH = "/v1/skills/{id}/execute"
 

@@ -322,7 +322,7 @@ pub(crate) struct SkillExecuteRequest {
     #[serde(default)]
     pub(crate) correlation_id: Option<String>,
     /// Internal-only execution metadata merged into the runtime context (NOT
-    /// caller-settable — `#[serde(skip)]`). Used by `rerun-from-node` to stamp the
+    /// caller-settable — `#[serde(skip)]`). `rerun-from-node` stamps the
     /// partial-replay seed keys (`replay_from_node`, `replay_token_values`) so the
     /// runtime re-executes only the chosen node and its descendants.
     #[serde(skip)]
@@ -840,8 +840,8 @@ async fn send_recorded_run_event(
     let _ = tx.send(event).await;
 }
 
-/// Build the EventEmitter fan-out used by skill execution: execution-record
-/// sink → run event bus → rollout/webhook/channel with normalized run seq.
+/// Build the skill-execution EventEmitter fan-out: execution-record sink →
+/// run event bus → rollout/webhook/channel with normalized run seq.
 ///
 /// Adding a sink is additive — every consumer sees the same event so
 /// the SSE stream, the persisted record, and the lifecycle webhook
@@ -1207,7 +1207,7 @@ pub(crate) fn parse_skill_roots(args: &[String]) -> Vec<PathBuf> {
     parse_skill_roots_impl(args)
 }
 
-// Used by in-crate integration tests; the release binary uses `parse_skill_roots`.
+// In-crate integration-test path; the release binary uses `parse_skill_roots`.
 #[allow(dead_code)]
 pub(crate) fn parse_cli_skill_roots(args: &[String]) -> Vec<PathBuf> {
     parse_cli_skill_roots_impl(args)
@@ -2015,4 +2015,3 @@ mod scale_tests {
         );
     }
 }
-

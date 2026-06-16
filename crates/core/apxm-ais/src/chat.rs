@@ -1,6 +1,6 @@
 //! Shared conversational-chat primitives — transcript rendering, the chat /
-//! summarize AIR, and the compaction budget — used by both the `apxm chat` CLI
-//! and the apxm-studio backend so they stay identical. (The TS frontend mirrors
+//! summarize AIR, and the compaction budget shared by the `apxm chat` CLI and
+//! the apxm-studio backend so they stay identical. (The TS frontend mirrors
 //! this contract; these values are the spec.)
 
 /// Turns kept verbatim during compaction; older turns fold into the summary.
@@ -240,8 +240,8 @@ pub fn parse_denied_capability(body: &str) -> Option<String> {
     (!cap.is_empty()).then(|| cap.to_string())
 }
 
-/// Single-ASK summarize graph used by the compaction post-hook to fold older
-/// turns into a running summary. One source of truth for both surfaces.
+/// Single-ASK summarize graph for folding older turns into a running summary.
+/// One source of truth for both surfaces.
 pub const SUMMARIZE_AIR: &str = r#"module {
   func.func @apxm_summarize(%arg0: !ais.token {ais.param_name = "to_summarize", ais.param_type = "str"}) -> !ais.token attributes {ais.entry} {
     %summary = ais.ask "Summarize the following conversation excerpt into a concise running summary that preserves decisions, facts, names, and open tasks. Be terse.\n\n{{{to_summarize}}}" : !ais.token
@@ -249,4 +249,3 @@ pub const SUMMARIZE_AIR: &str = r#"module {
   }
 }
 "#;
-

@@ -6,7 +6,7 @@
 use crate::storage::StorageResult;
 use apxm_core::error::RuntimeError;
 
-/// Trait for embedding generators used by storage backends.
+/// Trait for storage-backend embedding generators.
 pub trait Embedder: Send + Sync {
     /// Generate embeddings for multiple texts.
     fn embed(&self, texts: &[&str]) -> StorageResult<Vec<Vec<f32>>>;

@@ -3,7 +3,7 @@
  * @brief Condenses consecutive memory operations into batched single-node ops.
  *
  * The pass identifies linear chains of QMEM or UMEM operations that target
- * the same memory space and whose intermediate results are only consumed by
+* the same memory space and whose intermediate results flow only to
  * the next operation in the chain.  Such chains are replaced with a single
  * "batch" operation whose query/value is the concatenation of all individual
  * queries/values, separated by a newline.

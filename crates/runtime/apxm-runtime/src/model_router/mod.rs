@@ -488,7 +488,7 @@ impl ModelRouter {
     /// Returns true if the model's backend has a closed circuit breaker,
     /// false if open or model not found in registry.
     ///
-    /// This is used by ProfileRouter to select healthy candidates.
+    /// ProfileRouter selects healthy candidates from this status snapshot.
     pub fn is_model_healthy(&self, model_name: &str) -> bool {
         // Look up the model in the registry to find its backend
         if let Some(entry) = self.model_registry.get(model_name) {
@@ -621,4 +621,3 @@ impl ModelRouter {
         })
     }
 }
-

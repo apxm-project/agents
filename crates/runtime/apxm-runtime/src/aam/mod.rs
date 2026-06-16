@@ -1,6 +1,6 @@
 //! Agent Abstract Machine (AAM) state management.
 //!
-//! This module provides the first pass of the AAM used by the runtime. It tracks
+//! This module provides the runtime's first AAM pass. It tracks
 //! beliefs (key/value map), goals (priority queue), registered capabilities, and
 //! episodic state transitions. The interface is intentionally conservative so we
 //! can evolve it alongside the rest of the runtime.
@@ -27,7 +27,7 @@ use std::collections::HashMap;
 use std::path::Path;
 use std::sync::Arc;
 
-/// Prefix for staged belief keys (used by QMEM).
+/// Prefix for staged belief keys in QMEM.
 pub const STAGED_BELIEF_PREFIX: &str = apxm_core::constants::runtime::belief_keys::STAGED_PREFIX;
 
 /// Shared handle to the Agent Abstract Machine state.
@@ -287,8 +287,8 @@ impl Aam {
 
     /// Look up the priority of a specific goal by its description key.
     ///
-    /// This is used by the scheduler to resolve the `goal_id` attribute
-    /// (which stores the goal description) to its AAM priority.
+    /// The scheduler resolves the `goal_id` attribute, which stores the goal
+    /// description, to its AAM priority through this lookup.
     pub fn goal_priority_by_description(&self, description: &str) -> Option<u32> {
         let state = self.inner.read();
         state
@@ -591,4 +591,3 @@ impl AamCheckpoint {
         serde_json::from_str(&json).map_err(|e| RuntimeError::Serialization(e.to_string()))
     }
 }
-

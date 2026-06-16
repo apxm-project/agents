@@ -6,7 +6,7 @@ use std::collections::HashMap;
 
 const DEFAULT_TEMPERATURE: f64 = 0.7;
 
-/// Definition of a tool that can be called by the LLM.
+/// Definition of an LLM-callable tool.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ToolDefinition {
     /// Unique name of the tool
@@ -470,4 +470,3 @@ impl GenerationConfig {
         request
     }
 }
-

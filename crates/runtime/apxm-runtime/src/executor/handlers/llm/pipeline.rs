@@ -19,8 +19,8 @@ use super::super::{Result, get_optional_u64_attribute};
 ///    `pinned_blocks`) from the runtime metrics report.
 ///
 /// Cloud backends without an application-visible cache control surface keep
-/// the historical default of `memoizable=true` so the in-process memo remains
-/// the primary application-level cache for them.
+/// `memoizable=true` so the in-process memo remains the primary
+/// application-level cache for them.
 pub(super) fn default_memoizable_for_backend(backend: Option<&str>) -> bool {
     match backend {
         Some("vllm") | Some("ollama") => false,
@@ -99,4 +99,3 @@ pub(super) fn charge_tokens(
 pub(super) fn resolve_global_token_budget(ctx: &ExecutionContext) -> Option<u64> {
     ctx.token_budget
 }
-

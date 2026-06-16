@@ -1,4 +1,4 @@
-//! Constants used by the sandbox subsystem.
+//! Constants for the sandbox subsystem.
 
 pub mod executables {
     pub const BASH: &str = "bash";

@@ -80,9 +80,9 @@ impl CapabilityPolicy {
         }
     }
 
-    /// Returns `true` if `other` is a subset of this policy. Used by nested
-    /// admission to guarantee a child execution never widens beyond what
-    /// its parent declared.
+    /// Returns `true` if `other` is a subset of this policy for nested admission.
+    ///
+    /// A child execution must never widen beyond what its parent declared.
     pub fn admits(&self, other: &Self) -> bool {
         match (self, other) {
             (Self::ReadOnly, Self::ReadOnly) => true,
@@ -297,4 +297,3 @@ pub fn file_hash_if_present(path: &Path, errors: &mut Vec<String>) -> Option<Str
 pub fn tagged_blake3(bytes: &[u8]) -> String {
     format!("{HASH_PREFIX}{}", blake3::hash(bytes).to_hex())
 }
-

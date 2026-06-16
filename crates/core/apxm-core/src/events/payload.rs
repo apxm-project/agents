@@ -282,7 +282,7 @@ pub struct UnknownEventPayload {
 
 impl UnknownEventPayload {
     /// Build an opaque payload from wire JSON. The `kind` discriminator should
-    /// already be removed from `payload_json`.
+    /// already be deleted from `payload_json`.
     pub fn from_json(kind_name: &str, payload_json: serde_json::Value) -> Self {
         Self {
             kind: event_kind_for_payload(kind_name),
@@ -320,7 +320,7 @@ impl EventPayload for UnknownEventPayload {
     }
 }
 
-/// Metadata for content that was intentionally removed from an event payload.
+/// Metadata for content that was intentionally deleted from an event payload.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct RedactedContent {
     /// Whether the original content was redacted.

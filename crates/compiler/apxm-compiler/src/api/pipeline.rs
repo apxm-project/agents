@@ -188,9 +188,8 @@ impl<'ctx> Pipeline<'ctx> {
             // Insert dspy-optimize AFTER dead-context-elimination so DCE has
             // already pruned unconsumed Asks; otherwise DSPy spends API budget
             // rewriting prompts that DCE is about to remove. Fall back to
-            // (build-prompt + 1) only if DCE is not in the pass list (e.g.
-            // O0 with a custom override). See docs/synthesis-O0-O2-2026-04-28.md
-            // §"DSPy is a no-op…" for the regression that motivated this.
+            // (build-prompt + 1) only if DCE is not in the pass list, such as
+            // O0 with a custom override.
             let insert_at = pass_names
                 .iter()
                 .position(|name| name == DEAD_CONTEXT_ELIMINATION.name)

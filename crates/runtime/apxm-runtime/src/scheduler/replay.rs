@@ -237,7 +237,7 @@ mod tests {
         // Nodes 2 and 3 replay; node 1 is completed (not re-run).
         assert_eq!(seed.replayed_nodes, HashSet::from([2, 3]));
         assert_eq!(seed.completed_nodes, HashSet::from([1]));
-        // The boundary token (10, produced by node 1, consumed by node 2) is seeded.
+        // The boundary token (10, node 1 -> node 2) is seeded.
         assert_eq!(
             seed.seed_tokens.get(&10),
             Some(&Value::String("from-node-1".into()))

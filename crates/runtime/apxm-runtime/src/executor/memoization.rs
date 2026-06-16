@@ -433,7 +433,7 @@ impl MemoCache {
     ) {
         #[cfg(feature = "dashmap")]
         {
-            // Evict old entries if at capacity
+            // Evict aged entries if at capacity.
             if self.l1.len() >= self.max_l1_entries {
                 self.evict_l1_expired();
 
@@ -465,7 +465,7 @@ impl MemoCache {
         {
             let mut entries = self.l1.write();
 
-            // Evict old entries if at capacity
+            // Evict aged entries if at capacity.
             if entries.len() >= self.max_l1_entries {
                 let ttl = self.ttl;
                 let before = entries.len();
@@ -627,4 +627,3 @@ impl MemoCache {
         }
     }
 }
-

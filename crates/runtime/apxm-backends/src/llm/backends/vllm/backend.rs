@@ -748,11 +748,9 @@ impl LLMBackend for GraphAwareVllmBackend {
 
     fn graph_capabilities(&self) -> BackendGraphCapabilities {
         // A registered GraphAwareVllmBackend is guaranteed to have passed
-        // the synchronous /v1/apxm/* probe in `health_check`; the previous
-        // per-call `apxm_endpoints_available` gate has been removed. If the
-        // fork process later drops the routes, that surfaces through
-        // health_check downgrading the backend, not through a silently
-        // degraded capability surface.
+        // the synchronous /v1/apxm/* probe in `health_check`. If the fork
+        // process later drops the routes, health_check downgrades the backend
+        // instead of silently degrading the capability surface.
         let scheduler_is_priority = self
             .scheduler_policy
             .read()
@@ -825,4 +823,3 @@ impl LLMBackend for GraphAwareVllmBackend {
         }
     }
 }
-

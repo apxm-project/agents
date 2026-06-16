@@ -69,8 +69,9 @@ impl std::fmt::Display for OtelInitError {
 
 impl std::error::Error for OtelInitError {}
 
-/// Stand-alone helper used by `init` callers when initialization
-/// itself fails — emit one warn rather than aborting startup.
+/// Stand-alone helper for `init` callers when initialization itself fails.
+///
+/// Emitting one warning keeps exporter setup failures from aborting startup.
 pub(crate) fn warn_init_failure(error: &OtelInitError) {
     warn!(error = %error, "OTLP exporter init failed; continuing without export");
 }

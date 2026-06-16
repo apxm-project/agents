@@ -31,7 +31,7 @@ LIFECYCLE_EVENTS: frozenset[str] = frozenset(
     }
 )
 
-# Only `pre_*` events can gate (Allow/Deny/EditArgs); see constitution #5.
+# Only `pre_*` events can gate because later hooks observe after side effects.
 _GATE_EVENTS: frozenset[str] = frozenset(
     {"session_start", "pre_turn", "pre_ask", "pre_tool"}
 )

@@ -1,5 +1,5 @@
 //! Canonical semantic-contract record: every backend call described in a
-//! deterministic, comparable form. Used by tier-1 semantic-equivalence tests.
+//! deterministic, comparable form for tier-1 semantic-equivalence tests.
 
 use serde::{Deserialize, Serialize};
 
@@ -43,4 +43,3 @@ impl CallTrace {
         self.events.is_empty()
     }
 }
-

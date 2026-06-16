@@ -16,7 +16,7 @@ pub enum TokenStatus {
     Pending,
     /// Token has a value and is ready to be consumed.
     Ready,
-    /// Token has been consumed by all consumers.
+    /// Token has reached all consumers.
     Consumed,
 }
 
@@ -112,4 +112,3 @@ impl Token {
         }
     }
 }
-

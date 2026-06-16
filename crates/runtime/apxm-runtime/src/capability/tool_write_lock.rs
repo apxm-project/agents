@@ -33,8 +33,9 @@ pub(crate) fn release_write_lock_if_idle(name: &str, lock: &Arc<RwLock<()>>) {
     });
 }
 
-/// Whether a lock entry currently exists for `name` (used by tests to assert
-/// idle pruning / no-leak behavior).
+/// Whether a lock entry currently exists for `name`.
+///
+/// Tests assert idle pruning and no-leak behavior through this query.
 #[cfg(test)]
 pub(crate) fn contains_lock(name: &str) -> bool {
     TOOL_WRITE_LOCKS.contains_key(name)

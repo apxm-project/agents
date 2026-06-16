@@ -48,11 +48,11 @@ pub(crate) struct AppState {
     pub(crate) rollout_registry: RolloutRegistry,
     /// Process-local cap for expensive inference/runtime work.
     pub(crate) inference_limiter: InferenceLimiter,
-    /// Layered server configuration used by streaming handlers.
+    /// Layered server configuration for streaming handlers.
     pub(crate) server_config: ServerConfig,
     /// In-flight streaming executions keyed by `execution_id`, each holding a
     /// `Notify` that `POST /v1/runs/{id}/cancel` trips to abort the run at the
-    /// next await boundary. Entries are removed when the execution settles.
+    /// next await boundary. Entries are deleted when the execution settles.
     pub(crate) cancel_registry: Arc<DashMap<String, Arc<Notify>>>,
     /// Server-owned multi-pass goal runs keyed by `goal_id`.
     pub(crate) goal_runs: GoalRunRegistry,

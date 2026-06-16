@@ -327,7 +327,7 @@ impl Runtime {
         self.workflow_spawner = spawner;
     }
 
-    /// Attach a skill-resolution bridge used by the `CALL_SKILL` op.
+    /// Attach a skill-resolution bridge for the `CALL_SKILL` op.
     ///
     /// The runtime defaults to [`NoOpSkillResolver`], which fails every
     /// `CALL_SKILL` invocation with a `call_skill:<id>` capability error.
@@ -340,8 +340,8 @@ impl Runtime {
 
     /// Set the instruction configuration for system prompts.
     ///
-    /// The instruction config is used by LLM handlers to get system prompts
-    /// for operations like ask, think, reason, plan, and reflect.
+    /// LLM handlers read system prompts for ask, think, reason, plan, and
+    /// reflect from this config.
     pub fn set_instruction_config(&mut self, config: apxm_core::InstructionConfig) {
         self.instruction_config = config;
     }
@@ -760,9 +760,9 @@ impl Runtime {
 
     /// Execute a top-level artifact with a host-owned cancellation token.
     ///
-    /// This is used by server-managed background workflows so cancelling the
-    /// public execution also cancels nested WORKFLOW_SPAWN children and parked
-    /// wake handles.
+    /// Server-managed background workflows use this token so public-execution
+    /// cancellation also cancels nested WORKFLOW_SPAWN children and parked wake
+    /// handles.
     pub async fn execute_artifact_with_session_emitter_metadata_and_cancellation(
         &self,
         artifact: Artifact,
@@ -1271,4 +1271,3 @@ fn parse_flow_name(name: &str) -> (String, String) {
         ("default".to_string(), name.to_string())
     }
 }
-

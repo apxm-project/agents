@@ -1,4 +1,4 @@
-//! Execution metadata keys produced and consumed by the runtime.
+//! Execution metadata keys for runtime producers and readers.
 
 pub const PARENT_EXECUTION_ID: &str = "parent_execution_id";
 /// Execution-scoped key the host (apxm-server) stamps so a parked execution can

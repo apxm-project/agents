@@ -1,4 +1,4 @@
-//! Typed shape for `DispatchIrV1`. See `.apxm/docs/design/dispatch-ir.md`.
+//! Typed shape for `DispatchIrV1`.
 //!
 //! These structs are the in-memory form of the compiled-graph intent that the
 //! APXM runtime hands to a graph-aware inference backend. The serde shape is

@@ -3,10 +3,8 @@
 use super::metrics::{PassMetrics, PipelineDiagnostics};
 use crate::api::{Context, Module, module::invalid_input_error};
 use crate::ffi;
-// Bindgen auto-generates `apxm_module_drain_pass_stats` from PassManager.h; the
-// re-export here names it so the per-pass loop can call it without re-importing
-// from `ffi`. Reads + erases the `<pass>_fired_count` / `<pass>_ir_size_delta`
-// module attrs after each pass.
+// Reads and erases per-pass metrics after each pass, so later diagnostics only
+// see the pass that just ran.
 use crate::ffi::{apxm_module_drain_pass_stats, apxm_module_total_template_tokens};
 use apxm_core::error::compiler::Result;
 use apxm_core::types::OptimizationLevel;
@@ -146,7 +144,7 @@ impl<'ctx> PassManager<'ctx> {
 
         let mut current_ops = initial_ops;
 
-        // Create a temporary pass manager for individual pass execution.
+        // Create a scratch pass manager for individual pass execution.
         let mut tmp_pm = PassManager::new(self.context)?;
 
         for name in pass_names {
@@ -218,8 +216,7 @@ fn drain_pass_stats(module: &Module, pass_name: &str) -> (usize, isize) {
 /// Sum every op's `ais.est_template_tokens` IntegerAttr across the module.
 ///
 /// Returns 0 when no op carries the attr (e.g. before BuildPrompt has run).
-/// Used by `run_with_metrics` to compute `PassMetrics::tokens_saved` as the
-/// pre/post delta around each pass.
+/// Computes `PassMetrics::tokens_saved` as the pre/post delta around each pass.
 fn total_template_tokens(module: &Module) -> usize {
     let mut total: u64 = 0;
     // SAFETY: `module.as_ptr()` is a valid `*mut ApxmModule` for the lifetime

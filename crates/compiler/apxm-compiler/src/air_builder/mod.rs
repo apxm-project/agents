@@ -1,8 +1,7 @@
 //! AIR Builder — programmatic construction of `.air` (MLIR text) modules.
 //!
 //! This crate provides the canonical way to construct valid `.air` files from
-//! Rust code.  It replaces the old `apxm-graph` crate's `to_mlir()` path with
-//! a clean, decoupled API that any frontend can use.
+//! Rust code through a decoupled API that any frontend can use.
 //!
 //! ```text
 //! JSON / TaskDag / programmatic ──→ AirModule ──→ .air text ──→ Pipeline::compile()

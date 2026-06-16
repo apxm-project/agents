@@ -8,7 +8,7 @@ use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
 use thiserror::Error;
 
-/// Abstract capabilities used by APXM agent routing.
+/// Abstract capabilities for APXM agent routing.
 pub const AGENT_ROUTE_CAPABILITIES: &[&str] =
     &["read", "write", "execute", "critique", "workflow_author"];
 pub const AGENT_ROUTE_SELECTOR_DETERMINISTIC: &str = "deterministic";
@@ -69,7 +69,7 @@ impl AgentRouteRequest {
     }
 }
 
-/// Per-candidate evidence used by the deterministic selector.
+/// Per-candidate evidence for the deterministic selector.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct AgentRouteScore {
     pub profile: String,
@@ -515,4 +515,3 @@ fn hash_str(hash: &mut u64, value: &str) {
     *hash ^= 0xff;
     *hash = hash.wrapping_mul(0x100000001b3);
 }
-

@@ -24,7 +24,7 @@
  *   - identical dialect attribute compatibility
  *
  * On success the pass increments `ais.fused_pairs` on the module so that
- * later stages know how much parallelism was removed.
+* later stages know how much parallelism changed.
  *
  * Note: Only AskOp is fusible (LOW latency). ThinkOp/ReasonOp are not fused
  * because they have different semantics (extended thinking, structured output).

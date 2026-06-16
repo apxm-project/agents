@@ -73,7 +73,7 @@ pub struct LLMRegistry {
     /// Backend name → typed provider protocol.
     backend_providers: Arc<DashMap<String, ProviderProtocol>>,
     /// graph_id → (handles_peak, blocks_peak), populated by `start_pin_polling`
-    /// and consumed by `pre_release_status_all`.
+    /// and read by `pre_release_status_all`.
     pin_peaks: Arc<DashMap<String, (Arc<AtomicU64>, Arc<AtomicU64>)>>,
 }
 
@@ -242,8 +242,8 @@ impl LLMRegistry {
     }
 
     /// Resolve the backend name a request would dispatch to, without taking a
-    /// backend handle. Used by the streaming path so it can record health and
-    /// metrics outcomes against the same backend the stream actually used.
+    /// backend handle. The streaming path records health and metrics outcomes
+    /// against the same backend the stream actually selected.
     pub fn resolved_backend_name(&self, request: &LLMRequest) -> Result<String> {
         self.resolve_backend(request)
     }
@@ -1031,4 +1031,3 @@ impl Default for LLMRegistry {
         Self::new()
     }
 }
-

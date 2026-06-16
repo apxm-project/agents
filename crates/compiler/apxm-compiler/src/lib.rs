@@ -1,10 +1,9 @@
-// FFI bridge to MLIR C++ requires unsafe throughout this crate.
-#![allow(unsafe_code)]
-
-//! APXM Compiler - Compilation system for AI Operations
+//! APXM compiler crate for parsing, transforming, and lowering APXM AIR.
 //!
 //! This crate compiles AI operations into executable artifacts. It provides APIs for
 //! parsing, transforming, and generating binary artifacts from AI operation definitions.
+//! The MLIR C++ FFI bridge is the crate's unsafe boundary, so unsafe code is
+//! enabled explicitly here instead of being hidden behind narrower attributes.
 //!
 //! # Overview
 //!
@@ -19,6 +18,8 @@
 //! - [`api`]: Interfaces for compiler interaction
 //! - [`passes`]: Optimization and transformation passes
 //! - [`codegen`]: Artifact generation
+
+#![allow(unsafe_code)]
 
 pub mod air_builder;
 pub mod api;

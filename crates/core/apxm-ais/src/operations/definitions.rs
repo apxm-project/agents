@@ -387,7 +387,7 @@ impl AISOperationType {
     /// Maps a wire-format operation kind index (u32) to an `AISOperationType`.
     ///
     /// This is the **single source of truth** for the u32→AISOperationType mapping
-    /// used by both the compiler artifact parser and the runtime sub-DAG parser.
+    /// shared by the compiler artifact parser and the runtime sub-DAG parser.
     pub fn from_wire_index(index: u32) -> Option<AISOperationType> {
         WIRE_INDEXED_OPERATIONS
             .iter()
@@ -624,8 +624,8 @@ impl OperationField {
 // Latency Classification
 // ============================================================================
 
-/// Expected latency tier for an operation, used by the scheduler for
-/// critical-path analysis and by agents for cost estimation.
+/// Expected latency tier for scheduler critical-path analysis and agent cost
+/// estimation.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum OperationLatency {

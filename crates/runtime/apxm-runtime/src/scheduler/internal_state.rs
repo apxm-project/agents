@@ -10,8 +10,7 @@ use apxm_core::types::{NodeId, OpStatus, Value};
 
 /// Internal operation state tracked during execution.
 ///
-/// This is used by the scheduler to track the status of each operation
-/// as it moves through the execution pipeline.
+/// Tracks each operation status as it moves through the scheduler pipeline.
 #[derive(Debug)]
 pub(crate) struct OpState {
     /// Current execution status.
@@ -136,4 +135,3 @@ pub struct ExecutionFrame {
     /// The promise token that will be resolved when this flow completes.
     pub parent_promise: Option<apxm_core::types::TokenId>,
 }
-

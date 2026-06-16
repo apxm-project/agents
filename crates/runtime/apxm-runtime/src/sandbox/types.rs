@@ -174,7 +174,7 @@ impl SandboxContext {
 
     /// Downcast the inner state to a concrete type.
     ///
-    /// Used by backend implementations to recover their own state.
+    /// Backend implementations recover their own state through this hook.
     pub fn downcast_ref<T: 'static>(&self) -> Option<&T> {
         self.inner.downcast_ref()
     }

@@ -8,7 +8,7 @@
  * dialect-level options (e.g. new interfaces) can be added without
  * recompiling every operation.
  *
- * `AIS_Op<>` is the conventional base class used by *all* AIS operations;
+* `AIS_Op<>` is the conventional base class for *all* AIS operations;
  * it wires the mnemonic and trait list into the dialect automatically.
  */
 

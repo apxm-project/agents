@@ -15,7 +15,7 @@ pub mod env {
     pub const APXM_DISABLE_HINTS: &str = "APXM_DISABLE_HINTS";
     /// Makes Python graph files emit AIR to stdout for the Rust compiler driver.
     pub const APXM_EMIT_AIR: &str = "APXM_EMIT_AIR";
-    /// Enables the in-process mock backend used by tests and offline benchmarks.
+    /// Enables the in-process mock backend for tests and offline benchmarks.
     pub const APXM_MOCK_BACKEND: &str = "APXM_MOCK_BACKEND";
     /// Configures mock backend latency in milliseconds.
     pub const APXM_MOCK_LATENCY_MS: &str = "APXM_MOCK_LATENCY_MS";
@@ -368,7 +368,7 @@ pub mod capabilities {
 pub mod agent_tools {
     /// SQLite database file shared by durable agent-management capabilities.
     pub const STORE_FILENAME: &str = "agent_tools.sqlite";
-    /// Payload field used by `schedule` fires to select a server task queue.
+    /// Payload field for `schedule` fires to select a server task queue.
     pub const PAYLOAD_QUEUE: &str = "queue";
     /// Default queue used when a fired scheduled prompt does not specify one.
     pub const SCHEDULED_PROMPT_QUEUE: &str = "scheduled_prompts";
@@ -432,7 +432,7 @@ pub mod llm {
         pub const PIN_MODE_NONE: &str = "none";
 
         /// Wire names for the dispatch-IR hint fields a backend can
-        /// honor or drop. These are the single source of truth used by
+        /// honor or drop. These are the single source of truth for
         /// the runtime to collect `fields_sent` (apxm-runtime
         /// `dispatch::v1::mod`) and by `BackendGraphCapabilities` to
         /// classify each into `dispatch_fields_honored` /
@@ -760,7 +760,7 @@ pub mod ui {
 }
 
 pub mod mlir {
-    /// MLIR textual syntax markers used by frontends and driver routing.
+    /// MLIR textual syntax markers for frontends and driver routing.
     pub mod syntax {
         /// Top-level MLIR module keyword.
         pub const MODULE_KEYWORD: &str = "module";

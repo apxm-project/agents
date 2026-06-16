@@ -2,16 +2,13 @@
 //! from the APXM runtime to graph-aware inference backends.
 //!
 //! This module is internal-only. It is **not** re-exported from the crate
-//! root and is **not** part of any public ABI. The governing design note is
-//! `.apxm/docs/design/dispatch-ir.md`, which gates promotion to a public
-//! contract on (1) measured benchmark proof and (2) a serious second
-//! backend.
+//! root and is **not** part of any public ABI. Promotion to a public contract
+//! requires measured benchmark proof and a serious second backend.
 //!
-//! See `.apxm/docs/design/agentic-infrastructure-final.md` for the
-//! ownership boundary between APXM (graph semantics) and graph-aware
-//! inference backends (token execution).
+//! APXM owns graph semantics; graph-aware inference backends own token
+//! execution.
 
-// The Dispatch IR is intentionally not yet consumed by any production code path.
+// The Dispatch IR intentionally has no production consumer yet.
 // It is being introduced as the typed envelope that the vLLM adapter (and a
-// future second backend) will lower to. See `.apxm/docs/design/dispatch-ir.md`.
+// future second backend) will lower to.
 pub mod v1;

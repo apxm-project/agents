@@ -3,7 +3,7 @@
  * @brief Dead Code Elimination (DCE) warning pass for AIS dialect.
  *
  * This pass scans all operations and emits warnings when operation results
- * are not consumed by any other operation. This helps developers identify:
+* have no downstream operation. This helps developers identify:
  *
  * - Forgotten variable bindings (e.g., `rsn "query" -> unused_result`)
  * - Missing return statements in flows

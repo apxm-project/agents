@@ -587,7 +587,7 @@ pub enum SessionAction {
         /// Second session ID or path
         session2: String,
     },
-    /// Clean old sessions
+    /// Clean aged sessions
     Clean {
         /// Remove sessions older than this duration (e.g., "7d", "30d", "1h")
         #[arg(long)]

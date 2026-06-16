@@ -1,7 +1,7 @@
 //! Module API for the Apxm compiler.
 //!
 //! Modules are the building blocks of Apxm programs.
-//! They contain a set of functions, variables, and types that can be used by other modules.
+//! They contain a set of functions, variables, and types available to other modules.
 //!
 //! Modules can be imported using the `import` keyword, which allows the functions, variables,
 //! and types defined in the imported module to be used in the current module.

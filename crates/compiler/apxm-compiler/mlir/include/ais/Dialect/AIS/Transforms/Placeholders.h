@@ -108,7 +108,7 @@ inline llvm::StringMap<unsigned> nameToIndex(
 
 /// Substitute every `{name}` in `templateStr` using `replacements`. Names
 /// not present in the map are left as the literal `{name}` text. This is
-/// used by passes that fold compile-time constants into a template.
+/// for passes that fold compile-time constants into a template.
 inline std::string substituteByName(
     llvm::StringRef templateStr,
     const llvm::StringMap<std::string> &replacements) {

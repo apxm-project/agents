@@ -58,7 +58,7 @@ pub fn exec_result_to_value(result: ExecResult) -> Value {
             result.duration, result.stdout, result.stderr
         ))
     } else {
-        // Match the format used by BashCapability
+        // Match BashCapability's command-result shape.
         let mut payload = result.stdout.clone();
         if !result.stderr.is_empty() {
             if !payload.is_empty() {
@@ -189,4 +189,3 @@ impl CapabilityExecutor for MockSearchCapability {
         &self.metadata
     }
 }
-

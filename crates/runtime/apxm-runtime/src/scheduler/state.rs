@@ -420,8 +420,8 @@ impl SchedulerState {
 
     /// Check if any operations are currently running.
     ///
-    /// Used by the watchdog to distinguish true deadlocks (nothing running,
-    /// nothing becoming ready) from long-running operations (e.g. LLM calls).
+    /// Helps the watchdog distinguish true deadlocks (nothing running, nothing
+    /// becoming ready) from long-running operations such as LLM calls.
     pub fn has_running_ops(&self) -> bool {
         self.op_states
             .iter()
@@ -990,7 +990,7 @@ mod tests {
         let (state, workers) =
             SchedulerState::new(dag, cfg, metrics, Instant::now(), vec![]).unwrap();
 
-        // Token 10 (produced by node 1, consumed by node 2) should exist
+        // Token 10 (node 1 -> node 2) should exist.
         assert!(state.tokens.contains_key(&10));
         // Token 20 (produced by node 2, no consumer) should exist
         assert!(state.tokens.contains_key(&20));
@@ -1360,7 +1360,7 @@ mod tests {
     /// splice BEFORE waking, so a SOLE loop recv (remaining == 1) never drives
     /// `remaining` to 0 — which would fire `notify_done` and signal completion.
     /// This test registers a `notify_done` waiter and asserts it is NOT fired by
-    /// the wake; it FAILS under the old wake-then-splice ordering.
+    /// the wake; it FAILS under the prior wake-then-splice ordering.
     #[tokio::test]
     async fn rearm_splices_before_wake_no_zero_remaining_window() {
         use crate::scheduler::park_registry::{self, ParkWaker, RearmSpec};

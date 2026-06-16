@@ -73,7 +73,7 @@ pub struct HookConfig {
     pub shell: Option<String>,
 }
 
-/// Stable TOML keys used by execution hook configuration.
+/// Stable TOML keys for execution hook configuration.
 pub mod hook_toml_keys {
     pub const TABLE: &str = "hooks";
     pub const EVENT: &str = "event";
@@ -181,7 +181,7 @@ pub struct ServerConfig {
     /// Process-level defaults consumed before the async server starts.
     pub process: ServerProcessConfig,
 
-    /// Runtime scheduler limits used by the server process.
+    /// Runtime scheduler limits for the server process.
     pub runtime: ServerRuntimeConfig,
 
     /// Process-local limiter for expensive inference work.
@@ -1007,4 +1007,3 @@ pub enum ConfigError {
     #[error("Failed to serialize config: {0}")]
     Serialize(String),
 }
-

@@ -21,7 +21,7 @@ impl TimingTracker {
     }
 
     /// Record a single LLM round-trip's timing for `node_id`. Repeated calls for
-    /// the same node accumulate (used by the tool-loop path).
+    /// the same node accumulate for the tool-loop path.
     pub fn record(&self, node_id: u64, prefill_ms: f64, decode_ms: f64) {
         let mut map = self.per_node.write();
         let entry = map.entry(node_id).or_default();
@@ -35,4 +35,3 @@ impl TimingTracker {
         self.per_node.read().get(&node_id).copied()
     }
 }
-

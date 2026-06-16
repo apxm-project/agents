@@ -54,7 +54,7 @@ impl ProviderId {
         ]
     }
 
-    /// Returns the concrete protocol used by this built-in provider.
+    /// Returns the concrete protocol for this built-in provider.
     pub fn protocol(&self) -> ProviderProtocol {
         match self {
             ProviderId::OpenAI => ProviderProtocol::OpenAI,
@@ -261,4 +261,3 @@ impl RegisteredProvider {
         Ok(Self { spec, backend })
     }
 }
-

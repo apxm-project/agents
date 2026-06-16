@@ -125,6 +125,22 @@ dekk apxm execute …       # run an .air workflow end-to-end
 Runnable demos live in [`examples/python/`](../examples/python/). The
 [`README.md`](../README.md) at the repo root has install instructions.
 
+## Server Concurrency
+
+`apxm-server` has two independent concurrency layers:
+
+- `[server.inference].max_concurrent` caps expensive server-wide execution work.
+  The default is `16`, and `APXM_SERVER_MAX_INFERENCE` overrides it for the
+  process.
+- `[server.runtime]` controls the per-execution scheduler, including
+  `max_concurrency`, `max_inflight`, `llm_inflight`, and
+  `max_parallel_tool_calls`.
+
+For webhook and channel traffic, same-conversation ordering is enforced by the
+runtime session lane guard. Calls with the same `session_id` serialize; different
+sessions can run in parallel until they hit the server inference limit and the
+originating apxm-os agent's `max_concurrency`.
+
 ## Key Principle
 
 **Core defines. Everything else consumes.** `apxm-core` is the downstream contract

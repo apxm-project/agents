@@ -49,5 +49,5 @@ pub use validation::{
     validate_operation_strict,
 };
 
-// Re-export pass generation functions (used by build.rs)
+// Re-export pass generation functions for build.rs.
 pub use passes::{generate_pass_descriptors, generate_pass_dispatch, generate_passes_tablegen};

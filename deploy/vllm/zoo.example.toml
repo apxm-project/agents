@@ -4,8 +4,8 @@
 # `deploy/vllm/zoo.toml` (gitignored) or any path passed to
 # `dekk apxm vllm zoo-apply <path>`. The schema is the same.
 #
-# See docs/backends/model-zoo.md for the full operator guide (manifest
-# fields, cache-warm flow, registration, failure modes).
+# The operator flow covers manifest fields, cache warming, registration, and
+# failure-mode handling as one deployment unit.
 #
 # The infrastructure is model-agnostic: vLLM runs in a container per
 # service, and any model vLLM can load (any HF id, any local path) can

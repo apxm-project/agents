@@ -21,7 +21,7 @@ pub const MANAGE_TASK: &str = "manage_task";
 pub const MEMORY_STORE_FACT: &str = "memory.store_fact";
 pub const MEMORY_SEARCH_FACTS: &str = "memory.search_facts";
 
-/// Tool-group tags used by capability metadata and LLM tool exposure.
+/// Tool-group tags for capability metadata and LLM tool exposure.
 pub mod groups {
     pub const FILE: &str = "file";
     pub const FILE_READ: &str = "file:read";

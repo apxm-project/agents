@@ -41,7 +41,7 @@ namespace {
 
 APXM_AIS_DEBUG_SETUP(schema_narrowing)
 
-/// Check if a value is actually consumed by any operation
+/// Check if a value has any downstream operation.
 static bool isValueConsumed(Value value) {
   return !value.use_empty();
 }

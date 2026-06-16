@@ -6,7 +6,7 @@
 //! `Authorization: Bearer <token>`) is the live integration step; the resolver
 //! client itself lives here and is unit-tested.
 
-// Live: consumed by `execute::inject_resolved_credentials` (F12/F13 wiring).
+// Live credential resolution contract for `execute::inject_resolved_credentials`.
 
 use serde::Deserialize;
 
@@ -107,4 +107,3 @@ fn enc(seg: &str) -> String {
     }
     out
 }
-

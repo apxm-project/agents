@@ -218,9 +218,10 @@ impl EventEmitter for RolloutEmitter {
 }
 
 
-/// Build a synthetic SessionMeta from skill execution context. Used by
-/// the server when the caller hasn't supplied a richer one (the
-/// reproducibility-pin hashes come from the skill manifest).
+/// Build a synthetic SessionMeta from skill execution context when the caller
+/// has not supplied a richer one.
+///
+/// Reproducibility-pin hashes come from the skill manifest.
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn session_meta_from_skill(
     execution_id: &str,

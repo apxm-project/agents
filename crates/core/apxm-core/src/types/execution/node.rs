@@ -80,7 +80,7 @@ pub type NodeId = u64;
 pub struct NodeMetadata {
     /// Human-readable node name from the source graph.
     /// Runtime-only: never serialized to/from artifact binary format.
-    /// Set during DAG lowering from ApxmGraph and used by ContextStack/CWD routing.
+    /// Set during DAG lowering from ApxmGraph for ContextStack/CWD routing.
     #[serde(skip)]
     pub name: Option<String>,
     /// Priority for execution (higher = more important).
@@ -173,4 +173,3 @@ impl Node {
         validate_operation(self.op_type, &self.attributes)
     }
 }
-

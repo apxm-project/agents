@@ -58,8 +58,8 @@ pub struct ExecutionContext {
     pub scope_registry: Arc<ScopeRegistry>,
     pub inner_plan_linker: Arc<dyn InnerPlanLinker>,
     pub workflow_spawner: Arc<dyn WorkflowSpawner>,
-    /// Host-supplied resolver used by the `CALL_SKILL` op to bind a
-    /// `skill_id` (or `skill_id@version`) to a concrete artifact at
+    /// Host-supplied resolver for binding `CALL_SKILL` `skill_id` values (or
+    /// `skill_id@version`) to a concrete artifact at
     /// execution time. Defaults to [`NoOpSkillResolver`], which fails
     /// `CALL_SKILL` cleanly with a `call_skill_no_resolver` capability
     /// error.
@@ -111,7 +111,7 @@ pub struct ExecutionContext {
     pub cancellation_token: CancellationToken,
     /// Only used for INV/tool nodes; LLM operations bypass sandboxing.
     pub sandbox_registry: Arc<SandboxRegistry>,
-    /// Tracks live agent processes (local + ACP). Used by SPAWN_AGENT and COMMUNICATE.
+    /// Tracks live agent processes for SPAWN_AGENT and COMMUNICATE.
     pub process_table: Arc<ProcessTable>,
     pub context_stack: Option<Arc<ContextStack>>,
     /// When set, LLM handler delegates backend selection here instead of `llm_registry`.
@@ -438,13 +438,13 @@ impl ExecutionContext {
         self
     }
 
-    /// Replace the flow registry used by flow-control operation handlers.
+    /// Replace the flow registry for flow-control operation handlers.
     pub fn with_flow_registry(mut self, flow_registry: Arc<FlowRegistry>) -> Self {
         self.flow_registry = flow_registry;
         self
     }
 
-    /// Replace the skill resolver used by the `CALL_SKILL` op.
+    /// Replace the skill resolver for the `CALL_SKILL` op.
     pub fn with_skill_resolver(mut self, resolver: Arc<dyn SkillResolver>) -> Self {
         self.skill_resolver = resolver;
         self
@@ -637,4 +637,3 @@ impl ExecutionContext {
         &self.flow_registry
     }
 }
-

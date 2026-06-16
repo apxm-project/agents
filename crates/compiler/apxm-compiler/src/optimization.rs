@@ -2,7 +2,7 @@
 //!
 //! Runtime and driver configuration stay backend/resource oriented. This module
 //! reads only compiler optimization inputs and turns them into transient pass
-//! attributes consumed by MLIR transforms.
+//! attributes for MLIR transforms.
 
 use std::collections::HashMap;
 use std::fs;
@@ -393,4 +393,3 @@ fn compiler_config_error(message: impl Into<String>) -> CompilerError {
         message,
     )))
 }
-

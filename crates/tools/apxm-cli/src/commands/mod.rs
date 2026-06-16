@@ -36,11 +36,8 @@ pub mod tool;
 pub mod watch;
 pub mod workflow;
 
-// Re-export CLI types
 pub use cli::*;
 
-// Shared helpers in `implementations` are only consumed by tests in main.rs
-// (sibling modules import them directly via `super::implementations::X`).
 #[cfg(test)]
 pub(crate) use implementations::*;
 
@@ -49,8 +46,6 @@ pub use analysis::*;
 #[cfg(feature = "driver")]
 pub use backend::*;
 pub use cache::*;
-// `chat` is reached via the `commands::chat::` path from main.rs; no glob
-// re-export needed (and a glob would be flagged unused).
 pub use codegen::*;
 #[cfg(feature = "driver")]
 pub use compile::*;
@@ -60,8 +55,6 @@ pub use goal::*;
 pub use ops::*;
 pub use process::*;
 pub use replay::*;
-// rollout::* is consumed via the `commands::rollout::...` path in main.rs;
-// no glob-export needed here.
 pub use session::*;
 pub use system::*;
 pub use team::*;

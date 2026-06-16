@@ -388,7 +388,7 @@ impl SchedulerState {
     /// This is the reverse of `splice_dag`. It removes the specified nodes and
     /// reconnects external edges through the replacement node.
     ///
-    /// External inputs (tokens consumed by the sub-DAG but produced outside it)
+    /// External inputs: tokens required by the sub-DAG but produced outside it.
     /// become inputs to the replacement node.
     /// External outputs (tokens produced by the sub-DAG but consumed outside it)
     /// become outputs of the replacement node.
@@ -421,7 +421,7 @@ impl SchedulerState {
             "Condensing sub-DAG into single node"
         );
 
-        // 2. Collect all tokens produced and consumed by the subgraph
+    // 2. Collect all tokens produced and required by the subgraph.
         let mut subgraph_output_tokens: HashSet<TokenId> = HashSet::new();
         let mut subgraph_input_tokens: HashSet<TokenId> = HashSet::new();
 
@@ -436,14 +436,14 @@ impl SchedulerState {
             }
         }
 
-        // External inputs: tokens consumed by subgraph but produced outside it
+    // External inputs: tokens required by subgraph but produced outside it.
         let external_inputs: Vec<TokenId> = subgraph_input_tokens
             .iter()
             .filter(|tid| !subgraph_output_tokens.contains(tid))
             .copied()
             .collect();
 
-        // External outputs: tokens produced by subgraph and consumed by nodes outside it
+    // External outputs: tokens produced by subgraph for nodes outside it.
         let mut external_outputs: Vec<TokenId> = Vec::new();
         for &tid in &subgraph_output_tokens {
             if let Some(token_state) = self.tokens.get(&tid) {
@@ -521,7 +521,7 @@ impl SchedulerState {
             }
         }
 
-        // 9. Adjust remaining counter: removed N nodes, added 1
+    // 9. Adjust remaining counter: deleted N nodes, added 1.
         let removed = subgraph.len();
         if removed > 1 {
             self.remaining
@@ -625,4 +625,3 @@ impl DagSplicer for SchedulerDagSplicer {
         self.state.condense_subdag(node_ids, replacement)
     }
 }
-

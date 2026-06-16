@@ -6,6 +6,6 @@
 //! keyword referenced from a `MlirEmissionSpec::syntactic_keywords` entry
 //! MUST come from this module — no raw string literals.
 
-/// `to` — used by COMMUNICATE (`$message to $recipient`) and DELEGATE
+/// `to` — preposition for COMMUNICATE (`$message to $recipient`) and DELEGATE
 /// (`$task_spec to $target_agent`).
 pub const TO: &str = "to";
