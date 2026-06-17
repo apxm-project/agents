@@ -1,0 +1,149 @@
+openapi: 3.0.3
+info:
+  title: APXM Session API (contract snapshot — 0002)
+  version: 0.1.0-draft
+  description: |
+    Draft contract for spec 0002. Generated from apxm-server types at implementation;
+    this file is the CI diff-test baseline. See review §7 session model.
+paths:
+  /v1/sessions/{session_id}/status:
+    get:
+      operationId: getSessionStatus
+      summary: Session status, ledger snapshot, linked runs
+      parameters:
+        - name: session_id
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        '200':
+          description: Session status
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/SessionStatus' }
+        '404':
+          description: Unknown session
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/TypedError' }
+  /v1/sessions/{session_id}/cancel:
+    post:
+      operationId: cancelSession
+      summary: Cancel in-flight work for session
+      parameters:
+        - name: session_id
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        '200':
+          description: Cancel accepted
+        '409':
+          description: Nothing to cancel
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/TypedError' }
+  /v1/sessions/{session_id}/grants:
+    post:
+      operationId: updateSessionGrants
+      summary: Add or revoke capability grants
+      parameters:
+        - name: session_id
+          in: path
+          required: true
+          schema: { type: string }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/GrantUpdate' }
+      responses:
+        '200':
+          description: Grants updated
+  /v1/sessions/{session_id}/compact:
+    post:
+      operationId: compactSession
+      summary: Compact session history per server policy
+      parameters:
+        - name: session_id
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        '200':
+          description: Compaction scheduled or complete
+  /v1/sessions/{session_id}/events:
+    get:
+      operationId: listSessionEvents
+      summary: List session-scoped events (paginated)
+      parameters:
+        - name: session_id
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        '200':
+          description: Event page
+  /v1/sessions/{session_id}/events/stream:
+    get:
+      operationId: streamSessionEvents
+      summary: Resumable SSE for session events (Last-Event-ID)
+      parameters:
+        - name: session_id
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        '200':
+          description: text/event-stream
+  /v1/permissions/{permission_id}/respond:
+    post:
+      operationId: respondPermission
+      summary: Client reply to server permission prompt
+      parameters:
+        - name: permission_id
+          in: path
+          required: true
+          schema: { type: string }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/PermissionResponse' }
+      responses:
+        '200':
+          description: Response recorded
+components:
+  schemas:
+    SessionStatus:
+      type: object
+      required: [session_id, turn_count, ledger]
+      properties:
+        session_id: { type: string }
+        turn_count: { type: integer }
+        ledger: { $ref: '#/components/schemas/SessionLedgerView' }
+        active_execution_id: { type: string, nullable: true }
+    SessionLedgerView:
+      type: object
+      properties:
+        turn_cap: { type: integer, nullable: true }
+        tool_budgets: { type: object, additionalProperties: { type: integer } }
+        grants: { type: array, items: { type: string } }
+    GrantUpdate:
+      type: object
+      properties:
+        add: { type: array, items: { type: string } }
+        remove: { type: array, items: { type: string } }
+    PermissionResponse:
+      type: object
+      required: [decision]
+      properties:
+        decision: { type: string, enum: [approve, deny, approve_for_session] }
+    TypedError:
+      type: object
+      required: [class, code, message]
+      properties:
+        class: { type: string, enum: [program_fault, server_fault] }
+        code: { type: string }
+        message: { type: string }
+        recovery_hint: { type: string, nullable: true }
