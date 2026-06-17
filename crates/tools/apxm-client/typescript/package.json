@@ -1,0 +1,10 @@
+{
+  "name": "@apxm/client",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "TypeScript wire types for apxm-server session/run APIs (generated from openapi-session-v1.yaml + runs.rs)",
+  "exports": {
+    ".": "./index.ts"
+  }
+}
