@@ -59,9 +59,9 @@ no unfinished dependency). `[US#]` tags story tasks. **Shared integration:**
 **Goal:** status, cancel, grants, compact, events without full-transcript posts.
 **Independent Test:** contract tests cover all endpoints (SC-006).
 
-- [ ] T060 [US5] Session handlers: status, cancel, grants, compact, events list/stream — `crates/tools/apxm-server/src/sessions.rs`.
-- [ ] T061 [P] [US5] Align `conversations.rs` turn-input path with session API semantics — `crates/tools/apxm-server/src/conversations.rs`.
-- [ ] T062 [P] [US5] Session API contract tests — `crates/tools/apxm-server/tests/contract_session_api.rs`.
+- [x] T060 [US5] Session handlers: status, cancel, grants, compact, events list/stream — `crates/tools/apxm-server/src/sessions.rs`.
+- [x] T061 [P] [US5] Align `conversations.rs` turn-input path with session API semantics — `crates/tools/apxm-server/src/conversations.rs`.
+- [x] T062 [P] [US5] Session API contract tests — `crates/tools/apxm-server/tests/contract_session_api.rs`.
 - [ ] **Checkpoint:** US5 — `dekk apxm test -p apxm-server contract_session_api` passes.
 
 ## Phase 8 — Route integration (SERIAL — shared files)

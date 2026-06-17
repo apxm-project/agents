@@ -24,6 +24,7 @@ use tracing::info;
 
 use crate::error::ApiError;
 use crate::state::AppState;
+use crate::types::errors::{ApiFaultCode, TypedError};
 
 /// One conversation session's running execution.
 #[derive(Clone, Debug)]
@@ -81,6 +82,26 @@ pub(crate) async fn post_conversation_message(
     Path(session_id): Path<String>,
     Json(req): Json<ConversationMessageRequest>,
 ) -> Result<(StatusCode, Json<JsonValue>), ApiError> {
+    let session_id = crate::execute::validate_session_id(session_id)?;
+
+    if let Some(ledger) = apxm_runtime::executor::session_ledger::get(&session_id)
+        && ledger.would_exceed_turn_cap()
+    {
+        return Err(ApiError::typed(TypedError::program_fault(
+            ApiFaultCode::TurnCapExceeded,
+            format!("session turn cap reached ({})", ledger.turn_cap().unwrap_or(0)),
+            Some("Start a new session or raise the turn cap on the server.".to_string()),
+        )));
+    }
+
+    if apxm_runtime::executor::session_ledger::get(&session_id).is_none()
+        && state.session_registry.get(&session_id).is_none()
+    {
+        return Err(ApiError::not_found(format!(
+            "unknown session: {session_id}"
+        )));
+    }
+
     // Record the user message into session memory so the transcript is full
     // session memory (T052) — not just the assistant answer the conversation
     // middleware records. Ordered under `conversation:user:<n>` so a recency

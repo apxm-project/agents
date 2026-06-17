@@ -32,6 +32,27 @@ impl TestHarness {
     }
 }
 
+/// Build a test router with session API routes mounted (contract tests).
+pub async fn contract_app_with_mock(mock: MockLLMBackend) -> Router {
+    let mut runtime = Runtime::new(RuntimeConfig::in_memory())
+        .await
+        .expect("test runtime");
+    runtime
+        .llm_registry()
+        .register(FIXTURE_WORKFLOW_BACKEND, mock)
+        .expect("register mock backend");
+    runtime
+        .llm_registry()
+        .set_default(FIXTURE_WORKFLOW_BACKEND)
+        .expect("set mock backend default");
+    runtime
+        .init_model_router(ModelRouterConfig::default())
+        .expect("init model router");
+    let state = test_state_with_runtime(Arc::new(runtime), ServerConfig::default()).await;
+    let sessions = crate::sessions::mount_routes(Router::new()).with_state(state.clone());
+    build_app(state).merge(sessions)
+}
+
 /// Build a test harness with custom server config and mock LLM backend.
 pub async fn test_harness_with_config_and_mock(
     server_config: ServerConfig,

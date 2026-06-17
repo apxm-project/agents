@@ -35,6 +35,7 @@ mod routes;
 mod runs;
 mod runtime_setup;
 mod search_skills;
+mod sessions;
 mod skill_resources;
 mod skills;
 mod startup;

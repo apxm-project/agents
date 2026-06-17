@@ -350,7 +350,7 @@ impl EventReplayCursor {
         Self::AfterSeq(seq)
     }
 
-    fn from_request(headers: &HeaderMap, query: &EventsQuery) -> Self {
+    pub(crate) fn from_request(headers: &HeaderMap, query: &EventsQuery) -> Self {
         headers
             .get(LAST_EVENT_ID_HEADER)
             .or_else(|| headers.get(LAST_EVENT_ID_HEADER_LOWER))
@@ -766,7 +766,7 @@ fn run_list_limit(config: &RunEventsConfig, raw: Option<usize>) -> usize {
     clamp_limit(raw, config.default_list_limit, config.max_list_limit)
 }
 
-fn run_events_limit(config: &RunEventsConfig, raw: Option<usize>) -> usize {
+pub(crate) fn run_events_limit(config: &RunEventsConfig, raw: Option<usize>) -> usize {
     clamp_limit(raw, config.default_events_limit, config.max_events_limit)
 }
 
