@@ -1,0 +1,17 @@
+[package]
+name = "apxm-client"
+version.workspace = true
+publish = false
+edition.workspace = true
+description = "Typed HTTP client for apxm-server (generated from OpenAPI — spec 0002)"
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+authors.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+serde.workspace = true
+serde_json.workspace = true

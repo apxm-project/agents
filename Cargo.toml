@@ -17,6 +17,7 @@ members = [
 	"crates/orchestration/apxm-artifact",
 	# ── Tools (CLI + Server) ──────────────────────
 	"crates/tools/apxm-cli",
+	"crates/tools/apxm-client",
 	"crates/tools/apxm-server",
     # -- Facade ---------
     "crates/apxm",
@@ -49,6 +50,7 @@ apxm-driver = { version = "0.1.0", path = "crates/orchestration/apxm-driver" }
 apxm-acp = { version = "0.1.0", path = "crates/orchestration/apxm-acp" }
 apxm-artifact = { version = "0.1.0", path = "crates/orchestration/apxm-artifact" }
 apxm = { version = "0.1.0", path = "crates/apxm"}
+apxm-client = { version = "0.1.0", path = "crates/tools/apxm-client" }
 
 # ── Serialization ────────────────────────────────────────────
 serde = { version = "1.0", features = ["derive"] }
