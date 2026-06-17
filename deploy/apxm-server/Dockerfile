@@ -95,6 +95,7 @@ ENV CONDA_ENV=/opt/conda/envs/apxm \
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
         ca-certificates \
+        curl \
     && rm -rf /var/lib/apt/lists/* \
     && useradd --create-home --shell /usr/sbin/nologin --uid 10001 apxm \
     && mkdir -p /apxm-home \
