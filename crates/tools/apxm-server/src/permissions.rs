@@ -380,7 +380,7 @@ impl PermissionRegistry {
 /// Collecting emitter for unit/integration tests.
 #[derive(Debug, Default, Clone)]
 pub struct RecordingEmitter {
-    events: Arc<Mutex<Vec<ApxmEvent>>>,
+    events: Arc<std::sync::Mutex<Vec<ApxmEvent>>>,
 }
 
 impl RecordingEmitter {
@@ -388,16 +388,20 @@ impl RecordingEmitter {
         Self::default()
     }
 
-    pub async fn events(&self) -> Vec<ApxmEvent> {
-        self.events.lock().await.clone()
+    pub fn events(&self) -> Vec<ApxmEvent> {
+        self.events
+            .lock()
+            .expect("recording emitter poisoned")
+            .clone()
     }
 }
 
 impl EventEmitter for RecordingEmitter {
     fn emit(&self, event: ApxmEvent) {
-        if let Ok(mut guard) = self.events.try_lock() {
-            guard.push(event);
-        }
+        self.events
+            .lock()
+            .expect("recording emitter poisoned")
+            .push(event);
     }
 }
 
@@ -427,28 +431,18 @@ mod tests {
         });
 
         sleep(Duration::from_millis(20)).await;
-        let events = emitter.events().await;
+        let events = emitter.events();
         assert!(
             events
                 .iter()
                 .any(|e| e.kind().name() == event_kind::APPROVAL_REQUEST.name()),
             "permission request event must be emitted"
         );
-        let permission_id = registry
-            .pending_event(
-                &events
-                    .iter()
-                    .find(|e| e.kind().name() == event_kind::APPROVAL_REQUEST.name())
-                    .and_then(|e| {
-                        e.payload
-                            .as_any()
-                            .downcast_ref::<ApprovalRequestPayload>()
-                    })
-                    .map(|p| p.approval_id.clone())
-                    .expect("approval id"),
-            )
-            .expect("pending event")
-            .permission_id;
+        let permission_id = events
+            .iter()
+            .find_map(|e| e.payload.downcast_ref::<ApprovalRequestPayload>())
+            .map(|p| p.approval_id.clone())
+            .expect("approval id");
 
         registry
             .respond(

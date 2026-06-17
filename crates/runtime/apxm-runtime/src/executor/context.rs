@@ -418,7 +418,7 @@ impl ExecutionContext {
     pub fn session_admits_capability(&self, capability: &str) -> bool {
         self.session_ledger
             .as_ref()
-            .map(|ledger| ledger.grants().is_empty() || ledger.admits(capability))
+            .map(|ledger| ledger.grants_is_empty() || ledger.admits(capability))
             .unwrap_or(true)
     }
 
@@ -427,7 +427,7 @@ impl ExecutionContext {
         let Some(ledger) = &self.session_ledger else {
             return Ok(());
         };
-        if ledger.grants().is_empty() || ledger.admits(capability) {
+        if ledger.grants_is_empty() || ledger.admits(capability) {
             return Ok(());
         }
         Err(apxm_core::error::RuntimeError::Capability {
