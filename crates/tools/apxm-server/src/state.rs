@@ -1,3 +1,4 @@
+use std::net::SocketAddr;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::{Duration, SystemTime};
@@ -17,6 +18,8 @@ use crate::executions::ExecutionStore;
 use crate::goal_runs::GoalRunRegistry;
 use crate::rollout::RolloutRegistry;
 use crate::runs::RunEventBus;
+use crate::safety::SafetyState;
+use crate::shutdown::ShutdownCoordinator;
 use crate::skills::SkillLibrary;
 use crate::tasks::TaskQueueManager;
 use crate::webhook::WebhookDispatcher;
@@ -52,6 +55,14 @@ pub(crate) struct AppState {
     pub(crate) inference_limiter: InferenceLimiter,
     /// Layered server configuration for streaming handlers.
     pub(crate) server_config: ServerConfig,
+    /// Resolved listen address (for auth policy and ops signals).
+    pub(crate) bind_addr: SocketAddr,
+    /// Auth-on when non-loopback or explicitly configured.
+    pub(crate) effective_require_auth: bool,
+    /// HTTP safety middleware state (rate limits).
+    pub(crate) safety_state: SafetyState,
+    /// Graceful shutdown in-flight tracking.
+    pub(crate) shutdown: ShutdownCoordinator,
     /// In-flight streaming executions keyed by `execution_id`, each holding a
     /// `Notify` that `POST /v1/runs/{id}/cancel` trips to abort the run at the
     /// next await boundary. Entries are deleted when the execution settles.
@@ -62,6 +73,31 @@ pub(crate) struct AppState {
     /// endpoint (`POST /v1/conversations/{id}/message`) so the host stays a
     /// dumb pipe (constitution #2).
     pub(crate) session_registry: crate::conversations::SessionRegistry,
+}
+
+/// Operational defaults derived from layered server config.
+pub(crate) struct HardeningDefaults {
+    pub(crate) bind_addr: SocketAddr,
+    pub(crate) effective_require_auth: bool,
+    pub(crate) safety_state: SafetyState,
+    pub(crate) shutdown: ShutdownCoordinator,
+}
+
+impl HardeningDefaults {
+    pub(crate) fn for_config(server_config: &ServerConfig) -> Self {
+        let bind_addr: SocketAddr = crate::DEFAULT_ADDR
+            .parse()
+            .expect("built-in default address");
+        Self {
+            bind_addr,
+            effective_require_auth: crate::bind::effective_require_auth(
+                &bind_addr,
+                &server_config.auth,
+            ),
+            safety_state: SafetyState::from_config(&server_config.safety),
+            shutdown: ShutdownCoordinator::new(),
+        }
+    }
 }
 
 #[derive(Clone)]

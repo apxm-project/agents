@@ -32,12 +32,18 @@ use axum::http::{Request, StatusCode, header};
 use axum::middleware::Next;
 use axum::response::{IntoResponse, Response};
 
+use crate::principal::PrincipalId;
 use crate::routes;
 
-/// Whether a request requires the bearer when `require_auth` is enabled.
+/// Auth policy resolved at startup from bind address + config.
+#[derive(Clone)]
+pub(crate) struct AuthPolicy {
+    pub(crate) config: ServerAuthConfig,
+    pub(crate) effective_require_auth: bool,
+}
+/// Whether a request requires the bearer when auth is effectively enabled.
 /// Default-deny: everything is protected except a small public read surface
-/// (liveness, model discovery, validation) and CORS preflight, so a newly added
-/// route is protected unless deliberately listed.
+/// (liveness, model discovery, metrics, validation) and CORS preflight.
 fn is_protected(method: &axum::http::Method, path: &str) -> bool {
     if method == axum::http::Method::OPTIONS {
         // Never gate CORS preflight; it carries no Authorization header.
@@ -45,6 +51,7 @@ fn is_protected(method: &axum::http::Method, path: &str) -> bool {
     }
     // Public, read-only endpoints that stay open even with auth enabled.
     let public = path == routes::HEALTH
+        || path == routes::METRICS
         || path == routes::MODELS
         || path == routes::BACKENDS
         || (path.starts_with(routes::SKILLS) && path.ends_with("/validate"));
@@ -130,25 +137,27 @@ fn unauthorized(message: &str) -> Response {
         .into_response()
 }
 
-/// Axum middleware enforcing bearer auth on mutating routes when enabled.
+/// Axum middleware enforcing bearer auth on protected routes when enabled.
 ///
-/// When `require_auth` is `false` (the default) this is a transparent
-/// pass-through for *all* routes. When enabled, protected routes fail closed.
+/// When `effective_require_auth` is `false` this is a transparent pass-through for
+/// *all* routes. When enabled, protected routes fail closed and attach a
+/// [`PrincipalId`] extension after successful validation.
 pub(crate) async fn require_bearer(
-    State(config): State<ServerAuthConfig>,
-    req: Request<Body>,
+    State(policy): State<AuthPolicy>,
+    mut req: Request<Body>,
     next: Next,
 ) -> Response {
-    if !config.require_auth {
+    if !policy.effective_require_auth {
+        req.extensions_mut().insert(PrincipalId::anonymous());
         return next.run(req).await;
     }
 
     if !is_protected(req.method(), req.uri().path()) {
+        req.extensions_mut().insert(PrincipalId::anonymous());
         return next.run(req).await;
     }
 
-    let Some(expected) = resolve_expected_bearer(&config) else {
-        // Auth is required but no token source is available: fail closed.
+    let Some(expected) = resolve_expected_bearer(&policy.config) else {
         return unauthorized("server auth is required but no bearer token is configured");
     };
 
@@ -160,6 +169,8 @@ pub(crate) async fn require_bearer(
         return unauthorized("invalid bearer token");
     }
 
+    req.extensions_mut()
+        .insert(PrincipalId::from_bearer(&presented));
     next.run(req).await
 }
 

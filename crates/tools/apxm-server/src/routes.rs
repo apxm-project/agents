@@ -1,6 +1,7 @@
 use std::fmt::Display;
 
 pub(crate) const HEALTH: &str = "/health";
+pub(crate) const METRICS: &str = "/metrics";
 pub(crate) const MODELS: &str = "/v1/models";
 pub(crate) const BACKENDS: &str = "/v1/backends";
 pub(crate) const EXECUTE: &str = "/v1/execute";
@@ -79,6 +80,7 @@ pub(crate) const GOAL_CANCEL: &str = "/v1/goals/{goal_id}/cancel";
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum ServerRoute {
     Health,
+    Metrics,
     Models,
     Backends,
     Execute,
@@ -151,6 +153,7 @@ impl ServerRoute {
     pub(crate) const fn path(self) -> &'static str {
         match self {
             Self::Health => HEALTH,
+            Self::Metrics => METRICS,
             Self::Models => MODELS,
             Self::Backends => BACKENDS,
             Self::Execute => EXECUTE,

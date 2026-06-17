@@ -143,6 +143,15 @@ pub(crate) fn apply_server_env_overrides(config: &mut ServerConfig) {
             config.observability.otlp_endpoint = Some(trimmed.to_string());
         }
     }
+    if let Some(value) = env_u32(apxm_env::APXM_SERVER_RATE_LIMIT_RPS) {
+        config.safety.rate_limit_rps = Some(value);
+    }
+    if let Some(value) = env_usize(apxm_env::APXM_SERVER_MAX_BODY_BYTES) {
+        config.safety.max_body_bytes = Some(value);
+    }
+    if let Some(value) = env_u64(apxm_env::APXM_SERVER_DRAIN_TIMEOUT_SECS) {
+        config.shutdown.drain_timeout_secs = value;
+    }
     if let Ok(value) = std::env::var(apxm_env::APXM_PUBLIC_URL) {
         let trimmed = value.trim();
         if !trimmed.is_empty() {
@@ -162,6 +171,13 @@ fn env_u64(name: &str) -> Option<u64> {
     std::env::var(name)
         .ok()
         .and_then(|value| value.parse::<u64>().ok())
+        .filter(|value| *value > 0)
+}
+
+fn env_u32(name: &str) -> Option<u32> {
+    std::env::var(name)
+        .ok()
+        .and_then(|value| value.parse::<u32>().ok())
         .filter(|value| *value > 0)
 }
 

@@ -56,9 +56,13 @@ mimalloc = { version = "0.1", default-features = false }
 tokio = { workspace = true, features = ["macros", "rt-multi-thread", "sync", "signal", "time"] }
 tokio-stream = { workspace = true, features = ["sync"] }
 tower = { version = "0.5", features = ["util"] }
-tower-http = { workspace = true, features = ["cors", "trace", "request-id", "set-header"] }
+tower-http = { workspace = true, features = ["cors", "trace", "request-id", "set-header", "limit"] }
 tracing.workspace = true
-tracing-subscriber.workspace = true
+tracing-subscriber = { workspace = true, features = ["env-filter", "fmt", "registry"] }
+tracing-opentelemetry.workspace = true
+opentelemetry.workspace = true
+opentelemetry-otlp.workspace = true
+opentelemetry_sdk.workspace = true
 utoipa.workspace = true
 serde_yaml.workspace = true
 

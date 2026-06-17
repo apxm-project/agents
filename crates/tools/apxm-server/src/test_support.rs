@@ -122,6 +122,7 @@ async fn test_state_with_runtime(runtime: Arc<Runtime>, server_config: ServerCon
         uuid::Uuid::new_v4()
     ));
     std::fs::create_dir_all(&rollout_home).expect("rollout home");
+    let hardening = crate::state::HardeningDefaults::for_config(&server_config);
     AppState {
         runtime,
         agent_registry: Arc::new(DashMap::new()),
@@ -139,7 +140,11 @@ async fn test_state_with_runtime(runtime: Arc<Runtime>, server_config: ServerCon
         )),
         rollout_registry: crate::rollout::RolloutRegistry::with_config(&server_config.rollout),
         inference_limiter: crate::state::InferenceLimiter::from_config(&server_config.inference),
-        server_config,
+        server_config: server_config.clone(),
+        bind_addr: hardening.bind_addr,
+        effective_require_auth: hardening.effective_require_auth,
+        safety_state: hardening.safety_state,
+        shutdown: hardening.shutdown,
         cancel_registry: Arc::new(DashMap::new()),
         goal_runs: crate::goal_runs::GoalRunRegistry::new(),
         session_registry: crate::conversations::SessionRegistry::new(),

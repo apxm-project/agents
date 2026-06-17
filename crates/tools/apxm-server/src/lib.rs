@@ -7,6 +7,7 @@ mod a2a;
 mod agent;
 mod app;
 mod auth;
+mod bind;
 mod call_skill;
 mod capability;
 mod checkpoints;
@@ -27,9 +28,11 @@ mod mcp;
 mod mcp_protocol;
 mod mcp_tools;
 mod memory;
+mod metrics;
 mod observability;
 pub mod openapi;
 pub mod permissions;
+mod principal;
 mod rerun;
 mod rollout;
 mod routes;
@@ -37,6 +40,8 @@ mod runs;
 mod runtime_setup;
 mod search_skills;
 mod sessions;
+mod safety;
+mod shutdown;
 mod skill_resources;
 mod skills;
 mod startup;
@@ -70,9 +75,11 @@ pub fn run() -> anyhow::Result<()> {
 }
 
 async fn async_main(server_config: apxm_driver::ServerConfig) -> anyhow::Result<()> {
-    tracing_subscriber::fmt()
-        .with_env_filter(log_filter(&server_config))
-        .init();
+    let log_filter = log_filter(&server_config);
+    match observability::init_tracing_subscriber(&server_config.observability, &log_filter) {
+        Ok(_exporter) => {}
+        Err(error) => observability::warn_init_failure(&error),
+    }
 
     startup::run_server_with_config(server_config).await
 }

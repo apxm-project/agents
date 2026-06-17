@@ -391,6 +391,8 @@ async fn test_state_with_skill_roots_and_execution_store(
     let mut runtime = Arc::new(runtime);
     let skill_library = SkillLibrary::new(skill_roots);
     install_test_runtime_bridges(&mut runtime, skill_library.clone());
+    let server_config = apxm_driver::ServerConfig::default();
+    let hardening = crate::state::HardeningDefaults::for_config(&server_config);
     AppState {
         runtime,
         agent_registry: Arc::new(DashMap::new()),
@@ -415,7 +417,11 @@ async fn test_state_with_skill_roots_and_execution_store(
         )),
         rollout_registry: crate::rollout::RolloutRegistry::new(),
         inference_limiter: crate::state::InferenceLimiter::unlimited_for_tests(),
-        server_config: apxm_driver::ServerConfig::default(),
+        server_config,
+        bind_addr: hardening.bind_addr,
+        effective_require_auth: hardening.effective_require_auth,
+        safety_state: hardening.safety_state,
+        shutdown: hardening.shutdown,
         cancel_registry: Arc::new(DashMap::new()),
         goal_runs: crate::goal_runs::GoalRunRegistry::new(),
         session_registry: crate::conversations::SessionRegistry::new(),
@@ -429,6 +435,8 @@ async fn test_state_with_runtime_and_skill_roots(
     let mut runtime = Arc::new(runtime);
     let skill_library = SkillLibrary::new(skill_roots);
     install_test_runtime_bridges(&mut runtime, skill_library.clone());
+    let server_config = apxm_driver::ServerConfig::default();
+    let hardening = crate::state::HardeningDefaults::for_config(&server_config);
     AppState {
         runtime,
         agent_registry: Arc::new(DashMap::new()),
@@ -451,7 +459,11 @@ async fn test_state_with_runtime_and_skill_roots(
         )),
         rollout_registry: crate::rollout::RolloutRegistry::new(),
         inference_limiter: crate::state::InferenceLimiter::unlimited_for_tests(),
-        server_config: apxm_driver::ServerConfig::default(),
+        server_config,
+        bind_addr: hardening.bind_addr,
+        effective_require_auth: hardening.effective_require_auth,
+        safety_state: hardening.safety_state,
+        shutdown: hardening.shutdown,
         cancel_registry: Arc::new(DashMap::new()),
         goal_runs: crate::goal_runs::GoalRunRegistry::new(),
         session_registry: crate::conversations::SessionRegistry::new(),

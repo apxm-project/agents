@@ -213,6 +213,12 @@ pub struct ServerConfig {
 
     /// Server observability exporter controls.
     pub observability: ServerObservabilityConfig,
+
+    /// HTTP safety controls (rate limit, body cap).
+    pub safety: ServerSafetyConfig,
+
+    /// Graceful shutdown drain controls.
+    pub shutdown: ServerShutdownConfig,
 }
 
 impl Default for ServerConfig {
@@ -232,6 +238,8 @@ impl Default for ServerConfig {
             rollout: ServerRolloutConfig::default(),
             mcp: ServerMcpConfig::default(),
             observability: ServerObservabilityConfig::default(),
+            safety: ServerSafetyConfig::default(),
+            shutdown: ServerShutdownConfig::default(),
         }
     }
 }
@@ -478,10 +486,63 @@ impl Default for ServerMcpConfig {
 }
 
 /// Server observability exporter configuration.
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(default)]
 pub struct ServerObservabilityConfig {
     pub otlp_endpoint: Option<String>,
+    /// When true, expose unversioned `GET /metrics` for Prometheus scrape.
+    pub metrics_enabled: bool,
+}
+
+impl Default for ServerObservabilityConfig {
+    fn default() -> Self {
+        Self {
+            otlp_endpoint: None,
+            metrics_enabled: true,
+        }
+    }
+}
+
+/// HTTP safety limits for ingress-exposed or shared deployments.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(default)]
+pub struct ServerSafetyConfig {
+    /// Per-principal requests-per-second cap. `None` disables rate limiting.
+    pub rate_limit_rps: Option<u32>,
+    /// Burst allowance for the token bucket. Defaults to `rate_limit_rps` when unset.
+    pub rate_limit_burst: Option<u32>,
+    /// Maximum accepted request body size in bytes. `None` disables the cap.
+    pub max_body_bytes: Option<usize>,
+}
+
+impl Default for ServerSafetyConfig {
+    fn default() -> Self {
+        Self {
+            rate_limit_rps: None,
+            rate_limit_burst: None,
+            max_body_bytes: Some(default_max_body_bytes()),
+        }
+    }
+}
+
+fn default_max_body_bytes() -> usize {
+    10 * 1024 * 1024
+}
+
+/// Graceful shutdown drain configuration.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(default)]
+pub struct ServerShutdownConfig {
+    /// Maximum seconds to wait for rollout writers to flush after SIGTERM.
+    pub drain_timeout_secs: u64,
+}
+
+impl Default for ServerShutdownConfig {
+    fn default() -> Self {
+        Self {
+            drain_timeout_secs: 30,
+        }
+    }
 }
 
 /// Policy configuration layered over the dynamic registry.

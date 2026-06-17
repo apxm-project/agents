@@ -68,6 +68,12 @@ pub mod env {
     pub const APXM_SERVER_MAX_INFERENCE: &str = "APXM_SERVER_MAX_INFERENCE";
     /// Maximum inference limiter wait before returning 429, in milliseconds.
     pub const APXM_SERVER_INFERENCE_WAIT_MS: &str = "APXM_SERVER_INFERENCE_WAIT_MS";
+    /// Per-principal HTTP requests-per-second cap (`None` disables when unset/0).
+    pub const APXM_SERVER_RATE_LIMIT_RPS: &str = "APXM_SERVER_RATE_LIMIT_RPS";
+    /// HTTP request body size cap in bytes.
+    pub const APXM_SERVER_MAX_BODY_BYTES: &str = "APXM_SERVER_MAX_BODY_BYTES";
+    /// Graceful shutdown rollout flush timeout in seconds.
+    pub const APXM_SERVER_DRAIN_TIMEOUT_SECS: &str = "APXM_SERVER_DRAIN_TIMEOUT_SECS";
     /// Maximum scheduler concurrency for server-owned runtime work.
     pub const APXM_RUNTIME_MAX_CONCURRENCY: &str = "APXM_RUNTIME_MAX_CONCURRENCY";
     /// Maximum scheduler in-flight work for server-owned runtime work.

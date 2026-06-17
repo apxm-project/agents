@@ -12,13 +12,15 @@ use tokio::sync::Mutex;
 use tracing::{info, warn};
 
 use crate::app::build_app;
+use crate::bind::effective_require_auth;
 use crate::checkpoints::CheckpointStore;
 use crate::executions::ExecutionStore;
 use crate::goal_runs::GoalRunRegistry;
-use crate::observability::{self, warn_init_failure};
 use crate::rollout::RolloutRegistry;
 use crate::runs::RunEventBus;
 use crate::runtime_setup::{build_runtime_with_router, build_runtime_without_router};
+use crate::safety::SafetyState;
+use crate::shutdown::ShutdownCoordinator;
 use crate::skill_resources::prepend_builtin_skill_root;
 use crate::skills::{SkillLibrary, parse_skill_roots};
 use crate::state::{AppState, InferenceLimiter};
@@ -88,17 +90,8 @@ pub(crate) async fn run_server_with_config(server_config: ServerConfig) -> anyho
     skill_resolver.attach_runtime(&runtime);
     workflow_spawner.attach_runtime(&runtime);
 
-    // wire the outbound lifecycle webhook if configured.
-    // Optional + fire-and-forget.
+    // Optional outbound lifecycle webhook if configured.
     let webhook_dispatcher = WebhookDispatcher::from_config(&server_config.webhook);
-
-    // bring up the OTEL exporter if env-configured.
-    // Initialization failures are logged + ignored: the in-process
-    // tracing-subscriber keeps working.
-    match observability::init(&server_config.observability) {
-        Ok(_exporter) => {}
-        Err(error) => warn_init_failure(&error),
-    }
 
     // bring up the rollout layer. The index db is rebuilt
     // lazily from disk on first read if missing/corrupt; opening here is
@@ -128,6 +121,12 @@ pub(crate) async fn run_server_with_config(server_config: ServerConfig) -> anyho
         }
     };
 
+    let addr = server_addr(&args, &server_config)?;
+    let effective_auth = effective_require_auth(&addr, &server_config.auth);
+    if effective_auth && !crate::bind::is_loopback_addr(&addr) {
+        info!(%addr, "bearer auth enabled for non-loopback bind (default-deny)");
+    }
+
     let state = AppState {
         runtime,
         agent_registry: Arc::new(DashMap::new()),
@@ -141,16 +140,19 @@ pub(crate) async fn run_server_with_config(server_config: ServerConfig) -> anyho
         webhook_dispatcher,
         rollout_paths,
         rollout_index,
-        rollout_registry,
+        rollout_registry: rollout_registry.clone(),
         inference_limiter: InferenceLimiter::from_config(&server_config.inference),
         server_config: server_config.clone(),
+        bind_addr: addr,
+        effective_require_auth: effective_auth,
+        safety_state: SafetyState::from_config(&server_config.safety),
+        shutdown: ShutdownCoordinator::new(),
         cancel_registry: Arc::new(DashMap::new()),
         goal_runs: GoalRunRegistry::new(),
         session_registry: crate::conversations::SessionRegistry::new(),
     };
 
     let app = build_app(state);
-    let addr = server_addr(&args, &server_config)?;
     let listener = tokio::net::TcpListener::bind(addr).await?;
     // Derive the announced address from the ACTUAL bound port: the configured
     // port may be 0 (OS-assigned ephemeral) in worktree-parallel stacks.
@@ -159,7 +161,10 @@ pub(crate) async fn run_server_with_config(server_config: ServerConfig) -> anyho
     advertise_listen("apxm-server", local.port());
 
     axum::serve(listener, app)
-        .with_graceful_shutdown(shutdown_signal())
+        .with_graceful_shutdown(shutdown_signal(
+            rollout_registry,
+            server_config.shutdown.drain_timeout_secs,
+        ))
         .await?;
     Ok(())
 }
@@ -289,7 +294,7 @@ fn server_addr(args: &[String], config: &ServerConfig) -> anyhow::Result<SocketA
         .map_err(|error| anyhow::anyhow!("invalid built-in default address: {error}"))
 }
 
-async fn shutdown_signal() {
+async fn shutdown_signal(rollout_registry: RolloutRegistry, drain_timeout_secs: u64) {
     #[cfg(unix)]
     {
         use tokio::signal::unix::{SignalKind, signal};
@@ -304,4 +309,12 @@ async fn shutdown_signal() {
         tokio::signal::ctrl_c().await.expect("Ctrl+C handler");
     }
     info!("shutdown signal received");
+    let timeout = std::time::Duration::from_secs(drain_timeout_secs.max(1));
+    match tokio::time::timeout(timeout, rollout_registry.flush_all()).await {
+        Ok(()) => info!("rollout flush complete"),
+        Err(_) => warn!(
+            timeout_secs = drain_timeout_secs,
+            "rollout flush timed out during graceful shutdown"
+        ),
+    }
 }

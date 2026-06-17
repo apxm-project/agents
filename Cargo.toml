@@ -72,7 +72,13 @@ tokio-stream = "0.1"
 # ── HTTP ─────────────────────────────────────────────────────
 reqwest = { version = "0.12", features = ["json", "rustls-tls"], default-features = false }
 axum = { version = "0.8", features = ["macros"] }
-tower-http = { version = "0.6", features = ["fs", "cors"] }
+tower-http = { version = "0.6", features = ["fs", "cors", "limit"] }
+
+# ── Observability (OTLP) ─────────────────────────────────────
+tracing-opentelemetry = "0.28"
+opentelemetry = { version = "0.27", features = ["trace"] }
+opentelemetry-otlp = { version = "0.27", features = ["http-proto", "reqwest-rustls"] }
+opentelemetry_sdk = { version = "0.27", features = ["rt-tokio"] }
 
 # ── Concurrency ──────────────────────────────────────────────
 dashmap = "6.0"

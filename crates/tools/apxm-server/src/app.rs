@@ -19,6 +19,7 @@ use crate::rerun::{rerun_from_node, rerun_run};
 use crate::generate::{handle_generate, handle_generate_stream, handle_schema};
 use crate::goals::{cancel_goal, get_goal, get_goal_events_bulk, list_goals, stream_goal_events};
 use crate::health::{health, list_backends, list_models};
+use crate::metrics::scrape_metrics;
 use crate::mcp::{mcp_jsonrpc, post_goal};
 use crate::memory::{delete_fact, search_facts, store_fact};
 use crate::routes::ServerRoute;
@@ -46,9 +47,18 @@ pub(crate) fn build_app(state: AppState) -> Router {
     // Warm the process-wide permission registry before handlers mount.
     let _ = crate::permissions::PermissionRegistry::global();
     let req_id_header = axum::http::HeaderName::from_static("x-request-id");
-    Router::new()
+    let auth_policy = crate::auth::AuthPolicy {
+        config: state.server_config.auth.clone(),
+        effective_require_auth: state.effective_require_auth,
+    };
+    let safety_state = state.safety_state.clone();
+    let shutdown = state.shutdown.clone();
+    let body_limit = crate::safety::body_limit_layer(&state.server_config.safety);
+
+    let mut router = Router::new()
         // Health + meta
         .route(ServerRoute::Health.path(), get(health))
+        .route(ServerRoute::Metrics.path(), get(scrape_metrics))
         .route(ServerRoute::Models.path(), get(list_models))
         .route(ServerRoute::Backends.path(), get(list_backends))
         // Execution
@@ -189,13 +199,26 @@ pub(crate) fn build_app(state: AppState) -> Router {
             ServerRoute::GoalEventsStream.path(),
             get(stream_goal_events),
         )
-        .route(ServerRoute::GoalCancel.path(), post(cancel_goal))
+        .route(ServerRoute::GoalCancel.path(), post(cancel_goal));
+
+    if let Some(layer) = body_limit {
+        router = router.layer(layer);
+    }
+
+    router
         // F04: opt-in, fail-closed bearer auth on mutating routes. The layer
-        // is always installed but is a transparent pass-through unless
-        // `server_config.auth.require_auth` is enabled (default off), so tests
-        // and local dev are unaffected.
+        // is always installed; non-loopback binds are auth-on by default.
         .layer(axum::middleware::from_fn_with_state(
-            state.server_config.auth.clone(),
+            safety_state,
+            crate::safety::rate_limit_middleware,
+        ))
+        .layer(axum::middleware::from_fn_with_state(
+            shutdown,
+            crate::shutdown::track_in_flight,
+        ))
+        .layer(axum::middleware::from_fn(crate::metrics::record_request_middleware))
+        .layer(axum::middleware::from_fn_with_state(
+            auth_policy,
             crate::auth::require_bearer,
         ))
         .with_state(state)

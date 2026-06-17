@@ -38,7 +38,8 @@ pub use config::{
     ApXmConfig, ChatConfig, ConfigError, ExecutionStreamConfig, GenerateStreamConfig, HookConfig,
     HookEvent, RunEventsConfig, ServerAuthConfig, ServerConfig, ServerExecutionsConfig,
     ServerInferenceConfig, ServerMcpConfig, ServerObservabilityConfig, ServerProcessConfig,
-    ServerRolloutConfig, ServerRuntimeConfig, ServerWebhookConfig, ToolConfig,
+    ServerRolloutConfig, ServerRuntimeConfig, ServerSafetyConfig, ServerShutdownConfig,
+    ServerWebhookConfig, ToolConfig,
 };
 
 // --- Linker ---

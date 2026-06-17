@@ -561,6 +561,9 @@ timeout_ms = 30000
                 .register(Arc::new(CountingCapability::new(invocations)))
                 .expect("register counting capability");
 
+            let server_config = apxm_driver::ServerConfig::default();
+            let hardening = crate::state::HardeningDefaults::for_config(&server_config);
+
             AppState {
                 runtime: Arc::new(runtime),
                 agent_registry: Arc::new(DashMap::new()),
@@ -583,7 +586,11 @@ timeout_ms = 30000
                 )),
                 rollout_registry: crate::rollout::RolloutRegistry::new(),
                 inference_limiter: InferenceLimiter::unlimited_for_tests(),
-                server_config: apxm_driver::ServerConfig::default(),
+                server_config,
+                bind_addr: hardening.bind_addr,
+                effective_require_auth: hardening.effective_require_auth,
+                safety_state: hardening.safety_state,
+                shutdown: hardening.shutdown,
                 cancel_registry: Arc::new(DashMap::new()),
                 goal_runs: crate::goal_runs::GoalRunRegistry::new(),
                 session_registry: crate::conversations::SessionRegistry::new(),

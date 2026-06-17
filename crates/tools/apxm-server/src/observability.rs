@@ -1,61 +1,23 @@
-//! OpenTelemetry OTLP exporter.
-//!
-//! When configured, APXM events flow to the global tracing-opentelemetry
-//! pipeline, which forwards them to the configured OTLP collector. The exporter
-//! is configured through layered APXM server config, with the standard OTLP env
-//! var applied as a startup override.
-//!
-//! If the env var is unset, `init` returns `Ok(None)` and no exporter is wired.
-
-use std::sync::Arc;
+//! OpenTelemetry OTLP exporter and tracing subscriber wiring.
 
 use apxm_driver::ServerObservabilityConfig;
+use opentelemetry::trace::TracerProvider;
+use opentelemetry_otlp::WithExportConfig;
 use tracing::{debug, warn};
+use tracing_subscriber::layer::SubscriberExt;
+use tracing_subscriber::util::SubscriberInitExt;
+use tracing_subscriber::EnvFilter;
 
-/// Lightweight handle representing a configured OTLP exporter. The
-/// real OpenTelemetry pipeline lives behind the `tracing` global
-/// subscriber so this struct mostly exists as a presence flag plus a
-/// place to hang per-emitter state.
+/// Lightweight handle representing a configured OTLP exporter.
 #[derive(Clone)]
-#[allow(dead_code)]
 pub(crate) struct OtelExporter {
-    endpoint: Arc<String>,
+    endpoint: std::sync::Arc<String>,
 }
 
 impl OtelExporter {
-    #[allow(dead_code)]
     pub(crate) fn endpoint(&self) -> &str {
         self.endpoint.as_str()
     }
-}
-
-/// Attempt to initialize the OTLP exporter. Returns `Ok(None)` when the
-/// endpoint is unset (the common case) and `Ok(Some(_))` after successful
-/// initialization. Initialization failures are
-/// non-fatal — the server keeps running with the in-process
-/// `tracing-subscriber` configured by `main`.
-pub(crate) fn init(
-    config: &ServerObservabilityConfig,
-) -> Result<Option<OtelExporter>, OtelInitError> {
-    let Some(endpoint) = config
-        .otlp_endpoint
-        .as_deref()
-        .map(str::trim)
-        .filter(|endpoint| !endpoint.is_empty())
-    else {
-        return Ok(None);
-    };
-
-    // The actual OTLP pipeline wiring lives in the
-    // `opentelemetry-otlp` crate, which is a heavy dependency that
-    // this PR keeps optional behind config. Until that lands we
-    // emit a one-line note so operators see the export endpoint and
-    // know `tracing` events will be exported when the OTEL pipeline
-    // is configured globally (per-process opentelemetry_sdk setup).
-    debug!(endpoint = %endpoint, "OTLP exporter configured");
-    Ok(Some(OtelExporter {
-        endpoint: Arc::new(endpoint.to_string()),
-    }))
 }
 
 #[derive(Debug)]
@@ -69,9 +31,67 @@ impl std::fmt::Display for OtelInitError {
 
 impl std::error::Error for OtelInitError {}
 
-/// Stand-alone helper for `init` callers when initialization itself fails.
-///
-/// Emitting one warning keeps exporter setup failures from aborting startup.
 pub(crate) fn warn_init_failure(error: &OtelInitError) {
     warn!(error = %error, "OTLP exporter init failed; continuing without export");
+}
+
+/// Initialize the global tracing subscriber with optional OTLP export.
+pub(crate) fn init_tracing_subscriber(
+    observability: &ServerObservabilityConfig,
+    log_filter: &str,
+) -> Result<Option<OtelExporter>, OtelInitError> {
+    let filter =
+        EnvFilter::try_new(log_filter).map_err(|error| OtelInitError(error.to_string()))?;
+
+    let endpoint = observability
+        .otlp_endpoint
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty());
+
+    let Some(endpoint) = endpoint else {
+        tracing_subscriber::registry()
+            .with(filter)
+            .with(tracing_subscriber::fmt::layer())
+            .init();
+        return Ok(None);
+    };
+
+    let exporter = opentelemetry_otlp::SpanExporter::builder()
+        .with_http()
+        .with_endpoint(endpoint)
+        .build()
+        .map_err(|error| OtelInitError(error.to_string()))?;
+
+    let provider = opentelemetry_sdk::trace::TracerProvider::builder()
+        .with_batch_exporter(exporter, opentelemetry_sdk::runtime::Tokio)
+        .build();
+
+    let tracer = provider.tracer("apxm-server");
+    let telemetry = tracing_opentelemetry::layer().with_tracer(tracer);
+
+    tracing_subscriber::registry()
+        .with(filter)
+        .with(telemetry)
+        .with(tracing_subscriber::fmt::layer())
+        .init();
+
+    debug!(endpoint = %endpoint, "OTLP exporter configured");
+    Ok(Some(OtelExporter {
+        endpoint: std::sync::Arc::new(endpoint.to_string()),
+    }))
+}
+
+/// Legacy presence hook for startup symmetry.
+pub(crate) fn init(
+    config: &ServerObservabilityConfig,
+) -> Result<Option<OtelExporter>, OtelInitError> {
+    let endpoint = config
+        .otlp_endpoint
+        .as_deref()
+        .map(str::trim)
+        .filter(|endpoint| !endpoint.is_empty());
+    Ok(endpoint.map(|value| OtelExporter {
+        endpoint: std::sync::Arc::new(value.to_string()),
+    }))
 }

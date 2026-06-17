@@ -805,6 +805,8 @@ mod tests {
                 .await
                 .expect("in-memory runtime"),
         );
+        let server_config = apxm_driver::ServerConfig::default();
+        let hardening = crate::state::HardeningDefaults::for_config(&server_config);
         AppState {
             runtime,
             agent_registry: Arc::new(DashMap::new()),
@@ -829,7 +831,11 @@ mod tests {
             )),
             rollout_registry: crate::rollout::RolloutRegistry::new(),
             inference_limiter: crate::state::InferenceLimiter::unlimited_for_tests(),
-            server_config: apxm_driver::ServerConfig::default(),
+            server_config,
+            bind_addr: hardening.bind_addr,
+            effective_require_auth: hardening.effective_require_auth,
+            safety_state: hardening.safety_state,
+            shutdown: hardening.shutdown,
             cancel_registry: Arc::new(DashMap::new()),
             goal_runs: crate::goal_runs::GoalRunRegistry::new(),
             session_registry: crate::conversations::SessionRegistry::new(),
