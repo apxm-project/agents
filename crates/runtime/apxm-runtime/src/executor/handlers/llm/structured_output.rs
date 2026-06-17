@@ -263,4 +263,3 @@ pub(super) async fn process_structured_output(
 
     Ok(structured.result)
 }
-

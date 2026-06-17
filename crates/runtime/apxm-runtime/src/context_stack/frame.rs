@@ -62,4 +62,3 @@ pub fn truncate_to_budget(text: &str, max_tokens: usize) -> (String, bool) {
         true,
     )
 }
-

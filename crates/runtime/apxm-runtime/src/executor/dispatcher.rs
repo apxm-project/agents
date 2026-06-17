@@ -698,4 +698,3 @@ mod retry_primitive_tests {
         );
     }
 }
-

@@ -24,7 +24,6 @@ use super::ExecutionContext;
 use super::hooks::{HookEvent, HookMode};
 use crate::memory::MemorySpace;
 
-
 const HOOK_DEADLINE: Duration = Duration::from_secs(30);
 const HOOK_PAYLOAD_KEY: &str = "__apxm_hook__";
 
@@ -102,7 +101,11 @@ async fn host_mem_recent(
         .map_err(|e| format!("mem.recent failed: {e}"))?;
     let texts: Vec<JsonValue> = items
         .into_iter()
-        .filter_map(|r| r.value.as_string().map(|s| JsonValue::String(s.to_string())))
+        .filter_map(|r| {
+            r.value
+                .as_string()
+                .map(|s| JsonValue::String(s.to_string()))
+        })
         .collect();
     Ok(JsonValue::Array(texts))
 }
@@ -212,9 +215,12 @@ fn value_to_json(v: Value) -> JsonValue {
 
 fn remaining_budget(ctx: &ExecutionContext) -> JsonValue {
     match ctx.token_budget {
-        Some(b) => json!(b.saturating_sub(
-            ctx.consumed_tokens.load(std::sync::atomic::Ordering::Relaxed)
-        )),
+        Some(b) => json!(
+            b.saturating_sub(
+                ctx.consumed_tokens
+                    .load(std::sync::atomic::Ordering::Relaxed)
+            )
+        ),
         None => JsonValue::Null,
     }
 }
@@ -249,7 +255,12 @@ pub async fn run_pre_tool_hooks(
             }
         });
         match bridge
-            .call_hook_with_host(&binding.handler_id, payload, HOOK_DEADLINE, |method, params| dispatch_host_call(ctx, method, params))
+            .call_hook_with_host(
+                &binding.handler_id,
+                payload,
+                HOOK_DEADLINE,
+                |method, params| dispatch_host_call(ctx, method, params),
+            )
             .await
         {
             Ok(decision) => match parse_pre_tool_decision(decision) {
@@ -301,11 +312,7 @@ fn parse_pre_tool_decision(decision: JsonValue) -> PreToolDecision {
 }
 
 /// Run all matching `post_tool` hooks; returns the (possibly replaced) result.
-pub async fn run_post_tool_hooks(
-    ctx: &ExecutionContext,
-    tool_name: &str,
-    result: Value,
-) -> Value {
+pub async fn run_post_tool_hooks(ctx: &ExecutionContext, tool_name: &str, result: Value) -> Value {
     let Some(registry) = ctx.hook_registry() else {
         return result;
     };
@@ -319,8 +326,7 @@ pub async fn run_post_tool_hooks(
 
     let mut current = result;
     for binding in bindings {
-        let result_json =
-            serde_json::to_value(&current).unwrap_or(JsonValue::Null);
+        let result_json = serde_json::to_value(&current).unwrap_or(JsonValue::Null);
         let payload = json!({
             HOOK_PAYLOAD_KEY: {
                 "event": "post_tool",
@@ -329,7 +335,12 @@ pub async fn run_post_tool_hooks(
             }
         });
         match bridge
-            .call_hook_with_host(&binding.handler_id, payload, HOOK_DEADLINE, |method, params| dispatch_host_call(ctx, method, params))
+            .call_hook_with_host(
+                &binding.handler_id,
+                payload,
+                HOOK_DEADLINE,
+                |method, params| dispatch_host_call(ctx, method, params),
+            )
             .await
         {
             Ok(decision) => {
@@ -370,7 +381,12 @@ async fn fire_lifecycle_hooks(
     };
     for binding in bindings {
         if let Err(e) = bridge
-            .call_hook_with_host(&binding.handler_id, payload.clone(), HOOK_DEADLINE, |method, params| dispatch_host_call(ctx, method, params))
+            .call_hook_with_host(
+                &binding.handler_id,
+                payload.clone(),
+                HOOK_DEADLINE,
+                |method, params| dispatch_host_call(ctx, method, params),
+            )
             .await
         {
             if binding.mode == HookMode::Gate {
@@ -427,7 +443,12 @@ pub async fn run_post_turn_hooks(ctx: &ExecutionContext, reply: &str) {
     for binding in bindings {
         let payload = json!({ HOOK_PAYLOAD_KEY: base.clone() });
         match bridge
-            .call_hook_with_host(&binding.handler_id, payload, HOOK_DEADLINE, |method, params| dispatch_host_call(ctx, method, params))
+            .call_hook_with_host(
+                &binding.handler_id,
+                payload,
+                HOOK_DEADLINE,
+                |method, params| dispatch_host_call(ctx, method, params),
+            )
             .await
         {
             Ok(decision) => apply_hook_writes(ctx, &decision).await,
@@ -454,10 +475,7 @@ async fn apply_hook_writes(ctx: &ExecutionContext, decision: &JsonValue) {
     let scope = ctx.memory_scope().to_string();
     let mem = ctx.memory();
     for w in writes {
-        let (Some(key), Some(val)) = (
-            w.get("key").and_then(|k| k.as_str()),
-            w.get("value"),
-        ) else {
+        let (Some(key), Some(val)) = (w.get("key").and_then(|k| k.as_str()), w.get("value")) else {
             continue;
         };
         if let Err(e) = mem
@@ -514,7 +532,12 @@ pub async fn run_pre_ask_hooks(
             }
         });
         match bridge
-            .call_hook_with_host(&binding.handler_id, payload, HOOK_DEADLINE, |method, params| dispatch_host_call(ctx, method, params))
+            .call_hook_with_host(
+                &binding.handler_id,
+                payload,
+                HOOK_DEADLINE,
+                |method, params| dispatch_host_call(ctx, method, params),
+            )
             .await
         {
             Ok(decision) => {

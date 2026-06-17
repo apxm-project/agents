@@ -53,4 +53,3 @@ pub async fn execute(_ctx: &ExecutionContext, node: &Node, inputs: Vec<Value>) -
         _ => Ok(Value::Array(inputs)),
     }
 }
-

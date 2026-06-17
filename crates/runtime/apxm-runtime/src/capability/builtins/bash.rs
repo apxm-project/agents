@@ -480,4 +480,3 @@ fn has_disallowed_shell_syntax(value: &str) -> bool {
 
     in_single_quote || in_double_quote || escaped
 }
-

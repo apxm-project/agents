@@ -191,4 +191,3 @@ impl<C: Clock> RateLimiter<C> {
         &self.cfg
     }
 }
-

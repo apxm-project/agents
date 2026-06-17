@@ -138,4 +138,3 @@ impl Default for CapabilityRegistry {
         Self::new()
     }
 }
-

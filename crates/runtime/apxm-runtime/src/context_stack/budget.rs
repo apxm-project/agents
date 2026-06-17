@@ -25,4 +25,3 @@ impl BudgetAllocator {
         self.used >= self.total
     }
 }
-

@@ -135,10 +135,7 @@ impl ReplaySeed {
     /// server path in [`Runtime::execute_artifact_inner`](crate::runtime::Runtime)
     /// and the [`ExecutorEngine`](crate::executor::ExecutorEngine) fallback path —
     /// route through this so they honor partial replay identically.
-    pub fn from_metadata(
-        metadata: &HashMap<String, String>,
-        dag: &ExecutionDag,
-    ) -> Option<Self> {
+    pub fn from_metadata(metadata: &HashMap<String, String>, dag: &ExecutionDag) -> Option<Self> {
         let from_node: NodeId = metadata
             .get(crate::metadata_keys::REPLAY_FROM_NODE)?
             .parse()

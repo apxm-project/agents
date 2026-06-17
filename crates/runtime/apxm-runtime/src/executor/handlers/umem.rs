@@ -69,4 +69,3 @@ pub async fn execute(ctx: &ExecutionContext, node: &Node, inputs: Vec<Value>) ->
     // Return the stored value
     Ok(value)
 }
-

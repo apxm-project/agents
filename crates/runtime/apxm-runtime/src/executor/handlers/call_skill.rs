@@ -306,4 +306,3 @@ fn record_call_skill_outputs(
         TransitionLabel::Custom(format!("call_skill_completed:{requested_skill_id}")),
     );
 }
-

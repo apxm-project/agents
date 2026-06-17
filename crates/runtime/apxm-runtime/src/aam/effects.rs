@@ -144,4 +144,3 @@ pub fn operation_effects(op: &AISOperationType) -> OperationEffects {
         AISOperationType::Yield => OperationEffects::new(),
     }
 }
-

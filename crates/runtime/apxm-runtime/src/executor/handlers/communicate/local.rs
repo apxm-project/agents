@@ -326,4 +326,3 @@ async fn communicate_inline_agent(
     let response = execute_llm_request_for_node(ctx, node, "COMMUNICATE", &request).await?;
     Ok(Some(Value::String(response.content)))
 }
-

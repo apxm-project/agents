@@ -10,4 +10,3 @@ pub async fn execute(_ctx: &ExecutionContext, node: &Node, inputs: Vec<Value>) -
         Ok(Value::Null)
     }
 }
-

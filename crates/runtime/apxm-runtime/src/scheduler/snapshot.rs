@@ -274,4 +274,3 @@ fn elapsed_ms_since(start: Instant, instant: Instant) -> u64 {
         .as_millis()
         .min(u64::MAX as u128) as u64
 }
-

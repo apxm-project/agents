@@ -115,7 +115,13 @@ impl PythonToolBridge {
             .worker
             .get_or_try_init(|| async {
                 let manifest = self.registry.manifest_json()?;
-                let w = PythonToolWorker::spawn_with_env(&manifest, &[], self.sandbox.as_ref(), self.sandbox_required).await?;
+                let w = PythonToolWorker::spawn_with_env(
+                    &manifest,
+                    &[],
+                    self.sandbox.as_ref(),
+                    self.sandbox_required,
+                )
+                .await?;
                 Ok::<_, RuntimeError>(Arc::new(w))
             })
             .await?;
@@ -139,7 +145,13 @@ impl PythonToolBridge {
             .worker
             .get_or_try_init(|| async {
                 let manifest = self.registry.manifest_json()?;
-                let w = PythonToolWorker::spawn_with_env(&manifest, &[], self.sandbox.as_ref(), self.sandbox_required).await?;
+                let w = PythonToolWorker::spawn_with_env(
+                    &manifest,
+                    &[],
+                    self.sandbox.as_ref(),
+                    self.sandbox_required,
+                )
+                .await?;
                 Ok::<_, RuntimeError>(Arc::new(w))
             })
             .await?;
@@ -165,11 +177,19 @@ impl PythonToolBridge {
             .worker
             .get_or_try_init(|| async {
                 let manifest = self.registry.manifest_json()?;
-                let w = PythonToolWorker::spawn_with_env(&manifest, &[], self.sandbox.as_ref(), self.sandbox_required).await?;
+                let w = PythonToolWorker::spawn_with_env(
+                    &manifest,
+                    &[],
+                    self.sandbox.as_ref(),
+                    self.sandbox_required,
+                )
+                .await?;
                 Ok::<_, RuntimeError>(Arc::new(w))
             })
             .await?;
-        worker.call_with_host(handler_id, payload, deadline, host).await
+        worker
+            .call_with_host(handler_id, payload, deadline, host)
+            .await
     }
 
     /// Access the underlying registry.

@@ -76,4 +76,3 @@ fn truncate_excerpt(text: &str) -> String {
     }
     format!("{}…", &text[..end])
 }
-

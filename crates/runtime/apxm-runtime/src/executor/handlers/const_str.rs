@@ -12,4 +12,3 @@ pub async fn execute(_ctx: &ExecutionContext, node: &Node, inputs: Vec<Value>) -
     let rendered = render_named(&value, &inputs, &input_names)?;
     Ok(Value::String(rendered))
 }
-

@@ -100,4 +100,3 @@ pub async fn execute(ctx: &ExecutionContext, node: &Node, _inputs: Vec<Value>) -
 
     Ok(array_value)
 }
-

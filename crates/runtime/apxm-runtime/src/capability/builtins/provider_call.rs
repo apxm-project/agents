@@ -301,60 +301,59 @@ impl CapabilityExecutor for ProviderCallCapability {
         // Resolve method/url/body. Named REST mode fills the url template from
         // args and builds the body from loose (non-reserved) args; generic
         // provider.call takes url/method/body from args verbatim.
-        let (method, url, body): (String, String, Option<JsonValue>) =
-            if let Some(rest) = &self.rest {
-                let mut url = rest.url.clone();
-                let mut path_params: Vec<String> = Vec::new();
-                for (k, v) in &args {
-                    let placeholder = format!("{{{k}}}");
-                    if url.contains(&placeholder) {
-                        url = url.replace(&placeholder, &value_to_str(v));
-                        path_params.push(k.clone());
-                    }
+        let (method, url, body): (String, String, Option<JsonValue>) = if let Some(rest) =
+            &self.rest
+        {
+            let mut url = rest.url.clone();
+            let mut path_params: Vec<String> = Vec::new();
+            for (k, v) in &args {
+                let placeholder = format!("{{{k}}}");
+                if url.contains(&placeholder) {
+                    url = url.replace(&placeholder, &value_to_str(v));
+                    path_params.push(k.clone());
                 }
-                let method = as_json("method")
-                    .and_then(|j| j.as_str().map(String::from))
-                    .unwrap_or_else(|| rest.method.clone());
-                // The loose args that are neither reserved nor consumed as url path
-                // params. GET/DELETE have no body, so these become query parameters;
-                // POST/PUT/PATCH carry them as the JSON body.
-                let loose: Vec<(&String, &Value)> = args
-                    .iter()
-                    .filter(|(k, _)| {
-                        !RESERVED_ARGS.contains(&k.as_str()) && !path_params.contains(k)
-                    })
-                    .map(|(k, v)| (k, v))
-                    .collect();
-                if method_has_no_body(&method) {
-                    // Append loose args to the query string (url-encoded). An
-                    // explicit `body` is ignored for body-less methods.
-                    let mut pairs: Vec<(&String, &Value)> = loose;
-                    // Stable order so the url is deterministic (tests, caching).
-                    pairs.sort_by(|a, b| a.0.cmp(b.0));
-                    url = append_query(&url, &pairs);
-                    (method, url, None)
-                } else {
-                    // Explicit `body` wins; else assemble it from the loose args.
-                    let body = as_json("body").or_else(|| {
-                        let obj: serde_json::Map<String, JsonValue> = loose
-                            .iter()
-                            .filter_map(|(k, v)| {
-                                serde_json::to_value(v).ok().map(|j| ((*k).clone(), j))
-                            })
-                            .collect();
-                        (!obj.is_empty()).then_some(JsonValue::Object(obj))
-                    });
-                    (method, url, body)
-                }
+            }
+            let method = as_json("method")
+                .and_then(|j| j.as_str().map(String::from))
+                .unwrap_or_else(|| rest.method.clone());
+            // The loose args that are neither reserved nor consumed as url path
+            // params. GET/DELETE have no body, so these become query parameters;
+            // POST/PUT/PATCH carry them as the JSON body.
+            let loose: Vec<(&String, &Value)> = args
+                .iter()
+                .filter(|(k, _)| !RESERVED_ARGS.contains(&k.as_str()) && !path_params.contains(k))
+                .map(|(k, v)| (k, v))
+                .collect();
+            if method_has_no_body(&method) {
+                // Append loose args to the query string (url-encoded). An
+                // explicit `body` is ignored for body-less methods.
+                let mut pairs: Vec<(&String, &Value)> = loose;
+                // Stable order so the url is deterministic (tests, caching).
+                pairs.sort_by(|a, b| a.0.cmp(b.0));
+                url = append_query(&url, &pairs);
+                (method, url, None)
             } else {
-                let url = as_json("url")
-                    .and_then(|j| j.as_str().map(String::from))
-                    .ok_or_else(|| cap_err("missing `url`".into()))?;
-                let method = as_json("method")
-                    .and_then(|j| j.as_str().map(String::from))
-                    .unwrap_or_else(|| "POST".into());
-                (method, url, as_json("body"))
-            };
+                // Explicit `body` wins; else assemble it from the loose args.
+                let body = as_json("body").or_else(|| {
+                    let obj: serde_json::Map<String, JsonValue> = loose
+                        .iter()
+                        .filter_map(|(k, v)| {
+                            serde_json::to_value(v).ok().map(|j| ((*k).clone(), j))
+                        })
+                        .collect();
+                    (!obj.is_empty()).then_some(JsonValue::Object(obj))
+                });
+                (method, url, body)
+            }
+        } else {
+            let url = as_json("url")
+                .and_then(|j| j.as_str().map(String::from))
+                .ok_or_else(|| cap_err("missing `url`".into()))?;
+            let method = as_json("method")
+                .and_then(|j| j.as_str().map(String::from))
+                .unwrap_or_else(|| "POST".into());
+            (method, url, as_json("body"))
+        };
 
         let b64 = base64::engine::general_purpose::STANDARD;
         let mut payload = json!({ "method": method, "url": url, "headers": headers });
@@ -402,8 +401,7 @@ impl CapabilityExecutor for ProviderCallCapability {
                     .await
                     .map_err(|e| cap_err(format!("proxy response parse: {e}")))?;
 
-                let retryable = pr.status == 429
-                    || (pr.status == 503 && pr.retry_after.is_some());
+                let retryable = pr.status == 429 || (pr.status == 503 && pr.retry_after.is_some());
                 if retryable && attempt + 1 < MAX_RETRY_ATTEMPTS {
                     let wait = retry_after_delay(pr.retry_after.as_deref());
                     tokio::time::sleep(wait).await;
@@ -615,7 +613,10 @@ mod tests {
         let decoded = String::from_utf8(STANDARD.decode(body).unwrap()).unwrap();
         let v: JsonValue = serde_json::from_str(&decoded).unwrap();
         assert_eq!(v["title"], json!("bug"));
-        assert!(v.get("owner").is_none(), "url placeholder is not in the body");
+        assert!(
+            v.get("owner").is_none(),
+            "url placeholder is not in the body"
+        );
     }
 
     // (B) A 429 with Retry-After triggers a bounded inline retry, then succeeds.
@@ -707,9 +708,6 @@ mod tests {
             MAX_RETRY_WAIT_SECS
         );
         // No/garbage header falls back to the small default.
-        assert_eq!(
-            retry_after_delay(None).as_secs(),
-            DEFAULT_RETRY_WAIT_SECS
-        );
+        assert_eq!(retry_after_delay(None).as_secs(), DEFAULT_RETRY_WAIT_SECS);
     }
 }

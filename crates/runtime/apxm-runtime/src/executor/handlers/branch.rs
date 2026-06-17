@@ -30,4 +30,3 @@ pub async fn execute(ctx: &ExecutionContext, node: &Node, inputs: Vec<Value>) ->
     // Return boolean result (actual branching handled by scheduler)
     Ok(Value::Bool(is_true))
 }
-

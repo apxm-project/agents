@@ -409,12 +409,13 @@ mod recent_window_tests {
 
         // The pinned summary is present and first, even though turn 1 is far
         // outside the 4-turn recency window.
-        assert_eq!(out.first().map(|r| r.key.as_str()), Some("conversation:summary"));
+        assert_eq!(
+            out.first().map(|r| r.key.as_str()),
+            Some("conversation:summary")
+        );
         assert!(
-            out.iter().any(|r| r
-                .value
-                .as_string()
-                .is_some_and(|s| s.contains("Ada"))),
+            out.iter()
+                .any(|r| r.value.as_string().is_some_and(|s| s.contains("Ada"))),
             "folded turn-1 fact must be recalled"
         );
         // Plus the last 4 turns (summary + 4 = 5 results), not turn 1 directly.
@@ -464,4 +465,3 @@ mod recent_window_tests {
         );
     }
 }
-

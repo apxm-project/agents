@@ -307,4 +307,3 @@ fn text_similarity(a: &str, b: &str) -> f64 {
         intersection / union
     }
 }
-

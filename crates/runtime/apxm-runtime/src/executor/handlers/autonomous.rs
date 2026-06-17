@@ -505,4 +505,3 @@ fn format_state(state: &Value) -> String {
         other => other.to_string(),
     }
 }
-

@@ -10,7 +10,7 @@
 
 use std::collections::{HashMap, HashSet};
 use std::sync::atomic::{AtomicUsize, Ordering};
-use std::sync::{Arc, Mutex, OnceLock};
+use std::sync::{Arc, Mutex, OnceLock, RwLock};
 
 /// Per-session caps/budgets/grants.
 #[derive(Debug)]
@@ -22,7 +22,7 @@ pub struct SessionLedger {
     tool_budgets: HashMap<String, usize>,
     tool_consumed: Mutex<HashMap<String, usize>>,
     /// Capability grant set seeded from the start request's `admit_capabilities`.
-    grants: HashSet<String>,
+    grants: RwLock<HashSet<String>>,
 }
 
 impl SessionLedger {
@@ -36,7 +36,7 @@ impl SessionLedger {
             turns_used: AtomicUsize::new(0),
             tool_budgets,
             tool_consumed: Mutex::new(HashMap::new()),
-            grants,
+            grants: RwLock::new(grants),
         }
     }
 
@@ -74,11 +74,93 @@ impl SessionLedger {
 
     /// Whether the session's grant set admits `capability`.
     pub fn admits(&self, capability: &str) -> bool {
-        self.grants.contains(capability)
+        self.grants
+            .read()
+            .expect("session ledger grants poisoned")
+            .contains(capability)
     }
 
-    pub fn grants(&self) -> &HashSet<String> {
-        &self.grants
+    pub fn grants(&self) -> HashSet<String> {
+        self.grants
+            .read()
+            .expect("session ledger grants poisoned")
+            .clone()
+    }
+
+    pub fn grants_is_empty(&self) -> bool {
+        self.grants
+            .read()
+            .expect("session ledger grants poisoned")
+            .is_empty()
+    }
+
+    /// Add capability ids to the session grant set.
+    pub fn add_grants(&self, grants: impl IntoIterator<Item = String>) {
+        self.grants
+            .write()
+            .expect("session ledger grants poisoned")
+            .extend(grants);
+    }
+
+    /// Remove capability ids from the session grant set.
+    pub fn remove_grants(&self, grants: impl IntoIterator<Item = String>) {
+        let mut set = self.grants
+            .write()
+            .expect("session ledger grants poisoned");
+        for grant in grants {
+            set.remove(&grant);
+        }
+    }
+
+    /// Remaining per-tool call budget for the session (`None` entry omitted).
+    pub fn tool_budgets_remaining(&self) -> HashMap<String, usize> {
+        let consumed = self.tool_consumed.lock().expect("ledger poisoned");
+        self.tool_budgets
+            .iter()
+            .map(|(tool, budget)| {
+                let used = consumed.get(tool).copied().unwrap_or(0);
+                (tool.clone(), budget.saturating_sub(used))
+            })
+            .collect()
+    }
+
+    /// Whether the next substantive turn would exceed the session turn cap.
+    pub fn would_exceed_turn_cap(&self) -> bool {
+        self.turn_cap
+            .is_some_and(|cap| self.turns_used() >= cap)
+    }
+
+    pub fn turn_cap(&self) -> Option<usize> {
+        self.turn_cap
+    }
+
+    /// Remaining substantive turns before the cap, if bounded.
+    pub fn turns_remaining(&self) -> Option<usize> {
+        self.turn_cap.map(|cap| cap.saturating_sub(self.turns_used()))
+    }
+}
+
+/// Outcome of charging a substantive turn at the session recv wake / re-arm seam.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum TurnChargeOutcome {
+    /// No ledger was seeded for this session (non-session or host omitted caps).
+    NoLedger,
+    /// Turn charged; returns the new running turn count.
+    Charged(usize),
+    /// Session turn cap would be exceeded — the turn must not proceed (fail-closed).
+    CapExceeded(String),
+}
+
+/// Charge one substantive turn when a session recv wakes, before re-arm delivers
+/// the user message. The recv re-arm path calls this so turn caps are enforced
+/// server-side without any host-side counting (spec 0002 US2 / SC-003).
+pub fn charge_turn_for_wake(session_id: &str) -> TurnChargeOutcome {
+    match get(session_id) {
+        None => TurnChargeOutcome::NoLedger,
+        Some(ledger) => match ledger.charge_turn() {
+            Ok(n) => TurnChargeOutcome::Charged(n),
+            Err(msg) => TurnChargeOutcome::CapExceeded(msg),
+        },
     }
 }
 
@@ -158,12 +240,53 @@ mod tests {
     #[test]
     fn registry_seed_is_idempotent() {
         let id = "sess-ledger-test-unique";
-        let first = seed(id, SessionLedger::new(Some(5), HashMap::new(), HashSet::new()));
-        let second = seed(id, SessionLedger::new(Some(99), HashMap::new(), HashSet::new()));
+        let first = seed(
+            id,
+            SessionLedger::new(Some(5), HashMap::new(), HashSet::new()),
+        );
+        let second = seed(
+            id,
+            SessionLedger::new(Some(99), HashMap::new(), HashSet::new()),
+        );
         // Idempotent: the second seed returns the first ledger (cap stays 5).
         assert!(Arc::ptr_eq(&first, &second));
         assert!(get(id).is_some());
         remove(id);
         assert!(get(id).is_none());
+    }
+
+    #[test]
+    fn charge_turn_for_wake_enforces_cap_via_registry() {
+        let id = "sess-charge-wake-cap";
+        seed(id, SessionLedger::new(Some(1), HashMap::new(), HashSet::new()));
+        assert_eq!(
+            charge_turn_for_wake(id),
+            TurnChargeOutcome::Charged(1),
+            "first wake charges turn 1"
+        );
+        assert!(
+            matches!(
+                charge_turn_for_wake(id),
+                TurnChargeOutcome::CapExceeded(_)
+            ),
+            "second wake exceeds cap of 1"
+        );
+        remove(id);
+    }
+
+    #[test]
+    fn charge_turn_for_wake_without_ledger() {
+        assert_eq!(
+            charge_turn_for_wake("sess-no-ledger-xyz"),
+            TurnChargeOutcome::NoLedger
+        );
+    }
+
+    #[test]
+    fn turns_remaining_tracks_cap() {
+        let l = SessionLedger::new(Some(3), HashMap::new(), HashSet::new());
+        assert_eq!(l.turns_remaining(), Some(3));
+        assert_eq!(l.charge_turn().unwrap(), 1);
+        assert_eq!(l.turns_remaining(), Some(2));
     }
 }

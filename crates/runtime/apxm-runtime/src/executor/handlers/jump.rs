@@ -12,4 +12,3 @@ pub async fn execute(_ctx: &ExecutionContext, _node: &Node, inputs: Vec<Value>) 
             message: "JUMP requires at least one input".to_string(),
         })
 }
-

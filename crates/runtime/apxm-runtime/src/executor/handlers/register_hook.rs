@@ -106,7 +106,10 @@ pub async fn execute(ctx: &ExecutionContext, node: &Node, _inputs: Vec<Value>) -
     );
 
     let mut result = HashMap::new();
-    result.insert("hook_event".to_string(), Value::String(event.as_str().to_string()));
+    result.insert(
+        "hook_event".to_string(),
+        Value::String(event.as_str().to_string()),
+    );
     result.insert("registered".to_string(), Value::Bool(true));
     Ok(Value::Object(result))
 }

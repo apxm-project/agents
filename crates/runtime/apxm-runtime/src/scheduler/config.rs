@@ -241,4 +241,3 @@ fn default_deadlock_timeout_ms() -> u64 {
 fn default_queue_capacity() -> usize {
     10_000
 }
-

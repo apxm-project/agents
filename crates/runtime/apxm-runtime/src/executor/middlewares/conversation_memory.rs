@@ -129,4 +129,3 @@ mod tests {
         assert!(!mw.applies_to(&inv));
     }
 }
-

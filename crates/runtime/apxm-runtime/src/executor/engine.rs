@@ -180,8 +180,7 @@ impl ExecutorEngine {
         // fallback scheduler entry pre-completes upstream nodes from the prior
         // run and re-executes only `from_node` and its descendants instead of
         // re-running the whole graph.
-        let replay_seed =
-            crate::scheduler::ReplaySeed::from_metadata(&self.context.metadata, &dag);
+        let replay_seed = crate::scheduler::ReplaySeed::from_metadata(&self.context.metadata, &dag);
 
         let (results, stats, _scheduler_metrics, _, _) = scheduler
             .execute_with_hooks_and_seed(
@@ -564,8 +563,10 @@ mod tests {
 
         let mut ctx = test_context().await;
         // Replay from node 2: node 1 is upstream and must be pre-completed.
-        ctx.metadata
-            .insert(crate::metadata_keys::REPLAY_FROM_NODE.to_string(), "2".to_string());
+        ctx.metadata.insert(
+            crate::metadata_keys::REPLAY_FROM_NODE.to_string(),
+            "2".to_string(),
+        );
         // Prior run's captured value for the boundary token 10 (node 1's output).
         let prior = serde_json::json!({ "10": "seeded-upstream" }).to_string();
         ctx.metadata

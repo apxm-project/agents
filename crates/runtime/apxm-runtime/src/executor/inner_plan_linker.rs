@@ -45,4 +45,3 @@ impl InnerPlanLinker for NoOpLinker {
         ))
     }
 }
-

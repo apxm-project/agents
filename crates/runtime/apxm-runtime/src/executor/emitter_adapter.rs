@@ -441,4 +441,3 @@ impl ExecutionEventEmitter for EmitterAdapter {
         self.emit(MemoizationHitPayload { node_id });
     }
 }
-

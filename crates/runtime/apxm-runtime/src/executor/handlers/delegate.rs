@@ -12,11 +12,11 @@ use super::{
     ExecutionContext, Node, Result, Value, execute_llm_request_for_node, get_string_attribute,
     read_stm_with_scope_fallback,
 };
-use apxm_backends::LLMRequest;
 use crate::aam::{ScopeSpec, TransitionLabel};
 use crate::executor::ExecutorEngine;
 use crate::flow_names::DELEGATE_FLOWS as DELEGATE_FLOW_NAMES;
 use crate::metadata_keys as metadata;
+use apxm_backends::LLMRequest;
 use apxm_core::constants::graph::attrs as graph_attrs;
 use apxm_core::constants::runtime::{belief_keys, response_keys};
 use apxm_core::error::RuntimeError;
@@ -244,4 +244,3 @@ async fn delegate_inline_agent(
     let response = execute_llm_request_for_node(ctx, node, "DELEGATE", &request).await?;
     Ok(Some(Value::String(response.content)))
 }
-

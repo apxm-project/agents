@@ -53,4 +53,3 @@ impl OperationMiddleware for TimeoutMiddleware {
         }
     }
 }
-

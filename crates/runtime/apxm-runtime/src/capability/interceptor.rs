@@ -100,4 +100,3 @@ impl CapabilityInterceptor for PermissionInterceptor {
         InterceptDecision::Allow
     }
 }
-

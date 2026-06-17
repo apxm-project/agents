@@ -238,4 +238,3 @@ impl ConcurrencyControlHandle {
         self.in_flight.load(Ordering::Relaxed)
     }
 }
-

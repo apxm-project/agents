@@ -373,4 +373,3 @@ pub fn wire_policy(policy: CompletionPolicy) -> &'static str {
         CompletionPolicy::Manual => "manual",
     }
 }
-

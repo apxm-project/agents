@@ -84,4 +84,3 @@ pub fn execution_phases(steps: &[WorkflowStep]) -> anyhow::Result<Vec<Vec<String
 
     Ok(phases)
 }
-

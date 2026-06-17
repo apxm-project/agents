@@ -24,4 +24,3 @@ pub async fn execute(ctx: &ExecutionContext, node: &Node, inputs: Vec<Value>) ->
 
     Ok(Value::Bool(should_continue))
 }
-

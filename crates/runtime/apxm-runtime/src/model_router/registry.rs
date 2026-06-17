@@ -339,4 +339,3 @@ fn default_models_path() -> Option<PathBuf> {
     // server home must not split its model roster across two directories.
     Some(apxm_core::env::apxm_home().join("models.toml"))
 }
-

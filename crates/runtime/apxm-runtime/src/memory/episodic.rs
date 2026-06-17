@@ -282,4 +282,3 @@ pub struct EpisodicStats {
     pub oldest_timestamp: Option<DateTime<Utc>>,
     pub newest_timestamp: Option<DateTime<Utc>>,
 }
-

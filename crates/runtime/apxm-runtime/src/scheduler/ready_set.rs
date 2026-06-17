@@ -49,7 +49,7 @@ impl ReadySet {
 
     /// Remove a node from pending tracking.
     ///
-/// Cleans up nodes during DAG condensation deletion.
+    /// Cleans up nodes during DAG condensation deletion.
     pub(crate) fn remove_pending(&self, node_id: NodeId) {
         self.pending_inputs.remove(&node_id);
     }

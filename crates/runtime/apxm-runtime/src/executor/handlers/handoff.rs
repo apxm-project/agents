@@ -320,4 +320,3 @@ async fn handoff_inline_agent(
     let response = execute_llm_request_for_node(ctx, node, "HANDOFF", &request).await?;
     Ok(Some(Value::String(response.content)))
 }
-

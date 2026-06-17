@@ -845,14 +845,13 @@ impl Runtime {
             Self::python_sandbox_required(),
         )?;
         let entry_dag = find_entry_dag(&artifact)?;
-        validate_args(&entry_dag, &args)?;
+        let arg_values = bind_args(&entry_dag, args)?;
 
         let artifact_flow_registry = Arc::new(FlowRegistry::new());
         for agent in reconstruct_agents_from_artifact(&artifact) {
             artifact_flow_registry.register_agent(agent);
         }
 
-        let arg_values: Vec<Value> = args.into_iter().map(Value::String).collect();
         #[cfg(feature = "metrics")]
         if !extra_metadata.contains_key(metadata::PARENT_EXECUTION_ID) {
             // Child executions inherit the parent's accounting; only reset for
@@ -1249,6 +1248,36 @@ fn validate_args(dag: &ExecutionDag, args: &[String]) -> Result<(), RuntimeError
     Ok(())
 }
 
+fn bind_args(dag: &ExecutionDag, args: Vec<String>) -> Result<Vec<Value>, RuntimeError> {
+    validate_args(dag, &args)?;
+    if args.is_empty() && is_turn_input_entry(dag) {
+        return Ok(Vec::new());
+    }
+    dag.metadata
+        .parameters
+        .iter()
+        .zip(args)
+        .map(|(param, raw)| {
+            if param.type_name == "json" {
+                let json = serde_json::from_str::<serde_json::Value>(&raw).map_err(|error| {
+                    RuntimeError::State(format!(
+                        "Flow argument '{}' expects json but received invalid JSON: {error}",
+                        param.name
+                    ))
+                })?;
+                Value::try_from(json).map_err(|error| {
+                    RuntimeError::State(format!(
+                        "Flow argument '{}' could not be converted from JSON: {error}",
+                        param.name
+                    ))
+                })
+            } else {
+                Ok(Value::String(raw))
+            }
+        })
+        .collect()
+}
+
 fn reconstruct_agents_from_artifact(artifact: &Artifact) -> Vec<Agent> {
     let mut agents: HashMap<String, Agent> = HashMap::new();
 
@@ -1289,6 +1318,7 @@ mod tests {
     use super::*;
     use apxm_artifact::ArtifactMetadata;
     use apxm_core::constants::graph::attrs as graph_attrs;
+    use apxm_core::types::execution::FlowParameter;
     use apxm_core::types::{AISOperationType, DagMetadata, Node, Value};
 
     fn artifact(dags: Vec<ExecutionDag>) -> Artifact {
@@ -1314,6 +1344,31 @@ mod tests {
                 parameters: Vec::new(),
             },
         }
+    }
+
+    #[test]
+    fn bind_args_parses_json_parameters() {
+        let mut dag = single_node_dag("main", true, Node::new(1, AISOperationType::Nop));
+        dag.metadata.parameters = vec![FlowParameter {
+            name: "data".to_string(),
+            type_name: "json".to_string(),
+        }];
+
+        let args = bind_args(
+            &dag,
+            vec![r#"{"event":{"subject":"studio-manual-run"}}"#.to_string()],
+        )
+        .unwrap();
+
+        let first = args[0].as_object().expect("json arg should bind as object");
+        let event = first
+            .get("event")
+            .and_then(Value::as_object)
+            .expect("event object");
+        assert_eq!(
+            event.get("subject").and_then(Value::as_str),
+            Some("studio-manual-run")
+        );
     }
 
     #[tokio::test]

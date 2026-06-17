@@ -861,4 +861,3 @@ async fn record_event(
         )
         .await;
 }
-

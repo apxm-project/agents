@@ -421,7 +421,7 @@ impl SchedulerState {
             "Condensing sub-DAG into single node"
         );
 
-    // 2. Collect all tokens produced and required by the subgraph.
+        // 2. Collect all tokens produced and required by the subgraph.
         let mut subgraph_output_tokens: HashSet<TokenId> = HashSet::new();
         let mut subgraph_input_tokens: HashSet<TokenId> = HashSet::new();
 
@@ -436,14 +436,14 @@ impl SchedulerState {
             }
         }
 
-    // External inputs: tokens required by subgraph but produced outside it.
+        // External inputs: tokens required by subgraph but produced outside it.
         let external_inputs: Vec<TokenId> = subgraph_input_tokens
             .iter()
             .filter(|tid| !subgraph_output_tokens.contains(tid))
             .copied()
             .collect();
 
-    // External outputs: tokens produced by subgraph for nodes outside it.
+        // External outputs: tokens produced by subgraph for nodes outside it.
         let mut external_outputs: Vec<TokenId> = Vec::new();
         for &tid in &subgraph_output_tokens {
             if let Some(token_state) = self.tokens.get(&tid) {
@@ -521,7 +521,7 @@ impl SchedulerState {
             }
         }
 
-    // 9. Adjust remaining counter: deleted N nodes, added 1.
+        // 9. Adjust remaining counter: deleted N nodes, added 1.
         let removed = subgraph.len();
         if removed > 1 {
             self.remaining

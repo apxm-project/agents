@@ -100,4 +100,3 @@ impl PythonToolRegistry {
         self.tools.is_empty()
     }
 }
-

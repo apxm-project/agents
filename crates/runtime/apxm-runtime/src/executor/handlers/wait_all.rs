@@ -7,4 +7,3 @@ pub async fn execute(_ctx: &ExecutionContext, _node: &Node, inputs: Vec<Value>) 
     // The actual synchronization is handled by the scheduler
     Ok(Value::Array(inputs))
 }
-

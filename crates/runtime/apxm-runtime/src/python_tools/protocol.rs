@@ -123,4 +123,3 @@ pub struct ErrorEnvelope {
     /// Optional Python traceback.
     pub traceback: Option<String>,
 }
-

@@ -78,6 +78,22 @@ impl ParkWaker {
         if let Some(spec) = &self.rearm
             && let Some(message_token) = self.outputs.first().copied()
         {
+            // Session ledger turn cap (spec 0002 US2): charge before re-arm so
+            // turn N+1 is denied without host-side counting (fail-closed).
+            if let crate::executor::session_ledger::TurnChargeOutcome::CapExceeded(msg) =
+                crate::executor::session_ledger::charge_turn_for_wake(&spec.session_id)
+            {
+                tracing::info!(
+                    session_id = %spec.session_id,
+                    %msg,
+                    "session turn cap exceeded; denying turn at recv re-arm"
+                );
+                self.state.wake_parked_node(
+                    &self.outputs,
+                    Value::String(format!("[turn_denied: {msg}]")),
+                );
+                return;
+            }
             // Bound the loop (CONV-1): count this delivered turn and only re-arm
             // while under the recv node's max_iterations cap. At the cap we skip
             // the re-arm so the recv completes and the session loop ends, instead

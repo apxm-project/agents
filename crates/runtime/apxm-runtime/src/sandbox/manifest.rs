@@ -133,4 +133,3 @@ pub fn classify_op(op: &str) -> (u8, IsolationLevel) {
         _ => (tier::IO, IsolationLevel::OsLevel),
     }
 }
-

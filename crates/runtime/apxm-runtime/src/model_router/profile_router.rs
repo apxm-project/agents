@@ -120,4 +120,3 @@ impl<'a> ProfileRouter<'a> {
         )
     }
 }
-

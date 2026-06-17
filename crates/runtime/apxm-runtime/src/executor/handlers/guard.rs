@@ -195,4 +195,3 @@ fn compare_f64(lhs: f64, op: &str, rhs: f64) -> bool {
         _ => false,
     }
 }
-

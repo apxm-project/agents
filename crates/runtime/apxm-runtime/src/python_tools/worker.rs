@@ -5,9 +5,8 @@
 //! responses to the correct `oneshot::Sender`.
 
 use super::constants::{
-    CAPABILITY_NAME, MANIFEST_TEMPFILE_PREFIX, PYTHON_BIN,
-    PYTHON_FRONTEND_PATH, PYTHON_MODULE_FLAG, PYTHONUNBUFFERED, REPO_MARKER, TRACE_TARGET,
-    WORKER_MODULE,
+    CAPABILITY_NAME, MANIFEST_TEMPFILE_PREFIX, PYTHON_BIN, PYTHON_FRONTEND_PATH,
+    PYTHON_MODULE_FLAG, PYTHONUNBUFFERED, REPO_MARKER, TRACE_TARGET, WORKER_MODULE,
 };
 use super::protocol::{
     CallRequest, CancelRequest, ErrorEnvelope, HostResultResponse, PROTOCOL_VERSION, WorkerRequest,
@@ -191,7 +190,14 @@ impl PythonToolWorker {
         // handlers that need credentials must go through the capability/
         // credential system, not raw env inheritance.
         const SECRET_MARKERS: &[&str] = &[
-            "KEY", "TOKEN", "SECRET", "PASSWORD", "PASSWD", "CREDENTIAL", "BEARER", "KEK",
+            "KEY",
+            "TOKEN",
+            "SECRET",
+            "PASSWORD",
+            "PASSWD",
+            "CREDENTIAL",
+            "BEARER",
+            "KEK",
             "PRIVATE",
         ];
         for (key, _) in std::env::vars() {
@@ -480,4 +486,3 @@ impl PythonToolWorker {
         Ok(())
     }
 }
-

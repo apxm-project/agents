@@ -679,4 +679,3 @@ fn project_aam_context(ctx: &ExecutionContext, node_id: u64, profile: &str) -> A
         system_prompt,
     }
 }
-

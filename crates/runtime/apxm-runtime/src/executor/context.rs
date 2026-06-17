@@ -26,13 +26,13 @@ use super::cancellation::CancellationToken;
 use super::dag_splicer::{DagSplicer, NoOpSplicer};
 use super::events::ExecutionEventEmitter;
 use super::fields_honored::FieldsHonoredCollector;
-use super::hooks::HookRegistry;
-use super::session_ledger::SessionLedger;
 use super::graph_metrics::GraphMetricsTracker;
 use super::handlers::warmup::{WarmupConfig, WarmupMetrics};
+use super::hooks::HookRegistry;
 use super::inner_plan_linker::{InnerPlanLinker, NoOpLinker};
 use super::memoization::MemoCache;
 use super::middleware::OperationMiddleware;
+use super::session_ledger::SessionLedger;
 use super::skill_resolver::{NoOpSkillResolver, SkillResolver};
 use super::timing_tracker::TimingTracker;
 use super::token_accounting::TokenAccountant;
@@ -376,6 +376,7 @@ impl ExecutionContext {
         name: &str,
         mut args: std::collections::HashMap<String, apxm_core::types::values::Value>,
     ) -> Result<apxm_core::types::values::Value, apxm_core::error::RuntimeError> {
+        self.ensure_session_grant(name)?;
         self.charge_tool_call(name)?;
         self.inject_tool_credential(name, &mut args);
         self.capability_system.invoke(name, args).await
@@ -388,6 +389,7 @@ impl ExecutionContext {
         mut args: std::collections::HashMap<String, apxm_core::types::values::Value>,
         timeout: std::time::Duration,
     ) -> Result<apxm_core::types::values::Value, apxm_core::error::RuntimeError> {
+        self.ensure_session_grant(name)?;
         self.charge_tool_call(name)?;
         self.inject_tool_credential(name, &mut args);
         self.capability_system
@@ -395,11 +397,62 @@ impl ExecutionContext {
             .await
     }
 
+    /// Charge one substantive session turn via the attached ledger (T031). Used when
+    /// the execution context already holds the session ledger; the recv re-arm
+    /// path charges via [`session_ledger::charge_turn_for_wake`] instead.
+    pub fn charge_session_turn(&self) -> Result<usize, apxm_core::error::RuntimeError> {
+        let Some(ledger) = &self.session_ledger else {
+            return Ok(1);
+        };
+        ledger.charge_turn().map_err(|message| {
+            apxm_core::error::RuntimeError::Capability {
+                capability: "session_turn".to_string(),
+                message,
+            }
+        })
+    }
+
+    /// Whether the session grant set admits `capability`. Without a ledger, all
+    /// capabilities pass (execution-scoped admission applies elsewhere). An empty
+    /// grant set is treated as unrestricted at the session layer.
+    pub fn session_admits_capability(&self, capability: &str) -> bool {
+        self.session_ledger
+            .as_ref()
+            .map(|ledger| ledger.grants().is_empty() || ledger.admits(capability))
+            .unwrap_or(true)
+    }
+
+    /// Fail-closed session grant check at the trusted invoke seam (T031).
+    fn ensure_session_grant(&self, capability: &str) -> Result<(), apxm_core::error::RuntimeError> {
+        let Some(ledger) = &self.session_ledger else {
+            return Ok(());
+        };
+        if ledger.grants().is_empty() || ledger.admits(capability) {
+            return Ok(());
+        }
+        Err(apxm_core::error::RuntimeError::Capability {
+            capability: capability.to_string(),
+            message: format!("capability '{capability}' not granted for this session"),
+        })
+    }
+
     /// Budget-check and increment the per-tool call counter. Fail-closed: an
     /// exhausted budget denies before the capability executes. A tool with no
     /// configured budget is unbounded. The counter is shared across child
     /// contexts, so the bound spans spawned agents and called skills.
+    ///
+    /// When a session ledger is attached, per-session tool budgets are the SSOT
+    /// (spec 0002 US2); per-execution counters are skipped.
     fn charge_tool_call(&self, name: &str) -> Result<(), apxm_core::error::RuntimeError> {
+        if let Some(ledger) = &self.session_ledger {
+            if !ledger.charge_tool(name) {
+                return Err(apxm_core::error::RuntimeError::Capability {
+                    capability: name.to_string(),
+                    message: format!("session tool budget exhausted for '{name}'"),
+                });
+            }
+            return Ok(());
+        }
         let Some(budgets) = &self.tool_call_budgets else {
             return Ok(());
         };
@@ -635,5 +688,78 @@ impl ExecutionContext {
     /// Get a reference to the flow registry
     pub fn flow_registry(&self) -> &FlowRegistry {
         &self.flow_registry
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::aam::Aam;
+    use crate::capability::CapabilitySystem;
+    use crate::capability::executor::EchoCapability;
+    use crate::memory::{MemoryConfig, MemorySystem};
+    use apxm_backends::LLMRegistry;
+    use std::collections::{HashMap, HashSet};
+    use std::sync::Arc;
+
+    async fn test_ctx_with_ledger(ledger: SessionLedger) -> ExecutionContext {
+        let memory = Arc::new(
+            MemorySystem::new(MemoryConfig::in_memory_ltm())
+                .await
+                .expect("memory"),
+        );
+        let aam = Aam::new();
+        let capability_system = Arc::new(CapabilitySystem::with_aam(aam.clone()));
+        capability_system
+            .register(Arc::new(EchoCapability::new()))
+            .expect("echo capability");
+        ExecutionContext::new(memory, Arc::new(LLMRegistry::new()), capability_system, aam)
+            .with_session_ledger(Arc::new(ledger))
+    }
+
+    #[tokio::test]
+    async fn charge_session_turn_enforces_cap_on_context() {
+        let ctx = test_ctx_with_ledger(SessionLedger::new(
+            Some(2),
+            HashMap::new(),
+            HashSet::new(),
+        ))
+        .await;
+        assert_eq!(ctx.charge_session_turn().unwrap(), 1);
+        assert_eq!(ctx.charge_session_turn().unwrap(), 2);
+        assert!(ctx.charge_session_turn().is_err(), "third turn exceeds cap");
+    }
+
+    #[tokio::test]
+    async fn session_grant_blocks_ungranted_capability() {
+        let mut grants = HashSet::new();
+        grants.insert("echo".to_string());
+        let ctx = test_ctx_with_ledger(SessionLedger::new(None, HashMap::new(), grants)).await;
+        assert!(ctx.session_admits_capability("echo"));
+        assert!(!ctx.session_admits_capability("delete_file"));
+        let err = ctx.invoke_tool("delete_file", HashMap::new()).await.unwrap_err();
+        assert!(
+            err.to_string().contains("not granted"),
+            "unexpected error: {err}"
+        );
+    }
+
+    #[tokio::test]
+    async fn session_tool_budget_enforced_at_invoke_seam() {
+        let mut budgets = HashMap::new();
+        budgets.insert("echo".to_string(), 1);
+        let ctx = test_ctx_with_ledger(SessionLedger::new(None, budgets, HashSet::new())).await;
+        let mut args = HashMap::new();
+        args.insert(
+            "message".to_string(),
+            apxm_core::types::values::Value::String("hi".to_string()),
+        );
+        let first = ctx.invoke_tool("echo", args.clone()).await;
+        assert!(first.is_ok(), "first invoke failed: {:?}", first.err());
+        let err = ctx.invoke_tool("echo", args).await.unwrap_err();
+        assert!(
+            err.to_string().contains("session tool budget exhausted"),
+            "unexpected error: {err}"
+        );
     }
 }

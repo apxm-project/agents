@@ -199,4 +199,3 @@ pub struct ProfileStats {
     /// Number of idle sessions for this profile.
     pub idle_sessions: usize,
 }
-

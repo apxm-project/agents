@@ -38,4 +38,3 @@ pub async fn execute(ctx: &ExecutionContext, node: &Node, inputs: Vec<Value>) ->
     // Void operation - return Null (no output tokens in artifact)
     Ok(Value::Null)
 }
-

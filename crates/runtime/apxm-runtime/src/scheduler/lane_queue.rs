@@ -47,4 +47,3 @@ pub struct SessionLanePermit {
     #[allow(dead_code)]
     session_id: String,
 }
-

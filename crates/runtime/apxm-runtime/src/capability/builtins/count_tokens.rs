@@ -54,4 +54,3 @@ impl CapabilityExecutor for CountTokensCapability {
         &self.metadata
     }
 }
-

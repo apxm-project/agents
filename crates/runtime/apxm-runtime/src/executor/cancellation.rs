@@ -136,4 +136,3 @@ fn is_cancelled_recursive(inner: &Arc<Inner>) -> bool {
     }
     false
 }
-

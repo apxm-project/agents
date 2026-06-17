@@ -102,9 +102,7 @@ pub(crate) const SYSTEM_PROMPT_INPUT: &str = "__system";
 /// rather than a static attribute.
 fn dataflow_system_prompt(node: &Node, inputs: &[Value]) -> Option<String> {
     let input_names = input_names_from_node(node);
-    let idx = input_names
-        .iter()
-        .position(|n| n == SYSTEM_PROMPT_INPUT)?;
+    let idx = input_names.iter().position(|n| n == SYSTEM_PROMPT_INPUT)?;
     let value = inputs.get(idx)?;
     Some(
         value
@@ -737,4 +735,3 @@ async fn execute_llm_once(
         }
     }
 }
-

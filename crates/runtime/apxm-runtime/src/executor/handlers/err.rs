@@ -24,4 +24,3 @@ pub async fn execute(ctx: &ExecutionContext, node: &Node, _inputs: Vec<Value>) -
     // Actual error propagation handled by scheduler
     Ok(Value::String(format!("Error: {}", message)))
 }
-

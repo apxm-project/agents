@@ -375,4 +375,3 @@ fn build_token_connections(
 
     connections
 }
-

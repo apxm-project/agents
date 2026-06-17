@@ -127,4 +127,3 @@ fn default_profiles_path() -> Option<PathBuf> {
     // store and models registry so all per-home model config shares one root.
     Some(apxm_core::env::apxm_home().join("model_profiles.toml"))
 }
-

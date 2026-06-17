@@ -236,4 +236,3 @@ impl Default for CircuitBreakerRegistry {
         Self::new(CircuitBreakerConfig::default())
     }
 }
-

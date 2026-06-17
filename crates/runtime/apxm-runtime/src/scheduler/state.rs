@@ -1199,7 +1199,13 @@ mod tests {
         // Re-arm on wake: splice the turn body (input connected to message token
         // 10) + the fresh recv into the live execution.
         state
-            .splice_turn_and_rearm(10, 1, std::collections::HashMap::new(), turn_dag, fresh_recv)
+            .splice_turn_and_rearm(
+                10,
+                1,
+                std::collections::HashMap::new(),
+                turn_dag,
+                fresh_recv,
+            )
             .expect("re-arm splice succeeds");
         assert_eq!(
             state.remaining.load(Ordering::SeqCst),
@@ -1230,8 +1236,14 @@ mod tests {
         // (no prior-turn recompute — SC-007). Splice offsets ids by max+1 (=2):
         // turn 1->3, fresh recv 2->4.
         let queued = drain_queue(&state);
-        assert!(!queued.contains(&1), "completed recv anchor must not re-run");
-        assert!(queued.contains(&3), "turn body enqueued after message delivered");
+        assert!(
+            !queued.contains(&1),
+            "completed recv anchor must not re-run"
+        );
+        assert!(
+            queued.contains(&3),
+            "turn body enqueued after message delivered"
+        );
         assert!(queued.contains(&4), "fresh recv re-armed (ready)");
     }
 
@@ -1259,7 +1271,9 @@ mod tests {
         // Turn body consumes BOTH the message (inner token 1 → live 10) and the
         // carried summary (inner token 4 → live 11).
         let mut turn_dag = ExecutionDag::new();
-        turn_dag.add_node(make_node(1, vec![1, 4], vec![2])).unwrap();
+        turn_dag
+            .add_node(make_node(1, vec![1, 4], vec![2]))
+            .unwrap();
         let fresh_recv = make_node(2, vec![], vec![3]);
 
         let mut carry = std::collections::HashMap::new();
@@ -1274,14 +1288,20 @@ mod tests {
         state.wake_parked_node(&[10], Value::String("turn 2 message".into()));
 
         let queued = drain_queue(&state);
-        assert!(queued.contains(&3), "turn body schedulable with carried state + message");
+        assert!(
+            queued.contains(&3),
+            "turn body schedulable with carried state + message"
+        );
         // The turn node now consumes the live summary token 11 (carried, not re-run).
         let turn = state.nodes.get(&3).expect("spliced turn node");
         assert!(
             turn.input_tokens.contains(&11),
             "carried session-state token wired into the new turn body"
         );
-        assert!(state.tokens.get(&11).unwrap().ready, "carried state stays ready");
+        assert!(
+            state.tokens.get(&11).unwrap().ready,
+            "carried state stays ready"
+        );
     }
 
     /// C1 end-to-end-ish: a session-loop recv, woken via the PRODUCTION
@@ -1391,7 +1411,10 @@ mod tests {
         // Register a waiter on notify_done (fires only on the 1->0 remaining edge).
         let notified = state.notify_done.notified();
         futures::pin_mut!(notified);
-        assert!(poll!(&mut notified).is_pending(), "waiter registers pending");
+        assert!(
+            poll!(&mut notified).is_pending(),
+            "waiter registers pending"
+        );
 
         let spec = RearmSpec {
             recv_node: Arc::new(recv),

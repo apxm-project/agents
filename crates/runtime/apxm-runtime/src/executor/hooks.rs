@@ -300,7 +300,10 @@ impl HookRegistry {
     }
 
     pub fn is_empty(&self) -> bool {
-        self.bindings.lock().expect("hook registry poisoned").is_empty()
+        self.bindings
+            .lock()
+            .expect("hook registry poisoned")
+            .is_empty()
     }
 
     pub fn len(&self) -> usize {
@@ -477,4 +480,3 @@ mod hook_registry_tests {
         assert_eq!(m2[0].handler_id, "h2");
     }
 }
-

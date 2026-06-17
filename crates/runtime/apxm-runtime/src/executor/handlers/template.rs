@@ -67,9 +67,7 @@ pub fn render_named(
             let start = i + 1;
             let mut end = start;
             while end < bytes.len()
-                && (bytes[end].is_ascii_alphanumeric()
-                    || bytes[end] == b'_'
-                    || bytes[end] == b'.')
+                && (bytes[end].is_ascii_alphanumeric() || bytes[end] == b'_' || bytes[end] == b'.')
             {
                 end += 1;
             }

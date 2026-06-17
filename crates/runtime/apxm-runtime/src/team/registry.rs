@@ -105,4 +105,3 @@ struct TeamsFile {
     #[serde(default)]
     team: Vec<TeamDefinition>,
 }
-

@@ -294,4 +294,3 @@ impl CapabilityExecutor for McpBridgeCapability {
         &self.metadata
     }
 }
-

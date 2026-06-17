@@ -543,4 +543,3 @@ pub fn extract_json_from_markdown(content: &str) -> Option<String> {
 
     None
 }
-

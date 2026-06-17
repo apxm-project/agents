@@ -175,4 +175,3 @@ pub fn push_global(queue: &PriorityQueue, node_id: NodeId, priority: Priority) {
 pub fn push_local(worker: &Worker<NodeId>, node_id: NodeId) {
     worker.push(node_id);
 }
-
