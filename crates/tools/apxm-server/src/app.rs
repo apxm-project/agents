@@ -14,6 +14,7 @@ use crate::conversations::post_conversation_message;
 use crate::execute::{compile_artifact, compile_workflow, compile_workflow_stream, execute, execute_stream};
 use crate::executions::{get_execution, get_execution_node, list_executions};
 use crate::fleet::get_fleet;
+use crate::permissions::respond_permission;
 use crate::rerun::{rerun_from_node, rerun_run};
 use crate::generate::{handle_generate, handle_generate_stream, handle_schema};
 use crate::goals::{cancel_goal, get_goal, get_goal_events_bulk, list_goals, stream_goal_events};
@@ -24,6 +25,10 @@ use crate::routes::ServerRoute;
 use crate::runs::{
     cancel_run, get_run, get_run_blob, get_run_events_bulk, get_run_graph, get_run_node,
     get_session_history, list_runs, stream_run_events,
+};
+use crate::sessions::{
+    cancel_session, compact_session, get_session_status, list_session_events,
+    stream_session_events, update_session_grants,
 };
 use crate::skills::{
     execute_skill, execute_skill_stream, get_skill, list_skills, register_skill_event_payloads,
@@ -38,6 +43,8 @@ use crate::tasks::{claim_task, complete_task, create_task, list_tasks};
 /// without binding to a TCP port.
 pub(crate) fn build_app(state: AppState) -> Router {
     register_server_event_payloads();
+    // Warm the process-wide permission registry before handlers mount.
+    let _ = crate::permissions::PermissionRegistry::global();
     let req_id_header = axum::http::HeaderName::from_static("x-request-id");
     Router::new()
         // Health + meta
@@ -153,6 +160,27 @@ pub(crate) fn build_app(state: AppState) -> Router {
         // Durable, role-tagged chat transcript by session_id (shared across
         // the `apxm chat` CLI and studio Chat hop).
         .route(ServerRoute::SessionHistory.path(), get(get_session_history))
+        // Session control API (spec 0002): status, cancel, grants, compact, events.
+        .route(ServerRoute::SessionStatus.path(), get(get_session_status))
+        .route(ServerRoute::SessionCancel.path(), post(cancel_session))
+        .route(
+            ServerRoute::SessionGrants.path(),
+            post(update_session_grants),
+        )
+        .route(ServerRoute::SessionCompact.path(), post(compact_session))
+        .route(
+            ServerRoute::SessionEvents.path(),
+            get(list_session_events),
+        )
+        .route(
+            ServerRoute::SessionEventsStream.path(),
+            get(stream_session_events),
+        )
+        // Server-driven permission response (spec 0002).
+        .route(
+            ServerRoute::PermissionRespond.path(),
+            post(respond_permission),
+        )
         // Goal aggregate observer endpoints for frontend/client state.
         .route(ServerRoute::Goals.path(), get(list_goals).post(post_goal))
         .route(ServerRoute::GoalDetail.path(), get(get_goal))

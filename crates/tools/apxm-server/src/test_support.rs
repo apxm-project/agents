@@ -49,8 +49,7 @@ pub async fn contract_app_with_mock(mock: MockLLMBackend) -> Router {
         .init_model_router(ModelRouterConfig::default())
         .expect("init model router");
     let state = test_state_with_runtime(Arc::new(runtime), ServerConfig::default()).await;
-    let sessions = crate::sessions::mount_routes(Router::new()).with_state(state.clone());
-    build_app(state).merge(sessions)
+    build_app(state)
 }
 
 /// Build a test harness with custom server config and mock LLM backend.

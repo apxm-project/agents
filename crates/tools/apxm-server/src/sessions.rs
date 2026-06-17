@@ -18,6 +18,7 @@ use tokio_stream::wrappers::BroadcastStream;
 use tokio_stream::wrappers::errors::BroadcastStreamRecvError;
 
 use crate::error::ApiError;
+use crate::routes::ServerRoute;
 use crate::runs::{EventReplayCursor, EventsQuery, run_events_limit};
 use crate::state::AppState;
 use crate::types::responses::OkAck;
@@ -78,32 +79,31 @@ enum SessionSseItem {
     Lagged(u64),
 }
 
-/// Mount session control routes on an existing router (used by contract tests
-/// until T070 wires `routes.rs` / `app.rs`).
+/// Mount session control routes on an existing router (contract-test helper).
 pub(crate) fn mount_routes(router: Router<AppState>) -> Router<AppState> {
     router
         .route(
-            "/v1/sessions/{session_id}/status",
+            ServerRoute::SessionStatus.path(),
             get(get_session_status),
         )
         .route(
-            "/v1/sessions/{session_id}/cancel",
+            ServerRoute::SessionCancel.path(),
             post(cancel_session),
         )
         .route(
-            "/v1/sessions/{session_id}/grants",
+            ServerRoute::SessionGrants.path(),
             post(update_session_grants),
         )
         .route(
-            "/v1/sessions/{session_id}/compact",
+            ServerRoute::SessionCompact.path(),
             post(compact_session),
         )
         .route(
-            "/v1/sessions/{session_id}/events",
+            ServerRoute::SessionEvents.path(),
             get(list_session_events),
         )
         .route(
-            "/v1/sessions/{session_id}/events/stream",
+            ServerRoute::SessionEventsStream.path(),
             get(stream_session_events),
         )
 }

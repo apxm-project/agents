@@ -61,6 +61,15 @@ pub(crate) const OBSERVABILITY_FLEET: &str = "/v1/observability/fleet";
 // `apxm chat` CLI and the studio Chat POST turns through `/v1/execute/stream`;
 // this reassembles the visible conversation across the hop.
 pub(crate) const SESSION_HISTORY: &str = "/v1/sessions/{id}/history";
+// session control API (spec 0002 US5).
+pub(crate) const SESSION_STATUS: &str = "/v1/sessions/{session_id}/status";
+pub(crate) const SESSION_CANCEL: &str = "/v1/sessions/{session_id}/cancel";
+pub(crate) const SESSION_GRANTS: &str = "/v1/sessions/{session_id}/grants";
+pub(crate) const SESSION_COMPACT: &str = "/v1/sessions/{session_id}/compact";
+pub(crate) const SESSION_EVENTS: &str = "/v1/sessions/{session_id}/events";
+pub(crate) const SESSION_EVENTS_STREAM: &str = "/v1/sessions/{session_id}/events/stream";
+// server-driven permission response (spec 0002 US4).
+pub(crate) const PERMISSION_RESPOND: &str = "/v1/permissions/{permission_id}/respond";
 pub(crate) const GOALS: &str = "/v1/goals";
 pub(crate) const GOAL_DETAIL: &str = "/v1/goals/{goal_id}";
 pub(crate) const GOAL_EVENTS: &str = "/v1/goals/{goal_id}/events";
@@ -124,6 +133,13 @@ pub(crate) enum ServerRoute {
     RunRerunFromNode,
     ObservabilityFleet,
     SessionHistory,
+    SessionStatus,
+    SessionCancel,
+    SessionGrants,
+    SessionCompact,
+    SessionEvents,
+    SessionEventsStream,
+    PermissionRespond,
     Goals,
     GoalDetail,
     GoalEvents,
@@ -189,6 +205,13 @@ impl ServerRoute {
             Self::RunRerunFromNode => RUN_RERUN_FROM_NODE,
             Self::ObservabilityFleet => OBSERVABILITY_FLEET,
             Self::SessionHistory => SESSION_HISTORY,
+            Self::SessionStatus => SESSION_STATUS,
+            Self::SessionCancel => SESSION_CANCEL,
+            Self::SessionGrants => SESSION_GRANTS,
+            Self::SessionCompact => SESSION_COMPACT,
+            Self::SessionEvents => SESSION_EVENTS,
+            Self::SessionEventsStream => SESSION_EVENTS_STREAM,
+            Self::PermissionRespond => PERMISSION_RESPOND,
             Self::Goals => GOALS,
             Self::GoalDetail => GOAL_DETAIL,
             Self::GoalEvents => GOAL_EVENTS,
@@ -254,4 +277,14 @@ pub(crate) fn run_cancel_path(execution_id: impl Display) -> String {
 #[allow(dead_code)]
 pub(crate) fn session_history_path(id: impl Display) -> String {
     format!("/v1/sessions/{id}/history")
+}
+
+#[allow(dead_code)]
+pub(crate) fn session_status_path(session_id: impl Display) -> String {
+    format!("/v1/sessions/{session_id}/status")
+}
+
+#[allow(dead_code)]
+pub(crate) fn permission_respond_path(permission_id: impl Display) -> String {
+    format!("/v1/permissions/{permission_id}/respond")
 }

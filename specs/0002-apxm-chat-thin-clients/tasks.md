@@ -69,8 +69,8 @@ no unfinished dependency). `[US#]` tags story tasks. **Shared integration:**
 **Goal:** wire new surfaces into the central route table and app mount.
 **Independent Test:** all new endpoints reachable; no duplicate route registrations.
 
-- [ ] T070 Wire session, permission, and observer routes in `ServerRoute` — `crates/tools/apxm-server/src/routes.rs`. **SERIAL**
-- [ ] T071 Mount session + permission handlers and shared state — `crates/tools/apxm-server/src/app.rs`. **SERIAL**
+- [x] T070 Wire session, permission, and observer routes in `ServerRoute` — `crates/tools/apxm-server/src/routes.rs`. **SERIAL**
+- [x] T071 Mount session + permission handlers and shared state — `crates/tools/apxm-server/src/app.rs`. **SERIAL**
 - [ ] **Checkpoint:** integration smoke — session status + permission respond return 200 on fixture server.
 
 ## Phase 9 — User Story 6: Generated client (P2)

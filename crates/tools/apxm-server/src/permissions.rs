@@ -347,7 +347,7 @@ pub fn emit_permission_resolved(
     ));
 }
 
-/// Axum handler for `POST /v1/permissions/{permission_id}/respond` (wired in T070).
+/// Axum handler for `POST /v1/permissions/{permission_id}/respond`.
 pub async fn respond_permission(
     Path(permission_id): Path<String>,
     Json(body): Json<PermissionResponse>,
@@ -381,7 +381,7 @@ pub fn respond_permission_with_registry(
 static GLOBAL_REGISTRY: std::sync::OnceLock<PermissionRegistry> = std::sync::OnceLock::new();
 
 impl PermissionRegistry {
-    /// Process-wide registry for HTTP respond handler (mounted in T071).
+    /// Process-wide registry for HTTP respond handler.
     pub fn global() -> &'static PermissionRegistry {
         GLOBAL_REGISTRY.get_or_init(|| {
             PermissionRegistry::with_grant_cache(SessionGrantCache::global().clone())
