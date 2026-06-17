@@ -965,7 +965,7 @@ pub(crate) async fn execute_skill_stream(
         let event_sinks = build_skill_event_sinks(
             &state,
             &prepared.execution_id,
-            Some(Arc::new(TokioChannelEmitter(tx_task.clone()))),
+            Some(Arc::new(TokioChannelEmitter::new(tx_task.clone()))),
         );
         let emitter = Arc::new(
             apxm_runtime::EmitterAdapter::new(

@@ -1,5 +1,8 @@
+use apxm_core::error::RuntimeError;
 use serde::{Deserialize, Serialize};
 use serde_json::Value as JsonValue;
+
+use crate::types::errors::{ApiFaultCode, FaultClass, TypedError};
 
 #[derive(Debug, Serialize)]
 pub(crate) struct OkAck {
@@ -379,7 +382,72 @@ pub(crate) struct StreamUsagePayload {
     pub(crate) usage: StreamUsage,
 }
 
-#[derive(Debug, Serialize)]
+/// Typed fault envelope on SSE `error` event streams (spec 0002 US3).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub(crate) struct StreamErrorBody {
+    pub(crate) class: FaultClass,
+    pub(crate) code: String,
     pub(crate) message: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) recovery_hint: Option<String>,
+}
+
+impl From<TypedError> for StreamErrorBody {
+    fn from(error: TypedError) -> Self {
+        Self {
+            class: error.class,
+            code: error.code,
+            message: error.message,
+            recovery_hint: error.recovery_hint,
+        }
+    }
+}
+
+impl StreamErrorBody {
+    pub(crate) fn from_typed(error: TypedError) -> Self {
+        error.into()
+    }
+
+    pub(crate) fn from_runtime(error: &RuntimeError) -> Self {
+        TypedError::from_runtime(error).into()
+    }
+
+    pub(crate) fn server_message(message: impl Into<String>) -> Self {
+        TypedError::server_fault(ApiFaultCode::RuntimeError, message, None).into()
+    }
+
+    pub(crate) fn timeout(message: impl Into<String>) -> Self {
+        TypedError::server_fault(ApiFaultCode::Timeout, message, None).into()
+    }
+}
+
+#[cfg(test)]
+mod stream_error_tests {
+    use super::*;
+
+    #[test]
+    fn server_message_is_server_fault_runtime_error() {
+        let body = StreamErrorBody::server_message("backend failed");
+        assert_eq!(body.class, FaultClass::ServerFault);
+        assert_eq!(body.code, "runtime_error");
+        assert_eq!(body.message, "backend failed");
+    }
+
+    #[test]
+    fn runtime_invalid_task_maps_to_program_fault_on_stream() {
+        let body = StreamErrorBody::from_runtime(&RuntimeError::InvalidTask {
+            reason: "missing field".to_string(),
+        });
+        assert_eq!(body.class, FaultClass::ProgramFault);
+        assert_eq!(body.code, "invalid_task");
+    }
+
+    #[test]
+    fn typed_error_round_trips_through_stream_body() {
+        let typed = TypedError::server_fault(ApiFaultCode::LlmError, "provider down", None);
+        let body = StreamErrorBody::from_typed(typed.clone());
+        assert_eq!(body.class, typed.class);
+        assert_eq!(body.code, typed.code);
+        assert_eq!(body.message, typed.message);
+    }
 }

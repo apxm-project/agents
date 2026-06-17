@@ -132,6 +132,14 @@ impl RunEventBus {
         entry.tx.subscribe()
     }
 
+    /// Execution ids with recorded events (integration-test discovery).
+    pub fn list_execution_ids(&self) -> Vec<String> {
+        self.inner
+            .iter()
+            .map(|entry| entry.key().clone())
+            .collect()
+    }
+
 }
 
 /// EventEmitter that funnels every event into the run bus, keyed by
@@ -328,12 +336,20 @@ pub(crate) struct EventsBulkResponse {
 }
 
 #[derive(Debug, Clone, Copy)]
-enum EventReplayCursor {
+pub(crate) enum EventReplayCursor {
     FromSeq(u64),
     AfterSeq(u64),
 }
 
 impl EventReplayCursor {
+    pub(crate) fn from_seq(seq: u64) -> Self {
+        Self::FromSeq(seq)
+    }
+
+    pub(crate) fn after_seq(seq: u64) -> Self {
+        Self::AfterSeq(seq)
+    }
+
     fn from_request(headers: &HeaderMap, query: &EventsQuery) -> Self {
         headers
             .get(LAST_EVENT_ID_HEADER)
@@ -344,14 +360,14 @@ impl EventReplayCursor {
             .unwrap_or_else(|| Self::FromSeq(query.since.unwrap_or(0)))
     }
 
-    fn accepts(self, seq: u64) -> bool {
+    pub(crate) fn accepts(self, seq: u64) -> bool {
         match self {
             Self::FromSeq(since) => seq >= since,
             Self::AfterSeq(last_event_id) => seq > last_event_id,
         }
     }
 
-    fn required_first_seq(self) -> Option<u64> {
+    pub(crate) fn required_first_seq(self) -> Option<u64> {
         match self {
             Self::FromSeq(since) => Some(since),
             Self::AfterSeq(last_event_id) => last_event_id.checked_add(1),
@@ -359,9 +375,141 @@ impl EventReplayCursor {
     }
 }
 
-enum RunSseItem {
+pub(crate) enum RunSseItem {
     Event(ApxmEvent),
     Lagged(u64),
+}
+
+/// Which SSE surface is emitting run events — controls the lag/overflow frame copy.
+#[derive(Debug, Clone, Copy)]
+pub(crate) enum RunEventStreamKind {
+    RunObserver,
+    ExecuteStream,
+}
+
+impl RunEventStreamKind {
+    fn lag_payload(self, missed: u64) -> serde_json::Value {
+        let message = match self {
+            Self::RunObserver => {
+                "run event stream lagged; reconnect with Last-Event-ID to replay"
+            }
+            Self::ExecuteStream => {
+                "execute event stream lagged; reconnect with Last-Event-ID to replay retained events"
+            }
+        };
+        serde_json::json!({ "message": message, "missed": missed, "code": "stream_lag" })
+    }
+}
+
+pub(crate) struct RunEventStreamOptions {
+    pub kind: RunEventStreamKind,
+    pub keep_alive_secs: u64,
+    /// Close the live SSE after a terminal lifecycle event (execute stream path).
+    pub close_on_terminal: bool,
+}
+
+/// Record a lifecycle/server event on the observer bus and mirror to rollout when active.
+pub(crate) fn record_run_lifecycle_event(
+    bus: &RunEventBus,
+    rollout_registry: &crate::rollout::RolloutRegistry,
+    execution_id: &str,
+    event: ApxmEvent,
+    rollout_recording: bool,
+) -> ApxmEvent {
+    let event = bus.record(execution_id, event);
+    if rollout_recording {
+        rollout_registry.try_record(execution_id, event.clone());
+    }
+    event
+}
+
+fn prepare_replay_events(
+    mut replay: Vec<ApxmEvent>,
+    cursor: EventReplayCursor,
+) -> (Vec<ApxmEvent>, Option<u64>) {
+    let mut seen = std::collections::HashSet::new();
+    replay.retain(|event| cursor.accepts(event.meta.seq) && seen.insert(event.meta.seq));
+    replay.sort_by_key(|event| event.meta.seq);
+    let high_water = replay.iter().map(|event| event.meta.seq).max();
+    (replay, high_water)
+}
+
+fn is_terminal_run_event(event: &ApxmEvent) -> bool {
+    matches!(
+        event.kind().name(),
+        "execute_complete" | "error" | "turn_aborted" | "skill_execute_complete"
+    )
+}
+
+fn combined_run_sse_items(
+    replay: Vec<ApxmEvent>,
+    cursor: EventReplayCursor,
+    rx: broadcast::Receiver<ApxmEvent>,
+    close_on_terminal: bool,
+) -> impl Stream<Item = RunSseItem> {
+    let (replay, replay_high_water) = prepare_replay_events(replay, cursor);
+    use futures::StreamExt as _;
+    let live = BroadcastStream::new(rx).filter_map(move |item| async move {
+        match item {
+            Ok(event)
+                if cursor.accepts(event.meta.seq)
+                    && replay_high_water.is_none_or(|seq| event.meta.seq > seq) =>
+            {
+                Some(RunSseItem::Event(event))
+            }
+            Ok(_) => None,
+            Err(BroadcastStreamRecvError::Lagged(missed)) => Some(RunSseItem::Lagged(missed)),
+        }
+    });
+    futures::stream::iter(replay.into_iter().map(RunSseItem::Event))
+        .chain(live)
+        .scan(false, move |closed, item| {
+            let emit = if *closed {
+                None
+            } else {
+                if matches!(item, RunSseItem::Lagged(_)) {
+                    *closed = true;
+                } else if close_on_terminal
+                    && matches!(&item, RunSseItem::Event(event) if is_terminal_run_event(event))
+                {
+                    *closed = true;
+                }
+                Some(item)
+            };
+            async move { emit }
+        })
+}
+
+fn run_sse_item_to_axum_event(item: RunSseItem, kind: RunEventStreamKind) -> Event {
+    match item {
+        RunSseItem::Event(event) => {
+            let id = event.meta.seq.to_string();
+            let data = serde_json::to_string(&event).unwrap_or_else(|_| "{}".to_string());
+            Event::default()
+                .event(event.kind().name())
+                .id(id)
+                .data(data)
+        }
+        RunSseItem::Lagged(missed) => Event::default()
+            .event(event_kind::ERROR.sse_event_type())
+            .data(kind.lag_payload(missed).to_string()),
+    }
+}
+
+/// Build a resumable SSE stream from an observer-bus subscription + replay snapshot.
+pub(crate) fn run_sse_stream(
+    rx: broadcast::Receiver<ApxmEvent>,
+    replay: Vec<ApxmEvent>,
+    cursor: EventReplayCursor,
+    options: RunEventStreamOptions,
+) -> Sse<impl Stream<Item = Result<Event, Infallible>>> {
+    use futures::StreamExt as _;
+    let kind = options.kind;
+    let stream = combined_run_sse_items(replay, cursor, rx, options.close_on_terminal)
+        .map(move |item| Ok(run_sse_item_to_axum_event(item, kind)));
+    Sse::new(stream).keep_alive(KeepAlive::new().interval(Duration::from_secs(
+        options.keep_alive_secs.max(1),
+    )))
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -582,72 +730,22 @@ pub(crate) async fn stream_run_events(
         )));
     }
 
-    use futures::StreamExt as _;
-
     let mut seen = std::collections::HashSet::new();
-    let mut replay: Vec<ApxmEvent> = disk_events
+    let replay: Vec<ApxmEvent> = disk_events
         .into_iter()
         .chain(snapshot)
         .filter(|event| cursor.accepts(event.meta.seq))
         .filter(|event| seen.insert(event.meta.seq))
         .collect();
-    replay.sort_by_key(|event| event.meta.seq);
-    let replay_high_water = replay.iter().map(|event| event.meta.seq).max();
 
-    let live = BroadcastStream::new(rx).filter_map(move |item| async move {
-        match item {
-            Ok(event)
-                if cursor.accepts(event.meta.seq)
-                    && replay_high_water.is_none_or(|seq| event.meta.seq > seq) =>
-            {
-                Some(RunSseItem::Event(event))
-            }
-            Ok(_) => None,
-            Err(BroadcastStreamRecvError::Lagged(missed)) => Some(RunSseItem::Lagged(missed)),
-        }
-    });
-    let combined = futures::stream::iter(replay.into_iter().map(RunSseItem::Event))
-        .chain(live)
-        .scan(false, |closed, item| {
-            let emit = if *closed {
-                None
-            } else {
-                if matches!(item, RunSseItem::Lagged(_)) {
-                    *closed = true;
-                }
-                Some(item)
-            };
-            async move { emit }
-        });
+    use futures::StreamExt as _;
+    let combined = combined_run_sse_items(replay, cursor, rx, false);
 
-    let stream = combined.map(|item| {
-        let event = match item {
-            RunSseItem::Event(event) => {
-                let id = event.meta.seq.to_string();
-                let data = serde_json::to_string(&event).unwrap_or_else(|_| "{}".to_string());
-                Event::default()
-                    .event(event.kind().name())
-                    .id(id)
-                    .data(data)
-            }
-            RunSseItem::Lagged(missed) => Event::default()
-                .event(event_kind::ERROR.sse_event_type())
-                .data(
-                    serde_json::json!({
-                        "message": "run event stream lagged; reconnect with Last-Event-ID to replay",
-                        "missed": missed,
-                    })
-                    .to_string(),
-                ),
-        };
-        Ok(event)
-    });
+    let stream = combined.map(|item| Ok(run_sse_item_to_axum_event(item, RunEventStreamKind::RunObserver)));
 
-    Ok(
-        Sse::new(stream).keep_alive(KeepAlive::new().interval(Duration::from_secs(
-            state.server_config.run_events.keep_alive_secs.max(1),
-        ))),
-    )
+    Ok(Sse::new(stream).keep_alive(KeepAlive::new().interval(Duration::from_secs(
+        state.server_config.run_events.keep_alive_secs.max(1),
+    ))))
 }
 
 // ────────────────────────────────────────────────────────────────────

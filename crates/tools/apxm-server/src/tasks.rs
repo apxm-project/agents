@@ -394,10 +394,9 @@ pub(crate) async fn claim_task(
                 expires_at_ms: t.lease_expires_ms,
             }))
         }
-        None => Err(ApiError {
-            status: axum::http::StatusCode::NOT_FOUND,
-            message: format!("No pending tasks in queue '{}'", queue),
-        }),
+        None => Err(ApiError::not_found(format!(
+            "No pending tasks in queue '{queue}'"
+        ))),
     }
 }
 
@@ -416,7 +415,7 @@ pub(crate) async fn complete_task(
             } else {
                 axum::http::StatusCode::BAD_REQUEST
             };
-            ApiError { status, message: e }
+            ApiError::from_parts(status, e)
         })?;
     info!(id = %id, success = %req.success, "Task completed");
     Ok(Json(OkAckId::new(id)))

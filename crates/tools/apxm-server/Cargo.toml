@@ -13,6 +13,14 @@ authors.workspace = true
 [lints]
 workspace = true
 
+[lib]
+name = "apxm_server"
+path = "src/lib.rs"
+
+[[bin]]
+name = "apxm-server"
+path = "src/main.rs"
+
 [[bin]]
 name = "apxm-mcp-server"
 path = "src/bin/apxm_mcp.rs"
@@ -55,6 +63,14 @@ tracing-subscriber.workspace = true
 [dev-dependencies]
 http-body-util = "0.1"
 tempfile.workspace = true
+axum.workspace = true
+apxm-core.workspace = true
+apxm-backends.workspace = true
+apxm-driver.workspace = true
+futures.workspace = true
+tower = { version = "0.5", features = ["util"] }
+tokio = { workspace = true, features = ["macros", "rt-multi-thread", "time"] }
+serde_json.workspace = true
 
 [build-dependencies]
 apxm-core.workspace = true

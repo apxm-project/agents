@@ -212,9 +212,8 @@ fn encode_event<T: Serialize>(buf: &mut Vec<u8>, meta: &SseEventMeta, payload: &
         .data(data)
 }
 
-fn encode_error_event(buf: &mut Vec<u8>, seq: u64, message: String) -> Event {
+fn encode_error_event(buf: &mut Vec<u8>, seq: u64, body: StreamErrorBody) -> Event {
     buf.clear();
-    let body = StreamErrorBody { message };
     let data = match serde_json::to_writer(&mut *buf, &body) {
         Ok(()) => String::from_utf8_lossy(buf).into_owned(),
         Err(_) => stream_sse::EMPTY_JSON_OBJECT.to_string(),
@@ -345,7 +344,11 @@ pub(crate) async fn handle_generate_stream(
                         )),
                         StreamChunk::Error(msg) => {
                             tracing::warn!(error = %msg, "Fatal streaming error from backend");
-                            Some(encode_error_event(&mut buf, seq_val, msg.clone()))
+                            Some(encode_error_event(
+                                &mut buf,
+                                seq_val,
+                                StreamErrorBody::server_message(msg.clone()),
+                            ))
                         }
                     };
                     if let Some(event) = maybe_event {
@@ -359,7 +362,11 @@ pub(crate) async fn handle_generate_stream(
                 }
                 Ok(Some(Err(e))) => {
                     let seq_val = next_stream_seq(&mut seq);
-                    let error_event = encode_error_event(&mut buf, seq_val, e.to_string());
+                    let error_event = encode_error_event(
+                        &mut buf,
+                        seq_val,
+                        StreamErrorBody::server_message(e.to_string()),
+                    );
                     let _ = tx.send(Ok(error_event)).await;
                     break;
                 }
@@ -371,7 +378,9 @@ pub(crate) async fn handle_generate_stream(
                     let timeout_event = encode_error_event(
                         &mut buf,
                         seq_val,
-                        stream_timeout_message(inactivity_timeout_secs),
+                        StreamErrorBody::timeout(stream_timeout_message(
+                            inactivity_timeout_secs,
+                        )),
                     );
                     let _ = tx.send(Ok(timeout_event)).await;
                     break;
@@ -439,7 +448,10 @@ pub(crate) async fn handle_schema() -> Json<JsonValue> {
             },
             "error_event_name": "error",
             "error_schema": {
-                "message": "string — human-readable error description"
+                "class": "program_fault | server_fault",
+                "code": "string — stable machine-readable fault code",
+                "message": "string — human-readable error description",
+                "recovery_hint": "string | null — optional model-facing guidance"
             }
         }
     }))

@@ -18,13 +18,14 @@ use apxm_runtime::EmitterAdapter;
 use apxm_runtime::capability::CapabilitySandboxPreflight;
 use axum::Json;
 use axum::extract::State;
-use axum::response::sse::{Event, KeepAlive, Sse};
+use axum::response::sse::{Event, Sse};
 use futures::Stream;
 use serde::{Deserialize, Serialize};
 use serde_json::Value as JsonValue;
 use tokio::sync::{Notify, mpsc};
 
 use crate::error::ApiError;
+use crate::runs::{RunBusFanOutEmitter, record_run_lifecycle_event};
 use crate::state::{AppState, TokioChannelEmitter};
 use crate::types::responses::{ExecutionStats, LlmUsageSummary};
 
@@ -344,6 +345,7 @@ pub(crate) async fn execute_stream(
     // `POST /v1/runs/{execution_id}/cancel` abort this run at its next await
     // boundary; the entry is deleted once the run settles either way.
     let execution_id = uuid::Uuid::new_v4().to_string();
+    let tx_task = tx.clone();
     // Seed the per-session runtime ledger (turn caps / tool budgets / grants)
     // keyed by session_id and register the session→execution mapping, so the
     // runtime owns per-session limits and the turn-input endpoint can find this
@@ -417,40 +419,48 @@ pub(crate) async fn execute_stream(
         false
     };
     let rollout_registry = state.rollout_registry.clone();
+    let run_event_bus = state.run_event_bus.clone();
     // Drop this session's registry record when its execution settles (only if it
     // still points at this execution — a newer turn may have re-registered).
     let session_registry = state.session_registry.clone();
     let session_cleanup = session_id.clone();
 
     tokio::spawn(async move {
+        let send_lifecycle = |event: ApxmEvent| async {
+            let event = record_run_lifecycle_event(
+                &run_event_bus,
+                &rollout_registry,
+                &execution_id,
+                event,
+                rollout_recording,
+            );
+            let _ = tx_task.send(event).await;
+        };
         // The admission slot is owned by the registered handle (released while
         // parked, reacquired on wake); unregister after the run settles.
         // Frame 0 hands the client the id it needs to address the cancel route.
-        let _ = tx
-            .send(ApxmEvent::root(
-                ExecutionStartedPayload {
-                    execution_id: execution_id.clone(),
-                },
-                EventSource::Server,
-                &trace_id,
-            ))
-            .await;
-        // Runtime conversation events flow to the SSE channel and, when this
-        // turn is being recorded, are mirrored into the rollout JSONL so the
-        // assistant tokens/tool activity survive the hop and a restart.
-        let channel_sink: Arc<dyn apxm_core::events::EventEmitter> =
-            Arc::new(TokioChannelEmitter(tx.clone()));
-        let sink: Arc<dyn apxm_core::events::EventEmitter> = if rollout_recording {
-            Arc::new(apxm_core::events::FanOutEmitter::new(vec![
-                channel_sink,
-                Arc::new(crate::rollout::RolloutEmitter::new(
-                    rollout_registry.clone(),
-                    execution_id.clone(),
-                )),
-            ]))
-        } else {
-            channel_sink
-        };
+        send_lifecycle(ApxmEvent::root(
+            ExecutionStartedPayload {
+                execution_id: execution_id.clone(),
+            },
+            EventSource::Server,
+            &trace_id,
+        ))
+        .await;
+        let mut downstream: Vec<Arc<dyn apxm_core::events::EventEmitter>> = vec![Arc::new(
+            TokioChannelEmitter::new(tx_task.clone()),
+        )];
+        if rollout_recording {
+            downstream.push(Arc::new(crate::rollout::RolloutEmitter::new(
+                rollout_registry.clone(),
+                execution_id.clone(),
+            )));
+        }
+        let sink: Arc<dyn apxm_core::events::EventEmitter> = Arc::new(RunBusFanOutEmitter::new(
+            run_event_bus.clone(),
+            execution_id.clone(),
+            downstream,
+        ));
         let emitter = Arc::new(EmitterAdapter::new(sink, EventSource::Runtime, &trace_id));
         let execution = runtime.execute_artifact_with_session_emitter_metadata_and_credentials(
             artifact,
@@ -464,49 +474,46 @@ pub(crate) async fn execute_stream(
         tokio::select! {
             outcome = execution => match outcome {
                 Ok(result) => {
-                    let _ = tx
-                        .send(ApxmEvent::root(
-                            ExecuteCompletePayload {
-                                result: serde_json::to_value(to_execute_response(result, session_dir))
-                                    .unwrap_or(JsonValue::Null),
-                            },
-                            EventSource::Server,
-                            &trace_id,
-                        ))
-                        .await;
+                    send_lifecycle(ApxmEvent::root(
+                        ExecuteCompletePayload {
+                            result: serde_json::to_value(to_execute_response(result, session_dir))
+                                .unwrap_or(JsonValue::Null),
+                        },
+                        EventSource::Server,
+                        &trace_id,
+                    ))
+                    .await;
                 }
                 Err(err) => {
-                    let _ = tx
-                        .send(ApxmEvent::root(
-                            ErrorPayload {
-                                message: err.to_string(),
-                                status: None,
-                                recoverable: false,
-                            },
-                            EventSource::Server,
-                            &trace_id,
-                        ))
-                        .await;
+                    send_lifecycle(ApxmEvent::root(
+                        ErrorPayload {
+                            message: err.to_string(),
+                            status: None,
+                            recoverable: false,
+                        },
+                        EventSource::Server,
+                        &trace_id,
+                    ))
+                    .await;
                 }
             },
             // Cancellation wins: dropping `execution` aborts the in-flight
             // model/tool call at its await point. Emit `turn_aborted` in place
             // of `execute_complete`.
             _ = cancel.notified() => {
-                let _ = tx
-                    .send(ApxmEvent::root(
-                        TurnAbortedPayload {
-                            execution_id: execution_id.clone(),
-                            duration_ms: 0,
-                            reason: "cancelled".to_string(),
-                            error_message_safe: Some(
-                                "cancelled via /v1/runs/{id}/cancel".to_string(),
-                            ),
-                        },
-                        EventSource::Server,
-                        &trace_id,
-                    ))
-                    .await;
+                send_lifecycle(ApxmEvent::root(
+                    TurnAbortedPayload {
+                        execution_id: execution_id.clone(),
+                        duration_ms: 0,
+                        reason: "cancelled".to_string(),
+                        error_message_safe: Some(
+                            "cancelled via /v1/runs/{id}/cancel".to_string(),
+                        ),
+                    },
+                    EventSource::Server,
+                    &trace_id,
+                ))
+                .await;
             }
         }
         // Flush + close the rollout recorder so the turn's tail (last tokens,
@@ -521,18 +528,20 @@ pub(crate) async fn execute_stream(
             session_registry.remove_if_execution(sid, &execution_id);
         }
     });
+    drop(tx);
 
     let stream = async_stream::stream! {
         while let Some(item) = rx.recv().await {
+            let id = item.meta.seq.to_string();
             let data = serde_json::to_string(&item).unwrap_or_else(|_| "{}".to_string());
-            yield Ok(Event::default().data(data));
+            yield Ok(Event::default().event(item.kind().name()).id(id).data(data));
         }
     };
-    Ok(
-        Sse::new(stream).keep_alive(KeepAlive::new().interval(std::time::Duration::from_secs(
+    Ok(Sse::new(stream).keep_alive(
+        axum::response::sse::KeepAlive::new().interval(std::time::Duration::from_secs(
             stream_config.keep_alive_secs.max(1),
-        ))),
-    )
+        )),
+    ))
 }
 
 /// The validated, destructured parts of an execute request.

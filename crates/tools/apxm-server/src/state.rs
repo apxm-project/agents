@@ -1,7 +1,9 @@
 use std::sync::Arc;
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::{Duration, SystemTime};
 
-use apxm_core::events::ApxmEvent;
+use apxm_core::events::payload::WarningPayload;
+use apxm_core::events::{ApxmEvent, EventSource};
 use apxm_driver::ServerConfig;
 use apxm_rollout::{IndexDb, RolloutPaths};
 use apxm_runtime::Runtime;
@@ -168,10 +170,101 @@ impl apxm_runtime::scheduler::admission_registry::ParkAdmission for AdmissionHan
 
 
 /// Thin [`EventEmitter`] that forwards events to a tokio MPSC channel.
-pub(crate) struct TokioChannelEmitter(pub(crate) mpsc::Sender<ApxmEvent>);
+///
+/// On backpressure (`try_send` full), emits an explicit lag warning instead of
+/// silently dropping (spec 0002 FR-001 / T010).
+pub(crate) struct TokioChannelEmitter {
+    tx: mpsc::Sender<ApxmEvent>,
+    dropped: AtomicUsize,
+}
+
+const EXECUTE_STREAM_LAG_CODE: &str = "execute_stream_lag";
+const EXECUTE_STREAM_LAG_TRACE: &str = "execute-stream-emitter";
+
+impl TokioChannelEmitter {
+    pub(crate) fn new(tx: mpsc::Sender<ApxmEvent>) -> Self {
+        Self {
+            tx,
+            dropped: AtomicUsize::new(0),
+        }
+    }
+
+    fn emit_lag_signal(&self, dropped: usize) {
+        let lag = ApxmEvent::root(
+            WarningPayload {
+                code: EXECUTE_STREAM_LAG_CODE.to_string(),
+                message: format!(
+                    "execute event stream lagged; consumer is slower than producer ({dropped} event(s) not delivered)"
+                ),
+            },
+            EventSource::Server,
+            EXECUTE_STREAM_LAG_TRACE,
+        );
+        match self.tx.try_send(lag) {
+            Ok(()) => {}
+            Err(mpsc::error::TrySendError::Full(lag)) => {
+                // Channel saturated: block on a helper thread until the consumer
+                // makes room so the lag signal is never silently dropped.
+                let tx = self.tx.clone();
+                std::thread::spawn(move || {
+                    let _ = tx.blocking_send(lag);
+                });
+            }
+            Err(mpsc::error::TrySendError::Closed(_)) => {}
+        }
+    }
+}
 
 impl apxm_core::events::EventEmitter for TokioChannelEmitter {
     fn emit(&self, event: ApxmEvent) {
-        let _ = self.0.try_send(event);
+        match self.tx.try_send(event) {
+            Ok(()) => {
+                self.dropped.store(0, Ordering::Relaxed);
+            }
+            Err(mpsc::error::TrySendError::Full(dropped_event)) => {
+                let count = self.dropped.fetch_add(1, Ordering::Relaxed) + 1;
+                if count == 1 {
+                    self.emit_lag_signal(count);
+                }
+                drop(dropped_event);
+            }
+            Err(mpsc::error::TrySendError::Closed(_)) => {}
+        }
+    }
+}
+
+#[cfg(test)]
+mod emitter_tests {
+    use super::*;
+    use apxm_core::events::EventEmitter;
+    use apxm_core::events::payload::TokenPayload;
+
+    #[test]
+    fn full_channel_emits_lag_warning_instead_of_silent_drop() {
+        let (tx, mut rx) = mpsc::channel(1);
+        let emitter = TokioChannelEmitter::new(tx);
+
+        emitter.emit(ApxmEvent::root(
+            TokenPayload {
+                text: "first".to_string(),
+            },
+            EventSource::Runtime,
+            "trace",
+        ));
+        emitter.emit(ApxmEvent::root(
+            TokenPayload {
+                text: "second".to_string(),
+            },
+            EventSource::Runtime,
+            "trace",
+        ));
+
+        let first = rx.try_recv().expect("first event delivered");
+        assert_eq!(first.payload.event_kind().name(), "token");
+
+        let lag = rx
+            .blocking_recv()
+            .expect("lag warning delivered after consumer makes room");
+        assert_eq!(lag.payload.event_kind().name(), "warning");
     }
 }

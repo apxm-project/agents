@@ -228,10 +228,7 @@ pub(crate) async fn get_checkpoint(
 ) -> Result<Json<JsonValue>, ApiError> {
     match state.checkpoint_store.get(&id) {
         Some(cp) => Ok(Json(serde_json::to_value(cp).unwrap_or_default())),
-        None => Err(ApiError {
-            status: axum::http::StatusCode::NOT_FOUND,
-            message: format!("Checkpoint '{}' not found", id),
-        }),
+        None => Err(ApiError::not_found(format!("Checkpoint '{}' not found", id))),
     }
 }
 
@@ -243,10 +240,7 @@ pub(crate) async fn resume_checkpoint(
     let cp = state
         .checkpoint_store
         .resume(&id, req.human_input)
-        .map_err(|e| ApiError {
-            status: axum::http::StatusCode::BAD_REQUEST,
-            message: e,
-        })?;
+        .map_err(ApiError::bad_request)?;
     info!(id = %id, "Checkpoint resumed with human input");
 
     // Push-wake any in-process PAUSE/RESUME node parked on this checkpoint: it
