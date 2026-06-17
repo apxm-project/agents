@@ -103,6 +103,7 @@ ENV_HF_HOME = env_name(EnvVar.HF_HOME)
 ENV_HUGGINGFACE_HUB_CACHE = env_name(EnvVar.HUGGINGFACE_HUB_CACHE)
 ENV_APXM_VLLM_HF_HOME = env_name(EnvVar.APXM_VLLM_HF_HOME)
 ENV_APXM_VLLM_HF_CACHE_ROOTS = env_name(EnvVar.APXM_VLLM_HF_CACHE_ROOTS)
+ENV_APXM_VLLM_DIR = env_name(EnvVar.APXM_VLLM_DIR)
 ENV_APXM_VLLM_IMAGE = env_name(EnvVar.APXM_VLLM_IMAGE)
 ENV_APXM_VLLM_SERVICE_NAME = env_name(EnvVar.APXM_VLLM_SERVICE_NAME)
 ENV_APXM_VLLM_MODEL_ROOTS = env_name(EnvVar.APXM_VLLM_MODEL_ROOTS)
@@ -208,10 +209,17 @@ def _check_line(status: str, name: str, detail: str = "") -> None:
     print(f"{status}: {name}{suffix}")
 
 
+def _display_path(path: Path) -> str:
+    try:
+        return str(path.relative_to(REPO_ROOT))
+    except ValueError:
+        return str(path)
+
+
 def _verify_fork_source(*, verbose: bool) -> bool:
     errors = 0
     if not (VLLM_DIR / "pyproject.toml").exists():
-        _check_line("ERROR", "external/vllm source", f"missing pyproject.toml at {VLLM_DIR}")
+        _check_line("ERROR", "workspace vllm source", f"missing pyproject.toml at {VLLM_DIR}")
         return False
 
     checks = (
@@ -241,18 +249,19 @@ def _verify_fork_source(*, verbose: bool) -> bool:
             _check_line("ERROR", label, f"missing {', '.join(missing)}")
             errors += 1
         elif verbose:
-            _check_line("OK", label, str(path.relative_to(REPO_ROOT)))
+            _check_line("OK", label, _display_path(path))
 
     if verbose:
         commit = _git_stdout(VLLM_DIR, "rev-parse", "HEAD")
         branch = _git_stdout(VLLM_DIR, "rev-parse", "--abbrev-ref", "HEAD")
-        origin_apxm = _git_stdout(VLLM_DIR, "rev-parse", "origin/apxm")
-        _check_line("OK", "external/vllm commit", commit or "<unknown>")
-        _check_line("OK", "external/vllm branch", branch or "<unknown>")
-        if origin_apxm:
-            status = "OK" if commit == origin_apxm else "WARN"
-            _check_line(status, "external/vllm origin/apxm", origin_apxm)
-        _check_line("WARN" if _git_dirty(VLLM_DIR) else "OK", "external/vllm dirty", str(_git_dirty(VLLM_DIR)).lower())
+        upstream = f"origin/{branch}" if branch else "origin/main"
+        upstream_commit = _git_stdout(VLLM_DIR, "rev-parse", upstream)
+        _check_line("OK", "workspace vllm commit", commit or "<unknown>")
+        _check_line("OK", "workspace vllm branch", branch or "<unknown>")
+        if upstream_commit:
+            status = "OK" if commit == upstream_commit else "WARN"
+            _check_line(status, f"workspace vllm {upstream}", upstream_commit)
+        _check_line("WARN" if _git_dirty(VLLM_DIR) else "OK", "workspace vllm dirty", str(_git_dirty(VLLM_DIR)).lower())
 
     return errors == 0
 
@@ -794,7 +803,7 @@ def doctor_cmd(args: argparse.Namespace) -> int:
     errors = 0
     print("mode=canonical-docker")
     print(f"repo_root={REPO_ROOT}")
-    print(f"external_vllm={VLLM_DIR}")
+    print(f"vllm_source={VLLM_DIR}")
     print(f"apxm_commit={_git_stdout(REPO_ROOT, 'rev-parse', 'HEAD') or '<unknown>'}")
     print(f"apxm_dirty={str(_git_dirty(REPO_ROOT)).lower()}")
 
@@ -999,7 +1008,7 @@ def docker_build_cmd(args: argparse.Namespace) -> int:
         )
         return 1
     if not _verify_fork_source(verbose=True):
-        _print("Refusing to build: external/vllm does not expose the APXM fork contract.")
+        _print(f"Refusing to build: {VLLM_DIR} does not expose the APXM fork contract.")
         return 1
     if not args.base_image:
         _print("Refusing to build: pass --base-image with the pinned vLLM image tag or digest.")
@@ -1036,7 +1045,7 @@ def docker_build_cmd(args: argparse.Namespace) -> int:
         f"apxm.vllm.dirty={str(_git_dirty(VLLM_DIR)).lower()}",
     ]
     cmd.extend([DockerFlag.BUILD_ARG.value, f"BASE_IMAGE={args.base_image}"])
-    cmd.append(str(REPO_ROOT))
+    cmd.append(str(VLLM_DIR))
 
     _print(f"Building APXM-vLLM image: {image}")
     rc = _run(cmd, cwd=REPO_ROOT)

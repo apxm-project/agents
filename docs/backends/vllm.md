@@ -1,7 +1,8 @@
 # vLLM backend (concept)
 
-This document defines the **contract** between APXM and the vLLM fork at
-`external/vllm/`. It is intentionally not a runbook — operational procedures
+This document defines the **contract** between APXM and the `apxm-project/vllm`
+fork. In the coordinator workspace APXM resolves it at `workspace/backends/vllm/`.
+It is intentionally not a runbook — operational procedures
 (start, scale, log, probe) live in
 [`docs/backends/model-zoo.md`](model-zoo.md).
 

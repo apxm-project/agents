@@ -11,7 +11,7 @@ not the operator runbook.** All operational procedures live in
 | `zoo.example.toml` | Schema reference + 3-shape template. Operators copy to `zoo.toml` (gitignored) and edit. |
 | `zoo.toml` | Operator's local manifest (gitignored). **Sole source of truth** for what runs once present. |
 | `run-vllm.sh` | Slurm wrapper invoked by `_start_one_service` via `sbatch`. Single-node only; multi-node Ray (cross-node TP+PP) is out of scope — one service per node. |
-| `Dockerfile.apxm` | Python-source-overlay Dockerfile that lays the `external/vllm/` fork on top of a pinned ROCm vLLM base image. |
+| `Dockerfile.apxm` | Python-source-overlay Dockerfile that builds from the workspace `vllm` checkout and a pinned ROCm vLLM base image. |
 
 ## How a service starts
 

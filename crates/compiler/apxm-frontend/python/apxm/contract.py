@@ -26,6 +26,7 @@ class EnvVar(str, Enum):
     APXM_VLLM_HF_HOME = "APXM_VLLM_HF_HOME"
     APXM_VLLM_IMAGE = "APXM_VLLM_IMAGE"
     APXM_VLLM_IMAGE_STORE = "APXM_VLLM_IMAGE_STORE"
+    APXM_VLLM_DIR = "APXM_VLLM_DIR"
     APXM_VLLM_MODEL_ROOTS = "APXM_VLLM_MODEL_ROOTS"
     APXM_VLLM_SERVICE_NAME = "APXM_VLLM_SERVICE_NAME"
     BACKEND_NAME = "BACKEND_NAME"
@@ -296,7 +297,7 @@ class RepoMarker(str, Enum):
 class RepoPath(str, Enum):
     """Repo-relative source path segments used by APXM controller scripts."""
 
-    EXTERNAL = "external"
+    BACKENDS = "backends"
     VLLM = "vllm"
 
 
@@ -470,11 +471,21 @@ def workspace_path(repo_root: Path, *segments: ApxmWorkspacePath | str) -> Path:
     return path
 
 
+def _default_vllm_dir(repo_root: Path) -> Path:
+    raw = os.environ.get(EnvVar.APXM_VLLM_DIR.value, "").strip()
+    if raw:
+        path = Path(raw)
+        if not path.is_absolute():
+            path = repo_root / path
+        return path.resolve()
+    return (repo_root.parent.parent / RepoPath.BACKENDS.value / RepoPath.VLLM.value).resolve()
+
+
 def build_layout(script_file: str | Path) -> RepoLayout:
     repo_root = find_repo_root(script_file)
     workspace_dir = workspace_path(repo_root)
     evaluation_dir = workspace_path(repo_root, ApxmWorkspacePath.EVALUATION)
-    vllm_dir = repo_root / RepoPath.EXTERNAL.value / RepoPath.VLLM.value
+    vllm_dir = _default_vllm_dir(repo_root)
     # Roaming buckets are relocatable via .apxm/config.toml; pinned
     # buckets always live at <repo>/.apxm/.
     from apxm.data_config import resolve_data_layout

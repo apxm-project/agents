@@ -54,5 +54,5 @@ can build reliable products on top.
   contract.
 - [`docs/backends/storage-layout.md`](docs/backends/storage-layout.md) — data,
   artifact, HF cache, image-store, and service-registry layout.
-- [`docs/external-vllm-fork.md`](docs/external-vllm-fork.md) — fork integration
+- [`docs/vllm-fork.md`](docs/vllm-fork.md) — fork integration
   contract and hard-stop conditions.

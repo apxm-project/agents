@@ -1,3 +1,0 @@
-[submodule "vllm"]
-	path = external/vllm
-	url = https://github.com/apxm-project/vllm.git

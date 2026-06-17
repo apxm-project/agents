@@ -206,7 +206,7 @@ du -sh /shared/models/cache/huggingface .apxm/vllm-images .apxm/evaluation \
   setup walkthrough; references this doc from step 1.
 - [`backends/model-zoo.md`](model-zoo.md) — operator reference; lists
   this doc under "Prerequisites".
-- [`external-vllm-fork.md`](../external-vllm-fork.md) — contract +
+- [`vllm-fork.md`](../vllm-fork.md) — contract +
   Dockerized serving path; defers to this doc for storage details.
 - `deploy/vllm/run-vllm.sh` — the per-service Slurm wrapper that
   bind-mounts `$HF_HOME_HOST` and `docker-load`s the saved image.

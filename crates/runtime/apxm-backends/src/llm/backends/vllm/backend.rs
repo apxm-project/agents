@@ -349,7 +349,7 @@ impl GraphAwareVllmBackend {
                         url = %url,
                         "vLLM fork is missing /v1/apxm/scheduler — likely an older fork \
                          build. Cannot verify scheduler policy; APXM priority hints may be \
-                         inert. Rebuild the external/vllm submodule to pick up the \
+                         inert. Rebuild the workspace vLLM fork to pick up the \
                          scheduler-info endpoint."
                     );
                 }

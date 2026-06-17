@@ -20,8 +20,9 @@ want dispatched and lets the platform decide *how*.
   (LLM, local, tool); `apxm-backends` holds the vLLM-fork glue.
 - **Tools** (`crates/tools/`) — `apxm-cli`, `apxm-server` (HTTP + MCP), the
   one inventory of installed skills that every client reads from.
-- **`external/vllm`** — git submodule, vLLM fork on branch
-  `apxm-rebase-v0.21.0`. Pinned to `apxm-project/vllm`.
+- **`apxm-project/vllm`** — graph-aware vLLM fork. In the APXM coordinator
+  workspace it is checked out as `workspace/backends/vllm`; override with
+  `APXM_VLLM_DIR` when running APXM standalone.
 
 ## Getting started
 
@@ -30,9 +31,10 @@ build, test, and run goes through it so the env contract, target dir, and
 process accounting stay consistent.
 
 ```bash
-git clone https://github.com/apxm-project/apxm
-cd apxm
-git submodule update --init --recursive      # external/vllm fork
+git clone https://github.com/apxm-project/apxm-project
+cd apxm-project
+python3 tools/bootstrap.py
+cd workspace/core/apxm
 dekk apxm install --no-interactive
 dekk apxm doctor                              # verify environment
 dekk apxm build                               # release build
@@ -108,8 +110,8 @@ maintainer action: `dekk apxm release pypi --yes`.
 
 See [`CONTRIBUTING.md`](CONTRIBUTING.md) for the clone flow, the lifecycle
 workflow that every non-trivial session routes through, and the commit-message
-rules. Released under the [MIT License](LICENSE); the bundled vLLM fork at
-[`external/vllm`](external/vllm) is Apache-2.0.
+rules. Released under the [MIT License](LICENSE); the vLLM fork at
+`apxm-project/vllm` is Apache-2.0.
 
 For coding agents (Claude Code, Codex CLI, Cursor, Aider, Gemini): read
 [`AGENTS.md`](AGENTS.md) or [`CODEX.md`](CODEX.md) (same text; Codex CLI is

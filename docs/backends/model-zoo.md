@@ -45,7 +45,8 @@ dekk apxm vllm doctor
 # 3. Build the APXM-vLLM runtime image. Pick a tag that records the
 #    APXM + vllm-fork SHAs so artifacts are reproducible.
 APXM_SHA=$(git rev-parse --short HEAD)
-VLLM_SHA=$(git -C external/vllm rev-parse --short HEAD)
+VLLM_DIR="${APXM_VLLM_DIR:-../../backends/vllm}"
+VLLM_SHA=$(git -C "$VLLM_DIR" rev-parse --short HEAD)
 IMAGE="apxm-vllm-runtime:${APXM_SHA}-${VLLM_SHA}-post-rebase"
 
 dekk apxm vllm docker-build --image "$IMAGE" \
@@ -200,7 +201,7 @@ requests through the dispatcher.
   `zoo.toml`.
 - **`vLLM server at … is missing /v1/apxm/scheduler`** — the endpoint
   is vanilla upstream vLLM, not the APXM fork. Either rebuild the
-  image from `external/vllm`, or register it under `protocol=openai`.
+  image from `APXM_VLLM_DIR` or `../../backends/vllm`, or register it under `protocol=openai`.
 - **`no healthy backends for <model>`** — all replicas are
   Unhealthy/Unknown. Check `service-list` and the container logs.
 - **`port already in use`** — manifest port collides with a running

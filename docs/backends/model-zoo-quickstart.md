@@ -38,13 +38,14 @@ dekk apxm vllm doctor
 
 Must report `docker_daemon_ready=true`, `docker_buildx_ready=true`,
 and all `slurm_tools` available. The APXM-fork checks under
-`external/vllm` must pass.
+`APXM_VLLM_DIR` or `../../backends/vllm` must pass.
 
 ## 3. Build the runtime image (once per APXM/fork SHA pair)
 
 ```bash
 APXM_SHA=$(git rev-parse --short HEAD)
-VLLM_SHA=$(git -C external/vllm rev-parse --short HEAD)
+VLLM_DIR="${APXM_VLLM_DIR:-../../backends/vllm}"
+VLLM_SHA=$(git -C "$VLLM_DIR" rev-parse --short HEAD)
 IMAGE="apxm-vllm-runtime:${APXM_SHA}-${VLLM_SHA}-post-rebase"
 
 dekk apxm vllm docker-build --image "$IMAGE" \
@@ -225,7 +226,7 @@ prints a peer-protection warning. Use `zoo-scale --replicas 0` or
 - **`zoo manifest not found`** — you forgot step 4. Copy the example.
 - **`vLLM server at … is missing /v1/apxm/scheduler`** — the served
   vLLM is upstream vanilla, not the APXM fork. Rebuild from
-  `external/vllm`, or register under `protocol=openai` for non-APXM
+  `APXM_VLLM_DIR` or `../../backends/vllm`, or register under `protocol=openai` for non-APXM
   evaluation use.
 - **`backend/model selection is ambiguous`** — two backends advertise
   the same alias. Set `APXM_BENCHMARK_BACKEND=<NAME>` or

@@ -1,16 +1,16 @@
-# External vLLM Fork
+# vLLM Fork
 
 This note documents the source-level contract between APXM and the APXM
-graph-aware vLLM fork. In this checkout the source normally lives at
-`external/vllm`; claim-bearing evaluation may also run an equivalent container
-image built from that fork. Operator setup lives in
+graph-aware vLLM fork. In the APXM coordinator workspace, the source lives at
+`workspace/backends/vllm`; standalone APXM checkouts can set `APXM_VLLM_DIR`.
+Claim-bearing evaluation may also run an equivalent container image built from that fork. Operator setup lives in
 [`backends/vllm.md`](backends/vllm.md); do not duplicate bring-up steps here.
 
 ## Scope
 
 APXM is backend-agnostic. vLLM is an optional LLM backend implemented under the
-normal backend registry. The fork lives at `external/vllm` and adds graph-aware
-OpenAI-compatible endpoints that stock vLLM does not expose.
+normal backend registry. The fork is the `apxm-project/vllm` repo and adds
+graph-aware OpenAI-compatible endpoints that stock vLLM does not expose.
 
 Bring-up, container build, zoo reconciliation, and operator commands all live
 in [`backends/vllm.md`](backends/vllm.md) and [`backends/model-zoo.md`](backends/model-zoo.md).
@@ -24,15 +24,10 @@ already-owned allocation, `dekk apxm vllm probe --endpoint ...` and
 
 ## Fork Source
 
-- Submodule path: `external/vllm`
-- Expected fork branch: `apxm`, but commit and router verification are the
-  source of truth for evaluation evidence.
-- Current source-of-truth commit in this workspace:
-  `fe6d35e45bd4624eb55ad9b695b3b7c11b94a99a` (`origin/apxm` as verified on
-  2026-05-12).
-- This workspace currently carries local APXM contract edits on top of that
-  commit for `/v1/apxm/scheduler`; image labels and evaluation records must
-  preserve the dirty-tree status until those edits are committed upstream.
+- Workspace path: `workspace/backends/vllm`
+- Override: `APXM_VLLM_DIR`
+- Expected fork branch: `main`; commit and router verification are the source of
+  truth for evaluation evidence.
 - Operator runbook: `docs/backends/vllm.md`
 - Rust backend: `crates/runtime/apxm-backends/src/llm/backends/vllm/backend.rs`
 
@@ -106,7 +101,7 @@ Do not infer tokens or cost from wall-clock time.
 
 Do not treat a backend as graph-aware when any of these are true:
 
-- `dekk apxm vllm doctor` resolves imports outside `external/vllm`.
+- `dekk apxm vllm doctor` resolves imports outside the configured vLLM checkout.
 - `dekk apxm vllm probe` cannot reach the APXM graph endpoints.
 - `dekk apxm vllm enable <SERVED_MODEL_ID>` cannot find the served id in
   `/v1/models`.

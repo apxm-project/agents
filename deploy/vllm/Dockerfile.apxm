@@ -12,7 +12,7 @@ LABEL apxm.vllm.install_mode="python-source-overlay"
 ENV APXM_VLLM_SOURCE_DIR=${APXM_VLLM_SOURCE_DIR}
 ENV APXM_VLLM_WORKDIR=${APXM_VLLM_WORKDIR}
 
-COPY external/vllm/ ${APXM_VLLM_SOURCE_DIR}/
+COPY . ${APXM_VLLM_SOURCE_DIR}/
 
 RUN python3 - <<'PY'
 import os

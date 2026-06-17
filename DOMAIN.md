@@ -30,7 +30,7 @@ hints. Not an "agent framework", not an "LLM orchestrator".
   zoo reference;
   [`docs/backends/model-zoo-quickstart.md`](docs/backends/model-zoo-quickstart.md)
   for the 15-minute walkthrough.
-- [`docs/external-vllm-fork.md`](docs/external-vllm-fork.md) — the
+- [`docs/vllm-fork.md`](docs/vllm-fork.md) — the
   fork integration contract.
 - `apxm-project/apxm-eval` — preregistrations, evaluation harness, claim
   cards, paper drafts, and paper-bound evidence.
