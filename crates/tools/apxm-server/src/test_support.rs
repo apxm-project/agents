@@ -25,10 +25,7 @@ pub struct TestHarness {
 
 impl TestHarness {
     pub fn first_execution_id(&self) -> Option<String> {
-        self.run_event_bus
-            .list_execution_ids()
-            .into_iter()
-            .next()
+        self.run_event_bus.list_execution_ids().into_iter().next()
     }
 }
 
@@ -117,10 +114,8 @@ async fn test_state_with_runtime(runtime: Arc<Runtime>, server_config: ServerCon
     let mut runtime = runtime;
     let skill_library = SkillLibrary::new(Vec::new());
     install_test_runtime_bridges(&mut runtime, skill_library.clone());
-    let rollout_home = std::env::temp_dir().join(format!(
-        "apxm-test-rollout-{}",
-        uuid::Uuid::new_v4()
-    ));
+    let rollout_home =
+        std::env::temp_dir().join(format!("apxm-test-rollout-{}", uuid::Uuid::new_v4()));
     std::fs::create_dir_all(&rollout_home).expect("rollout home");
     let hardening = crate::state::HardeningDefaults::for_config(&server_config);
     AppState {
@@ -164,7 +159,7 @@ fn install_test_runtime_bridges(runtime: &mut Arc<Runtime>, skill_library: Skill
     workflow_spawner.attach_runtime(runtime);
 }
 
-/// Small observer-bus buffer for backpressure fixtures (SC-001).
+/// Small observer-bus buffer for backpressure fixtures.
 pub fn backpressure_run_events_config() -> RunEventsConfig {
     RunEventsConfig {
         stream_buffer: 8,

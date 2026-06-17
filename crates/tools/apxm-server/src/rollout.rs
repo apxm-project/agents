@@ -101,11 +101,8 @@ impl RolloutRegistry {
 
     /// Close all open rollout writers during graceful shutdown.
     pub(crate) async fn flush_all(&self) {
-        let execution_ids: Vec<String> = self
-            .inner
-            .iter()
-            .map(|entry| entry.key().clone())
-            .collect();
+        let execution_ids: Vec<String> =
+            self.inner.iter().map(|entry| entry.key().clone()).collect();
         for execution_id in execution_ids {
             self.close(&execution_id).await;
         }
@@ -228,7 +225,6 @@ impl EventEmitter for RolloutEmitter {
         self.registry.try_record(&self.execution_id, event);
     }
 }
-
 
 /// Build a synthetic SessionMeta from skill execution context when the caller
 /// has not supplied a richer one.

@@ -1,4 +1,4 @@
-//! OpenAPI export for the spec 0002 session + permission surface (US6 / T080).
+//! OpenAPI export for the session + permission surface.
 //!
 //! Wire shapes are derived from server types via `utoipa`; CI diff-tests the
 //! export against `specs/0002-apxm-chat-thin-clients/contracts/openapi-session-v1.yaml`.
@@ -15,7 +15,7 @@ use crate::types::errors::{FaultClass, TypedError};
     info(
         title = "APXM Session API (contract snapshot — 0002)",
         version = "0.1.0-draft",
-        description = "Draft contract for spec 0002. Generated from apxm-server types at implementation;\nthis file is the CI diff-test baseline. See review §7 session model."
+        description = "Draft contract generated from apxm-server types at implementation;\nthis file is the CI diff-test baseline. See review §7 session model."
     ),
     paths(
         doc_get_session_status,
@@ -35,7 +35,7 @@ use crate::types::errors::{FaultClass, TypedError};
         TypedError,
         FaultClass,
     )),
-    tags((name = "session", description = "Session control API (spec 0002 US5)"))
+    tags((name = "session", description = "Session control API"))
 )]
 pub struct SessionApiDoc;
 

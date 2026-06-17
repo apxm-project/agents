@@ -62,14 +62,14 @@ pub(crate) const OBSERVABILITY_FLEET: &str = "/v1/observability/fleet";
 // `apxm chat` CLI and the studio Chat POST turns through `/v1/execute/stream`;
 // this reassembles the visible conversation across the hop.
 pub(crate) const SESSION_HISTORY: &str = "/v1/sessions/{id}/history";
-// session control API (spec 0002 US5).
+// session control API.
 pub(crate) const SESSION_STATUS: &str = "/v1/sessions/{session_id}/status";
 pub(crate) const SESSION_CANCEL: &str = "/v1/sessions/{session_id}/cancel";
 pub(crate) const SESSION_GRANTS: &str = "/v1/sessions/{session_id}/grants";
 pub(crate) const SESSION_COMPACT: &str = "/v1/sessions/{session_id}/compact";
 pub(crate) const SESSION_EVENTS: &str = "/v1/sessions/{session_id}/events";
 pub(crate) const SESSION_EVENTS_STREAM: &str = "/v1/sessions/{session_id}/events/stream";
-// server-driven permission response (spec 0002 US4).
+// server-driven permission response.
 pub(crate) const PERMISSION_RESPOND: &str = "/v1/permissions/{permission_id}/respond";
 pub(crate) const GOALS: &str = "/v1/goals";
 pub(crate) const GOAL_DETAIL: &str = "/v1/goals/{goal_id}";

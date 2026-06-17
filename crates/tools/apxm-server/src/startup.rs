@@ -152,6 +152,7 @@ pub(crate) async fn run_server_with_config(server_config: ServerConfig) -> anyho
         session_registry: crate::conversations::SessionRegistry::new(),
     };
 
+    let shutdown = state.shutdown.clone();
     let app = build_app(state);
     let listener = tokio::net::TcpListener::bind(addr).await?;
     // Derive the announced address from the ACTUAL bound port: the configured
@@ -162,6 +163,7 @@ pub(crate) async fn run_server_with_config(server_config: ServerConfig) -> anyho
 
     axum::serve(listener, app)
         .with_graceful_shutdown(shutdown_signal(
+            shutdown,
             rollout_registry,
             server_config.shutdown.drain_timeout_secs,
         ))
@@ -200,9 +202,8 @@ fn write_listen_registry(dir: &str, name: &str, port: u16) -> std::io::Result<()
     }
 
     let pid = std::process::id();
-    let json = format!(
-        r#"{{"pid":{pid},"addr":"127.0.0.1","port":{port},"scheme":"http","ready":true}}"#
-    );
+    let json =
+        format!(r#"{{"pid":{pid},"addr":"127.0.0.1","port":{port},"scheme":"http","ready":true}}"#);
     let tmp = dir_path.join(format!("{name}.json.tmp.{pid}"));
     let final_path = dir_path.join(format!("{name}.json"));
     std::fs::write(&tmp, json)?;
@@ -294,7 +295,11 @@ fn server_addr(args: &[String], config: &ServerConfig) -> anyhow::Result<SocketA
         .map_err(|error| anyhow::anyhow!("invalid built-in default address: {error}"))
 }
 
-async fn shutdown_signal(rollout_registry: RolloutRegistry, drain_timeout_secs: u64) {
+async fn shutdown_signal(
+    shutdown: ShutdownCoordinator,
+    rollout_registry: RolloutRegistry,
+    drain_timeout_secs: u64,
+) {
     #[cfg(unix)]
     {
         use tokio::signal::unix::{SignalKind, signal};
@@ -308,13 +313,49 @@ async fn shutdown_signal(rollout_registry: RolloutRegistry, drain_timeout_secs: 
     {
         tokio::signal::ctrl_c().await.expect("Ctrl+C handler");
     }
+    drain_and_flush_rollouts(shutdown, rollout_registry, drain_timeout_secs).await;
+}
+
+async fn drain_and_flush_rollouts(
+    shutdown: ShutdownCoordinator,
+    rollout_registry: RolloutRegistry,
+    drain_timeout_secs: u64,
+) {
     info!("shutdown signal received");
     let timeout = std::time::Duration::from_secs(drain_timeout_secs.max(1));
+    shutdown.signal_drain();
+    shutdown.wait_for_http_drain(timeout).await;
     match tokio::time::timeout(timeout, rollout_registry.flush_all()).await {
         Ok(()) => info!("rollout flush complete"),
         Err(_) => warn!(
             timeout_secs = drain_timeout_secs,
             "rollout flush timed out during graceful shutdown"
         ),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn shutdown_drain_waits_for_tracked_http_work() {
+        let shutdown = ShutdownCoordinator::new();
+        let guard = shutdown.track_request();
+        let started = std::time::Instant::now();
+        let drain = tokio::spawn(drain_and_flush_rollouts(
+            shutdown.clone(),
+            RolloutRegistry::new(),
+            2,
+        ));
+
+        tokio::time::sleep(std::time::Duration::from_millis(30)).await;
+        assert!(shutdown.is_draining());
+        assert!(!drain.is_finished());
+
+        drop(guard);
+        drain.await.expect("drain task");
+        assert!(started.elapsed() >= std::time::Duration::from_millis(30));
+        assert_eq!(shutdown.in_flight(), 0);
     }
 }

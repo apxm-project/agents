@@ -3,10 +3,10 @@
 use apxm_driver::ServerObservabilityConfig;
 use opentelemetry::trace::TracerProvider;
 use opentelemetry_otlp::WithExportConfig;
-use tracing::{debug, warn};
+use tracing::warn;
+use tracing_subscriber::EnvFilter;
 use tracing_subscriber::layer::SubscriberExt;
 use tracing_subscriber::util::SubscriberInitExt;
-use tracing_subscriber::EnvFilter;
 
 /// Lightweight handle representing a configured OTLP exporter.
 #[derive(Clone)]
@@ -76,22 +76,7 @@ pub(crate) fn init_tracing_subscriber(
         .with(tracing_subscriber::fmt::layer())
         .init();
 
-    debug!(endpoint = %endpoint, "OTLP exporter configured");
     Ok(Some(OtelExporter {
         endpoint: std::sync::Arc::new(endpoint.to_string()),
-    }))
-}
-
-/// Legacy presence hook for startup symmetry.
-pub(crate) fn init(
-    config: &ServerObservabilityConfig,
-) -> Result<Option<OtelExporter>, OtelInitError> {
-    let endpoint = config
-        .otlp_endpoint
-        .as_deref()
-        .map(str::trim)
-        .filter(|endpoint| !endpoint.is_empty());
-    Ok(endpoint.map(|value| OtelExporter {
-        endpoint: std::sync::Arc::new(value.to_string()),
     }))
 }

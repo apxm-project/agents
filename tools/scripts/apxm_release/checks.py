@@ -153,10 +153,20 @@ def _check_dekk_doctor() -> CheckResult:
 def _check_codegen_current(skip_codegen: bool) -> CheckResult:
     if skip_codegen:
         return CheckResult("codegen", True, "skipped")
-    check = run(["dekk", "apxm", "codegen", "--check"], capture=True)
-    if check.returncode != 0:
-        return CheckResult("codegen", False, last_line(check))
-    return CheckResult("codegen", True, "generated Python frontend is current")
+    commands = (
+        (["dekk", "apxm", "codegen", "--check"], "Python frontend"),
+        (["dekk", "apxm", "codegen-typescript", "--check"], "TypeScript bindings"),
+        (["dekk", "apxm", "codegen-event-kinds", "--check"], "event kinds"),
+    )
+    for command, label in commands:
+        check = run(command, capture=True)
+        if check.returncode != 0:
+            return CheckResult("codegen", False, f"{label}: {last_line(check)}")
+    return CheckResult(
+        "codegen",
+        True,
+        "generated Python frontend, TypeScript bindings, and event kinds are current",
+    )
 
 
 def _check_python_tests(skip_tests: bool) -> CheckResult:

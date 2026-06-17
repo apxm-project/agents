@@ -10,13 +10,12 @@
 use std::io::Write as _;
 
 use anyhow::{Context, Result, anyhow};
+use apxm_client::reqwest;
 use apxm_client::{
-    client_for_sse,
+    ClientInfo, DEFAULT_SERVER_BASE, client_for_sse,
     events::{event_kind, parse_approval_prompt},
-    ClientInfo, DEFAULT_SERVER_BASE,
 };
 use apxm_core::events::ApxmEvent;
-use apxm_client::reqwest;
 use futures::StreamExt;
 use serde_json::Value as JsonValue;
 
@@ -58,10 +57,9 @@ pub async fn watch_command(thread_id: String, expand: Option<u64>) -> Result<()>
 pub async fn watch_with_options(opts: WatchOptions) -> Result<()> {
     let client = client_for_sse(&opts.server_base);
     let http = client.client().clone();
-    // Optional one-shot node detail pull (the `Ctrl+O` gesture from the
-    // plan; exposed here as `--expand <node_id>` so tests can drive it
-    // without a real terminal). Printed to stderr so the live tree on
-    // stdout stays parseable.
+    // Optional one-shot node detail pull, exposed as `--expand <node_id>` so
+    // tests can drive it without a real terminal. Printed to stderr so the
+    // live tree on stdout stays parseable.
     if let Some(node_id) = opts.expand_node_id {
         match fetch_node_detail(&http, &opts.server_base, &opts.thread_id, node_id).await {
             Ok(detail) => eprintln!(
@@ -232,4 +230,3 @@ pub(crate) fn decode_event_frame(frame: &SseFrame) -> Option<ApxmEvent> {
     // already inside the envelope.
     serde_json::from_str::<ApxmEvent>(&frame.data).ok()
 }
-

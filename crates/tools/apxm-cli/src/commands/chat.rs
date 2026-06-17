@@ -1,7 +1,7 @@
 //! `apxm chat` — interactive conversational REPL over a running apxm-server.
 //!
-//! Thin protocol pipe (spec 0002 US7): deliver user input, render SSE events,
-//! answer server permission prompts. Session ledger, turn caps, tool budgets, and
+//! Thin protocol pipe: deliver user input, render SSE events, and answer server
+//! permission prompts. Session ledger, turn caps, tool budgets, and
 //! grants are enforced server-side — the host does not count turns or track
 //! budgets locally (constitution #2).
 
@@ -11,14 +11,13 @@ use std::path::PathBuf;
 
 use anyhow::{Context, Result, anyhow};
 use apxm_ais::chat::{self, COMPACT_AT_TOKENS, KEEP_RECENT_TURNS, Role};
+use apxm_client::reqwest;
 use apxm_client::{
-    client_for_sse,
+    Client, ClientInfo, DEFAULT_SERVER_BASE, client_for_sse,
     execute::ExecuteRequest,
     types::{GrantUpdate, SessionStatus},
-    Client, ClientInfo, DEFAULT_SERVER_BASE,
 };
 use apxm_core::constants::orchestration::admission as orchestration_admission;
-use apxm_client::reqwest;
 use futures::StreamExt;
 use serde_json::Value as JsonValue;
 
@@ -72,7 +71,7 @@ pub struct ChatOptions {
     /// Tenant/owner scope for per-tool credential resolution.
     pub owner: Option<String>,
     /// Expose + auto-admit the workflow-authoring tools (`compose_workflow`,
-    /// `run_workflow`) so the agent can create and run workflows (Goal 1).
+    /// `run_workflow`) so the agent can create and run workflows.
     pub author: bool,
 }
 
@@ -473,9 +472,8 @@ pub async fn chat_command(opts: ChatOptions) -> Result<()> {
                         }
                         continue;
                     }
-                    // Goal 1: persist the agent's last reply (e.g. an authored
-                    // workflow) to disk — operator-initiated, so the agent stays
-                    // read-only while still creating workflows.
+                    // Persist the agent's last reply to disk only when the
+                    // operator asks; the agent stays read-only by default.
                     "save" => {
                         if rest.is_empty() {
                             eprintln!("(usage: /save <path>)");
@@ -490,7 +488,7 @@ pub async fn chat_command(opts: ChatOptions) -> Result<()> {
                         }
                         continue;
                     }
-                    // Goal 1: run / list authored workflows (operator-gated).
+                    // Run or list authored workflows only after an operator command.
                     "workflow" => {
                         handle_workflow_meta(rest, &client, &session_id).await;
                         continue;
@@ -795,11 +793,7 @@ async fn compact_if_needed(
 /// Run the built-in summarize graph for `text` and return the summary, without
 /// printing anything (a quiet, non-streaming turn). Reuses the same session id
 /// so the summarization is attributed to this conversation.
-async fn summarize_quiet(
-    client: &Client,
-    session_id: &str,
-    text: &str,
-) -> Result<String> {
+async fn summarize_quiet(client: &Client, session_id: &str, text: &str) -> Result<String> {
     let body = ExecuteRequest {
         air: chat::SUMMARIZE_AIR.to_string(),
         args: vec![text.to_string()],
@@ -833,9 +827,9 @@ async fn summarize_quiet(
     Ok(summary)
 }
 
-/// Handle `/workflow <sub>` meta-commands (Goal 1): `list` enumerates `.air` /
-/// `.apxmw` files in the cwd; `run <path>` reads the file client-side and runs it
-/// through `/v1/compile/stream`, admitting the session's granted capabilities.
+/// Handle `/workflow <sub>` meta-commands: `list` enumerates `.air` / `.apxmw`
+/// files in the cwd; `run <path>` reads the file client-side and runs it through
+/// `/v1/compile/stream`, admitting the session's granted capabilities.
 async fn handle_workflow_meta(rest: &str, client: &Client, session_id: &str) {
     let (sub, arg) = rest
         .split_once(' ')

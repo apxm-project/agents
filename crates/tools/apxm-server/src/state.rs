@@ -204,11 +204,10 @@ impl apxm_runtime::scheduler::admission_registry::ParkAdmission for AdmissionHan
     }
 }
 
-
 /// Thin [`EventEmitter`] that forwards events to a tokio MPSC channel.
 ///
 /// On backpressure (`try_send` full), emits an explicit lag warning instead of
-/// silently dropping (spec 0002 FR-001 / T010).
+/// silently dropping.
 pub(crate) struct TokioChannelEmitter {
     tx: mpsc::Sender<ApxmEvent>,
     dropped: AtomicUsize,

@@ -181,7 +181,7 @@ fn tool_agent_code(
 
 /// Render `snapshot` to a multi-line monospace string.
 ///
-/// Layout matches the design in the plan:
+/// Layout shape:
 ///
 /// ```text
 /// ⏺ Cleo · 3 specialists running       [thread_id: ...]

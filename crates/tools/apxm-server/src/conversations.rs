@@ -8,9 +8,8 @@
 //! adds no conversational behavior; it only delivers input and renders output.
 //!
 //! The session→execution registry below lets the endpoint find a session's
-//! running execution. Driving one long-lived execution per session over a single
-//! SSE is wired with US1/US2; this module is the substrate (registry + endpoint
-//! + wake) the loop builds on.
+//! running execution. This module provides the registry, endpoint, and wake
+//! behavior used by the loop.
 
 use std::sync::Arc;
 
@@ -33,8 +32,8 @@ pub(crate) struct SessionRecord {
 }
 
 /// `session_id` → running execution. Lets the turn-input endpoint find a
-/// session's long-lived execution (and, for US1/US2, hold one execution per
-/// session across parks).
+/// session's long-lived execution and hold one execution per session across
+/// parks.
 #[derive(Clone, Default)]
 pub(crate) struct SessionRegistry {
     inner: Arc<DashMap<String, SessionRecord>>,
@@ -89,7 +88,10 @@ pub(crate) async fn post_conversation_message(
     {
         return Err(ApiError::typed(TypedError::program_fault(
             ApiFaultCode::TurnCapExceeded,
-            format!("session turn cap reached ({})", ledger.turn_cap().unwrap_or(0)),
+            format!(
+                "session turn cap reached ({})",
+                ledger.turn_cap().unwrap_or(0)
+            ),
             Some("Start a new session or raise the turn cap on the server.".to_string()),
         )));
     }
@@ -102,15 +104,19 @@ pub(crate) async fn post_conversation_message(
         )));
     }
 
-    // Record the user message into session memory so the transcript is full
-    // session memory (T052) — not just the assistant answer the conversation
-    // middleware records. Ordered under `conversation:user:<n>` so a recency
-    // window (`qmem recall_mode=recent`) can read the user side too. Best-effort.
+    // Record the user message into session memory so the transcript includes
+    // the user side, not just the assistant answer the conversation middleware
+    // records. Ordered under `conversation:user:<n>` so a recency window
+    // (`qmem recall_mode=recent`) can read the user side too. Best-effort.
     {
         let mem = state.runtime.memory();
         let count_key = "conversation:user_count";
         let n = mem
-            .read_scoped(apxm_runtime::memory::MemorySpace::Stm, &session_id, count_key)
+            .read_scoped(
+                apxm_runtime::memory::MemorySpace::Stm,
+                &session_id,
+                count_key,
+            )
             .await
             .ok()
             .flatten()

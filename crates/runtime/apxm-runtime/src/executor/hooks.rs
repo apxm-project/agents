@@ -191,7 +191,7 @@ pub struct GraphFinishedEvent {
 // op) that drive the SAME Python handler path as `@tool` (constitution #4). The
 // registry lives on `ExecutionContext` (lifetime = the python tool bridge) and
 // is inherited by child contexts. Drivers (the interceptor/middleware/async
-// pre-step) consume it in US3.
+// pre-step) consume it.
 // ===========================================================================
 
 /// Conversational lifecycle events a `@hook` can bind to.

@@ -308,7 +308,7 @@ impl Runtime {
         ));
         // Attach the per-session ledger (turn caps / tool budgets / grants),
         // seeded by the server at execution start and keyed by session_id, so
-        // the runtime owns per-session limits rather than the host (T031).
+        // the runtime owns per-session limits rather than the host.
         if let Some(sid) = ctx.session_id.clone()
             && let Some(ledger) = crate::executor::session_ledger::get(&sid)
         {
@@ -1223,7 +1223,7 @@ fn validate_args(dag: &ExecutionDag, args: &[String]) -> Result<(), RuntimeError
     if args.len() != params.len() {
         // A turn-input (recv) loop entry binds its reserved turn parameter from
         // the server turn-input endpoint at runtime, so launching it with zero
-        // args is valid — the recv anchor parks for each user message (T024).
+        // args is valid because the recv anchor parks for each user message.
         if args.is_empty() && is_turn_input_entry(dag) {
             return Ok(());
         }

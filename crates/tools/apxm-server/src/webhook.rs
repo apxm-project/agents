@@ -142,4 +142,3 @@ impl EventEmitter for WebhookEmitter {
         self.dispatcher.dispatch(event);
     }
 }
-

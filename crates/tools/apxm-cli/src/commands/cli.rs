@@ -364,7 +364,7 @@ pub enum Commands {
 
 #[derive(Args, Debug, Clone)]
 pub struct GoalArgs {
-    /// Goal/task for APXM to decompose, plan, and supervise.
+    /// Goal/task for APXM to decompose and supervise.
     #[arg(value_name = "TASK")]
     pub task: Option<String>,
 
@@ -665,7 +665,6 @@ pub enum WorkflowAction {
         file: PathBuf,
     },
 }
-
 
 #[derive(Subcommand)]
 pub enum CacheAction {

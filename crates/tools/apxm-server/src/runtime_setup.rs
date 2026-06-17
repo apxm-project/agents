@@ -1,4 +1,6 @@
-use apxm_backends::BackendRegistration;
+use apxm_backends::llm::backends::{MockLLMBackend, MockResponse};
+use apxm_backends::{BackendRegistration, LLMRegistry};
+use apxm_core::constants::env as apxm_env;
 use apxm_driver::runtime::agents::configure_agent_registry;
 use apxm_driver::runtime::sandbox::configure_sandbox_registry;
 use apxm_runtime::capability::builtins::{FiredSchedule, OnFire};
@@ -105,9 +107,8 @@ fn register_builtin_capabilities(runtime: &Runtime, schedule_on_fire: Option<OnF
         Arc::new(ProviderCallCapability::new()),
         Arc::new(McpBridgeCapability::new()),
         Arc::new(CountTokensCapability::new()),
-        // Workflow authoring (Goal 1): write-class, in the `authoring` group so
-        // the conversational agent can create + run workflows under admit-gated,
-        // staging-confined, workflow-scoped admission.
+        // Workflow authoring is write-class and confined to the `authoring`
+        // group so the conversational agent needs an explicit admission grant.
         Arc::new(ComposeWorkflowCapability::new()),
         Arc::new(RunWorkflowCapability::new()),
     ];
@@ -217,6 +218,18 @@ pub(crate) async fn build_runtime_without_router(
 }
 
 pub(crate) async fn load_llm_backends(runtime: &Runtime) {
+    if let Some(latency_ms) = mock_backend_latency_from_env() {
+        match register_mock_llm_backend(runtime.llm_registry(), latency_ms) {
+            Ok(()) => {
+                info!(latency_ms, "registered env-controlled mock LLM backend");
+                return;
+            }
+            Err(error) => {
+                warn!(%error, "failed to register env-controlled mock LLM backend");
+            }
+        }
+    }
+
     let mut loaded = 0u32;
     let mut first_name: Option<String> = None;
     match apxm_credentials::BackendStore::open() {
@@ -256,5 +269,59 @@ pub(crate) async fn load_llm_backends(runtime: &Runtime) {
         Err(e) => {
             warn!(error = %e, "credential store unavailable - no LLM backends registered");
         }
+    }
+}
+
+fn mock_backend_latency_from_env() -> Option<u64> {
+    let enabled = std::env::var(apxm_env::APXM_MOCK_BACKEND)
+        .ok()
+        .map(|value| {
+            let value = value.trim();
+            !value.is_empty() && value != "0" && !value.eq_ignore_ascii_case("false")
+        })
+        .unwrap_or(false);
+    if !enabled {
+        return None;
+    }
+
+    Some(
+        std::env::var(apxm_env::APXM_MOCK_LATENCY_MS)
+            .ok()
+            .and_then(|value| value.parse().ok())
+            .unwrap_or(25),
+    )
+}
+
+fn register_mock_llm_backend(registry: &LLMRegistry, latency_ms: u64) -> Result<(), String> {
+    let mock = MockLLMBackend::new()
+        .with_latency_ms(latency_ms)
+        .default(MockResponse::new("Mock LLM response from apxm-server."));
+    registry
+        .register("mock", mock)
+        .map_err(|error| format!("failed to register mock backend: {error}"))?;
+    registry
+        .set_default("mock")
+        .map_err(|error| format!("failed to set mock backend default: {error}"))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn register_mock_llm_backend_sets_default() {
+        let runtime = Runtime::new(RuntimeConfig::in_memory())
+            .await
+            .expect("runtime");
+
+        register_mock_llm_backend(runtime.llm_registry(), 0).expect("mock backend");
+
+        assert!(
+            runtime
+                .llm_registry()
+                .backend_names()
+                .iter()
+                .any(|name| name == "mock")
+        );
     }
 }

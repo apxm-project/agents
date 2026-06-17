@@ -45,9 +45,10 @@ pub(crate) async fn scrape_metrics(state: axum::extract::State<AppState>) -> Res
 
     (
         StatusCode::OK,
-        [
-            (header::CONTENT_TYPE, HeaderValue::from_static("text/plain; version=0.0.4")),
-        ],
+        [(
+            header::CONTENT_TYPE,
+            HeaderValue::from_static("text/plain; version=0.0.4"),
+        )],
         body,
     )
         .into_response()

@@ -9,9 +9,9 @@
 //!   - `post_tool` → replace_result(x) | (none)
 //!   - `pre_ask`   → prepend_system(text) | set_system(text) | (none)
 //!
-//! Failure semantics (FR-014, T046): a `gate` hook that errors fails CLOSED
-//! (the guarded action is denied and the error surfaced); an `observe` hook that
-//! errors surfaces a warning and CONTINUES.
+//! Failure semantics: a `gate` hook that errors fails CLOSED (the guarded
+//! action is denied and the error surfaced); an `observe` hook that errors
+//! surfaces a warning and CONTINUES.
 
 use std::collections::HashMap;
 use std::time::Duration;
@@ -274,7 +274,7 @@ pub async fn run_pre_tool_hooks(
                 PreToolDecision::EditArgs(new_args) => current = new_args,
             },
             Err(e) => {
-                // Failure semantics (T046): gate fails closed; observe continues.
+                // Gate hooks fail closed; observe hooks continue.
                 if binding.mode == HookMode::Gate {
                     return Err(RuntimeError::Capability {
                         capability: tool_name.to_string(),

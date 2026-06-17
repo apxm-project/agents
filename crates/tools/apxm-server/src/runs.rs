@@ -134,12 +134,8 @@ impl RunEventBus {
 
     /// Execution ids with recorded events (integration-test discovery).
     pub fn list_execution_ids(&self) -> Vec<String> {
-        self.inner
-            .iter()
-            .map(|entry| entry.key().clone())
-            .collect()
+        self.inner.iter().map(|entry| entry.key().clone()).collect()
     }
-
 }
 
 /// EventEmitter that funnels every event into the run bus, keyed by
@@ -390,9 +386,7 @@ pub(crate) enum RunEventStreamKind {
 impl RunEventStreamKind {
     fn lag_payload(self, missed: u64) -> serde_json::Value {
         let message = match self {
-            Self::RunObserver => {
-                "run event stream lagged; reconnect with Last-Event-ID to replay"
-            }
+            Self::RunObserver => "run event stream lagged; reconnect with Last-Event-ID to replay",
             Self::ExecuteStream => {
                 "execute event stream lagged; reconnect with Last-Event-ID to replay retained events"
             }
@@ -507,9 +501,8 @@ pub(crate) fn run_sse_stream(
     let kind = options.kind;
     let stream = combined_run_sse_items(replay, cursor, rx, options.close_on_terminal)
         .map(move |item| Ok(run_sse_item_to_axum_event(item, kind)));
-    Sse::new(stream).keep_alive(KeepAlive::new().interval(Duration::from_secs(
-        options.keep_alive_secs.max(1),
-    )))
+    Sse::new(stream)
+        .keep_alive(KeepAlive::new().interval(Duration::from_secs(options.keep_alive_secs.max(1))))
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -741,11 +734,18 @@ pub(crate) async fn stream_run_events(
     use futures::StreamExt as _;
     let combined = combined_run_sse_items(replay, cursor, rx, false);
 
-    let stream = combined.map(|item| Ok(run_sse_item_to_axum_event(item, RunEventStreamKind::RunObserver)));
+    let stream = combined.map(|item| {
+        Ok(run_sse_item_to_axum_event(
+            item,
+            RunEventStreamKind::RunObserver,
+        ))
+    });
 
-    Ok(Sse::new(stream).keep_alive(KeepAlive::new().interval(Duration::from_secs(
-        state.server_config.run_events.keep_alive_secs.max(1),
-    ))))
+    Ok(
+        Sse::new(stream).keep_alive(KeepAlive::new().interval(Duration::from_secs(
+            state.server_config.run_events.keep_alive_secs.max(1),
+        ))),
+    )
 }
 
 // ────────────────────────────────────────────────────────────────────
@@ -775,7 +775,6 @@ fn clamp_limit(raw: Option<usize>, default: usize, max: usize) -> usize {
     let default = default.clamp(1, max);
     raw.unwrap_or(default).clamp(1, max)
 }
-
 
 fn record_to_summary(state: &AppState, record: ExecutionRecord) -> RunSummary {
     let events = state.run_event_bus.snapshot(&record.execution_id);
@@ -1126,10 +1125,7 @@ pub(crate) struct SessionHistoryResponse {
 /// Tool and lifecycle events are not part of the visible conversation and are
 /// skipped. Typed `UserMessage`/`AssistantMessage` payloads are also honored
 /// if a future writer emits them.
-fn turn_messages_from_lines(
-    lines: &[apxm_rollout::RolloutLine],
-    out: &mut Vec<HistoryMessage>,
-) {
+fn turn_messages_from_lines(lines: &[apxm_rollout::RolloutLine], out: &mut Vec<HistoryMessage>) {
     use apxm_rollout::RolloutPayload;
 
     let mut token_buf = String::new();
@@ -1205,11 +1201,7 @@ fn turn_messages_from_lines(
                     have_assistant_done = true;
                 }
                 k if k == event_kind::TOKEN.name() => {
-                    if let Some(text) = ev
-                        .event
-                        .pointer("/payload/text")
-                        .and_then(|v| v.as_str())
-                    {
+                    if let Some(text) = ev.event.pointer("/payload/text").and_then(|v| v.as_str()) {
                         token_buf.push_str(text);
                     }
                 }

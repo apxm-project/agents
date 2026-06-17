@@ -1433,4 +1433,3 @@ fn display_path(path: &Path) -> String {
         .display()
         .to_string()
 }
-

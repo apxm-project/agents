@@ -63,6 +63,7 @@ clean-processes = { run = "apxm process stop", description = "Stop APXM job proc
 
 codegen = { run = "apxm codegen frontend", description = "Regenerate frontend bindings from Core definitions", skill = true, group = "Build & Test" }
 codegen-typescript = { run = "apxm codegen typescript", description = "Regenerate TypeScript frontend bindings from Core definitions", skill = true, group = "Build & Test" }
+codegen-event-kinds = { run = "apxm codegen event-kinds", description = "Regenerate TypeScript event kind constants from Core definitions", skill = true, group = "Build & Test" }
 tokenize = { run = "apxm tokenize", description = "Count text with APXM's compiler-side tokenizer", skill = true, group = "Discovery" }
 
 compile = { run = "apxm compile", description = "Compile graph to .apxmobj artifact", skill = true, group = "Compilation" }

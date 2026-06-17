@@ -59,7 +59,7 @@ pub async fn execute(ctx: &ExecutionContext, node: &Node, inputs: Vec<Value>) ->
     // `delegate`/`main` flow in the artifact, look up `agent_info:<target>` in
     // STM (written by SPAWN_AGENT) and dispatch the task as a one-shot LLM ASK
     // against that agent's config. This makes `delegate(researcher)` work for an
-    // inline-spawned sub-agent even before a multi-func flow is emitted (FR; US5).
+    // inline-spawned sub-agent even before a multi-func flow is emitted.
     let Some(sub_dag) = sub_dag else {
         if let Some(response) =
             delegate_inline_agent(ctx, node, &target_agent, &task_spec, inputs.first()).await?

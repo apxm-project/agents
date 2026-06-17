@@ -65,7 +65,7 @@ pub async fn execute(ctx: &ExecutionContext, node: &Node, _inputs: Vec<Value>) -
         });
         // session_start fires once, now — registration happens at session start
         // in the entry flow. Awaited async pre-step via the bridge (NOT the dead
-        // sync ExecutionHook); a gate failure fails closed (T045/T046).
+        // sync ExecutionHook); a gate failure fails closed.
         if event == HookEvent::SessionStart
             && let Some(bridge) = ctx.python_tool_bridge.as_ref()
         {

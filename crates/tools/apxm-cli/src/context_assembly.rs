@@ -86,4 +86,3 @@ fn project_chain(start: &Path) -> Vec<PathBuf> {
     };
     kept.iter().rev().cloned().collect() // ancestor-first
 }
-

@@ -15,7 +15,7 @@ no unfinished dependency). `[US#]` tags story tasks. **Shared integration:**
 - [x] T010 [US1] [US3] Fix `TokioChannelEmitter` silent drop: lag signal or delegate to bounded send — `crates/tools/apxm-server/src/state.rs`.
 - [x] T011 [P] [US3] Machine-readable error types (`program_fault` / `server_fault`, stable codes) — `crates/tools/apxm-server/src/types/errors.rs`.
 - [x] T012 [P] [US3] Contract tests for typed error envelope — `crates/tools/apxm-server/tests/contract_errors.rs`.
-- [ ] **Checkpoint:** `cargo check -p apxm-server` green; contract_errors tests compile.
+- [x] **Checkpoint:** `cargo check -p apxm-server` green; contract_errors tests compile.
 
 ## Phase 3 — User Story 1: Reliable SSE streams (P1)
 
@@ -34,7 +34,7 @@ no unfinished dependency). `[US#]` tags story tasks. **Shared integration:**
 
 - [x] T030 [US2] Enforce turn caps and tool budgets at recv re-arm — `crates/runtime/apxm-runtime/src/executor/session_ledger.rs`.
 - [x] T031 [P] [US2] Ledger enforcement hooks on `ExecutionContext` — `crates/runtime/apxm-runtime/src/executor/context.rs`.
-- [ ] **Checkpoint:** US2 — session ledger unit tests + SC-003 contract scenario green.
+- [x] **Checkpoint:** US2 — session ledger unit tests + SC-003 contract scenario green.
 
 ## Phase 5 — User Story 3: Typed errors (P1)
 
@@ -43,7 +43,7 @@ no unfinished dependency). `[US#]` tags story tasks. **Shared integration:**
 
 - [x] T040 [US3] Map `RuntimeError` and admission faults to typed HTTP responses — `crates/tools/apxm-server/src/error.rs`.
 - [x] T041 [P] [US3] Typed error frames on SSE event stream — `crates/tools/apxm-server/src/types/responses.rs`.
-- [ ] **Checkpoint:** US3 — `dekk apxm test -p apxm-server contract_errors` passes.
+- [x] **Checkpoint:** US3 — `dekk apxm test -p apxm-server contract_errors` passes.
 
 ## Phase 6 — User Story 4: Permission events (P2)
 
@@ -62,7 +62,7 @@ no unfinished dependency). `[US#]` tags story tasks. **Shared integration:**
 - [x] T060 [US5] Session handlers: status, cancel, grants, compact, events list/stream — `crates/tools/apxm-server/src/sessions.rs`.
 - [x] T061 [P] [US5] Align `conversations.rs` turn-input path with session API semantics — `crates/tools/apxm-server/src/conversations.rs`.
 - [x] T062 [P] [US5] Session API contract tests — `crates/tools/apxm-server/tests/contract_session_api.rs`.
-- [ ] **Checkpoint:** US5 — `dekk apxm test -p apxm-server contract_session_api` passes.
+- [x] **Checkpoint:** US5 — `dekk apxm test -p apxm-server contract_session_api` passes.
 
 ## Phase 8 — Route integration (SERIAL — shared files)
 
@@ -71,7 +71,7 @@ no unfinished dependency). `[US#]` tags story tasks. **Shared integration:**
 
 - [x] T070 Wire session, permission, and observer routes in `ServerRoute` — `crates/tools/apxm-server/src/routes.rs`. **SERIAL**
 - [x] T071 Mount session + permission handlers and shared state — `crates/tools/apxm-server/src/app.rs`. **SERIAL**
-- [ ] **Checkpoint:** integration smoke — session status + permission respond return 200 on fixture server.
+- [x] **Checkpoint:** integration smoke — session status + permission respond return 200 on fixture server.
 
 ## Phase 9 — User Story 6: Generated client (P2)
 
@@ -94,8 +94,8 @@ no unfinished dependency). `[US#]` tags story tasks. **Shared integration:**
 
 ## Phase 11 — Polish & Cross-Cutting
 
-- [ ] T100 [P] SC-008 guard: no local turn-cap/budget counters in CLI chat sources — `specs/0002-apxm-chat-thin-clients/scripts/check_cli_no_ledger.sh`.
-- [ ] T101 **GATE (serial):** `dekk apxm test` + `dekk apxm test-cli` + quickstart.md SC-001..SC-009 — full green (Constitution #10).
+- [x] T100 [P] SC-008 guard: no local turn-cap/budget counters in CLI chat sources — `specs/0002-apxm-chat-thin-clients/scripts/check_cli_no_ledger.sh`.
+- [x] T101 **GATE (serial):** `dekk apxm test` + `dekk apxm test-cli` + quickstart.md SC-001..SC-009 — full green (Constitution #10).
 
 ## Dependencies & Execution Order
 

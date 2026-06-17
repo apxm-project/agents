@@ -1,4 +1,4 @@
-//! SSE backpressure integration tests (spec 0002 US1 / SC-001, SC-002).
+//! SSE backpressure integration tests.
 
 use std::time::Duration;
 
@@ -122,8 +122,7 @@ async fn get_run_events_bulk_since(
     let resp = app.oneshot(req).await.unwrap();
     let status = resp.status();
     let bytes = resp.into_body().collect().await.unwrap().to_bytes();
-    let json: serde_json::Value =
-        serde_json::from_slice(&bytes).unwrap_or(serde_json::Value::Null);
+    let json: serde_json::Value = serde_json::from_slice(&bytes).unwrap_or(serde_json::Value::Null);
     (status, json)
 }
 
@@ -213,25 +212,20 @@ fn token_event_count(frames: &[SseFrame]) -> usize {
 
 fn high_volume_mock(output_tokens: usize, tokens_per_second: u64) -> MockLLMBackend {
     MockLLMBackend::new()
-        .default(
-            MockResponse::new("tok ")
-                .with_tokens(10, output_tokens),
-        )
+        .default(MockResponse::new("tok ").with_tokens(10, output_tokens))
         .with_tokens_per_second(tokens_per_second)
 }
 
-/// SC-001: under deliberate consumer backpressure, no silent drops and overflow
+/// Under deliberate consumer backpressure, no silent drops and overflow
 /// surfaces an explicit lag/error frame.
 #[tokio::test]
 async fn sse_backpressure_sc001_no_silent_drops_and_lag_signal() {
     let mut config = ServerConfig::default();
     config.run_events = test_support::backpressure_run_events_config();
     config.execution_stream.channel_capacity = 4;
-    let harness = test_support::test_harness_with_config_and_mock(
-        config,
-        high_volume_mock(100, 50_000),
-    )
-    .await;
+    let harness =
+        test_support::test_harness_with_config_and_mock(config, high_volume_mock(100, 50_000))
+            .await;
     let app = harness.router.clone();
     let bus_execution_id = harness.first_execution_id();
 
@@ -299,7 +293,7 @@ async fn sse_backpressure_sc001_no_silent_drops_and_lag_signal() {
     );
 }
 
-/// SC-002: reconnect resume delivers post-ack events in order across simulated disconnects.
+/// Reconnect resume delivers post-ack events in order across simulated disconnects.
 #[tokio::test]
 async fn sse_backpressure_sc002_reconnect_resume_preserves_order() {
     let harness = test_support::test_harness_with_config_and_mock(
@@ -311,13 +305,13 @@ async fn sse_backpressure_sc002_reconnect_resume_preserves_order() {
     let bus_execution_id = harness.first_execution_id();
 
     let session_id = "sc002-resume";
-    let (status, body) = post_execute_stream(
-        app.clone(),
-        &test_support::single_ask_air(),
-        session_id,
-    )
-    .await;
-    assert_eq!(status, StatusCode::OK, "baseline execute stream failed: {body}");
+    let (status, body) =
+        post_execute_stream(app.clone(), &test_support::single_ask_air(), session_id).await;
+    assert_eq!(
+        status,
+        StatusCode::OK,
+        "baseline execute stream failed: {body}"
+    );
 
     let frames = parse_sse_frames(&body);
     let execution_id = execution_id_from_sse(&frames)

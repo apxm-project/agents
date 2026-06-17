@@ -152,8 +152,7 @@ async fn lookup_thread(paths: &RolloutPaths, thread_id: &str) -> Result<ThreadIn
 
 /// `apxm rollout archive <thread_id>` — bundle the rollout JSONL +
 /// referenced blobs + (optionally) the source skill into a `.tar.gz`.
-/// The output is the air-gapped reproducibility envelope described in
-///.1 of the plan.
+/// The output is an air-gapped reproducibility envelope.
 pub async fn rollout_archive_command(opts: RolloutArchiveOptions) -> Result<PathBuf> {
     let paths = resolve_paths(opts.home);
     let entry = lookup_thread(&paths, &opts.thread_id).await?;
@@ -223,4 +222,3 @@ fn append_file<W: std::io::Write>(
         .with_context(|| format!("failed to append {} as {name}", path.display()))?;
     Ok(())
 }
-

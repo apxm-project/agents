@@ -1119,4 +1119,3 @@ fn non_empty(value: &str) -> Option<&str> {
 fn path_to_string(path: PathBuf) -> String {
     path.to_string_lossy().to_string()
 }
-

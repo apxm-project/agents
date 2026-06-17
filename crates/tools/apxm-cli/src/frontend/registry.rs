@@ -267,4 +267,3 @@ pub fn emission_specs() -> Vec<FrontendEmissionSpec> {
 fn category_label(category: OperationCategory) -> &'static str {
     crate::commands::implementations::category_str(category)
 }
-

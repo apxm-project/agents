@@ -272,14 +272,14 @@ impl SchedulerState {
     }
 
     /// Re-arm the in-graph conversation loop after a `recv` node woke with a
-    /// user message — the native-loop keystone (US1/T022).
+    /// user message.
     ///
     /// Splices a fresh turn sub-DAG whose `turn_input_token` is connected to the
     /// woken `message_token`, plus a `fresh_recv` node (no inputs → becomes ready
     /// and re-parks for the next message), into the live execution in ONE splice.
     /// Consequences:
     /// - each user turn runs its OWN spliced sub-DAG; prior turns are never
-    ///   re-executed (SC-007 / FR-012);
+    ///   re-executed;
     /// - the loop continues because the fresh recv re-arms;
     /// - it is pure composition over [`Self::splice_dag`], so the fire-once and
     ///   `remaining`-count invariants (the park/wake suite) are preserved — no new
@@ -288,7 +288,7 @@ impl SchedulerState {
     /// `fresh_recv` MUST carry a node id unique within `turn_dag`; both are
     /// offset away from live IDs by the splice.
     ///
-    /// `carry_connections` carries per-turn session state across re-arms (T023):
+    /// `carry_connections` carries per-turn session state across re-arms:
     /// each entry maps an inner turn-body input token → a live token holding
     /// prior state (e.g. the running history/summary token produced by the
     /// previous turn). This threads cross-turn memory through spliced token
@@ -321,7 +321,7 @@ impl SchedulerState {
     /// turn flow (`<turn_agent>.<turn_flow>`) with the woken user message bound
     /// to its reserved `turn_param` (constitution #6), and (2) a fresh recv node
     /// (a clone of `recv_node`) that re-parks on the session key — so the next
-    /// user message drives another turn. Prior turns are never re-run (SC-007).
+    /// user message drives another turn. Prior turns are never re-run.
     pub fn rearm_session_turn(
         &self,
         message_token: TokenId,

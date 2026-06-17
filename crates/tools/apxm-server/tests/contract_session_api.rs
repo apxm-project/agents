@@ -1,4 +1,4 @@
-//! Session API contract tests (spec 0002 US5 / SC-006, SC-003).
+//! Session API contract tests.
 
 mod contract;
 
@@ -23,8 +23,7 @@ async fn get_json(app: &Router, path: &str) -> (StatusCode, serde_json::Value) {
     let resp = app.clone().oneshot(req).await.unwrap();
     let status = resp.status();
     let bytes = resp.into_body().collect().await.unwrap().to_bytes();
-    let json: serde_json::Value =
-        serde_json::from_slice(&bytes).unwrap_or(serde_json::Value::Null);
+    let json: serde_json::Value = serde_json::from_slice(&bytes).unwrap_or(serde_json::Value::Null);
     (status, json)
 }
 
@@ -117,10 +116,12 @@ async fn session_status_matches_openapi_shape() {
     assert!(json["turn_count"].is_number());
     assert!(json["ledger"].is_object());
     assert_eq!(json["ledger"]["turn_cap"], 5);
-    assert!(json["ledger"]["grants"]
-        .as_array()
-        .expect("grants array")
-        .contains(&serde_json::json!("read_file")));
+    assert!(
+        json["ledger"]["grants"]
+            .as_array()
+            .expect("grants array")
+            .contains(&serde_json::json!("read_file"))
+    );
 }
 
 #[tokio::test]
@@ -182,11 +183,7 @@ async fn list_session_events_after_execute_stream() {
     let status = post_execute_stream(&app, session_id).await;
     assert_eq!(status, StatusCode::OK);
 
-    let (status, json) = get_json(
-        &app,
-        &format!("/v1/sessions/{session_id}/events?since=0"),
-    )
-    .await;
+    let (status, json) = get_json(&app, &format!("/v1/sessions/{session_id}/events?since=0")).await;
     assert_eq!(status, StatusCode::OK);
     assert_eq!(json["session_id"], session_id);
     assert!(json["events"].as_array().expect("events").len() > 0);
@@ -207,7 +204,10 @@ async fn stream_session_events_returns_sse() {
     )
     .await;
     assert_eq!(status, StatusCode::OK);
-    assert!(body.contains("data:"), "expected SSE data frames, got: {body}");
+    assert!(
+        body.contains("data:"),
+        "expected SSE data frames, got: {body}"
+    );
 }
 
 #[tokio::test]

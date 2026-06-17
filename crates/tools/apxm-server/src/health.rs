@@ -1,5 +1,6 @@
 use axum::Json;
 use axum::extract::State;
+use std::collections::HashSet;
 
 use crate::state::AppState;
 use crate::types::responses::{
@@ -41,30 +42,47 @@ pub(crate) async fn list_models(State(state): State<AppState>) -> Json<ModelList
 /// `GET /v1/backends` — the live backend registry with the model ids each
 /// backend serves, projected to non-secret fields.
 ///
-/// Sourced from the same [`apxm_credentials::BackendStore`] the runtime loads
-/// its backends from, so a client that compiles graphs (apxm-studio) can pin
-/// the exact backends the runtime will dispatch to — no duplicate, drifting
-/// registry. Credentials (`api_key`, `headers`, `endpoint`) are deliberately
-/// never serialized.
-pub(crate) async fn list_backends(State(_state): State<AppState>) -> Json<BackendList> {
-    let data = match apxm_credentials::BackendStore::open().and_then(|store| store.list()) {
-        Ok(backends) => backends
-            .into_iter()
-            .map(|backend| BackendEntry {
-                name: backend.name,
-                protocol: backend.protocol.as_str().to_string(),
-                models: backend
-                    .models
-                    .into_iter()
-                    .map(|model| BackendModelEntry { id: model.id })
-                    .collect(),
-            })
-            .collect(),
-        Err(e) => {
-            tracing::warn!(error = %e, "failed to read backend store for /v1/backends");
-            Vec::new()
+/// Sourced from the credential store plus the live runtime registry, so clients
+/// can see env-provided dev backends as well as stored provider credentials.
+/// Credentials (`api_key`, `headers`, `endpoint`) are deliberately never
+/// serialized.
+pub(crate) async fn list_backends(State(state): State<AppState>) -> Json<BackendList> {
+    let mut seen = HashSet::new();
+    let mut data: Vec<BackendEntry> =
+        match apxm_credentials::BackendStore::open().and_then(|store| store.list()) {
+            Ok(backends) => backends
+                .into_iter()
+                .map(|backend| BackendEntry {
+                    name: backend.name.clone(),
+                    protocol: backend.protocol.as_str().to_string(),
+                    models: backend
+                        .models
+                        .into_iter()
+                        .map(|model| BackendModelEntry { id: model.id })
+                        .collect(),
+                })
+                .inspect(|backend| {
+                    seen.insert(backend.name.clone());
+                })
+                .collect(),
+            Err(e) => {
+                tracing::warn!(error = %e, "failed to read backend store for /v1/backends");
+                Vec::new()
+            }
+        };
+    for name in state.runtime.llm_registry().backend_names() {
+        if seen.insert(name.clone()) {
+            data.push(BackendEntry {
+                protocol: if name == "mock" {
+                    "mock".to_string()
+                } else {
+                    "runtime".to_string()
+                },
+                models: vec![BackendModelEntry { id: name.clone() }],
+                name,
+            });
         }
-    };
+    }
     Json(BackendList {
         object: "list",
         data,

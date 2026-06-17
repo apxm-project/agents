@@ -138,8 +138,10 @@ fn rollup_programs(records: Vec<ExecutionRecord>, now: u64) -> Vec<ProgramFleetE
             .or_default()
             .observe(record, now);
     }
-    let mut entries: Vec<ProgramFleetEntry> =
-        by_program.into_values().map(ProgramAccumulator::finish).collect();
+    let mut entries: Vec<ProgramFleetEntry> = by_program
+        .into_values()
+        .map(ProgramAccumulator::finish)
+        .collect();
     // Most recently active program first.
     entries.sort_by_key(|entry| std::cmp::Reverse(entry.last_started_at_ms));
     entries
@@ -180,7 +182,9 @@ impl ProgramAccumulator {
     fn finish(self) -> ProgramFleetEntry {
         // `run_count >= 1` always holds here (an accumulator only exists once a
         // record was observed), so `last` is present.
-        let last = self.last.expect("program accumulator has at least one record");
+        let last = self
+            .last
+            .expect("program accumulator has at least one record");
         let last_uptime_ms = last
             .completed_at_ms
             .map(|done| done.saturating_sub(last.started_at_ms));
@@ -309,7 +313,14 @@ mod tests {
     #[test]
     fn rollup_groups_runs_and_tracks_latest_and_stop_reason() {
         let records = vec![
-            record("e1", "writer", ExecutionStatus::Succeeded, 100, Some(150), None),
+            record(
+                "e1",
+                "writer",
+                ExecutionStatus::Succeeded,
+                100,
+                Some(150),
+                None,
+            ),
             record(
                 "e2",
                 "writer",
@@ -345,7 +356,14 @@ mod tests {
 
     #[test]
     fn raw_runs_with_empty_skill_id_are_skipped() {
-        let records = vec![record("e1", "", ExecutionStatus::Succeeded, 100, Some(150), None)];
+        let records = vec![record(
+            "e1",
+            "",
+            ExecutionStatus::Succeeded,
+            100,
+            Some(150),
+            None,
+        )];
         assert!(rollup_programs(records, 200).is_empty());
     }
 }

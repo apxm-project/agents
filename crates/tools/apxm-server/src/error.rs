@@ -77,9 +77,7 @@ impl ApiError {
         Self {
             status: typed.http_status(),
             message: typed.message.clone(),
-            code: Some(
-                ApiFaultCode::from_wire(&typed.code).unwrap_or(ApiFaultCode::RuntimeError),
-            ),
+            code: Some(ApiFaultCode::from_wire(&typed.code).unwrap_or(ApiFaultCode::RuntimeError)),
             recovery_hint: typed.recovery_hint.clone(),
         }
     }

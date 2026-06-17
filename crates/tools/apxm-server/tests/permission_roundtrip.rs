@@ -1,4 +1,4 @@
-//! Permission round-trip fixture (spec 0002 US4 / SC-005).
+//! Permission round-trip fixture.
 
 use std::collections::HashMap;
 use std::time::Duration;
@@ -45,9 +45,10 @@ async fn sc005_permission_roundtrip_approve_and_session_grant() {
         })
         .expect("permission event on stream");
     assert!(
-        emitter.events().iter().any(|e| {
-            e.kind().name() == event_kind::APPROVAL_REQUEST.name()
-        }),
+        emitter
+            .events()
+            .iter()
+            .any(|e| { e.kind().name() == event_kind::APPROVAL_REQUEST.name() }),
         "SC-005: stream emits permission event before proceed"
     );
 

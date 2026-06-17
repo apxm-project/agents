@@ -1,7 +1,7 @@
-//! Session-scoped approval grant cache (spec 0002 US4 / T051).
+//! Session-scoped approval grant cache.
 //!
 //! Maps `(session_id, capability + args fingerprint)` to a cached allow decision
-//! so "approve for session" suppresses repeat prompts (FR-007, SC-005).
+//! so "approve for session" suppresses repeat prompts.
 
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex, OnceLock};

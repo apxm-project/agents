@@ -1,4 +1,4 @@
-//! Server-driven permission prompts (spec 0002 US4 / T050).
+//! Server-driven permission prompts.
 //!
 //! Emits permission events on the run stream, blocks tool execution until the
 //! client responds on `POST /v1/permissions/{id}/respond`, and records session
@@ -18,8 +18,8 @@ use axum::Json;
 use axum::extract::Path;
 use dashmap::DashMap;
 use serde::{Deserialize, Serialize};
-use utoipa::ToSchema;
 use tokio::sync::{Mutex, Notify};
+use utoipa::ToSchema;
 
 use crate::error::ApiError;
 use crate::helpers::now_ms;
@@ -124,13 +124,16 @@ impl PermissionRegistry {
         if keys.is_empty() {
             return "(no args)".to_string();
         }
-        keys.into_iter().map(|k| k.as_str()).collect::<Vec<_>>().join(", ")
+        keys.into_iter()
+            .map(|k| k.as_str())
+            .collect::<Vec<_>>()
+            .join(", ")
     }
 
     /// Emit a permission event and block until the client responds or times out.
     ///
     /// Returns immediately with [`PermissionOutcome::Approved`] when a session
-    /// grant cache hit suppresses the prompt (SC-005).
+    /// grant cache hit suppresses the prompt.
     pub async fn block_for_permission(
         &self,
         execution_id: &str,
@@ -258,7 +261,7 @@ impl PermissionRegistry {
             return PermissionOutcome::Denied;
         };
 
-        if let Ok(mut guard) = entry.outcome.try_lock()
+        if let Ok(guard) = entry.outcome.try_lock()
             && guard.is_some()
         {
             return guard.clone().unwrap_or(PermissionOutcome::Denied);
@@ -341,11 +344,7 @@ pub fn emit_permission_resolved(
         approval_id: permission_id.to_string(),
         decision: decision.to_string(),
     };
-    emitter.emit(ApxmEvent::root(
-        payload,
-        EventSource::Server,
-        execution_id,
-    ));
+    emitter.emit(ApxmEvent::root(payload, EventSource::Server, execution_id));
 }
 
 /// Axum handler for `POST /v1/permissions/{permission_id}/respond`.
@@ -353,9 +352,8 @@ pub async fn respond_permission(
     Path(permission_id): Path<String>,
     Json(body): Json<PermissionResponse>,
 ) -> Result<Json<OkAck>, ApiError> {
-    respond_permission_with_registry(&permission_id, body, &PermissionRegistry::global()).map(
-        |()| Json(OkAck::new()),
-    )
+    respond_permission_with_registry(&permission_id, body, &PermissionRegistry::global())
+        .map(|()| Json(OkAck::new()))
 }
 
 /// Apply a client reply without exposing internal HTTP error types (tests/clients).
@@ -485,13 +483,7 @@ mod tests {
 
         let waiter = tokio::spawn(async move {
             registry_c
-                .block_for_permission(
-                    "exec-deny",
-                    None,
-                    "bash",
-                    &HashMap::new(),
-                    &emitter_c,
-                )
+                .block_for_permission("exec-deny", None, "bash", &HashMap::new(), &emitter_c)
                 .await
         });
 

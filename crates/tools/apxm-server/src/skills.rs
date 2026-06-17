@@ -24,7 +24,7 @@ use serde::{Deserialize, Serialize};
 use tokio::sync::mpsc;
 
 use crate::error::ApiError;
-use crate::execute::{acquire_admission, ExecuteResponse, to_execute_response};
+use crate::execute::{ExecuteResponse, acquire_admission, to_execute_response};
 use crate::executions::{ExecutionRecordingEmitter, IdempotencyClaim};
 use crate::rollout::{RolloutEmitter, session_meta_from_skill};
 use crate::runs::RunBusFanOutEmitter;
@@ -488,7 +488,9 @@ fn token_values_for_replay(
 /// Full launch metadata for a prepared execution: the side-effect-policy seed,
 /// optional admission id (releases the inference slot while parked), and any
 /// internal `extra_metadata` (e.g. the `rerun-from-node` replay seed).
-fn launch_metadata(prepared: &PreparedCompiledExecution) -> std::collections::HashMap<String, String> {
+fn launch_metadata(
+    prepared: &PreparedCompiledExecution,
+) -> std::collections::HashMap<String, String> {
     let mut map = side_effect_policy_metadata(prepared.side_effect_policy.as_deref());
     if let Some(admission_id) = &prepared.admission_id {
         map.insert(
@@ -496,7 +498,12 @@ fn launch_metadata(prepared: &PreparedCompiledExecution) -> std::collections::Ha
             admission_id.clone(),
         );
     }
-    map.extend(prepared.extra_metadata.iter().map(|(k, v)| (k.clone(), v.clone())));
+    map.extend(
+        prepared
+            .extra_metadata
+            .iter()
+            .map(|(k, v)| (k.clone(), v.clone())),
+    );
     map
 }
 
@@ -649,8 +656,11 @@ async fn run_detached_skill_body(state: AppState, mut prepared: PreparedCompiled
     );
     emit_recorded_run_event(&state, &prepared.execution_id, started_event);
 
-    let event_sinks =
-        build_skill_event_sinks(&state, &prepared.execution_id, /*include_channel*/ None);
+    let event_sinks = build_skill_event_sinks(
+        &state,
+        &prepared.execution_id,
+        /*include_channel*/ None,
+    );
     let emitter = Arc::new(
         apxm_runtime::EmitterAdapter::new(
             Arc::new(apxm_core::events::FanOutEmitter::new(event_sinks)),
@@ -674,17 +684,16 @@ async fn run_detached_skill_body(state: AppState, mut prepared: PreparedCompiled
             metadata,
         );
 
-    let result = match await_skill_execution(&state, &execution_id, timeout_ms, runtime_execution)
-        .await
-    {
-        Ok(result) => result,
-        Err(_) => {
-            // `await_skill_execution` already settled the record as failed.
-            apxm_runtime::scheduler::admission_registry::unregister(&admission_id);
-            state.rollout_registry.close(&execution_id).await;
-            return;
-        }
-    };
+    let result =
+        match await_skill_execution(&state, &execution_id, timeout_ms, runtime_execution).await {
+            Ok(result) => result,
+            Err(_) => {
+                // `await_skill_execution` already settled the record as failed.
+                apxm_runtime::scheduler::admission_registry::unregister(&admission_id);
+                state.rollout_registry.close(&execution_id).await;
+                return;
+            }
+        };
 
     apxm_runtime::scheduler::admission_registry::unregister(&admission_id);
 
@@ -1903,10 +1912,10 @@ fn skill_lookup_error(error: SkillLookupError) -> ApiError {
 
 #[cfg(test)]
 mod scale_tests {
-    //! Unit coverage for the US4 (server scale) seams: the resolution cache that
-    //! lets a hot delivery skip the full skill-root scan (T026) and the
+    //! Unit coverage for server scale seams: the resolution cache that lets a
+    //! hot delivery skip the full skill-root scan and the
     //! `ADMISSION_ID` stamping that lets a parked skill run release its inference
-    //! slot (T025).
+    //! slot.
     use super::*;
     use apxm_artifact::{Artifact, ArtifactMetadata};
 
@@ -1963,7 +1972,9 @@ mod scale_tests {
         // mismatch must invalidate the cache and force a fresh scan.
         let bytes_v2 = b"artifact-v2-different";
         write_min_skill(&root, "pkg", "scale-skill", "0.3.0", bytes_v2);
-        let refreshed = lib.find_executable("scale-skill").expect("refreshed resolve");
+        let refreshed = lib
+            .find_executable("scale-skill")
+            .expect("refreshed resolve");
         assert_eq!(
             refreshed.record.version.as_deref(),
             Some("0.3.0"),

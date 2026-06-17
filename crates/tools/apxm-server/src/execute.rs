@@ -170,10 +170,7 @@ pub(crate) async fn compile_artifact(
     let caps = registered_capability_names(&state);
     let bytes = air_to_artifact_bytes_with_caps(&req.air, &caps)?;
     Ok((
-        [(
-            axum::http::header::CONTENT_TYPE,
-            "application/octet-stream",
-        )],
+        [(axum::http::header::CONTENT_TYPE, "application/octet-stream")],
         bytes,
     )
         .into_response())
@@ -349,8 +346,8 @@ pub(crate) async fn execute_stream(
     // Seed the per-session runtime ledger (turn caps / tool budgets / grants)
     // keyed by session_id and register the session→execution mapping, so the
     // runtime owns per-session limits and the turn-input endpoint can find this
-    // session's long-lived execution (T014/T031, constitution #2). Idempotent
-    // across re-armed turns of the same session.
+    // session's long-lived execution. Idempotent across re-armed turns of the
+    // same session.
     if let Some(sid) = &session_id {
         apxm_runtime::executor::session_ledger::seed(
             sid,
@@ -360,7 +357,9 @@ pub(crate) async fn execute_stream(
                 admit.iter().cloned().collect(),
             ),
         );
-        state.session_registry.register(sid.clone(), execution_id.clone());
+        state
+            .session_registry
+            .register(sid.clone(), execution_id.clone());
     }
     let cancel = Arc::new(Notify::new());
     state
@@ -380,8 +379,7 @@ pub(crate) async fn execute_stream(
     // together. Mirrors the skill path's `ensure_rollout_open`.
     let rollout_session_id = session_id.clone();
     let rollout_recording = if let Some(sid) = rollout_session_id.as_deref() {
-        let session_meta =
-            crate::rollout::session_meta_from_chat(&execution_id, sid, args.clone());
+        let session_meta = crate::rollout::session_meta_from_chat(&execution_id, sid, args.clone());
         let recorder = state
             .rollout_registry
             .open_for_run(
@@ -447,9 +445,8 @@ pub(crate) async fn execute_stream(
             &trace_id,
         ))
         .await;
-        let mut downstream: Vec<Arc<dyn apxm_core::events::EventEmitter>> = vec![Arc::new(
-            TokioChannelEmitter::new(tx_task.clone()),
-        )];
+        let mut downstream: Vec<Arc<dyn apxm_core::events::EventEmitter>> =
+            vec![Arc::new(TokioChannelEmitter::new(tx_task.clone()))];
         if rollout_recording {
             downstream.push(Arc::new(crate::rollout::RolloutEmitter::new(
                 rollout_registry.clone(),
@@ -537,11 +534,11 @@ pub(crate) async fn execute_stream(
             yield Ok(Event::default().event(item.kind().name()).id(id).data(data));
         }
     };
-    Ok(Sse::new(stream).keep_alive(
-        axum::response::sse::KeepAlive::new().interval(std::time::Duration::from_secs(
-            stream_config.keep_alive_secs.max(1),
+    Ok(
+        Sse::new(stream).keep_alive(axum::response::sse::KeepAlive::new().interval(
+            std::time::Duration::from_secs(stream_config.keep_alive_secs.max(1)),
         )),
-    ))
+    )
 }
 
 /// The validated, destructured parts of an execute request.
@@ -823,10 +820,7 @@ pub(crate) fn python_artifacts_trusted() -> bool {
 /// sidecar to the compiled artifact as a `python_tools` section so the runtime
 /// builds the (sandboxed) python bridge from it. No-op when untrusted or absent
 /// — the server then stays python-free and the admission guard rejects handlers.
-pub(crate) fn attach_trusted_python_section(
-    artifact: &mut Artifact,
-    sidecar: Option<Vec<u8>>,
-) {
+pub(crate) fn attach_trusted_python_section(artifact: &mut Artifact, sidecar: Option<Vec<u8>>) {
     if let Some(data) = sidecar
         && python_artifacts_trusted()
     {
@@ -1095,7 +1089,7 @@ fn parse_string_array_attr(node: &Node, attr_name: &str) -> Option<Vec<String>> 
         })
 }
 
-/// Dispatch-time credential resolution (apxm-auth M9, F12/F13). Opt-in via
+/// Dispatch-time credential resolution. Opt-in via
 /// `APXM_RESOLVE_CREDENTIALS`: walk `inv_tool` nodes whose `params_json` carries
 /// a `credential` connection id, resolve it through apxm-auth, and inject
 /// `headers.Authorization = "Bearer <token>"` (dropping the bare id) so the

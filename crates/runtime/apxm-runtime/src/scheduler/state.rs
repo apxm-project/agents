@@ -1167,7 +1167,7 @@ mod tests {
         assert_eq!(t.value.clone(), Some(Value::String("resumed".into())));
     }
 
-    /// T022 keystone spike: a parked recv, on wake, splices a fresh turn sub-DAG
+    /// A parked recv, on wake, splices a fresh turn sub-DAG
     /// (consuming the user message) AND re-arms a fresh recv — proving the native
     /// conversation loop composes from `splice_turn_and_rearm` + `wake_parked_node`
     /// with the park/wake invariants intact (no node re-execution; remaining and
@@ -1233,7 +1233,7 @@ mod tests {
 
         // The turn body (consuming the message) and the fresh recv (re-arm) are
         // both scheduled; the completed anchor (node 1) is NOT re-enqueued
-        // (no prior-turn recompute — SC-007). Splice offsets ids by max+1 (=2):
+        // (no prior-turn recompute). Splice offsets ids by max+1 (=2):
         // turn 1->3, fresh recv 2->4.
         let queued = drain_queue(&state);
         assert!(
@@ -1247,7 +1247,7 @@ mod tests {
         assert!(queued.contains(&4), "fresh recv re-armed (ready)");
     }
 
-    /// T023: per-turn session state (history/summary) carries across re-arms via
+    /// Per-turn session state (history/summary) carries across re-arms via
     /// spliced token connections — the new turn body consumes a live state token
     /// produced before the re-arm, without re-running anything.
     #[test]

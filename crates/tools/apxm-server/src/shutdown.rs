@@ -1,21 +1,22 @@
 //! Graceful shutdown coordination: track in-flight HTTP work and signal drain.
 
 use std::sync::Arc;
-use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::time::Duration;
 
+use axum::Json;
 use axum::body::Body;
 use axum::http::Request;
+use axum::http::StatusCode;
 use axum::middleware::Next;
-use axum::response::Response;
-use tokio::sync::Notify;
+use axum::response::{IntoResponse, Response};
 use tracing::warn;
 
 /// Tracks in-flight HTTP handlers and exposes a drain barrier.
 #[derive(Clone, Default)]
 pub(crate) struct ShutdownCoordinator {
     in_flight: Arc<AtomicUsize>,
-    draining: Arc<Notify>,
+    draining: Arc<AtomicBool>,
 }
 
 impl ShutdownCoordinator {
@@ -32,6 +33,10 @@ impl ShutdownCoordinator {
 
     pub(crate) fn in_flight(&self) -> usize {
         self.in_flight.load(Ordering::SeqCst)
+    }
+
+    pub(crate) fn is_draining(&self) -> bool {
+        self.draining.load(Ordering::SeqCst)
     }
 
     /// Wait until all tracked HTTP handlers complete or timeout elapses.
@@ -53,7 +58,7 @@ impl ShutdownCoordinator {
     }
 
     pub(crate) fn signal_drain(&self) {
-        self.draining.notify_waiters();
+        self.draining.store(true, Ordering::SeqCst);
     }
 }
 
@@ -73,6 +78,17 @@ pub(crate) async fn track_in_flight(
     req: Request<Body>,
     next: Next,
 ) -> Response {
+    if coordinator.is_draining() {
+        return (
+            StatusCode::SERVICE_UNAVAILABLE,
+            Json(serde_json::json!({
+                "class": "server_fault",
+                "code": "server_draining",
+                "message": "server is draining in-flight requests"
+            })),
+        )
+            .into_response();
+    }
     let _guard = coordinator.track_request();
     next.run(req).await
 }

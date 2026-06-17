@@ -38,9 +38,9 @@ mod rollout;
 mod routes;
 mod runs;
 mod runtime_setup;
+mod safety;
 mod search_skills;
 mod sessions;
-mod safety;
 mod shutdown;
 mod skill_resources;
 mod skills;
@@ -56,6 +56,7 @@ mod workflow_source;
 mod tests;
 
 pub(crate) use app::build_app;
+#[cfg(test)]
 pub(crate) use startup::build_server_runtime;
 
 /// Canonical default port for the APXM server.
@@ -77,7 +78,10 @@ pub fn run() -> anyhow::Result<()> {
 async fn async_main(server_config: apxm_driver::ServerConfig) -> anyhow::Result<()> {
     let log_filter = log_filter(&server_config);
     match observability::init_tracing_subscriber(&server_config.observability, &log_filter) {
-        Ok(_exporter) => {}
+        Ok(Some(exporter)) => {
+            tracing::info!(endpoint = %exporter.endpoint(), "OTLP exporter configured");
+        }
+        Ok(None) => {}
         Err(error) => observability::warn_init_failure(&error),
     }
 

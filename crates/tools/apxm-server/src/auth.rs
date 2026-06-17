@@ -173,4 +173,3 @@ pub(crate) async fn require_bearer(
         .insert(PrincipalId::from_bearer(&presented));
     next.run(req).await
 }
-

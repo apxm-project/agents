@@ -382,7 +382,7 @@ pub(crate) struct StreamUsagePayload {
     pub(crate) usage: StreamUsage,
 }
 
-/// Typed fault envelope on SSE `error` event streams (spec 0002 US3).
+/// Typed fault envelope on SSE `error` event streams.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub(crate) struct StreamErrorBody {
     pub(crate) class: FaultClass,

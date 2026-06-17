@@ -1185,9 +1185,9 @@ fn assert_complete_skill_record(record: &serde_json::Value, fixture: &SkillFixtu
 // ────────────────────────────────────────────────────────────────────
 mod session_history_tests {
     use super::*;
+    use crate::rollout::{RolloutEmitter, session_meta_from_chat};
     use apxm_core::events::payload::{LlmPromptPayload, RedactedContent, TokenPayload};
     use apxm_core::events::{ApxmEvent, EventEmitter, EventSource};
-    use crate::rollout::{RolloutEmitter, session_meta_from_chat};
 
     fn single_ask_air() -> String {
         // One ASK node: drives the mock backend so the runtime emits a real
@@ -1263,7 +1263,10 @@ mod session_history_tests {
         let app = crate::build_app(state.clone());
         let session_id = "chat-sess-order";
 
-        for (turn, reply) in [("exec-turn-1", "first reply"), ("exec-turn-2", "second reply")] {
+        for (turn, reply) in [
+            ("exec-turn-1", "first reply"),
+            ("exec-turn-2", "second reply"),
+        ] {
             let meta = session_meta_from_chat(turn, session_id, Vec::new());
             state
                 .rollout_registry
@@ -1297,8 +1300,7 @@ mod session_history_tests {
             state.rollout_registry.close(turn).await;
         }
 
-        let (status, hist) =
-            get_json(app, &crate::routes::session_history_path(session_id)).await;
+        let (status, hist) = get_json(app, &crate::routes::session_history_path(session_id)).await;
         assert_eq!(status, StatusCode::OK);
         let messages = hist["messages"].as_array().expect("messages array");
         // Expect: user, assistant(first), user, assistant(second) — in turn order.
@@ -1306,7 +1308,11 @@ mod session_history_tests {
             .iter()
             .map(|m| m["role"].as_str().unwrap_or_default())
             .collect();
-        assert_eq!(roles, vec!["user", "assistant", "user", "assistant"], "{messages:?}");
+        assert_eq!(
+            roles,
+            vec!["user", "assistant", "user", "assistant"],
+            "{messages:?}"
+        );
         let assistant_contents: Vec<&str> = messages
             .iter()
             .filter(|m| m["role"] == "assistant")
@@ -1341,8 +1347,11 @@ mod session_history_tests {
         .await;
         assert_eq!(status, StatusCode::OK, "execute_stream body: {body}");
 
-        let (status, hist) =
-            get_json(app.clone(), &crate::routes::session_history_path(session_id)).await;
+        let (status, hist) = get_json(
+            app.clone(),
+            &crate::routes::session_history_path(session_id),
+        )
+        .await;
         assert_eq!(status, StatusCode::OK);
         let messages = hist["messages"].as_array().expect("messages array");
 
@@ -1357,17 +1366,21 @@ mod session_history_tests {
             1,
             "expected exactly one user turn (no duplicate), got: {messages:?}"
         );
-        assert_eq!(user_turns[0], real_prompt, "user turn must be the real text");
+        assert_eq!(
+            user_turns[0], real_prompt,
+            "user turn must be the real text"
+        );
         assert!(
             !user_turns[0].contains("text(chars="),
             "user turn must not be the redaction summary, got: {messages:?}"
         );
         // Assistant reply is still faithful.
         assert!(
-            messages
-                .iter()
-                .any(|m| m["role"] == "assistant"
-                    && m["content"].as_str().unwrap_or_default().contains("hello there")),
+            messages.iter().any(|m| m["role"] == "assistant"
+                && m["content"]
+                    .as_str()
+                    .unwrap_or_default()
+                    .contains("hello there")),
             "assistant reply should still be present, got: {messages:?}"
         );
     }

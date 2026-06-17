@@ -998,4 +998,3 @@ fn rpc_error(code: i64, message: impl Into<String>) -> Value {
         "message": message.into(),
     })
 }
-

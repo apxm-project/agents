@@ -1,7 +1,7 @@
 //! Workflow-authoring built-ins: `compose_workflow` and `run_workflow`.
 //!
 //! These let the conversational agent CREATE and RUN workflows first-class
-//! (Goal 1) without the operator shelling commands. They are write-class (not
+//! without the operator shelling commands. They are write-class (not
 //! read-only) and live in the `authoring` group, which the server's ASK-exposure
 //! check admits as a deliberate, admit-gated, confined exception (workflow-scoped
 //! admission): the agent may *propose* them, but *executing* them still requires

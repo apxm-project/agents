@@ -138,8 +138,11 @@ pub(crate) async fn rerun_from_node(
     // computes the descendant set of `from_node` itself and pre-completes the
     // upstream nodes from these values. When no values were persisted, fall back
     // to a full re-run.
-    let from_node_supported =
-        build_replay_metadata(req.from_node, &record.token_values, &mut req.base.extra_metadata);
+    let from_node_supported = build_replay_metadata(
+        req.from_node,
+        &record.token_values,
+        &mut req.base.extra_metadata,
+    );
 
     let skill_result = rerun_skill(&state, &record, &req.base).await?;
     Ok(Json(RerunResponse {
@@ -254,7 +257,10 @@ fn build_replay_metadata(
 /// The set of node ids that appeared in the prior run's graph (from its recorded
 /// `operation_start` events). Empty when no events are available — callers treat
 /// an empty set as "cannot validate" rather than "node unknown".
-async fn prior_run_node_ids(state: &AppState, execution_id: &str) -> std::collections::HashSet<u64> {
+async fn prior_run_node_ids(
+    state: &AppState,
+    execution_id: &str,
+) -> std::collections::HashSet<u64> {
     use apxm_core::events::payload::OperationStartPayload;
     crate::runs::events_for_run(state, execution_id)
         .await
@@ -297,7 +303,10 @@ mod tests {
         let mut metadata = HashMap::new();
         let supported = build_replay_metadata(2, &token_values, &mut metadata);
 
-        assert!(supported, "token values present -> partial replay supported");
+        assert!(
+            supported,
+            "token values present -> partial replay supported"
+        );
         assert_eq!(
             metadata.get(apxm_runtime::metadata_keys::REPLAY_FROM_NODE),
             Some(&"2".to_string())
@@ -345,16 +354,14 @@ mod tests {
         let from_node: u64 = metadata[apxm_runtime::metadata_keys::REPLAY_FROM_NODE]
             .parse()
             .unwrap();
-        let raw: HashMap<String, Value> = serde_json::from_str(
-            &metadata[apxm_runtime::metadata_keys::REPLAY_TOKEN_VALUES],
-        )
-        .unwrap();
+        let raw: HashMap<String, Value> =
+            serde_json::from_str(&metadata[apxm_runtime::metadata_keys::REPLAY_TOKEN_VALUES])
+                .unwrap();
         let prior: HashMap<u64, Value> = raw
             .into_iter()
             .map(|(k, v)| (k.parse().unwrap(), v))
             .collect();
-        let seed =
-            apxm_runtime::scheduler::ReplaySeed::compute(&dag, from_node, &prior).unwrap();
+        let seed = apxm_runtime::scheduler::ReplaySeed::compute(&dag, from_node, &prior).unwrap();
 
         // Upstream node 1 is NOT re-executed; 2 and 3 are.
         assert!(
@@ -666,11 +673,13 @@ timeout_ms = 30000
 
             // (b) The server honored a genuine partial replay.
             assert_eq!(
-                body["from_node_supported"], serde_json::Value::Bool(true),
+                body["from_node_supported"],
+                serde_json::Value::Bool(true),
                 "(b) prior token values were available -> partial replay supported"
             );
             assert_eq!(
-                body["partial"], serde_json::Value::Bool(true),
+                body["partial"],
+                serde_json::Value::Bool(true),
                 "(b) the rerun ran as a partial replay"
             );
             assert_eq!(body["from_node"], serde_json::json!(2));

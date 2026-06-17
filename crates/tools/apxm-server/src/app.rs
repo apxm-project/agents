@@ -8,20 +8,24 @@ use crate::a2a::{a2a_get_task, a2a_jsonrpc, a2a_send_task};
 use crate::agent::{
     agent_card, deregister_agent, get_agent, list_agents, receive_message, register_agent,
 };
-use crate::capability::{invoke_capability, list_capabilities, register_capability, rescan_capabilities};
+use crate::capability::{
+    invoke_capability, list_capabilities, register_capability, rescan_capabilities,
+};
 use crate::checkpoints::{create_checkpoint, get_checkpoint, resume_checkpoint};
 use crate::conversations::post_conversation_message;
-use crate::execute::{compile_artifact, compile_workflow, compile_workflow_stream, execute, execute_stream};
+use crate::execute::{
+    compile_artifact, compile_workflow, compile_workflow_stream, execute, execute_stream,
+};
 use crate::executions::{get_execution, get_execution_node, list_executions};
 use crate::fleet::get_fleet;
-use crate::permissions::respond_permission;
-use crate::rerun::{rerun_from_node, rerun_run};
 use crate::generate::{handle_generate, handle_generate_stream, handle_schema};
 use crate::goals::{cancel_goal, get_goal, get_goal_events_bulk, list_goals, stream_goal_events};
 use crate::health::{health, list_backends, list_models};
-use crate::metrics::scrape_metrics;
 use crate::mcp::{mcp_jsonrpc, post_goal};
 use crate::memory::{delete_fact, search_facts, store_fact};
+use crate::metrics::scrape_metrics;
+use crate::permissions::respond_permission;
+use crate::rerun::{rerun_from_node, rerun_run};
 use crate::routes::ServerRoute;
 use crate::runs::{
     cancel_run, get_run, get_run_blob, get_run_events_bulk, get_run_graph, get_run_node,
@@ -161,16 +165,13 @@ pub(crate) fn build_app(state: AppState) -> Router {
         .route(ServerRoute::RunCancel.path(), post(cancel_run))
         // Re-execute a prior run (optionally from a specific node).
         .route(ServerRoute::RunRerun.path(), post(rerun_run))
-        .route(
-            ServerRoute::RunRerunFromNode.path(),
-            post(rerun_from_node),
-        )
+        .route(ServerRoute::RunRerunFromNode.path(), post(rerun_from_node))
         // Fleet observability rollup for the studio Fleet/observability views.
         .route(ServerRoute::ObservabilityFleet.path(), get(get_fleet))
         // Durable, role-tagged chat transcript by session_id (shared across
         // the `apxm chat` CLI and studio Chat hop).
         .route(ServerRoute::SessionHistory.path(), get(get_session_history))
-        // Session control API (spec 0002): status, cancel, grants, compact, events.
+        // Session control API: status, cancel, grants, compact, events.
         .route(ServerRoute::SessionStatus.path(), get(get_session_status))
         .route(ServerRoute::SessionCancel.path(), post(cancel_session))
         .route(
@@ -178,15 +179,12 @@ pub(crate) fn build_app(state: AppState) -> Router {
             post(update_session_grants),
         )
         .route(ServerRoute::SessionCompact.path(), post(compact_session))
-        .route(
-            ServerRoute::SessionEvents.path(),
-            get(list_session_events),
-        )
+        .route(ServerRoute::SessionEvents.path(), get(list_session_events))
         .route(
             ServerRoute::SessionEventsStream.path(),
             get(stream_session_events),
         )
-        // Server-driven permission response (spec 0002).
+        // Server-driven permission response.
         .route(
             ServerRoute::PermissionRespond.path(),
             post(respond_permission),
@@ -206,8 +204,8 @@ pub(crate) fn build_app(state: AppState) -> Router {
     }
 
     router
-        // F04: opt-in, fail-closed bearer auth on mutating routes. The layer
-        // is always installed; non-loopback binds are auth-on by default.
+        // Opt-in, fail-closed bearer auth on mutating routes. The layer is
+        // always installed; non-loopback binds are auth-on by default.
         .layer(axum::middleware::from_fn_with_state(
             safety_state,
             crate::safety::rate_limit_middleware,
@@ -216,15 +214,16 @@ pub(crate) fn build_app(state: AppState) -> Router {
             shutdown,
             crate::shutdown::track_in_flight,
         ))
-        .layer(axum::middleware::from_fn(crate::metrics::record_request_middleware))
+        .layer(axum::middleware::from_fn(
+            crate::metrics::record_request_middleware,
+        ))
         .layer(axum::middleware::from_fn_with_state(
             auth_policy,
             crate::auth::require_bearer,
         ))
         .with_state(state)
-        // F04: restrictive CORS — allow loopback origins only (keeps the
-        // studio proxy working on localhost) instead of the previous
-        // `CorsLayer::permissive()` wildcard.
+        // Restrictive CORS allows loopback origins only, keeping the studio
+        // proxy working on localhost without a wildcard origin.
         .layer(loopback_cors_layer())
         .layer(TraceLayer::new_for_http())
         // Propagate X-Request-Id from clients; generate one when absent
@@ -278,4 +277,3 @@ fn is_loopback_origin(origin: &str) -> bool {
 fn register_server_event_payloads() {
     register_skill_event_payloads();
 }
-

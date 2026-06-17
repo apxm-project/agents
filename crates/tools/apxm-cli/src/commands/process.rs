@@ -388,4 +388,3 @@ fn signal_pid(pid: i32, signal: &str) -> Result<bool> {
 fn signal_pid(_pid: i32, _signal: &str) -> Result<bool> {
     anyhow::bail!("process cleanup is currently supported on Unix-like systems")
 }
-

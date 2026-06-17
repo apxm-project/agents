@@ -1,7 +1,6 @@
 //! Per-principal identity derived from validated bearer tokens (v0 single-tenant).
 
 use axum::http::Request;
-use axum::http::request::Parts;
 
 /// Stable principal fingerprint for rate limiting and structured logs.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
@@ -24,15 +23,6 @@ impl PrincipalId {
     pub(crate) fn as_str(&self) -> &str {
         &self.0
     }
-}
-
-/// Request extension key for the resolved principal.
-pub(crate) fn principal_from_parts(parts: &Parts) -> PrincipalId {
-    parts
-        .extensions
-        .get::<PrincipalId>()
-        .cloned()
-        .unwrap_or_else(PrincipalId::anonymous)
 }
 
 pub(crate) fn principal_from_request<B>(req: &Request<B>) -> PrincipalId {

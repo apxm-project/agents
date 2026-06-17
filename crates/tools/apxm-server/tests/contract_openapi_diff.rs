@@ -1,4 +1,4 @@
-//! OpenAPI contract diff-test (spec 0002 US6 / SC-007 / T082).
+//! OpenAPI contract diff-test.
 //!
 //! Ensures the `utoipa` export from apxm-server matches the checked-in contract
 //! baseline at `specs/0002-apxm-chat-thin-clients/contracts/openapi-session-v1.yaml`.
@@ -27,8 +27,7 @@ fn schema_names(doc: &Value) -> BTreeSet<String> {
 
 fn resolve_ref(doc: &Value, reference: &str) -> Option<Value> {
     let name = reference.strip_prefix("#/components/schemas/")?;
-    doc.pointer(&format!("/components/schemas/{name}"))
-        .cloned()
+    doc.pointer(&format!("/components/schemas/{name}")).cloned()
 }
 
 fn normalize_nullable(obj: &mut Map<String, Value>) {
@@ -91,10 +90,7 @@ fn normalize_operation(doc: &Value, op: &mut Map<String, Value>) {
             if let Some(response_obj) = response.as_object_mut() {
                 response_obj.remove("description");
             }
-            if let Some(content) = response
-                .get_mut("content")
-                .and_then(Value::as_object_mut)
-            {
+            if let Some(content) = response.get_mut("content").and_then(Value::as_object_mut) {
                 for media in content.values_mut() {
                     if let Some(schema) = media.get_mut("schema") {
                         normalize_schema(doc, schema);
@@ -158,8 +154,8 @@ fn comparable_paths(doc: &Value) -> Value {
 
 #[test]
 fn exported_openapi_matches_contract_baseline() {
-    let baseline = std::fs::read_to_string(contract_baseline_path())
-        .expect("contract baseline YAML exists");
+    let baseline =
+        std::fs::read_to_string(contract_baseline_path()).expect("contract baseline YAML exists");
     let exported = session_api_openapi_yaml();
 
     let baseline_doc = normalize_openapi(parse_yaml(&baseline));

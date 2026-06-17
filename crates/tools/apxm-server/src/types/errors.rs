@@ -1,4 +1,4 @@
-//! Machine-readable API fault envelopes (spec 0002 US3).
+//! Machine-readable API fault envelopes.
 //!
 //! Distinguishes **program faults** (caller/program recoverable, 4xx) from
 //! **server faults** (infrastructure/runtime, 5xx). Wire shape matches
@@ -176,7 +176,7 @@ impl TypedError {
             })
     }
 
-    /// Map a runtime execution error to a typed fault (used by `error.rs` in US3).
+    /// Map a runtime execution error to a typed fault used by `error.rs`.
     pub fn from_runtime(error: &RuntimeError) -> Self {
         match error {
             RuntimeError::InvalidTask { reason } => Self::program_fault(
@@ -184,11 +184,9 @@ impl TypedError {
                 reason.clone(),
                 Some("Fix the task payload and resubmit.".to_string()),
             ),
-            RuntimeError::SchedulerCancelled => Self::program_fault(
-                ApiFaultCode::Conflict,
-                "execution cancelled",
-                None,
-            ),
+            RuntimeError::SchedulerCancelled => {
+                Self::program_fault(ApiFaultCode::Conflict, "execution cancelled", None)
+            }
             RuntimeError::Scheduler { .. }
             | RuntimeError::SchedulerMissingToken { .. }
             | RuntimeError::SchedulerDuplicateProducer { .. }
@@ -207,11 +205,9 @@ impl TypedError {
             RuntimeError::Timeout { .. } => {
                 Self::server_fault(ApiFaultCode::Timeout, error.to_string(), None)
             }
-            RuntimeError::Security(_) => Self::program_fault(
-                ApiFaultCode::AdmissionDenied,
-                error.to_string(),
-                None,
-            ),
+            RuntimeError::Security(_) => {
+                Self::program_fault(ApiFaultCode::AdmissionDenied, error.to_string(), None)
+            }
             _ => Self::server_fault(ApiFaultCode::RuntimeError, error.to_string(), None),
         }
     }

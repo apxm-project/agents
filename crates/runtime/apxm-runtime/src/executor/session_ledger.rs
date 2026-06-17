@@ -104,9 +104,7 @@ impl SessionLedger {
 
     /// Remove capability ids from the session grant set.
     pub fn remove_grants(&self, grants: impl IntoIterator<Item = String>) {
-        let mut set = self.grants
-            .write()
-            .expect("session ledger grants poisoned");
+        let mut set = self.grants.write().expect("session ledger grants poisoned");
         for grant in grants {
             set.remove(&grant);
         }
@@ -126,8 +124,7 @@ impl SessionLedger {
 
     /// Whether the next substantive turn would exceed the session turn cap.
     pub fn would_exceed_turn_cap(&self) -> bool {
-        self.turn_cap
-            .is_some_and(|cap| self.turns_used() >= cap)
+        self.turn_cap.is_some_and(|cap| self.turns_used() >= cap)
     }
 
     pub fn turn_cap(&self) -> Option<usize> {
@@ -136,7 +133,8 @@ impl SessionLedger {
 
     /// Remaining substantive turns before the cap, if bounded.
     pub fn turns_remaining(&self) -> Option<usize> {
-        self.turn_cap.map(|cap| cap.saturating_sub(self.turns_used()))
+        self.turn_cap
+            .map(|cap| cap.saturating_sub(self.turns_used()))
     }
 }
 
@@ -153,7 +151,7 @@ pub enum TurnChargeOutcome {
 
 /// Charge one substantive turn when a session recv wakes, before re-arm delivers
 /// the user message. The recv re-arm path calls this so turn caps are enforced
-/// server-side without any host-side counting (spec 0002 US2 / SC-003).
+/// server-side without any host-side counting.
 pub fn charge_turn_for_wake(session_id: &str) -> TurnChargeOutcome {
     match get(session_id) {
         None => TurnChargeOutcome::NoLedger,
@@ -258,17 +256,17 @@ mod tests {
     #[test]
     fn charge_turn_for_wake_enforces_cap_via_registry() {
         let id = "sess-charge-wake-cap";
-        seed(id, SessionLedger::new(Some(1), HashMap::new(), HashSet::new()));
+        seed(
+            id,
+            SessionLedger::new(Some(1), HashMap::new(), HashSet::new()),
+        );
         assert_eq!(
             charge_turn_for_wake(id),
             TurnChargeOutcome::Charged(1),
             "first wake charges turn 1"
         );
         assert!(
-            matches!(
-                charge_turn_for_wake(id),
-                TurnChargeOutcome::CapExceeded(_)
-            ),
+            matches!(charge_turn_for_wake(id), TurnChargeOutcome::CapExceeded(_)),
             "second wake exceeds cap of 1"
         );
         remove(id);

@@ -397,19 +397,19 @@ impl ExecutionContext {
             .await
     }
 
-    /// Charge one substantive session turn via the attached ledger (T031). Used when
+    /// Charge one substantive session turn via the attached ledger. Used when
     /// the execution context already holds the session ledger; the recv re-arm
     /// path charges via [`session_ledger::charge_turn_for_wake`] instead.
     pub fn charge_session_turn(&self) -> Result<usize, apxm_core::error::RuntimeError> {
         let Some(ledger) = &self.session_ledger else {
             return Ok(1);
         };
-        ledger.charge_turn().map_err(|message| {
-            apxm_core::error::RuntimeError::Capability {
+        ledger
+            .charge_turn()
+            .map_err(|message| apxm_core::error::RuntimeError::Capability {
                 capability: "session_turn".to_string(),
                 message,
-            }
-        })
+            })
     }
 
     /// Whether the session grant set admits `capability`. Without a ledger, all
@@ -422,7 +422,7 @@ impl ExecutionContext {
             .unwrap_or(true)
     }
 
-    /// Fail-closed session grant check at the trusted invoke seam (T031).
+    /// Fail-closed session grant check at the trusted invoke seam.
     fn ensure_session_grant(&self, capability: &str) -> Result<(), apxm_core::error::RuntimeError> {
         let Some(ledger) = &self.session_ledger else {
             return Ok(());
@@ -441,8 +441,8 @@ impl ExecutionContext {
     /// configured budget is unbounded. The counter is shared across child
     /// contexts, so the bound spans spawned agents and called skills.
     ///
-    /// When a session ledger is attached, per-session tool budgets are the SSOT
-    /// (spec 0002 US2); per-execution counters are skipped.
+    /// When a session ledger is attached, per-session tool budgets are the SSOT;
+    /// per-execution counters are skipped.
     fn charge_tool_call(&self, name: &str) -> Result<(), apxm_core::error::RuntimeError> {
         if let Some(ledger) = &self.session_ledger {
             if !ledger.charge_tool(name) {
@@ -719,12 +719,8 @@ mod tests {
 
     #[tokio::test]
     async fn charge_session_turn_enforces_cap_on_context() {
-        let ctx = test_ctx_with_ledger(SessionLedger::new(
-            Some(2),
-            HashMap::new(),
-            HashSet::new(),
-        ))
-        .await;
+        let ctx =
+            test_ctx_with_ledger(SessionLedger::new(Some(2), HashMap::new(), HashSet::new())).await;
         assert_eq!(ctx.charge_session_turn().unwrap(), 1);
         assert_eq!(ctx.charge_session_turn().unwrap(), 2);
         assert!(ctx.charge_session_turn().is_err(), "third turn exceeds cap");
@@ -737,7 +733,10 @@ mod tests {
         let ctx = test_ctx_with_ledger(SessionLedger::new(None, HashMap::new(), grants)).await;
         assert!(ctx.session_admits_capability("echo"));
         assert!(!ctx.session_admits_capability("delete_file"));
-        let err = ctx.invoke_tool("delete_file", HashMap::new()).await.unwrap_err();
+        let err = ctx
+            .invoke_tool("delete_file", HashMap::new())
+            .await
+            .unwrap_err();
         assert!(
             err.to_string().contains("not granted"),
             "unexpected error: {err}"

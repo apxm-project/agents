@@ -78,7 +78,7 @@ impl ParkWaker {
         if let Some(spec) = &self.rearm
             && let Some(message_token) = self.outputs.first().copied()
         {
-            // Session ledger turn cap (spec 0002 US2): charge before re-arm so
+            // Session ledger turn cap: charge before re-arm so
             // turn N+1 is denied without host-side counting (fail-closed).
             if let crate::executor::session_ledger::TurnChargeOutcome::CapExceeded(msg) =
                 crate::executor::session_ledger::charge_turn_for_wake(&spec.session_id)

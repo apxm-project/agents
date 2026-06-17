@@ -15,7 +15,7 @@ curl -s http://127.0.0.1:18800/metrics | head
 ```bash
 export APXM_SERVER_RATE_LIMIT_RPS=2
 export APXM_SERVER_MAX_BODY_BYTES=1024
-dekk apxm test -p apxm-server hardening_contract
+dekk apxm test -p apxm-server --test hardening_contract
 ```
 
 ## Non-loopback auth (manual)

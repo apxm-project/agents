@@ -1,4 +1,4 @@
-//! Shared SSE permission prompt handling for chat and watch (spec 0002 US7).
+//! Shared SSE permission prompt handling for chat and watch.
 
 use anyhow::Result;
 use apxm_client::{
@@ -16,10 +16,7 @@ pub async fn maybe_answer_permission(client: &Client, json: &JsonValue) -> Resul
     };
     let decision = prompt_permission_decision(&prompt)?;
     client
-        .respond_permission(
-            &prompt.approval_id,
-            &PermissionResponse { decision },
-        )
+        .respond_permission(&prompt.approval_id, &PermissionResponse { decision })
         .await
         .map_err(|e| anyhow::anyhow!("permission respond failed: {e}"))?;
     if decision == PermissionResponseDecision::Deny {

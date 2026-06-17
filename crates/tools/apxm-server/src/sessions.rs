@@ -1,4 +1,4 @@
-//! Session control API (spec 0002 US5): status, cancel, grants, compact, events.
+//! Session control API: status, cancel, grants, compact, events.
 
 use std::collections::{HashMap, HashSet};
 use std::convert::Infallible;
@@ -14,9 +14,9 @@ use axum::response::sse::{Event, KeepAlive, Sse};
 use axum::routing::{get, post};
 use futures::Stream;
 use serde::{Deserialize, Serialize};
-use utoipa::ToSchema;
 use tokio_stream::wrappers::BroadcastStream;
 use tokio_stream::wrappers::errors::BroadcastStreamRecvError;
+use utoipa::ToSchema;
 
 use crate::error::ApiError;
 use crate::routes::ServerRoute;
@@ -83,26 +83,14 @@ enum SessionSseItem {
 /// Mount session control routes on an existing router (contract-test helper).
 pub(crate) fn mount_routes(router: Router<AppState>) -> Router<AppState> {
     router
-        .route(
-            ServerRoute::SessionStatus.path(),
-            get(get_session_status),
-        )
-        .route(
-            ServerRoute::SessionCancel.path(),
-            post(cancel_session),
-        )
+        .route(ServerRoute::SessionStatus.path(), get(get_session_status))
+        .route(ServerRoute::SessionCancel.path(), post(cancel_session))
         .route(
             ServerRoute::SessionGrants.path(),
             post(update_session_grants),
         )
-        .route(
-            ServerRoute::SessionCompact.path(),
-            post(compact_session),
-        )
-        .route(
-            ServerRoute::SessionEvents.path(),
-            get(list_session_events),
-        )
+        .route(ServerRoute::SessionCompact.path(), post(compact_session))
+        .route(ServerRoute::SessionEvents.path(), get(list_session_events))
         .route(
             ServerRoute::SessionEventsStream.path(),
             get(stream_session_events),
@@ -272,9 +260,7 @@ pub(crate) fn cancel_session_for_state(state: &AppState, session_id: &str) -> Re
             notify.notify_one();
             Ok(())
         }
-        None => Err(ApiError::conflict(
-            "no in-flight session work to cancel",
-        )),
+        None => Err(ApiError::conflict("no in-flight session work to cancel")),
     }
 }
 
@@ -282,9 +268,8 @@ pub(crate) fn update_grants_for_state(
     session_id: &str,
     update: GrantUpdate,
 ) -> Result<(), ApiError> {
-    let ledger = session_ledger::get(session_id).ok_or_else(|| {
-        ApiError::not_found(format!("unknown session: {session_id}"))
-    })?;
+    let ledger = session_ledger::get(session_id)
+        .ok_or_else(|| ApiError::not_found(format!("unknown session: {session_id}")))?;
     if !update.add.is_empty() {
         ledger.add_grants(update.add);
     }
@@ -302,7 +287,11 @@ pub(crate) async fn compact_session_for_state(
     let mem = state.runtime.memory();
     let count_key = "conversation:user_count";
     let count = mem
-        .read_scoped(apxm_runtime::memory::MemorySpace::Stm, session_id, count_key)
+        .read_scoped(
+            apxm_runtime::memory::MemorySpace::Stm,
+            session_id,
+            count_key,
+        )
         .await
         .ok()
         .flatten()
@@ -389,9 +378,7 @@ pub(crate) async fn session_events_for_state(
         session_id: session_id.to_string(),
         events: page
             .into_iter()
-            .map(|record| {
-                serde_json::to_value(&record.event).unwrap_or(serde_json::Value::Null)
-            })
+            .map(|record| serde_json::to_value(&record.event).unwrap_or(serde_json::Value::Null))
             .collect(),
         next_seq,
         done: filtered.len() <= limit,

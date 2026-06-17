@@ -270,13 +270,15 @@ fn capability_from_tool(t: &PackToolDecl) -> Option<Arc<dyn CapabilityExecutor>>
             // unless the pack overrides it explicitly.
             let requires_auth = t.requires_auth.unwrap_or(true);
             let cap = match t.url.clone() {
-                Some(url) => apxm_runtime::capability::builtins::ProviderCallCapability::named_rest(
-                    t.capability.clone(),
-                    metadata.description.clone(),
-                    schema,
-                    t.method.clone().unwrap_or_else(|| "POST".to_string()),
-                    url,
-                ),
+                Some(url) => {
+                    apxm_runtime::capability::builtins::ProviderCallCapability::named_rest(
+                        t.capability.clone(),
+                        metadata.description.clone(),
+                        schema,
+                        t.method.clone().unwrap_or_else(|| "POST".to_string()),
+                        url,
+                    )
+                }
                 None => apxm_runtime::capability::builtins::ProviderCallCapability::named(
                     t.capability.clone(),
                     metadata.description.clone(),
@@ -340,7 +342,10 @@ fn pack_tools_in_dir(pack_dir: &std::path::Path) -> Vec<Arc<dyn CapabilityExecut
 /// Idempotent: already-registered capability ids are skipped. Called on deploy
 /// and via `POST /v1/capabilities/rescan` so freshly dropped packs show up
 /// without a server restart.
-pub(crate) fn rescan_pack_tools(runtime: &apxm_runtime::Runtime, roots: &[std::path::PathBuf]) -> u32 {
+pub(crate) fn rescan_pack_tools(
+    runtime: &apxm_runtime::Runtime,
+    roots: &[std::path::PathBuf],
+) -> u32 {
     let before = runtime.capability_system().list_capabilities().len();
     register_pack_tools(runtime, roots);
     let after = runtime.capability_system().list_capabilities().len();
@@ -394,9 +399,11 @@ pub(crate) fn register_pack_tools(runtime: &apxm_runtime::Runtime, roots: &[std:
             "scanned pack tool capability root"
         );
     }
-    info!(count = total_registered, "completed pack tool capability scan");
+    info!(
+        count = total_registered,
+        "completed pack tool capability scan"
+    );
 }
-
 
 pub(crate) async fn list_capabilities(
     State(state): State<AppState>,

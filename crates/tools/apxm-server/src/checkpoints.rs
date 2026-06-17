@@ -228,7 +228,10 @@ pub(crate) async fn get_checkpoint(
 ) -> Result<Json<JsonValue>, ApiError> {
     match state.checkpoint_store.get(&id) {
         Some(cp) => Ok(Json(serde_json::to_value(cp).unwrap_or_default())),
-        None => Err(ApiError::not_found(format!("Checkpoint '{}' not found", id))),
+        None => Err(ApiError::not_found(format!(
+            "Checkpoint '{}' not found",
+            id
+        ))),
     }
 }
 
@@ -264,4 +267,3 @@ pub(crate) async fn resume_checkpoint(
         resumed_at_ms: cp.resumed_at_ms,
     }))
 }
-

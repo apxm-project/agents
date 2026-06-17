@@ -1,4 +1,4 @@
-//! Contract tests for typed error envelopes (spec 0002 US3 / SC-004).
+//! Contract tests for typed error envelopes.
 
 mod contract;
 
@@ -26,11 +26,7 @@ fn program_fault_fixture_has_distinct_class_and_code() {
 
 #[test]
 fn server_fault_fixture_has_distinct_class_and_code() {
-    let error = TypedError::server_fault(
-        ApiFaultCode::InternalError,
-        "unexpected failure",
-        None,
-    );
+    let error = TypedError::server_fault(ApiFaultCode::InternalError, "unexpected failure", None);
     let json = to_json(&error);
 
     contract::assert_typed_error_envelope(&json);

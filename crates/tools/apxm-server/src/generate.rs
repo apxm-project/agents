@@ -135,7 +135,6 @@ impl GenerateRequest {
     }
 }
 
-
 fn extract_trace_id(headers: &HeaderMap, body: &GenerateRequest) -> String {
     headers
         .get("X-Trace-ID")
@@ -378,9 +377,7 @@ pub(crate) async fn handle_generate_stream(
                     let timeout_event = encode_error_event(
                         &mut buf,
                         seq_val,
-                        StreamErrorBody::timeout(stream_timeout_message(
-                            inactivity_timeout_secs,
-                        )),
+                        StreamErrorBody::timeout(stream_timeout_message(inactivity_timeout_secs)),
                     );
                     let _ = tx.send(Ok(timeout_event)).await;
                     break;

@@ -12,7 +12,6 @@ pub mod backend;
 pub mod cache;
 #[cfg(feature = "driver")]
 pub mod chat;
-pub(crate) mod sse_permissions;
 pub mod codegen;
 #[cfg(feature = "driver")]
 pub mod compile;
@@ -28,6 +27,7 @@ pub mod replay;
 #[cfg(feature = "driver")]
 pub mod rollout;
 pub mod session;
+pub(crate) mod sse_permissions;
 pub mod system;
 pub mod team;
 pub mod template;
