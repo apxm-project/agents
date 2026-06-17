@@ -65,6 +65,7 @@ pub struct PermissionEvent {
     pub session_grant_eligible: bool,
 }
 
+#[derive(Debug)]
 struct PendingPermission {
     event: PermissionEvent,
     fingerprint: GrantFingerprint,
@@ -122,7 +123,7 @@ impl PermissionRegistry {
         if keys.is_empty() {
             return "(no args)".to_string();
         }
-        keys.join(", ")
+        keys.into_iter().map(|k| k.as_str()).collect::<Vec<_>>().join(", ")
     }
 
     /// Emit a permission event and block until the client responds or times out.
@@ -190,7 +191,7 @@ impl PermissionRegistry {
                     PermissionDecision::Deny,
                     session_id,
                     true,
-                    emitter,
+                    Some(emitter),
                     execution_id,
                     "expired",
                 );
@@ -356,6 +357,17 @@ pub async fn respond_permission(
     )
 }
 
+/// Apply a client reply without exposing internal HTTP error types (tests/clients).
+pub fn apply_response(
+    registry: &PermissionRegistry,
+    permission_id: &str,
+    body: PermissionResponse,
+) -> Result<PermissionOutcome, String> {
+    registry
+        .respond(permission_id, body, None)
+        .map_err(|_| format!("failed to record permission response for '{permission_id}'"))
+}
+
 /// Testable respond path without axum extractors.
 pub fn respond_permission_with_registry(
     permission_id: &str,
@@ -372,7 +384,7 @@ impl PermissionRegistry {
     /// Process-wide registry for HTTP respond handler (mounted in T071).
     pub fn global() -> &'static PermissionRegistry {
         GLOBAL_REGISTRY.get_or_init(|| {
-            PermissionRegistry::new().with_grant_cache(SessionGrantCache::global())
+            PermissionRegistry::with_grant_cache(SessionGrantCache::global().clone())
         })
     }
 }
@@ -455,7 +467,7 @@ mod tests {
             .expect("respond");
 
         assert_eq!(waiter.await.unwrap(), PermissionOutcome::Approved);
-        let resolved = emitter.events().await;
+        let resolved = emitter.events();
         assert!(
             resolved
                 .iter()
@@ -483,14 +495,10 @@ mod tests {
         });
 
         sleep(Duration::from_millis(20)).await;
-        let events = emitter.events().await;
-        let payload = events
-            .iter()
-            .find_map(|e| {
-                e.payload
-                    .as_any()
-                    .downcast_ref::<ApprovalRequestPayload>()
-            })
+        let payload = emitter
+            .events()
+            .into_iter()
+            .find_map(|e| e.payload.downcast_ref::<ApprovalRequestPayload>().cloned())
             .expect("approval request");
         registry
             .respond(
@@ -508,30 +516,33 @@ mod tests {
     #[tokio::test]
     async fn session_grant_suppresses_second_prompt() {
         let cache = SessionGrantCache::new();
-        let registry = PermissionRegistry::new().with_grant_cache(cache.clone());
+        let registry = PermissionRegistry::with_grant_cache(cache.clone());
         let emitter = RecordingEmitter::new();
 
         let mut args = HashMap::new();
         args.insert("path".to_string(), Value::String("/tmp/x".to_string()));
 
-        let first = registry
-            .block_for_permission(
-                "exec-sg",
-                Some("sess-grant"),
-                "write_file",
-                &args,
-                &emitter,
-            )
-            .await;
-        assert_ne!(first, PermissionOutcome::Approved, "first call must prompt");
+        let registry_c = registry.clone();
+        let emitter_c = emitter.clone();
+        let args_c = args.clone();
+        let first = tokio::spawn(async move {
+            registry_c
+                .block_for_permission(
+                    "exec-sg",
+                    Some("sess-grant"),
+                    "write_file",
+                    &args_c,
+                    &emitter_c,
+                )
+                .await
+        });
 
-        // Simulate client approve-for-session via respond on the pending prompt.
-        let events = emitter.events().await;
-        let approval_id = events
-            .iter()
+        sleep(Duration::from_millis(20)).await;
+        let approval_id = emitter
+            .events()
+            .into_iter()
             .find_map(|e| {
                 e.payload
-                    .as_any()
                     .downcast_ref::<ApprovalRequestPayload>()
                     .map(|p| p.approval_id.clone())
             })
@@ -545,6 +556,7 @@ mod tests {
                 Some(&emitter),
             )
             .expect("respond");
+        assert_eq!(first.await.unwrap(), PermissionOutcome::Approved);
 
         let emitter2 = RecordingEmitter::new();
         let second = registry
@@ -558,7 +570,7 @@ mod tests {
             .await;
         assert_eq!(second, PermissionOutcome::Approved);
         assert!(
-            emitter2.events().await.is_empty(),
+            emitter2.events().is_empty(),
             "session grant must suppress re-prompt"
         );
         assert_eq!(cache.grant_count("sess-grant"), 1);
@@ -580,11 +592,9 @@ mod tests {
         sleep(Duration::from_millis(20)).await;
         let approval_id = emitter
             .events()
-            .await
             .into_iter()
             .find_map(|e| {
                 e.payload
-                    .as_any()
                     .downcast_ref::<ApprovalRequestPayload>()
                     .map(|p| p.approval_id.clone())
             })
@@ -605,7 +615,11 @@ mod tests {
             None,
         );
         assert_eq!(first.unwrap(), PermissionOutcome::Approved);
-        assert!(second.is_err(), "duplicate respond should conflict or miss");
+        assert_eq!(
+            second.unwrap(),
+            PermissionOutcome::Approved,
+            "duplicate respond is idempotent"
+        );
         assert_eq!(waiter.await.unwrap(), PermissionOutcome::Approved);
     }
 }

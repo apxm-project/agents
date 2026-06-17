@@ -50,9 +50,9 @@ no unfinished dependency). `[US#]` tags story tasks. **Shared integration:**
 **Goal:** server→client permission prompts with response endpoint and session grant cache.
 **Independent Test:** approve round-trip + session-grant suppresses re-prompt (SC-005).
 
-- [ ] T050 [US4] Permission event emitter, blocker, and response handler — `crates/tools/apxm-server/src/permissions.rs`.
-- [ ] T051 [P] [US4] Session-scoped approval grant cache (fingerprint → ledger) — `crates/tools/apxm-server/src/permissions/grant_cache.rs`.
-- [ ] **Checkpoint:** US4 — permission E2E fixture passes (SC-005).
+- [x] T050 [US4] Permission event emitter, blocker, and response handler — `crates/tools/apxm-server/src/permissions.rs`.
+- [x] T051 [P] [US4] Session-scoped approval grant cache (fingerprint → ledger) — `crates/tools/apxm-server/src/permissions/grant_cache.rs`.
+- [x] **Checkpoint:** US4 — permission E2E fixture passes (SC-005).
 
 ## Phase 7 — User Story 5: Session control API (P2)
 

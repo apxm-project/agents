@@ -8,7 +8,7 @@ use apxm_core::events::payload::ApprovalRequestPayload;
 use apxm_core::types::values::Value;
 use apxm_server::permissions::{
     PermissionDecision, PermissionOutcome, PermissionRegistry, PermissionResponse,
-    RecordingEmitter,
+    RecordingEmitter, apply_response,
 };
 use tokio::time::sleep;
 
@@ -51,15 +51,14 @@ async fn sc005_permission_roundtrip_approve_and_session_grant() {
         "SC-005: stream emits permission event before proceed"
     );
 
-    registry
-        .respond(
-            &approval_id,
-            PermissionResponse {
-                decision: PermissionDecision::ApproveForSession,
-            },
-            Some(&emitter),
-        )
-        .expect("respond");
+    apply_response(
+        &registry,
+        &approval_id,
+        PermissionResponse {
+            decision: PermissionDecision::ApproveForSession,
+        },
+    )
+    .expect("respond");
     assert_eq!(waiter.await.unwrap(), PermissionOutcome::Approved);
 
     let emitter2 = RecordingEmitter::new();
