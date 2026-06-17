@@ -88,9 +88,9 @@ no unfinished dependency). `[US#]` tags story tasks. **Shared integration:**
 **Goal:** chat delivers input, renders SSE, answers permissions — no local ledger.
 **Independent Test:** SC-008 grep gate + live chat against server enforcement.
 
-- [ ] T090 [US7] Refactor `apxm chat` to use `apxm-client`; remove host-side ledger — `crates/tools/apxm-cli/src/commands/chat.rs`.
-- [ ] T091 [P] [US7] Render permission events and collect terminal replies in watch path — `crates/tools/apxm-cli/src/commands/watch.rs`.
-- [ ] **Checkpoint:** US7 — `dekk apxm test-cli` + SC-008 script green.
+- [x] T090 [US7] Refactor `apxm chat` to use `apxm-client`; remove host-side ledger — `crates/tools/apxm-cli/src/commands/chat.rs`.
+- [x] T091 [P] [US7] Render permission events and collect terminal replies in watch path — `crates/tools/apxm-cli/src/commands/watch.rs`.
+- [x] **Checkpoint:** US7 — `dekk apxm test-cli` + SC-008 script green.
 
 ## Phase 11 — Polish & Cross-Cutting
 

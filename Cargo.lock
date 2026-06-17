@@ -246,7 +246,7 @@ dependencies = [
  "dirs 5.0.1",
  "flate2",
  "futures",
- "reqwest 0.12.28",
+ "reqwest 0.13.4",
  "rpassword",
  "rusqlite",
  "serde",
@@ -264,6 +264,7 @@ dependencies = [
 name = "apxm-client"
 version = "0.1.0"
 dependencies = [
+ "anyhow",
  "futures",
  "openapiv3",
  "prettyplease",
@@ -4171,6 +4172,7 @@ checksum = "219c5811de6525e5416c7d5d53bb656d3afdbc6c5af816e0802bcfa42dbdc1c3"
 dependencies = [
  "base64 0.22.1",
  "bytes",
+ "futures-channel",
  "futures-core",
  "futures-util",
  "http",

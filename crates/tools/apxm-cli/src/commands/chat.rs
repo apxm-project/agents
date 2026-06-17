@@ -1,17 +1,9 @@
 //! `apxm chat` — interactive conversational REPL over a running apxm-server.
 //!
-//! Each user message runs one execution of the agent graph against
-//! `POST /v1/execute/stream`, threading a stable `session_id` (so server-side
-//! memory accrues across turns — see `ExecutionContext::memory_scope`) and a
-//! client-side transcript that is passed back as the graph's `conversation`
-//! parameter every turn. This is the host-resident conversational loop: the
-//! runtime stays single-shot ("one DAG = one turn") and the REPL drives it.
-//! The built-in graph is a direct ASK by default, or a SPAWN_AGENT +
-//! COMMUNICATE turn when `--agent` selects an ACP profile such as `claude`.
-//!
-//! The SSE stream is parsed with the same [`super::watch::SseParser`] +
-//! [`super::render`] machinery the `watch` command uses, so the per-agent
-//! dispatch tree (`--tree`) renders identically.
+//! Thin protocol pipe (spec 0002 US7): deliver user input, render SSE events,
+//! answer server permission prompts. Session ledger, turn caps, tool budgets, and
+//! grants are enforced server-side — the host does not count turns or track
+//! budgets locally (constitution #2).
 
 use std::collections::HashMap;
 use std::io::Write as _;
@@ -19,17 +11,20 @@ use std::path::PathBuf;
 
 use anyhow::{Context, Result, anyhow};
 use apxm_ais::chat::{self, COMPACT_AT_TOKENS, KEEP_RECENT_TURNS, Role};
+use apxm_client::{
+    client_for_sse,
+    execute::ExecuteRequest,
+    types::{GrantUpdate, SessionStatus},
+    Client, ClientInfo, DEFAULT_SERVER_BASE,
+};
 use apxm_core::constants::orchestration::admission as orchestration_admission;
+use apxm_client::reqwest;
 use futures::StreamExt;
 use serde_json::Value as JsonValue;
 
 use super::render::{RunSnapshot, render_tree};
+use super::sse_permissions::maybe_answer_permission;
 use super::watch::{SseParser, decode_event_frame};
-
-/// Default apxm-server endpoint. Matches the server's own default bind address
-/// (`apxm-server` `DEFAULT_PORT` = 18800). Override via `APXM_SERVER_BASE` or
-/// `--server`.
-const DEFAULT_SERVER_BASE: &str = "http://127.0.0.1:18800";
 
 /// CLI options for the chat REPL.
 #[derive(Debug, Clone)]
@@ -58,23 +53,17 @@ pub struct ChatOptions {
     /// the agent reacts to external events (file changes, process output, cron,
     /// webhooks) without a human typing. The REPL stays interactive alongside it.
     pub monitor_url: Option<String>,
-    /// Maximum number of substantive turns (stdin + event) before the loop stops
-    /// serving. `None` = unbounded. A stdin turn at the cap is soft-blocked
-    /// (warns; `/continue` extends); an event-driven turn at the cap is dropped
-    /// (no human to confirm). Clamped to the operator ceiling
-    /// `APXM_CHAT_MAX_TURNS_CEILING` if that env var is set.
+    /// Maximum substantive turns — forwarded to the server session ledger on the
+    /// first execute; enforcement is server-side (no host counting).
     pub max_turns: Option<usize>,
-    /// Maximum number of event-driven (monitor cue) turns. `None` = unbounded.
-    /// Events past the cap are dropped while stdin stays interactive. Clamped to
-    /// `APXM_CHAT_MAX_EVENTS_CEILING` if set.
+    /// Maximum event-driven turns — reserved for server-side policy; the host
+    /// does not drop events based on a local counter.
     pub max_events: Option<usize>,
-    /// Per-tool, per-turn call budget as raw `CAP=N` strings. Sent as
-    /// `tool_call_budgets` each turn; the runtime enforces it across the turn's
-    /// whole execution tree.
+    /// Per-tool call budget for one turn, as `CAP=N`. Sent as `tool_call_budgets`;
+    /// the server/runtime enforces across the execution tree.
     pub tool_budget: Vec<String>,
-    /// Per-tool, per-conversation call cap as raw `CAP=N` strings.
-    /// Tracked host-side across turns; the effective per-turn budget sent to the
-    /// runtime is `min(tool_budget, session_cap − consumed)`.
+    /// Per-tool session call cap as `CAP=N`. Merged into the first execute's
+    /// `tool_call_budgets` so the server session ledger owns consumption.
     pub tool_cap: Vec<String>,
     /// Per-tool auth binding as raw `CAP=CONNECTION_ID` strings. The
     /// server resolves each to a bearer token (scoped to `owner`) and the runtime
@@ -246,52 +235,41 @@ fn air_has_in_program_loop(air: &str) -> bool {
 /// the turn-input endpoint, render streamed tokens. No transcript, no
 /// compaction, no budgets host-side — all of that lives in the program/runtime.
 async fn run_dumb_pipe(
-    client: &reqwest::Client,
-    base: &str,
+    client: &Client,
     session_id: &str,
     air: &str,
     opts: &ChatOptions,
 ) -> Result<()> {
-    let base = base.trim_end_matches('/');
-    let exec_url = format!("{base}/v1/execute/stream");
-    // Self-contained sub-agent spawns are auto-admitted server-side; any extra
-    // write grants the operator passed still ride the one-time start request.
     let admit = initial_session_grants(opts);
-    let body = serde_json::json!({
-        "air": air,
-        "session_id": session_id,
-        "admit_capabilities": admit,
-        "imports": opts.import,
-        "owner": opts.owner,
-    });
+    let body = ExecuteRequest {
+        air: air.to_string(),
+        session_id: Some(session_id.to_string()),
+        admit_capabilities: admit,
+        imports: opts.import.clone(),
+        owner: opts.owner.clone(),
+        ..Default::default()
+    };
     let resp = client
-        .post(&exec_url)
-        .header("Accept", "text/event-stream")
-        .json(&body)
-        .send()
+        .execute_stream(&body)
         .await
-        .with_context(|| format!("failed to POST {exec_url}"))?;
+        .context("execute stream failed")?;
     if !resp.status().is_success() {
         let status = resp.status();
         let text = resp.text().await.unwrap_or_default();
-        return Err(anyhow!("server returned {status} for {exec_url}: {text}"));
+        return Err(anyhow!("server returned {status}: {text}"));
     }
 
-    // Render the session's long-lived SSE in the background; tokens for EVERY
-    // turn stream over this one connection (streaming from any depth).
-    let render = tokio::spawn(render_session_stream(resp));
+    let client_c = client.clone();
+    let render = tokio::spawn(render_session_stream(resp, client_c));
 
-    // Foreground: pipe each stdin line to the turn-input endpoint. The reply
-    // streams back over the open SSE above — the host never threads a transcript.
     use tokio::io::AsyncBufReadExt as _;
     let mut stdin_lines = tokio::io::BufReader::new(tokio::io::stdin()).lines();
-    let msg_url = format!("{base}/v1/conversations/{session_id}/message");
     loop {
         eprint!("\nuser> ");
         let _ = std::io::stderr().flush();
         let line = match stdin_lines.next_line().await.context("stdin read failed")? {
             Some(l) => l.trim().to_string(),
-            None => break, // EOF (Ctrl-D)
+            None => break,
         };
         if line.is_empty() {
             continue;
@@ -299,12 +277,7 @@ async fn run_dumb_pipe(
         if matches!(line.as_str(), "/exit" | "/quit") {
             break;
         }
-        let r = client
-            .post(&msg_url)
-            .json(&serde_json::json!({ "message": line }))
-            .send()
-            .await
-            .with_context(|| format!("failed to POST {msg_url}"))?;
+        let r = client.post_conversation_message(session_id, &line).await?;
         if !r.status().is_success() {
             let status = r.status();
             let text = r.text().await.unwrap_or_default();
@@ -316,9 +289,7 @@ async fn run_dumb_pipe(
     Ok(())
 }
 
-/// Render tokens from the session's long-lived SSE stream (dumb-pipe path). The
-/// host only renders; it adds no conversational behavior.
-async fn render_session_stream(resp: reqwest::Response) {
+async fn render_session_stream(resp: reqwest::Response, client: Client) {
     let mut stream = resp.bytes_stream();
     let mut parser = SseParser::default();
     while let Some(chunk) = stream.next().await {
@@ -327,6 +298,7 @@ async fn render_session_stream(resp: reqwest::Response) {
             let Ok(v) = serde_json::from_str::<JsonValue>(&frame.data) else {
                 continue;
             };
+            let _ = maybe_answer_permission(&client, &v).await;
             let kind = v.pointer("/payload/kind").and_then(|k| k.as_str());
             if kind == Some("token")
                 && let Some(tok) = v.pointer("/payload/text").and_then(|t| t.as_str())
@@ -376,79 +348,44 @@ pub async fn chat_command(opts: ChatOptions) -> Result<()> {
         );
     }
 
-    // No read timeout: SSE streams stall between events, and reqwest's default
-    // client already has no read timeout (setting it to zero would, per
-    // reqwest's per-read semantics, time out immediately and fail every call).
-    let client = reqwest::Client::builder()
-        .build()
-        .context("failed to build HTTP client")?;
+    let client = client_for_sse(&base);
 
-    // Dumb-pipe routing (constitution #2): when the artifact carries its OWN
-    // conversation loop (a `ConversationalAgent` multi-flow artifact with an
-    // in-graph re-arming recv), the host adds ZERO conversational behavior — it
-    // POSTs the artifact once, pipes stdin to the turn-input endpoint, and
-    // renders streamed tokens. The host-driven loop below remains the path for
-    // single-shot artifacts and artifacts that rely on host-owned conversation.
     if air_has_in_program_loop(&air) {
         eprintln!(
-            "apxm chat — in-program loop detected; host is a dumb pipe (session {session_id} @ {base})"
+            "apxm chat — in-program loop detected; host is a dumb pipe (session {session_id} @ {})",
+            client.baseurl()
         );
         eprintln!("type a message; /exit to quit");
-        return run_dumb_pipe(&client, &base, &session_id, &air, &opts).await;
+        return run_dumb_pipe(&client, &session_id, &air, &opts).await;
     }
 
-    eprintln!("apxm chat — session {session_id} @ {base}");
+    eprintln!("apxm chat — session {session_id} @ {}", client.baseurl());
     eprintln!("type a message, or /help for meta-commands; /exit to quit");
 
     let mut convo = Conversation::default();
-    // Capabilities granted for this session: starts with --admit and grows as
-    // the operator approves write-tool turns interactively.
-    let mut session_grants = initial_session_grants(&opts);
+    let initial_grants = initial_session_grants(&opts);
+    let tool_call_budgets = tool_call_budgets_for_opts(&opts);
 
-    // Optional event source: subscribe to an apxm-os control-plane SSE stream so
-    // external cue events (process output, file changes, cron, webhooks) drive
-    // turns alongside stdin. The agent is no longer blocked waiting on a human.
     let mut event_rx = match &opts.monitor_url {
         Some(url) => {
             let (tx, rx) = tokio::sync::mpsc::unbounded_channel::<String>();
-            spawn_monitor_subscriber(client.clone(), url.clone(), tx);
+            spawn_monitor_subscriber(client.client().clone(), url.clone(), tx);
             eprintln!("monitor: subscribed to {url}/events — external events become turns");
             Some(rx)
         }
         None => None,
     };
 
-    // Async stdin so it can be `select!`-ed against the event stream.
     use tokio::io::AsyncBufReadExt as _;
     let mut stdin_lines = tokio::io::BufReader::new(tokio::io::stdin()).lines();
 
-    // Turn budgets (Control 1 — host-enforced). The runtime is single-shot
-    // ("one DAG = one turn"), so the turn count lives in this outer loop, never
-    // in the AIR program. Request values are clamped to the operator ceiling env
-    // vars: a request may only *lower* the bound, never raise it.
-    let max_turns = clamp_to_ceiling(opts.max_turns, "APXM_CHAT_MAX_TURNS_CEILING");
-    let max_events = clamp_to_ceiling(opts.max_events, "APXM_CHAT_MAX_EVENTS_CEILING");
-    if let Some(n) = max_turns {
-        eprintln!("turn limit: {n} turns (/continue extends by {n})");
-    }
-    if let Some(n) = max_events {
-        eprintln!("event limit: {n} event-driven turns");
-    }
-    let mut turns_used: usize = 0;
-    let mut events_used: usize = 0;
-    // Running ceiling on `turns_used`; `/continue` raises it by `max_turns`.
-    let mut turn_budget = max_turns;
-
-    // Per-tool call budgets. The per-turn budget rides the execute
-    // request and is enforced by the runtime across the turn's execution tree;
-    // the per-conversation cap is tracked here and folded into each turn's budget.
-    let tool_turn_budget = parse_kv_usize(&opts.tool_budget);
-    let tool_session_cap = parse_kv_usize(&opts.tool_cap);
-    let mut tool_session_consumed: HashMap<String, usize> = HashMap::new();
-    if !tool_turn_budget.is_empty() || !tool_session_cap.is_empty() {
+    if opts.max_turns.is_some() || opts.max_events.is_some() {
         eprintln!(
-            "tool budgets: per-turn {tool_turn_budget:?}, per-conversation {tool_session_cap:?}"
+            "(turn/event limits are enforced by the server session ledger — not counted host-side)"
         );
+    }
+    if !tool_call_budgets.is_empty() {
+        eprintln!("tool budgets (server-enforced): {tool_call_budgets:?}");
     }
 
     loop {
@@ -484,23 +421,10 @@ pub async fn chat_command(opts: ChatOptions) -> Result<()> {
         if !from_event {
             if let Some(meta) = line.strip_prefix('/') {
                 if meta.split(' ').next() == Some("compact") {
-                    // Force a compaction now (post-hook on demand).
-                    match compact_if_needed(&mut convo, &client, &base, &session_id, true).await {
+                    match compact_if_needed(&mut convo, &client, &session_id, true).await {
                         Ok(true) => {}
                         Ok(false) => eprintln!("(nothing to compact yet)"),
                         Err(err) => eprintln!("(compaction failed: {err})"),
-                    }
-                    continue;
-                }
-                if meta.split(' ').next() == Some("continue") {
-                    // Extend the soft turn budget by the configured
-                    // increment so the operator can keep going past the cap.
-                    match max_turns {
-                        Some(n) => {
-                            turn_budget = Some(turns_used + n);
-                            eprintln!("(extended: budget now {} turns)", turns_used + n);
-                        }
-                        None => eprintln!("(no turn limit set)"),
                     }
                     continue;
                 }
@@ -509,29 +433,44 @@ pub async fn chat_command(opts: ChatOptions) -> Result<()> {
                     .map(|(v, r)| (v, r.trim()))
                     .unwrap_or((meta, ""));
                 match verb {
-                    // Control 4: inspect / revoke the live capability grant set.
                     "grants" => {
-                        if session_grants.is_empty() {
-                            eprintln!("(no capabilities granted this session)");
-                        } else {
-                            eprintln!("granted: {}", session_grants.join(", "));
+                        match client.get_session_status(&session_id).await {
+                            Ok(resp) => {
+                                let status = resp.into_inner();
+                                if status.ledger.grants.is_empty() {
+                                    eprintln!("(no capabilities granted this session)");
+                                } else {
+                                    eprintln!("granted: {}", status.ledger.grants.join(", "));
+                                }
+                            }
+                            Err(err) => eprintln!("(session status failed: {err})"),
                         }
                         continue;
                     }
                     "revoke" => {
                         if rest.is_empty() {
                             eprintln!("(usage: /revoke <capability>)");
-                        } else if let Some(pos) = session_grants.iter().position(|c| c == rest) {
-                            session_grants.remove(pos);
-                            eprintln!("(revoked '{rest}' for this session)");
+                        } else if let Err(err) = client
+                            .update_session_grants(
+                                &session_id,
+                                &GrantUpdate {
+                                    remove: vec![rest.to_string()],
+                                    ..Default::default()
+                                },
+                            )
+                            .await
+                        {
+                            eprintln!("(revoke failed: {err})");
                         } else {
-                            eprintln!("('{rest}' was not granted)");
+                            eprintln!("(revoked '{rest}' for this session)");
                         }
                         continue;
                     }
-                    // Control 2: show per-tool budgets and remaining session headroom.
                     "budget" => {
-                        print_budget(&tool_turn_budget, &tool_session_cap, &tool_session_consumed);
+                        match client.get_session_status(&session_id).await {
+                            Ok(resp) => print_server_budget(&resp.into_inner()),
+                            Err(err) => eprintln!("(session status failed: {err})"),
+                        }
                         continue;
                     }
                     // Goal 1: persist the agent's last reply (e.g. an authored
@@ -553,13 +492,12 @@ pub async fn chat_command(opts: ChatOptions) -> Result<()> {
                     }
                     // Goal 1: run / list authored workflows (operator-gated).
                     "workflow" => {
-                        handle_workflow_meta(rest, &client, &base, &session_id, &session_grants)
-                            .await;
+                        handle_workflow_meta(rest, &client, &session_id).await;
                         continue;
                     }
                     _ => {}
                 }
-                match handle_meta(meta, &client, &base).await {
+                match handle_meta(meta, &client).await {
                     Ok(true) => break,
                     Ok(false) => {}
                     Err(err) => eprintln!("(meta-command error: {err})"),
@@ -568,69 +506,66 @@ pub async fn chat_command(opts: ChatOptions) -> Result<()> {
             }
         }
 
-        // Enforce the turn budget. An event-driven turn at the cap is
-        // dropped (no human to confirm); a stdin turn is soft-blocked so the
-        // operator can `/continue`. Both stdin and event turns share `turns_used`.
-        if from_event {
-            if let Some(me) = max_events {
-                if events_used >= me {
-                    eprintln!("[event] dropped: event limit ({me}) reached");
-                    continue;
-                }
-            }
-        }
-        if let Some(tb) = turn_budget {
-            if turns_used >= tb {
-                if from_event {
-                    eprintln!("[event] dropped: turn limit ({tb}) reached");
-                } else {
-                    eprintln!("(turn limit {tb} reached — /continue to extend, /exit to quit)");
-                }
-                continue;
-            }
-        }
-
         handle_user_turn(
             &line,
             &mut convo,
-            &mut session_grants,
             &client,
-            &base,
             &air,
             &session_id,
             &opts,
-            &tool_turn_budget,
-            &tool_session_cap,
-            &mut tool_session_consumed,
+            &initial_grants,
+            &tool_call_budgets,
         )
         .await;
-
-        turns_used += 1;
-        if from_event {
-            events_used += 1;
-        }
     }
     Ok(())
 }
 
-/// Clamp an optional request bound to an operator ceiling env var. A request may
-/// only *lower* the operator ceiling, never raise it: if both are present the
-/// effective bound is `min(request, ceiling)`; a ceiling with no request applies
-/// on its own. Unparseable ceilings are ignored.
-fn clamp_to_ceiling(requested: Option<usize>, ceiling_env: &str) -> Option<usize> {
-    let ceiling = std::env::var(ceiling_env)
-        .ok()
-        .and_then(|v| v.parse::<usize>().ok());
-    clamp_bound(requested, ceiling)
+/// Merge per-turn `--tool-budget` and session `--tool-cap` into the wire map
+/// sent to the server. Consumption is tracked server-side (SessionLedger).
+fn tool_call_budgets_for_opts(opts: &ChatOptions) -> HashMap<String, usize> {
+    let turn = parse_kv_usize(&opts.tool_budget);
+    let cap = parse_kv_usize(&opts.tool_cap);
+    let mut out = HashMap::new();
+    for name in turn.keys().chain(cap.keys()) {
+        if out.contains_key(name) {
+            continue;
+        }
+        let per_turn = turn.get(name).copied();
+        let session = cap.get(name).copied();
+        match (per_turn, session) {
+            (Some(a), Some(b)) => {
+                out.insert(name.clone(), a.min(b));
+            }
+            (Some(a), None) => {
+                out.insert(name.clone(), a);
+            }
+            (None, Some(b)) => {
+                out.insert(name.clone(), b);
+            }
+            (None, None) => {}
+        }
+    }
+    out
 }
 
-/// Pure clamp: a request may only *lower* an operator ceiling, never raise it.
-fn clamp_bound(requested: Option<usize>, ceiling: Option<usize>) -> Option<usize> {
-    match (requested, ceiling) {
-        (Some(r), Some(c)) => Some(r.min(c)),
-        (Some(r), None) => Some(r),
-        (None, Some(c)) => Some(c),
-        (None, None) => None,
+fn print_server_budget(status: &SessionStatus) {
+    let ledger = &status.ledger;
+    if ledger.turn_cap.is_none() && ledger.tool_budgets.is_empty() {
+        eprintln!("(no session budgets set — server ledger empty)");
+        return;
+    }
+    if let Some(cap) = ledger.turn_cap {
+        eprintln!("  turns: {}/{} used", status.turn_count, cap);
+    }
+    if ledger.tool_budgets.is_empty() {
+        return;
+    }
+    let mut names: Vec<_> = ledger.tool_budgets.keys().collect();
+    names.sort();
+    for name in names {
+        let budget = ledger.tool_budgets[name];
+        eprintln!("  {name}: session budget {budget} (server-tracked)");
     }
 }
 
@@ -667,32 +602,6 @@ fn parse_kv_string(items: &[String]) -> HashMap<String, String> {
     map
 }
 
-/// Compute the per-tool budget to send for the next turn. For each
-/// tool with a per-turn and/or per-conversation cap, the effective budget is the
-/// lower of the per-turn budget and the session cap's remaining headroom. An
-/// exhausted session cap yields 0 — a hard deny at the runtime's invoke seam.
-fn effective_turn_budgets(
-    turn: &HashMap<String, usize>,
-    session_cap: &HashMap<String, usize>,
-    consumed: &HashMap<String, usize>,
-) -> HashMap<String, usize> {
-    let mut out = HashMap::new();
-    for name in turn.keys().chain(session_cap.keys()) {
-        if out.contains_key(name) {
-            continue;
-        }
-        let per_turn = turn.get(name).copied();
-        let session_remaining = session_cap
-            .get(name)
-            .map(|cap| cap.saturating_sub(consumed.get(name).copied().unwrap_or(0)));
-        let effective = clamp_bound(per_turn, session_remaining);
-        if let Some(n) = effective {
-            out.insert(name.clone(), n);
-        }
-    }
-    out
-}
-
 /// Await the next event, or pend forever when no monitor is attached — so an
 /// absent event source simply never wins the `select!`.
 async fn recv_opt(rx: &mut Option<tokio::sync::mpsc::UnboundedReceiver<String>>) -> Option<String> {
@@ -709,52 +618,46 @@ async fn recv_opt(rx: &mut Option<tokio::sync::mpsc::UnboundedReceiver<String>>)
 async fn handle_user_turn(
     user_text: &str,
     convo: &mut Conversation,
-    session_grants: &mut Vec<String>,
-    client: &reqwest::Client,
-    base: &str,
+    client: &Client,
     air: &str,
     session_id: &str,
     opts: &ChatOptions,
-    tool_turn_budget: &HashMap<String, usize>,
-    tool_session_cap: &HashMap<String, usize>,
-    tool_session_consumed: &mut HashMap<String, usize>,
+    initial_grants: &[String],
+    tool_call_budgets: &HashMap<String, usize>,
 ) {
     let prompt = convo.render(user_text);
-    // The per-tool budget for THIS turn folds the per-turn budget with the
-    // remaining per-conversation cap.
-    let turn_budgets =
-        effective_turn_budgets(tool_turn_budget, tool_session_cap, tool_session_consumed);
-    // On a refused write capability, prompt the operator; on approval grant it
-    // for the session and retry the SAME turn. Rides the static admission path.
     loop {
         match run_turn(
             client,
-            base,
             air,
             session_id,
             &prompt,
             user_text,
-            session_grants,
+            initial_grants,
             opts,
-            &turn_budgets,
+            tool_call_budgets,
         )
         .await
         {
-            Ok(TurnOutcome::Answered {
-                answer,
-                tool_call_counts,
-            }) => {
-                // Fold this turn's consumption into the running session totals so
-                // the next turn's budget tightens (per-conversation cap).
-                for (name, count) in tool_call_counts {
-                    *tool_session_consumed.entry(name).or_insert(0) += count;
-                }
-                record_and_compact(convo, user_text, answer, client, base, session_id).await;
+            Ok(TurnOutcome::Answered { answer }) => {
+                record_and_compact(convo, user_text, answer, client, session_id).await;
                 break;
             }
             Ok(TurnOutcome::NeedsGrant(cap)) => match prompt_grant(&cap) {
                 Ok(true) => {
-                    session_grants.push(cap);
+                    if let Err(err) = client
+                        .update_session_grants(
+                            session_id,
+                            &GrantUpdate {
+                                add: vec![cap.clone()],
+                                ..Default::default()
+                            },
+                        )
+                        .await
+                    {
+                        eprintln!("(grant failed: {err})");
+                        break;
+                    }
                     continue;
                 }
                 Ok(false) => {
@@ -841,13 +744,7 @@ fn cue_event_to_turn(data: &str) -> String {
 
 /// Outcome of one conversational turn.
 enum TurnOutcome {
-    /// The assistant produced a reply, with the per-tool call counts consumed
-    /// this turn (Control 2 — for host-side session accounting).
-    Answered {
-        answer: String,
-        tool_call_counts: HashMap<String, usize>,
-    },
-    /// A write capability was refused; the operator must grant it to proceed.
+    Answered { answer: String },
     NeedsGrant(String),
 }
 
@@ -858,25 +755,20 @@ async fn record_and_compact(
     convo: &mut Conversation,
     user: &str,
     answer: String,
-    client: &reqwest::Client,
-    base: &str,
+    client: &Client,
     session_id: &str,
 ) {
     convo.record(user.to_string(), answer);
     if convo.token_estimate() > COMPACT_AT_TOKENS {
-        if let Err(err) = compact_if_needed(convo, client, base, session_id, false).await {
+        if let Err(err) = compact_if_needed(convo, client, session_id, false).await {
             eprintln!("(compaction skipped: {err})");
         }
     }
 }
 
-/// Fold the oldest turns into the running summary via a quiet summarize turn.
-/// `force` compacts regardless of the token threshold.
-/// On any failure the transcript is left untouched (no turn is lost).
 async fn compact_if_needed(
     convo: &mut Conversation,
-    client: &reqwest::Client,
-    base: &str,
+    client: &Client,
     session_id: &str,
     force: bool,
 ) -> Result<bool> {
@@ -887,7 +779,7 @@ async fn compact_if_needed(
         return Ok(false);
     }
     let before = convo.token_estimate();
-    let new_summary = summarize_quiet(client, base, session_id, &foldable).await?;
+    let new_summary = summarize_quiet(client, session_id, &foldable).await?;
     if new_summary.trim().is_empty() {
         return Ok(false); // summarizer returned nothing — keep transcript intact
     }
@@ -904,28 +796,22 @@ async fn compact_if_needed(
 /// printing anything (a quiet, non-streaming turn). Reuses the same session id
 /// so the summarization is attributed to this conversation.
 async fn summarize_quiet(
-    client: &reqwest::Client,
-    base: &str,
+    client: &Client,
     session_id: &str,
     text: &str,
 ) -> Result<String> {
-    let url = format!("{}/v1/execute/stream", base.trim_end_matches('/'));
-    let body = serde_json::json!({
-        "air": chat::SUMMARIZE_AIR,
-        "args": [text],
-        "session_id": session_id,
-    });
-    let resp = client
-        .post(&url)
-        .header("Accept", "text/event-stream")
-        .json(&body)
-        .send()
-        .await
-        .with_context(|| format!("failed to POST {url}"))?;
+    let body = ExecuteRequest {
+        air: chat::SUMMARIZE_AIR.to_string(),
+        args: vec![text.to_string()],
+        session_id: Some(session_id.to_string()),
+        ..Default::default()
+    };
+    let resp = client.execute_stream(&body).await?;
     anyhow::ensure!(
         resp.status().is_success(),
-        "summarize returned {} for {url}",
-        resp.status()
+        "summarize returned {} for {}",
+        resp.status(),
+        client.baseurl()
     );
     let mut stream = resp.bytes_stream();
     let mut parser = SseParser::default();
@@ -933,60 +819,24 @@ async fn summarize_quiet(
     while let Some(chunk) = stream.next().await {
         let chunk = chunk.context("SSE chunk read failed")?;
         for frame in parser.feed(&chunk) {
-            if let Ok(v) = serde_json::from_str::<JsonValue>(&frame.data)
-                && let Some(c) = v
+            if let Ok(v) = serde_json::from_str::<JsonValue>(&frame.data) {
+                let _ = maybe_answer_permission(client, &v).await;
+                if let Some(c) = v
                     .pointer("/payload/result/content")
                     .and_then(|c| c.as_str())
-            {
-                summary = c.to_string();
+                {
+                    summary = c.to_string();
+                }
             }
         }
     }
     Ok(summary)
 }
 
-/// Print the per-tool call budgets and remaining per-conversation headroom
-///, for the `/budget` meta-command.
-fn print_budget(
-    turn: &HashMap<String, usize>,
-    session_cap: &HashMap<String, usize>,
-    consumed: &HashMap<String, usize>,
-) {
-    if turn.is_empty() && session_cap.is_empty() {
-        eprintln!("(no tool budgets set)");
-        return;
-    }
-    let mut names: Vec<&String> = turn.keys().chain(session_cap.keys()).collect();
-    names.sort();
-    names.dedup();
-    for name in names {
-        let per_turn = turn
-            .get(name)
-            .map(|n| n.to_string())
-            .unwrap_or_else(|| "∞".to_string());
-        match session_cap.get(name) {
-            Some(cap) => {
-                let used = consumed.get(name).copied().unwrap_or(0);
-                eprintln!(
-                    "  {name}: per-turn {per_turn}, session {used}/{cap} ({} left)",
-                    cap.saturating_sub(used)
-                );
-            }
-            None => eprintln!("  {name}: per-turn {per_turn}, session ∞"),
-        }
-    }
-}
-
 /// Handle `/workflow <sub>` meta-commands (Goal 1): `list` enumerates `.air` /
 /// `.apxmw` files in the cwd; `run <path>` reads the file client-side and runs it
 /// through `/v1/compile/stream`, admitting the session's granted capabilities.
-async fn handle_workflow_meta(
-    rest: &str,
-    client: &reqwest::Client,
-    base: &str,
-    session_id: &str,
-    session_grants: &[String],
-) {
+async fn handle_workflow_meta(rest: &str, client: &Client, session_id: &str) {
     let (sub, arg) = rest
         .split_once(' ')
         .map(|(s, a)| (s, a.trim()))
@@ -1018,9 +868,7 @@ async fn handle_workflow_meta(
             }
             match std::fs::read_to_string(arg) {
                 Ok(air) => {
-                    if let Err(e) =
-                        run_workflow_air(client, base, session_id, &air, session_grants).await
-                    {
+                    if let Err(e) = run_workflow_air(client, session_id, &air).await {
                         eprintln!("(workflow run failed: {e})");
                     }
                 }
@@ -1034,20 +882,20 @@ async fn handle_workflow_meta(
 /// Run an authored workflow's AIR through `/v1/compile/stream`, printing the
 /// final content. Admits the session's granted capabilities so writes the
 /// operator already approved carry through.
-async fn run_workflow_air(
-    client: &reqwest::Client,
-    base: &str,
-    session_id: &str,
-    air: &str,
-    session_grants: &[String],
-) -> Result<()> {
-    let url = format!("{}/v1/compile/stream", base.trim_end_matches('/'));
+async fn run_workflow_air(client: &Client, session_id: &str, air: &str) -> Result<()> {
+    let grants = client
+        .get_session_status(session_id)
+        .await
+        .map(|r| r.into_inner().ledger.grants)
+        .unwrap_or_default();
+    let url = format!("{}/v1/compile/stream", client.baseurl());
     let body = serde_json::json!({
         "air": air,
         "session_id": session_id,
-        "admit_capabilities": session_grants,
+        "admit_capabilities": grants,
     });
     let resp = client
+        .client()
         .post(&url)
         .header("Accept", "text/event-stream")
         .json(&body)
@@ -1066,6 +914,7 @@ async fn run_workflow_air(
         let chunk = chunk.context("SSE chunk read failed")?;
         for frame in parser.feed(&chunk) {
             if let Ok(v) = serde_json::from_str::<JsonValue>(&frame.data) {
+                let _ = maybe_answer_permission(client, &v).await;
                 if let Some(c) = v
                     .pointer("/payload/result/content")
                     .and_then(|c| c.as_str())
@@ -1098,8 +947,7 @@ fn prompt_grant(capability: &str) -> Result<bool> {
 /// and return the assistant's text.
 #[allow(clippy::too_many_arguments)]
 async fn run_turn(
-    client: &reqwest::Client,
-    base: &str,
+    client: &Client,
     air: &str,
     session_id: &str,
     prompt: &str,
@@ -1108,55 +956,39 @@ async fn run_turn(
     opts: &ChatOptions,
     tool_call_budgets: &HashMap<String, usize>,
 ) -> Result<TurnOutcome> {
-    let url = format!("{}/v1/execute/stream", base.trim_end_matches('/'));
-    // Per-tool auth bindings: capability -> apxm-auth connection id.
-    // Only the connection id travels; the server resolves the token.
     let tool_credentials = parse_kv_string(&opts.tool_auth);
-    // Args bind POSITIONALLY to graph parameters — the bare transcript is the
-    // single `conversation` parameter (no `name=value` parsing on this path).
-    let body = serde_json::json!({
-        "air": air,
-        "args": [prompt],
-        "session_id": session_id,
-        // The verbatim user input recorded as the faithful transcript user turn
-        // (the model-facing prompt is redacted on the runtime side).
-        "user_text": user_text,
-        "admit_capabilities": admit,
-        "imports": opts.import,
-        "tool_call_budgets": tool_call_budgets,
-        "tool_credentials": tool_credentials,
-        "owner": opts.owner,
-    });
-    let resp = client
-        .post(&url)
-        .header("Accept", "text/event-stream")
-        .json(&body)
-        .send()
-        .await
-        .with_context(|| format!("failed to POST {url}"))?;
+    let body = ExecuteRequest {
+        air: air.to_string(),
+        args: vec![prompt.to_string()],
+        session_id: Some(session_id.to_string()),
+        user_text: Some(user_text.to_string()),
+        admit_capabilities: admit.to_vec(),
+        imports: opts.import.clone(),
+        tool_call_budgets: tool_call_budgets.clone(),
+        tool_credentials,
+        owner: opts.owner.clone(),
+    };
+    let resp = client.execute_stream(&body).await?;
     if !resp.status().is_success() {
         let status = resp.status();
         let text = resp.text().await.unwrap_or_default();
-        // A pre-stream 400 from the static write-admission check means a write
-        // capability needs explicit consent; surface it for the HITL prompt.
         if let Some(cap) = chat::parse_denied_capability(&text) {
             return Ok(TurnOutcome::NeedsGrant(cap));
         }
-        return Err(anyhow!("server returned {status} for {url}: {text}"));
+        return Err(anyhow!(
+            "server returned {status} for {}: {text}",
+            client.baseurl()
+        ));
     }
 
     let mut stream = resp.bytes_stream();
     let mut parser = SseParser::default();
     let mut snap = RunSnapshot::new(session_id.to_string());
     let mut assistant = String::new();
-    let mut tool_call_counts: HashMap<String, usize> = HashMap::new();
     let mut error: Option<String> = None;
     let mut streamed_any = false;
     let stdout = std::io::stdout();
 
-    // Live streaming: in plain (non-tree) mode, print each `token` event's text
-    // as it arrives so the reply appears incrementally. The tree view renders
-    // the dispatch tree instead, so token streaming is suppressed there.
     if !opts.tree {
         print!("\nassistant> ");
         let _ = std::io::stdout().flush();
@@ -1166,8 +998,8 @@ async fn run_turn(
         let chunk = chunk.context("SSE chunk read failed")?;
         for frame in parser.feed(&chunk) {
             if let Ok(v) = serde_json::from_str::<JsonValue>(&frame.data) {
+                let _ = maybe_answer_permission(client, &v).await;
                 let kind = v.pointer("/payload/kind").and_then(|k| k.as_str());
-                // Stream tokens live as they are produced.
                 if kind == Some("token")
                     && let Some(tok) = v.pointer("/payload/text").and_then(|t| t.as_str())
                 {
@@ -1178,8 +1010,6 @@ async fn run_turn(
                     assistant.push_str(tok);
                     streamed_any = true;
                 }
-                // Stream extended-thinking blocks dimmed, so the reasoning is
-                // visible without being mistaken for the final answer.
                 if kind == Some("thought")
                     && !opts.tree
                     && let Some(th) = v.pointer("/payload/text").and_then(|t| t.as_str())
@@ -1187,25 +1017,12 @@ async fn run_turn(
                     print!("\x1b[2m{th}\x1b[0m");
                     let _ = std::io::stdout().flush();
                 }
-                // ExecuteComplete carries the authoritative final content.
                 if let Some(c) = v
                     .pointer("/payload/result/content")
                     .and_then(|c| c.as_str())
                 {
                     assistant = c.to_string();
                 }
-                // …and the per-tool call counts consumed (Control 2 session cap).
-                if let Some(counts) = v
-                    .pointer("/payload/result/tool_call_counts")
-                    .and_then(|c| c.as_object())
-                {
-                    for (name, value) in counts {
-                        if let Some(n) = value.as_u64() {
-                            tool_call_counts.insert(name.clone(), n as usize);
-                        }
-                    }
-                }
-                // ErrorPayload carries a message.
                 if kind == Some("error")
                     && let Some(m) = v.pointer("/payload/message").and_then(|m| m.as_str())
                 {
@@ -1244,31 +1061,27 @@ async fn run_turn(
         // Backend didn't stream tokens — print the final content in one shot.
         println!("{assistant}");
     }
-    Ok(TurnOutcome::Answered {
-        answer: assistant,
-        tool_call_counts,
-    })
+    Ok(TurnOutcome::Answered { answer: assistant })
 }
 
-/// Handle an in-REPL `/meta` command. Returns `Ok(true)` to exit the loop.
-async fn handle_meta(cmd: &str, client: &reqwest::Client, base: &str) -> Result<bool> {
+async fn handle_meta(cmd: &str, client: &Client) -> Result<bool> {
     let (verb, _rest) = cmd.split_once(' ').unwrap_or((cmd, ""));
     match verb {
         "exit" | "quit" => return Ok(true),
         "help" => {
             eprintln!(
-                "meta-commands: /tools /skills /agents /compact /continue /grants /revoke <cap> \
+                "meta-commands: /tools /skills /agents /compact /grants /revoke <cap> \
                  /budget /save <path> /workflow <list|run <path>> /help /exit"
             );
         }
         "tools" => {
-            print_list(client, &format!("{base}/v1/capabilities"), "tools").await?;
+            print_list(client, "/v1/capabilities", "tools").await?;
         }
         "skills" => {
-            print_list(client, &format!("{base}/v1/skills"), "skills").await?;
+            print_list(client, "/v1/skills", "skills").await?;
         }
         "agents" => {
-            print_list(client, &format!("{base}/v1/agents"), "agents").await?;
+            print_list(client, "/v1/agents", "agents").await?;
         }
         other => eprintln!("unknown meta-command /{other} (try /help)"),
     }
@@ -1277,18 +1090,8 @@ async fn handle_meta(cmd: &str, client: &reqwest::Client, base: &str) -> Result<
 
 /// Fetch a JSON list endpoint and print `name`/`description` (or `skill_id`)
 /// rows. Tolerates either a bare array or an object with a `data` array.
-async fn print_list(client: &reqwest::Client, url: &str, label: &str) -> Result<()> {
-    let resp = client
-        .get(url)
-        .send()
-        .await
-        .with_context(|| format!("failed to GET {url}"))?;
-    anyhow::ensure!(
-        resp.status().is_success(),
-        "server returned {} for {url}",
-        resp.status()
-    );
-    let v: JsonValue = resp.json().await.context("invalid JSON from server")?;
+async fn print_list(client: &Client, path: &str, label: &str) -> Result<()> {
+    let v = client.get_json(path).await?;
     let items = v
         .as_array()
         .cloned()

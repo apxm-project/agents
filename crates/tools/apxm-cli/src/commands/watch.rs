@@ -8,17 +8,20 @@
 //! drag in `reqwest-eventsource` just for this one consumer.
 
 use std::io::Write as _;
-use std::time::Duration;
 
 use anyhow::{Context, Result, anyhow};
+use apxm_client::{
+    client_for_sse,
+    events::{event_kind, parse_approval_prompt},
+    ClientInfo, DEFAULT_SERVER_BASE,
+};
 use apxm_core::events::ApxmEvent;
+use apxm_client::reqwest;
 use futures::StreamExt;
+use serde_json::Value as JsonValue;
 
 use super::render::{RunSnapshot, render_tree};
-
-/// Default apxm-server endpoint. Override via APXM_SERVER_BASE or the
-/// `--server` flag.
-const DEFAULT_SERVER_BASE: &str = "http://127.0.0.1:8000";
+use super::sse_permissions::maybe_answer_permission;
 
 /// Parameters for the watch command. Kept as a struct so the CLI surface
 /// can grow flags without bloating the function signature.
@@ -53,18 +56,14 @@ pub async fn watch_command(thread_id: String, expand: Option<u64>) -> Result<()>
 /// wrapper around this; tests drive it directly so they don't have to
 /// poke env vars.
 pub async fn watch_with_options(opts: WatchOptions) -> Result<()> {
-    let client = reqwest::Client::builder()
-        // SSE streams may stall — disable the body read timeout so the
-        // keepalive heartbeats don't trip a false-negative.
-        .read_timeout(Duration::from_secs(0))
-        .build()
-        .context("failed to build reqwest client")?;
+    let client = client_for_sse(&opts.server_base);
+    let http = client.client().clone();
     // Optional one-shot node detail pull (the `Ctrl+O` gesture from the
     // plan; exposed here as `--expand <node_id>` so tests can drive it
     // without a real terminal). Printed to stderr so the live tree on
     // stdout stays parseable.
     if let Some(node_id) = opts.expand_node_id {
-        match fetch_node_detail(&client, &opts.server_base, &opts.thread_id, node_id).await {
+        match fetch_node_detail(&http, &opts.server_base, &opts.thread_id, node_id).await {
             Ok(detail) => eprintln!(
                 "── node {node_id} detail ──\n{}\n──────────────────────────",
                 serde_json::to_string_pretty(&detail).unwrap_or_default()
@@ -78,7 +77,7 @@ pub async fn watch_with_options(opts: WatchOptions) -> Result<()> {
         base = opts.server_base.trim_end_matches('/'),
         tid = opts.thread_id,
     );
-    let response = client
+    let response = http
         .get(&url)
         .header("Accept", "text/event-stream")
         .send()
@@ -96,6 +95,19 @@ pub async fn watch_with_options(opts: WatchOptions) -> Result<()> {
     while let Some(chunk) = stream.next().await {
         let chunk = chunk.context("SSE chunk read failed")?;
         for frame in parser.feed(&chunk) {
+            if !frame.data.is_empty() {
+                if let Ok(json) = serde_json::from_str::<JsonValue>(&frame.data) {
+                    if event_kind(&json) == Some("approval_request") {
+                        if let Some(prompt) = parse_approval_prompt(&json) {
+                            eprintln!(
+                                "\n[permission] awaiting reply for tool '{}' ({})",
+                                prompt.tool_name, prompt.approval_id
+                            );
+                        }
+                        let _ = maybe_answer_permission(&client, &json).await;
+                    }
+                }
+            }
             if let Some(event) = decode_event_frame(&frame) {
                 snapshot.apply(&event);
                 // Re-render in place: clear screen + redraw the tree.

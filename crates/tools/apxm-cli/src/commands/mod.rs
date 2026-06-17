@@ -12,6 +12,7 @@ pub mod backend;
 pub mod cache;
 #[cfg(feature = "driver")]
 pub mod chat;
+pub(crate) mod sse_permissions;
 pub mod codegen;
 #[cfg(feature = "driver")]
 pub mod compile;
