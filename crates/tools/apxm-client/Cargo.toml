@@ -3,6 +3,7 @@ name = "apxm-client"
 version.workspace = true
 publish = false
 edition.workspace = true
+build = "build.rs"
 description = "Typed HTTP client for apxm-server (generated from OpenAPI — spec 0002)"
 license.workspace = true
 repository.workspace = true
@@ -13,5 +14,19 @@ authors.workspace = true
 workspace = true
 
 [dependencies]
+futures.workspace = true
+progenitor-client.workspace = true
+reqwest = { version = "0.13", features = ["json", "rustls"], default-features = false }
 serde.workspace = true
 serde_json.workspace = true
+
+[build-dependencies]
+prettyplease = "0.2"
+progenitor.workspace = true
+openapiv3.workspace = true
+serde_json.workspace = true
+serde_yaml.workspace = true
+syn = "2.0"
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }

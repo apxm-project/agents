@@ -97,6 +97,11 @@ bpe-openai = "0.3"
 walkdir = "2.0"
 rusqlite = { version = "0.32", features = ["bundled"] }
 jsonschema = "0.18"
+utoipa = { version = "5.5", features = ["axum_extras"] }
+serde_yaml = "0.9"
+progenitor = "0.14"
+progenitor-client = "0.14"
+openapiv3 = "2.2"
 
 # ── Dev ──────────────────────────────────────────────────────
 insta = { version = "1.0", features = ["yaml"] }

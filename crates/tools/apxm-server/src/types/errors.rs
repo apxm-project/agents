@@ -8,9 +8,10 @@
 use apxm_core::error::RuntimeError;
 use axum::http::StatusCode;
 use serde::{Deserialize, Serialize};
+use utoipa::ToSchema;
 
 /// Fault class on the wire — program vs server responsibility boundary.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum FaultClass {
     /// Caller or program can adjust inputs and retry (4xx).
@@ -122,7 +123,7 @@ impl ApiFaultCode {
 }
 
 /// Typed error envelope returned on HTTP responses and SSE error frames.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
 pub struct TypedError {
     pub class: FaultClass,
     pub code: String,

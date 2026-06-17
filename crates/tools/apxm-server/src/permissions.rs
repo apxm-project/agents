@@ -18,6 +18,7 @@ use axum::Json;
 use axum::extract::Path;
 use dashmap::DashMap;
 use serde::{Deserialize, Serialize};
+use utoipa::ToSchema;
 use tokio::sync::{Mutex, Notify};
 
 use crate::error::ApiError;
@@ -30,13 +31,13 @@ use grant_cache::{GrantFingerprint, SessionGrantCache};
 pub const DEFAULT_PERMISSION_TIMEOUT: Duration = Duration::from_secs(120);
 
 /// Client reply to a server permission prompt (OpenAPI `PermissionResponse`).
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
 pub struct PermissionResponse {
     pub decision: PermissionDecision,
 }
 
 /// Wire decision enum for permission responses.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum PermissionDecision {
     Approve,

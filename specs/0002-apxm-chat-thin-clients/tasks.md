@@ -78,10 +78,10 @@ no unfinished dependency). `[US#]` tags story tasks. **Shared integration:**
 **Goal:** OpenAPI + typed client with CI diff-test (SC-007).
 **Independent Test:** intentional wire drift fails CI until regeneration.
 
-- [ ] T080 [US6] `utoipa` OpenAPI export from `ServerRoute` + response types — `crates/tools/apxm-server/src/openapi.rs`.
-- [ ] T081 [P] [US6] Generate `apxm-client` bindings from exported schema — `crates/tools/apxm-client/src/lib.rs`.
-- [ ] T082 [P] [US6] CI schema diff-test against `specs/0002-apxm-chat-thin-clients/contracts/openapi-session-v1.yaml` — `crates/tools/apxm-server/tests/contract_openapi_diff.rs`.
-- [ ] **Checkpoint:** US6 — diff-test passes; sample consumer compiles with `apxm-client` only.
+- [x] T080 [US6] `utoipa` OpenAPI export from `ServerRoute` + response types — `crates/tools/apxm-server/src/openapi.rs`.
+- [x] T081 [P] [US6] Generate `apxm-client` bindings from exported schema — `crates/tools/apxm-client/src/lib.rs`.
+- [x] T082 [P] [US6] CI schema diff-test against `specs/0002-apxm-chat-thin-clients/contracts/openapi-session-v1.yaml` — `crates/tools/apxm-server/tests/contract_openapi_diff.rs`.
+- [x] **Checkpoint:** US6 — diff-test passes; sample consumer compiles with `apxm-client` only.
 
 ## Phase 10 — User Story 7: CLI thin pipe (P3)
 

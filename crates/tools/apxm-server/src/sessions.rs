@@ -14,6 +14,7 @@ use axum::response::sse::{Event, KeepAlive, Sse};
 use axum::routing::{get, post};
 use futures::Stream;
 use serde::{Deserialize, Serialize};
+use utoipa::ToSchema;
 use tokio_stream::wrappers::BroadcastStream;
 use tokio_stream::wrappers::errors::BroadcastStreamRecvError;
 
@@ -25,7 +26,7 @@ use crate::types::responses::OkAck;
 
 const SESSION_COMPACT_KEEP_RECENT: i64 = 4;
 
-#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, PartialEq, Eq, ToSchema)]
 pub(crate) struct SessionStatus {
     pub(crate) session_id: String,
     pub(crate) turn_count: usize,
@@ -34,7 +35,7 @@ pub(crate) struct SessionStatus {
     pub(crate) active_execution_id: Option<String>,
 }
 
-#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, PartialEq, Eq, ToSchema)]
 pub(crate) struct SessionLedgerView {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub(crate) turn_cap: Option<usize>,
@@ -44,7 +45,7 @@ pub(crate) struct SessionLedgerView {
     pub(crate) grants: Vec<String>,
 }
 
-#[derive(Debug, Clone, Deserialize, Default)]
+#[derive(Debug, Clone, Deserialize, Default, ToSchema)]
 pub(crate) struct GrantUpdate {
     #[serde(default)]
     pub(crate) add: Vec<String>,

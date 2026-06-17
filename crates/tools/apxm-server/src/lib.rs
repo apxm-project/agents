@@ -28,6 +28,7 @@ mod mcp_protocol;
 mod mcp_tools;
 mod memory;
 mod observability;
+pub mod openapi;
 pub mod permissions;
 mod rerun;
 mod rollout;
