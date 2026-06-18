@@ -35,6 +35,7 @@ pub mod permissions;
 mod principal;
 mod rerun;
 mod rollout;
+mod run_history;
 mod routes;
 mod runs;
 mod runtime_setup;

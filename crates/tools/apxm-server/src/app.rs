@@ -20,6 +20,7 @@ use crate::executions::{get_execution, get_execution_node, list_executions};
 use crate::fleet::get_fleet;
 use crate::generate::{handle_generate, handle_generate_stream, handle_schema};
 use crate::goals::{cancel_goal, get_goal, get_goal_events_bulk, list_goals, stream_goal_events};
+use crate::run_history::{get_run_summary, list_workflow_runs, reindex_runs};
 use crate::health::{health, list_backends, list_models};
 use crate::mcp::{mcp_jsonrpc, post_goal};
 use crate::memory::{delete_fact, search_facts, store_fact};
@@ -197,7 +198,12 @@ pub(crate) fn build_app(state: AppState) -> Router {
             ServerRoute::GoalEventsStream.path(),
             get(stream_goal_events),
         )
-        .route(ServerRoute::GoalCancel.path(), post(cancel_goal));
+        .route(ServerRoute::GoalCancel.path(), post(cancel_goal))
+        // Workflow-scoped run history (spec 0013).
+        .route(ServerRoute::WorkflowRuns.path(), get(list_workflow_runs))
+        .route(ServerRoute::RunsReindex.path(), post(reindex_runs))
+        // Run summary alias (lighter shape than /v1/executions/{id}).
+        .route("/v1/runs/{execution_id}/summary", get(get_run_summary));
 
     if let Some(layer) = body_limit {
         router = router.layer(layer);

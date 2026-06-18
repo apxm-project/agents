@@ -83,6 +83,12 @@ pub(crate) struct ExecuteRequest {
     /// rollout recording is active.
     #[serde(default)]
     pub(crate) user_text: Option<String>,
+    /// Workspace workflow identity (spec 0009 / 0013). The basename of
+    /// `workspace/workflows/<id>/`; present when the caller supplies it so
+    /// run history can be grouped by workflow and queried via
+    /// `GET /v1/workflows/{id}/runs`.
+    #[serde(default)]
+    pub(crate) workflow_id: Option<String>,
 }
 
 /// A caller-supplied workflow source plus the same execution controls as
@@ -113,6 +119,8 @@ pub(crate) struct CompileRequest {
     pub(crate) owner: Option<String>,
     #[serde(default)]
     pub(crate) user_text: Option<String>,
+    #[serde(default)]
+    pub(crate) workflow_id: Option<String>,
 }
 
 impl CompileRequest {
@@ -132,6 +140,7 @@ impl CompileRequest {
             tool_credentials: self.tool_credentials,
             owner: self.owner,
             user_text: self.user_text,
+            workflow_id: self.workflow_id,
         })
     }
 }
@@ -260,6 +269,9 @@ pub(crate) async fn run_air_inner(
         // execute path has no rollout, so the verbatim prompt is unused here.
         user_text: _,
         python_tools_sidecar,
+        // The raw (non-streaming) execute path does not record into the
+        // ExecutionStore, so workflow_id is unused here.
+        workflow_id: _,
     } = prepare_request(req)?;
     let known_caps = registered_capability_names(state);
     let mut artifact = air_to_artifact_with_caps(&air, &known_caps)?;
@@ -312,6 +324,9 @@ pub(crate) async fn execute_stream(
         owner,
         user_text,
         python_tools_sidecar,
+        // The streaming execute path does not record into the ExecutionStore;
+        // the skill execute path does via SkillExecuteRequest.workflow_id.
+        workflow_id: _,
     } = prepare_request(req)?;
     let known_caps = registered_capability_names(&state);
     let mut artifact = air_to_artifact_with_caps(&air, &known_caps)?;
@@ -558,6 +573,8 @@ pub(crate) struct PreparedRequest {
     /// Captured `; __apxm_python_tools__` sidecar (stripped from the AIR text).
     /// Injected as an artifact section only on the operator-trusted python path.
     pub(crate) python_tools_sidecar: Option<Vec<u8>>,
+    /// Workspace workflow id forwarded from the caller (spec 0013).
+    pub(crate) workflow_id: Option<String>,
 }
 
 pub(crate) fn prepare_request(mut req: ExecuteRequest) -> Result<PreparedRequest, ApiError> {
@@ -582,6 +599,7 @@ pub(crate) fn prepare_request(mut req: ExecuteRequest) -> Result<PreparedRequest
         owner: req.owner,
         user_text: req.user_text,
         python_tools_sidecar,
+        workflow_id: req.workflow_id,
     })
 }
 
