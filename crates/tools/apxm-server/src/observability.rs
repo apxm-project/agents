@@ -35,6 +35,12 @@ pub(crate) fn warn_init_failure(error: &OtelInitError) {
     warn!(error = %error, "OTLP exporter init failed; continuing without export");
 }
 
+fn json_logs_enabled() -> bool {
+    std::env::var("APXM_LOG_FORMAT")
+        .map(|value| value.trim().eq_ignore_ascii_case("json"))
+        .unwrap_or(false)
+}
+
 /// Initialize the global tracing subscriber with optional OTLP export.
 pub(crate) fn init_tracing_subscriber(
     observability: &ServerObservabilityConfig,
@@ -50,10 +56,17 @@ pub(crate) fn init_tracing_subscriber(
         .filter(|value| !value.is_empty());
 
     let Some(endpoint) = endpoint else {
-        tracing_subscriber::registry()
-            .with(filter)
-            .with(tracing_subscriber::fmt::layer())
-            .init();
+        if json_logs_enabled() {
+            tracing_subscriber::registry()
+                .with(filter)
+                .with(tracing_subscriber::fmt::layer().json())
+                .init();
+        } else {
+            tracing_subscriber::registry()
+                .with(filter)
+                .with(tracing_subscriber::fmt::layer())
+                .init();
+        }
         return Ok(None);
     };
 
@@ -70,11 +83,19 @@ pub(crate) fn init_tracing_subscriber(
     let tracer = provider.tracer("apxm-server");
     let telemetry = tracing_opentelemetry::layer().with_tracer(tracer);
 
-    tracing_subscriber::registry()
-        .with(filter)
-        .with(telemetry)
-        .with(tracing_subscriber::fmt::layer())
-        .init();
+    if json_logs_enabled() {
+        tracing_subscriber::registry()
+            .with(filter)
+            .with(telemetry)
+            .with(tracing_subscriber::fmt::layer().json())
+            .init();
+    } else {
+        tracing_subscriber::registry()
+            .with(filter)
+            .with(telemetry)
+            .with(tracing_subscriber::fmt::layer())
+            .init();
+    }
 
     Ok(Some(OtelExporter {
         endpoint: std::sync::Arc::new(endpoint.to_string()),

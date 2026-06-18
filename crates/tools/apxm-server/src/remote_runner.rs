@@ -150,8 +150,7 @@ impl RemoteAgentSpawner {
 
         let body = req.to_wire();
         let response = self
-            .http
-            .post(&url)
+            .runner_auth(self.http.post(&url))
             .json(&body)
             .send()
             .await
@@ -181,8 +180,7 @@ impl RemoteAgentSpawner {
         debug!(%run_id, %url, "querying remote agent status");
 
         let response = self
-            .http
-            .get(&url)
+            .runner_auth(self.http.get(&url))
             .send()
             .await
             .map_err(|e| RemoteRunnerError::Transport(e.to_string()))?;
@@ -208,8 +206,7 @@ impl RemoteAgentSpawner {
         debug!(%run_id, %url, "cancelling remote agent");
 
         let response = self
-            .http
-            .delete(&url)
+            .runner_auth(self.http.delete(&url))
             .send()
             .await
             .map_err(|e| RemoteRunnerError::Transport(e.to_string()))?;
@@ -225,6 +222,13 @@ impl RemoteAgentSpawner {
 
         info!(%run_id, "remote agent cancelled");
         Ok(())
+    }
+
+    fn runner_auth(&self, request: reqwest::RequestBuilder) -> reqwest::RequestBuilder {
+        match std::env::var("APXM_RUNNER_IDENTITY_TOKEN") {
+            Ok(token) if !token.trim().is_empty() => request.bearer_auth(token.trim().to_string()),
+            _ => request,
+        }
     }
 }
 
