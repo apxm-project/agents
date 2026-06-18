@@ -25,10 +25,11 @@
 # with "undefined reference" on focal.
 FROM condaforge/miniforge3:25.3.1-0 AS builder
 
-ARG RUST_TOOLCHAIN=nightly
+ARG RUST_TOOLCHAIN=nightly-2026-06-18
 ENV CARGO_TARGET_DIR=/build-target \
     DEBIAN_FRONTEND=noninteractive \
-    CONDA_ENV=/opt/conda/envs/apxm
+    CONDA_ENV=/opt/conda/envs/apxm \
+    RUSTUP_TOOLCHAIN=${RUST_TOOLCHAIN}
 
 # System packages needed by the compiler's build.rs. CMake is *not*
 # installed here — Ubuntu 20.04 focal (miniforge3's base) ships 3.16,
