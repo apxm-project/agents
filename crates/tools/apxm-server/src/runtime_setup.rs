@@ -19,6 +19,21 @@ pub(crate) async fn build_runtime_with_router(
     // Wire the ACP agent spawner so SPAWN_AGENT can launch real subprocess
     // agents (claude, codex, …) through /v1/execute. Best-effort: a failure
     // here only disables agent spawning, it must not abort server startup.
+    //
+    // When APXM_RUNNER_URL is set the RemoteAgentSpawner seam is active.
+    // The spawner is constructed and logged here; handler-level dispatch
+    // (routing SPAWN_AGENT through the runner HTTP API) is wired in the
+    // agent capability layer once spec 0011 T020 is implemented.  Until then
+    // the local subprocess path remains the active backend in both modes so
+    // dev workflows are unaffected.
+    // When APXM_RUNNER_URL is present the RemoteAgentSpawner seam is in play.
+    // Log the intent now; handler-level dispatch is wired in spec 0011 T020.
+    // Until then the local subprocess path remains active in both modes.
+    if let Ok(url) = std::env::var("APXM_RUNNER_URL") {
+        if !url.is_empty() {
+            info!(runner_url = %url, "remote agent runner seam active; handler dispatch will delegate to runner once T020 is wired");
+        }
+    }
     if let Err(e) = configure_agent_registry(
         runtime.process_table(),
         runtime.capability_system_arc(),

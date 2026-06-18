@@ -34,6 +34,7 @@ pub mod openapi;
 pub mod permissions;
 mod principal;
 mod rerun;
+pub mod remote_runner;
 mod rollout;
 mod run_history;
 mod routes;
