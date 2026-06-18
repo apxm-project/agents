@@ -62,28 +62,223 @@
 //! | checkpoint rows | permanent | none | operator action |
 //! | sandbox scratch | ephemeral | 1 hour | post-run cleanup |
 
-/// Identifies the backing store for the run-history index.
+use std::path::Path;
+use std::sync::{Arc, Mutex};
+
+use rusqlite::{Connection, OptionalExtension, params};
+use serde::Serialize;
+
+use crate::executions::{ExecutionRecord, ExecutionStatus};
+use crate::helpers::now_ms;
+
+const RUNS_TABLE_SQL: &str = r#"
+CREATE TABLE IF NOT EXISTS runs (
+  execution_id TEXT PRIMARY KEY,
+  workflow_id TEXT,
+  skill_id TEXT,
+  skill_version TEXT,
+  session_id TEXT,
+  session_dir TEXT,
+  run_root TEXT,
+  trace_id TEXT,
+  status TEXT NOT NULL,
+  started_at_ms INTEGER NOT NULL,
+  finished_at_ms INTEGER,
+  duration_ms INTEGER,
+  input_tokens INTEGER NOT NULL DEFAULT 0,
+  output_tokens INTEGER NOT NULL DEFAULT 0,
+  total_tokens INTEGER NOT NULL DEFAULT 0,
+  cost_usd REAL,
+  retention_class TEXT NOT NULL DEFAULT 'standard',
+  updated_at_ms INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_runs_workflow_started
+  ON runs(workflow_id, started_at_ms DESC, execution_id);
+CREATE INDEX IF NOT EXISTS idx_runs_status_started
+  ON runs(status, started_at_ms DESC, execution_id);
+"#;
+
+/// Derived run-history row persisted in the v0 SQLite index.
 ///
-/// The active backend is selected at startup from the server config.
-/// Changing it requires applying the numbered sqlx migrations and a reindex.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum RunHistoryBackend {
-    /// Scan-on-read over JSON files in `$APXM_HOME/sessions/`.  The v0 default.
-    JsonFiles,
-    /// Derived SQLite index at `$APXM_HOME/sessions/runs.sqlite`.
-    Sqlite,
-    /// Postgres run-history DB (requires numbered sqlx migrations).
-    Postgres(String),
+/// The immutable execution evidence remains the session snapshot, rollout JSONL,
+/// and `/workspace/runs/<workflow>/<execution>/` artifact tree. This row is the
+/// query model Studio and API clients use for cheap workflow/run lists.
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub(crate) struct StoredRunRecord {
+    pub(crate) run_id: String,
+    pub(crate) workflow_id: Option<String>,
+    pub(crate) skill_id: Option<String>,
+    pub(crate) skill_version: Option<String>,
+    pub(crate) session_id: Option<String>,
+    pub(crate) session_dir: Option<String>,
+    pub(crate) run_root: Option<String>,
+    pub(crate) trace_id: Option<String>,
+    pub(crate) status: ExecutionStatus,
+    pub(crate) started_at: u64,
+    pub(crate) finished_at: Option<u64>,
+    pub(crate) duration_ms: Option<u64>,
+    pub(crate) input_tokens: u64,
+    pub(crate) output_tokens: u64,
+    pub(crate) total_tokens: u64,
+    pub(crate) cost_usd: Option<f64>,
+    pub(crate) retention_class: String,
 }
 
-impl RunHistoryBackend {
-    /// Return a human-readable label for logging and diagnostics.
-    pub fn label(&self) -> &str {
-        match self {
-            Self::JsonFiles => "json-files",
-            Self::Sqlite => "sqlite",
-            Self::Postgres(_) => "postgres",
+impl StoredRunRecord {
+    pub(crate) fn from_execution_record(record: &ExecutionRecord) -> Self {
+        let (input_tokens, output_tokens, total_tokens) = record
+            .result
+            .as_ref()
+            .map(|result| {
+                let input = result.llm_usage.input_tokens as u64;
+                let output = result.llm_usage.output_tokens as u64;
+                (input, output, input.saturating_add(output))
+            })
+            .unwrap_or((0, 0, 0));
+        let finished_at = record.completed_at_ms;
+        Self {
+            run_id: record.execution_id.clone(),
+            workflow_id: record.workflow_id.clone(),
+            skill_id: Some(record.skill_id.clone()),
+            skill_version: Some(record.skill_version.clone()),
+            session_id: Some(record.session_id.clone()),
+            session_dir: Some(record.session_dir.clone()),
+            run_root: record.run_root.clone(),
+            trace_id: record.trace_id.clone(),
+            status: record.status.clone(),
+            started_at: record.started_at_ms,
+            finished_at,
+            duration_ms: finished_at.and_then(|end| end.checked_sub(record.started_at_ms)),
+            input_tokens,
+            output_tokens,
+            total_tokens,
+            cost_usd: None,
+            retention_class: RetentionClass::Standard.as_str().to_string(),
         }
+    }
+}
+
+/// SQLite-backed workflow run-history index.
+///
+/// `None` is reserved for explicit in-memory tests. Production startup opens
+/// `runs.sqlite` under the state sessions root and fails closed if the index
+/// cannot be created, so workflow lists survive process restarts and do not rely
+/// on scan-on-read.
+#[derive(Clone)]
+pub(crate) struct RunHistoryIndex {
+    db: Option<Arc<Mutex<Connection>>>,
+}
+
+impl RunHistoryIndex {
+    pub(crate) fn disabled() -> Self {
+        Self { db: None }
+    }
+
+    pub(crate) fn open(path: &Path) -> Result<Self, RunHistoryError> {
+        if let Some(parent) = path.parent() {
+            std::fs::create_dir_all(parent)
+                .map_err(|error| RunHistoryError::Backend(error.to_string()))?;
+        }
+        let conn =
+            Connection::open(path).map_err(|error| RunHistoryError::Backend(error.to_string()))?;
+        conn.pragma_update(None, "journal_mode", "WAL").ok();
+        conn.execute_batch(RUNS_TABLE_SQL)
+            .map_err(|error| RunHistoryError::Backend(error.to_string()))?;
+        Ok(Self {
+            db: Some(Arc::new(Mutex::new(conn))),
+        })
+    }
+
+    pub(crate) fn upsert_from_record(&self, record: &ExecutionRecord) {
+        self.upsert_row(&StoredRunRecord::from_execution_record(record));
+    }
+
+    pub(crate) fn upsert_row(&self, row: &StoredRunRecord) {
+        let Some(db) = &self.db else { return };
+        let Ok(conn) = db.lock() else { return };
+        let _ = conn.execute(
+            "INSERT INTO runs (
+                execution_id, workflow_id, skill_id, skill_version, session_id, session_dir,
+                run_root, trace_id, status, started_at_ms, finished_at_ms, duration_ms,
+                input_tokens, output_tokens, total_tokens, cost_usd, retention_class, updated_at_ms
+             ) VALUES (
+                ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18
+             )
+             ON CONFLICT(execution_id) DO UPDATE SET
+                workflow_id=excluded.workflow_id,
+                skill_id=excluded.skill_id,
+                skill_version=excluded.skill_version,
+                session_id=excluded.session_id,
+                session_dir=excluded.session_dir,
+                run_root=excluded.run_root,
+                trace_id=excluded.trace_id,
+                status=excluded.status,
+                started_at_ms=excluded.started_at_ms,
+                finished_at_ms=excluded.finished_at_ms,
+                duration_ms=excluded.duration_ms,
+                input_tokens=excluded.input_tokens,
+                output_tokens=excluded.output_tokens,
+                total_tokens=excluded.total_tokens,
+                cost_usd=excluded.cost_usd,
+                retention_class=excluded.retention_class,
+                updated_at_ms=excluded.updated_at_ms",
+            params![
+                row.run_id,
+                row.workflow_id,
+                row.skill_id,
+                row.skill_version,
+                row.session_id,
+                row.session_dir,
+                row.run_root,
+                row.trace_id,
+                status_to_str(&row.status),
+                row.started_at as i64,
+                row.finished_at.map(|value| value as i64),
+                row.duration_ms.map(|value| value as i64),
+                row.input_tokens as i64,
+                row.output_tokens as i64,
+                row.total_tokens as i64,
+                row.cost_usd,
+                row.retention_class,
+                now_ms() as i64,
+            ],
+        );
+    }
+
+    pub(crate) fn list_workflow(&self, workflow_id: &str) -> Option<Vec<StoredRunRecord>> {
+        let db = self.db.as_ref()?;
+        let conn = db.lock().ok()?;
+        let mut stmt = conn
+            .prepare(
+                "SELECT execution_id, workflow_id, skill_id, skill_version, session_id, session_dir,
+                        run_root, trace_id, status, started_at_ms, finished_at_ms, duration_ms,
+                        input_tokens, output_tokens, total_tokens, cost_usd, retention_class
+                   FROM runs
+                  WHERE workflow_id = ?1
+                  ORDER BY started_at_ms DESC, execution_id ASC",
+            )
+            .ok()?;
+        let rows = stmt
+            .query_map([workflow_id], |row| stored_run_from_row(row))
+            .ok()?;
+        Some(rows.filter_map(Result::ok).collect())
+    }
+
+    pub(crate) fn get(&self, execution_id: &str) -> Option<StoredRunRecord> {
+        let db = self.db.as_ref()?;
+        let conn = db.lock().ok()?;
+        conn.query_row(
+            "SELECT execution_id, workflow_id, skill_id, skill_version, session_id, session_dir,
+                    run_root, trace_id, status, started_at_ms, finished_at_ms, duration_ms,
+                    input_tokens, output_tokens, total_tokens, cost_usd, retention_class
+               FROM runs
+              WHERE execution_id = ?1",
+            [execution_id],
+            stored_run_from_row,
+        )
+        .optional()
+        .ok()
+        .flatten()
     }
 }
 
@@ -127,7 +322,9 @@ impl RetentionClass {
 /// artifact is a contract violation.
 #[derive(Debug)]
 pub enum RunHistoryError {
-    NotFound { id: String },
+    NotFound {
+        id: String,
+    },
     ArtifactExpired {
         artifact_ref: String,
         expired_at: String,
@@ -140,7 +337,11 @@ impl std::fmt::Display for RunHistoryError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Self::NotFound { id } => write!(f, "run record not found: {id}"),
-            Self::ArtifactExpired { artifact_ref, expired_at, retention_class } => write!(
+            Self::ArtifactExpired {
+                artifact_ref,
+                expired_at,
+                retention_class,
+            } => write!(
                 f,
                 "artifact_expired artifact_ref={artifact_ref} expired_at={expired_at} \
                  retention_class={retention_class}"
@@ -151,3 +352,46 @@ impl std::fmt::Display for RunHistoryError {
 }
 
 impl std::error::Error for RunHistoryError {}
+
+fn stored_run_from_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<StoredRunRecord> {
+    let status: String = row.get(8)?;
+    Ok(StoredRunRecord {
+        run_id: row.get(0)?,
+        workflow_id: row.get(1)?,
+        skill_id: row.get(2)?,
+        skill_version: row.get(3)?,
+        session_id: row.get(4)?,
+        session_dir: row.get(5)?,
+        run_root: row.get(6)?,
+        trace_id: row.get(7)?,
+        status: status_from_str(&status),
+        started_at: row.get::<_, i64>(9)?.max(0) as u64,
+        finished_at: row
+            .get::<_, Option<i64>>(10)?
+            .map(|value| value.max(0) as u64),
+        duration_ms: row
+            .get::<_, Option<i64>>(11)?
+            .map(|value| value.max(0) as u64),
+        input_tokens: row.get::<_, i64>(12)?.max(0) as u64,
+        output_tokens: row.get::<_, i64>(13)?.max(0) as u64,
+        total_tokens: row.get::<_, i64>(14)?.max(0) as u64,
+        cost_usd: row.get(15)?,
+        retention_class: row.get(16)?,
+    })
+}
+
+fn status_to_str(status: &ExecutionStatus) -> &'static str {
+    match status {
+        ExecutionStatus::Running => "running",
+        ExecutionStatus::Succeeded => "succeeded",
+        ExecutionStatus::Failed => "failed",
+    }
+}
+
+fn status_from_str(status: &str) -> ExecutionStatus {
+    match status {
+        "succeeded" => ExecutionStatus::Succeeded,
+        "failed" => ExecutionStatus::Failed,
+        _ => ExecutionStatus::Running,
+    }
+}

@@ -17,6 +17,11 @@ async fn test_app() -> Router {
     test_support::test_app_with_mock(MockLLMBackend::static_response("ok")).await
 }
 
+async fn test_app_with_run_history_db(path: &std::path::Path) -> Router {
+    test_support::test_app_with_run_history_db_and_mock(path, MockLLMBackend::static_response("ok"))
+        .await
+}
+
 async fn post_reindex(app: &Router) -> (StatusCode, serde_json::Value) {
     let req = Request::builder()
         .method("POST")
@@ -122,6 +127,61 @@ async fn reindex_counts_valid_artifact() {
     assert_eq!(status, StatusCode::OK);
     assert_eq!(summary["workflow_id"], "wf-001");
     assert_eq!(summary["run_root"], run_dir.display().to_string());
+}
+
+// ── Durable SQLite run-history index ─────────────────────────────────────────
+
+#[tokio::test]
+#[allow(unsafe_code)]
+async fn reindex_persists_workflow_rows_and_token_columns_in_sqlite() {
+    let tmp = tempfile::tempdir().unwrap();
+    let runs_root = tmp.path().join("runs");
+    let db_path = tmp.path().join("sessions").join("runs.sqlite");
+    let run_dir = make_run_dir(&runs_root, "wf-db", "exec-db");
+    write_artifact(
+        &run_dir,
+        r#"{
+          "run_id":"exec-db",
+          "workflow_id":"wf-db",
+          "skill_id":"wf-db",
+          "skill_version":"raw-workflow",
+          "session_id":"session-db",
+          "session_dir":"/tmp/session-db",
+          "trace_id":"trace-db",
+          "status":"succeeded",
+          "started_at_ms":1000,
+          "finished_at_ms":2500,
+          "duration_ms":1500,
+          "input_tokens":12,
+          "output_tokens":8,
+          "total_tokens":20
+        }"#,
+    );
+
+    let app = test_app_with_run_history_db(&db_path).await;
+    // SAFETY: this integration test file is run serially in CI and by the
+    // documented command; mutation is scoped to the test process.
+    unsafe { std::env::set_var("APXM_RUNS_ROOT", &runs_root) };
+    let (status, body) = post_reindex(&app).await;
+    unsafe { std::env::remove_var("APXM_RUNS_ROOT") };
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(body["artifacts_found"].as_u64(), Some(1));
+    assert_eq!(body["records_loaded"].as_u64(), Some(1));
+    assert!(db_path.is_file(), "runs.sqlite should be created");
+
+    // A new router with an empty hot ExecutionStore but the same SQLite index
+    // must answer workflow history without APXM_RUNS_ROOT or another reindex.
+    let app = test_app_with_run_history_db(&db_path).await;
+    let (status, history) = get_json(&app, "/v1/workflows/wf-db/runs").await;
+    assert_eq!(status, StatusCode::OK);
+    let runs = history["runs"].as_array().expect("runs array");
+    assert_eq!(runs.len(), 1);
+    assert_eq!(runs[0]["run_id"], "exec-db");
+    assert_eq!(runs[0]["trace_id"], "trace-db");
+    assert_eq!(runs[0]["input_tokens"], 12);
+    assert_eq!(runs[0]["output_tokens"], 8);
+    assert_eq!(runs[0]["total_tokens"], 20);
+    assert_eq!(runs[0]["retention_class"], "standard");
 }
 
 // ── Corrupt artifact ──────────────────────────────────────────────────────────

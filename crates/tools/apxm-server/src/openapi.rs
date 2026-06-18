@@ -209,6 +209,17 @@ pub struct RunRecordSchema {
     /// Wall-clock duration in milliseconds. `null` while still running.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub duration_ms: Option<u64>,
+    /// Input tokens attributed to this run by the execution result.
+    pub input_tokens: u64,
+    /// Output tokens attributed to this run by the execution result.
+    pub output_tokens: u64,
+    /// Input + output tokens for cheap workflow-level aggregation.
+    pub total_tokens: u64,
+    /// Optional cost estimate in USD. `null` until pricing attribution is enabled.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub cost_usd: Option<f64>,
+    /// Retention policy class for the row and its artifact references.
+    pub retention_class: String,
 }
 
 /// Envelope for `GET /v1/workflows/{id}/runs`.

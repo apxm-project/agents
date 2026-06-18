@@ -10,7 +10,9 @@ use axum::Router;
 use dashmap::DashMap;
 
 use crate::build_app;
+use crate::execution_index::ExecutionIndex;
 use crate::executions::ExecutionStore;
+use crate::run_history::storage::RunHistoryIndex;
 use crate::runs::RunEventBus;
 use crate::skills::SkillLibrary;
 use crate::state::AppState;
@@ -93,6 +95,34 @@ pub async fn test_app_with_config_and_mock(
         .router
 }
 
+/// Build a test router with a real run-history SQLite index at `db_path`.
+pub async fn test_app_with_run_history_db_and_mock(
+    db_path: &std::path::Path,
+    mock: MockLLMBackend,
+) -> Router {
+    let mut runtime = Runtime::new(RuntimeConfig::in_memory())
+        .await
+        .expect("test runtime");
+    runtime
+        .llm_registry()
+        .register(FIXTURE_WORKFLOW_BACKEND, mock)
+        .expect("register mock backend");
+    runtime
+        .llm_registry()
+        .set_default(FIXTURE_WORKFLOW_BACKEND)
+        .expect("set mock backend default");
+    runtime
+        .init_model_router(ModelRouterConfig::default())
+        .expect("init model router");
+    let server_config = ServerConfig::default();
+    let run_history = RunHistoryIndex::open(db_path).expect("run-history db");
+    let execution_store =
+        ExecutionStore::with_index_and_run_history(ExecutionIndex::with_capacity(256), run_history);
+    let state =
+        test_state_with_runtime_store(Arc::new(runtime), server_config, execution_store).await;
+    build_app(state)
+}
+
 /// Shared ASK AIR fixture that drives the mock LLM backend.
 pub fn single_ask_air() -> String {
     r#"module {
@@ -111,6 +141,19 @@ pub fn fixture_workflow_backend() -> &'static str {
 }
 
 async fn test_state_with_runtime(runtime: Arc<Runtime>, server_config: ServerConfig) -> AppState {
+    test_state_with_runtime_store(
+        runtime,
+        server_config,
+        ExecutionStore::with_index_max_entries(256),
+    )
+    .await
+}
+
+async fn test_state_with_runtime_store(
+    runtime: Arc<Runtime>,
+    server_config: ServerConfig,
+    execution_store: ExecutionStore,
+) -> AppState {
     let mut runtime = runtime;
     let skill_library = SkillLibrary::new(Vec::new());
     install_test_runtime_bridges(&mut runtime, skill_library.clone());
@@ -126,7 +169,7 @@ async fn test_state_with_runtime(runtime: Arc<Runtime>, server_config: ServerCon
         start_time: SystemTime::now(),
         a2a_tasks: Arc::new(DashMap::new()),
         skill_library,
-        execution_store: ExecutionStore::with_index_max_entries(256),
+        execution_store,
         run_event_bus: crate::runs::RunEventBus::with_config(&server_config.run_events),
         webhook_dispatcher: None,
         rollout_paths: Arc::new(apxm_rollout::RolloutPaths::new(rollout_home)),

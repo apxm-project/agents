@@ -17,6 +17,7 @@ use crate::checkpoints::CheckpointStore;
 use crate::executions::ExecutionStore;
 use crate::goal_runs::GoalRunRegistry;
 use crate::rollout::RolloutRegistry;
+use crate::run_history::storage::RunHistoryIndex;
 use crate::runs::RunEventBus;
 use crate::runtime_setup::{build_runtime_with_router, build_runtime_without_router};
 use crate::safety::SafetyState;
@@ -28,23 +29,27 @@ use crate::tasks::TaskQueueManager;
 use crate::webhook::WebhookDispatcher;
 
 pub(crate) fn execution_store_from_paths(config: &ServerExecutionsConfig) -> ExecutionStore {
-    match ApxmPaths::discover() {
-        Ok(paths) => {
-            let store = ExecutionStore::from_session_roots_with_index_max_entries(
-                paths.session_lookup_dirs(),
-                config.index_max_entries,
-            );
-            let loaded = store.list().len();
-            if loaded > 0 {
-                info!(count = loaded, "loaded persisted execution records");
-            }
-            store
-        }
-        Err(error) => {
-            warn!(%error, "failed to discover APXM paths for execution record reload");
-            ExecutionStore::with_index_max_entries(config.index_max_entries)
-        }
+    let paths = ApxmPaths::discover().unwrap_or_else(|error| {
+        panic!("failed to discover APXM paths for execution store: {error}")
+    });
+    let run_history_path = paths.sessions_dir_for_read().join("runs.sqlite");
+    let run_history = RunHistoryIndex::open(&run_history_path).unwrap_or_else(|error| {
+        panic!(
+            "failed to open required run-history sqlite index at {}: {error}",
+            run_history_path.display()
+        )
+    });
+    info!(path = %run_history_path.display(), "opened run-history sqlite index");
+    let store = ExecutionStore::from_session_roots_with_run_history(
+        paths.session_lookup_dirs(),
+        config.index_max_entries,
+        run_history,
+    );
+    let loaded = store.list().len();
+    if loaded > 0 {
+        info!(count = loaded, "loaded persisted execution records");
     }
+    store
 }
 
 // Default-config runtime constructor used exclusively by integration tests

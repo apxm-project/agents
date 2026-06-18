@@ -20,8 +20,7 @@ async fn get_json(app: &Router, path: &str) -> (StatusCode, serde_json::Value) {
     let resp = app.clone().oneshot(req).await.unwrap();
     let status = resp.status();
     let bytes = resp.into_body().collect().await.unwrap().to_bytes();
-    let json: serde_json::Value =
-        serde_json::from_slice(&bytes).unwrap_or(serde_json::Value::Null);
+    let json: serde_json::Value = serde_json::from_slice(&bytes).unwrap_or(serde_json::Value::Null);
     (status, json)
 }
 
@@ -122,7 +121,7 @@ async fn get_run_summary_returns_404_for_unknown_id() {
 // ── POST /v1/runs/reindex ────────────────────────────────────────────────────
 
 #[tokio::test]
-async fn reindex_returns_501_until_implemented() {
+async fn reindex_returns_200_with_diagnostic_when_runs_root_is_unset() {
     let app = test_app().await;
     let req = Request::builder()
         .method("POST")
@@ -130,9 +129,16 @@ async fn reindex_returns_501_until_implemented() {
         .body(Body::empty())
         .unwrap();
     let resp = app.clone().oneshot(req).await.unwrap();
-    assert_eq!(
-        resp.status(),
-        StatusCode::NOT_IMPLEMENTED,
-        "reindex must return 501 while the artifact-walk rebuild is not yet wired"
+    assert_eq!(resp.status(), StatusCode::OK);
+    let bytes = resp.into_body().collect().await.unwrap().to_bytes();
+    let body: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+    assert_eq!(body["artifacts_found"], 0);
+    assert_eq!(body["records_loaded"], 0);
+    assert!(
+        body["diagnostics"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|diag| diag.as_str().unwrap_or_default().contains("APXM_RUNS_ROOT"))
     );
 }

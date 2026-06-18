@@ -16,6 +16,7 @@ use crate::error::ApiError;
 use crate::execute::ExecuteResponse;
 use crate::execution_index::{ExecutionIndex, IndexEntry};
 use crate::helpers::now_ms;
+use crate::run_history::storage::{RunHistoryIndex, StoredRunRecord};
 use crate::state::AppState;
 
 pub(crate) const EXECUTION_RECORDS_DIR: &str = "executions";
@@ -155,6 +156,7 @@ pub(crate) struct NodeExecutionDetail {
 pub(crate) struct ExecutionStore {
     inner: Arc<DashMap<String, ExecutionRecord>>,
     index: ExecutionIndex,
+    run_history: RunHistoryIndex,
     /// Maps a detached run's idempotency key -> execution_id. Populated on
     /// insert and on rehydration from disk so a restart rebuilds atomic dedup
     /// for detached spawns.
@@ -183,6 +185,19 @@ impl ExecutionStore {
         Self {
             inner: Arc::new(DashMap::new()),
             index,
+            run_history: RunHistoryIndex::disabled(),
+            idempotency_index: Arc::new(DashMap::new()),
+        }
+    }
+
+    pub(crate) fn with_index_and_run_history(
+        index: ExecutionIndex,
+        run_history: RunHistoryIndex,
+    ) -> Self {
+        Self {
+            inner: Arc::new(DashMap::new()),
+            index,
+            run_history,
             idempotency_index: Arc::new(DashMap::new()),
         }
     }
@@ -214,6 +229,23 @@ impl ExecutionStore {
         P: AsRef<FsPath>,
     {
         let store = Self::with_index_max_entries(index_max_entries);
+        store.reload_from_session_roots(session_roots);
+        store
+    }
+
+    pub(crate) fn from_session_roots_with_run_history<I, P>(
+        session_roots: I,
+        index_max_entries: usize,
+        run_history: RunHistoryIndex,
+    ) -> Self
+    where
+        I: IntoIterator<Item = P>,
+        P: AsRef<FsPath>,
+    {
+        let store = Self::with_index_and_run_history(
+            ExecutionIndex::with_capacity(index_max_entries),
+            run_history,
+        );
         store.reload_from_session_roots(session_roots);
         store
     }
@@ -346,6 +378,7 @@ impl ExecutionStore {
             .insert(record.execution_id.clone(), record.clone());
         persist_record_snapshot(&record);
         self.index.upsert_from_record(&record);
+        self.run_history.upsert_from_record(&record);
         record
     }
 
@@ -373,6 +406,7 @@ impl ExecutionStore {
         persist_record_snapshot(&record);
         write_run_artifact(&record);
         self.index.upsert_from_record(&record);
+        self.run_history.upsert_from_record(&record);
         Some(record)
     }
 
@@ -391,6 +425,7 @@ impl ExecutionStore {
         persist_record_snapshot(&record);
         write_run_artifact(&record);
         self.index.upsert_from_record(&record);
+        self.run_history.upsert_from_record(&record);
         Some(record)
     }
 
@@ -412,6 +447,7 @@ impl ExecutionStore {
         drop(entry);
         persist_record_snapshot(&record);
         self.index.upsert_from_record(&record);
+        self.run_history.upsert_from_record(&record);
         Some(record)
     }
 
@@ -429,12 +465,20 @@ impl ExecutionStore {
         drop(entry);
         persist_record_snapshot(&record);
         self.index.upsert_from_record(&record);
+        self.run_history.upsert_from_record(&record);
         Some(record)
     }
 
     pub(crate) fn get(&self, execution_id: &str) -> Option<ExecutionRecord> {
         if let Some(entry) = self.inner.get(execution_id) {
             return Some(entry.clone());
+        }
+        if let Some(row) = self.run_history.get(execution_id) {
+            let record = ExecutionRecord::from(row);
+            self.index_idempotency_key(&record);
+            self.inner
+                .insert(record.execution_id.clone(), record.clone());
+            return Some(record);
         }
         // Fall back through the index: cheap metadata probe → resolve the
         // snapshot path → rehydrate the full record into the hot map.
@@ -460,6 +504,33 @@ impl ExecutionStore {
                 .then_with(|| left.execution_id.cmp(&right.execution_id))
         });
         records
+    }
+
+    pub(crate) fn list_workflow(&self, workflow_id: &str) -> Vec<ExecutionRecord> {
+        if let Some(rows) = self.run_history.list_workflow(workflow_id) {
+            return rows.into_iter().map(ExecutionRecord::from).collect();
+        }
+        self.list()
+            .into_iter()
+            .filter(|record| record.workflow_id.as_deref() == Some(workflow_id))
+            .collect()
+    }
+
+    pub(crate) fn list_workflow_history(&self, workflow_id: &str) -> Vec<StoredRunRecord> {
+        if let Some(rows) = self.run_history.list_workflow(workflow_id) {
+            return rows;
+        }
+        self.list_workflow(workflow_id)
+            .into_iter()
+            .map(|record| StoredRunRecord::from_execution_record(&record))
+            .collect()
+    }
+
+    pub(crate) fn get_run_history(&self, execution_id: &str) -> Option<StoredRunRecord> {
+        self.run_history.get(execution_id).or_else(|| {
+            self.get(execution_id)
+                .map(|record| StoredRunRecord::from_execution_record(&record))
+        })
     }
 
     pub(crate) fn upsert_reindexed(&self, input: ReindexedExecutionRecord) -> bool {
@@ -497,8 +568,20 @@ impl ExecutionStore {
         };
         self.index_idempotency_key(&record);
         self.index.upsert_from_record(&record);
+        self.run_history.upsert_from_record(&record);
         self.inner.insert(record.execution_id.clone(), record);
         true
+    }
+
+    pub(crate) fn upsert_run_history_row(&self, row: StoredRunRecord) {
+        self.run_history.upsert_row(&row);
+        if self.inner.contains_key(&row.run_id) {
+            return;
+        }
+        let record = ExecutionRecord::from(row);
+        self.index_idempotency_key(&record);
+        self.index.upsert_from_record(&record);
+        self.inner.insert(record.execution_id.clone(), record);
     }
 
     pub(crate) fn record_node_output(
@@ -519,6 +602,7 @@ impl ExecutionStore {
         drop(entry);
         persist_record_snapshot(&record);
         self.index.upsert_from_record(&record);
+        self.run_history.upsert_from_record(&record);
         Some(record)
     }
 
@@ -540,6 +624,7 @@ impl ExecutionStore {
         drop(entry);
         persist_record_snapshot(&record);
         self.index.upsert_from_record(&record);
+        self.run_history.upsert_from_record(&record);
         Some(record)
     }
 
@@ -625,11 +710,46 @@ impl ExecutionStore {
                 continue;
             }
             self.index.upsert_from_record(&record);
+            self.run_history.upsert_from_record(&record);
             self.index_idempotency_key(&record);
             self.inner.insert(record.execution_id.clone(), record);
             loaded += 1;
         }
         loaded
+    }
+}
+
+impl From<StoredRunRecord> for ExecutionRecord {
+    fn from(row: StoredRunRecord) -> Self {
+        ExecutionRecord {
+            execution_id: row.run_id,
+            skill_id: row.skill_id.unwrap_or_default(),
+            skill_version: row.skill_version.unwrap_or_default(),
+            entry_flow: None,
+            source_hash: None,
+            air_hash: None,
+            artifact_hash: None,
+            parent_execution_id: None,
+            parent_skill_id: None,
+            parent_skill_version: None,
+            scope_id: None,
+            session_id: row.session_id.unwrap_or_default(),
+            session_dir: row.session_dir.unwrap_or_default(),
+            idempotency_key: None,
+            correlation_id: None,
+            trace_id: row.trace_id,
+            workflow_id: row.workflow_id,
+            run_root: row.run_root,
+            status: row.status,
+            started_at_ms: row.started_at,
+            completed_at_ms: row.finished_at,
+            result: None,
+            error: None,
+            node_outputs: Vec::new(),
+            node_metrics: Vec::new(),
+            token_values: std::collections::HashMap::new(),
+            goal: None,
+        }
     }
 }
 
@@ -666,6 +786,11 @@ struct RunArtifact<'a> {
     started_at_ms: u64,
     finished_at_ms: u64,
     duration_ms: u64,
+    input_tokens: u64,
+    output_tokens: u64,
+    total_tokens: u64,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    cost_usd: Option<f64>,
     node_output_count: usize,
     node_metric_count: usize,
     nodes: Vec<RunArtifactNode>,
@@ -716,6 +841,15 @@ fn write_run_artifact(record: &ExecutionRecord) {
     };
     let finished_at_ms = record.completed_at_ms.unwrap_or_else(now_ms);
     let duration_ms = finished_at_ms.saturating_sub(record.started_at_ms);
+    let (input_tokens, output_tokens, total_tokens) = record
+        .result
+        .as_ref()
+        .map(|result| {
+            let input = result.llm_usage.input_tokens as u64;
+            let output = result.llm_usage.output_tokens as u64;
+            (input, output, input.saturating_add(output))
+        })
+        .unwrap_or((0, 0, 0));
     let dir = std::path::Path::new(run_root);
     if let Err(error) = std::fs::create_dir_all(dir) {
         tracing::warn!(
@@ -744,6 +878,10 @@ fn write_run_artifact(record: &ExecutionRecord) {
         started_at_ms: record.started_at_ms,
         finished_at_ms,
         duration_ms,
+        input_tokens,
+        output_tokens,
+        total_tokens,
+        cost_usd: None,
         node_output_count: record.node_outputs.len(),
         node_metric_count: record.node_metrics.len(),
         nodes,

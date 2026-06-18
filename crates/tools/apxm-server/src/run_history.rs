@@ -18,6 +18,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::error::ApiError;
 use crate::executions::{ExecutionStatus, ReindexedExecutionRecord};
+use crate::run_history::storage::StoredRunRecord;
 use crate::state::AppState;
 
 /// Lightweight run record returned by the history index.
@@ -51,6 +52,12 @@ pub(crate) struct RunRecord {
     /// settled yet.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub(crate) duration_ms: Option<u64>,
+    pub(crate) input_tokens: u64,
+    pub(crate) output_tokens: u64,
+    pub(crate) total_tokens: u64,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) cost_usd: Option<f64>,
+    pub(crate) retention_class: String,
 }
 
 #[derive(Debug, Serialize)]
@@ -71,25 +78,9 @@ pub(crate) async fn list_workflow_runs(
 ) -> Json<WorkflowRunsResponse> {
     let runs: Vec<RunRecord> = state
         .execution_store
-        .list()
+        .list_workflow_history(workflow_id.as_str())
         .into_iter()
-        .filter(|record| record.workflow_id.as_deref() == Some(workflow_id.as_str()))
-        .map(|record| RunRecord {
-            run_id: record.execution_id,
-            workflow_id: record.workflow_id,
-            skill_id: Some(record.skill_id),
-            skill_version: Some(record.skill_version),
-            session_id: Some(record.session_id),
-            session_dir: Some(record.session_dir),
-            run_root: record.run_root,
-            trace_id: record.trace_id,
-            status: record.status,
-            started_at: record.started_at_ms,
-            finished_at: record.completed_at_ms,
-            duration_ms: record
-                .completed_at_ms
-                .and_then(|end| end.checked_sub(record.started_at_ms)),
-        })
+        .map(RunRecord::from)
         .collect();
 
     Json(WorkflowRunsResponse { workflow_id, runs })
@@ -106,24 +97,9 @@ pub(crate) async fn get_run_summary(
 ) -> Result<Json<RunRecord>, ApiError> {
     let record = state
         .execution_store
-        .get(&execution_id)
+        .get_run_history(&execution_id)
         .ok_or_else(|| ApiError::not_found(format!("run not found: {execution_id}")))?;
-    Ok(Json(RunRecord {
-        run_id: record.execution_id,
-        workflow_id: record.workflow_id,
-        skill_id: Some(record.skill_id),
-        skill_version: Some(record.skill_version),
-        session_id: Some(record.session_id),
-        session_dir: Some(record.session_dir),
-        run_root: record.run_root,
-        trace_id: record.trace_id,
-        status: record.status,
-        started_at: record.started_at_ms,
-        finished_at: record.completed_at_ms,
-        duration_ms: record
-            .completed_at_ms
-            .and_then(|end| end.checked_sub(record.started_at_ms)),
-    }))
+    Ok(Json(RunRecord::from(record)))
 }
 
 /// Minimal run-summary artifact written to `{run_root}/run.json` on settlement
@@ -153,6 +129,22 @@ struct RunArtifactFile {
     started_at_ms: u64,
     finished_at_ms: Option<u64>,
     duration_ms: Option<u64>,
+    #[serde(default)]
+    input_tokens: Option<u64>,
+    #[serde(default)]
+    output_tokens: Option<u64>,
+    #[serde(default)]
+    total_tokens: Option<u64>,
+    #[serde(default)]
+    cost_usd: Option<f64>,
+    #[serde(default)]
+    llm_usage: Option<RunArtifactLlmUsage>,
+}
+
+#[derive(Debug, Deserialize)]
+struct RunArtifactLlmUsage {
+    input_tokens: u64,
+    output_tokens: u64,
 }
 
 /// Outcome of a reindex walk — counts of artifacts found, loaded, and skipped.
@@ -243,12 +235,6 @@ pub(crate) fn reindex_from_runs_root(state: &AppState) -> ReindexResult {
                 .clone()
                 .unwrap_or_else(|| artifact.run_id.clone());
 
-            // Skip if the store already has a live record for this execution.
-            if state.execution_store.get(&execution_id).is_some() {
-                records_loaded += 1;
-                continue;
-            }
-
             // Synthesize a lightweight execution record from the run artifact so
             // workflow history remains queryable after a process restart even if
             // only `$APXM_RUNS_ROOT` is available.
@@ -269,26 +255,61 @@ pub(crate) fn reindex_from_runs_root(state: &AppState) -> ReindexResult {
                 .run_root
                 .clone()
                 .or_else(|| Some(run_dir.display().to_string()));
-            let inserted = state
-                .execution_store
-                .upsert_reindexed(ReindexedExecutionRecord {
-                    execution_id,
-                    skill_id: artifact.skill_id.clone().unwrap_or_default(),
-                    skill_version: artifact.skill_version.clone().unwrap_or_default(),
-                    entry_flow: artifact.entry_flow.clone(),
-                    workflow_id: Some(artifact.workflow_id.clone()),
-                    session_id,
-                    session_dir,
-                    run_root,
-                    trace_id: artifact.trace_id.clone(),
-                    status: artifact.status.clone(),
-                    started_at_ms: artifact.started_at_ms,
-                    completed_at_ms: artifact.finished_at_ms,
-                });
+            let input_tokens = artifact
+                .input_tokens
+                .or_else(|| artifact.llm_usage.as_ref().map(|usage| usage.input_tokens))
+                .unwrap_or(0);
+            let output_tokens = artifact
+                .output_tokens
+                .or_else(|| artifact.llm_usage.as_ref().map(|usage| usage.output_tokens))
+                .unwrap_or(0);
+            let total_tokens = artifact
+                .total_tokens
+                .unwrap_or_else(|| input_tokens.saturating_add(output_tokens));
+            let inserted = if state.execution_store.get(&execution_id).is_some() {
+                false
+            } else {
+                state
+                    .execution_store
+                    .upsert_reindexed(ReindexedExecutionRecord {
+                        execution_id: execution_id.clone(),
+                        skill_id: artifact.skill_id.clone().unwrap_or_default(),
+                        skill_version: artifact.skill_version.clone().unwrap_or_default(),
+                        entry_flow: artifact.entry_flow.clone(),
+                        workflow_id: Some(artifact.workflow_id.clone()),
+                        session_id: session_id.clone(),
+                        session_dir: session_dir.clone(),
+                        run_root: run_root.clone(),
+                        trace_id: artifact.trace_id.clone(),
+                        status: artifact.status.clone(),
+                        started_at_ms: artifact.started_at_ms,
+                        completed_at_ms: artifact.finished_at_ms,
+                    })
+            };
             if inserted {
                 records_loaded += 1;
             }
-            let _ = artifact.duration_ms;
+            state
+                .execution_store
+                .upsert_run_history_row(StoredRunRecord {
+                    run_id: execution_id,
+                    workflow_id: Some(artifact.workflow_id),
+                    skill_id: artifact.skill_id,
+                    skill_version: artifact.skill_version,
+                    session_id: artifact.session_id,
+                    session_dir: artifact.session_dir,
+                    run_root,
+                    trace_id: artifact.trace_id,
+                    status: artifact.status,
+                    started_at: artifact.started_at_ms,
+                    finished_at: artifact.finished_at_ms,
+                    duration_ms: artifact.duration_ms,
+                    input_tokens,
+                    output_tokens,
+                    total_tokens,
+                    cost_usd: artifact.cost_usd,
+                    retention_class: "standard".to_string(),
+                });
         }
     }
 
@@ -296,6 +317,65 @@ pub(crate) fn reindex_from_runs_root(state: &AppState) -> ReindexResult {
         artifacts_found,
         records_loaded,
         diagnostics,
+    }
+}
+
+impl From<crate::executions::ExecutionRecord> for RunRecord {
+    fn from(record: crate::executions::ExecutionRecord) -> Self {
+        let (input_tokens, output_tokens, total_tokens) = record
+            .result
+            .as_ref()
+            .map(|result| {
+                let input = result.llm_usage.input_tokens as u64;
+                let output = result.llm_usage.output_tokens as u64;
+                (input, output, input.saturating_add(output))
+            })
+            .unwrap_or((0, 0, 0));
+        RunRecord {
+            run_id: record.execution_id,
+            workflow_id: record.workflow_id,
+            skill_id: Some(record.skill_id),
+            skill_version: Some(record.skill_version),
+            session_id: Some(record.session_id),
+            session_dir: Some(record.session_dir),
+            run_root: record.run_root,
+            trace_id: record.trace_id,
+            status: record.status,
+            started_at: record.started_at_ms,
+            finished_at: record.completed_at_ms,
+            duration_ms: record
+                .completed_at_ms
+                .and_then(|end| end.checked_sub(record.started_at_ms)),
+            input_tokens,
+            output_tokens,
+            total_tokens,
+            cost_usd: None,
+            retention_class: "standard".to_string(),
+        }
+    }
+}
+
+impl From<StoredRunRecord> for RunRecord {
+    fn from(row: StoredRunRecord) -> Self {
+        RunRecord {
+            run_id: row.run_id,
+            workflow_id: row.workflow_id,
+            skill_id: row.skill_id,
+            skill_version: row.skill_version,
+            session_id: row.session_id,
+            session_dir: row.session_dir,
+            run_root: row.run_root,
+            trace_id: row.trace_id,
+            status: row.status,
+            started_at: row.started_at,
+            finished_at: row.finished_at,
+            duration_ms: row.duration_ms,
+            input_tokens: row.input_tokens,
+            output_tokens: row.output_tokens,
+            total_tokens: row.total_tokens,
+            cost_usd: row.cost_usd,
+            retention_class: row.retention_class,
+        }
     }
 }
 
