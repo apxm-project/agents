@@ -60,6 +60,11 @@ pub(crate) struct ExecutionRecord {
     /// Correlation/delivery id from webhook ingress (FR-016 observability).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub(crate) correlation_id: Option<String>,
+    /// Workspace workflow identity (spec 0009). The basename of
+    /// `workspace/workflows/<id>/`; present when the caller supplies it so
+    /// run history can be grouped and queried by workflow id (spec 0013).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) workflow_id: Option<String>,
     pub(crate) status: ExecutionStatus,
     pub(crate) started_at_ms: u64,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -230,6 +235,7 @@ impl ExecutionStore {
             session_dir,
             None,
             None,
+            None,
         )
     }
 
@@ -246,6 +252,7 @@ impl ExecutionStore {
         session_dir: &str,
         idempotency_key: Option<String>,
         correlation_id: Option<String>,
+        workflow_id: Option<String>,
     ) -> ExecutionRecord {
         let record = ExecutionRecord {
             execution_id,
@@ -263,6 +270,7 @@ impl ExecutionStore {
             session_dir: session_dir.to_string(),
             idempotency_key,
             correlation_id,
+            workflow_id,
             status: ExecutionStatus::Running,
             started_at_ms: now_ms(),
             completed_at_ms: None,

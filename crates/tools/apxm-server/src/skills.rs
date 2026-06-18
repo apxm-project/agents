@@ -321,6 +321,12 @@ pub(crate) struct SkillExecuteRequest {
     /// Correlation/delivery id from the inbound cue event (webhook path).
     #[serde(default)]
     pub(crate) correlation_id: Option<String>,
+    /// Workspace workflow identity. When present, stamped on the execution
+    /// record so run history can be grouped by workflow id (spec 0009 / 0013).
+    /// The value is the basename of `workspace/workflows/<id>/` — the folder
+    /// name that uniquely identifies the workflow definition on disk.
+    #[serde(default)]
+    pub(crate) workflow_id: Option<String>,
     /// Internal-only execution metadata merged into the runtime context (NOT
     /// caller-settable — `#[serde(skip)]`). `rerun-from-node` stamps the
     /// partial-replay seed keys (`replay_from_node`, `replay_token_values`) so the
@@ -1100,6 +1106,7 @@ fn prepare_skill_execution_with_reservation(
     reserved_execution_id: Option<String>,
     idempotency_key: Option<String>,
 ) -> Result<PreparedCompiledExecution, ApiError> {
+    let workflow_id = req.workflow_id.clone();
     let executable = state
         .skill_library
         .find_executable(id)
@@ -1153,6 +1160,7 @@ fn prepare_skill_execution_with_reservation(
                 &session_dir,
                 idempotency_key,
                 correlation_id.clone(),
+                workflow_id,
             ),
         None => state
             .execution_store
@@ -1163,6 +1171,7 @@ fn prepare_skill_execution_with_reservation(
                 &session_dir,
                 None,
                 correlation_id.clone(),
+                workflow_id,
             ),
     };
     Ok(PreparedCompiledExecution {

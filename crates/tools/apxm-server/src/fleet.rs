@@ -283,6 +283,7 @@ mod tests {
             session_dir: "/tmp/s".to_string(),
             idempotency_key: None,
             correlation_id: None,
+            workflow_id: None,
             status,
             started_at_ms: started,
             completed_at_ms: completed,

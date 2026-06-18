@@ -205,6 +205,7 @@ async fn rerun_skill(
         detach: false,
         idempotency_key: None,
         correlation_id: None,
+        workflow_id: None,
         extra_metadata: req.extra_metadata.clone(),
     };
     execute_skill_by_id(state, &skill_ref, skill_req).await
