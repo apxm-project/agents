@@ -1702,6 +1702,9 @@ fn is_allowed_static_skill_op(op: AISOperationType) -> bool {
     matches!(
         op,
         AISOperationType::Agent
+            | AISOperationType::Ask
+            | AISOperationType::Think
+            | AISOperationType::Reason
             | AISOperationType::ConstStr
             | AISOperationType::Nop
             | AISOperationType::Identity
@@ -2021,6 +2024,13 @@ mod scale_tests {
             extra_metadata: HashMap::new(),
             admission_id,
         }
+    }
+
+    #[test]
+    fn static_skill_admission_allows_pure_llm_ops() {
+        assert!(is_allowed_static_skill_op(AISOperationType::Ask));
+        assert!(is_allowed_static_skill_op(AISOperationType::Think));
+        assert!(is_allowed_static_skill_op(AISOperationType::Reason));
     }
 
     #[test]

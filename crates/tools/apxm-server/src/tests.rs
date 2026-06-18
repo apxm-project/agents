@@ -896,6 +896,14 @@ fn skill_artifact_bytes_with_output(op_type: AISOperationType, output: &str) -> 
     skill_artifact_bytes_with_entry_and_output(op_type, FIXTURE_ENTRY_FLOW, output)
 }
 
+fn compiled_single_ask_skill_artifact_bytes() -> Vec<u8> {
+    crate::execute::air_to_artifact_bytes_with_caps(
+        &single_ask_air(),
+        &std::collections::HashSet::new(),
+    )
+    .expect("compile ASK skill artifact")
+}
+
 fn skill_artifact_bytes_with_entry(op_type: AISOperationType, entry_flow: &str) -> Vec<u8> {
     skill_artifact_bytes_with_entry_and_output(op_type, entry_flow, FIXTURE_OUTPUT)
 }
@@ -1388,6 +1396,58 @@ async fn skill_execute_writes_workflow_run_node_artifacts_and_exposes_run_node_d
         execution_node_body["outputs"][0]["output"][SUMMARY_FIELD],
         FIXTURE_OUTPUT_SUMMARY
     );
+}
+
+#[tokio::test]
+#[allow(unsafe_code)]
+async fn skill_execute_allows_pure_llm_artifacts_and_records_usage() {
+    let _runs_root_guard = APXM_RUNS_ROOT_LOCK.lock().expect("APXM_RUNS_ROOT lock");
+    let skill_root = tempfile::tempdir().expect("skill root");
+    let runs_root = tempfile::tempdir().expect("runs root");
+    let artifact = compiled_single_ask_skill_artifact_bytes();
+    write_executable_skill_with_artifact(
+        skill_root.path(),
+        FIXTURE_PACKAGE_DIR,
+        FIXTURE_SKILL_VERSION,
+        &artifact,
+        FIXTURE_SKILL_ID,
+        "single_ask",
+    );
+
+    let runtime = runtime_with_mock_workflow_backend(
+        MockLLMBackend::new().default(MockResponse::new("static skill reply").with_tokens(5, 3)),
+    )
+    .await;
+    let state =
+        test_state_with_runtime_and_skill_roots(runtime, vec![skill_root.path().to_path_buf()])
+            .await;
+    let app = crate::build_app(state);
+
+    // SAFETY: this test owns APXM_RUNS_ROOT for the synchronous request and
+    // removes it before returning.
+    unsafe { std::env::set_var("APXM_RUNS_ROOT", runs_root.path()) };
+    let (status, body) = post_json(
+        app,
+        &skill_execute_route(FIXTURE_SKILL_ID),
+        serde_json::json!({ "workflow_id": "wf-skill-llm", "trace_id": "trace-skill-llm" }),
+    )
+    .await;
+    unsafe { std::env::remove_var("APXM_RUNS_ROOT") };
+
+    assert_eq!(status, StatusCode::OK, "skill execute failed: {body}");
+    assert_eq!(body["content"], "static skill reply");
+    assert_eq!(body["llm_usage"]["input_tokens"], 5);
+    assert_eq!(body["llm_usage"]["output_tokens"], 3);
+    assert_eq!(body["llm_usage"]["total_requests"], 1);
+
+    let execution_id = body["execution_id"].as_str().expect("execution_id");
+    let run_dir = runs_root.path().join("wf-skill-llm").join(execution_id);
+    let results_json: serde_json::Value = serde_json::from_slice(
+        &std::fs::read(run_dir.join("results.json")).expect("results.json bytes"),
+    )
+    .expect("results.json");
+    assert_eq!(results_json["content"], "static skill reply");
+    assert_eq!(results_json["llm_usage"]["total_requests"], 1);
 }
 
 #[tokio::test]
