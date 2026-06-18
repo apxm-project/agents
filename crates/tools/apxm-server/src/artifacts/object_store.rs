@@ -185,15 +185,9 @@ fn uri_to_local_path(
     }
 }
 
-/// Returns true when the ISO-8601 UTC timestamp is in the past.
-///
-/// This is a best-effort check using `std` only (no chrono dependency).
-/// The production implementation should use `chrono` or `time`.
+/// Returns true when the RFC-3339 timestamp is in the past.
 fn is_expired(expires_at: &str) -> bool {
-    // Simplified: compare string prefixes against the current date.
-    // A real implementation parses the RFC-3339 timestamp and compares to
-    // `SystemTime::now()`.  For the v0 stub we always return false so no
-    // artifacts are prematurely expired.
-    let _ = expires_at;
-    false
+    chrono::DateTime::parse_from_rfc3339(expires_at)
+        .map(|timestamp| timestamp.with_timezone(&chrono::Utc) <= chrono::Utc::now())
+        .unwrap_or(false)
 }

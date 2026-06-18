@@ -180,9 +180,25 @@ pub struct RunRecordSchema {
     /// a `workflow_id` at submission time.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub workflow_id: Option<String>,
+    /// Skill id that executed the run, when available from the live record or
+    /// reindexed run artifact.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub skill_id: Option<String>,
+    /// Skill version that executed the run, when available.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub skill_version: Option<String>,
     /// Session that submitted this run.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub session_id: Option<String>,
+    /// Session directory containing the execution snapshot, when known.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub session_dir: Option<String>,
+    /// Workflow run root containing `run.json` and per-node artifacts.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub run_root: Option<String>,
+    /// Cross-plane trace id, when the inbound route supplied one.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub trace_id: Option<String>,
     /// Settled status: `"running"`, `"succeeded"`, or `"failed"`.
     pub status: String,
     /// Unix milliseconds when the execution was admitted.

@@ -105,6 +105,22 @@ pub(crate) struct ExecutionRecord {
     pub(crate) goal: Option<serde_json::Value>,
 }
 
+#[derive(Debug, Clone)]
+pub(crate) struct ReindexedExecutionRecord {
+    pub(crate) execution_id: String,
+    pub(crate) skill_id: String,
+    pub(crate) skill_version: String,
+    pub(crate) entry_flow: Option<String>,
+    pub(crate) workflow_id: Option<String>,
+    pub(crate) session_id: String,
+    pub(crate) session_dir: String,
+    pub(crate) run_root: Option<String>,
+    pub(crate) trace_id: Option<String>,
+    pub(crate) status: ExecutionStatus,
+    pub(crate) started_at_ms: u64,
+    pub(crate) completed_at_ms: Option<u64>,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub(crate) struct NodeOutputRecord {
     pub(crate) node_id: u64,
@@ -446,6 +462,45 @@ impl ExecutionStore {
         records
     }
 
+    pub(crate) fn upsert_reindexed(&self, input: ReindexedExecutionRecord) -> bool {
+        if self.inner.contains_key(&input.execution_id) {
+            return false;
+        }
+        let record = ExecutionRecord {
+            execution_id: input.execution_id,
+            skill_id: input.skill_id,
+            skill_version: input.skill_version,
+            entry_flow: input.entry_flow,
+            source_hash: None,
+            air_hash: None,
+            artifact_hash: None,
+            parent_execution_id: None,
+            parent_skill_id: None,
+            parent_skill_version: None,
+            scope_id: None,
+            session_id: input.session_id,
+            session_dir: input.session_dir,
+            idempotency_key: None,
+            correlation_id: None,
+            trace_id: input.trace_id,
+            workflow_id: input.workflow_id,
+            run_root: input.run_root,
+            status: input.status,
+            started_at_ms: input.started_at_ms,
+            completed_at_ms: input.completed_at_ms,
+            result: None,
+            error: None,
+            node_outputs: Vec::new(),
+            node_metrics: Vec::new(),
+            token_values: std::collections::HashMap::new(),
+            goal: None,
+        };
+        self.index_idempotency_key(&record);
+        self.index.upsert_from_record(&record);
+        self.inner.insert(record.execution_id.clone(), record);
+        true
+    }
+
     pub(crate) fn record_node_output(
         &self,
         execution_id: &str,
@@ -604,6 +659,8 @@ struct RunArtifact<'a> {
     entry_flow: Option<&'a str>,
     session_id: &'a str,
     session_dir: &'a str,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    trace_id: Option<&'a str>,
     run_root: &'a str,
     status: &'a ExecutionStatus,
     started_at_ms: u64,
@@ -681,6 +738,7 @@ fn write_run_artifact(record: &ExecutionRecord) {
         entry_flow: record.entry_flow.as_deref(),
         session_id: &record.session_id,
         session_dir: &record.session_dir,
+        trace_id: record.trace_id.as_deref(),
         run_root,
         status: &record.status,
         started_at_ms: record.started_at_ms,

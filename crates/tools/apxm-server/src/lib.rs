@@ -6,6 +6,7 @@
 mod a2a;
 mod agent;
 mod app;
+pub mod artifacts;
 mod auth;
 mod bind;
 mod call_skill;
@@ -36,7 +37,7 @@ mod principal;
 mod rerun;
 pub mod remote_runner;
 mod rollout;
-mod run_history;
+pub mod run_history;
 mod routes;
 mod runs;
 mod runtime_setup;

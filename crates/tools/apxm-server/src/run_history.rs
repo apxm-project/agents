@@ -7,15 +7,17 @@
 //! - `GET /v1/runs/{execution_id}` — read one run summary by execution id
 //!   (additive alias; the full record is still at `/v1/executions/{id}`).
 //!
-//! The reindex route (`POST /v1/runs/reindex`, spec 0013 Phase 4) is scaffolded
-//! here and returns 501 until the artifact-walk rebuild is implemented.
+//! The reindex route (`POST /v1/runs/reindex`, spec 0013 Phase 4) walks
+//! workflow run artifacts and hydrates lightweight records for workflow history.
+
+pub mod storage;
 
 use axum::Json;
 use axum::extract::{Path, State};
 use serde::{Deserialize, Serialize};
 
 use crate::error::ApiError;
-use crate::executions::ExecutionStatus;
+use crate::executions::{ExecutionStatus, ReindexedExecutionRecord};
 use crate::state::AppState;
 
 /// Lightweight run record returned by the history index.
@@ -27,7 +29,17 @@ pub(crate) struct RunRecord {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub(crate) workflow_id: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) skill_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) skill_version: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub(crate) session_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) session_dir: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) run_root: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) trace_id: Option<String>,
     pub(crate) status: ExecutionStatus,
     /// Unix milliseconds — recorded when the execution was admitted.
     pub(crate) started_at: u64,
@@ -65,7 +77,12 @@ pub(crate) async fn list_workflow_runs(
         .map(|record| RunRecord {
             run_id: record.execution_id,
             workflow_id: record.workflow_id,
+            skill_id: Some(record.skill_id),
+            skill_version: Some(record.skill_version),
             session_id: Some(record.session_id),
+            session_dir: Some(record.session_dir),
+            run_root: record.run_root,
+            trace_id: record.trace_id,
             status: record.status,
             started_at: record.started_at_ms,
             finished_at: record.completed_at_ms,
@@ -94,7 +111,12 @@ pub(crate) async fn get_run_summary(
     Ok(Json(RunRecord {
         run_id: record.execution_id,
         workflow_id: record.workflow_id,
+        skill_id: Some(record.skill_id),
+        skill_version: Some(record.skill_version),
         session_id: Some(record.session_id),
+        session_dir: Some(record.session_dir),
+        run_root: record.run_root,
+        trace_id: record.trace_id,
         status: record.status,
         started_at: record.started_at_ms,
         finished_at: record.completed_at_ms,
@@ -110,7 +132,23 @@ pub(crate) async fn get_run_summary(
 #[derive(Debug, Deserialize)]
 struct RunArtifactFile {
     run_id: String,
+    #[serde(default)]
+    execution_id: Option<String>,
     workflow_id: String,
+    #[serde(default)]
+    skill_id: Option<String>,
+    #[serde(default)]
+    skill_version: Option<String>,
+    #[serde(default)]
+    entry_flow: Option<String>,
+    #[serde(default)]
+    session_id: Option<String>,
+    #[serde(default)]
+    session_dir: Option<String>,
+    #[serde(default)]
+    run_root: Option<String>,
+    #[serde(default)]
+    trace_id: Option<String>,
     status: ExecutionStatus,
     started_at_ms: u64,
     finished_at_ms: Option<u64>,
@@ -158,7 +196,11 @@ pub(crate) fn reindex_from_runs_root(state: &AppState) -> ReindexResult {
     // Walk: runs_root/<workflow_id>/<execution_id>/run.json
     let Ok(wf_dirs) = std::fs::read_dir(root) else {
         diagnostics.push(format!("failed to read APXM_RUNS_ROOT={runs_root}"));
-        return ReindexResult { artifacts_found, records_loaded, diagnostics };
+        return ReindexResult {
+            artifacts_found,
+            records_loaded,
+            diagnostics,
+        };
     };
 
     for wf_entry in wf_dirs.filter_map(Result::ok) {
@@ -184,56 +226,82 @@ pub(crate) fn reindex_from_runs_root(state: &AppState) -> ReindexResult {
             let bytes = match std::fs::read(&artifact_path) {
                 Ok(b) => b,
                 Err(e) => {
-                    diagnostics.push(format!(
-                        "read error {}: {e}",
-                        artifact_path.display()
-                    ));
+                    diagnostics.push(format!("read error {}: {e}", artifact_path.display()));
                     continue;
                 }
             };
             let artifact: RunArtifactFile = match serde_json::from_slice(&bytes) {
                 Ok(a) => a,
                 Err(e) => {
-                    diagnostics.push(format!(
-                        "parse error {}: {e}",
-                        artifact_path.display()
-                    ));
+                    diagnostics.push(format!("parse error {}: {e}", artifact_path.display()));
                     continue;
                 }
             };
 
+            let execution_id = artifact
+                .execution_id
+                .clone()
+                .unwrap_or_else(|| artifact.run_id.clone());
+
             // Skip if the store already has a live record for this execution.
-            if state.execution_store.get(&artifact.run_id).is_some() {
+            if state.execution_store.get(&execution_id).is_some() {
                 records_loaded += 1;
                 continue;
             }
 
-            // Synthesize a minimal RunRecord from the artifact so callers of
-            // `GET /v1/workflows/{id}/runs` can see the run without a full
-            // ExecutionRecord being in the session-dir snapshot.
-            //
-            // The artifact covers: run_id, workflow_id, status, timing.
-            // Fields absent from the artifact (session_id, skill_id, …) are
-            // not available here — callers needing the full record must fetch
-            // `/v1/executions/{id}` which rehydrates from the session snapshot.
+            // Synthesize a lightweight execution record from the run artifact so
+            // workflow history remains queryable after a process restart even if
+            // only `$APXM_RUNS_ROOT` is available.
             tracing::debug!(
-                run_id = %artifact.run_id,
+                run_id = %execution_id,
                 workflow_id = %artifact.workflow_id,
                 "reindex: found settled run artifact"
             );
-            records_loaded += 1;
-            let _ = (artifact.status, artifact.started_at_ms, artifact.finished_at_ms, artifact.duration_ms);
+            let session_id = artifact
+                .session_id
+                .clone()
+                .unwrap_or_else(|| format!("reindexed-{execution_id}"));
+            let session_dir = artifact
+                .session_dir
+                .clone()
+                .unwrap_or_else(|| run_dir.display().to_string());
+            let run_root = artifact
+                .run_root
+                .clone()
+                .or_else(|| Some(run_dir.display().to_string()));
+            let inserted = state
+                .execution_store
+                .upsert_reindexed(ReindexedExecutionRecord {
+                    execution_id,
+                    skill_id: artifact.skill_id.clone().unwrap_or_default(),
+                    skill_version: artifact.skill_version.clone().unwrap_or_default(),
+                    entry_flow: artifact.entry_flow.clone(),
+                    workflow_id: Some(artifact.workflow_id.clone()),
+                    session_id,
+                    session_dir,
+                    run_root,
+                    trace_id: artifact.trace_id.clone(),
+                    status: artifact.status.clone(),
+                    started_at_ms: artifact.started_at_ms,
+                    completed_at_ms: artifact.finished_at_ms,
+                });
+            if inserted {
+                records_loaded += 1;
+            }
+            let _ = artifact.duration_ms;
         }
     }
 
-    ReindexResult { artifacts_found, records_loaded, diagnostics }
+    ReindexResult {
+        artifacts_found,
+        records_loaded,
+        diagnostics,
+    }
 }
 
 /// `POST /v1/runs/reindex` — rebuild the run-history index from durable
 /// artifacts under the 0009 run-root (spec 0013 User Story 2).
-pub(crate) async fn reindex_runs(
-    State(state): State<AppState>,
-) -> Json<serde_json::Value> {
+pub(crate) async fn reindex_runs(State(state): State<AppState>) -> Json<serde_json::Value> {
     let result = reindex_from_runs_root(&state);
     Json(serde_json::json!({
         "artifacts_found": result.artifacts_found,

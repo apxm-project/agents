@@ -1195,7 +1195,7 @@ async fn skill_execute_writes_workflow_run_node_artifacts_and_exposes_run_node_d
     let (status, body) = post_json(
         app.clone(),
         &skill_execute_route(FIXTURE_SKILL_ID),
-        serde_json::json!({ "workflow_id": "wf-observe" }),
+        serde_json::json!({ "workflow_id": "wf-observe", "trace_id": "trace-observe" }),
     )
     .await;
     unsafe { std::env::remove_var("APXM_RUNS_ROOT") };
@@ -1216,8 +1216,20 @@ async fn skill_execute_writes_workflow_run_node_artifacts_and_exposes_run_node_d
     assert_eq!(run_json["artifact_schema_version"], 1);
     assert_eq!(run_json["run_id"], execution_id);
     assert_eq!(run_json["workflow_id"], "wf-observe");
+    assert_eq!(run_json["trace_id"], "trace-observe");
     assert_eq!(run_json["node_output_count"], 1);
     assert_eq!(run_json["node_metric_count"], 1);
+
+    let (status, run_body) = get_json(app.clone(), &format!("/v1/runs/{execution_id}")).await;
+    assert_eq!(status, StatusCode::OK, "run detail failed: {run_body}");
+    assert_eq!(run_body["execution_id"], execution_id);
+    assert_eq!(run_body["workflow_id"], "wf-observe");
+    assert_eq!(run_body["trace_id"], "trace-observe");
+    assert_eq!(run_body["run_root"], run_dir.display().to_string());
+
+    let (status, runs_body) = get_json(app.clone(), "/v1/runs?trace_id=trace-observe").await;
+    assert_eq!(status, StatusCode::OK, "trace run list failed: {runs_body}");
+    assert_eq!(runs_body["data"][0]["execution_id"], execution_id);
 
     let nodes_root = run_dir.join("nodes");
     let node_dirs: Vec<std::path::PathBuf> = std::fs::read_dir(&nodes_root)

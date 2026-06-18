@@ -211,15 +211,23 @@ pub(crate) struct RunSummary {
     pub(crate) execution_id: String,
     pub(crate) skill_id: String,
     pub(crate) skill_version: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) workflow_id: Option<String>,
     pub(crate) status: ExecutionStatus,
     pub(crate) started_at_ms: u64,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub(crate) completed_at_ms: Option<u64>,
     pub(crate) session_id: String,
     #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) session_dir: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) run_root: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub(crate) root_agent: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub(crate) correlation_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) trace_id: Option<String>,
     pub(crate) totals: RunTotals,
 }
 
@@ -529,6 +537,8 @@ pub(crate) struct RunsListQuery {
     #[serde(default)]
     pub(crate) session_id: Option<String>,
     #[serde(default)]
+    pub(crate) trace_id: Option<String>,
+    #[serde(default)]
     pub(crate) status: Option<String>,
     #[serde(default)]
     pub(crate) limit: Option<usize>,
@@ -554,6 +564,12 @@ pub(crate) async fn list_runs(
                 .as_deref()
                 .is_none_or(|sid| record.session_id == sid)
         })
+        .filter(|record| {
+            query
+                .trace_id
+                .as_deref()
+                .is_none_or(|tid| record.trace_id.as_deref() == Some(tid))
+        })
         .filter(|record| match &status_filter {
             Some(filter) => record.status == *filter,
             None => true,
@@ -564,7 +580,7 @@ pub(crate) async fn list_runs(
     // fall back to the SQLite index when the in-memory
     // execution store has nothing for this filter. Useful after a
     // restart: the rollout JSONLs survive and the index points at them.
-    if runs.is_empty() {
+    if runs.is_empty() && query.trace_id.is_none() {
         let index = state.rollout_index.lock().await;
         let from_index = index.list_recent(limit).unwrap_or_default();
         for entry in from_index {
@@ -599,12 +615,16 @@ fn index_entry_to_summary(entry: apxm_rollout::ThreadIndexEntry) -> RunSummary {
         execution_id: entry.thread_id,
         skill_id: String::new(),
         skill_version: String::new(),
+        workflow_id: None,
         status,
         started_at_ms,
         completed_at_ms: None,
         session_id: entry.session_id,
+        session_dir: None,
+        run_root: None,
         root_agent: entry.agent_code,
         correlation_id: None,
+        trace_id: None,
         totals: RunTotals::default(),
     }
 }
@@ -809,12 +829,16 @@ fn record_to_summary(state: &AppState, record: ExecutionRecord) -> RunSummary {
         execution_id: record.execution_id,
         skill_id: record.skill_id,
         skill_version: record.skill_version,
+        workflow_id: record.workflow_id,
         status: record.status,
         started_at_ms: record.started_at_ms,
         completed_at_ms: record.completed_at_ms,
         session_id: record.session_id,
+        session_dir: Some(record.session_dir),
+        run_root: record.run_root,
         root_agent,
         correlation_id: record.correlation_id.clone(),
+        trace_id: record.trace_id.clone(),
         totals,
     }
 }

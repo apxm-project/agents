@@ -26,8 +26,20 @@ async fn post_reindex(app: &Router) -> (StatusCode, serde_json::Value) {
     let resp = app.clone().oneshot(req).await.unwrap();
     let status = resp.status();
     let bytes = resp.into_body().collect().await.unwrap().to_bytes();
-    let json: serde_json::Value =
-        serde_json::from_slice(&bytes).unwrap_or(serde_json::Value::Null);
+    let json: serde_json::Value = serde_json::from_slice(&bytes).unwrap_or(serde_json::Value::Null);
+    (status, json)
+}
+
+async fn get_json(app: &Router, uri: &str) -> (StatusCode, serde_json::Value) {
+    let req = Request::builder()
+        .method("GET")
+        .uri(uri)
+        .body(Body::empty())
+        .unwrap();
+    let resp = app.clone().oneshot(req).await.unwrap();
+    let status = resp.status();
+    let bytes = resp.into_body().collect().await.unwrap().to_bytes();
+    let json: serde_json::Value = serde_json::from_slice(&bytes).unwrap_or(serde_json::Value::Null);
     (status, json)
 }
 
@@ -97,6 +109,19 @@ async fn reindex_counts_valid_artifact() {
     assert_eq!(status, StatusCode::OK);
     assert_eq!(body["artifacts_found"].as_u64(), Some(1));
     assert_eq!(body["records_loaded"].as_u64(), Some(1));
+
+    let (status, history) = get_json(&app, "/v1/workflows/wf-001/runs").await;
+    assert_eq!(status, StatusCode::OK);
+    let runs = history["runs"].as_array().expect("runs array");
+    assert_eq!(runs.len(), 1);
+    assert_eq!(runs[0]["run_id"], "exec-abc");
+    assert_eq!(runs[0]["workflow_id"], "wf-001");
+    assert_eq!(runs[0]["run_root"], run_dir.display().to_string());
+
+    let (status, summary) = get_json(&app, "/v1/runs/exec-abc/summary").await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(summary["workflow_id"], "wf-001");
+    assert_eq!(summary["run_root"], run_dir.display().to_string());
 }
 
 // ── Corrupt artifact ──────────────────────────────────────────────────────────
@@ -116,7 +141,10 @@ async fn reindex_records_diagnostic_for_corrupt_artifact() {
     assert_eq!(body["artifacts_found"].as_u64(), Some(1));
     assert_eq!(body["records_loaded"].as_u64(), Some(0));
     let diags = body["diagnostics"].as_array().expect("diagnostics array");
-    assert!(!diags.is_empty(), "corrupt artifact must produce a diagnostic");
+    assert!(
+        !diags.is_empty(),
+        "corrupt artifact must produce a diagnostic"
+    );
 }
 
 // ── Partial artifact (missing optional fields) ────────────────────────────────
@@ -172,5 +200,9 @@ async fn reindex_mixes_valid_and_corrupt_artifacts() {
     assert_eq!(body["artifacts_found"].as_u64(), Some(2));
     assert_eq!(body["records_loaded"].as_u64(), Some(1));
     let diags = body["diagnostics"].as_array().expect("diagnostics array");
-    assert_eq!(diags.len(), 1, "exactly one diagnostic for the corrupt file");
+    assert_eq!(
+        diags.len(),
+        1,
+        "exactly one diagnostic for the corrupt file"
+    );
 }
