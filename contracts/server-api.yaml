@@ -1,0 +1,365 @@
+# Generated from source code - keep in sync
+# Source of truth: crates/tools/apxm-server/src/routes.rs + openapi.rs
+# Drift gate: CI diff-tests this file against the utoipa-generated session surface.
+# Run `cargo test -p apxm-server session_openapi` to regenerate the session slice.
+# Full route inventory is in routes.rs; this file captures the key contract surface.
+
+openapi: "3.0.3"
+info:
+  title: APXM Server API
+  version: "0.1.0-draft"
+  description: >
+    Execution kernel: compiles AIR graphs, runs graph-aware capability-gated
+    dispatch, and exposes observability endpoints. Internal (/v1/*) by default;
+    public edge blocks raw /v1.
+
+servers:
+  - url: "http://127.0.0.1:18800"
+    description: Local development server
+
+tags:
+  - name: execution
+    description: Run and compile AIR/skill graphs
+  - name: skills
+    description: Skill catalog and invocation
+  - name: runs
+    description: Run observability and control
+  - name: session
+    description: Session control, grants, and compaction
+  - name: goals
+    description: Goal-convergence orchestration
+  - name: memory
+    description: QMEM/UMEM fact store
+  - name: capabilities
+    description: Capability registry
+  - name: agents
+    description: Agent registration and A2A
+  - name: health
+    description: Liveness
+
+paths:
+  /health:
+    get:
+      operationId: getHealth
+      summary: Service liveness
+      tags: [health]
+      responses:
+        "200":
+          description: Service is alive
+
+  /v1/models:
+    get:
+      operationId: listModels
+      summary: Registered backend models
+      tags: [health]
+      responses:
+        "200":
+          description: Model list
+
+  /v1/backends:
+    get:
+      operationId: listBackends
+      summary: Registered LLM/execution backends
+      tags: [health]
+      responses:
+        "200":
+          description: Backend list
+
+  /v1/execute:
+    post:
+      operationId: executeAir
+      summary: Run an AIR graph (blocking response)
+      tags: [execution]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ExecuteRequest"
+      responses:
+        "200":
+          description: Execution result
+        "400":
+          description: Bad request
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TypedError"
+        "422":
+          description: Unprocessable AIR
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TypedError"
+        "500":
+          description: Server fault
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TypedError"
+
+  /v1/execute/stream:
+    post:
+      operationId: executeAirStream
+      summary: Run an AIR graph (SSE node/token event stream)
+      tags: [execution]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ExecuteRequest"
+      responses:
+        "200":
+          description: text/event-stream of typed execution events
+
+  /v1/compile:
+    post:
+      operationId: compileAir
+      summary: Compile AIR to .apxmobj artifact
+      tags: [execution]
+      responses:
+        "200":
+          description: Compiled artifact descriptor
+
+  /v1/skills:
+    get:
+      operationId: listSkills
+      summary: Skill catalog (folder scan)
+      tags: [skills]
+      responses:
+        "200":
+          description: Skill list
+
+  /v1/skills/{id}/execute:
+    post:
+      operationId: executeSkill
+      summary: Invoke a named skill
+      tags: [skills]
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Skill execution result
+        "404":
+          description: Skill not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TypedError"
+
+  /v1/runs:
+    get:
+      operationId: listRuns
+      summary: Run trace list (paginated)
+      tags: [runs]
+      responses:
+        "200":
+          description: Run list
+
+  /v1/runs/{execution_id}:
+    get:
+      operationId: getRun
+      summary: Single run trace
+      tags: [runs]
+      parameters:
+        - name: execution_id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Run trace detail
+        "404":
+          description: Run not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TypedError"
+
+  /v1/runs/{execution_id}/cancel:
+    post:
+      operationId: cancelRun
+      summary: Cancel an in-flight run
+      tags: [runs]
+      parameters:
+        - name: execution_id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Cancel accepted
+        "409":
+          description: Nothing to cancel
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TypedError"
+
+  /v1/sessions/{session_id}/status:
+    get:
+      operationId: getSessionStatus
+      summary: Session status, ledger snapshot, linked runs
+      tags: [session]
+      parameters:
+        - name: session_id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Session status
+        "404":
+          description: Unknown session
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TypedError"
+
+  /v1/sessions/{session_id}/cancel:
+    post:
+      operationId: cancelSession
+      summary: Cancel in-flight work for session
+      tags: [session]
+      parameters:
+        - name: session_id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Cancel accepted
+        "409":
+          description: Nothing to cancel
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TypedError"
+
+  /v1/sessions/{session_id}/grants:
+    post:
+      operationId: updateSessionGrants
+      summary: Add or revoke capability grants
+      tags: [session]
+      parameters:
+        - name: session_id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Grants updated
+
+  /v1/memory/facts/store:
+    post:
+      operationId: storeMemoryFact
+      summary: Write a QMEM/UMEM fact
+      tags: [memory]
+      responses:
+        "200":
+          description: Fact stored
+
+  /v1/memory/facts/search:
+    post:
+      operationId: searchMemoryFacts
+      summary: Search QMEM/UMEM facts
+      tags: [memory]
+      responses:
+        "200":
+          description: Matching facts
+
+  /v1/capabilities:
+    get:
+      operationId: listCapabilities
+      summary: Capability registry snapshot
+      tags: [capabilities]
+      responses:
+        "200":
+          description: Capability list
+
+  /v1/goals:
+    get:
+      operationId: listGoals
+      summary: Goal-convergence run list
+      tags: [goals]
+      responses:
+        "200":
+          description: Goal list
+
+  /.well-known/agent.json:
+    get:
+      operationId: getAgentCard
+      summary: A2A agent card (RFC draft)
+      tags: [agents]
+      responses:
+        "200":
+          description: Agent card JSON
+
+  /v1/permissions/{permission_id}/respond:
+    post:
+      operationId: respondPermission
+      summary: Client reply to server permission prompt
+      tags: [session]
+      parameters:
+        - name: permission_id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Response recorded
+
+components:
+  schemas:
+    ExecuteRequest:
+      type: object
+      required: [air]
+      properties:
+        air:
+          type: string
+          description: AIR graph serialized to JSON string
+        args:
+          type: array
+          items:
+            type: string
+        session_id:
+          type: string
+        admit_capabilities:
+          type: array
+          items:
+            type: string
+
+    TypedError:
+      type: object
+      required: [class, code, message]
+      description: >
+        Stable typed error envelope. class/code/message are guaranteed stable;
+        recovery_hint is advisory. Unknown additional fields are allowed for
+        forward compatibility.
+      properties:
+        class:
+          type: string
+          enum: [program_fault, server_fault]
+          description: >
+            program_fault = caller/program can adjust and retry (4xx);
+            server_fault = infrastructure failure, not model-recoverable (5xx).
+        code:
+          type: string
+          description: Stable machine-readable fault code (e.g. not_found, admission_denied)
+        message:
+          type: string
+          description: Operator-readable summary
+        recovery_hint:
+          type: string
+          description: Specific next action the caller can take (optional)

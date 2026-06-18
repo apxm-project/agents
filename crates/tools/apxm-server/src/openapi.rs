@@ -2,6 +2,26 @@
 //!
 //! Wire shapes are derived from server types via `utoipa`; CI diff-tests the
 //! export against `specs/0002-apxm-chat-thin-clients/contracts/openapi-session-v1.yaml`.
+//!
+//! # Route inventory (spec 0012 — T001)
+//!
+//! The exhaustive route list lives in `routes.rs`. The full server contract
+//! artifact is at `contracts/server-api.yaml` (spec 0012, generated from source —
+//! keep in sync). Key surface groups:
+//!
+//! - Execution: `POST /v1/execute` · `/execute/stream` · `/compile` · `/compile/stream`
+//! - Skills: `GET /v1/skills` · `/{id}` · `POST /{id}/execute` · `/{id}/execute/stream`
+//! - Runs: `GET /v1/runs` · `/{id}` · `/graph` · `/events/stream` · `POST /{id}/cancel`
+//! - Session: `GET /v1/sessions/{id}/status` · `POST /cancel` · `/grants` · `/compact`
+//! - Goals: `GET /v1/goals` · `/{id}` · `/events/stream` · `POST /{id}/cancel`
+//! - Memory: `POST /v1/memory/facts/store` · `/search` · `/delete`
+//! - Capabilities: `GET /v1/capabilities` · `POST /register` · `/rescan` · `/{id}/invoke`
+//! - Agents/A2A: `GET /.well-known/agent.json` · `POST /a2a/tasks/send`
+//! - Permission: `POST /v1/permissions/{id}/respond`
+//!
+//! This file (`openapi.rs`) owns the utoipa-generated slice for session + permission.
+//! Remaining surfaces are documented in `contracts/server-api.yaml` pending
+//! full utoipa coverage (spec 0012 Phase 3).
 
 use utoipa::OpenApi;
 
