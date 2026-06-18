@@ -71,6 +71,13 @@ pub(crate) struct ExecutionRecord {
     /// run history can be grouped and queried by workflow id (spec 0013).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub(crate) workflow_id: Option<String>,
+    /// Server-owned run-root directory (spec 0009 T034).
+    ///
+    /// Resolved at execution start as `$APXM_RUNS_ROOT/{workflow_id}/{execution_id}/`
+    /// when both `APXM_RUNS_ROOT` and `workflow_id` are present; absent
+    /// otherwise. A settled run writes `run.json` here (T035).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) run_root: Option<String>,
     pub(crate) status: ExecutionStatus,
     pub(crate) started_at_ms: u64,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -286,6 +293,7 @@ impl ExecutionStore {
         workflow_id: Option<String>,
         trace_id: Option<String>,
     ) -> ExecutionRecord {
+        let run_root = resolve_run_root(workflow_id.as_deref(), &execution_id);
         let record = ExecutionRecord {
             execution_id,
             skill_id: provenance.skill_id,
@@ -303,6 +311,7 @@ impl ExecutionStore {
             idempotency_key,
             correlation_id,
             workflow_id,
+            run_root,
             trace_id,
             status: ExecutionStatus::Running,
             started_at_ms: now_ms(),
@@ -344,6 +353,7 @@ impl ExecutionStore {
         let record = entry.clone();
         drop(entry);
         persist_record_snapshot(&record);
+        write_run_artifact(&record);
         self.index.upsert_from_record(&record);
         Some(record)
     }
@@ -361,6 +371,7 @@ impl ExecutionStore {
         let record = entry.clone();
         drop(entry);
         persist_record_snapshot(&record);
+        write_run_artifact(&record);
         self.index.upsert_from_record(&record);
         Some(record)
     }
@@ -562,6 +573,87 @@ impl ExecutionStore {
             loaded += 1;
         }
         loaded
+    }
+}
+
+/// Resolve the run-root path for a new execution (spec 0009 T034).
+///
+/// Returns `Some("{APXM_RUNS_ROOT}/{workflow_id}/{execution_id}")` when both
+/// `$APXM_RUNS_ROOT` and `workflow_id` are present; `None` otherwise.
+fn resolve_run_root(workflow_id: Option<&str>, execution_id: &str) -> Option<String> {
+    let runs_root = std::env::var("APXM_RUNS_ROOT").ok()?;
+    let wf = workflow_id?;
+    Some(format!("{runs_root}/{wf}/{execution_id}"))
+}
+
+/// Minimal run-summary artifact written to `{run_root}/run.json` on settlement
+/// (spec 0009 T035).  Contains only the fields needed to scan and correlate
+/// runs by workflow; the full record lives in the session-dir snapshot.
+#[derive(Serialize)]
+struct RunArtifact<'a> {
+    run_id: &'a str,
+    workflow_id: &'a str,
+    status: &'a ExecutionStatus,
+    started_at_ms: u64,
+    finished_at_ms: u64,
+    duration_ms: u64,
+}
+
+/// Write `run.json` into the record's run root when it is present.
+/// Failures are logged as warnings; they must not surface to callers.
+fn write_run_artifact(record: &ExecutionRecord) {
+    let Some(run_root) = record.run_root.as_deref() else {
+        return;
+    };
+    let Some(workflow_id) = record.workflow_id.as_deref() else {
+        return;
+    };
+    let finished_at_ms = record.completed_at_ms.unwrap_or_else(now_ms);
+    let duration_ms = finished_at_ms.saturating_sub(record.started_at_ms);
+    let artifact = RunArtifact {
+        run_id: &record.execution_id,
+        workflow_id,
+        status: &record.status,
+        started_at_ms: record.started_at_ms,
+        finished_at_ms,
+        duration_ms,
+    };
+    let Ok(bytes) = serde_json::to_vec_pretty(&artifact) else {
+        tracing::warn!(
+            execution_id = %record.execution_id,
+            "failed to serialize run artifact"
+        );
+        return;
+    };
+    let dir = std::path::Path::new(run_root);
+    if let Err(error) = std::fs::create_dir_all(dir) {
+        tracing::warn!(
+            execution_id = %record.execution_id,
+            path = %dir.display(),
+            %error,
+            "failed to create run artifact directory"
+        );
+        return;
+    }
+    let path = dir.join("run.json");
+    let temp_path = dir.join("run.json.tmp");
+    if let Err(error) = std::fs::write(&temp_path, bytes) {
+        tracing::warn!(
+            execution_id = %record.execution_id,
+            path = %temp_path.display(),
+            %error,
+            "failed to write run artifact"
+        );
+        return;
+    }
+    if let Err(error) = std::fs::rename(&temp_path, &path) {
+        tracing::warn!(
+            execution_id = %record.execution_id,
+            from = %temp_path.display(),
+            to = %path.display(),
+            %error,
+            "failed to persist run artifact"
+        );
     }
 }
 
