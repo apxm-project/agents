@@ -308,6 +308,8 @@ mod tests {
             node_metrics: Vec::new(),
             token_values: std::collections::HashMap::new(),
             goal: None,
+            run_root: None,
+            trace_id: None,
         }
     }
 

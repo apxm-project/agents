@@ -249,20 +249,24 @@ mod tests {
     use super::*;
 
     #[test]
+    #[allow(unsafe_code)]
     fn from_env_returns_none_when_unset() {
         // Guard: ensure APXM_RUNNER_URL is absent for this test.
-        std::env::remove_var("APXM_RUNNER_URL");
+        // SAFETY: single-threaded test; no concurrent env readers.
+        unsafe { std::env::remove_var("APXM_RUNNER_URL") };
         assert!(RemoteAgentSpawner::from_env().is_none());
     }
 
     #[test]
+    #[allow(unsafe_code)]
     fn from_env_returns_some_when_set() {
-        std::env::set_var("APXM_RUNNER_URL", "http://localhost:9200");
+        // SAFETY: single-threaded test; no concurrent env readers.
+        unsafe { std::env::set_var("APXM_RUNNER_URL", "http://localhost:9200") };
         let spawner = RemoteAgentSpawner::from_env();
         assert!(spawner.is_some());
         let s = spawner.unwrap();
         assert_eq!(s.runner_url, "http://localhost:9200");
-        std::env::remove_var("APXM_RUNNER_URL");
+        unsafe { std::env::remove_var("APXM_RUNNER_URL") };
     }
 
     #[test]

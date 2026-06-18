@@ -342,15 +342,16 @@ mod tests {
     /// server consumes Studio-deployed packs from `/workspace/libs` (Docker
     /// workspace layout) without requiring a process restart.
     #[test]
+    #[allow(unsafe_code)]
     fn pack_capability_roots_includes_apxm_libs_root() {
         use std::env;
         use std::path::PathBuf;
 
         let workspace_libs = PathBuf::from("/workspace/libs");
-        // Scope the env mutation to this test with a guard pattern.
-        env::set_var(apxm_core::constants::env::APXM_LIBS_ROOT, &workspace_libs);
+        // SAFETY: single-threaded test; no concurrent env readers.
+        unsafe { env::set_var(apxm_core::constants::env::APXM_LIBS_ROOT, &workspace_libs) };
         let roots = pack_capability_roots(&[]);
-        env::remove_var(apxm_core::constants::env::APXM_LIBS_ROOT);
+        unsafe { env::remove_var(apxm_core::constants::env::APXM_LIBS_ROOT) };
 
         assert!(
             roots.contains(&workspace_libs),

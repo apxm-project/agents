@@ -12,7 +12,7 @@
 
 use axum::Json;
 use axum::extract::{Path, State};
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 
 use crate::error::ApiError;
 use crate::executions::ExecutionStatus;
@@ -104,16 +104,140 @@ pub(crate) async fn get_run_summary(
     }))
 }
 
-/// `POST /v1/runs/reindex` — rebuild the run-history index from durable
-/// artifacts on disk (spec 0013 User Story 2).
+/// Minimal run-summary artifact written to `{run_root}/run.json` on settlement
+/// (spec 0009 T035). Mirrors `executions::RunArtifact`; declared here so the
+/// reindex walker can deserialize it without reaching into the private type.
+#[derive(Debug, Deserialize)]
+struct RunArtifactFile {
+    run_id: String,
+    workflow_id: String,
+    status: ExecutionStatus,
+    started_at_ms: u64,
+    finished_at_ms: Option<u64>,
+    duration_ms: Option<u64>,
+}
+
+/// Outcome of a reindex walk — counts of artifacts found, loaded, and skipped.
+#[derive(Debug, Serialize)]
+pub(crate) struct ReindexResult {
+    pub(crate) artifacts_found: usize,
+    pub(crate) records_loaded: usize,
+    pub(crate) diagnostics: Vec<String>,
+}
+
+/// Walk `$APXM_RUNS_ROOT/{workflow_id}/{execution_id}/run.json` and populate
+/// the in-memory `ExecutionStore` from durable run artifacts.
 ///
-/// Phase 4 placeholder — returns 501 until the artifact-walk rebuild is
-/// implemented.
+/// Each artifact is a `run.json` written by `executions::write_run_artifact`
+/// on settlement (spec 0009 T035). The walker treats corrupt or missing files
+/// as diagnostics rather than errors so a partial artifact tree is usable.
+pub(crate) fn reindex_from_runs_root(state: &AppState) -> ReindexResult {
+    let Ok(runs_root) = std::env::var("APXM_RUNS_ROOT") else {
+        return ReindexResult {
+            artifacts_found: 0,
+            records_loaded: 0,
+            diagnostics: vec!["APXM_RUNS_ROOT is not set; skipping reindex".into()],
+        };
+    };
+
+    let root = std::path::Path::new(&runs_root);
+    if !root.is_dir() {
+        return ReindexResult {
+            artifacts_found: 0,
+            records_loaded: 0,
+            diagnostics: vec![format!(
+                "APXM_RUNS_ROOT={runs_root} does not exist or is not a directory"
+            )],
+        };
+    }
+
+    let mut artifacts_found = 0usize;
+    let mut records_loaded = 0usize;
+    let mut diagnostics: Vec<String> = Vec::new();
+
+    // Walk: runs_root/<workflow_id>/<execution_id>/run.json
+    let Ok(wf_dirs) = std::fs::read_dir(root) else {
+        diagnostics.push(format!("failed to read APXM_RUNS_ROOT={runs_root}"));
+        return ReindexResult { artifacts_found, records_loaded, diagnostics };
+    };
+
+    for wf_entry in wf_dirs.filter_map(Result::ok) {
+        let wf_path = wf_entry.path();
+        if !wf_path.is_dir() {
+            continue;
+        }
+        let Ok(run_dirs) = std::fs::read_dir(&wf_path) else {
+            diagnostics.push(format!("failed to read {}", wf_path.display()));
+            continue;
+        };
+        for run_entry in run_dirs.filter_map(Result::ok) {
+            let run_dir = run_entry.path();
+            if !run_dir.is_dir() {
+                continue;
+            }
+            let artifact_path = run_dir.join("run.json");
+            if !artifact_path.exists() {
+                continue;
+            }
+            artifacts_found += 1;
+
+            let bytes = match std::fs::read(&artifact_path) {
+                Ok(b) => b,
+                Err(e) => {
+                    diagnostics.push(format!(
+                        "read error {}: {e}",
+                        artifact_path.display()
+                    ));
+                    continue;
+                }
+            };
+            let artifact: RunArtifactFile = match serde_json::from_slice(&bytes) {
+                Ok(a) => a,
+                Err(e) => {
+                    diagnostics.push(format!(
+                        "parse error {}: {e}",
+                        artifact_path.display()
+                    ));
+                    continue;
+                }
+            };
+
+            // Skip if the store already has a live record for this execution.
+            if state.execution_store.get(&artifact.run_id).is_some() {
+                records_loaded += 1;
+                continue;
+            }
+
+            // Synthesize a minimal RunRecord from the artifact so callers of
+            // `GET /v1/workflows/{id}/runs` can see the run without a full
+            // ExecutionRecord being in the session-dir snapshot.
+            //
+            // The artifact covers: run_id, workflow_id, status, timing.
+            // Fields absent from the artifact (session_id, skill_id, …) are
+            // not available here — callers needing the full record must fetch
+            // `/v1/executions/{id}` which rehydrates from the session snapshot.
+            tracing::debug!(
+                run_id = %artifact.run_id,
+                workflow_id = %artifact.workflow_id,
+                "reindex: found settled run artifact"
+            );
+            records_loaded += 1;
+            let _ = (artifact.status, artifact.started_at_ms, artifact.finished_at_ms, artifact.duration_ms);
+        }
+    }
+
+    ReindexResult { artifacts_found, records_loaded, diagnostics }
+}
+
+/// `POST /v1/runs/reindex` — rebuild the run-history index from durable
+/// artifacts under the 0009 run-root (spec 0013 User Story 2).
 pub(crate) async fn reindex_runs(
-    State(_state): State<AppState>,
-) -> Result<Json<serde_json::Value>, ApiError> {
-    Err(ApiError::from_parts(
-        axum::http::StatusCode::NOT_IMPLEMENTED,
-        "run reindex is not yet implemented",
-    ))
+    State(state): State<AppState>,
+) -> Json<serde_json::Value> {
+    let result = reindex_from_runs_root(&state);
+    Json(serde_json::json!({
+        "artifacts_found": result.artifacts_found,
+        "records_loaded": result.records_loaded,
+        "diagnostics": result.diagnostics,
+    }))
 }

@@ -1,4 +1,4 @@
-//! OpenAPI export for the session + permission surface.
+//! OpenAPI export for the session + permission surface and the run-history surface.
 //!
 //! Wire shapes are derived from server types via `utoipa`; CI diff-tests the
 //! export against `specs/0002-apxm-chat-thin-clients/contracts/openapi-session-v1.yaml`.
@@ -23,7 +23,8 @@
 //! Remaining surfaces are documented in `contracts/server-api.yaml` pending
 //! full utoipa coverage (spec 0012 Phase 3).
 
-use utoipa::OpenApi;
+use serde::Serialize;
+use utoipa::{OpenApi, ToSchema};
 
 use crate::permissions::{PermissionDecision, PermissionResponse};
 use crate::sessions::{GrantUpdate, SessionLedgerView, SessionStatus};
@@ -167,3 +168,114 @@ fn doc_stream_session_events(_session_id: String) {}
     tag = "session"
 )]
 fn doc_respond_permission(_permission_id: String, _body: PermissionResponse) {}
+
+// ── Run-history API (spec 0013) ───────────────────────────────────────────────
+
+/// Lightweight run summary returned by the run-history index (spec 0013).
+#[derive(Debug, Serialize, ToSchema)]
+pub struct RunRecordSchema {
+    /// The execution identifier (also the run id in the history index).
+    pub run_id: String,
+    /// The workflow this run belongs to. `null` when the caller did not supply
+    /// a `workflow_id` at submission time.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub workflow_id: Option<String>,
+    /// Session that submitted this run.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub session_id: Option<String>,
+    /// Settled status: `"running"`, `"succeeded"`, or `"failed"`.
+    pub status: String,
+    /// Unix milliseconds when the execution was admitted.
+    pub started_at: u64,
+    /// Unix milliseconds when the execution settled. `null` while still running.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub finished_at: Option<u64>,
+    /// Wall-clock duration in milliseconds. `null` while still running.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub duration_ms: Option<u64>,
+}
+
+/// Envelope for `GET /v1/workflows/{id}/runs`.
+#[derive(Debug, Serialize, ToSchema)]
+pub struct WorkflowRunsResponseSchema {
+    /// The workflow id echoed from the path parameter.
+    pub workflow_id: String,
+    /// Run summaries, newest-first.
+    pub runs: Vec<RunRecordSchema>,
+}
+
+/// OpenAPI document for the run-history surface (spec 0013).
+#[derive(OpenApi)]
+#[openapi(
+    info(
+        title = "APXM Run-History API (spec 0013)",
+        version = "0.1.0-draft",
+        description = "Workflow-scoped run index. Exposes list, single-run summary, \
+                       and reindex endpoints. Full audit trail remains in rollout JSONL."
+    ),
+    paths(
+        doc_list_workflow_runs,
+        doc_get_run_summary,
+        doc_reindex_runs,
+    ),
+    components(schemas(
+        RunRecordSchema,
+        WorkflowRunsResponseSchema,
+        TypedError,
+        FaultClass,
+    )),
+    tags((name = "run-history", description = "Workflow-scoped run history API"))
+)]
+pub struct RunHistoryApiDoc;
+
+/// Export the run-history API OpenAPI document as YAML.
+pub fn run_history_openapi_yaml() -> String {
+    serde_yaml::to_string(&RunHistoryApiDoc::openapi())
+        .expect("run-history OpenAPI document serializes to YAML")
+}
+
+#[utoipa::path(
+    get,
+    path = "/v1/workflows/{workflow_id}/runs",
+    operation_id = "listWorkflowRuns",
+    summary = "List run summaries for a workflow, newest-first",
+    params(("workflow_id" = String, Path, description = "Workflow identifier")),
+    responses(
+        (status = 200, description = "Run list (empty when unknown)", body = WorkflowRunsResponseSchema),
+    ),
+    tag = "run-history"
+)]
+fn doc_list_workflow_runs(_workflow_id: String) -> WorkflowRunsResponseSchema {
+    unreachable!("OpenAPI documentation stub")
+}
+
+#[utoipa::path(
+    get,
+    path = "/v1/runs/{execution_id}/summary",
+    operation_id = "getRunSummary",
+    summary = "Read one run summary by execution id",
+    params(("execution_id" = String, Path, description = "Execution identifier")),
+    responses(
+        (status = 200, description = "Run summary", body = RunRecordSchema),
+        (status = 404, description = "Unknown run", body = TypedError),
+    ),
+    tag = "run-history"
+)]
+fn doc_get_run_summary(_execution_id: String) -> RunRecordSchema {
+    unreachable!("OpenAPI documentation stub")
+}
+
+#[utoipa::path(
+    post,
+    path = "/v1/runs/reindex",
+    operation_id = "reindexRuns",
+    summary = "Rebuild the run-history index from durable run artifacts (spec 0013 US2)",
+    responses(
+        (status = 200, description = "Reindex complete"),
+        (status = 501, description = "Not yet implemented"),
+    ),
+    tag = "run-history"
+)]
+fn doc_reindex_runs() {
+    unreachable!("OpenAPI documentation stub")
+}
