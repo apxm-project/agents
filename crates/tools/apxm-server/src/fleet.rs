@@ -288,6 +288,10 @@ mod tests {
             started_at_ms: started,
             completed_at_ms: completed,
             result: completed.map(|_| ExecuteResponse {
+                execution_id: None,
+                workflow_id: None,
+                run_root: None,
+                trace_id: None,
                 results: Default::default(),
                 content: None,
                 session_dir: None,

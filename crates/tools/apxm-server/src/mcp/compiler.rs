@@ -65,7 +65,7 @@ pub(crate) async fn call_run_tool(
             ));
         }
     };
-    match crate::execute::run_air_inner(state, req).await {
+    match crate::execute::run_air_inner(state, req, None).await {
         Ok(response) => {
             let text = serde_json::to_string(&response)
                 .unwrap_or_else(|error| format!("{{\"error\":\"serialize failed: {error}\"}}"));

@@ -14,8 +14,8 @@ use apxm_core::paths::ApxmPaths;
 use apxm_core::types::AISOperationType;
 use apxm_core::types::execution::Node;
 use apxm_core::types::values::Value as RuntimeValue;
-use apxm_runtime::EmitterAdapter;
 use apxm_runtime::capability::CapabilitySandboxPreflight;
+use apxm_runtime::{EmitterAdapter, ExecutionEventEmitter};
 use axum::Json;
 use axum::extract::State;
 use axum::http::HeaderMap;
@@ -26,6 +26,7 @@ use serde_json::Value as JsonValue;
 use tokio::sync::{Notify, mpsc};
 
 use crate::error::ApiError;
+use crate::executions::{ExecutionRecord, ExecutionRecordingEmitter};
 use crate::runs::{RunBusFanOutEmitter, record_run_lifecycle_event};
 use crate::state::{AppState, TokioChannelEmitter};
 use crate::types::responses::{ExecutionStats, LlmUsageSummary};
@@ -190,6 +191,14 @@ pub(crate) async fn compile_artifact(
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub(crate) struct ExecuteResponse {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) execution_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) workflow_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) run_root: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) trace_id: Option<String>,
     pub(crate) results: HashMap<String, JsonValue>,
     pub(crate) content: Option<String>,
     pub(crate) session_dir: Option<String>,
@@ -231,8 +240,9 @@ pub(crate) async fn execute(
     headers: HeaderMap,
     Json(req): Json<ExecuteRequest>,
 ) -> Result<Json<ExecuteResponse>, ApiError> {
-    let _ = extract_trace_id(&headers); // extracted for future use in run recording
-    Ok(Json(run_air_inner(&state, req).await?))
+    Ok(Json(
+        run_air_inner(&state, req, extract_trace_id(&headers)).await?,
+    ))
 }
 
 /// Transport-neutral core: compile + admit + execute one AIR request, returning
@@ -259,6 +269,7 @@ pub(crate) async fn acquire_admission(state: &AppState) -> Result<String, ApiErr
 pub(crate) async fn run_air_inner(
     state: &AppState,
     req: ExecuteRequest,
+    trace_id: Option<String>,
 ) -> Result<ExecuteResponse, ApiError> {
     let PreparedRequest {
         air,
@@ -274,9 +285,7 @@ pub(crate) async fn run_air_inner(
         // execute path has no rollout, so the verbatim prompt is unused here.
         user_text: _,
         python_tools_sidecar,
-        // The raw (non-streaming) execute path does not record into the
-        // ExecutionStore, so workflow_id is unused here.
-        workflow_id: _,
+        workflow_id,
     } = prepare_request(req)?;
     let known_caps = registered_capability_names(state);
     let mut artifact = air_to_artifact_with_caps(&air, &known_caps)?;
@@ -296,21 +305,101 @@ pub(crate) async fn run_air_inner(
     if let Some((key, value)) = tool_call_budgets_metadata(&tool_call_budgets) {
         metadata.insert(key, value);
     }
+    let execution_id = uuid::Uuid::new_v4().to_string();
+    let trace_id = trace_id.unwrap_or_else(|| execution_id.clone());
+    let raw_record = start_raw_execution_record(
+        state,
+        &execution_id,
+        workflow_id,
+        trace_id.clone(),
+        session_id.as_deref(),
+        session_dir.as_deref(),
+    );
+    if raw_record.is_some() {
+        state.run_event_bus.record(
+            &execution_id,
+            ApxmEvent::root(
+                ExecutionStartedPayload {
+                    execution_id: execution_id.clone(),
+                },
+                EventSource::Server,
+                &trace_id,
+            ),
+        );
+    }
+    let emitter: Option<Arc<dyn ExecutionEventEmitter>> = raw_record.as_ref().map(|_| {
+        Arc::new(EmitterAdapter::new(
+            Arc::new(apxm_core::events::FanOutEmitter::new(vec![
+                Arc::new(ExecutionRecordingEmitter::new(
+                    state.execution_store.clone(),
+                    execution_id.clone(),
+                )),
+                Arc::new(RunBusFanOutEmitter::new(
+                    state.run_event_bus.clone(),
+                    execution_id.clone(),
+                    Vec::new(),
+                )),
+            ])),
+            EventSource::Runtime,
+            &trace_id,
+        )) as Arc<dyn ExecutionEventEmitter>
+    });
     let execution = state
         .runtime
         .execute_artifact_with_session_emitter_metadata_and_credentials(
             artifact,
             args,
             session_id,
-            None,
+            emitter,
             session_dir.clone(),
             metadata,
             resolved_credentials,
         )
         .await;
     apxm_runtime::scheduler::admission_registry::unregister(&admission_id);
-    let execution = execution.map_err(ApiError::runtime)?;
-    Ok(to_execute_response(execution, session_dir))
+    match execution {
+        Ok(execution) => {
+            let mut response = to_execute_response(execution, session_dir);
+            if let Some(record) = raw_record {
+                attach_run_metadata(&mut response, &record, &trace_id);
+                state
+                    .execution_store
+                    .complete_success(&execution_id, response.clone());
+                state.run_event_bus.record(
+                    &execution_id,
+                    ApxmEvent::root(
+                        ExecuteCompletePayload {
+                            result: serde_json::to_value(&response).unwrap_or(JsonValue::Null),
+                        },
+                        EventSource::Server,
+                        &trace_id,
+                    ),
+                );
+            }
+            Ok(response)
+        }
+        Err(error) => {
+            if raw_record.is_some() {
+                let message = error.to_string();
+                state
+                    .execution_store
+                    .complete_failure(&execution_id, message.clone());
+                state.run_event_bus.record(
+                    &execution_id,
+                    ApxmEvent::root(
+                        ErrorPayload {
+                            message,
+                            status: None,
+                            recoverable: false,
+                        },
+                        EventSource::Server,
+                        &trace_id,
+                    ),
+                );
+            }
+            Err(ApiError::runtime(error))
+        }
+    }
 }
 
 pub(crate) async fn execute_stream(
@@ -330,9 +419,7 @@ pub(crate) async fn execute_stream(
         owner,
         user_text,
         python_tools_sidecar,
-        // The streaming execute path does not record into the ExecutionStore;
-        // the skill execute path does via SkillExecuteRequest.workflow_id.
-        workflow_id: _,
+        workflow_id,
     } = prepare_request(req)?;
     let known_caps = registered_capability_names(&state);
     let mut artifact = air_to_artifact_with_caps(&air, &known_caps)?;
@@ -365,6 +452,14 @@ pub(crate) async fn execute_stream(
     // `POST /v1/runs/{execution_id}/cancel` abort this run at its next await
     // boundary; the entry is deleted once the run settles either way.
     let execution_id = uuid::Uuid::new_v4().to_string();
+    let raw_record = start_raw_execution_record(
+        &state,
+        &execution_id,
+        workflow_id,
+        trace_id.clone(),
+        session_id.as_deref(),
+        session_dir.as_deref(),
+    );
     let tx_task = tx.clone();
     // Seed the per-session runtime ledger (turn caps / tool budgets / grants)
     // keyed by session_id and register the session→execution mapping, so the
@@ -441,6 +536,7 @@ pub(crate) async fn execute_stream(
     };
     let rollout_registry = state.rollout_registry.clone();
     let run_event_bus = state.run_event_bus.clone();
+    let execution_store = state.execution_store.clone();
     // Drop this session's registry record when its execution settles (only if it
     // still points at this execution — a newer turn may have re-registered).
     let session_registry = state.session_registry.clone();
@@ -470,6 +566,12 @@ pub(crate) async fn execute_stream(
         .await;
         let mut downstream: Vec<Arc<dyn apxm_core::events::EventEmitter>> =
             vec![Arc::new(TokioChannelEmitter::new(tx_task.clone()))];
+        if raw_record.is_some() {
+            downstream.push(Arc::new(ExecutionRecordingEmitter::new(
+                execution_store.clone(),
+                execution_id.clone(),
+            )));
+        }
         if rollout_recording {
             downstream.push(Arc::new(crate::rollout::RolloutEmitter::new(
                 rollout_registry.clone(),
@@ -494,10 +596,14 @@ pub(crate) async fn execute_stream(
         tokio::select! {
             outcome = execution => match outcome {
                 Ok(result) => {
+                    let mut response = to_execute_response(result, session_dir);
+                    if let Some(record) = raw_record.as_ref() {
+                        attach_run_metadata(&mut response, record, &trace_id);
+                        execution_store.complete_success(&execution_id, response.clone());
+                    }
                     send_lifecycle(ApxmEvent::root(
                         ExecuteCompletePayload {
-                            result: serde_json::to_value(to_execute_response(result, session_dir))
-                                .unwrap_or(JsonValue::Null),
+                            result: serde_json::to_value(response).unwrap_or(JsonValue::Null),
                         },
                         EventSource::Server,
                         &trace_id,
@@ -505,6 +611,9 @@ pub(crate) async fn execute_stream(
                     .await;
                 }
                 Err(err) => {
+                    if raw_record.is_some() {
+                        execution_store.complete_failure(&execution_id, err.to_string());
+                    }
                     send_lifecycle(ApxmEvent::root(
                         ErrorPayload {
                             message: err.to_string(),
@@ -521,6 +630,9 @@ pub(crate) async fn execute_stream(
             // model/tool call at its await point. Emit `turn_aborted` in place
             // of `execute_complete`.
             _ = cancel.notified() => {
+                if raw_record.is_some() {
+                    execution_store.complete_failure(&execution_id, "cancelled".to_string());
+                }
                 send_lifecycle(ApxmEvent::root(
                     TurnAbortedPayload {
                         execution_id: execution_id.clone(),
@@ -589,8 +701,21 @@ pub(crate) fn prepare_request(mut req: ExecuteRequest) -> Result<PreparedRequest
     if req.air.trim().is_empty() {
         return Err(ApiError::bad_request("air must not be empty"));
     }
+    let workflow_id = req
+        .workflow_id
+        .take()
+        .filter(|workflow_id| !workflow_id.trim().is_empty())
+        .map(validate_workflow_id)
+        .transpose()?;
+    let session_id_request = match req.session_id.take() {
+        Some(session_id) => Some(session_id),
+        None if workflow_id.is_some() => {
+            Some(format!("apxm-workflow-{}", uuid::Uuid::new_v4().simple()))
+        }
+        None => None,
+    };
     let (session_id, session_dir) =
-        resolve_session_request(req.session_id.take(), req.session_root.take())?;
+        resolve_session_request(session_id_request, req.session_root.take())?;
     // Strip + capture the python-tools sidecar comment so the MLIR parser never
     // sees a `;` line, and (on the trusted path) it can be re-attached to the
     // compiled artifact as a section the runtime builds the python bridge from.
@@ -607,8 +732,49 @@ pub(crate) fn prepare_request(mut req: ExecuteRequest) -> Result<PreparedRequest
         owner: req.owner,
         user_text: req.user_text,
         python_tools_sidecar,
-        workflow_id: req.workflow_id,
+        workflow_id,
     })
+}
+
+fn start_raw_execution_record(
+    state: &AppState,
+    execution_id: &str,
+    workflow_id: Option<String>,
+    trace_id: String,
+    session_id: Option<&str>,
+    session_dir: Option<&str>,
+) -> Option<ExecutionRecord> {
+    let workflow_id = workflow_id?;
+    let session_id = session_id?;
+    let session_dir = session_dir?;
+    Some(state.execution_store.start_skill_execution_with_all(
+        execution_id.to_string(),
+        apxm_skill::SkillExecutionProvenance {
+            skill_id: workflow_id.clone(),
+            skill_version: "raw-workflow".to_string(),
+            entry_flow: None,
+            source_hash: None,
+            air_hash: None,
+            artifact_hash: None,
+            parent_execution_id: None,
+            parent_skill_id: None,
+            parent_skill_version: None,
+            scope_id: None,
+        },
+        session_id,
+        session_dir,
+        None,
+        None,
+        Some(workflow_id),
+        Some(trace_id),
+    ))
+}
+
+fn attach_run_metadata(response: &mut ExecuteResponse, record: &ExecutionRecord, trace_id: &str) {
+    response.execution_id = Some(record.execution_id.clone());
+    response.workflow_id = record.workflow_id.clone();
+    response.run_root = record.run_root.clone();
+    response.trace_id = Some(trace_id.to_string());
 }
 
 /// Resolve a per-tool auth binding — `{capability: connection_id}` —
@@ -769,6 +935,22 @@ pub(crate) fn validate_session_id(session_id: String) -> Result<String, ApiError
         ));
     }
     Ok(session_id)
+}
+
+fn validate_workflow_id(workflow_id: String) -> Result<String, ApiError> {
+    let workflow_id = workflow_id.trim().to_string();
+    if workflow_id.is_empty()
+        || workflow_id == "."
+        || workflow_id == ".."
+        || !workflow_id
+            .chars()
+            .all(|ch| ch.is_ascii_alphanumeric() || matches!(ch, '-' | '_' | '.'))
+    {
+        return Err(ApiError::bad_request(
+            "workflow_id must contain only ASCII letters, digits, '-', '_', or '.', and must not be '.' or '..'",
+        ));
+    }
+    Ok(workflow_id)
 }
 
 pub(crate) fn air_module_to_artifact(module: AirModule) -> Result<Artifact, ApiError> {
@@ -1239,6 +1421,10 @@ pub(crate) fn to_execute_response(
     }
 
     ExecuteResponse {
+        execution_id: None,
+        workflow_id: None,
+        run_root: None,
+        trace_id: None,
         results: mapped,
         content,
         session_dir,

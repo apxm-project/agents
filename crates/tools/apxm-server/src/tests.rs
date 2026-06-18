@@ -107,6 +107,7 @@ const HASH_FIELD: &str = "hash";
 const STATUS_SUCCEEDED: &str = apxm_core::constants::orchestration::execution_status::SUCCEEDED;
 const STATUS_RUNNING: &str = apxm_core::constants::orchestration::execution_status::RUNNING;
 const STATUS_FAILED: &str = apxm_core::constants::orchestration::execution_status::FAILED;
+static APXM_RUNS_ROOT_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
 const FIXTURE_PACKAGE_DIR: &str = "checkout";
 const FIXTURE_SKILL_SESSION_DIR: &str = "skills";
@@ -970,6 +971,10 @@ fn tagged_blake3(bytes: &[u8]) -> String {
 
 fn fixture_execute_response(session_dir: Option<String>) -> ExecuteResponse {
     ExecuteResponse {
+        execution_id: None,
+        workflow_id: None,
+        run_root: None,
+        trace_id: None,
         results: HashMap::new(),
         content: Some(FIXTURE_OUTPUT.to_string()),
         session_dir,
@@ -1182,6 +1187,7 @@ fn assert_complete_skill_record(record: &serde_json::Value, fixture: &SkillFixtu
 #[tokio::test]
 #[allow(unsafe_code)]
 async fn skill_execute_writes_workflow_run_node_artifacts_and_exposes_run_node_detail() {
+    let _runs_root_guard = APXM_RUNS_ROOT_LOCK.lock().expect("APXM_RUNS_ROOT lock");
     let skill_root = tempfile::tempdir().expect("skill root");
     let runs_root = tempfile::tempdir().expect("runs root");
     write_executable_skill(skill_root.path());
@@ -1290,6 +1296,91 @@ async fn skill_execute_writes_workflow_run_node_artifacts_and_exposes_run_node_d
         execution_node_body["outputs"][0]["output"][SUMMARY_FIELD],
         FIXTURE_OUTPUT_SUMMARY
     );
+}
+
+#[tokio::test]
+#[allow(unsafe_code)]
+async fn raw_execute_with_workflow_id_writes_run_node_artifacts_and_exposes_endpoints() {
+    let _runs_root_guard = APXM_RUNS_ROOT_LOCK.lock().expect("APXM_RUNS_ROOT lock");
+    let runs_root = tempfile::tempdir().expect("runs root");
+    let state = test_state().await;
+    let app = crate::build_app(state);
+
+    let body = serde_json::json!({
+        "air": const_only_air(),
+        "workflow_id": "wf-raw-observe",
+    });
+    let req = Request::builder()
+        .method("POST")
+        .uri(crate::routes::EXECUTE)
+        .header("Content-Type", "application/json")
+        .header("X-Trace-Id", "trace-raw-observe")
+        .body(Body::from(body.to_string()))
+        .unwrap();
+
+    // SAFETY: this test owns APXM_RUNS_ROOT for the synchronous request and
+    // removes it before returning.
+    unsafe { std::env::set_var("APXM_RUNS_ROOT", runs_root.path()) };
+    let resp = app.clone().oneshot(req).await.unwrap();
+    unsafe { std::env::remove_var("APXM_RUNS_ROOT") };
+    let status = resp.status();
+    let bytes = resp.into_body().collect().await.unwrap().to_bytes();
+    let body: serde_json::Value = serde_json::from_slice(&bytes).expect("execute response json");
+    assert_eq!(status, StatusCode::OK, "raw execute failed: {body}");
+
+    let execution_id = body["execution_id"].as_str().expect("execution_id");
+    let run_dir = runs_root.path().join("wf-raw-observe").join(execution_id);
+    assert_eq!(body["workflow_id"], "wf-raw-observe");
+    assert_eq!(body["trace_id"], "trace-raw-observe");
+    assert_eq!(body["run_root"], run_dir.display().to_string());
+    assert!(
+        run_dir.join("run.json").is_file(),
+        "missing raw run.json under {}",
+        run_dir.display()
+    );
+
+    let (status, runs_body) = get_json(app.clone(), "/v1/runs?trace_id=trace-raw-observe").await;
+    assert_eq!(status, StatusCode::OK, "trace run list failed: {runs_body}");
+    assert_eq!(runs_body["data"][0]["execution_id"], execution_id);
+    assert_eq!(runs_body["data"][0]["workflow_id"], "wf-raw-observe");
+    assert_eq!(
+        runs_body["data"][0]["run_root"],
+        run_dir.display().to_string()
+    );
+
+    let nodes_root = run_dir.join("nodes");
+    let node_dirs: Vec<std::path::PathBuf> = std::fs::read_dir(&nodes_root)
+        .expect("nodes dir")
+        .map(|entry| entry.expect("node dir entry").path())
+        .filter(|path| path.is_dir())
+        .collect();
+    assert!(
+        !node_dirs.is_empty(),
+        "expected raw execute node dirs under {}",
+        nodes_root.display()
+    );
+    assert!(
+        node_dirs
+            .iter()
+            .any(|node_dir| node_dir.join("output.json").is_file()
+                && node_dir.join("metrics.json").is_file()
+                && node_dir.join("node.json").is_file()),
+        "expected at least one node dir with node/output/metrics artifacts"
+    );
+
+    let (status, node_body) = get_json(app, &run_node_detail_route(execution_id, 1)).await;
+    assert_eq!(
+        status,
+        StatusCode::OK,
+        "raw run node detail failed: {node_body}"
+    );
+    assert_eq!(
+        node_body["outputs"][0]["output"][SUMMARY_FIELD],
+        FIXTURE_OUTPUT_SUMMARY
+    );
+    assert!(node_body["artifacts"]["node_dir"].as_str().is_some());
+    assert!(node_body["artifacts"]["output_json"].as_str().is_some());
+    assert!(node_body["artifacts"]["metrics_json"].as_str().is_some());
 }
 
 // ────────────────────────────────────────────────────────────────────
