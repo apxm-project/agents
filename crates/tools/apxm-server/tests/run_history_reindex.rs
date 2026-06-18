@@ -5,6 +5,8 @@
 //! response counts and diagnostics rather than internal state.
 
 use apxm_backends::llm::backends::mock::MockLLMBackend;
+use apxm_core::events::payload::RedactedContent;
+use apxm_core::types::NodeMetrics;
 use apxm_server::test_support;
 use axum::Router;
 use axum::body::Body;
@@ -127,6 +129,335 @@ async fn reindex_counts_valid_artifact() {
     assert_eq!(status, StatusCode::OK);
     assert_eq!(summary["workflow_id"], "wf-001");
     assert_eq!(summary["run_root"], run_dir.display().to_string());
+}
+
+#[tokio::test]
+#[allow(unsafe_code)]
+async fn reindex_hydrates_node_detail_and_artifact_refs() {
+    let app = test_app().await;
+    let tmp = tempfile::tempdir().unwrap();
+    let run_dir = make_run_dir(&tmp.path().to_path_buf(), "wf-nodes", "exec-nodes");
+    let node_dir = run_dir.join("nodes").join("01_node");
+    std::fs::create_dir_all(&node_dir).unwrap();
+    std::fs::write(
+        node_dir.join("node.json"),
+        serde_json::to_vec(&serde_json::json!({
+            "run_id": "exec-nodes",
+            "workflow_id": "wf-nodes",
+            "node_id": 1,
+            "node_name": "node",
+            "node_dir": "01_node"
+        }))
+        .unwrap(),
+    )
+    .unwrap();
+    std::fs::write(
+        node_dir.join("output.json"),
+        serde_json::to_vec(&serde_json::json!({
+            "node_id": 1,
+            "node_name": "node",
+            "observed_at_ms": 1200,
+            "output": RedactedContent::from_text("node output")
+        }))
+        .unwrap(),
+    )
+    .unwrap();
+    std::fs::write(
+        node_dir.join("metrics.json"),
+        serde_json::to_vec(&serde_json::json!({
+            "node_id": 1,
+            "node_name": "node",
+            "observed_at_ms": 1300,
+            "metrics": NodeMetrics::new(1)
+        }))
+        .unwrap(),
+    )
+    .unwrap();
+    write_artifact(
+        &run_dir,
+        r#"{
+          "run_id":"exec-nodes",
+          "workflow_id":"wf-nodes",
+          "skill_id":"wf-nodes",
+          "skill_version":"raw-workflow",
+          "status":"succeeded",
+          "started_at_ms":1000,
+          "finished_at_ms":2000,
+          "duration_ms":1000,
+          "nodes":[{
+            "node_id":1,
+            "node_dir":"nodes/01_node",
+            "output_json":"nodes/01_node/output.json",
+            "metrics_json":"nodes/01_node/metrics.json"
+          }]
+        }"#,
+    );
+
+    unsafe { std::env::set_var("APXM_RUNS_ROOT", tmp.path()) };
+    let (status, body) = post_reindex(&app).await;
+    unsafe { std::env::remove_var("APXM_RUNS_ROOT") };
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(body["artifacts_found"].as_u64(), Some(1));
+    assert_eq!(body["records_loaded"].as_u64(), Some(1));
+
+    let (status, node) = get_json(&app, "/v1/runs/exec-nodes/nodes/1").await;
+    assert_eq!(status, StatusCode::OK, "node detail failed: {node}");
+    assert_eq!(node["node_id"], 1);
+    assert_eq!(node["outputs"].as_array().map(Vec::len), Some(1));
+    assert_eq!(node["metrics"].as_array().map(Vec::len), Some(1));
+    assert_eq!(
+        node["artifacts"]["output_json"],
+        "nodes/01_node/output.json"
+    );
+    assert_eq!(
+        node["artifacts"]["metrics_json"],
+        "nodes/01_node/metrics.json"
+    );
+
+    let (status, artifact) = get_json(
+        &app,
+        "/v1/runs/exec-nodes/artifacts/nodes/01_node/output.json",
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "artifact fetch failed: {artifact}");
+    assert_eq!(artifact["node_id"], 1);
+}
+
+#[tokio::test]
+#[allow(unsafe_code)]
+async fn reindex_preserves_noncanonical_node_artifact_refs() {
+    let app = test_app().await;
+    let tmp = tempfile::tempdir().unwrap();
+    let run_dir = make_run_dir(
+        &tmp.path().to_path_buf(),
+        "wf-custom-node",
+        "exec-custom-node",
+    );
+    let node_dir = run_dir.join("nodes").join("custom-step-output");
+    std::fs::create_dir_all(&node_dir).unwrap();
+    std::fs::write(
+        node_dir.join("node.json"),
+        serde_json::to_vec(&serde_json::json!({
+            "run_id": "exec-custom-node",
+            "workflow_id": "wf-custom-node",
+            "node_id": 7,
+            "node_name": "Original Name",
+            "node_dir": "custom-step-output"
+        }))
+        .unwrap(),
+    )
+    .unwrap();
+    std::fs::write(
+        node_dir.join("value.out.json"),
+        serde_json::to_vec(&serde_json::json!({
+            "node_id": 7,
+            "node_name": "Renamed Later",
+            "observed_at_ms": 1200,
+            "output": RedactedContent::from_text("custom output")
+        }))
+        .unwrap(),
+    )
+    .unwrap();
+    std::fs::write(
+        node_dir.join("value.metrics.json"),
+        serde_json::to_vec(&serde_json::json!({
+            "node_id": 7,
+            "node_name": "Renamed Later",
+            "observed_at_ms": 1300,
+            "metrics": NodeMetrics::new(7)
+        }))
+        .unwrap(),
+    )
+    .unwrap();
+    write_artifact(
+        &run_dir,
+        r#"{
+          "run_id":"exec-custom-node",
+          "workflow_id":"wf-custom-node",
+          "skill_id":"wf-custom-node",
+          "skill_version":"raw-workflow",
+          "status":"succeeded",
+          "started_at_ms":1000,
+          "finished_at_ms":2000,
+          "duration_ms":1000,
+          "nodes":[{
+            "node_id":7,
+            "node_dir":"nodes/custom-step-output",
+            "node_json":"nodes/custom-step-output/node.json",
+            "output_json":"nodes/custom-step-output/value.out.json",
+            "metrics_json":"nodes/custom-step-output/value.metrics.json"
+          }]
+        }"#,
+    );
+
+    unsafe { std::env::set_var("APXM_RUNS_ROOT", tmp.path()) };
+    let (status, body) = post_reindex(&app).await;
+    unsafe { std::env::remove_var("APXM_RUNS_ROOT") };
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(body["records_loaded"].as_u64(), Some(1));
+
+    let (status, node) = get_json(&app, "/v1/runs/exec-custom-node/nodes/7").await;
+    assert_eq!(status, StatusCode::OK, "node detail failed: {node}");
+    assert_eq!(
+        node["artifacts"]["node_dir"], "nodes/custom-step-output",
+        "node detail must preserve durable node_dir instead of recomputing one"
+    );
+    assert_eq!(
+        node["artifacts"]["output_json"],
+        "nodes/custom-step-output/value.out.json"
+    );
+    assert_eq!(
+        node["artifacts"]["metrics_json"],
+        "nodes/custom-step-output/value.metrics.json"
+    );
+}
+
+#[cfg(unix)]
+#[tokio::test]
+#[allow(unsafe_code)]
+async fn reindex_skips_symlinked_node_artifact_escape() {
+    use std::os::unix::fs::symlink;
+
+    let app = test_app().await;
+    let tmp = tempfile::tempdir().unwrap();
+    let run_dir = make_run_dir(&tmp.path().to_path_buf(), "wf-symlink", "exec-symlink");
+    let node_dir = run_dir.join("nodes").join("01_node");
+    std::fs::create_dir_all(&node_dir).unwrap();
+    std::fs::write(
+        node_dir.join("node.json"),
+        serde_json::to_vec(&serde_json::json!({
+            "run_id": "exec-symlink",
+            "workflow_id": "wf-symlink",
+            "node_id": 1,
+            "node_name": "node",
+            "node_dir": "01_node"
+        }))
+        .unwrap(),
+    )
+    .unwrap();
+    let outside = tmp.path().join("outside-output.json");
+    std::fs::write(
+        &outside,
+        serde_json::to_vec(&serde_json::json!({
+            "node_id": 1,
+            "node_name": "node",
+            "observed_at_ms": 1200,
+            "output": RedactedContent::from_text("outside")
+        }))
+        .unwrap(),
+    )
+    .unwrap();
+    symlink(&outside, node_dir.join("output.json")).unwrap();
+    std::fs::write(
+        node_dir.join("metrics.json"),
+        serde_json::to_vec(&serde_json::json!({
+            "node_id": 1,
+            "node_name": "node",
+            "observed_at_ms": 1300,
+            "metrics": NodeMetrics::new(1)
+        }))
+        .unwrap(),
+    )
+    .unwrap();
+    write_artifact(
+        &run_dir,
+        r#"{
+          "run_id":"exec-symlink",
+          "workflow_id":"wf-symlink",
+          "skill_id":"wf-symlink",
+          "skill_version":"raw-workflow",
+          "status":"succeeded",
+          "started_at_ms":1000,
+          "finished_at_ms":2000,
+          "duration_ms":1000,
+          "nodes":[{
+            "node_id":1,
+            "node_dir":"nodes/01_node",
+            "output_json":"nodes/01_node/output.json",
+            "metrics_json":"nodes/01_node/metrics.json"
+          }]
+        }"#,
+    );
+
+    unsafe { std::env::set_var("APXM_RUNS_ROOT", tmp.path()) };
+    let (status, body) = post_reindex(&app).await;
+    unsafe { std::env::remove_var("APXM_RUNS_ROOT") };
+    assert_eq!(status, StatusCode::OK);
+    let diagnostics = body["diagnostics"].as_array().expect("diagnostics array");
+    assert!(
+        diagnostics.iter().any(|diagnostic| diagnostic
+            .as_str()
+            .is_some_and(|message| message.contains("escapes run root"))),
+        "expected symlink escape diagnostic, got {diagnostics:?}"
+    );
+
+    let (status, node) = get_json(&app, "/v1/runs/exec-symlink/nodes/1").await;
+    assert_eq!(status, StatusCode::OK, "node detail failed: {node}");
+    assert_eq!(node["outputs"].as_array().map(Vec::len), None);
+    assert_eq!(node["metrics"].as_array().map(Vec::len), Some(1));
+    assert!(node["artifacts"]["output_json"].is_null());
+    assert_eq!(
+        node["artifacts"]["metrics_json"],
+        "nodes/01_node/metrics.json"
+    );
+}
+
+#[tokio::test]
+#[allow(unsafe_code)]
+async fn reindex_exposes_failed_run_results_artifact() {
+    let app = test_app().await;
+    let tmp = tempfile::tempdir().unwrap();
+    let run_dir = make_run_dir(&tmp.path().to_path_buf(), "wf-failed", "exec-failed");
+    write_artifact(
+        &run_dir,
+        r#"{
+          "run_id":"exec-failed",
+          "workflow_id":"wf-failed",
+          "skill_id":"wf-failed",
+          "skill_version":"raw-workflow",
+          "status":"failed",
+          "started_at_ms":1000,
+          "finished_at_ms":2000,
+          "duration_ms":1000,
+          "results_json":"results.json"
+        }"#,
+    );
+    std::fs::write(
+        run_dir.join("results.json"),
+        serde_json::to_vec(&serde_json::json!({
+            "object": "apxm.run.results",
+            "artifact_schema_version": 1,
+            "run_id": "exec-failed",
+            "execution_id": "exec-failed",
+            "workflow_id": "wf-failed",
+            "status": "failed",
+            "error": "backend down",
+            "results": {}
+        }))
+        .unwrap(),
+    )
+    .unwrap();
+
+    unsafe { std::env::set_var("APXM_RUNS_ROOT", tmp.path()) };
+    let (status, body) = post_reindex(&app).await;
+    unsafe { std::env::remove_var("APXM_RUNS_ROOT") };
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(body["records_loaded"].as_u64(), Some(1));
+
+    let (status, artifacts) = get_json(&app, "/v1/runs/exec-failed/artifacts").await;
+    assert_eq!(status, StatusCode::OK, "artifact list failed: {artifacts}");
+    assert!(
+        artifacts["artifacts"]
+            .as_array()
+            .expect("artifacts array")
+            .iter()
+            .any(|artifact| artifact["path"] == "results.json"),
+        "reindexed failed run should list results.json: {artifacts}"
+    );
+    let (status, results) = get_json(&app, "/v1/runs/exec-failed/artifacts/results.json").await;
+    assert_eq!(status, StatusCode::OK, "results fetch failed: {results}");
+    assert_eq!(results["status"], "failed");
+    assert_eq!(results["error"], "backend down");
 }
 
 // ── Durable SQLite run-history index ─────────────────────────────────────────

@@ -1391,6 +1391,32 @@ async fn skill_execute_writes_workflow_run_node_artifacts_and_exposes_run_node_d
 }
 
 #[tokio::test]
+async fn skill_execute_rejects_path_like_workflow_id() {
+    let skill_root = tempfile::tempdir().expect("skill root");
+    write_executable_skill(skill_root.path());
+
+    let state = test_state_with_skill_roots(vec![skill_root.path().to_path_buf()]).await;
+    let app = crate::build_app(state);
+
+    let (status, body) = post_json(
+        app,
+        &skill_execute_route(FIXTURE_SKILL_ID),
+        serde_json::json!({ "workflow_id": "../escape" }),
+    )
+    .await;
+
+    assert_eq!(status, StatusCode::BAD_REQUEST, "unexpected body: {body}");
+    assert!(
+        body["error"]
+            .as_str()
+            .or_else(|| body["message"].as_str())
+            .unwrap_or("")
+            .contains("workflow_id"),
+        "error should explain workflow_id validation: {body}"
+    );
+}
+
+#[tokio::test]
 #[allow(unsafe_code)]
 async fn raw_execute_with_workflow_id_writes_run_node_artifacts_and_exposes_endpoints() {
     let _runs_root_guard = APXM_RUNS_ROOT_LOCK.lock().expect("APXM_RUNS_ROOT lock");
@@ -1468,14 +1494,23 @@ async fn raw_execute_with_workflow_id_writes_run_node_artifacts_and_exposes_endp
         "expected raw execute node dirs under {}",
         nodes_root.display()
     );
-    assert!(
-        node_dirs
-            .iter()
-            .any(|node_dir| node_dir.join("output.json").is_file()
-                && node_dir.join("metrics.json").is_file()
-                && node_dir.join("node.json").is_file()),
-        "expected at least one node dir with node/output/metrics artifacts"
-    );
+    for node_dir in &node_dirs {
+        assert!(
+            node_dir.join("node.json").is_file(),
+            "missing node.json in {}",
+            node_dir.display()
+        );
+        assert!(
+            node_dir.join("output.json").is_file(),
+            "missing output.json in {}",
+            node_dir.display()
+        );
+        assert!(
+            node_dir.join("metrics.json").is_file(),
+            "missing metrics.json in {}",
+            node_dir.display()
+        );
+    }
 
     let (status, node_body) = get_json(app, &run_node_detail_route(execution_id, 1)).await;
     assert_eq!(
@@ -1560,6 +1595,82 @@ async fn raw_execute_with_llm_usage_exposes_run_summary_totals() {
     assert_eq!(runs_body["data"][0]["execution_id"], execution_id);
     assert_eq!(runs_body["data"][0]["totals"]["total_tokens"], 19);
     assert_eq!(runs_body["data"][0]["totals"]["total_requests"], 1);
+}
+
+#[tokio::test]
+#[allow(unsafe_code)]
+async fn failed_workflow_run_writes_results_artifact() {
+    let _runs_root_guard = APXM_RUNS_ROOT_LOCK.lock().expect("APXM_RUNS_ROOT lock");
+    let runs_root = tempfile::tempdir().expect("runs root");
+    let runtime =
+        runtime_with_mock_workflow_backend(MockLLMBackend::new().always_fail("backend down")).await;
+    let state = test_state_with_runtime_and_skill_roots(runtime, Vec::new()).await;
+    let app = crate::build_app(state);
+
+    let body = serde_json::json!({
+        "air": single_ask_air(),
+        "workflow_id": "wf-failed-observe",
+    });
+    let req = Request::builder()
+        .method("POST")
+        .uri(crate::routes::EXECUTE)
+        .header("Content-Type", "application/json")
+        .header("X-Trace-Id", "trace-failed-observe")
+        .body(Body::from(body.to_string()))
+        .unwrap();
+
+    unsafe { std::env::set_var("APXM_RUNS_ROOT", runs_root.path()) };
+    let resp = app.clone().oneshot(req).await.unwrap();
+    unsafe { std::env::remove_var("APXM_RUNS_ROOT") };
+    assert!(
+        resp.status().is_server_error() || resp.status().is_client_error(),
+        "expected failed execute response, got {}",
+        resp.status()
+    );
+
+    let workflow_dir = runs_root.path().join("wf-failed-observe");
+    let run_dir = std::fs::read_dir(&workflow_dir)
+        .expect("workflow run dir")
+        .map(|entry| entry.expect("run dir entry").path())
+        .find(|path| path.is_dir())
+        .expect("one failed run dir");
+    let run_json: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(run_dir.join("run.json")).expect("run.json bytes"))
+            .expect("run.json");
+    assert_eq!(run_json["status"], "failed");
+    assert_eq!(run_json["results_json"], "results.json");
+
+    let results_json: serde_json::Value = serde_json::from_slice(
+        &std::fs::read(run_dir.join("results.json")).expect("results.json bytes"),
+    )
+    .expect("results.json");
+    assert_eq!(results_json["object"], "apxm.run.results");
+    assert_eq!(results_json["status"], "failed");
+    assert_eq!(results_json["workflow_id"], "wf-failed-observe");
+    assert!(
+        results_json["error"]
+            .as_str()
+            .unwrap_or_default()
+            .contains("LLM error"),
+        "failure results artifact should carry error: {results_json}"
+    );
+
+    let execution_id = run_json["execution_id"].as_str().expect("execution_id");
+    let (status, artifacts_body) =
+        get_json(app.clone(), &routes::run_artifacts_path(execution_id)).await;
+    assert_eq!(
+        status,
+        StatusCode::OK,
+        "failed run artifact list failed: {artifacts_body}"
+    );
+    assert!(
+        artifacts_body["artifacts"]
+            .as_array()
+            .expect("artifacts array")
+            .iter()
+            .any(|artifact| artifact["path"] == "results.json"),
+        "artifact list must expose failure results.json: {artifacts_body}"
+    );
 }
 
 // ────────────────────────────────────────────────────────────────────

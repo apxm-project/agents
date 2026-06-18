@@ -1661,6 +1661,19 @@ fn run_node_artifact_refs(
     metrics: &[NodeMetricsRecord],
 ) -> Option<RunNodeArtifactRefs> {
     let run_root = record.run_root.as_ref()?;
+    if let Some(saved) = record
+        .node_artifacts
+        .iter()
+        .find(|artifact| artifact.node_id == node_id)
+    {
+        return Some(RunNodeArtifactRefs {
+            run_root: run_root.clone(),
+            node_json: saved.node_json.clone(),
+            output_json: saved.output_json.clone(),
+            metrics_json: saved.metrics_json.clone(),
+            node_dir: saved.node_dir.clone(),
+        });
+    }
     let node_name = outputs
         .last()
         .and_then(|output| output.node_name.as_deref())
@@ -1674,10 +1687,16 @@ fn run_node_artifact_refs(
     Some(RunNodeArtifactRefs {
         run_root: run_root.clone(),
         node_json: format!("{}/{}", node_dir, constants::session::node::NODE_JSON),
-        output_json: (!outputs.is_empty())
-            .then(|| format!("{}/{}", node_dir, constants::session::node::OUTPUT_JSON)),
-        metrics_json: (!metrics.is_empty())
-            .then(|| format!("{}/{}", node_dir, constants::session::node::METRICS_JSON)),
+        output_json: Some(format!(
+            "{}/{}",
+            node_dir,
+            constants::session::node::OUTPUT_JSON
+        )),
+        metrics_json: Some(format!(
+            "{}/{}",
+            node_dir,
+            constants::session::node::METRICS_JSON
+        )),
         node_dir,
     })
 }

@@ -310,6 +310,7 @@ mod tests {
             error: error.map(str::to_string),
             node_outputs: Vec::new(),
             node_metrics: Vec::new(),
+            node_artifacts: Vec::new(),
             token_values: std::collections::HashMap::new(),
             goal: None,
             run_root: None,

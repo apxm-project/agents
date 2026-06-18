@@ -937,7 +937,7 @@ pub(crate) fn validate_session_id(session_id: String) -> Result<String, ApiError
     Ok(session_id)
 }
 
-fn validate_workflow_id(workflow_id: String) -> Result<String, ApiError> {
+pub(crate) fn validate_workflow_id(workflow_id: String) -> Result<String, ApiError> {
     let workflow_id = workflow_id.trim().to_string();
     if workflow_id.is_empty()
         || workflow_id == "."

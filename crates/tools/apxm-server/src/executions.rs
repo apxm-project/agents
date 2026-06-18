@@ -94,6 +94,8 @@ pub(crate) struct ExecutionRecord {
     pub(crate) node_outputs: Vec<NodeOutputRecord>,
     #[serde(default)]
     pub(crate) node_metrics: Vec<NodeMetricsRecord>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub(crate) node_artifacts: Vec<NodeArtifactRefsRecord>,
     /// Real (unredacted) token values captured on a successful run, keyed by
     /// token id. Persisted so a later `rerun-from-node` can seed the replay
     /// boundary with the prior run's upstream outputs. Empty when the run did
@@ -121,6 +123,9 @@ pub(crate) struct ReindexedExecutionRecord {
     pub(crate) status: ExecutionStatus,
     pub(crate) started_at_ms: u64,
     pub(crate) completed_at_ms: Option<u64>,
+    pub(crate) node_outputs: Vec<NodeOutputRecord>,
+    pub(crate) node_metrics: Vec<NodeMetricsRecord>,
+    pub(crate) node_artifacts: Vec<NodeArtifactRefsRecord>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -139,6 +144,17 @@ pub(crate) struct NodeMetricsRecord {
     pub(crate) node_name: Option<String>,
     pub(crate) observed_at_ms: u64,
     pub(crate) metrics: NodeMetrics,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub(crate) struct NodeArtifactRefsRecord {
+    pub(crate) node_id: u64,
+    pub(crate) node_dir: String,
+    pub(crate) node_json: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) output_json: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) metrics_json: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -371,6 +387,7 @@ impl ExecutionStore {
             error: None,
             node_outputs: Vec::new(),
             node_metrics: Vec::new(),
+            node_artifacts: Vec::new(),
             token_values: std::collections::HashMap::new(),
             goal: None,
         };
@@ -535,7 +552,35 @@ impl ExecutionStore {
     }
 
     pub(crate) fn upsert_reindexed(&self, input: ReindexedExecutionRecord) -> bool {
-        if self.inner.contains_key(&input.execution_id) {
+        if let Some(mut existing) = self.inner.get_mut(&input.execution_id) {
+            if existing.run_root.is_none() {
+                existing.run_root = input.run_root;
+            }
+            if existing.workflow_id.is_none() {
+                existing.workflow_id = input.workflow_id;
+            }
+            if existing.trace_id.is_none() {
+                existing.trace_id = input.trace_id;
+            }
+            if existing.session_id.is_empty() {
+                existing.session_id = input.session_id;
+            }
+            if existing.session_dir.is_empty() {
+                existing.session_dir = input.session_dir;
+            }
+            if existing.node_outputs.is_empty() {
+                existing.node_outputs = input.node_outputs;
+            }
+            if existing.node_metrics.is_empty() {
+                existing.node_metrics = input.node_metrics;
+            }
+            if existing.node_artifacts.is_empty() {
+                existing.node_artifacts = input.node_artifacts;
+            }
+            let record = existing.clone();
+            drop(existing);
+            self.index.upsert_from_record(&record);
+            self.run_history.upsert_from_record(&record);
             return false;
         }
         let record = ExecutionRecord {
@@ -562,8 +607,9 @@ impl ExecutionStore {
             completed_at_ms: input.completed_at_ms,
             result: None,
             error: None,
-            node_outputs: Vec::new(),
-            node_metrics: Vec::new(),
+            node_outputs: input.node_outputs,
+            node_metrics: input.node_metrics,
+            node_artifacts: input.node_artifacts,
             token_values: std::collections::HashMap::new(),
             goal: None,
         };
@@ -748,6 +794,7 @@ impl From<StoredRunRecord> for ExecutionRecord {
             error: None,
             node_outputs: Vec::new(),
             node_metrics: Vec::new(),
+            node_artifacts: Vec::new(),
             token_values: std::collections::HashMap::new(),
             goal: None,
         }
@@ -834,14 +881,20 @@ struct RunResultsArtifact<'a> {
     run_id: &'a str,
     execution_id: &'a str,
     workflow_id: &'a str,
+    status: &'a ExecutionStatus,
     #[serde(skip_serializing_if = "Option::is_none")]
     trace_id: Option<&'a str>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    error: Option<&'a str>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     content: Option<&'a str>,
     results: &'a std::collections::HashMap<String, serde_json::Value>,
-    stats: &'a ExecutionStats,
-    llm_usage: &'a LlmUsageSummary,
-    tool_call_counts: &'a std::collections::HashMap<String, usize>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    stats: Option<&'a ExecutionStats>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    llm_usage: Option<&'a LlmUsageSummary>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    tool_call_counts: Option<&'a std::collections::HashMap<String, usize>>,
 }
 
 use crate::types::responses::{ExecutionStats, LlmUsageSummary};
@@ -1010,39 +1063,65 @@ fn write_run_node_artifacts(
             .iter()
             .rev()
             .find(|output| output.node_id == node_id);
-        if let Some(output) = latest_output {
-            write_json_file(&output_path, output, &record.execution_id, "node output");
-        }
+        let output_artifact;
+        let output_ref = if let Some(output) = latest_output {
+            output
+        } else {
+            output_artifact = NodeOutputRecord {
+                node_id,
+                node_name: node_name.clone(),
+                observed_at_ms: record.completed_at_ms.unwrap_or(record.started_at_ms),
+                output: RedactedContent::from_json(&serde_json::Value::Null),
+            };
+            &output_artifact
+        };
+        write_json_file(
+            &output_path,
+            output_ref,
+            &record.execution_id,
+            "node output",
+        );
 
         let latest_metrics = record
             .node_metrics
             .iter()
             .rev()
             .find(|metrics| metrics.node_id == node_id);
-        if let Some(metrics) = latest_metrics {
-            write_json_file(&metrics_path, metrics, &record.execution_id, "node metrics");
-        }
+        let metrics_artifact;
+        let metrics_ref = if let Some(metrics) = latest_metrics {
+            metrics
+        } else {
+            metrics_artifact = NodeMetricsRecord {
+                node_id,
+                node_name: node_name.clone(),
+                observed_at_ms: record.completed_at_ms.unwrap_or(record.started_at_ms),
+                metrics: NodeMetrics::new(node_id),
+            };
+            &metrics_artifact
+        };
+        write_json_file(
+            &metrics_path,
+            metrics_ref,
+            &record.execution_id,
+            "node metrics",
+        );
 
         artifacts.push(RunArtifactNode {
             node_id,
             node_name,
             node_dir: format!("{}/{}", constants::session::files::NODES_DIR, dir_name),
-            output_json: latest_output.map(|_| {
-                format!(
-                    "{}/{}/{}",
-                    constants::session::files::NODES_DIR,
-                    dir_name,
-                    constants::session::node::OUTPUT_JSON
-                )
-            }),
-            metrics_json: latest_metrics.map(|_| {
-                format!(
-                    "{}/{}/{}",
-                    constants::session::files::NODES_DIR,
-                    dir_name,
-                    constants::session::node::METRICS_JSON
-                )
-            }),
+            output_json: Some(format!(
+                "{}/{}/{}",
+                constants::session::files::NODES_DIR,
+                dir_name,
+                constants::session::node::OUTPUT_JSON
+            )),
+            metrics_json: Some(format!(
+                "{}/{}/{}",
+                constants::session::files::NODES_DIR,
+                dir_name,
+                constants::session::node::METRICS_JSON
+            )),
         });
     }
     artifacts
@@ -1053,19 +1132,24 @@ fn write_run_results_artifact(
     workflow_id: &str,
     run_dir: &std::path::Path,
 ) -> Option<&'static str> {
-    let result = record.result.as_ref()?;
+    let result = record.result.as_ref();
+    let empty_results = std::collections::HashMap::new();
     let artifact = RunResultsArtifact {
         object: "apxm.run.results",
         artifact_schema_version: 1,
         run_id: &record.execution_id,
         execution_id: &record.execution_id,
         workflow_id,
+        status: &record.status,
         trace_id: record.trace_id.as_deref(),
-        content: result.content.as_deref(),
-        results: &result.results,
-        stats: &result.stats,
-        llm_usage: &result.llm_usage,
-        tool_call_counts: &result.tool_call_counts,
+        error: record.error.as_deref(),
+        content: result.and_then(|result| result.content.as_deref()),
+        results: result
+            .map(|result| &result.results)
+            .unwrap_or(&empty_results),
+        stats: result.map(|result| &result.stats),
+        llm_usage: result.map(|result| &result.llm_usage),
+        tool_call_counts: result.map(|result| &result.tool_call_counts),
     };
     let path = run_dir.join(RESULTS_JSON);
     write_json_file(&path, &artifact, &record.execution_id, "run results");

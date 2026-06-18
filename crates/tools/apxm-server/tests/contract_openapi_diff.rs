@@ -14,6 +14,10 @@ fn contract_baseline_path() -> PathBuf {
         .join("../../../specs/0002-apxm-chat-thin-clients/contracts/openapi-session-v1.yaml")
 }
 
+fn server_api_contract_path() -> PathBuf {
+    PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../../contracts/server-api.yaml")
+}
+
 fn parse_yaml(value: &str) -> Value {
     serde_yaml::from_str(value).expect("valid OpenAPI YAML")
 }
@@ -197,4 +201,88 @@ fn exported_openapi_includes_session_and_permission_paths() {
     ] {
         assert!(paths.contains_key(path), "missing path {path}");
     }
+}
+
+fn operation<'a>(doc: &'a Value, path: &str, method: &str) -> &'a Value {
+    doc.get("paths")
+        .and_then(Value::as_object)
+        .and_then(|paths| paths.get(path))
+        .and_then(|path_item| path_item.get(method))
+        .unwrap_or_else(|| panic!("missing operation {method} {path}"))
+}
+
+fn parameter_names(operation: &Value) -> BTreeSet<String> {
+    operation
+        .get("parameters")
+        .and_then(Value::as_array)
+        .map(|params| {
+            params
+                .iter()
+                .filter_map(|param| param.get("name").and_then(Value::as_str))
+                .map(str::to_string)
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+#[test]
+fn checked_server_api_documents_run_observability_controls() {
+    let baseline =
+        std::fs::read_to_string(server_api_contract_path()).expect("server API YAML exists");
+    let doc = parse_yaml(&baseline);
+
+    let list_runs = operation(&doc, "/v1/runs", "get");
+    let run_params = parameter_names(list_runs);
+    for name in ["session_id", "trace_id", "status", "limit"] {
+        assert!(
+            run_params.contains(name),
+            "GET /v1/runs missing query parameter {name}"
+        );
+    }
+
+    let events = operation(&doc, "/v1/runs/{execution_id}/events", "get");
+    let event_params = parameter_names(events);
+    for name in ["since", "limit"] {
+        assert!(
+            event_params.contains(name),
+            "GET /v1/runs/{{id}}/events missing query parameter {name}"
+        );
+    }
+
+    let stream = operation(&doc, "/v1/runs/{execution_id}/events/stream", "get");
+    let stream_params = parameter_names(stream);
+    for name in ["since", "Last-Event-ID"] {
+        assert!(
+            stream_params.contains(name),
+            "GET /v1/runs/{{id}}/events/stream missing replay parameter {name}"
+        );
+    }
+    assert!(
+        !stream_params.contains("limit"),
+        "SSE stream must not document limit until the handler enforces it"
+    );
+
+    let artifact = operation(
+        &doc,
+        "/v1/runs/{execution_id}/artifacts/{artifact_path}",
+        "get",
+    );
+    assert!(
+        artifact.pointer("/responses/400").is_some(),
+        "artifact fetch must document invalid-path 400"
+    );
+    let greedy = artifact
+        .get("parameters")
+        .and_then(Value::as_array)
+        .and_then(|params| {
+            params
+                .iter()
+                .find(|param| param.get("name").and_then(Value::as_str) == Some("artifact_path"))
+        })
+        .expect("artifact_path parameter");
+    assert_eq!(
+        greedy.pointer("/x-apxm-greedy-path"),
+        Some(&Value::Bool(true)),
+        "artifact_path must declare greedy path semantics"
+    );
 }

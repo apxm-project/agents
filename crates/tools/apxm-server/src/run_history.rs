@@ -15,9 +15,13 @@ pub mod storage;
 use axum::Json;
 use axum::extract::{Path, State};
 use serde::{Deserialize, Serialize};
+use std::path::{Component, Path as FsPath, PathBuf};
 
 use crate::error::ApiError;
-use crate::executions::{ExecutionStatus, ReindexedExecutionRecord};
+use crate::executions::{
+    ExecutionStatus, NodeArtifactRefsRecord, NodeMetricsRecord, NodeOutputRecord,
+    ReindexedExecutionRecord,
+};
 use crate::run_history::storage::StoredRunRecord;
 use crate::state::AppState;
 
@@ -139,6 +143,21 @@ struct RunArtifactFile {
     cost_usd: Option<f64>,
     #[serde(default)]
     llm_usage: Option<RunArtifactLlmUsage>,
+    #[serde(default)]
+    nodes: Vec<RunArtifactNodeFile>,
+}
+
+#[derive(Debug, Deserialize)]
+struct RunArtifactNodeFile {
+    #[serde(default)]
+    node_id: Option<u64>,
+    node_dir: String,
+    #[serde(default)]
+    node_json: Option<String>,
+    #[serde(default)]
+    output_json: Option<String>,
+    #[serde(default)]
+    metrics_json: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -266,26 +285,27 @@ pub(crate) fn reindex_from_runs_root(state: &AppState) -> ReindexResult {
             let total_tokens = artifact
                 .total_tokens
                 .unwrap_or_else(|| input_tokens.saturating_add(output_tokens));
-            let inserted = if state.execution_store.get(&execution_id).is_some() {
-                false
-            } else {
-                state
-                    .execution_store
-                    .upsert_reindexed(ReindexedExecutionRecord {
-                        execution_id: execution_id.clone(),
-                        skill_id: artifact.skill_id.clone().unwrap_or_default(),
-                        skill_version: artifact.skill_version.clone().unwrap_or_default(),
-                        entry_flow: artifact.entry_flow.clone(),
-                        workflow_id: Some(artifact.workflow_id.clone()),
-                        session_id: session_id.clone(),
-                        session_dir: session_dir.clone(),
-                        run_root: run_root.clone(),
-                        trace_id: artifact.trace_id.clone(),
-                        status: artifact.status.clone(),
-                        started_at_ms: artifact.started_at_ms,
-                        completed_at_ms: artifact.finished_at_ms,
-                    })
-            };
+            let (node_outputs, node_metrics, node_artifacts) =
+                load_node_evidence(&run_dir, &artifact, &mut diagnostics);
+            let inserted = state
+                .execution_store
+                .upsert_reindexed(ReindexedExecutionRecord {
+                    execution_id: execution_id.clone(),
+                    skill_id: artifact.skill_id.clone().unwrap_or_default(),
+                    skill_version: artifact.skill_version.clone().unwrap_or_default(),
+                    entry_flow: artifact.entry_flow.clone(),
+                    workflow_id: Some(artifact.workflow_id.clone()),
+                    session_id: session_id.clone(),
+                    session_dir: session_dir.clone(),
+                    run_root: run_root.clone(),
+                    trace_id: artifact.trace_id.clone(),
+                    status: artifact.status.clone(),
+                    started_at_ms: artifact.started_at_ms,
+                    completed_at_ms: artifact.finished_at_ms,
+                    node_outputs,
+                    node_metrics,
+                    node_artifacts,
+                });
             if inserted {
                 records_loaded += 1;
             }
@@ -318,6 +338,147 @@ pub(crate) fn reindex_from_runs_root(state: &AppState) -> ReindexResult {
         records_loaded,
         diagnostics,
     }
+}
+
+fn safe_run_relative_path(path: &str) -> Option<PathBuf> {
+    let candidate = FsPath::new(path);
+    if candidate.is_absolute() {
+        return None;
+    }
+    if candidate
+        .components()
+        .any(|component| !matches!(component, Component::Normal(_)))
+    {
+        return None;
+    }
+    Some(candidate.to_path_buf())
+}
+
+fn resolve_run_relative_file(
+    run_dir: &FsPath,
+    relative_path: &str,
+    diagnostics: &mut Vec<String>,
+) -> Option<PathBuf> {
+    let Some(relative_path) = safe_run_relative_path(relative_path) else {
+        diagnostics.push(format!("unsafe node artifact path: {relative_path}"));
+        return None;
+    };
+    let root = match run_dir.canonicalize() {
+        Ok(root) => root,
+        Err(error) => {
+            diagnostics.push(format!(
+                "run root canonicalize error {}: {error}",
+                run_dir.display()
+            ));
+            return None;
+        }
+    };
+    let path = root.join(&relative_path);
+    let path = match path.canonicalize() {
+        Ok(path) => path,
+        Err(error) => {
+            diagnostics.push(format!(
+                "node artifact canonicalize error {}: {error}",
+                path.display()
+            ));
+            return None;
+        }
+    };
+    if !path.starts_with(&root) {
+        diagnostics.push(format!(
+            "unsafe node artifact path escapes run root: {}",
+            relative_path.display()
+        ));
+        return None;
+    }
+    if !path.is_file() {
+        diagnostics.push(format!("node artifact is not a file: {}", path.display()));
+        return None;
+    }
+    Some(path)
+}
+
+fn read_node_artifact<T: for<'de> Deserialize<'de>>(
+    run_dir: &FsPath,
+    relative_path: &str,
+    diagnostics: &mut Vec<String>,
+) -> Option<T> {
+    let path = resolve_run_relative_file(run_dir, relative_path, diagnostics)?;
+    let bytes = match std::fs::read(&path) {
+        Ok(bytes) => bytes,
+        Err(error) => {
+            diagnostics.push(format!("read error {}: {error}", path.display()));
+            return None;
+        }
+    };
+    match serde_json::from_slice(&bytes) {
+        Ok(value) => Some(value),
+        Err(error) => {
+            diagnostics.push(format!("parse error {}: {error}", path.display()));
+            None
+        }
+    }
+}
+
+fn load_node_evidence(
+    run_dir: &FsPath,
+    artifact: &RunArtifactFile,
+    diagnostics: &mut Vec<String>,
+) -> (
+    Vec<NodeOutputRecord>,
+    Vec<NodeMetricsRecord>,
+    Vec<NodeArtifactRefsRecord>,
+) {
+    let mut outputs = Vec::new();
+    let mut metrics = Vec::new();
+    let mut node_artifacts = Vec::new();
+    for node in &artifact.nodes {
+        let node_json_path = node
+            .node_json
+            .clone()
+            .unwrap_or_else(|| format!("{}/node.json", node.node_dir));
+        let output_path = node
+            .output_json
+            .clone()
+            .unwrap_or_else(|| format!("{}/output.json", node.node_dir));
+        let output = read_node_artifact::<NodeOutputRecord>(run_dir, &output_path, diagnostics);
+
+        let metrics_path = node
+            .metrics_json
+            .clone()
+            .unwrap_or_else(|| format!("{}/metrics.json", node.node_dir));
+        let metric = read_node_artifact::<NodeMetricsRecord>(run_dir, &metrics_path, diagnostics);
+
+        let node_id = node
+            .node_id
+            .or_else(|| output.as_ref().map(|output| output.node_id))
+            .or_else(|| metric.as_ref().map(|metric| metric.node_id));
+        if let Some(node_id) = node_id
+            && safe_run_relative_path(&node.node_dir).is_some()
+            && resolve_run_relative_file(run_dir, &node_json_path, diagnostics).is_some()
+        {
+            node_artifacts.push(NodeArtifactRefsRecord {
+                node_id,
+                node_dir: node.node_dir.clone(),
+                node_json: node_json_path,
+                output_json: output.as_ref().map(|_| output_path.clone()),
+                metrics_json: metric.as_ref().map(|_| metrics_path.clone()),
+            });
+        } else if node_id.is_none() {
+            diagnostics.push(format!(
+                "node artifact entry missing node_id for {}",
+                node.node_dir
+            ));
+        }
+
+        if let Some(output) = output {
+            outputs.push(output);
+        }
+        if let Some(metric) = metric {
+            metrics.push(metric);
+        }
+    }
+    (outputs, metrics, node_artifacts)
 }
 
 impl From<crate::executions::ExecutionRecord> for RunRecord {

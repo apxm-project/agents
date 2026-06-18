@@ -24,7 +24,9 @@ use serde::{Deserialize, Serialize};
 use tokio::sync::mpsc;
 
 use crate::error::ApiError;
-use crate::execute::{ExecuteResponse, acquire_admission, to_execute_response};
+use crate::execute::{
+    ExecuteResponse, acquire_admission, to_execute_response, validate_workflow_id,
+};
 use crate::executions::{ExecutionRecordingEmitter, IdempotencyClaim};
 use crate::rollout::{RolloutEmitter, session_meta_from_skill};
 use crate::runs::RunBusFanOutEmitter;
@@ -1111,7 +1113,12 @@ fn prepare_skill_execution_with_reservation(
     reserved_execution_id: Option<String>,
     idempotency_key: Option<String>,
 ) -> Result<PreparedCompiledExecution, ApiError> {
-    let workflow_id = req.workflow_id.clone();
+    let workflow_id = req
+        .workflow_id
+        .clone()
+        .filter(|workflow_id| !workflow_id.trim().is_empty())
+        .map(validate_workflow_id)
+        .transpose()?;
     let executable = state
         .skill_library
         .find_executable(id)
@@ -1157,30 +1164,26 @@ fn prepare_skill_execution_with_reservation(
         scope_id: None,
     };
     let execution = match reserved_execution_id {
-        Some(execution_id) => state
-            .execution_store
-            .start_skill_execution_with_all(
-                execution_id,
-                provenance,
-                &session_id,
-                &session_dir,
-                idempotency_key,
-                correlation_id.clone(),
-                workflow_id,
-                trace_id,
-            ),
-        None => state
-            .execution_store
-            .start_skill_execution_with_all(
-                uuid::Uuid::new_v4().to_string(),
-                provenance,
-                &session_id,
-                &session_dir,
-                None,
-                correlation_id.clone(),
-                workflow_id,
-                trace_id,
-            ),
+        Some(execution_id) => state.execution_store.start_skill_execution_with_all(
+            execution_id,
+            provenance,
+            &session_id,
+            &session_dir,
+            idempotency_key,
+            correlation_id.clone(),
+            workflow_id,
+            trace_id,
+        ),
+        None => state.execution_store.start_skill_execution_with_all(
+            uuid::Uuid::new_v4().to_string(),
+            provenance,
+            &session_id,
+            &session_dir,
+            None,
+            correlation_id.clone(),
+            workflow_id,
+            trace_id,
+        ),
     };
     Ok(PreparedCompiledExecution {
         artifact,

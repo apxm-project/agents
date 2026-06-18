@@ -157,6 +157,33 @@ paths:
       operationId: listRuns
       summary: Run trace list (paginated)
       tags: [runs]
+      parameters:
+        - name: session_id
+          in: query
+          required: false
+          schema:
+            type: string
+          description: Filter runs by session id.
+        - name: trace_id
+          in: query
+          required: false
+          schema:
+            type: string
+          description: Filter runs by propagated trace id.
+        - name: status
+          in: query
+          required: false
+          schema:
+            type: string
+            enum: [running, succeeded, done, failed]
+          description: Filter by run status. `done` aliases terminal successful runs.
+        - name: limit
+          in: query
+          required: false
+          schema:
+            type: integer
+            minimum: 1
+          description: Maximum rows to return; clamped by server configuration.
       responses:
         "200":
           description: Run list
@@ -239,7 +266,8 @@ paths:
           in: path
           required: true
           schema:
-            type: string
+            type: integer
+            minimum: 0
       responses:
         "200":
           description: Node detail
@@ -277,7 +305,9 @@ paths:
       summary: Materialized run artifact by greedy relative path
       description: >
         The implementation accepts a greedy relative artifact path returned by
-        the artifact list endpoint and rejects absolute paths and traversal.
+        the artifact list endpoint and rejects empty, absolute, traversal, and
+        non-file paths. Segment-encode each path component and preserve `/`
+        separators. Examples: `results.json`, `nodes/01_node/output.json`.
       tags: [runs]
       parameters:
         - name: execution_id
@@ -290,10 +320,17 @@ paths:
           required: true
           schema:
             type: string
-          description: Greedy relative artifact path, for example nodes/01_node/output.json.
+          x-apxm-greedy-path: true
+          description: Greedy relative artifact path, for example `nodes/01_node/output.json`.
       responses:
         "200":
           description: Artifact bytes
+        "400":
+          description: Invalid artifact path
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TypedError"
         "404":
           description: Run or artifact not found
           content:
@@ -312,6 +349,20 @@ paths:
           required: true
           schema:
             type: string
+        - name: since
+          in: query
+          required: false
+          schema:
+            type: integer
+            default: 0
+          description: Replay events from this sequence number, inclusive.
+        - name: limit
+          in: query
+          required: false
+          schema:
+            type: integer
+            minimum: 1
+          description: Maximum events to return; clamped by server configuration.
       responses:
         "200":
           description: Run event page
@@ -338,6 +389,13 @@ paths:
           required: false
           schema:
             type: integer
+          description: Replay events from this sequence number, inclusive.
+        - name: Last-Event-ID
+          in: header
+          required: false
+          schema:
+            type: string
+          description: SSE resume cursor; exclusive resume after the event id.
       responses:
         "200":
           description: text/event-stream of run events
