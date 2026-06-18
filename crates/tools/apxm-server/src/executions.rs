@@ -21,6 +21,7 @@ use crate::state::AppState;
 
 pub(crate) const EXECUTION_RECORDS_DIR: &str = "executions";
 pub(crate) const EXECUTION_RECORD_EXTENSION: &str = "json";
+const RESULTS_JSON: &str = "results.json";
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -795,6 +796,8 @@ struct RunArtifact<'a> {
     node_metric_count: usize,
     nodes: Vec<RunArtifactNode>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    results_json: Option<&'static str>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     stats: Option<&'a ExecutionStats>,
     #[serde(skip_serializing_if = "Option::is_none")]
     llm_usage: Option<&'a LlmUsageSummary>,
@@ -822,6 +825,23 @@ struct RunNodeArtifact<'a> {
     #[serde(skip_serializing_if = "Option::is_none")]
     node_name: Option<&'a str>,
     node_dir: &'a str,
+}
+
+#[derive(Serialize)]
+struct RunResultsArtifact<'a> {
+    object: &'static str,
+    artifact_schema_version: u32,
+    run_id: &'a str,
+    execution_id: &'a str,
+    workflow_id: &'a str,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    trace_id: Option<&'a str>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    content: Option<&'a str>,
+    results: &'a std::collections::HashMap<String, serde_json::Value>,
+    stats: &'a ExecutionStats,
+    llm_usage: &'a LlmUsageSummary,
+    tool_call_counts: &'a std::collections::HashMap<String, usize>,
 }
 
 use crate::types::responses::{ExecutionStats, LlmUsageSummary};
@@ -861,6 +881,7 @@ fn write_run_artifact(record: &ExecutionRecord) {
         return;
     }
     let nodes = write_run_node_artifacts(record, workflow_id, dir);
+    let results_json = write_run_results_artifact(record, workflow_id, dir);
     let artifact = RunArtifact {
         object: "apxm.run",
         artifact_schema_version: 1,
@@ -885,6 +906,7 @@ fn write_run_artifact(record: &ExecutionRecord) {
         node_output_count: record.node_outputs.len(),
         node_metric_count: record.node_metrics.len(),
         nodes,
+        results_json,
         stats: record.result.as_ref().map(|result| &result.stats),
         llm_usage: record.result.as_ref().map(|result| &result.llm_usage),
         tool_call_counts: record
@@ -1024,6 +1046,30 @@ fn write_run_node_artifacts(
         });
     }
     artifacts
+}
+
+fn write_run_results_artifact(
+    record: &ExecutionRecord,
+    workflow_id: &str,
+    run_dir: &std::path::Path,
+) -> Option<&'static str> {
+    let result = record.result.as_ref()?;
+    let artifact = RunResultsArtifact {
+        object: "apxm.run.results",
+        artifact_schema_version: 1,
+        run_id: &record.execution_id,
+        execution_id: &record.execution_id,
+        workflow_id,
+        trace_id: record.trace_id.as_deref(),
+        content: result.content.as_deref(),
+        results: &result.results,
+        stats: &result.stats,
+        llm_usage: &result.llm_usage,
+        tool_call_counts: &result.tool_call_counts,
+    };
+    let path = run_dir.join(RESULTS_JSON);
+    write_json_file(&path, &artifact, &record.execution_id, "run results");
+    Some(RESULTS_JSON)
 }
 
 fn write_json_file<T: Serialize>(

@@ -1236,6 +1236,23 @@ async fn skill_execute_writes_workflow_run_node_artifacts_and_exposes_run_node_d
     assert_eq!(run_json["trace_id"], "trace-observe");
     assert_eq!(run_json["node_output_count"], 1);
     assert_eq!(run_json["node_metric_count"], 1);
+    assert_eq!(run_json["results_json"], "results.json");
+
+    let results_json: serde_json::Value = serde_json::from_slice(
+        &std::fs::read(run_dir.join("results.json")).expect("results.json bytes"),
+    )
+    .expect("results.json");
+    assert_eq!(results_json["object"], "apxm.run.results");
+    assert_eq!(results_json["execution_id"], execution_id);
+    assert_eq!(results_json["workflow_id"], "wf-observe");
+    assert_eq!(results_json["content"], FIXTURE_OUTPUT);
+    assert!(
+        results_json["results"]
+            .as_object()
+            .expect("results object")
+            .values()
+            .any(|value| value.as_str() == Some(FIXTURE_OUTPUT))
+    );
 
     let (status, run_body) = get_json(app.clone(), &format!("/v1/runs/{execution_id}")).await;
     assert_eq!(status, StatusCode::OK, "run detail failed: {run_body}");
@@ -1317,6 +1334,10 @@ async fn skill_execute_writes_workflow_run_node_artifacts_and_exposes_run_node_d
         "artifact list must expose run.json: {artifact_paths:?}"
     );
     assert!(
+        artifact_paths.contains(&"results.json"),
+        "artifact list must expose results.json: {artifact_paths:?}"
+    );
+    assert!(
         artifact_paths.contains(&output_artifact),
         "artifact list must expose node output file: {artifact_paths:?}"
     );
@@ -1335,6 +1356,25 @@ async fn skill_execute_writes_workflow_run_node_artifacts_and_exposes_run_node_d
     assert_eq!(
         artifact_body["output"][SUMMARY_FIELD],
         FIXTURE_OUTPUT_SUMMARY
+    );
+
+    let (status, results_body) = get_json(
+        app.clone(),
+        &routes::run_artifact_path(execution_id, "results.json"),
+    )
+    .await;
+    assert_eq!(
+        status,
+        StatusCode::OK,
+        "run results artifact fetch failed: {results_body}"
+    );
+    assert_eq!(results_body["content"], FIXTURE_OUTPUT);
+    assert!(
+        results_body["results"]
+            .as_object()
+            .expect("results object")
+            .values()
+            .any(|value| value.as_str() == Some(FIXTURE_OUTPUT))
     );
 
     let (status, execution_node_body) =
@@ -1389,6 +1429,23 @@ async fn raw_execute_with_workflow_id_writes_run_node_artifacts_and_exposes_endp
         run_dir.join("run.json").is_file(),
         "missing raw run.json under {}",
         run_dir.display()
+    );
+    assert!(
+        run_dir.join("results.json").is_file(),
+        "missing raw results.json under {}",
+        run_dir.display()
+    );
+    let results_json: serde_json::Value = serde_json::from_slice(
+        &std::fs::read(run_dir.join("results.json")).expect("results.json bytes"),
+    )
+    .expect("results.json");
+    assert_eq!(results_json["content"], FIXTURE_OUTPUT);
+    assert!(
+        results_json["results"]
+            .as_object()
+            .expect("results object")
+            .values()
+            .any(|value| value.as_str() == Some(FIXTURE_OUTPUT))
     );
 
     let (status, runs_body) = get_json(app.clone(), "/v1/runs?trace_id=trace-raw-observe").await;
@@ -1481,6 +1538,14 @@ async fn raw_execute_with_llm_usage_exposes_run_summary_totals() {
     assert_eq!(run_json["output_tokens"], 7);
     assert_eq!(run_json["total_tokens"], 19);
     assert!(run_json["cost_usd"].is_null());
+    assert_eq!(run_json["results_json"], "results.json");
+    let results_json: serde_json::Value = serde_json::from_slice(
+        &std::fs::read(run_dir.join("results.json")).expect("results.json bytes"),
+    )
+    .expect("results.json");
+    assert_eq!(results_json["content"], "observed reply");
+    assert_eq!(results_json["llm_usage"]["input_tokens"], 12);
+    assert_eq!(results_json["llm_usage"]["output_tokens"], 7);
 
     let (status, run_body) = get_json(app.clone(), &format!("/v1/runs/{execution_id}")).await;
     assert_eq!(status, StatusCode::OK, "run detail failed: {run_body}");
