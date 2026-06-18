@@ -90,6 +90,7 @@ CREATE TABLE IF NOT EXISTS runs (
   total_tokens INTEGER NOT NULL DEFAULT 0,
   cost_usd REAL,
   retention_class TEXT NOT NULL DEFAULT 'standard',
+  hidden_at_ms INTEGER,
   updated_at_ms INTEGER NOT NULL
 );
 CREATE INDEX IF NOT EXISTS idx_runs_workflow_started
@@ -184,6 +185,13 @@ impl RunHistoryIndex {
         conn.pragma_update(None, "journal_mode", "WAL").ok();
         conn.execute_batch(RUNS_TABLE_SQL)
             .map_err(|error| RunHistoryError::Backend(error.to_string()))?;
+        ensure_hidden_at_column(&conn)?;
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_runs_visible_started
+               ON runs(hidden_at_ms, started_at_ms DESC, execution_id)",
+            [],
+        )
+        .map_err(|error| RunHistoryError::Backend(error.to_string()))?;
         Ok(Self {
             db: Some(Arc::new(Mutex::new(conn))),
         })
@@ -191,6 +199,58 @@ impl RunHistoryIndex {
 
     pub(crate) fn upsert_from_record(&self, record: &ExecutionRecord) {
         self.upsert_row(&StoredRunRecord::from_execution_record(record));
+    }
+
+    pub(crate) fn is_hidden(&self, execution_id: &str) -> bool {
+        let Some(db) = &self.db else { return false };
+        let Ok(conn) = db.lock() else { return false };
+        conn.query_row(
+            "SELECT hidden_at_ms IS NOT NULL FROM runs WHERE execution_id = ?1",
+            [execution_id],
+            |row| row.get::<_, bool>(0),
+        )
+        .optional()
+        .ok()
+        .flatten()
+        .unwrap_or(false)
+    }
+
+    pub(crate) fn hide_settled_visible(&self, hidden_at_ms: u64) -> Vec<String> {
+        let Some(db) = &self.db else {
+            return Vec::new();
+        };
+        let Ok(mut conn) = db.lock() else {
+            return Vec::new();
+        };
+        let Ok(tx) = conn.transaction() else {
+            return Vec::new();
+        };
+        let ids: Vec<String> = {
+            let Ok(mut stmt) = tx.prepare(
+                "SELECT execution_id
+                   FROM runs
+                  WHERE status != 'running' AND hidden_at_ms IS NULL",
+            ) else {
+                return Vec::new();
+            };
+            let Ok(rows) = stmt.query_map([], |row| row.get::<_, String>(0)) else {
+                return Vec::new();
+            };
+            rows.filter_map(Result::ok).collect()
+        };
+        if ids.is_empty() {
+            let _ = tx.commit();
+            return ids;
+        }
+        let _ = tx.execute(
+            "UPDATE runs
+                SET hidden_at_ms = ?1,
+                    updated_at_ms = ?1
+              WHERE status != 'running' AND hidden_at_ms IS NULL",
+            params![hidden_at_ms as i64],
+        );
+        let _ = tx.commit();
+        ids
     }
 
     pub(crate) fn upsert_row(&self, row: &StoredRunRecord) {
@@ -253,8 +313,8 @@ impl RunHistoryIndex {
                 "SELECT execution_id, workflow_id, skill_id, skill_version, session_id, session_dir,
                         run_root, trace_id, status, started_at_ms, finished_at_ms, duration_ms,
                         input_tokens, output_tokens, total_tokens, cost_usd, retention_class
-                   FROM runs
-                  WHERE workflow_id = ?1
+                  FROM runs
+                  WHERE workflow_id = ?1 AND hidden_at_ms IS NULL
                   ORDER BY started_at_ms DESC, execution_id ASC",
             )
             .ok()?;
@@ -280,6 +340,23 @@ impl RunHistoryIndex {
         .ok()
         .flatten()
     }
+}
+
+fn ensure_hidden_at_column(conn: &Connection) -> Result<(), RunHistoryError> {
+    let mut stmt = conn
+        .prepare("PRAGMA table_info(runs)")
+        .map_err(|error| RunHistoryError::Backend(error.to_string()))?;
+    let columns = stmt
+        .query_map([], |row| row.get::<_, String>(1))
+        .map_err(|error| RunHistoryError::Backend(error.to_string()))?;
+    let has_hidden_at = columns
+        .filter_map(Result::ok)
+        .any(|name| name == "hidden_at_ms");
+    if !has_hidden_at {
+        conn.execute("ALTER TABLE runs ADD COLUMN hidden_at_ms INTEGER", [])
+            .map_err(|error| RunHistoryError::Backend(error.to_string()))?;
+    }
+    Ok(())
 }
 
 /// Retention class for a run record or artifact reference.

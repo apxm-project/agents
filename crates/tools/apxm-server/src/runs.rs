@@ -135,6 +135,10 @@ impl RunEventBus {
         entry.tx.subscribe()
     }
 
+    pub(crate) fn remove(&self, execution_id: &str) {
+        self.inner.remove(execution_id);
+    }
+
     /// Execution ids with recorded events (integration-test discovery).
     pub fn list_execution_ids(&self) -> Vec<String> {
         self.inner.iter().map(|entry| entry.key().clone()).collect()
@@ -205,6 +209,11 @@ impl EventEmitter for RunBusFanOutEmitter {
 pub(crate) struct RunListResponse {
     pub(crate) object: &'static str,
     pub(crate) data: Vec<RunSummary>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub(crate) struct ClearRunsResponse {
+    pub(crate) cleared: usize,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -610,6 +619,9 @@ pub(crate) async fn list_runs(
             {
                 continue;
             }
+            if state.execution_store.is_run_hidden(&entry.thread_id) {
+                continue;
+            }
             runs.push(index_entry_to_summary(entry));
         }
     }
@@ -617,6 +629,16 @@ pub(crate) async fn list_runs(
     Json(RunListResponse {
         object: "list",
         data: runs,
+    })
+}
+
+pub(crate) async fn clear_runs(State(state): State<AppState>) -> Json<ClearRunsResponse> {
+    let cleared_ids = state.execution_store.clear_settled_visible();
+    for id in &cleared_ids {
+        state.run_event_bus.remove(id);
+    }
+    Json(ClearRunsResponse {
+        cleared: cleared_ids.len(),
     })
 }
 

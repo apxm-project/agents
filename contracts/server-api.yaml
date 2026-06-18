@@ -188,6 +188,29 @@ paths:
         "200":
           description: Run list
 
+  /v1/runs/clear:
+    post:
+      operationId: clearRuns
+      summary: Hide settled runs from visible run lists
+      description: >
+        Clears the Studio/operator-visible run history by hiding settled
+        non-running rows from the derived run index. Durable run artifacts,
+        rollout JSONL, and execution evidence remain available by direct run
+        id and are not deleted by this operation.
+      tags: [runs]
+      responses:
+        "200":
+          description: Clear result
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [cleared]
+                properties:
+                  cleared:
+                    type: integer
+                    minimum: 0
+
   /v1/runs/{execution_id}:
     get:
       operationId: getRun

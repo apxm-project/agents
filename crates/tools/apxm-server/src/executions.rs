@@ -1,3 +1,4 @@
+use std::collections::HashSet;
 use std::path::Path as FsPath;
 use std::sync::Arc;
 
@@ -509,10 +510,56 @@ impl ExecutionStore {
         Some(record)
     }
 
+    pub(crate) fn is_run_hidden(&self, execution_id: &str) -> bool {
+        self.run_history.is_hidden(execution_id)
+    }
+
+    pub(crate) fn clear_settled_visible(&self) -> Vec<String> {
+        let settled: Vec<ExecutionRecord> = self
+            .inner
+            .iter()
+            .filter(|entry| entry.status != ExecutionStatus::Running)
+            .filter(|entry| !self.run_history.is_hidden(&entry.execution_id))
+            .map(|entry| entry.value().clone())
+            .collect();
+
+        for record in &settled {
+            self.run_history.upsert_from_record(record);
+        }
+
+        let mut ids = self.run_history.hide_settled_visible(now_ms());
+        if ids.is_empty() {
+            ids = settled
+                .into_iter()
+                .map(|record| record.execution_id)
+                .collect();
+        }
+
+        let id_set: HashSet<&str> = ids.iter().map(String::as_str).collect();
+        for id in &ids {
+            self.inner.remove(id);
+        }
+        let stale_ids: Vec<String> = self
+            .inner
+            .iter()
+            .filter(|entry| entry.status != ExecutionStatus::Running)
+            .filter(|entry| {
+                id_set.contains(entry.execution_id.as_str())
+                    || self.run_history.is_hidden(&entry.execution_id)
+            })
+            .map(|entry| entry.execution_id.clone())
+            .collect();
+        for id in stale_ids {
+            self.inner.remove(&id);
+        }
+        ids
+    }
+
     pub(crate) fn list(&self) -> Vec<ExecutionRecord> {
         let mut records: Vec<ExecutionRecord> = self
             .inner
             .iter()
+            .filter(|entry| !self.run_history.is_hidden(&entry.execution_id))
             .map(|entry| entry.value().clone())
             .collect();
         records.sort_by(|left, right| {

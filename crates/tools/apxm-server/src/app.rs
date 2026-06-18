@@ -29,8 +29,9 @@ use crate::rerun::{rerun_from_node, rerun_run};
 use crate::routes::ServerRoute;
 use crate::run_history::{get_run_summary, list_workflow_runs, reindex_runs};
 use crate::runs::{
-    cancel_run, get_run, get_run_artifact, get_run_blob, get_run_events_bulk, get_run_graph,
-    get_run_node, get_session_history, list_run_artifacts, list_runs, stream_run_events,
+    cancel_run, clear_runs, get_run, get_run_artifact, get_run_blob, get_run_events_bulk,
+    get_run_graph, get_run_node, get_session_history, list_run_artifacts, list_runs,
+    stream_run_events,
 };
 use crate::sessions::{
     cancel_session, compact_session, get_session_status, list_session_events,
@@ -155,6 +156,7 @@ pub(crate) fn build_app(state: AppState) -> Router {
         .route(ServerRoute::Mcp.path(), post(mcp_jsonrpc))
         // observer endpoints
         .route(ServerRoute::Runs.path(), get(list_runs))
+        .route(ServerRoute::RunsClear.path(), post(clear_runs))
         .route(ServerRoute::RunDetail.path(), get(get_run))
         .route(ServerRoute::RunGraph.path(), get(get_run_graph))
         .route(ServerRoute::RunNodeDetail.path(), get(get_run_node))

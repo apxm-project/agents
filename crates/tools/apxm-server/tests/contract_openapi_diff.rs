@@ -240,6 +240,19 @@ fn checked_server_api_documents_run_observability_controls() {
         );
     }
 
+    let clear_runs = operation(&doc, "/v1/runs/clear", "post");
+    assert_eq!(
+        clear_runs.get("operationId").and_then(Value::as_str),
+        Some("clearRuns"),
+        "POST /v1/runs/clear must be documented"
+    );
+    assert!(
+        clear_runs
+            .pointer("/responses/200/content/application~1json/schema/properties/cleared")
+            .is_some(),
+        "clear runs response must document cleared count"
+    );
+
     let events = operation(&doc, "/v1/runs/{execution_id}/events", "get");
     let event_params = parameter_names(events);
     for name in ["since", "limit"] {

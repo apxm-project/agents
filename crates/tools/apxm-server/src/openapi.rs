@@ -11,8 +11,9 @@
 //!
 //! - Execution: `POST /v1/execute` · `/execute/stream` · `/compile` · `/compile/stream`
 //! - Skills: `GET /v1/skills` · `/{id}` · `POST /{id}/execute` · `/{id}/execute/stream`
-//! - Runs: `GET /v1/runs` · `/{id}` · `/graph` · `/nodes/{node}` · `/artifacts`
-//!   · `/artifacts/{path}` · `/events/stream` · `POST /{id}/cancel`
+//! - Runs: `GET /v1/runs` · `POST /v1/runs/clear` · `/{id}` · `/graph`
+//!   · `/nodes/{node}` · `/artifacts` · `/artifacts/{path}` · `/events/stream`
+//!   · `POST /{id}/cancel`
 //! - Session: `GET /v1/sessions/{id}/status` · `POST /cancel` · `/grants` · `/compact`
 //! - Goals: `GET /v1/goals` · `/{id}` · `/events/stream` · `POST /{id}/cancel`
 //! - Memory: `POST /v1/memory/facts/store` · `/search` · `/delete`
@@ -270,6 +271,7 @@ pub struct RunArtifactListSchema {
         doc_get_run_summary,
         doc_list_run_artifacts,
         doc_get_run_artifact,
+        doc_clear_runs,
         doc_reindex_runs,
     ),
     components(schemas(
@@ -354,6 +356,20 @@ fn doc_list_run_artifacts(_execution_id: String) -> RunArtifactListSchema {
     tag = "run-history"
 )]
 fn doc_get_run_artifact(_execution_id: String, _artifact_path: String) {
+    unreachable!("OpenAPI documentation stub")
+}
+
+#[utoipa::path(
+    post,
+    path = "/v1/runs/clear",
+    operation_id = "clearRuns",
+    summary = "Hide settled runs from visible run lists while preserving durable artifacts",
+    responses(
+        (status = 200, description = "Clear complete"),
+    ),
+    tag = "run-history"
+)]
+fn doc_clear_runs() {
     unreachable!("OpenAPI documentation stub")
 }
 

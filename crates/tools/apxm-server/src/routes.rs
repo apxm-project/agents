@@ -46,6 +46,7 @@ pub(crate) const SCHEMA: &str = "/v1/schema";
 pub(crate) const MCP: &str = apxm_core::constants::mcp::ROUTE;
 // observer endpoints.
 pub(crate) const RUNS: &str = "/v1/runs";
+pub(crate) const RUNS_CLEAR: &str = "/v1/runs/clear";
 pub(crate) const RUN_DETAIL: &str = "/v1/runs/{execution_id}";
 pub(crate) const RUN_GRAPH: &str = "/v1/runs/{execution_id}/graph";
 pub(crate) const RUN_NODE_DETAIL: &str = "/v1/runs/{execution_id}/nodes/{node_id}";
@@ -129,6 +130,7 @@ pub(crate) enum ServerRoute {
     Schema,
     Mcp,
     Runs,
+    RunsClear,
     RunDetail,
     RunGraph,
     RunNodeDetail,
@@ -206,6 +208,7 @@ impl ServerRoute {
             Self::Schema => SCHEMA,
             Self::Mcp => MCP,
             Self::Runs => RUNS,
+            Self::RunsClear => RUNS_CLEAR,
             Self::RunDetail => RUN_DETAIL,
             Self::RunGraph => RUN_GRAPH,
             Self::RunNodeDetail => RUN_NODE_DETAIL,
@@ -288,6 +291,11 @@ pub(crate) fn checkpoint_resume_path(id: impl Display) -> String {
 #[allow(dead_code)]
 pub(crate) fn run_cancel_path(execution_id: impl Display) -> String {
     format!("{RUNS}/{execution_id}/cancel")
+}
+
+#[allow(dead_code)]
+pub(crate) fn runs_clear_path() -> &'static str {
+    RUNS_CLEAR
 }
 
 #[allow(dead_code)]

@@ -531,6 +531,69 @@ async fn reindex_persists_workflow_rows_and_token_columns_in_sqlite() {
     assert_eq!(runs[0]["retention_class"], "standard");
 }
 
+#[tokio::test]
+#[allow(unsafe_code)]
+async fn reindex_keeps_cleared_runs_hidden() {
+    let _runs_root_guard = runs_root_env_guard();
+    let tmp = tempfile::tempdir().unwrap();
+    let runs_root = tmp.path().join("runs");
+    let db_path = tmp.path().join("sessions").join("runs.sqlite");
+    let run_dir = make_run_dir(&runs_root, "wf-hidden", "exec-hidden");
+    write_artifact(
+        &run_dir,
+        r#"{
+          "run_id":"exec-hidden",
+          "workflow_id":"wf-hidden",
+          "skill_id":"skill-hidden",
+          "skill_version":"raw-workflow",
+          "session_id":"session-hidden",
+          "session_dir":"/tmp/session-hidden",
+          "run_root":"/tmp/runs/wf-hidden/exec-hidden",
+          "status":"succeeded",
+          "started_at_ms":1000,
+          "finished_at_ms":1100,
+          "duration_ms":100,
+          "input_tokens":1,
+          "output_tokens":2,
+          "total_tokens":3
+        }"#,
+    );
+
+    let app = test_app_with_run_history_db(&db_path).await;
+    // SAFETY: this test holds APXM_RUNS_ROOT_LOCK while mutating process env.
+    unsafe { std::env::set_var("APXM_RUNS_ROOT", &runs_root) };
+    let (status, body) = post_reindex(&app).await;
+    assert_eq!(status, StatusCode::OK, "reindex failed: {body}");
+
+    let (status, before) = get_json(&app, "/v1/workflows/wf-hidden/runs").await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(before["runs"].as_array().map(Vec::len), Some(1));
+
+    let req = Request::builder()
+        .method("POST")
+        .uri("/v1/runs/clear")
+        .body(Body::empty())
+        .unwrap();
+    let resp = app.clone().oneshot(req).await.unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+
+    let (status, after_clear) = get_json(&app, "/v1/workflows/wf-hidden/runs").await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(after_clear["runs"].as_array().map(Vec::len), Some(0));
+
+    let (status, body) = post_reindex(&app).await;
+    unsafe { std::env::remove_var("APXM_RUNS_ROOT") };
+    assert_eq!(status, StatusCode::OK, "second reindex failed: {body}");
+
+    let (status, after_reindex) = get_json(&app, "/v1/workflows/wf-hidden/runs").await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(
+        after_reindex["runs"].as_array().map(Vec::len),
+        Some(0),
+        "reindex must not make cleared runs visible again: {after_reindex}"
+    );
+}
+
 // ── Corrupt artifact ──────────────────────────────────────────────────────────
 
 #[tokio::test]
