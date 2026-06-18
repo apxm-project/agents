@@ -1086,6 +1086,10 @@ fn execution_node_detail_route(execution_id: &str, node_id: u64) -> String {
     routes::execution_node_detail_path(execution_id, node_id)
 }
 
+fn run_node_detail_route(execution_id: &str, node_id: u64) -> String {
+    format!("/v1/runs/{execution_id}/nodes/{node_id}")
+}
+
 fn sse_data_events(text: &str) -> Vec<serde_json::Value> {
     text.lines()
         .filter_map(|line| line.strip_prefix("data:"))
@@ -1173,6 +1177,107 @@ fn assert_complete_skill_record(record: &serde_json::Value, fixture: &SkillFixtu
     assert_eq!(record["compile_status"], "compiled");
     assert_eq!(record["validation"]["status"], "valid");
     assert_eq!(record["validation"]["errors"].as_array().unwrap().len(), 0);
+}
+
+#[tokio::test]
+#[allow(unsafe_code)]
+async fn skill_execute_writes_workflow_run_node_artifacts_and_exposes_run_node_detail() {
+    let skill_root = tempfile::tempdir().expect("skill root");
+    let runs_root = tempfile::tempdir().expect("runs root");
+    write_executable_skill(skill_root.path());
+
+    let state = test_state_with_skill_roots(vec![skill_root.path().to_path_buf()]).await;
+    let app = crate::build_app(state);
+
+    // SAFETY: this test owns APXM_RUNS_ROOT for the synchronous request and
+    // removes it before returning.
+    unsafe { std::env::set_var("APXM_RUNS_ROOT", runs_root.path()) };
+    let (status, body) = post_json(
+        app.clone(),
+        &skill_execute_route(FIXTURE_SKILL_ID),
+        serde_json::json!({ "workflow_id": "wf-observe" }),
+    )
+    .await;
+    unsafe { std::env::remove_var("APXM_RUNS_ROOT") };
+    assert_eq!(status, StatusCode::OK, "skill execute failed: {body}");
+
+    let execution_id = body["execution_id"].as_str().expect("execution_id");
+    let run_dir = runs_root.path().join("wf-observe").join(execution_id);
+    let run_json_path = run_dir.join("run.json");
+    assert!(
+        run_json_path.is_file(),
+        "missing {}",
+        run_json_path.display()
+    );
+    let run_json: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(&run_json_path).expect("run.json bytes"))
+            .expect("run.json");
+    assert_eq!(run_json["object"], "apxm.run");
+    assert_eq!(run_json["artifact_schema_version"], 1);
+    assert_eq!(run_json["run_id"], execution_id);
+    assert_eq!(run_json["workflow_id"], "wf-observe");
+    assert_eq!(run_json["node_output_count"], 1);
+    assert_eq!(run_json["node_metric_count"], 1);
+
+    let nodes_root = run_dir.join("nodes");
+    let node_dirs: Vec<std::path::PathBuf> = std::fs::read_dir(&nodes_root)
+        .expect("nodes dir")
+        .map(|entry| entry.expect("node dir entry").path())
+        .filter(|path| path.is_dir())
+        .collect();
+    assert_eq!(
+        node_dirs.len(),
+        1,
+        "expected one node dir under {nodes_root:?}"
+    );
+    let node_dir = &node_dirs[0];
+    let node_json: serde_json::Value = serde_json::from_slice(
+        &std::fs::read(node_dir.join("node.json")).expect("node.json bytes"),
+    )
+    .expect("node.json");
+    assert_eq!(node_json["node_id"], 1);
+    assert_eq!(node_json["run_id"], execution_id);
+
+    let output_json: serde_json::Value = serde_json::from_slice(
+        &std::fs::read(node_dir.join("output.json")).expect("output.json bytes"),
+    )
+    .expect("output.json");
+    assert_eq!(output_json["node_id"], 1);
+    assert_eq!(output_json["output"][SUMMARY_FIELD], FIXTURE_OUTPUT_SUMMARY);
+    assert_eq!(output_json["output"][REDACTED_FIELD], true);
+
+    let metrics_json: serde_json::Value = serde_json::from_slice(
+        &std::fs::read(node_dir.join("metrics.json")).expect("metrics.json bytes"),
+    )
+    .expect("metrics.json");
+    assert_eq!(metrics_json["node_id"], 1);
+    assert_eq!(metrics_json["metrics"]["operation"]["successes"], 1);
+
+    let (status, node_body) = get_json(app.clone(), &run_node_detail_route(execution_id, 1)).await;
+    assert_eq!(
+        status,
+        StatusCode::OK,
+        "run node detail failed: {node_body}"
+    );
+    assert_eq!(node_body["node_id"], 1);
+    assert_eq!(
+        node_body["outputs"][0]["output"][SUMMARY_FIELD],
+        FIXTURE_OUTPUT_SUMMARY
+    );
+    assert!(node_body["artifacts"]["node_dir"].as_str().is_some());
+    assert!(node_body["artifacts"]["output_json"].as_str().is_some());
+
+    let (status, execution_node_body) =
+        get_json(app, &execution_node_detail_route(execution_id, 1)).await;
+    assert_eq!(
+        status,
+        StatusCode::OK,
+        "execution node detail failed: {execution_node_body}"
+    );
+    assert_eq!(
+        execution_node_body["outputs"][0]["output"][SUMMARY_FIELD],
+        FIXTURE_OUTPUT_SUMMARY
+    );
 }
 
 // ────────────────────────────────────────────────────────────────────

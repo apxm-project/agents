@@ -1,8 +1,10 @@
 use std::path::Path as FsPath;
 use std::sync::Arc;
 
+use apxm_core::constants;
 use apxm_core::events::payload::{NodeMetricsPayload, NodeOutputPayload, RedactedContent};
 use apxm_core::events::{ApxmEvent, EventEmitter};
+use apxm_core::paths::session_node_dir_name;
 use apxm_core::types::NodeMetrics;
 use apxm_skill::SkillExecutionProvenance;
 use axum::Json;
@@ -586,17 +588,64 @@ fn resolve_run_root(workflow_id: Option<&str>, execution_id: &str) -> Option<Str
     Some(format!("{runs_root}/{wf}/{execution_id}"))
 }
 
-/// Minimal run-summary artifact written to `{run_root}/run.json` on settlement
-/// (spec 0009 T035).  Contains only the fields needed to scan and correlate
-/// runs by workflow; the full record lives in the session-dir snapshot.
+/// Workflow-scoped run artifact written to `{run_root}/run.json` on settlement.
+/// The full execution snapshot stays in the session directory; this artifact is
+/// the durable run-history index plus redacted node evidence for observers.
 #[derive(Serialize)]
 struct RunArtifact<'a> {
+    object: &'static str,
+    artifact_schema_version: u32,
     run_id: &'a str,
+    execution_id: &'a str,
     workflow_id: &'a str,
+    skill_id: &'a str,
+    skill_version: &'a str,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    entry_flow: Option<&'a str>,
+    session_id: &'a str,
+    session_dir: &'a str,
+    run_root: &'a str,
     status: &'a ExecutionStatus,
     started_at_ms: u64,
     finished_at_ms: u64,
     duration_ms: u64,
+    node_output_count: usize,
+    node_metric_count: usize,
+    nodes: Vec<RunArtifactNode>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    stats: Option<&'a ExecutionStats>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    llm_usage: Option<&'a LlmUsageSummary>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    tool_call_counts: Option<&'a std::collections::HashMap<String, usize>>,
+}
+
+#[derive(Serialize)]
+struct RunArtifactNode {
+    node_id: u64,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    node_name: Option<String>,
+    node_dir: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    output_json: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    metrics_json: Option<String>,
+}
+
+#[derive(Serialize)]
+struct RunNodeArtifact<'a> {
+    run_id: &'a str,
+    workflow_id: &'a str,
+    node_id: u64,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    node_name: Option<&'a str>,
+    node_dir: &'a str,
+}
+
+use crate::types::responses::{ExecutionStats, LlmUsageSummary};
+
+fn node_dir_name(node_id: u64, node_name: Option<&str>) -> String {
+    session_node_dir_name(node_id, node_name.unwrap_or("node"))
 }
 
 /// Write `run.json` into the record's run root when it is present.
@@ -610,21 +659,6 @@ fn write_run_artifact(record: &ExecutionRecord) {
     };
     let finished_at_ms = record.completed_at_ms.unwrap_or_else(now_ms);
     let duration_ms = finished_at_ms.saturating_sub(record.started_at_ms);
-    let artifact = RunArtifact {
-        run_id: &record.execution_id,
-        workflow_id,
-        status: &record.status,
-        started_at_ms: record.started_at_ms,
-        finished_at_ms,
-        duration_ms,
-    };
-    let Ok(bytes) = serde_json::to_vec_pretty(&artifact) else {
-        tracing::warn!(
-            execution_id = %record.execution_id,
-            "failed to serialize run artifact"
-        );
-        return;
-    };
     let dir = std::path::Path::new(run_root);
     if let Err(error) = std::fs::create_dir_all(dir) {
         tracing::warn!(
@@ -635,6 +669,40 @@ fn write_run_artifact(record: &ExecutionRecord) {
         );
         return;
     }
+    let nodes = write_run_node_artifacts(record, workflow_id, dir);
+    let artifact = RunArtifact {
+        object: "apxm.run",
+        artifact_schema_version: 1,
+        run_id: &record.execution_id,
+        execution_id: &record.execution_id,
+        workflow_id,
+        skill_id: &record.skill_id,
+        skill_version: &record.skill_version,
+        entry_flow: record.entry_flow.as_deref(),
+        session_id: &record.session_id,
+        session_dir: &record.session_dir,
+        run_root,
+        status: &record.status,
+        started_at_ms: record.started_at_ms,
+        finished_at_ms,
+        duration_ms,
+        node_output_count: record.node_outputs.len(),
+        node_metric_count: record.node_metrics.len(),
+        nodes,
+        stats: record.result.as_ref().map(|result| &result.stats),
+        llm_usage: record.result.as_ref().map(|result| &result.llm_usage),
+        tool_call_counts: record
+            .result
+            .as_ref()
+            .map(|result| &result.tool_call_counts),
+    };
+    let Ok(bytes) = serde_json::to_vec_pretty(&artifact) else {
+        tracing::warn!(
+            execution_id = %record.execution_id,
+            "failed to serialize run artifact"
+        );
+        return;
+    };
     let path = dir.join("run.json");
     let temp_path = dir.join("run.json.tmp");
     if let Err(error) = std::fs::write(&temp_path, bytes) {
@@ -653,6 +721,142 @@ fn write_run_artifact(record: &ExecutionRecord) {
             to = %path.display(),
             %error,
             "failed to persist run artifact"
+        );
+    }
+}
+
+fn write_run_node_artifacts(
+    record: &ExecutionRecord,
+    workflow_id: &str,
+    run_dir: &std::path::Path,
+) -> Vec<RunArtifactNode> {
+    let mut nodes: std::collections::BTreeMap<u64, Option<String>> =
+        std::collections::BTreeMap::new();
+    for output in &record.node_outputs {
+        nodes
+            .entry(output.node_id)
+            .or_insert_with(|| output.node_name.clone());
+    }
+    for metrics in &record.node_metrics {
+        nodes
+            .entry(metrics.node_id)
+            .or_insert_with(|| metrics.node_name.clone());
+    }
+
+    let nodes_root = run_dir.join(constants::session::files::NODES_DIR);
+    if let Err(error) = std::fs::create_dir_all(&nodes_root) {
+        tracing::warn!(
+            execution_id = %record.execution_id,
+            path = %nodes_root.display(),
+            %error,
+            "failed to create run node artifact directory"
+        );
+        return Vec::new();
+    }
+
+    let mut artifacts = Vec::with_capacity(nodes.len());
+    for (node_id, node_name) in nodes {
+        let dir_name = node_dir_name(node_id, node_name.as_deref());
+        let node_dir = nodes_root.join(&dir_name);
+        if let Err(error) = std::fs::create_dir_all(&node_dir) {
+            tracing::warn!(
+                execution_id = %record.execution_id,
+                node_id,
+                path = %node_dir.display(),
+                %error,
+                "failed to create per-node run artifact directory"
+            );
+            continue;
+        }
+
+        let node_path = node_dir.join(constants::session::node::NODE_JSON);
+        let output_path = node_dir.join(constants::session::node::OUTPUT_JSON);
+        let metrics_path = node_dir.join(constants::session::node::METRICS_JSON);
+
+        let node_meta = RunNodeArtifact {
+            run_id: &record.execution_id,
+            workflow_id,
+            node_id,
+            node_name: node_name.as_deref(),
+            node_dir: &dir_name,
+        };
+        write_json_file(
+            &node_path,
+            &node_meta,
+            &record.execution_id,
+            "node metadata",
+        );
+
+        let latest_output = record
+            .node_outputs
+            .iter()
+            .rev()
+            .find(|output| output.node_id == node_id);
+        if let Some(output) = latest_output {
+            write_json_file(&output_path, output, &record.execution_id, "node output");
+        }
+
+        let latest_metrics = record
+            .node_metrics
+            .iter()
+            .rev()
+            .find(|metrics| metrics.node_id == node_id);
+        if let Some(metrics) = latest_metrics {
+            write_json_file(&metrics_path, metrics, &record.execution_id, "node metrics");
+        }
+
+        artifacts.push(RunArtifactNode {
+            node_id,
+            node_name,
+            node_dir: format!("{}/{}", constants::session::files::NODES_DIR, dir_name),
+            output_json: latest_output.map(|_| {
+                format!(
+                    "{}/{}/{}",
+                    constants::session::files::NODES_DIR,
+                    dir_name,
+                    constants::session::node::OUTPUT_JSON
+                )
+            }),
+            metrics_json: latest_metrics.map(|_| {
+                format!(
+                    "{}/{}/{}",
+                    constants::session::files::NODES_DIR,
+                    dir_name,
+                    constants::session::node::METRICS_JSON
+                )
+            }),
+        });
+    }
+    artifacts
+}
+
+fn write_json_file<T: Serialize>(
+    path: &std::path::Path,
+    value: &T,
+    execution_id: &str,
+    label: &'static str,
+) {
+    let Ok(bytes) = serde_json::to_vec_pretty(value) else {
+        tracing::warn!(execution_id, label, "failed to serialize run node artifact");
+        return;
+    };
+    let temp_path = path.with_extension("json.tmp");
+    if let Err(error) = std::fs::write(&temp_path, bytes) {
+        tracing::warn!(
+            execution_id,
+            path = %temp_path.display(),
+            %error,
+            "failed to write run node artifact"
+        );
+        return;
+    }
+    if let Err(error) = std::fs::rename(&temp_path, path) {
+        tracing::warn!(
+            execution_id,
+            from = %temp_path.display(),
+            to = %path.display(),
+            %error,
+            "failed to persist run node artifact"
         );
     }
 }

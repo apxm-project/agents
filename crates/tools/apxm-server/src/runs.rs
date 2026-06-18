@@ -19,11 +19,13 @@ use std::convert::Infallible;
 use std::sync::Arc;
 use std::time::Duration;
 
+use apxm_core::constants;
 use apxm_core::events::payload::{
     AgentSpawnedPayload, CommunicateDispatchedPayload, GraphEdgePayload, OperationEndPayload,
     OperationStartPayload, ToolEndPayload, ToolStartPayload,
 };
 use apxm_core::events::{ApxmEvent, EventEmitter, kind as event_kind};
+use apxm_core::paths::session_node_dir_name;
 use apxm_core::types::operations::AISOperationType;
 use apxm_driver::RunEventsConfig;
 use apxm_rollout::load_rollout;
@@ -42,7 +44,7 @@ use tokio_stream::wrappers::BroadcastStream;
 use tokio_stream::wrappers::errors::BroadcastStreamRecvError;
 
 use crate::error::ApiError;
-use crate::executions::{ExecutionRecord, ExecutionStatus};
+use crate::executions::{ExecutionRecord, ExecutionStatus, NodeMetricsRecord, NodeOutputRecord};
 use crate::state::AppState;
 
 const MIN_RETAINED_EVENTS: usize = 128;
@@ -293,10 +295,27 @@ pub(crate) struct RunNodeDetail {
     pub(crate) status: NodeStatus,
     pub(crate) duration_ms: Option<u64>,
     pub(crate) events: Vec<serde_json::Value>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub(crate) outputs: Vec<NodeOutputRecord>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub(crate) metrics: Vec<NodeMetricsRecord>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) artifacts: Option<RunNodeArtifactRefs>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub(crate) agent: Option<RunNodeAgentDetail>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub(crate) tool: Option<RunNodeToolDetail>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub(crate) struct RunNodeArtifactRefs {
+    pub(crate) run_root: String,
+    pub(crate) node_dir: String,
+    pub(crate) node_json: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) output_json: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) metrics_json: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -649,12 +668,13 @@ pub(crate) async fn get_run_node(
     Path((execution_id, node_id)): Path<(String, u64)>,
 ) -> Result<Json<RunNodeDetail>, ApiError> {
     let events = events_for_run(&state, &execution_id).await;
-    if events.is_empty() && state.execution_store.get(&execution_id).is_none() {
+    let record = state.execution_store.get(&execution_id);
+    if events.is_empty() && record.is_none() {
         return Err(ApiError::not_found(format!(
             "run not found: {execution_id}"
         )));
     }
-    build_node_detail(&execution_id, node_id, &events)
+    build_node_detail(&execution_id, node_id, &events, record.as_ref())
         .map(Json)
         .ok_or_else(|| {
             ApiError::not_found(format!("node {node_id} not found for run {execution_id}"))
@@ -1295,6 +1315,7 @@ fn build_node_detail(
     execution_id: &str,
     node_id: u64,
     events: &[ApxmEvent],
+    record: Option<&ExecutionRecord>,
 ) -> Option<RunNodeDetail> {
     let mut op_type: Option<AISOperationType> = None;
     let mut status = NodeStatus::Pending;
@@ -1371,9 +1392,43 @@ fn build_node_detail(
         }
     }
 
-    if !seen {
+    let outputs: Vec<NodeOutputRecord> = record
+        .map(|record| {
+            record
+                .node_outputs
+                .iter()
+                .filter(|output| output.node_id == node_id)
+                .cloned()
+                .collect()
+        })
+        .unwrap_or_default();
+    let metrics: Vec<NodeMetricsRecord> = record
+        .map(|record| {
+            record
+                .node_metrics
+                .iter()
+                .filter(|metrics| metrics.node_id == node_id)
+                .cloned()
+                .collect()
+        })
+        .unwrap_or_default();
+    if matches!(status, NodeStatus::Pending)
+        && let Some(latest) = metrics.last()
+    {
+        if latest.metrics.operation.failures > 0 {
+            status = NodeStatus::Failed;
+        } else if latest.metrics.operation.successes > 0 {
+            status = NodeStatus::Succeeded;
+        }
+        duration_ms = Some(latest.metrics.operation.total_duration_ms);
+    }
+
+    if !seen && outputs.is_empty() && metrics.is_empty() {
         return None;
     }
+
+    let artifacts =
+        record.and_then(|record| run_node_artifact_refs(record, node_id, &outputs, &metrics));
 
     Some(RunNodeDetail {
         execution_id: execution_id.to_string(),
@@ -1382,7 +1437,38 @@ fn build_node_detail(
         status,
         duration_ms,
         events: filtered,
+        outputs,
+        metrics,
+        artifacts,
         agent,
         tool,
+    })
+}
+
+fn run_node_artifact_refs(
+    record: &ExecutionRecord,
+    node_id: u64,
+    outputs: &[NodeOutputRecord],
+    metrics: &[NodeMetricsRecord],
+) -> Option<RunNodeArtifactRefs> {
+    let run_root = record.run_root.as_ref()?;
+    let node_name = outputs
+        .last()
+        .and_then(|output| output.node_name.as_deref())
+        .or_else(|| {
+            metrics
+                .last()
+                .and_then(|metrics| metrics.node_name.as_deref())
+        });
+    let dir_name = session_node_dir_name(node_id, node_name.unwrap_or("node"));
+    let node_dir = format!("{}/{}", constants::session::files::NODES_DIR, dir_name);
+    Some(RunNodeArtifactRefs {
+        run_root: run_root.clone(),
+        node_json: format!("{}/{}", node_dir, constants::session::node::NODE_JSON),
+        output_json: (!outputs.is_empty())
+            .then(|| format!("{}/{}", node_dir, constants::session::node::OUTPUT_JSON)),
+        metrics_json: (!metrics.is_empty())
+            .then(|| format!("{}/{}", node_dir, constants::session::node::METRICS_JSON)),
+        node_dir,
     })
 }
