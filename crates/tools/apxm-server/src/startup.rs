@@ -214,7 +214,7 @@ fn write_listen_registry(dir: &str, name: &str, port: u16) -> std::io::Result<()
 /// Build the set of directories scanned for pack `tools.toml` action blocks:
 pub(crate) fn pack_capability_roots(skill_roots: &[std::path::PathBuf]) -> Vec<std::path::PathBuf> {
     let mut roots = skill_roots.to_vec();
-    if let Ok(root) = std::env::var("APXM_LIBS_ROOT") {
+    if let Ok(root) = std::env::var(apxm_core::constants::env::APXM_LIBS_ROOT) {
         let root = std::path::PathBuf::from(root);
         if !roots.contains(&root) {
             roots.push(root);
@@ -337,6 +337,27 @@ async fn drain_and_flush_rollouts(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// T034 contract: `pack_capability_roots` includes `APXM_LIBS_ROOT` so the
+    /// server consumes Studio-deployed packs from `/workspace/libs` (Docker
+    /// workspace layout) without requiring a process restart.
+    #[test]
+    fn pack_capability_roots_includes_apxm_libs_root() {
+        use std::env;
+        use std::path::PathBuf;
+
+        let workspace_libs = PathBuf::from("/workspace/libs");
+        // Scope the env mutation to this test with a guard pattern.
+        env::set_var(apxm_core::constants::env::APXM_LIBS_ROOT, &workspace_libs);
+        let roots = pack_capability_roots(&[]);
+        env::remove_var(apxm_core::constants::env::APXM_LIBS_ROOT);
+
+        assert!(
+            roots.contains(&workspace_libs),
+            "APXM_LIBS_ROOT=/workspace/libs must appear in pack capability roots so \
+             Server consumes Studio-deployed packs without restart (spec 0016 T034)"
+        );
+    }
 
     #[tokio::test]
     async fn shutdown_drain_waits_for_tracked_http_work() {
