@@ -11,7 +11,8 @@
 //!
 //! - Execution: `POST /v1/execute` · `/execute/stream` · `/compile` · `/compile/stream`
 //! - Skills: `GET /v1/skills` · `/{id}` · `POST /{id}/execute` · `/{id}/execute/stream`
-//! - Runs: `GET /v1/runs` · `/{id}` · `/graph` · `/events/stream` · `POST /{id}/cancel`
+//! - Runs: `GET /v1/runs` · `/{id}` · `/graph` · `/nodes/{node}` · `/artifacts`
+//!   · `/artifacts/{path}` · `/events/stream` · `POST /{id}/cancel`
 //! - Session: `GET /v1/sessions/{id}/status` · `POST /cancel` · `/grants` · `/compact`
 //! - Goals: `GET /v1/goals` · `/{id}` · `/events/stream` · `POST /{id}/cancel`
 //! - Memory: `POST /v1/memory/facts/store` · `/search` · `/delete`
@@ -231,6 +232,30 @@ pub struct WorkflowRunsResponseSchema {
     pub runs: Vec<RunRecordSchema>,
 }
 
+/// One durable run artifact file under a run root.
+#[derive(Debug, Serialize, ToSchema)]
+pub struct RunArtifactEntrySchema {
+    /// POSIX-style path relative to the run root, for example `run.json` or
+    /// `nodes/01_node/output.json`.
+    pub path: String,
+    /// File size in bytes.
+    pub size_bytes: u64,
+    /// Best-effort media type derived from the file extension.
+    pub media_type: String,
+}
+
+/// Envelope for `GET /v1/runs/{execution_id}/artifacts`.
+#[derive(Debug, Serialize, ToSchema)]
+pub struct RunArtifactListSchema {
+    /// Execution/run id echoed from the path parameter.
+    pub execution_id: String,
+    /// Absolute server-local run root. Operators should fetch files through the
+    /// artifact endpoints instead of relying on direct volume access.
+    pub run_root: String,
+    /// Files materialized under the run root, newest schema first.
+    pub artifacts: Vec<RunArtifactEntrySchema>,
+}
+
 /// OpenAPI document for the run-history surface (spec 0013).
 #[derive(OpenApi)]
 #[openapi(
@@ -243,11 +268,15 @@ pub struct WorkflowRunsResponseSchema {
     paths(
         doc_list_workflow_runs,
         doc_get_run_summary,
+        doc_list_run_artifacts,
+        doc_get_run_artifact,
         doc_reindex_runs,
     ),
     components(schemas(
         RunRecordSchema,
         WorkflowRunsResponseSchema,
+        RunArtifactEntrySchema,
+        RunArtifactListSchema,
         TypedError,
         FaultClass,
     )),
@@ -289,6 +318,42 @@ fn doc_list_workflow_runs(_workflow_id: String) -> WorkflowRunsResponseSchema {
     tag = "run-history"
 )]
 fn doc_get_run_summary(_execution_id: String) -> RunRecordSchema {
+    unreachable!("OpenAPI documentation stub")
+}
+
+#[utoipa::path(
+    get,
+    path = "/v1/runs/{execution_id}/artifacts",
+    operation_id = "listRunArtifacts",
+    summary = "List durable files under one run root",
+    params(("execution_id" = String, Path, description = "Execution identifier")),
+    responses(
+        (status = 200, description = "Artifact list", body = RunArtifactListSchema),
+        (status = 404, description = "Unknown run or missing artifact root", body = TypedError),
+    ),
+    tag = "run-history"
+)]
+fn doc_list_run_artifacts(_execution_id: String) -> RunArtifactListSchema {
+    unreachable!("OpenAPI documentation stub")
+}
+
+#[utoipa::path(
+    get,
+    path = "/v1/runs/{execution_id}/artifacts/{artifact_path}",
+    operation_id = "getRunArtifact",
+    summary = "Fetch one durable run artifact by relative path",
+    params(
+        ("execution_id" = String, Path, description = "Execution identifier"),
+        ("artifact_path" = String, Path, description = "Relative artifact path from listRunArtifacts"),
+    ),
+    responses(
+        (status = 200, description = "Artifact bytes"),
+        (status = 400, description = "Unsafe or invalid artifact path", body = TypedError),
+        (status = 404, description = "Unknown run or artifact", body = TypedError),
+    ),
+    tag = "run-history"
+)]
+fn doc_get_run_artifact(_execution_id: String, _artifact_path: String) {
     unreachable!("OpenAPI documentation stub")
 }
 
