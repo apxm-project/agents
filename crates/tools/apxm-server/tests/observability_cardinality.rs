@@ -62,7 +62,12 @@ async fn scrape_metrics() -> String {
         .await
         .expect("response");
     assert_eq!(response.status(), StatusCode::OK);
-    let bytes = response.into_body().collect().await.expect("body").to_bytes();
+    let bytes = response
+        .into_body()
+        .collect()
+        .await
+        .expect("body")
+        .to_bytes();
     String::from_utf8(bytes.to_vec()).expect("utf8 metrics body")
 }
 
@@ -108,8 +113,9 @@ async fn webhook_verify_total_result_cardinality() {
 /// `apxm_queue_depth` must only carry `state` values from the bounded set.
 #[tokio::test]
 async fn queue_depth_state_cardinality() {
-    let allowed: std::collections::HashSet<&str> =
-        ["pending", "processing", "dead_lettered"].into_iter().collect();
+    let allowed: std::collections::HashSet<&str> = ["pending", "processing", "dead_lettered"]
+        .into_iter()
+        .collect();
     let body = scrape_metrics().await;
     let families = parse_metric_families(&body);
     for (name, labels) in &families {

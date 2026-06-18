@@ -13,7 +13,16 @@ use axum::body::Body;
 use axum::http::{Request, StatusCode};
 use http_body_util::BodyExt;
 use std::path::PathBuf;
+use std::sync::{Mutex, MutexGuard};
 use tower::ServiceExt;
+
+static APXM_RUNS_ROOT_LOCK: Mutex<()> = Mutex::new(());
+
+fn runs_root_env_guard() -> MutexGuard<'static, ()> {
+    APXM_RUNS_ROOT_LOCK
+        .lock()
+        .expect("APXM_RUNS_ROOT test lock poisoned")
+}
 
 async fn test_app() -> Router {
     test_support::test_app_with_mock(MockLLMBackend::static_response("ok")).await
@@ -65,8 +74,9 @@ fn write_artifact(dir: &PathBuf, content: &str) {
 #[tokio::test]
 #[allow(unsafe_code)]
 async fn reindex_skips_gracefully_when_runs_root_unset() {
+    let _runs_root_guard = runs_root_env_guard();
     let app = test_app().await;
-    // SAFETY: tests run with --test-threads=1 or isolated; env mutation contained.
+    // SAFETY: this test holds APXM_RUNS_ROOT_LOCK while mutating process env.
     unsafe { std::env::remove_var("APXM_RUNS_ROOT") };
     let (status, body) = post_reindex(&app).await;
     assert_eq!(status, StatusCode::OK);
@@ -86,9 +96,10 @@ async fn reindex_skips_gracefully_when_runs_root_unset() {
 #[tokio::test]
 #[allow(unsafe_code)]
 async fn reindex_returns_zero_counts_for_empty_root() {
+    let _runs_root_guard = runs_root_env_guard();
     let app = test_app().await;
     let tmp = tempfile::tempdir().unwrap();
-    // SAFETY: tests run with --test-threads=1 or isolated; env mutation contained.
+    // SAFETY: this test holds APXM_RUNS_ROOT_LOCK while mutating process env.
     unsafe { std::env::set_var("APXM_RUNS_ROOT", tmp.path()) };
     let (status, body) = post_reindex(&app).await;
     unsafe { std::env::remove_var("APXM_RUNS_ROOT") };
@@ -102,6 +113,7 @@ async fn reindex_returns_zero_counts_for_empty_root() {
 #[tokio::test]
 #[allow(unsafe_code)]
 async fn reindex_counts_valid_artifact() {
+    let _runs_root_guard = runs_root_env_guard();
     let app = test_app().await;
     let tmp = tempfile::tempdir().unwrap();
     let run_dir = make_run_dir(&tmp.path().to_path_buf(), "wf-001", "exec-abc");
@@ -109,7 +121,7 @@ async fn reindex_counts_valid_artifact() {
         &run_dir,
         r#"{"run_id":"exec-abc","workflow_id":"wf-001","status":"succeeded","started_at_ms":1000,"finished_at_ms":2000,"duration_ms":1000}"#,
     );
-    // SAFETY: tests run with --test-threads=1 or isolated; env mutation contained.
+    // SAFETY: this test holds APXM_RUNS_ROOT_LOCK while mutating process env.
     unsafe { std::env::set_var("APXM_RUNS_ROOT", tmp.path()) };
     let (status, body) = post_reindex(&app).await;
     unsafe { std::env::remove_var("APXM_RUNS_ROOT") };
@@ -134,6 +146,7 @@ async fn reindex_counts_valid_artifact() {
 #[tokio::test]
 #[allow(unsafe_code)]
 async fn reindex_hydrates_node_detail_and_artifact_refs() {
+    let _runs_root_guard = runs_root_env_guard();
     let app = test_app().await;
     let tmp = tempfile::tempdir().unwrap();
     let run_dir = make_run_dir(&tmp.path().to_path_buf(), "wf-nodes", "exec-nodes");
@@ -226,6 +239,7 @@ async fn reindex_hydrates_node_detail_and_artifact_refs() {
 #[tokio::test]
 #[allow(unsafe_code)]
 async fn reindex_preserves_noncanonical_node_artifact_refs() {
+    let _runs_root_guard = runs_root_env_guard();
     let app = test_app().await;
     let tmp = tempfile::tempdir().unwrap();
     let run_dir = make_run_dir(
@@ -316,6 +330,7 @@ async fn reindex_preserves_noncanonical_node_artifact_refs() {
 #[tokio::test]
 #[allow(unsafe_code)]
 async fn reindex_skips_symlinked_node_artifact_escape() {
+    let _runs_root_guard = runs_root_env_guard();
     use std::os::unix::fs::symlink;
 
     let app = test_app().await;
@@ -405,6 +420,7 @@ async fn reindex_skips_symlinked_node_artifact_escape() {
 #[tokio::test]
 #[allow(unsafe_code)]
 async fn reindex_exposes_failed_run_results_artifact() {
+    let _runs_root_guard = runs_root_env_guard();
     let app = test_app().await;
     let tmp = tempfile::tempdir().unwrap();
     let run_dir = make_run_dir(&tmp.path().to_path_buf(), "wf-failed", "exec-failed");
@@ -465,6 +481,7 @@ async fn reindex_exposes_failed_run_results_artifact() {
 #[tokio::test]
 #[allow(unsafe_code)]
 async fn reindex_persists_workflow_rows_and_token_columns_in_sqlite() {
+    let _runs_root_guard = runs_root_env_guard();
     let tmp = tempfile::tempdir().unwrap();
     let runs_root = tmp.path().join("runs");
     let db_path = tmp.path().join("sessions").join("runs.sqlite");
@@ -490,8 +507,7 @@ async fn reindex_persists_workflow_rows_and_token_columns_in_sqlite() {
     );
 
     let app = test_app_with_run_history_db(&db_path).await;
-    // SAFETY: this integration test file is run serially in CI and by the
-    // documented command; mutation is scoped to the test process.
+    // SAFETY: this test holds APXM_RUNS_ROOT_LOCK while mutating process env.
     unsafe { std::env::set_var("APXM_RUNS_ROOT", &runs_root) };
     let (status, body) = post_reindex(&app).await;
     unsafe { std::env::remove_var("APXM_RUNS_ROOT") };
@@ -520,11 +536,12 @@ async fn reindex_persists_workflow_rows_and_token_columns_in_sqlite() {
 #[tokio::test]
 #[allow(unsafe_code)]
 async fn reindex_records_diagnostic_for_corrupt_artifact() {
+    let _runs_root_guard = runs_root_env_guard();
     let app = test_app().await;
     let tmp = tempfile::tempdir().unwrap();
     let run_dir = make_run_dir(&tmp.path().to_path_buf(), "wf-bad", "exec-bad");
     write_artifact(&run_dir, "{ not valid json }");
-    // SAFETY: tests run with --test-threads=1 or isolated; env mutation contained.
+    // SAFETY: this test holds APXM_RUNS_ROOT_LOCK while mutating process env.
     unsafe { std::env::set_var("APXM_RUNS_ROOT", tmp.path()) };
     let (status, body) = post_reindex(&app).await;
     unsafe { std::env::remove_var("APXM_RUNS_ROOT") };
@@ -543,6 +560,7 @@ async fn reindex_records_diagnostic_for_corrupt_artifact() {
 #[tokio::test]
 #[allow(unsafe_code)]
 async fn reindex_handles_partial_artifact_missing_optional_fields() {
+    let _runs_root_guard = runs_root_env_guard();
     let app = test_app().await;
     let tmp = tempfile::tempdir().unwrap();
     let run_dir = make_run_dir(&tmp.path().to_path_buf(), "wf-partial", "exec-partial");
@@ -551,7 +569,7 @@ async fn reindex_handles_partial_artifact_missing_optional_fields() {
         &run_dir,
         r#"{"run_id":"exec-partial","workflow_id":"wf-partial","status":"running","started_at_ms":5000}"#,
     );
-    // SAFETY: tests run with --test-threads=1 or isolated; env mutation contained.
+    // SAFETY: this test holds APXM_RUNS_ROOT_LOCK while mutating process env.
     unsafe { std::env::set_var("APXM_RUNS_ROOT", tmp.path()) };
     let (status, body) = post_reindex(&app).await;
     unsafe { std::env::remove_var("APXM_RUNS_ROOT") };
@@ -570,6 +588,7 @@ async fn reindex_handles_partial_artifact_missing_optional_fields() {
 #[tokio::test]
 #[allow(unsafe_code)]
 async fn reindex_mixes_valid_and_corrupt_artifacts() {
+    let _runs_root_guard = runs_root_env_guard();
     let app = test_app().await;
     let tmp = tempfile::tempdir().unwrap();
     let root = tmp.path().to_path_buf();
@@ -582,7 +601,7 @@ async fn reindex_mixes_valid_and_corrupt_artifacts() {
     let bad = make_run_dir(&root, "wf-mix", "exec-bad");
     write_artifact(&bad, "GARBAGE");
 
-    // SAFETY: tests run with --test-threads=1 or isolated; env mutation contained.
+    // SAFETY: this test holds APXM_RUNS_ROOT_LOCK while mutating process env.
     unsafe { std::env::set_var("APXM_RUNS_ROOT", tmp.path()) };
     let (status, body) = post_reindex(&app).await;
     unsafe { std::env::remove_var("APXM_RUNS_ROOT") };

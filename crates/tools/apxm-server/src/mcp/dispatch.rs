@@ -19,7 +19,7 @@ use super::schema::{
     MCP_TOOL_APXM_AAM_RECALL, MCP_TOOL_APXM_CAPABILITY_LIST, MCP_TOOL_APXM_EVIDENCE_LOOKUP,
     MCP_TOOL_APXM_PROMPT_AS_WORKFLOW, MCP_TOOL_APXM_SKILL_CALL, MCP_TOOL_APXM_SKILL_GET,
     MCP_TOOL_APXM_SKILL_VALIDATE, MCP_TOOL_APXM_SKILLS_LIST, MCP_TOOL_APXM_TRACE_FETCH,
-    MCP_TOOL_ARG_ARGS, MCP_TOOL_ARG_ID, MCP_TOOL_ARG_SESSION_ID,
+    MCP_TOOL_ARG_ARGS, MCP_TOOL_ARG_ID, MCP_TOOL_ARG_SESSION_ID, MCP_TOOL_ARG_WORKFLOW_ID,
 };
 
 pub(crate) async fn call_skill_tool(
@@ -61,6 +61,10 @@ pub(crate) async fn call_skill_tool(
                 Ok(session_id) => session_id,
                 Err(message) => return Some(mcp_tool_result(id.clone(), message, true)),
             };
+            let workflow_id = match parse_optional_string_arg(tool_args, MCP_TOOL_ARG_WORKFLOW_ID) {
+                Ok(workflow_id) => workflow_id,
+                Err(message) => return Some(mcp_tool_result(id.clone(), message, true)),
+            };
             let request = SkillExecuteRequest {
                 args,
                 session_id,
@@ -68,7 +72,7 @@ pub(crate) async fn call_skill_tool(
                 detach: false,
                 idempotency_key: None,
                 correlation_id: None,
-                workflow_id: None,
+                workflow_id,
                 trace_id: None,
                 extra_metadata: Default::default(),
             };

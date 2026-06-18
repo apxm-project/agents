@@ -1063,65 +1063,39 @@ fn write_run_node_artifacts(
             .iter()
             .rev()
             .find(|output| output.node_id == node_id);
-        let output_artifact;
-        let output_ref = if let Some(output) = latest_output {
-            output
-        } else {
-            output_artifact = NodeOutputRecord {
-                node_id,
-                node_name: node_name.clone(),
-                observed_at_ms: record.completed_at_ms.unwrap_or(record.started_at_ms),
-                output: RedactedContent::from_json(&serde_json::Value::Null),
-            };
-            &output_artifact
-        };
-        write_json_file(
-            &output_path,
-            output_ref,
-            &record.execution_id,
-            "node output",
-        );
+        if let Some(output) = latest_output {
+            write_json_file(&output_path, output, &record.execution_id, "node output");
+        }
 
         let latest_metrics = record
             .node_metrics
             .iter()
             .rev()
             .find(|metrics| metrics.node_id == node_id);
-        let metrics_artifact;
-        let metrics_ref = if let Some(metrics) = latest_metrics {
-            metrics
-        } else {
-            metrics_artifact = NodeMetricsRecord {
-                node_id,
-                node_name: node_name.clone(),
-                observed_at_ms: record.completed_at_ms.unwrap_or(record.started_at_ms),
-                metrics: NodeMetrics::new(node_id),
-            };
-            &metrics_artifact
-        };
-        write_json_file(
-            &metrics_path,
-            metrics_ref,
-            &record.execution_id,
-            "node metrics",
-        );
+        if let Some(metrics) = latest_metrics {
+            write_json_file(&metrics_path, metrics, &record.execution_id, "node metrics");
+        }
 
         artifacts.push(RunArtifactNode {
             node_id,
             node_name,
             node_dir: format!("{}/{}", constants::session::files::NODES_DIR, dir_name),
-            output_json: Some(format!(
-                "{}/{}/{}",
-                constants::session::files::NODES_DIR,
-                dir_name,
-                constants::session::node::OUTPUT_JSON
-            )),
-            metrics_json: Some(format!(
-                "{}/{}/{}",
-                constants::session::files::NODES_DIR,
-                dir_name,
-                constants::session::node::METRICS_JSON
-            )),
+            output_json: latest_output.map(|_| {
+                format!(
+                    "{}/{}/{}",
+                    constants::session::files::NODES_DIR,
+                    dir_name,
+                    constants::session::node::OUTPUT_JSON
+                )
+            }),
+            metrics_json: latest_metrics.map(|_| {
+                format!(
+                    "{}/{}/{}",
+                    constants::session::files::NODES_DIR,
+                    dir_name,
+                    constants::session::node::METRICS_JSON
+                )
+            }),
         });
     }
     artifacts

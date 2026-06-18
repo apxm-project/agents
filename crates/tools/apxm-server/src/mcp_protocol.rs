@@ -53,6 +53,7 @@ pub(crate) mod args {
     pub(crate) const TASK: &str = "task";
     pub(crate) const TOP_K: &str = "top_k";
     pub(crate) const TRACE_ID: &str = "trace_id";
+    pub(crate) const WORKFLOW_ID: &str = "workflow_id";
 }
 
 pub(crate) mod tool_result {

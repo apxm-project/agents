@@ -16,7 +16,10 @@ use apxm_server::run_history::storage::RetentionClass;
 fn retention_class_ttls_are_correct() {
     assert_eq!(RetentionClass::Ephemeral.default_ttl_secs(), Some(3_600));
     assert_eq!(RetentionClass::Short.default_ttl_secs(), Some(7 * 86_400));
-    assert_eq!(RetentionClass::Standard.default_ttl_secs(), Some(90 * 86_400));
+    assert_eq!(
+        RetentionClass::Standard.default_ttl_secs(),
+        Some(90 * 86_400)
+    );
     assert_eq!(RetentionClass::Permanent.default_ttl_secs(), None);
 }
 
@@ -40,7 +43,10 @@ fn artifact_expired_error_serializes_to_contract_shape() {
     let json = serde_json::to_string(&err).expect("serialize ArtifactError");
     let val: serde_json::Value = serde_json::from_str(&json).unwrap();
 
-    assert_eq!(val["error"], "artifact_expired", "error key must be 'artifact_expired'");
+    assert_eq!(
+        val["error"], "artifact_expired",
+        "error key must be 'artifact_expired'"
+    );
     assert_eq!(val["artifact_ref"], "s3://bucket/runs/exec-1/out.tar.gz");
     assert_eq!(val["expired_at"], "2026-06-01T00:00:00Z");
     assert_eq!(val["retention_class"], "standard");

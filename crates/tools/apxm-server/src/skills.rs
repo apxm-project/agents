@@ -27,7 +27,7 @@ use crate::error::ApiError;
 use crate::execute::{
     ExecuteResponse, acquire_admission, to_execute_response, validate_workflow_id,
 };
-use crate::executions::{ExecutionRecordingEmitter, IdempotencyClaim};
+use crate::executions::{ExecutionRecord, ExecutionRecordingEmitter, IdempotencyClaim};
 use crate::rollout::{RolloutEmitter, session_meta_from_skill};
 use crate::runs::RunBusFanOutEmitter;
 use crate::skill_resources::{
@@ -520,6 +520,12 @@ fn launch_metadata(
     map
 }
 
+fn attach_skill_run_metadata(response: &mut ExecuteResponse, record: &ExecutionRecord) {
+    response.workflow_id = record.workflow_id.clone();
+    response.run_root = record.run_root.clone();
+    response.trace_id = record.trace_id.clone();
+}
+
 pub(crate) async fn list_skills(State(state): State<AppState>) -> Json<SkillScan> {
     Json(state.skill_library.scan())
 }
@@ -711,7 +717,10 @@ async fn run_detached_skill_body(state: AppState, mut prepared: PreparedCompiled
     apxm_runtime::scheduler::admission_registry::unregister(&admission_id);
 
     let token_values = token_values_for_replay(&result);
-    let response = to_execute_response(result, Some(session_dir));
+    let mut response = to_execute_response(result, Some(session_dir));
+    if let Some(record) = state.execution_store.get(&execution_id) {
+        attach_skill_run_metadata(&mut response, &record);
+    }
     state
         .execution_store
         .complete_success(&execution_id, response.clone());
@@ -811,7 +820,10 @@ async fn execute_compiled_skill(
     let result = result?;
 
     let token_values = token_values_for_replay(&result);
-    let response = to_execute_response(result, Some(prepared.session_dir));
+    let mut response = to_execute_response(result, Some(prepared.session_dir));
+    if let Some(record) = state.execution_store.get(&prepared.execution_id) {
+        attach_skill_run_metadata(&mut response, &record);
+    }
     state
         .execution_store
         .complete_success(&prepared.execution_id, response.clone());

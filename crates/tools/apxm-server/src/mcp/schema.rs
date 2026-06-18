@@ -27,6 +27,7 @@ pub(crate) const MCP_TOOL_APXM_CAPABILITY_LIST: &str = Tier3Tool::CapabilityList
 pub(crate) const MCP_TOOL_ARG_ID: &str = args::ID;
 pub(crate) const MCP_TOOL_ARG_ARGS: &str = args::ARGS;
 pub(crate) const MCP_TOOL_ARG_SESSION_ID: &str = args::SESSION_ID;
+pub(crate) const MCP_TOOL_ARG_WORKFLOW_ID: &str = args::WORKFLOW_ID;
 pub(crate) const MCP_TOOL_PARAM_NAME: &str = fields::NAME;
 pub(crate) const MCP_TOOL_PARAM_ARGUMENTS: &str = fields::ARGUMENTS;
 
@@ -146,6 +147,13 @@ fn skill_call_input_schema() -> JsonValue {
             (fields::DESCRIPTION): "Optional simple session identifier. Path separators and dot-only components are rejected."
         }),
     );
+    properties.insert(
+        MCP_TOOL_ARG_WORKFLOW_ID.to_string(),
+        serde_json::json!({
+            (fields::TYPE): schema_type::STRING,
+            (fields::DESCRIPTION): "Optional workflow id used for workflow-scoped run history and artifacts. Path separators and dot-only components are rejected."
+        }),
+    );
     serde_json::json!({
         (fields::TYPE): schema_type::OBJECT,
         (fields::ADDITIONAL_PROPERTIES): false,
@@ -255,4 +263,24 @@ fn evidence_lookup_input_schema() -> JsonValue {
             }
         }
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn skill_call_schema_accepts_workflow_id() {
+        let schema = skill_call_input_schema();
+        assert_eq!(
+            schema.pointer("/additionalProperties"),
+            Some(&JsonValue::Bool(false))
+        );
+        assert!(
+            schema
+                .pointer(&format!("/properties/{MCP_TOOL_ARG_WORKFLOW_ID}"))
+                .is_some(),
+            "apxm_skill_call must expose workflow_id for workflow-scoped run history"
+        );
+    }
 }

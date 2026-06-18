@@ -96,6 +96,7 @@ const MCP_JSONRPC_VERSION: &str = "2.0";
 const MCP_REQUEST_ID: u64 = 23;
 const MCP_ARG_ID: &str = "id";
 const MCP_ARG_SESSION_ID: &str = "session_id";
+const MCP_ARG_WORKFLOW_ID: &str = "workflow_id";
 const EVENT_SKILL_EXECUTE_STARTED: &str = "skill_execute_started";
 const EVENT_SKILL_EXECUTE_COMPLETE: &str = "skill_execute_complete";
 const EVENT_NODE_OUTPUT: &str = "node_output";
@@ -1474,6 +1475,36 @@ async fn skill_execute_rejects_path_like_workflow_id() {
             .contains("workflow_id"),
         "error should explain workflow_id validation: {body}"
     );
+}
+
+#[tokio::test]
+#[allow(unsafe_code)]
+async fn mcp_skill_call_with_workflow_id_writes_workflow_run_artifacts() {
+    let _runs_root_guard = APXM_RUNS_ROOT_LOCK.lock().expect("APXM_RUNS_ROOT lock");
+    let skill_root = tempfile::tempdir().expect("skill root");
+    let runs_root = tempfile::tempdir().expect("runs root");
+    write_executable_skill(skill_root.path());
+
+    let state = test_state_with_skill_roots(vec![skill_root.path().to_path_buf()]).await;
+    let app = crate::build_app(state);
+
+    unsafe { std::env::set_var("APXM_RUNS_ROOT", runs_root.path()) };
+    let body = successful_mcp_tool_json(
+        app,
+        MCP_TOOL_APXM_SKILL_CALL,
+        serde_json::json!({
+            MCP_ARG_ID: FIXTURE_SKILL_ID,
+            MCP_ARG_WORKFLOW_ID: "wf-mcp-observe",
+        }),
+    )
+    .await;
+    unsafe { std::env::remove_var("APXM_RUNS_ROOT") };
+
+    let execution_id = body["execution_id"].as_str().expect("execution_id");
+    assert_eq!(body["workflow_id"], "wf-mcp-observe");
+    let run_dir = runs_root.path().join("wf-mcp-observe").join(execution_id);
+    assert!(run_dir.join("run.json").is_file());
+    assert!(run_dir.join("results.json").is_file());
 }
 
 #[tokio::test]

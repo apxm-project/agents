@@ -134,7 +134,9 @@ impl RemoteAgentSpawner {
     /// variable.  Returns `None` when the variable is absent or empty so the
     /// caller can fall back to the local subprocess path.
     pub fn from_env() -> Option<Self> {
-        let url = std::env::var("APXM_RUNNER_URL").ok().filter(|v| !v.is_empty())?;
+        let url = std::env::var("APXM_RUNNER_URL")
+            .ok()
+            .filter(|v| !v.is_empty())?;
         info!(runner_url = %url, "remote agent runner configured");
         Some(Self::new(url))
     }
@@ -158,7 +160,10 @@ impl RemoteAgentSpawner {
         let status = response.status();
         if !status.is_success() {
             let text = response.text().await.unwrap_or_default();
-            return Err(RemoteRunnerError::Http { status: status.as_u16(), body: text });
+            return Err(RemoteRunnerError::Http {
+                status: status.as_u16(),
+                body: text,
+            });
         }
 
         let resp: SpawnResponse = response
@@ -185,7 +190,10 @@ impl RemoteAgentSpawner {
         let status = response.status();
         if !status.is_success() {
             let text = response.text().await.unwrap_or_default();
-            return Err(RemoteRunnerError::Http { status: status.as_u16(), body: text });
+            return Err(RemoteRunnerError::Http {
+                status: status.as_u16(),
+                body: text,
+            });
         }
 
         response
@@ -209,7 +217,10 @@ impl RemoteAgentSpawner {
         let status = response.status();
         if !status.is_success() {
             let text = response.text().await.unwrap_or_default();
-            return Err(RemoteRunnerError::Http { status: status.as_u16(), body: text });
+            return Err(RemoteRunnerError::Http {
+                status: status.as_u16(),
+                body: text,
+            });
         }
 
         info!(%run_id, "remote agent cancelled");

@@ -102,7 +102,11 @@ impl std::fmt::Display for ArtifactError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Self::NotFound { artifact_ref } => write!(f, "artifact not found: {artifact_ref}"),
-            Self::ArtifactExpired { artifact_ref, expired_at, retention_class } => write!(
+            Self::ArtifactExpired {
+                artifact_ref,
+                expired_at,
+                retention_class,
+            } => write!(
                 f,
                 "artifact_expired: ref={artifact_ref} expired_at={expired_at} \
                  retention_class={retention_class}"
@@ -162,7 +166,8 @@ impl ObjectStoreClient {
                 Err(ArtifactError::Backend {
                     message: format!(
                         "S3 client not wired: bucket={bucket} region={region} \
-                         ref={}", artifact.artifact_ref
+                         ref={}",
+                        artifact.artifact_ref
                     ),
                 })
             }
@@ -171,10 +176,7 @@ impl ObjectStoreClient {
 }
 
 /// Parse a `file:///path/to/artifact` URI to an absolute local path.
-fn uri_to_local_path(
-    uri: &str,
-    runs_root: &std::path::Path,
-) -> Result<std::path::PathBuf, String> {
+fn uri_to_local_path(uri: &str, runs_root: &std::path::Path) -> Result<std::path::PathBuf, String> {
     if let Some(rel) = uri.strip_prefix("file://") {
         Ok(std::path::PathBuf::from(rel))
     } else if uri.starts_with('/') {

@@ -1666,11 +1666,21 @@ fn run_node_artifact_refs(
         .iter()
         .find(|artifact| artifact.node_id == node_id)
     {
+        let output_json = saved
+            .output_json
+            .as_ref()
+            .filter(|path| run_artifact_file_exists(run_root, path))
+            .cloned();
+        let metrics_json = saved
+            .metrics_json
+            .as_ref()
+            .filter(|path| run_artifact_file_exists(run_root, path))
+            .cloned();
         return Some(RunNodeArtifactRefs {
             run_root: run_root.clone(),
             node_json: saved.node_json.clone(),
-            output_json: saved.output_json.clone(),
-            metrics_json: saved.metrics_json.clone(),
+            output_json,
+            metrics_json,
             node_dir: saved.node_dir.clone(),
         });
     }
@@ -1684,19 +1694,22 @@ fn run_node_artifact_refs(
         });
     let dir_name = session_node_dir_name(node_id, node_name.unwrap_or("node"));
     let node_dir = format!("{}/{}", constants::session::files::NODES_DIR, dir_name);
+    let node_json = format!("{}/{}", node_dir, constants::session::node::NODE_JSON);
+    if !run_artifact_file_exists(run_root, &node_json) {
+        return None;
+    }
+    let output_json = format!("{}/{}", node_dir, constants::session::node::OUTPUT_JSON);
+    let metrics_json = format!("{}/{}", node_dir, constants::session::node::METRICS_JSON);
     Some(RunNodeArtifactRefs {
         run_root: run_root.clone(),
-        node_json: format!("{}/{}", node_dir, constants::session::node::NODE_JSON),
-        output_json: Some(format!(
-            "{}/{}",
-            node_dir,
-            constants::session::node::OUTPUT_JSON
-        )),
-        metrics_json: Some(format!(
-            "{}/{}",
-            node_dir,
-            constants::session::node::METRICS_JSON
-        )),
+        node_json,
+        output_json: run_artifact_file_exists(run_root, &output_json).then_some(output_json),
+        metrics_json: run_artifact_file_exists(run_root, &metrics_json).then_some(metrics_json),
         node_dir,
     })
+}
+
+fn run_artifact_file_exists(run_root: &str, artifact_path: &str) -> bool {
+    let path = std::path::Path::new(run_root).join(artifact_path);
+    path.is_file()
 }
