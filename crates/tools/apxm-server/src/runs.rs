@@ -238,6 +238,12 @@ pub(crate) struct RunTotals {
     pub(crate) nodes: usize,
     pub(crate) edges: usize,
     pub(crate) tool_calls: usize,
+    pub(crate) input_tokens: usize,
+    pub(crate) output_tokens: usize,
+    pub(crate) total_tokens: usize,
+    pub(crate) total_requests: usize,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) cost_usd: Option<f64>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -982,7 +988,17 @@ fn artifact_media_type(path: &FsPath) -> &'static str {
 
 fn record_to_summary(state: &AppState, record: ExecutionRecord) -> RunSummary {
     let events = state.run_event_bus.snapshot(&record.execution_id);
-    let totals = run_totals(&events);
+    let mut totals = run_totals(&events);
+    if let Some(result) = record.result.as_ref() {
+        totals.input_tokens = result.llm_usage.input_tokens;
+        totals.output_tokens = result.llm_usage.output_tokens;
+        totals.total_tokens = result
+            .llm_usage
+            .input_tokens
+            .saturating_add(result.llm_usage.output_tokens);
+        totals.total_requests = result.llm_usage.total_requests;
+        totals.cost_usd = None;
+    }
     let root_agent = events.iter().find_map(|event| {
         event
             .payload
@@ -1027,6 +1043,11 @@ fn run_totals(events: &[ApxmEvent]) -> RunTotals {
         nodes: nodes.len(),
         edges,
         tool_calls,
+        input_tokens: 0,
+        output_tokens: 0,
+        total_tokens: 0,
+        total_requests: 0,
+        cost_usd: None,
     }
 }
 

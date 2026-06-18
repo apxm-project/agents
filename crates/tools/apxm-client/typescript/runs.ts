@@ -6,13 +6,27 @@ export interface RunSummary {
   execution_id: string;
   skill_id: string;
   skill_version: string;
+  workflow_id?: string | null;
   status: string;
   started_at_ms: number;
   completed_at_ms?: number;
   session_id: string;
+  session_dir?: string | null;
+  run_root?: string | null;
   root_agent?: string;
   correlation_id?: string | null;
-  totals: { events: number; nodes: number; edges: number; tool_calls: number };
+  trace_id?: string | null;
+  totals: {
+    events: number;
+    nodes: number;
+    edges: number;
+    tool_calls: number;
+    input_tokens: number;
+    output_tokens: number;
+    total_tokens: number;
+    total_requests: number;
+    cost_usd?: number | null;
+  };
 }
 
 export interface RunListResponse {

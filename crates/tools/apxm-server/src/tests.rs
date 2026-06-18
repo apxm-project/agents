@@ -16,7 +16,7 @@ use std::sync::Arc;
 use std::time::SystemTime;
 
 use apxm_artifact::{Artifact, ArtifactMetadata};
-use apxm_backends::llm::backends::MockLLMBackend;
+use apxm_backends::llm::backends::{MockLLMBackend, MockResponse};
 use apxm_core::constants::graph::attrs as graph_attrs;
 use apxm_core::error::RuntimeError;
 use apxm_core::events::payload::{REDACTION_HASH_PREFIX_BLAKE3, RedactedContent};
@@ -337,6 +337,17 @@ fn const_only_air() -> String {
   func.func @const_only() -> !ais.token attributes {ais.entry} {
     %value = ais.const_str "ok" : !ais.token
     func.return %value : !ais.token
+  }
+}
+"#
+    .to_string()
+}
+
+fn single_ask_air() -> String {
+    r#"module {
+  func.func @single_ask() -> !ais.token attributes {ais.entry} {
+    %reply = ais.ask "say hello" : !ais.token
+    func.return %reply : !ais.token
   }
 }
 "#
@@ -1422,6 +1433,68 @@ async fn raw_execute_with_workflow_id_writes_run_node_artifacts_and_exposes_endp
     assert!(node_body["artifacts"]["node_dir"].as_str().is_some());
     assert!(node_body["artifacts"]["output_json"].as_str().is_some());
     assert!(node_body["artifacts"]["metrics_json"].as_str().is_some());
+}
+
+#[tokio::test]
+#[allow(unsafe_code)]
+async fn raw_execute_with_llm_usage_exposes_run_summary_totals() {
+    let _runs_root_guard = APXM_RUNS_ROOT_LOCK.lock().expect("APXM_RUNS_ROOT lock");
+    let runs_root = tempfile::tempdir().expect("runs root");
+    let runtime = runtime_with_mock_workflow_backend(
+        MockLLMBackend::new().default(MockResponse::new("observed reply").with_tokens(12, 7)),
+    )
+    .await;
+    let state = test_state_with_runtime_and_skill_roots(runtime, Vec::new()).await;
+    let app = crate::build_app(state);
+
+    let body = serde_json::json!({
+        "air": single_ask_air(),
+        "workflow_id": "wf-usage-observe",
+    });
+    let req = Request::builder()
+        .method("POST")
+        .uri(crate::routes::EXECUTE)
+        .header("Content-Type", "application/json")
+        .header("X-Trace-Id", "trace-usage-observe")
+        .body(Body::from(body.to_string()))
+        .unwrap();
+
+    // SAFETY: this test owns APXM_RUNS_ROOT for the synchronous request and
+    // removes it before returning.
+    unsafe { std::env::set_var("APXM_RUNS_ROOT", runs_root.path()) };
+    let resp = app.clone().oneshot(req).await.unwrap();
+    unsafe { std::env::remove_var("APXM_RUNS_ROOT") };
+    let status = resp.status();
+    let bytes = resp.into_body().collect().await.unwrap().to_bytes();
+    let body: serde_json::Value = serde_json::from_slice(&bytes).expect("execute response json");
+    assert_eq!(status, StatusCode::OK, "raw execute failed: {body}");
+    assert_eq!(body["llm_usage"]["input_tokens"], 12);
+    assert_eq!(body["llm_usage"]["output_tokens"], 7);
+    assert_eq!(body["llm_usage"]["total_requests"], 1);
+
+    let execution_id = body["execution_id"].as_str().expect("execution_id");
+    let run_dir = runs_root.path().join("wf-usage-observe").join(execution_id);
+    let run_json: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(run_dir.join("run.json")).expect("run.json bytes"))
+            .expect("run.json");
+    assert_eq!(run_json["input_tokens"], 12);
+    assert_eq!(run_json["output_tokens"], 7);
+    assert_eq!(run_json["total_tokens"], 19);
+    assert!(run_json["cost_usd"].is_null());
+
+    let (status, run_body) = get_json(app.clone(), &format!("/v1/runs/{execution_id}")).await;
+    assert_eq!(status, StatusCode::OK, "run detail failed: {run_body}");
+    assert_eq!(run_body["totals"]["input_tokens"], 12);
+    assert_eq!(run_body["totals"]["output_tokens"], 7);
+    assert_eq!(run_body["totals"]["total_tokens"], 19);
+    assert_eq!(run_body["totals"]["total_requests"], 1);
+    assert!(run_body["totals"]["cost_usd"].is_null());
+
+    let (status, runs_body) = get_json(app, "/v1/runs?trace_id=trace-usage-observe").await;
+    assert_eq!(status, StatusCode::OK, "trace run list failed: {runs_body}");
+    assert_eq!(runs_body["data"][0]["execution_id"], execution_id);
+    assert_eq!(runs_body["data"][0]["totals"]["total_tokens"], 19);
+    assert_eq!(runs_body["data"][0]["totals"]["total_requests"], 1);
 }
 
 // ────────────────────────────────────────────────────────────────────
