@@ -78,6 +78,12 @@ fn resolve_owner(owner: Option<&str>) -> String {
 
 /// Read apxm-auth's per-run bearer (written 0600 by `apxm-auth serve`).
 fn read_bearer() -> Option<String> {
+    if let Ok(value) = std::env::var("APXM_AUTH_BEARER") {
+        let trimmed = value.trim();
+        if !trimmed.is_empty() {
+            return Some(trimmed.to_string());
+        }
+    }
     let dir = std::env::var("XDG_STATE_HOME")
         .map(std::path::PathBuf::from)
         .or_else(|_| {
