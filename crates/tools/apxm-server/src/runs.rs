@@ -16,6 +16,7 @@
 
 use std::collections::{HashMap, VecDeque};
 use std::convert::Infallible;
+use std::path::{Component, Path as FsPath, PathBuf};
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -324,6 +325,20 @@ pub(crate) struct RunNodeArtifactRefs {
     pub(crate) output_json: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub(crate) metrics_json: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub(crate) struct RunArtifactList {
+    pub(crate) execution_id: String,
+    pub(crate) run_root: String,
+    pub(crate) artifacts: Vec<RunArtifactEntry>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub(crate) struct RunArtifactEntry {
+    pub(crate) path: String,
+    pub(crate) size_bytes: u64,
+    pub(crate) media_type: &'static str,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -701,6 +716,66 @@ pub(crate) async fn get_run_node(
         })
 }
 
+/// `GET /v1/runs/{execution_id}/artifacts` — list the durable files under
+/// the run root. This lets Studio/operator tooling inspect the recorded
+/// `run.json` and per-node JSON files without direct volume access.
+pub(crate) async fn list_run_artifacts(
+    State(state): State<AppState>,
+    Path(execution_id): Path<String>,
+) -> Result<Json<RunArtifactList>, ApiError> {
+    let record = state
+        .execution_store
+        .get(&execution_id)
+        .ok_or_else(|| ApiError::not_found(format!("run not found: {execution_id}")))?;
+    let run_root = record
+        .run_root
+        .clone()
+        .ok_or_else(|| ApiError::not_found(format!("run has no artifact root: {execution_id}")))?;
+    let root = FsPath::new(&run_root);
+    if !root.is_dir() {
+        return Err(ApiError::not_found(format!(
+            "run artifacts not found for {execution_id}"
+        )));
+    }
+
+    let mut artifacts = Vec::new();
+    collect_artifact_entries(root, root, &mut artifacts).map_err(|error| {
+        ApiError::internal_message(format!("failed to list run artifacts: {error}"))
+    })?;
+    artifacts.sort_by(|a, b| a.path.cmp(&b.path));
+    Ok(Json(RunArtifactList {
+        execution_id,
+        run_root,
+        artifacts,
+    }))
+}
+
+/// `GET /v1/runs/{execution_id}/artifacts/{path}` — read one durable artifact
+/// file by the relative path returned by `list_run_artifacts`.
+pub(crate) async fn get_run_artifact(
+    State(state): State<AppState>,
+    Path((execution_id, artifact_path)): Path<(String, String)>,
+) -> Result<Response, ApiError> {
+    let record = state
+        .execution_store
+        .get(&execution_id)
+        .ok_or_else(|| ApiError::not_found(format!("run not found: {execution_id}")))?;
+    let run_root = record
+        .run_root
+        .as_deref()
+        .ok_or_else(|| ApiError::not_found(format!("run has no artifact root: {execution_id}")))?;
+    let path = resolve_artifact_path(run_root, &artifact_path)?;
+    let bytes = std::fs::read(&path).map_err(|error| {
+        ApiError::internal_message(format!("failed to read run artifact: {error}"))
+    })?;
+    let media_type = artifact_media_type(&path);
+    Response::builder()
+        .status(axum::http::StatusCode::OK)
+        .header(header::CONTENT_TYPE, media_type)
+        .body(Body::from(bytes))
+        .map_err(|error| ApiError::internal_message(format!("failed to build response: {error}")))
+}
+
 pub(crate) async fn get_run_events_bulk(
     State(state): State<AppState>,
     Path(execution_id): Path<String>,
@@ -814,6 +889,95 @@ fn clamp_limit(raw: Option<usize>, default: usize, max: usize) -> usize {
     let max = max.max(1);
     let default = default.clamp(1, max);
     raw.unwrap_or(default).clamp(1, max)
+}
+
+fn collect_artifact_entries(
+    root: &FsPath,
+    dir: &FsPath,
+    out: &mut Vec<RunArtifactEntry>,
+) -> std::io::Result<()> {
+    for entry in std::fs::read_dir(dir)? {
+        let entry = entry?;
+        let file_type = entry.file_type()?;
+        let path = entry.path();
+        if file_type.is_symlink() {
+            continue;
+        }
+        if file_type.is_dir() {
+            collect_artifact_entries(root, &path, out)?;
+            continue;
+        }
+        if !file_type.is_file() {
+            continue;
+        }
+        let relative = path.strip_prefix(root).unwrap_or(&path);
+        let relative = relative
+            .components()
+            .filter_map(|component| match component {
+                Component::Normal(value) => Some(value.to_string_lossy().into_owned()),
+                _ => None,
+            })
+            .collect::<Vec<_>>()
+            .join("/");
+        if relative.ends_with(".tmp") || relative.is_empty() {
+            continue;
+        }
+        let metadata = entry.metadata()?;
+        out.push(RunArtifactEntry {
+            media_type: artifact_media_type(&path),
+            path: relative,
+            size_bytes: metadata.len(),
+        });
+    }
+    Ok(())
+}
+
+fn resolve_artifact_path(run_root: &str, artifact_path: &str) -> Result<PathBuf, ApiError> {
+    if artifact_path.is_empty() {
+        return Err(ApiError::bad_request("artifact path is required"));
+    }
+    let relative = FsPath::new(artifact_path);
+    if relative.is_absolute() {
+        return Err(ApiError::bad_request("artifact path must be relative"));
+    }
+    let mut clean = PathBuf::new();
+    for component in relative.components() {
+        match component {
+            Component::Normal(value) => clean.push(value),
+            _ => {
+                return Err(ApiError::bad_request(
+                    "artifact path contains invalid segments",
+                ));
+            }
+        }
+    }
+    if clean.as_os_str().is_empty() {
+        return Err(ApiError::bad_request("artifact path is required"));
+    }
+    let root = FsPath::new(run_root);
+    let root = root
+        .canonicalize()
+        .map_err(|_| ApiError::not_found("run artifact root not found"))?;
+    let candidate = root.join(clean);
+    let candidate = candidate
+        .canonicalize()
+        .map_err(|_| ApiError::not_found("run artifact not found"))?;
+    if !candidate.starts_with(&root) {
+        return Err(ApiError::bad_request("artifact path escapes run root"));
+    }
+    if !candidate.is_file() {
+        return Err(ApiError::not_found("run artifact not found"));
+    }
+    Ok(candidate)
+}
+
+fn artifact_media_type(path: &FsPath) -> &'static str {
+    match path.extension().and_then(|ext| ext.to_str()) {
+        Some("json") => "application/json",
+        Some("jsonl") | Some("ndjson") => "application/x-ndjson",
+        Some("txt") | Some("log") | Some("md") => "text/plain; charset=utf-8",
+        _ => "application/octet-stream",
+    }
 }
 
 fn record_to_summary(state: &AppState, record: ExecutionRecord) -> RunSummary {

@@ -1285,6 +1285,47 @@ async fn skill_execute_writes_workflow_run_node_artifacts_and_exposes_run_node_d
     assert!(node_body["artifacts"]["node_dir"].as_str().is_some());
     assert!(node_body["artifacts"]["output_json"].as_str().is_some());
 
+    let output_artifact = node_body["artifacts"]["output_json"]
+        .as_str()
+        .expect("output artifact ref");
+    let (status, artifacts_body) =
+        get_json(app.clone(), &routes::run_artifacts_path(execution_id)).await;
+    assert_eq!(
+        status,
+        StatusCode::OK,
+        "run artifact list failed: {artifacts_body}"
+    );
+    let artifact_paths: Vec<&str> = artifacts_body["artifacts"]
+        .as_array()
+        .expect("artifacts array")
+        .iter()
+        .filter_map(|artifact| artifact["path"].as_str())
+        .collect();
+    assert!(
+        artifact_paths.contains(&"run.json"),
+        "artifact list must expose run.json: {artifact_paths:?}"
+    );
+    assert!(
+        artifact_paths.contains(&output_artifact),
+        "artifact list must expose node output file: {artifact_paths:?}"
+    );
+
+    let (status, artifact_body) = get_json(
+        app.clone(),
+        &routes::run_artifact_path(execution_id, output_artifact),
+    )
+    .await;
+    assert_eq!(
+        status,
+        StatusCode::OK,
+        "run artifact fetch failed: {artifact_body}"
+    );
+    assert_eq!(artifact_body["node_id"], 1);
+    assert_eq!(
+        artifact_body["output"][SUMMARY_FIELD],
+        FIXTURE_OUTPUT_SUMMARY
+    );
+
     let (status, execution_node_body) =
         get_json(app, &execution_node_detail_route(execution_id, 1)).await;
     assert_eq!(

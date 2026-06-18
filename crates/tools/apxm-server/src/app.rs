@@ -20,7 +20,6 @@ use crate::executions::{get_execution, get_execution_node, list_executions};
 use crate::fleet::get_fleet;
 use crate::generate::{handle_generate, handle_generate_stream, handle_schema};
 use crate::goals::{cancel_goal, get_goal, get_goal_events_bulk, list_goals, stream_goal_events};
-use crate::run_history::{get_run_summary, list_workflow_runs, reindex_runs};
 use crate::health::{health, list_backends, list_models};
 use crate::mcp::{mcp_jsonrpc, post_goal};
 use crate::memory::{delete_fact, search_facts, store_fact};
@@ -28,9 +27,10 @@ use crate::metrics::scrape_metrics;
 use crate::permissions::respond_permission;
 use crate::rerun::{rerun_from_node, rerun_run};
 use crate::routes::ServerRoute;
+use crate::run_history::{get_run_summary, list_workflow_runs, reindex_runs};
 use crate::runs::{
-    cancel_run, get_run, get_run_blob, get_run_events_bulk, get_run_graph, get_run_node,
-    get_session_history, list_runs, stream_run_events,
+    cancel_run, get_run, get_run_artifact, get_run_blob, get_run_events_bulk, get_run_graph,
+    get_run_node, get_session_history, list_run_artifacts, list_runs, stream_run_events,
 };
 use crate::sessions::{
     cancel_session, compact_session, get_session_status, list_session_events,
@@ -158,6 +158,8 @@ pub(crate) fn build_app(state: AppState) -> Router {
         .route(ServerRoute::RunDetail.path(), get(get_run))
         .route(ServerRoute::RunGraph.path(), get(get_run_graph))
         .route(ServerRoute::RunNodeDetail.path(), get(get_run_node))
+        .route(ServerRoute::RunArtifacts.path(), get(list_run_artifacts))
+        .route(ServerRoute::RunArtifactDetail.path(), get(get_run_artifact))
         .route(ServerRoute::RunEvents.path(), get(get_run_events_bulk))
         .route(ServerRoute::RunEventsStream.path(), get(stream_run_events))
         // rollout blob fetch

@@ -49,6 +49,8 @@ pub(crate) const RUNS: &str = "/v1/runs";
 pub(crate) const RUN_DETAIL: &str = "/v1/runs/{execution_id}";
 pub(crate) const RUN_GRAPH: &str = "/v1/runs/{execution_id}/graph";
 pub(crate) const RUN_NODE_DETAIL: &str = "/v1/runs/{execution_id}/nodes/{node_id}";
+pub(crate) const RUN_ARTIFACTS: &str = "/v1/runs/{execution_id}/artifacts";
+pub(crate) const RUN_ARTIFACT_DETAIL: &str = "/v1/runs/{execution_id}/artifacts/{*artifact_path}";
 pub(crate) const RUN_EVENTS: &str = "/v1/runs/{execution_id}/events";
 pub(crate) const RUN_EVENTS_STREAM: &str = "/v1/runs/{execution_id}/events/stream";
 // rollout blob endpoint.
@@ -130,6 +132,8 @@ pub(crate) enum ServerRoute {
     RunDetail,
     RunGraph,
     RunNodeDetail,
+    RunArtifacts,
+    RunArtifactDetail,
     RunEvents,
     RunEventsStream,
     RunBlob,
@@ -205,6 +209,8 @@ impl ServerRoute {
             Self::RunDetail => RUN_DETAIL,
             Self::RunGraph => RUN_GRAPH,
             Self::RunNodeDetail => RUN_NODE_DETAIL,
+            Self::RunArtifacts => RUN_ARTIFACTS,
+            Self::RunArtifactDetail => RUN_ARTIFACT_DETAIL,
             Self::RunEvents => RUN_EVENTS,
             Self::RunEventsStream => RUN_EVENTS_STREAM,
             Self::RunBlob => RUN_BLOB,
@@ -282,6 +288,16 @@ pub(crate) fn checkpoint_resume_path(id: impl Display) -> String {
 #[allow(dead_code)]
 pub(crate) fn run_cancel_path(execution_id: impl Display) -> String {
     format!("{RUNS}/{execution_id}/cancel")
+}
+
+#[allow(dead_code)]
+pub(crate) fn run_artifacts_path(execution_id: impl Display) -> String {
+    format!("{RUNS}/{execution_id}/artifacts")
+}
+
+#[allow(dead_code)]
+pub(crate) fn run_artifact_path(execution_id: impl Display, artifact_path: impl Display) -> String {
+    format!("{RUNS}/{execution_id}/artifacts/{artifact_path}")
 }
 
 #[allow(dead_code)]
