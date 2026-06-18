@@ -321,6 +321,11 @@ pub(crate) struct SkillExecuteRequest {
     /// Correlation/delivery id from the inbound cue event (webhook path).
     #[serde(default)]
     pub(crate) correlation_id: Option<String>,
+    /// Trace id propagated from the inbound `X-Trace-Id` HTTP header. When
+    /// present, stamped on the execution record and forwarded to Auth proxy
+    /// calls so one trace id covers the full OS → Server → Auth chain.
+    #[serde(default)]
+    pub(crate) trace_id: Option<String>,
     /// Workspace workflow identity. When present, stamped on the execution
     /// record so run history can be grouped by workflow id (spec 0009 / 0013).
     /// The value is the basename of `workspace/workflows/<id>/` — the folder
@@ -1138,6 +1143,7 @@ fn prepare_skill_execution_with_reservation(
             correlation_id.clone(),
         );
     }
+    let trace_id = req.trace_id.filter(|s| !s.is_empty());
     let provenance = SkillExecutionProvenance {
         skill_id: manifest.skill_id.clone(),
         skill_version: manifest.version.clone(),
@@ -1153,7 +1159,7 @@ fn prepare_skill_execution_with_reservation(
     let execution = match reserved_execution_id {
         Some(execution_id) => state
             .execution_store
-            .start_skill_execution_with_provenance_execution_id_and_idempotency_key(
+            .start_skill_execution_with_all(
                 execution_id,
                 provenance,
                 &session_id,
@@ -1161,10 +1167,11 @@ fn prepare_skill_execution_with_reservation(
                 idempotency_key,
                 correlation_id.clone(),
                 workflow_id,
+                trace_id,
             ),
         None => state
             .execution_store
-            .start_skill_execution_with_provenance_execution_id_and_idempotency_key(
+            .start_skill_execution_with_all(
                 uuid::Uuid::new_v4().to_string(),
                 provenance,
                 &session_id,
@@ -1172,6 +1179,7 @@ fn prepare_skill_execution_with_reservation(
                 None,
                 correlation_id.clone(),
                 workflow_id,
+                trace_id,
             ),
     };
     Ok(PreparedCompiledExecution {

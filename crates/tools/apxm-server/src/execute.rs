@@ -18,6 +18,7 @@ use apxm_runtime::EmitterAdapter;
 use apxm_runtime::capability::CapabilitySandboxPreflight;
 use axum::Json;
 use axum::extract::State;
+use axum::http::HeaderMap;
 use axum::response::sse::{Event, Sse};
 use futures::Stream;
 use serde::{Deserialize, Serialize};
@@ -147,16 +148,18 @@ impl CompileRequest {
 
 pub(crate) async fn compile_workflow(
     state: State<AppState>,
+    headers: HeaderMap,
     Json(req): Json<CompileRequest>,
 ) -> Result<Json<ExecuteResponse>, ApiError> {
-    execute(state, Json(req.into_execute_request()?)).await
+    execute(state, headers, Json(req.into_execute_request()?)).await
 }
 
 pub(crate) async fn compile_workflow_stream(
     state: State<AppState>,
+    headers: HeaderMap,
     Json(req): Json<CompileRequest>,
 ) -> Result<Sse<impl Stream<Item = Result<Event, std::convert::Infallible>>>, ApiError> {
-    execute_stream(state, Json(req.into_execute_request()?)).await
+    execute_stream(state, headers, Json(req.into_execute_request()?)).await
 }
 
 #[derive(Debug, Deserialize)]
@@ -225,8 +228,10 @@ pub(crate) fn admit_grant_metadata(
 
 pub(crate) async fn execute(
     State(state): State<AppState>,
+    headers: HeaderMap,
     Json(req): Json<ExecuteRequest>,
 ) -> Result<Json<ExecuteResponse>, ApiError> {
+    let _ = extract_trace_id(&headers); // extracted for future use in run recording
     Ok(Json(run_air_inner(&state, req).await?))
 }
 
@@ -310,6 +315,7 @@ pub(crate) async fn run_air_inner(
 
 pub(crate) async fn execute_stream(
     State(state): State<AppState>,
+    headers: HeaderMap,
     Json(req): Json<ExecuteRequest>,
 ) -> Result<Sse<impl Stream<Item = Result<Event, std::convert::Infallible>>>, ApiError> {
     let PreparedRequest {
@@ -349,8 +355,10 @@ pub(crate) async fn execute_stream(
     if let Some((key, value)) = tool_call_budgets_metadata(&tool_call_budgets) {
         grant_metadata.insert(key, value);
     }
-    let trace_id = session_id
-        .clone()
+    // Prefer the caller-supplied X-Trace-Id header for end-to-end correlation.
+    // Fall back to session_id (for multi-turn sessions) then a fresh UUID.
+    let trace_id = extract_trace_id(&headers)
+        .or_else(|| session_id.clone())
         .unwrap_or_else(|| uuid::Uuid::new_v4().to_string());
     // A unique per-execution handle: `session_id` is reused across turns, so it
     // cannot key cancellation. Registering a `Notify` lets
@@ -1198,6 +1206,18 @@ fn inv_tool_static_args(node: &Node) -> Result<HashMap<String, RuntimeValue>, Ap
     }
 
     Ok(args)
+}
+
+/// Extract the `X-Trace-Id` header value from an HTTP request's header map.
+/// Returns `None` when the header is absent or not valid ASCII. The value is
+/// trimmed but not otherwise validated; callers are responsible for logging or
+/// forwarding it as-is.
+pub(crate) fn extract_trace_id(headers: &HeaderMap) -> Option<String> {
+    headers
+        .get("x-trace-id")
+        .and_then(|v| v.to_str().ok())
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty())
 }
 
 pub(crate) fn to_execute_response(

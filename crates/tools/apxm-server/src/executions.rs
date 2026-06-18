@@ -60,6 +60,12 @@ pub(crate) struct ExecutionRecord {
     /// Correlation/delivery id from webhook ingress (FR-016 observability).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub(crate) correlation_id: Option<String>,
+    /// X-Trace-Id header value propagated from the inbound HTTP request.
+    /// Carried through the dispatch chain so a single trace id ties together
+    /// the OS delivery journal, the server execution record, and any Auth proxy
+    /// calls made during the run.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) trace_id: Option<String>,
     /// Workspace workflow identity (spec 0009). The basename of
     /// `workspace/workflows/<id>/`; present when the caller supplies it so
     /// run history can be grouped and queried by workflow id (spec 0013).
@@ -254,6 +260,32 @@ impl ExecutionStore {
         correlation_id: Option<String>,
         workflow_id: Option<String>,
     ) -> ExecutionRecord {
+        self.start_skill_execution_with_all(
+            execution_id,
+            provenance,
+            session_id,
+            session_dir,
+            idempotency_key,
+            correlation_id,
+            workflow_id,
+            None,
+        )
+    }
+
+    /// Full-parameter variant that also stamps a `trace_id` from the inbound
+    /// `X-Trace-Id` header. All callers that have a trace id from an HTTP header
+    /// should prefer this over the shorter variant.
+    pub(crate) fn start_skill_execution_with_all(
+        &self,
+        execution_id: String,
+        provenance: SkillExecutionProvenance,
+        session_id: &str,
+        session_dir: &str,
+        idempotency_key: Option<String>,
+        correlation_id: Option<String>,
+        workflow_id: Option<String>,
+        trace_id: Option<String>,
+    ) -> ExecutionRecord {
         let record = ExecutionRecord {
             execution_id,
             skill_id: provenance.skill_id,
@@ -271,6 +303,7 @@ impl ExecutionStore {
             idempotency_key,
             correlation_id,
             workflow_id,
+            trace_id,
             status: ExecutionStatus::Running,
             started_at_ms: now_ms(),
             completed_at_ms: None,
