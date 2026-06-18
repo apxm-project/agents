@@ -1,11 +1,13 @@
 use apxm_backends::llm::backends::{MockLLMBackend, MockResponse};
 use apxm_backends::{BackendRegistration, LLMRegistry};
 use apxm_core::constants::env as apxm_env;
-use apxm_driver::runtime::agents::configure_agent_registry;
+use apxm_core::error::RuntimeError;
 use apxm_driver::runtime::sandbox::configure_sandbox_registry;
 use apxm_runtime::capability::builtins::{FiredSchedule, OnFire};
 use apxm_runtime::{ModelRouterConfig, Runtime, RuntimeConfig};
 use tracing::{info, warn};
+
+use crate::remote_runner::RemoteAgentSpawner;
 
 pub(crate) async fn build_runtime_with_router(
     config: RuntimeConfig,
@@ -16,32 +18,37 @@ pub(crate) async fn build_runtime_with_router(
     runtime.set_sandbox_registry(std::sync::Arc::clone(&sandbox_registry));
     register_builtin_capabilities(&runtime, schedule_on_fire);
     load_llm_backends(&runtime).await;
-    // Wire the ACP agent spawner so SPAWN_AGENT can launch real subprocess
-    // agents (claude, codex, …) through /v1/execute. Best-effort: a failure
-    // here only disables agent spawning, it must not abort server startup.
-    //
-    // When APXM_RUNNER_URL is set the RemoteAgentSpawner seam is active.
-    // The spawner is constructed and logged here; handler-level dispatch
-    // (routing SPAWN_AGENT through the runner HTTP API) is wired in the
-    // agent capability layer once spec 0011 T020 is implemented.  Until then
-    // the local subprocess path remains the active backend in both modes so
-    // dev workflows are unaffected.
-    // When APXM_RUNNER_URL is present the RemoteAgentSpawner seam is in play.
-    // Log the intent now; handler-level dispatch is wired in spec 0011 T020.
-    // Until then the local subprocess path remains active in both modes.
-    if let Ok(url) = std::env::var("APXM_RUNNER_URL") {
-        if !url.is_empty() {
-            info!(runner_url = %url, "remote agent runner seam active; handler dispatch will delegate to runner once T020 is wired");
+    if let Some(remote_runner) = RemoteAgentSpawner::from_env() {
+        let route_candidates =
+            remote_runner
+                .discover_route_candidates()
+                .await
+                .map_err(|error| {
+                    RuntimeError::State(format!(
+                        "APXM_RUNNER_URL is set but runner profile discovery failed: {error}"
+                    ))
+                })?;
+        if route_candidates.is_empty() {
+            return Err(RuntimeError::State(
+                "APXM_RUNNER_URL is set but runner reported no available agent profiles"
+                    .to_string(),
+            ));
         }
-    }
-    if let Err(e) = configure_agent_registry(
-        runtime.process_table(),
-        runtime.capability_system_arc(),
-        sandbox_registry,
-    )
-    .await
-    {
-        warn!(error = %e, "failed to configure ACP agent spawner; SPAWN_AGENT unavailable");
+        let remote_runner =
+            std::sync::Arc::new(remote_runner.with_route_candidates(route_candidates));
+        runtime
+            .process_table()
+            .set_agent_spawner(remote_runner.clone())
+            .await;
+        runtime
+            .process_table()
+            .set_agent_prompter(remote_runner)
+            .await;
+        info!("configured remote runner-backed ACP agent spawner/prompter");
+    } else {
+        info!(
+            "APXM_RUNNER_URL is not set; runner-backed ACP agent profiles are unavailable"
+        );
     }
     runtime.init_model_router(ModelRouterConfig::default())?;
     // Professional-agent middleware chain (dispatcher chokepoint). A generous
