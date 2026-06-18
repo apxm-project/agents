@@ -59,4 +59,3 @@ pub fn list_pass_metadata() -> &'static [PassMetadata] {
 pub fn find_pass_metadata(name: &str) -> Option<&'static PassMetadata> {
     list_pass_metadata().iter().find(|pass| pass.name == name)
 }
-

@@ -298,4 +298,3 @@ impl DockerManager {
         Ok(())
     }
 }
-

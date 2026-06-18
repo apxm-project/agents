@@ -113,4 +113,3 @@ pub fn normalize_endpoint_for_protocol(protocol: ProviderProtocol, endpoint: &st
         format!("{trimmed}/v1")
     }
 }
-

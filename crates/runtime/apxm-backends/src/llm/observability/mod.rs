@@ -327,4 +327,3 @@ impl MetricsSource for BackendMetricsSource {
         serde_json::Value::Object(map)
     }
 }
-

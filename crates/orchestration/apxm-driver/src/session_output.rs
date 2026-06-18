@@ -101,7 +101,6 @@ fn derive_final_output(
     (None, joined)
 }
 
-
 /// Simple .air emitter for session output (avoids circular dependency on Compiler).
 fn emit_air_simple(module: &AirModule) -> String {
     let mut out = String::new();

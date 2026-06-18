@@ -312,4 +312,3 @@ pub fn default_model_for_protocol(protocol: ProviderProtocol) -> Option<&'static
 pub fn resolve_builtin_model(id: &str) -> Option<&'static BuiltinModelSpec> {
     BUILTIN_MODELS.iter().find(|model| model.id == id)
 }
-

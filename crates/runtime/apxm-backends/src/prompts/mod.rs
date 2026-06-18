@@ -281,4 +281,3 @@ fn trim_owned(s: String) -> String {
     }
     trimmed.to_owned()
 }
-

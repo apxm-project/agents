@@ -300,4 +300,3 @@ async fn validate_vllm(
         Err(validation_err(name, format!("HTTP {}", resp.status())))
     }
 }
-

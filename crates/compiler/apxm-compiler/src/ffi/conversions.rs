@@ -27,4 +27,3 @@ pub(crate) unsafe fn pass_info_from_raw(info: *const raw::ApxmPassInfo) -> Optio
         })
     }
 }
-

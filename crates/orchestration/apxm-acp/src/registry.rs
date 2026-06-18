@@ -476,4 +476,3 @@ struct UserAgentsFile {
     #[serde(default)]
     agents: BTreeMap<String, AcpAgentProfile>,
 }
-

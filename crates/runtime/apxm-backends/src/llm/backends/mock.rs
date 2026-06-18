@@ -567,5 +567,3 @@ impl LLMBackend for MockLLMBackend {
         }
     }
 }
-
-

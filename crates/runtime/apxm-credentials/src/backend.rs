@@ -242,4 +242,3 @@ fn normalize_endpoint(backend: &mut BackendConfig) {
         *url = normalize_endpoint_for_protocol(backend.protocol, url);
     }
 }
-

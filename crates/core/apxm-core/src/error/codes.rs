@@ -517,4 +517,3 @@ impl fmt::Display for ErrorCode {
         write!(f, "{}", self.as_str())
     }
 }
-

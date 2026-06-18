@@ -179,4 +179,3 @@ impl Default for LatencyProfileStore {
         Self::new()
     }
 }
-

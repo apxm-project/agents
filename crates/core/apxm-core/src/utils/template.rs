@@ -45,4 +45,3 @@ pub fn parse_placeholder_names(s: &str) -> Vec<&str> {
 pub fn is_numeric_placeholder(name: &str) -> bool {
     !name.is_empty() && name.bytes().all(|b| b.is_ascii_digit())
 }
-

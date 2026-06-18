@@ -6,4 +6,3 @@ pub fn mask_key(key: &str) -> String {
         format!("{}...{}", &key[..4], &key[key.len() - 4..])
     }
 }
-

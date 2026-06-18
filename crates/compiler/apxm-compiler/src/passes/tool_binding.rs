@@ -378,4 +378,3 @@ pub fn tool_binding_check_dag(
 
     Ok(warnings)
 }
-

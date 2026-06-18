@@ -724,5 +724,3 @@ struct StreamError {
     #[serde(default)]
     message: Option<String>,
 }
-
-

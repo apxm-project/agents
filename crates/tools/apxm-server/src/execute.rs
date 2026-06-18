@@ -310,11 +310,14 @@ pub(crate) async fn run_air_inner(
     let raw_record = start_raw_execution_record(
         state,
         &execution_id,
-        workflow_id,
+        workflow_id.clone(),
         trace_id.clone(),
         session_id.as_deref(),
         session_dir.as_deref(),
     );
+    if let Some(record) = raw_record.as_ref() {
+        attach_runtime_run_metadata(&mut metadata, record, &trace_id)?;
+    }
     if raw_record.is_some() {
         state.run_event_bus.record(
             &execution_id,
@@ -455,11 +458,14 @@ pub(crate) async fn execute_stream(
     let raw_record = start_raw_execution_record(
         &state,
         &execution_id,
-        workflow_id,
+        workflow_id.clone(),
         trace_id.clone(),
         session_id.as_deref(),
         session_dir.as_deref(),
     );
+    if let Some(record) = raw_record.as_ref() {
+        attach_runtime_run_metadata(&mut grant_metadata, record, &trace_id)?;
+    }
     let tx_task = tx.clone();
     // Seed the per-session runtime ledger (turn caps / tool budgets / grants)
     // keyed by session_id and register the session→execution mapping, so the
@@ -775,6 +781,37 @@ fn attach_run_metadata(response: &mut ExecuteResponse, record: &ExecutionRecord,
     response.workflow_id = record.workflow_id.clone();
     response.run_root = record.run_root.clone();
     response.trace_id = Some(trace_id.to_string());
+}
+
+fn attach_runtime_run_metadata(
+    metadata: &mut HashMap<String, String>,
+    record: &ExecutionRecord,
+    trace_id: &str,
+) -> Result<(), ApiError> {
+    metadata.insert(
+        apxm_runtime::metadata_keys::EXECUTION_ID.to_string(),
+        record.execution_id.clone(),
+    );
+    metadata.insert(
+        apxm_runtime::metadata_keys::WORKFLOW_ID.to_string(),
+        record.workflow_id.clone().unwrap_or_default(),
+    );
+    metadata.insert(
+        apxm_runtime::metadata_keys::TRACE_ID.to_string(),
+        trace_id.to_string(),
+    );
+    if let Some(run_root) = record.run_root.as_ref() {
+        std::fs::create_dir_all(run_root).map_err(|error| {
+            ApiError::internal_message(format!(
+                "failed to create run artifact root '{run_root}': {error}"
+            ))
+        })?;
+        metadata.insert(
+            apxm_runtime::metadata_keys::RUN_ROOT.to_string(),
+            run_root.clone(),
+        );
+    }
+    Ok(())
 }
 
 /// Resolve a per-tool auth binding — `{capability: connection_id}` —

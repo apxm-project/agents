@@ -35,4 +35,3 @@ impl ContentBlock {
         Self::Text { text: s.into() }
     }
 }
-

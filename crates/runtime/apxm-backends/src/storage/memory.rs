@@ -168,4 +168,3 @@ fn estimate_value_size(value: &Value) -> usize {
         Value::Token(_) => 8,
     }
 }
-

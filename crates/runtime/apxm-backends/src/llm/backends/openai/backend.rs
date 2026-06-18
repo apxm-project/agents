@@ -1000,6 +1000,3 @@ struct StreamFunctionDelta {
     #[serde(default)]
     arguments: Option<String>,
 }
-
-
-

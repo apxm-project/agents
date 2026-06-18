@@ -52,4 +52,3 @@ pub fn resolved_cache_salt_selector(node_attr: Option<&str>) -> Option<String> {
     }
     Some(trimmed.to_owned())
 }
-

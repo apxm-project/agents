@@ -266,7 +266,12 @@ mod tests {
         let cards = catalogue();
         let visible = VisibleSet::from_imports(["support", "engineering", "docs"]);
 
-        let matches = rank("review frontend hooks and module boundaries", &cards, &visible, 3);
+        let matches = rank(
+            "review frontend hooks and module boundaries",
+            &cards,
+            &visible,
+            3,
+        );
 
         assert_eq!(matches[0].skill_id, "architecture_review");
         assert!(matches.iter().all(|m| m.skill_id != "data_viz"));
@@ -277,14 +282,29 @@ mod tests {
         let cards = catalogue();
         let visible = VisibleSet::from_imports(["support", "engineering", "docs", "analysis"]);
         let cases = [
-            ("prioritize incoming bug report by severity", "ticket_triage"),
-            ("review module boundaries and frontend composability", "architecture_review"),
-            ("look for vulnerabilities and unsafe inputs", "security_scan"),
+            (
+                "prioritize incoming bug report by severity",
+                "ticket_triage",
+            ),
+            (
+                "review module boundaries and frontend composability",
+                "architecture_review",
+            ),
+            (
+                "look for vulnerabilities and unsafe inputs",
+                "security_scan",
+            ),
             ("write a changelog from merged commits", "release_notes"),
             ("make a chart of latency measurements", "data_viz"),
-            ("check hooks composition and implementation structure", "architecture_review"),
+            (
+                "check hooks composition and implementation structure",
+                "architecture_review",
+            ),
             ("classify GitHub issues into owner buckets", "ticket_triage"),
-            ("scan dependencies for secret handling risks", "security_scan"),
+            (
+                "scan dependencies for secret handling risks",
+                "security_scan",
+            ),
             ("summarize pull requests for a release", "release_notes"),
             ("visualize benchmark results as graphs", "data_viz"),
         ];

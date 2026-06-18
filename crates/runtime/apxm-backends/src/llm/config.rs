@@ -138,4 +138,3 @@ pub struct DockerConfig {
     /// Number of GPUs for tensor parallelism.
     pub tensor_parallel: Option<usize>,
 }
-

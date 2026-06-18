@@ -43,4 +43,3 @@ pub fn generate_artifact_operation_kind_cases() -> String {
     }
     output
 }
-

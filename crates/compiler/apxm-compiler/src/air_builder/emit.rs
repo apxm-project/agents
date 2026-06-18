@@ -1356,4 +1356,3 @@ fn sanitize_symbol_name(name: &str) -> String {
         format!("g_{symbol}")
     }
 }
-

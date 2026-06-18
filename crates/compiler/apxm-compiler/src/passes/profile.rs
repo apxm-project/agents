@@ -217,4 +217,3 @@ fn weighted_avg_f64(a: f64, w_a: u64, b: f64, w_b: u64) -> f64 {
     }
     (a * w_a as f64 + b * w_b as f64) / total as f64
 }
-

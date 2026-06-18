@@ -10,8 +10,8 @@
 //! - `agent_route`   (optional): set to "auto" to let APXM select a profile.
 //! - `required_capabilities` / `preferred_profiles` (optional): route hints.
 //! - `mode`          (optional): agent mode to set after spawn (e.g. "architect")
-//! - `model`         (optional): model override (e.g. "claude-sonnet-4")
-//! - `cwd`           (optional): working directory for the agent subprocess
+//! - `model`         (optional): model override selected by the profile
+//! - `cwd`           (optional): working directory for local external agents
 //! - `capabilities`  (optional): list of capabilities
 //! - `goals`         (optional): initial goals
 
@@ -25,11 +25,13 @@ use crate::agent_router::{
 };
 use crate::constants::env as runtime_env;
 use crate::metadata_keys as metadata;
+use crate::process_table::AgentSpawnContext;
 use apxm_core::apxm_op;
 use apxm_core::constants::graph::attrs as graph_attrs;
 use apxm_core::constants::runtime::context_stack as context_stack_consts;
 use apxm_core::constants::runtime::{belief_keys, response_keys};
 use apxm_core::error::RuntimeError;
+use apxm_core::paths::session_node_dir_name;
 use apxm_core::types::aam::{AamContext, CapabilityProjection, GoalProjection};
 use apxm_core::types::goal::GoalStatus;
 use apxm_core::types::{Number, ProcessSpawnMetric, SpawnedProcessKind};
@@ -133,7 +135,9 @@ pub async fn execute(ctx: &ExecutionContext, node: &Node, _inputs: Vec<Value>) -
         .and_then(|decision| decision.profile.clone())
         .or(initial_profile);
 
-    // When profile is present or APXM selected one, spawn an ACP subprocess.
+    // When profile is present or APXM selected one, spawn an external ACP
+    // process through the configured adapter. In production this may be a
+    // runner job, not a server-local subprocess.
     if let Some(profile_name) = &profile {
         let spawn_start = std::time::Instant::now();
         let spawner = match ctx.process_table.agent_spawner().await {
@@ -210,13 +214,14 @@ pub async fn execute(ctx: &ExecutionContext, node: &Node, _inputs: Vec<Value>) -
         // Project current AAM state into AamContext for the spawned agent
         let aam_context = project_aam_context(ctx, node.id, profile_name);
 
-        // Build generic APXM-owned env for the agent subprocess. Adapter-specific
+        // Build generic APXM-owned env for the external agent. Adapter-specific
         // environment belongs in the APXM ACP profile, not in runtime.
         let mut extra_env = std::collections::HashMap::new();
         if let Some(ref ws) = node_workspace {
             let ws_str = ws.to_string_lossy().into_owned();
             extra_env.insert(runtime_env::APXM_NODE_WORKSPACE.to_string(), ws_str);
         }
+        let spawn_context = build_agent_spawn_context(ctx, node, node_workspace.as_ref())?;
 
         let session = spawner
             .spawn_external(
@@ -226,11 +231,12 @@ pub async fn execute(ctx: &ExecutionContext, node: &Node, _inputs: Vec<Value>) -
                 mode.as_deref(),
                 model.as_deref(),
                 &aam_context,
+                &spawn_context,
                 &extra_env,
             )
             .await?;
 
-        // Register the session — if this fails, shut down the subprocess to avoid leaking it
+        // Register the session returned by the adapter.
         let process_id = ctx
             .process_table
             .register_external(
@@ -348,7 +354,7 @@ pub async fn execute(ctx: &ExecutionContext, node: &Node, _inputs: Vec<Value>) -
             execution_id = %ctx.execution_id,
             agent_name = %agent_name,
             profile = %profile_name,
-            "SPAWN_AGENT: ACP subprocess spawned and registered in ProcessTable"
+            "SPAWN_AGENT: external ACP agent spawned and registered in ProcessTable"
         );
     } else {
         // No profile — register as a local process for tracking
@@ -476,6 +482,104 @@ pub async fn execute(ctx: &ExecutionContext, node: &Node, _inputs: Vec<Value>) -
     );
 
     Ok(Value::Object(agent_info))
+}
+
+fn build_agent_spawn_context(
+    ctx: &ExecutionContext,
+    node: &Node,
+    node_workspace: Option<&PathBuf>,
+) -> Result<AgentSpawnContext> {
+    let node_name = node
+        .metadata
+        .name
+        .clone()
+        .unwrap_or_else(|| format!("node_{}", node.id));
+    let node_dir_name = node_workspace
+        .and_then(|path| path.file_name())
+        .and_then(|name| name.to_str())
+        .map(ToOwned::to_owned)
+        .unwrap_or_else(|| session_node_dir_name(node.id, &node_name));
+    let node_artifact_dir = format!(
+        "{}/{}",
+        apxm_core::constants::session::files::NODES_DIR,
+        node_dir_name
+    );
+    let runner_artifact_dir = format!("{node_artifact_dir}/runner");
+    let context_ref = format!("{runner_artifact_dir}/context");
+    let workdir_ref = format!("{runner_artifact_dir}/workdir");
+
+    if let Some(run_root) = ctx.metadata.get(metadata::RUN_ROOT) {
+        let runner_dir = PathBuf::from(run_root).join(&runner_artifact_dir);
+        let context_dir = PathBuf::from(run_root).join(&context_ref);
+        let workdir_dir = PathBuf::from(run_root).join(&workdir_ref);
+        std::fs::create_dir_all(&context_dir).map_err(|error| RuntimeError::Operation {
+            op_type: node.op_type,
+            message: format!(
+                "Failed to create runner context directory '{}': {error}",
+                context_dir.display()
+            ),
+        })?;
+        std::fs::create_dir_all(&workdir_dir).map_err(|error| RuntimeError::Operation {
+            op_type: node.op_type,
+            message: format!(
+                "Failed to create runner workdir '{}': {error}",
+                workdir_dir.display()
+            ),
+        })?;
+        std::fs::create_dir_all(&runner_dir).map_err(|error| RuntimeError::Operation {
+            op_type: node.op_type,
+            message: format!(
+                "Failed to create runner artifact directory '{}': {error}",
+                runner_dir.display()
+            ),
+        })?;
+        if let Some(node_workspace) = node_workspace {
+            stage_runner_context_files(node_workspace, &context_dir).map_err(|error| {
+                RuntimeError::Operation {
+                    op_type: node.op_type,
+                    message: format!(
+                        "Failed to stage runner context from '{}' to '{}': {error}",
+                        node_workspace.display(),
+                        context_dir.display()
+                    ),
+                }
+            })?;
+        }
+    }
+
+    Ok(AgentSpawnContext {
+        execution_id: ctx
+            .metadata
+            .get(metadata::EXECUTION_ID)
+            .cloned()
+            .or_else(|| Some(ctx.execution_id.clone())),
+        workflow_id: ctx.metadata.get(metadata::WORKFLOW_ID).cloned(),
+        trace_id: ctx.metadata.get(metadata::TRACE_ID).cloned(),
+        session_id: ctx.session_id.clone(),
+        session_dir: ctx.metadata.get(metadata::SESSION_DIR).cloned(),
+        run_root: ctx.metadata.get(metadata::RUN_ROOT).cloned(),
+        node_id: node.id,
+        node_name: Some(node_name),
+        node_workspace: node_workspace.map(|path| path.to_string_lossy().into_owned()),
+        node_artifact_dir: Some(node_artifact_dir),
+        runner_artifact_dir: Some(runner_artifact_dir),
+        context_ref: Some(context_ref),
+        workdir_ref: Some(workdir_ref),
+    })
+}
+
+fn stage_runner_context_files(
+    node_workspace: &std::path::Path,
+    context_dir: &std::path::Path,
+) -> std::io::Result<()> {
+    const CONTEXT_FILES: &[&str] = &["node.json", "AGENTS.md", "CLAUDE.md"];
+    for file_name in CONTEXT_FILES {
+        let source = node_workspace.join(file_name);
+        if source.is_file() {
+            std::fs::copy(&source, context_dir.join(file_name))?;
+        }
+    }
+    Ok(())
 }
 
 async fn resolve_spawn_agent_route(

@@ -453,4 +453,3 @@ fn truncate_string_in_place(value: &mut String, remaining: &mut usize) {
     value.truncate(boundary);
     *remaining = 0;
 }
-

@@ -324,4 +324,3 @@ impl RegistryPolicy {
         Ok(())
     }
 }
-

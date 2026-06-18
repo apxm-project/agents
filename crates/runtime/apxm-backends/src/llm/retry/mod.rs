@@ -188,4 +188,3 @@ impl Default for RetryStrategy {
         RetryStrategy::new(RetryConfig::default())
     }
 }
-

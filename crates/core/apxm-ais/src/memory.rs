@@ -84,4 +84,3 @@ impl fmt::Display for MemoryTier {
         write!(f, "{}", self.as_str())
     }
 }
-

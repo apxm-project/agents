@@ -244,4 +244,3 @@ fn classify(raw: serde_json::Value) -> Result<JsonRpcMessage, AcpError> {
         Err(AcpError::Protocol(format!("unclassifiable message: {raw}")))
     }
 }
-

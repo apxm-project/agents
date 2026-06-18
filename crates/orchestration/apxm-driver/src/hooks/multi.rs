@@ -290,4 +290,3 @@ impl ExecutionEventEmitter for MultiEmitter {
         });
     }
 }
-

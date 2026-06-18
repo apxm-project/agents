@@ -111,4 +111,3 @@ pub fn event_payload_registry() -> EventPayloadRegistry {
         .expect("ACP event kind should be a unique extension");
     registry
 }
-

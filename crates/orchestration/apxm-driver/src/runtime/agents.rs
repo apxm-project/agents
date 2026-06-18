@@ -105,6 +105,7 @@ impl AgentSpawner for AcpAgentSpawner {
         mode: Option<&str>,
         model: Option<&str>,
         aam_context: &AamContext,
+        _spawn_context: &apxm_runtime::process_table::AgentSpawnContext,
         extra_env: &std::collections::HashMap<String, String>,
     ) -> Result<Arc<tokio::sync::Mutex<dyn std::any::Any + Send + Sync>>, RuntimeError> {
         let registry = AgentRegistry::load();
@@ -209,7 +210,6 @@ impl AgentSpawner for AcpAgentSpawner {
         Ok(session_arc)
     }
 }
-
 
 // ─── AgentPrompter implementation ────────────────────────────────────────────
 

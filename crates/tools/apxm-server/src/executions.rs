@@ -2,6 +2,8 @@ use std::collections::HashSet;
 use std::path::Path as FsPath;
 use std::sync::Arc;
 
+use apxm_rollout::ThreadIndexEntry;
+
 use apxm_core::constants;
 use apxm_core::events::payload::{NodeMetricsPayload, NodeOutputPayload, RedactedContent};
 use apxm_core::events::{ApxmEvent, EventEmitter};
@@ -17,7 +19,7 @@ use crate::error::ApiError;
 use crate::execute::ExecuteResponse;
 use crate::execution_index::{ExecutionIndex, IndexEntry};
 use crate::helpers::now_ms;
-use crate::run_history::storage::{RunHistoryIndex, StoredRunRecord};
+use crate::run_history::storage::{RolloutThreadHideRow, RunHistoryIndex, StoredRunRecord};
 use crate::state::AppState;
 
 pub(crate) const EXECUTION_RECORDS_DIR: &str = "executions";
@@ -553,6 +555,24 @@ impl ExecutionStore {
             self.inner.remove(&id);
         }
         ids
+    }
+
+    /// Hide settled threads that appear only via the rollout-index fallback in
+    /// `GET /v1/runs` (no prior `runs` row). Called after [`Self::clear_settled_visible`].
+    pub(crate) fn hide_rollout_index_threads_for_clear(
+        &self,
+        entries: &[ThreadIndexEntry],
+    ) -> usize {
+        let rows: Vec<RolloutThreadHideRow<'_>> = entries
+            .iter()
+            .map(|e| RolloutThreadHideRow {
+                execution_id: e.thread_id.as_str(),
+                session_id: e.session_id.as_str(),
+                status: e.status.as_str(),
+                started_at: e.started_at.as_str(),
+            })
+            .collect();
+        self.run_history.hide_rollout_index_threads(&rows, now_ms())
     }
 
     pub(crate) fn list(&self) -> Vec<ExecutionRecord> {

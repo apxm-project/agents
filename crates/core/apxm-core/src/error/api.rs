@@ -330,4 +330,3 @@ impl std::error::Error for Error {
         self.related.first().map(|e| e as &dyn std::error::Error)
     }
 }
-

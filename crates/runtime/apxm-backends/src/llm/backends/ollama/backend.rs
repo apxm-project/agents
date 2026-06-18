@@ -537,4 +537,3 @@ struct OllamaTags {
 struct OllamaModel {
     name: String,
 }
-

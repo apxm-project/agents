@@ -133,4 +133,3 @@ impl AgentProfileRegistry {
         self.resolve(name).unwrap_or_else(|| &self.builtins[0])
     }
 }
-

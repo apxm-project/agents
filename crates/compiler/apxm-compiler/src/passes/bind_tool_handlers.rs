@@ -189,4 +189,3 @@ pub fn bind_python_handlers_to_dag(dag: &mut ExecutionDag) -> Result<usize> {
 
     Ok(annotated)
 }
-

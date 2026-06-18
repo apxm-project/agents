@@ -1319,6 +1319,11 @@ async fn skill_execute_writes_workflow_run_node_artifacts_and_exposes_run_node_d
         node_body["outputs"][0]["output"][SUMMARY_FIELD],
         FIXTURE_OUTPUT_SUMMARY
     );
+    assert_eq!(
+        node_body["output"][SUMMARY_FIELD],
+        FIXTURE_OUTPUT_SUMMARY,
+        "node detail must expose first-class output"
+    );
     assert!(node_body["artifacts"]["node_dir"].as_str().is_some());
     assert!(node_body["artifacts"]["output_json"].as_str().is_some());
 
@@ -1349,6 +1354,15 @@ async fn skill_execute_writes_workflow_run_node_artifacts_and_exposes_run_node_d
     assert!(
         artifact_paths.contains(&output_artifact),
         "artifact list must expose node output file: {artifact_paths:?}"
+    );
+
+    let (status, graph_body) =
+        get_json(app.clone(), &format!("/v1/runs/{execution_id}/graph")).await;
+    assert_eq!(status, StatusCode::OK, "run graph failed: {graph_body}");
+    assert_eq!(
+        graph_body["nodes"].as_array().expect("graph nodes").len(),
+        1,
+        "run graph must expose executed node"
     );
 
     let (status, artifact_body) = get_json(

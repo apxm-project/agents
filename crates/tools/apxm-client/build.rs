@@ -4,7 +4,10 @@ fn main() {
     println!("cargo:rerun-if-changed={}", spec_path.display());
 
     let spec_file = std::fs::File::open(&spec_path).unwrap_or_else(|error| {
-        panic!("failed to open OpenAPI spec {}: {error}", spec_path.display())
+        panic!(
+            "failed to open OpenAPI spec {}: {error}",
+            spec_path.display()
+        )
     });
     let spec: openapiv3::OpenAPI =
         serde_yaml::from_reader(spec_file).expect("OpenAPI spec parses as YAML");

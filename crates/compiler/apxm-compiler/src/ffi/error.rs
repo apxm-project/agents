@@ -99,4 +99,3 @@ pub fn collect_errors() -> Vec<Error> {
         })
         .collect()
 }
-

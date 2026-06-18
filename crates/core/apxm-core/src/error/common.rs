@@ -130,4 +130,3 @@ pub fn format_error(error: &dyn std::error::Error) -> String {
         })
         .collect()
 }
-

@@ -74,4 +74,3 @@ impl Edge {
         matches!(self.dependency_type, DependencyType::Control)
     }
 }
-

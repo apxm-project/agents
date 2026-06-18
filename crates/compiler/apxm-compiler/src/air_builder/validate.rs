@@ -581,8 +581,6 @@ fn levenshtein_at_most_1(a: &str, b: &str) -> bool {
     true
 }
 
-
-
 fn validate_node_refs(module: &AirModule) -> Result<(), AirError> {
     for node in &module.nodes {
         for (attr_key, attr_value) in &node.attributes {

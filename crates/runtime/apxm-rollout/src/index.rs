@@ -116,6 +116,26 @@ impl IndexDb {
         Ok(rows)
     }
 
+    /// Threads whose rollout `status` is not `running`.
+    ///
+    /// Used by `POST /v1/runs/clear` so index-only runs (visible via the `GET /v1/runs`
+    /// rollout-index fallback after restart) receive a run-history tombstone and disappear
+    /// from the operator list.
+    pub fn list_settled_threads(&self, limit: i64) -> Result<Vec<ThreadIndexEntry>, IndexError> {
+        let mut stmt = self.conn.prepare(
+            "SELECT thread_id, parent_thread_id, session_id, started_at, completed_at,
+                    status, agent_role, agent_code, file_path, line_count, file_bytes
+             FROM threads
+            WHERE LOWER(status) != 'running'
+            ORDER BY started_at DESC
+            LIMIT ?1",
+        )?;
+        let rows = stmt
+            .query_map(params![limit], row_to_entry)?
+            .collect::<Result<Vec<_>, _>>()?;
+        Ok(rows)
+    }
+
     pub fn list_by_session(&self, session_id: &str) -> Result<Vec<ThreadIndexEntry>, IndexError> {
         let mut stmt = self.conn.prepare(
             "SELECT thread_id, parent_thread_id, session_id, started_at, completed_at,

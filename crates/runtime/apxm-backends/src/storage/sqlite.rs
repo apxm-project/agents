@@ -491,4 +491,3 @@ fn blob_to_embedding(blob: &[u8]) -> Option<Vec<f32>> {
             .collect(),
     )
 }
-

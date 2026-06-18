@@ -220,4 +220,3 @@ impl fmt::Display for OrchestrationWakeOutcome {
         f.write_str(self.as_str())
     }
 }
-

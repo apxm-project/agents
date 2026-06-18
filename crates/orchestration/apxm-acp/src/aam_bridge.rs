@@ -87,4 +87,3 @@ pub fn render_session_params(
         (fields::MCP_SERVERS): mcp_servers_val,
     })
 }
-

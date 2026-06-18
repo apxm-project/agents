@@ -43,4 +43,3 @@ impl Drop for Context {
 
 unsafe impl Send for Context {}
 unsafe impl Sync for Context {}
-

@@ -46,4 +46,3 @@ fn normalize(s: &str) -> String {
     let trimmed = replaced.trim_matches('_');
     trimmed.to_ascii_uppercase()
 }
-

@@ -318,6 +318,10 @@ pub(crate) struct RunNodeDetail {
     pub(crate) op_type: Option<AISOperationType>,
     pub(crate) status: NodeStatus,
     pub(crate) duration_ms: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) input: Option<serde_json::Value>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) output: Option<serde_json::Value>,
     pub(crate) events: Vec<serde_json::Value>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub(crate) outputs: Vec<NodeOutputRecord>,
@@ -634,6 +638,13 @@ pub(crate) async fn list_runs(
 
 pub(crate) async fn clear_runs(State(state): State<AppState>) -> Json<ClearRunsResponse> {
     let cleared_ids = state.execution_store.clear_settled_visible();
+    let settled_index_threads = {
+        let index = state.rollout_index.lock().await;
+        index.list_settled_threads(50_000).unwrap_or_default()
+    };
+    let _ = state
+        .execution_store
+        .hide_rollout_index_threads_for_clear(&settled_index_threads);
     for id in &cleared_ids {
         state.run_event_bus.remove(id);
     }
@@ -1078,16 +1089,13 @@ fn build_graph(execution_id: &str, events: &[ApxmEvent]) -> RunGraph {
     let mut edges: Vec<RunGraphEdge> = Vec::new();
     let mut agent_codes: HashMap<u64, String> = HashMap::new();
     let mut tool_names: HashMap<u64, String> = HashMap::new();
+    let mut span_to_node: HashMap<String, u64> = HashMap::new();
 
     for event in events {
         if let Some(payload) = event.payload.downcast_ref::<AgentSpawnedPayload>() {
             agent_codes.insert(payload.node_id, payload.agent_code.clone());
         }
         if let Some(payload) = event.payload.downcast_ref::<ToolStartPayload>() {
-            // Tool events are not bound to a graph node id; fold them
-            // into the active op span via the event's parent_span_id
-            // is overkill here. For the graph view we still emit a
-            // pseudo node so observers can see the tool call.
             let node_id = u64::MAX - (tool_names.len() as u64);
             tool_names.insert(node_id, payload.name.clone());
             nodes.insert(
@@ -1103,11 +1111,33 @@ fn build_graph(execution_id: &str, events: &[ApxmEvent]) -> RunGraph {
                     completed_at_ms: None,
                     duration_ms: None,
                     layer: None,
-                    context: None,
+                    context: serde_json::to_value(&payload.args).ok(),
                 },
             );
+            if let Some(parent_span) = &event.meta.parent_span_id
+                && let Some(&from_node) = span_to_node.get(parent_span)
+            {
+                edges.push(RunGraphEdge {
+                    from: from_node,
+                    to: node_id,
+                    kind: "tool_invocation".to_string(),
+                });
+            }
+        }
+        if let Some(payload) = event.payload.downcast_ref::<ToolEndPayload>() {
+            for (tool_node_id, tool_name) in &tool_names {
+                if tool_name == &payload.name
+                    && let Some(node) = nodes.get_mut(tool_node_id)
+                    && matches!(node.status, NodeStatus::Running)
+                {
+                    node.completed_at_ms = Some(event.meta.timestamp.timestamp_millis());
+                    node.status = NodeStatus::Succeeded;
+                    break;
+                }
+            }
         }
         if let Some(payload) = event.payload.downcast_ref::<OperationStartPayload>() {
+            span_to_node.insert(event.meta.span_id.clone(), payload.node_id);
             let kind = classify_op(payload.op_type);
             nodes
                 .entry(payload.node_id)
@@ -1551,10 +1581,18 @@ fn build_node_detail(
     let mut op_type: Option<AISOperationType> = None;
     let mut status = NodeStatus::Pending;
     let mut duration_ms: Option<u64> = None;
+    let mut input: Option<serde_json::Value> = None;
     let mut agent: Option<RunNodeAgentDetail> = None;
     let mut tool: Option<RunNodeToolDetail> = None;
     let mut filtered: Vec<serde_json::Value> = Vec::new();
     let mut seen = false;
+    let mut span_to_node: HashMap<String, u64> = HashMap::new();
+
+    for event in events {
+        if let Some(payload) = event.payload.downcast_ref::<OperationStartPayload>() {
+            span_to_node.insert(event.meta.span_id.clone(), payload.node_id);
+        }
+    }
 
     for event in events {
         let matches_node = if let Some(payload) =
@@ -1563,6 +1601,7 @@ fn build_node_detail(
             if payload.node_id == node_id {
                 op_type = Some(payload.op_type);
                 status = NodeStatus::Running;
+                input = payload.context.clone();
                 true
             } else {
                 false
@@ -1601,19 +1640,32 @@ fn build_node_detail(
         }
     }
 
-    // Tool detail: pull from the first ToolStart whose surrounding
-    // span matches `node_id`. The cheap approximation here is to scan
-    // for ToolStart/ToolEnd pairs in the event stream and bind them
-    // when the node has no other identity (e.g. an INV_TOOL node).
+    let pseudo_tool_index = pseudo_tool_index_for_node(node_id);
+    if pseudo_tool_index.is_some() {
+        seen = true;
+    }
+
+    let mut tool_index = 0usize;
     for event in events {
-        if let Some(payload) = event.payload.downcast_ref::<ToolStartPayload>()
-            && tool.is_none()
-        {
-            tool = Some(RunNodeToolDetail {
-                tool_name: payload.name.clone(),
-                args: serde_json::to_value(&payload.args).ok(),
-                result: None,
-            });
+        if let Some(payload) = event.payload.downcast_ref::<ToolStartPayload>() {
+            let parent_node = event
+                .meta
+                .parent_span_id
+                .as_ref()
+                .and_then(|span| span_to_node.get(span).copied());
+            let binds_pseudo = pseudo_tool_index == Some(tool_index);
+            let binds_real = parent_node == Some(node_id);
+            if (binds_pseudo || binds_real) && tool.is_none() {
+                tool = Some(RunNodeToolDetail {
+                    tool_name: payload.name.clone(),
+                    args: serde_json::to_value(&payload.args).ok(),
+                    result: None,
+                });
+                if input.is_none() {
+                    input = serde_json::to_value(&payload.args).ok();
+                }
+            }
+            tool_index += 1;
         }
         if let Some(payload) = event.payload.downcast_ref::<ToolEndPayload>()
             && let Some(ref mut existing) = tool
@@ -1661,12 +1713,16 @@ fn build_node_detail(
     let artifacts =
         record.and_then(|record| run_node_artifact_refs(record, node_id, &outputs, &metrics));
 
+    let output = synthesize_node_output(&outputs, tool.as_ref());
+
     Some(RunNodeDetail {
         execution_id: execution_id.to_string(),
         node_id,
         op_type,
         status,
         duration_ms,
+        input,
+        output,
         events: filtered,
         outputs,
         metrics,
@@ -1674,6 +1730,24 @@ fn build_node_detail(
         agent,
         tool,
     })
+}
+
+fn pseudo_tool_index_for_node(node_id: u64) -> Option<usize> {
+    if node_id > u64::MAX - 10_000 {
+        Some((u64::MAX - node_id) as usize)
+    } else {
+        None
+    }
+}
+
+fn synthesize_node_output(
+    outputs: &[NodeOutputRecord],
+    tool: Option<&RunNodeToolDetail>,
+) -> Option<serde_json::Value> {
+    if let Some(latest) = outputs.last() {
+        return serde_json::to_value(&latest.output).ok();
+    }
+    tool.and_then(|tool| tool.result.clone())
 }
 
 fn run_node_artifact_refs(

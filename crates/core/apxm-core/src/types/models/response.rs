@@ -81,4 +81,3 @@ impl LLMResponse {
         self.finish_reason == FinishReason::ToolUse || self.has_tool_calls()
     }
 }
-

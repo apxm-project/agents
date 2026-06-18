@@ -68,4 +68,3 @@ impl fmt::Display for UnknownProtocol {
 }
 
 impl std::error::Error for UnknownProtocol {}
-

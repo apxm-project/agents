@@ -65,6 +65,7 @@
 use std::path::Path;
 use std::sync::{Arc, Mutex};
 
+use chrono::DateTime;
 use rusqlite::{Connection, OptionalExtension, params};
 use serde::Serialize;
 
@@ -170,6 +171,17 @@ pub(crate) struct RunHistoryIndex {
     db: Option<Arc<Mutex<Connection>>>,
 }
 
+/// Minimal identity for a rollout thread row when inserting a hidden tombstone
+/// (threads that appear in `GET /v1/runs` via the index fallback but have no
+/// prior `runs` row).
+#[derive(Debug, Clone, Copy)]
+pub(crate) struct RolloutThreadHideRow<'a> {
+    pub execution_id: &'a str,
+    pub session_id: &'a str,
+    pub status: &'a str,
+    pub started_at: &'a str,
+}
+
 impl RunHistoryIndex {
     pub(crate) fn disabled() -> Self {
         Self { db: None }
@@ -251,6 +263,62 @@ impl RunHistoryIndex {
         );
         let _ = tx.commit();
         ids
+    }
+
+    /// Upsert hidden tombstones for settled rollout-index threads so
+    /// [`crate::executions::ExecutionStore::is_hidden`] returns true for
+    /// index-only listings after `POST /v1/runs/clear`.
+    pub(crate) fn hide_rollout_index_threads(
+        &self,
+        threads: &[RolloutThreadHideRow<'_>],
+        hidden_at_ms: u64,
+    ) -> usize {
+        let Some(db) = &self.db else {
+            return 0;
+        };
+        let Ok(conn) = db.lock() else {
+            return 0;
+        };
+        let mut applied = 0usize;
+        for row in threads {
+            if row.status.eq_ignore_ascii_case("running") {
+                continue;
+            }
+            let started_ms = DateTime::parse_from_rfc3339(row.started_at)
+                .map(|ts| ts.timestamp_millis())
+                .unwrap_or(0);
+            let status_db = if row.status.eq_ignore_ascii_case("failed") {
+                "failed"
+            } else {
+                "succeeded"
+            };
+            let hidden = hidden_at_ms as i64;
+            if let Ok(n) = conn.execute(
+                r#"INSERT INTO runs (
+                    execution_id, workflow_id, skill_id, skill_version, session_id, session_dir,
+                    run_root, trace_id, status, started_at_ms, finished_at_ms, duration_ms,
+                    input_tokens, output_tokens, total_tokens, cost_usd, retention_class,
+                    hidden_at_ms, updated_at_ms
+                 ) VALUES (
+                    ?1, NULL, '', '', ?2, '', NULL, NULL, ?3, ?4, NULL, NULL,
+                    0, 0, 0, NULL, 'standard', ?5, ?5
+                 )
+                 ON CONFLICT(execution_id) DO UPDATE SET
+                    hidden_at_ms = excluded.hidden_at_ms,
+                    updated_at_ms = excluded.updated_at_ms
+                  WHERE runs.hidden_at_ms IS NULL"#,
+                params![
+                    row.execution_id,
+                    row.session_id,
+                    status_db,
+                    started_ms,
+                    hidden
+                ],
+            ) {
+                applied += n;
+            }
+        }
+        applied
     }
 
     pub(crate) fn upsert_row(&self, row: &StoredRunRecord) {

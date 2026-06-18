@@ -319,4 +319,3 @@ impl<C: Clock> RateLimiter<C> {
             .map(|state| state.bucket.available_tokens(now))
     }
 }
-

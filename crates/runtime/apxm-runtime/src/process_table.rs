@@ -141,6 +141,28 @@ impl AgentPromptResponse {
     }
 }
 
+/// Structured execution/node context required to spawn an external agent.
+///
+/// Production runner-backed spawners need durable run observability paths and
+/// node identity; passing only `cwd` and ad-hoc environment strings is not
+/// sufficient for a fail-closed remote execution boundary.
+#[derive(Debug, Clone, Default)]
+pub struct AgentSpawnContext {
+    pub execution_id: Option<String>,
+    pub workflow_id: Option<String>,
+    pub trace_id: Option<String>,
+    pub session_id: Option<String>,
+    pub session_dir: Option<String>,
+    pub run_root: Option<String>,
+    pub node_id: u64,
+    pub node_name: Option<String>,
+    pub node_workspace: Option<String>,
+    pub node_artifact_dir: Option<String>,
+    pub runner_artifact_dir: Option<String>,
+    pub context_ref: Option<String>,
+    pub workdir_ref: Option<String>,
+}
+
 /// Trait for spawning external agent processes.
 ///
 /// Implemented by apxm-acp (which has access to AcpSession, AgentRegistry, etc.)
@@ -150,9 +172,11 @@ pub trait AgentSpawner: Send + Sync {
     /// Return APXM route candidates currently available to this spawner.
     fn route_candidates(&self) -> Vec<AgentRouteCandidate>;
 
-    /// Spawn an external agent subprocess.
+    /// Spawn an external agent process or remote runner job.
     ///
-    /// Returns the session handle (type-erased AcpSession) wrapped in Arc<Mutex>.
+    /// Returns the session handle wrapped in Arc<Mutex>. The concrete handle is
+    /// adapter-specific, for example a local ACP session or a remote runner job
+    /// session.
     async fn spawn_external(
         &self,
         agent_name: &str,
@@ -161,6 +185,7 @@ pub trait AgentSpawner: Send + Sync {
         mode: Option<&str>,
         model: Option<&str>,
         aam_context: &apxm_core::types::aam::AamContext,
+        spawn_context: &AgentSpawnContext,
         extra_env: &std::collections::HashMap<String, String>,
     ) -> Result<Arc<tokio::sync::Mutex<dyn std::any::Any + Send + Sync>>, RuntimeError>;
 }

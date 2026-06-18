@@ -246,4 +246,3 @@ pub fn session_node_dir_name(node_id: u64, node_name: &str) -> String {
 
     format!("{node_id:02}_{suffix}")
 }
-

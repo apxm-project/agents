@@ -273,4 +273,3 @@ fn no_healthy_backends_error(candidates: &[String], model_filter: Option<&str>) 
         anyhow::anyhow!("no healthy backends; candidates = {:?}", candidates)
     }
 }
-

@@ -103,4 +103,3 @@ pub fn validate_model_allowlist(module: &AirModule, allowlist: Option<&Vec<Strin
         Span::new("<graph>".to_string(), 1, 1, 0),
     ))))
 }
-

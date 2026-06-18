@@ -43,4 +43,3 @@ fn duration_ms(value: Option<&str>, default_ms: u64) -> Duration {
         .map(Duration::from_millis)
         .unwrap_or_else(|| Duration::from_millis(default_ms))
 }
-

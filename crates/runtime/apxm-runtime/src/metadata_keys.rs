@@ -1,6 +1,15 @@
 //! Execution metadata keys for runtime producers and readers.
 
 pub const PARENT_EXECUTION_ID: &str = "parent_execution_id";
+/// Server-owned execution id for the top-level run record. Distinct from the
+/// runtime context id for hosts that wrap runtime execution in an HTTP run.
+pub const EXECUTION_ID: &str = "execution_id";
+/// Workflow id used to resolve the durable run artifact root.
+pub const WORKFLOW_ID: &str = "workflow_id";
+/// Durable run artifact root, usually `$APXM_RUNS_ROOT/{workflow_id}/{execution_id}`.
+pub const RUN_ROOT: &str = "run_root";
+/// End-to-end trace id stamped by the HTTP/server layer.
+pub const TRACE_ID: &str = "trace_id";
 /// Execution-scoped key the host (apxm-server) stamps so a parked execution can
 /// release/reacquire its cross-execution admission slot via the admission registry.
 pub const ADMISSION_ID: &str = "admission_id";

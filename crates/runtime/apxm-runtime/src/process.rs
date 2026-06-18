@@ -35,9 +35,9 @@ pub enum ProcessKind {
     Local,
     /// External ACP agent subprocess (Claude, Codex, Gemini, etc.).
     ///
-    /// The session is type-erased because apxm-runtime cannot depend on
-    /// apxm-acp. The concrete type is `Arc<Mutex<AcpSession>>` — handlers
-    /// with access to both crates perform the downcast.
+    /// The session is type-erased because apxm-runtime cannot depend on a
+    /// concrete host. Local driver mode stores an ACP session; runner-backed
+    /// server mode stores a remote runner session handle.
     External {
         /// Type-erased ACP session handle.
         session: Arc<Mutex<dyn std::any::Any + Send + Sync>>,

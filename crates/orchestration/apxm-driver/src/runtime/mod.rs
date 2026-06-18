@@ -32,7 +32,11 @@ use workflow_spawn::DriverWorkflowSpawner;
 /// unrecognized values.
 fn parse_routing_target(target: Option<&str>) -> apxm_runtime::RoutingTarget {
     use apxm_runtime::RoutingTarget;
-    match target.map(str::trim).map(str::to_ascii_lowercase).as_deref() {
+    match target
+        .map(str::trim)
+        .map(str::to_ascii_lowercase)
+        .as_deref()
+    {
         Some("cost") => RoutingTarget::Cost,
         Some("latency") => RoutingTarget::Latency,
         Some("quality") => RoutingTarget::Quality,

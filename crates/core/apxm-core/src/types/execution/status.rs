@@ -253,4 +253,3 @@ fn percentile_u128(mut values: Vec<u128>, percentile: f64) -> u128 {
     let index = ((values.len() - 1) as f64 * percentile).ceil() as usize;
     values[index.min(values.len() - 1)]
 }
-

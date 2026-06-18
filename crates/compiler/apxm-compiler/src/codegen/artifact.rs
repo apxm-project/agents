@@ -464,4 +464,3 @@ impl<'a> BinaryReader<'a> {
         })
     }
 }
-
