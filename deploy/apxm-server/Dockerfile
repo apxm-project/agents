@@ -76,11 +76,18 @@ WORKDIR /src
 COPY . /src
 
 # Build only what the server needs. -p apxm-server pulls apxm-compiler
-# transitively, so MLIR/LLVM 22 must be present (above). Expect ~30 GB
-# of intermediate build artifacts under /build-target — make sure the
-# Docker engine's working volume has enough free space, otherwise
-# rustc fails with "No space left on device" during the final link.
-RUN cargo build --release -p apxm-server
+# transitively, so MLIR/LLVM 22 must be present (above). BuildKit cache mounts
+# keep Cargo registry/git and target artifacts warm across source changes; the
+# final binary and compiler shared library are copied into /artifacts so the
+# runtime stage can COPY them from a normal image layer.
+RUN --mount=type=cache,id=apxm-server-cargo-registry,target=/root/.cargo/registry \
+    --mount=type=cache,id=apxm-server-cargo-git,target=/root/.cargo/git \
+    --mount=type=cache,id=apxm-server-target,target=/build-target \
+    mkdir -p /artifacts \
+    && cargo build --release -p apxm-server \
+    && cp /build-target/release/apxm-server /artifacts/apxm-server \
+    && cp /build-target/release/build/apxm-compiler-*/out/build/lib/libapxm_compiler_c.so \
+        /artifacts/libapxm_compiler_c.so
 
 # ── Stage 2 — runtime ──────────────────────────────────────────────
 # Must match the builder's glibc (Ubuntu 24.04 ships glibc 2.39, which
@@ -110,11 +117,9 @@ COPY --from=builder /opt/conda/envs/apxm/lib /opt/conda/envs/apxm/lib
 # The compiler crate emits libapxm_compiler_c.so under its cargo build
 # output dir. The binary has no RPATH set, so the .so must land on
 # LD_LIBRARY_PATH (already pointed at the conda lib dir above).
-COPY --from=builder \
-    /build-target/release/build/apxm-compiler-*/out/build/lib/libapxm_compiler_c.so \
-    /opt/conda/envs/apxm/lib/
+COPY --from=builder /artifacts/libapxm_compiler_c.so /opt/conda/envs/apxm/lib/
 
-COPY --from=builder /build-target/release/apxm-server /usr/local/bin/apxm-server
+COPY --from=builder /artifacts/apxm-server /usr/local/bin/apxm-server
 
 USER apxm
 WORKDIR /apxm-home
