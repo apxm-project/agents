@@ -182,6 +182,192 @@ paths:
               schema:
                 $ref: "#/components/schemas/TypedError"
 
+  /v1/runs/{execution_id}/summary:
+    get:
+      operationId: getRunSummary
+      summary: Single run usage/timing summary
+      tags: [runs]
+      parameters:
+        - name: execution_id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Run summary
+        "404":
+          description: Run not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TypedError"
+
+  /v1/runs/{execution_id}/graph:
+    get:
+      operationId: getRunGraph
+      summary: Run graph reconstructed from events
+      tags: [runs]
+      parameters:
+        - name: execution_id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Run graph
+        "404":
+          description: Run not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TypedError"
+
+  /v1/runs/{execution_id}/nodes/{node_id}:
+    get:
+      operationId: getRunNode
+      summary: Per-node outputs, metrics, events, and artifact refs
+      tags: [runs]
+      parameters:
+        - name: execution_id
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: node_id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Node detail
+        "404":
+          description: Run or node not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TypedError"
+
+  /v1/runs/{execution_id}/artifacts:
+    get:
+      operationId: listRunArtifacts
+      summary: Materialized run-root files
+      tags: [runs]
+      parameters:
+        - name: execution_id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Artifact list with relative paths
+        "404":
+          description: Run or artifact root not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TypedError"
+
+  /v1/runs/{execution_id}/artifacts/{artifact_path}:
+    get:
+      operationId: getRunArtifact
+      summary: Materialized run artifact by greedy relative path
+      description: >
+        The implementation accepts a greedy relative artifact path returned by
+        the artifact list endpoint and rejects absolute paths and traversal.
+      tags: [runs]
+      parameters:
+        - name: execution_id
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: artifact_path
+          in: path
+          required: true
+          schema:
+            type: string
+          description: Greedy relative artifact path, for example nodes/01_node/output.json.
+      responses:
+        "200":
+          description: Artifact bytes
+        "404":
+          description: Run or artifact not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TypedError"
+
+  /v1/runs/{execution_id}/events:
+    get:
+      operationId: getRunEvents
+      summary: Replayed run events
+      tags: [runs]
+      parameters:
+        - name: execution_id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Run event page
+        "404":
+          description: Run not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TypedError"
+
+  /v1/runs/{execution_id}/events/stream:
+    get:
+      operationId: streamRunEvents
+      summary: Run event SSE stream with replay support
+      tags: [runs]
+      parameters:
+        - name: execution_id
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: since
+          in: query
+          required: false
+          schema:
+            type: integer
+      responses:
+        "200":
+          description: text/event-stream of run events
+
+  /v1/runs/{execution_id}/blobs/{blob_ref}:
+    get:
+      operationId: getRunBlob
+      summary: Large blob referenced from run events
+      tags: [runs]
+      parameters:
+        - name: execution_id
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: blob_ref
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Blob bytes
+        "404":
+          description: Run or blob not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TypedError"
+
   /v1/runs/{execution_id}/cancel:
     post:
       operationId: cancelRun
@@ -202,6 +388,72 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/TypedError"
+
+  /v1/runs/{execution_id}/rerun:
+    post:
+      operationId: rerunRun
+      summary: Re-run a completed execution
+      tags: [runs]
+      parameters:
+        - name: execution_id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Re-run accepted
+        "404":
+          description: Run not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TypedError"
+
+  /v1/runs/{execution_id}/rerun-from-node:
+    post:
+      operationId: rerunRunFromNode
+      summary: Re-run a completed execution from one node
+      tags: [runs]
+      parameters:
+        - name: execution_id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Re-run accepted
+        "404":
+          description: Run not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TypedError"
+
+  /v1/workflows/{workflow_id}/runs:
+    get:
+      operationId: listWorkflowRuns
+      summary: Workflow-scoped run history
+      tags: [runs]
+      parameters:
+        - name: workflow_id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Workflow run list
+
+  /v1/runs/reindex:
+    post:
+      operationId: reindexRuns
+      summary: Rebuild run-history DB from run-root artifacts
+      tags: [runs]
+      responses:
+        "200":
+          description: Reindex result
 
   /v1/sessions/{session_id}/status:
     get:
