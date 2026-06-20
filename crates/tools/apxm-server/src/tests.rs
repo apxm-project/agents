@@ -1320,8 +1320,7 @@ async fn skill_execute_writes_workflow_run_node_artifacts_and_exposes_run_node_d
         FIXTURE_OUTPUT_SUMMARY
     );
     assert_eq!(
-        node_body["output"][SUMMARY_FIELD],
-        FIXTURE_OUTPUT_SUMMARY,
+        node_body["output"][SUMMARY_FIELD], FIXTURE_OUTPUT_SUMMARY,
         "node detail must expose first-class output"
     );
     assert!(node_body["artifacts"]["node_dir"].as_str().is_some());

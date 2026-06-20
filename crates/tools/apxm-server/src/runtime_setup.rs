@@ -46,9 +46,7 @@ pub(crate) async fn build_runtime_with_router(
             .await;
         info!("configured remote runner-backed ACP agent spawner/prompter");
     } else {
-        info!(
-            "APXM_RUNNER_URL is not set; runner-backed ACP agent profiles are unavailable"
-        );
+        info!("APXM_RUNNER_URL is not set; runner-backed ACP agent profiles are unavailable");
     }
     runtime.init_model_router(ModelRouterConfig::default())?;
     // Professional-agent middleware chain (dispatcher chokepoint). A generous

@@ -4,4 +4,6 @@
 //! handlers can share it without taking a dependency on the compiler crate.
 //! This module re-exports the canonical helpers.
 
-pub use apxm_core::utils::template::{is_numeric_placeholder, parse_placeholder_names};
+pub use apxm_core::utils::template::{
+    is_numeric_placeholder, parse_placeholder_names, placeholder_root,
+};

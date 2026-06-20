@@ -1,4 +1,4 @@
-use crate::template::{is_numeric_placeholder, parse_placeholder_names};
+use crate::template::{is_numeric_placeholder, parse_placeholder_names, placeholder_root};
 use crate::{AirError, AirModule};
 use apxm_core::constants::graph::attrs as graph_attrs;
 use apxm_core::types::{DependencyType, Value, get_operation_spec};
@@ -494,7 +494,8 @@ fn check_template_placeholders(
     param_names: &HashSet<&str>,
 ) -> Result<(), AirError> {
     for placeholder in parse_placeholder_names(template) {
-        if is_numeric_placeholder(placeholder) {
+        let root = placeholder_root(placeholder);
+        if is_numeric_placeholder(root) {
             return Err(AirError::Validation(format!(
                 "node '{}' (id={}, op={}, attr={}): numeric placeholder \
                  '{{{}}}' is not allowed in templates; use a named reference \
@@ -503,10 +504,10 @@ fn check_template_placeholders(
                 node.name, node.id, node.op, attr_key, placeholder
             )));
         }
-        if input_set.contains(placeholder) || param_names.contains(placeholder) {
+        if input_set.contains(root) || param_names.contains(root) {
             continue;
         }
-        let suggestion = nearest_name(placeholder, input_set, param_names);
+        let suggestion = nearest_name(root, input_set, param_names);
         let hint = match suggestion {
             Some(s) => format!(" (did you mean '{{{}}}'?)", s),
             None => String::new(),
@@ -579,6 +580,54 @@ fn levenshtein_at_most_1(a: &str, b: &str) -> bool {
         }
     }
     true
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::air_builder::{AirModule, AirNode, AirParam};
+    use apxm_core::types::AISOperationType;
+    use std::collections::HashMap;
+
+    fn inv_tool_with_params(params_json: &str) -> AirModule {
+        let mut attributes = HashMap::new();
+        attributes.insert(
+            graph_attrs::CAPABILITY.to_string(),
+            Value::String("telegram.send_message".to_string()),
+        );
+        attributes.insert(
+            graph_attrs::PARAMS_JSON.to_string(),
+            Value::String(params_json.to_string()),
+        );
+        AirModule {
+            name: "wf".to_string(),
+            nodes: vec![AirNode {
+                id: 1,
+                name: "send".to_string(),
+                op: AISOperationType::InvTool,
+                attributes,
+            }],
+            edges: vec![],
+            parameters: vec![AirParam {
+                name: "data".to_string(),
+                type_name: "json".to_string(),
+            }],
+            metadata: HashMap::new(),
+        }
+    }
+
+    #[test]
+    fn dotted_placeholder_resolves_against_parameter_root() {
+        let module = inv_tool_with_params(r#"{"chat_id":"{data.event.subject}"}"#);
+        validate_module(&module).expect("dotted selector should resolve through data parameter");
+    }
+
+    #[test]
+    fn dotted_placeholder_rejects_unknown_root() {
+        let module = inv_tool_with_params(r#"{"chat_id":"{event.subject}"}"#);
+        let err = validate_module(&module).expect_err("unknown dotted root should fail");
+        assert!(err.to_string().contains("{event.subject}"));
+    }
 }
 
 fn validate_node_refs(module: &AirModule) -> Result<(), AirError> {

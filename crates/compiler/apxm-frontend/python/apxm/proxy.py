@@ -133,22 +133,25 @@ class GraphRecorder:
 
         pairs: list[tuple[str, NodeRef]] = []
         seen: set[str] = set()
+        seen_inputs: set[str] = set()
 
         for match in _TEMPLATE_PLACEHOLDER_RE.finditer(template):
             var_name = match.group(1)
             if var_name in seen:
                 continue
             seen.add(var_name)
+            root_name = var_name.split(".", 1)[0]
 
             # Compile parameters and runtime-resolved dotted paths (e.g.
             # `{data.event.subject}`) are resolved at execute time against
-            # module.parameters / the `data` envelope — skip wiring.
-            if var_name in self._param_names or var_name.startswith("data."):
+            # module.parameters — skip wiring.
+            if root_name in self._param_names:
                 continue
 
-            val = self._resolve_name_from_scope_chain(var_name, scope_chain)
-            if isinstance(val, NodeRef):
-                pairs.append((var_name, val))
+            val = self._resolve_name_from_scope_chain(root_name, scope_chain)
+            if isinstance(val, NodeRef) and root_name not in seen_inputs:
+                pairs.append((root_name, val))
+                seen_inputs.add(root_name)
             # Otherwise leave as-is — validator will diagnose if unresolved.
 
         return template, pairs

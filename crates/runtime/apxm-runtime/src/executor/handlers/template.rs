@@ -163,6 +163,7 @@ pub fn input_names_from_node(node: &apxm_core::types::execution::Node) -> Vec<St
     node.attributes
         .get(graph_attrs::INPUT_NAMES)
         .and_then(|v| match v {
+            Value::String(s) => Some(vec![s.to_string()]),
             Value::Array(items) => Some(
                 items
                     .iter()
@@ -177,7 +178,11 @@ pub fn input_names_from_node(node: &apxm_core::types::execution::Node) -> Vec<St
 #[cfg(test)]
 mod tests {
     use super::*;
+    use apxm_core::constants::graph::attrs as graph_attrs;
+    use apxm_core::types::execution::Node;
+    use apxm_core::types::operations::AISOperationType;
     use apxm_core::types::values::Value;
+    use std::collections::HashMap;
 
     #[test]
     fn dotted_event_field_resolves_from_json_param() {
@@ -206,5 +211,16 @@ mod tests {
         let inputs = vec![data];
         let names = vec!["data".to_string()];
         assert!(render_named("{data.event.missing}", &inputs, &names).is_err());
+    }
+
+    #[test]
+    fn input_names_from_node_accepts_legacy_single_string() {
+        let mut node = Node::new(1, AISOperationType::Ask);
+        node.attributes = HashMap::from([(
+            graph_attrs::INPUT_NAMES.to_string(),
+            Value::String("message".to_string()),
+        )]);
+
+        assert_eq!(input_names_from_node(&node), vec!["message".to_string()]);
     }
 }

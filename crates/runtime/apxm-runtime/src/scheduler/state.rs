@@ -8,6 +8,7 @@ use std::time::Instant;
 use apxm_core::types::{
     ExecutionDag, ExecutionStats, Node, NodeId, NodeStatus, OpStatus, TokenId, Value,
 };
+use apxm_core::utils::template::{parse_placeholder_names, placeholder_root};
 use crossbeam_deque::Worker;
 use dashmap::{DashMap, DashSet};
 use parking_lot::Mutex;
@@ -28,6 +29,110 @@ use crate::scheduler::internal_state::{ExecutionFrame, OpState, PromiseState, To
 use crate::scheduler::queue::{Priority, PriorityQueue};
 use crate::scheduler::ready_set::ReadySet;
 use crate::scheduler::work_stealing::WorkStealingScheduler;
+
+fn render_runtime_parameter_placeholders(
+    template: &str,
+    named: &HashMap<String, Value>,
+    positional: &[String],
+) -> RuntimeResult<String> {
+    let mut out = template.to_string();
+
+    // Preserve the legacy explicit named form first.
+    for (param_name, param_value) in named {
+        let placeholder = format!("{{{{{param_name}}}}}");
+        out = out.replace(&placeholder, &value_to_template_string(param_value));
+    }
+
+    // Dotted selectors use the same authored template grammar as node inputs:
+    // `{data.event.subject}` resolves root `data` from flow parameters and then
+    // navigates JSON fields. Non-parameter placeholders such as `{respond}` are
+    // left untouched for the operation handler to resolve from `input_names`.
+    for placeholder in parse_placeholder_names(template) {
+        let root = placeholder_root(placeholder);
+        let Some(root_value) = named.get(root) else {
+            continue;
+        };
+        let replacement = if placeholder == root {
+            value_to_template_string(root_value)
+        } else {
+            let value = resolve_parameter_placeholder(root_value, placeholder).ok_or_else(
+                || RuntimeError::Scheduler {
+                    message: format!(
+                        "runtime parameter placeholder '{{{placeholder}}}' could not be resolved"
+                    ),
+                },
+            )?;
+            value_to_template_string(&value)
+        };
+        out = out.replace(&format!("{{{placeholder}}}"), &replacement);
+    }
+
+    // Preserve positional `{0}`, `{1}`, ... substitution.
+    for (i, param_value) in positional.iter().enumerate() {
+        out = out.replace(&format!("{{{i}}}"), param_value);
+    }
+
+    Ok(out)
+}
+
+fn render_runtime_parameter_params_json(
+    params_json: &str,
+    named: &HashMap<String, Value>,
+    positional: &[String],
+) -> RuntimeResult<String> {
+    let mut value = serde_json::from_str::<serde_json::Value>(params_json).map_err(|err| {
+        RuntimeError::Scheduler {
+            message: format!("invalid params_json before parameter substitution: {err}"),
+        }
+    })?;
+    render_runtime_parameter_json_value(&mut value, named, positional)?;
+    serde_json::to_string(&value).map_err(|err| RuntimeError::Scheduler {
+        message: format!("could not serialize params_json after parameter substitution: {err}"),
+    })
+}
+
+fn render_runtime_parameter_json_value(
+    value: &mut serde_json::Value,
+    named: &HashMap<String, Value>,
+    positional: &[String],
+) -> RuntimeResult<()> {
+    match value {
+        serde_json::Value::String(s) => {
+            *s = render_runtime_parameter_placeholders(s, named, positional)?;
+        }
+        serde_json::Value::Array(items) => {
+            for item in items {
+                render_runtime_parameter_json_value(item, named, positional)?;
+            }
+        }
+        serde_json::Value::Object(map) => {
+            for item in map.values_mut() {
+                render_runtime_parameter_json_value(item, named, positional)?;
+            }
+        }
+        _ => {}
+    }
+    Ok(())
+}
+
+fn resolve_parameter_placeholder(root_value: &Value, placeholder: &str) -> Option<Value> {
+    let (_, path) = placeholder.split_once('.')?;
+    let mut cur = root_value.to_json().ok()?;
+    for seg in path.split('.') {
+        cur = match cur {
+            serde_json::Value::Object(map) => map.get(seg)?.clone(),
+            serde_json::Value::Array(arr) => arr.get(seg.parse::<usize>().ok()?)?.clone(),
+            _ => return None,
+        };
+    }
+    Value::try_from(cur).ok()
+}
+
+fn value_to_template_string(value: &Value) -> String {
+    value
+        .as_string()
+        .map_or_else(|| format!("{value}"), |s| s.to_string())
+}
 
 /// The internal state of the scheduler.
 pub struct SchedulerState {
@@ -167,20 +272,13 @@ impl SchedulerState {
 
         let dag_snapshot = Arc::new(dag.clone());
 
-        // Build parameter substitution maps BEFORE consuming inputs
-        // Named map: {{PARAM_NAME}} -> value
-        let param_map: HashMap<String, String> = dag
+        // Build parameter substitution maps BEFORE consuming inputs.
+        let param_map: HashMap<String, Value> = dag
             .metadata
             .parameters
             .iter()
             .zip(&inputs)
-            .map(|(param, value)| {
-                let value_str = match value {
-                    Value::String(s) => s.clone(),
-                    v => format!("{}", v),
-                };
-                (param.name.clone(), value_str)
-            })
+            .map(|(param, value)| (param.name.clone(), value.clone()))
             .collect();
 
         // Positional map: {0}, {1}, ... -> value
@@ -215,33 +313,27 @@ impl SchedulerState {
             Some(entry_tokens.into_iter().zip(inputs).collect())
         };
 
-        // Build node and priority maps with parameter substitution
-        let nodes: Arc<DashMap<NodeId, Arc<Node>>> = Arc::new(
-            dag.nodes
-                .iter()
-                .map(|n| {
-                    let mut node = n.clone();
-                    // Substitute both {{PARAM_NAME}} and {0}, {1}, ... in all string attributes
-                    if !param_map.is_empty() || !positional_map.is_empty() {
-                        for (_key, value) in node.attributes.iter_mut() {
-                            if let Value::String(s) = value {
-                                // Substitute named {{PARAM_NAME}} placeholders
-                                for (param_name, param_value) in &param_map {
-                                    let placeholder = format!("{{{{{}}}}}", param_name);
-                                    *s = s.replace(&placeholder, param_value);
-                                }
-                                // Substitute positional {0}, {1}, ... placeholders
-                                for (i, param_value) in positional_map.iter().enumerate() {
-                                    let placeholder = format!("{{{}}}", i);
-                                    *s = s.replace(&placeholder, param_value);
-                                }
-                            }
-                        }
+        // Build node and priority maps with parameter substitution.
+        let node_map: DashMap<NodeId, Arc<Node>> = DashMap::new();
+        for n in &dag.nodes {
+            let mut node = n.clone();
+            // Substitute flow parameters in all string attributes. This includes
+            // legacy `{{PARAM_NAME}}`, positional `{0}`, and named JSON selectors
+            // such as `{data.event.subject}`.
+            if !param_map.is_empty() || !positional_map.is_empty() {
+                for (key, value) in node.attributes.iter_mut() {
+                    if let Value::String(s) = value {
+                        *s = if key == apxm_core::constants::graph::attrs::PARAMS_JSON {
+                            render_runtime_parameter_params_json(s, &param_map, &positional_map)?
+                        } else {
+                            render_runtime_parameter_placeholders(s, &param_map, &positional_map)?
+                        };
                     }
-                    (n.id, Arc::new(node))
-                })
-                .collect(),
-        );
+                }
+            }
+            node_map.insert(n.id, Arc::new(node));
+        }
+        let nodes: Arc<DashMap<NodeId, Arc<Node>>> = Arc::new(node_map);
 
         let priorities: Arc<DashMap<NodeId, Priority>> = Arc::new(
             dag.nodes
@@ -1649,6 +1741,83 @@ mod tests {
             .and_then(Value::as_str)
             .expect("message attribute");
         assert_eq!(message, "Task: review the demo");
+    }
+
+    #[test]
+    fn test_new_substitutes_dotted_json_runtime_parameters_in_tool_params() {
+        let mut node = make_node(1, vec![20], vec![10]);
+        node.op_type = AISOperationType::InvTool;
+        node.attributes.insert(
+            apxm_core::constants::graph::attrs::PARAMS_JSON.to_string(),
+            Value::String(r#"{"chat_id":"{data.event.subject}","text":"{respond}"}"#.to_string()),
+        );
+
+        let mut dag = ExecutionDag::new();
+        dag.add_node(node).unwrap();
+        dag.entry_nodes = dag.find_entry_nodes();
+        dag.exit_nodes = dag.find_exit_nodes();
+        dag.metadata = DagMetadata {
+            name: Some("parameterized-tool".to_string()),
+            is_entry: true,
+            parameters: vec![FlowParameter {
+                name: "data".to_string(),
+                type_name: "json".to_string(),
+            }],
+        };
+
+        let metrics = Arc::new(MetricsCollector::new());
+        let data = Value::try_from(serde_json::json!({
+            "event": { "subject": "chat-\"42\"\nnext", "payload": { "text": "hi" } }
+        }))
+        .unwrap();
+        let (state, _) =
+            SchedulerState::new(dag, test_config(), metrics, Instant::now(), vec![data]).unwrap();
+
+        let stored = state.nodes.get(&1).expect("node should be stored");
+        let params_json = stored
+            .attributes
+            .get(apxm_core::constants::graph::attrs::PARAMS_JSON)
+            .and_then(Value::as_str)
+            .expect("params_json attribute");
+        let parsed: serde_json::Value =
+            serde_json::from_str(params_json).expect("substituted params_json stays valid JSON");
+        assert_eq!(parsed["chat_id"], serde_json::json!("chat-\"42\"\nnext"));
+        assert_eq!(parsed["text"], serde_json::json!("{respond}"));
+    }
+
+    #[test]
+    fn test_new_rejects_unresolved_dotted_json_runtime_parameter() {
+        let mut node = make_node(1, vec![], vec![10]);
+        node.op_type = AISOperationType::InvTool;
+        node.attributes.insert(
+            apxm_core::constants::graph::attrs::PARAMS_JSON.to_string(),
+            Value::String(r#"{"chat_id":"{data.event.missing}"}"#.to_string()),
+        );
+
+        let mut dag = ExecutionDag::new();
+        dag.add_node(node).unwrap();
+        dag.entry_nodes = dag.find_entry_nodes();
+        dag.exit_nodes = dag.find_exit_nodes();
+        dag.metadata = DagMetadata {
+            name: Some("bad-parameterized-tool".to_string()),
+            is_entry: true,
+            parameters: vec![FlowParameter {
+                name: "data".to_string(),
+                type_name: "json".to_string(),
+            }],
+        };
+
+        let metrics = Arc::new(MetricsCollector::new());
+        let data = Value::try_from(serde_json::json!({
+            "event": { "subject": "chat-42" }
+        }))
+        .unwrap();
+        let err = match SchedulerState::new(dag, test_config(), metrics, Instant::now(), vec![data])
+        {
+            Ok(_) => panic!("missing dotted parameter path should fail closed"),
+            Err(err) => err,
+        };
+        assert!(err.to_string().contains("{data.event.missing}"));
     }
 
     #[test]

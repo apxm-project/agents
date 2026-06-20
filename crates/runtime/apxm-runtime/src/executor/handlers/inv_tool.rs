@@ -12,6 +12,7 @@ use crate::metadata_keys;
 use apxm_core::constants::graph::attrs as graph_attrs;
 use apxm_core::constants::runtime::belief_keys;
 use apxm_core::error::RuntimeError;
+use apxm_core::types::AISOperationType;
 use std::collections::HashMap;
 
 /// Returns true if the effective grant policy (wire form of
@@ -126,21 +127,7 @@ pub async fn execute(ctx: &ExecutionContext, node: &Node, inputs: Vec<Value>) ->
         .get(graph_attrs::PARAMS_JSON)
         .and_then(|v| v.as_string())
     {
-        // Parse JSON and extract key-value pairs
-        if let Ok(parsed) = serde_json::from_str::<serde_json::Value>(params_json)
-            && let Some(obj) = parsed.as_object()
-        {
-            for (k, v) in obj {
-                // Pass ALL values through, including nested objects/arrays — e.g.
-                // an `http_get` `headers` object (and apxm-auth-injected
-                // `Authorization`) must reach the capability. Previously nested
-                // values were dropped, so structured args silently vanished.
-                let Ok(value) = Value::try_from(v.clone()) else {
-                    continue;
-                };
-                args.insert(k.clone(), value);
-            }
-        }
+        args = args_from_params_json(node.op_type, params_json)?;
     }
 
     // Substitute `{name}` placeholders in every string-valued arg with the
@@ -151,9 +138,7 @@ pub async fn execute(ctx: &ExecutionContext, node: &Node, inputs: Vec<Value>) ->
     if !inputs.is_empty() {
         let input_names = input_names_from_node(node);
         for val in args.values_mut() {
-            if let Value::String(s) = val {
-                *s = render_named(s, &inputs, &input_names)?;
-            }
+            render_named_in_value(val, &inputs, &input_names)?;
         }
     }
 
@@ -251,6 +236,58 @@ pub async fn execute(ctx: &ExecutionContext, node: &Node, inputs: Vec<Value>) ->
     Ok(result)
 }
 
+fn args_from_params_json(
+    op_type: AISOperationType,
+    params_json: &str,
+) -> Result<HashMap<String, Value>> {
+    let parsed = serde_json::from_str::<serde_json::Value>(params_json).map_err(|err| {
+        RuntimeError::Operation {
+            op_type,
+            message: format!("INV_TOOL params_json is invalid JSON: {err}"),
+        }
+    })?;
+    let obj = parsed.as_object().ok_or_else(|| RuntimeError::Operation {
+        op_type,
+        message: "INV_TOOL params_json must be a JSON object".to_string(),
+    })?;
+    let mut args = HashMap::new();
+    for (k, v) in obj {
+        // Pass ALL values through, including nested objects/arrays — e.g. an
+        // `http_get` `headers` object (and apxm-auth-injected `Authorization`)
+        // must reach the capability.
+        let value = Value::try_from(v.clone()).map_err(|err| RuntimeError::Operation {
+            op_type,
+            message: format!("INV_TOOL params_json value for '{k}' is unsupported: {err}"),
+        })?;
+        args.insert(k.clone(), value);
+    }
+    Ok(args)
+}
+
+fn render_named_in_value(
+    value: &mut Value,
+    inputs: &[Value],
+    input_names: &[String],
+) -> Result<()> {
+    match value {
+        Value::String(s) => {
+            *s = render_named(s, inputs, input_names)?;
+        }
+        Value::Array(items) => {
+            for item in items {
+                render_named_in_value(item, inputs, input_names)?;
+            }
+        }
+        Value::Object(map) => {
+            for item in map.values_mut() {
+                render_named_in_value(item, inputs, input_names)?;
+            }
+        }
+        Value::Null | Value::Bool(_) | Value::Number(_) | Value::Token(_) => {}
+    }
+    Ok(())
+}
+
 /// Dispatch an INV_TOOL call to the Python tool worker bridge.
 ///
 /// Converts the `HashMap<String, Value>` args to `serde_json::Value`,
@@ -329,5 +366,68 @@ fn json_to_value(v: serde_json::Value) -> Result<Value> {
             }
             Ok(Value::Object(result))
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn args_from_params_json_preserves_structured_values() {
+        let args = args_from_params_json(
+            AISOperationType::InvTool,
+            r#"{"chat_id":"chat-42","headers":{"x":"y"},"items":[1,true]}"#,
+        )
+        .unwrap();
+
+        assert_eq!(
+            args.get("chat_id").and_then(Value::as_string),
+            Some(&"chat-42".to_string())
+        );
+        assert!(matches!(args.get("headers"), Some(Value::Object(_))));
+        assert!(matches!(args.get("items"), Some(Value::Array(_))));
+    }
+
+    #[test]
+    fn render_named_in_value_resolves_nested_params_json_placeholders() {
+        let mut value = Value::try_from(serde_json::json!({
+            "headers": { "x-chat": "{message.chat.id}" },
+            "items": ["literal", "{reply}"]
+        }))
+        .unwrap();
+        let inputs = vec![
+            Value::try_from(serde_json::json!({"chat": {"id": "chat-42"}})).unwrap(),
+            Value::String("hello".to_string()),
+        ];
+        let input_names = vec!["message".to_string(), "reply".to_string()];
+
+        render_named_in_value(&mut value, &inputs, &input_names).unwrap();
+
+        assert_eq!(
+            value,
+            Value::try_from(serde_json::json!({
+                "headers": { "x-chat": "chat-42" },
+                "items": ["literal", "hello"]
+            }))
+            .unwrap()
+        );
+    }
+
+    #[test]
+    fn args_from_params_json_rejects_invalid_json() {
+        let err = args_from_params_json(AISOperationType::InvTool, r#"{"chat_id":""bad"}"#)
+            .expect_err("invalid params_json should fail closed");
+        assert!(err.to_string().contains("params_json is invalid JSON"));
+    }
+
+    #[test]
+    fn args_from_params_json_rejects_non_object() {
+        let err = args_from_params_json(AISOperationType::InvTool, r#"["not","object"]"#)
+            .expect_err("params_json must be object");
+        assert!(
+            err.to_string()
+                .contains("params_json must be a JSON object")
+        );
     }
 }

@@ -3,7 +3,7 @@ use std::collections::HashSet;
 use apxm_core::constants::graph::attrs as graph_attrs;
 use apxm_core::types::{AISOperationType, ExecutionDag, Node, Value};
 
-use crate::template::{is_numeric_placeholder, parse_placeholder_names};
+use crate::template::{is_numeric_placeholder, parse_placeholder_names, placeholder_root};
 
 pub(crate) fn validate_template_placeholders(dags: &[ExecutionDag]) -> Result<(), String> {
     for dag in dags {
@@ -107,13 +107,14 @@ fn check_template_placeholders(
     param_names: &HashSet<&str>,
 ) -> Result<(), String> {
     for placeholder in parse_placeholder_names(template) {
-        if is_numeric_placeholder(placeholder) {
+        let root = placeholder_root(placeholder);
+        if is_numeric_placeholder(root) {
             return Err(format!(
                 "node {} (op={}, attr={}): numeric placeholder '{{{}}}' is not allowed; use a named input or declared parameter",
                 node.id, node.op_type, attr_key, placeholder
             ));
         }
-        if input_names.contains(placeholder) || param_names.contains(placeholder) {
+        if input_names.contains(root) || param_names.contains(root) {
             continue;
         }
         return Err(format!(

@@ -1090,7 +1090,6 @@ fn build_graph(execution_id: &str, events: &[ApxmEvent]) -> RunGraph {
     let mut agent_codes: HashMap<u64, String> = HashMap::new();
     let mut tool_names: HashMap<u64, String> = HashMap::new();
     let mut span_to_node: HashMap<String, u64> = HashMap::new();
-
     for event in events {
         if let Some(payload) = event.payload.downcast_ref::<AgentSpawnedPayload>() {
             agent_codes.insert(payload.node_id, payload.agent_code.clone());
@@ -1808,4 +1807,76 @@ fn run_node_artifact_refs(
 fn run_artifact_file_exists(run_root: &str, artifact_path: &str) -> bool {
     let path = std::path::Path::new(run_root).join(artifact_path);
     path.is_file()
+}
+
+#[cfg(test)]
+mod graph_tests {
+    use super::*;
+    use apxm_core::events::EventSource;
+
+    fn operation_start(node_id: u64, op_type: AISOperationType) -> ApxmEvent {
+        ApxmEvent::root(
+            OperationStartPayload {
+                node_id,
+                op_type,
+                context: None,
+            },
+            EventSource::Runtime,
+            "run-1",
+        )
+    }
+
+    fn graph_edge(from_node_id: u64, to_node_id: u64, kind: &str) -> ApxmEvent {
+        ApxmEvent::root(
+            GraphEdgePayload {
+                from_node_id,
+                to_node_id,
+                kind: kind.to_string(),
+            },
+            EventSource::Runtime,
+            "run-1",
+        )
+    }
+
+    #[test]
+    fn build_graph_does_not_infer_dependencies_from_observed_operation_order() {
+        let graph = build_graph(
+            "run-1",
+            &[
+                operation_start(1, AISOperationType::InvTool),
+                operation_start(2, AISOperationType::Ask),
+                operation_start(3, AISOperationType::Return),
+            ],
+        );
+
+        assert!(
+            graph.edges.is_empty(),
+            "run graph must expose explicit graph edges, not scheduling order"
+        );
+        let layers: Vec<(u64, Option<u32>)> = graph
+            .nodes
+            .iter()
+            .map(|node| (node.id, node.layer))
+            .collect();
+        assert_eq!(layers, vec![(1, Some(0)), (2, Some(0)), (3, Some(0))]);
+    }
+
+    #[test]
+    fn build_graph_uses_explicit_graph_edge_payloads() {
+        let graph = build_graph(
+            "run-1",
+            &[
+                operation_start(1, AISOperationType::InvTool),
+                operation_start(2, AISOperationType::Ask),
+                graph_edge(1, 2, "data"),
+            ],
+        );
+
+        let edges: Vec<(u64, u64, &str)> = graph
+            .edges
+            .iter()
+            .map(|edge| (edge.from, edge.to, edge.kind.as_str()))
+            .collect();
+        assert_eq!(edges, vec![(1, 2, "data")]);
+    }
 }

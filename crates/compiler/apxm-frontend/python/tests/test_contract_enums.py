@@ -15,6 +15,7 @@ from apxm.constants import (
     CAPABILITY_SEARCH_SKILLS,
     DEPENDENCY_CONTROL,
     DEPENDENCY_DATA,
+    INPUT_NAMES,
     PARAMS_JSON,
     TOOL_GROUPS,
     TOOL_GROUP_FILE_READ,
@@ -113,3 +114,29 @@ def test_invoke_accepts_capability_enum():
     graph = g.to_graph()
     attrs = graph.nodes[node._node_id - 1].attributes
     assert attrs[CAPABILITY] == CAPABILITY_SEARCH_SKILLS
+
+
+def test_dotted_flow_parameter_placeholder_does_not_autowire():
+    g = GraphRecorder("dotted_param")
+    g.param("payload", "json")
+
+    node = g.ask(prompt="{payload.event.id}")
+
+    graph = g.to_graph()
+    attrs = graph.nodes[node._node_id - 1].attributes
+    assert INPUT_NAMES not in attrs
+    assert graph.edges == []
+
+
+def test_dotted_node_placeholder_autowires_root_input():
+    g = GraphRecorder("dotted_node_ref")
+    message = g.print(name="message", message='{"text":"hello"}')
+
+    node = g.ask(prompt="{message.text}")
+
+    graph = g.to_graph()
+    attrs = graph.nodes[node._node_id - 1].attributes
+    assert attrs[INPUT_NAMES] == ["message"]
+    assert len(graph.edges) == 1
+    assert graph.edges[0].from_id == message._node_id
+    assert graph.edges[0].to_id == node._node_id
