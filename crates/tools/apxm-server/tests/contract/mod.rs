@@ -1,4 +1,4 @@
-//! Shared helpers for spec 0002 contract and integration tests.
+//! Shared helpers for contract and integration tests.
 
 use serde_json::Value;
 

@@ -1,4 +1,4 @@
-//! Run-history storage backend abstraction and migration notes (spec 0021).
+//! Run-history storage backend abstraction and migration notes.
 //!
 //! ## Current state (v0)
 //!

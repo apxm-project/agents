@@ -203,7 +203,7 @@ pub(crate) fn build_app(state: AppState) -> Router {
             get(stream_goal_events),
         )
         .route(ServerRoute::GoalCancel.path(), post(cancel_goal))
-        // Workflow-scoped run history (spec 0013).
+        // Workflow-scoped run history.
         .route(ServerRoute::WorkflowRuns.path(), get(list_workflow_runs))
         .route(ServerRoute::RunsReindex.path(), post(reindex_runs))
         // Run summary alias (lighter shape than /v1/executions/{id}).

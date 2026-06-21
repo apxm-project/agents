@@ -85,7 +85,7 @@ pub(crate) struct ExecuteRequest {
     /// rollout recording is active.
     #[serde(default)]
     pub(crate) user_text: Option<String>,
-    /// Workspace workflow identity (spec 0009 / 0013). The basename of
+    /// Workspace workflow identity. The basename of
     /// `workspace/workflows/<id>/`; present when the caller supplies it so
     /// run history can be grouped by workflow and queried via
     /// `GET /v1/workflows/{id}/runs`.
@@ -699,7 +699,7 @@ pub(crate) struct PreparedRequest {
     /// Captured `; __apxm_python_tools__` sidecar (stripped from the AIR text).
     /// Injected as an artifact section only on the operator-trusted python path.
     pub(crate) python_tools_sidecar: Option<Vec<u8>>,
-    /// Workspace workflow id forwarded from the caller (spec 0013).
+    /// Workspace workflow id forwarded from the caller.
     pub(crate) workflow_id: Option<String>,
 }
 

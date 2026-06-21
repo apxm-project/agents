@@ -1,4 +1,4 @@
-//! Corrupt/partial artifact diagnostics tests for the reindex walk (spec 0013 T032).
+//! Corrupt/partial artifact diagnostics tests for the reindex walk.
 //!
 //! These tests exercise the `POST /v1/runs/reindex` HTTP endpoint with
 //! `APXM_RUNS_ROOT` pointing at a temporary directory, asserting on the JSON

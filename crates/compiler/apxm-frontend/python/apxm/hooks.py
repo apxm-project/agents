@@ -4,7 +4,7 @@ A hook reuses the SAME invocation path as `@tool`: it produces a stable
 `handler_id` and registers the callable in the shared tool registry, so the
 runtime `PythonToolBridge` dispatches tools and hooks through one mechanism
 (constitution #4 — one Python-handler mechanism). The frontend records each
-hook into the artifact's hooks sidecar; later (US3) a `REGISTER_HOOK` op lowers
+hook into the artifact's hooks sidecar; later a `REGISTER_HOOK` op lowers
 the binding so it travels inside the artifact (AIR-portable, constitution #3).
 
 This module owns the NEW conversational lifecycle hooks. The legacy

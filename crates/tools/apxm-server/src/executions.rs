@@ -73,16 +73,16 @@ pub(crate) struct ExecutionRecord {
     /// calls made during the run.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub(crate) trace_id: Option<String>,
-    /// Workspace workflow identity (spec 0009). The basename of
+    /// Workspace workflow identity. The basename of
     /// `workspace/workflows/<id>/`; present when the caller supplies it so
-    /// run history can be grouped and queried by workflow id (spec 0013).
+    /// run history can be grouped and queried by workflow id.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub(crate) workflow_id: Option<String>,
-    /// Server-owned run-root directory (spec 0009 T034).
+    /// Server-owned run-root directory.
     ///
     /// Resolved at execution start as `$APXM_RUNS_ROOT/{workflow_id}/{execution_id}/`
     /// when both `APXM_RUNS_ROOT` and `workflow_id` are present; absent
-    /// otherwise. A settled run writes `run.json` here (T035).
+    /// otherwise. A settled run writes `run.json` here.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub(crate) run_root: Option<String>,
     pub(crate) status: ExecutionStatus,
@@ -868,7 +868,7 @@ impl From<StoredRunRecord> for ExecutionRecord {
     }
 }
 
-/// Resolve the run-root path for a new execution (spec 0009 T034).
+/// Resolve the run-root path for a new execution.
 ///
 /// Returns `Some("{APXM_RUNS_ROOT}/{workflow_id}/{execution_id}")` when both
 /// `$APXM_RUNS_ROOT` and `workflow_id` are present; `None` otherwise.

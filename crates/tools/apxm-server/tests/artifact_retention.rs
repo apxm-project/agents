@@ -1,4 +1,4 @@
-//! Artifact expiry and retention/GC tests (spec 0021 T043).
+//! Artifact expiry and retention/GC tests.
 //!
 //! Validates that:
 //! 1. Expired artifact references return a typed `artifact_expired` error body,
@@ -11,7 +11,7 @@
 use apxm_server::artifacts::object_store::{ArtifactError, ArtifactRef};
 use apxm_server::run_history::storage::RetentionClass;
 
-/// Retention class TTLs match the spec 0021 table.
+/// Retention class TTLs match the retention table.
 #[test]
 fn retention_class_ttls_are_correct() {
     assert_eq!(RetentionClass::Ephemeral.default_ttl_secs(), Some(3_600));

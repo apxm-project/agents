@@ -683,16 +683,16 @@ mod tests {
     }
 
     #[test]
-    fn c5_capability_rescan_route_is_pinned() {
+    fn capability_rescan_route_is_pinned() {
         assert_eq!(
             crate::routes::CAPABILITIES_RESCAN,
             "/v1/capabilities/rescan"
         );
     }
 
-    /// Cross-plane contract C4: os-dispatch execute envelope + correlation id.
+    /// Cross-plane contract: os-dispatch execute envelope + correlation id.
     #[test]
-    fn c4_execute_envelope_accepts_correlation_and_data_arg() {
+    fn execute_envelope_accepts_correlation_and_data_arg() {
         use crate::skills::SkillExecuteRequest;
         let envelope = serde_json::json!({
             "event": { "kind": "webhook", "correlation_id": "del-42", "payload": { "x": 1 } },
