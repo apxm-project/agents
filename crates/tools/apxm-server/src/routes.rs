@@ -79,7 +79,7 @@ pub(crate) const GOAL_DETAIL: &str = "/v1/goals/{goal_id}";
 pub(crate) const GOAL_EVENTS: &str = "/v1/goals/{goal_id}/events";
 pub(crate) const GOAL_EVENTS_STREAM: &str = "/v1/goals/{goal_id}/events/stream";
 pub(crate) const GOAL_CANCEL: &str = "/v1/goals/{goal_id}/cancel";
-// workflow-scoped run history (spec 0013).
+// workflow-scoped run history.
 pub(crate) const WORKFLOW_RUNS: &str = "/v1/workflows/{id}/runs";
 pub(crate) const RUNS_REINDEX: &str = "/v1/runs/reindex";
 

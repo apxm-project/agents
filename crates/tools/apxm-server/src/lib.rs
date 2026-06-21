@@ -34,7 +34,6 @@ mod observability;
 pub mod openapi;
 pub mod permissions;
 mod principal;
-pub mod remote_runner;
 mod rerun;
 mod rollout;
 mod routes;

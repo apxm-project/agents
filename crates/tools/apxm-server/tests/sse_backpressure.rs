@@ -247,7 +247,7 @@ async fn sse_backpressure_sc001_no_silent_drops_and_lag_signal() {
     let lag_frames: Vec<_> = frames.iter().filter(|f| is_lag_frame(f)).collect();
     assert!(
         !lag_frames.is_empty(),
-        "slow consumer must receive explicit lag/overflow signal (SC-001), body: {}",
+        "slow consumer must receive explicit lag/overflow signal, body: {}",
         &body[..body.len().min(400)]
     );
     for lag in &lag_frames {
@@ -285,7 +285,7 @@ async fn sse_backpressure_sc001_no_silent_drops_and_lag_signal() {
     let bus_seqs = bulk_event_seqs(&bulk);
     assert!(
         bus_seqs.len() >= 10,
-        "observer bus must retain events for replay (SC-001): {bus_seqs:?}"
+        "observer bus must retain events for replay: {bus_seqs:?}"
     );
     assert!(
         bus_seqs.windows(2).all(|w| w[1] == w[0] + 1),

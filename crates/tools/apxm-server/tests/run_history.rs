@@ -1,4 +1,4 @@
-//! Workflow run query tests (spec 0013 T023).
+//! Workflow run query tests.
 //!
 //! Covers `GET /v1/workflows/{id}/runs` (list) and
 //! `GET /v1/runs/{id}/summary` (single-run alias).

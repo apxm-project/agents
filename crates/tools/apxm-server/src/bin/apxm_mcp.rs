@@ -40,9 +40,6 @@ mod config_layers;
 mod mcp_protocol;
 #[path = "../mcp_tools.rs"]
 mod mcp_tools;
-#[allow(dead_code)]
-#[path = "../remote_runner.rs"]
-mod remote_runner;
 #[path = "../runtime_setup.rs"]
 mod runtime_setup;
 #[path = "../skill_resources.rs"]

@@ -1,4 +1,4 @@
-//! Object-store client boundary for run blobs and Runner artifacts (spec 0021 T040).
+//! Object-store client boundary for run blobs and Runner artifacts.
 //!
 //! ## Contract
 //!

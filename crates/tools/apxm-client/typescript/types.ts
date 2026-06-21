@@ -1,4 +1,4 @@
-// AUTO-GENERATED from openapi-session-v1.yaml (spec 0002 US6). DO NOT EDIT BY HAND.
+// AUTO-GENERATED from openapi-session-v1.yaml. DO NOT EDIT BY HAND.
 
 export type TypedErrorClass = "program_fault" | "server_fault";
 

@@ -49,7 +49,7 @@ async fn sc005_permission_roundtrip_approve_and_session_grant() {
             .events()
             .iter()
             .any(|e| { e.kind().name() == event_kind::APPROVAL_REQUEST.name() }),
-        "SC-005: stream emits permission event before proceed"
+        "stream emits permission event before proceed"
     );
 
     apply_response(
@@ -75,6 +75,6 @@ async fn sc005_permission_roundtrip_approve_and_session_grant() {
     assert_eq!(second, PermissionOutcome::Approved);
     assert!(
         emitter2.events().is_empty(),
-        "SC-005: session-grant suppresses second prompt"
+        "session-grant suppresses second prompt"
     );
 }

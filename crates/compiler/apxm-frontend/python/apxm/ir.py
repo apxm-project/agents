@@ -573,7 +573,7 @@ def validate_against_apxm(graph: ApxmGraph) -> ValidationResult:
 
 
 def _validate_register_hook(graph: ApxmGraph) -> list[str]:
-    """AIR validation for REGISTER_HOOK nodes (T042).
+    """AIR validation for REGISTER_HOOK nodes.
 
     Flags: unknown ``hook_event``; ``gate`` mode on a non-pre event; missing
     ``python_hook_handler_id``.
