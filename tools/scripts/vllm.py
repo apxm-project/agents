@@ -977,7 +977,7 @@ def enable_cmd(args: argparse.Namespace) -> int:
         _print(
             f"Backend {args.backend_name} is already registered against "
             f"endpoint {existing_endpoint}. `enable` does not reconcile — "
-            f"either delete the backend (`dekk apxm backend delete "
+            f"either remove the backend (`dekk apxm backend remove "
             f"{args.backend_name}`) and re-enable, or use `zoo apply` to "
             f"manage drift."
         )
