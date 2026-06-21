@@ -7,10 +7,10 @@ The host (`apxm chat` / the HTTP server) is a dumb pipe — it delivers the user
 message and renders streamed tokens; all cognition lives in the program
 (constitution #2).
 
-Foundational skeleton (spec 0001, Phase 2 / T015): this builds the multi-flow
+Foundational skeleton: this builds the multi-flow
 *shape* and the canonical turn graph, with the reserved named turn parameter
-(constitution #6). The native re-arming in-graph loop (US1), the `REGISTER_HOOK`
-lowering (US3), and the in-graph compaction subgraph (US4) are layered on in
+(constitution #6). The native re-arming in-graph loop, the `REGISTER_HOOK`
+lowering, and the in-graph compaction subgraph are layered on in
 later phases; hooks/compaction/skills are recorded here so they travel with the
 artifact and are wired as those phases land.
 """
@@ -143,7 +143,7 @@ class ConversationalAgent:
             if not isinstance(a, Agent):
                 raise TypeError("sub_agents must be Agent objects")
 
-        # Build-time delegate target validation (T061 will deepen): sub-agent
+        # Build-time delegate target validation: sub-agent
         # names must be unique so `<name>.main` flows do not collide.
         names = [a.name for a in self.sub_agents]
         dupes = {n for n in names if names.count(n) > 1}
@@ -293,8 +293,8 @@ class ConversationalAgent:
 
         Foundational skeleton: emits the loop *entry* node (an AUTONOMOUS recv,
         re-arming) and a flow-call into the turn body. The native park + re-arm
-        (no node re-execution) is the US1 keystone; this shape validates and is
-        the seam US1/US2 wire the runtime loop onto.
+        (no node re-execution) is the keystone; this shape validates and is
+        the seam the runtime loop wires onto.
         """
         entry = GraphRecorder("main", metadata={graph_keys.IS_ENTRY: True})
         entry.param(TURN_PARAM, "str")

@@ -329,7 +329,7 @@ pub(crate) struct SkillExecuteRequest {
     #[serde(default)]
     pub(crate) trace_id: Option<String>,
     /// Workspace workflow identity. When present, stamped on the execution
-    /// record so run history can be grouped by workflow id (spec 0009 / 0013).
+    /// record so run history can be grouped by workflow id.
     /// The value is the basename of `workspace/workflows/<id>/` — the folder
     /// name that uniquely identifies the workflow definition on disk.
     #[serde(default)]

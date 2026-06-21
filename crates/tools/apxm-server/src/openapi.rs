@@ -3,10 +3,10 @@
 //! Wire shapes are derived from server types via `utoipa`; CI diff-tests the
 //! export against `specs/0002-apxm-chat-thin-clients/contracts/openapi-session-v1.yaml`.
 //!
-//! # Route inventory (spec 0012 — T001)
+//! # Route inventory
 //!
 //! The exhaustive route list lives in `routes.rs`. The full server contract
-//! artifact is at `contracts/server-api.yaml` (spec 0012, generated from source —
+//! artifact is at `contracts/server-api.yaml` (generated from source —
 //! keep in sync). Key surface groups:
 //!
 //! - Execution: `POST /v1/execute` · `/execute/stream` · `/compile` · `/compile/stream`
@@ -23,7 +23,7 @@
 //!
 //! This file (`openapi.rs`) owns the utoipa-generated slice for session + permission.
 //! Remaining surfaces are documented in `contracts/server-api.yaml` pending
-//! full utoipa coverage (spec 0012 Phase 3).
+//! full utoipa coverage.
 
 use serde::Serialize;
 use utoipa::{OpenApi, ToSchema};
@@ -171,9 +171,9 @@ fn doc_stream_session_events(_session_id: String) {}
 )]
 fn doc_respond_permission(_permission_id: String, _body: PermissionResponse) {}
 
-// ── Run-history API (spec 0013) ───────────────────────────────────────────────
+// ── Run-history API ───────────────────────────────────────────────
 
-/// Lightweight run summary returned by the run-history index (spec 0013).
+/// Lightweight run summary returned by the run-history index.
 #[derive(Debug, Serialize, ToSchema)]
 pub struct RunRecordSchema {
     /// The execution identifier (also the run id in the history index).
@@ -257,11 +257,11 @@ pub struct RunArtifactListSchema {
     pub artifacts: Vec<RunArtifactEntrySchema>,
 }
 
-/// OpenAPI document for the run-history surface (spec 0013).
+/// OpenAPI document for the run-history surface.
 #[derive(OpenApi)]
 #[openapi(
     info(
-        title = "APXM Run-History API (spec 0013)",
+        title = "APXM Run-History API",
         version = "0.1.0-draft",
         description = "Workflow-scoped run index. Exposes list, single-run summary, \
                        and reindex endpoints. Full audit trail remains in rollout JSONL."
@@ -377,7 +377,7 @@ fn doc_clear_runs() {
     post,
     path = "/v1/runs/reindex",
     operation_id = "reindexRuns",
-    summary = "Rebuild the run-history index from durable run artifacts (spec 0013 US2)",
+    summary = "Rebuild the run-history index from durable run artifacts",
     responses(
         (status = 200, description = "Reindex complete"),
         (status = 501, description = "Not yet implemented"),

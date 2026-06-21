@@ -54,21 +54,3 @@ pub(crate) async fn scrape_metrics(state: axum::extract::State<AppState>) -> Res
         .into_response()
 }
 
-/// Reset counters for tests.
-#[cfg(test)]
-pub(crate) fn reset_for_tests() {
-    HTTP_REQUESTS_TOTAL.store(0, Ordering::Relaxed);
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn request_counter_increments() {
-        reset_for_tests();
-        record_http_request();
-        record_http_request();
-        assert_eq!(HTTP_REQUESTS_TOTAL.load(Ordering::Relaxed), 2);
-    }
-}

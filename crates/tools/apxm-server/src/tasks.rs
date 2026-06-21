@@ -410,12 +410,11 @@ pub(crate) async fn complete_task(
         .complete(&id, &req.claim_token, req.result, req.success)
         .await
         .map_err(|e| {
-            let status = if e.starts_with("lease_expired:") {
-                axum::http::StatusCode::CONFLICT
+            if e.starts_with("lease_expired:") {
+                ApiError::conflict(e)
             } else {
-                axum::http::StatusCode::BAD_REQUEST
-            };
-            ApiError::from_parts(status, e)
+                ApiError::bad_request(e)
+            }
         })?;
     info!(id = %id, success = %req.success, "Task completed");
     Ok(Json(OkAckId::new(id)))

@@ -108,18 +108,6 @@ impl ApiFaultCode {
             | Self::StreamLag => StatusCode::INTERNAL_SERVER_ERROR,
         }
     }
-
-    /// Best-effort mapping for legacy `ApiError { status, message }` call sites.
-    pub fn from_http_status(status: StatusCode) -> Self {
-        match status {
-            StatusCode::BAD_REQUEST => Self::BadRequest,
-            StatusCode::NOT_FOUND => Self::NotFound,
-            StatusCode::UNPROCESSABLE_ENTITY => Self::UnprocessableEntity,
-            StatusCode::TOO_MANY_REQUESTS => Self::TooManyRequests,
-            StatusCode::CONFLICT => Self::Conflict,
-            _ => Self::InternalError,
-        }
-    }
 }
 
 /// Typed error envelope returned on HTTP responses and SSE error frames.

@@ -1396,7 +1396,7 @@ mod tests {
         );
     }
 
-    /// C1 end-to-end-ish: a session-loop recv, woken via the PRODUCTION
+    /// End-to-end-ish: a session-loop recv, woken via the PRODUCTION
     /// re-arming `ParkWaker` (not a direct primitive call), splices a turn
     /// flow-call (binding the message) + a fresh recv — proving the emitted
     /// entry flow drives `splice_turn_and_rearm` through the real wake path.

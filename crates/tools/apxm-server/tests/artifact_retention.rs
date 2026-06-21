@@ -1,4 +1,4 @@
-//! Artifact expiry and retention/GC tests (spec 0021 T043).
+//! Artifact expiry and retention/GC tests.
 //!
 //! Validates that:
 //! 1. Expired artifact references return a typed `artifact_expired` error body,
@@ -11,7 +11,7 @@
 use apxm_server::artifacts::object_store::{ArtifactError, ArtifactRef};
 use apxm_server::run_history::storage::RetentionClass;
 
-/// Retention class TTLs match the spec 0021 table.
+/// Retention class TTLs match the retention table.
 #[test]
 fn retention_class_ttls_are_correct() {
     assert_eq!(RetentionClass::Ephemeral.default_ttl_secs(), Some(3_600));
@@ -114,18 +114,3 @@ fn permanent_artifact_ref_omits_expires_at_in_json() {
     );
 }
 
-/// Invariant: expired blobs return a typed error; run records stay queryable.
-#[test]
-fn expired_blob_does_not_break_run_record_query() {
-    // When a run record's blob has expired its artifact_refs entry has an
-    // expires_at in the past.  The run record itself (status, timing, workflow_id)
-    // must remain queryable; only the blob resolution fails with ArtifactExpired.
-    //
-    // This invariant is exercised live by `tools/storage_restore_fixture.py`
-    // (check_object_references) which probes the server's artifact endpoint and
-    // verifies the typed error.
-    assert!(
-        true,
-        "invariant: run record must remain queryable even when its blobs have expired"
-    );
-}

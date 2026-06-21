@@ -1,4 +1,4 @@
-//! SSE event helpers for permission prompts (spec 0002 US4/US7).
+//! SSE event helpers for permission prompts.
 
 use serde_json::Value as JsonValue;
 

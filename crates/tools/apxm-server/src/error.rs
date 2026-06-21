@@ -8,7 +8,7 @@ use crate::types::errors::{ApiFaultCode, TypedError};
 pub(crate) struct ApiError {
     pub(crate) status: axum::http::StatusCode,
     pub(crate) message: String,
-    code: Option<ApiFaultCode>,
+    code: ApiFaultCode,
     recovery_hint: Option<String>,
 }
 
@@ -22,18 +22,8 @@ impl ApiError {
         Self {
             status: code.http_status(),
             message,
-            code: Some(code),
+            code,
             recovery_hint,
-        }
-    }
-
-    pub(crate) fn from_parts(status: axum::http::StatusCode, message: impl Into<String>) -> Self {
-        let message = message.into();
-        Self {
-            status,
-            message,
-            code: None,
-            recovery_hint: None,
         }
     }
 
@@ -77,7 +67,7 @@ impl ApiError {
         Self {
             status: typed.http_status(),
             message: typed.message.clone(),
-            code: Some(ApiFaultCode::from_wire(&typed.code).unwrap_or(ApiFaultCode::RuntimeError)),
+            code: ApiFaultCode::from_wire(&typed.code).unwrap_or(ApiFaultCode::RuntimeError),
             recovery_hint: typed.recovery_hint.clone(),
         }
     }
@@ -90,7 +80,7 @@ impl ApiError {
         Self {
             status: typed.http_status(),
             message: typed.message.clone(),
-            code: ApiFaultCode::from_wire(&typed.code),
+            code: ApiFaultCode::from_wire(&typed.code).unwrap_or(ApiFaultCode::InternalError),
             recovery_hint: typed.recovery_hint.clone(),
         }
     }
@@ -103,17 +93,8 @@ impl ApiError {
         self.to_typed()
     }
 
-    fn resolved_code(&self) -> ApiFaultCode {
-        self.code
-            .unwrap_or_else(|| ApiFaultCode::from_http_status(self.status))
-    }
-
     fn to_typed(&self) -> TypedError {
-        TypedError::new(
-            self.resolved_code(),
-            self.message.clone(),
-            self.recovery_hint.clone(),
-        )
+        TypedError::new(self.code, self.message.clone(), self.recovery_hint.clone())
     }
 }
 
@@ -171,11 +152,12 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn legacy_struct_literal_still_emits_typed_envelope() {
-        let json = response_json(ApiError::from_parts(
-            axum::http::StatusCode::NOT_FOUND,
+    async fn typed_constructor_round_trips_fault_code() {
+        let json = response_json(ApiError::typed(TypedError::program_fault(
+            ApiFaultCode::NotFound,
             "missing checkpoint",
-        ))
+            None,
+        )))
         .await;
 
         assert_eq!(json["class"], "program_fault");

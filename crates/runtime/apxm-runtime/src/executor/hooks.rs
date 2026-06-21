@@ -427,7 +427,7 @@ mod hook_registry_tests {
         assert!(glob_match("c*é", "café"));
     }
 
-    /// The turn/ask lifecycle events the C3 drivers consume (`pre_turn`,
+    /// The turn/ask lifecycle events the turn drivers consume (`pre_turn`,
     /// `post_turn`, `post_ask`) must be registrable and discoverable via
     /// `for_event` — i.e. not dead surface.
     #[test]

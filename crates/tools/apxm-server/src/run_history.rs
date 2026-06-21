@@ -1,4 +1,4 @@
-//! Workflow-scoped run history index (spec 0013).
+//! Workflow-scoped run history index.
 //!
 //! Provides two read paths over the durable `ExecutionStore`:
 //!
@@ -7,7 +7,7 @@
 //! - `GET /v1/runs/{execution_id}` — read one run summary by execution id
 //!   (additive alias; the full record is still at `/v1/executions/{id}`).
 //!
-//! The reindex route (`POST /v1/runs/reindex`, spec 0013 Phase 4) walks
+//! The reindex route (`POST /v1/runs/reindex`) walks
 //! workflow run artifacts and hydrates lightweight records for workflow history.
 
 pub mod storage;
@@ -27,7 +27,7 @@ use crate::state::AppState;
 
 /// Lightweight run record returned by the history index.
 ///
-/// Wire shape matches the spec 0013 run-history-row contract.
+/// Wire shape matches the run-history-row contract.
 #[derive(Debug, Clone, Serialize)]
 pub(crate) struct RunRecord {
     pub(crate) run_id: String,
@@ -107,7 +107,7 @@ pub(crate) async fn get_run_summary(
 }
 
 /// Minimal run-summary artifact written to `{run_root}/run.json` on settlement
-/// (spec 0009 T035). Mirrors `executions::RunArtifact`; declared here so the
+/// on settlement. Mirrors `executions::RunArtifact`; declared here so the
 /// reindex walker can deserialize it without reaching into the private type.
 #[derive(Debug, Deserialize)]
 struct RunArtifactFile {
@@ -178,7 +178,7 @@ pub(crate) struct ReindexResult {
 /// the in-memory `ExecutionStore` from durable run artifacts.
 ///
 /// Each artifact is a `run.json` written by `executions::write_run_artifact`
-/// on settlement (spec 0009 T035). The walker treats corrupt or missing files
+/// on settlement. The walker treats corrupt or missing files
 /// as diagnostics rather than errors so a partial artifact tree is usable.
 pub(crate) fn reindex_from_runs_root(state: &AppState) -> ReindexResult {
     let Ok(runs_root) = std::env::var("APXM_RUNS_ROOT") else {
@@ -541,7 +541,7 @@ impl From<StoredRunRecord> for RunRecord {
 }
 
 /// `POST /v1/runs/reindex` — rebuild the run-history index from durable
-/// artifacts under the 0009 run-root (spec 0013 User Story 2).
+/// artifacts under the server-owned run-root.
 pub(crate) async fn reindex_runs(State(state): State<AppState>) -> Json<serde_json::Value> {
     let result = reindex_from_runs_root(&state);
     Json(serde_json::json!({

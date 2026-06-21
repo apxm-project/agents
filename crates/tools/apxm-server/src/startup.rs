@@ -343,7 +343,7 @@ async fn drain_and_flush_rollouts(
 mod tests {
     use super::*;
 
-    /// T034 contract: `pack_capability_roots` includes `APXM_LIBS_ROOT` so the
+    /// Contract: `pack_capability_roots` includes `APXM_LIBS_ROOT` so the
     /// server consumes Studio-deployed packs from `/workspace/libs` (Docker
     /// workspace layout) without requiring a process restart.
     #[test]
@@ -361,7 +361,7 @@ mod tests {
         assert!(
             roots.contains(&workspace_libs),
             "APXM_LIBS_ROOT=/workspace/libs must appear in pack capability roots so \
-             Server consumes Studio-deployed packs without restart (spec 0016 T034)"
+             Server consumes Studio-deployed packs without restart"
         );
     }
 
