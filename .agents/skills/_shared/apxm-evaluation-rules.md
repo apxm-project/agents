@@ -82,5 +82,5 @@ Before publishing a number:
 
 - `tau2 --seed S --num-tasks N` is not nested across N. If you need
   nested arcs across multiple Ns, use `--task-ids` to pin the set.
-- `dekk apxm quality-eval` is the tier-3 path (rubric + budget +
-  judge). `dekk apxm test-quality-eval` exercises the harness offline.
+- `dekk apxm-eval quality-eval` is the tier-3 path (rubric + budget +
+  judge). `dekk apxm-eval test-quality-eval` exercises the harness offline.
