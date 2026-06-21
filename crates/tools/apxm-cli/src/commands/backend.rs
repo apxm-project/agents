@@ -232,7 +232,7 @@ pub async fn backend_command(action: BackendAction, json_output: bool) -> Result
                             Status::Warning,
                             &format!(
                                 "Ollama not reachable - run `{}` after starting Ollama",
-                                dekk_hints::BACKEND_SYNC_MODELS
+                                dekk_hints::BACKEND_ADD_MODEL
                             ),
                         );
                     }
