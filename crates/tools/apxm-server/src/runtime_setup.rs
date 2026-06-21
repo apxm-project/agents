@@ -1,13 +1,10 @@
 use apxm_backends::llm::backends::{MockLLMBackend, MockResponse};
 use apxm_backends::{BackendRegistration, LLMRegistry};
 use apxm_core::constants::env as apxm_env;
-use apxm_core::error::RuntimeError;
 use apxm_driver::runtime::sandbox::configure_sandbox_registry;
 use apxm_runtime::capability::builtins::{FiredSchedule, OnFire};
 use apxm_runtime::{ModelRouterConfig, Runtime, RuntimeConfig};
 use tracing::{info, warn};
-
-use crate::remote_runner::RemoteAgentSpawner;
 
 pub(crate) async fn build_runtime_with_router(
     config: RuntimeConfig,
@@ -18,36 +15,8 @@ pub(crate) async fn build_runtime_with_router(
     runtime.set_sandbox_registry(std::sync::Arc::clone(&sandbox_registry));
     register_builtin_capabilities(&runtime, schedule_on_fire);
     load_llm_backends(&runtime).await;
-    if let Some(remote_runner) = RemoteAgentSpawner::from_env() {
-        let route_candidates =
-            remote_runner
-                .discover_route_candidates()
-                .await
-                .map_err(|error| {
-                    RuntimeError::State(format!(
-                        "APXM_RUNNER_URL is set but runner profile discovery failed: {error}"
-                    ))
-                })?;
-        if route_candidates.is_empty() {
-            return Err(RuntimeError::State(
-                "APXM_RUNNER_URL is set but runner reported no available agent profiles"
-                    .to_string(),
-            ));
-        }
-        let remote_runner =
-            std::sync::Arc::new(remote_runner.with_route_candidates(route_candidates));
-        runtime
-            .process_table()
-            .set_agent_spawner(remote_runner.clone())
-            .await;
-        runtime
-            .process_table()
-            .set_agent_prompter(remote_runner)
-            .await;
-        info!("configured remote runner-backed ACP agent spawner/prompter");
-    } else {
-        info!("APXM_RUNNER_URL is not set; runner-backed ACP agent profiles are unavailable");
-    }
+    // v0: KIND 2 ACP agents run in-process via the process table's default
+    // spawner; the remote runner plane (apxm-runner) is removed.
     runtime.init_model_router(ModelRouterConfig::default())?;
     // Professional-agent middleware chain (dispatcher chokepoint). A generous
     // per-node timeout bounds a hung node without tripping normal multi-agent
