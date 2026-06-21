@@ -114,18 +114,3 @@ fn permanent_artifact_ref_omits_expires_at_in_json() {
     );
 }
 
-/// Invariant: expired blobs return a typed error; run records stay queryable.
-#[test]
-fn expired_blob_does_not_break_run_record_query() {
-    // When a run record's blob has expired its artifact_refs entry has an
-    // expires_at in the past.  The run record itself (status, timing, workflow_id)
-    // must remain queryable; only the blob resolution fails with ArtifactExpired.
-    //
-    // This invariant is exercised live by `tools/storage_restore_fixture.py`
-    // (check_object_references) which probes the server's artifact endpoint and
-    // verifies the typed error.
-    assert!(
-        true,
-        "invariant: run record must remain queryable even when its blobs have expired"
-    );
-}
