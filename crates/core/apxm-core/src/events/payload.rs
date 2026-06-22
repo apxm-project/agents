@@ -800,6 +800,12 @@ impl_event_payload!(WorkflowFinishedPayload, kind::WORKFLOW_FINISHED);
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ExecutionStartedPayload {
     pub execution_id: String,
+    /// Positional graph inputs supplied by the caller.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub args: Vec<String>,
+    /// Verbatim user/cue text when the caller provides one.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub user_text: Option<String>,
 }
 impl_event_payload!(ExecutionStartedPayload, kind::EXECUTION_STARTED);
 

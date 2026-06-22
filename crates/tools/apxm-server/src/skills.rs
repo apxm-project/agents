@@ -401,6 +401,8 @@ pub(crate) struct SkillExecuteStartedPayload {
     pub(crate) skill_id: String,
     pub(crate) skill_version: String,
     pub(crate) session_id: String,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub(crate) args: Vec<String>,
 }
 impl_event_payload!(SkillExecuteStartedPayload, SKILL_EXECUTE_STARTED);
 
@@ -669,6 +671,7 @@ async fn run_detached_skill_body(state: AppState, mut prepared: PreparedCompiled
             skill_id: prepared.skill_id.clone(),
             skill_version: prepared.skill_version.clone(),
             session_id: prepared.session_id.clone(),
+            args: prepared.args.clone(),
         },
         EventSource::Server,
         &prepared.execution_id,
@@ -778,6 +781,7 @@ async fn execute_compiled_skill(
             skill_id: prepared.skill_id.clone(),
             skill_version: prepared.skill_version.clone(),
             session_id: prepared.session_id.clone(),
+            args: prepared.args.clone(),
         },
         EventSource::Server,
         &prepared.execution_id,
@@ -990,6 +994,7 @@ pub(crate) async fn execute_skill_stream(
                     skill_id: prepared.skill_id.clone(),
                     skill_version: prepared.skill_version.clone(),
                     session_id: prepared.session_id.clone(),
+                    args: prepared.args.clone(),
                 },
                 EventSource::Server,
                 &trace_id,

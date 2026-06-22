@@ -466,6 +466,8 @@ async fn run_prepared_workflow(
         ApxmEvent::root(
             ExecutionStartedPayload {
                 execution_id: prepared.execution_id.clone(),
+                args: vec![prepared.workflow_path.clone()],
+                user_text: None,
             },
             EventSource::Server,
             &prepared.execution_id,
