@@ -18,7 +18,7 @@ profiles require Node/npm plus the corresponding authenticated agent setup:
 
 - `claude` runs `npx -y @agentclientprotocol/claude-agent-acp@^0.24.2` and
   needs Claude Code to be configured locally.
-- `codex` runs `npx @zed-industries/codex-acp@^0.10.0` and needs the Codex ACP
+- `codex` runs `npx -y @zed-industries/codex-acp@^0.16.0` and needs the Codex ACP
   adapter and OpenAI/Codex credentials to be configured locally.
 
 ## Examples

@@ -1,6 +1,7 @@
 use apxm_backends::llm::backends::{MockLLMBackend, MockResponse};
 use apxm_backends::{BackendRegistration, LLMRegistry};
 use apxm_core::constants::env as apxm_env;
+use apxm_driver::runtime::agents::configure_agent_registry;
 use apxm_driver::runtime::sandbox::configure_sandbox_registry;
 use apxm_runtime::capability::builtins::{FiredSchedule, OnFire};
 use apxm_runtime::{ModelRouterConfig, Runtime, RuntimeConfig};
@@ -15,6 +16,13 @@ pub(crate) async fn build_runtime_with_router(
     runtime.set_sandbox_registry(std::sync::Arc::clone(&sandbox_registry));
     register_builtin_capabilities(&runtime, schedule_on_fire);
     load_llm_backends(&runtime).await;
+    configure_agent_registry(
+        runtime.process_table(),
+        runtime.capability_system_arc(),
+        sandbox_registry,
+    )
+    .await
+    .map_err(|error| apxm_core::error::RuntimeError::State(error.to_string()))?;
     // v0: KIND 2 ACP agents run in-process via the process table's default
     // spawner; the remote runner plane (apxm-runner) is removed.
     runtime.init_model_router(ModelRouterConfig::default())?;
@@ -202,7 +210,15 @@ pub(crate) async fn build_runtime_without_router(
     config: RuntimeConfig,
 ) -> Result<Runtime, apxm_core::error::RuntimeError> {
     let mut runtime = Runtime::new(config).await?;
-    runtime.set_sandbox_registry(configure_sandbox_registry());
+    let sandbox_registry = configure_sandbox_registry();
+    runtime.set_sandbox_registry(std::sync::Arc::clone(&sandbox_registry));
+    configure_agent_registry(
+        runtime.process_table(),
+        runtime.capability_system_arc(),
+        sandbox_registry,
+    )
+    .await
+    .map_err(|error| apxm_core::error::RuntimeError::State(error.to_string()))?;
     Ok(runtime)
 }
 

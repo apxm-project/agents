@@ -103,7 +103,7 @@ code and the host must be able to run the configured command. In this checkout:
 
 - `claude` runs `npx -y @agentclientprotocol/claude-agent-acp@^0.24.2` and
   needs Node/npm plus a working Claude Code setup.
-- `codex` runs `npx @zed-industries/codex-acp@^0.10.0` and needs Node/npm plus
+- `codex` runs `npx -y @zed-industries/codex-acp@^0.16.0` and needs Node/npm plus
   a working Codex/OpenAI setup.
 
 Check what is available before executing agent examples:

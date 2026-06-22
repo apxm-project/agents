@@ -38,7 +38,7 @@ Optional, depending on the example:
 - Node/npm plus the relevant authenticated agent CLI when using APXM ACP
   profiles. The checked-in `claude` profile launches
   `npx -y @agentclientprotocol/claude-agent-acp@^0.24.2`; the checked-in
-  `codex` profile launches `npx @zed-industries/codex-acp@^0.10.0`.
+  `codex` profile launches `npx -y @zed-industries/codex-acp@^0.16.0`.
 - The APXM vLLM fork for `self-hosted/vllm_graph_smoke.py`; see
   `docs/backends/vllm.md`.
 - `jq` and `rg` only for inspection/reporting commands that mention

@@ -10,7 +10,7 @@ coordinate APXM ACP agent profiles and optional self-hosted vLLM routes.
   Check them with `dekk apxm agent list` and `dekk apxm agent test <name>`.
 - The checked-in `claude` profile uses
   `npx -y @agentclientprotocol/claude-agent-acp@^0.24.2`; the checked-in
-  `codex` profile uses `npx @zed-industries/codex-acp@^0.10.0`.
+  `codex` profile uses `npx -y @zed-industries/codex-acp@^0.16.0`.
 - vLLM workflows are optional and require a running repo-local
   `external/vllm` fork plus a registered served model alias. See
   `docs/backends/vllm.md`.
