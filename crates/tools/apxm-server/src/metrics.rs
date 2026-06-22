@@ -53,4 +53,3 @@ pub(crate) async fn scrape_metrics(state: axum::extract::State<AppState>) -> Res
     )
         .into_response()
 }
-

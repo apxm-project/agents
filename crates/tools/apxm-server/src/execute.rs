@@ -281,9 +281,7 @@ pub(crate) async fn run_air_inner(
         tool_call_budgets,
         tool_credentials,
         owner,
-        // Only the streaming path records a durable transcript; the raw
-        // execute path has no rollout, so the verbatim prompt is unused here.
-        user_text: _,
+        user_text,
         python_tools_sidecar,
         workflow_id,
     } = prepare_request(req)?;
@@ -324,6 +322,8 @@ pub(crate) async fn run_air_inner(
             ApxmEvent::root(
                 ExecutionStartedPayload {
                     execution_id: execution_id.clone(),
+                    args: args.clone(),
+                    user_text: user_text.clone(),
                 },
                 EventSource::Server,
                 &trace_id,
@@ -566,6 +566,8 @@ pub(crate) async fn execute_stream(
         send_lifecycle(ApxmEvent::root(
             ExecutionStartedPayload {
                 execution_id: execution_id.clone(),
+                args: args.clone(),
+                user_text: user_text.clone(),
             },
             EventSource::Server,
             &trace_id,

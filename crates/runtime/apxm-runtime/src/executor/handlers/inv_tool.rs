@@ -175,6 +175,9 @@ pub async fn execute(ctx: &ExecutionContext, node: &Node, inputs: Vec<Value>) ->
                 )));
             }
         };
+    if let Some(emitter) = &ctx.event_emitter {
+        emitter.emit_tool_start(&capability_name, &args);
+    }
 
     // Python branch is taken iff `bind-tool-handlers` stamped a handler id.
     let raw = if let Some(handler_id) = python_handler_id {
@@ -224,6 +227,9 @@ pub async fn execute(ctx: &ExecutionContext, node: &Node, inputs: Vec<Value>) ->
     // post_tool hooks (replace_result) for both paths.
     let result =
         crate::executor::hook_driver::run_post_tool_hooks(ctx, &capability_name, raw).await;
+    if let Some(emitter) = &ctx.event_emitter {
+        emitter.emit_tool_end(&capability_name, &result);
+    }
 
     tracing::info!(
         capability = %capability_name,

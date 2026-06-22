@@ -113,4 +113,3 @@ fn permanent_artifact_ref_omits_expires_at_in_json() {
         "permanent artifacts must omit expires_at from JSON"
     );
 }
-

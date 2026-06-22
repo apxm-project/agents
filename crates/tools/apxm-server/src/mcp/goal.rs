@@ -696,6 +696,8 @@ async fn goal_start(
             ApxmEvent::root(
                 ExecutionStartedPayload {
                     execution_id: goal_id.clone(),
+                    args: vec![request.task.clone()],
+                    user_text: Some(request.task.clone()),
                 },
                 EventSource::Server,
                 &goal_id,
