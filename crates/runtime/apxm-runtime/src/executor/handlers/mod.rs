@@ -238,6 +238,10 @@ async fn execute_llm_request_with_node_name(
     phase: &str,
     request: &LLMRequest,
 ) -> Result<LLMResponse> {
+    if ctx.cancellation_token.is_cancelled() {
+        return Err(RuntimeError::SchedulerCancelled);
+    }
+
     // Use streaming path when an event emitter is available so we can
     // emit token-by-token events. The default generate_stream() impl
     // wraps generate() into a single Done chunk for non-streaming backends.
@@ -251,15 +255,23 @@ async fn execute_llm_request_with_node_name(
 
     // Route through ModelRouter when available (circuit breakers + policy routing).
     let response = if let Some(router) = &ctx.model_router {
-        router
-            .generate(request.clone())
-            .await
-            .map_err(|e| llm_error(ctx, phase, request, e))?
+        tokio::select! {
+            result = router.generate(request.clone()) => {
+                result.map_err(|e| llm_error(ctx, phase, request, e))?
+            }
+            _ = ctx.cancellation_token.cancelled() => {
+                return Err(RuntimeError::SchedulerCancelled);
+            }
+        }
     } else {
-        ctx.llm_registry
-            .generate(request.clone())
-            .await
-            .map_err(|e| llm_error(ctx, phase, request, e))?
+        tokio::select! {
+            result = ctx.llm_registry.generate(request.clone()) => {
+                result.map_err(|e| llm_error(ctx, phase, request, e))?
+            }
+            _ = ctx.cancellation_token.cancelled() => {
+                return Err(RuntimeError::SchedulerCancelled);
+            }
+        }
     };
 
     #[cfg(feature = "metrics")]
@@ -324,7 +336,16 @@ async fn execute_llm_request_streaming(
     let mut pending_tool_call: Option<PendingToolCall> = None;
     let mut streamed_tool_calls: Vec<apxm_core::types::ToolCall> = Vec::new();
 
-    while let Some(chunk_result) = stream.next().await {
+    loop {
+        let chunk_result = tokio::select! {
+            chunk_result = stream.next() => chunk_result,
+            _ = ctx.cancellation_token.cancelled() => {
+                return Err(RuntimeError::SchedulerCancelled);
+            }
+        };
+        let Some(chunk_result) = chunk_result else {
+            break;
+        };
         let chunk = match chunk_result {
             Ok(chunk) => chunk,
             Err(e) => {

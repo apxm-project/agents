@@ -543,6 +543,7 @@ pub(crate) async fn execute_stream(
     let rollout_registry = state.rollout_registry.clone();
     let run_event_bus = state.run_event_bus.clone();
     let execution_store = state.execution_store.clone();
+    let cancellation_token = apxm_runtime::CancellationToken::new();
     // Drop this session's registry record when its execution settles (only if it
     // still points at this execution — a newer turn may have re-registered).
     let session_registry = state.session_registry.clone();
@@ -590,15 +591,17 @@ pub(crate) async fn execute_stream(
             downstream,
         ));
         let emitter = Arc::new(EmitterAdapter::new(sink, EventSource::Runtime, &trace_id));
-        let execution = runtime.execute_artifact_with_session_emitter_metadata_and_credentials(
-            artifact,
-            args,
-            session_id,
-            Some(emitter),
-            session_dir.clone(),
-            grant_metadata,
-            resolved_credentials,
-        );
+        let execution = runtime
+            .execute_artifact_with_session_emitter_metadata_credentials_and_cancellation(
+                artifact,
+                args,
+                session_id,
+                Some(emitter),
+                session_dir.clone(),
+                grant_metadata,
+                resolved_credentials,
+                cancellation_token.clone(),
+            );
         tokio::select! {
             outcome = execution => match outcome {
                 Ok(result) => {
@@ -636,6 +639,7 @@ pub(crate) async fn execute_stream(
             // model/tool call at its await point. Emit `turn_aborted` in place
             // of `execute_complete`.
             _ = cancel.notified() => {
+                cancellation_token.cancel();
                 if raw_record.is_some() {
                     execution_store.complete_failure(&execution_id, "cancelled".to_string());
                 }

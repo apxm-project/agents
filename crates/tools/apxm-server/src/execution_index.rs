@@ -17,6 +17,7 @@
 
 use std::collections::{BTreeMap, HashMap};
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 
 use serde::{Deserialize, Serialize};
@@ -28,6 +29,7 @@ pub(crate) const INDEX_FILE_NAME: &str = "_index.json";
 
 /// Default LRU bound for in-memory index entries.
 pub(crate) const DEFAULT_MAX_ENTRIES: usize = 10_000;
+static TEMP_FILE_COUNTER: AtomicU64 = AtomicU64::new(0);
 
 /// Compact lookup record stored in the index.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -434,7 +436,7 @@ fn write_sidecar(dir: &Path, sidecar: &HashMap<String, SidecarEntry>) {
         );
         return;
     };
-    let temp_path = path.with_extension("json.tmp");
+    let temp_path = unique_temp_path(&path);
     if let Err(error) = std::fs::write(&temp_path, bytes) {
         tracing::warn!(
             path = %temp_path.display(),
@@ -451,4 +453,14 @@ fn write_sidecar(dir: &Path, sidecar: &HashMap<String, SidecarEntry>) {
             "failed to persist execution index sidecar"
         );
     }
+}
+
+fn unique_temp_path(path: &Path) -> PathBuf {
+    let counter = TEMP_FILE_COUNTER.fetch_add(1, Ordering::Relaxed);
+    let pid = std::process::id();
+    let file_name = path
+        .file_name()
+        .and_then(|name| name.to_str())
+        .unwrap_or("tmp");
+    path.with_file_name(format!("{file_name}.{pid}.{counter}.tmp"))
 }
