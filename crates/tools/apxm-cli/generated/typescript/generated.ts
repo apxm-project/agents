@@ -1192,7 +1192,7 @@ export const ALL_AGENTS: readonly AgentTemplate[] = [
   },
   {
     name: "codex",
-    command: "npx @zed-industries/codex-acp@^0.10.0",
+    command: "npx -y @zed-industries/codex-acp@^0.16.0",
     description: "Codex ACP profile for coding, tests, code review, and workflow implementation.",
     routeCapabilities: [
       "read",

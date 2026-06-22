@@ -181,7 +181,7 @@ impl AgentRegistry {
             ),
             (
                 "codex",
-                "npx @zed-industries/codex-acp@^0.10.0",
+                "npx -y @zed-industries/codex-acp@^0.16.0",
                 "Codex ACP profile for coding, tests, code review, and workflow implementation.",
                 dg,
                 dt,

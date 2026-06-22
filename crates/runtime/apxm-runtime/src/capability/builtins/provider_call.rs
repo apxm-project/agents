@@ -134,6 +134,12 @@ fn append_query(url: &str, pairs: &[(&String, &Value)]) -> String {
     out
 }
 
+fn has_header(headers: &[(String, String)], name: &str) -> bool {
+    headers
+        .iter()
+        .any(|(key, _)| key.eq_ignore_ascii_case(name))
+}
+
 pub struct ProviderCallCapability {
     metadata: CapabilityMetadata,
     /// apxm-auth base override; `None` resolves from `APXM_AUTH_URL` at dispatch.
@@ -294,7 +300,7 @@ impl CapabilityExecutor for ProviderCallCapability {
             .and_then(|j| j.as_str().map(String::from))
             .ok_or_else(|| cap_err("missing `credential` (apxm-auth connection id)".into()))?;
         let result_path = as_json("result_path").and_then(|j| j.as_str().map(String::from));
-        let headers: Vec<(String, String)> = as_json("headers")
+        let mut headers: Vec<(String, String)> = as_json("headers")
             .and_then(|j| {
                 j.as_object().map(|o| {
                     o.iter()
@@ -362,13 +368,21 @@ impl CapabilityExecutor for ProviderCallCapability {
         };
 
         let b64 = base64::engine::general_purpose::STANDARD;
-        let mut payload = json!({ "method": method, "url": url, "headers": headers });
-        if let Some(body) = body {
+        let body_b64 = if let Some(body) = body {
+            if !matches!(body, JsonValue::String(_)) && !has_header(&headers, "content-type") {
+                headers.push(("Content-Type".to_string(), "application/json".to_string()));
+            }
             let bytes = match body {
                 JsonValue::String(s) => s.into_bytes(),
                 other => other.to_string().into_bytes(),
             };
-            payload["body_b64"] = JsonValue::String(b64.encode(&bytes));
+            Some(b64.encode(&bytes))
+        } else {
+            None
+        };
+        let mut payload = json!({ "method": method, "url": url, "headers": headers });
+        if let Some(body_b64) = body_b64 {
+            payload["body_b64"] = JsonValue::String(body_b64);
         }
 
         let base = self.base.clone().unwrap_or_else(auth_base);
@@ -536,6 +550,8 @@ mod tests {
     struct InnerReq {
         url: String,
         #[serde(default)]
+        headers: Vec<(String, String)>,
+        #[serde(default)]
         body_b64: Option<String>,
     }
 
@@ -614,6 +630,12 @@ mod tests {
         assert_eq!(
             inner.url, "https://api.example.com/repos/octocat/issues",
             "POST url keeps no query string"
+        );
+        assert!(
+            inner.headers.iter().any(|(key, value)| {
+                key.eq_ignore_ascii_case("content-type") && value == "application/json"
+            }),
+            "JSON body requests must carry a content type"
         );
         let body = inner.body_b64.expect("POST sends a body");
         let decoded = String::from_utf8(STANDARD.decode(body).unwrap()).unwrap();

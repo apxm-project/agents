@@ -9,6 +9,7 @@ const EXAMPLES_DIR: &str = "examples";
 const SKILL_URI_PREFIX: &str = "skill://";
 const SKILL_ROOT_FLAG: &str = "--skill-root";
 const SKILL_ROOTS_ENV: &str = "APXM_SKILL_ROOTS";
+const LIBS_ROOT_ENV: &str = "APXM_LIBS_ROOT";
 const BUILTIN_SKILL_ROOT_ENV: &str = env!("APXM_BUILTIN_SKILL_ROOT");
 const USER_INSTALL_DIR: &str = ".apxm/libs";
 
@@ -168,6 +169,10 @@ pub(crate) fn parse_skill_roots(args: &[String]) -> Vec<PathBuf> {
 
     if let Some(env_roots) = std::env::var_os(SKILL_ROOTS_ENV) {
         roots.extend(std::env::split_paths(&env_roots));
+    }
+
+    if let Some(libs_root) = std::env::var_os(LIBS_ROOT_ENV) {
+        roots.push(PathBuf::from(libs_root));
     }
 
     if let Some(home) = std::env::var_os("HOME") {
@@ -573,4 +578,25 @@ fn is_symlink(path: &Path) -> bool {
     fs::symlink_metadata(path)
         .map(|metadata| metadata.file_type().is_symlink())
         .unwrap_or(false)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    #[allow(unsafe_code)]
+    fn parse_skill_roots_includes_apxm_libs_root() {
+        let libs_root = PathBuf::from("/workspace/libs");
+        // SAFETY: this test only reads the env through parse_skill_roots.
+        unsafe { std::env::set_var(LIBS_ROOT_ENV, &libs_root) };
+        let roots = parse_skill_roots(&[]);
+        unsafe { std::env::remove_var(LIBS_ROOT_ENV) };
+
+        assert!(
+            roots.contains(&libs_root),
+            "APXM_LIBS_ROOT must be an executable skill root so OS-triggered \
+             workflow packs deployed by Studio are visible to apxm-server"
+        );
+    }
 }
