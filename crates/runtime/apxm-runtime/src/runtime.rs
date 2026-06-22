@@ -764,6 +764,33 @@ impl Runtime {
         .await
     }
 
+    /// Execute a top-level artifact with host-owned cancellation and
+    /// pre-resolved per-tool credentials.
+    #[allow(clippy::too_many_arguments)]
+    pub async fn execute_artifact_with_session_emitter_metadata_credentials_and_cancellation(
+        &self,
+        artifact: Artifact,
+        args: Vec<String>,
+        session_id: Option<String>,
+        event_emitter: Option<Arc<dyn ExecutionEventEmitter>>,
+        session_dir: Option<String>,
+        extra_metadata: HashMap<String, String>,
+        tool_credentials: Option<HashMap<String, String>>,
+        cancellation_token: CancellationToken,
+    ) -> Result<RuntimeExecutionResult, RuntimeError> {
+        self.execute_artifact_inner(
+            artifact,
+            args,
+            session_id,
+            event_emitter,
+            session_dir,
+            extra_metadata,
+            Some(cancellation_token),
+            tool_credentials,
+        )
+        .await
+    }
+
     /// Execute a top-level artifact with a host-owned cancellation token.
     ///
     /// Server-managed background workflows use this token so public-execution

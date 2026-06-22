@@ -178,7 +178,10 @@ pub async fn execute(ctx: &ExecutionContext, node: &Node, inputs: Vec<Value>) ->
 
     // Python branch is taken iff `bind-tool-handlers` stamped a handler id.
     let raw = if let Some(handler_id) = python_handler_id {
-        execute_python_tool(ctx, &capability_name, &handler_id, &args, timeout).await?
+        tokio::select! {
+            result = execute_python_tool(ctx, &capability_name, &handler_id, &args, timeout) => result?,
+            _ = ctx.cancellation_token.cancelled() => return Err(RuntimeError::SchedulerCancelled),
+        }
     } else {
         // Invoke-site write boundary: enforce the no-widen grant for EVERY tool
         // call, closing the bypass where nested executions skipped the server's
@@ -199,17 +202,19 @@ pub async fn execute(ctx: &ExecutionContext, node: &Node, inputs: Vec<Value>) ->
         } else {
             None
         };
-        let outcome = ctx
-            .invoke_tool_with_timeout(&capability_name, args, timeout)
-            .await
-            .map_err(|e| {
-                tracing::error!(
-                    capability = %capability_name,
-                    error = %e,
-                    "Capability invocation failed"
-                );
-                e
-            })?;
+        let outcome = tokio::select! {
+            result = ctx.invoke_tool_with_timeout(&capability_name, args, timeout) => {
+                result.map_err(|e| {
+                    tracing::error!(
+                        capability = %capability_name,
+                        error = %e,
+                        "Capability invocation failed"
+                    );
+                    e
+                })?
+            }
+            _ = ctx.cancellation_token.cancelled() => return Err(RuntimeError::SchedulerCancelled),
+        };
         if let Some((lock, guard)) = write_guard {
             drop(guard);
             crate::capability::tool_write_lock::release_write_lock_if_idle(&capability_name, &lock);

@@ -1,6 +1,7 @@
 use std::collections::HashSet;
-use std::path::Path as FsPath;
+use std::path::{Path as FsPath, PathBuf};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, Ordering};
 
 use apxm_rollout::ThreadIndexEntry;
 
@@ -25,6 +26,7 @@ use crate::state::AppState;
 pub(crate) const EXECUTION_RECORDS_DIR: &str = "executions";
 pub(crate) const EXECUTION_RECORD_EXTENSION: &str = "json";
 const RESULTS_JSON: &str = "results.json";
+static TEMP_FILE_COUNTER: AtomicU64 = AtomicU64::new(0);
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -1042,7 +1044,7 @@ fn write_run_artifact(record: &ExecutionRecord) {
         return;
     };
     let path = dir.join("run.json");
-    let temp_path = dir.join("run.json.tmp");
+    let temp_path = unique_temp_path(&path);
     if let Err(error) = std::fs::write(&temp_path, bytes) {
         tracing::warn!(
             execution_id = %record.execution_id,
@@ -1207,7 +1209,7 @@ fn write_json_file<T: Serialize>(
         tracing::warn!(execution_id, label, "failed to serialize run node artifact");
         return;
     };
-    let temp_path = path.with_extension("json.tmp");
+    let temp_path = unique_temp_path(path);
     if let Err(error) = std::fs::write(&temp_path, bytes) {
         tracing::warn!(
             execution_id,
@@ -1248,7 +1250,7 @@ fn persist_record_snapshot(record: &ExecutionRecord) {
             return;
         }
     }
-    let temp_path = path.with_extension(format!("{EXECUTION_RECORD_EXTENSION}.tmp"));
+    let temp_path = unique_temp_path(&path);
     if let Err(error) = std::fs::write(&temp_path, bytes) {
         tracing::warn!(
             execution_id = %record.execution_id,
@@ -1280,6 +1282,16 @@ pub(crate) fn execution_record_snapshot_path(
 
 fn execution_record_snapshot_file_name(execution_id: &str) -> String {
     format!("{execution_id}.{EXECUTION_RECORD_EXTENSION}")
+}
+
+fn unique_temp_path(path: &FsPath) -> PathBuf {
+    let counter = TEMP_FILE_COUNTER.fetch_add(1, Ordering::Relaxed);
+    let pid = std::process::id();
+    let file_name = path
+        .file_name()
+        .and_then(|name| name.to_str())
+        .unwrap_or("tmp");
+    path.with_file_name(format!("{file_name}.{pid}.{counter}.tmp"))
 }
 
 fn is_execution_record_snapshot(path: &FsPath) -> bool {
