@@ -2,7 +2,7 @@
 //!
 //! Distinguishes **program faults** (caller/program recoverable, 4xx) from
 //! **server faults** (infrastructure/runtime, 5xx). Wire shape matches
-//! `specs/0002-apxm-chat-thin-clients/contracts/openapi-session-v1.yaml`
+//! `contracts/session-api.yaml`
 //! `TypedError` schema.
 
 use apxm_core::error::RuntimeError;
@@ -153,15 +153,13 @@ impl TypedError {
     }
 
     pub fn http_status(&self) -> StatusCode {
-        ApiFaultCode::from_wire(&self.code)
-            .map(ApiFaultCode::http_status)
-            .unwrap_or_else(|| {
+        ApiFaultCode::from_wire(&self.code).map_or_else(|| {
                 if self.class == FaultClass::ProgramFault {
                     StatusCode::BAD_REQUEST
                 } else {
                     StatusCode::INTERNAL_SERVER_ERROR
                 }
-            })
+            }, ApiFaultCode::http_status)
     }
 
     /// Map a runtime execution error to a typed fault used by `error.rs`.

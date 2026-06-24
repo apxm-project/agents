@@ -12,31 +12,31 @@ use sqlx::{
 use std::{path::Path, sync::Arc, time::Duration};
 
 const SQLITE_SPACE: &str = "sqlite";
-const SCHEMA_KV_STORE: &str = r#"
+const SCHEMA_KV_STORE: &str = r"
 CREATE TABLE IF NOT EXISTS kv_store (
     key        TEXT PRIMARY KEY NOT NULL,
     value      TEXT NOT NULL,
     created_at INTEGER NOT NULL DEFAULT (unixepoch()),
     updated_at INTEGER NOT NULL DEFAULT (unixepoch())
 ) WITHOUT ROWID;
-"#;
+";
 
 /// FTS5 virtual table for BM25 full-text search on key + value content.
-const SCHEMA_KV_FTS: &str = r#"
+const SCHEMA_KV_FTS: &str = r"
 CREATE VIRTUAL TABLE IF NOT EXISTS kv_fts USING fts5(
     key,
     content,
     tokenize='unicode61'
 );
-"#;
+";
 
 /// Embeddings table for vector similarity search.
-const SCHEMA_KV_EMBEDDINGS: &str = r#"
+const SCHEMA_KV_EMBEDDINGS: &str = r"
 CREATE TABLE IF NOT EXISTS kv_embeddings (
     key        TEXT PRIMARY KEY NOT NULL,
     embedding  BLOB NOT NULL
 );
-"#;
+";
 
 /// Default hybrid search weights.
 const VECTOR_WEIGHT: f64 = 0.7;
@@ -188,13 +188,13 @@ impl StorageBackend for SqliteBackend {
             serde_json::to_string(&value).map_err(|e| ser_err("serialize value", e))?;
 
         sqlx::query(
-            r#"
+            r"
             INSERT INTO kv_store (key, value, updated_at)
             VALUES (?1, ?2, unixepoch())
             ON CONFLICT(key) DO UPDATE
               SET value = excluded.value,
                   updated_at = unixepoch();
-            "#,
+            ",
         )
         .bind(key)
         .bind(&value_json)
@@ -221,12 +221,12 @@ impl StorageBackend for SqliteBackend {
         {
             let blob = embedding_to_blob(&embedding);
             sqlx::query(
-                r#"
+                r"
                     INSERT INTO kv_embeddings (key, embedding)
                     VALUES (?1, ?2)
                     ON CONFLICT(key) DO UPDATE
                       SET embedding = excluded.embedding;
-                    "#,
+                    ",
             )
             .bind(key)
             .bind(&blob)
@@ -298,13 +298,13 @@ impl StorageBackend for SqliteBackend {
         let limit_i64 = i64::try_from(limit).unwrap_or(i64::MAX);
 
         let rows: Vec<(String, String)> = sqlx::query_as(
-            r#"
+            r"
             SELECT key, value
             FROM kv_store
             WHERE key LIKE ?1 ESCAPE '\'
             ORDER BY key
             LIMIT ?2;
-            "#,
+            ",
         )
         .bind(pattern)
         .bind(limit_i64)
@@ -341,13 +341,13 @@ impl StorageBackend for SqliteBackend {
 
         // Step 1: FTS5 BM25 search
         let fts_rows: Vec<(String, f64)> = sqlx::query_as(
-            r#"
+            r"
             SELECT key, rank
             FROM kv_fts
             WHERE kv_fts MATCH ?1
             ORDER BY rank
             LIMIT ?2
-            "#,
+            ",
         )
         .bind(query)
         .bind(fetch_limit)

@@ -190,11 +190,10 @@ impl GateVerdict {
         if let Ok(verdict) = serde_json::from_str::<GateVerdict>(text.trim()) {
             return Some(verdict);
         }
-        if let Some(obj) = extract_json_object(text) {
-            if let Ok(verdict) = serde_json::from_str::<GateVerdict>(&obj) {
+        if let Some(obj) = extract_json_object(text)
+            && let Ok(verdict) = serde_json::from_str::<GateVerdict>(&obj) {
                 return Some(verdict);
             }
-        }
         None
     }
 
@@ -210,14 +209,13 @@ impl GateVerdict {
             let line = line.trim();
             let candidate = line
                 .split_once(':')
-                .map(|(k, v)| {
+                .map_or(line, |(k, v)| {
                     if k.trim().eq_ignore_ascii_case("status") {
                         v
                     } else {
                         line
                     }
-                })
-                .unwrap_or(line);
+                });
             let candidate = candidate
                 .trim()
                 .trim_matches(|c| matches!(c, '"' | '`' | '*' | '.' | ' '));

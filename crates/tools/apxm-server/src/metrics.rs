@@ -31,8 +31,7 @@ pub(crate) async fn scrape_metrics(state: axum::extract::State<AppState>) -> Res
     let uptime = state
         .start_time
         .elapsed()
-        .map(|duration| duration.as_secs_f64())
-        .unwrap_or(0.0);
+        .map_or(0.0, |duration| duration.as_secs_f64());
     let requests = HTTP_REQUESTS_TOTAL.load(Ordering::Relaxed);
     let body = format!(
         "# HELP apxm_server_uptime_seconds Process uptime in seconds.\n\

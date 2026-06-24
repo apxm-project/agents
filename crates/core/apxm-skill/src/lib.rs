@@ -48,8 +48,7 @@ impl CapabilityPolicy {
     /// caller decides whether to reject it.
     pub fn from_manifest_value(value: Option<&str>) -> Option<Self> {
         match value {
-            None => Some(Self::ReadOnly),
-            Some(POLICY_NAME_READ_ONLY) => Some(Self::ReadOnly),
+            None | Some(POLICY_NAME_READ_ONLY) => Some(Self::ReadOnly),
             Some(POLICY_NAME_SANDBOXED) => Some(Self::Sandboxed),
             Some(other) => {
                 let inner = other
@@ -85,14 +84,10 @@ impl CapabilityPolicy {
     /// A child execution must never widen beyond what its parent declared.
     pub fn admits(&self, other: &Self) -> bool {
         match (self, other) {
-            (Self::ReadOnly, Self::ReadOnly) => true,
-            (Self::Sandboxed, Self::ReadOnly | Self::Sandboxed) => true,
+            (_, Self::ReadOnly) | (Self::Sandboxed, Self::Sandboxed) => true,
             (Self::Broader { admits: parent }, Self::Broader { admits: child }) => {
                 child.is_subset(parent)
             }
-            // ReadOnly is the universal privilege floor: any grant admits a
-            // read-only child (it is strictly less privileged than any policy).
-            (Self::Broader { .. }, Self::ReadOnly) => true,
             (Self::Broader { admits }, Self::Sandboxed) => {
                 admits.iter().any(|name| name == POLICY_NAME_SANDBOXED)
             }

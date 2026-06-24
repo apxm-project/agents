@@ -140,13 +140,12 @@ impl ObservedGraphMetrics {
             for pred in predecessors.get(&node_id).into_iter().flatten() {
                 if let Some(pred_duration) = best_duration.get(pred).copied()
                     && best_predecessor
-                        .map(|(_, current)| pred_duration > current)
-                        .unwrap_or(true)
+                        .is_none_or(|(_, current)| pred_duration > current)
                 {
                     best_predecessor = Some((*pred, pred_duration));
                 }
             }
-            let upstream_duration = best_predecessor.map(|(_, value)| value).unwrap_or(0);
+            let upstream_duration = best_predecessor.map_or(0, |(_, value)| value);
             if let Some((pred, _)) = best_predecessor {
                 previous.insert(node_id, pred);
             }

@@ -15,6 +15,7 @@ pub enum PassCategory {
 }
 
 impl From<u32> for PassCategory {
+    #[allow(clippy::match_same_arms)]
     fn from(value: u32) -> Self {
         match value {
             0 => PassCategory::Analysis,

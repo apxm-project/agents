@@ -334,7 +334,6 @@ impl CapabilityExecutor for ProviderCallCapability {
             let loose: Vec<(&String, &Value)> = args
                 .iter()
                 .filter(|(k, _)| !RESERVED_ARGS.contains(&k.as_str()) && !path_params.contains(k))
-                .map(|(k, v)| (k, v))
                 .collect();
             if method_has_no_body(&method) {
                 // Append loose args to the query string (url-encoded). An

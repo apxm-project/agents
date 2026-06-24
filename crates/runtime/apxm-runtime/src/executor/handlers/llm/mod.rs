@@ -678,7 +678,7 @@ async fn execute_llm_once(
         let ttl = request
             .operation_type
             .as_ref()
-            .map(|op| MemoCache::ttl_for_op(op));
+            .map(MemoCache::ttl_for_op);
 
         ctx.response_cache.put_with_ttl(
             key,

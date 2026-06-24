@@ -3,7 +3,7 @@
 use serde_json::Value;
 
 /// Assert a JSON value matches the OpenAPI `TypedError` envelope
-/// (`specs/0002-apxm-chat-thin-clients/contracts/openapi-session-v1.yaml`).
+/// (`contracts/session-api.yaml`).
 pub fn assert_typed_error_envelope(value: &Value) {
     let class = value
         .get("class")

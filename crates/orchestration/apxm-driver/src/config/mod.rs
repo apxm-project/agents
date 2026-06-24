@@ -171,6 +171,7 @@ pub struct ChatConfig {
 /// APXM server operational configuration.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(default)]
+#[derive(Default)]
 pub struct ServerConfig {
     /// Optional bind address, overridden by `APXM_SERVER_ADDR` and CLI `--port`.
     pub bind_addr: Option<String>,
@@ -221,28 +222,6 @@ pub struct ServerConfig {
     pub shutdown: ServerShutdownConfig,
 }
 
-impl Default for ServerConfig {
-    fn default() -> Self {
-        Self {
-            bind_addr: None,
-            public_url: None,
-            process: ServerProcessConfig::default(),
-            runtime: ServerRuntimeConfig::default(),
-            inference: ServerInferenceConfig::default(),
-            auth: ServerAuthConfig::default(),
-            generate_stream: GenerateStreamConfig::default(),
-            execution_stream: ExecutionStreamConfig::default(),
-            executions: ServerExecutionsConfig::default(),
-            run_events: RunEventsConfig::default(),
-            webhook: ServerWebhookConfig::default(),
-            rollout: ServerRolloutConfig::default(),
-            mcp: ServerMcpConfig::default(),
-            observability: ServerObservabilityConfig::default(),
-            safety: ServerSafetyConfig::default(),
-            shutdown: ServerShutdownConfig::default(),
-        }
-    }
-}
 
 /// APXM server process configuration.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]

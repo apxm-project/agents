@@ -19,9 +19,7 @@ use apxm_artifact::{Artifact, ArtifactMetadata};
 use apxm_backends::llm::backends::{MockLLMBackend, MockResponse};
 use apxm_core::constants::graph::attrs as graph_attrs;
 use apxm_core::error::RuntimeError;
-use apxm_core::events::payload::{REDACTION_HASH_PREFIX_BLAKE3, RedactedContent};
 use apxm_core::types::AISOperationType;
-use apxm_core::types::NodeMetrics;
 use apxm_core::types::execution::{DagMetadata, ExecutionDag, Node, NodeMetadata};
 use apxm_core::types::values::Value;
 use apxm_runtime::capability::executor::CapabilityExecutor;
@@ -29,7 +27,7 @@ use apxm_runtime::capability::metadata::CapabilityMetadata;
 use apxm_runtime::{
     DefaultBackend, ExecRequest, ExecResult, IsolationLevel, ModelRouterConfig, Runtime,
     RuntimeConfig, SandboxBackend, SandboxCapabilities, SandboxContext, SandboxError,
-    SandboxRegistry, TransitionLabel, ValidationResult,
+    SandboxRegistry, ValidationResult,
 };
 use async_trait::async_trait;
 use axum::Router;
@@ -39,32 +37,17 @@ use dashmap::DashMap;
 use http_body_util::BodyExt;
 use tower::ServiceExt;
 
-use crate::build_app;
-use crate::build_server_runtime;
-use crate::checkpoints::{Checkpoint, CheckpointStatus, CheckpointStore};
-use crate::execute::{ExecuteRequest, ExecuteResponse, prepare_request};
-use crate::executions::{ExecutionStore, execution_record_snapshot_path};
-use crate::helpers::{jsonrpc_err, jsonrpc_ok, mcp_tool_result, now_ms};
+use crate::checkpoints::CheckpointStore;
+use crate::execute::ExecuteResponse;
+use crate::executions::ExecutionStore;
 use crate::mcp::{
-    MCP_METHOD_INITIALIZE, MCP_METHOD_RESOURCES_LIST, MCP_METHOD_RESOURCES_READ,
-    MCP_METHOD_TOOLS_CALL, MCP_METHOD_TOOLS_LIST, MCP_RESOURCE_PARAM_URI as MCP_PARAM_URI,
-    MCP_TOOL_APXM_AAM_RECALL, MCP_TOOL_APXM_CAPABILITY_LIST, MCP_TOOL_APXM_EVIDENCE_LOOKUP,
-    MCP_TOOL_APXM_GOAL_CANCEL, MCP_TOOL_APXM_GOAL_EVENTS, MCP_TOOL_APXM_GOAL_START,
-    MCP_TOOL_APXM_GOAL_STATUS, MCP_TOOL_APXM_PROMPT_AS_WORKFLOW, MCP_TOOL_APXM_SKILL_CALL,
-    MCP_TOOL_APXM_SKILL_GET, MCP_TOOL_APXM_SKILL_VALIDATE, MCP_TOOL_APXM_SKILLS_LIST,
-    MCP_TOOL_APXM_TRACE_FETCH, MCP_TOOL_APXM_WORKFLOW_CANCEL, MCP_TOOL_APXM_WORKFLOW_EVENTS,
-    MCP_TOOL_APXM_WORKFLOW_START, MCP_TOOL_APXM_WORKFLOW_STATUS,
+    MCP_METHOD_TOOLS_CALL, MCP_TOOL_APXM_SKILL_CALL,
     MCP_TOOL_PARAM_ARGUMENTS as MCP_PARAM_ARGUMENTS, MCP_TOOL_PARAM_NAME as MCP_PARAM_NAME,
 };
-use crate::mcp_protocol::{
-    admission_error, args as mcp_args, fields as mcp_fields, status as mcp_status, tool_result,
-    workflow_skill,
-};
 use crate::routes;
-use crate::skill_resources::{prepend_builtin_skill_root, skill_uri as skill_resource_uri};
-use crate::skills::{SkillLibrary, parse_skill_roots};
+use crate::skills::SkillLibrary;
 use crate::state::AppState;
-use crate::tasks::{QueuedTask, TaskQueueManager, TaskStatus};
+use crate::tasks::TaskQueueManager;
 use crate::types::responses::{ExecutionStats, LlmUsageSummary};
 
 // NOTE: these submodules (`src/tests/agent.rs`, etc.) are not present in the

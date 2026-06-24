@@ -52,7 +52,7 @@ impl MultiEmitter {
 impl ExecutionEventEmitter for MultiEmitter {
     fn set_current_span_id(&self, span_id: Option<String>) {
         self.for_each("set_current_span_id", |child| {
-            child.set_current_span_id(span_id.clone())
+            child.set_current_span_id(span_id.clone());
         });
     }
 
@@ -62,7 +62,7 @@ impl ExecutionEventEmitter for MultiEmitter {
 
     fn set_current_scope_id(&self, scope_id: Option<String>) {
         self.for_each("set_current_scope_id", |child| {
-            child.set_current_scope_id(scope_id.clone())
+            child.set_current_scope_id(scope_id.clone());
         });
     }
 
@@ -84,19 +84,19 @@ impl ExecutionEventEmitter for MultiEmitter {
 
     fn emit_graph_start(&self, execution_id: &str, node_count: usize) {
         self.for_each("emit_graph_start", |child| {
-            child.emit_graph_start(execution_id, node_count)
+            child.emit_graph_start(execution_id, node_count);
         });
     }
 
     fn emit_graph_end(&self, execution_id: &str, node_count: usize, success: bool) {
         self.for_each("emit_graph_end", |child| {
-            child.emit_graph_end(execution_id, node_count, success)
+            child.emit_graph_end(execution_id, node_count, success);
         });
     }
 
     fn emit_operation_start(&self, node_id: u64, op_type: AISOperationType) {
         self.for_each("emit_operation_start", |child| {
-            child.emit_operation_start(node_id, op_type)
+            child.emit_operation_start(node_id, op_type);
         });
     }
 
@@ -116,50 +116,50 @@ impl ExecutionEventEmitter for MultiEmitter {
                 duration,
                 success,
                 tokens.clone(),
-                timing.clone(),
-            )
+                timing,
+            );
         });
     }
 
     fn emit_node_output(&self, node_id: u64, value: &Value) {
         self.for_each("emit_node_output", |child| {
-            child.emit_node_output(node_id, value)
+            child.emit_node_output(node_id, value);
         });
     }
 
     fn emit_llm_prompt(&self, node_id: u64, prompt: &str) {
         self.for_each("emit_llm_prompt", |child| {
-            child.emit_llm_prompt(node_id, prompt)
+            child.emit_llm_prompt(node_id, prompt);
         });
     }
 
     fn emit_llm_token_for_node(&self, node_id: u64, content: &str) {
         self.for_each("emit_llm_token_for_node", |child| {
-            child.emit_llm_token_for_node(node_id, content)
+            child.emit_llm_token_for_node(node_id, content);
         });
     }
 
     fn emit_plan_created(&self, plan_id: &str, steps: usize) {
         self.for_each("emit_plan_created", |child| {
-            child.emit_plan_created(plan_id, steps)
+            child.emit_plan_created(plan_id, steps);
         });
     }
 
     fn emit_plan_step_started(&self, plan_id: &str, step_index: usize) {
         self.for_each("emit_plan_step_started", |child| {
-            child.emit_plan_step_started(plan_id, step_index)
+            child.emit_plan_step_started(plan_id, step_index);
         });
     }
 
     fn emit_plan_step_completed(&self, plan_id: &str, step_index: usize, success: bool) {
         self.for_each("emit_plan_step_completed", |child| {
-            child.emit_plan_step_completed(plan_id, step_index, success)
+            child.emit_plan_step_completed(plan_id, step_index, success);
         });
     }
 
     fn emit_workflow_started(&self, workflow_name: &str, session_dir: &str, step_count: usize) {
         self.for_each("emit_workflow_started", |child| {
-            child.emit_workflow_started(workflow_name, session_dir, step_count)
+            child.emit_workflow_started(workflow_name, session_dir, step_count);
         });
     }
 
@@ -178,7 +178,7 @@ impl ExecutionEventEmitter for MultiEmitter {
                 step_id,
                 step_index,
                 step_count,
-            )
+            );
         });
     }
 
@@ -205,7 +205,7 @@ impl ExecutionEventEmitter for MultiEmitter {
                 duration,
                 session_dir,
                 error,
-            )
+            );
         });
     }
 
@@ -226,37 +226,37 @@ impl ExecutionEventEmitter for MultiEmitter {
                 success,
                 duration,
                 step_count,
-            )
+            );
         });
     }
 
     fn emit_memory_read(&self, scope: &str, key: &str) {
         self.for_each("emit_memory_read", |child| {
-            child.emit_memory_read(scope, key)
+            child.emit_memory_read(scope, key);
         });
     }
 
     fn emit_memory_write(&self, scope: &str, key: &str) {
         self.for_each("emit_memory_write", |child| {
-            child.emit_memory_write(scope, key)
+            child.emit_memory_write(scope, key);
         });
     }
 
     fn emit_checkpoint_saved(&self, checkpoint_id: &str) {
         self.for_each("emit_checkpoint_saved", |child| {
-            child.emit_checkpoint_saved(checkpoint_id)
+            child.emit_checkpoint_saved(checkpoint_id);
         });
     }
 
     fn emit_checkpoint_restored(&self, checkpoint_id: &str) {
         self.for_each("emit_checkpoint_restored", |child| {
-            child.emit_checkpoint_restored(checkpoint_id)
+            child.emit_checkpoint_restored(checkpoint_id);
         });
     }
 
     fn emit_scheduler_decision(&self, node_id: u64, delay: Duration, reason: &str) {
         self.for_each("emit_scheduler_decision", |child| {
-            child.emit_scheduler_decision(node_id, delay, reason)
+            child.emit_scheduler_decision(node_id, delay, reason);
         });
     }
 
@@ -268,25 +268,25 @@ impl ExecutionEventEmitter for MultiEmitter {
         reason: &str,
     ) {
         self.for_each("emit_head_of_line_block", |child| {
-            child.emit_head_of_line_block(blocker_node, blocked_node, wait_ms, reason)
+            child.emit_head_of_line_block(blocker_node, blocked_node, wait_ms, reason);
         });
     }
 
     fn emit_gpu_utilization(&self, gpu_id: u32, utilization_pct: f32, memory_pct: f32) {
         self.for_each("emit_gpu_utilization", |child| {
-            child.emit_gpu_utilization(gpu_id, utilization_pct, memory_pct)
+            child.emit_gpu_utilization(gpu_id, utilization_pct, memory_pct);
         });
     }
 
     fn emit_token_usage(&self, node_id: u64, input_tokens: usize, output_tokens: usize) {
         self.for_each("emit_token_usage", |child| {
-            child.emit_token_usage(node_id, input_tokens, output_tokens)
+            child.emit_token_usage(node_id, input_tokens, output_tokens);
         });
     }
 
     fn emit_memoization_hit(&self, node_id: u64) {
         self.for_each("emit_memoization_hit", |child| {
-            child.emit_memoization_hit(node_id)
+            child.emit_memoization_hit(node_id);
         });
     }
 }

@@ -94,7 +94,7 @@ pub fn annotate_token_estimates(module: &mut AirModule) {
         let count = tokenizer_for_model(model).count(&static_text);
         node.attributes.insert(
             mlir_key.clone(),
-            Value::Number(Number::Integer(count as i64)),
+            Value::Number(Number::Integer(i64::try_from(count).unwrap_or(i64::MAX))),
         );
     }
 }
@@ -132,10 +132,8 @@ fn strip_placeholders(template: &str) -> String {
 
 /// UTF-8 byte length of the codepoint starting with `b`.
 fn utf8_len(b: u8) -> usize {
-    if b < 0x80 {
+    if b < 0xC0 {
         1
-    } else if b < 0xC0 {
-        1 // continuation byte — treat as one (input is assumed valid)
     } else if b < 0xE0 {
         2
     } else if b < 0xF0 {
@@ -152,7 +150,7 @@ fn utf8_len(b: u8) -> usize {
 /// attribute.
 pub fn refine_token_estimates(dags: &mut [ExecutionDag]) {
     for dag in dags.iter_mut() {
-        for node in dag.nodes.iter_mut() {
+        for node in &mut dag.nodes {
             // Only process nodes in a shared prefix group
             if node.get_attribute(graph_attrs::REUSE_GROUP).is_none() {
                 continue;
@@ -176,7 +174,7 @@ pub fn refine_token_estimates(dags: &mut [ExecutionDag]) {
             let count = tokenizer_for_model(model).count(&static_text);
             node.set_attribute(
                 graph_attrs::SHARED_PREFIX_EST_TOKENS.to_string(),
-                Value::Number(apxm_core::types::Number::Integer(count as i64)),
+                Value::Number(apxm_core::types::Number::Integer(i64::try_from(count).unwrap_or(i64::MAX))),
             );
         }
     }

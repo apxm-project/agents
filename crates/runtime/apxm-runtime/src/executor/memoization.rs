@@ -112,7 +112,7 @@ impl SqliteMemoStore {
             .prepare("SELECT content, model, input_tokens, output_tokens, inserted_at, ttl_secs FROM memo_cache WHERE key = ?1")
             .ok()?;
 
-        let result = stmt
+        stmt
             .query_row(params![key.0.min(i64::MAX as u64) as i64], |row| {
                 let content: String = row.get(0)?;
                 let model: String = row.get(1)?;
@@ -135,9 +135,7 @@ impl SqliteMemoStore {
                     model,
                 })
             })
-            .ok();
-
-        result
+            .ok()
     }
 
     fn put(

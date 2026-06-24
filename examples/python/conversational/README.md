@@ -4,7 +4,8 @@
 > fixture for the *agent-in-program* feature — the conversation loop, each turn,
 > context/compaction, lifecycle hooks (`@hook`), skill discovery, and sub-agents
 > authored in ONE `ConversationalAgent(...)` program so the host is a dumb pipe.
-> See `specs/0001-agent-in-program/` (spec.md, quickstart.md) and
+> See `examples/python/conversational/controllable_agent.py`,
+> `examples/python/conversational/README.md`, and
 > `docs/apxm-cli-agent-vision.md`. The two-layer model below is the original
 > host-driven shape (`loop="host"`), kept for backward compatibility.
 

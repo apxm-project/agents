@@ -36,6 +36,7 @@ pub(crate) struct SessionStatus {
 }
 
 #[derive(Debug, Clone, Serialize, PartialEq, Eq, ToSchema)]
+#[derive(Default)]
 pub(crate) struct SessionLedgerView {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub(crate) turn_cap: Option<usize>,
@@ -232,8 +233,7 @@ pub(crate) fn session_status_for_state(
     let ledger = session_ledger::get(session_id);
     let turn_count = ledger
         .as_ref()
-        .map(|ledger| ledger.turns_used())
-        .unwrap_or(0);
+        .map_or(0, |ledger| ledger.turns_used());
     let ledger_view = ledger
         .as_ref()
         .map(|ledger| ledger_view_from_runtime(ledger.as_ref()))
@@ -467,12 +467,3 @@ async fn collect_session_event_records(
         .collect()
 }
 
-impl Default for SessionLedgerView {
-    fn default() -> Self {
-        Self {
-            turn_cap: None,
-            tool_budgets: HashMap::new(),
-            grants: Vec::new(),
-        }
-    }
-}

@@ -159,12 +159,11 @@ fn is_lag_frame(frame: &SseFrame) -> bool {
     {
         return true;
     }
-    if let Ok(json) = serde_json::from_str::<serde_json::Value>(&frame.data) {
-        if event_kind(&json) == Some("warning") {
+    if let Ok(json) = serde_json::from_str::<serde_json::Value>(&frame.data)
+        && event_kind(&json) == Some("warning") {
             return json.pointer("/payload/code").and_then(|v| v.as_str())
                 == Some("execute_stream_lag");
         }
-    }
     false
 }
 
@@ -189,13 +188,12 @@ fn token_events_in_bulk(events: &serde_json::Value) -> usize {
     events
         .get("events")
         .and_then(|v| v.as_array())
-        .map(|items| {
+        .map_or(0, |items| {
             items
                 .iter()
                 .filter(|event| event_kind(event) == Some("token"))
                 .count()
         })
-        .unwrap_or(0)
 }
 
 fn token_event_count(frames: &[SseFrame]) -> usize {

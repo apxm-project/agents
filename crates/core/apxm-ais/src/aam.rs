@@ -240,7 +240,7 @@ impl Capabilities {
 
     /// Check if a capability is available.
     pub fn is_available(&self, name: &str) -> bool {
-        self.get(name).map(|c| c.available).unwrap_or(false)
+        self.get(name).is_some_and(|c| c.available)
     }
 
     /// Get all capabilities.

@@ -607,7 +607,7 @@ fn render_providers_module() -> String {
     buf.push_str("    REGISTERED_PROVIDERS[_p.id] = _p\n");
     buf.push_str("    for _a in _p.aliases:\n");
     buf.push_str("        REGISTERED_PROVIDERS[_a] = _p\n");
-    buf.push_str("\n");
+    buf.push('\n');
 
     // resolve_provider()
     buf.push_str("def resolve_provider(name: str) -> ProviderSpec:\n");
@@ -655,7 +655,7 @@ fn render_models_module() -> String {
     // Group models by provider
     let models = builtin_models();
     let mut providers: Vec<&str> = models.iter().map(|m| m.provider).collect();
-    providers.sort();
+    providers.sort_unstable();
     providers.dedup();
 
     for provider in &providers {
@@ -739,11 +739,10 @@ fn to_model_constant(id: &str) -> String {
         let mut buf = String::with_capacity(stripped.len() + 4);
         let mut prev: Option<char> = None;
         for ch in stripped.chars() {
-            if let Some(p) = prev {
-                if p.is_ascii_alphabetic() && ch.is_ascii_digit() {
+            if let Some(p) = prev
+                && p.is_ascii_alphabetic() && ch.is_ascii_digit() {
                     buf.push('-');
                 }
-            }
             buf.push(ch);
             prev = Some(ch);
         }

@@ -111,9 +111,7 @@ pub(crate) async fn prompt_as_workflow_with_recorder(
     let trace_id = args
         .get(mcp_args::TRACE_ID)
         .and_then(JsonValue::as_str)
-        .filter(|value| !value.trim().is_empty())
-        .map(ToString::to_string)
-        .unwrap_or_else(|| format!("{}-{}", workflow_skill::TRACE_PREFIX, uuid::Uuid::new_v4()));
+        .filter(|value| !value.trim().is_empty()).map_or_else(|| format!("{}-{}", workflow_skill::TRACE_PREFIX, uuid::Uuid::new_v4()), ToString::to_string);
     validate_trace_id(&trace_id)?;
 
     let emission_start = Instant::now();
@@ -155,8 +153,8 @@ pub(crate) async fn prompt_as_workflow_with_recorder(
             )
             .await?
         }
-        Err(error @ WorkflowCandidateError::Emission(_))
-        | Err(error @ WorkflowCandidateError::Timeout(_)) => return Err(error.into_message()),
+        Err(error @
+(WorkflowCandidateError::Emission(_) | WorkflowCandidateError::Timeout(_))) => return Err(error.into_message()),
     };
     let emission_ms = emission_start.elapsed().as_millis();
     let session_dir = workflow_session_dir(&trace_id)?;
@@ -488,8 +486,7 @@ pub(crate) fn capability_list_with_config(
     let backends = runtime.llm_registry().backend_names();
     let health = runtime
         .model_router()
-        .map(|router| serde_json::to_value(router.all_health()).unwrap_or(JsonValue::Null))
-        .unwrap_or(JsonValue::Null);
+        .map_or(JsonValue::Null, |router| serde_json::to_value(router.all_health()).unwrap_or(JsonValue::Null));
 
     json!({
         (tool_result::CAPABILITIES): capabilities,
@@ -773,10 +770,11 @@ fn runtime_args_for_artifact(
     artifact: &Artifact,
     parameters: &serde_json::Map<String, JsonValue>,
 ) -> Vec<String> {
-    artifact
-        .entry_dag()
-        .map(|dag| dag.metadata.parameters.as_slice())
-        .unwrap_or(&[])
+    let flow_parameters = match artifact.entry_dag() {
+        Some(dag) => dag.metadata.parameters.as_slice(),
+        None => &[],
+    };
+    flow_parameters
         .iter()
         .map(|parameter| {
             parameters
@@ -975,8 +973,8 @@ fn compile_stats(artifact: &Artifact, compile_ms: u128, emission_ms: u128) -> Js
     let dag = artifact.entry_dag();
     json!({
         (tool_result::WORKFLOW_NAME): dag.and_then(|dag| dag.metadata.name.as_deref()).unwrap_or(mcp_defaults::ARTIFACT_WORKFLOW_NAME),
-        (tool_result::NODE_COUNT): dag.map(|dag| dag.nodes.len()).unwrap_or(0),
-        (tool_result::EDGE_COUNT): dag.map(|dag| dag.edges.len()).unwrap_or(0),
+        (tool_result::NODE_COUNT): dag.map_or(0, |dag| dag.nodes.len()),
+        (tool_result::EDGE_COUNT): dag.map_or(0, |dag| dag.edges.len()),
         (tool_result::COMPILE_MS): compile_ms,
         (tool_result::EMISSION_MS): emission_ms,
     })
@@ -1371,8 +1369,7 @@ fn bounded_usize_arg(
     let value = args
         .get(key)
         .and_then(JsonValue::as_u64)
-        .map(|value| value as usize)
-        .unwrap_or(default);
+        .map_or(default, |value| value as usize);
     if value < min || value > max {
         return Err(format!("{key} must be between {min} and {max}"));
     }
@@ -1420,9 +1417,7 @@ fn write_generated_air(session_dir: &str, air: &str) -> Result<String, String> {
 
 fn json_arg_to_string(value: &JsonValue) -> String {
     value
-        .as_str()
-        .map(ToString::to_string)
-        .unwrap_or_else(|| value.to_string())
+        .as_str().map_or_else(|| value.to_string(), ToString::to_string)
 }
 
 fn display_path(path: &Path) -> String {

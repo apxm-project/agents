@@ -403,8 +403,8 @@ mod disabled {
     #[derive(Debug, Default, Clone, Copy)]
     pub struct MetricsCollector;
 
+    #[allow(clippy::inline_always)]
     impl MetricsCollector {
-        #[inline(always)]
         pub fn new() -> Self {
             Self
         }
@@ -460,6 +460,7 @@ mod disabled {
     #[derive(Debug, Default, Clone, Copy)]
     pub struct WorkerLocalMetrics;
 
+    #[allow(clippy::inline_always)]
     impl WorkerLocalMetrics {
         #[inline(always)]
         pub fn new(_shared: std::sync::Arc<MetricsCollector>) -> Self {

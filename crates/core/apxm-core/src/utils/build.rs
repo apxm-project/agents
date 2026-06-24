@@ -257,8 +257,7 @@ fn find_versioned_library(libdir: &Path, config: &LibraryConfig) -> Option<PathB
                 && path
                     .file_name()
                     .and_then(OsStr::to_str)
-                    .map(|name| base_names.iter().any(|base| name.starts_with(base)))
-                    .unwrap_or(false)
+                    .is_some_and(|name| base_names.iter().any(|base| name.starts_with(base)))
         })
         .max_by_key(|path| {
             path.file_name()
@@ -444,7 +443,7 @@ fn find_llvm_version_from_libraries(prefix: &Path) -> Option<String> {
                 "build::llvm",
                 "Detected LLVM version from libraries: {}",
                 version
-            )
+            );
         })
 }
 
@@ -601,16 +600,12 @@ impl MlirEnvReport {
         lines.push(format!(
             "mlir-tblgen: {}",
             self.mlir_tblgen_path
-                .as_ref()
-                .map(|p| p.display().to_string())
-                .unwrap_or_else(|| "<not found in PATH>".to_string())
+                .as_ref().map_or_else(|| "<not found in PATH>".to_string(), |p| p.display().to_string())
         ));
         lines.push(format!(
             "llvm-config: {}",
             self.llvm_config_path
-                .as_ref()
-                .map(|p| p.display().to_string())
-                .unwrap_or_else(|| "<not found in PATH>".to_string())
+                .as_ref().map_or_else(|| "<not found in PATH>".to_string(), |p| p.display().to_string())
         ));
 
         if !self.candidates.is_empty() {
@@ -769,8 +764,7 @@ fn command_available(cmd: &str) -> bool {
     Command::new(cmd)
         .arg("--version")
         .output()
-        .map(|output| output.status.success())
-        .unwrap_or(false)
+        .is_ok_and(|output| output.status.success())
 }
 
 fn find_in_path(cmd: &str) -> Option<PathBuf> {

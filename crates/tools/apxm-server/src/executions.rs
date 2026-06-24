@@ -986,12 +986,11 @@ fn write_run_artifact(record: &ExecutionRecord) {
     let (input_tokens, output_tokens, total_tokens) = record
         .result
         .as_ref()
-        .map(|result| {
+        .map_or((0, 0, 0), |result| {
             let input = result.llm_usage.input_tokens as u64;
             let output = result.llm_usage.output_tokens as u64;
             (input, output, input.saturating_add(output))
-        })
-        .unwrap_or((0, 0, 0));
+        });
     let dir = std::path::Path::new(run_root);
     if let Err(error) = std::fs::create_dir_all(dir) {
         tracing::warn!(
@@ -1188,8 +1187,7 @@ fn write_run_results_artifact(
         error: record.error.as_deref(),
         content: result.and_then(|result| result.content.as_deref()),
         results: result
-            .map(|result| &result.results)
-            .unwrap_or(&empty_results),
+            .map_or(&empty_results, |result| &result.results),
         stats: result.map(|result| &result.stats),
         llm_usage: result.map(|result| &result.llm_usage),
         tool_call_counts: result.map(|result| &result.tool_call_counts),
@@ -1239,8 +1237,8 @@ fn persist_record_snapshot(record: &ExecutionRecord) {
         );
         return;
     };
-    if let Some(parent) = path.parent() {
-        if let Err(error) = std::fs::create_dir_all(parent) {
+    if let Some(parent) = path.parent()
+        && let Err(error) = std::fs::create_dir_all(parent) {
             tracing::warn!(
                 execution_id = %record.execution_id,
                 path = %parent.display(),
@@ -1249,7 +1247,6 @@ fn persist_record_snapshot(record: &ExecutionRecord) {
             );
             return;
         }
-    }
     let temp_path = unique_temp_path(&path);
     if let Err(error) = std::fs::write(&temp_path, bytes) {
         tracing::warn!(

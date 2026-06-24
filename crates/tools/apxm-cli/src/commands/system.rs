@@ -91,8 +91,7 @@ pub fn doctor_command(config: Option<PathBuf>, json_output: bool) -> Result<()> 
         .stdout(std::process::Stdio::null())
         .stderr(std::process::Stdio::null())
         .status()
-        .map(|s| s.success())
-        .unwrap_or(false);
+        .is_ok_and(|s| s.success());
 
     // --- Environment Variables ---
     let env_apxm_backend = env::var(apxm_env::APXM_BACKEND).ok();
@@ -323,7 +322,7 @@ fn detect_conda_prefix() -> Option<PathBuf> {
         for line in text.lines() {
             let trimmed = line.trim().trim_matches('"').trim_end_matches(',');
             let candidate = PathBuf::from(trimmed);
-            if candidate.file_name().map(|n| n == "apxm").unwrap_or(false) && candidate.is_dir() {
+            if candidate.file_name().is_some_and(|n| n == "apxm") && candidate.is_dir() {
                 return Some(candidate);
             }
         }
@@ -355,7 +354,7 @@ fn print_minimal_mlir_status() {
 
     match conda_prefix.as_ref() {
         Some(prefix) => {
-            print_status_line("Conda prefix", Status::Ok, &prefix.display().to_string())
+            print_status_line("Conda prefix", Status::Ok, &prefix.display().to_string());
         }
         None => {
             print_status_line("Conda prefix", Status::Error, "<not set>");
@@ -371,15 +370,15 @@ fn print_minimal_mlir_status() {
     let checks: &[(&str, bool)] = &[
         (
             "mlir-tblgen",
-            mlir_tblgen.as_ref().map(|p| p.is_file()).unwrap_or(false),
+            mlir_tblgen.as_ref().is_some_and(|p| p.is_file()),
         ),
         (
             "cmake/mlir",
-            mlir_cmake.as_ref().map(|p| p.is_dir()).unwrap_or(false),
+            mlir_cmake.as_ref().is_some_and(|p| p.is_dir()),
         ),
         (
             "cmake/llvm",
-            llvm_cmake.as_ref().map(|p| p.is_dir()).unwrap_or(false),
+            llvm_cmake.as_ref().is_some_and(|p| p.is_dir()),
         ),
     ];
 

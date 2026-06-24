@@ -68,7 +68,7 @@ impl CapabilityReverseHandler {
     /// Take the accumulated token usage.
     pub fn take_token_usage(&self) -> (Option<u64>, Option<u64>) {
         let mut guard = self.token_usage.lock().unwrap();
-        std::mem::replace(&mut *guard, (None, None))
+        std::mem::take(&mut *guard)
     }
 
     fn check_read_permission(&self) -> Result<(), AcpError> {
@@ -116,7 +116,7 @@ impl CapabilityReverseHandler {
             args.insert(
                 reverse_params::OFFSET.to_string(),
                 apxm_core::types::values::Value::Number(apxm_core::types::values::Number::Integer(
-                    line as i64,
+                    i64::try_from(line).unwrap_or(i64::MAX),
                 )),
             );
         }
@@ -128,8 +128,7 @@ impl CapabilityReverseHandler {
             .map_err(|e| AcpError::Protocol(format!("read failed: {e}")))?;
 
         let content = result
-            .as_string()
-            .map(|s| s.to_string())
+            .as_string().cloned()
             .unwrap_or_default();
         Ok(serde_json::json!({reverse_response::CONTENT: content}))
     }

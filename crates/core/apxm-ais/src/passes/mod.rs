@@ -159,13 +159,13 @@ pub const NORMALIZE: PassSpec = PassSpec::new(
     "normalize",
     "NormalizeAgentGraph",
     "Normalize AIS graph structure",
-    r#"Canonicalizes the AIS graph by:
+    r"Canonicalizes the AIS graph by:
 - Deduplicating unnamed LLM context operands
 - Normalizing string attributes (lowercase capability/memory-tier names)
 - Establishing SSA ordering invariants for downstream passes
 
 This pass ensures the IR is in a canonical form that other passes
-can rely on, similar to MLIR's canonicalizer but domain-specific."#,
+can rely on, similar to MLIR's canonicalizer but domain-specific.",
     PassCategory::Transform,
     "mlir::ais::createNormalizeAgentGraphPass()",
 );
@@ -217,7 +217,7 @@ pub const SCHEDULING: PassSpec = PassSpec::new(
     "scheduling",
     "CapabilityScheduling",
     "Annotate operations with scheduling metadata",
-    r#"Classifies capabilities into execution tiers and annotates operations
+    r"Classifies capabilities into execution tiers and annotates operations
 with scheduling hints for the runtime:
 
 - Tier classification (io/compute/reasoning/memory/general)
@@ -225,7 +225,7 @@ with scheduling hints for the runtime:
 - Parallel-safety markers for speculation
 
 These annotations guide the runtime dataflow scheduler to overlap work
-and optimize execution order."#,
+and optimize execution order.",
     PassCategory::Transform,
     "mlir::ais::createCapabilitySchedulingPass()",
 )
@@ -258,7 +258,7 @@ pub const ASSIGN_PRIORITY: PassSpec = PassSpec::new(
     "assign-priority",
     "AssignPriority",
     "Assign execution priority based on critical path analysis",
-    r#"Performs DAG analysis to compute the critical path and assigns priority
+    r"Performs DAG analysis to compute the critical path and assigns priority
 attributes to each AIS operation for the runtime scheduler.
 
 Priority levels:
@@ -268,7 +268,7 @@ Priority levels:
 
 The priority attribute is stored as an IntegerAttr and later extracted by
 the ArtifactEmitter into node.metadata.priority, which the runtime scheduler
-uses to assign work to the 4-level priority queue (Critical/High/Normal/Low)."#,
+uses to assign work to the 4-level priority queue (Critical/High/Normal/Low).",
     PassCategory::Transform,
     "mlir::ais::createAssignPriorityPass()",
 );
@@ -278,12 +278,12 @@ pub const SHARED_PREFIX_ANALYSIS: PassSpec = PassSpec::new(
     "shared-prefix-analysis",
     "SharedPrefixAnalysis",
     "Annotate existing shared-prefix reuse opportunities",
-    r#"Detects LLM operations that already share the same leading prompt prefix
+    r"Detects LLM operations that already share the same leading prompt prefix
 and context operands, then emits graph-hint metadata for prefix-aware backends.
 
 This pass does not rewrite prompt templates or reorder operands. It only emits
 analysis metadata such as shared-prefix group, estimated shared-prefix tokens,
-and warmup candidate markers."#,
+and warmup candidate markers.",
     PassCategory::Transform,
     "mlir::ais::createSharedPrefixAnalysisPass()",
 );
@@ -293,7 +293,7 @@ pub const FUSE_ASK_OPS: PassSpec = PassSpec::new(
     "fuse-ask-ops",
     "FuseAskOps",
     "Explicit-only ASK fusion experiment",
-    r#"Identifies producer-consumer ais.ask chains and merges them into single
+    r"Identifies producer-consumer ais.ask chains and merges them into single
 batched operations:
 
 - Reduces serialized LLM API calls
@@ -305,7 +305,7 @@ they have different semantics (extended thinking, structured output).
 
 This pass is explicit-only until APXM has typed request-attribute preservation
 and semantic-quality heuristics for LLM-call merging. Only fuses when producer
-has single use."#,
+has single use.",
     PassCategory::Transform,
     "mlir::ais::createFuseAskOpsPass()",
 );
@@ -315,7 +315,7 @@ pub const CONDENSE_OPS: PassSpec = PassSpec::new(
     "condense-ops",
     "CondenseOps",
     "Explicit-only memory operation batching experiment",
-    r#"Identifies linear chains of QMEM or UMEM operations that target the same
+    r"Identifies linear chains of QMEM or UMEM operations that target the same
 memory space and condenses them into a single batched operation.
 
 For QMEM chains, queries are concatenated (newline-separated) into a single
@@ -329,7 +329,7 @@ Condensation fires when:
 4. Intermediate results are not consumed by other operations
 
 This pass is explicit-only until memory-store semantics and batching capability
-contracts are typed."#,
+contracts are typed.",
     PassCategory::Transform,
     "mlir::ais::createCondenseOpsPass()",
 );
@@ -398,7 +398,7 @@ pub const SCHEMA_NARROWING: PassSpec = PassSpec::new(
     "schema-narrowing",
     "SchemaNarrowing",
     "Explicit-only schema narrowing experiment",
-    r#"Planned optimization: analyze how operation results are consumed and
+    r"Planned optimization: analyze how operation results are consumed and
 tighten output schema constraints to only include fields used downstream.
 
 This reduces token usage in structured output scenarios by avoiding
@@ -408,7 +408,7 @@ Example: If only the 'summary' field of a JSON response is used, the schema
 is narrowed to only request that field.
 
 The current implementation is not field-use narrowing, so this pass is not
-part of the automatic O-level pipelines."#,
+part of the automatic O-level pipelines.",
     PassCategory::Optimization,
     "mlir::ais::createSchemaNarrowingPass()",
 );
@@ -418,7 +418,7 @@ pub const DSPY_OPTIMIZE: PassSpec = PassSpec::new(
     "dspy-optimize",
     "DspyOptimize",
     "Config-gated compiler prompt optimization",
-    r#"Invokes DSPy (Stanford NLP) to automatically optimize LLM prompt templates.
+    r"Invokes DSPy (Stanford NLP) to automatically optimize LLM prompt templates.
 Uses MIPROv2, BootstrapFewShot, or COPRO optimizers to discover better
 instructions from training examples.
 
@@ -428,7 +428,7 @@ typed request, default O-levels stay deterministic and side-effect free.
 
 Placement: immediately after build-prompt (which synthesizes named placeholders).
 Subsequent passes (template-specialization, dead-context-elimination,
-prompt-canonicalization) then operate on the optimized templates."#,
+prompt-canonicalization) then operate on the optimized templates.",
     PassCategory::Optimization,
     "mlir::ais::createDspyOptimizePass()",
 );
@@ -438,7 +438,7 @@ pub const PROMPT_CANONICALIZATION: PassSpec = PassSpec::new(
     "prompt-canonicalization",
     "PromptCanonicalization",
     "Explicit-only shared-prefix prompt layout experiment",
-    r#"Analyzes prompt templates across the graph and canonicalizes them to
+    r"Analyzes prompt templates across the graph and canonicalizes them to
 maximize KV-cache sharing in inference engines that support prefix caching.
 
 This includes:
@@ -448,7 +448,7 @@ This includes:
 
 This can help prefix-caching inference backends reuse shared context across
 requests. It is explicit-only until prompt layout rewrites are controlled by a
-typed backend-agnostic graph-hint contract."#,
+typed backend-agnostic graph-hint contract.",
     PassCategory::Optimization,
     "mlir::ais::createPromptCanonicalizationPass()",
 );

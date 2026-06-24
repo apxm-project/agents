@@ -182,14 +182,13 @@ pub(crate) fn parse_skill_roots(args: &[String]) -> Vec<PathBuf> {
         }
     }
 
-    if let Ok(current_dir) = std::env::current_dir() {
-        if roots.is_empty() {
+    if let Ok(current_dir) = std::env::current_dir()
+        && roots.is_empty() {
             let repo_skills = current_dir.join(".agents").join("skills");
             if repo_skills.is_dir() {
                 roots.push(repo_skills);
             }
         }
-    }
 
     dedupe_paths(roots)
 }
@@ -378,9 +377,8 @@ fn list_example_resources(
 }
 
 fn collect_regular_files(dir: &Path, files: &mut Vec<PathBuf>) {
-    let entries = match fs::read_dir(dir) {
-        Ok(entries) => entries,
-        Err(_) => return,
+    let Ok(entries) = fs::read_dir(dir) else {
+        return;
     };
     for entry in entries.flatten() {
         let path = entry.path();
@@ -472,9 +470,8 @@ fn find_manifest_dirs(root: &Path, packages: &mut Vec<PathBuf>) {
         packages.push(root.to_path_buf());
         return;
     }
-    let entries = match fs::read_dir(root) {
-        Ok(entries) => entries,
-        Err(_) => return,
+    let Ok(entries) = fs::read_dir(root) else {
+        return;
     };
     let mut dirs = Vec::new();
     for entry in entries.flatten() {
@@ -553,7 +550,6 @@ fn mime_type_for_path(path: &Path) -> MimeType {
         Some("json") => MimeType::Json,
         Some("md") => MimeType::Markdown,
         Some("toml") => MimeType::Toml,
-        Some("txt") => MimeType::PlainText,
         _ => MimeType::PlainText,
     }
 }
@@ -576,8 +572,7 @@ fn dedupe_paths(paths: Vec<PathBuf>) -> Vec<PathBuf> {
 
 fn is_symlink(path: &Path) -> bool {
     fs::symlink_metadata(path)
-        .map(|metadata| metadata.file_type().is_symlink())
-        .unwrap_or(false)
+        .is_ok_and(|metadata| metadata.file_type().is_symlink())
 }
 
 #[cfg(test)]

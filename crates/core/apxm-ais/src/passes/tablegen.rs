@@ -6,6 +6,7 @@
 //! - `PassDescriptors.inc` - Pass registry descriptors
 
 use super::{PassCategory, PassSpec, get_ais_passes, get_all_passes};
+use std::fmt::Write;
 
 // ============================================================================
 // TableGen Generation (Passes.generated.td)
@@ -114,7 +115,7 @@ pub fn generate_passes_tablegen() -> String {
                     PassCategory::Lowering => "Conversion/Lowering Passes",
                 };
                 output.push_str("\n//===----------------------------------------------------------------------===//\n");
-                output.push_str(&format!("// {}\n", section_name));
+                let _ = writeln!(output, "// {section_name}");
                 output.push_str("//===----------------------------------------------------------------------===//\n\n");
             }
             current_category = Some(pass.category);
@@ -161,10 +162,11 @@ pub fn generate_pass_dispatch() -> String {
     for (i, pass) in passes.iter().enumerate() {
         let if_keyword = if i == 0 { "if" } else { "} else if" };
 
-        output.push_str(&format!(
+        let _ = write!(
+            output,
             "{} (name == \"{}\") {{\n  pm->pass_manager->addPass({});\n  return true;\n",
             if_keyword, pass.name, pass.constructor
-        ));
+        );
     }
 
     output.push_str("}\n");
@@ -175,7 +177,7 @@ pub fn generate_pass_dispatch() -> String {
 // Pass Descriptors Generation (PassDescriptors.inc)
 // ============================================================================
 
-const DESCRIPTORS_HEADER: &str = r#"/**
+const DESCRIPTORS_HEADER: &str = r"/**
  * @file  PassDescriptors.inc
  * @brief GENERATED from Rust - DO NOT EDIT MANUALLY
  *
@@ -184,7 +186,7 @@ const DESCRIPTORS_HEADER: &str = r#"/**
  */
 
 // Pass descriptors array entries
-"#;
+";
 
 /// Generate PassDescriptors.inc content.
 pub fn generate_pass_descriptors() -> String {
@@ -192,12 +194,13 @@ pub fn generate_pass_descriptors() -> String {
     output.push_str(DESCRIPTORS_HEADER);
 
     for pass in get_all_passes() {
-        output.push_str(&format!(
-            "{{\"{}\", \"{}\", {}}},\n",
+        let _ = writeln!(
+            output,
+            "{{\"{}\", \"{}\", {}}},",
             pass.name,
             pass.summary,
             pass.category.to_c_enum()
-        ));
+        );
     }
 
     output

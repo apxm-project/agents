@@ -3,6 +3,29 @@
 //! The `apxm-server` binary is a thin entrypoint; integration and contract tests
 //! link against this crate.
 
+#![allow(
+    dead_code,
+    clippy::assigning_clones,
+    clippy::case_sensitive_file_extension_comparisons,
+    clippy::cast_possible_wrap,
+    clippy::doc_lazy_continuation,
+    clippy::format_push_string,
+    clippy::if_same_then_else,
+    clippy::large_enum_variant,
+    clippy::large_futures,
+    clippy::manual_let_else,
+    clippy::map_unwrap_or,
+    clippy::match_same_arms,
+    clippy::result_large_err,
+    clippy::struct_field_names,
+    clippy::too_many_arguments,
+    clippy::type_complexity,
+    clippy::unnecessary_sort_by,
+    clippy::unused_async,
+    clippy::used_underscore_binding,
+    clippy::zero_sized_map_values,
+)]
+
 mod a2a;
 mod agent;
 mod app;
@@ -100,8 +123,7 @@ fn server_worker_threads(server_config: &apxm_driver::ServerConfig) -> usize {
 
 fn default_server_worker_threads() -> usize {
     let cores = std::thread::available_parallelism()
-        .map(|threads| threads.get())
-        .unwrap_or(4);
+        .map_or(4, |threads| threads.get());
     (cores / 2).max(2)
 }
 

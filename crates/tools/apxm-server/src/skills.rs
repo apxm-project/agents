@@ -1233,7 +1233,7 @@ async fn await_skill_execution(
                 let message = "skill execution timed out".to_string();
                 state
                     .execution_store
-                    .complete_failure(&execution_id, message.clone());
+                    .complete_failure(execution_id, message.clone());
                 return Err(ApiError::bad_request(message));
             }
         }
@@ -1622,12 +1622,12 @@ fn validate_sandboxed_inv_tool_node(
         .and_then(|value| value.as_string())
         .ok_or_else(|| ApiError::bad_request("INV_TOOL missing capability attribute"))?;
     let capability_system = state.runtime.capability_system();
-    if capability_system.is_read_only(&capability) {
+    if capability_system.is_read_only(capability) {
         return Ok(());
     }
 
     let args = inv_tool_static_args(node)?;
-    match capability_system.sandbox_preflight(&capability, &args) {
+    match capability_system.sandbox_preflight(capability, &args) {
         Ok(CapabilitySandboxPreflight::Sandboxed { .. }) => Ok(()),
         Ok(CapabilitySandboxPreflight::Direct) => Err(ApiError::bad_request(format!(
             "skill capability '{capability}' is side-effectful but does not declare sandbox execution"
@@ -1650,7 +1650,7 @@ fn inv_tool_static_args(
         return Ok(args);
     };
 
-    let parsed: serde_json::Value = serde_json::from_str(&params_json)
+    let parsed: serde_json::Value = serde_json::from_str(params_json)
         .map_err(|error| ApiError::bad_request(format!("invalid INV_TOOL params_json: {error}")))?;
     let Some(obj) = parsed.as_object() else {
         return Err(ApiError::bad_request(
@@ -1860,8 +1860,7 @@ fn find_manifest_dirs(root: &Path, packages: &mut Vec<PathBuf>, warnings: &mut V
 
 fn is_symlink(path: &Path) -> bool {
     fs::symlink_metadata(path)
-        .map(|metadata| metadata.file_type().is_symlink())
-        .unwrap_or(false)
+        .is_ok_and(|metadata| metadata.file_type().is_symlink())
 }
 
 fn annotate_duplicates(records: &mut [SkillRecord]) {
@@ -1875,8 +1874,8 @@ fn annotate_duplicates(records: &mut [SkillRecord]) {
     }
 
     for record in records {
-        if let (Some(skill_id), Some(version)) = (&record.skill_id, &record.version) {
-            if counts
+        if let (Some(skill_id), Some(version)) = (&record.skill_id, &record.version)
+            && counts
                 .get(&(skill_id.clone(), version.clone()))
                 .copied()
                 .unwrap_or_default()
@@ -1889,7 +1888,6 @@ fn annotate_duplicates(records: &mut [SkillRecord]) {
                     .errors
                     .push(format!("duplicate skill id/version: {skill_id}@{version}"));
             }
-        }
     }
 }
 
@@ -1908,8 +1906,7 @@ fn find_record(
             Some(pack) => record
                 .pack
                 .as_ref()
-                .map(|p| p.pack_id == pack)
-                .unwrap_or(false),
+                .is_some_and(|p| p.pack_id == pack),
             None => true,
         })
         .filter(|record| {

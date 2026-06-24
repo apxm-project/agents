@@ -89,8 +89,7 @@ impl Plan {
     pub fn has_inner_plan(&self) -> bool {
         self.inner_plan
             .as_ref()
-            .map(InnerPlanPayload::has_payload)
-            .unwrap_or(false)
+            .is_some_and(InnerPlanPayload::has_payload)
     }
 }
 
@@ -99,8 +98,7 @@ impl InnerPlanPayload {
     pub fn has_payload(&self) -> bool {
         self.air
             .as_ref()
-            .map(|air| !air.trim().is_empty())
-            .unwrap_or(false)
+            .is_some_and(|air| !air.trim().is_empty())
             || self.task_dag.is_some()
     }
 }

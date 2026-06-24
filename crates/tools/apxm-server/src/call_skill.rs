@@ -124,8 +124,7 @@ impl SkillResolver for SkillLibrarySkillResolver {
                 .library
                 .roots()
                 .first()
-                .map(|root| executable.record.package_dir.starts_with(root))
-                .unwrap_or(false);
+                .is_some_and(|root| executable.record.package_dir.starts_with(root));
         if !skill_visible(
             request.parent_visible_skills.as_deref(),
             &resolved_skill_id,
@@ -378,8 +377,7 @@ fn project_child_result(
         .results
         .iter()
         .min_by_key(|(token_id, _)| *token_id)
-        .map(|(_, value)| value.clone())
-        .unwrap_or(Value::Null);
+        .map_or(Value::Null, |(_, value)| value.clone());
 
     (child_outputs, return_value)
 }

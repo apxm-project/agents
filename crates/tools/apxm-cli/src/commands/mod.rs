@@ -27,6 +27,7 @@ pub mod replay;
 #[cfg(feature = "driver")]
 pub mod rollout;
 pub mod session;
+#[cfg(feature = "driver")]
 pub(crate) mod sse_permissions;
 pub mod system;
 pub mod team;
@@ -39,8 +40,6 @@ pub mod workflow;
 
 pub use cli::*;
 
-#[cfg(test)]
-pub(crate) use implementations::*;
 
 pub use agent::*;
 pub use analysis::*;

@@ -38,17 +38,14 @@ mod toml_keys {
 /// Prompt optimizer implementation.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
+#[derive(Default)]
 pub enum PromptOptimizer {
     Mipro,
+    #[default]
     Bootstrap,
     Copro,
 }
 
-impl Default for PromptOptimizer {
-    fn default() -> Self {
-        Self::Bootstrap
-    }
-}
 
 impl PromptOptimizer {
     pub fn as_str(self) -> &'static str {
@@ -63,17 +60,14 @@ impl PromptOptimizer {
 /// Prompt optimization budget.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
+#[derive(Default)]
 pub enum PromptOptimizationBudget {
+    #[default]
     Light,
     Medium,
     Heavy,
 }
 
-impl Default for PromptOptimizationBudget {
-    fn default() -> Self {
-        Self::Light
-    }
-}
 
 impl PromptOptimizationBudget {
     pub fn as_str(self) -> &'static str {
@@ -88,18 +82,15 @@ impl PromptOptimizationBudget {
 /// Prompt optimization metric.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
+#[derive(Default)]
 pub enum PromptMetric {
+    #[default]
     TokenOverlap,
     ExactMatch,
     Contains,
     LlmJudge,
 }
 
-impl Default for PromptMetric {
-    fn default() -> Self {
-        Self::TokenOverlap
-    }
-}
 
 impl PromptMetric {
     pub fn as_str(self) -> &'static str {

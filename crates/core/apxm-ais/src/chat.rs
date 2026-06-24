@@ -134,11 +134,10 @@ pub struct ChatAcpAirOptions<'a> {
 /// `{{{conversation}}}` is the parameter placeholder (single-pass substitution).
 pub fn chat_air(opts: &ChatAirOptions) -> String {
     let mut attrs: Vec<String> = Vec::new();
-    if let Some(sp) = opts.system_prompt {
-        if !sp.is_empty() {
+    if let Some(sp) = opts.system_prompt
+        && !sp.is_empty() {
             attrs.push(format!("system_prompt = \"{}\"", escape_air_string(sp)));
         }
-    }
     if let Some(b) = opts.backend {
         let safe = sanitize_route_id(b);
         if !safe.is_empty() {

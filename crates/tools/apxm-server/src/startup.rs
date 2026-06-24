@@ -243,8 +243,7 @@ pub(crate) fn pack_capability_roots(skill_roots: &[std::path::PathBuf]) -> Vec<s
 fn server_runtime_config(server_config: &ServerConfig) -> RuntimeConfig {
     let mut config = RuntimeConfig::default();
     let cores = std::thread::available_parallelism()
-        .map(|value| value.get())
-        .unwrap_or(4);
+        .map_or(4, |value| value.get());
     let default_compute = (cores / 2).max(2);
 
     let max_concurrency = server_config

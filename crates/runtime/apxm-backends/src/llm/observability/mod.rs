@@ -208,7 +208,7 @@ impl MetricsTracker {
     pub fn aggregate_per_backend(&self) -> HashMap<String, AggregatedMetrics> {
         let inner = self.inner.lock();
         let mut result = HashMap::new();
-        for entry in inner.backend_metrics.iter() {
+        for entry in &inner.backend_metrics {
             result.insert(entry.key().clone(), Self::compute_aggregated(entry.value()));
         }
         result

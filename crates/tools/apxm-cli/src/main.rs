@@ -4,6 +4,18 @@
 //! running graphs, environment diagnostics, and
 //! backend registration and management.
 
+#![allow(
+    clippy::assigning_clones,
+    clippy::case_sensitive_file_extension_comparisons,
+    clippy::cast_possible_wrap,
+    clippy::format_push_string,
+    clippy::manual_let_else,
+    clippy::match_same_arms,
+    clippy::match_wildcard_for_single_variants,
+    clippy::option_option,
+    clippy::struct_field_names,
+)]
+
 mod commands;
 // Only the driver-gated `chat` command consumes this; gate it to match so the
 // default (non-driver) build doesn't compile it as dead code.

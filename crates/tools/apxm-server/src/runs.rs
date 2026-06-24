@@ -412,9 +412,7 @@ impl EventReplayCursor {
             .get(LAST_EVENT_ID_HEADER)
             .or_else(|| headers.get(LAST_EVENT_ID_HEADER_LOWER))
             .and_then(|v| v.to_str().ok())
-            .and_then(|s| s.parse::<u64>().ok())
-            .map(Self::AfterSeq)
-            .unwrap_or_else(|| Self::FromSeq(query.since.unwrap_or(0)))
+            .and_then(|s| s.parse::<u64>().ok()).map_or_else(|| Self::FromSeq(query.since.unwrap_or(0)), Self::AfterSeq)
     }
 
     pub(crate) fn accepts(self, seq: u64) -> bool {
@@ -657,8 +655,7 @@ fn index_entry_to_summary(entry: apxm_rollout::ThreadIndexEntry) -> RunSummary {
     // Index rows don't carry a started_at_ms — parse RFC3339 once for
     // sortability; failures fall through to 0 (sorts last).
     let started_at_ms = chrono::DateTime::parse_from_rfc3339(&entry.started_at)
-        .map(|ts| ts.timestamp_millis() as u64)
-        .unwrap_or(0);
+        .map_or(0, |ts| ts.timestamp_millis() as u64);
     let status = match entry.status.as_str() {
         "succeeded" | "done" => ExecutionStatus::Succeeded,
         "failed" => ExecutionStatus::Failed,
@@ -1013,8 +1010,8 @@ fn resolve_artifact_path(run_root: &str, artifact_path: &str) -> Result<PathBuf,
 fn artifact_media_type(path: &FsPath) -> &'static str {
     match path.extension().and_then(|ext| ext.to_str()) {
         Some("json") => "application/json",
-        Some("jsonl") | Some("ndjson") => "application/x-ndjson",
-        Some("txt") | Some("log") | Some("md") => "text/plain; charset=utf-8",
+        Some("jsonl" | "ndjson") => "application/x-ndjson",
+        Some("txt" | "log" | "md") => "text/plain; charset=utf-8",
         _ => "application/octet-stream",
     }
 }
@@ -1307,14 +1304,13 @@ pub(crate) async fn events_for_run_since(
     since: u64,
 ) -> Vec<ApxmEvent> {
     let snapshot = state.run_event_bus.snapshot(execution_id);
-    if !snapshot.is_empty() {
-        if snapshot
+    if !snapshot.is_empty()
+        && snapshot
             .first()
             .is_none_or(|first_event| since >= first_event.meta.seq)
         {
             return snapshot;
         }
-    }
     events_from_disk(state, execution_id).await
 }
 

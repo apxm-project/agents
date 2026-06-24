@@ -495,7 +495,7 @@ and capture full server stderr.
 **Status:** if apxm-server is not started with ACP spawn capability enabled,
 `spawn_agent.rs` line 142 returns "No AgentSpawner configured. Cannot spawn
 ACP agent." This is a runtime failure, not a compile failure. Whether the
-current stack startup (`dekk apxm-studio stack up` or equivalent) enables the
+current stack startup (`dekk apxm stack up` or equivalent) enables the
 AgentSpawner is not confirmed.
 
 **Next step:** check apxm-server startup args and confirm AgentSpawner is

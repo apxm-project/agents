@@ -61,7 +61,7 @@ impl GoogleBackend {
     }
 
     /// Build request body for Google AI API.
-    fn build_request_body(&self, request: &LLMRequest) -> serde_json::Value {
+    fn build_request_body(request: &LLMRequest) -> serde_json::Value {
         let all_messages = request.resolved_messages();
 
         // Separate system messages for Google's systemInstruction field
@@ -123,7 +123,7 @@ impl GoogleBackend {
     }
 
     /// Parse Google API response.
-    fn parse_response(&self, response: GoogleResponse, model: &str) -> Result<LLMResponse> {
+    fn parse_response(response: GoogleResponse, model: &str) -> Result<LLMResponse> {
         let candidate = response
             .candidates
             .first()
@@ -151,7 +151,7 @@ impl LLMBackend for GoogleBackend {
         request.validate()?;
 
         let model = self.request_model(&request).to_string();
-        let body = self.build_request_body(&request);
+        let body = Self::build_request_body(&request);
         let url = format!("{}/models/{}:generateContent", self.base_url, model);
 
         log_debug!(
@@ -191,7 +191,7 @@ impl LLMBackend for GoogleBackend {
             .await
             .context("Failed to parse Google response")?;
 
-        self.parse_response(api_response, &model)
+        Self::parse_response(api_response, &model)
     }
 
     fn generate_stream(
@@ -201,7 +201,7 @@ impl LLMBackend for GoogleBackend {
         Box::pin(async_stream::try_stream! {
             request.validate()?;
             let model = self.request_model(&request).to_string();
-            let body = self.build_request_body(&request);
+            let body = Self::build_request_body(&request);
             // Google uses the streamGenerateContent endpoint with alt=sse.
             let url = format!(
                 "{}/models/{}:streamGenerateContent?alt=sse",
@@ -245,26 +245,25 @@ impl LLMBackend for GoogleBackend {
                 // Process SSE lines.
                 while let Some(line_end) = buffer.find('\n') {
                     let line = buffer[..line_end].trim_end().to_string();
-                    buffer.drain(..line_end + 1);
+                    buffer.drain(..=line_end);
                     let line = line.trim();
 
                     if line.is_empty() || line.starts_with(':') {
                         continue;
                     }
 
-                    if let Some(data) = line.strip_prefix(sse::DATA_PREFIX) {
-                        if let Ok(parsed) = serde_json::from_str::<serde_json::Value>(data) {
+                    if let Some(data) = line.strip_prefix(sse::DATA_PREFIX)
+                        && let Ok(parsed) = serde_json::from_str::<serde_json::Value>(data) {
                             // Extract text from candidates[].content.parts[].text
                             if let Some(candidates) = parsed["candidates"].as_array() {
                                 for candidate in candidates {
                                     if let Some(parts) = candidate["content"]["parts"].as_array() {
                                         for part in parts {
-                                            if let Some(text) = part["text"].as_str() {
-                                                if !text.is_empty() {
+                                            if let Some(text) = part["text"].as_str()
+                                                && !text.is_empty() {
                                                     full_content.push_str(text);
                                                     yield StreamChunk::Token(text.to_string());
                                                 }
-                                            }
                                         }
                                     }
                                 }
@@ -282,7 +281,6 @@ impl LLMBackend for GoogleBackend {
                                 }
                             }
                         }
-                    }
                 }
             }
 

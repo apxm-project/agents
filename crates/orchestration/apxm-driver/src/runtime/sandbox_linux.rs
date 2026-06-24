@@ -346,9 +346,7 @@ fn normalize_writable_mount(
             host_candidate
         } else {
             host_candidate
-                .parent()
-                .map(Path::to_path_buf)
-                .unwrap_or_else(|| working_directory.host.clone())
+                .parent().map_or_else(|| working_directory.host.clone(), Path::to_path_buf)
         }
     } else {
         std::fs::create_dir_all(&host_candidate)
@@ -358,9 +356,7 @@ fn normalize_writable_mount(
 
     let sandbox = if host_candidate_exists && host_candidate_is_file {
         sandbox_candidate
-            .parent()
-            .map(Path::to_path_buf)
-            .unwrap_or_else(|| working_directory.sandbox.clone())
+            .parent().map_or_else(|| working_directory.sandbox.clone(), Path::to_path_buf)
     } else {
         sandbox_candidate
     };

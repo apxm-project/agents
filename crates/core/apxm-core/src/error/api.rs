@@ -7,6 +7,8 @@
 //! - Educational help text
 //! - Error context (operation_id, trace_id, etc.)
 
+#![allow(clippy::format_push_string)]
+
 use crate::error::codes::ErrorCode;
 use crate::error::common::ErrorContext;
 use crate::error::span::Span;
@@ -151,14 +153,7 @@ impl Error {
             ));
 
             if let Some(replacement) = &suggestion.replacement {
-                if !replacement.parts.is_empty() {
-                    // Multi-part replacement: only emitted if we know the source.
-                    if let Some(lines) = lines {
-                        for part in &replacement.parts {
-                            output.push_str(&Self::format_replacement_part(part, lines));
-                        }
-                    }
-                } else {
+                if replacement.parts.is_empty() {
                     // Simple replacement: can be shown without source.
                     output.push_str(&format!("     {}\n", "|".blue().bold()));
                     output.push_str(&format!(
@@ -166,6 +161,13 @@ impl Error {
                         "|".blue().bold(),
                         replacement.code.green()
                     ));
+                } else {
+                    // Multi-part replacement: only emitted if we know the source.
+                    if let Some(lines) = lines {
+                        for part in &replacement.parts {
+                            output.push_str(&Self::format_replacement_part(part, lines));
+                        }
+                    }
                 }
             }
 
@@ -213,7 +215,7 @@ impl Error {
     fn push_span(output: &mut String, span: &Span, lines: Option<&[&str]>, is_primary: bool) {
         match lines {
             Some(lines) => {
-                output.push_str(&Self::format_span_with_snippet(span, lines, is_primary))
+                output.push_str(&Self::format_span_with_snippet(span, lines, is_primary));
             }
             None => output.push_str(&format!("  {} {}\n", "-->".blue().bold(), span)),
         }

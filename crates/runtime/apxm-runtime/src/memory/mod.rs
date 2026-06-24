@@ -253,7 +253,7 @@ impl MemorySystem {
                 Some((sort_key, logical))
             })
             .collect();
-        ordered.sort_by(|a, b| a.0.cmp(&b.0));
+        ordered.sort_by_key(|(sort_key, _)| *sort_key);
         let start = ordered.len().saturating_sub(n);
         let mut out = Vec::new();
         // Surface any caller-pinned keys ahead of the recency window. These have

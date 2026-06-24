@@ -99,32 +99,30 @@ pub fn workflow_validate_command(file: PathBuf, json: bool) -> Result<()> {
             "errors": errors,
         });
         println!("{}", serde_json::to_string_pretty(&output)?);
+    } else if errors.is_empty() {
+        println!(
+            "{} Workflow is valid",
+            apxm_core::constants::ui::icons::SUCCESS
+        );
+        println!("  Name: {}", def.name);
+        println!("  Steps: {}", def.steps.len());
+        println!(
+            "  Parameters: {}",
+            def.parameters
+                .iter()
+                .map(|p| format!("{}: {}", p.name, p.type_name))
+                .collect::<Vec<_>>()
+                .join(", ")
+        );
     } else {
-        if errors.is_empty() {
-            println!(
-                "{} Workflow is valid",
-                apxm_core::constants::ui::icons::SUCCESS
-            );
-            println!("  Name: {}", def.name);
-            println!("  Steps: {}", def.steps.len());
-            println!(
-                "  Parameters: {}",
-                def.parameters
-                    .iter()
-                    .map(|p| format!("{}: {}", p.name, p.type_name))
-                    .collect::<Vec<_>>()
-                    .join(", ")
-            );
-        } else {
-            println!(
-                "{} Validation failed:",
-                apxm_core::constants::ui::icons::FAILED
-            );
-            for error in &errors {
-                println!("  - {}", error);
-            }
-            return Err(anyhow::anyhow!("Validation failed"));
+        println!(
+            "{} Validation failed:",
+            apxm_core::constants::ui::icons::FAILED
+        );
+        for error in &errors {
+            println!("  - {}", error);
         }
+        return Err(anyhow::anyhow!("Validation failed"));
     }
 
     Ok(())

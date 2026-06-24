@@ -1,7 +1,7 @@
 //! OpenAPI contract diff-test.
 //!
 //! Ensures the `utoipa` export from apxm-server matches the checked-in contract
-//! baseline at `specs/0002-apxm-chat-thin-clients/contracts/openapi-session-v1.yaml`.
+//! baseline at `contracts/session-api.yaml`.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::PathBuf;
@@ -11,7 +11,7 @@ use serde_json::{Map, Value};
 
 fn contract_baseline_path() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .join("../../../specs/0002-apxm-chat-thin-clients/contracts/openapi-session-v1.yaml")
+        .join("../../../contracts/session-api.yaml")
 }
 
 fn server_api_contract_path() -> PathBuf {
@@ -35,14 +35,12 @@ fn resolve_ref(doc: &Value, reference: &str) -> Option<Value> {
 }
 
 fn normalize_nullable(obj: &mut Map<String, Value>) {
-    if let Some(Value::Array(types)) = obj.get("type") {
-        if types.len() == 2 && types.iter().any(|t| t.as_str() == Some("null")) {
-            if let Some(non_null) = types.iter().find(|t| t.as_str() != Some("null")) {
+    if let Some(Value::Array(types)) = obj.get("type")
+        && types.len() == 2 && types.iter().any(|t| t.as_str() == Some("null"))
+            && let Some(non_null) = types.iter().find(|t| t.as_str() != Some("null")) {
                 obj.insert("type".to_string(), non_null.clone());
                 obj.insert("nullable".to_string(), Value::Bool(true));
             }
-        }
-    }
 }
 
 fn normalize_schema(doc: &Value, schema: &mut Value) {
@@ -72,11 +70,10 @@ fn normalize_schema(doc: &Value, schema: &mut Value) {
     if let Some(items) = obj.get_mut("items") {
         normalize_schema(doc, items);
     }
-    if let Some(additional) = obj.get_mut("additionalProperties") {
-        if additional.is_object() {
+    if let Some(additional) = obj.get_mut("additionalProperties")
+        && additional.is_object() {
             normalize_schema(doc, additional);
         }
-    }
 }
 
 fn normalize_operation(doc: &Value, op: &mut Map<String, Value>) {
@@ -113,8 +110,8 @@ fn normalize_openapi(mut doc: Value) -> Value {
     obj.remove("tags");
     obj.insert("openapi".to_string(), Value::String("3.0.3".to_string()));
 
-    if let Some(components) = obj.get_mut("components").and_then(Value::as_object_mut) {
-        if let Some(schemas) = components.get_mut("schemas").and_then(Value::as_object_mut) {
+    if let Some(components) = obj.get_mut("components").and_then(Value::as_object_mut)
+        && let Some(schemas) = components.get_mut("schemas").and_then(Value::as_object_mut) {
             let names: Vec<String> = schemas.keys().cloned().collect();
             for name in names {
                 if let Some(schema) = schemas.get_mut(&name) {
@@ -122,7 +119,6 @@ fn normalize_openapi(mut doc: Value) -> Value {
                 }
             }
         }
-    }
 
     if let Some(paths) = obj.get_mut("paths").and_then(Value::as_object_mut) {
         for path_item in paths.values_mut() {
@@ -175,8 +171,7 @@ fn exported_openapi_matches_contract_baseline() {
         comparable_schemas(&exported_doc, &baseline_schemas),
         comparable_schemas(&baseline_doc, &baseline_schemas),
         "OpenAPI schema drifted from contract baseline.\n\
-         Regenerate specs/0002-apxm-chat-thin-clients/contracts/openapi-session-v1.yaml \
-         after intentional wire changes.\n\
+         Regenerate contracts/session-api.yaml after intentional wire changes.\n\
          --- exported ---\n{exported}\n\
          --- baseline ---\n{baseline}"
     );

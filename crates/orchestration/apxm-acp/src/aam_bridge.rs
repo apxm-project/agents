@@ -46,7 +46,7 @@ pub fn render_system_prompt(ctx: &AamContext) -> Option<String> {
     if !ctx.goals.is_empty() {
         let mut goal_lines = vec!["### Goals (by priority)".to_string()];
         let mut sorted_goals = ctx.goals.clone();
-        sorted_goals.sort_by(|a, b| b.priority.cmp(&a.priority));
+        sorted_goals.sort_by_key(|goal| std::cmp::Reverse(goal.priority));
         for (i, goal) in sorted_goals.iter().enumerate() {
             goal_lines.push(format!(
                 "{}. [P:{}] {}",

@@ -90,7 +90,7 @@ pub enum RuntimeError {
     /// LLM backend error
     #[error(
         "LLM error{backend}: {message}",
-        backend = Self::backend_suffix(.backend)
+        backend = Self::backend_suffix(.backend.as_ref())
     )]
     LLM {
         /// Error message describing the LLM failure.
@@ -102,7 +102,7 @@ pub enum RuntimeError {
     /// Memory system error.
     #[error(
         "Memory error{space}: {message}",
-        space = Self::memory_space_suffix(.space)
+        space = Self::memory_space_suffix(.space.as_ref())
     )]
     Memory {
         /// Error message describing the memory failure.
@@ -145,14 +145,14 @@ pub enum RuntimeError {
 }
 
 impl RuntimeError {
-    fn backend_suffix(backend: &Option<String>) -> String {
+    fn backend_suffix(backend: Option<&String>) -> String {
         match backend {
             Some(b) => format!(" (backend: {})", b),
             None => String::new(),
         }
     }
 
-    fn memory_space_suffix(space: &Option<String>) -> String {
+    fn memory_space_suffix(space: Option<&String>) -> String {
         match space {
             Some(s) => format!(" (space: {})", s),
             None => String::new(),

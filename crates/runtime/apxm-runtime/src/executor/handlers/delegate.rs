@@ -49,10 +49,7 @@ pub async fn execute(ctx: &ExecutionContext, node: &Node, inputs: Vec<Value>) ->
                 break;
             }
         }
-        match found {
-            Some(dag) => Some(dag),
-            None => None,
-        }
+        found
     };
 
     // Inline fallback (mirrors HANDOFF): when the target has no sibling

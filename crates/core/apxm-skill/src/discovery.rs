@@ -314,8 +314,7 @@ mod tests {
             .filter(|(query, expected)| {
                 rank(query, &cards, &visible, 1)
                     .first()
-                    .map(|m| m.skill_id.as_str() == *expected)
-                    .unwrap_or(false)
+                    .is_some_and(|m| m.skill_id.as_str() == *expected)
             })
             .count();
 

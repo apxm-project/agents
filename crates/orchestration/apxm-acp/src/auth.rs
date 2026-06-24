@@ -10,28 +10,25 @@ use std::env;
 /// Normalization: trim, replace `[^a-zA-Z0-9]` with `_`, strip leading/trailing `_`, uppercase.
 pub fn resolve_auth_credential(method_id: &str) -> Option<String> {
     // 1. Exact env var
-    if let Ok(val) = env::var(method_id) {
-        if !val.is_empty() {
+    if let Ok(val) = env::var(method_id)
+        && !val.is_empty() {
             return Some(val);
         }
-    }
 
     let norm = normalize(method_id);
 
     // 2. ACPX_AUTH_{NORM}
     let acpx_key = format!("{}{norm}", crate::constants::auth::ENV_PREFIX);
-    if let Ok(val) = env::var(&acpx_key) {
-        if !val.is_empty() {
+    if let Ok(val) = env::var(&acpx_key)
+        && !val.is_empty() {
             return Some(val);
         }
-    }
 
     // 3. {NORM}
-    if let Ok(val) = env::var(&norm) {
-        if !val.is_empty() {
+    if let Ok(val) = env::var(&norm)
+        && !val.is_empty() {
             return Some(val);
         }
-    }
 
     None
 }

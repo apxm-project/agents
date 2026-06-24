@@ -186,7 +186,7 @@ async fn list_session_events_after_execute_stream() {
     let (status, json) = get_json(&app, &format!("/v1/sessions/{session_id}/events?since=0")).await;
     assert_eq!(status, StatusCode::OK);
     assert_eq!(json["session_id"], session_id);
-    assert!(json["events"].as_array().expect("events").len() > 0);
+    assert!(!json["events"].as_array().expect("events").is_empty());
     assert!(json["next_seq"].is_number());
     assert!(json["done"].is_boolean());
 }

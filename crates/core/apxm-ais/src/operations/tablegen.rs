@@ -5,6 +5,7 @@
 
 use super::OperationCategory;
 use super::definitions::{AISOperationType, OperationSpec, get_all_operations};
+use std::fmt::Write;
 
 // ============================================================================
 // MLIR-Specific Types for TableGen Generation
@@ -483,12 +484,13 @@ pub fn generate_tablegen() -> String {
         if current_category != Some(category) {
             current_category = Some(category);
             let comment = get_category_comment(category);
-            output.push_str(&format!(
+            let _ = write!(
+                output,
                 "\n//===----------------------------------------------------------------------===//\n\
                  // {}\n\
                  //===----------------------------------------------------------------------===//\n\n",
                 comment
-            ));
+            );
         }
 
         output.push_str(&generate_op_def(spec));
@@ -527,12 +529,8 @@ fn derive_mlir_spec(base: &'static OperationSpec) -> MlirOperationSpec {
 
     // Derive memory effects based on category
     let memory_effects: &'static [MemoryEffect] = match base.op_type {
-        QMem => &[MemoryEffect::MemRead(AISResource::Belief)],
+        QMem | Ask | Think | Verify => &[MemoryEffect::MemRead(AISResource::Belief)],
         UMem => &[MemoryEffect::MemWrite(AISResource::Belief)],
-        // Ask: reads beliefs only (simple Q&A)
-        Ask => &[MemoryEffect::MemRead(AISResource::Belief)],
-        // Think: reads beliefs only (extended thinking, no side effects)
-        Think => &[MemoryEffect::MemRead(AISResource::Belief)],
         // Reason: reads AND writes beliefs + goals (structured reasoning updates)
         Reason => &[
             MemoryEffect::MemRead(AISResource::Belief),
@@ -543,7 +541,6 @@ fn derive_mlir_spec(base: &'static OperationSpec) -> MlirOperationSpec {
             MemoryEffect::MemRead(AISResource::Episodic),
             MemoryEffect::MemWrite(AISResource::Belief),
         ],
-        Verify => &[MemoryEffect::MemRead(AISResource::Belief)],
         Plan => &[MemoryEffect::MemWrite(AISResource::Goal)],
         InvTool => &[MemoryEffect::MemRead(AISResource::Capability)],
         _ => &[],

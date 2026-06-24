@@ -114,11 +114,8 @@ pub(crate) fn dispatch_ir_accounting_json(
 
     let priority_backends = backend_capabilities
         .iter()
-        .filter_map(|(backend, capabilities)| {
-            capabilities
-                .supports_priority
-                .then(|| serde_json::Value::String(backend.clone()))
-        })
+        .filter(|(_, capabilities)| capabilities.supports_priority)
+        .map(|(backend, _)| serde_json::Value::String(backend.clone()))
         .collect::<Vec<_>>();
 
     let pinned_blocks_peak_max = graph_status_snapshots

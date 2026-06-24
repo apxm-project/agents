@@ -247,7 +247,7 @@ pub(crate) fn build_app(state: AppState) -> Router {
 /// that `CorsLayer::permissive()` emitted.
 fn loopback_cors_layer() -> CorsLayer {
     let predicate = |origin: &HeaderValue, _request_parts: &axum::http::request::Parts| {
-        origin.to_str().map(is_loopback_origin).unwrap_or(false)
+        origin.to_str().is_ok_and(is_loopback_origin)
     };
     CorsLayer::new()
         .allow_origin(AllowOrigin::predicate(predicate))

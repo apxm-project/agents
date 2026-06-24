@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """controllable_agent.py — the whole agent in one program.
 
-The feature acceptance fixture for specs/0001-agent-in-program. The *entire*
+The feature acceptance fixture for the agent-in-program example. The *entire*
 conversational agent — the loop, each turn, context management + compaction,
 pre/post/session-start hooks, skill/tool discovery, and sub-agents — lives in
 this one program. The host (`apxm chat` or the HTTP server) is a dumb pipe:

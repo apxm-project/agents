@@ -166,19 +166,15 @@ fn validate_providers(module: &AirModule) -> Result<(), AirError> {
             continue;
         }
 
-        let provider_value = match node.attributes.get(graph_attrs::PROVIDER) {
-            Some(v) => v,
-            None => continue,
+        let Some(provider_value) = node.attributes.get(graph_attrs::PROVIDER) else {
+            continue;
         };
 
-        let provider_name = match provider_value.as_str() {
-            Some(s) => s,
-            None => {
-                return Err(AirError::Validation(format!(
-                    "node '{}' ({}): provider attribute must be a string",
-                    node.name, node.op
-                )));
-            }
+        let Some(provider_name) = provider_value.as_str() else {
+            return Err(AirError::Validation(format!(
+                "node '{}' ({}): provider attribute must be a string",
+                node.name, node.op
+            )));
         };
 
         let _ = provider_name;
@@ -315,7 +311,6 @@ fn validate_required_attributes(module: &AirModule) -> Result<(), AirError> {
             AISOperationType::Communicate => Some(graph_attrs::RECIPIENT),
             AISOperationType::ConstStr => Some(graph_attrs::VALUE),
             AISOperationType::InvTool => Some(graph_attrs::CAPABILITY),
-            AISOperationType::Merge => None,
             _ => None,
         };
         let missing = required_attr.filter(|key| !node.attributes.contains_key(*key));
@@ -582,6 +577,50 @@ fn levenshtein_at_most_1(a: &str, b: &str) -> bool {
     true
 }
 
+fn validate_node_refs(module: &AirModule) -> Result<(), AirError> {
+    for node in &module.nodes {
+        for (attr_key, attr_value) in &node.attributes {
+            if let Some(placeholder) = find_node_id_placeholder(attr_value) {
+                return Err(AirError::Validation(format!(
+                    "node '{}' (id={}, op={}, attr={}): node-id placeholder syntax '{}' \
+                     is not supported. Use named placeholders like '{{source}}' with \
+                     input_names for template-bearing string attributes, and use Data edges \
+                     for structural inputs instead of node-id references.",
+                    node.name, node.id, node.op, attr_key, placeholder
+                )));
+            }
+        }
+    }
+
+    Ok(())
+}
+
+fn find_node_id_placeholder(value: &Value) -> Option<String> {
+    match value {
+        Value::String(text) => find_node_id_placeholder_in_str(text),
+        Value::Array(items) => items.iter().find_map(find_node_id_placeholder),
+        Value::Object(map) => map.values().find_map(find_node_id_placeholder),
+        _ => None,
+    }
+}
+
+fn find_node_id_placeholder_in_str(text: &str) -> Option<String> {
+    let mut rest = text;
+    while let Some(start) = rest.find("{{node_") {
+        let candidate = &rest[start..];
+        let Some(end) = candidate.find("}}") else {
+            break;
+        };
+        let placeholder = &candidate[..end + 2];
+        let inner = &placeholder["{{node_".len()..placeholder.len() - 2];
+        if inner.chars().all(|ch| ch.is_ascii_digit()) {
+            return Some(placeholder.to_string());
+        }
+        rest = &candidate[end + 2..];
+    }
+    None
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -628,48 +667,4 @@ mod tests {
         let err = validate_module(&module).expect_err("unknown dotted root should fail");
         assert!(err.to_string().contains("{event.subject}"));
     }
-}
-
-fn validate_node_refs(module: &AirModule) -> Result<(), AirError> {
-    for node in &module.nodes {
-        for (attr_key, attr_value) in &node.attributes {
-            if let Some(placeholder) = find_node_id_placeholder(attr_value) {
-                return Err(AirError::Validation(format!(
-                    "node '{}' (id={}, op={}, attr={}): node-id placeholder syntax '{}' \
-                     is not supported. Use named placeholders like '{{source}}' with \
-                     input_names for template-bearing string attributes, and use Data edges \
-                     for structural inputs instead of node-id references.",
-                    node.name, node.id, node.op, attr_key, placeholder
-                )));
-            }
-        }
-    }
-
-    Ok(())
-}
-
-fn find_node_id_placeholder(value: &Value) -> Option<String> {
-    match value {
-        Value::String(text) => find_node_id_placeholder_in_str(text),
-        Value::Array(items) => items.iter().find_map(find_node_id_placeholder),
-        Value::Object(map) => map.values().find_map(find_node_id_placeholder),
-        _ => None,
-    }
-}
-
-fn find_node_id_placeholder_in_str(text: &str) -> Option<String> {
-    let mut rest = text;
-    while let Some(start) = rest.find("{{node_") {
-        let candidate = &rest[start..];
-        let Some(end) = candidate.find("}}") else {
-            break;
-        };
-        let placeholder = &candidate[..end + 2];
-        let inner = &placeholder["{{node_".len()..placeholder.len() - 2];
-        if inner.chars().all(|ch| ch.is_ascii_digit()) {
-            return Some(placeholder.to_string());
-        }
-        rest = &candidate[end + 2..];
-    }
-    None
 }

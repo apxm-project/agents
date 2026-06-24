@@ -75,20 +75,19 @@ impl CompilerError {
     /// Get the underlying Error if available
     pub fn as_error(&self) -> Option<&Error> {
         match self {
-            CompilerError::ContextCreation(e) => Some(e),
-            CompilerError::ContextOperation(e) => Some(e),
-            CompilerError::Parse(e) => Some(e),
-            CompilerError::Verification(e) => Some(e),
-            CompilerError::PassManager(e) => Some(e),
-            CompilerError::PassExecution(e) => Some(e),
-            CompilerError::Serialization(e) => Some(e),
-            CompilerError::InvalidInput(e) => Some(e),
-            CompilerError::Compilation(e) => Some(e),
-            CompilerError::InvalidConfig(e) => Some(e),
-            CompilerError::Unsupported(e) => Some(e),
-            CompilerError::Internal(e) => Some(e),
-            CompilerError::Io(_) => None,
-            CompilerError::Json(_) => None,
+            CompilerError::ContextCreation(e)
+            | CompilerError::ContextOperation(e)
+            | CompilerError::Parse(e)
+            | CompilerError::Verification(e)
+            | CompilerError::PassManager(e)
+            | CompilerError::PassExecution(e)
+            | CompilerError::Serialization(e)
+            | CompilerError::InvalidInput(e)
+            | CompilerError::Compilation(e)
+            | CompilerError::InvalidConfig(e)
+            | CompilerError::Unsupported(e)
+            | CompilerError::Internal(e) => Some(e),
+            CompilerError::Io(_) | CompilerError::Json(_) => None,
         }
     }
 

@@ -386,7 +386,7 @@ impl OperationDispatcher {
         }
 
         match &result {
-            Ok(_value) => {
+            Ok(value) => {
                 apxm_op!(trace,
                     op_type = ?node.op_type,
                     node_id = node.id,
@@ -396,7 +396,7 @@ impl OperationDispatcher {
                 ctx.memory
                     .record_episode(
                         format!("operation_completed:{:?}", node.op_type),
-                        _value.clone(),
+                        value.clone(),
                         ctx.execution_id.clone(),
                         Some(node.id),
                         None, // session_dir not available in dispatcher context

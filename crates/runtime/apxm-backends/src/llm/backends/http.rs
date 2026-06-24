@@ -39,7 +39,5 @@ fn env_duration_ms(name: &str, default_ms: u64) -> Duration {
 fn duration_ms(value: Option<&str>, default_ms: u64) -> Duration {
     value
         .and_then(|raw| raw.parse::<u64>().ok())
-        .filter(|millis| *millis > 0)
-        .map(Duration::from_millis)
-        .unwrap_or_else(|| Duration::from_millis(default_ms))
+        .filter(|millis| *millis > 0).map_or_else(|| Duration::from_millis(default_ms), Duration::from_millis)
 }

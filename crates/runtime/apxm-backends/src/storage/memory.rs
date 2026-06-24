@@ -154,9 +154,8 @@ impl StorageBackend for InMemoryBackend {
 /// Rough estimation of value size in bytes (best-effort; not allocator-accurate).
 fn estimate_value_size(value: &Value) -> usize {
     match value {
-        Value::Null => 1,
-        Value::Bool(_) => 1,
-        Value::Number(_) => 8,
+        Value::Null | Value::Bool(_) => 1,
+        Value::Number(_) | Value::Token(_) => 8,
         Value::String(s) => s.len(),
         Value::Array(arr) => arr
             .iter()
@@ -165,6 +164,5 @@ fn estimate_value_size(value: &Value) -> usize {
             acc.saturating_add(k.len())
                 .saturating_add(estimate_value_size(v))
         }),
-        Value::Token(_) => 8,
     }
 }

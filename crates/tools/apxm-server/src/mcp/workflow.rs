@@ -652,7 +652,7 @@ async fn run_prepared_workflow(
                 );
             }
         },
-        _ = cancel.notified() => {
+        () = cancel.notified() => {
             runtime_events_closed.store(true, Ordering::SeqCst);
             cancellation_token.cancel();
             let reason = format!("cancelled via {MCP_TOOL_APXM_WORKFLOW_CANCEL}");
@@ -918,13 +918,13 @@ fn workflow_spawn_air(
     let workflow_target = quote_air_string(&workflow_path.to_string_lossy());
     let attrs = workflow_spawn_attrs(args)?;
     Ok(format!(
-        r#"module {{
+        r"module {{
   func.func @apxm_mcp_workflow_start() -> !ais.token attributes {{ais.entry}} {{
     %child = ais.workflow_spawn {workflow_target_kind} {workflow_target}{attrs} : !ais.token
     func.return %child : !ais.token
   }}
 }}
-"#,
+",
         workflow_target_kind = quote_air_string(WORKFLOW_TARGET_KIND_WORKFLOW_PATH),
     ))
 }

@@ -396,15 +396,13 @@ impl OpenAIBackend {
         }
 
         // Merge in extra_body if provided (for vLLM extensions, etc.)
-        if let Some(extra) = &request.extra_body {
-            if let serde_json::Value::Object(extra_map) = extra {
-                if let serde_json::Value::Object(body_map) = &mut body {
+        if let Some(extra) = &request.extra_body
+            && let serde_json::Value::Object(extra_map) = extra
+                && let serde_json::Value::Object(body_map) = &mut body {
                     for (key, value) in extra_map {
                         body_map.insert(key.clone(), value.clone());
                     }
                 }
-            }
-        }
 
         body
     }
@@ -415,7 +413,7 @@ impl OpenAIBackend {
     /// `content: null` and place the generated text in a `reasoning` field instead.
     /// We fall back to `reasoning` when `content` is absent so those endpoints work
     /// transparently.
-    fn parse_response(&self, response: OpenAIResponse, model: &str) -> Result<LLMResponse> {
+    fn parse_response(response: OpenAIResponse, model: &str) -> Result<LLMResponse> {
         let choice = response.choices.first().context("No choices in response")?;
 
         // Prefer `content`; fall back to `reasoning` for on-premises reasoning models.
@@ -445,10 +443,10 @@ impl OpenAIBackend {
             .unwrap_or_default();
 
         // Determine finish reason
-        let finish_reason = if !tool_calls.is_empty() {
-            FinishReason::ToolUse
-        } else {
+        let finish_reason = if tool_calls.is_empty() {
             FinishReason::from_string(&choice.finish_reason)
+        } else {
+            FinishReason::ToolUse
         };
 
         let input_tokens = response.usage.input_token_count();
@@ -545,7 +543,7 @@ impl LLMBackend for OpenAIBackend {
             ))
         }?;
 
-        let mut llm_response = self.parse_response(api_response, &model)?;
+        let mut llm_response = Self::parse_response(api_response, &model)?;
         if let Some(honored) = fields_honored {
             llm_response.metadata.insert(
                 FIELDS_HONORED_RECORD_KEY.to_owned(),
@@ -604,7 +602,7 @@ impl LLMBackend for OpenAIBackend {
                 // Process SSE lines.
                 while let Some(line_end) = buffer.find('\n') {
                     let line = buffer[..line_end].trim_end().to_string();
-                    buffer.drain(..line_end + 1);
+                    buffer.drain(..=line_end);
                     let line = line.trim();
 
                     if line.is_empty() || line.starts_with(':') {
@@ -622,10 +620,10 @@ impl LLMBackend for OpenAIBackend {
                                 })
                                 .collect();
 
-                            let finish_reason = if !tool_calls.is_empty() {
-                                FinishReason::ToolUse
-                            } else {
+                            let finish_reason = if tool_calls.is_empty() {
                                 FinishReason::Stop
+                            } else {
+                                FinishReason::ToolUse
                             };
 
                             let resp = LLMResponse::new(
@@ -656,12 +654,11 @@ impl LLMBackend for OpenAIBackend {
                             for choice in &parsed.choices {
                                 if let Some(ref delta) = choice.delta {
                                     // Text content.
-                                    if let Some(ref content) = delta.content {
-                                        if !content.is_empty() {
+                                    if let Some(ref content) = delta.content
+                                        && !content.is_empty() {
                                             full_content.push_str(content);
-                                            yield StreamChunk::Token(content.to_string());
+                                            yield StreamChunk::Token(content.clone());
                                         }
-                                    }
 
                                     // Tool calls.
                                     if let Some(ref tc_arr) = delta.tool_calls {
@@ -676,27 +673,25 @@ impl LLMBackend for OpenAIBackend {
                                                     .to_string();
                                                 tool_calls_map.insert(
                                                     index,
-                                                    (id.to_string(), name.clone(), String::new()),
+                                                    (id.clone(), name.clone(), String::new()),
                                                 );
                                                 yield StreamChunk::ToolCallStart {
-                                                    id: id.to_string(),
+                                                    id: id.clone(),
                                                     name,
                                                 };
                                             }
 
-                                            if let Some(ref args) = tc.function.as_ref().and_then(|f| f.arguments.as_ref()) {
-                                                if !args.is_empty() {
-                                                    if let Some((id, _, accumulated_args)) =
+                                            if let Some(args) = tc.function.as_ref().and_then(|f| f.arguments.as_ref())
+                                                && !args.is_empty()
+                                                    && let Some((id, _, accumulated_args)) =
                                                         tool_calls_map.get_mut(&index)
                                                     {
                                                         accumulated_args.push_str(args);
                                                         yield StreamChunk::ToolCallDelta {
                                                             id: id.clone(),
-                                                            arguments_delta: args.to_string(),
+                                                            arguments_delta: args.clone(),
                                                         };
                                                     }
-                                                }
-                                            }
                                         }
                                     }
                                 }
@@ -754,7 +749,7 @@ impl LLMBackend for OpenAIBackend {
                 name: m.id.to_string(),
                 context_window: 128_000,
                 supports_vision: m.id.contains("4o")
-                    || m.id.contains("5")
+                    || m.id.contains('5')
                     || m.id.contains("turbo"),
                 supports_functions: true,
             })

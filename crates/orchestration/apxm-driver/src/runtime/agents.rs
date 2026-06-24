@@ -157,8 +157,8 @@ impl AgentSpawner for AcpAgentSpawner {
             })?;
 
         // Apply session controls if specified (or from profile defaults)
-        if let Some(mode_id) = effective_mode {
-            if let Err(e) =
+        if let Some(mode_id) = effective_mode
+            && let Err(e) =
                 apxm_acp::controls::SessionControls::set_mode(&mut session, mode_id).await
             {
                 if is_unsupported_session_control(&e) {
@@ -176,9 +176,8 @@ impl AgentSpawner for AcpAgentSpawner {
                     });
                 }
             }
-        }
-        if let Some(model_id) = effective_model {
-            if let Err(e) =
+        if let Some(model_id) = effective_model
+            && let Err(e) =
                 apxm_acp::controls::SessionControls::set_model(&mut session, model_id).await
             {
                 if is_unsupported_session_control(&e) {
@@ -196,7 +195,6 @@ impl AgentSpawner for AcpAgentSpawner {
                     });
                 }
             }
-        }
 
         apxm_acp!(info,
             agent_name = agent_name,

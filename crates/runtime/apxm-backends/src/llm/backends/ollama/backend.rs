@@ -104,13 +104,9 @@ impl OllamaBackend {
 
                 let converted_value = if let Some(s) = value.as_str() {
                     if INT_OPTIONS.contains(&key.as_str()) {
-                        s.parse::<i64>()
-                            .map(serde_json::Value::from)
-                            .unwrap_or_else(|_| value.clone())
+                        s.parse::<i64>().map_or_else(|_| value.clone(), serde_json::Value::from)
                     } else if FLOAT_OPTIONS.contains(&key.as_str()) {
-                        s.parse::<f64>()
-                            .map(serde_json::Value::from)
-                            .unwrap_or_else(|_| value.clone())
+                        s.parse::<f64>().map_or_else(|_| value.clone(), serde_json::Value::from)
                     } else if s == "true" || s == "false" {
                         serde_json::Value::Bool(s == "true")
                     } else {
@@ -223,10 +219,10 @@ impl OllamaBackend {
             })
             .collect();
 
-        let finish_reason = if !tool_calls.is_empty() {
-            FinishReason::ToolUse
-        } else {
+        let finish_reason = if tool_calls.is_empty() {
             FinishReason::Stop
+        } else {
+            FinishReason::ToolUse
         };
 
         (tool_calls, finish_reason)
@@ -346,41 +342,35 @@ impl LLMBackend for OllamaBackend {
 
                 while let Some(line_end) = buffer.find('\n') {
                     let line = buffer[..line_end].trim().to_string();
-                    buffer.drain(..line_end + 1);
+                    buffer.drain(..=line_end);
 
                     if line.is_empty() {
                         continue;
                     }
 
                     if let Ok(parsed) = serde_json::from_str::<OllamaChatResponse>(&line) {
-                        if let Some(prompt_count) = parsed.prompt_eval_count {
-                            if let Some(eval_count) = parsed.eval_count {
+                        if let Some(prompt_count) = parsed.prompt_eval_count
+                            && let Some(eval_count) = parsed.eval_count {
                                 last_usage = TokenUsage::new(prompt_count, eval_count);
                                 yield StreamChunk::Usage(last_usage.clone());
                             }
-                        }
 
-                        if let Some(ref thinking) = parsed.message.thinking {
-                            if !thinking.is_empty() {
+                        if let Some(ref thinking) = parsed.message.thinking
+                            && !thinking.is_empty() {
                                 full_reasoning.push_str(thinking);
-                                yield StreamChunk::Thought(thinking.to_string());
+                                yield StreamChunk::Thought(thinking.clone());
                             }
-                        }
 
-                        if let Some(ref content) = parsed.message.content {
-                            if !content.is_empty() {
+                        if let Some(ref content) = parsed.message.content
+                            && !content.is_empty() {
                                 full_content.push_str(content);
-                                yield StreamChunk::Token(content.to_string());
+                                yield StreamChunk::Token(content.clone());
                             }
-                        }
 
                         if let Some(ref tc_arr) = parsed.message.tool_calls {
                             for (idx, tc) in tc_arr.iter().enumerate() {
-                                if !tool_calls_map.contains_key(&idx) {
-                                    tool_calls_map.insert(
-                                        idx,
-                                        (tc.function.name.clone(), tc.function.arguments.clone()),
-                                    );
+                                if let std::collections::hash_map::Entry::Vacant(e) = tool_calls_map.entry(idx) {
+                                    e.insert((tc.function.name.clone(), tc.function.arguments.clone()));
                                     yield StreamChunk::ToolCallStart {
                                         id: format!("call_{}", idx),
                                         name: tc.function.name.clone(),
