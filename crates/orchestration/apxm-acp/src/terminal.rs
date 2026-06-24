@@ -57,7 +57,10 @@ impl TerminalManager {
         // reach outside it for writes or escape network isolation policy.
         let (program, prog_args) = match &self.sandbox {
             Some(backend) => {
-                let wrap_cwd = cwd.map_or_else(|| std::env::current_dir().unwrap_or_default(), PathBuf::from);
+                let wrap_cwd = cwd.map_or_else(
+                    || std::env::current_dir().unwrap_or_default(),
+                    PathBuf::from,
+                );
                 backend.wrap_command(command, args, &wrap_cwd, true)
             }
             None => (command.to_string(), args.to_vec()),
@@ -190,9 +193,10 @@ impl TerminalManager {
     /// Kill a terminal process.
     pub async fn kill(&self, terminal_id: &str) -> Result<(), AcpError> {
         if let Some(mut entry) = self.terminals.get_mut(terminal_id)
-            && let Some(ref mut child) = entry.value_mut().child {
-                let _ = child.kill().await;
-            }
+            && let Some(ref mut child) = entry.value_mut().child
+        {
+            let _ = child.kill().await;
+        }
         Ok(())
     }
 

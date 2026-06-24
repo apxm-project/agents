@@ -1541,11 +1541,7 @@ fn validate_static_skill_admission(
     state: &AppState,
 ) -> Result<(), ApiError> {
     let capability_system = state.runtime.capability_system();
-    for name in manifest
-        .required_capabilities
-        .iter()
-        .chain(manifest.allowed_tools.iter())
-    {
+    for name in &manifest.required_capabilities {
         if !capability_system.has_capability(name) {
             return Err(ApiError::bad_request(format!(
                 "skill capability '{name}' is not registered"
@@ -1561,19 +1557,15 @@ fn validate_static_skill_admission(
         ))
     })?;
 
-    let allowed_tools: HashSet<&str> = if manifest.allowed_tools.is_empty() {
-        manifest
-            .required_capabilities
-            .iter()
-            .map(String::as_str)
-            .collect()
-    } else {
-        manifest.allowed_tools.iter().map(String::as_str).collect()
-    };
+    let declared_tools: HashSet<&str> = manifest
+        .required_capabilities
+        .iter()
+        .map(String::as_str)
+        .collect();
 
     match &policy {
         CapabilityPolicy::ReadOnly => {
-            for name in &allowed_tools {
+            for name in &declared_tools {
                 if !capability_system.is_read_only(name) {
                     return Err(ApiError::bad_request(format!(
                         "skill capability '{name}' is not read-only"
@@ -1582,22 +1574,12 @@ fn validate_static_skill_admission(
             }
         }
         CapabilityPolicy::Sandboxed => {}
-        CapabilityPolicy::Broader { admits } => {
-            for name in &allowed_tools {
-                if !admits.contains(*name) && !capability_system.is_read_only(name) {
-                    return Err(ApiError::bad_request(format!(
-                        "skill capability '{name}' is not admitted by broader policy {}",
-                        policy.name()
-                    )));
-                }
-            }
-        }
     }
 
     for dag in artifact.dags() {
         for node in &dag.nodes {
             if node.op_type == AISOperationType::InvTool {
-                validate_inv_tool_node(node, &allowed_tools)?;
+                validate_inv_tool_node(node, &declared_tools)?;
                 if matches!(policy, CapabilityPolicy::Sandboxed) {
                     validate_sandboxed_inv_tool_node(node, state)?;
                 }
@@ -1680,7 +1662,7 @@ fn inv_tool_static_args(
 
 fn validate_inv_tool_node(
     node: &apxm_core::types::execution::Node,
-    allowed_tools: &HashSet<&str>,
+    declared_tools: &HashSet<&str>,
 ) -> Result<(), ApiError> {
     if node.attributes.contains_key(graph_attrs::PYTHON_HANDLER_ID) {
         return Err(ApiError::bad_request(
@@ -1692,7 +1674,7 @@ fn validate_inv_tool_node(
         .get(graph_attrs::CAPABILITY)
         .and_then(|value| value.as_string())
         .ok_or_else(|| ApiError::bad_request("INV_TOOL missing capability attribute"))?;
-    if !allowed_tools.contains(capability.as_str()) {
+    if !declared_tools.contains(capability.as_str()) {
         return Err(ApiError::bad_request(format!(
             "skill artifact invokes undeclared capability '{capability}'"
         )));
@@ -1859,8 +1841,7 @@ fn find_manifest_dirs(root: &Path, packages: &mut Vec<PathBuf>, warnings: &mut V
 }
 
 fn is_symlink(path: &Path) -> bool {
-    fs::symlink_metadata(path)
-        .is_ok_and(|metadata| metadata.file_type().is_symlink())
+    fs::symlink_metadata(path).is_ok_and(|metadata| metadata.file_type().is_symlink())
 }
 
 fn annotate_duplicates(records: &mut [SkillRecord]) {
@@ -1880,14 +1861,14 @@ fn annotate_duplicates(records: &mut [SkillRecord]) {
                 .copied()
                 .unwrap_or_default()
                 > 1
-            {
-                record.validation.status = ValidationStatus::Invalid;
-                record.compile_status = CompileStatus::Invalid;
-                record
-                    .validation
-                    .errors
-                    .push(format!("duplicate skill id/version: {skill_id}@{version}"));
-            }
+        {
+            record.validation.status = ValidationStatus::Invalid;
+            record.compile_status = CompileStatus::Invalid;
+            record
+                .validation
+                .errors
+                .push(format!("duplicate skill id/version: {skill_id}@{version}"));
+        }
     }
 }
 
@@ -1903,10 +1884,7 @@ fn find_record(
         .into_iter()
         .filter(|record| record.skill_id.as_deref() == Some(skill_id))
         .filter(|record| match pack_filter {
-            Some(pack) => record
-                .pack
-                .as_ref()
-                .is_some_and(|p| p.pack_id == pack),
+            Some(pack) => record.pack.as_ref().is_some_and(|p| p.pack_id == pack),
             None => true,
         })
         .filter(|record| {

@@ -38,12 +38,13 @@ pub fn validate_command(
         );
     }
 
-    if warnings.is_empty() && errors.is_empty()
+    if warnings.is_empty()
+        && errors.is_empty()
         && let Ok(graph) = load_air_graph_for_analysis(&input)
-            && graph.nodes.is_empty()
-        {
-            warnings.push("compiled AIR contains no executable nodes".to_string());
-        }
+        && graph.nodes.is_empty()
+    {
+        warnings.push("compiled AIR contains no executable nodes".to_string());
+    }
 
     let valid = errors.is_empty();
 
@@ -190,7 +191,8 @@ impl<'a> GraphAnalysis<'a> {
     }
 
     pub(crate) fn node_op(&self, id: u64) -> String {
-        self.node_by_id(id).map_or_else(|| "?".to_string(), |n| n.op.to_string())
+        self.node_by_id(id)
+            .map_or_else(|| "?".to_string(), |n| n.op.to_string())
     }
 
     fn node_latency_op(&self, id: u64) -> String {
@@ -200,7 +202,8 @@ impl<'a> GraphAnalysis<'a> {
         node.attributes
             .get(graph_attrs::LLM_OPERATION)
             .and_then(|value| value.as_str())
-            .and_then(|value| value.parse::<AISOperationType>().ok()).map_or_else(|| node.op.to_string(), |operation| operation.to_string())
+            .and_then(|value| value.parse::<AISOperationType>().ok())
+            .map_or_else(|| node.op.to_string(), |operation| operation.to_string())
     }
 
     pub(crate) fn node_name(&self, id: u64) -> &str {

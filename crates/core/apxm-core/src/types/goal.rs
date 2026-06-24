@@ -191,9 +191,10 @@ impl GateVerdict {
             return Some(verdict);
         }
         if let Some(obj) = extract_json_object(text)
-            && let Ok(verdict) = serde_json::from_str::<GateVerdict>(&obj) {
-                return Some(verdict);
-            }
+            && let Ok(verdict) = serde_json::from_str::<GateVerdict>(&obj)
+        {
+            return Some(verdict);
+        }
         None
     }
 
@@ -207,15 +208,13 @@ impl GateVerdict {
         // Loose fallback: find a "status: <word>" or a bare recognized word.
         for line in text.lines() {
             let line = line.trim();
-            let candidate = line
-                .split_once(':')
-                .map_or(line, |(k, v)| {
-                    if k.trim().eq_ignore_ascii_case("status") {
-                        v
-                    } else {
-                        line
-                    }
-                });
+            let candidate = line.split_once(':').map_or(line, |(k, v)| {
+                if k.trim().eq_ignore_ascii_case("status") {
+                    v
+                } else {
+                    line
+                }
+            });
             let candidate = candidate
                 .trim()
                 .trim_matches(|c| matches!(c, '"' | '`' | '*' | '.' | ' '));

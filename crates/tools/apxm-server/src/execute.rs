@@ -25,6 +25,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value as JsonValue;
 use tokio::sync::{Notify, mpsc};
 
+use crate::delegated_capabilities::ResolvedDelegatedCapabilities;
 use crate::error::ApiError;
 use crate::executions::{ExecutionRecord, ExecutionRecordingEmitter};
 use crate::runs::{RunBusFanOutEmitter, record_run_lifecycle_event};
@@ -37,10 +38,11 @@ const ERROR_RAW_PYTHON_TOOL_HANDLERS: &str =
 const ERROR_INV_TOOL_MISSING_CAPABILITY: &str = "INV_TOOL missing capability attribute";
 const ERROR_INV_TOOL_PARAMS_NOT_OBJECT: &str = "INV_TOOL params_json must be a JSON object";
 const ERROR_ASK_REQUIRES_READ_ONLY_TOOLS: &str = "ASK tool exposure requires read-only tools";
-const ADMIT_SPAWN_AGENT: &str = orchestration_admission::SPAWN_AGENT;
-const ADMIT_SPAWN_TEAM: &str = orchestration_admission::SPAWN_TEAM;
+const DELEGATED_SPAWN_AGENT: &str = orchestration_admission::SPAWN_AGENT;
+const DELEGATED_SPAWN_TEAM: &str = orchestration_admission::SPAWN_TEAM;
 
 #[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub(crate) struct ExecuteRequest {
     pub(crate) air: String,
     #[serde(default)]
@@ -49,12 +51,10 @@ pub(crate) struct ExecuteRequest {
     pub(crate) session_id: Option<String>,
     #[serde(default)]
     pub(crate) session_root: Option<String>,
-    /// Capabilities the caller has explicitly granted this execution. A
-    /// non-read-only, non-sandboxed (Direct) tool node is admitted only if its
-    /// capability appears here — the itemized consent that lets a workflow
-    /// perform writes. Read-only and sandboxed capabilities never need listing.
+    /// Runtime-minted delegated capability ids presented for this execution.
+    /// Read-only and sandboxed capabilities never need listing.
     #[serde(default)]
-    pub(crate) admit_capabilities: Vec<String>,
+    pub(crate) delegated_capability_ids: Vec<String>,
     /// Visible skill set (lib / lib::skill / skill ids). Empty means only shared skills.
     #[serde(default)]
     pub(crate) imports: Vec<String>,
@@ -110,7 +110,7 @@ pub(crate) struct CompileRequest {
     #[serde(default)]
     pub(crate) session_root: Option<String>,
     #[serde(default)]
-    pub(crate) admit_capabilities: Vec<String>,
+    pub(crate) delegated_capability_ids: Vec<String>,
     #[serde(default)]
     pub(crate) imports: Vec<String>,
     #[serde(default)]
@@ -136,7 +136,7 @@ impl CompileRequest {
             args: self.args,
             session_id: self.session_id,
             session_root: self.session_root,
-            admit_capabilities: self.admit_capabilities,
+            delegated_capability_ids: self.delegated_capability_ids,
             imports: self.imports,
             tool_call_budgets: self.tool_call_budgets,
             tool_credentials: self.tool_credentials,
@@ -210,29 +210,26 @@ pub(crate) struct ExecuteResponse {
     pub(crate) tool_call_counts: HashMap<String, usize>,
 }
 
-/// Build the top-level execution metadata seeding the effective capability grant
-/// so nested CALL_SKILL admission enforces `child ⊆ parent` (no-widen).
-pub(crate) fn admit_grant_metadata(
-    admit: &std::collections::HashSet<String>,
+/// Build top-level execution metadata from delegated authority so nested
+/// CALL_SKILL authority enforces `child ⊆ parent` (no-widen).
+pub(crate) fn delegated_authority_metadata(
+    delegated_capabilities: &ResolvedDelegatedCapabilities,
     imports: &[String],
-) -> HashMap<String, String> {
-    let policy = if admit.is_empty() {
-        apxm_skill::CapabilityPolicy::ReadOnly
-    } else {
-        apxm_skill::CapabilityPolicy::Broader {
-            admits: admit.iter().cloned().collect(),
-        }
-    };
+) -> Result<HashMap<String, String>, ApiError> {
     let mut metadata = HashMap::new();
     metadata.insert(
+        apxm_runtime::metadata_keys::DELEGATED_CAPABILITIES.to_string(),
+        delegated_capabilities.to_runtime_metadata_json()?,
+    );
+    metadata.insert(
         apxm_runtime::metadata_keys::SIDE_EFFECT_POLICY.to_string(),
-        policy.name(),
+        apxm_skill::CapabilityPolicy::ReadOnly.name(),
     );
     metadata.insert(
         apxm_runtime::metadata_keys::VISIBLE_SKILLS.to_string(),
         imports.join(","),
     );
-    metadata
+    Ok(metadata)
 }
 
 pub(crate) async fn execute(
@@ -245,10 +242,10 @@ pub(crate) async fn execute(
     ))
 }
 
-/// Transport-neutral core: compile + admit + execute one AIR request, returning
+/// Transport-neutral core: compile + authorize + execute one AIR request, returning
 /// the `ExecuteResponse`. Both the REST `/v1/execute` handler and the MCP
 /// `run` tool call this, so the compile path, the static write-boundary
-/// pre-flight, the credential injection, and the no-widen grant seed are shared
+/// pre-flight, the credential injection, and the no-widen authority seed are shared
 /// (DRY) rather than duplicated per transport.
 /// Acquire an admission slot and register a park-aware handle, returning the
 /// admission id to stamp into execution metadata. While the execution is parked
@@ -276,7 +273,7 @@ pub(crate) async fn run_air_inner(
         args,
         session_id,
         session_dir,
-        admit,
+        delegated_ids,
         imports,
         tool_call_budgets,
         tool_credentials,
@@ -288,14 +285,15 @@ pub(crate) async fn run_air_inner(
     let known_caps = registered_capability_names(state);
     let mut artifact = air_to_artifact_with_caps(&air, &known_caps)?;
     attach_trusted_python_section(&mut artifact, python_tools_sidecar);
-    validate_raw_execute_admission(&artifact, state, &admit)?;
+    let delegated_capabilities = state.delegated_capabilities.resolve(&delegated_ids)?;
+    validate_raw_execute_admission(&artifact, state, &delegated_capabilities)?;
     inject_resolved_credentials(&mut artifact, owner.as_deref()).await?;
     let resolved_credentials =
         resolve_tool_credentials(&tool_credentials, owner.as_deref()).await?;
     let tool_call_budgets =
         merge_tool_budgets(tool_call_budgets, air_declared_tool_budgets(&artifact));
     let admission_id = acquire_admission(state).await?;
-    let mut metadata = admit_grant_metadata(&admit, &imports);
+    let mut metadata = delegated_authority_metadata(&delegated_capabilities, &imports)?;
     metadata.insert(
         apxm_runtime::metadata_keys::ADMISSION_ID.to_string(),
         admission_id.clone(),
@@ -415,7 +413,7 @@ pub(crate) async fn execute_stream(
         args,
         session_id,
         session_dir,
-        admit,
+        delegated_ids,
         imports,
         tool_call_budgets,
         tool_credentials,
@@ -427,7 +425,8 @@ pub(crate) async fn execute_stream(
     let known_caps = registered_capability_names(&state);
     let mut artifact = air_to_artifact_with_caps(&air, &known_caps)?;
     attach_trusted_python_section(&mut artifact, python_tools_sidecar);
-    validate_raw_execute_admission(&artifact, &state, &admit)?;
+    let delegated_capabilities = state.delegated_capabilities.resolve(&delegated_ids)?;
+    validate_raw_execute_admission(&artifact, &state, &delegated_capabilities)?;
     inject_resolved_credentials(&mut artifact, owner.as_deref()).await?;
     let resolved_credentials =
         resolve_tool_credentials(&tool_credentials, owner.as_deref()).await?;
@@ -437,13 +436,13 @@ pub(crate) async fn execute_stream(
     let stream_config = state.server_config.execution_stream;
     let (tx, mut rx) = mpsc::channel::<ApxmEvent>(stream_config.channel_capacity.max(1));
     let runtime = Arc::clone(&state.runtime);
-    let mut grant_metadata = admit_grant_metadata(&admit, &imports);
-    grant_metadata.insert(
+    let mut authority_metadata = delegated_authority_metadata(&delegated_capabilities, &imports)?;
+    authority_metadata.insert(
         apxm_runtime::metadata_keys::ADMISSION_ID.to_string(),
         admission_id.clone(),
     );
     if let Some((key, value)) = tool_call_budgets_metadata(&tool_call_budgets) {
-        grant_metadata.insert(key, value);
+        authority_metadata.insert(key, value);
     }
     // Prefer the caller-supplied X-Trace-Id header for end-to-end correlation.
     // Fall back to session_id (for multi-turn sessions) then a fresh UUID.
@@ -464,10 +463,10 @@ pub(crate) async fn execute_stream(
         session_dir.as_deref(),
     );
     if let Some(record) = raw_record.as_ref() {
-        attach_runtime_run_metadata(&mut grant_metadata, record, &trace_id)?;
+        attach_runtime_run_metadata(&mut authority_metadata, record, &trace_id)?;
     }
     let tx_task = tx.clone();
-    // Seed the per-session runtime ledger (turn caps / tool budgets / grants)
+    // Seed the per-session runtime ledger (turn caps / tool budgets)
     // keyed by session_id and register the session→execution mapping, so the
     // runtime owns per-session limits and the turn-input endpoint can find this
     // session's long-lived execution. Idempotent across re-armed turns of the
@@ -478,7 +477,6 @@ pub(crate) async fn execute_stream(
             apxm_runtime::executor::session_ledger::SessionLedger::new(
                 None,
                 tool_call_budgets.clone(),
-                admit.iter().cloned().collect(),
             ),
         );
         state
@@ -600,7 +598,7 @@ pub(crate) async fn execute_stream(
                 session_id,
                 Some(emitter),
                 session_dir.clone(),
-                grant_metadata,
+                authority_metadata,
                 resolved_credentials,
                 cancellation_token.clone(),
             );
@@ -695,7 +693,7 @@ pub(crate) struct PreparedRequest {
     pub(crate) args: Vec<String>,
     pub(crate) session_id: Option<String>,
     pub(crate) session_dir: Option<String>,
-    pub(crate) admit: std::collections::HashSet<String>,
+    pub(crate) delegated_ids: std::collections::HashSet<String>,
     pub(crate) imports: Vec<String>,
     pub(crate) tool_call_budgets: HashMap<String, usize>,
     pub(crate) tool_credentials: HashMap<String, String>,
@@ -737,7 +735,7 @@ pub(crate) fn prepare_request(mut req: ExecuteRequest) -> Result<PreparedRequest
         args: req.args,
         session_id,
         session_dir,
-        admit: req.admit_capabilities.into_iter().collect(),
+        delegated_ids: req.delegated_capability_ids.into_iter().collect(),
         imports: req.imports,
         tool_call_budgets: clamp_tool_call_budgets(req.tool_call_budgets),
         tool_credentials: req.tool_credentials,
@@ -1058,7 +1056,7 @@ pub(crate) fn registered_capability_names(state: &AppState) -> std::collections:
 }
 
 /// Single-tenant operator trust gate for running author python on the server.
-/// Per ADR 0001 the server stays python-free by default; python is admitted ONLY
+/// Per ADR 0001 the server stays python-free by default; python is delegated ONLY
 /// when the operator explicitly asserts trust AND the worker is sandboxed — both
 /// `APXM_TRUST_PYTHON_ARTIFACTS` and `APXM_SANDBOX_PYTHON` must be set. (Full
 /// multi-tenant provenance = cryptographic artifact signing, still future work.)
@@ -1085,7 +1083,7 @@ pub(crate) fn attach_trusted_python_section(artifact: &mut Artifact, sidecar: Op
 pub(crate) fn validate_raw_execute_admission(
     artifact: &Artifact,
     state: &AppState,
-    admit: &std::collections::HashSet<String>,
+    delegated_capabilities: &ResolvedDelegatedCapabilities,
 ) -> Result<(), ApiError> {
     let python_trusted = python_artifacts_trusted();
     if !python_trusted
@@ -1099,7 +1097,7 @@ pub(crate) fn validate_raw_execute_admission(
 
     // Agents declared as sibling flows in THIS artifact (`<name>.main` /
     // `<name>.delegate`). Spawning them is self-contained — the program carries
-    // its own sub-agents — so it needs no external `--admit spawn_agent` grant
+    // its own sub-agents, so it needs no external delegated spawn_agent id
     // (server-api admission; constitution #3). External/process spawns still do.
     let in_artifact_agents: std::collections::HashSet<String> = artifact
         .dags()
@@ -1110,8 +1108,8 @@ pub(crate) fn validate_raw_execute_admission(
 
     // Capabilities the artifact provides itself (author @tools, python-backed),
     // read from the python-tools section's manifest `name` fields. On the trusted
-    // python path an INV_TOOL of one of these is admitted (the sandboxed bridge
-    // serves it) even though it is not in the server registry. Section-based so it
+    // python path an INV_TOOL of one of these is provided by the sandboxed bridge
+    // even though it is not in the server registry. Section-based so it
     // is independent of how the capability name is encoded on the node.
     let in_artifact_caps: std::collections::HashSet<String> = artifact
         .section_data(apxm_runtime::python_tools::CAPABILITY_NAME)
@@ -1133,7 +1131,12 @@ pub(crate) fn validate_raw_execute_admission(
 
             match node.op_type {
                 AISOperationType::InvTool => {
-                    validate_raw_inv_tool_node(node, state, admit, &in_artifact_caps)?;
+                    validate_raw_inv_tool_node(
+                        node,
+                        state,
+                        delegated_capabilities,
+                        &in_artifact_caps,
+                    )?;
                 }
                 AISOperationType::Ask | AISOperationType::Think | AISOperationType::Reason => {
                     validate_raw_llm_tool_exposure(node, state, &in_artifact_caps)?;
@@ -1145,11 +1148,19 @@ pub(crate) fn validate_raw_execute_admission(
                         .and_then(|v| v.as_string())
                         .is_some_and(|name| in_artifact_agents.contains(name.as_str()));
                     if !self_contained {
-                        validate_raw_spawn_op_admission(ADMIT_SPAWN_AGENT, node, admit)?;
+                        validate_raw_spawn_op_admission(
+                            DELEGATED_SPAWN_AGENT,
+                            node,
+                            delegated_capabilities,
+                        )?;
                     }
                 }
                 AISOperationType::SpawnTeam => {
-                    validate_raw_spawn_op_admission(ADMIT_SPAWN_TEAM, node, admit)?;
+                    validate_raw_spawn_op_admission(
+                        DELEGATED_SPAWN_TEAM,
+                        node,
+                        delegated_capabilities,
+                    )?;
                 }
                 AISOperationType::WorkflowSpawn => {
                     validate_workflow_spawn_node(node).map_err(ApiError::bad_request)?;
@@ -1163,16 +1174,16 @@ pub(crate) fn validate_raw_execute_admission(
 }
 
 fn validate_raw_spawn_op_admission(
-    admit_name: &str,
+    delegated_name: &str,
     node: &Node,
-    admit: &std::collections::HashSet<String>,
+    delegated_capabilities: &ResolvedDelegatedCapabilities,
 ) -> Result<(), ApiError> {
-    if admit.contains(admit_name) || admit.contains(&admit_name.to_ascii_lowercase()) {
+    if delegated_capabilities.admits_mutating_tool(delegated_name) {
         return Ok(());
     }
     Err(ApiError::bad_request(format!(
-        "{:?} performs process spawning and was not granted; add '{}' to admit_capabilities to authorize this execution",
-        node.op_type, admit_name
+        "{:?} performs process spawning and is missing delegated authority for '{}'; mint a delegated capability for that tool_binding and present its cap_* id in delegated_capability_ids",
+        node.op_type, delegated_name
     )))
 }
 
@@ -1189,7 +1200,7 @@ fn validate_workflow_spawn_node(node: &Node) -> Result<(), String> {
 fn validate_raw_inv_tool_node(
     node: &Node,
     state: &AppState,
-    admit: &std::collections::HashSet<String>,
+    delegated_capabilities: &ResolvedDelegatedCapabilities,
     in_artifact_caps: &std::collections::HashSet<String>,
 ) -> Result<(), ApiError> {
     let capability = node
@@ -1201,9 +1212,17 @@ fn validate_raw_inv_tool_node(
 
     // On the operator-trusted python path, a capability the artifact declares
     // itself via REGISTER_CAPABILITY (a python @tool) is provided by the
-    // sandboxed bridge, not the server registry — admit it.
+    // sandboxed bridge, not the server registry. The sidecar has no read-only
+    // bit yet, so fail closed and treat artifact-local Python tools as writes
+    // unless a runtime-minted delegated capability authorizes their tool binding.
     if python_artifacts_trusted() && in_artifact_caps.contains(capability) {
-        return Ok(());
+        if delegated_capabilities.admits_mutating_tool(capability) {
+            return Ok(());
+        }
+        return Err(ApiError::bad_request(format!(
+            "python-backed capability '{capability}' is missing delegated authority; \
+             mint a delegated capability for that tool_binding and present its cap_* id in delegated_capability_ids"
+        )));
     }
 
     if !capability_system.has_capability(capability) {
@@ -1219,16 +1238,16 @@ fn validate_raw_inv_tool_node(
     let args = inv_tool_static_args(node)?;
     match capability_system.sandbox_preflight(capability, &args) {
         Ok(CapabilitySandboxPreflight::Sandboxed { .. }) => Ok(()),
-        // A Direct (write) capability is admitted only if the caller explicitly
-        // granted it for this execution. The grant is itemized consent: anything
-        // not listed stays refused, so the write boundary is preserved.
+        // A Direct (write) capability is authorized only if the caller presents
+        // a delegated id for it. Anything not listed stays refused, so the write
+        // boundary is preserved.
         Ok(CapabilitySandboxPreflight::Direct) => {
-            if admit.contains(capability) {
+            if delegated_capabilities.admits_mutating_tool(capability) {
                 Ok(())
             } else {
                 Err(ApiError::bad_request(format!(
-                    "capability '{capability}' performs writes and was not granted; \
-                     add it to admit_capabilities to authorize this execution"
+                    "capability '{capability}' performs writes and is missing delegated authority; \
+                     mint a delegated capability for that tool_binding and present its cap_* id in delegated_capability_ids"
                 )))
             }
         }
@@ -1252,7 +1271,7 @@ fn validate_raw_llm_tool_exposure(
     validate_read_only_tool_names(&requested_tools, state, in_artifact_caps)
 }
 
-/// An ASK node may expose a capability if it is read-only OR an admit-gated
+/// An ASK node may expose a capability if it is read-only OR an delegated_ids-gated
 /// authoring capability.
 fn ask_exposable_groups(groups: &[String]) -> bool {
     groups
@@ -1307,11 +1326,10 @@ fn validate_read_only_tool_names(
     let capability_system = state.runtime.capability_system();
     let python_trusted = python_artifacts_trusted();
     for tool_name in tool_names {
-        // An author @tool the artifact provides itself (python-backed) is served
-        // by the sandboxed bridge on the trusted path — exposing it on the ASK is
-        // fine even though it is not in the server registry.
         if python_trusted && in_artifact_caps.contains(tool_name) {
-            continue;
+            return Err(ApiError::bad_request(format!(
+                "{ERROR_ASK_REQUIRES_READ_ONLY_TOOLS}; python-backed capability '{tool_name}' has no read_only template metadata"
+            )));
         }
         let Some(metadata) = capability_system.get_metadata(tool_name) else {
             return Err(ApiError::bad_request(format!(
@@ -1349,8 +1367,8 @@ pub(crate) async fn inject_resolved_credentials(
     artifact: &mut Artifact,
     owner: Option<&str>,
 ) -> Result<(), ApiError> {
-    let enabled = std::env::var("APXM_RESOLVE_CREDENTIALS")
-        .is_ok_and(|v| !v.is_empty() && v != "0");
+    let enabled =
+        std::env::var("APXM_RESOLVE_CREDENTIALS").is_ok_and(|v| !v.is_empty() && v != "0");
     if !enabled {
         return Ok(());
     }
@@ -1363,7 +1381,8 @@ pub(crate) async fn inject_resolved_credentials(
             let Some(pj) = node
                 .attributes
                 .get(graph_attrs::PARAMS_JSON)
-                .and_then(|v| v.as_string()).cloned()
+                .and_then(|v| v.as_string())
+                .cloned()
             else {
                 continue;
             };
@@ -1479,5 +1498,33 @@ pub(crate) fn to_execute_response(
             total_requests: result.llm_metrics.total_requests,
         },
         tool_call_counts: result.tool_call_counts,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::ExecuteRequest;
+
+    #[test]
+    fn execute_request_rejects_unknown_authority_fields() {
+        let raw = serde_json::json!({
+            "air": "node 1 ask",
+            "unminted_authority": ["write_file"]
+        });
+        let err = serde_json::from_value::<ExecuteRequest>(raw).unwrap_err();
+        assert!(
+            err.to_string().contains("unminted_authority"),
+            "unexpected error: {err}"
+        );
+    }
+
+    #[test]
+    fn execute_request_accepts_delegated_capability_ids() {
+        let raw = serde_json::json!({
+            "air": "node 1 ask",
+            "delegated_capability_ids": ["cap_123"]
+        });
+        let req = serde_json::from_value::<ExecuteRequest>(raw).expect("request");
+        assert_eq!(req.delegated_capability_ids, vec!["cap_123"]);
     }
 }

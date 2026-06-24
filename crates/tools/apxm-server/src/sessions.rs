@@ -1,4 +1,4 @@
-//! Session control API: status, cancel, grants, compact, events.
+//! Session control API: status, cancel, compact, events.
 
 use std::collections::{HashMap, HashSet};
 use std::convert::Infallible;
@@ -13,7 +13,7 @@ use axum::http::HeaderMap;
 use axum::response::sse::{Event, KeepAlive, Sse};
 use axum::routing::{get, post};
 use futures::Stream;
-use serde::{Deserialize, Serialize};
+use serde::Serialize;
 use tokio_stream::wrappers::BroadcastStream;
 use tokio_stream::wrappers::errors::BroadcastStreamRecvError;
 use utoipa::ToSchema;
@@ -35,23 +35,12 @@ pub(crate) struct SessionStatus {
     pub(crate) active_execution_id: Option<String>,
 }
 
-#[derive(Debug, Clone, Serialize, PartialEq, Eq, ToSchema)]
-#[derive(Default)]
+#[derive(Debug, Clone, Serialize, PartialEq, Eq, ToSchema, Default)]
 pub(crate) struct SessionLedgerView {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub(crate) turn_cap: Option<usize>,
     #[serde(default, skip_serializing_if = "HashMap::is_empty")]
     pub(crate) tool_budgets: HashMap<String, usize>,
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub(crate) grants: Vec<String>,
-}
-
-#[derive(Debug, Clone, Deserialize, Default, ToSchema)]
-pub(crate) struct GrantUpdate {
-    #[serde(default)]
-    pub(crate) add: Vec<String>,
-    #[serde(default)]
-    pub(crate) remove: Vec<String>,
 }
 
 #[derive(Debug, Clone, Serialize, PartialEq, Eq)]
@@ -86,10 +75,6 @@ pub(crate) fn mount_routes(router: Router<AppState>) -> Router<AppState> {
     router
         .route(ServerRoute::SessionStatus.path(), get(get_session_status))
         .route(ServerRoute::SessionCancel.path(), post(cancel_session))
-        .route(
-            ServerRoute::SessionGrants.path(),
-            post(update_session_grants),
-        )
         .route(ServerRoute::SessionCompact.path(), post(compact_session))
         .route(ServerRoute::SessionEvents.path(), get(list_session_events))
         .route(
@@ -112,16 +97,6 @@ pub(crate) async fn cancel_session(
 ) -> Result<Json<OkAck>, ApiError> {
     let session_id = crate::execute::validate_session_id(session_id)?;
     cancel_session_for_state(&state, &session_id)?;
-    Ok(Json(OkAck::new()))
-}
-
-pub(crate) async fn update_session_grants(
-    State(_state): State<AppState>,
-    Path(session_id): Path<String>,
-    Json(req): Json<GrantUpdate>,
-) -> Result<Json<OkAck>, ApiError> {
-    let session_id = crate::execute::validate_session_id(session_id)?;
-    update_grants_for_state(&session_id, req)?;
     Ok(Json(OkAck::new()))
 }
 
@@ -231,9 +206,7 @@ pub(crate) fn session_status_for_state(
 ) -> Result<SessionStatus, ApiError> {
     ensure_session_known(state, session_id)?;
     let ledger = session_ledger::get(session_id);
-    let turn_count = ledger
-        .as_ref()
-        .map_or(0, |ledger| ledger.turns_used());
+    let turn_count = ledger.as_ref().map_or(0, |ledger| ledger.turns_used());
     let ledger_view = ledger
         .as_ref()
         .map(|ledger| ledger_view_from_runtime(ledger.as_ref()))
@@ -262,21 +235,6 @@ pub(crate) fn cancel_session_for_state(state: &AppState, session_id: &str) -> Re
         }
         None => Err(ApiError::conflict("no in-flight session work to cancel")),
     }
-}
-
-pub(crate) fn update_grants_for_state(
-    session_id: &str,
-    update: GrantUpdate,
-) -> Result<(), ApiError> {
-    let ledger = session_ledger::get(session_id)
-        .ok_or_else(|| ApiError::not_found(format!("unknown session: {session_id}")))?;
-    if !update.add.is_empty() {
-        ledger.add_grants(update.add);
-    }
-    if !update.remove.is_empty() {
-        ledger.remove_grants(update.remove);
-    }
-    Ok(())
 }
 
 pub(crate) async fn compact_session_for_state(
@@ -431,12 +389,9 @@ async fn linked_execution_ids(state: &AppState, session_id: &str) -> Vec<String>
 }
 
 fn ledger_view_from_runtime(ledger: &SessionLedger) -> SessionLedgerView {
-    let mut grants: Vec<String> = ledger.grants().into_iter().collect();
-    grants.sort();
     SessionLedgerView {
         turn_cap: ledger.turn_cap(),
         tool_budgets: ledger.tool_budgets_remaining(),
-        grants,
     }
 }
 
@@ -466,4 +421,3 @@ async fn collect_session_event_records(
         })
         .collect()
 }
-

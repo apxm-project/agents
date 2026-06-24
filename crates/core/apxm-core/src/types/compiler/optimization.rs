@@ -67,7 +67,6 @@ pub enum OptimizationTarget {
     Balanced,
 }
 
-
 impl std::str::FromStr for OptimizationTarget {
     type Err = RuntimeError;
 

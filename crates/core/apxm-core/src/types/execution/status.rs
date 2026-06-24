@@ -139,8 +139,7 @@ impl ObservedGraphMetrics {
             let mut best_predecessor: Option<(NodeId, u128)> = None;
             for pred in predecessors.get(&node_id).into_iter().flatten() {
                 if let Some(pred_duration) = best_duration.get(pred).copied()
-                    && best_predecessor
-                        .is_none_or(|(_, current)| pred_duration > current)
+                    && best_predecessor.is_none_or(|(_, current)| pred_duration > current)
                 {
                     best_predecessor = Some((*pred, pred_duration));
                 }

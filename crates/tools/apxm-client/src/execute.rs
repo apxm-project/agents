@@ -17,7 +17,7 @@ pub struct ExecuteRequest {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub session_id: Option<String>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub admit_capabilities: Vec<String>,
+    pub delegated_capability_ids: Vec<String>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub imports: Vec<String>,
     #[serde(default, skip_serializing_if = "HashMap::is_empty")]

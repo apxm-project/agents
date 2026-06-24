@@ -12,58 +12,90 @@ use crate::metadata_keys;
 use apxm_core::constants::graph::attrs as graph_attrs;
 use apxm_core::constants::runtime::belief_keys;
 use apxm_core::error::RuntimeError;
-use apxm_core::types::AISOperationType;
+use apxm_core::types::{AISOperationType, CapabilityOperation, CapabilityStatus};
+use chrono::{DateTime, Utc};
+use serde::Deserialize;
 use std::collections::HashMap;
 
-/// Returns true if the effective grant policy (wire form of
-/// `apxm_skill::CapabilityPolicy`, e.g. `broader[a,b]`) admits a write to
-/// `cap`. `read_only`/`sandboxed`/absent never admit a Direct write.
-fn grant_admits_write(policy: Option<&str>, cap: &str) -> bool {
-    match policy {
-        Some(p) if p.starts_with("broader[") => p
-            .strip_prefix("broader[")
-            .and_then(|s| s.strip_suffix(']'))
-            .map(|inner| inner.split(',').map(str::trim).any(|t| t == cap))
-            .unwrap_or(false),
-        _ => false,
-    }
+#[derive(Debug, Deserialize)]
+struct RuntimeDelegatedCapability {
+    tool_binding: String,
+    operations: Vec<CapabilityOperation>,
+    #[serde(default)]
+    expires_at: Option<String>,
+    status: CapabilityStatus,
+}
+
+/// Returns true if the effective runtime-minted delegated capability set admits
+/// a Direct write to `cap`. Absence, malformed metadata, expired grants, and
+/// non-mutating grants all fail closed.
+fn delegated_authority_admits_write(metadata: Option<&str>, cap: &str) -> bool {
+    let Some(metadata) = metadata else {
+        return false;
+    };
+    let Ok(capabilities) = serde_json::from_str::<Vec<RuntimeDelegatedCapability>>(metadata) else {
+        return false;
+    };
+    capabilities.into_iter().any(|capability| {
+        capability.status == CapabilityStatus::Active
+            && capability.tool_binding == cap
+            && capability
+                .operations
+                .iter()
+                .copied()
+                .any(CapabilityOperation::is_mutating)
+            && !delegated_capability_expired(capability.expires_at.as_deref())
+    })
+}
+
+fn delegated_capability_expired(expires_at: Option<&str>) -> bool {
+    let Some(expires_at) = expires_at else {
+        return false;
+    };
+    DateTime::parse_from_rfc3339(expires_at)
+        .map(|expires_at| expires_at.with_timezone(&Utc) <= Utc::now())
+        .unwrap_or(true)
 }
 
 /// Invoke-site write boundary — enforced for EVERY tool call regardless of how
 /// the execution was launched (raw /v1/execute, a CALL_SKILL child DAG, a
 /// dispatched graph, SPAWN_AGENT). A Direct (write) capability runs only if this
-/// execution's effective grant (`SIDE_EFFECT_POLICY`, seeded from
-/// admit_capabilities at the top level and propagated to children with no-widen)
-/// admits it. Read-only and sandboxed capabilities are always allowed. This
-/// closes the gap where the write boundary was previously enforced only by the
-/// server's static pre-flight at /v1/execute (bypassable by nested executions).
+/// execution's effective runtime-minted delegated capabilities admit it.
+/// Read-only and sandboxed capabilities are always allowed. This closes the gap
+/// where the write boundary was previously enforced only by the server's static
+/// pre-flight at /v1/execute (bypassable by nested executions).
 fn enforce_write_boundary(
     ctx: &ExecutionContext,
     name: &str,
     args: &HashMap<String, Value>,
+    unregistered_requires_delegation: bool,
 ) -> Result<()> {
     let caps = &ctx.capability_system;
-    if !caps.has_capability(name) || caps.is_read_only(name) {
+    if caps.has_capability(name) {
+        if caps.is_read_only(name) {
+            return Ok(());
+        }
+        match caps.sandbox_preflight(name, args) {
+            Ok(CapabilitySandboxPreflight::Sandboxed { .. }) => return Ok(()),
+            Ok(CapabilitySandboxPreflight::Direct) => {}
+            // Pre-flight error -> fail-closed: treat as a write needing admission.
+            Err(_) => {}
+        }
+    } else if !unregistered_requires_delegation {
         return Ok(());
     }
-    match caps.sandbox_preflight(name, args) {
-        Ok(CapabilitySandboxPreflight::Sandboxed { .. }) => return Ok(()),
-        Ok(CapabilitySandboxPreflight::Direct) => {}
-        // Pre-flight error -> fail-closed: treat as a write needing admission.
-        Err(_) => {}
-    }
-    let policy = ctx
+    let delegated_capabilities = ctx
         .metadata
-        .get(metadata_keys::SIDE_EFFECT_POLICY)
+        .get(metadata_keys::DELEGATED_CAPABILITIES)
         .map(String::as_str);
-    if grant_admits_write(policy, name) {
+    if delegated_authority_admits_write(delegated_capabilities, name) {
         Ok(())
     } else {
         Err(RuntimeError::Capability {
             capability: name.to_string(),
             message: format!(
-                "write capability '{name}' is not admitted by this execution's grant; \
-                 add it to admit_capabilities to authorize this execution"
+                "write capability '{name}' is not delegated by this execution; \
+                 present a runtime-minted cap_* id in delegated_capability_ids to authorize this execution"
             ),
         })
     }
@@ -179,6 +211,11 @@ pub async fn execute(ctx: &ExecutionContext, node: &Node, inputs: Vec<Value>) ->
         emitter.emit_tool_start(&capability_name, &args);
     }
 
+    // Invoke-site write boundary: enforce delegated authority for EVERY tool
+    // call, including artifact-local Python tools that do not exist in the
+    // process-wide capability registry.
+    enforce_write_boundary(ctx, &capability_name, &args, python_handler_id.is_some())?;
+
     // Python branch is taken iff `bind-tool-handlers` stamped a handler id.
     let raw = if let Some(handler_id) = python_handler_id {
         tokio::select! {
@@ -186,10 +223,6 @@ pub async fn execute(ctx: &ExecutionContext, node: &Node, inputs: Vec<Value>) ->
             _ = ctx.cancellation_token.cancelled() => return Err(RuntimeError::SchedulerCancelled),
         }
     } else {
-        // Invoke-site write boundary: enforce the no-widen grant for EVERY tool
-        // call, closing the bypass where nested executions skipped the server's
-        // static pre-flight.
-        enforce_write_boundary(ctx, &capability_name, &args)?;
         // Write serialization on the GRAPH path: the dataflow scheduler runs
         // independent inv_tool nodes concurrently and serializes only by data
         // dependency, never by tool identity — so a graph with two same-name
@@ -440,5 +473,59 @@ mod tests {
             err.to_string()
                 .contains("params_json must be a JSON object")
         );
+    }
+
+    #[test]
+    fn delegated_authority_requires_runtime_minted_tool_binding_grant() {
+        let metadata = serde_json::json!([{
+            "capability_id": "cap_fixture",
+            "tool_binding": "fixture.write",
+            "operations": ["write"],
+            "expires_at": null,
+            "status": "active"
+        }])
+        .to_string();
+
+        assert!(delegated_authority_admits_write(
+            Some(&metadata),
+            "fixture.write"
+        ));
+        assert!(!delegated_authority_admits_write(
+            Some(&metadata),
+            "other.write"
+        ));
+        assert!(!delegated_authority_admits_write(
+            Some("not delegated capability metadata"),
+            "fixture.write"
+        ));
+    }
+
+    #[test]
+    fn delegated_authority_rejects_expired_or_non_mutating_grants() {
+        let expired = serde_json::json!([{
+            "capability_id": "cap_fixture",
+            "tool_binding": "fixture.write",
+            "operations": ["write"],
+            "expires_at": "2000-01-01T00:00:00Z",
+            "status": "active"
+        }])
+        .to_string();
+        let read_only = serde_json::json!([{
+            "capability_id": "cap_fixture",
+            "tool_binding": "fixture.write",
+            "operations": ["read"],
+            "expires_at": null,
+            "status": "active"
+        }])
+        .to_string();
+
+        assert!(!delegated_authority_admits_write(
+            Some(&expired),
+            "fixture.write"
+        ));
+        assert!(!delegated_authority_admits_write(
+            Some(&read_only),
+            "fixture.write"
+        ));
     }
 }

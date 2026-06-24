@@ -35,7 +35,7 @@ export function parseApprovalPrompt(json: Record<string, unknown>): ApprovalProm
   };
 }
 
-export function decisionForGrant(approve: boolean, forSession = false): PermissionResponseDecision {
+export function decisionForGrant(approve: boolean): PermissionResponseDecision {
   if (!approve) return "deny";
-  return forSession ? "approve_for_session" : "approve";
+  return "approve";
 }

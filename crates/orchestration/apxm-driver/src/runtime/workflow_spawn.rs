@@ -337,11 +337,11 @@ impl DriverWorkflowSpawner {
                 })?;
 
                 let should_skip = step.depends_on.iter().any(|dep| {
-                    step_results
-                        .get(dep)
-                        .is_some_and(|result: &apxm_runtime::workflow::StepResult| {
+                    step_results.get(dep).is_some_and(
+                        |result: &apxm_runtime::workflow::StepResult| {
                             result.status != apxm_runtime::workflow::StepStatus::Success
-                        })
+                        },
+                    )
                 });
                 if should_skip {
                     apxm_runtime::workflow::write_workflow_step_finished(
@@ -589,9 +589,10 @@ impl DriverWorkflowSpawner {
 
         match workflow_result.status {
             apxm_runtime::workflow::WorkflowStatus::Success => Ok(WorkflowSpawnResult {
-                value: workflow_result
-                    .output
-                    .map_or(apxm_core::types::Value::Null, apxm_core::types::Value::String),
+                value: workflow_result.output.map_or(
+                    apxm_core::types::Value::Null,
+                    apxm_core::types::Value::String,
+                ),
                 session_dir: Some(workflow_session_dir.to_string_lossy().to_string()),
             }),
             apxm_runtime::workflow::WorkflowStatus::PartialFailure

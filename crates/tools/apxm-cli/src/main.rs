@@ -13,7 +13,7 @@
     clippy::match_same_arms,
     clippy::match_wildcard_for_single_variants,
     clippy::option_option,
-    clippy::struct_field_names,
+    clippy::struct_field_names
 )]
 
 mod commands;
@@ -228,7 +228,7 @@ async fn run_cli(cli: Cli) -> Result<()> {
             air,
             server,
             session_id,
-            admit,
+            delegated_capability_ids,
             import,
             tools,
             backend,
@@ -250,7 +250,7 @@ async fn run_cli(cli: Cli) -> Result<()> {
                 air,
                 server,
                 session_id,
-                admit,
+                delegated_capability_ids,
                 import,
                 tools,
                 backend,

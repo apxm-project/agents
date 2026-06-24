@@ -128,10 +128,8 @@ pub(crate) struct StoredRunRecord {
 
 impl StoredRunRecord {
     pub(crate) fn from_execution_record(record: &ExecutionRecord) -> Self {
-        let (input_tokens, output_tokens, total_tokens) = record
-            .result
-            .as_ref()
-            .map_or((0, 0, 0), |result| {
+        let (input_tokens, output_tokens, total_tokens) =
+            record.result.as_ref().map_or((0, 0, 0), |result| {
                 let input = result.llm_usage.input_tokens as u64;
                 let output = result.llm_usage.output_tokens as u64;
                 (input, output, input.saturating_add(output))
@@ -283,8 +281,8 @@ impl RunHistoryIndex {
             if row.status.eq_ignore_ascii_case("running") {
                 continue;
             }
-            let started_ms = DateTime::parse_from_rfc3339(row.started_at)
-                .map_or(0, |ts| ts.timestamp_millis());
+            let started_ms =
+                DateTime::parse_from_rfc3339(row.started_at).map_or(0, |ts| ts.timestamp_millis());
             let status_db = if row.status.eq_ignore_ascii_case("failed") {
                 "failed"
             } else {
@@ -384,9 +382,7 @@ impl RunHistoryIndex {
                   ORDER BY started_at_ms DESC, execution_id ASC",
             )
             .ok()?;
-        let rows = stmt
-            .query_map([workflow_id], stored_run_from_row)
-            .ok()?;
+        let rows = stmt.query_map([workflow_id], stored_run_from_row).ok()?;
         Some(rows.filter_map(Result::ok).collect())
     }
 

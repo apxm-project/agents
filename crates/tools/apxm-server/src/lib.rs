@@ -23,7 +23,7 @@
     clippy::unnecessary_sort_by,
     clippy::unused_async,
     clippy::used_underscore_binding,
-    clippy::zero_sized_map_values,
+    clippy::zero_sized_map_values
 )]
 
 mod a2a;
@@ -34,10 +34,12 @@ mod auth;
 mod bind;
 mod call_skill;
 mod capability;
+mod capability_discovery;
 mod checkpoints;
 mod config_layers;
 mod conversations;
 mod credentials;
+mod delegated_capabilities;
 mod error;
 mod execute;
 mod execution_index;
@@ -122,8 +124,7 @@ fn server_worker_threads(server_config: &apxm_driver::ServerConfig) -> usize {
 }
 
 fn default_server_worker_threads() -> usize {
-    let cores = std::thread::available_parallelism()
-        .map_or(4, |threads| threads.get());
+    let cores = std::thread::available_parallelism().map_or(4, |threads| threads.get());
     (cores / 2).max(2)
 }
 

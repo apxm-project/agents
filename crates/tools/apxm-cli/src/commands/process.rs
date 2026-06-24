@@ -302,9 +302,10 @@ fn emit_process_list(processes: &[ProcessReport], json: bool) -> Result<()> {
             process.pid,
             process.pgid,
             process.kind,
-            process
-                .cwd
-                .as_ref().map_or_else(|| "<unknown>".to_string(), |path| path.display().to_string()),
+            process.cwd.as_ref().map_or_else(
+                || "<unknown>".to_string(),
+                |path| path.display().to_string()
+            ),
             process.command
         );
     }

@@ -10,8 +10,7 @@ use apxm_server::openapi::session_api_openapi_yaml;
 use serde_json::{Map, Value};
 
 fn contract_baseline_path() -> PathBuf {
-    PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .join("../../../contracts/session-api.yaml")
+    PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../../contracts/session-api.yaml")
 }
 
 fn server_api_contract_path() -> PathBuf {
@@ -36,11 +35,13 @@ fn resolve_ref(doc: &Value, reference: &str) -> Option<Value> {
 
 fn normalize_nullable(obj: &mut Map<String, Value>) {
     if let Some(Value::Array(types)) = obj.get("type")
-        && types.len() == 2 && types.iter().any(|t| t.as_str() == Some("null"))
-            && let Some(non_null) = types.iter().find(|t| t.as_str() != Some("null")) {
-                obj.insert("type".to_string(), non_null.clone());
-                obj.insert("nullable".to_string(), Value::Bool(true));
-            }
+        && types.len() == 2
+        && types.iter().any(|t| t.as_str() == Some("null"))
+        && let Some(non_null) = types.iter().find(|t| t.as_str() != Some("null"))
+    {
+        obj.insert("type".to_string(), non_null.clone());
+        obj.insert("nullable".to_string(), Value::Bool(true));
+    }
 }
 
 fn normalize_schema(doc: &Value, schema: &mut Value) {
@@ -71,9 +72,10 @@ fn normalize_schema(doc: &Value, schema: &mut Value) {
         normalize_schema(doc, items);
     }
     if let Some(additional) = obj.get_mut("additionalProperties")
-        && additional.is_object() {
-            normalize_schema(doc, additional);
-        }
+        && additional.is_object()
+    {
+        normalize_schema(doc, additional);
+    }
 }
 
 fn normalize_operation(doc: &Value, op: &mut Map<String, Value>) {
@@ -111,14 +113,15 @@ fn normalize_openapi(mut doc: Value) -> Value {
     obj.insert("openapi".to_string(), Value::String("3.0.3".to_string()));
 
     if let Some(components) = obj.get_mut("components").and_then(Value::as_object_mut)
-        && let Some(schemas) = components.get_mut("schemas").and_then(Value::as_object_mut) {
-            let names: Vec<String> = schemas.keys().cloned().collect();
-            for name in names {
-                if let Some(schema) = schemas.get_mut(&name) {
-                    normalize_schema(&lookup, schema);
-                }
+        && let Some(schemas) = components.get_mut("schemas").and_then(Value::as_object_mut)
+    {
+        let names: Vec<String> = schemas.keys().cloned().collect();
+        for name in names {
+            if let Some(schema) = schemas.get_mut(&name) {
+                normalize_schema(&lookup, schema);
             }
         }
+    }
 
     if let Some(paths) = obj.get_mut("paths").and_then(Value::as_object_mut) {
         for path_item in paths.values_mut() {
@@ -188,7 +191,6 @@ fn exported_openapi_includes_session_and_permission_paths() {
     for path in [
         "/v1/sessions/{session_id}/status",
         "/v1/sessions/{session_id}/cancel",
-        "/v1/sessions/{session_id}/grants",
         "/v1/sessions/{session_id}/compact",
         "/v1/sessions/{session_id}/events",
         "/v1/sessions/{session_id}/events/stream",

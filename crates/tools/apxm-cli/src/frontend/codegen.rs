@@ -740,9 +740,11 @@ fn to_model_constant(id: &str) -> String {
         let mut prev: Option<char> = None;
         for ch in stripped.chars() {
             if let Some(p) = prev
-                && p.is_ascii_alphabetic() && ch.is_ascii_digit() {
-                    buf.push('-');
-                }
+                && p.is_ascii_alphabetic()
+                && ch.is_ascii_digit()
+            {
+                buf.push('-');
+            }
             buf.push(ch);
             prev = Some(ch);
         }

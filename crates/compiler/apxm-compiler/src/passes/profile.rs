@@ -154,7 +154,9 @@ impl ExecutionProfile {
                 // Token usage annotation
                 node.attributes.insert(
                     graph_attrs::PROFILE_AVG_TOKENS.to_string(),
-                    Value::Number(apxm_core::types::Number::Integer(stats.avg_tokens.cast_signed())),
+                    Value::Number(apxm_core::types::Number::Integer(
+                        stats.avg_tokens.cast_signed(),
+                    )),
                 );
 
                 // Inject retry_count for high-error-rate nodes
@@ -169,15 +171,16 @@ impl ExecutionProfile {
 
                 // Token budget warning
                 if let Some(budget) = token_budget
-                    && stats.avg_tokens > budget {
-                        node.attributes.insert(
-                            graph_attrs::PROFILE_TOKEN_WARNING.to_string(),
-                            Value::String(format!(
-                                "avg_tokens ({}) exceeds budget ({})",
-                                stats.avg_tokens, budget
-                            )),
-                        );
-                    }
+                    && stats.avg_tokens > budget
+                {
+                    node.attributes.insert(
+                        graph_attrs::PROFILE_TOKEN_WARNING.to_string(),
+                        Value::String(format!(
+                            "avg_tokens ({}) exceeds budget ({})",
+                            stats.avg_tokens, budget
+                        )),
+                    );
+                }
 
                 annotated += 1;
             }

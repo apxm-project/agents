@@ -1,9 +1,9 @@
 //! `apxm chat` — interactive conversational REPL over a running apxm-server.
 //!
 //! Thin protocol pipe: deliver user input, render SSE events, and answer server
-//! permission prompts. Session ledger, turn caps, tool budgets, and
-//! grants are enforced server-side — the host does not count turns or track
-//! budgets locally (constitution #2).
+//! permission prompts. Session ledger turn caps and tool budgets are enforced
+//! server-side — the host does not count turns or track budgets locally
+//! (constitution #2).
 
 use std::collections::HashMap;
 use std::io::Write as _;
@@ -13,9 +13,8 @@ use anyhow::{Context, Result, anyhow};
 use apxm_ais::chat::{self, COMPACT_AT_TOKENS, KEEP_RECENT_TURNS, Role};
 use apxm_client::reqwest;
 use apxm_client::{
-    Client, ClientInfo, DEFAULT_SERVER_BASE, client_for_sse,
-    execute::ExecuteRequest,
-    types::{GrantUpdate, SessionStatus},
+    Client, ClientInfo, DEFAULT_SERVER_BASE, client_for_sse, execute::ExecuteRequest,
+    types::SessionStatus,
 };
 use apxm_core::constants::orchestration::admission as orchestration_admission;
 use futures::StreamExt;
@@ -31,7 +30,7 @@ pub struct ChatOptions {
     pub air: Option<PathBuf>,
     pub server: Option<String>,
     pub session_id: Option<String>,
-    pub admit: Vec<String>,
+    pub delegated_capability_ids: Vec<String>,
     /// Skill libraries / ids this agent imports (scoped visible set).
     pub import: Vec<String>,
     pub tree: bool,
@@ -70,8 +69,7 @@ pub struct ChatOptions {
     pub tool_auth: Vec<String>,
     /// Tenant/owner scope for per-tool credential resolution.
     pub owner: Option<String>,
-    /// Expose + auto-admit the workflow-authoring tools (`compose_workflow`,
-    /// `run_workflow`) so the agent can create and run workflows.
+    /// Expose the workflow-authoring tools (`compose_workflow`, `run_workflow`).
     pub author: bool,
 }
 
@@ -195,31 +193,32 @@ fn builtin_chat_air(opts: &ChatOptions, context: Option<&str>) -> String {
             model: opts.model.as_deref(),
             effort: None,
             tools: opts.tools,
+            capability_discovery: true,
             skills: true,
             authoring: opts.author,
         }),
     }
 }
 
-fn initial_session_grants(opts: &ChatOptions) -> Vec<String> {
-    let mut grants = opts.admit.clone();
+fn initial_delegated_capability_ids(opts: &ChatOptions) -> Vec<String> {
+    let mut delegated = opts.delegated_capability_ids.clone();
     if opts.agent.as_deref().and_then(non_empty).is_some()
-        && !grants
+        && !delegated
             .iter()
             .any(|capability| capability == orchestration_admission::SPAWN_AGENT)
     {
-        grants.push(orchestration_admission::SPAWN_AGENT.to_string());
+        delegated.push(orchestration_admission::SPAWN_AGENT.to_string());
     }
-    // `--author` admits the write-class authoring tools so the agent can actually
-    // create + run workflows (exposure alone doesn't grant execution).
+    // Until delegated authoring minting is wired, keep these internal authoring
+    // ids as operator-provided delegated authority.
     if opts.author {
         for cap in ["compose_workflow", "run_workflow"] {
-            if !grants.iter().any(|g| g == cap) {
-                grants.push(cap.to_string());
+            if !delegated.iter().any(|g| g == cap) {
+                delegated.push(cap.to_string());
             }
         }
     }
-    grants
+    delegated
 }
 
 /// True when the artifact carries its OWN in-graph conversation loop: a
@@ -239,11 +238,11 @@ async fn run_dumb_pipe(
     air: &str,
     opts: &ChatOptions,
 ) -> Result<()> {
-    let admit = initial_session_grants(opts);
+    let delegated_capability_ids = initial_delegated_capability_ids(opts);
     let body = ExecuteRequest {
         air: air.to_string(),
         session_id: Some(session_id.to_string()),
-        admit_capabilities: admit,
+        delegated_capability_ids,
         imports: opts.import.clone(),
         owner: opts.owner.clone(),
         ..Default::default()
@@ -325,19 +324,14 @@ pub async fn chat_command(opts: ChatOptions) -> Result<()> {
     // Assemble the AGENTS.md / CLAUDE.md hierarchy and feed it as the system prompt.
     let context = {
         let base = crate::context_assembly::assemble_context();
-        if opts.import.is_empty() {
-            base
-        } else {
-            // Tell the agent its visible libraries so it scopes `search_skills`.
-            let hint = format!(
+        let mut hints = vec![capability_discovery_prompt().to_string()];
+        if !opts.import.is_empty() {
+            hints.push(format!(
                 "Imported skill libraries: {}. Call search_skills with these in `imports` to discover them; shared-tier skills are always visible.",
                 opts.import.join(", ")
-            );
-            Some(match base {
-                Some(b) => format!("{b}\n\n{hint}"),
-                None => hint,
-            })
+            ));
         }
+        append_context_hints(base, &hints)
     };
     let air = chat_air_for_options(&opts, context.as_deref())?;
     if let Some(ctx) = &context {
@@ -362,7 +356,7 @@ pub async fn chat_command(opts: ChatOptions) -> Result<()> {
     eprintln!("type a message, or /help for meta-commands; /exit to quit");
 
     let mut convo = Conversation::default();
-    let initial_grants = initial_session_grants(&opts);
+    let delegated_capability_ids = initial_delegated_capability_ids(&opts);
     let tool_call_budgets = tool_call_budgets_for_opts(&opts);
 
     let mut event_rx = match &opts.monitor_url {
@@ -432,39 +426,6 @@ pub async fn chat_command(opts: ChatOptions) -> Result<()> {
                     .map(|(v, r)| (v, r.trim()))
                     .unwrap_or((meta, ""));
                 match verb {
-                    "grants" => {
-                        match client.get_session_status(&session_id).await {
-                            Ok(resp) => {
-                                let status = resp.into_inner();
-                                if status.ledger.grants.is_empty() {
-                                    eprintln!("(no capabilities granted this session)");
-                                } else {
-                                    eprintln!("granted: {}", status.ledger.grants.join(", "));
-                                }
-                            }
-                            Err(err) => eprintln!("(session status failed: {err})"),
-                        }
-                        continue;
-                    }
-                    "revoke" => {
-                        if rest.is_empty() {
-                            eprintln!("(usage: /revoke <capability>)");
-                        } else if let Err(err) = client
-                            .update_session_grants(
-                                &session_id,
-                                &GrantUpdate {
-                                    remove: vec![rest.to_string()],
-                                    ..Default::default()
-                                },
-                            )
-                            .await
-                        {
-                            eprintln!("(revoke failed: {err})");
-                        } else {
-                            eprintln!("(revoked '{rest}' for this session)");
-                        }
-                        continue;
-                    }
                     "budget" => {
                         match client.get_session_status(&session_id).await {
                             Ok(resp) => print_server_budget(&resp.into_inner()),
@@ -511,12 +472,32 @@ pub async fn chat_command(opts: ChatOptions) -> Result<()> {
             &air,
             &session_id,
             &opts,
-            &initial_grants,
+            &delegated_capability_ids,
             &tool_call_budgets,
         )
         .await;
     }
     Ok(())
+}
+
+fn capability_discovery_prompt() -> &'static str {
+    "Runtime capability discovery: call `capability_discovery` when you need to inspect available capability templates. Treat results as CapabilityTemplateV1 authoring metadata only; they are not authority. Do not invent `capability_id` values. Present writes only when delegated_capability_ids are supplied by APXM."
+}
+
+fn append_context_hints(base: Option<String>, hints: &[String]) -> Option<String> {
+    let hint = hints
+        .iter()
+        .map(String::as_str)
+        .filter(|item| !item.trim().is_empty())
+        .collect::<Vec<_>>()
+        .join("\n");
+    if hint.is_empty() {
+        return base;
+    }
+    Some(match base {
+        Some(base) if !base.trim().is_empty() => format!("{base}\n\n{hint}"),
+        _ => hint,
+    })
 }
 
 /// Merge per-turn `--tool-budget` and session `--tool-cap` into the wire map
@@ -610,7 +591,7 @@ async fn recv_opt(rx: &mut Option<tokio::sync::mpsc::UnboundedReceiver<String>>)
 }
 
 /// Run one turn for `user_text` (typed or event-driven), including the
-/// interactive HITL grant retry loop. Errors are reported, never fatal — the
+/// interactive HITL retry loop. Errors are reported, never fatal — the
 /// REPL keeps serving.
 #[allow(clippy::too_many_arguments)]
 async fn handle_user_turn(
@@ -620,7 +601,7 @@ async fn handle_user_turn(
     air: &str,
     session_id: &str,
     opts: &ChatOptions,
-    initial_grants: &[String],
+    delegated_capability_ids: &[String],
     tool_call_budgets: &HashMap<String, usize>,
 ) {
     let prompt = convo.render(user_text);
@@ -631,7 +612,7 @@ async fn handle_user_turn(
             session_id,
             &prompt,
             user_text,
-            initial_grants,
+            delegated_capability_ids,
             opts,
             tool_call_budgets,
         )
@@ -641,32 +622,10 @@ async fn handle_user_turn(
                 record_and_compact(convo, user_text, answer, client, session_id).await;
                 break;
             }
-            Ok(TurnOutcome::NeedsGrant(cap)) => match prompt_grant(&cap) {
-                Ok(true) => {
-                    if let Err(err) = client
-                        .update_session_grants(
-                            session_id,
-                            &GrantUpdate {
-                                add: vec![cap.clone()],
-                                ..Default::default()
-                            },
-                        )
-                        .await
-                    {
-                        eprintln!("(grant failed: {err})");
-                        break;
-                    }
-                    continue;
-                }
-                Ok(false) => {
-                    eprintln!("(denied; turn skipped)");
-                    break;
-                }
-                Err(err) => {
-                    eprintln!("(grant prompt failed: {err})");
-                    break;
-                }
-            },
+            Ok(TurnOutcome::NeedsGrant(cap)) => {
+                eprintln!("(capability '{cap}' requires delegated authority)");
+                break;
+            }
             Err(err) => {
                 eprintln!("(turn failed: {err})");
                 break;
@@ -829,7 +788,7 @@ async fn summarize_quiet(client: &Client, session_id: &str, text: &str) -> Resul
 
 /// Handle `/workflow <sub>` meta-commands: `list` enumerates `.air` / `.apxmw`
 /// files in the cwd; `run <path>` reads the file client-side and runs it through
-/// `/v1/compile/stream`, admitting the session's granted capabilities.
+/// `/v1/compile/stream`.
 async fn handle_workflow_meta(rest: &str, client: &Client, session_id: &str) {
     let (sub, arg) = rest
         .split_once(' ')
@@ -874,19 +833,12 @@ async fn handle_workflow_meta(rest: &str, client: &Client, session_id: &str) {
 }
 
 /// Run an authored workflow's AIR through `/v1/compile/stream`, printing the
-/// final content. Admits the session's granted capabilities so writes the
-/// operator already approved carry through.
+/// final content.
 async fn run_workflow_air(client: &Client, session_id: &str, air: &str) -> Result<()> {
-    let grants = client
-        .get_session_status(session_id)
-        .await
-        .map(|r| r.into_inner().ledger.grants)
-        .unwrap_or_default();
     let url = format!("{}/v1/compile/stream", client.baseurl());
     let body = serde_json::json!({
         "air": air,
         "session_id": session_id,
-        "admit_capabilities": grants,
     });
     let resp = client
         .client()
@@ -923,18 +875,6 @@ async fn run_workflow_air(client: &Client, session_id: &str, air: &str) -> Resul
     Ok(())
 }
 
-/// Prompt the operator to grant a write capability for the session.
-fn prompt_grant(capability: &str) -> Result<bool> {
-    eprint!("grant write capability '{capability}' for this session? [y/N] ");
-    let _ = std::io::stderr().flush();
-    let mut answer = String::new();
-    std::io::stdin()
-        .read_line(&mut answer)
-        .context("stdin read failed")?;
-    let a = answer.trim().to_ascii_lowercase();
-    Ok(a == "y" || a == "yes")
-}
-
 // Write-denial detection is shared with the studio via `chat::parse_denied_capability`.
 
 /// Run one conversational turn: POST the graph + transcript, stream the SSE,
@@ -946,7 +886,7 @@ async fn run_turn(
     session_id: &str,
     prompt: &str,
     user_text: &str,
-    admit: &[String],
+    delegated_capability_ids: &[String],
     opts: &ChatOptions,
     tool_call_budgets: &HashMap<String, usize>,
 ) -> Result<TurnOutcome> {
@@ -956,7 +896,7 @@ async fn run_turn(
         args: vec![prompt.to_string()],
         session_id: Some(session_id.to_string()),
         user_text: Some(user_text.to_string()),
-        admit_capabilities: admit.to_vec(),
+        delegated_capability_ids: delegated_capability_ids.to_vec(),
         imports: opts.import.clone(),
         tool_call_budgets: tool_call_budgets.clone(),
         tool_credentials,
@@ -1064,12 +1004,12 @@ async fn handle_meta(cmd: &str, client: &Client) -> Result<bool> {
         "exit" | "quit" => return Ok(true),
         "help" => {
             eprintln!(
-                "meta-commands: /tools /skills /agents /compact /grants /revoke <cap> \
-                 /budget /save <path> /workflow <list|run <path>> /help /exit"
+                "meta-commands: /tools /skills /agents /compact /budget /save <path> \
+                 /workflow <list|run <path>> /help /exit"
             );
         }
         "tools" => {
-            print_list(client, "/v1/capabilities", "tools").await?;
+            print_list(client, "/v1/capability-templates", "tools").await?;
         }
         "skills" => {
             print_list(client, "/v1/skills", "skills").await?;
@@ -1114,4 +1054,54 @@ async fn print_list(client: &Client, path: &str, label: &str) -> Result<()> {
         }
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn test_options() -> ChatOptions {
+        ChatOptions {
+            air: None,
+            server: None,
+            session_id: None,
+            delegated_capability_ids: Vec::new(),
+            import: Vec::new(),
+            tree: false,
+            tools: false,
+            backend: None,
+            model: None,
+            agent: None,
+            agent_mode: None,
+            agent_model: None,
+            monitor_url: None,
+            max_turns: None,
+            max_events: None,
+            tool_budget: Vec::new(),
+            tool_cap: Vec::new(),
+            tool_auth: Vec::new(),
+            owner: None,
+            author: false,
+        }
+    }
+
+    #[test]
+    fn conversational_runtime_prompt_names_capability_discovery_only() {
+        let prompt = capability_discovery_prompt();
+        assert_eq!(
+            prompt,
+            "Runtime capability discovery: call `capability_discovery` when you need to inspect available capability templates. Treat results as CapabilityTemplateV1 authoring metadata only; they are not authority. Do not invent `capability_id` values. Present writes only when delegated_capability_ids are supplied by APXM."
+        );
+    }
+
+    #[test]
+    fn built_in_conversational_agent_exposes_capability_discovery() {
+        let opts = test_options();
+        let air = builtin_chat_air(&opts, Some(capability_discovery_prompt()));
+        assert!(air.contains("tool_groups"));
+        assert!(air.contains("\"discovery\""));
+        assert!(air.contains("\"skills\""));
+        assert!(air.contains("capability_discovery"));
+        assert!(air.contains("delegated_capability_ids"));
+    }
 }

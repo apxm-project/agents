@@ -46,7 +46,6 @@ pub enum PromptOptimizer {
     Copro,
 }
 
-
 impl PromptOptimizer {
     pub fn as_str(self) -> &'static str {
         match self {
@@ -67,7 +66,6 @@ pub enum PromptOptimizationBudget {
     Medium,
     Heavy,
 }
-
 
 impl PromptOptimizationBudget {
     pub fn as_str(self) -> &'static str {
@@ -90,7 +88,6 @@ pub enum PromptMetric {
     Contains,
     LlmJudge,
 }
-
 
 impl PromptMetric {
     pub fn as_str(self) -> &'static str {

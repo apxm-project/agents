@@ -174,7 +174,9 @@ pub fn refine_token_estimates(dags: &mut [ExecutionDag]) {
             let count = tokenizer_for_model(model).count(&static_text);
             node.set_attribute(
                 graph_attrs::SHARED_PREFIX_EST_TOKENS.to_string(),
-                Value::Number(apxm_core::types::Number::Integer(i64::try_from(count).unwrap_or(i64::MAX))),
+                Value::Number(apxm_core::types::Number::Integer(
+                    i64::try_from(count).unwrap_or(i64::MAX),
+                )),
             );
         }
     }

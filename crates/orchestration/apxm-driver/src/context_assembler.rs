@@ -85,8 +85,9 @@ impl ContextAssembler {
             .unwrap_or_default();
         let reg = AgentProfileRegistry::new();
         let agent_profile = reg.resolve(profile);
-        let role_desc = agent_profile
-            .map_or("Work within the provided workspace.", |p| p.description.as_str());
+        let role_desc = agent_profile.map_or("Work within the provided workspace.", |p| {
+            p.description.as_str()
+        });
         let constraints: Vec<String> = agent_profile
             .map(|p| p.constraints.clone())
             .unwrap_or_default();
@@ -217,12 +218,13 @@ impl ContextAssembler {
             // Extract operation timing if available
             if entry.event_type.starts_with("operation_completed:")
                 && let Value::Object(ref map) = entry.payload
-                    && let Some(Value::Number(Number::Float(duration))) = map.get("duration_ms") {
-                        operation_stats
-                            .entry(entry.event_type.clone())
-                            .or_default()
-                            .push(*duration);
-                    }
+                && let Some(Value::Number(Number::Float(duration))) = map.get("duration_ms")
+            {
+                operation_stats
+                    .entry(entry.event_type.clone())
+                    .or_default()
+                    .push(*duration);
+            }
         }
 
         // Report top event types
@@ -234,10 +236,11 @@ impl ContextAssembler {
 
             // Add average duration if available
             if let Some(durations) = operation_stats.get(event_type)
-                && !durations.is_empty() {
-                    let avg = durations.iter().sum::<f64>() / durations.len() as f64;
-                    history.push_str(&format!("    avg response time: {:.1}ms\n", avg));
-                }
+                && !durations.is_empty()
+            {
+                let avg = durations.iter().sum::<f64>() / durations.len() as f64;
+                history.push_str(&format!("    avg response time: {:.1}ms\n", avg));
+            }
         }
 
         Some(history)

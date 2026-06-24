@@ -30,7 +30,7 @@
     clippy::format_push_string,
     clippy::too_many_arguments,
     clippy::unnecessary_sort_by,
-    clippy::unused_self,
+    clippy::unused_self
 )]
 
 pub mod compiler;

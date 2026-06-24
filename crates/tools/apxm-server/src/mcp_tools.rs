@@ -111,7 +111,11 @@ pub(crate) async fn prompt_as_workflow_with_recorder(
     let trace_id = args
         .get(mcp_args::TRACE_ID)
         .and_then(JsonValue::as_str)
-        .filter(|value| !value.trim().is_empty()).map_or_else(|| format!("{}-{}", workflow_skill::TRACE_PREFIX, uuid::Uuid::new_v4()), ToString::to_string);
+        .filter(|value| !value.trim().is_empty())
+        .map_or_else(
+            || format!("{}-{}", workflow_skill::TRACE_PREFIX, uuid::Uuid::new_v4()),
+            ToString::to_string,
+        );
     validate_trace_id(&trace_id)?;
 
     let emission_start = Instant::now();
@@ -153,8 +157,9 @@ pub(crate) async fn prompt_as_workflow_with_recorder(
             )
             .await?
         }
-        Err(error @
-(WorkflowCandidateError::Emission(_) | WorkflowCandidateError::Timeout(_))) => return Err(error.into_message()),
+        Err(error @ (WorkflowCandidateError::Emission(_) | WorkflowCandidateError::Timeout(_))) => {
+            return Err(error.into_message());
+        }
     };
     let emission_ms = emission_start.elapsed().as_millis();
     let session_dir = workflow_session_dir(&trace_id)?;
@@ -432,11 +437,11 @@ pub(crate) async fn aam_recall_with_config(
 }
 
 #[allow(dead_code)]
-pub(crate) fn capability_list(runtime: &Runtime, args: JsonValue) -> JsonValue {
-    capability_list_with_config(runtime, args, &ServerMcpConfig::default())
+pub(crate) fn capability_discovery(runtime: &Runtime, args: JsonValue) -> JsonValue {
+    capability_discovery_with_config(runtime, args, &ServerMcpConfig::default())
 }
 
-pub(crate) fn capability_list_with_config(
+pub(crate) fn capability_discovery_with_config(
     runtime: &Runtime,
     args: JsonValue,
     config: &ServerMcpConfig,
@@ -457,39 +462,54 @@ pub(crate) fn capability_list_with_config(
         .filter(|value| *value > 0)
         .unwrap_or(config.default_top_k)
         .clamp(1, config.max_top_k.max(1));
-    let mut capabilities: Vec<(JsonValue, usize)> = runtime
+    let mut templates: Vec<(JsonValue, usize)> = runtime
         .capability_system()
         .list_capabilities()
         .into_iter()
         .map(|capability| {
-            let value = serde_json::to_value(capability).unwrap_or(JsonValue::Null);
+            let name = capability.name;
+            let operations = if capability.read_only {
+                vec!["read"]
+            } else {
+                vec!["write"]
+            };
+            let value = json!({
+                "schema_version": apxm_core::types::CAPABILITY_TEMPLATE_SCHEMA_V1,
+                "template_key": name.clone(),
+                "tool_binding": name,
+                "description": capability.description,
+                "parameters_schema": capability.parameters_schema,
+                "operations": operations,
+                "requires_auth": capability.requires_auth,
+                "authority": "template_only",
+            });
             let score = capability_query_score(&query_terms, &value);
             (value, score)
         })
         .collect();
     if !query_terms.is_empty() {
-        capabilities.retain(|(_, score)| *score > 0);
+        templates.retain(|(_, score)| *score > 0);
     }
-    capabilities.sort_by(|(left, left_score), (right, right_score)| {
+    templates.sort_by(|(left, left_score), (right, right_score)| {
         right_score.cmp(left_score).then_with(|| {
-            capability_name(left)
+            capability_template_key(left)
                 .unwrap_or_default()
-                .cmp(capability_name(right).unwrap_or_default())
+                .cmp(capability_template_key(right).unwrap_or_default())
         })
     });
-    let capabilities = capabilities
+    let templates = templates
         .into_iter()
         .take(top_k)
         .map(|(value, _)| value)
         .collect::<Vec<_>>();
 
     let backends = runtime.llm_registry().backend_names();
-    let health = runtime
-        .model_router()
-        .map_or(JsonValue::Null, |router| serde_json::to_value(router.all_health()).unwrap_or(JsonValue::Null));
+    let health = runtime.model_router().map_or(JsonValue::Null, |router| {
+        serde_json::to_value(router.all_health()).unwrap_or(JsonValue::Null)
+    });
 
     json!({
-        (tool_result::CAPABILITIES): capabilities,
+        "capability_templates": templates,
         (tool_result::BACKENDS): backends,
         (tool_result::HEALTH): health,
     })
@@ -508,10 +528,8 @@ fn capability_query_score(query_terms: &[&str], capability: &JsonValue) -> usize
         .count()
 }
 
-fn capability_name(capability: &JsonValue) -> Option<&str> {
-    capability
-        .get(tool_result::NAME)
-        .and_then(JsonValue::as_str)
+fn capability_template_key(capability: &JsonValue) -> Option<&str> {
+    capability.get("template_key").and_then(JsonValue::as_str)
 }
 
 #[allow(dead_code)]
@@ -1417,7 +1435,8 @@ fn write_generated_air(session_dir: &str, air: &str) -> Result<String, String> {
 
 fn json_arg_to_string(value: &JsonValue) -> String {
     value
-        .as_str().map_or_else(|| value.to_string(), ToString::to_string)
+        .as_str()
+        .map_or_else(|| value.to_string(), ToString::to_string)
 }
 
 fn display_path(path: &Path) -> String {

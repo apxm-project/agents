@@ -68,7 +68,7 @@ DOGFOOD_TASKS: tuple[str, ...] = (
     "Create an APXM workflow to audit MCP server changes for protocol compatibility and missing tests.",
     "Create an APXM workflow to inspect the prompt_as_workflow implementation and summarize validation risks.",
     "Create an APXM workflow to check HTTP MCP parity with stdio MCP for all Tier-3 tools.",
-    "Create an APXM workflow to review capability_list output and summarize model-router health visibility.",
+    "Create an APXM workflow to review capability_discovery output and summarize model-router health visibility.",
 )
 
 

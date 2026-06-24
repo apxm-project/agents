@@ -14,10 +14,12 @@
 //! - Runs: `GET /v1/runs` · `POST /v1/runs/clear` · `/{id}` · `/graph`
 //!   · `/nodes/{node}` · `/artifacts` · `/artifacts/{path}` · `/events/stream`
 //!   · `POST /{id}/cancel`
-//! - Session: `GET /v1/sessions/{id}/status` · `POST /cancel` · `/grants` · `/compact`
+//! - Session: `GET /v1/sessions/{id}/status` · `POST /cancel` · `/compact`
 //! - Goals: `GET /v1/goals` · `/{id}` · `/events/stream` · `POST /{id}/cancel`
 //! - Memory: `POST /v1/memory/facts/store` · `/search` · `/delete`
-//! - Capabilities: `GET /v1/capabilities` · `POST /register` · `/rescan` · `/{id}/invoke`
+//! - Capabilities: `GET /v1/capability-templates` · `/reindex` ·
+//!   `POST /v1/capabilities/delegate` · `POST /{capability_id}/revoke` ·
+//!   `POST /v1/capabilities/{capability_id}/invoke`
 //! - Agents/A2A: `GET /.well-known/agent.json` · `POST /a2a/tasks/send`
 //! - Permission: `POST /v1/permissions/{id}/respond`
 //!
@@ -29,7 +31,7 @@ use serde::Serialize;
 use utoipa::{OpenApi, ToSchema};
 
 use crate::permissions::{PermissionDecision, PermissionResponse};
-use crate::sessions::{GrantUpdate, SessionLedgerView, SessionStatus};
+use crate::sessions::{SessionLedgerView, SessionStatus};
 use crate::types::errors::{FaultClass, TypedError};
 
 /// OpenAPI document for session control + permission response endpoints.
@@ -43,7 +45,6 @@ use crate::types::errors::{FaultClass, TypedError};
     paths(
         doc_get_session_status,
         doc_cancel_session,
-        doc_update_session_grants,
         doc_compact_session,
         doc_list_session_events,
         doc_stream_session_events,
@@ -52,7 +53,6 @@ use crate::types::errors::{FaultClass, TypedError};
     components(schemas(
         SessionStatus,
         SessionLedgerView,
-        GrantUpdate,
         PermissionResponse,
         PermissionDecision,
         TypedError,
@@ -103,20 +103,6 @@ fn doc_get_session_status(_session_id: String) -> SessionStatus {
     tag = "session"
 )]
 fn doc_cancel_session(_session_id: String) {}
-
-#[utoipa::path(
-    post,
-    path = "/v1/sessions/{session_id}/grants",
-    operation_id = "updateSessionGrants",
-    summary = "Add or revoke capability grants",
-    params(("session_id" = String, Path, description = "Session identifier")),
-    request_body(content = GrantUpdate, description = "Grant delta"),
-    responses(
-        (status = 200, description = "Grants updated"),
-    ),
-    tag = "session"
-)]
-fn doc_update_session_grants(_session_id: String, _body: GrantUpdate) {}
 
 #[utoipa::path(
     post,

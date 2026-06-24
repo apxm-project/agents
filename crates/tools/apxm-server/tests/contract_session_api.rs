@@ -2,7 +2,7 @@
 
 mod contract;
 
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 use std::time::Duration;
 
 use apxm_backends::llm::backends::mock::MockLLMBackend;
@@ -87,13 +87,8 @@ async fn get_sse_prefix(app: &Router, path: &str) -> (StatusCode, String) {
     (status, String::from_utf8_lossy(&chunk).into_owned())
 }
 
-fn seed_session_ledger(session_id: &str, turn_cap: Option<usize>, grants: &[&str]) {
-    let mut grant_set = HashSet::new();
-    grant_set.extend(grants.iter().map(|s| s.to_string()));
-    seed(
-        session_id,
-        SessionLedger::new(turn_cap, HashMap::new(), grant_set),
-    );
+fn seed_session_ledger(session_id: &str, turn_cap: Option<usize>) {
+    seed(session_id, SessionLedger::new(turn_cap, HashMap::new()));
 }
 
 #[tokio::test]
@@ -108,7 +103,7 @@ async fn unknown_session_status_returns_typed_not_found() {
 #[tokio::test]
 async fn session_status_matches_openapi_shape() {
     let session_id = "contract-status-shape";
-    seed_session_ledger(session_id, Some(5), &["read_file"]);
+    seed_session_ledger(session_id, Some(5));
     let app = test_support::contract_app_with_mock(MockLLMBackend::static_response("ok")).await;
     let (status, json) = get_json(&app, &format!("/v1/sessions/{session_id}/status")).await;
     assert_eq!(status, StatusCode::OK);
@@ -116,18 +111,13 @@ async fn session_status_matches_openapi_shape() {
     assert!(json["turn_count"].is_number());
     assert!(json["ledger"].is_object());
     assert_eq!(json["ledger"]["turn_cap"], 5);
-    assert!(
-        json["ledger"]["grants"]
-            .as_array()
-            .expect("grants array")
-            .contains(&serde_json::json!("read_file"))
-    );
+    assert!(json["ledger"].get("grants").is_none());
 }
 
 #[tokio::test]
 async fn cancel_unknown_inflight_session_returns_conflict() {
     let session_id = "contract-cancel-conflict";
-    seed_session_ledger(session_id, None, &[]);
+    seed_session_ledger(session_id, None);
     let app = test_support::contract_app_with_mock(MockLLMBackend::static_response("ok")).await;
     let (status, json) = post_json(
         &app,
@@ -141,9 +131,9 @@ async fn cancel_unknown_inflight_session_returns_conflict() {
 }
 
 #[tokio::test]
-async fn update_grants_add_and_remove_round_trip_in_status() {
-    let session_id = "contract-grants-roundtrip";
-    seed_session_ledger(session_id, None, &["alpha"]);
+async fn session_grants_route_is_removed() {
+    let session_id = "contract-grants-removed";
+    seed_session_ledger(session_id, None);
     let app = test_support::contract_app_with_mock(MockLLMBackend::static_response("ok")).await;
 
     let (status, _) = post_json(
@@ -152,18 +142,13 @@ async fn update_grants_add_and_remove_round_trip_in_status() {
         serde_json::json!({ "add": ["beta"], "remove": ["alpha"] }),
     )
     .await;
-    assert_eq!(status, StatusCode::OK);
-
-    let (_, json) = get_json(&app, &format!("/v1/sessions/{session_id}/status")).await;
-    let grants = json["ledger"]["grants"].as_array().expect("grants");
-    assert!(grants.contains(&serde_json::json!("beta")));
-    assert!(!grants.iter().any(|g| g == "alpha"));
+    assert_eq!(status, StatusCode::NOT_FOUND);
 }
 
 #[tokio::test]
 async fn compact_session_returns_ok_for_known_session() {
     let session_id = "contract-compact-ok";
-    seed_session_ledger(session_id, None, &[]);
+    seed_session_ledger(session_id, None);
     let app = test_support::contract_app_with_mock(MockLLMBackend::static_response("ok")).await;
     let (status, json) = post_json(
         &app,
@@ -213,10 +198,7 @@ async fn stream_session_events_returns_sse() {
 #[tokio::test]
 async fn sc003_turn_cap_denies_conversation_message_without_client_counting() {
     let session_id = "contract-turn-cap";
-    seed(
-        session_id,
-        SessionLedger::new(Some(1), HashMap::new(), HashSet::new()),
-    );
+    seed(session_id, SessionLedger::new(Some(1), HashMap::new()));
     let ledger = apxm_runtime::executor::session_ledger::get(session_id).expect("ledger");
     assert_eq!(ledger.charge_turn().unwrap(), 1);
 

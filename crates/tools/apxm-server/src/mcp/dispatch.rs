@@ -16,7 +16,7 @@ use crate::skills::{SkillExecuteRequest, SkillLookupError, execute_skill_by_id};
 use crate::state::AppState;
 
 use super::schema::{
-    MCP_TOOL_APXM_AAM_RECALL, MCP_TOOL_APXM_CAPABILITY_LIST, MCP_TOOL_APXM_EVIDENCE_LOOKUP,
+    MCP_TOOL_APXM_AAM_RECALL, MCP_TOOL_APXM_CAPABILITY_DISCOVERY, MCP_TOOL_APXM_EVIDENCE_LOOKUP,
     MCP_TOOL_APXM_PROMPT_AS_WORKFLOW, MCP_TOOL_APXM_SKILL_CALL, MCP_TOOL_APXM_SKILL_GET,
     MCP_TOOL_APXM_SKILL_VALIDATE, MCP_TOOL_APXM_SKILLS_LIST, MCP_TOOL_APXM_TRACE_FETCH,
     MCP_TOOL_ARG_ARGS, MCP_TOOL_ARG_ID, MCP_TOOL_ARG_SESSION_ID, MCP_TOOL_ARG_WORKFLOW_ID,
@@ -146,9 +146,9 @@ pub(crate) async fn call_skill_tool(
                 Err(error) => mcp_tool_result(id.clone(), error, true),
             },
         ),
-        MCP_TOOL_APXM_CAPABILITY_LIST => Some(mcp_json_tool_result(
+        MCP_TOOL_APXM_CAPABILITY_DISCOVERY => Some(mcp_json_tool_result(
             id.clone(),
-            mcp_tools::capability_list_with_config(
+            mcp_tools::capability_discovery_with_config(
                 &state.runtime,
                 tool_args.clone(),
                 &state.server_config.mcp,

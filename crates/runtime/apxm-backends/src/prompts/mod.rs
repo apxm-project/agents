@@ -38,7 +38,8 @@ use std::path::{Path, PathBuf};
 static PROMPTS_DIR: Dir = include_dir!("$CARGO_MANIFEST_DIR/prompts");
 
 /// Global MiniJinja environment with all embedded prompts preloaded.
-static GLOBAL_ENV: std::sync::LazyLock<Environment<'static>> = std::sync::LazyLock::new(build_environment);
+static GLOBAL_ENV: std::sync::LazyLock<Environment<'static>> =
+    std::sync::LazyLock::new(build_environment);
 
 /// Render a prompt template by name with the given context.
 ///

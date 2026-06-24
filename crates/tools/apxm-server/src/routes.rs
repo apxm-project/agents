@@ -12,9 +12,10 @@ pub(crate) const COMPILE_ARTIFACT: &str = "/v1/compile-artifact";
 pub(crate) const MEMORY_FACTS_STORE: &str = "/v1/memory/facts/store";
 pub(crate) const MEMORY_FACTS_SEARCH: &str = "/v1/memory/facts/search";
 pub(crate) const MEMORY_FACTS_DELETE: &str = "/v1/memory/facts/delete";
-pub(crate) const CAPABILITIES: &str = "/v1/capabilities";
-pub(crate) const CAPABILITIES_REGISTER: &str = "/v1/capabilities/register";
-pub(crate) const CAPABILITIES_RESCAN: &str = "/v1/capabilities/rescan";
+pub(crate) const CAPABILITY_TEMPLATES: &str = "/v1/capability-templates";
+pub(crate) const CAPABILITY_TEMPLATES_REINDEX: &str = "/v1/capability-templates/reindex";
+pub(crate) const CAPABILITY_DELEGATE: &str = "/v1/capabilities/delegate";
+pub(crate) const CAPABILITY_REVOKE: &str = "/v1/capabilities/{capability_id}/revoke";
 pub(crate) const CAPABILITY_INVOKE: &str = "/v1/capabilities/{capability_id}/invoke";
 pub(crate) const SKILLS: &str = "/v1/skills";
 pub(crate) const SKILL_DETAIL: &str = "/v1/skills/{id}";
@@ -68,7 +69,6 @@ pub(crate) const SESSION_HISTORY: &str = "/v1/sessions/{id}/history";
 // session control API.
 pub(crate) const SESSION_STATUS: &str = "/v1/sessions/{session_id}/status";
 pub(crate) const SESSION_CANCEL: &str = "/v1/sessions/{session_id}/cancel";
-pub(crate) const SESSION_GRANTS: &str = "/v1/sessions/{session_id}/grants";
 pub(crate) const SESSION_COMPACT: &str = "/v1/sessions/{session_id}/compact";
 pub(crate) const SESSION_EVENTS: &str = "/v1/sessions/{session_id}/events";
 pub(crate) const SESSION_EVENTS_STREAM: &str = "/v1/sessions/{session_id}/events/stream";
@@ -97,9 +97,10 @@ pub(crate) enum ServerRoute {
     MemoryFactsStore,
     MemoryFactsSearch,
     MemoryFactsDelete,
-    Capabilities,
-    CapabilitiesRegister,
-    CapabilitiesRescan,
+    CapabilityTemplates,
+    CapabilityTemplatesReindex,
+    CapabilityDelegate,
+    CapabilityRevoke,
     CapabilityInvoke,
     Skills,
     SkillDetail,
@@ -146,7 +147,6 @@ pub(crate) enum ServerRoute {
     SessionHistory,
     SessionStatus,
     SessionCancel,
-    SessionGrants,
     SessionCompact,
     SessionEvents,
     SessionEventsStream,
@@ -175,9 +175,10 @@ impl ServerRoute {
             Self::MemoryFactsStore => MEMORY_FACTS_STORE,
             Self::MemoryFactsSearch => MEMORY_FACTS_SEARCH,
             Self::MemoryFactsDelete => MEMORY_FACTS_DELETE,
-            Self::Capabilities => CAPABILITIES,
-            Self::CapabilitiesRegister => CAPABILITIES_REGISTER,
-            Self::CapabilitiesRescan => CAPABILITIES_RESCAN,
+            Self::CapabilityTemplates => CAPABILITY_TEMPLATES,
+            Self::CapabilityTemplatesReindex => CAPABILITY_TEMPLATES_REINDEX,
+            Self::CapabilityDelegate => CAPABILITY_DELEGATE,
+            Self::CapabilityRevoke => CAPABILITY_REVOKE,
             Self::CapabilityInvoke => CAPABILITY_INVOKE,
             Self::Skills => SKILLS,
             Self::SkillDetail => SKILL_DETAIL,
@@ -224,7 +225,6 @@ impl ServerRoute {
             Self::SessionHistory => SESSION_HISTORY,
             Self::SessionStatus => SESSION_STATUS,
             Self::SessionCancel => SESSION_CANCEL,
-            Self::SessionGrants => SESSION_GRANTS,
             Self::SessionCompact => SESSION_COMPACT,
             Self::SessionEvents => SESSION_EVENTS,
             Self::SessionEventsStream => SESSION_EVENTS_STREAM,

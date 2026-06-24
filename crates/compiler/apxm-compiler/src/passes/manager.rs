@@ -207,7 +207,12 @@ fn drain_pass_stats(module: &Module, pass_name: &str) -> (usize, isize) {
     // of the &Module borrow. The C side only reads + erases the two named
     // string-keyed attrs and writes to the two i64 out-params.
     unsafe {
-        apxm_module_drain_pass_stats(module.as_ptr(), c_name.as_ptr(), &raw mut fired, &raw mut ir_delta);
+        apxm_module_drain_pass_stats(
+            module.as_ptr(),
+            c_name.as_ptr(),
+            &raw mut fired,
+            &raw mut ir_delta,
+        );
     }
     (fired.max(0) as usize, ir_delta as isize)
 }

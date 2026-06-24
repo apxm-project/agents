@@ -83,12 +83,12 @@ pub fn tool_binding_check(
                 .attributes
                 .get(attrs::CAPABILITY_NAME)
                 .and_then(|v| v.as_str())
-            {
-                registered
-                    .entry(name.to_string())
-                    .or_default()
-                    .push(node.name.clone());
-            }
+        {
+            registered
+                .entry(name.to_string())
+                .or_default()
+                .push(node.name.clone());
+        }
     }
 
     // Collect all invoked capability names from INV_TOOL nodes and ASK tool lists.
@@ -99,25 +99,25 @@ pub fn tool_binding_check(
                 .attributes
                 .get(attrs::CAPABILITY)
                 .and_then(|v| v.as_str())
-            {
-                invoked.insert(cap.to_string());
+        {
+            invoked.insert(cap.to_string());
 
-                // E712: capability must resolve to a REGISTER_CAPABILITY or a builtin.
-                if !registered.contains_key(cap) && !BUILTIN_CAPABILITIES.contains(&cap) {
-                    errors.push(ToolBindingDiagnostic {
-                        code: ErrorCode::UnboundCapability,
-                        message: format!(
-                            "INV_TOOL node '{}' references capability '{}' which is not \
+            // E712: capability must resolve to a REGISTER_CAPABILITY or a builtin.
+            if !registered.contains_key(cap) && !BUILTIN_CAPABILITIES.contains(&cap) {
+                errors.push(ToolBindingDiagnostic {
+                    code: ErrorCode::UnboundCapability,
+                    message: format!(
+                        "INV_TOOL node '{}' references capability '{}' which is not \
                              registered by any REGISTER_CAPABILITY node and is not a \
                              known builtin ({})",
-                            node.name,
-                            cap,
-                            BUILTIN_CAPABILITIES.join(", "),
-                        ),
-                        node_name: node.name.clone(),
-                    });
-                }
+                        node.name,
+                        cap,
+                        BUILTIN_CAPABILITIES.join(", "),
+                    ),
+                    node_name: node.name.clone(),
+                });
             }
+        }
         if node.op == AISOperationType::Ask
             && let Some(tools) = node.attributes.get(attrs::TOOLS).and_then(|v| v.as_array())
         {
@@ -136,17 +136,18 @@ pub fn tool_binding_check(
                 .attributes
                 .get(attrs::PYTHON_HANDLER_ID)
                 .and_then(|v| v.as_str())
-                && !is_valid_handler_id(handler_id) {
-                    errors.push(ToolBindingDiagnostic {
-                        code: ErrorCode::InvalidHandlerId,
-                        message: format!(
-                            "REGISTER_CAPABILITY node '{}' has invalid python_handler_id \
+            && !is_valid_handler_id(handler_id)
+        {
+            errors.push(ToolBindingDiagnostic {
+                code: ErrorCode::InvalidHandlerId,
+                message: format!(
+                    "REGISTER_CAPABILITY node '{}' has invalid python_handler_id \
                              '{}'; expected format: sha256:<64 hex chars>",
-                            node.name, handler_id,
-                        ),
-                        node_name: node.name.clone(),
-                    });
-                }
+                    node.name, handler_id,
+                ),
+                node_name: node.name.clone(),
+            });
+        }
     }
 
     // W721: warn on REGISTER_CAPABILITY whose name is never invoked.
@@ -234,12 +235,12 @@ pub fn tool_binding_check_dag(
                 .attributes
                 .get(attrs::CAPABILITY_NAME)
                 .and_then(|v| v.as_str())
-            {
-                registered
-                    .entry(name.to_string())
-                    .or_default()
-                    .push(format!("#{}", node.id));
-            }
+        {
+            registered
+                .entry(name.to_string())
+                .or_default()
+                .push(format!("#{}", node.id));
+        }
     }
 
     // Collect all invoked capability names from INV_TOOL nodes and ASK tool lists.
@@ -250,31 +251,31 @@ pub fn tool_binding_check_dag(
                 .attributes
                 .get(attrs::CAPABILITY)
                 .and_then(|v| v.as_str())
-            {
-                invoked.insert(cap.to_string());
+        {
+            invoked.insert(cap.to_string());
 
-                // E712: capability must resolve to a REGISTER_CAPABILITY node, a
-                // known builtin, or a capability the caller declared available
-                // (e.g. provider/pack capabilities the server has registered at
-                // runtime — opaque to a standalone compile, declared by the host).
-                if !registered.contains_key(cap)
-                    && !BUILTIN_CAPABILITIES.contains(&cap)
-                    && !known_caps.contains(cap)
-                {
-                    errors.push(ToolBindingDiagnostic {
-                        code: ErrorCode::UnboundCapability,
-                        message: format!(
-                            "INV_TOOL node #{} references capability '{}' which is not \
+            // E712: capability must resolve to a REGISTER_CAPABILITY node, a
+            // known builtin, or a capability the caller declared available
+            // (e.g. provider/pack capabilities the server has registered at
+            // runtime — opaque to a standalone compile, declared by the host).
+            if !registered.contains_key(cap)
+                && !BUILTIN_CAPABILITIES.contains(&cap)
+                && !known_caps.contains(cap)
+            {
+                errors.push(ToolBindingDiagnostic {
+                    code: ErrorCode::UnboundCapability,
+                    message: format!(
+                        "INV_TOOL node #{} references capability '{}' which is not \
                              registered by any REGISTER_CAPABILITY node and is not a \
                              known builtin ({})",
-                            node.id,
-                            cap,
-                            BUILTIN_CAPABILITIES.join(", "),
-                        ),
-                        node_name: format!("#{}", node.id),
-                    });
-                }
+                        node.id,
+                        cap,
+                        BUILTIN_CAPABILITIES.join(", "),
+                    ),
+                    node_name: format!("#{}", node.id),
+                });
             }
+        }
         if node.op_type == AISOperationType::Ask
             && let Some(tools) = node.attributes.get(attrs::TOOLS).and_then(|v| v.as_array())
         {
@@ -293,17 +294,18 @@ pub fn tool_binding_check_dag(
                 .attributes
                 .get(attrs::PYTHON_HANDLER_ID)
                 .and_then(|v| v.as_str())
-                && !is_valid_handler_id(handler_id) {
-                    errors.push(ToolBindingDiagnostic {
-                        code: ErrorCode::InvalidHandlerId,
-                        message: format!(
-                            "REGISTER_CAPABILITY node #{} has invalid python_handler_id \
+            && !is_valid_handler_id(handler_id)
+        {
+            errors.push(ToolBindingDiagnostic {
+                code: ErrorCode::InvalidHandlerId,
+                message: format!(
+                    "REGISTER_CAPABILITY node #{} has invalid python_handler_id \
                              '{}'; expected format: sha256:<64 hex chars>",
-                            node.id, handler_id,
-                        ),
-                        node_name: format!("#{}", node.id),
-                    });
-                }
+                    node.id, handler_id,
+                ),
+                node_name: format!("#{}", node.id),
+            });
+        }
     }
 
     // W721: warn on REGISTER_CAPABILITY whose name is never invoked.

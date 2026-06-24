@@ -26,7 +26,11 @@ HTTP/SSE gateway exposing the APXM agent runtime over REST, MCP, and A2A protoco
 | `/v1/schema` | GET | JSON schema for structured output |
 | `/v1/memory` | GET/POST | Memory read/write |
 | `/v1/models` | GET | List available models |
-| `/v1/capabilities/register` | POST | Register runtime capabilities |
+| `/v1/capability-templates` | GET | List authoring-time capability templates |
+| `/v1/capability-templates/reindex` | POST | Reindex installed pack capability templates |
+| `/v1/capabilities/delegate` | POST | Mint an opaque runtime delegated capability |
+| `/v1/capabilities/:capability_id/revoke` | POST | Revoke a runtime delegated capability |
+| `/v1/capabilities/:capability_id/invoke` | POST | Invoke a read-only delegated capability once |
 | `/v1/skills` | GET | List server-owned APXM skill manifests and validation status |
 | `/v1/skills/:id` | GET | Get one installed skill by `skill_id` or `skill_id@version` |
 | `/v1/skills/:id/validate` | POST | Re-read and validate one installed skill without compiling or executing |
@@ -86,7 +90,7 @@ The HTTP MCP endpoint also exposes APXM skill library tools:
 - `trace_fetch` -- fetch execution, episodic, or session trace details by `trace_id`
 - `aam_recall` -- query AAM beliefs/goals/transitions plus runtime memory
 - `evidence_lookup` -- query repo-local `.apxm` claim/evaluation evidence
-- `capability_list` -- list runtime capabilities, LLM backends, and model-router health
+- `capability_discovery` -- discover CapabilityTemplateV1 authoring metadata, LLM backends, and model-router health; templates are not authority
 - `workflow_start` -- start a server-managed `.apxmw` workflow in the background and return `execution_id`, `session_id`, and `session_dir`
 - `workflow_status` -- fetch the current status, result, error, and event totals for a workflow run by `execution_id`
 - `workflow_events` -- page retained run events for a workflow run with `since` and `limit`
@@ -125,8 +129,9 @@ from one stream. `goal_status` exposes `task.description`, `task.plan`, and
 `task.planning` as the frontend task ledger, plus `latest_pass` and the current
 workflow `execution_id` for drilling into `/v1/runs` or the `workflow_*` MCP
 tools when per-step detail is needed.
-Real ACP workers require the caller to grant `admit_capabilities:
-["SPAWN_AGENT"]`.
+Real ACP workers require the caller to mint a delegated capability for the
+`SPAWN_AGENT` tool binding and present the returned opaque `cap_*` id in
+`delegated_capability_ids`.
 
 The runtime registers durable agent-management capabilities as normal runtime
 tools: `schedule` arms one-shot, recurring, or cron wakeups, and `manage_task`
@@ -194,7 +199,7 @@ The `apxm-mcp-server` binary exposes these tools over stdio:
 - `trace_fetch` -- fetch a compact trace summary by `trace_id`
 - `aam_recall` -- query AAM state and memory
 - `evidence_lookup` -- query `.apxm` evidence stores
-- `capability_list` -- list runtime capabilities and backend health
+- `capability_discovery` -- discover CapabilityTemplateV1 authoring metadata and backend health
 
 The stdio binary is a compile/query/debug surface. It does not expose the
 server-owned workflow or goal control tools

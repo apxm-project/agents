@@ -22,7 +22,7 @@ pub(crate) const MCP_TOOL_APXM_PROMPT_AS_WORKFLOW: &str = Tier3Tool::PromptAsWor
 pub(crate) const MCP_TOOL_APXM_TRACE_FETCH: &str = Tier3Tool::TraceFetch.as_str();
 pub(crate) const MCP_TOOL_APXM_AAM_RECALL: &str = Tier3Tool::AamRecall.as_str();
 pub(crate) const MCP_TOOL_APXM_EVIDENCE_LOOKUP: &str = Tier3Tool::EvidenceLookup.as_str();
-pub(crate) const MCP_TOOL_APXM_CAPABILITY_LIST: &str = Tier3Tool::CapabilityList.as_str();
+pub(crate) const MCP_TOOL_APXM_CAPABILITY_DISCOVERY: &str = Tier3Tool::CapabilityDiscovery.as_str();
 
 pub(crate) const MCP_TOOL_ARG_ID: &str = args::ID;
 pub(crate) const MCP_TOOL_ARG_ARGS: &str = args::ARGS;
@@ -99,8 +99,8 @@ pub(crate) fn tier3_tool_entries() -> Vec<ToolEntry> {
             input_schema: evidence_lookup_input_schema(),
         },
         ToolEntry {
-            name: MCP_TOOL_APXM_CAPABILITY_LIST.to_string(),
-            description: tool_description::tier3(Tier3Tool::CapabilityList).to_string(),
+            name: MCP_TOOL_APXM_CAPABILITY_DISCOVERY.to_string(),
+            description: tool_description::tier3(Tier3Tool::CapabilityDiscovery).to_string(),
             input_schema: query_input_schema(),
         },
     ]

@@ -183,12 +183,13 @@ pub(crate) fn parse_skill_roots(args: &[String]) -> Vec<PathBuf> {
     }
 
     if let Ok(current_dir) = std::env::current_dir()
-        && roots.is_empty() {
-            let repo_skills = current_dir.join(".agents").join("skills");
-            if repo_skills.is_dir() {
-                roots.push(repo_skills);
-            }
+        && roots.is_empty()
+    {
+        let repo_skills = current_dir.join(".agents").join("skills");
+        if repo_skills.is_dir() {
+            roots.push(repo_skills);
         }
+    }
 
     dedupe_paths(roots)
 }
@@ -571,8 +572,7 @@ fn dedupe_paths(paths: Vec<PathBuf>) -> Vec<PathBuf> {
 }
 
 fn is_symlink(path: &Path) -> bool {
-    fs::symlink_metadata(path)
-        .is_ok_and(|metadata| metadata.file_type().is_symlink())
+    fs::symlink_metadata(path).is_ok_and(|metadata| metadata.file_type().is_symlink())
 }
 
 #[cfg(test)]

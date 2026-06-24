@@ -283,10 +283,9 @@ pub enum Commands {
         /// a fresh one.
         #[arg(long)]
         session_id: Option<String>,
-        /// Capability to admit for write-tool turns (repeatable); forwarded as
-        /// ExecuteRequest.admit_capabilities.
-        #[arg(long = "admit", value_name = "CAP")]
-        admit: Vec<String>,
+        /// Runtime-minted delegated capability id for write-tool turns (repeatable).
+        #[arg(long = "delegated-capability-id", value_name = "CAPABILITY_ID")]
+        delegated_capability_ids: Vec<String>,
         /// Skill library / id to import into the agent's visible set (repeatable:
         /// `lib`, `lib::skill`, or `skill`). Activates server-side CALL_SKILL
         /// scoping; shared-tier skills are always visible. Empty = unrestricted.
@@ -354,9 +353,8 @@ pub enum Commands {
         /// Tenant/owner scope for --tool-auth credential resolution.
         #[arg(long = "owner", value_name = "OWNER")]
         owner: Option<String>,
-        /// Let the agent create and run workflows: exposes + admits the
-        /// `compose_workflow`/`run_workflow` tools (write-class but
-        /// staging-confined and admit-gated). Ignored when `--air`/`--agent` set.
+        /// Let the agent create and run workflows by exposing authoring tools.
+        /// Ignored when `--air`/`--agent` set.
         #[arg(long = "author")]
         author: bool,
     },
@@ -448,13 +446,13 @@ pub struct GoalArgs {
     #[arg(long = "base-ref", default_value = "HEAD")]
     pub base_ref: String,
 
-    /// Extra capability grant forwarded to APXM admission (repeatable).
-    #[arg(long = "admit", value_name = "CAP")]
-    pub admit: Vec<String>,
+    /// Runtime-minted delegated capability id forwarded to APXM (repeatable).
+    #[arg(long = "delegated-capability-id", value_name = "CAPABILITY_ID")]
+    pub delegated_capability_ids: Vec<String>,
 
-    /// Explicitly grant SPAWN_AGENT. Also auto-granted when profiles are used.
-    #[arg(long = "admit-spawn", hide = true)]
-    pub admit_spawn: bool,
+    /// Explicitly provide delegated SPAWN_AGENT authority. Also auto-added when profiles are used.
+    #[arg(long = "delegate-spawn", hide = true)]
+    pub delegate_spawn: bool,
 
     /// Skill library / id to import into the goal run's visible set.
     #[arg(long = "import", value_name = "LIB")]

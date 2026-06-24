@@ -46,8 +46,7 @@ pub struct SessionProvenance {
 
 /// Serialize to pretty JSON and write to a file.
 fn json_pretty_write(path: &Path, value: &(impl serde::Serialize + ?Sized)) -> io::Result<()> {
-    let json =
-        serde_json::to_string_pretty(value).map_err(io::Error::other)?;
+    let json = serde_json::to_string_pretty(value).map_err(io::Error::other)?;
     fs::write(path, json)
 }
 
@@ -272,8 +271,7 @@ impl SessionOutputWriter {
         let path = self.session_dir.join("episodic.ndjson");
         let mut file = BufWriter::new(fs::File::create(&path)?);
         for entry in entries {
-            let line = serde_json::to_string(entry)
-                .map_err(io::Error::other)?;
+            let line = serde_json::to_string(entry).map_err(io::Error::other)?;
             writeln!(file, "{}", line)?;
         }
         file.flush()?;
@@ -450,8 +448,7 @@ impl FileEventSink {
 
     /// Write a single event as one JSON line.
     pub fn write_event(&mut self, event: &ApxmEvent) -> io::Result<()> {
-        let line =
-            serde_json::to_string(event).map_err(io::Error::other)?;
+        let line = serde_json::to_string(event).map_err(io::Error::other)?;
         writeln!(self.writer, "{}", line)
     }
 
@@ -571,9 +568,10 @@ impl SessionEventEmitter {
     /// Update the memory system reference in the context assembler
     pub fn set_memory(&self, memory: Arc<apxm_runtime::memory::MemorySystem>) {
         if let Some(mut assembler_opt) = self.context_assembler.try_lock()
-            && let Some(assembler) = assembler_opt.take() {
-                *assembler_opt = Some(assembler.with_memory(memory));
-            }
+            && let Some(assembler) = assembler_opt.take()
+        {
+            *assembler_opt = Some(assembler.with_memory(memory));
+        }
     }
 
     fn node_workspace_dir(&self, node_id: u64) -> Option<PathBuf> {
@@ -695,25 +693,23 @@ impl SessionEventEmitter {
                 .attributes
                 .get(constants::graph::attrs::PROFILE)
                 .and_then(|v| v.as_str())
-            {
-                match profile {
-                    CLAUDE_PROFILE => {
-                        if let Ok(contents) =
-                            assembler.assemble_claude_md(node_id, meta, &skill_names)
-                        {
-                            let _ = fs::write(node_dir.join(CLAUDE_CONTEXT_FILE), contents);
-                        }
+        {
+            match profile {
+                CLAUDE_PROFILE => {
+                    if let Ok(contents) = assembler.assemble_claude_md(node_id, meta, &skill_names)
+                    {
+                        let _ = fs::write(node_dir.join(CLAUDE_CONTEXT_FILE), contents);
                     }
-                    CODEX_PROFILE => {
-                        if let Ok(contents) =
-                            assembler.assemble_agents_md(node_id, meta, &skill_names)
-                        {
-                            let _ = fs::write(node_dir.join(CODEX_CONTEXT_FILE), contents);
-                        }
-                    }
-                    _ => {}
                 }
+                CODEX_PROFILE => {
+                    if let Ok(contents) = assembler.assemble_agents_md(node_id, meta, &skill_names)
+                    {
+                        let _ = fs::write(node_dir.join(CODEX_CONTEXT_FILE), contents);
+                    }
+                }
+                _ => {}
             }
+        }
     }
 
     fn write_live(&self, current_node_id: Option<u64>) -> io::Result<()> {

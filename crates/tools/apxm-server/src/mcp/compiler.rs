@@ -31,14 +31,14 @@ pub(crate) fn run_input_schema() -> JsonValue {
             "path": { "type": "string", "description": "Path to a .air file or Python frontend file that emits AIR" },
             "args": { "type": "array", "items": { "type": "string" }, "description": "positional string args bound to workflow parameters" },
             "session_id": { "type": "string" },
-            "admit_capabilities": { "type": "array", "items": { "type": "string" }, "description": "write capabilities the caller grants this run" }
+            "delegated_capability_ids": { "type": "array", "items": { "type": "string" }, "description": "runtime-minted delegated capability ids for this run" }
         }
     })
 }
 
 /// Side-effecting MCP tool: compile + run AIR, returning the
 /// `ExecuteResponse`. This is the safe "agent writes IR -> dispatch" path —
-/// writes are gated by `admit_capabilities` (static pre-flight) AND the runtime
+/// writes are gated by `delegated_capability_ids` (static pre-flight) AND the runtime
 /// invoke-site write boundary. Returns `Some(response)` if `tool_name` is it.
 pub(crate) async fn call_run_tool(
     state: &AppState,
@@ -54,7 +54,7 @@ pub(crate) async fn call_run_tool(
         Err(error) => return Some(mcp_tool_result(id.clone(), error, true)),
     };
     // Parse the arguments object directly into ExecuteRequest (air/args/
-    // session_id/admit_capabilities) — not the Value->HashMap coercion path.
+    // session_id/delegated_capability_ids) — not the Value->HashMap coercion path.
     let req: crate::execute::ExecuteRequest = match serde_json::from_value(args) {
         Ok(req) => req,
         Err(error) => {

@@ -76,18 +76,19 @@ impl DockerManager {
 
         // Check if container is already running
         if let Ok(status) = Self::status(&backend.name)
-            && status == ContainerStatus::Running {
-                // Get container ID
-                let output = Command::new("docker")
-                    .args(["ps", "-q", "-f", &format!("name={}", backend.name)])
-                    .output()?;
-                if output.status.success() {
-                    let container_id = String::from_utf8_lossy(&output.stdout).trim().to_string();
-                    if !container_id.is_empty() {
-                        return Ok(container_id);
-                    }
+            && status == ContainerStatus::Running
+        {
+            // Get container ID
+            let output = Command::new("docker")
+                .args(["ps", "-q", "-f", &format!("name={}", backend.name)])
+                .output()?;
+            if output.status.success() {
+                let container_id = String::from_utf8_lossy(&output.stdout).trim().to_string();
+                if !container_id.is_empty() {
+                    return Ok(container_id);
                 }
             }
+        }
 
         // Build docker run command
         let mut cmd = Command::new("docker");
@@ -108,10 +109,10 @@ impl DockerManager {
 
         // Add GPU support if tensor_parallel is specified
         if let Some(tensor_parallel) = docker_config.tensor_parallel
-            && tensor_parallel > 0 {
-                cmd.arg("--gpus")
-                    .arg("all,capabilities=compute,utility");
-            }
+            && tensor_parallel > 0
+        {
+            cmd.arg("--gpus").arg("all,capabilities=compute,utility");
+        }
 
         // Add the image
         cmd.arg(&docker_config.image);

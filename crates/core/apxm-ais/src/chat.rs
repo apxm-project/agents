@@ -109,9 +109,12 @@ pub struct ChatAirOptions<'a> {
     /// Expose the `skills` tool group so the agent can call `search_skills` to
     /// discover relevant skills by description (scoped to its visible set).
     pub skills: bool,
+    /// Expose runtime capability discovery so the agent can inspect
+    /// authoring-time capability templates without receiving authority.
+    pub capability_discovery: bool,
     /// Expose the `authoring` tool group (`compose_workflow` / `run_workflow`) so
     /// the agent can create and run workflows. These are write-class but
-    /// admit-gated and staging-confined (workflow-scoped admission).
+    /// delegated_ids-gated and staging-confined (workflow-scoped admission).
     pub authoring: bool,
 }
 
@@ -135,9 +138,10 @@ pub struct ChatAcpAirOptions<'a> {
 pub fn chat_air(opts: &ChatAirOptions) -> String {
     let mut attrs: Vec<String> = Vec::new();
     if let Some(sp) = opts.system_prompt
-        && !sp.is_empty() {
-            attrs.push(format!("system_prompt = \"{}\"", escape_air_string(sp)));
-        }
+        && !sp.is_empty()
+    {
+        attrs.push(format!("system_prompt = \"{}\"", escape_air_string(sp)));
+    }
     if let Some(b) = opts.backend {
         let safe = sanitize_route_id(b);
         if !safe.is_empty() {
@@ -159,6 +163,9 @@ pub fn chat_air(opts: &ChatAirOptions) -> String {
     let mut groups: Vec<&str> = Vec::new();
     if opts.tools {
         groups.push(groups::WEB);
+    }
+    if opts.capability_discovery {
+        groups.push(groups::DISCOVERY);
     }
     if opts.skills {
         groups.push(groups::SKILLS);
@@ -226,13 +233,13 @@ pub fn acp_chat_air(opts: &ChatAcpAirOptions) -> String {
 }
 
 /// Parse the capability name out of a write-denial message. Matches BOTH the
-/// server's static pre-flight wording (`capability '<cap>' performs writes and
-/// was not granted; …`) and the runtime's invoke-site wording (`write capability
-/// '<cap>' is not admitted by this execution's grant`). Shared by the CLI REPL
-/// and the studio backend so both fire the HITL grant prompt on either form.
+/// server's static pre-flight wording (`capability '<cap>' performs writes`) and
+/// the runtime's invoke-site wording (`write capability '<cap>' is not delegated`).
+/// Shared by the CLI REPL and the studio backend so both fire the HITL prompt on
+/// either form.
 pub fn parse_denied_capability(body: &str) -> Option<String> {
     let is_write_denial =
-        body.contains("performs writes") || body.contains("is not admitted by this execution");
+        body.contains("performs writes") || body.contains("is not delegated by this execution");
     if !is_write_denial {
         return None;
     }
@@ -250,3 +257,18 @@ pub const SUMMARIZE_AIR: &str = r#"module {
   }
 }
 "#;
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn chat_air_can_expose_capability_discovery_group() {
+        let air = chat_air(&ChatAirOptions {
+            capability_discovery: true,
+            skills: true,
+            ..ChatAirOptions::default()
+        });
+        assert!(air.contains(r#"tool_groups = ["discovery", "skills"]"#));
+    }
+}

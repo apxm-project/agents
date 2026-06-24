@@ -112,30 +112,29 @@ impl SqliteMemoStore {
             .prepare("SELECT content, model, input_tokens, output_tokens, inserted_at, ttl_secs FROM memo_cache WHERE key = ?1")
             .ok()?;
 
-        stmt
-            .query_row(params![key.0.min(i64::MAX as u64) as i64], |row| {
-                let content: String = row.get(0)?;
-                let model: String = row.get(1)?;
-                let input_tokens: i64 = row.get(2)?;
-                let output_tokens: i64 = row.get(3)?;
-                let inserted_at: i64 = row.get(4)?;
-                let ttl_secs: i64 = row.get(5)?;
+        stmt.query_row(params![key.0.min(i64::MAX as u64) as i64], |row| {
+            let content: String = row.get(0)?;
+            let model: String = row.get(1)?;
+            let input_tokens: i64 = row.get(2)?;
+            let output_tokens: i64 = row.get(3)?;
+            let inserted_at: i64 = row.get(4)?;
+            let ttl_secs: i64 = row.get(5)?;
 
-                // Check if entry is expired
-                let inserted_at_u64 = u64::try_from(inserted_at).unwrap_or(0);
-                let ttl_secs_u64 = u64::try_from(ttl_secs).unwrap_or(0);
-                if now - inserted_at_u64 > ttl_secs_u64 {
-                    return Err(rusqlite::Error::QueryReturnedNoRows);
-                }
+            // Check if entry is expired
+            let inserted_at_u64 = u64::try_from(inserted_at).unwrap_or(0);
+            let ttl_secs_u64 = u64::try_from(ttl_secs).unwrap_or(0);
+            if now - inserted_at_u64 > ttl_secs_u64 {
+                return Err(rusqlite::Error::QueryReturnedNoRows);
+            }
 
-                Ok(CachedResponse {
-                    content,
-                    input_tokens: usize::try_from(input_tokens).unwrap_or(0),
-                    output_tokens: usize::try_from(output_tokens).unwrap_or(0),
-                    model,
-                })
+            Ok(CachedResponse {
+                content,
+                input_tokens: usize::try_from(input_tokens).unwrap_or(0),
+                output_tokens: usize::try_from(output_tokens).unwrap_or(0),
+                model,
             })
-            .ok()
+        })
+        .ok()
     }
 
     fn put(

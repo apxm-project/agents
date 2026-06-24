@@ -209,30 +209,36 @@ pub fn build_pass_list(
             );
 
             let convergence_passes: Vec<String> = match target {
-                OptimizationTarget::Tokens => [TEMPLATE_SPECIALIZATION,
+                OptimizationTarget::Tokens => [
+                    TEMPLATE_SPECIALIZATION,
                     DEAD_CONTEXT_ELIMINATION,
                     SCHEDULING,
                     CANONICALIZER,
                     TOOL_BINDING,
-                    BIND_TOOL_HANDLERS]
+                    BIND_TOOL_HANDLERS,
+                ]
                 .iter()
                 .map(|s| s.to_string())
                 .collect(),
-                OptimizationTarget::Latency | OptimizationTarget::Parallelism => [SCHEDULING,
+                OptimizationTarget::Latency | OptimizationTarget::Parallelism => [
+                    SCHEDULING,
                     TEMPLATE_SPECIALIZATION,
                     DEAD_CONTEXT_ELIMINATION,
                     CANONICALIZER,
                     TOOL_BINDING,
-                    BIND_TOOL_HANDLERS]
+                    BIND_TOOL_HANDLERS,
+                ]
                 .iter()
                 .map(|s| s.to_string())
                 .collect(),
-                _ => [TEMPLATE_SPECIALIZATION,
+                _ => [
+                    TEMPLATE_SPECIALIZATION,
                     DEAD_CONTEXT_ELIMINATION,
                     SCHEDULING,
                     CANONICALIZER,
                     TOOL_BINDING,
-                    BIND_TOOL_HANDLERS]
+                    BIND_TOOL_HANDLERS,
+                ]
                 .iter()
                 .map(|s| s.to_string())
                 .collect(),

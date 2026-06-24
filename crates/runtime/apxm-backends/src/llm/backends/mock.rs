@@ -61,6 +61,8 @@ pub struct RecordedCall {
     pub output_tokens: usize,
     /// Simulated latency in milliseconds
     pub latency_ms: u64,
+    /// Tool names attached to the request.
+    pub tool_names: Vec<String>,
 }
 
 /// Configurable response for pattern-based mocking.
@@ -396,15 +398,21 @@ impl MockLLMBackend {
     }
 
     /// Record a call to the mock backend.
-    fn record_call(&self, prompt: String, system: Option<String>, resp: &MockResponse) {
+    fn record_call(&self, request: &LLMRequest, prompt: String, resp: &MockResponse) {
+        let tool_names = request
+            .tools
+            .as_ref()
+            .map(|tools| tools.iter().map(|tool| tool.name.clone()).collect())
+            .unwrap_or_default();
         self.calls.lock().unwrap().push(RecordedCall {
             prompt,
-            system,
+            system: request.system_prompt.clone(),
             model: self.model.clone(),
             temperature: 1.0, // default
             input_tokens: resp.input_tokens,
             output_tokens: resp.output_tokens,
             latency_ms: self.latency_ms,
+            tool_names,
         });
     }
 
@@ -418,11 +426,7 @@ impl MockLLMBackend {
             tokio::time::sleep(Duration::from_millis(self.latency_ms)).await;
         }
 
-        self.record_call(
-            effective_prompt.clone(),
-            request.system_prompt.clone(),
-            &resp,
-        );
+        self.record_call(request, effective_prompt.clone(), &resp);
 
         (effective_prompt, resp)
     }
@@ -456,7 +460,7 @@ impl LLMBackend for MockLLMBackend {
                 calc_response.usage.input_tokens,
                 calc_response.usage.output_tokens,
             );
-            self.record_call(effective_prompt, request.system_prompt.clone(), &mock_resp);
+            self.record_call(&request, effective_prompt, &mock_resp);
             return Ok(calc_response);
         }
 
@@ -514,7 +518,7 @@ impl LLMBackend for MockLLMBackend {
                 calc_response.usage.input_tokens,
                 calc_response.usage.output_tokens,
             );
-            self.record_call(effective_prompt, request.system_prompt.clone(), &mock_resp);
+            self.record_call(&request, effective_prompt, &mock_resp);
 
             let words: Vec<String> = calc_response
                 .content
@@ -532,7 +536,7 @@ impl LLMBackend for MockLLMBackend {
         let resp = self.select_response(&effective_prompt).clone();
 
         // Record the call (without latency for streaming)
-        self.record_call(effective_prompt, request.system_prompt.clone(), &resp);
+        self.record_call(&request, effective_prompt, &resp);
 
         let response = LLMResponse::new(
             resp.content.clone(),

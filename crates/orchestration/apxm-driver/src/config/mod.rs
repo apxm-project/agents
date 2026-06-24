@@ -222,7 +222,6 @@ pub struct ServerConfig {
     pub shutdown: ServerShutdownConfig,
 }
 
-
 /// APXM server process configuration.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(default)]

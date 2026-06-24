@@ -675,10 +675,7 @@ async fn execute_llm_once(
     // Store in memoization cache if deterministic
     if let Some(key) = memo_key {
         // Use per-op TTL based on operation type
-        let ttl = request
-            .operation_type
-            .as_ref()
-            .map(MemoCache::ttl_for_op);
+        let ttl = request.operation_type.as_ref().map(MemoCache::ttl_for_op);
 
         ctx.response_cache.put_with_ttl(
             key,

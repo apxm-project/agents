@@ -12,7 +12,6 @@ export interface TypedError {
 export interface SessionLedgerView {
   turn_cap?: number | null;
   tool_budgets?: Record<string, number>;
-  grants?: string[];
 }
 
 export interface SessionStatus {
@@ -22,12 +21,7 @@ export interface SessionStatus {
   active_execution_id?: string | null;
 }
 
-export interface GrantUpdate {
-  add?: string[];
-  remove?: string[];
-}
-
-export type PermissionResponseDecision = "approve" | "deny" | "approve_for_session";
+export type PermissionResponseDecision = "approve" | "deny";
 
 export interface PermissionResponse {
   decision: PermissionResponseDecision;

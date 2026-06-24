@@ -44,7 +44,8 @@ impl ApxmPaths {
 
         let project_candidate = Self::resolve_project_dir(&cwd);
         let project_dir = Self::canonicalize_if_exists(project_candidate);
-        let home_dir = Self::resolve_home_dir().map_or_else(|_| project_dir.clone(), Self::canonicalize_if_exists);
+        let home_dir = Self::resolve_home_dir()
+            .map_or_else(|_| project_dir.clone(), Self::canonicalize_if_exists);
         let state_dir = Self::canonicalize_if_exists(state_home());
 
         Ok(Self {

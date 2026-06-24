@@ -104,9 +104,11 @@ impl OllamaBackend {
 
                 let converted_value = if let Some(s) = value.as_str() {
                     if INT_OPTIONS.contains(&key.as_str()) {
-                        s.parse::<i64>().map_or_else(|_| value.clone(), serde_json::Value::from)
+                        s.parse::<i64>()
+                            .map_or_else(|_| value.clone(), serde_json::Value::from)
                     } else if FLOAT_OPTIONS.contains(&key.as_str()) {
-                        s.parse::<f64>().map_or_else(|_| value.clone(), serde_json::Value::from)
+                        s.parse::<f64>()
+                            .map_or_else(|_| value.clone(), serde_json::Value::from)
                     } else if s == "true" || s == "false" {
                         serde_json::Value::Bool(s == "true")
                     } else {

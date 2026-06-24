@@ -11,6 +11,7 @@ pub const WRITE: &str = "write";
 pub const SEARCH_WEB: &str = "search_web";
 pub const HTTP_GET: &str = "http_get";
 pub const HTTP_POST: &str = "http_post";
+pub const CAPABILITY_DISCOVERY: &str = "capability_discovery";
 pub const SEARCH_SKILLS: &str = "search_skills";
 
 /// Event-driven scheduling tool (durable one-shot / recurring wakeups).
@@ -33,6 +34,7 @@ pub mod groups {
     pub const WEB: &str = "web";
     pub const SEARCH: &str = "search";
     pub const WEB_SEARCH: &str = "web:search";
+    pub const DISCOVERY: &str = "discovery";
     pub const SKILLS: &str = "skills";
     pub const AUTHORING: &str = "authoring";
     pub const TASK: &str = "task";
@@ -53,6 +55,7 @@ pub const BUILTINS: &[&str] = &[
     READ,
     WRITE,
     SEARCH_WEB,
+    CAPABILITY_DISCOVERY,
     SEARCH_SKILLS,
     HTTP_GET,
     HTTP_POST,

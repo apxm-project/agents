@@ -543,7 +543,7 @@ skill_id = "{SKILL_ID}"
 version = "{SKILL_VERSION}"
 entry_flow = "{ENTRY_FLOW}"
 artifact_hash = "{artifact_hash}"
-allowed_tools = ["{COUNT_CAPABILITY}"]
+required_capabilities = ["{COUNT_CAPABILITY}"]
 side_effect_policy = "read_only"
 timeout_ms = 30000
 "#
@@ -602,6 +602,8 @@ timeout_ms = 30000
                 shutdown: hardening.shutdown,
                 cancel_registry: Arc::new(DashMap::new()),
                 goal_runs: crate::goal_runs::GoalRunRegistry::new(),
+                delegated_capabilities:
+                    crate::delegated_capabilities::DelegatedCapabilityStore::new(),
                 session_registry: crate::conversations::SessionRegistry::new(),
             }
         }

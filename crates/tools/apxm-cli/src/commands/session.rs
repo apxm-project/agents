@@ -73,14 +73,16 @@ pub fn session_list_command(
 
         let manifest_path = path.join(constants::session::files::MANIFEST);
         if let Ok(text) = std::fs::read_to_string(&manifest_path)
-            && let Ok(manifest) = serde_json::from_str::<SessionManifest>(&text) {
-                if let Some(ref filter) = status_filter
-                    && manifest.status.as_str() != filter.as_str() {
-                        continue;
-                    }
-                let size = dir_size(&path)?;
-                sessions.push((manifest, path, size));
+            && let Ok(manifest) = serde_json::from_str::<SessionManifest>(&text)
+        {
+            if let Some(ref filter) = status_filter
+                && manifest.status.as_str() != filter.as_str()
+            {
+                continue;
             }
+            let size = dir_size(&path)?;
+            sessions.push((manifest, path, size));
+        }
     }
 
     sessions.sort_by(|a, b| b.0.timestamp.cmp(&a.0.timestamp));
@@ -172,15 +174,16 @@ pub fn session_inspect_command(session_id: String, json: bool) -> Result<()> {
             let path = entry.path();
             let node_json_path = path.join(constants::session::node::NODE_JSON);
             if let Ok(text) = std::fs::read_to_string(&node_json_path)
-                && let Ok(info) = serde_json::from_str::<serde_json::Value>(&text) {
-                    let status_path = path.join(constants::session::node::STATUS_JSON);
-                    let status = if let Ok(s) = std::fs::read_to_string(&status_path) {
-                        serde_json::from_str::<serde_json::Value>(&s).ok()
-                    } else {
-                        None
-                    };
-                    node_info.push((info, status));
-                }
+                && let Ok(info) = serde_json::from_str::<serde_json::Value>(&text)
+            {
+                let status_path = path.join(constants::session::node::STATUS_JSON);
+                let status = if let Ok(s) = std::fs::read_to_string(&status_path) {
+                    serde_json::from_str::<serde_json::Value>(&s).ok()
+                } else {
+                    None
+                };
+                node_info.push((info, status));
+            }
         }
     }
 
@@ -300,9 +303,10 @@ pub fn session_diff_command(session1_id: String, session2_id: String, json: bool
 
     for (node_id, output1) in &results1 {
         if let Some(output2) = results2.get(node_id)
-            && output1 != output2 {
-                changed_nodes.push(*node_id);
-            }
+            && output1 != output2
+        {
+            changed_nodes.push(*node_id);
+        }
     }
 
     let nodes1 = load_node_timings(&path1)?;
@@ -419,14 +423,15 @@ fn load_node_timings(session_path: &Path) -> Result<HashMap<u64, u64>> {
         let status_path = path.join(constants::session::node::STATUS_JSON);
         if let Ok(text) = std::fs::read_to_string(&status_path)
             && let Ok(status) = serde_json::from_str::<serde_json::Value>(&text)
-                && let (Some(node_json), Some(duration)) = (
-                    std::fs::read_to_string(path.join(constants::session::node::NODE_JSON)).ok(),
-                    status.get("duration_ms").and_then(|v| v.as_u64()),
-                )
-                    && let Ok(node_info) = serde_json::from_str::<serde_json::Value>(&node_json)
-                        && let Some(id) = node_info.get("id").and_then(|v| v.as_u64()) {
-                            timings.insert(id, duration);
-                        }
+            && let (Some(node_json), Some(duration)) = (
+                std::fs::read_to_string(path.join(constants::session::node::NODE_JSON)).ok(),
+                status.get("duration_ms").and_then(|v| v.as_u64()),
+            )
+            && let Ok(node_info) = serde_json::from_str::<serde_json::Value>(&node_json)
+            && let Some(id) = node_info.get("id").and_then(|v| v.as_u64())
+        {
+            timings.insert(id, duration);
+        }
     }
     Ok(timings)
 }
@@ -468,12 +473,13 @@ pub fn session_clean_command(
         let manifest_path = path.join(constants::session::files::MANIFEST);
         if let Ok(text) = std::fs::read_to_string(&manifest_path)
             && let Ok(manifest) = serde_json::from_str::<SessionManifest>(&text)
-                && let Ok(timestamp) = chrono::DateTime::parse_from_rfc3339(&manifest.timestamp) {
-                    let age = now.signed_duration_since(timestamp.with_timezone(&chrono::Utc));
-                    if all || (cutoff.is_some() && age > cutoff.unwrap()) {
-                        to_delete.push((path, manifest.execution_id.clone(), age));
-                    }
-                }
+            && let Ok(timestamp) = chrono::DateTime::parse_from_rfc3339(&manifest.timestamp)
+        {
+            let age = now.signed_duration_since(timestamp.with_timezone(&chrono::Utc));
+            if all || (cutoff.is_some() && age > cutoff.unwrap()) {
+                to_delete.push((path, manifest.execution_id.clone(), age));
+            }
+        }
     }
 
     if to_delete.is_empty() {
