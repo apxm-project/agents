@@ -113,7 +113,7 @@ impl SearchSkillsCapability {
 /// sets `shared`, or it lives under the global root (the always-present builtin
 /// skill root, prepended first at server startup).
 fn is_shared(manifest_shared: bool, pkg_dir: &Path, global_root: Option<&Path>) -> bool {
-    manifest_shared || global_root.map(|r| pkg_dir.starts_with(r)).unwrap_or(false)
+    manifest_shared || global_root.is_some_and(|r| pkg_dir.starts_with(r))
 }
 
 #[async_trait]
@@ -142,8 +142,7 @@ impl CapabilityExecutor for SearchSkillsCapability {
         let k = args
             .get("k")
             .and_then(|v| v.as_i64())
-            .map(|n| n.max(1) as usize)
-            .unwrap_or(DEFAULT_K);
+            .map_or(DEFAULT_K, |n| n.max(1) as usize);
 
         let visible = VisibleSet::from_imports(imports);
         let cards = self.cards();
@@ -177,7 +176,7 @@ pub(crate) fn register(runtime: &Runtime, library: SkillLibrary) {
     match runtime.capability_system().register(cap) {
         Ok(()) => info!(capability = NAME, "registered skill-discovery capability"),
         Err(error) => {
-            warn!(capability = NAME, %error, "failed to register search_skills capability")
+            warn!(capability = NAME, %error, "failed to register search_skills capability");
         }
     }
 }

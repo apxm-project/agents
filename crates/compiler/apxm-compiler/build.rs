@@ -512,7 +512,7 @@ fn clang_builtin_include_dirs(clang_roots: &[PathBuf]) -> Option<PathBuf> {
             };
             let include = path.join("include");
             if include.join("stddef.h").is_file() {
-                let replace = best.as_ref().map(|(v, _)| major > *v).unwrap_or(true);
+                let replace = best.as_ref().is_none_or(|(v, _)| major > *v);
                 if replace {
                     best = Some((major, include));
                 }
@@ -714,7 +714,7 @@ fn emit_compiler_link_directives(install_dir: &Path, mlir_layout: &MlirLayout) -
 fn generate_stub_bindings(out_dir: &Path) -> Result<()> {
     // Signatures are derived from how the Rust API layer in api/module.rs, api/context.rs,
     // passes/manager.rs, and passes/registry.rs call into the FFI layer.
-    let stub = r#"
+    let stub = r"
 // Stub bindings generated because MLIR was not found at build time.
 // All functions return null/false/empty — the Rust wrappers surface CompilerError at runtime.
 #[allow(dead_code, non_upper_case_globals, non_camel_case_types, clippy::missing_safety_doc)]
@@ -842,7 +842,7 @@ pub mod bindings_inner {
     pub unsafe fn apxm_error_free(_err: *mut ApxmError) {}
 }
 pub use bindings_inner::*;
-"#;
+";
     let bindings_path = out_dir.join("bindings.rs");
     std::fs::write(&bindings_path, stub).context("Failed to write stub bindings")?;
     log_info!(
@@ -917,8 +917,7 @@ fn build() -> Result<()> {
     let cmake_available = Command::new("cmake")
         .arg("--version")
         .status()
-        .map(|s| s.success())
-        .unwrap_or(false);
+        .is_ok_and(|s| s.success());
 
     if cmake_available {
         log_info!("apxm-compiler-build", "Configuring CMake...");

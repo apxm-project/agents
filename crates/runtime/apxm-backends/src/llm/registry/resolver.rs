@@ -43,7 +43,7 @@ impl SelectionCriteria {
         SelectionCriteria {
             backend: request.backend.clone(),
             model: request.model.clone(),
-            operation: request.operation_type.clone(),
+            operation: request.operation_type,
         }
     }
 }

@@ -153,7 +153,7 @@ fn render_ts_operations(buf: &mut String, ops: &[FrontendOperationSpec]) {
 
 fn render_ts_categories(buf: &mut String, ops: &[FrontendOperationSpec]) {
     let mut categories: Vec<&str> = ops.iter().map(|s| s.category).collect();
-    categories.sort();
+    categories.sort_unstable();
     categories.dedup();
 
     buf.push_str("export type OpCategory =\n");

@@ -72,10 +72,7 @@ impl GoalTree {
 
     /// Get children of a goal.
     pub fn children_of(&self, parent_id: &GoalId) -> &[GoalId] {
-        self.children
-            .get(parent_id)
-            .map(|v| v.as_slice())
-            .unwrap_or(&[])
+        self.children.get(parent_id).map_or(&[], Vec::as_slice)
     }
 
     /// Set completion policy for a goal.

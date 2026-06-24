@@ -37,8 +37,7 @@ pub(crate) fn warn_init_failure(error: &OtelInitError) {
 
 fn json_logs_enabled() -> bool {
     std::env::var("APXM_LOG_FORMAT")
-        .map(|value| value.trim().eq_ignore_ascii_case("json"))
-        .unwrap_or(false)
+        .is_ok_and(|value| value.trim().eq_ignore_ascii_case("json"))
 }
 
 /// Initialize the global tracing subscriber with optional OTLP export.

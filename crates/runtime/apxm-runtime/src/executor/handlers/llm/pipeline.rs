@@ -22,10 +22,7 @@ use super::super::{Result, get_optional_u64_attribute};
 /// `memoizable=true` so the in-process memo remains the primary
 /// application-level cache for them.
 pub(super) fn default_memoizable_for_backend(backend: Option<&str>) -> bool {
-    match backend {
-        Some("vllm") | Some("ollama") => false,
-        _ => true,
-    }
+    !matches!(backend, Some("vllm" | "ollama"))
 }
 
 /// Map an `effort` attribute (`off`/`low`/`medium`/`high`) to an extended-

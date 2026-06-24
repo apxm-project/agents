@@ -8,7 +8,7 @@ use crate::types::responses::{
 };
 
 pub(crate) async fn health(State(state): State<AppState>) -> Json<HealthResponse> {
-    let uptime_secs = state.start_time.elapsed().map(|d| d.as_secs()).unwrap_or(0);
+    let uptime_secs = state.start_time.elapsed().map_or(0, |d| d.as_secs());
     Json(HealthResponse {
         status: "ok",
         version: env!("CARGO_PKG_VERSION"),

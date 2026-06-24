@@ -21,20 +21,15 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 /// Circuit breaker state for a single backend.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 pub enum CircuitState {
     /// Normal operation.
+    #[default]
     Closed,
     /// Backend tripped; requests rejected.
     Open,
     /// Cooldown expired; one probe allowed.
     HalfOpen,
-}
-
-impl Default for CircuitState {
-    fn default() -> Self {
-        CircuitState::Closed
-    }
 }
 
 /// Configuration for the circuit breaker.

@@ -3,6 +3,8 @@
 //! Spawns coding agents (Claude Code, Codex, Gemini CLI, etc.) via subprocess,
 //! speaks JSON-RPC 2.0 over stdio, and integrates with APXM's runtime systems.
 
+#![allow(clippy::unused_async, clippy::unused_async_trait_impl)]
+
 pub mod auth;
 pub mod constants;
 pub mod content;

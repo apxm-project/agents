@@ -312,8 +312,8 @@ impl TryFrom<serde_json::Value> for Value {
                 }
 
                 if let Some(u) = num.as_u64() {
-                    if u <= i64::MAX as u64 {
-                        return Ok(Value::Number(Number::Integer(u as i64)));
+                    if i64::try_from(u).is_ok() {
+                        return Ok(Value::Number(Number::Integer(i64::try_from(u).unwrap_or(i64::MAX))));
                     }
                     return Ok(Value::Number(Number::Float(u as f64)));
                 }

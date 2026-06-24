@@ -166,7 +166,7 @@ impl MockLLMBackend {
         };
         let (node_id, node_name) = match &request.apxm_hints {
             Some(h) => (
-                h.node_id.map(|n| n as u64).unwrap_or(0),
+                h.node_id.map_or(0, |n| n as u64),
                 h.node_name.clone().unwrap_or_default(),
             ),
             None => (0, String::new()),
@@ -382,7 +382,7 @@ impl MockLLMBackend {
     }
 
     /// Extract the effective prompt from request.
-    fn extract_prompt(&self, request: &LLMRequest) -> String {
+    fn extract_prompt(request: &LLMRequest) -> String {
         if request.has_messages() {
             request
                 .resolved_messages()
@@ -410,7 +410,7 @@ impl MockLLMBackend {
 
     /// Extract the effective prompt and record the call.
     async fn record_and_extract(&self, request: &LLMRequest) -> (String, MockResponse) {
-        let effective_prompt = self.extract_prompt(request);
+        let effective_prompt = Self::extract_prompt(request);
         let resp = self.select_response(&effective_prompt).clone();
 
         // Simulate latency if configured
@@ -445,7 +445,7 @@ impl LLMBackend for MockLLMBackend {
 
         self.record_if_enabled(&request);
 
-        let effective_prompt = self.extract_prompt(&request);
+        let effective_prompt = Self::extract_prompt(&request);
 
         // Check built-in calculator pattern before user-defined patterns
         if let Some(calc_response) = self.try_calculator_pattern(&request, &effective_prompt) {
@@ -506,7 +506,7 @@ impl LLMBackend for MockLLMBackend {
             ))]));
         }
 
-        let effective_prompt = self.extract_prompt(&request);
+        let effective_prompt = Self::extract_prompt(&request);
 
         // Check built-in calculator pattern before user-defined patterns
         if let Some(calc_response) = self.try_calculator_pattern(&request, &effective_prompt) {

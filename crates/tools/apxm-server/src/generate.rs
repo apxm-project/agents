@@ -125,7 +125,7 @@ impl GenerateRequest {
                     "auto" => ToolChoice::Auto,
                     "none" => ToolChoice::None,
                     "required" => ToolChoice::Required,
-                    _ => ToolChoice::Specific(choice.to_string()),
+                    _ => ToolChoice::Specific(choice.clone()),
                 };
                 request = request.with_tool_choice(lowered);
             }

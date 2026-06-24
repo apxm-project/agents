@@ -72,7 +72,7 @@ use serde::Serialize;
 use crate::executions::{ExecutionRecord, ExecutionStatus};
 use crate::helpers::now_ms;
 
-const RUNS_TABLE_SQL: &str = r#"
+const RUNS_TABLE_SQL: &str = r"
 CREATE TABLE IF NOT EXISTS runs (
   execution_id TEXT PRIMARY KEY,
   workflow_id TEXT,
@@ -98,7 +98,7 @@ CREATE INDEX IF NOT EXISTS idx_runs_workflow_started
   ON runs(workflow_id, started_at_ms DESC, execution_id);
 CREATE INDEX IF NOT EXISTS idx_runs_status_started
   ON runs(status, started_at_ms DESC, execution_id);
-"#;
+";
 
 /// Derived run-history row persisted in the v0 SQLite index.
 ///
@@ -131,12 +131,11 @@ impl StoredRunRecord {
         let (input_tokens, output_tokens, total_tokens) = record
             .result
             .as_ref()
-            .map(|result| {
+            .map_or((0, 0, 0), |result| {
                 let input = result.llm_usage.input_tokens as u64;
                 let output = result.llm_usage.output_tokens as u64;
                 (input, output, input.saturating_add(output))
-            })
-            .unwrap_or((0, 0, 0));
+            });
         let finished_at = record.completed_at_ms;
         Self {
             run_id: record.execution_id.clone(),
@@ -285,8 +284,7 @@ impl RunHistoryIndex {
                 continue;
             }
             let started_ms = DateTime::parse_from_rfc3339(row.started_at)
-                .map(|ts| ts.timestamp_millis())
-                .unwrap_or(0);
+                .map_or(0, |ts| ts.timestamp_millis());
             let status_db = if row.status.eq_ignore_ascii_case("failed") {
                 "failed"
             } else {
@@ -294,7 +292,7 @@ impl RunHistoryIndex {
             };
             let hidden = hidden_at_ms as i64;
             if let Ok(n) = conn.execute(
-                r#"INSERT INTO runs (
+                r"INSERT INTO runs (
                     execution_id, workflow_id, skill_id, skill_version, session_id, session_dir,
                     run_root, trace_id, status, started_at_ms, finished_at_ms, duration_ms,
                     input_tokens, output_tokens, total_tokens, cost_usd, retention_class,
@@ -306,7 +304,7 @@ impl RunHistoryIndex {
                  ON CONFLICT(execution_id) DO UPDATE SET
                     hidden_at_ms = excluded.hidden_at_ms,
                     updated_at_ms = excluded.updated_at_ms
-                  WHERE runs.hidden_at_ms IS NULL"#,
+                  WHERE runs.hidden_at_ms IS NULL",
                 params![
                     row.execution_id,
                     row.session_id,
@@ -387,7 +385,7 @@ impl RunHistoryIndex {
             )
             .ok()?;
         let rows = stmt
-            .query_map([workflow_id], |row| stored_run_from_row(row))
+            .query_map([workflow_id], stored_run_from_row)
             .ok()?;
         Some(rows.filter_map(Result::ok).collect())
     }

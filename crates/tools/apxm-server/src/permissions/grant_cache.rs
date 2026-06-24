@@ -93,8 +93,7 @@ impl SessionGrantCache {
             .lock()
             .expect("grant cache poisoned")
             .get(session_id)
-            .map(|g| g.fingerprints.len())
-            .unwrap_or(0)
+            .map_or(0, |g| g.fingerprints.len())
     }
 }
 

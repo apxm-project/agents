@@ -49,13 +49,13 @@ impl CompileError {
     /// Get the underlying Error if available
     pub fn as_error(&self) -> Option<&Error> {
         match self {
-            CompileError::Parse(e) => Some(e),
-            CompileError::Type(e) => Some(e),
-            CompileError::Verification(e) => Some(e),
-            CompileError::Optimization(e) => Some(e),
-            CompileError::PassFailed(e) => Some(e),
-            CompileError::DagConstruction(e) => Some(e),
             CompileError::ModuleNotFound { .. } => None,
+            CompileError::Parse(e)
+            | CompileError::Type(e)
+            | CompileError::Verification(e)
+            | CompileError::Optimization(e)
+            | CompileError::PassFailed(e)
+            | CompileError::DagConstruction(e) => Some(e),
         }
     }
 

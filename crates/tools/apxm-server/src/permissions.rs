@@ -208,7 +208,7 @@ impl PermissionRegistry {
     }
 
     /// Record a client reply. Idempotent: concurrent duplicate responses return OK.
-    pub fn respond(
+    pub(crate) fn respond(
         &self,
         permission_id: &str,
         response: PermissionResponse,
@@ -269,8 +269,8 @@ impl PermissionRegistry {
 
         let outcome = match decision {
             PermissionDecision::Approve | PermissionDecision::ApproveForSession => {
-                if decision == PermissionDecision::ApproveForSession {
-                    if let Some(session_id) = session_id {
+                if decision == PermissionDecision::ApproveForSession
+                    && let Some(session_id) = session_id {
                         let mut recorded = entry
                             .session_grant_recorded
                             .try_lock()
@@ -281,7 +281,6 @@ impl PermissionRegistry {
                             *recorded = true;
                         }
                     }
-                }
                 PermissionOutcome::Approved
             }
             PermissionDecision::Deny => PermissionOutcome::Denied,
@@ -348,11 +347,11 @@ pub fn emit_permission_resolved(
 }
 
 /// Axum handler for `POST /v1/permissions/{permission_id}/respond`.
-pub async fn respond_permission(
+pub(crate) async fn respond_permission(
     Path(permission_id): Path<String>,
     Json(body): Json<PermissionResponse>,
 ) -> Result<Json<OkAck>, ApiError> {
-    respond_permission_with_registry(&permission_id, body, &PermissionRegistry::global())
+    respond_permission_with_registry(&permission_id, body, PermissionRegistry::global())
         .map(|()| Json(OkAck::new()))
 }
 
@@ -368,7 +367,7 @@ pub fn apply_response(
 }
 
 /// Testable respond path without axum extractors.
-pub fn respond_permission_with_registry(
+pub(crate) fn respond_permission_with_registry(
     permission_id: &str,
     body: PermissionResponse,
     registry: &PermissionRegistry,

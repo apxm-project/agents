@@ -81,7 +81,7 @@ impl Module {
                 .into_owned()
         };
 
-        unsafe { ffi::apxm_string_free(c_str as *mut _) };
+        unsafe { ffi::apxm_string_free(c_str.cast()) };
 
         Ok(result)
     }
@@ -130,7 +130,7 @@ impl Module {
         // Post-MLIR tool-binding-check: validate INV_TOOL ↔ REGISTER_CAPABILITY
         // and copy `python_handler_id` from registrations onto invocations.
         // W721/W723 warnings are logged here (non-fatal).
-        for dag in dags.iter_mut() {
+        for dag in &mut dags {
             let warnings = crate::passes::tool_binding_check_dag(dag, manifest, known_caps)?;
             for w in &warnings {
                 eprintln!("warning[{}]: {}", w.code, w.message);
@@ -184,14 +184,13 @@ impl Module {
         let c_options = ffi::ApxmArtifactOptions {
             module_name: module_name_cstr
                 .as_ref()
-                .map(|c| c.as_ptr())
-                .unwrap_or(ptr::null()),
+                .map_or(ptr::null(), |c| c.as_ptr()),
             emit_debug_json: false,
             target_version: ptr::null(),
         };
 
         let raw = ffi::handle_null_result(
-            unsafe { ffi::apxm_codegen_emit_artifact(self.raw, &c_options) },
+            unsafe { ffi::apxm_codegen_emit_artifact(self.raw, &raw const c_options) },
             "artifact generation",
         )?;
 

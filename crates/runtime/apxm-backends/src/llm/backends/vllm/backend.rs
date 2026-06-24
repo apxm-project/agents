@@ -224,8 +224,7 @@ impl GraphAwareVllmBackend {
             .as_ref()
             .and_then(|c| c.get(MODEL))
             .and_then(|m| m.as_str())
-            .map(|value| !value.trim().is_empty())
-            .unwrap_or(false);
+            .is_some_and(|value| !value.trim().is_empty());
 
         let base_url = config
             .as_ref()
@@ -316,7 +315,7 @@ impl GraphAwareVllmBackend {
                     }
                     Ok(info) => {
                         *self.scheduler_policy.write() = Some(info.policy.clone());
-                        *self.dispatch_ir_version.write() = info.dispatch_ir_version.clone();
+                        (*self.dispatch_ir_version.write()).clone_from(&info.dispatch_ir_version);
                         if !self.scheduler_policy_warned.swap(true, Ordering::Relaxed) {
                             tracing::warn!(
                                 policy = %info.policy,
@@ -532,7 +531,7 @@ impl GraphAwareVllmBackend {
                 }
 
                 if !map.contains_key(apxm_llm::REQUEST_PRIORITY)
-                    && apxm_isolate().map_or(true, |m| m == "priority")
+                    && apxm_isolate().is_none_or(|m| m == "priority")
                     && let Some(priority_class) = &hints.priority_class
                 {
                     let priority = u8::from(VllmRequestPriority::from(*priority_class));
@@ -673,7 +672,7 @@ impl LLMBackend for GraphAwareVllmBackend {
                 if let Ok(body) = response.json::<SchedulerInfoResponse>().await {
                     let policy = body.policy.clone();
                     *self.scheduler_policy.write() = Some(policy);
-                    *self.dispatch_ir_version.write() = body.dispatch_ir_version.clone();
+                    (*self.dispatch_ir_version.write()).clone_from(&body.dispatch_ir_version);
                     // Warn-once on non-priority policy (the manifest disallows
                     // FCFS, so reaching here indicates the fork was started
                     // with the wrong --scheduling-policy flag). Still a soft
@@ -755,8 +754,7 @@ impl LLMBackend for GraphAwareVllmBackend {
             .scheduler_policy
             .read()
             .as_deref()
-            .map(|policy| policy == super::graph_meta::SCHEDULER_POLICY_PRIORITY)
-            .unwrap_or(false);
+            .is_some_and(|policy| policy == super::graph_meta::SCHEDULER_POLICY_PRIORITY);
         // If the fork advertises a `dispatch_ir_version`,
         // gate `supports_dispatch_ir_v1_internal` on the tag matching
         // `DISPATCH_IR_V1_VERSION_TAG` exactly. Older fork builds omit
@@ -793,8 +791,7 @@ impl LLMBackend for GraphAwareVllmBackend {
         let counter = self.execution_counter.fetch_add(1, Ordering::Relaxed);
         let timestamp = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
-            .map(|d| d.as_millis())
-            .unwrap_or(0);
+            .map_or(0, |d| d.as_millis());
         format!("exec-{}-{}", timestamp, counter)
     }
 

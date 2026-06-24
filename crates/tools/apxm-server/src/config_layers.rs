@@ -184,7 +184,6 @@ fn env_u32(name: &str) -> Option<u32> {
 fn env_bool(name: &str) -> Option<bool> {
     let value = std::env::var(name).ok()?;
     match value.trim().to_ascii_lowercase().as_str() {
-        "" => None,
         "1" | "true" | "yes" | "on" => Some(true),
         "0" | "false" | "no" | "off" => Some(false),
         _ => None,

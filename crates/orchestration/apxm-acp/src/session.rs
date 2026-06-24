@@ -126,8 +126,8 @@ impl AcpSession {
             .and_then(|v| v.as_array())
         {
             for method in auth_methods {
-                if let Some(method_id) = method.get(fields::METHOD_ID).and_then(|v| v.as_str()) {
-                    if let Some(credential) = auth::resolve_auth_credential(method_id) {
+                if let Some(method_id) = method.get(fields::METHOD_ID).and_then(|v| v.as_str())
+                    && let Some(credential) = auth::resolve_auth_credential(method_id) {
                         let auth_params = serde_json::json!({
                             fields::METHOD_ID: method_id,
                             fields::CREDENTIAL: credential,
@@ -145,7 +145,6 @@ impl AcpSession {
                         })??;
                         break;
                     }
-                }
             }
         }
 
@@ -370,7 +369,10 @@ impl Drop for AcpSession {
             // SAFETY: libc::kill is safe to call with a valid pid.
             #[allow(unsafe_code)]
             unsafe {
-                libc::kill(pid as libc::pid_t, libc::SIGKILL)
+                libc::kill(
+                    i32::try_from(pid).unwrap_or(i32::MAX),
+                    libc::SIGKILL,
+                )
             };
         }
         #[cfg(not(unix))]
@@ -385,7 +387,7 @@ impl Drop for AcpSession {
 #[allow(unsafe_code)]
 fn send_sigterm(pid: u32) {
     // SAFETY: libc::kill is safe to call with a valid pid.
-    unsafe { libc::kill(pid as libc::pid_t, libc::SIGTERM) };
+    unsafe { libc::kill(i32::try_from(pid).unwrap_or(i32::MAX), libc::SIGTERM) };
 }
 
 /// No-op reverse handler used during initialize/authenticate/session-new.

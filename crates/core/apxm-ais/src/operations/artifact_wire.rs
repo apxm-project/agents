@@ -5,6 +5,7 @@
 //! handwritten wire table.
 
 use super::definitions::{AISOperationType, WIRE_INDEXED_OPERATIONS};
+use std::fmt::Write;
 
 pub const ARTIFACT_OPERATION_KIND_ENTRIES_FILE: &str = "OperationKind.generated.inc";
 pub const ARTIFACT_OPERATION_KIND_CASES_FILE: &str = "OperationKindCases.generated.inc";
@@ -28,7 +29,7 @@ pub fn generate_artifact_operation_kind_entries() -> String {
     let mut output = generated_header(ARTIFACT_OPERATION_KIND_ENTRIES_FILE);
     for &(wire_index, op) in WIRE_INDEXED_OPERATIONS {
         let name = cpp_operation_name(op);
-        output.push_str(&format!("  {name} = {wire_index},\n"));
+        let _ = writeln!(output, "  {name} = {wire_index},");
     }
     output
 }
@@ -37,9 +38,10 @@ pub fn generate_artifact_operation_kind_cases() -> String {
     let mut output = generated_header(ARTIFACT_OPERATION_KIND_CASES_FILE);
     for &(_, op) in WIRE_INDEXED_OPERATIONS {
         let name = cpp_operation_name(op);
-        output.push_str(&format!(
-            "      .Case<{name}Op>([](auto) {{ return OperationKind::{name}; }})\n"
-        ));
+        let _ = writeln!(
+            output,
+            "      .Case<{name}Op>([](auto) {{ return OperationKind::{name}; }})"
+        );
     }
     output
 }

@@ -67,9 +67,8 @@ impl MemoryTier {
     /// Check if tier supports semantic search.
     pub fn supports_semantic_search(&self) -> bool {
         match self {
-            MemoryTier::Stm => false,
+            MemoryTier::Stm | MemoryTier::Episodic => false,
             MemoryTier::Ltm => true,
-            MemoryTier::Episodic => false,
         }
     }
 

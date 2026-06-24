@@ -1042,9 +1042,7 @@ async fn watch_goal_pass(
     let mut terminal_event_seen = false;
     let mut pass_events = state.run_event_bus.subscribe(execution_id);
 
-    if state.execution_store.get(execution_id).is_none() {
-        return None;
-    }
+    state.execution_store.get(execution_id)?;
 
     replay_goal_pass_events(
         state,
@@ -1140,9 +1138,7 @@ fn settled_goal_pass_record(
 
 fn is_goal_pass_terminal_event(event: &ApxmEvent) -> bool {
     let kind = event.kind();
-    [kind::EXECUTE_COMPLETE, kind::ERROR, kind::TURN_ABORTED]
-        .iter()
-        .any(|terminal| kind == *terminal)
+    [kind::EXECUTE_COMPLETE, kind::ERROR, kind::TURN_ABORTED].contains(&kind)
 }
 
 fn goal_decision_kind(goal: Option<&JsonValue>) -> Option<&str> {
@@ -1987,8 +1983,7 @@ fn extract_goal_planner_value(content: &str) -> Result<JsonValue, String> {
         .strip_prefix("```json")
         .or_else(|| trimmed.strip_prefix("```"))
         .and_then(|value| value.strip_suffix("```"))
-        .map(str::trim)
-        .unwrap_or(trimmed);
+        .map_or(trimmed, str::trim);
     if let Ok(value) = serde_json::from_str::<JsonValue>(unfenced) {
         return Ok(value);
     }
@@ -2057,7 +2052,7 @@ fn auto_goal_workers(
     let needs_synthesizer = ids.len() >= 5 || (complex && ids.len() >= 4);
     add_auto_worker_id(&mut ids, "synthesizer", needs_synthesizer, max_workers);
 
-    ids.sort_by_key(|id| auto_worker_order(id));
+    ids.sort_by_key(auto_worker_order);
     let included = ids.iter().copied().collect::<HashSet<_>>();
     ids.into_iter()
         .map(|id| auto_goal_worker(id, &included))
@@ -2470,8 +2465,7 @@ fn worker_selection_summary(
     default_source: &'static str,
 ) -> WorkerSelectionSummary {
     let source = decision
-        .map(|decision| decision.source.as_str())
-        .unwrap_or(default_source);
+        .map_or(default_source, |decision| decision.source.as_str());
     let selected_profile_hint = if source == AgentRouteSource::Selected.as_str() {
         worker.profile.clone()
     } else {
@@ -2486,18 +2480,10 @@ fn worker_selection_summary(
         },
         source,
         selected_profile_hint,
-        required_capabilities: decision
-            .map(|decision| decision.required_capabilities.clone())
-            .unwrap_or_else(|| goal_worker_required_capabilities(worker)),
-        preferred_profiles: decision
-            .map(|decision| decision.preferred_profiles.clone())
-            .unwrap_or_else(|| worker.preferred_profiles.clone()),
-        route_selector: decision
-            .map(|_| AGENT_ROUTE_SELECTOR_DETERMINISTIC.to_string())
-            .unwrap_or_else(|| "disabled".to_string()),
-        reason: decision
-            .map(|decision| decision.reason.clone())
-            .unwrap_or_else(|| "selection disabled".to_string()),
+        required_capabilities: decision.map_or_else(|| goal_worker_required_capabilities(worker), |decision| decision.required_capabilities.clone()),
+        preferred_profiles: decision.map_or_else(|| worker.preferred_profiles.clone(), |decision| decision.preferred_profiles.clone()),
+        route_selector: decision.map_or_else(|| "disabled".to_string(), |_| AGENT_ROUTE_SELECTOR_DETERMINISTIC.to_string()),
+        reason: decision.map_or_else(|| "selection disabled".to_string(), |decision| decision.reason.clone()),
         mode: worker.mode.clone(),
         model: worker.model.clone(),
     }
@@ -2820,7 +2806,7 @@ fn build_plan(
                 .join("reports")
                 .join(format!("{supervisor_id}.md")),
         },
-        workspace_mode: workspace_policy.mode.clone(),
+        workspace_mode: workspace_policy.mode,
     })
 }
 
@@ -3163,12 +3149,11 @@ fn acp_worker_air(request: &GoalStartArgs, worker: &WorkerPlan) -> Result<String
     let message = worker_message(request, worker)?;
     let route_auto = worker.agent_route.as_deref() == Some("auto");
     let mut preferred_profiles = worker.preferred_profiles.clone();
-    if route_auto {
-        if let Some(profile) = worker.profile.as_ref() {
+    if route_auto
+        && let Some(profile) = worker.profile.as_ref() {
             preferred_profiles.retain(|candidate| candidate != profile);
             preferred_profiles.insert(0, profile.clone());
         }
-    }
     let spawn_attrs = spawn_attrs(
         if route_auto {
             None
@@ -3575,7 +3560,7 @@ impl GoalPlan {
                 .map(|worker| WorkerPlanSummary {
                     id: worker.id.clone(),
                     role: worker.role.clone(),
-                    transport: worker.transport.clone(),
+                    transport: worker.transport,
                     profile: if worker.agent_route.as_deref() == Some("auto") {
                         None
                     } else {
@@ -3597,19 +3582,19 @@ impl GoalPlan {
                     depends_on: worker.depends_on.clone(),
                     cwd: worker.cwd.to_string_lossy().to_string(),
                     workspace: WorkspaceBindingSummary {
-                        mode: worker.workspace.mode.clone(),
+                        mode: worker.workspace.mode,
                         worktree_ref: worker.workspace.worktree_ref.clone(),
                         base_commit: worker.workspace.base_commit.clone(),
-                        cleanup: worker.workspace.cleanup.clone(),
+                        cleanup: worker.workspace.cleanup,
                     },
                 })
                 .collect(),
             supervisor: SupervisorPlanSummary {
                 id: self.supervisor.id.clone(),
-                transport: self.supervisor.transport.clone(),
+                transport: self.supervisor.transport,
                 profile: self.supervisor.profile.clone(),
             },
-            workspace_mode: self.workspace_mode.clone(),
+            workspace_mode: self.workspace_mode,
         }
     }
 }
@@ -3706,6 +3691,22 @@ fn goal_prompt() -> Result<String, ApiError> {
     )
 }
 
+fn goal_flowchart() -> Result<String, ApiError> {
+    render_goal_template(TEMPLATE_GOAL_FLOWCHART, &serde_json::json!({}))
+}
+
+fn quote_air(value: &str) -> String {
+    format!("\"{}\"", apxm_ais::chat::escape_air_string(value))
+}
+
+fn mcp_json_tool_result<T: serde::Serialize>(id: JsonValue, value: T) -> Json<JsonValue> {
+    let text = serde_json::to_string_pretty(&value).unwrap_or_else(|error| {
+        serde_json::json!({ "error": format!("failed to serialize MCP result: {error}") })
+            .to_string()
+    });
+    mcp_tool_result(id, text, false)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -3765,20 +3766,4 @@ mod tests {
             vec!["critic", "planner", "synthesizer"]
         );
     }
-}
-
-fn goal_flowchart() -> Result<String, ApiError> {
-    render_goal_template(TEMPLATE_GOAL_FLOWCHART, &serde_json::json!({}))
-}
-
-fn quote_air(value: &str) -> String {
-    format!("\"{}\"", apxm_ais::chat::escape_air_string(value))
-}
-
-fn mcp_json_tool_result<T: serde::Serialize>(id: JsonValue, value: T) -> Json<JsonValue> {
-    let text = serde_json::to_string_pretty(&value).unwrap_or_else(|error| {
-        serde_json::json!({ "error": format!("failed to serialize MCP result: {error}") })
-            .to_string()
-    });
-    mcp_tool_result(id, text, false)
 }

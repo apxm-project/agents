@@ -74,6 +74,7 @@ pub struct LLMRegistry {
     backend_providers: Arc<DashMap<String, ProviderProtocol>>,
     /// graph_id → (handles_peak, blocks_peak), populated by `start_pin_polling`
     /// and read by `pre_release_status_all`.
+    #[allow(clippy::type_complexity)]
     pin_peaks: Arc<DashMap<String, (Arc<AtomicU64>, Arc<AtomicU64>)>>,
 }
 
@@ -446,11 +447,10 @@ impl LLMRegistry {
                 prepared.model = Some(default_model);
             } else if let Some(ref backend_name) = prepared.backend {
                 // Per-provider builtin fallback
-                if let Some(provider) = self.backend_providers.get(backend_name) {
-                    if let Some(builtin) = default_model_for_protocol(*provider.value()) {
+                if let Some(provider) = self.backend_providers.get(backend_name)
+                    && let Some(builtin) = default_model_for_protocol(*provider.value()) {
                         prepared.model = Some(builtin.to_string());
                     }
-                }
             }
         }
 
@@ -503,7 +503,6 @@ impl LLMRegistry {
                                     fallback_name,
                                     fallback_err
                                 );
-                                continue;
                             }
                         }
                     }
@@ -770,9 +769,7 @@ impl LLMRegistry {
 
             Err(anyhow::anyhow!(
                 "All streaming backends failed for request: {}",
-                last_error
-                    .map(|error| error.to_string())
-                    .unwrap_or_else(|| "no backends available".to_string())
+                last_error.map_or_else(|| "no backends available".to_string(), |error| error.to_string())
             ))?;
             return;
         })
@@ -1014,7 +1011,7 @@ impl LLMRegistry {
 
         for (name, backend) in self.backend_snapshot() {
             let status = match backend.health_check().await {
-                Ok(_) => HealthStatus::Healthy,
+                Ok(()) => HealthStatus::Healthy,
                 Err(_) => HealthStatus::Unhealthy,
             };
 

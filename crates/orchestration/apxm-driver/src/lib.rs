@@ -23,6 +23,16 @@
 //!   └──────────┘          └──────────┘          └──────────┘
 //! ```
 
+#![allow(
+    clippy::assigning_clones,
+    clippy::cast_possible_wrap,
+    clippy::field_reassign_with_default,
+    clippy::format_push_string,
+    clippy::too_many_arguments,
+    clippy::unnecessary_sort_by,
+    clippy::unused_self,
+)]
+
 pub mod compiler;
 pub mod config;
 pub mod context_assembler;

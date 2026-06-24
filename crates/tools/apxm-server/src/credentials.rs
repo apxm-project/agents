@@ -71,9 +71,9 @@ impl CredentialResolver {
 
 /// Owner precedence: dispatch-context owner, else `APXM_AUTH_OWNER`, else `"default"`.
 fn resolve_owner(owner: Option<&str>) -> String {
-    owner.map(str::to_string).unwrap_or_else(|| {
+    owner.map_or_else(|| {
         std::env::var("APXM_AUTH_OWNER").unwrap_or_else(|_| "default".to_string())
-    })
+    }, str::to_string)
 }
 
 /// Read apxm-auth's per-run bearer (written 0600 by `apxm-auth serve`).
@@ -102,7 +102,7 @@ fn enc(seg: &str) -> String {
     for b in seg.bytes() {
         match b {
             b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'_' | b'.' | b'~' => {
-                out.push(b as char)
+                out.push(b as char);
             }
             _ => {
                 out.push('%');

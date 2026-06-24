@@ -494,8 +494,7 @@ impl ReferenceType {
     pub const fn list_command(self) -> &'static str {
         match self {
             Self::Profile => "apxm agent list",
-            Self::Backend => "apxm backend list",
-            Self::Model => "apxm backend list",
+            Self::Backend | Self::Model => "apxm backend list",
             Self::Capability => "apxm tool list",
         }
     }
@@ -519,10 +518,10 @@ pub struct MlirEmissionSpec {
     pub context_style: ContextStyle,
     /// MLIR result type.
     pub result_type: MlirResultType,
-    /// Positional attributes (e.g., ["recipient"] for COMMUNICATE).
+    /// Positional attributes (e.g., `recipient` for COMMUNICATE).
     pub positional_attrs: &'static [&'static str],
     /// Keyword arguments emitted as the trailing attr-dict
-    /// (e.g., ["profile", "mode"] → `{profile = "...", mode = "..."}`).
+    /// (e.g., `profile`, `mode` → `{profile = "...", mode = "..."}`).
     pub keywords: &'static [&'static str],
     /// Syntactic-keyword attributes that emit as `<keyword> "<value>"` between
     /// the primary attribute and the operand list (e.g., COMMUNICATE's
@@ -752,8 +751,6 @@ const EMISSION_VOID_NONE: MlirEmissionSpec = MlirEmissionSpec {
     keywords: &[],
     syntactic_keywords: &[],
 };
-
-/// Standard emission spec: Handle result, parenthesized context.
 
 // ============================================================================
 // Operation Registry
@@ -2232,8 +2229,7 @@ mod tests {
             let prefix = &source[..idx];
             let type_start = prefix
                 .rfind(|c: char| c.is_whitespace() || c == '(' || c == ',' || c == '<')
-                .map(|p| p + 1)
-                .unwrap_or(0);
+                .map_or(0, |p| p + 1);
             if !prefix[type_start..idx].contains("Attr") {
                 continue;
             }

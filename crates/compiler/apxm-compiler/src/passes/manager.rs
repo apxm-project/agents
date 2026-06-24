@@ -169,7 +169,7 @@ impl<'ctx> PassManager<'ctx> {
                 duration_ms: elapsed.as_secs_f64() * 1000.0,
                 ops_before: current_ops,
                 ops_after,
-                ops_delta: ops_after as isize - current_ops as isize,
+                ops_delta: ops_after.cast_signed() - current_ops.cast_signed(),
                 fired_count,
                 ir_size_delta,
                 tokens_saved,
@@ -198,9 +198,8 @@ impl<'ctx> PassManager<'ctx> {
 /// Returns `(fired_count, ir_size_delta)`; either component is 0 if the pass
 /// did not surface stats.
 fn drain_pass_stats(module: &Module, pass_name: &str) -> (usize, isize) {
-    let c_name = match CString::new(pass_name) {
-        Ok(s) => s,
-        Err(_) => return (0, 0),
+    let Ok(c_name) = CString::new(pass_name) else {
+        return (0, 0);
     };
     let mut fired: i64 = 0;
     let mut ir_delta: i64 = 0;
@@ -208,7 +207,7 @@ fn drain_pass_stats(module: &Module, pass_name: &str) -> (usize, isize) {
     // of the &Module borrow. The C side only reads + erases the two named
     // string-keyed attrs and writes to the two i64 out-params.
     unsafe {
-        apxm_module_drain_pass_stats(module.as_ptr(), c_name.as_ptr(), &mut fired, &mut ir_delta);
+        apxm_module_drain_pass_stats(module.as_ptr(), c_name.as_ptr(), &raw mut fired, &raw mut ir_delta);
     }
     (fired.max(0) as usize, ir_delta as isize)
 }
@@ -222,7 +221,7 @@ fn total_template_tokens(module: &Module) -> usize {
     // SAFETY: `module.as_ptr()` is a valid `*mut ApxmModule` for the lifetime
     // of the &Module borrow. The C side only walks ops and reads the
     // `ais.est_template_tokens` IntegerAttr; no IR mutation.
-    let rc = unsafe { apxm_module_total_template_tokens(module.as_ptr(), &mut total) };
+    let rc = unsafe { apxm_module_total_template_tokens(module.as_ptr(), &raw mut total) };
     if rc != 0 {
         return 0;
     }
@@ -251,7 +250,7 @@ fn count_module_ops(module: &Module) -> Result<usize> {
                 && *l != "{"
                 && *l != "})"
                 && *l != "}) {"
-                && !l.starts_with("#")
+                && !l.starts_with('#')
         })
         .filter(|l| {
             // Count lines that look like MLIR operations

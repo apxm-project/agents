@@ -80,10 +80,9 @@ pub async fn agent_command(action: AgentAction, json_output: bool) -> Result<()>
             let max_name = list.iter().map(|(n, _, _)| n.len()).max().unwrap_or(8);
             let max_source = sources::USER_PROFILE.len();
             println!(
-                "  {:<name_w$}  {:<src_w$}  {}",
+                "  {:<name_w$}  {:<src_w$}  COMMAND",
                 "AGENT",
                 "SOURCE",
-                "COMMAND",
                 name_w = max_name,
                 src_w = max_source,
             );
@@ -265,10 +264,9 @@ pub async fn agent_command(action: AgentAction, json_output: bool) -> Result<()>
             print_section_header("Built-in Agent Templates");
             let max_name = templates.iter().map(|(n, _)| n.len()).max().unwrap_or(8);
             println!(
-                "  {:<name_w$}  {:<8}  {}",
+                "  {:<name_w$}  {:<8}  COMMAND",
                 "TEMPLATE",
                 "TIMEOUT",
-                "COMMAND",
                 name_w = max_name,
             );
             for (name, profile) in &templates {

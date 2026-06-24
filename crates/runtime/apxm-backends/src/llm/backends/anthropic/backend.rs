@@ -142,9 +142,8 @@ impl AnthropicBackend {
     /// Convert a structured Message to Anthropic JSON format.
     fn message_to_anthropic_json(msg: &crate::llm::backends::Message) -> serde_json::Value {
         let role = match msg.role {
-            Role::User | Role::Tool => roles::USER,
+            Role::User | Role::Tool | Role::System => roles::USER,
             Role::Assistant => roles::ASSISTANT,
-            Role::System => roles::USER,
         };
 
         if msg.role == Role::Tool
@@ -255,7 +254,7 @@ impl AnthropicBackend {
     }
 
     /// Parse Anthropic API response.
-    fn parse_response(&self, response: AnthropicResponse, model: &str) -> Result<LLMResponse> {
+    fn parse_response(response: AnthropicResponse, model: &str) -> Result<LLMResponse> {
         let mut text_content = String::new();
         let mut tool_calls = Vec::new();
 
@@ -272,10 +271,10 @@ impl AnthropicBackend {
         }
 
         // Determine finish reason
-        let finish_reason = if !tool_calls.is_empty() {
-            FinishReason::ToolUse
-        } else {
+        let finish_reason = if tool_calls.is_empty() {
             FinishReason::from_string(&response.stop_reason)
+        } else {
+            FinishReason::ToolUse
         };
 
         let usage = TokenUsage::new(response.usage.input_tokens, response.usage.output_tokens);
@@ -332,7 +331,7 @@ impl LLMBackend for AnthropicBackend {
             .await
             .context("Failed to parse Anthropic response")?;
 
-        self.parse_response(api_response, &model)
+        Self::parse_response(api_response, &model)
     }
 
     fn generate_stream(
@@ -412,17 +411,15 @@ impl LLMBackend for AnthropicBackend {
 
                     match event_type.as_str() {
                         anthropic_events::MESSAGE_START => {
-                            if let Ok(payload) = serde_json::from_str::<MessageStartPayload>(&data_str) {
-                                if let Some(msg) = payload.message {
-                                    if let Some(usage) = msg.usage {
+                            if let Ok(payload) = serde_json::from_str::<MessageStartPayload>(&data_str)
+                                && let Some(msg) = payload.message
+                                    && let Some(usage) = msg.usage {
                                         input_tokens = usage.input_tokens as usize;
                                     }
-                                }
-                            }
                         }
                         anthropic_events::CONTENT_BLOCK_START => {
-                            if let Ok(payload) = serde_json::from_str::<ContentBlockStartPayload>(&data_str) {
-                                if let Some(block) = payload.content_block {
+                            if let Ok(payload) = serde_json::from_str::<ContentBlockStartPayload>(&data_str)
+                                && let Some(block) = payload.content_block {
                                     match block {
                                         StreamContentBlock::ToolUse { id, name } => {
                                             current_tool_id = id;
@@ -434,51 +431,45 @@ impl LLMBackend for AnthropicBackend {
                                             };
                                         }
                                         StreamContentBlock::Thinking { thinking } => {
-                                            if let Some(text) = thinking {
-                                                if !text.is_empty() {
+                                            if let Some(text) = thinking
+                                                && !text.is_empty() {
                                                     yield StreamChunk::Thought(text);
                                                 }
-                                            }
                                         }
                                         _ => {}
                                     }
                                 }
-                            }
                         }
                         anthropic_events::CONTENT_BLOCK_DELTA => {
-                            if let Ok(payload) = serde_json::from_str::<ContentBlockDeltaPayload>(&data_str) {
-                                if let Some(delta) = payload.delta {
+                            if let Ok(payload) = serde_json::from_str::<ContentBlockDeltaPayload>(&data_str)
+                                && let Some(delta) = payload.delta {
                                     match delta {
                                         StreamDelta::TextDelta { text } => {
-                                            if let Some(text) = text {
-                                                if !text.is_empty() {
+                                            if let Some(text) = text
+                                                && !text.is_empty() {
                                                     full_content.push_str(&text);
                                                     yield StreamChunk::Token(text);
                                                 }
-                                            }
                                         }
                                         StreamDelta::InputJsonDelta { partial_json } => {
-                                            if let Some(partial) = partial_json {
-                                                if !partial.is_empty() {
+                                            if let Some(partial) = partial_json
+                                                && !partial.is_empty() {
                                                     current_tool_input.push_str(&partial);
                                                     yield StreamChunk::ToolCallDelta {
                                                         id: current_tool_id.clone(),
                                                         arguments_delta: partial,
                                                     };
                                                 }
-                                            }
                                         }
                                         StreamDelta::ThinkingDelta { thinking } => {
-                                            if let Some(text) = thinking {
-                                                if !text.is_empty() {
+                                            if let Some(text) = thinking
+                                                && !text.is_empty() {
                                                     yield StreamChunk::Thought(text);
                                                 }
-                                            }
                                         }
                                         StreamDelta::Other => {}
                                     }
                                 }
-                            }
                         }
                         anthropic_events::CONTENT_BLOCK_STOP => {
                             if !current_tool_id.is_empty() {
@@ -495,17 +486,16 @@ impl LLMBackend for AnthropicBackend {
                             }
                         }
                         anthropic_events::MESSAGE_DELTA => {
-                            if let Ok(payload) = serde_json::from_str::<MessageDeltaPayload>(&data_str) {
-                                if let Some(usage) = payload.usage {
+                            if let Ok(payload) = serde_json::from_str::<MessageDeltaPayload>(&data_str)
+                                && let Some(usage) = payload.usage {
                                     output_tokens = usage.output_tokens as usize;
                                 }
-                            }
                         }
                         anthropic_events::MESSAGE_STOP => {
-                            let finish_reason = if !tool_calls.is_empty() {
-                                FinishReason::ToolUse
-                            } else {
+                            let finish_reason = if tool_calls.is_empty() {
                                 FinishReason::Stop
+                            } else {
+                                FinishReason::ToolUse
                             };
 
                             let usage = TokenUsage::new(input_tokens, output_tokens);

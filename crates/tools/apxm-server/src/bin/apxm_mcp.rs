@@ -69,9 +69,8 @@ fn main() {
     let mut stdout = io::stdout();
 
     for line in stdin.lock().lines() {
-        let line = match line {
-            Ok(l) => l,
-            Err(_) => break,
+        let Ok(line) = line else {
+            break;
         };
         let line = line.trim().to_string();
         if line.is_empty() {
@@ -164,9 +163,7 @@ fn handle_initialize() -> Result<Value, Value> {
 }
 
 fn raw_execute_enabled() -> bool {
-    std::env::var(RAW_EXECUTE_ENV)
-        .ok()
-        .is_some_and(|value| matches!(value.as_str(), "1" | "true" | "TRUE" | "yes" | "YES"))
+    std::env::var(RAW_EXECUTE_ENV).is_ok_and(|value| matches!(value.as_str(), "1" | "true" | "TRUE" | "yes" | "YES"))
 }
 
 fn handle_tools_list(raw_execute_enabled: bool) -> Result<Value, Value> {
@@ -501,8 +498,8 @@ fn tool_compile(args: Value) -> Result<String, String> {
         .to_bytes()
         .map_err(|e| format!("artifact encode failed: {e}"))?;
     let dag = artifact.entry_dag();
-    let node_count = dag.map(|d| d.nodes.len()).unwrap_or(0);
-    let edge_count = dag.map(|d| d.edges.len()).unwrap_or(0);
+    let node_count = dag.map_or(0, |d| d.nodes.len());
+    let edge_count = dag.map_or(0, |d| d.edges.len());
     let workflow_name = dag
         .and_then(|d| d.metadata.name.as_deref())
         .unwrap_or("artifact");
@@ -708,7 +705,7 @@ fn tool_analyze(args: Value) -> Result<String, String> {
     let mut phases: Vec<Vec<u64>> = Vec::new();
     let mut remaining_in: HashMap<u64, usize> = in_degree.clone();
     let mut current_layer: Vec<u64> = entry_nodes.clone();
-    current_layer.sort();
+    current_layer.sort_unstable();
 
     while !current_layer.is_empty() {
         phases.push(current_layer.clone());
@@ -725,7 +722,7 @@ fn tool_analyze(args: Value) -> Result<String, String> {
                 }
             }
         }
-        next_layer.sort();
+        next_layer.sort_unstable();
         next_layer.dedup();
         current_layer = next_layer;
     }
@@ -795,9 +792,7 @@ fn tool_analyze(args: Value) -> Result<String, String> {
                 .iter()
                 .map(|&id| {
                     let node = graph.nodes.iter().find(|n| n.id == id);
-                    let op = node
-                        .map(|n| n.op_type.to_string())
-                        .unwrap_or_else(|| "?".to_string());
+                    let op = node.map_or_else(|| "?".to_string(), |n| n.op_type.to_string());
                     let name = node.and_then(|n| n.metadata.name.as_deref()).unwrap_or("?");
                     json!({
                         (tool_result::ID): id,
@@ -849,7 +844,7 @@ fn tool_analyze(args: Value) -> Result<String, String> {
             (tool_result::PARALLEL_MS): parallel_latency,
             (tool_result::ESTIMATED_SPEEDUP): format!("{:.2}x", speedup),
         },
-        (tool_result::SUGGESTIONS): build_suggestions(&phases, max_parallelism, speedup, &critical_path, &graph),
+        (tool_result::SUGGESTIONS): build_suggestions(&phases, max_parallelism, speedup, &critical_path, graph),
     });
 
     Ok(serde_json::to_string_pretty(&result).unwrap())
@@ -893,7 +888,7 @@ fn build_suggestions(
                 .nodes
                 .iter()
                 .find(|n| n.id == id)
-                .map(|n| {
+                .map_or(100, |n| {
                     for spec in AIS_OPERATIONS {
                         if spec.op_type == n.op_type {
                             return operation_latency_estimate_ms(spec.latency);
@@ -901,7 +896,6 @@ fn build_suggestions(
                     }
                     100
                 })
-                .unwrap_or(100)
         });
         if let Some(&bn) = bottleneck
             && let Some(node) = graph.nodes.iter().find(|n| n.id == bn)

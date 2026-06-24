@@ -64,7 +64,7 @@ pub async fn execute(ctx: &ExecutionContext, node: &Node, inputs: Vec<Value>) ->
     // Record switch decision in AAM
     let label = crate::aam::TransitionLabel::operation(node.id, node.op_type);
     let match_desc = matched_index
-        .map(|i| format!("case[{}]:{}", i, &discriminant_value))
+        .map(|i| format!("case[{}]:{}", i, discriminant_value))
         .unwrap_or_else(|| "default".to_string());
     ctx.aam.set_belief(
         format!(

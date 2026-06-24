@@ -47,8 +47,7 @@ fn require_api_key<'a>(name: &str, backend: &'a BackendConfig) -> Result<&'a str
 }
 
 fn validation_err(name: &str, reason: impl Into<String>) -> BackendError {
-    BackendError::Io(std::io::Error::new(
-        std::io::ErrorKind::Other,
+    BackendError::Io(std::io::Error::other(
         format!("Backend '{}': {}", name, reason.into()),
     ))
 }
@@ -82,11 +81,9 @@ async fn validate_openai(
     // that don't expose /v1/models but do serve /chat/completions).
     let model = backend
         .models
-        .first()
-        .map(|m| m.id.as_str())
-        .unwrap_or_else(|| {
+        .first().map_or_else(|| {
             default_model_for_protocol(ProviderProtocol::OpenAI).unwrap_or("gpt-4o-mini")
-        });
+        }, |m| m.id.as_str());
     let chat_url = format!("{base}/chat/completions");
     let mut req = client
         .post(&chat_url)
@@ -124,12 +121,10 @@ async fn validate_anthropic(
     // Use first registered model; fall back to a known Anthropic default.
     let model = backend
         .models
-        .first()
-        .map(|m| m.id.as_str())
-        .unwrap_or_else(|| {
+        .first().map_or_else(|| {
             default_model_for_protocol(ProviderProtocol::Anthropic)
                 .unwrap_or("claude-3-haiku-20240307")
-        });
+        }, |m| m.id.as_str());
 
     let body = format!(
         "{{\"model\":\"{}\",\"max_tokens\":1,\"messages\":[{{\"role\":\"user\",\"content\":\"hi\"}}]}}",

@@ -52,6 +52,7 @@ impl std::fmt::Display for OptimizationLevel {
 /// Optimization target for compilation - what to optimize for
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
+#[derive(Default)]
 pub enum OptimizationTarget {
     /// Minimize end-to-end latency using production-safe scheduling hints
     Latency,
@@ -62,14 +63,10 @@ pub enum OptimizationTarget {
     /// Maximize parallel execution (aggressive scheduling)
     Parallelism,
     /// Balanced optimization (default)
+    #[default]
     Balanced,
 }
 
-impl Default for OptimizationTarget {
-    fn default() -> Self {
-        Self::Balanced
-    }
-}
 
 impl std::str::FromStr for OptimizationTarget {
     type Err = RuntimeError;

@@ -78,8 +78,8 @@ pub fn tool_binding_check(
     // Collect all registered capability names from REGISTER_CAPABILITY nodes.
     let mut registered: HashMap<String, Vec<String>> = HashMap::new();
     for node in &module.nodes {
-        if node.op == AISOperationType::RegisterCapability {
-            if let Some(name) = node
+        if node.op == AISOperationType::RegisterCapability
+            && let Some(name) = node
                 .attributes
                 .get(attrs::CAPABILITY_NAME)
                 .and_then(|v| v.as_str())
@@ -89,14 +89,13 @@ pub fn tool_binding_check(
                     .or_default()
                     .push(node.name.clone());
             }
-        }
     }
 
     // Collect all invoked capability names from INV_TOOL nodes and ASK tool lists.
     let mut invoked: HashSet<String> = HashSet::new();
     for node in &module.nodes {
-        if node.op == AISOperationType::InvTool {
-            if let Some(cap) = node
+        if node.op == AISOperationType::InvTool
+            && let Some(cap) = node
                 .attributes
                 .get(attrs::CAPABILITY)
                 .and_then(|v| v.as_str())
@@ -119,7 +118,6 @@ pub fn tool_binding_check(
                     });
                 }
             }
-        }
         if node.op == AISOperationType::Ask
             && let Some(tools) = node.attributes.get(attrs::TOOLS).and_then(|v| v.as_array())
         {
@@ -133,13 +131,12 @@ pub fn tool_binding_check(
 
     // E713: validate python_handler_id format on REGISTER_CAPABILITY nodes.
     for node in &module.nodes {
-        if node.op == AISOperationType::RegisterCapability {
-            if let Some(handler_id) = node
+        if node.op == AISOperationType::RegisterCapability
+            && let Some(handler_id) = node
                 .attributes
                 .get(attrs::PYTHON_HANDLER_ID)
                 .and_then(|v| v.as_str())
-            {
-                if !is_valid_handler_id(handler_id) {
+                && !is_valid_handler_id(handler_id) {
                     errors.push(ToolBindingDiagnostic {
                         code: ErrorCode::InvalidHandlerId,
                         message: format!(
@@ -150,8 +147,6 @@ pub fn tool_binding_check(
                         node_name: node.name.clone(),
                     });
                 }
-            }
-        }
     }
 
     // W721: warn on REGISTER_CAPABILITY whose name is never invoked.
@@ -234,8 +229,8 @@ pub fn tool_binding_check_dag(
     // Collect all registered capability names from REGISTER_CAPABILITY nodes.
     let mut registered: HashMap<String, Vec<String>> = HashMap::new();
     for node in &dag.nodes {
-        if node.op_type == AISOperationType::RegisterCapability {
-            if let Some(name) = node
+        if node.op_type == AISOperationType::RegisterCapability
+            && let Some(name) = node
                 .attributes
                 .get(attrs::CAPABILITY_NAME)
                 .and_then(|v| v.as_str())
@@ -245,14 +240,13 @@ pub fn tool_binding_check_dag(
                     .or_default()
                     .push(format!("#{}", node.id));
             }
-        }
     }
 
     // Collect all invoked capability names from INV_TOOL nodes and ASK tool lists.
     let mut invoked: HashSet<String> = HashSet::new();
     for node in &dag.nodes {
-        if node.op_type == AISOperationType::InvTool {
-            if let Some(cap) = node
+        if node.op_type == AISOperationType::InvTool
+            && let Some(cap) = node
                 .attributes
                 .get(attrs::CAPABILITY)
                 .and_then(|v| v.as_str())
@@ -281,7 +275,6 @@ pub fn tool_binding_check_dag(
                     });
                 }
             }
-        }
         if node.op_type == AISOperationType::Ask
             && let Some(tools) = node.attributes.get(attrs::TOOLS).and_then(|v| v.as_array())
         {
@@ -295,13 +288,12 @@ pub fn tool_binding_check_dag(
 
     // E713: validate python_handler_id format on REGISTER_CAPABILITY nodes.
     for node in &dag.nodes {
-        if node.op_type == AISOperationType::RegisterCapability {
-            if let Some(handler_id) = node
+        if node.op_type == AISOperationType::RegisterCapability
+            && let Some(handler_id) = node
                 .attributes
                 .get(attrs::PYTHON_HANDLER_ID)
                 .and_then(|v| v.as_str())
-            {
-                if !is_valid_handler_id(handler_id) {
+                && !is_valid_handler_id(handler_id) {
                     errors.push(ToolBindingDiagnostic {
                         code: ErrorCode::InvalidHandlerId,
                         message: format!(
@@ -312,8 +304,6 @@ pub fn tool_binding_check_dag(
                         node_name: format!("#{}", node.id),
                     });
                 }
-            }
-        }
     }
 
     // W721: warn on REGISTER_CAPABILITY whose name is never invoked.

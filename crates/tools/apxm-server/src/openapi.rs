@@ -1,7 +1,7 @@
 //! OpenAPI export for the session + permission surface and the run-history surface.
 //!
 //! Wire shapes are derived from server types via `utoipa`; CI diff-tests the
-//! export against `specs/0002-apxm-chat-thin-clients/contracts/openapi-session-v1.yaml`.
+//! export against `contracts/session-api.yaml`.
 //!
 //! # Route inventory
 //!

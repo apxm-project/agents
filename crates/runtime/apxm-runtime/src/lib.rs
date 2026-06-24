@@ -22,6 +22,35 @@
 //! }
 //! ```
 
+#![allow(
+    clippy::assigning_clones,
+    clippy::cast_possible_wrap,
+    clippy::collapsible_if,
+    clippy::elidable_lifetime_names,
+    clippy::explicit_iter_loop,
+    clippy::format_push_string,
+    clippy::if_not_else,
+    clippy::ignored_unit_patterns,
+    clippy::implicit_clone,
+    clippy::manual_let_else,
+    clippy::map_unwrap_or,
+    clippy::match_same_arms,
+    clippy::needless_borrow,
+    clippy::needless_continue,
+    clippy::needless_return,
+    clippy::non_std_lazy_statics,
+    clippy::redundant_else,
+    clippy::ref_option,
+    clippy::semicolon_if_nothing_returned,
+    clippy::single_char_add_str,
+    clippy::too_many_arguments,
+    clippy::unnecessary_literal_bound,
+    clippy::unused_async,
+    clippy::unused_async_trait_impl,
+    clippy::unused_self,
+    clippy::unwrap_or_default,
+)]
+
 pub mod aam;
 pub mod agent_pool;
 pub mod agent_router;

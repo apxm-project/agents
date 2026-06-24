@@ -136,6 +136,7 @@ async fn host_mem_read(
 ///   - no emitter → a hook's own LLM call (e.g. compaction's summarize) never
 ///     leaks tokens into the USER's reply stream;
 ///   - no nested hooks → no `pre_ask → llm → pre_ask` re-entrancy.
+///
 /// Routes through the ModelRouter when present (circuit breakers + policy).
 async fn host_llm_ask(
     ctx: &ExecutionContext,

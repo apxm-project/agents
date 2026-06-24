@@ -1,10 +1,10 @@
 openapi: 3.0.3
 info:
-  title: APXM Session API (contract snapshot — 0002)
+  title: APXM Session API
   version: 0.1.0-draft
   description: |
-    Draft contract for spec 0002. Generated from apxm-server types at implementation;
-    this file is the CI diff-test baseline. See review §7 session model.
+    CI diff-test baseline for the session/permission surface. Generated from
+    apxm-server types via utoipa; keep in sync with `openapi.rs` exports.
 paths:
   /v1/sessions/{session_id}/status:
     get:

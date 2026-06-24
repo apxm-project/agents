@@ -132,7 +132,7 @@ impl<'ctx> Pipeline<'ctx> {
         unsafe {
             crate::ffi::apxm_module_strip_all_pass_stats(module.as_ptr());
         }
-        self.strip_transient_module_config(&module)?;
+        Self::strip_transient_module_config(&module)?;
 
         if self.config.verify {
             module.verify()?;
@@ -163,7 +163,7 @@ impl<'ctx> Pipeline<'ctx> {
             .filter(|n| crate::passes::is_mlir_pass(n))
             .collect();
         let diagnostics = pm.run_with_metrics(&module, &pass_names)?;
-        self.strip_transient_module_config(&module)?;
+        Self::strip_transient_module_config(&module)?;
 
         if self.config.verify {
             module.verify()?;
@@ -194,8 +194,7 @@ impl<'ctx> Pipeline<'ctx> {
                 .iter()
                 .position(|name| name == DEAD_CONTEXT_ELIMINATION.name)
                 .or_else(|| pass_names.iter().position(|name| name == BUILD_PROMPT.name))
-                .map(|index| index + 1)
-                .unwrap_or(pass_names.len());
+                .map_or(pass_names.len(), |index| index + 1);
             pass_names.insert(insert_at, dspy_name.to_string());
         }
 
@@ -255,7 +254,7 @@ impl<'ctx> Pipeline<'ctx> {
         Ok(())
     }
 
-    fn strip_transient_module_config(&self, module: &Module) -> Result<()> {
+    fn strip_transient_module_config(module: &Module) -> Result<()> {
         use apxm_core::constants::dspy;
 
         for attr in [

@@ -135,13 +135,13 @@ impl ExecutionProfile {
                 node.attributes.insert(
                     graph_attrs::PROFILE_LATENCY_MS.to_string(),
                     Value::Number(apxm_core::types::Number::Integer(
-                        stats.avg_latency_ms as i64,
+                        stats.avg_latency_ms.cast_signed(),
                     )),
                 );
                 node.attributes.insert(
                     graph_attrs::PROFILE_P99_LATENCY_MS.to_string(),
                     Value::Number(apxm_core::types::Number::Integer(
-                        stats.p99_latency_ms as i64,
+                        stats.p99_latency_ms.cast_signed(),
                     )),
                 );
 
@@ -154,7 +154,7 @@ impl ExecutionProfile {
                 // Token usage annotation
                 node.attributes.insert(
                     graph_attrs::PROFILE_AVG_TOKENS.to_string(),
-                    Value::Number(apxm_core::types::Number::Integer(stats.avg_tokens as i64)),
+                    Value::Number(apxm_core::types::Number::Integer(stats.avg_tokens.cast_signed())),
                 );
 
                 // Inject retry_count for high-error-rate nodes
@@ -168,8 +168,8 @@ impl ExecutionProfile {
                 }
 
                 // Token budget warning
-                if let Some(budget) = token_budget {
-                    if stats.avg_tokens > budget {
+                if let Some(budget) = token_budget
+                    && stats.avg_tokens > budget {
                         node.attributes.insert(
                             graph_attrs::PROFILE_TOKEN_WARNING.to_string(),
                             Value::String(format!(
@@ -178,7 +178,6 @@ impl ExecutionProfile {
                             )),
                         );
                     }
-                }
 
                 annotated += 1;
             }

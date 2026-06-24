@@ -273,14 +273,13 @@ impl ExecutionIndex {
         let mut loaded = 0;
         let dir_path = dir.to_path_buf();
         for (id, entry) in &on_disk {
-            if let Some(side) = sidecar.get(id) {
-                if side.started_at_ms == entry.started_at_ms
+            if let Some(side) = sidecar.get(id)
+                && side.started_at_ms == entry.started_at_ms
                     && side.status == entry.status
                     && side.finished_at_ms == entry.finished_at_ms
                 {
                     // Sidecar agrees; nothing to do beyond inserting.
                 }
-            }
             {
                 let mut inner = self.inner.lock().expect("execution index poisoned");
                 inner.insert(id.clone(), entry.clone());
@@ -295,12 +294,11 @@ impl ExecutionIndex {
             || on_disk.iter().any(|(id, entry)| {
                 sidecar
                     .get(id)
-                    .map(|s| {
+                    .is_none_or(|s| {
                         s.started_at_ms != entry.started_at_ms
                             || s.status != entry.status
                             || s.finished_at_ms != entry.finished_at_ms
                     })
-                    .unwrap_or(true)
             });
         if needs_rewrite {
             let snapshot: HashMap<String, SidecarEntry> = on_disk

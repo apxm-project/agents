@@ -755,10 +755,10 @@ fn project_aam_context(ctx: &ExecutionContext, node_id: u64, profile: &str) -> A
     let capabilities: Vec<CapabilityProjection> = ctx
         .aam
         .capabilities()
-        .into_iter()
-        .map(|(_, rec)| CapabilityProjection {
-            name: rec.name,
-            description: rec.description,
+        .values()
+        .map(|rec| CapabilityProjection {
+            name: rec.name.clone(),
+            description: rec.description.clone(),
         })
         .collect();
 

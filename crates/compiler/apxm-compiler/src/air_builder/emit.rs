@@ -4,6 +4,7 @@ use apxm_core::constants::mlir::types as mlir_types;
 use apxm_core::types::AISOperationType;
 use apxm_core::types::{Number, Value};
 use std::collections::{BTreeSet, HashMap};
+use std::fmt::Write;
 
 /// The AIS value types. The emitter currently produces only `Token`-typed SSA
 /// values; `Handle`/`Goal` complete the model and are rendered by `format_type`
@@ -51,8 +52,8 @@ fn node_uses_flow_params(node: &AirNode, params: &[AirParam]) -> bool {
     }
 
     for attr_name in graph_attrs::TEMPLATE_BEARING_ATTRS {
-        if let Some(value) = node.attributes.get(*attr_name) {
-            if let Some(text) = value.as_str() {
+        if let Some(value) = node.attributes.get(*attr_name)
+            && let Some(text) = value.as_str() {
                 for param in params {
                     let pattern = format!("{{{{{}}}}}", param.name);
                     if text.contains(&pattern) {
@@ -60,7 +61,6 @@ fn node_uses_flow_params(node: &AirNode, params: &[AirParam]) -> bool {
                     }
                 }
             }
-        }
     }
 
     false
@@ -117,8 +117,7 @@ pub fn emit_air(module: &AirModule) -> Result<String, AirError> {
                 produced_values.get(source_id).cloned().ok_or_else(|| {
                     let source_name = nodes_by_id
                         .get(source_id)
-                        .map(|n| n.name.as_str())
-                        .unwrap_or("unknown");
+                        .map_or("unknown", |n| n.name.as_str());
                     AirError::Emission(format!(
                         "emission failed for node '{}' (id={}, op={}): \
                          references source '{}' (id={}) with no produced SSA value.",
@@ -228,10 +227,11 @@ pub fn emit_air(module: &AirModule) -> Result<String, AirError> {
 
     let mut mlir = String::new();
     mlir.push_str("module {\n");
-    mlir.push_str(&format!(
-        "  func.func @{}({}) -> !ais.token{} {{\n",
+    let _ = writeln!(
+        mlir,
+        "  func.func @{}({}) -> !ais.token{} {{",
         function_name, args, function_attrs
-    ));
+    );
     for line in state.lines {
         mlir.push_str(&line);
         mlir.push('\n');
@@ -1181,7 +1181,7 @@ fn format_context(values: &[MlirValueRef], open: char, close: char) -> String {
         .join(", ");
     let types = values
         .iter()
-        .map(|value| format_type(&value.ty).to_string())
+        .map(|value| format_type(&value.ty).clone())
         .collect::<Vec<_>>()
         .join(", ");
     format!(" {open}{operands} : {types}{close}")

@@ -374,7 +374,7 @@ impl BinaryWriter {
     }
 
     fn write_bool(&mut self, v: bool) {
-        self.write_u8(if v { 1 } else { 0 });
+        self.write_u8(u8::from(v));
     }
 
     fn write_u32(&mut self, v: u32) {

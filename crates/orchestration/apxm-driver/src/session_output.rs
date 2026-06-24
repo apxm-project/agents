@@ -47,7 +47,7 @@ pub struct SessionProvenance {
 /// Serialize to pretty JSON and write to a file.
 fn json_pretty_write(path: &Path, value: &(impl serde::Serialize + ?Sized)) -> io::Result<()> {
     let json =
-        serde_json::to_string_pretty(value).map_err(|e| io::Error::new(io::ErrorKind::Other, e))?;
+        serde_json::to_string_pretty(value).map_err(io::Error::other)?;
     fs::write(path, json)
 }
 
@@ -273,7 +273,7 @@ impl SessionOutputWriter {
         let mut file = BufWriter::new(fs::File::create(&path)?);
         for entry in entries {
             let line = serde_json::to_string(entry)
-                .map_err(|e| io::Error::new(io::ErrorKind::Other, e))?;
+                .map_err(io::Error::other)?;
             writeln!(file, "{}", line)?;
         }
         file.flush()?;
@@ -451,7 +451,7 @@ impl FileEventSink {
     /// Write a single event as one JSON line.
     pub fn write_event(&mut self, event: &ApxmEvent) -> io::Result<()> {
         let line =
-            serde_json::to_string(event).map_err(|e| io::Error::new(io::ErrorKind::Other, e))?;
+            serde_json::to_string(event).map_err(io::Error::other)?;
         writeln!(self.writer, "{}", line)
     }
 
@@ -570,11 +570,10 @@ impl SessionEventEmitter {
 
     /// Update the memory system reference in the context assembler
     pub fn set_memory(&self, memory: Arc<apxm_runtime::memory::MemorySystem>) {
-        if let Some(mut assembler_opt) = self.context_assembler.try_lock() {
-            if let Some(assembler) = assembler_opt.take() {
+        if let Some(mut assembler_opt) = self.context_assembler.try_lock()
+            && let Some(assembler) = assembler_opt.take() {
                 *assembler_opt = Some(assembler.with_memory(memory));
             }
-        }
     }
 
     fn node_workspace_dir(&self, node_id: u64) -> Option<PathBuf> {
@@ -691,8 +690,8 @@ impl SessionEventEmitter {
             }
         }
 
-        if let Some(assembler) = self.context_assembler.lock().as_ref() {
-            if let Some(profile) = meta
+        if let Some(assembler) = self.context_assembler.lock().as_ref()
+            && let Some(profile) = meta
                 .attributes
                 .get(constants::graph::attrs::PROFILE)
                 .and_then(|v| v.as_str())
@@ -715,7 +714,6 @@ impl SessionEventEmitter {
                     _ => {}
                 }
             }
-        }
     }
 
     fn write_live(&self, current_node_id: Option<u64>) -> io::Result<()> {

@@ -640,7 +640,7 @@ pub(crate) async fn execute_stream(
             // Cancellation wins: dropping `execution` aborts the in-flight
             // model/tool call at its await point. Emit `turn_aborted` in place
             // of `execute_complete`.
-            _ = cancel.notified() => {
+            () = cancel.notified() => {
                 cancellation_token.cancel();
                 if raw_record.is_some() {
                     execution_store.complete_failure(&execution_id, "cancelled".to_string());
@@ -1038,7 +1038,7 @@ pub(crate) fn air_to_artifact_bytes_with_caps(
     let pipeline =
         CompilerPipeline::with_opt_level(&context, apxm_core::types::OptimizationLevel::O1);
     let module = pipeline
-        .compile(&air_text)
+        .compile(air_text)
         .map_err(|error| ApiError::bad_request(format!("failed to compile AIR: {error}")))?;
     module
         .generate_artifact_bytes_with_known_caps(known_caps)
@@ -1133,7 +1133,7 @@ pub(crate) fn validate_raw_execute_admission(
 
             match node.op_type {
                 AISOperationType::InvTool => {
-                    validate_raw_inv_tool_node(node, state, admit, &in_artifact_caps)?
+                    validate_raw_inv_tool_node(node, state, admit, &in_artifact_caps)?;
                 }
                 AISOperationType::Ask | AISOperationType::Think | AISOperationType::Reason => {
                     validate_raw_llm_tool_exposure(node, state, &in_artifact_caps)?;
@@ -1143,8 +1143,7 @@ pub(crate) fn validate_raw_execute_admission(
                         .attributes
                         .get(graph_attrs::AGENT_NAME)
                         .and_then(|v| v.as_string())
-                        .map(|name| in_artifact_agents.contains(name.as_str()))
-                        .unwrap_or(false);
+                        .is_some_and(|name| in_artifact_agents.contains(name.as_str()));
                     if !self_contained {
                         validate_raw_spawn_op_admission(ADMIT_SPAWN_AGENT, node, admit)?;
                     }
@@ -1351,8 +1350,7 @@ pub(crate) async fn inject_resolved_credentials(
     owner: Option<&str>,
 ) -> Result<(), ApiError> {
     let enabled = std::env::var("APXM_RESOLVE_CREDENTIALS")
-        .map(|v| !v.is_empty() && v != "0")
-        .unwrap_or(false);
+        .is_ok_and(|v| !v.is_empty() && v != "0");
     if !enabled {
         return Ok(());
     }
@@ -1365,8 +1363,7 @@ pub(crate) async fn inject_resolved_credentials(
             let Some(pj) = node
                 .attributes
                 .get(graph_attrs::PARAMS_JSON)
-                .and_then(|v| v.as_string())
-                .map(|s| s.to_string())
+                .and_then(|v| v.as_string()).cloned()
             else {
                 continue;
             };

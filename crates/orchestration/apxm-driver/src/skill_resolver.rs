@@ -65,23 +65,20 @@ impl SkillResolver {
     ) -> Vec<PathBuf> {
         let mut resolved = Vec::new();
 
-        if op_type == AISOperationType::SpawnAgent {
-            if let Some(profile) = string_attr(attributes, graph_attrs::PROFILE) {
+        if op_type == AISOperationType::SpawnAgent
+            && let Some(profile) = string_attr(attributes, graph_attrs::PROFILE) {
                 self.push_skill(&mut resolved, profile);
             }
-        }
 
-        if op_type == AISOperationType::Communicate {
-            if let Some(recipient) = string_attr(attributes, graph_attrs::RECIPIENT) {
+        if op_type == AISOperationType::Communicate
+            && let Some(recipient) = string_attr(attributes, graph_attrs::RECIPIENT) {
                 self.push_skill(&mut resolved, recipient);
             }
-        }
 
-        if op_type == AISOperationType::InvTool {
-            if let Some(capability) = string_attr(attributes, graph_attrs::CAPABILITY) {
+        if op_type == AISOperationType::InvTool
+            && let Some(capability) = string_attr(attributes, graph_attrs::CAPABILITY) {
                 self.push_skill(&mut resolved, capability);
             }
-        }
 
         self.push_skill(&mut resolved, &op_type_key(op_type));
         resolved

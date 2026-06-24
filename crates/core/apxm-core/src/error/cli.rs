@@ -65,10 +65,8 @@ impl CliError {
         match self {
             CliError::InputNotFound { .. } => 66, // EX_NOINPUT
             CliError::OutputWrite { .. } => 73,   // EX_CANTCREAT
-            CliError::Compilation { .. } => 1,    // General error
-            CliError::Compiler { .. } => 1,       // General error
+            CliError::Compilation { .. } | CliError::Compiler { .. } | CliError::Runtime { .. } => 1,
             CliError::Config { .. } => 78,        // EX_CONFIG
-            CliError::Runtime { .. } => 1,        // General error
             CliError::UnknownPass { .. } => 64,   // EX_USAGE
             CliError::Io(_) => 74,                // EX_IOERR
             CliError::Json(_) => 65,              // EX_DATAERR

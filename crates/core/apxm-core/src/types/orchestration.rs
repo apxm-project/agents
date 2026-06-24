@@ -83,8 +83,10 @@ impl std::error::Error for UnknownOrchestrationTransport {}
 /// Workspace allocation policy for native goal workers.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
+#[derive(Default)]
 pub enum OrchestrationWorkspaceMode {
     /// Allocate APXM-owned session directories.
+    #[default]
     Session,
     /// Reuse the supplied/current repository directory.
     Shared,
@@ -108,11 +110,6 @@ impl OrchestrationWorkspaceMode {
     }
 }
 
-impl Default for OrchestrationWorkspaceMode {
-    fn default() -> Self {
-        Self::Session
-    }
-}
 
 impl fmt::Display for OrchestrationWorkspaceMode {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -147,8 +144,10 @@ impl std::error::Error for UnknownOrchestrationWorkspaceMode {}
 /// Cleanup policy for generated goal workspaces.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
+#[derive(Default)]
 pub enum OrchestrationWorkspaceCleanup {
     /// Keep artifacts/workspaces for review.
+    #[default]
     Keep,
 }
 
@@ -162,11 +161,6 @@ impl OrchestrationWorkspaceCleanup {
     }
 }
 
-impl Default for OrchestrationWorkspaceCleanup {
-    fn default() -> Self {
-        Self::Keep
-    }
-}
 
 impl fmt::Display for OrchestrationWorkspaceCleanup {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {

@@ -290,7 +290,7 @@ impl AgentRouter {
                         .to_string(),
                 });
                 continue;
-            };
+            }
             let eligible_profiles = eligible
                 .iter()
                 .map(|candidate| candidate.profile.clone())

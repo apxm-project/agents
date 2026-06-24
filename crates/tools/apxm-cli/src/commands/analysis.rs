@@ -22,12 +22,7 @@ pub fn validate_command(
     let mut errors: Vec<String> = Vec::new();
     let mut warnings: Vec<String> = Vec::new();
 
-    if !ApxmPathFormat::from_path(&input).is_air_source() {
-        errors.push(
-            "workflow source must be canonical .air; JSON is reserved for structured data outputs"
-                .to_string(),
-        );
-    } else {
+    if ApxmPathFormat::from_path(&input).is_air_source() {
         match load_air_graph_for_analysis(&input) {
             Ok(graph) => {
                 if let Err(err) = graph.validate() {
@@ -36,15 +31,19 @@ pub fn validate_command(
             }
             Err(err) => errors.push(err.to_string()),
         }
+    } else {
+        errors.push(
+            "workflow source must be canonical .air; JSON is reserved for structured data outputs"
+                .to_string(),
+        );
     }
 
-    if warnings.is_empty() && errors.is_empty() {
-        if let Ok(graph) = load_air_graph_for_analysis(&input)
+    if warnings.is_empty() && errors.is_empty()
+        && let Ok(graph) = load_air_graph_for_analysis(&input)
             && graph.nodes.is_empty()
         {
             warnings.push("compiled AIR contains no executable nodes".to_string());
         }
-    }
 
     let valid = errors.is_empty();
 
@@ -151,7 +150,7 @@ impl<'a> GraphAnalysis<'a> {
         let mut phases: Vec<Vec<u64>> = Vec::new();
         let mut remaining_in: HashMap<u64, usize> = in_degree.clone();
         let mut current_layer: Vec<u64> = entry_nodes.clone();
-        current_layer.sort();
+        current_layer.sort_unstable();
 
         while !current_layer.is_empty() {
             phases.push(current_layer.clone());
@@ -168,7 +167,7 @@ impl<'a> GraphAnalysis<'a> {
                     }
                 }
             }
-            next_layer.sort();
+            next_layer.sort_unstable();
             next_layer.dedup();
             current_layer = next_layer;
         }
@@ -191,9 +190,7 @@ impl<'a> GraphAnalysis<'a> {
     }
 
     pub(crate) fn node_op(&self, id: u64) -> String {
-        self.node_by_id(id)
-            .map(|n| n.op.to_string())
-            .unwrap_or_else(|| "?".to_string())
+        self.node_by_id(id).map_or_else(|| "?".to_string(), |n| n.op.to_string())
     }
 
     fn node_latency_op(&self, id: u64) -> String {
@@ -203,13 +200,11 @@ impl<'a> GraphAnalysis<'a> {
         node.attributes
             .get(graph_attrs::LLM_OPERATION)
             .and_then(|value| value.as_str())
-            .and_then(|value| value.parse::<AISOperationType>().ok())
-            .map(|operation| operation.to_string())
-            .unwrap_or_else(|| node.op.to_string())
+            .and_then(|value| value.parse::<AISOperationType>().ok()).map_or_else(|| node.op.to_string(), |operation| operation.to_string())
     }
 
     pub(crate) fn node_name(&self, id: u64) -> &str {
-        self.node_by_id(id).map(|n| n.name.as_str()).unwrap_or("?")
+        self.node_by_id(id).map_or("?", |n| n.name.as_str())
     }
 
     fn node_latency_ms(&self, id: u64) -> u64 {
@@ -634,11 +629,11 @@ pub fn explain_command(target: &str, json_output: bool) -> Result<()> {
                             "id": id,
                             "name": ga.node_name(id),
                             "op": op,
-                            "category": spec.map(|s| category_str(s.category)).unwrap_or("unknown"),
-                            "description": spec.map(|s| s.description).unwrap_or(""),
-                            "latency": spec.map(|s| s.latency.as_str()).unwrap_or("unknown"),
+                            "category": spec.map_or("unknown", |s| category_str(s.category)),
+                            "description": spec.map_or("", |s| s.description),
+                            "latency": spec.map_or("unknown", |s| s.latency.as_str()),
                             "latency_ms": ga.node_latency_ms(id),
-                            "produces_output": spec.map(|s| s.produces_output).unwrap_or(false),
+                            "produces_output": spec.is_some_and(|s| s.produces_output),
                             "required_attributes": required_attrs,
                             "feeds": feeds,
                             "depends_on": depends_on,
@@ -669,7 +664,7 @@ pub fn explain_command(target: &str, json_output: bool) -> Result<()> {
         println!("{}", serde_json::to_string_pretty(&result).unwrap());
     } else {
         println!();
-        println!("  {} {}", "Workflow:".bold().cyan(), ga.graph.name.bold(),);
+        println!("  {} {}", "Workflow:".bold().cyan(), ga.graph.name.bold());
         println!(
             "  Nodes: {} | Edges: {} | Depth: {}",
             ga.graph.nodes.len(),
@@ -700,9 +695,9 @@ pub fn explain_command(target: &str, json_output: bool) -> Result<()> {
             for &id in layer {
                 let op = ga.node_op(id);
                 let spec = find_op_spec(&op);
-                let cat = spec.map(|s| category_str(s.category)).unwrap_or("unknown");
+                let cat = spec.map_or("unknown", |s| category_str(s.category));
                 let lat_val = ga.node_latency_ms(id);
-                let desc = spec.map(|s| s.description).unwrap_or("");
+                let desc = spec.map_or("", |s| s.description);
 
                 println!();
                 println!(

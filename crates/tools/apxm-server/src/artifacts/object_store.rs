@@ -141,15 +141,14 @@ impl ObjectStoreClient {
     /// ref is unknown, and `Err(ArtifactError::Backend)` for I/O failures.
     pub fn resolve(&self, artifact: &ArtifactRef) -> Result<Vec<u8>, ArtifactError> {
         // Check expiry before hitting the backend.
-        if let Some(ref expires_at) = artifact.expires_at {
-            if is_expired(expires_at) {
+        if let Some(ref expires_at) = artifact.expires_at
+            && is_expired(expires_at) {
                 return Err(ArtifactError::ArtifactExpired {
                     artifact_ref: artifact.artifact_ref.clone(),
                     expired_at: expires_at.clone(),
                     retention_class: artifact.retention_class.clone(),
                 });
             }
-        }
 
         match self {
             Self::LocalFs { runs_root } => {
@@ -190,6 +189,5 @@ fn uri_to_local_path(uri: &str, runs_root: &std::path::Path) -> Result<std::path
 /// Returns true when the RFC-3339 timestamp is in the past.
 fn is_expired(expires_at: &str) -> bool {
     chrono::DateTime::parse_from_rfc3339(expires_at)
-        .map(|timestamp| timestamp.with_timezone(&chrono::Utc) <= chrono::Utc::now())
-        .unwrap_or(false)
+        .is_ok_and(|timestamp| timestamp.with_timezone(&chrono::Utc) <= chrono::Utc::now())
 }

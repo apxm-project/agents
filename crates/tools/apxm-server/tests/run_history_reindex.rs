@@ -86,7 +86,7 @@ async fn reindex_skips_gracefully_when_runs_root_unset() {
     assert!(
         diags
             .iter()
-            .any(|d| d.as_str().map_or(false, |s| s.contains("APXM_RUNS_ROOT"))),
+            .any(|d| d.as_str().is_some_and(|s| s.contains("APXM_RUNS_ROOT"))),
         "diagnostics must mention APXM_RUNS_ROOT, got: {diags:?}"
     );
 }

@@ -50,8 +50,7 @@ pub(crate) async fn build_runtime_with_router(
     // can neither add, remove, nor reorder it.
     {
         let strict = std::env::var("APXM_REQUIRE_AUTH_STRICT")
-            .map(|v| !v.is_empty() && v != "0")
-            .unwrap_or(false);
+            .is_ok_and(|v| !v.is_empty() && v != "0");
         let requires_auth: std::collections::HashSet<String> = runtime
             .capability_system()
             .list_capabilities()
@@ -132,7 +131,7 @@ fn register_builtin_capabilities(runtime: &Runtime, schedule_on_fire: Option<OnF
             apxm_runtime::capability::builtins::spawn_firer(store, arm, Some(on_fire));
         }
         Err(error) => {
-            warn!(%error, "failed to open agent tools store; schedule/manage_task unavailable")
+            warn!(%error, "failed to open agent tools store; schedule/manage_task unavailable");
         }
     }
 
@@ -142,7 +141,7 @@ fn register_builtin_capabilities(runtime: &Runtime, schedule_on_fire: Option<OnF
         match sys.register(cap) {
             Ok(()) => n += 1,
             Err(e) => {
-                warn!(capability = %name, error = %e, "failed to register builtin capability")
+                warn!(capability = %name, error = %e, "failed to register builtin capability");
             }
         }
     }
@@ -278,13 +277,10 @@ pub(crate) async fn load_llm_backends(runtime: &Runtime) {
 }
 
 fn mock_backend_latency_from_env() -> Option<u64> {
-    let enabled = std::env::var(apxm_env::APXM_MOCK_BACKEND)
-        .ok()
-        .map(|value| {
+    let enabled = std::env::var(apxm_env::APXM_MOCK_BACKEND).is_ok_and(|value| {
             let value = value.trim();
             !value.is_empty() && value != "0" && !value.eq_ignore_ascii_case("false")
-        })
-        .unwrap_or(false);
+        });
     if !enabled {
         return None;
     }

@@ -25,11 +25,11 @@
 //! - No `unwrap`/panic in normal operation; errors are returned or logged.
 
 #![forbid(unsafe_code)]
+#![allow(clippy::format_push_string)]
 
 use apxm_core::log_error;
 use include_dir::{Dir, include_dir};
 use minijinja::{Environment, Error as MiniJinjaError, Value as MJValue};
-use once_cell::sync::Lazy;
 use serde::Serialize;
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
@@ -38,7 +38,7 @@ use std::path::{Path, PathBuf};
 static PROMPTS_DIR: Dir = include_dir!("$CARGO_MANIFEST_DIR/prompts");
 
 /// Global MiniJinja environment with all embedded prompts preloaded.
-static GLOBAL_ENV: Lazy<Environment<'static>> = Lazy::new(build_environment);
+static GLOBAL_ENV: std::sync::LazyLock<Environment<'static>> = std::sync::LazyLock::new(build_environment);
 
 /// Render a prompt template by name with the given context.
 ///
@@ -117,8 +117,10 @@ fn build_environment() -> Environment<'static> {
             }
             Err(e) => {
                 let msg = format!(
-                    "Prompt template is not valid UTF-8: name={:?} path={:?} err={}",
-                    name, path, e
+                    "Prompt template is not valid UTF-8: name={:?} path={} err={}",
+                    name,
+                    path.display(),
+                    e
                 );
                 log_error!("prompts", "{}", msg);
                 registration_failures.push(msg);
@@ -201,9 +203,8 @@ fn load_filesystem_prompts_recursive(
     dir: &Path,
     templates: &mut HashMap<String, String>,
 ) {
-    let entries = match std::fs::read_dir(dir) {
-        Ok(entries) => entries,
-        Err(_) => return,
+    let Ok(entries) = std::fs::read_dir(dir) else {
+        return;
     };
 
     for entry in entries.flatten() {
