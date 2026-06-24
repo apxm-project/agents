@@ -136,13 +136,14 @@ impl AgentRegistry {
         let mut user_profiles = BTreeMap::new();
 
         if let Some(path) = Self::user_config_path()
-            && let Ok(content) = std::fs::read_to_string(&path) {
-                if let Ok(user) = toml::from_str::<UserAgentsFile>(&content) {
-                    user_profiles = user.agents;
-                } else {
-                    apxm_acp!(warn, path = %path.display(), "failed to parse agent config");
-                }
+            && let Ok(content) = std::fs::read_to_string(&path)
+        {
+            if let Ok(user) = toml::from_str::<UserAgentsFile>(&content) {
+                user_profiles = user.agents;
+            } else {
+                apxm_acp!(warn, path = %path.display(), "failed to parse agent config");
             }
+        }
 
         for (name, profile) in &mut user_profiles {
             if let Some(template) = templates.get(name) {
@@ -150,7 +151,9 @@ impl AgentRegistry {
                     profile.description.clone_from(&template.description);
                 }
                 if profile.route_capabilities.is_empty() {
-                    profile.route_capabilities.clone_from(&template.route_capabilities);
+                    profile
+                        .route_capabilities
+                        .clone_from(&template.route_capabilities);
                 }
             } else if profile.route_capabilities.is_empty() {
                 profile.route_capabilities = default_route_capabilities();

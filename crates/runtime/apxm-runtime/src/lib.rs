@@ -48,7 +48,7 @@
     clippy::unused_async,
     clippy::unused_async_trait_impl,
     clippy::unused_self,
-    clippy::unwrap_or_default,
+    clippy::unwrap_or_default
 )]
 
 pub mod aam;

@@ -6,6 +6,7 @@
 
 // ── Foundation ──────────────────────────────────────────────
 pub mod aam;
+pub mod capability;
 pub mod goal;
 pub mod identifiers;
 pub mod operations;
@@ -30,6 +31,14 @@ pub mod source_format;
 pub use aam::{
     AamContext, CapabilityProjection, CapabilityRecord, CompletionPolicy, GoalProjection, GoalTree,
     ScopePolicy, ScopeSpec,
+};
+pub use capability::{
+    ApprovalMode, ApprovalPolicy, AuthContext, CAPABILITY_TEMPLATE_SCHEMA_V1, CapabilityOperation,
+    CapabilityProvenance, CapabilitySchemaError, CapabilityScope, CapabilityStatus,
+    CapabilityTemplateV1, DELEGATED_CAPABILITY_SCHEMA_V1, Delegability, DelegatedCapabilityV1,
+    Lifecycle, LifecycleBound, PlannerVisibility, ResourceHandle, ResourceSelector, RuntimeLimits,
+    RuntimeSurfaceLimit, RuntimeSurfaceMode, RuntimeSurfacePolicy, Sensitivity,
+    ToolBindingMetadata,
 };
 pub use communicate::{CommunicateProtocol, UnknownProtocol};
 pub use compiler::{

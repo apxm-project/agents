@@ -43,23 +43,6 @@ paths:
           content:
             application/json:
               schema: { $ref: '#/components/schemas/TypedError' }
-  /v1/sessions/{session_id}/grants:
-    post:
-      operationId: updateSessionGrants
-      summary: Add or revoke capability grants
-      parameters:
-        - name: session_id
-          in: path
-          required: true
-          schema: { type: string }
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema: { $ref: '#/components/schemas/GrantUpdate' }
-      responses:
-        '200':
-          description: Grants updated
   /v1/sessions/{session_id}/compact:
     post:
       operationId: compactSession
@@ -128,17 +111,11 @@ components:
       properties:
         turn_cap: { type: integer, nullable: true }
         tool_budgets: { type: object, additionalProperties: { type: integer } }
-        grants: { type: array, items: { type: string } }
-    GrantUpdate:
-      type: object
-      properties:
-        add: { type: array, items: { type: string } }
-        remove: { type: array, items: { type: string } }
     PermissionResponse:
       type: object
       required: [decision]
       properties:
-        decision: { type: string, enum: [approve, deny, approve_for_session] }
+        decision: { type: string, enum: [approve, deny] }
     TypedError:
       type: object
       required: [class, code, message]

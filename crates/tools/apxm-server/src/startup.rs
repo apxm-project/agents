@@ -76,10 +76,11 @@ pub(crate) async fn run_server_with_config(server_config: ServerConfig) -> anyho
     //   2. `~/.apxm/libs/<pack>/` — the connector-pack library the studio seeds
     //      `pack.toml` + `tools.toml` into. Scanning the libs roots is the
     //      companion hop that makes an installed connector pack show up in
-    //      `/v1/capabilities` so the studio install-gate sees its blocks as
-    //      AVAILABLE without any per-provider Rust.
+    //      `/v1/capability-templates` so the studio install-gate sees its
+    //      blocks as AVAILABLE without any per-provider Rust.
     let pack_scan_roots = pack_capability_roots(&skill_roots);
     crate::capability::rescan_pack_tools(&runtime, &pack_scan_roots);
+    crate::capability_discovery::register(&runtime);
     crate::search_skills::register(&runtime, skill_library.clone());
     let mut runtime = Arc::new(runtime);
     let (skill_resolver, workflow_spawner) = {
@@ -154,6 +155,7 @@ pub(crate) async fn run_server_with_config(server_config: ServerConfig) -> anyho
         shutdown: ShutdownCoordinator::new(),
         cancel_registry: Arc::new(DashMap::new()),
         goal_runs: GoalRunRegistry::new(),
+        delegated_capabilities: crate::delegated_capabilities::DelegatedCapabilityStore::new(),
         session_registry: crate::conversations::SessionRegistry::new(),
     };
 
@@ -242,8 +244,7 @@ pub(crate) fn pack_capability_roots(skill_roots: &[std::path::PathBuf]) -> Vec<s
 
 fn server_runtime_config(server_config: &ServerConfig) -> RuntimeConfig {
     let mut config = RuntimeConfig::default();
-    let cores = std::thread::available_parallelism()
-        .map_or(4, |value| value.get());
+    let cores = std::thread::available_parallelism().map_or(4, |value| value.get());
     let default_compute = (cores / 2).max(2);
 
     let max_concurrency = server_config

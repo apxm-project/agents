@@ -110,7 +110,6 @@ impl OrchestrationWorkspaceMode {
     }
 }
 
-
 impl fmt::Display for OrchestrationWorkspaceMode {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.write_str(self.as_str())
@@ -160,7 +159,6 @@ impl OrchestrationWorkspaceCleanup {
         }
     }
 }
-
 
 impl fmt::Display for OrchestrationWorkspaceCleanup {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {

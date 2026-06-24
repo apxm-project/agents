@@ -96,10 +96,7 @@ impl Plan {
 impl InnerPlanPayload {
     /// Returns true when this inner plan contains either AIR text or a task DAG.
     pub fn has_payload(&self) -> bool {
-        self.air
-            .as_ref()
-            .is_some_and(|air| !air.trim().is_empty())
-            || self.task_dag.is_some()
+        self.air.as_ref().is_some_and(|air| !air.trim().is_empty()) || self.task_dag.is_some()
     }
 }
 

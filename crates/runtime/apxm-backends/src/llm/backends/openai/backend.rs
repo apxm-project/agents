@@ -398,11 +398,12 @@ impl OpenAIBackend {
         // Merge in extra_body if provided (for vLLM extensions, etc.)
         if let Some(extra) = &request.extra_body
             && let serde_json::Value::Object(extra_map) = extra
-                && let serde_json::Value::Object(body_map) = &mut body {
-                    for (key, value) in extra_map {
-                        body_map.insert(key.clone(), value.clone());
-                    }
-                }
+            && let serde_json::Value::Object(body_map) = &mut body
+        {
+            for (key, value) in extra_map {
+                body_map.insert(key.clone(), value.clone());
+            }
+        }
 
         body
     }

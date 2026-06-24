@@ -233,7 +233,7 @@ impl AgentRouter {
                         request_id: request.id.clone(),
                         profile: profile.clone(),
                         required_capabilities,
-                        candidate_capabilities: candidate.capability_list.clone(),
+                        candidate_capabilities: candidate.capability_names.clone(),
                     });
                 }
                 *selected_counts.entry(profile.clone()).or_insert(0) += 1;
@@ -348,20 +348,20 @@ struct NormalizedCandidate {
     profile: String,
     default_mode: Option<String>,
     default_model: Option<String>,
-    capability_list: Vec<String>,
+    capability_names: Vec<String>,
     capabilities: HashSet<String>,
     index: usize,
 }
 
 impl NormalizedCandidate {
     fn new((index, candidate): (usize, &AgentRouteCandidate)) -> Self {
-        let capability_list = normalize_capabilities(&candidate.capabilities);
-        let capabilities = capability_list.iter().cloned().collect::<HashSet<_>>();
+        let capability_names = normalize_capabilities(&candidate.capabilities);
+        let capabilities = capability_names.iter().cloned().collect::<HashSet<_>>();
         Self {
             profile: candidate.profile.clone(),
             default_mode: candidate.default_mode.clone(),
             default_model: candidate.default_model.clone(),
-            capability_list,
+            capability_names,
             capabilities,
             index,
         }

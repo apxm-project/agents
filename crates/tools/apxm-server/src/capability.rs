@@ -15,7 +15,7 @@ use tracing::{info, warn};
 
 use crate::error::ApiError;
 use crate::state::AppState;
-use crate::types::responses::{CapabilityEntry, OkAckName};
+use crate::types::responses::CapabilityTemplateEntry;
 
 /// A capability that forwards invocations to an external HTTP endpoint.
 ///
@@ -92,48 +92,6 @@ impl CapabilityExecutor for HttpCapability {
     fn metadata(&self) -> &CapabilityMetadata {
         &self.metadata
     }
-}
-
-#[derive(Debug, Deserialize)]
-pub(crate) struct RegisterCapabilityRequest {
-    name: String,
-    description: String,
-    #[serde(default)]
-    parameters_schema: JsonValue,
-    /// Mark capability as read-only for raw workflow execution admission.
-    #[serde(default)]
-    read_only: bool,
-    /// Optional least-privilege tool groups exposed to LLM/tool admission.
-    #[serde(default)]
-    groups: Vec<String>,
-    /// Optional tags for inventory and routing.
-    #[serde(default)]
-    tags: Vec<String>,
-    /// Endpoint for `kind=http`.
-    #[serde(default)]
-    endpoint: Option<String>,
-    /// Timeout in milliseconds for HTTP capability calls (default: 30 000).
-    #[serde(default)]
-    timeout_ms: Option<u64>,
-    /// Optional static headers forwarded on every HTTP callback — e.g.
-    /// `{"Authorization": "Bearer <token>"}` so a bearer-authenticated endpoint
-    /// accepts the call. Omit for loopback-trusted endpoints.
-    #[serde(default)]
-    headers: Option<HashMap<String, String>>,
-    /// Static capability response for `kind=static`.
-    #[serde(default)]
-    static_response: JsonValue,
-    /// Explicit backing kind for the capability-id contract:
-    /// `provider` (REST via apxm-auth /proxy — the connector default),
-    /// `http` (forward to `endpoint`), `static`, or `mcp` (MCP-server bridge).
-    #[serde(default)]
-    kind: Option<String>,
-    /// MCP server URL for `kind=mcp`.
-    #[serde(default)]
-    server_url: Option<String>,
-    /// MCP tool name for `kind=mcp` (defaults to `name`).
-    #[serde(default)]
-    mcp_tool: Option<String>,
 }
 
 #[derive(Clone)]
@@ -239,9 +197,9 @@ fn normalize_pack_schema(capability: &str, schema: &JsonValue) -> JsonValue {
 }
 
 /// Auto-register the action blocks declared by every installed pack's pack-root
-/// `tools.toml`, so installing a connector pack makes its blocks real
-/// capabilities (listed in /v1/capabilities) with NO per-provider Rust. Each
-/// `[[tool]]` is registered by its capability id behind the declared backing
+/// `tools.toml`, so installing a connector pack makes its blocks visible to
+/// capability-template discovery with NO per-provider Rust. Each `[[tool]]`
+/// is registered by its tool binding behind the declared backing
 /// kind (default `provider` → provider.call, REST via apxm-auth /proxy). This is
 /// the keystone that makes capabilities declarative the way skills already are.
 /// Build the capability executor for one declared tool (None if its kind is not
@@ -338,9 +296,9 @@ fn pack_tools_in_dir(pack_dir: &std::path::Path) -> Vec<Arc<dyn CapabilityExecut
     file.tool.iter().filter_map(capability_from_tool).collect()
 }
 
-/// Rescan installed pack `tools.toml` files and register any new capabilities.
+/// Reindex installed pack `tools.toml` files and register any new template bindings.
 /// Idempotent: already-registered capability ids are skipped. Called on deploy
-/// and via `POST /v1/capabilities/rescan` so freshly dropped packs show up
+/// and via `POST /v1/capability-templates/reindex` so freshly dropped packs show up
 /// without a server restart.
 pub(crate) fn rescan_pack_tools(
     runtime: &apxm_runtime::Runtime,
@@ -353,9 +311,9 @@ pub(crate) fn rescan_pack_tools(
 }
 
 /// Auto-register the action blocks declared by every installed pack's pack-root
-/// `tools.toml`, so installing a connector pack makes its blocks real
-/// capabilities (listed in /v1/capabilities) with NO per-provider Rust. Each
-/// `[[tool]]` registers by its capability id behind the declared backing kind
+/// `tools.toml`, so installing a connector pack makes its blocks visible to
+/// capability-template discovery with NO per-provider Rust. Each `[[tool]]`
+/// registers by its tool binding behind the declared backing kind
 /// (default `provider` → provider.call, REST via apxm-auth /proxy). This is the
 /// keystone that makes capabilities declarative the way skills already are.
 pub(crate) fn register_pack_tools(runtime: &apxm_runtime::Runtime, roots: &[std::path::PathBuf]) {
@@ -405,19 +363,25 @@ pub(crate) fn register_pack_tools(runtime: &apxm_runtime::Runtime, roots: &[std:
     );
 }
 
-pub(crate) async fn list_capabilities(
+pub(crate) async fn list_capability_templates(
     State(state): State<AppState>,
-) -> Result<Json<Vec<CapabilityEntry>>, ApiError> {
-    let caps: Vec<CapabilityEntry> = state
+) -> Result<Json<Vec<CapabilityTemplateEntry>>, ApiError> {
+    let caps: Vec<CapabilityTemplateEntry> = state
         .runtime
         .capability_system()
         .list_capabilities()
         .iter()
-        .map(|m| CapabilityEntry {
-            name: m.name.clone(),
+        .map(|m| CapabilityTemplateEntry {
+            schema_version: apxm_core::types::CAPABILITY_TEMPLATE_SCHEMA_V1,
+            template_key: m.name.clone(),
+            tool_binding: m.name.clone(),
             description: m.description.clone(),
             parameters_schema: m.parameters_schema.clone(),
-            read_only: m.read_only,
+            operations: if m.read_only {
+                vec![apxm_core::types::CapabilityOperation::Read]
+            } else {
+                vec![apxm_core::types::CapabilityOperation::Write]
+            },
             requires_auth: m.requires_auth,
         })
         .collect();
@@ -425,120 +389,21 @@ pub(crate) async fn list_capabilities(
 }
 
 #[derive(Debug, Serialize)]
-pub(crate) struct RescanCapabilitiesResponse {
+pub(crate) struct ReindexCapabilityTemplatesResponse {
     pub(crate) registered: u32,
     pub(crate) total: usize,
 }
 
-pub(crate) async fn rescan_capabilities(
+pub(crate) async fn reindex_capability_templates(
     State(state): State<AppState>,
-) -> Result<Json<RescanCapabilitiesResponse>, ApiError> {
+) -> Result<Json<ReindexCapabilityTemplatesResponse>, ApiError> {
     let roots = crate::startup::pack_capability_roots(state.skill_library.roots());
     let registered = rescan_pack_tools(&state.runtime, &roots);
     let total = state.runtime.capability_system().list_capabilities().len();
-    Ok(Json(RescanCapabilitiesResponse { registered, total }))
-}
-
-pub(crate) async fn register_capability(
-    State(state): State<AppState>,
-    Json(req): Json<RegisterCapabilityRequest>,
-) -> Result<Json<OkAckName>, ApiError> {
-    let mut metadata = CapabilityMetadata::new(
-        req.name.clone(),
-        req.description.clone(),
-        req.parameters_schema,
-    );
-    if req.read_only {
-        metadata = metadata.with_read_only();
-    }
-    if !req.groups.is_empty() {
-        metadata = metadata.with_groups(req.groups.clone());
-    }
-    if !req.tags.is_empty() {
-        metadata = metadata.with_tags(req.tags.clone());
-    }
-
-    let kind = req.kind.clone().ok_or_else(|| {
-        ApiError::bad_request(
-            "capability registration requires explicit kind: provider, http, mcp, or static"
-                .to_string(),
-        )
-    })?;
-
-    let capability: Arc<dyn CapabilityExecutor> = match kind.as_str() {
-        "provider" => {
-            // Connector default: backed by provider.call (REST via apxm-auth
-            // /proxy). The block carries url/method/body/credential in its args.
-            info!(name = %req.name, "registering provider capability (apxm-auth proxy)");
-            Arc::new(
-                apxm_runtime::capability::builtins::ProviderCallCapability::named(
-                    req.name.clone(),
-                    req.description.clone(),
-                    metadata.parameters_schema.clone(),
-                ),
-            )
-        }
-        "mcp" => {
-            // MCP-client bridge: a per-tool block on an external MCP server.
-            let server_url = req
-                .server_url
-                .clone()
-                .ok_or_else(|| ApiError::bad_request("kind=mcp requires server_url".to_string()))?;
-            let tool = req.mcp_tool.clone().unwrap_or_else(|| req.name.clone());
-            info!(name = %req.name, server_url = %server_url, tool = %tool, "registering MCP-bridge capability");
-            Arc::new(
-                apxm_runtime::capability::builtins::McpBridgeCapability::named(
-                    req.name.clone(),
-                    req.description.clone(),
-                    server_url,
-                    tool,
-                ),
-            )
-        }
-        "http" => {
-            let endpoint = req.endpoint.clone().ok_or_else(|| {
-                ApiError::bad_request("kind=http requires an endpoint".to_string())
-            })?;
-            guard_url_ssrf(&req.name, &endpoint)
-                .await
-                .map_err(|error| ApiError::bad_request(error.to_string()))?;
-            info!(name = %req.name, endpoint = %endpoint, "registering HTTP capability");
-            Arc::new(HttpCapability {
-                metadata,
-                endpoint,
-                timeout_ms: req.timeout_ms.unwrap_or(30_000),
-                headers: req.headers.clone().unwrap_or_default(),
-                client: reqwest::Client::builder()
-                    .redirect(reqwest::redirect::Policy::none())
-                    .build()
-                    .map_err(|e| {
-                        ApiError::internal_message(format!("failed to build HTTP client: {e}"))
-                    })?,
-            })
-        }
-        "static" => {
-            let response_value = Value::try_from(req.static_response)
-                .map_err(|e| ApiError::bad_request(e.to_string()))?;
-            info!(name = %req.name, "registering static capability");
-            Arc::new(StaticCapability {
-                metadata,
-                static_response: response_value,
-            })
-        }
-        _ => {
-            return Err(ApiError::bad_request(format!(
-                "unknown capability kind '{}'; expected provider, http, mcp, or static",
-                kind
-            )));
-        }
-    };
-
-    state
-        .runtime
-        .capability_system()
-        .register_or_replace(capability)
-        .map_err(ApiError::runtime)?;
-    Ok(Json(OkAckName::new(req.name)))
+    Ok(Json(ReindexCapabilityTemplatesResponse {
+        registered,
+        total,
+    }))
 }
 
 /// Request body for `POST /v1/capabilities/{capability_id}/invoke`.
@@ -584,18 +449,20 @@ pub(crate) async fn invoke_capability(
     Json(req): Json<InvokeCapabilityRequest>,
 ) -> Result<Json<InvokeCapabilityResponse>, ApiError> {
     let cap_sys = state.runtime.capability_system();
+    let delegated = state.delegated_capabilities.get_active(&capability_id)?;
+    let tool_binding = delegated.tool_binding;
 
-    if !cap_sys.has_capability(&capability_id) {
+    if !cap_sys.has_capability(&tool_binding) {
         return Err(ApiError::not_found(format!(
-            "capability '{capability_id}' is not registered"
+            "capability template '{tool_binding}' is not registered"
         )));
     }
 
     // Load-options must be side-effect-free: refuse anything that is not
     // explicitly read-only so this endpoint can never be used to drive a write.
-    if !cap_sys.is_read_only(&capability_id) {
+    if !cap_sys.is_read_only(&tool_binding) {
         return Err(ApiError::bad_request(format!(
-            "capability '{capability_id}' is not read_only; only read-only capabilities may be invoked for load-options"
+            "capability template '{tool_binding}' is not read_only; only read-only capabilities may be invoked for load-options"
         )));
     }
 
@@ -612,13 +479,14 @@ pub(crate) async fn invoke_capability(
     }
 
     info!(
-        capability = %capability_id,
+        capability_id = %capability_id,
+        capability = %tool_binding,
         owner = ?req.owner,
         "invoking read-only capability for load-options"
     );
 
     let result = cap_sys
-        .invoke(&capability_id, args)
+        .invoke(&tool_binding, args)
         .await
         .map_err(ApiError::runtime)?;
     let result_json = result
@@ -683,10 +551,10 @@ mod tests {
     }
 
     #[test]
-    fn capability_rescan_route_is_pinned() {
+    fn capability_template_reindex_route_is_pinned() {
         assert_eq!(
-            crate::routes::CAPABILITIES_RESCAN,
-            "/v1/capabilities/rescan"
+            crate::routes::CAPABILITY_TEMPLATES_REINDEX,
+            "/v1/capability-templates/reindex"
         );
     }
 
@@ -712,8 +580,8 @@ mod tests {
     }
 
     /// A packs directory containing a `tools.toml` registers its `[[tool]]`
-    /// entries as runtime capabilities, so `/v1/capabilities` lists them and the
-    /// studio install-gate sees the blocks as AVAILABLE.
+    /// entries as template-backed tool bindings, so `/v1/capability-templates`
+    /// lists them and the studio install-gate sees the blocks as AVAILABLE.
     #[tokio::test]
     async fn packs_dir_tools_toml_registers_capabilities() {
         use apxm_runtime::{Runtime, RuntimeConfig};
@@ -845,8 +713,37 @@ mod tests {
             shutdown: hardening.shutdown,
             cancel_registry: Arc::new(DashMap::new()),
             goal_runs: crate::goal_runs::GoalRunRegistry::new(),
+            delegated_capabilities: crate::delegated_capabilities::DelegatedCapabilityStore::new(),
             session_registry: crate::conversations::SessionRegistry::new(),
         }
+    }
+
+    async fn mint_test_capability(
+        state: &AppState,
+        tool_binding: &str,
+        operations: Vec<apxm_core::types::CapabilityOperation>,
+    ) -> String {
+        let response = crate::delegated_capabilities::delegate_capability(
+            State(state.clone()),
+            Json(crate::delegated_capabilities::DelegateCapabilityRequest {
+                template_key: Some(tool_binding.to_string()),
+                tool_binding: tool_binding.to_string(),
+                operations,
+                resource_handle: None,
+                auth_context: None,
+                scope: None,
+                runtime_limits: None,
+                sensitivity: None,
+                approval_policy: None,
+                delegability: None,
+                lifecycle: None,
+                description: None,
+                trace_tags: Default::default(),
+            }),
+        )
+        .await
+        .expect("mint delegated capability");
+        response.0.capability_id
     }
 
     /// A read-only capability returns a static option list — exactly what the
@@ -874,9 +771,16 @@ mod tests {
             }))
             .expect("register read-only capability");
 
+        let capability_id = mint_test_capability(
+            &state,
+            "slack.list_channels",
+            vec![apxm_core::types::CapabilityOperation::Read],
+        )
+        .await;
+
         let resp = invoke_capability(
             State(state),
-            Path("slack.list_channels".to_string()),
+            Path(capability_id),
             Json(InvokeCapabilityRequest {
                 connection: Some("slack/acme".to_string()),
                 ..Default::default()
@@ -908,9 +812,16 @@ mod tests {
             }))
             .expect("register write capability");
 
+        let capability_id = mint_test_capability(
+            &state,
+            "slack.post_message",
+            vec![apxm_core::types::CapabilityOperation::Write],
+        )
+        .await;
+
         let err = invoke_capability(
             State(state),
-            Path("slack.post_message".to_string()),
+            Path(capability_id),
             Json(InvokeCapabilityRequest::default()),
         )
         .await
@@ -924,17 +835,17 @@ mod tests {
         );
     }
 
-    /// An unregistered capability id yields a 404 rather than a generic error.
+    /// An unknown delegated capability id is rejected before invocation.
     #[tokio::test]
     async fn invoke_unknown_capability_is_not_found() {
         let state = test_state().await;
         let err = invoke_capability(
             State(state),
-            Path("nope.missing".to_string()),
+            Path("cap_nope_missing".to_string()),
             Json(InvokeCapabilityRequest::default()),
         )
         .await
         .expect_err("unknown capability is rejected");
-        assert_eq!(err.status, axum::http::StatusCode::NOT_FOUND);
+        assert_eq!(err.status, axum::http::StatusCode::BAD_REQUEST);
     }
 }

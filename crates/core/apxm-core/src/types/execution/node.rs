@@ -22,8 +22,7 @@ use crate::types::{AISOperationType, TokenId, Value, validate_operation};
 /// Nodes without a matching backend keep their compile-time latency.
 /// Nodes with no compile-time latency and no matching tier use
 /// `default_latency_ns`.
-#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
-#[derive(Default)]
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq, Default)]
 pub struct LatencyTierConfig {
     /// Backend name -> latency in nanoseconds.
     #[serde(default)]
@@ -37,7 +36,6 @@ pub struct LatencyTierConfig {
 fn default_latency_ns() -> u64 {
     0
 }
-
 
 impl LatencyTierConfig {
     /// Look up the runtime latency override for a given backend name.

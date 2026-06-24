@@ -163,7 +163,8 @@ fn handle_initialize() -> Result<Value, Value> {
 }
 
 fn raw_execute_enabled() -> bool {
-    std::env::var(RAW_EXECUTE_ENV).is_ok_and(|value| matches!(value.as_str(), "1" | "true" | "TRUE" | "yes" | "YES"))
+    std::env::var(RAW_EXECUTE_ENV)
+        .is_ok_and(|value| matches!(value.as_str(), "1" | "true" | "TRUE" | "yes" | "YES"))
 }
 
 fn handle_tools_list(raw_execute_enabled: bool) -> Result<Value, Value> {
@@ -317,8 +318,8 @@ fn handle_tools_list(raw_execute_enabled: bool) -> Result<Value, Value> {
             }
         }),
         json!({
-            (mcp_fields::NAME): Tier3Tool::CapabilityList.as_str(),
-            (mcp_fields::DESCRIPTION): tool_description::tier3(Tier3Tool::CapabilityList),
+            (mcp_fields::NAME): Tier3Tool::CapabilityDiscovery.as_str(),
+            (mcp_fields::DESCRIPTION): tool_description::tier3(Tier3Tool::CapabilityDiscovery),
             (mcp_fields::INPUT_SCHEMA): query_tool_schema()
         }),
     ];
@@ -375,7 +376,7 @@ fn handle_tools_call(params: Value, raw_execute_enabled: bool) -> Result<Value, 
             Some(Tier3Tool::TraceFetch) => tool_trace_fetch(args),
             Some(Tier3Tool::AamRecall) => tool_aam_recall(args),
             Some(Tier3Tool::EvidenceLookup) => tool_evidence_lookup(args),
-            Some(Tier3Tool::CapabilityList) => tool_capability_list(args),
+            Some(Tier3Tool::CapabilityDiscovery) => tool_capability_discovery(args),
             None => Err(format!("unknown tool: {name}")),
         },
     };
@@ -884,18 +885,14 @@ fn build_suggestions(
     if critical_path.len() >= 3 {
         // Find bottleneck node on critical path
         let bottleneck = critical_path.iter().max_by_key(|&&id| {
-            graph
-                .nodes
-                .iter()
-                .find(|n| n.id == id)
-                .map_or(100, |n| {
-                    for spec in AIS_OPERATIONS {
-                        if spec.op_type == n.op_type {
-                            return operation_latency_estimate_ms(spec.latency);
-                        }
+            graph.nodes.iter().find(|n| n.id == id).map_or(100, |n| {
+                for spec in AIS_OPERATIONS {
+                    if spec.op_type == n.op_type {
+                        return operation_latency_estimate_ms(spec.latency);
                     }
-                    100
-                })
+                }
+                100
+            })
         });
         if let Some(&bn) = bottleneck
             && let Some(node) = graph.nodes.iter().find(|n| n.id == bn)
@@ -938,9 +935,9 @@ fn tool_evidence_lookup(args: Value) -> Result<String, String> {
     serde_json::to_string_pretty(&output).map_err(|error| error.to_string())
 }
 
-fn tool_capability_list(args: Value) -> Result<String, String> {
+fn tool_capability_discovery(args: Value) -> Result<String, String> {
     run_with_stdio_runtime(|runtime, _server_config| async move {
-        Ok(mcp_tools::capability_list(&runtime, args))
+        Ok(mcp_tools::capability_discovery(&runtime, args))
     })
 }
 

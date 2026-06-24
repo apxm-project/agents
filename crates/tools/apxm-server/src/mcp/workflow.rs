@@ -25,8 +25,8 @@ use tokio::sync::Notify;
 
 use crate::error::ApiError;
 use crate::execute::{
-    ExecuteRequest, ExecuteResponse, PreparedRequest, acquire_admission, admit_grant_metadata,
-    air_to_artifact_with_caps, inject_resolved_credentials, prepare_request,
+    ExecuteRequest, ExecuteResponse, PreparedRequest, acquire_admission, air_to_artifact_with_caps,
+    delegated_authority_metadata, inject_resolved_credentials, prepare_request,
     registered_capability_names, to_execute_response, tool_call_budgets_metadata,
     validate_raw_execute_admission,
 };
@@ -46,6 +46,7 @@ const DEFAULT_EVENTS_LIMIT: usize = 100;
 const MAX_EVENTS_LIMIT: usize = 1000;
 
 #[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub(crate) struct WorkflowStartArgs {
     pub(crate) workflow_path: String,
     #[serde(default)]
@@ -53,7 +54,7 @@ pub(crate) struct WorkflowStartArgs {
     #[serde(default)]
     pub(crate) session_id: Option<String>,
     #[serde(default)]
-    pub(crate) admit_capabilities: Vec<String>,
+    pub(crate) delegated_capability_ids: Vec<String>,
     #[serde(default)]
     pub(crate) imports: Vec<String>,
     #[serde(skip)]
@@ -177,10 +178,10 @@ pub(crate) fn workflow_start_input_schema() -> JsonValue {
                 "description": "Named JSON arguments passed to the workflow"
             },
             "session_id": { "type": "string" },
-            "admit_capabilities": {
+            "delegated_capability_ids": {
                 "type": "array",
                 "items": { "type": "string" },
-                "description": "Write capabilities the caller grants this workflow run"
+                "description": "Runtime-minted delegated capability ids for this workflow run"
             },
             "imports": {
                 "type": "array",
@@ -371,7 +372,7 @@ async fn prepare_workflow_run(
         args: Vec::new(),
         session_id: Some(session_id),
         session_root: None,
-        admit_capabilities: request.admit_capabilities,
+        delegated_capability_ids: request.delegated_capability_ids,
         imports: request.imports,
         tool_call_budgets: std::collections::HashMap::new(),
         tool_credentials: std::collections::HashMap::new(),
@@ -384,7 +385,7 @@ async fn prepare_workflow_run(
         args,
         session_id,
         session_dir,
-        admit,
+        delegated_ids,
         imports,
         tool_call_budgets,
         tool_credentials: _,
@@ -399,10 +400,11 @@ async fn prepare_workflow_run(
     let session_dir = session_dir.expect("workflow_start always supplies a session_dir");
     let known_caps = registered_capability_names(state);
     let mut artifact = air_to_artifact_with_caps(&air, &known_caps)?;
-    validate_raw_execute_admission(&artifact, state, &admit)?;
+    let delegated_capabilities = state.delegated_capabilities.resolve(&delegated_ids)?;
+    validate_raw_execute_admission(&artifact, state, &delegated_capabilities)?;
     inject_resolved_credentials(&mut artifact, owner.as_deref()).await?;
     let admission_id = acquire_admission(state).await?;
-    let mut metadata = admit_grant_metadata(&admit, &imports);
+    let mut metadata = delegated_authority_metadata(&delegated_capabilities, &imports)?;
     metadata.insert(
         apxm_runtime::metadata_keys::ADMISSION_ID.to_string(),
         admission_id.clone(),

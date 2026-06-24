@@ -1,4 +1,5 @@
 use apxm_core::error::RuntimeError;
+use apxm_core::types::CapabilityOperation;
 use serde::{Deserialize, Serialize};
 use serde_json::Value as JsonValue;
 
@@ -100,15 +101,14 @@ pub(crate) struct ToolEntry {
 }
 
 #[derive(Debug, Serialize)]
-pub(crate) struct CapabilityEntry {
-    pub(crate) name: String,
+pub(crate) struct CapabilityTemplateEntry {
+    pub(crate) schema_version: &'static str,
+    pub(crate) template_key: String,
+    pub(crate) tool_binding: String,
     pub(crate) description: String,
     pub(crate) parameters_schema: JsonValue,
-    /// Read-only capabilities run unattended; write capabilities require an
-    /// explicit per-execution grant (admit-list). Surfaced so clients can show
-    /// a consent prompt for the writes a workflow performs.
-    pub(crate) read_only: bool,
-    /// Whether the capability needs a connected credential to call.
+    pub(crate) operations: Vec<CapabilityOperation>,
+    /// Whether the template requires a connected credential to mint authority.
     pub(crate) requires_auth: bool,
 }
 

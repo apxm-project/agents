@@ -119,7 +119,7 @@
       }
     },
     "session_id": { "type": "string" },
-    "admit_capabilities": {
+    "delegated_capability_ids": {
       "type": "array",
       "items": { "type": "string" }
     },

@@ -185,6 +185,7 @@ async fn test_state_with_runtime_store(
         shutdown: hardening.shutdown,
         cancel_registry: Arc::new(DashMap::new()),
         goal_runs: crate::goal_runs::GoalRunRegistry::new(),
+        delegated_capabilities: crate::delegated_capabilities::DelegatedCapabilityStore::new(),
         session_registry: crate::conversations::SessionRegistry::new(),
     }
 }

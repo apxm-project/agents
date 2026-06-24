@@ -127,7 +127,7 @@ pub struct ExecutionContext {
     /// spawned-agent / called-skill turns see the same author hooks. `None`
     /// when the artifact declares no hooks.
     pub hook_registry: Option<Arc<HookRegistry>>,
-    /// Per-session ledger (turn caps / per-tool budgets / grant set) keyed by
+    /// Per-session ledger (turn caps / per-tool budgets) keyed by
     /// `session_id`, owned by the runtime rather than the host (constitution #2).
     /// Inherited by child contexts so a one-execution-per-session conversation
     /// enforces caps across re-armed turns. `None` for non-session executions.
@@ -376,7 +376,6 @@ impl ExecutionContext {
         name: &str,
         mut args: std::collections::HashMap<String, apxm_core::types::values::Value>,
     ) -> Result<apxm_core::types::values::Value, apxm_core::error::RuntimeError> {
-        self.ensure_session_grant(name)?;
         self.charge_tool_call(name)?;
         self.inject_tool_credential(name, &mut args);
         self.capability_system.invoke(name, args).await
@@ -389,7 +388,6 @@ impl ExecutionContext {
         mut args: std::collections::HashMap<String, apxm_core::types::values::Value>,
         timeout: std::time::Duration,
     ) -> Result<apxm_core::types::values::Value, apxm_core::error::RuntimeError> {
-        self.ensure_session_grant(name)?;
         self.charge_tool_call(name)?;
         self.inject_tool_credential(name, &mut args);
         self.capability_system
@@ -410,30 +408,6 @@ impl ExecutionContext {
                 capability: "session_turn".to_string(),
                 message,
             })
-    }
-
-    /// Whether the session grant set admits `capability`. Without a ledger, all
-    /// capabilities pass (execution-scoped admission applies elsewhere). An empty
-    /// grant set is treated as unrestricted at the session layer.
-    pub fn session_admits_capability(&self, capability: &str) -> bool {
-        self.session_ledger
-            .as_ref()
-            .map(|ledger| ledger.grants_is_empty() || ledger.admits(capability))
-            .unwrap_or(true)
-    }
-
-    /// Fail-closed session grant check at the trusted invoke seam.
-    fn ensure_session_grant(&self, capability: &str) -> Result<(), apxm_core::error::RuntimeError> {
-        let Some(ledger) = &self.session_ledger else {
-            return Ok(());
-        };
-        if ledger.grants_is_empty() || ledger.admits(capability) {
-            return Ok(());
-        }
-        Err(apxm_core::error::RuntimeError::Capability {
-            capability: capability.to_string(),
-            message: format!("capability '{capability}' not granted for this session"),
-        })
     }
 
     /// Budget-check and increment the per-tool call counter. Fail-closed: an
@@ -654,7 +628,7 @@ impl ExecutionContext {
         self.hook_registry.as_ref()
     }
 
-    /// Attach the per-session ledger (turn caps / tool budgets / grants).
+    /// Attach the per-session ledger (turn caps / tool budgets).
     pub fn with_session_ledger(mut self, ledger: Arc<SessionLedger>) -> Self {
         self.session_ledger = Some(ledger);
         self
@@ -699,7 +673,7 @@ mod tests {
     use crate::capability::executor::EchoCapability;
     use crate::memory::{MemoryConfig, MemorySystem};
     use apxm_backends::LLMRegistry;
-    use std::collections::{HashMap, HashSet};
+    use std::collections::HashMap;
     use std::sync::Arc;
 
     async fn test_ctx_with_ledger(ledger: SessionLedger) -> ExecutionContext {
@@ -719,35 +693,17 @@ mod tests {
 
     #[tokio::test]
     async fn charge_session_turn_enforces_cap_on_context() {
-        let ctx =
-            test_ctx_with_ledger(SessionLedger::new(Some(2), HashMap::new(), HashSet::new())).await;
+        let ctx = test_ctx_with_ledger(SessionLedger::new(Some(2), HashMap::new())).await;
         assert_eq!(ctx.charge_session_turn().unwrap(), 1);
         assert_eq!(ctx.charge_session_turn().unwrap(), 2);
         assert!(ctx.charge_session_turn().is_err(), "third turn exceeds cap");
     }
 
     #[tokio::test]
-    async fn session_grant_blocks_ungranted_capability() {
-        let mut grants = HashSet::new();
-        grants.insert("echo".to_string());
-        let ctx = test_ctx_with_ledger(SessionLedger::new(None, HashMap::new(), grants)).await;
-        assert!(ctx.session_admits_capability("echo"));
-        assert!(!ctx.session_admits_capability("delete_file"));
-        let err = ctx
-            .invoke_tool("delete_file", HashMap::new())
-            .await
-            .unwrap_err();
-        assert!(
-            err.to_string().contains("not granted"),
-            "unexpected error: {err}"
-        );
-    }
-
-    #[tokio::test]
     async fn session_tool_budget_enforced_at_invoke_seam() {
         let mut budgets = HashMap::new();
         budgets.insert("echo".to_string(), 1);
-        let ctx = test_ctx_with_ledger(SessionLedger::new(None, budgets, HashSet::new())).await;
+        let ctx = test_ctx_with_ledger(SessionLedger::new(None, budgets)).await;
         let mut args = HashMap::new();
         args.insert(
             "message".to_string(),

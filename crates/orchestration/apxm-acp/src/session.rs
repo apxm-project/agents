@@ -127,24 +127,25 @@ impl AcpSession {
         {
             for method in auth_methods {
                 if let Some(method_id) = method.get(fields::METHOD_ID).and_then(|v| v.as_str())
-                    && let Some(credential) = auth::resolve_auth_credential(method_id) {
-                        let auth_params = serde_json::json!({
-                            fields::METHOD_ID: method_id,
-                            fields::CREDENTIAL: credential,
-                        });
-                        let auth_id = transport
-                            .send_request(methods::AUTHENTICATE, Some(auth_params))
-                            .await?;
-                        let _ = tokio::time::timeout(
-                            Duration::from_secs(timeouts::AUTH_TIMEOUT_SECS),
-                            transport.read_response(auth_id, &no_op),
-                        )
-                        .await
-                        .map_err(|_| {
-                            AcpError::Timeout(format!("{} timed out", methods::AUTHENTICATE))
-                        })??;
-                        break;
-                    }
+                    && let Some(credential) = auth::resolve_auth_credential(method_id)
+                {
+                    let auth_params = serde_json::json!({
+                        fields::METHOD_ID: method_id,
+                        fields::CREDENTIAL: credential,
+                    });
+                    let auth_id = transport
+                        .send_request(methods::AUTHENTICATE, Some(auth_params))
+                        .await?;
+                    let _ = tokio::time::timeout(
+                        Duration::from_secs(timeouts::AUTH_TIMEOUT_SECS),
+                        transport.read_response(auth_id, &no_op),
+                    )
+                    .await
+                    .map_err(|_| {
+                        AcpError::Timeout(format!("{} timed out", methods::AUTHENTICATE))
+                    })??;
+                    break;
+                }
             }
         }
 
@@ -369,10 +370,7 @@ impl Drop for AcpSession {
             // SAFETY: libc::kill is safe to call with a valid pid.
             #[allow(unsafe_code)]
             unsafe {
-                libc::kill(
-                    i32::try_from(pid).unwrap_or(i32::MAX),
-                    libc::SIGKILL,
-                )
+                libc::kill(i32::try_from(pid).unwrap_or(i32::MAX), libc::SIGKILL)
             };
         }
         #[cfg(not(unix))]

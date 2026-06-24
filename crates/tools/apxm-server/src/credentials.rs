@@ -71,9 +71,10 @@ impl CredentialResolver {
 
 /// Owner precedence: dispatch-context owner, else `APXM_AUTH_OWNER`, else `"default"`.
 fn resolve_owner(owner: Option<&str>) -> String {
-    owner.map_or_else(|| {
-        std::env::var("APXM_AUTH_OWNER").unwrap_or_else(|_| "default".to_string())
-    }, str::to_string)
+    owner.map_or_else(
+        || std::env::var("APXM_AUTH_OWNER").unwrap_or_else(|_| "default".to_string()),
+        str::to_string,
+    )
 }
 
 /// Read apxm-auth's per-run bearer (written 0600 by `apxm-auth serve`).

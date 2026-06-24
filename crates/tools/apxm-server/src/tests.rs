@@ -41,8 +41,9 @@ use crate::checkpoints::CheckpointStore;
 use crate::execute::ExecuteResponse;
 use crate::executions::ExecutionStore;
 use crate::mcp::{
-    MCP_METHOD_TOOLS_CALL, MCP_TOOL_APXM_SKILL_CALL,
-    MCP_TOOL_PARAM_ARGUMENTS as MCP_PARAM_ARGUMENTS, MCP_TOOL_PARAM_NAME as MCP_PARAM_NAME,
+    MCP_METHOD_TOOLS_CALL, MCP_METHOD_TOOLS_LIST, MCP_TOOL_APXM_CAPABILITY_DISCOVERY,
+    MCP_TOOL_APXM_SKILL_CALL, MCP_TOOL_PARAM_ARGUMENTS as MCP_PARAM_ARGUMENTS,
+    MCP_TOOL_PARAM_NAME as MCP_PARAM_NAME,
 };
 use crate::routes;
 use crate::skills::SkillLibrary;
@@ -420,6 +421,7 @@ async fn test_state_with_skill_roots_and_execution_store(
         shutdown: hardening.shutdown,
         cancel_registry: Arc::new(DashMap::new()),
         goal_runs: crate::goal_runs::GoalRunRegistry::new(),
+        delegated_capabilities: crate::delegated_capabilities::DelegatedCapabilityStore::new(),
         session_registry: crate::conversations::SessionRegistry::new(),
     }
 }
@@ -462,6 +464,7 @@ async fn test_state_with_runtime_and_skill_roots(
         shutdown: hardening.shutdown,
         cancel_registry: Arc::new(DashMap::new()),
         goal_runs: crate::goal_runs::GoalRunRegistry::new(),
+        delegated_capabilities: crate::delegated_capabilities::DelegatedCapabilityStore::new(),
         session_registry: crate::conversations::SessionRegistry::new(),
     }
 }
@@ -567,6 +570,343 @@ async fn cancel_route_trips_in_flight_run_and_404s_unknown() {
     assert_eq!(status, StatusCode::NOT_FOUND);
 }
 
+#[tokio::test]
+async fn raw_execute_rejects_callable_names_as_delegated_capability_ids() {
+    let state = test_state().await;
+    state
+        .runtime
+        .capability_system()
+        .register(Arc::new(FixtureSideEffectCapability::new("fixture.write")))
+        .expect("register fixture write capability");
+    let app = crate::build_app(state);
+
+    let (status, body) = post_json(
+        app,
+        crate::routes::EXECUTE,
+        serde_json::json!({
+            "air": mock_inv_tool_air_response("fixture.write"),
+            "delegated_capability_ids": ["fixture.write"],
+        }),
+    )
+    .await;
+
+    assert_ne!(status, StatusCode::OK);
+    assert!(
+        body["message"]
+            .as_str()
+            .is_some_and(|message| message.contains("cap_*")),
+        "expected minted-id rejection, got {status}: {body}"
+    );
+}
+
+#[tokio::test]
+async fn minted_delegated_capability_authorizes_raw_write_until_revoked() {
+    let state = test_state().await;
+    state
+        .runtime
+        .capability_system()
+        .register(Arc::new(FixtureSideEffectCapability::new("fixture.write")))
+        .expect("register fixture write capability");
+    let app = crate::build_app(state);
+
+    let (status, delegated) = post_json(
+        app.clone(),
+        crate::routes::CAPABILITY_DELEGATE,
+        serde_json::json!({
+            "tool_binding": "fixture.write",
+            "operations": ["write"],
+        }),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "delegate failed: {delegated}");
+    let capability_id = delegated["capability_id"]
+        .as_str()
+        .expect("delegated capability_id");
+    assert!(capability_id.starts_with("cap_"));
+    assert_eq!(delegated["tool_binding"], "fixture.write");
+
+    let execute_body = serde_json::json!({
+        "air": mock_inv_tool_air_response("fixture.write"),
+        "delegated_capability_ids": [capability_id],
+    });
+    let (status, body) = post_json(app.clone(), crate::routes::EXECUTE, execute_body.clone()).await;
+    assert_eq!(status, StatusCode::OK, "execute failed: {body}");
+    assert!(
+        body["results"]
+            .as_object()
+            .expect("results object")
+            .values()
+            .any(|value| value.as_str() == Some(FIXTURE_OUTPUT))
+    );
+
+    let (status, revoke_body) = post_json(
+        app.clone(),
+        &format!("/v1/capabilities/{capability_id}/revoke"),
+        serde_json::json!({}),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "revoke failed: {revoke_body}");
+    assert_eq!(revoke_body["status"], "revoked");
+
+    let (status, body) = post_json(app, crate::routes::EXECUTE, execute_body).await;
+    assert_ne!(status, StatusCode::OK);
+    assert!(
+        body["message"]
+            .as_str()
+            .is_some_and(|message| message.contains("Revoked") || message.contains("revoked")),
+        "expected revoked-id rejection, got {status}: {body}"
+    );
+}
+
+#[tokio::test]
+async fn conversational_agent_discovers_templates_and_runs_with_delegated_capability() {
+    let backend = MockLLMBackend::static_response("capability discovery ready");
+    let runtime = runtime_with_mock_workflow_backend(backend.clone()).await;
+    let state = test_state_with_runtime_and_skill_roots(runtime, Vec::new()).await;
+    crate::capability_discovery::register(&state.runtime);
+    state
+        .runtime
+        .capability_system()
+        .register(Arc::new(FixtureSideEffectCapability::new("fixture.write")))
+        .expect("register fixture write capability");
+    let app = crate::build_app(state);
+
+    let (status, discovery_body) = post_json(
+        app.clone(),
+        crate::routes::EXECUTE,
+        serde_json::json!({
+            "air": mock_inv_tool_air_with_args(
+                apxm_core::constants::capabilities::CAPABILITY_DISCOVERY,
+                serde_json::json!({
+                    "request": "fixture write capability",
+                    "operations": ["write"],
+                    "k": 5
+                }),
+            ),
+        }),
+    )
+    .await;
+    assert_eq!(
+        status,
+        StatusCode::OK,
+        "capability discovery execute failed: {discovery_body}"
+    );
+    let discovery_json = discovery_body["results"]
+        .as_object()
+        .expect("results object")
+        .values()
+        .find_map(|value| value.as_str())
+        .expect("discovery JSON result");
+    assert!(
+        !discovery_json.contains("capability_id"),
+        "discovery must return templates only, got {discovery_json}"
+    );
+    let templates: serde_json::Value =
+        serde_json::from_str(discovery_json).expect("template JSON array");
+    let fixture_template = templates
+        .as_array()
+        .expect("template array")
+        .iter()
+        .find(|template| template["template_key"] == "fixture.write")
+        .expect("fixture.write template discovered");
+    assert_eq!(fixture_template["authority"], "template_only");
+    assert_eq!(fixture_template["operations"][0], "write");
+
+    let (status, delegated) = post_json(
+        app.clone(),
+        crate::routes::CAPABILITY_DELEGATE,
+        serde_json::json!({
+            "template_key": "fixture.write",
+            "tool_binding": "fixture.write",
+            "operations": ["write"],
+        }),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "delegate failed: {delegated}");
+    let capability_id = delegated["capability_id"]
+        .as_str()
+        .expect("delegated capability_id")
+        .to_string();
+    assert!(capability_id.starts_with("cap_"));
+
+    let conversation_air = apxm_ais::chat::chat_air(&apxm_ais::chat::ChatAirOptions {
+        system_prompt: Some(
+            "Runtime capability discovery: call `capability_discovery` to inspect \
+             CapabilityTemplateV1 metadata. Templates are not authority; writes \
+             require APXM-supplied delegated_capability_ids.",
+        ),
+        capability_discovery: true,
+        ..apxm_ais::chat::ChatAirOptions::default()
+    });
+    let conversation_prompt = apxm_ais::chat::render_transcript([(
+        apxm_ais::chat::Role::User,
+        "Find the fixture write capability and explain what authority is needed.",
+    )]);
+    let (status, stream_body) = post_json_text(
+        app.clone(),
+        crate::routes::EXECUTE_STREAM,
+        serde_json::json!({
+            "air": conversation_air,
+            "args": [conversation_prompt],
+            "session_id": "conv-capability-e2e",
+            "user_text": "Find the fixture write capability and explain what authority is needed.",
+            "delegated_capability_ids": [capability_id],
+        }),
+    )
+    .await;
+    assert_eq!(
+        status,
+        StatusCode::OK,
+        "conversation execute_stream failed: {stream_body}"
+    );
+    assert!(
+        stream_body.contains("capability discovery ready"),
+        "conversation stream should include mock answer, got {stream_body}"
+    );
+    let calls = backend.recorded_calls();
+    let call = calls
+        .iter()
+        .find(|call| call.prompt.contains("Find the fixture write capability"))
+        .expect("conversation LLM call recorded");
+    assert!(
+        call.system
+            .as_deref()
+            .is_some_and(|system| system.contains("capability_discovery")
+                && system.contains("delegated_capability_ids")),
+        "conversation system prompt should carry runtime discovery guidance, got {:?}",
+        call.system
+    );
+    assert!(
+        call.tool_names
+            .iter()
+            .any(|name| name == apxm_core::constants::capabilities::CAPABILITY_DISCOVERY),
+        "conversation ASK should expose capability_discovery, got {:?}",
+        call.tool_names
+    );
+    assert!(
+        !call.tool_names.iter().any(|name| name == "fixture.write"),
+        "conversation discovery group must not expose write tools directly, got {:?}",
+        call.tool_names
+    );
+
+    let (status, write_body) = post_json(
+        app,
+        crate::routes::EXECUTE,
+        serde_json::json!({
+            "air": mock_inv_tool_air_response("fixture.write"),
+            "delegated_capability_ids": [delegated["capability_id"].clone()],
+        }),
+    )
+    .await;
+    assert_eq!(
+        status,
+        StatusCode::OK,
+        "delegated write failed: {write_body}"
+    );
+    assert!(
+        write_body["results"]
+            .as_object()
+            .expect("results object")
+            .values()
+            .any(|value| value.as_str() == Some(FIXTURE_OUTPUT))
+    );
+}
+
+#[tokio::test]
+#[allow(unsafe_code)]
+async fn trusted_python_inv_tool_requires_delegated_capability() {
+    let _env_guard = APXM_RUNS_ROOT_LOCK.lock().expect("env lock");
+    let state = test_state().await;
+    let mut artifact = Artifact::from_bytes(&inv_tool_artifact_bytes(
+        "fixture.python_write",
+        Some("sha256:fixture"),
+    ))
+    .expect("artifact");
+    artifact.add_section(apxm_artifact::ArtifactSection {
+        kind: apxm_runtime::python_tools::CAPABILITY_NAME.to_string(),
+        data: serde_json::to_vec(&serde_json::json!([{
+            "handler_id": "sha256:fixture",
+            "module": "fixture",
+            "qualname": "write",
+            "name": "fixture.python_write",
+            "description": "fixture python write",
+            "schema": { "type": "object", "properties": {} }
+        }]))
+        .expect("python tool section"),
+    });
+
+    unsafe {
+        std::env::set_var("APXM_TRUST_PYTHON_ARTIFACTS", "1");
+        std::env::set_var("APXM_SANDBOX_PYTHON", "1");
+    }
+    let rejected = crate::execute::validate_raw_execute_admission(
+        &artifact,
+        &state,
+        &crate::delegated_capabilities::ResolvedDelegatedCapabilities::empty(),
+    )
+    .expect_err("python tools must require delegated authority");
+    unsafe {
+        std::env::remove_var("APXM_TRUST_PYTHON_ARTIFACTS");
+        std::env::remove_var("APXM_SANDBOX_PYTHON");
+    }
+
+    assert!(
+        rejected.message.contains("python-backed capability")
+            && rejected.message.contains("delegated authority"),
+        "unexpected rejection: {}",
+        rejected.message
+    );
+}
+
+#[tokio::test]
+async fn mcp_tools_list_uses_capability_discovery_not_raw_runtime_tools() {
+    let state = test_state().await;
+    state
+        .runtime
+        .capability_system()
+        .register(Arc::new(FixtureReadCapability::new("fixture.read")))
+        .expect("register fixture read capability");
+    let app = crate::build_app(state);
+
+    let (status, body) = post_json(
+        app.clone(),
+        routes::MCP,
+        serde_json::json!({
+            "jsonrpc": MCP_JSONRPC_VERSION,
+            "id": MCP_REQUEST_ID,
+            "method": MCP_METHOD_TOOLS_LIST,
+            "params": {}
+        }),
+    )
+    .await;
+
+    assert_eq!(status, StatusCode::OK, "MCP tools/list failed: {body}");
+    let names: Vec<&str> = body["result"]["tools"]
+        .as_array()
+        .expect("tools array")
+        .iter()
+        .filter_map(|tool| tool["name"].as_str())
+        .collect();
+    assert!(names.contains(&MCP_TOOL_APXM_CAPABILITY_DISCOVERY));
+    assert!(
+        !names.contains(&"fixture.read"),
+        "raw runtime capability leaked as MCP tool: {names:?}"
+    );
+
+    let (status, body) = post_json(
+        app,
+        routes::MCP,
+        mcp_call("fixture.read", serde_json::json!({})),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(body["result"]["isError"], true);
+    assert!(
+        tool_text(&body).contains("capability_discovery"),
+        "expected capability_discovery guidance, got {body}"
+    );
+}
+
 fn mock_yield_air_response() -> String {
     format!(
         r#"module {{
@@ -594,6 +934,23 @@ fn mock_inv_tool_air_response(capability: &str) -> String {
         entry = FIXTURE_ENTRY_FLOW,
         node = FIXTURE_WORKFLOW_NODE_NAME,
         capability = capability
+    )
+}
+
+fn mock_inv_tool_air_with_args(capability: &str, args: serde_json::Value) -> String {
+    let args = apxm_ais::chat::escape_air_string(&args.to_string());
+    format!(
+        r#"module {{
+  func.func @{entry}() -> !ais.token attributes {{ais.entry}} {{
+    %{node} = ais.inv_tool "{capability}" ("{args}") : !ais.token
+    func.return %{node} : !ais.token
+  }}
+}}
+"#,
+        entry = FIXTURE_ENTRY_FLOW,
+        node = FIXTURE_WORKFLOW_NODE_NAME,
+        capability = capability,
+        args = args
     )
 }
 
@@ -708,8 +1065,7 @@ skill_id = "{FIXTURE_SKILL_ID}"
 version = "{FIXTURE_SKILL_VERSION}"
 entry_flow = "{FIXTURE_ENTRY_FLOW}"
 artifact_hash = "{artifact_hash}"
-required_capabilities = ["{required_capability}"]
-allowed_tools = ["{allowed_tool}"]
+required_capabilities = ["{required_capability}", "{allowed_tool}"]
 side_effect_policy = "read_only"
 "#
         ),
@@ -734,8 +1090,7 @@ skill_id = "{FIXTURE_SKILL_ID}"
 version = "{FIXTURE_SKILL_VERSION}"
 entry_flow = "{FIXTURE_ENTRY_FLOW}"
 artifact_hash = "{artifact_hash}"
-required_capabilities = ["{required_capability}"]
-allowed_tools = ["{allowed_tool}"]
+required_capabilities = ["{required_capability}", "{allowed_tool}"]
 side_effect_policy = "{SIDE_EFFECT_POLICY_SANDBOXED}"
 "#
         ),
@@ -761,8 +1116,7 @@ skill_id = "{FIXTURE_SKILL_ID}"
 version = "{FIXTURE_SKILL_VERSION}"
 entry_flow = "{FIXTURE_ENTRY_FLOW}"
 artifact_hash = "{artifact_hash}"
-required_capabilities = ["{required_capability}"]
-allowed_tools = ["{allowed_tool}"]
+required_capabilities = ["{required_capability}", "{allowed_tool}"]
 side_effect_policy = "{side_effect_policy}"
 "#
         ),
@@ -830,8 +1184,7 @@ entry_flow = "{entry_flow}"
 source_hash = "{source_hash}"
 air_hash = "{air_hash}"
 artifact_hash = "{artifact_hash}"
-required_capabilities = ["{FIXTURE_CAPABILITY}"]
-allowed_tools = ["{FIXTURE_TOOL}"]
+required_capabilities = ["{FIXTURE_CAPABILITY}", "{FIXTURE_TOOL}"]
 timeout_ms = {FIXTURE_TIMEOUT_MS}
 token_limit = {FIXTURE_TOKEN_LIMIT}
 isolation_policy = "process"
@@ -1163,7 +1516,7 @@ fn assert_complete_skill_record(record: &serde_json::Value, fixture: &SkillFixtu
         record["manifest"]["required_capabilities"][0],
         FIXTURE_CAPABILITY
     );
-    assert_eq!(record["manifest"]["allowed_tools"][0], FIXTURE_TOOL);
+    assert_eq!(record["manifest"]["required_capabilities"][1], FIXTURE_TOOL);
     assert_eq!(record["manifest"]["timeout_ms"], FIXTURE_TIMEOUT_MS);
     assert_eq!(record["manifest"]["token_limit"], FIXTURE_TOKEN_LIMIT);
     assert_eq!(record["manifest"]["inputs"][0]["name"], FIXTURE_INPUT_NAME);

@@ -124,7 +124,7 @@ session. The cue sets `respond = true`.
           → loads skill.apxmobj from <package_dir>/skill.apxmobj
           → verifies BLAKE3 hash against skill.toml artifact_hash
           → deserializes to Artifact, caches by (skill_id, artifact_hash)
-      - validate_static_skill_admission(): checks allowed_tools, side_effect_policy,
+      - validate_static_skill_admission(): checks required_capabilities, side_effect_policy,
           every INV_TOOL node in the artifact
 
 11. apxm-runtime execute_artifact_with_session_emitter_and_metadata

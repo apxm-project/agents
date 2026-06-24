@@ -86,7 +86,7 @@ struct GoalStartArgs {
     #[serde(default)]
     session_id: Option<String>,
     #[serde(default)]
-    admit_capabilities: Vec<String>,
+    delegated_capability_ids: Vec<String>,
     #[serde(default)]
     imports: Vec<String>,
     /// Zero-based index of this bounded pass within a goal. Public callers
@@ -567,7 +567,7 @@ pub(crate) fn goal_start_input_schema() -> JsonValue {
                 }
             },
             "session_id": { "type": "string" },
-            "admit_capabilities": {
+            "delegated_capability_ids": {
                 "type": "array",
                 "items": { "type": "string" },
                 "description": "Must include SPAWN_AGENT when any worker/supervisor uses transport=acp"
@@ -749,12 +749,12 @@ async fn start_goal_pass(
     let uses_process_spawns = goal_uses_process_spawns(&request);
     if uses_process_spawns
         && !request
-            .admit_capabilities
+            .delegated_capability_ids
             .iter()
             .any(|capability| capability == goal_admission::SPAWN_AGENT)
     {
         return Err(ApiError::bad_request(format!(
-            "{MCP_TOOL_APXM_GOAL_START}: transport=acp requires admit_capabilities=[\"{}\"]",
+            "{MCP_TOOL_APXM_GOAL_START}: transport=acp requires delegated_capability_ids=[\"{}\"]",
             goal_admission::SPAWN_AGENT,
         )));
     }
@@ -791,7 +791,7 @@ async fn start_goal_pass(
                     workflow_path: bundle.workflow_path.to_string_lossy().to_string(),
                     args: JsonMap::new(),
                     session_id: Some(bundle.session_id.clone()),
-                    admit_capabilities: request.admit_capabilities.clone(),
+                    delegated_capability_ids: request.delegated_capability_ids.clone(),
                     imports: request.imports.clone(),
                     orchestration: Some(goal_contract),
                 },
@@ -2464,8 +2464,7 @@ fn worker_selection_summary(
     decision: Option<&AgentRouteDecision>,
     default_source: &'static str,
 ) -> WorkerSelectionSummary {
-    let source = decision
-        .map_or(default_source, |decision| decision.source.as_str());
+    let source = decision.map_or(default_source, |decision| decision.source.as_str());
     let selected_profile_hint = if source == AgentRouteSource::Selected.as_str() {
         worker.profile.clone()
     } else {
@@ -2480,10 +2479,22 @@ fn worker_selection_summary(
         },
         source,
         selected_profile_hint,
-        required_capabilities: decision.map_or_else(|| goal_worker_required_capabilities(worker), |decision| decision.required_capabilities.clone()),
-        preferred_profiles: decision.map_or_else(|| worker.preferred_profiles.clone(), |decision| decision.preferred_profiles.clone()),
-        route_selector: decision.map_or_else(|| "disabled".to_string(), |_| AGENT_ROUTE_SELECTOR_DETERMINISTIC.to_string()),
-        reason: decision.map_or_else(|| "selection disabled".to_string(), |decision| decision.reason.clone()),
+        required_capabilities: decision.map_or_else(
+            || goal_worker_required_capabilities(worker),
+            |decision| decision.required_capabilities.clone(),
+        ),
+        preferred_profiles: decision.map_or_else(
+            || worker.preferred_profiles.clone(),
+            |decision| decision.preferred_profiles.clone(),
+        ),
+        route_selector: decision.map_or_else(
+            || "disabled".to_string(),
+            |_| AGENT_ROUTE_SELECTOR_DETERMINISTIC.to_string(),
+        ),
+        reason: decision.map_or_else(
+            || "selection disabled".to_string(),
+            |decision| decision.reason.clone(),
+        ),
         mode: worker.mode.clone(),
         model: worker.model.clone(),
     }
@@ -3149,11 +3160,10 @@ fn acp_worker_air(request: &GoalStartArgs, worker: &WorkerPlan) -> Result<String
     let message = worker_message(request, worker)?;
     let route_auto = worker.agent_route.as_deref() == Some("auto");
     let mut preferred_profiles = worker.preferred_profiles.clone();
-    if route_auto
-        && let Some(profile) = worker.profile.as_ref() {
-            preferred_profiles.retain(|candidate| candidate != profile);
-            preferred_profiles.insert(0, profile.clone());
-        }
+    if route_auto && let Some(profile) = worker.profile.as_ref() {
+        preferred_profiles.retain(|candidate| candidate != profile);
+        preferred_profiles.insert(0, profile.clone());
+    }
     let spawn_attrs = spawn_attrs(
         if route_auto {
             None

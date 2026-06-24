@@ -1,18 +1,18 @@
-//! Per-session ledger — turn caps, per-tool budgets, and the grant set, owned by
+//! Per-session ledger — turn caps and per-tool budgets, owned by
 //! the RUNTIME and keyed by `session_id` (moved off the host, constitution #2).
 //!
 //! In the dumb-pipe model the host POSTs the artifact once and pipes turns; it no
-//! longer tracks per-conversation turn counts, tool budgets, or grants. The
-//! runtime holds them here so a one-execution-per-session conversation enforces
+//! longer tracks per-conversation turn counts or tool budgets. The runtime
+//! holds them here so a one-execution-per-session conversation enforces
 //! caps across its re-armed turns without any host bookkeeping. The ledger is a
 //! process-global registry keyed by session id; an `Arc<SessionLedger>` is also
 //! threaded onto `ExecutionContext` (inherited by child contexts).
 
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 use std::sync::atomic::{AtomicUsize, Ordering};
-use std::sync::{Arc, Mutex, OnceLock, RwLock};
+use std::sync::{Arc, Mutex, OnceLock};
 
-/// Per-session caps/budgets/grants.
+/// Per-session caps/budgets.
 #[derive(Debug)]
 pub struct SessionLedger {
     /// Max substantive turns for the session (`None` = unbounded).
@@ -21,22 +21,15 @@ pub struct SessionLedger {
     /// Per-tool call budget for the whole session (`None` entry = unbounded).
     tool_budgets: HashMap<String, usize>,
     tool_consumed: Mutex<HashMap<String, usize>>,
-    /// Capability grant set seeded from the start request's `admit_capabilities`.
-    grants: RwLock<HashSet<String>>,
 }
 
 impl SessionLedger {
-    pub fn new(
-        turn_cap: Option<usize>,
-        tool_budgets: HashMap<String, usize>,
-        grants: HashSet<String>,
-    ) -> Self {
+    pub fn new(turn_cap: Option<usize>, tool_budgets: HashMap<String, usize>) -> Self {
         Self {
             turn_cap,
             turns_used: AtomicUsize::new(0),
             tool_budgets,
             tool_consumed: Mutex::new(HashMap::new()),
-            grants: RwLock::new(grants),
         }
     }
 
@@ -70,44 +63,6 @@ impl SessionLedger {
         }
         *used += 1;
         true
-    }
-
-    /// Whether the session's grant set admits `capability`.
-    pub fn admits(&self, capability: &str) -> bool {
-        self.grants
-            .read()
-            .expect("session ledger grants poisoned")
-            .contains(capability)
-    }
-
-    pub fn grants(&self) -> HashSet<String> {
-        self.grants
-            .read()
-            .expect("session ledger grants poisoned")
-            .clone()
-    }
-
-    pub fn grants_is_empty(&self) -> bool {
-        self.grants
-            .read()
-            .expect("session ledger grants poisoned")
-            .is_empty()
-    }
-
-    /// Add capability ids to the session grant set.
-    pub fn add_grants(&self, grants: impl IntoIterator<Item = String>) {
-        self.grants
-            .write()
-            .expect("session ledger grants poisoned")
-            .extend(grants);
-    }
-
-    /// Remove capability ids from the session grant set.
-    pub fn remove_grants(&self, grants: impl IntoIterator<Item = String>) {
-        let mut set = self.grants.write().expect("session ledger grants poisoned");
-        for grant in grants {
-            set.remove(&grant);
-        }
     }
 
     /// Remaining per-tool call budget for the session (`None` entry omitted).
@@ -200,7 +155,7 @@ mod tests {
 
     #[test]
     fn turn_cap_is_enforced() {
-        let l = SessionLedger::new(Some(2), HashMap::new(), HashSet::new());
+        let l = SessionLedger::new(Some(2), HashMap::new());
         assert_eq!(l.charge_turn().unwrap(), 1);
         assert_eq!(l.charge_turn().unwrap(), 2);
         assert!(l.charge_turn().is_err(), "third turn exceeds cap of 2");
@@ -209,7 +164,7 @@ mod tests {
 
     #[test]
     fn unbounded_turns_when_no_cap() {
-        let l = SessionLedger::new(None, HashMap::new(), HashSet::new());
+        let l = SessionLedger::new(None, HashMap::new());
         for _ in 0..100 {
             assert!(l.charge_turn().is_ok());
         }
@@ -219,7 +174,7 @@ mod tests {
     fn tool_budget_is_enforced() {
         let mut budgets = HashMap::new();
         budgets.insert("lookup".to_string(), 2);
-        let l = SessionLedger::new(None, budgets, HashSet::new());
+        let l = SessionLedger::new(None, budgets);
         assert!(l.charge_tool("lookup"));
         assert!(l.charge_tool("lookup"));
         assert!(!l.charge_tool("lookup"), "third lookup exceeds budget of 2");
@@ -227,25 +182,10 @@ mod tests {
     }
 
     #[test]
-    fn grants_admit_set() {
-        let mut grants = HashSet::new();
-        grants.insert("write_file".to_string());
-        let l = SessionLedger::new(None, HashMap::new(), grants);
-        assert!(l.admits("write_file"));
-        assert!(!l.admits("delete_file"));
-    }
-
-    #[test]
     fn registry_seed_is_idempotent() {
         let id = "sess-ledger-test-unique";
-        let first = seed(
-            id,
-            SessionLedger::new(Some(5), HashMap::new(), HashSet::new()),
-        );
-        let second = seed(
-            id,
-            SessionLedger::new(Some(99), HashMap::new(), HashSet::new()),
-        );
+        let first = seed(id, SessionLedger::new(Some(5), HashMap::new()));
+        let second = seed(id, SessionLedger::new(Some(99), HashMap::new()));
         // Idempotent: the second seed returns the first ledger (cap stays 5).
         assert!(Arc::ptr_eq(&first, &second));
         assert!(get(id).is_some());
@@ -256,10 +196,7 @@ mod tests {
     #[test]
     fn charge_turn_for_wake_enforces_cap_via_registry() {
         let id = "sess-charge-wake-cap";
-        seed(
-            id,
-            SessionLedger::new(Some(1), HashMap::new(), HashSet::new()),
-        );
+        seed(id, SessionLedger::new(Some(1), HashMap::new()));
         assert_eq!(
             charge_turn_for_wake(id),
             TurnChargeOutcome::Charged(1),
@@ -282,7 +219,7 @@ mod tests {
 
     #[test]
     fn turns_remaining_tracks_cap() {
-        let l = SessionLedger::new(Some(3), HashMap::new(), HashSet::new());
+        let l = SessionLedger::new(Some(3), HashMap::new());
         assert_eq!(l.turns_remaining(), Some(3));
         assert_eq!(l.charge_turn().unwrap(), 1);
         assert_eq!(l.turns_remaining(), Some(2));

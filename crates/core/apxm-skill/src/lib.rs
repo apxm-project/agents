@@ -4,7 +4,6 @@
 //! table; parsing accepts both layouts so producers can converge without
 //! duplicating server-side compatibility code.
 
-use std::collections::BTreeSet;
 use std::fs;
 use std::path::Path;
 
@@ -21,61 +20,35 @@ pub const HASH_PREFIX: &str = "blake3:";
 /// constants instead of duplicating the string literals.
 pub const POLICY_NAME_READ_ONLY: &str = "read_only";
 pub const POLICY_NAME_SANDBOXED: &str = "sandboxed";
-/// Prefix of the `Broader` wire form: `broader[cap.a,cap.b]`. The bracketed,
-/// comma-joined set of admitted capabilities is the durable form of an operator
-/// write grant (e.g. a studio workflow packaged as a skill).
-pub const POLICY_PREFIX_BROADER: &str = "broader[";
 
 /// Classification of what side effects a skill is permitted to perform.
 ///
-/// `ReadOnly` and `Sandboxed` are the two policies that the static skill
-/// executor admits today. `Broader { admits }` is a forward-compatible
-/// variant the admission layer can match on once specific capability sets
-/// are sanctioned (e.g. "writes to a single temp dir", "network egress to
-/// a pinned host"). Until then it is admitted only when the caller passes
-/// in an explicit allow-list.
+/// Static skills may be read-only or sandboxed. Direct write authority is no
+/// longer expressed in `side_effect_policy`; runtime writes require
+/// DelegatedCapabilityV1 ids supplied at execution time.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum CapabilityPolicy {
     ReadOnly,
     Sandboxed,
-    Broader { admits: BTreeSet<String> },
 }
 
 impl CapabilityPolicy {
     /// Parse a manifest's `side_effect_policy` string into a structured policy.
-    /// Accepts `read_only`, `sandboxed`, and the `broader[a,b,…]` grant form
-    /// (the round-trip of [`Self::name`]). Any other value yields `None`; the
-    /// caller decides whether to reject it.
+    /// Accepts `read_only` and `sandboxed`. Any other value yields `None`; the
+    /// caller decides how to report it.
     pub fn from_manifest_value(value: Option<&str>) -> Option<Self> {
         match value {
             None | Some(POLICY_NAME_READ_ONLY) => Some(Self::ReadOnly),
             Some(POLICY_NAME_SANDBOXED) => Some(Self::Sandboxed),
-            Some(other) => {
-                let inner = other
-                    .strip_prefix(POLICY_PREFIX_BROADER)?
-                    .strip_suffix(']')?;
-                let admits: BTreeSet<String> = inner
-                    .split(',')
-                    .map(str::trim)
-                    .filter(|token| !token.is_empty())
-                    .map(String::from)
-                    .collect();
-                Some(Self::Broader { admits })
-            }
+            Some(_) => None,
         }
     }
 
-    /// Wire name for this policy (matches what producers write in
-    /// `skill.toml`). `Broader` does not have a single canonical name; it
-    /// surfaces as the joined set of admitted capability tokens.
+    /// Wire name for this policy (matches what producers write in `skill.toml`).
     pub fn name(&self) -> String {
         match self {
             Self::ReadOnly => POLICY_NAME_READ_ONLY.to_string(),
             Self::Sandboxed => POLICY_NAME_SANDBOXED.to_string(),
-            Self::Broader { admits } => {
-                let joined: Vec<&str> = admits.iter().map(String::as_str).collect();
-                format!("{}{}]", POLICY_PREFIX_BROADER, joined.join(","))
-            }
         }
     }
 
@@ -85,18 +58,13 @@ impl CapabilityPolicy {
     pub fn admits(&self, other: &Self) -> bool {
         match (self, other) {
             (_, Self::ReadOnly) | (Self::Sandboxed, Self::Sandboxed) => true,
-            (Self::Broader { admits: parent }, Self::Broader { admits: child }) => {
-                child.is_subset(parent)
-            }
-            (Self::Broader { admits }, Self::Sandboxed) => {
-                admits.iter().any(|name| name == POLICY_NAME_SANDBOXED)
-            }
             _ => false,
         }
     }
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
 pub struct SkillManifest {
     pub skill_id: String,
     pub version: String,
@@ -130,8 +98,6 @@ pub struct SkillManifest {
     pub runtime_version: Option<String>,
     #[serde(default)]
     pub required_capabilities: Vec<String>,
-    #[serde(default)]
-    pub allowed_tools: Vec<String>,
     #[serde(default)]
     pub timeout_ms: Option<u64>,
     #[serde(default)]

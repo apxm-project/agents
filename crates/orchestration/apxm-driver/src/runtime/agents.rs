@@ -160,41 +160,41 @@ impl AgentSpawner for AcpAgentSpawner {
         if let Some(mode_id) = effective_mode
             && let Err(e) =
                 apxm_acp::controls::SessionControls::set_mode(&mut session, mode_id).await
-            {
-                if is_unsupported_session_control(&e) {
-                    apxm_acp!(
-                        warn,
-                        agent_name = agent_name,
-                        profile = profile_name,
-                        mode = mode_id,
-                        "ACP agent does not support session mode control"
-                    );
-                } else {
-                    return Err(RuntimeError::Operation {
-                        op_type: apxm_core::types::operations::AISOperationType::SpawnAgent,
-                        message: format!("set_mode('{}') failed: {}", mode_id, e),
-                    });
-                }
+        {
+            if is_unsupported_session_control(&e) {
+                apxm_acp!(
+                    warn,
+                    agent_name = agent_name,
+                    profile = profile_name,
+                    mode = mode_id,
+                    "ACP agent does not support session mode control"
+                );
+            } else {
+                return Err(RuntimeError::Operation {
+                    op_type: apxm_core::types::operations::AISOperationType::SpawnAgent,
+                    message: format!("set_mode('{}') failed: {}", mode_id, e),
+                });
             }
+        }
         if let Some(model_id) = effective_model
             && let Err(e) =
                 apxm_acp::controls::SessionControls::set_model(&mut session, model_id).await
-            {
-                if is_unsupported_session_control(&e) {
-                    apxm_acp!(
-                        warn,
-                        agent_name = agent_name,
-                        profile = profile_name,
-                        model = model_id,
-                        "ACP agent does not support session model control"
-                    );
-                } else {
-                    return Err(RuntimeError::Operation {
-                        op_type: apxm_core::types::operations::AISOperationType::SpawnAgent,
-                        message: format!("set_model('{}') failed: {}", model_id, e),
-                    });
-                }
+        {
+            if is_unsupported_session_control(&e) {
+                apxm_acp!(
+                    warn,
+                    agent_name = agent_name,
+                    profile = profile_name,
+                    model = model_id,
+                    "ACP agent does not support session model control"
+                );
+            } else {
+                return Err(RuntimeError::Operation {
+                    op_type: apxm_core::types::operations::AISOperationType::SpawnAgent,
+                    message: format!("set_model('{}') failed: {}", model_id, e),
+                });
             }
+        }
 
         apxm_acp!(info,
             agent_name = agent_name,

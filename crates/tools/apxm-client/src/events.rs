@@ -51,15 +51,12 @@ pub fn prompt_permission_decision(
         "\n[permission] tool '{}' requested by {} (risk={})",
         prompt.tool_name, prompt.agent_code, prompt.risk_level
     );
-    eprint!("  approve [y], deny [n], approve for session [s]? [y/N/s] ");
+    eprint!("  approve [y], deny [n]? [y/N] ");
     let _ = std::io::stderr().flush();
     let mut answer = String::new();
     std::io::stdin().read_line(&mut answer)?;
     Ok(match answer.trim().to_ascii_lowercase().as_str() {
         "y" | "yes" => types::PermissionResponseDecision::Approve,
-        "s" | "session" | "approve_for_session" => {
-            types::PermissionResponseDecision::ApproveForSession
-        }
         _ => types::PermissionResponseDecision::Deny,
     })
 }

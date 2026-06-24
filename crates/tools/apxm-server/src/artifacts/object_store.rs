@@ -142,13 +142,14 @@ impl ObjectStoreClient {
     pub fn resolve(&self, artifact: &ArtifactRef) -> Result<Vec<u8>, ArtifactError> {
         // Check expiry before hitting the backend.
         if let Some(ref expires_at) = artifact.expires_at
-            && is_expired(expires_at) {
-                return Err(ArtifactError::ArtifactExpired {
-                    artifact_ref: artifact.artifact_ref.clone(),
-                    expired_at: expires_at.clone(),
-                    retention_class: artifact.retention_class.clone(),
-                });
-            }
+            && is_expired(expires_at)
+        {
+            return Err(ArtifactError::ArtifactExpired {
+                artifact_ref: artifact.artifact_ref.clone(),
+                expired_at: expires_at.clone(),
+                retention_class: artifact.retention_class.clone(),
+            });
+        }
 
         match self {
             Self::LocalFs { runs_root } => {

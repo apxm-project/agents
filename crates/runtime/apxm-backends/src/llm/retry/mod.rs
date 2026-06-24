@@ -136,7 +136,10 @@ impl RetryStrategy {
     /// Calculate delay for next retry with exponential backoff and optional jitter.
     pub fn next_delay(&self, attempt: usize) -> Duration {
         let base_millis = self.config.initial_delay.as_millis() as f64
-            * self.config.backoff_multiplier.powi(i32::try_from(attempt).unwrap_or(i32::MAX));
+            * self
+                .config
+                .backoff_multiplier
+                .powi(i32::try_from(attempt).unwrap_or(i32::MAX));
 
         let capped = base_millis.min(self.config.max_delay.as_millis() as f64);
 

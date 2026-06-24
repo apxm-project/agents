@@ -448,9 +448,10 @@ impl LLMRegistry {
             } else if let Some(ref backend_name) = prepared.backend {
                 // Per-provider builtin fallback
                 if let Some(provider) = self.backend_providers.get(backend_name)
-                    && let Some(builtin) = default_model_for_protocol(*provider.value()) {
-                        prepared.model = Some(builtin.to_string());
-                    }
+                    && let Some(builtin) = default_model_for_protocol(*provider.value())
+                {
+                    prepared.model = Some(builtin.to_string());
+                }
             }
         }
 

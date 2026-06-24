@@ -3,7 +3,7 @@
 
 The feature acceptance fixture for the agent-in-program example. The *entire*
 conversational agent — the loop, each turn, context management + compaction,
-pre/post/session-start hooks, skill/tool discovery, and sub-agents — lives in
+pre/post/session-start hooks, skill and capability discovery, and sub-agents — lives in
 this one program. The host (`apxm chat` or the HTTP server) is a dumb pipe:
 deliver the user message in, render streamed tokens out.
 

@@ -483,10 +483,8 @@ fn load_node_evidence(
 
 impl From<crate::executions::ExecutionRecord> for RunRecord {
     fn from(record: crate::executions::ExecutionRecord) -> Self {
-        let (input_tokens, output_tokens, total_tokens) = record
-            .result
-            .as_ref()
-            .map_or((0, 0, 0), |result| {
+        let (input_tokens, output_tokens, total_tokens) =
+            record.result.as_ref().map_or((0, 0, 0), |result| {
                 let input = result.llm_usage.input_tokens as u64;
                 let output = result.llm_usage.output_tokens as u64;
                 (input, output, input.saturating_add(output))

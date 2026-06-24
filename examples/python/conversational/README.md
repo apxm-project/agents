@@ -38,10 +38,9 @@ In the REPL:
 - type a message → one turn runs against `POST /v1/execute/stream`
 - `--tree` renders the per-agent dispatch tree (spawns, tool calls) live
 - meta-commands: `/tools` `/skills` `/agents` `/compact` `/help` `/exit`
-- if a turn needs a **write** capability, the REPL prompts
-  `grant write capability '<cap>' for this session? [y/N]` and, on approval,
-  retries the turn with that grant (the same `admit_capabilities` consent path
-  used by `--admit`).
+- if a turn needs a **write** capability, APXM must mint a delegated capability
+  for the requested tool binding and retry the turn with the returned `cap_*`
+  id in `delegated_capability_ids`.
 
 ## What `chat_agent.py` demonstrates
 
@@ -113,7 +112,7 @@ handlers as the REST API:
   a normal result (`ok:false` + diagnostics), not a protocol error.
 - `ops_list` (PURE): the AIS op vocabulary.
 - `run` (side-effecting): compile + run canonical AIR; writes require
-  `admit_capabilities`.
+  runtime-minted `delegated_capability_ids`.
 - `goal_start` (side-effecting): starts a server-owned goal. Explicit workers
   are used when provided; otherwise APXM materializes bounded worker workflow
   passes. Returns `goal_id`, workflow status/events/cancel handles, session
@@ -129,8 +128,7 @@ handlers as the REST API:
 
 The write boundary is enforced at the runtime `inv_tool` invoke site (not only
 the server's static pre-flight), so it holds for **every** path — raw execute,
-`CALL_SKILL` child workflows, workflow starts, and `SPAWN_AGENT`. The effective grant
-(`SIDE_EFFECT_POLICY`) is seeded from `admit_capabilities` at the top level and
-propagated to children with no-widen (`child ⊆ parent`). Read-only and sandboxed
-capabilities are always allowed; a Direct write runs only if the execution's
-grant admits it.
+`CALL_SKILL` child workflows, workflow starts, and `SPAWN_AGENT`. Direct writes
+run only when the execution presents a runtime-minted `cap_*` delegated
+capability whose `tool_binding` matches the invoked capability. Read-only and
+sandboxed capabilities are always allowed.

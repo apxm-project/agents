@@ -230,7 +230,8 @@ fn build_start_arguments(args: &GoalArgs, task: &str, max_iterations: usize) -> 
     root.insert("workspace".to_string(), workspace_json(args)?);
 
     if let Some(profile) = args
-        .supervisor_profile.as_deref()
+        .supervisor_profile
+        .as_deref()
         .map(str::trim)
         .filter(|value| !value.is_empty())
     {
@@ -244,18 +245,18 @@ fn build_start_arguments(args: &GoalArgs, task: &str, max_iterations: usize) -> 
         );
     }
 
-    let mut admit = BTreeSet::new();
-    for cap in &args.admit {
+    let mut delegated = BTreeSet::new();
+    for cap in &args.delegated_capability_ids {
         if !cap.trim().is_empty() {
-            admit.insert(cap.trim().to_string());
+            delegated.insert(cap.trim().to_string());
         }
     }
-    if args.admit_spawn || uses_profiles || args.use_agents || auto_plan {
-        admit.insert(goal_admission::SPAWN_AGENT.to_string());
+    if args.delegate_spawn || uses_profiles || args.use_agents || auto_plan {
+        delegated.insert(goal_admission::SPAWN_AGENT.to_string());
     }
     root.insert(
-        "admit_capabilities".to_string(),
-        JsonValue::Array(admit.into_iter().map(JsonValue::String).collect()),
+        "delegated_capability_ids".to_string(),
+        JsonValue::Array(delegated.into_iter().map(JsonValue::String).collect()),
     );
     if !args.import.is_empty() {
         root.insert(
@@ -704,10 +705,9 @@ async fn follow_goal(
         for frame in parser.feed(&chunk) {
             if let Some(event) = decode_goal_sse_frame(&frame) {
                 events_seen += 1;
-                if render
-                    && let Some(line) = summarize_event(&event) {
-                        println!("{line}");
-                    }
+                if render && let Some(line) = summarize_event(&event) {
+                    println!("{line}");
+                }
                 if event_is_goal_terminal(&event, goal_id) {
                     terminal_event_kind = event_kind(&event).map(str::to_string);
                     let status = goal_status(client, base, goal_id).await?;
@@ -955,9 +955,9 @@ fn print_final_status(status: &JsonValue) {
             })
             .and_then(JsonValue::as_str)
             .filter(|reason| !reason.is_empty())
-        {
-            println!("reason: {reason}");
-        }
+    {
+        println!("reason: {reason}");
+    }
     if let Some(error) = status
         .get("error")
         .and_then(JsonValue::as_str)
@@ -985,7 +985,8 @@ fn summarize_event(event: &JsonValue) -> Option<String> {
         name if name == event_kind_constants::WORKFLOW_STARTED.name() => Some(format!(
             "{seq}workflow {} started ({} steps)",
             payload_str(payload, "workflow_name").unwrap_or("<workflow>"),
-            payload_usize(payload, "step_count").map_or_else(|| "?".to_string(), |value| value.to_string())
+            payload_usize(payload, "step_count")
+                .map_or_else(|| "?".to_string(), |value| value.to_string())
         )),
         name if name == event_kind_constants::WORKFLOW_STEP_STARTED.name() => Some(format!(
             "{seq}step {} started",
@@ -1015,11 +1016,13 @@ fn summarize_event(event: &JsonValue) -> Option<String> {
             match payload_str(payload, "op_type") {
                 Some(op_type) if op_type == spawn_agent.as_str() => Some(format!(
                     "{seq}spawn agent node {}",
-                    payload_u64(payload, "node_id").map_or_else(|| "?".to_string(), |value| value.to_string())
+                    payload_u64(payload, "node_id")
+                        .map_or_else(|| "?".to_string(), |value| value.to_string())
                 )),
                 Some(op_type) if op_type == communicate.as_str() => Some(format!(
                     "{seq}communicate with worker node {}",
-                    payload_u64(payload, "node_id").map_or_else(|| "?".to_string(), |value| value.to_string())
+                    payload_u64(payload, "node_id")
+                        .map_or_else(|| "?".to_string(), |value| value.to_string())
                 )),
                 _ => None,
             }
@@ -1046,7 +1049,8 @@ fn summarize_event(event: &JsonValue) -> Option<String> {
         )),
         name if name == event_kind_constants::GOAL_NEEDS_ANOTHER_PASS.name() => Some(format!(
             "{seq}goal needs another pass (next iteration {}): {}",
-            payload_u64(payload, "next_iteration").map_or_else(|| "?".to_string(), |value| value.to_string()),
+            payload_u64(payload, "next_iteration")
+                .map_or_else(|| "?".to_string(), |value| value.to_string()),
             payload_str(payload, "reason").unwrap_or("")
         )),
         name if name == event_kind_constants::GOAL_HALTED.name() => Some(format!(

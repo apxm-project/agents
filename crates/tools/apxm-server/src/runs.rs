@@ -412,7 +412,8 @@ impl EventReplayCursor {
             .get(LAST_EVENT_ID_HEADER)
             .or_else(|| headers.get(LAST_EVENT_ID_HEADER_LOWER))
             .and_then(|v| v.to_str().ok())
-            .and_then(|s| s.parse::<u64>().ok()).map_or_else(|| Self::FromSeq(query.since.unwrap_or(0)), Self::AfterSeq)
+            .and_then(|s| s.parse::<u64>().ok())
+            .map_or_else(|| Self::FromSeq(query.since.unwrap_or(0)), Self::AfterSeq)
     }
 
     pub(crate) fn accepts(self, seq: u64) -> bool {
@@ -1308,9 +1309,9 @@ pub(crate) async fn events_for_run_since(
         && snapshot
             .first()
             .is_none_or(|first_event| since >= first_event.meta.seq)
-        {
-            return snapshot;
-        }
+    {
+        return snapshot;
+    }
     events_from_disk(state, execution_id).await
 }
 

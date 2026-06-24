@@ -599,13 +599,17 @@ impl MlirEnvReport {
         ));
         lines.push(format!(
             "mlir-tblgen: {}",
-            self.mlir_tblgen_path
-                .as_ref().map_or_else(|| "<not found in PATH>".to_string(), |p| p.display().to_string())
+            self.mlir_tblgen_path.as_ref().map_or_else(
+                || "<not found in PATH>".to_string(),
+                |p| p.display().to_string()
+            )
         ));
         lines.push(format!(
             "llvm-config: {}",
-            self.llvm_config_path
-                .as_ref().map_or_else(|| "<not found in PATH>".to_string(), |p| p.display().to_string())
+            self.llvm_config_path.as_ref().map_or_else(
+                || "<not found in PATH>".to_string(),
+                |p| p.display().to_string()
+            )
         ));
 
         if !self.candidates.is_empty() {

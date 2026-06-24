@@ -13,7 +13,7 @@ use apxm_server::permissions::{
 use tokio::time::sleep;
 
 #[tokio::test]
-async fn sc005_permission_roundtrip_approve_and_session_grant() {
+async fn sc005_permission_roundtrip_approve() {
     let registry = PermissionRegistry::with_timeout(Duration::from_secs(5));
     let emitter = RecordingEmitter::new();
     let mut args = HashMap::new();
@@ -56,25 +56,9 @@ async fn sc005_permission_roundtrip_approve_and_session_grant() {
         &registry,
         &approval_id,
         PermissionResponse {
-            decision: PermissionDecision::ApproveForSession,
+            decision: PermissionDecision::Approve,
         },
     )
     .expect("respond");
     assert_eq!(waiter.await.unwrap(), PermissionOutcome::Approved);
-
-    let emitter2 = RecordingEmitter::new();
-    let second = registry
-        .block_for_permission(
-            "exec-sc005",
-            Some("sess-sc005"),
-            "write_file",
-            &args,
-            &emitter2,
-        )
-        .await;
-    assert_eq!(second, PermissionOutcome::Approved);
-    assert!(
-        emitter2.events().is_empty(),
-        "session-grant suppresses second prompt"
-    );
 }

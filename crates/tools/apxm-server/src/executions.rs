@@ -983,10 +983,8 @@ fn write_run_artifact(record: &ExecutionRecord) {
     };
     let finished_at_ms = record.completed_at_ms.unwrap_or_else(now_ms);
     let duration_ms = finished_at_ms.saturating_sub(record.started_at_ms);
-    let (input_tokens, output_tokens, total_tokens) = record
-        .result
-        .as_ref()
-        .map_or((0, 0, 0), |result| {
+    let (input_tokens, output_tokens, total_tokens) =
+        record.result.as_ref().map_or((0, 0, 0), |result| {
             let input = result.llm_usage.input_tokens as u64;
             let output = result.llm_usage.output_tokens as u64;
             (input, output, input.saturating_add(output))
@@ -1186,8 +1184,7 @@ fn write_run_results_artifact(
         trace_id: record.trace_id.as_deref(),
         error: record.error.as_deref(),
         content: result.and_then(|result| result.content.as_deref()),
-        results: result
-            .map_or(&empty_results, |result| &result.results),
+        results: result.map_or(&empty_results, |result| &result.results),
         stats: result.map(|result| &result.stats),
         llm_usage: result.map(|result| &result.llm_usage),
         tool_call_counts: result.map(|result| &result.tool_call_counts),
@@ -1238,15 +1235,16 @@ fn persist_record_snapshot(record: &ExecutionRecord) {
         return;
     };
     if let Some(parent) = path.parent()
-        && let Err(error) = std::fs::create_dir_all(parent) {
-            tracing::warn!(
-                execution_id = %record.execution_id,
-                path = %parent.display(),
-                %error,
-                "failed to create execution record snapshot directory"
-            );
-            return;
-        }
+        && let Err(error) = std::fs::create_dir_all(parent)
+    {
+        tracing::warn!(
+            execution_id = %record.execution_id,
+            path = %parent.display(),
+            %error,
+            "failed to create execution record snapshot directory"
+        );
+        return;
+    }
     let temp_path = unique_temp_path(&path);
     if let Err(error) = std::fs::write(&temp_path, bytes) {
         tracing::warn!(

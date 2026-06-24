@@ -9,10 +9,11 @@ use crate::agent::{
     agent_card, deregister_agent, get_agent, list_agents, receive_message, register_agent,
 };
 use crate::capability::{
-    invoke_capability, list_capabilities, register_capability, rescan_capabilities,
+    invoke_capability, list_capability_templates, reindex_capability_templates,
 };
 use crate::checkpoints::{create_checkpoint, get_checkpoint, resume_checkpoint};
 use crate::conversations::post_conversation_message;
+use crate::delegated_capabilities::{delegate_capability, revoke_capability};
 use crate::execute::{
     compile_artifact, compile_workflow, compile_workflow_stream, execute, execute_stream,
 };
@@ -34,8 +35,7 @@ use crate::runs::{
     stream_run_events,
 };
 use crate::sessions::{
-    cancel_session, compact_session, get_session_status, list_session_events,
-    stream_session_events, update_session_grants,
+    cancel_session, compact_session, get_session_status, list_session_events, stream_session_events,
 };
 use crate::skills::{
     execute_skill, execute_skill_stream, get_skill, list_skills, register_skill_event_payloads,
@@ -82,18 +82,23 @@ pub(crate) fn build_app(state: AppState) -> Router {
         .route(ServerRoute::MemoryFactsStore.path(), post(store_fact))
         .route(ServerRoute::MemoryFactsSearch.path(), post(search_facts))
         .route(ServerRoute::MemoryFactsDelete.path(), post(delete_fact))
-        // Capabilities
-        .route(ServerRoute::Capabilities.path(), get(list_capabilities))
+        // Capability templates and delegated capability invocation.
         .route(
-            ServerRoute::CapabilitiesRegister.path(),
-            post(register_capability),
+            ServerRoute::CapabilityTemplates.path(),
+            get(list_capability_templates),
         )
         .route(
-            ServerRoute::CapabilitiesRescan.path(),
-            post(rescan_capabilities),
+            ServerRoute::CapabilityTemplatesReindex.path(),
+            post(reindex_capability_templates),
         )
-        // Invoke a single read-only capability once (no graph) so the studio
-        // can populate dynamic "load options" dropdowns.
+        .route(
+            ServerRoute::CapabilityDelegate.path(),
+            post(delegate_capability),
+        )
+        .route(
+            ServerRoute::CapabilityRevoke.path(),
+            post(revoke_capability),
+        )
         .route(
             ServerRoute::CapabilityInvoke.path(),
             post(invoke_capability),
@@ -176,13 +181,9 @@ pub(crate) fn build_app(state: AppState) -> Router {
         // Durable, role-tagged chat transcript by session_id (shared across
         // the `apxm chat` CLI and studio Chat hop).
         .route(ServerRoute::SessionHistory.path(), get(get_session_history))
-        // Session control API: status, cancel, grants, compact, events.
+        // Session control API: status, cancel, compact, events.
         .route(ServerRoute::SessionStatus.path(), get(get_session_status))
         .route(ServerRoute::SessionCancel.path(), post(cancel_session))
-        .route(
-            ServerRoute::SessionGrants.path(),
-            post(update_session_grants),
-        )
         .route(ServerRoute::SessionCompact.path(), post(compact_session))
         .route(ServerRoute::SessionEvents.path(), get(list_session_events))
         .route(

@@ -49,7 +49,8 @@ impl GoalEventReplayCursor {
             .get(LAST_EVENT_ID_HEADER)
             .or_else(|| headers.get(LAST_EVENT_ID_HEADER_LOWER))
             .and_then(|value| value.to_str().ok())
-            .and_then(|value| value.parse::<u64>().ok()).map_or_else(|| Self::FromSeq(query.since.unwrap_or(0)), Self::AfterSeq)
+            .and_then(|value| value.parse::<u64>().ok())
+            .map_or_else(|| Self::FromSeq(query.since.unwrap_or(0)), Self::AfterSeq)
     }
 
     fn accepts(self, seq: u64) -> bool {

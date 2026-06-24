@@ -25,7 +25,7 @@ tags:
   - name: runs
     description: Run observability and control
   - name: session
-    description: Session control, grants, and compaction
+    description: Session control and compaction
   - name: goals
     description: Goal-convergence orchestration
   - name: memory
@@ -578,21 +578,6 @@ paths:
               schema:
                 $ref: "#/components/schemas/TypedError"
 
-  /v1/sessions/{session_id}/grants:
-    post:
-      operationId: updateSessionGrants
-      summary: Add or revoke capability grants
-      tags: [session]
-      parameters:
-        - name: session_id
-          in: path
-          required: true
-          schema:
-            type: string
-      responses:
-        "200":
-          description: Grants updated
-
   /v1/memory/facts/store:
     post:
       operationId: storeMemoryFact
@@ -611,14 +596,76 @@ paths:
         "200":
           description: Matching facts
 
-  /v1/capabilities:
+  /v1/capability-templates:
     get:
-      operationId: listCapabilities
-      summary: Capability registry snapshot
+      operationId: listCapabilityTemplates
+      summary: Authoring-time capability template catalog
       tags: [capabilities]
       responses:
         "200":
-          description: Capability list
+          description: Capability template list
+
+  /v1/capability-templates/reindex:
+    post:
+      operationId: reindexCapabilityTemplates
+      summary: Reindex installed pack capability templates
+      tags: [capabilities]
+      responses:
+        "200":
+          description: Capability templates reindexed
+
+  /v1/capabilities/delegate:
+    post:
+      operationId: delegateCapability
+      summary: Mint a runtime delegated capability
+      tags: [capabilities]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/DelegateCapabilityRequest"
+      responses:
+        "200":
+          description: Runtime-minted delegated capability
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DelegatedCapabilityV1"
+
+  /v1/capabilities/{capability_id}/revoke:
+    post:
+      operationId: revokeCapability
+      summary: Revoke a runtime delegated capability
+      tags: [capabilities]
+      parameters:
+        - name: capability_id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Revoked delegated capability
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DelegatedCapabilityV1"
+
+  /v1/capabilities/{capability_id}/invoke:
+    post:
+      operationId: invokeCapability
+      summary: Invoke a read-only delegated capability once
+      tags: [capabilities]
+      parameters:
+        - name: capability_id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Capability invocation result
 
   /v1/goals:
     get:
@@ -668,10 +715,53 @@ components:
             type: string
         session_id:
           type: string
-        admit_capabilities:
+        delegated_capability_ids:
           type: array
           items:
             type: string
+
+    DelegateCapabilityRequest:
+      type: object
+      required: [tool_binding]
+      properties:
+        template_key:
+          type: string
+        tool_binding:
+          type: string
+          description: CapabilityTemplateV1 tool binding to delegate
+        operations:
+          type: array
+          items:
+            type: string
+        description:
+          type: string
+
+    DelegatedCapabilityV1:
+      type: object
+      required:
+        - schema_version
+        - capability_id
+        - tool_binding
+        - operations
+        - status
+      properties:
+        schema_version:
+          type: string
+          enum: [apxm.capability.v1]
+        capability_id:
+          type: string
+          description: Opaque APXM-minted cap_* id
+        template_key:
+          type: string
+        tool_binding:
+          type: string
+        operations:
+          type: array
+          items:
+            type: string
+        status:
+          type: string
+          enum: [active, approval_pending, revoked, expired, exhausted]
 
     TypedError:
       type: object

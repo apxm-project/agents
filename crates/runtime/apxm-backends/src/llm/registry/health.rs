@@ -154,9 +154,9 @@ impl HealthMonitor {
 
     /// Get the health status of a backend.
     pub fn status(&self, name: &str) -> HealthStatus {
-        self.stats
-            .get(name)
-            .map_or(HealthStatus::Unknown, |entry| entry.value().lock().compute_status())
+        self.stats.get(name).map_or(HealthStatus::Unknown, |entry| {
+            entry.value().lock().compute_status()
+        })
     }
 
     /// Explicitly set the health status of a backend (override).

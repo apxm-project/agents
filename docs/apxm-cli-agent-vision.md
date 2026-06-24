@@ -225,7 +225,7 @@ to well-formed AIR. Worktrees: `apxm/.claude/worktrees/agent-vision-{ir,mw,proto
 
 The agent must **not** see the whole catalogue. Following Claude Code / Codex,
 there are two orthogonal axes: **discovery scope** (which skills are visible) and
-**capability scope** (what a skill may do — already exists via `allowed_tools` /
+**capability scope** (what a skill may do — declared via `required_capabilities` /
 `side_effect_policy`). This section is discovery scope.
 
 ### Model

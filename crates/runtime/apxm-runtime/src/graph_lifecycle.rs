@@ -162,9 +162,10 @@ pub(crate) fn graph_metadata_from_dispatch_ir(ir: &DispatchIrV1) -> GraphMetadat
         .nodes
         .iter()
         .map(|node| {
-            let is_critical_path = node.registration_is_critical_path.unwrap_or(
-                matches!(node.priority_class, Some(PriorityClass::CriticalPath)),
-            );
+            let is_critical_path = node.registration_is_critical_path.unwrap_or(matches!(
+                node.priority_class,
+                Some(PriorityClass::CriticalPath)
+            ));
             NodeSpec {
                 node_id: node.node_id,
                 node_name: node

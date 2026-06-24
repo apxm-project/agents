@@ -153,13 +153,16 @@ impl TypedError {
     }
 
     pub fn http_status(&self) -> StatusCode {
-        ApiFaultCode::from_wire(&self.code).map_or_else(|| {
+        ApiFaultCode::from_wire(&self.code).map_or_else(
+            || {
                 if self.class == FaultClass::ProgramFault {
                     StatusCode::BAD_REQUEST
                 } else {
                     StatusCode::INTERNAL_SERVER_ERROR
                 }
-            }, ApiFaultCode::http_status)
+            },
+            ApiFaultCode::http_status,
+        )
     }
 
     /// Map a runtime execution error to a typed fault used by `error.rs`.

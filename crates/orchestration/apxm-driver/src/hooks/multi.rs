@@ -110,14 +110,7 @@ impl ExecutionEventEmitter for MultiEmitter {
         timing: Option<TimingBreakdown>,
     ) {
         self.for_each("emit_operation_end", |child| {
-            child.emit_operation_end(
-                node_id,
-                op_type,
-                duration,
-                success,
-                tokens.clone(),
-                timing,
-            );
+            child.emit_operation_end(node_id, op_type, duration, success, tokens.clone(), timing);
         });
     }
 

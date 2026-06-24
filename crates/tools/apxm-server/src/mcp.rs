@@ -1,7 +1,3 @@
-use std::collections::HashMap;
-
-use apxm_core::types::values::Value;
-use apxm_runtime::capability::CapabilitySandboxPreflight;
 use axum::Json;
 use axum::extract::State;
 use serde_json::Value as JsonValue;
@@ -29,10 +25,10 @@ pub(crate) use goal::{
 pub(crate) use schema::{
     MCP_METHOD_INITIALIZE, MCP_METHOD_RESOURCES_LIST, MCP_METHOD_RESOURCES_READ,
     MCP_METHOD_TOOLS_CALL, MCP_METHOD_TOOLS_LIST, MCP_RESOURCE_PARAM_URI, MCP_TOOL_APXM_AAM_RECALL,
-    MCP_TOOL_APXM_CAPABILITY_LIST, MCP_TOOL_APXM_EVIDENCE_LOOKUP, MCP_TOOL_APXM_PROMPT_AS_WORKFLOW,
-    MCP_TOOL_APXM_SKILL_CALL, MCP_TOOL_APXM_SKILL_GET, MCP_TOOL_APXM_SKILL_VALIDATE,
-    MCP_TOOL_APXM_SKILLS_LIST, MCP_TOOL_APXM_TRACE_FETCH, MCP_TOOL_PARAM_ARGUMENTS,
-    MCP_TOOL_PARAM_NAME, McpRequest,
+    MCP_TOOL_APXM_CAPABILITY_DISCOVERY, MCP_TOOL_APXM_EVIDENCE_LOOKUP,
+    MCP_TOOL_APXM_PROMPT_AS_WORKFLOW, MCP_TOOL_APXM_SKILL_CALL, MCP_TOOL_APXM_SKILL_GET,
+    MCP_TOOL_APXM_SKILL_VALIDATE, MCP_TOOL_APXM_SKILLS_LIST, MCP_TOOL_APXM_TRACE_FETCH,
+    MCP_TOOL_PARAM_ARGUMENTS, MCP_TOOL_PARAM_NAME, McpRequest,
 };
 #[allow(unused_imports)]
 pub(crate) use workflow::{
@@ -40,19 +36,15 @@ pub(crate) use workflow::{
     MCP_TOOL_APXM_WORKFLOW_STATUS,
 };
 
-const MCP_ERROR_ARGUMENTS_OBJECT: &str = "arguments must be an object";
 const MCP_ERROR_UNKNOWN_TOOL_PREFIX: &str = "unknown tool";
-const MCP_ERROR_CAPABILITY_NOT_AGENT_SAFE: &str =
-    "capability is not read-only and does not declare sandbox execution";
-const MCP_ERROR_SANDBOX_PREFLIGHT_PREFIX: &str = "capability failed sandbox preflight";
 
 // ─── MCP 2025-11-25 JSON-RPC endpoint (/v1/mcp) ─────────────────────────────
 
 /// MCP 2025-11-25 compatible JSON-RPC handler.
 ///
 /// Supports:
-/// - `tools/list`  — enumerate APXM capabilities as MCP tools
-/// - `tools/call`  — invoke an APXM capability by name
+/// - `tools/list`  — enumerate APXM server tools and capability discovery
+/// - `tools/call`  — call APXM server tools; raw capability-name calls are not authority
 /// - `resources/list` — enumerate bundled and configured APXM skill resources
 /// - `resources/read` — read `skill://...` skill resources
 ///
@@ -107,7 +99,7 @@ pub(crate) async fn mcp_jsonrpc(
             });
             tools.push(ToolEntry {
                 name: compiler::MCP_TOOL_APXM_RUN.to_string(),
-                description: "Compile and run an APXM AIR graph; writes require admit_capabilities (gated at the invoke site)".to_string(),
+                description: "Compile and run an APXM AIR graph; writes require runtime-minted delegated_capability_ids".to_string(),
                 input_schema: compiler::run_input_schema(),
             });
             tools.push(ToolEntry {
@@ -157,19 +149,6 @@ pub(crate) async fn mcp_jsonrpc(
                 description: "Cancel an in-flight server-owned goal run by goal_id".to_string(),
                 input_schema: goal::goal_cancel_input_schema(),
             });
-            tools.extend(
-                state
-                    .runtime
-                    .capability_system()
-                    .list_capabilities()
-                    .iter()
-                    .filter(|m| m.read_only)
-                    .map(|m| ToolEntry {
-                        name: m.name.clone(),
-                        description: m.description.clone(),
-                        input_schema: m.parameters_schema.clone(),
-                    }),
-            );
             jsonrpc_ok(
                 id,
                 serde_json::json!({ (fields::TOOLS): serde_json::to_value(&tools).unwrap_or(JsonValue::Null) }),
@@ -195,7 +174,7 @@ pub(crate) async fn mcp_jsonrpc(
             }
 
             // run (side-effecting): compile + run; writes gated by
-            // admit_capabilities + the runtime invoke-site write boundary.
+            // delegated_capability_ids + the runtime invoke-site write boundary.
             if let Some(response) =
                 compiler::call_run_tool(&state, &id, tool_name, &tool_args).await
             {
@@ -218,63 +197,13 @@ pub(crate) async fn mcp_jsonrpc(
                 return response;
             }
 
-            // Convert JSON args to Value map. MCP tool calls always carry an
-            // argument object; silently treating other shapes as `{}` bypasses
-            // required-argument validation for registered capabilities.
-            let JsonValue::Object(map) = &tool_args else {
-                return mcp_tool_result(id, MCP_ERROR_ARGUMENTS_OBJECT.to_string(), true);
-            };
-            let mut args = HashMap::new();
-            for (key, value) in map {
-                let value = match Value::try_from(value.clone()) {
-                    Ok(value) => value,
-                    Err(error) => {
-                        return mcp_tool_result(
-                            id,
-                            format!("invalid argument '{key}': {error}"),
-                            true,
-                        );
-                    }
-                };
-                args.insert(key.clone(), value);
-            }
-
-            let cap_sys = state.runtime.capability_system();
-            if !cap_sys.has_capability(tool_name) {
-                return mcp_tool_result(
-                    id,
-                    format!("{MCP_ERROR_UNKNOWN_TOOL_PREFIX}: {tool_name}"),
-                    true,
-                );
-            }
-            if !cap_sys.is_read_only(tool_name) {
-                match cap_sys.sandbox_preflight(tool_name, &args) {
-                    Ok(CapabilitySandboxPreflight::Sandboxed { .. }) => {}
-                    Ok(CapabilitySandboxPreflight::Direct) => {
-                        return mcp_tool_result(
-                            id,
-                            format!("{MCP_ERROR_CAPABILITY_NOT_AGENT_SAFE}: {tool_name}"),
-                            true,
-                        );
-                    }
-                    Err(error) => {
-                        return mcp_tool_result(
-                            id,
-                            format!("{MCP_ERROR_SANDBOX_PREFLIGHT_PREFIX}: {tool_name}: {error}"),
-                            true,
-                        );
-                    }
-                }
-            }
-            match cap_sys.invoke(tool_name, args).await {
-                Ok(result) => {
-                    let result_json = result
-                        .to_json()
-                        .unwrap_or_else(|_| JsonValue::String(result.to_string()));
-                    mcp_tool_result(id, result_json.to_string(), false)
-                }
-                Err(e) => mcp_tool_result(id, e.to_string(), true),
-            }
+            mcp_tool_result(
+                id,
+                format!(
+                    "{MCP_ERROR_UNKNOWN_TOOL_PREFIX}: {tool_name}; use capability_discovery for templates and present runtime-minted delegated_capability_ids when executing"
+                ),
+                true,
+            )
         }
         MCP_METHOD_INITIALIZE => {
             let result = McpInitializeResult {

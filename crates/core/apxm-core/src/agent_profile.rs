@@ -20,7 +20,6 @@ pub struct AgentProfile {
     pub upstream_frame_budget: usize,
     pub include_upstream_prompts: bool,
     pub allowed_skills: Vec<String>,
-    pub allowed_tools: Vec<String>,
     pub constraints: Vec<String>,
     pub belief_read_scope: BeliefScope,
     pub belief_write_scope: BeliefScope,
@@ -35,7 +34,6 @@ impl AgentProfile {
             upstream_frame_budget: 4000,
             include_upstream_prompts: false,
             allowed_skills: vec!["system_design".to_string(), "api_design".to_string()],
-            allowed_tools: vec![],
             constraints: vec![
                 "Stay at design/interface level".to_string(),
                 "Do not write implementation code".to_string(),
@@ -61,12 +59,6 @@ impl AgentProfile {
                 "write_tests".to_string(),
                 "debug".to_string(),
             ],
-            allowed_tools: vec![
-                "file_read".to_string(),
-                "file_write".to_string(),
-                "shell".to_string(),
-                "git".to_string(),
-            ],
             constraints: vec![
                 "Follow the provided architecture".to_string(),
                 "Write tests for new code".to_string(),
@@ -87,7 +79,6 @@ impl AgentProfile {
             upstream_frame_budget: 2000,
             include_upstream_prompts: true,
             allowed_skills: vec!["code_review".to_string()],
-            allowed_tools: vec!["file_read".to_string()],
             constraints: vec![
                 "Cannot modify code, only review".to_string(),
                 "Must cite specific line numbers for issues".to_string(),

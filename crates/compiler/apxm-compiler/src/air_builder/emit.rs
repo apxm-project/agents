@@ -53,14 +53,15 @@ fn node_uses_flow_params(node: &AirNode, params: &[AirParam]) -> bool {
 
     for attr_name in graph_attrs::TEMPLATE_BEARING_ATTRS {
         if let Some(value) = node.attributes.get(*attr_name)
-            && let Some(text) = value.as_str() {
-                for param in params {
-                    let pattern = format!("{{{{{}}}}}", param.name);
-                    if text.contains(&pattern) {
-                        return true;
-                    }
+            && let Some(text) = value.as_str()
+        {
+            for param in params {
+                let pattern = format!("{{{{{}}}}}", param.name);
+                if text.contains(&pattern) {
+                    return true;
                 }
             }
+        }
     }
 
     false

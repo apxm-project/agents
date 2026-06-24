@@ -344,7 +344,7 @@ pub(crate) enum Tier3Tool {
     TraceFetch,
     AamRecall,
     EvidenceLookup,
-    CapabilityList,
+    CapabilityDiscovery,
 }
 
 impl Tier3Tool {
@@ -354,7 +354,7 @@ impl Tier3Tool {
             Self::TraceFetch => "trace_fetch",
             Self::AamRecall => "aam_recall",
             Self::EvidenceLookup => "evidence_lookup",
-            Self::CapabilityList => "capability_list",
+            Self::CapabilityDiscovery => "capability_discovery",
         }
     }
 
@@ -364,7 +364,7 @@ impl Tier3Tool {
             value if value == Self::TraceFetch.as_str() => Some(Self::TraceFetch),
             value if value == Self::AamRecall.as_str() => Some(Self::AamRecall),
             value if value == Self::EvidenceLookup.as_str() => Some(Self::EvidenceLookup),
-            value if value == Self::CapabilityList.as_str() => Some(Self::CapabilityList),
+            value if value == Self::CapabilityDiscovery.as_str() => Some(Self::CapabilityDiscovery),
             _ => None,
         }
     }
@@ -380,8 +380,7 @@ pub(crate) mod tool_description {
         "Recall matching AAM beliefs, goals, transitions, and memory entries.";
     pub(crate) const EVIDENCE_LOOKUP: &str =
         "Lookup APXM evaluation and claim evidence from repo-local .apxm evidence stores.";
-    pub(crate) const CAPABILITY_LIST: &str =
-        "List APXM runtime capabilities, LLM backends, and model-router health.";
+    pub(crate) const CAPABILITY_DISCOVERY: &str = "Discover APXM CapabilityTemplateV1 authoring metadata, LLM backends, and model-router health. Results are templates only, not authority.";
 
     pub(crate) const fn tier3(tool: Tier3Tool) -> &'static str {
         match tool {
@@ -389,7 +388,7 @@ pub(crate) mod tool_description {
             Tier3Tool::TraceFetch => TRACE_FETCH,
             Tier3Tool::AamRecall => AAM_RECALL,
             Tier3Tool::EvidenceLookup => EVIDENCE_LOOKUP,
-            Tier3Tool::CapabilityList => CAPABILITY_LIST,
+            Tier3Tool::CapabilityDiscovery => CAPABILITY_DISCOVERY,
         }
     }
 }

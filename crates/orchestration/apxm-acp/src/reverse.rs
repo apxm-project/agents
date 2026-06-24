@@ -127,9 +127,7 @@ impl CapabilityReverseHandler {
             .await
             .map_err(|e| AcpError::Protocol(format!("read failed: {e}")))?;
 
-        let content = result
-            .as_string().cloned()
-            .unwrap_or_default();
+        let content = result.as_string().cloned().unwrap_or_default();
         Ok(serde_json::json!({reverse_response::CONTENT: content}))
     }
 
