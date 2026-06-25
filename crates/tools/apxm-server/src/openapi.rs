@@ -18,7 +18,7 @@
 //! - Goals: `GET /v1/goals` · `/{id}` · `/events/stream` · `POST /{id}/cancel`
 //! - Memory: `POST /v1/memory/facts/store` · `/search` · `/delete`
 //! - Capabilities: `GET /v1/capability-templates` · `/reindex` ·
-//!   `POST /v1/capabilities/delegate` · `POST /{capability_id}/revoke` ·
+//!   `POST /v1/capability-grants` · `POST /v1/capability-grants/{grant_id}/revoke` ·
 //!   `POST /v1/capabilities/{capability_id}/invoke`
 //! - Agents/A2A: `GET /.well-known/agent.json` · `POST /a2a/tasks/send`
 //! - Permission: `POST /v1/permissions/{id}/respond`

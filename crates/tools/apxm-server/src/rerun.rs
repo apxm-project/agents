@@ -602,8 +602,8 @@ timeout_ms = 30000
                 shutdown: hardening.shutdown,
                 cancel_registry: Arc::new(DashMap::new()),
                 goal_runs: crate::goal_runs::GoalRunRegistry::new(),
-                delegated_capabilities:
-                    crate::delegated_capabilities::DelegatedCapabilityStore::new(),
+                capability_grants:
+                    crate::capability_grants::CapabilityGrantStore::new(),
                 session_registry: crate::conversations::SessionRegistry::new(),
             }
         }

@@ -614,48 +614,48 @@ paths:
         "200":
           description: Capability templates reindexed
 
-  /v1/capabilities/delegate:
+  /v1/capability-grants:
     post:
-      operationId: delegateCapability
-      summary: Mint a runtime delegated capability
+      operationId: mintCapabilityGrant
+      summary: Mint a runtime capability grant
       tags: [capabilities]
       requestBody:
         required: true
         content:
           application/json:
             schema:
-              $ref: "#/components/schemas/DelegateCapabilityRequest"
+              $ref: "#/components/schemas/MintCapabilityGrantRequest"
       responses:
         "200":
-          description: Runtime-minted delegated capability
+          description: Runtime-minted capability grant
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/DelegatedCapabilityV1"
+                $ref: "#/components/schemas/CapabilityGrant"
 
-  /v1/capabilities/{capability_id}/revoke:
+  /v1/capability-grants/{grant_id}/revoke:
     post:
-      operationId: revokeCapability
-      summary: Revoke a runtime delegated capability
+      operationId: revokeCapabilityGrant
+      summary: Revoke a runtime capability grant
       tags: [capabilities]
       parameters:
-        - name: capability_id
+        - name: grant_id
           in: path
           required: true
           schema:
             type: string
       responses:
         "200":
-          description: Revoked delegated capability
+          description: Revoked capability grant
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/DelegatedCapabilityV1"
+                $ref: "#/components/schemas/CapabilityGrant"
 
   /v1/capabilities/{capability_id}/invoke:
     post:
       operationId: invokeCapability
-      summary: Invoke a read-only delegated capability once
+      summary: Invoke a read-only capability once with an active grant
       tags: [capabilities]
       parameters:
         - name: capability_id
@@ -715,53 +715,120 @@ components:
             type: string
         session_id:
           type: string
-        delegated_capability_ids:
+        capability_grant_ids:
           type: array
           items:
             type: string
 
-    DelegateCapabilityRequest:
+    MintCapabilityGrantRequest:
       type: object
       required: [tool_binding]
+      additionalProperties: false
       properties:
         template_key:
           type: string
+        capability:
+          type: string
         tool_binding:
           type: string
-          description: CapabilityTemplateV1 tool binding to delegate
+          description: CapabilityTemplateV1 tool binding to grant
         operations:
           type: array
           items:
             type: string
+            enum: [read, list, search, create, write, append, update, delete, execute, send, approve, publish]
+        resource:
+          type: object
+          additionalProperties: true
+        subject:
+          type: object
+          additionalProperties: true
+        scope:
+          type: object
+          additionalProperties: true
+        runtime_limits:
+          type: object
+          additionalProperties: true
+        sensitivity:
+          type: string
+        prompt_policy:
+          type: object
+          additionalProperties: true
+        delegability:
+          type: string
+        lifecycle:
+          type: object
+          additionalProperties: true
         description:
           type: string
+        trace_tags:
+          type: object
+          additionalProperties:
+            type: string
 
-    DelegatedCapabilityV1:
+    CapabilityGrant:
       type: object
       required:
         - schema_version
-        - capability_id
+        - grant_id
+        - capability
         - tool_binding
         - operations
         - status
+      additionalProperties: false
       properties:
         schema_version:
           type: string
-          enum: [apxm.capability.v1]
-        capability_id:
+          enum: [apxm.capability-grant.v1]
+        grant_id:
           type: string
-          description: Opaque APXM-minted cap_* id
+          description: Opaque APXM-minted grant_* id
+        capability:
+          type: string
         template_key:
           type: string
         tool_binding:
           type: string
+        resource:
+          type: object
+          additionalProperties: true
         operations:
           type: array
           items:
             type: string
+        subject:
+          type: object
+          additionalProperties: true
+        scope:
+          type: object
+          additionalProperties: true
+        runtime_limits:
+          type: object
+          additionalProperties: true
+        sensitivity:
+          type: string
+        prompt_policy:
+          type: object
+          additionalProperties: true
+        delegability:
+          type: string
+        lifecycle:
+          type: object
+          additionalProperties: true
+        provenance:
+          type: object
+          additionalProperties: true
         status:
           type: string
-          enum: [active, approval_pending, revoked, expired, exhausted]
+          enum: [active, prompt_pending, revoked, expired, exhausted]
+        parent_grant_id:
+          type: string
+        description:
+          type: string
+        trace_tags:
+          type: object
+          additionalProperties:
+            type: string
 
     TypedError:
       type: object

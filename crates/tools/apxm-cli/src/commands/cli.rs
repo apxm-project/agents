@@ -283,9 +283,9 @@ pub enum Commands {
         /// a fresh one.
         #[arg(long)]
         session_id: Option<String>,
-        /// Runtime-minted delegated capability id for write-tool turns (repeatable).
-        #[arg(long = "delegated-capability-id", value_name = "CAPABILITY_ID")]
-        delegated_capability_ids: Vec<String>,
+        /// Runtime-minted capability grant id for write-tool turns (repeatable).
+        #[arg(long = "capability-grant-id", value_name = "GRANT_ID")]
+        capability_grant_ids: Vec<String>,
         /// Skill library / id to import into the agent's visible set (repeatable:
         /// `lib`, `lib::skill`, or `skill`). Activates server-side CALL_SKILL
         /// scoping; shared-tier skills are always visible. Empty = unrestricted.
@@ -446,11 +446,11 @@ pub struct GoalArgs {
     #[arg(long = "base-ref", default_value = "HEAD")]
     pub base_ref: String,
 
-    /// Runtime-minted delegated capability id forwarded to APXM (repeatable).
-    #[arg(long = "delegated-capability-id", value_name = "CAPABILITY_ID")]
-    pub delegated_capability_ids: Vec<String>,
+    /// Runtime-minted capability grant id forwarded to APXM (repeatable).
+    #[arg(long = "capability-grant-id", value_name = "GRANT_ID")]
+    pub capability_grant_ids: Vec<String>,
 
-    /// Explicitly provide delegated SPAWN_AGENT authority. Also auto-added when profiles are used.
+    /// Mint a runtime grant for the SPAWN_AGENT tool binding (via --capability-grant-id or auto when profiles are used).
     #[arg(long = "delegate-spawn", hide = true)]
     pub delegate_spawn: bool,
 

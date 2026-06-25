@@ -99,7 +99,7 @@ pub(crate) async fn mcp_jsonrpc(
             });
             tools.push(ToolEntry {
                 name: compiler::MCP_TOOL_APXM_RUN.to_string(),
-                description: "Compile and run an APXM AIR graph; writes require runtime-minted delegated_capability_ids".to_string(),
+                description: "Compile and run an APXM AIR graph; writes require runtime-minted capability_grant_ids".to_string(),
                 input_schema: compiler::run_input_schema(),
             });
             tools.push(ToolEntry {
@@ -174,7 +174,7 @@ pub(crate) async fn mcp_jsonrpc(
             }
 
             // run (side-effecting): compile + run; writes gated by
-            // delegated_capability_ids + the runtime invoke-site write boundary.
+            // capability_grant_ids + the runtime invoke-site write boundary.
             if let Some(response) =
                 compiler::call_run_tool(&state, &id, tool_name, &tool_args).await
             {
@@ -200,7 +200,7 @@ pub(crate) async fn mcp_jsonrpc(
             mcp_tool_result(
                 id,
                 format!(
-                    "{MCP_ERROR_UNKNOWN_TOOL_PREFIX}: {tool_name}; use capability_discovery for templates and present runtime-minted delegated_capability_ids when executing"
+                    "{MCP_ERROR_UNKNOWN_TOOL_PREFIX}: {tool_name}; use capability_discovery for templates and present runtime-minted capability_grant_ids when executing"
                 ),
                 true,
             )

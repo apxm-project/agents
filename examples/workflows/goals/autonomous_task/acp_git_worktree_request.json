@@ -9,8 +9,8 @@
     "base_ref": "HEAD",
     "cleanup": "keep"
   },
-  "delegated_capability_ids": [
-    "cap_spawn_agent_example"
+  "capability_grant_ids": [
+    "grant_spawn_agent_example"
   ],
   "workers": [
     {

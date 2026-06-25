@@ -14,9 +14,9 @@ browser SPA → studio Rust backend (proxy, :18802) → apxm-server (:18800)
 ```
 - Canvas is lowered to AIR **in studio** (Rust `lower` → Python frontend → `.air`
   MLIR), then `POST /v1/execute/stream` (fallback `/v1/execute`).
-- Write-boundary consent is wired through runtime-minted delegated
-  capabilities: a canvas requests templates, APXM mints opaque `cap_*` ids, and
-  studio sends those ids as `delegated_capability_ids`.
+- Write-boundary consent is wired through runtime-minted capability
+  grants: a canvas requests templates, APXM mints opaque `grant_*` ids, and
+  studio sends those ids as `capability_grant_ids`.
 - Backend/model pickers read `GET /v1/backends` (unified registry — no
   re-derivation).
 - Base URL: `apxm_ais::defaults::DEFAULT_SERVER_URL` (`http://127.0.0.1:18800`),
@@ -40,9 +40,9 @@ themselves — they hand work to apxm-server, so confinement is automatic.
 
 Two things cross the wire to control it:
 
-1. **`delegated_capability_ids`** (studio → `/v1/execute*`): opaque
-   runtime-minted delegated capabilities. A non-read-only, non-sandboxed
-   capability runs only if a presented `cap_*` id delegates its tool binding.
+1. **`capability_grant_ids`** (studio → `/v1/execute*`): opaque
+   runtime-minted capability grants. A non-read-only, non-sandboxed
+   capability runs only if a presented `grant_*` id authorizes its tool binding.
    Templates discovered through capability discovery are authoring metadata only.
 
 2. **`sandbox_hint`** (os → `/v1/skills/{id}/execute`): the minimum isolation an
@@ -83,9 +83,7 @@ Two things cross the wire to control it:
   sandboxing is set at the **profile** level (`apxm agent add --sandbox`), which
   studio selects; a per-node override would need an AIR `Op::Agent` attribute +
   runtime honoring it.
-- **studio memory nodes** (`MemoryWrite` → `memory.store_fact`) are not included
-  in studio's write-consent scan, which only covers `NodeKind::Tool`. Whether
-  this is a gap depends on `memory.store_fact`'s registered `read_only` status —
-  confirm before changing the gate.
-- **os → server has no bearer** and no delegated-capability minting path yet
+- **studio memory nodes** (`MemoryWrite` → `memory.store_fact`, etc.) are included
+  in the capability-prompt scan alongside tool and spawn nodes.
+- **os → server has no bearer** and no capability-grant minting path yet
   (read-only/sandboxed skills only on that route).

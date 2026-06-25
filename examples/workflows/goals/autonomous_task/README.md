@@ -81,7 +81,7 @@ prompt headings, and report headings stay neutral for the same reason.
 For real ACP workers, callers must grant process spawning explicitly:
 
 ```json
-"delegated_capability_ids": ["cap_spawn_agent_example"]
+"capability_grant_ids": ["grant_spawn_agent_example"]
 ```
 
 In `git_worktree` mode, APXM runs `git worktree add --detach` once per worker

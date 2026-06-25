@@ -39,7 +39,7 @@ mod checkpoints;
 mod config_layers;
 mod conversations;
 mod credentials;
-mod delegated_capabilities;
+mod capability_grants;
 mod error;
 mod execute;
 mod execution_index;

@@ -107,8 +107,8 @@ pub fn tool_binding_check(
                 errors.push(ToolBindingDiagnostic {
                     code: ErrorCode::UnboundCapability,
                     message: format!(
-                        "INV_TOOL node '{}' references capability '{}' which is not \
-                             registered by any REGISTER_CAPABILITY node and is not a \
+                        "INV_TOOL node '{}' references capability '{}' which has no \
+                             registered tool binding (REGISTER_CAPABILITY) and is not a \
                              known builtin ({})",
                         node.name,
                         cap,

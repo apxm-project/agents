@@ -114,7 +114,7 @@ pub struct ChatAirOptions<'a> {
     pub capability_discovery: bool,
     /// Expose the `authoring` tool group (`compose_workflow` / `run_workflow`) so
     /// the agent can create and run workflows. These are write-class but
-    /// delegated_ids-gated and staging-confined (workflow-scoped admission).
+    /// capability_grant_ids-gated and staging-confined (workflow-scoped admission).
     pub authoring: bool,
 }
 
@@ -232,18 +232,30 @@ pub fn acp_chat_air(opts: &ChatAcpAirOptions) -> String {
     )
 }
 
-/// Parse the capability name out of a write-denial message. Matches BOTH the
-/// server's static pre-flight wording (`capability '<cap>' performs writes`) and
-/// the runtime's invoke-site wording (`write capability '<cap>' is not delegated`).
-/// Shared by the CLI REPL and the studio backend so both fire the HITL prompt on
-/// either form.
+/// Parse the tool binding / capability id out of an admission-denial message.
+/// Matches server preflight, runtime INV_TOOL admission, spawn admission, and
+/// python-backed handler checks.
 pub fn parse_denied_capability(body: &str) -> Option<String> {
-    let is_write_denial =
-        body.contains("performs writes") || body.contains("is not delegated by this execution");
-    if !is_write_denial {
+    let is_denial = body.contains("performs writes")
+        || body.contains("missing a capability grant")
+        || body.contains("performs process spawning");
+    if !is_denial {
         return None;
     }
-    let after = body.split_once("capability '")?.1;
+    for prefix in [
+        "capability '",
+        "python-backed capability '",
+        "missing a capability grant for '",
+    ] {
+        if let Some(cap) = quoted_after(body, prefix) {
+            return Some(cap);
+        }
+    }
+    None
+}
+
+fn quoted_after(body: &str, prefix: &str) -> Option<String> {
+    let after = body.split_once(prefix)?.1;
     let cap = after.split_once('\'')?.0;
     (!cap.is_empty()).then(|| cap.to_string())
 }
@@ -261,6 +273,29 @@ pub const SUMMARIZE_AIR: &str = r#"module {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn parse_denied_capability_matches_write_spawn_and_python_denials() {
+        assert_eq!(
+            parse_denied_capability(
+                "capability 'slack.post_message' performs writes and is missing a capability grant"
+            ),
+            Some("slack.post_message".to_string())
+        );
+        assert_eq!(
+            parse_denied_capability(
+                "SpawnAgent performs process spawning and is missing a capability grant for 'SPAWN_AGENT'"
+            ),
+            Some("SPAWN_AGENT".to_string())
+        );
+        assert_eq!(
+            parse_denied_capability(
+                "python-backed capability 'python_tools' is missing a capability grant"
+            ),
+            Some("python_tools".to_string())
+        );
+        assert!(parse_denied_capability("unrelated server fault").is_none());
+    }
 
     #[test]
     fn chat_air_can_expose_capability_discovery_group() {

@@ -155,7 +155,7 @@ pub(crate) async fn run_server_with_config(server_config: ServerConfig) -> anyho
         shutdown: ShutdownCoordinator::new(),
         cancel_registry: Arc::new(DashMap::new()),
         goal_runs: GoalRunRegistry::new(),
-        delegated_capabilities: crate::delegated_capabilities::DelegatedCapabilityStore::new(),
+        capability_grants: crate::capability_grants::CapabilityGrantStore::new(),
         session_registry: crate::conversations::SessionRegistry::new(),
     };
 

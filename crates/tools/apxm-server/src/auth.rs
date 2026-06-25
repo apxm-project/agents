@@ -141,14 +141,14 @@ fn unauthorized(message: &str) -> Response {
 /// is relaxed. Loopback is not a sufficient boundary for grants that can turn
 /// into filesystem writes.
 fn always_requires_bearer(path: &str) -> bool {
-    path == routes::CAPABILITY_DELEGATE
-        || (path.starts_with("/v1/capabilities/") && path.ends_with("/revoke"))
+    path == routes::CAPABILITY_GRANT_MINT
+        || (path.starts_with("/v1/capability-grants/") && path.ends_with("/revoke"))
 }
 
 /// Axum middleware enforcing bearer auth on protected routes.
 ///
 /// When `effective_require_auth` is `false` this is a transparent pass-through
-/// for ordinary routes, but authority-minting delegated capability routes still
+/// for ordinary routes, but capability-grant mint/revoke routes still
 /// fail closed. When enabled, protected routes fail closed and attach a
 /// [`PrincipalId`] extension after successful validation.
 pub(crate) async fn require_bearer(
@@ -188,9 +188,9 @@ mod tests {
     use axum::http::Method;
 
     #[test]
-    fn delegated_capability_authority_routes_are_always_bearer_protected() {
-        assert!(always_requires_bearer("/v1/capabilities/delegate"));
-        assert!(always_requires_bearer("/v1/capabilities/cap_123/revoke"));
+    fn capability_grant_authority_routes_are_always_bearer_protected() {
+        assert!(always_requires_bearer("/v1/capability-grants"));
+        assert!(always_requires_bearer("/v1/capability-grants/grant_123/revoke"));
         assert!(!always_requires_bearer("/v1/capability-templates"));
     }
 

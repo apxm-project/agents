@@ -17,6 +17,8 @@ use apxm_core::types::OrchestrationWorkspaceMode;
 use apxm_core::types::{AISOperationType, OrchestrationTransport, OrchestrationWorkspaceCleanup};
 use serde_json::{Map as JsonMap, Value as JsonValue, json};
 
+use apxm_client::Client;
+
 use super::cli::GoalArgs;
 
 const DEFAULT_SERVER_BASE: &str = "http://127.0.0.1:18800";
@@ -55,7 +57,19 @@ pub async fn goal_command(args: GoalArgs, json_output: bool) -> Result<()> {
     match mode {
         GoalMode::Start(task) => {
             let max_iterations = args.max_iterations.unwrap_or(1).max(1);
-            let request = build_start_arguments(&args, &task, max_iterations)?;
+            let mut request = build_start_arguments(&args, &task, max_iterations)?;
+            if let Some(ids) = request
+                .get_mut("capability_grant_ids")
+                .and_then(JsonValue::as_array_mut)
+            {
+                let raw: Vec<String> = ids
+                    .iter()
+                    .filter_map(|v| v.as_str().map(str::to_string))
+                    .collect();
+                let apxm = Client::new(base.trim_end_matches('/'));
+                let resolved = apxm.resolve_capability_grant_ids(&raw).await?;
+                *ids = resolved.into_iter().map(JsonValue::String).collect();
+            }
             let started =
                 call_mcp_tool(&client, &base, mcp_tools::APXM_GOAL_START, request).await?;
             if !json_output {
@@ -245,18 +259,18 @@ fn build_start_arguments(args: &GoalArgs, task: &str, max_iterations: usize) -> 
         );
     }
 
-    let mut delegated = BTreeSet::new();
-    for cap in &args.delegated_capability_ids {
-        if !cap.trim().is_empty() {
-            delegated.insert(cap.trim().to_string());
+    let mut grant_ids = BTreeSet::new();
+    for grant in &args.capability_grant_ids {
+        if !grant.trim().is_empty() {
+            grant_ids.insert(grant.trim().to_string());
         }
     }
     if args.delegate_spawn || uses_profiles || args.use_agents || auto_plan {
-        delegated.insert(goal_admission::SPAWN_AGENT.to_string());
+        grant_ids.insert(goal_admission::SPAWN_AGENT.to_string());
     }
     root.insert(
-        "delegated_capability_ids".to_string(),
-        JsonValue::Array(delegated.into_iter().map(JsonValue::String).collect()),
+        "capability_grant_ids".to_string(),
+        JsonValue::Array(grant_ids.into_iter().map(JsonValue::String).collect()),
     );
     if !args.import.is_empty() {
         root.insert(

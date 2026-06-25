@@ -86,7 +86,7 @@ struct GoalStartArgs {
     #[serde(default)]
     session_id: Option<String>,
     #[serde(default)]
-    delegated_capability_ids: Vec<String>,
+    capability_grant_ids: Vec<String>,
     #[serde(default)]
     imports: Vec<String>,
     /// Zero-based index of this bounded pass within a goal. Public callers
@@ -567,10 +567,10 @@ pub(crate) fn goal_start_input_schema() -> JsonValue {
                 }
             },
             "session_id": { "type": "string" },
-            "delegated_capability_ids": {
+            "capability_grant_ids": {
                 "type": "array",
                 "items": { "type": "string" },
-                "description": "Must include SPAWN_AGENT when any worker/supervisor uses transport=acp"
+                "description": "Must include a minted grant_* id authorizing the SPAWN_AGENT tool binding when any worker/supervisor uses transport=acp"
             },
             "imports": { "type": "array", "items": { "type": "string" } },
             "max_iterations": {
@@ -747,16 +747,19 @@ async fn start_goal_pass(
     normalize_goal_routing_fields(&mut request)?;
     let selection = apply_goal_selection(state, &mut request).await?;
     let uses_process_spawns = goal_uses_process_spawns(&request);
-    if uses_process_spawns
-        && !request
-            .delegated_capability_ids
+    if uses_process_spawns {
+        let grant_ids: HashSet<String> = request
+            .capability_grant_ids
             .iter()
-            .any(|capability| capability == goal_admission::SPAWN_AGENT)
-    {
-        return Err(ApiError::bad_request(format!(
-            "{MCP_TOOL_APXM_GOAL_START}: transport=acp requires delegated_capability_ids=[\"{}\"]",
-            goal_admission::SPAWN_AGENT,
-        )));
+            .cloned()
+            .collect();
+        let resolved = state.capability_grants.resolve(&grant_ids)?;
+        if !resolved.admits_mutating_tool(goal_admission::SPAWN_AGENT) {
+            return Err(ApiError::bad_request(format!(
+                "{MCP_TOOL_APXM_GOAL_START}: transport=acp requires a minted capability grant for the '{}' tool binding",
+                goal_admission::SPAWN_AGENT,
+            )));
+        }
     }
 
     let bundle = materialize_goal_bundle(&request, selection.as_ref())?;
@@ -791,7 +794,7 @@ async fn start_goal_pass(
                     workflow_path: bundle.workflow_path.to_string_lossy().to_string(),
                     args: JsonMap::new(),
                     session_id: Some(bundle.session_id.clone()),
-                    delegated_capability_ids: request.delegated_capability_ids.clone(),
+                    capability_grant_ids: request.capability_grant_ids.clone(),
                     imports: request.imports.clone(),
                     orchestration: Some(goal_contract),
                 },
