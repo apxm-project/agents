@@ -367,3 +367,35 @@ impl CapabilityExecutor for WriteCapability {
         &self.metadata
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::{WriteCapability, WriteConfig};
+
+    #[test]
+    fn configured_base_directory_rejects_escape_paths() {
+        let dir = tempfile::tempdir().unwrap();
+        let cap = WriteCapability::with_config(WriteConfig {
+            base_directory: Some(dir.path().to_path_buf()),
+            ..Default::default()
+        });
+
+        let error = cap.resolve_path("../escape.txt").unwrap_err();
+        assert!(
+            error.to_string().contains("outside base_directory"),
+            "unexpected error: {error}"
+        );
+    }
+
+    #[test]
+    fn configured_base_directory_allows_child_paths() {
+        let dir = tempfile::tempdir().unwrap();
+        let cap = WriteCapability::with_config(WriteConfig {
+            base_directory: Some(dir.path().to_path_buf()),
+            ..Default::default()
+        });
+
+        let path = cap.resolve_path("nested/output.txt").unwrap();
+        assert!(path.starts_with(dir.path()));
+    }
+}

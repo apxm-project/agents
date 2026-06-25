@@ -95,7 +95,8 @@ pub(crate) struct ExecuteRequest {
 
 /// A caller-supplied workflow source plus the same execution controls as
 /// [`ExecuteRequest`]. The source must be canonical AIR text or a server-local
-/// `.air` / Python frontend path that emits AIR.
+/// `.air` file. Python frontends must be precompiled before they cross the
+/// server API boundary.
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct CompileRequest {

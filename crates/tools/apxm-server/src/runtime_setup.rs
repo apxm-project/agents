@@ -76,6 +76,7 @@ fn register_builtin_capabilities(runtime: &Runtime, schedule_on_fire: Option<OnF
         BashCapability, ComposeWorkflowCapability, CountTokensCapability, HttpGetCapability,
         HttpPostCapability, ManageTaskCapability, McpBridgeCapability, ProviderCallCapability,
         ReadCapability, RunWorkflowCapability, ScheduleCapability, ToolsStore, WriteCapability,
+        WriteConfig,
     };
     use apxm_runtime::capability::executor::CapabilityExecutor;
     use std::sync::Arc;
@@ -94,11 +95,22 @@ fn register_builtin_capabilities(runtime: &Runtime, schedule_on_fire: Option<OnF
         Some(base) => Arc::new(ReadCapability::new_with_base_directory(base)),
         None => Arc::new(ReadCapability::new()),
     };
+    // Write is confined to APXM_WRITE_BASE (defaulting to the process cwd) so a
+    // delegated write grant cannot target arbitrary host paths.
+    let write_base = std::env::var_os("APXM_WRITE_BASE")
+        .map(std::path::PathBuf::from)
+        .or_else(|| std::env::current_dir().ok())
+        .unwrap_or_else(|| std::path::PathBuf::from("."));
+    let write_capability: Arc<dyn CapabilityExecutor> =
+        Arc::new(WriteCapability::with_config(WriteConfig {
+            base_directory: Some(write_base),
+            ..Default::default()
+        }));
     let mut caps: Vec<Arc<dyn CapabilityExecutor>> = vec![
         Arc::new(HttpGetCapability::new()),
         Arc::new(HttpPostCapability::new()),
         read_capability,
-        Arc::new(WriteCapability::new()),
+        write_capability,
         Arc::new(BashCapability::new()),
         Arc::new(ProviderCallCapability::new()),
         Arc::new(McpBridgeCapability::new()),

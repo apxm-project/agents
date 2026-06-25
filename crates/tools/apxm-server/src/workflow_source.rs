@@ -1,7 +1,5 @@
-use std::env;
 use std::path::Path;
 
-use apxm_core::constants::env as apxm_env;
 use apxm_core::types::ApxmPathFormat;
 use serde_json::Value as JsonValue;
 
@@ -42,10 +40,13 @@ pub(crate) fn air_from_path(path: &Path) -> Result<String, String> {
         return Ok(strip_python_tools_sidecar(&text).0);
     }
     if format.is_python_frontend() {
-        return emit_air_from_python(path);
+        return Err(format!(
+            "Python frontend paths are not accepted by the server compile API; precompile '{}' to AIR and pass 'air' or a .air path",
+            path.display()
+        ));
     }
     Err(format!(
-        "unsupported workflow source '{}'; use .air or a Python frontend file",
+        "unsupported workflow source '{}'; use .air or inline AIR text",
         path.display()
     ))
 }
@@ -69,57 +70,40 @@ pub(crate) fn strip_python_tools_sidecar(air: &str) -> (String, Option<Vec<u8>>)
     (filtered, sidecar)
 }
 
-fn emit_air_from_python(path: &Path) -> Result<String, String> {
-    let repo_root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../..");
-    let python_frontend = repo_root.join("crates/compiler/apxm-frontend/python");
-    let mut pythonpath_entries = vec![python_frontend, repo_root];
-    if let Some(parent) = path.parent() {
-        pythonpath_entries.push(parent.to_path_buf());
-    }
-    if let Some(existing) = env::var_os(apxm_env::PYTHONPATH) {
-        pythonpath_entries.extend(env::split_paths(&existing));
-    }
-    let pythonpath = env::join_paths(pythonpath_entries)
-        .map_err(|error| format!("failed to build PYTHONPATH for APXM Python frontend: {error}"))?;
+#[cfg(test)]
+mod tests {
+    use super::{air_from_path, strip_python_tools_sidecar};
 
-    for candidate in ["python3", "python"] {
-        let output = match std::process::Command::new(candidate)
-            .arg(path)
-            .env(apxm_env::PYTHONPATH, &pythonpath)
-            .env(apxm_env::APXM_EMIT_AIR, apxm_env::flag_values::ENABLED)
-            .output()
-        {
-            Ok(output) => output,
-            Err(error) if error.kind() == std::io::ErrorKind::NotFound => continue,
-            Err(error) => {
-                return Err(format!(
-                    "failed to run Python workflow '{}' with {candidate}: {error}",
-                    path.display()
-                ));
-            }
-        };
-        if !output.status.success() {
-            return Err(format!(
-                "Python workflow '{}' failed: {}",
-                path.display(),
-                String::from_utf8_lossy(&output.stderr).trim()
-            ));
-        }
-        let air = String::from_utf8(output.stdout).map_err(|error| {
-            format!(
-                "Python workflow '{}' emitted non-UTF8 AIR: {error}",
-                path.display()
-            )
-        })?;
-        let (air, _sidecar) = strip_python_tools_sidecar(&air);
-        if air.trim().is_empty() {
-            return Err(format!(
-                "Python workflow '{}' emitted no AIR",
-                path.display()
-            ));
-        }
-        return Ok(air);
+    #[test]
+    fn air_paths_are_read_without_sidecars() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("workflow.air");
+        std::fs::write(
+            &path,
+            "module { }\n; __apxm_python_tools__ {\"unsafe\":\"sidecar\"}\n",
+        )
+        .unwrap();
+
+        let air = air_from_path(&path).unwrap();
+        assert_eq!(air, "module { }");
     }
 
-    Err("Python interpreter not found on PATH (tried python3, python)".to_string())
+    #[test]
+    fn python_frontend_paths_are_rejected_by_server_compile_api() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("workflow.py");
+        std::fs::write(&path, "print('executed')\n").unwrap();
+
+        let error = air_from_path(&path).unwrap_err();
+        assert!(error.contains("Python frontend paths are not accepted"));
+    }
+
+    #[test]
+    fn inline_air_sidecars_are_stripped() {
+        let (air, sidecar) = strip_python_tools_sidecar(
+            "module { }\n; __apxm_hooks__ {}\n; __apxm_python_tools__ {}\n",
+        );
+        assert_eq!(air, "module { }");
+        assert_eq!(sidecar, Some(b"{}".to_vec()));
+    }
 }

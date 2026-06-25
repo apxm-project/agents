@@ -137,22 +137,30 @@ fn unauthorized(message: &str) -> Response {
         .into_response()
 }
 
-/// Axum middleware enforcing bearer auth on protected routes when enabled.
+/// Some authority-minting routes are protected even on loopback when global auth
+/// is relaxed. Loopback is not a sufficient boundary for grants that can turn
+/// into filesystem writes.
+fn always_requires_bearer(path: &str) -> bool {
+    path == routes::CAPABILITY_DELEGATE
+        || (path.starts_with("/v1/capabilities/") && path.ends_with("/revoke"))
+}
+
+/// Axum middleware enforcing bearer auth on protected routes.
 ///
-/// When `effective_require_auth` is `false` this is a transparent pass-through for
-/// *all* routes. When enabled, protected routes fail closed and attach a
+/// When `effective_require_auth` is `false` this is a transparent pass-through
+/// for ordinary routes, but authority-minting delegated capability routes still
+/// fail closed. When enabled, protected routes fail closed and attach a
 /// [`PrincipalId`] extension after successful validation.
 pub(crate) async fn require_bearer(
     State(policy): State<AuthPolicy>,
     mut req: Request<Body>,
     next: Next,
 ) -> Response {
-    if !policy.effective_require_auth {
-        req.extensions_mut().insert(PrincipalId::anonymous());
-        return next.run(req).await;
-    }
+    let path = req.uri().path();
+    let must_authenticate = policy.effective_require_auth && is_protected(req.method(), path)
+        || always_requires_bearer(path);
 
-    if !is_protected(req.method(), req.uri().path()) {
+    if !must_authenticate {
         req.extensions_mut().insert(PrincipalId::anonymous());
         return next.run(req).await;
     }
@@ -172,4 +180,24 @@ pub(crate) async fn require_bearer(
     req.extensions_mut()
         .insert(PrincipalId::from_bearer(&presented));
     next.run(req).await
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{always_requires_bearer, is_protected};
+    use axum::http::Method;
+
+    #[test]
+    fn delegated_capability_authority_routes_are_always_bearer_protected() {
+        assert!(always_requires_bearer("/v1/capabilities/delegate"));
+        assert!(always_requires_bearer("/v1/capabilities/cap_123/revoke"));
+        assert!(!always_requires_bearer("/v1/capability-templates"));
+    }
+
+    #[test]
+    fn discovery_routes_remain_public_when_auth_is_enabled() {
+        assert!(!is_protected(&Method::GET, crate::routes::HEALTH));
+        assert!(!is_protected(&Method::GET, crate::routes::MODELS));
+        assert!(is_protected(&Method::POST, crate::routes::EXECUTE));
+    }
 }
