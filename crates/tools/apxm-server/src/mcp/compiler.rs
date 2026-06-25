@@ -28,7 +28,7 @@ pub(crate) fn run_input_schema() -> JsonValue {
         "additionalProperties": false,
         "properties": {
             "air": { "type": "string", "description": "APXM AIR (MLIR) source to run" },
-            "path": { "type": "string", "description": "Path to a .air file or Python frontend file that emits AIR" },
+            "path": { "type": "string", "description": "Path to a .air file" },
             "args": { "type": "array", "items": { "type": "string" }, "description": "positional string args bound to workflow parameters" },
             "session_id": { "type": "string" },
             "delegated_capability_ids": { "type": "array", "items": { "type": "string" }, "description": "runtime-minted delegated capability ids for this run" }
@@ -82,7 +82,7 @@ pub(crate) fn air_input_schema() -> JsonValue {
         "additionalProperties": false,
         "properties": {
             "air": { "type": "string", "description": "APXM AIR (MLIR) source text" },
-            "path": { "type": "string", "description": "Path to a .air file or Python frontend file that emits AIR" }
+            "path": { "type": "string", "description": "Path to a .air file" }
         }
     })
 }

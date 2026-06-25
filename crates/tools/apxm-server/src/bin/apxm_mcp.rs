@@ -181,7 +181,7 @@ fn handle_tools_list(raw_execute_enabled: bool) -> Result<Value, Value> {
                     },
                     (mcp_args::PATH): {
                         (mcp_fields::TYPE): schema_type::STRING,
-                        (mcp_fields::DESCRIPTION): "Path to a .air file or Python frontend file that emits AIR"
+                        (mcp_fields::DESCRIPTION): "Path to a .air file"
                     }
                 },
                 (mcp_fields::REQUIRED): []
@@ -199,7 +199,7 @@ fn handle_tools_list(raw_execute_enabled: bool) -> Result<Value, Value> {
                     },
                     (mcp_args::PATH): {
                         (mcp_fields::TYPE): schema_type::STRING,
-                        (mcp_fields::DESCRIPTION): "Path to a .air file or Python frontend file that emits AIR"
+                        (mcp_fields::DESCRIPTION): "Path to a .air file"
                     },
                     (mcp_args::OPT_LEVEL): {
                         (mcp_fields::TYPE): schema_type::INTEGER,
@@ -232,7 +232,7 @@ fn handle_tools_list(raw_execute_enabled: bool) -> Result<Value, Value> {
                     },
                     (mcp_args::PATH): {
                         (mcp_fields::TYPE): schema_type::STRING,
-                        (mcp_fields::DESCRIPTION): "Path to a .air file or Python frontend file that emits AIR"
+                        (mcp_fields::DESCRIPTION): "Path to a .air file"
                     }
                 },
                 (mcp_fields::REQUIRED): []
@@ -338,7 +338,7 @@ fn handle_tools_list(raw_execute_enabled: bool) -> Result<Value, Value> {
                         },
                         (mcp_args::PATH): {
                             (mcp_fields::TYPE): schema_type::STRING,
-                            (mcp_fields::DESCRIPTION): "Path to a .air file or Python frontend file that emits AIR"
+                            (mcp_fields::DESCRIPTION): "Path to a .air file"
                         },
                         (mcp_args::PARAMETERS): {
                             (mcp_fields::TYPE): schema_type::OBJECT,
@@ -662,7 +662,7 @@ fn tool_get_contract() -> Result<String, String> {
         (tool_result::PARAMETER_TYPES): contract_value::PARAMETER_TYPES,
         (tool_result::AIR_CONTRACT): {
             (tool_result::REQUIRED_ARGUMENT): mcp_args::AIR,
-            (tool_result::DESCRIPTION): "Canonical APXM workflow source as AIR text, or path to .air/.py",
+            (tool_result::DESCRIPTION): "Canonical APXM workflow source as AIR text, or path to .air",
         }
     });
     Ok(serde_json::to_string_pretty(&result).unwrap())

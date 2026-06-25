@@ -501,6 +501,26 @@ async fn post_json(
     (status, json)
 }
 
+async fn post_json_with_bearer(
+    app: Router,
+    path: &str,
+    body: serde_json::Value,
+    bearer: &str,
+) -> (StatusCode, serde_json::Value) {
+    let req = Request::builder()
+        .method("POST")
+        .uri(path)
+        .header("Content-Type", "application/json")
+        .header("Authorization", format!("Bearer {bearer}"))
+        .body(Body::from(body.to_string()))
+        .unwrap();
+    let resp = app.oneshot(req).await.unwrap();
+    let status = resp.status();
+    let bytes = resp.into_body().collect().await.unwrap().to_bytes();
+    let json: serde_json::Value = serde_json::from_slice(&bytes).unwrap_or(serde_json::Value::Null);
+    (status, json)
+}
+
 async fn post_json_text(app: Router, path: &str, body: serde_json::Value) -> (StatusCode, String) {
     let req = Request::builder()
         .method("POST")
@@ -601,7 +621,8 @@ async fn raw_execute_rejects_callable_names_as_delegated_capability_ids() {
 
 #[tokio::test]
 async fn minted_delegated_capability_authorizes_raw_write_until_revoked() {
-    let state = test_state().await;
+    let mut state = test_state().await;
+    state.server_config.auth.bearer = Some("test-token".to_string());
     state
         .runtime
         .capability_system()
@@ -609,13 +630,25 @@ async fn minted_delegated_capability_authorizes_raw_write_until_revoked() {
         .expect("register fixture write capability");
     let app = crate::build_app(state);
 
-    let (status, delegated) = post_json(
+    let (unauth_status, _) = post_json(
         app.clone(),
         crate::routes::CAPABILITY_DELEGATE,
         serde_json::json!({
             "tool_binding": "fixture.write",
             "operations": ["write"],
         }),
+    )
+    .await;
+    assert_eq!(unauth_status, StatusCode::UNAUTHORIZED);
+
+    let (status, delegated) = post_json_with_bearer(
+        app.clone(),
+        crate::routes::CAPABILITY_DELEGATE,
+        serde_json::json!({
+            "tool_binding": "fixture.write",
+            "operations": ["write"],
+        }),
+        "test-token",
     )
     .await;
     assert_eq!(status, StatusCode::OK, "delegate failed: {delegated}");
@@ -639,10 +672,11 @@ async fn minted_delegated_capability_authorizes_raw_write_until_revoked() {
             .any(|value| value.as_str() == Some(FIXTURE_OUTPUT))
     );
 
-    let (status, revoke_body) = post_json(
+    let (status, revoke_body) = post_json_with_bearer(
         app.clone(),
         &format!("/v1/capabilities/{capability_id}/revoke"),
         serde_json::json!({}),
+        "test-token",
     )
     .await;
     assert_eq!(status, StatusCode::OK, "revoke failed: {revoke_body}");
@@ -662,7 +696,8 @@ async fn minted_delegated_capability_authorizes_raw_write_until_revoked() {
 async fn conversational_agent_discovers_templates_and_runs_with_delegated_capability() {
     let backend = MockLLMBackend::static_response("capability discovery ready");
     let runtime = runtime_with_mock_workflow_backend(backend.clone()).await;
-    let state = test_state_with_runtime_and_skill_roots(runtime, Vec::new()).await;
+    let mut state = test_state_with_runtime_and_skill_roots(runtime, Vec::new()).await;
+    state.server_config.auth.bearer = Some("test-token".to_string());
     crate::capability_discovery::register(&state.runtime);
     state
         .runtime
@@ -712,7 +747,7 @@ async fn conversational_agent_discovers_templates_and_runs_with_delegated_capabi
     assert_eq!(fixture_template["authority"], "template_only");
     assert_eq!(fixture_template["operations"][0], "write");
 
-    let (status, delegated) = post_json(
+    let (status, delegated) = post_json_with_bearer(
         app.clone(),
         crate::routes::CAPABILITY_DELEGATE,
         serde_json::json!({
@@ -720,6 +755,7 @@ async fn conversational_agent_discovers_templates_and_runs_with_delegated_capabi
             "tool_binding": "fixture.write",
             "operations": ["write"],
         }),
+        "test-token",
     )
     .await;
     assert_eq!(status, StatusCode::OK, "delegate failed: {delegated}");
