@@ -3,6 +3,8 @@
 //! Invokes registered capabilities/tools through the capability system.
 //! Provides automatic input validation, timeout enforcement, and error handling.
 
+use std::collections::HashMap;
+
 use super::{
     ExecutionContext, Node, Result, Value, get_optional_u64_attribute, get_string_attribute,
     template::{input_names_from_node, render_named},
@@ -12,43 +14,31 @@ use crate::metadata_keys;
 use apxm_core::constants::graph::attrs as graph_attrs;
 use apxm_core::constants::runtime::belief_keys;
 use apxm_core::error::RuntimeError;
-use apxm_core::types::{AISOperationType, CapabilityOperation, CapabilityStatus};
+use apxm_core::types::{AISOperationType, GrantStatus, PermissionOperation, RuntimeCapabilityGrant};
 use chrono::{DateTime, Utc};
-use serde::Deserialize;
-use std::collections::HashMap;
 
-#[derive(Debug, Deserialize)]
-struct RuntimeDelegatedCapability {
-    tool_binding: String,
-    operations: Vec<CapabilityOperation>,
-    #[serde(default)]
-    expires_at: Option<String>,
-    status: CapabilityStatus,
-}
-
-/// Returns true if the effective runtime-minted delegated capability set admits
-/// a Direct write to `cap`. Absence, malformed metadata, expired grants, and
-/// non-mutating grants all fail closed.
-fn delegated_authority_admits_write(metadata: Option<&str>, cap: &str) -> bool {
+/// Returns true when runtime `capability_grants` metadata admits a direct write
+/// to `tool_binding`. Missing, malformed, expired, or non-mutating grants fail closed.
+fn capability_grant_admits_write(metadata: Option<&str>, tool_binding: &str) -> bool {
     let Some(metadata) = metadata else {
         return false;
     };
-    let Ok(capabilities) = serde_json::from_str::<Vec<RuntimeDelegatedCapability>>(metadata) else {
+    let Ok(grants) = serde_json::from_str::<Vec<RuntimeCapabilityGrant>>(metadata) else {
         return false;
     };
-    capabilities.into_iter().any(|capability| {
-        capability.status == CapabilityStatus::Active
-            && capability.tool_binding == cap
-            && capability
+    grants.into_iter().any(|grant| {
+        grant.status == GrantStatus::Active
+            && grant.tool_binding == tool_binding
+            && grant
                 .operations
                 .iter()
                 .copied()
-                .any(CapabilityOperation::is_mutating)
-            && !delegated_capability_expired(capability.expires_at.as_deref())
+                .any(PermissionOperation::is_mutating)
+            && !capability_grant_expired(grant.expires_at.as_deref())
     })
 }
 
-fn delegated_capability_expired(expires_at: Option<&str>) -> bool {
+fn capability_grant_expired(expires_at: Option<&str>) -> bool {
     let Some(expires_at) = expires_at else {
         return false;
     };
@@ -57,13 +47,9 @@ fn delegated_capability_expired(expires_at: Option<&str>) -> bool {
         .unwrap_or(true)
 }
 
-/// Invoke-site write boundary — enforced for EVERY tool call regardless of how
-/// the execution was launched (raw /v1/execute, a CALL_SKILL child DAG, a
-/// dispatched graph, SPAWN_AGENT). A Direct (write) capability runs only if this
-/// execution's effective runtime-minted delegated capabilities admit it.
-/// Read-only and sandboxed capabilities are always allowed. This closes the gap
-/// where the write boundary was previously enforced only by the server's static
-/// pre-flight at /v1/execute (bypassable by nested executions).
+/// Invoke-site capability admission — enforced for EVERY tool call regardless of how
+/// the execution was launched. A direct (write) capability runs only when this
+/// execution's effective capability grants admit its tool binding.
 fn enforce_write_boundary(
     ctx: &ExecutionContext,
     name: &str,
@@ -84,18 +70,18 @@ fn enforce_write_boundary(
     } else if !unregistered_requires_delegation {
         return Ok(());
     }
-    let delegated_capabilities = ctx
+    let capability_grants = ctx
         .metadata
-        .get(metadata_keys::DELEGATED_CAPABILITIES)
+        .get(metadata_keys::CAPABILITY_GRANTS)
         .map(String::as_str);
-    if delegated_authority_admits_write(delegated_capabilities, name) {
+    if capability_grant_admits_write(capability_grants, name) {
         Ok(())
     } else {
         Err(RuntimeError::Capability {
             capability: name.to_string(),
             message: format!(
-                "write capability '{name}' is not delegated by this execution; \
-                 present a runtime-minted cap_* id in delegated_capability_ids to authorize this execution"
+                "capability '{name}' performs writes and is missing a capability grant; \
+                 mint a grant for its tool binding and present grant_* ids in capability_grant_ids"
             ),
         })
     }
@@ -211,7 +197,7 @@ pub async fn execute(ctx: &ExecutionContext, node: &Node, inputs: Vec<Value>) ->
         emitter.emit_tool_start(&capability_name, &args);
     }
 
-    // Invoke-site write boundary: enforce delegated authority for EVERY tool
+    // Invoke-site capability admission for EVERY tool call.
     // call, including artifact-local Python tools that do not exist in the
     // process-wide capability registry.
     enforce_write_boundary(ctx, &capability_name, &args, python_handler_id.is_some())?;
@@ -476,9 +462,9 @@ mod tests {
     }
 
     #[test]
-    fn delegated_authority_requires_runtime_minted_tool_binding_grant() {
+    fn capability_grant_admits_write_requires_runtime_minted_tool_binding_grant() {
         let metadata = serde_json::json!([{
-            "capability_id": "cap_fixture",
+            "grant_id": "grant_fixture",
             "tool_binding": "fixture.write",
             "operations": ["write"],
             "expires_at": null,
@@ -486,24 +472,24 @@ mod tests {
         }])
         .to_string();
 
-        assert!(delegated_authority_admits_write(
+        assert!(capability_grant_admits_write(
             Some(&metadata),
             "fixture.write"
         ));
-        assert!(!delegated_authority_admits_write(
+        assert!(!capability_grant_admits_write(
             Some(&metadata),
             "other.write"
         ));
-        assert!(!delegated_authority_admits_write(
-            Some("not delegated capability metadata"),
+        assert!(!capability_grant_admits_write(
+            Some("not capability grant metadata"),
             "fixture.write"
         ));
     }
 
     #[test]
-    fn delegated_authority_rejects_expired_or_non_mutating_grants() {
+    fn capability_grant_admits_write_rejects_expired_or_non_mutating_grants() {
         let expired = serde_json::json!([{
-            "capability_id": "cap_fixture",
+            "grant_id": "grant_fixture",
             "tool_binding": "fixture.write",
             "operations": ["write"],
             "expires_at": "2000-01-01T00:00:00Z",
@@ -511,7 +497,7 @@ mod tests {
         }])
         .to_string();
         let read_only = serde_json::json!([{
-            "capability_id": "cap_fixture",
+            "grant_id": "grant_fixture",
             "tool_binding": "fixture.write",
             "operations": ["read"],
             "expires_at": null,
@@ -519,11 +505,11 @@ mod tests {
         }])
         .to_string();
 
-        assert!(!delegated_authority_admits_write(
+        assert!(!capability_grant_admits_write(
             Some(&expired),
             "fixture.write"
         ));
-        assert!(!delegated_authority_admits_write(
+        assert!(!capability_grant_admits_write(
             Some(&read_only),
             "fixture.write"
         ));

@@ -378,9 +378,9 @@ pub(crate) async fn list_capability_templates(
             description: m.description.clone(),
             parameters_schema: m.parameters_schema.clone(),
             operations: if m.read_only {
-                vec![apxm_core::types::CapabilityOperation::Read]
+                vec![apxm_core::types::PermissionOperation::Read]
             } else {
-                vec![apxm_core::types::CapabilityOperation::Write]
+                vec![apxm_core::types::PermissionOperation::Write]
             },
             requires_auth: m.requires_auth,
         })
@@ -449,12 +449,14 @@ pub(crate) async fn invoke_capability(
     Json(req): Json<InvokeCapabilityRequest>,
 ) -> Result<Json<InvokeCapabilityResponse>, ApiError> {
     let cap_sys = state.runtime.capability_system();
-    let delegated = state.delegated_capabilities.get_active(&capability_id)?;
-    let tool_binding = delegated.tool_binding;
+    let tool_binding = capability_id.trim().to_string();
+    if tool_binding.is_empty() {
+        return Err(ApiError::bad_request("capability_id must not be empty"));
+    }
 
     if !cap_sys.has_capability(&tool_binding) {
         return Err(ApiError::not_found(format!(
-            "capability template '{tool_binding}' is not registered"
+            "capability '{tool_binding}' is not registered"
         )));
     }
 
@@ -462,7 +464,7 @@ pub(crate) async fn invoke_capability(
     // explicitly read-only so this endpoint can never be used to drive a write.
     if !cap_sys.is_read_only(&tool_binding) {
         return Err(ApiError::bad_request(format!(
-            "capability template '{tool_binding}' is not read_only; only read-only capabilities may be invoked for load-options"
+            "capability '{tool_binding}' is not read_only; only read-only capabilities may be invoked for load-options"
         )));
     }
 
@@ -713,7 +715,7 @@ mod tests {
             shutdown: hardening.shutdown,
             cancel_registry: Arc::new(DashMap::new()),
             goal_runs: crate::goal_runs::GoalRunRegistry::new(),
-            delegated_capabilities: crate::delegated_capabilities::DelegatedCapabilityStore::new(),
+            capability_grants: crate::capability_grants::CapabilityGrantStore::new(),
             session_registry: crate::conversations::SessionRegistry::new(),
         }
     }
@@ -721,20 +723,21 @@ mod tests {
     async fn mint_test_capability(
         state: &AppState,
         tool_binding: &str,
-        operations: Vec<apxm_core::types::CapabilityOperation>,
+        operations: Vec<apxm_core::types::PermissionOperation>,
     ) -> String {
-        let response = crate::delegated_capabilities::delegate_capability(
+        let response = crate::capability_grants::mint_capability_grant(
             State(state.clone()),
-            Json(crate::delegated_capabilities::DelegateCapabilityRequest {
+            Json(crate::capability_grants::MintCapabilityGrantRequest {
                 template_key: Some(tool_binding.to_string()),
+                capability: None,
                 tool_binding: tool_binding.to_string(),
                 operations,
-                resource_handle: None,
-                auth_context: None,
+                resource: None,
+                subject: None,
                 scope: None,
                 runtime_limits: None,
                 sensitivity: None,
-                approval_policy: None,
+                prompt_policy: None,
                 delegability: None,
                 lifecycle: None,
                 description: None,
@@ -742,8 +745,8 @@ mod tests {
             }),
         )
         .await
-        .expect("mint delegated capability");
-        response.0.capability_id
+        .expect("mint capability grant");
+        response.0.grant_id
     }
 
     /// A read-only capability returns a static option list — exactly what the
@@ -771,12 +774,7 @@ mod tests {
             }))
             .expect("register read-only capability");
 
-        let capability_id = mint_test_capability(
-            &state,
-            "slack.list_channels",
-            vec![apxm_core::types::CapabilityOperation::Read],
-        )
-        .await;
+        let capability_id = "slack.list_channels".to_string();
 
         let resp = invoke_capability(
             State(state),
@@ -812,16 +810,9 @@ mod tests {
             }))
             .expect("register write capability");
 
-        let capability_id = mint_test_capability(
-            &state,
-            "slack.post_message",
-            vec![apxm_core::types::CapabilityOperation::Write],
-        )
-        .await;
-
         let err = invoke_capability(
             State(state),
-            Path(capability_id),
+            Path("slack.post_message".to_string()),
             Json(InvokeCapabilityRequest::default()),
         )
         .await
@@ -835,17 +826,17 @@ mod tests {
         );
     }
 
-    /// An unknown delegated capability id is rejected before invocation.
+    /// An unknown capability id is rejected before invocation.
     #[tokio::test]
     async fn invoke_unknown_capability_is_not_found() {
         let state = test_state().await;
         let err = invoke_capability(
             State(state),
-            Path("cap_nope_missing".to_string()),
+            Path("missing.capability".to_string()),
             Json(InvokeCapabilityRequest::default()),
         )
         .await
         .expect_err("unknown capability is rejected");
-        assert_eq!(err.status, axum::http::StatusCode::BAD_REQUEST);
+        assert_eq!(err.status, axum::http::StatusCode::NOT_FOUND);
     }
 }

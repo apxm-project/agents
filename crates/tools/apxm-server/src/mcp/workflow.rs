@@ -26,7 +26,7 @@ use tokio::sync::Notify;
 use crate::error::ApiError;
 use crate::execute::{
     ExecuteRequest, ExecuteResponse, PreparedRequest, acquire_admission, air_to_artifact_with_caps,
-    delegated_authority_metadata, inject_resolved_credentials, prepare_request,
+    capability_grants_metadata, inject_resolved_credentials, prepare_request,
     registered_capability_names, to_execute_response, tool_call_budgets_metadata,
     validate_raw_execute_admission,
 };
@@ -54,7 +54,7 @@ pub(crate) struct WorkflowStartArgs {
     #[serde(default)]
     pub(crate) session_id: Option<String>,
     #[serde(default)]
-    pub(crate) delegated_capability_ids: Vec<String>,
+    pub(crate) capability_grant_ids: Vec<String>,
     #[serde(default)]
     pub(crate) imports: Vec<String>,
     #[serde(skip)]
@@ -178,10 +178,10 @@ pub(crate) fn workflow_start_input_schema() -> JsonValue {
                 "description": "Named JSON arguments passed to the workflow"
             },
             "session_id": { "type": "string" },
-            "delegated_capability_ids": {
+            "capability_grant_ids": {
                 "type": "array",
                 "items": { "type": "string" },
-                "description": "Runtime-minted delegated capability ids for this workflow run"
+                "description": "Runtime-minted capability grant ids for this workflow run"
             },
             "imports": {
                 "type": "array",
@@ -372,7 +372,7 @@ async fn prepare_workflow_run(
         args: Vec::new(),
         session_id: Some(session_id),
         session_root: None,
-        delegated_capability_ids: request.delegated_capability_ids,
+        capability_grant_ids: request.capability_grant_ids,
         imports: request.imports,
         tool_call_budgets: std::collections::HashMap::new(),
         tool_credentials: std::collections::HashMap::new(),
@@ -385,7 +385,7 @@ async fn prepare_workflow_run(
         args,
         session_id,
         session_dir,
-        delegated_ids,
+        grant_ids,
         imports,
         tool_call_budgets,
         tool_credentials: _,
@@ -400,11 +400,11 @@ async fn prepare_workflow_run(
     let session_dir = session_dir.expect("workflow_start always supplies a session_dir");
     let known_caps = registered_capability_names(state);
     let mut artifact = air_to_artifact_with_caps(&air, &known_caps)?;
-    let delegated_capabilities = state.delegated_capabilities.resolve(&delegated_ids)?;
-    validate_raw_execute_admission(&artifact, state, &delegated_capabilities)?;
+    let capability_grants = state.capability_grants.resolve(&grant_ids)?;
+    validate_raw_execute_admission(&artifact, state, &capability_grants)?;
     inject_resolved_credentials(&mut artifact, owner.as_deref()).await?;
     let admission_id = acquire_admission(state).await?;
-    let mut metadata = delegated_authority_metadata(&delegated_capabilities, &imports)?;
+    let mut metadata = capability_grants_metadata(&capability_grants, &imports)?;
     metadata.insert(
         apxm_runtime::metadata_keys::ADMISSION_ID.to_string(),
         admission_id.clone(),

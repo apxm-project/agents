@@ -69,8 +69,8 @@ pub(crate) struct AppState {
     pub(crate) cancel_registry: Arc<DashMap<String, Arc<Notify>>>,
     /// Server-owned multi-pass goal runs keyed by `goal_id`.
     pub(crate) goal_runs: GoalRunRegistry,
-    /// Runtime-minted delegated capabilities keyed by opaque `cap_*` id.
-    pub(crate) delegated_capabilities: crate::delegated_capabilities::DelegatedCapabilityStore,
+    /// Runtime-minted capability grants keyed by opaque `grant_*` id.
+    pub(crate) capability_grants: crate::capability_grants::CapabilityGrantStore,
     /// `session_id` → running conversation execution. Backs the turn-input
     /// endpoint (`POST /v1/conversations/{id}/message`) so the host stays a
     /// dumb pipe (constitution #2).

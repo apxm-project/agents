@@ -30,7 +30,7 @@ pub struct ChatOptions {
     pub air: Option<PathBuf>,
     pub server: Option<String>,
     pub session_id: Option<String>,
-    pub delegated_capability_ids: Vec<String>,
+    pub capability_grant_ids: Vec<String>,
     /// Skill libraries / ids this agent imports (scoped visible set).
     pub import: Vec<String>,
     pub tree: bool,
@@ -200,25 +200,44 @@ fn builtin_chat_air(opts: &ChatOptions, context: Option<&str>) -> String {
     }
 }
 
-fn initial_delegated_capability_ids(opts: &ChatOptions) -> Vec<String> {
-    let mut delegated = opts.delegated_capability_ids.clone();
+fn required_tool_bindings(opts: &ChatOptions) -> Vec<String> {
+    let mut bindings = opts
+        .capability_grant_ids
+        .iter()
+        .filter(|grant| !grant.starts_with("grant_"))
+        .cloned()
+        .collect::<Vec<_>>();
     if opts.agent.as_deref().and_then(non_empty).is_some()
-        && !delegated
+        && !bindings
             .iter()
             .any(|capability| capability == orchestration_admission::SPAWN_AGENT)
     {
-        delegated.push(orchestration_admission::SPAWN_AGENT.to_string());
+        bindings.push(orchestration_admission::SPAWN_AGENT.to_string());
     }
-    // Until delegated authoring minting is wired, keep these internal authoring
-    // ids as operator-provided delegated authority.
     if opts.author {
         for cap in ["compose_workflow", "run_workflow"] {
-            if !delegated.iter().any(|g| g == cap) {
-                delegated.push(cap.to_string());
+            if !bindings.iter().any(|g| g == cap) {
+                bindings.push(cap.to_string());
             }
         }
     }
-    delegated
+    bindings
+}
+
+async fn resolve_execute_capability_grant_ids(
+    client: &Client,
+    opts: &ChatOptions,
+) -> Result<Vec<String>> {
+    let mut grant_ids = opts
+        .capability_grant_ids
+        .iter()
+        .filter(|grant| grant.starts_with("grant_"))
+        .cloned()
+        .collect::<Vec<_>>();
+    for binding in required_tool_bindings(opts) {
+        grant_ids.push(client.mint_capability_grant(&binding).await?);
+    }
+    Ok(grant_ids)
 }
 
 /// True when the artifact carries its OWN in-graph conversation loop: a
@@ -238,11 +257,11 @@ async fn run_dumb_pipe(
     air: &str,
     opts: &ChatOptions,
 ) -> Result<()> {
-    let delegated_capability_ids = initial_delegated_capability_ids(opts);
+    let capability_grant_ids = resolve_execute_capability_grant_ids(&client, opts).await?;
     let body = ExecuteRequest {
         air: air.to_string(),
         session_id: Some(session_id.to_string()),
-        delegated_capability_ids,
+        capability_grant_ids,
         imports: opts.import.clone(),
         owner: opts.owner.clone(),
         ..Default::default()
@@ -356,7 +375,17 @@ pub async fn chat_command(opts: ChatOptions) -> Result<()> {
     eprintln!("type a message, or /help for meta-commands; /exit to quit");
 
     let mut convo = Conversation::default();
-    let delegated_capability_ids = initial_delegated_capability_ids(&opts);
+    let mut approved_tool_bindings: Vec<String> = opts
+        .capability_grant_ids
+        .iter()
+        .filter(|grant| !grant.starts_with("grant_"))
+        .cloned()
+        .collect();
+    for binding in required_tool_bindings(&opts) {
+        if !approved_tool_bindings.iter().any(|existing| existing == &binding) {
+            approved_tool_bindings.push(binding);
+        }
+    }
     let tool_call_budgets = tool_call_budgets_for_opts(&opts);
 
     let mut event_rx = match &opts.monitor_url {
@@ -472,7 +501,7 @@ pub async fn chat_command(opts: ChatOptions) -> Result<()> {
             &air,
             &session_id,
             &opts,
-            &delegated_capability_ids,
+            &mut approved_tool_bindings,
             &tool_call_budgets,
         )
         .await;
@@ -481,7 +510,7 @@ pub async fn chat_command(opts: ChatOptions) -> Result<()> {
 }
 
 fn capability_discovery_prompt() -> &'static str {
-    "Runtime capability discovery: call `capability_discovery` when you need to inspect available capability templates. Treat results as CapabilityTemplateV1 authoring metadata only; they are not authority. Do not invent `capability_id` values. Present writes only when delegated_capability_ids are supplied by APXM."
+    "Runtime capability discovery: call `capability_discovery` when you need to inspect available capability templates. Treat results as CapabilityTemplateV1 authoring metadata only; they are not authority. Do not invent `capability_id` values. Present writes only when capability_grant_ids are supplied by APXM."
 }
 
 fn append_context_hints(base: Option<String>, hints: &[String]) -> Option<String> {
@@ -601,18 +630,28 @@ async fn handle_user_turn(
     air: &str,
     session_id: &str,
     opts: &ChatOptions,
-    delegated_capability_ids: &[String],
+    approved_tool_bindings: &mut Vec<String>,
     tool_call_budgets: &HashMap<String, usize>,
 ) {
     let prompt = convo.render(user_text);
     loop {
+        let capability_grant_ids = match client
+            .resolve_capability_grant_ids(&approved_tool_bindings)
+            .await
+        {
+            Ok(ids) => ids,
+            Err(err) => {
+                eprintln!("(could not mint capability grants: {err})");
+                break;
+            }
+        };
         match run_turn(
             client,
             air,
             session_id,
             &prompt,
             user_text,
-            delegated_capability_ids,
+            &capability_grant_ids,
             opts,
             tool_call_budgets,
         )
@@ -623,8 +662,21 @@ async fn handle_user_turn(
                 break;
             }
             Ok(TurnOutcome::NeedsGrant(cap)) => {
-                eprintln!("(capability '{cap}' requires delegated authority)");
-                break;
+                eprint!(
+                    "(capability '{cap}' requires a capability grant — grant for this session? [y/N]) "
+                );
+                let _ = std::io::stderr().flush();
+                let mut line = String::new();
+                if std::io::stdin().read_line(&mut line).is_err() {
+                    break;
+                }
+                if !matches!(line.trim().to_ascii_lowercase().as_str(), "y" | "yes") {
+                    eprintln!("(turn skipped — write capability '{cap}' was not granted)");
+                    break;
+                }
+                if !approved_tool_bindings.iter().any(|binding| binding == &cap) {
+                    approved_tool_bindings.push(cap);
+                }
             }
             Err(err) => {
                 eprintln!("(turn failed: {err})");
@@ -886,7 +938,7 @@ async fn run_turn(
     session_id: &str,
     prompt: &str,
     user_text: &str,
-    delegated_capability_ids: &[String],
+    capability_grant_ids: &[String],
     opts: &ChatOptions,
     tool_call_budgets: &HashMap<String, usize>,
 ) -> Result<TurnOutcome> {
@@ -896,7 +948,7 @@ async fn run_turn(
         args: vec![prompt.to_string()],
         session_id: Some(session_id.to_string()),
         user_text: Some(user_text.to_string()),
-        delegated_capability_ids: delegated_capability_ids.to_vec(),
+        capability_grant_ids: capability_grant_ids.to_vec(),
         imports: opts.import.clone(),
         tool_call_budgets: tool_call_budgets.clone(),
         tool_credentials,
@@ -1065,7 +1117,7 @@ mod tests {
             air: None,
             server: None,
             session_id: None,
-            delegated_capability_ids: Vec::new(),
+            capability_grant_ids: Vec::new(),
             import: Vec::new(),
             tree: false,
             tools: false,
@@ -1090,7 +1142,7 @@ mod tests {
         let prompt = capability_discovery_prompt();
         assert_eq!(
             prompt,
-            "Runtime capability discovery: call `capability_discovery` when you need to inspect available capability templates. Treat results as CapabilityTemplateV1 authoring metadata only; they are not authority. Do not invent `capability_id` values. Present writes only when delegated_capability_ids are supplied by APXM."
+            "Runtime capability discovery: call `capability_discovery` when you need to inspect available capability templates. Treat results as CapabilityTemplateV1 authoring metadata only; they are not authority. Do not invent `capability_id` values. Present writes only when capability_grant_ids are supplied by APXM."
         );
     }
 
@@ -1102,6 +1154,6 @@ mod tests {
         assert!(air.contains("\"discovery\""));
         assert!(air.contains("\"skills\""));
         assert!(air.contains("capability_discovery"));
-        assert!(air.contains("delegated_capability_ids"));
+        assert!(air.contains("capability_grant_ids"));
     }
 }

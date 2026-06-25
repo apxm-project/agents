@@ -54,8 +54,8 @@ Use `--event` and `--trigger` when this pass comes from an external event, and
 1. Call `goal_start` once with `task`, optional
    `context/event/trigger`, optional `planning`, optional explicit `workers`,
    optional `supervisor`, and workspace policy. Omit `workers` for server-owned
-   auto-planning. Include a runtime-minted `cap_*` id for the `SPAWN_AGENT`
-   tool binding in `delegated_capability_ids` for real ACP/headless workers.
+   auto-planning. Include a runtime-minted `grant_*` id for the `SPAWN_AGENT`
+   tool binding in `capability_grant_ids` for real ACP/headless workers.
 2. Store `goal_id`, `session_id`, `session_dir`, `workflow_path`,
    `bundle_dir`, and returned artifact paths. Use the current `execution_id`
    only for workflow drill-down.

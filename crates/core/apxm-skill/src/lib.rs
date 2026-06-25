@@ -25,7 +25,7 @@ pub const POLICY_NAME_SANDBOXED: &str = "sandboxed";
 ///
 /// Static skills may be read-only or sandboxed. Direct write authority is no
 /// longer expressed in `side_effect_policy`; runtime writes require
-/// DelegatedCapabilityV1 ids supplied at execution time.
+/// CapabilityGrant ids supplied at execution time via `capability_grant_ids`.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum CapabilityPolicy {
     ReadOnly,

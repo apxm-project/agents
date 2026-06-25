@@ -38,9 +38,9 @@ The orchestrator agent calls it once, records the returned `goal_id`, then
 sleeps until `/v1/goals/{goal_id}/events/stream` or `goal_events` returns
 aggregate `orchestrator_wake`, `error`, or `turn_aborted`, or `goal_status`
 reports a terminal state. Use the current `execution_id` only for workflow
-drill-down. Real ACP workers require a runtime-minted delegated capability for
-the `SPAWN_AGENT` tool binding, passed as a `cap_*` id in
-`delegated_capability_ids`.
+drill-down. Real ACP workers require a runtime-minted capability grant for
+the `SPAWN_AGENT` tool binding, passed as a `grant_*` id in
+`capability_grant_ids`.
 
 ## Stdio MCP Tools
 

@@ -32,10 +32,10 @@ pub const CALL_SKILL_DEPTH: &str = "call_skill_depth";
 /// from the launching skill manifest and propagated to children so CALL_SKILL
 /// admission can enforce `child ⊆ parent`.
 pub const SIDE_EFFECT_POLICY: &str = "side_effect_policy";
-/// JSON array of runtime-minted delegated capabilities presented by the host.
+/// JSON array of runtime-minted capability grants presented by the host.
 /// INV_TOOL write admission checks these opaque grants by `tool_binding`; raw
 /// callable names are never authority.
-pub const DELEGATED_CAPABILITIES: &str = "delegated_capabilities";
+pub const CAPABILITY_GRANTS: &str = "capability_grants";
 /// Comma-joined visible skill set (lib / lib::skill / skill ids). Seeded from
 /// `imports`, propagated to children. Absent = unrestricted (back-compat).
 pub const VISIBLE_SKILLS: &str = "visible_skills";

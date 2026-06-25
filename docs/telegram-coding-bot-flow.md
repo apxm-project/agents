@@ -30,7 +30,7 @@ errors, the correct implementation pattern, and open gaps.
  │  apxm-server  :18800                                       │
  │  /v1/skills/{id}/execute   — find .apxmobj, verify hash    │
  │  /v1/compile-artifact      — registry-aware compile        │
- │  /v1/capabilities          — registered capability list    │
+ │  /v1/capability-templates  — authoring-time capability templates │
  │  CapabilitySystem          — builtins + pack tools         │
  │  AgentSpawner              — ACP subprocess launch         │
  └──────────┬────────────────────────────────────────────────┘
@@ -198,9 +198,7 @@ this path only for skills that use nothing but builtins (`ask`, `inv_tool
 Calls `registered_capability_names(state)` first, which queries
 `state.runtime.capability_system().list_capabilities()`. This set includes:
 - All builtin Rust capabilities (registered in `runtime_setup.rs`)
-- All pack/connector capabilities loaded from installed `tools.toml` files
-  at server startup via `register_pack_tools()`
-- Any capability registered via the POST /v1/capabilities API
+- Pack/connector capabilities loaded from installed `tools.toml` files at server startup via `register_pack_tools()`
 
 The wire schema is `{"air": "<AIR text>"}`. The response is raw `.apxmobj`
 bytes (`application/octet-stream`). This is the path Studio uses for
@@ -213,7 +211,7 @@ compile-on-deploy. Use this path for any skill that uses pack capabilities
 1. Ensure the telegram pack is installed:
      ~/.apxm/libs/telegram/tools.toml  (must contain [[tool]] telegram.send_message)
    Verify the server sees it:
-     curl http://localhost:18800/v1/capabilities | grep telegram
+     curl http://localhost:18800/v1/capability-templates | grep telegram
 
 2. Emit AIR from the Python script:
      APXM_EMIT_AIR=1 python my_skill.py   (prints AIR to stdout)

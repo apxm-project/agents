@@ -67,7 +67,7 @@ request. Use `acp_git_worktree_pass_request.json` after replacing the profile
 names with resolvable APXM ACP profiles and granting:
 
 ```json
-["SPAWN_AGENT"]
+["grant_spawn_agent_example"]
 ```
 
 The schema in `pass_request.schema.json` documents the expected shape for one

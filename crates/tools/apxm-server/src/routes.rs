@@ -14,8 +14,8 @@ pub(crate) const MEMORY_FACTS_SEARCH: &str = "/v1/memory/facts/search";
 pub(crate) const MEMORY_FACTS_DELETE: &str = "/v1/memory/facts/delete";
 pub(crate) const CAPABILITY_TEMPLATES: &str = "/v1/capability-templates";
 pub(crate) const CAPABILITY_TEMPLATES_REINDEX: &str = "/v1/capability-templates/reindex";
-pub(crate) const CAPABILITY_DELEGATE: &str = "/v1/capabilities/delegate";
-pub(crate) const CAPABILITY_REVOKE: &str = "/v1/capabilities/{capability_id}/revoke";
+pub(crate) const CAPABILITY_GRANT_MINT: &str = "/v1/capability-grants";
+pub(crate) const CAPABILITY_GRANT_REVOKE: &str = "/v1/capability-grants/{grant_id}/revoke";
 pub(crate) const CAPABILITY_INVOKE: &str = "/v1/capabilities/{capability_id}/invoke";
 pub(crate) const SKILLS: &str = "/v1/skills";
 pub(crate) const SKILL_DETAIL: &str = "/v1/skills/{id}";
@@ -99,8 +99,8 @@ pub(crate) enum ServerRoute {
     MemoryFactsDelete,
     CapabilityTemplates,
     CapabilityTemplatesReindex,
-    CapabilityDelegate,
-    CapabilityRevoke,
+    CapabilityGrantMint,
+    CapabilityGrantRevoke,
     CapabilityInvoke,
     Skills,
     SkillDetail,
@@ -177,8 +177,8 @@ impl ServerRoute {
             Self::MemoryFactsDelete => MEMORY_FACTS_DELETE,
             Self::CapabilityTemplates => CAPABILITY_TEMPLATES,
             Self::CapabilityTemplatesReindex => CAPABILITY_TEMPLATES_REINDEX,
-            Self::CapabilityDelegate => CAPABILITY_DELEGATE,
-            Self::CapabilityRevoke => CAPABILITY_REVOKE,
+            Self::CapabilityGrantMint => CAPABILITY_GRANT_MINT,
+            Self::CapabilityGrantRevoke => CAPABILITY_GRANT_REVOKE,
             Self::CapabilityInvoke => CAPABILITY_INVOKE,
             Self::Skills => SKILLS,
             Self::SkillDetail => SKILL_DETAIL,

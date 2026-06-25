@@ -421,7 +421,7 @@ async fn test_state_with_skill_roots_and_execution_store(
         shutdown: hardening.shutdown,
         cancel_registry: Arc::new(DashMap::new()),
         goal_runs: crate::goal_runs::GoalRunRegistry::new(),
-        delegated_capabilities: crate::delegated_capabilities::DelegatedCapabilityStore::new(),
+        capability_grants: crate::capability_grants::CapabilityGrantStore::new(),
         session_registry: crate::conversations::SessionRegistry::new(),
     }
 }
@@ -464,7 +464,7 @@ async fn test_state_with_runtime_and_skill_roots(
         shutdown: hardening.shutdown,
         cancel_registry: Arc::new(DashMap::new()),
         goal_runs: crate::goal_runs::GoalRunRegistry::new(),
-        delegated_capabilities: crate::delegated_capabilities::DelegatedCapabilityStore::new(),
+        capability_grants: crate::capability_grants::CapabilityGrantStore::new(),
         session_registry: crate::conversations::SessionRegistry::new(),
     }
 }
@@ -591,7 +591,7 @@ async fn cancel_route_trips_in_flight_run_and_404s_unknown() {
 }
 
 #[tokio::test]
-async fn raw_execute_rejects_callable_names_as_delegated_capability_ids() {
+async fn raw_execute_rejects_callable_names_as_capability_grant_ids() {
     let state = test_state().await;
     state
         .runtime
@@ -605,7 +605,7 @@ async fn raw_execute_rejects_callable_names_as_delegated_capability_ids() {
         crate::routes::EXECUTE,
         serde_json::json!({
             "air": mock_inv_tool_air_response("fixture.write"),
-            "delegated_capability_ids": ["fixture.write"],
+            "capability_grant_ids": ["fixture.write"],
         }),
     )
     .await;
@@ -614,13 +614,13 @@ async fn raw_execute_rejects_callable_names_as_delegated_capability_ids() {
     assert!(
         body["message"]
             .as_str()
-            .is_some_and(|message| message.contains("cap_*")),
+            .is_some_and(|message| message.contains("grant_*")),
         "expected minted-id rejection, got {status}: {body}"
     );
 }
 
 #[tokio::test]
-async fn minted_delegated_capability_authorizes_raw_write_until_revoked() {
+async fn minted_capability_grant_authorizes_raw_write_until_revoked() {
     let mut state = test_state().await;
     state.server_config.auth.bearer = Some("test-token".to_string());
     state
@@ -632,7 +632,7 @@ async fn minted_delegated_capability_authorizes_raw_write_until_revoked() {
 
     let (unauth_status, _) = post_json(
         app.clone(),
-        crate::routes::CAPABILITY_DELEGATE,
+        crate::routes::CAPABILITY_GRANT_MINT,
         serde_json::json!({
             "tool_binding": "fixture.write",
             "operations": ["write"],
@@ -641,9 +641,9 @@ async fn minted_delegated_capability_authorizes_raw_write_until_revoked() {
     .await;
     assert_eq!(unauth_status, StatusCode::UNAUTHORIZED);
 
-    let (status, delegated) = post_json_with_bearer(
+    let (status, minted) = post_json_with_bearer(
         app.clone(),
-        crate::routes::CAPABILITY_DELEGATE,
+        crate::routes::CAPABILITY_GRANT_MINT,
         serde_json::json!({
             "tool_binding": "fixture.write",
             "operations": ["write"],
@@ -651,16 +651,16 @@ async fn minted_delegated_capability_authorizes_raw_write_until_revoked() {
         "test-token",
     )
     .await;
-    assert_eq!(status, StatusCode::OK, "delegate failed: {delegated}");
-    let capability_id = delegated["capability_id"]
+    assert_eq!(status, StatusCode::OK, "mint failed: {minted}");
+    let grant_id = minted["grant_id"]
         .as_str()
-        .expect("delegated capability_id");
-    assert!(capability_id.starts_with("cap_"));
-    assert_eq!(delegated["tool_binding"], "fixture.write");
+        .expect("capability grant_id");
+    assert!(grant_id.starts_with("grant_"));
+    assert_eq!(minted["tool_binding"], "fixture.write");
 
     let execute_body = serde_json::json!({
         "air": mock_inv_tool_air_response("fixture.write"),
-        "delegated_capability_ids": [capability_id],
+        "capability_grant_ids": [grant_id],
     });
     let (status, body) = post_json(app.clone(), crate::routes::EXECUTE, execute_body.clone()).await;
     assert_eq!(status, StatusCode::OK, "execute failed: {body}");
@@ -674,7 +674,7 @@ async fn minted_delegated_capability_authorizes_raw_write_until_revoked() {
 
     let (status, revoke_body) = post_json_with_bearer(
         app.clone(),
-        &format!("/v1/capabilities/{capability_id}/revoke"),
+        &format!("/v1/capability-grants/{grant_id}/revoke"),
         serde_json::json!({}),
         "test-token",
     )
@@ -693,7 +693,7 @@ async fn minted_delegated_capability_authorizes_raw_write_until_revoked() {
 }
 
 #[tokio::test]
-async fn conversational_agent_discovers_templates_and_runs_with_delegated_capability() {
+async fn conversational_agent_discovers_templates_and_runs_with_capability_grant() {
     let backend = MockLLMBackend::static_response("capability discovery ready");
     let runtime = runtime_with_mock_workflow_backend(backend.clone()).await;
     let mut state = test_state_with_runtime_and_skill_roots(runtime, Vec::new()).await;
@@ -733,7 +733,7 @@ async fn conversational_agent_discovers_templates_and_runs_with_delegated_capabi
         .find_map(|value| value.as_str())
         .expect("discovery JSON result");
     assert!(
-        !discovery_json.contains("capability_id"),
+        !discovery_json.contains("grant_id"),
         "discovery must return templates only, got {discovery_json}"
     );
     let templates: serde_json::Value =
@@ -749,7 +749,7 @@ async fn conversational_agent_discovers_templates_and_runs_with_delegated_capabi
 
     let (status, delegated) = post_json_with_bearer(
         app.clone(),
-        crate::routes::CAPABILITY_DELEGATE,
+        crate::routes::CAPABILITY_GRANT_MINT,
         serde_json::json!({
             "template_key": "fixture.write",
             "tool_binding": "fixture.write",
@@ -758,18 +758,18 @@ async fn conversational_agent_discovers_templates_and_runs_with_delegated_capabi
         "test-token",
     )
     .await;
-    assert_eq!(status, StatusCode::OK, "delegate failed: {delegated}");
-    let capability_id = delegated["capability_id"]
+    assert_eq!(status, StatusCode::OK, "mint failed: {delegated}");
+    let grant_id = delegated["grant_id"]
         .as_str()
-        .expect("delegated capability_id")
+        .expect("capability grant_id")
         .to_string();
-    assert!(capability_id.starts_with("cap_"));
+    assert!(grant_id.starts_with("grant_"));
 
     let conversation_air = apxm_ais::chat::chat_air(&apxm_ais::chat::ChatAirOptions {
         system_prompt: Some(
             "Runtime capability discovery: call `capability_discovery` to inspect \
              CapabilityTemplateV1 metadata. Templates are not authority; writes \
-             require APXM-supplied delegated_capability_ids.",
+             require APXM-supplied capability_grant_ids.",
         ),
         capability_discovery: true,
         ..apxm_ais::chat::ChatAirOptions::default()
@@ -786,7 +786,7 @@ async fn conversational_agent_discovers_templates_and_runs_with_delegated_capabi
             "args": [conversation_prompt],
             "session_id": "conv-capability-e2e",
             "user_text": "Find the fixture write capability and explain what authority is needed.",
-            "delegated_capability_ids": [capability_id],
+            "capability_grant_ids": [grant_id],
         }),
     )
     .await;
@@ -808,7 +808,7 @@ async fn conversational_agent_discovers_templates_and_runs_with_delegated_capabi
         call.system
             .as_deref()
             .is_some_and(|system| system.contains("capability_discovery")
-                && system.contains("delegated_capability_ids")),
+                && system.contains("capability_grant_ids")),
         "conversation system prompt should carry runtime discovery guidance, got {:?}",
         call.system
     );
@@ -830,14 +830,14 @@ async fn conversational_agent_discovers_templates_and_runs_with_delegated_capabi
         crate::routes::EXECUTE,
         serde_json::json!({
             "air": mock_inv_tool_air_response("fixture.write"),
-            "delegated_capability_ids": [delegated["capability_id"].clone()],
+            "capability_grant_ids": [delegated["grant_id"].clone()],
         }),
     )
     .await;
     assert_eq!(
         status,
         StatusCode::OK,
-        "delegated write failed: {write_body}"
+        "capability-grant write failed: {write_body}"
     );
     assert!(
         write_body["results"]
@@ -850,7 +850,7 @@ async fn conversational_agent_discovers_templates_and_runs_with_delegated_capabi
 
 #[tokio::test]
 #[allow(unsafe_code)]
-async fn trusted_python_inv_tool_requires_delegated_capability() {
+async fn trusted_python_inv_tool_requires_capability_grant() {
     let _env_guard = APXM_RUNS_ROOT_LOCK.lock().expect("env lock");
     let state = test_state().await;
     let mut artifact = Artifact::from_bytes(&inv_tool_artifact_bytes(
@@ -878,9 +878,9 @@ async fn trusted_python_inv_tool_requires_delegated_capability() {
     let rejected = crate::execute::validate_raw_execute_admission(
         &artifact,
         &state,
-        &crate::delegated_capabilities::ResolvedDelegatedCapabilities::empty(),
+        &crate::capability_grants::ResolvedCapabilityGrants::empty(),
     )
-    .expect_err("python tools must require delegated authority");
+    .expect_err("python tools must require a capability grant");
     unsafe {
         std::env::remove_var("APXM_TRUST_PYTHON_ARTIFACTS");
         std::env::remove_var("APXM_SANDBOX_PYTHON");
@@ -888,7 +888,7 @@ async fn trusted_python_inv_tool_requires_delegated_capability() {
 
     assert!(
         rejected.message.contains("python-backed capability")
-            && rejected.message.contains("delegated authority"),
+            && rejected.message.contains("capability grant"),
         "unexpected rejection: {}",
         rejected.message
     );

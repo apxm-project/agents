@@ -1,5 +1,5 @@
 use apxm_core::error::RuntimeError;
-use apxm_core::types::CapabilityOperation;
+use apxm_core::types::PermissionOperation;
 use serde::{Deserialize, Serialize};
 use serde_json::Value as JsonValue;
 
@@ -107,7 +107,7 @@ pub(crate) struct CapabilityTemplateEntry {
     pub(crate) tool_binding: String,
     pub(crate) description: String,
     pub(crate) parameters_schema: JsonValue,
-    pub(crate) operations: Vec<CapabilityOperation>,
+    pub(crate) operations: Vec<PermissionOperation>,
     /// Whether the template requires a connected credential to mint authority.
     pub(crate) requires_auth: bool,
 }

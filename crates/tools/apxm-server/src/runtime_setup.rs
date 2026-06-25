@@ -116,7 +116,7 @@ fn register_builtin_capabilities(runtime: &Runtime, schedule_on_fire: Option<OnF
         Arc::new(McpBridgeCapability::new()),
         Arc::new(CountTokensCapability::new()),
         // Workflow authoring is write-class and confined to the `authoring`
-        // group so the conversational agent needs delegated authority.
+        // group so the conversational agent needs a capability grant.
         Arc::new(ComposeWorkflowCapability::new()),
         Arc::new(RunWorkflowCapability::new()),
     ];

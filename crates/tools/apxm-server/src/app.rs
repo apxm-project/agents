@@ -13,7 +13,7 @@ use crate::capability::{
 };
 use crate::checkpoints::{create_checkpoint, get_checkpoint, resume_checkpoint};
 use crate::conversations::post_conversation_message;
-use crate::delegated_capabilities::{delegate_capability, revoke_capability};
+use crate::capability_grants::{mint_capability_grant, revoke_capability_grant};
 use crate::execute::{
     compile_artifact, compile_workflow, compile_workflow_stream, execute, execute_stream,
 };
@@ -82,7 +82,7 @@ pub(crate) fn build_app(state: AppState) -> Router {
         .route(ServerRoute::MemoryFactsStore.path(), post(store_fact))
         .route(ServerRoute::MemoryFactsSearch.path(), post(search_facts))
         .route(ServerRoute::MemoryFactsDelete.path(), post(delete_fact))
-        // Capability templates and delegated capability invocation.
+        // Capability templates and runtime capability grant invocation.
         .route(
             ServerRoute::CapabilityTemplates.path(),
             get(list_capability_templates),
@@ -92,12 +92,12 @@ pub(crate) fn build_app(state: AppState) -> Router {
             post(reindex_capability_templates),
         )
         .route(
-            ServerRoute::CapabilityDelegate.path(),
-            post(delegate_capability),
+            ServerRoute::CapabilityGrantMint.path(),
+            post(mint_capability_grant),
         )
         .route(
-            ServerRoute::CapabilityRevoke.path(),
-            post(revoke_capability),
+            ServerRoute::CapabilityGrantRevoke.path(),
+            post(revoke_capability_grant),
         )
         .route(
             ServerRoute::CapabilityInvoke.path(),
