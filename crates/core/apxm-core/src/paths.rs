@@ -24,6 +24,7 @@ const LOGS_DIR: &str = "logs";
 const SESSIONS_DIR: &str = "sessions";
 const MEMORY_DIR: &str = "memory";
 const LIBS_DIR: &str = "libs";
+const INTEGRATIONS_DIR: &str = "integrations";
 
 /// Resolved APXM directories for the current process.
 #[derive(Debug, Clone)]
@@ -127,10 +128,9 @@ impl ApxmPaths {
         Self::ensure_subdir_at(&self.state_dir, MEMORY_DIR)
     }
 
-    /// Connector-pack library roots ordered by precedence (`<project>/.apxm/libs`
-    /// then `<home>/.apxm/libs`). Studio seeds each installed connector pack into
-    /// `<root>/<pack>/` (`pack.toml` + `tools.toml`); the server scans these at
-    /// startup to register the packs' declared action blocks as capabilities.
+    /// Deployed workflow/skill library roots ordered by precedence (`<project>/.apxm/libs`
+    /// then `<home>/.apxm/libs`). Executable skill packs live here; integration
+    /// catalog definitions are discovered via [`Self::integrations_dirs`].
     ///
     /// This is a *read* surface: roots that do not exist are still returned (the
     /// scanner tolerates a missing directory), so a fresh install with no packs
@@ -143,6 +143,39 @@ impl ApxmPaths {
         let home_libs = self.home_dir.join(LIBS_DIR);
         if !dirs.contains(&home_libs) {
             dirs.push(home_libs);
+        }
+        dirs
+    }
+
+    /// Integration catalog roots ordered by precedence.
+    ///
+    /// Honors `APXM_INTEGRATIONS_ROOT` when set, then `$APXM_WORKSPACE_ROOT/integrations`,
+    /// then `<project>/.apxm/integrations` and `<home>/.apxm/integrations`.
+    pub fn integrations_dirs(&self) -> Vec<PathBuf> {
+        use crate::constants::env::{APXM_INTEGRATIONS_ROOT, APXM_WORKSPACE_ROOT};
+
+        let mut dirs = Vec::new();
+        if let Ok(root) = env::var(APXM_INTEGRATIONS_ROOT) {
+            let root = PathBuf::from(root);
+            if !dirs.contains(&root) {
+                dirs.push(root);
+            }
+        }
+        if let Ok(workspace) = env::var(APXM_WORKSPACE_ROOT) {
+            let root = PathBuf::from(workspace).join(INTEGRATIONS_DIR);
+            if !dirs.contains(&root) {
+                dirs.push(root);
+            }
+        }
+        if self.project_dir.is_dir() {
+            let root = self.project_dir.join(INTEGRATIONS_DIR);
+            if !dirs.contains(&root) {
+                dirs.push(root);
+            }
+        }
+        let home_integrations = self.home_dir.join(INTEGRATIONS_DIR);
+        if !dirs.contains(&home_integrations) {
+            dirs.push(home_integrations);
         }
         dirs
     }

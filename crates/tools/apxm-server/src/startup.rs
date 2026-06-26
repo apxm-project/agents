@@ -78,7 +78,7 @@ pub(crate) async fn run_server_with_config(server_config: ServerConfig) -> anyho
     //      companion hop that makes an installed connector pack show up in
     //      `/v1/capability-templates` so the studio install-gate sees its
     //      blocks as AVAILABLE without any per-provider Rust.
-    let pack_scan_roots = pack_capability_roots(&skill_roots);
+    let pack_scan_roots = integration_capability_roots();
     crate::capability::rescan_pack_tools(&runtime, &pack_scan_roots);
     crate::capability_discovery::register(&runtime);
     crate::search_skills::register(&runtime, skill_library.clone());
@@ -218,7 +218,35 @@ fn write_listen_registry(dir: &str, name: &str, port: u16) -> std::io::Result<()
     Ok(())
 }
 
+/// Build integration catalog roots scanned for `capabilities.toml` action blocks.
+pub(crate) fn integration_capability_roots() -> Vec<std::path::PathBuf> {
+    use apxm_core::constants::env::{APXM_INTEGRATIONS_ROOT, APXM_WORKSPACE_ROOT};
+
+    let mut roots = Vec::new();
+    if let Ok(root) = std::env::var(APXM_INTEGRATIONS_ROOT) {
+        let root = std::path::PathBuf::from(root);
+        if root.is_dir() && !roots.contains(&root) {
+            roots.push(root);
+        }
+    }
+    if let Ok(workspace) = std::env::var(APXM_WORKSPACE_ROOT) {
+        let root = std::path::PathBuf::from(workspace).join("integrations");
+        if root.is_dir() && !roots.contains(&root) {
+            roots.push(root);
+        }
+    }
+    if let Ok(paths) = ApxmPaths::discover() {
+        for integration_root in paths.integrations_dirs() {
+            if integration_root.is_dir() && !roots.contains(&integration_root) {
+                roots.push(integration_root);
+            }
+        }
+    }
+    roots
+}
+
 /// Build the set of directories scanned for pack `tools.toml` action blocks:
+#[deprecated(note = "use integration_capability_roots for connector capabilities")]
 pub(crate) fn pack_capability_roots(skill_roots: &[std::path::PathBuf]) -> Vec<std::path::PathBuf> {
     let mut roots = skill_roots.to_vec();
     if let Ok(root) = std::env::var(apxm_core::constants::env::APXM_LIBS_ROOT) {
@@ -343,25 +371,25 @@ async fn drain_and_flush_rollouts(
 mod tests {
     use super::*;
 
-    /// Contract: `pack_capability_roots` includes `APXM_LIBS_ROOT` so the
-    /// server consumes Studio-deployed packs from `/workspace/libs` (Docker
-    /// workspace layout) without requiring a process restart.
+    /// Contract: `integration_capability_roots` includes workspace integrations
+    /// so the server registers bundled catalog capabilities without restart.
     #[test]
     #[allow(unsafe_code)]
-    fn pack_capability_roots_includes_apxm_libs_root() {
+    fn integration_capability_roots_includes_workspace_integrations() {
         use std::env;
-        use std::path::PathBuf;
 
-        let workspace_libs = PathBuf::from("/workspace/libs");
+        let workspace = tempfile::tempdir().expect("temp workspace");
+        let integrations = workspace.path().join("integrations");
+        std::fs::create_dir_all(&integrations).expect("integrations dir");
+
         // SAFETY: single-threaded test; no concurrent env readers.
-        unsafe { env::set_var(apxm_core::constants::env::APXM_LIBS_ROOT, &workspace_libs) };
-        let roots = pack_capability_roots(&[]);
-        unsafe { env::remove_var(apxm_core::constants::env::APXM_LIBS_ROOT) };
+        unsafe { env::set_var(apxm_core::constants::env::APXM_WORKSPACE_ROOT, workspace.path()) };
+        let roots = integration_capability_roots();
+        unsafe { env::remove_var(apxm_core::constants::env::APXM_WORKSPACE_ROOT) };
 
         assert!(
-            roots.contains(&workspace_libs),
-            "APXM_LIBS_ROOT=/workspace/libs must appear in pack capability roots so \
-             Server consumes Studio-deployed packs without restart"
+            roots.iter().any(|root| root == &integrations),
+            "APXM_WORKSPACE_ROOT/integrations must appear in integration capability roots"
         );
     }
 

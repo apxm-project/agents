@@ -236,7 +236,25 @@ Attribute names must be a single source of truth — see the
 `apxm-core`; Python kwargs, MLIR attrs, and Rust executors must all
 resolve through it, never via duplicated string literals.
 
-## 10. Storage layout
+## 10. Capability abstract machine vocabulary
+
+APXM models **capabilities** as the first-class abstract-machine unit.
+Each capability composes a **tool_binding** (callable implementation) plus a
+**permission policy** (authority). Runtime authority flows through typed
+**capability grants** (`grant_*` ids), not bare handler strings.
+
+Canonical terms, forbidden aliases, route naming, and schema versions live in
+the monorepo glossary:
+
+- `docs/context/capability-vocabulary.md` — SSOT for APXM-owned capability
+  vocabulary (`CapabilityDefinition`, `ToolBinding`, `PermissionPolicy`,
+  `CapabilityGrant`, `PermissionOperation`, `PromptPolicy`, …).
+
+When touching capability registry, admission, pack schemas, AIS
+`REGISTER_CAPABILITY` / `INV_TOOL.capability`, or server `/v1/capability-templates`
+routes, read that doc first and keep code, schemas, and UI copy aligned.
+
+## 11. Storage layout
 
 `/home` is shared WekaFS (9.1 TiB, 50+ tenants). It is **not** personal
 disk:
@@ -258,7 +276,7 @@ disk:
 See `docs/backends/storage-layout.md` for the full contract and the
 supported migration procedure.
 
-## 11. Boundaries (read before any potentially destructive action)
+## 12. Boundaries (read before any potentially destructive action)
 
 ### Never, under any circumstance
 

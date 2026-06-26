@@ -281,7 +281,81 @@ fn capability_from_tool(t: &PackToolDecl) -> Option<Arc<dyn CapabilityExecutor>>
     }
 }
 
+#[derive(Debug, Deserialize)]
+struct IntegrationCapabilityDecl {
+    id: String,
+    #[serde(default)]
+    name: Option<String>,
+    #[serde(default)]
+    description: Option<String>,
+    #[serde(default)]
+    kind: Option<String>,
+    #[serde(default)]
+    read_only: bool,
+    #[serde(default)]
+    requires_auth: Option<bool>,
+    #[serde(default)]
+    method: Option<String>,
+    #[serde(default)]
+    url: Option<String>,
+    #[serde(default)]
+    schema: JsonValue,
+}
+
+#[derive(Debug, Deserialize)]
+struct IntegrationCapabilitiesFile {
+    #[serde(default)]
+    capability: Vec<IntegrationCapabilityDecl>,
+}
+
+fn pack_tool_from_integration_capability(cap: &IntegrationCapabilityDecl) -> PackToolDecl {
+    PackToolDecl {
+        capability: cap.id.clone(),
+        name: cap.name.clone(),
+        description: cap.description.clone(),
+        kind: cap.kind.clone(),
+        method: cap.method.clone(),
+        url: cap.url.clone(),
+        endpoint_pattern: None,
+        read_only: cap.read_only,
+        requires_auth: cap.requires_auth,
+        schema: cap.schema.clone(),
+        server_url: None,
+        mcp_tool: None,
+        version: None,
+    }
+}
+
+/// Read `capabilities.toml` from an integration folder (`integration.toml` present).
+fn integration_capabilities_in_dir(
+    integration_dir: &std::path::Path,
+) -> Vec<Arc<dyn CapabilityExecutor>> {
+    if !integration_dir.join("integration.toml").is_file() {
+        return Vec::new();
+    }
+    let Ok(raw) = std::fs::read_to_string(integration_dir.join("capabilities.toml")) else {
+        return Vec::new();
+    };
+    let file: IntegrationCapabilitiesFile = match toml::from_str(&raw) {
+        Ok(file) => file,
+        Err(error) => {
+            info!(
+                dir = %integration_dir.display(),
+                %error,
+                "skipping malformed capabilities.toml"
+            );
+            return Vec::new();
+        }
+    };
+    file.capability
+        .iter()
+        .map(pack_tool_from_integration_capability)
+        .filter_map(|tool| capability_from_tool(&tool))
+        .collect()
+}
+
 /// Read a pack dir's pack-root `tools.toml` and build its capability executors.
+#[deprecated(note = "integration catalog uses capabilities.toml under integrations/<provider>/")]
 fn pack_tools_in_dir(pack_dir: &std::path::Path) -> Vec<Arc<dyn CapabilityExecutor>> {
     let Ok(raw) = std::fs::read_to_string(pack_dir.join("tools.toml")) else {
         return Vec::new();
@@ -335,7 +409,7 @@ pub(crate) fn register_pack_tools(runtime: &apxm_runtime::Runtime, roots: &[std:
                 continue;
             }
             root_seen += 1;
-            for cap in pack_tools_in_dir(&pack_dir) {
+            for cap in integration_capabilities_in_dir(&pack_dir) {
                 // register() errors if already present (builtin / re-scan) — fine.
                 let name = cap.metadata().name.clone();
                 match sys.register(cap) {
@@ -397,7 +471,7 @@ pub(crate) struct ReindexCapabilityTemplatesResponse {
 pub(crate) async fn reindex_capability_templates(
     State(state): State<AppState>,
 ) -> Result<Json<ReindexCapabilityTemplatesResponse>, ApiError> {
-    let roots = crate::startup::pack_capability_roots(state.skill_library.roots());
+    let roots = crate::startup::integration_capability_roots();
     let registered = rescan_pack_tools(&state.runtime, &roots);
     let total = state.runtime.capability_system().list_capabilities().len();
     Ok(Json(ReindexCapabilityTemplatesResponse {
@@ -581,57 +655,45 @@ mod tests {
         assert_eq!(parsed["event"]["correlation_id"], "del-42");
     }
 
-    /// A packs directory containing a `tools.toml` registers its `[[tool]]`
-    /// entries as template-backed tool bindings, so `/v1/capability-templates`
-    /// lists them and the studio install-gate sees the blocks as AVAILABLE.
+    /// Integration folders register capabilities from `capabilities.toml` only.
     #[tokio::test]
-    async fn packs_dir_tools_toml_registers_capabilities() {
+    async fn integration_capabilities_toml_registers_capabilities() {
         use apxm_runtime::{Runtime, RuntimeConfig};
 
-        let root = tempfile::tempdir().expect("packs root");
-        let pack_dir = root.path().join("slack-connector");
-        std::fs::create_dir_all(&pack_dir).expect("create pack dir");
+        let root = tempfile::tempdir().expect("integrations root");
+        let integration_dir = root.path().join("slack");
+        std::fs::create_dir_all(&integration_dir).expect("create integration dir");
         std::fs::write(
-            pack_dir.join("tools.toml"),
-            r#"
-                [[tool]]
-                capability = "slack.post_message"
-                name = "Post Slack message"
-                description = "Send a message to a Slack channel"
-                kind = "provider"
-                method = "POST"
-                url = "https://slack.com/api/chat.postMessage"
-                schema = """{"type":"object","required":["channel","text"],"properties":{"channel":{"type":"string"},"text":{"type":"string"}}}"""
-
-                [[tool]]
-                capability = "weather.lookup"
-                kind = "provider"
-                read_only = true
-                requires_auth = false
-            "#,
-        )
-        .expect("write tools.toml");
-        std::fs::write(
-            pack_dir.join("connector.toml"),
+            integration_dir.join("integration.toml"),
             r#"
                 schema_version = 1
-                profile_version = "connector-plugin/v1"
-                app_id = "slack"
+                integration_id = "slack"
                 provider = "slack"
+                version = "0.1.0"
 
-                [connection]
-                noun = "Workspace"
-
-                [[operation]]
-                id = "post_message"
-                kind = "action"
-                runtime_node = "tool"
-                source = "tools.toml:slack.post_message"
-                title = "Send message"
-                summary = "Slack message to {{args.channel|label}}: {{args.text|label}}"
+                [files]
+                provider = "provider.toml"
+                connector = "connector.toml"
+                capabilities = "capabilities.toml"
+                triggers = "triggers.toml"
             "#,
         )
-        .expect("write connector UI metadata");
+        .expect("write integration.toml");
+        std::fs::write(
+            integration_dir.join("capabilities.toml"),
+            r#"
+                [[capability]]
+                id = "slack.post_message"
+                name = "Post Slack message"
+                kind = "provider"
+                read_only = false
+                requires_auth = true
+                method = "POST"
+                url = "https://slack.com/api/chat.postMessage"
+                schema = """{"type":"object","required":["channel","text"]}"""
+            "#,
+        )
+        .expect("write capabilities.toml");
 
         let runtime = Runtime::new(RuntimeConfig::in_memory())
             .await
@@ -641,32 +703,91 @@ mod tests {
         let sys = runtime.capability_system();
         assert!(
             sys.has_capability("slack.post_message"),
-            "provider block registered as a capability"
+            "integration capability registered from capabilities.toml"
         );
-        assert!(
-            sys.has_capability("weather.lookup"),
-            "second provider block registered as a capability"
-        );
+    }
 
-        let listed = sys.list_capabilities();
-        let slack = listed
-            .iter()
-            .find(|m| m.name == "slack.post_message")
-            .expect("slack capability listed");
-        assert!(slack.requires_auth, "auth-gated provider block");
+    /// Legacy `tools.toml` packs without `integration.toml` must not register.
+    #[tokio::test]
+    async fn legacy_tools_toml_without_integration_is_ignored() {
+        use apxm_runtime::{Runtime, RuntimeConfig};
+
+        let root = tempfile::tempdir().expect("libs root");
+        let pack_dir = root.path().join("legacy-pack");
+        std::fs::create_dir_all(&pack_dir).expect("create pack dir");
+        std::fs::write(
+            pack_dir.join("tools.toml"),
+            r#"
+                [[tool]]
+                capability = "legacy.only"
+                name = "Legacy only"
+                kind = "provider"
+                method = "GET"
+                url = "https://example.com/legacy"
+            "#,
+        )
+        .expect("write tools.toml");
+
+        let runtime = Runtime::new(RuntimeConfig::in_memory())
+            .await
+            .expect("build in-memory runtime");
+        register_pack_tools(&runtime, &[root.path().to_path_buf()]);
+
         assert!(
-            slack.metadata.is_empty(),
-            "apxm-server must not ingest Studio connector UI metadata"
+            !runtime.capability_system().has_capability("legacy.only"),
+            "tools.toml without integration.toml must not register connector capabilities"
         );
-        let weather = listed
-            .iter()
+    }
+
+    #[tokio::test]
+    async fn integration_capabilities_toml_registers_read_only_flag() {
+        use apxm_runtime::{Runtime, RuntimeConfig};
+
+        let root = tempfile::tempdir().expect("integrations root");
+        let integration_dir = root.path().join("weather");
+        std::fs::create_dir_all(&integration_dir).expect("create integration dir");
+        std::fs::write(
+            integration_dir.join("integration.toml"),
+            r#"
+                schema_version = 1
+                integration_id = "weather"
+                provider = "weather"
+                version = "0.1.0"
+
+                [files]
+                provider = "provider.toml"
+                connector = "connector.toml"
+                capabilities = "capabilities.toml"
+                triggers = "triggers.toml"
+            "#,
+        )
+        .unwrap();
+        std::fs::write(
+            integration_dir.join("capabilities.toml"),
+            r#"
+                [[capability]]
+                id = "weather.lookup"
+                kind = "provider"
+                read_only = true
+                requires_auth = false
+                method = "GET"
+                url = "https://example.com/weather"
+            "#,
+        )
+        .unwrap();
+
+        let runtime = Runtime::new(RuntimeConfig::in_memory())
+            .await
+            .expect("build in-memory runtime");
+        register_pack_tools(&runtime, &[root.path().to_path_buf()]);
+        let weather = runtime
+            .capability_system()
+            .list_capabilities()
+            .into_iter()
             .find(|m| m.name == "weather.lookup")
             .expect("weather capability listed");
-        assert!(
-            !weather.requires_auth,
-            "explicit requires_auth=false overrides the provider default"
-        );
-        assert!(weather.read_only, "read_only flag honored");
+        assert!(!weather.requires_auth);
+        assert!(weather.read_only);
     }
 
     use crate::state::AppState;
