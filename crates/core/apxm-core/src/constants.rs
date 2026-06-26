@@ -9,10 +9,14 @@ pub mod diagnostics {
 
 pub mod env {
     pub const APXM_BACKEND: &str = "APXM_BACKEND";
-    /// Docker workspace libs root where Studio writes connector-pack directories.
-    /// Setting this to `/workspace/libs` makes the server scan Studio-deployed packs
-    /// without a restart. Used by `pack_capability_roots` in apxm-server startup.
+    /// Docker workspace libs root where Studio writes deployed workflow/skill packs.
+    /// Used for executable skill resolution, not integration catalog discovery.
     pub const APXM_LIBS_ROOT: &str = "APXM_LIBS_ROOT";
+    /// Canonical integration catalog root (`<workspace>/integrations` or bundled source).
+    /// Used by Studio, Server, OS, and Auth to discover provider integration folders.
+    pub const APXM_INTEGRATIONS_ROOT: &str = "APXM_INTEGRATIONS_ROOT";
+    /// Workspace root containing `integrations/` and `libs/` subdirectories.
+    pub const APXM_WORKSPACE_ROOT: &str = "APXM_WORKSPACE_ROOT";
     /// Path to the APXM project/run configuration file.
     pub const APXM_CONFIG: &str = "APXM_CONFIG";
     /// Disables dispatch IR hints sent to vLLM-compatible backends.
