@@ -210,7 +210,10 @@ pub use catalog::{
     resolve_provider_spec,
 };
 pub use config::{BackendConfig, BackendType, DockerConfig, ModelConfig};
-pub use protocol::{ProviderProtocol, ProviderSpec, normalize_endpoint_for_protocol};
+pub use protocol::{
+    ProviderProtocol, ProviderSpec, normalize_anthropic_gateway_endpoint,
+    normalize_endpoint_for_protocol,
+};
 
 pub use assembler::{AssembledEvent, AssembledToolCall, StreamAssembler};
 pub use backends::{

@@ -113,3 +113,14 @@ pub fn normalize_endpoint_for_protocol(protocol: ProviderProtocol, endpoint: &st
         format!("{trimmed}/v1")
     }
 }
+
+/// Some enterprise Anthropic gateways (e.g. APIM) publish a base path like
+/// `/Anthropic` while the Messages API still lives under `/v1/messages`.
+pub fn normalize_anthropic_gateway_endpoint(endpoint: &str) -> String {
+    let trimmed = endpoint.trim_end_matches('/');
+    if trimmed.ends_with("/Anthropic") && !trimmed.ends_with("/v1") {
+        format!("{trimmed}/v1")
+    } else {
+        trimmed.to_string()
+    }
+}
