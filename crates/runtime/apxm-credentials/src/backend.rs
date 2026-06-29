@@ -239,6 +239,10 @@ impl BackendStore {
 /// with the runtime, which builds paths like `${endpoint}/chat/completions`.
 fn normalize_endpoint(backend: &mut BackendConfig) {
     if let Some(ref mut url) = backend.endpoint {
+        // Defer `/v1` normalization until env references are resolved at runtime.
+        if url.starts_with("env:") {
+            return;
+        }
         *url = normalize_endpoint_for_protocol(backend.protocol, url);
     }
 }

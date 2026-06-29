@@ -6,7 +6,10 @@
 use crate::llm::LLMRegistry;
 use crate::llm::Provider;
 use crate::llm::wire::config_keys;
-use crate::llm::{BackendConfig, BackendType, ProviderProtocol, normalize_endpoint_for_protocol};
+use crate::llm::{
+    BackendConfig, BackendType, ProviderProtocol, normalize_anthropic_gateway_endpoint,
+    normalize_endpoint_for_protocol,
+};
 use anyhow::{Result, anyhow};
 use apxm_core::constants::graph::attrs::{BASE_URL, MODEL};
 use apxm_core::types::{AISOperationType, ModelInfo};
@@ -90,9 +93,16 @@ impl BackendRegistration {
             .as_deref()
             .map(|value| resolve_env_reference(value, "endpoint", &backend.name))
             .transpose()?
-            .map(|value| normalize_endpoint_for_protocol(backend.protocol, &value));
+            .map(|value| normalize_endpoint_for_protocol(backend.protocol, &value))
+            .map(|value| {
+                if backend.protocol == ProviderProtocol::Anthropic {
+                    normalize_anthropic_gateway_endpoint(&value)
+                } else {
+                    value
+                }
+            });
 
-        let extra_headers = backend
+        let mut extra_headers: HashMap<String, String> = backend
             .headers
             .iter()
             .map(|(key, value)| {
@@ -100,6 +110,7 @@ impl BackendRegistration {
                 Ok((key.clone(), resolved))
             })
             .collect::<Result<HashMap<_, _>>>()?;
+        merge_custom_headers_from_env(backend.protocol, &mut extra_headers);
 
         let models = backend
             .models
@@ -251,6 +262,33 @@ fn resolve_env_reference(value: &str, field: &str, backend_name: &str) -> Result
         })
     } else {
         Ok(value.to_string())
+    }
+}
+
+/// Merge `ANTHROPIC_CUSTOM_HEADERS` (multi-line `Name: value`) into backend headers.
+fn merge_custom_headers_from_env(
+    protocol: ProviderProtocol,
+    headers: &mut HashMap<String, String>,
+) {
+    if protocol != ProviderProtocol::Anthropic {
+        return;
+    }
+    let Ok(raw) = env::var("ANTHROPIC_CUSTOM_HEADERS") else {
+        return;
+    };
+    for line in raw.lines() {
+        let line = line.trim();
+        if line.is_empty() {
+            continue;
+        }
+        let Some((name, value)) = line.split_once(':') else {
+            continue;
+        };
+        let name = name.trim();
+        let value = value.trim();
+        if !name.is_empty() && !value.is_empty() {
+            headers.insert(name.to_string(), value.to_string());
+        }
     }
 }
 
