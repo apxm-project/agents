@@ -6,6 +6,8 @@ use std::time::SystemTime;
 use apxm_backends::llm::backends::MockLLMBackend;
 use apxm_driver::{RunEventsConfig, ServerConfig};
 use apxm_runtime::{ModelRouterConfig, Runtime, RuntimeConfig};
+use apxm_runtime::host_dispatch::NoOpHostDispatchGateway;
+use apxm_server_api::{AgentRuntimeApi, RuntimeApiAdapter};
 use axum::Router;
 use dashmap::DashMap;
 
@@ -157,12 +159,16 @@ async fn test_state_with_runtime_store(
     let mut runtime = runtime;
     let skill_library = SkillLibrary::new(Vec::new());
     install_test_runtime_bridges(&mut runtime, skill_library.clone());
+    let runtime: Arc<dyn AgentRuntimeApi> = Arc::new(RuntimeApiAdapter(runtime));
     let rollout_home =
         std::env::temp_dir().join(format!("apxm-test-rollout-{}", uuid::Uuid::new_v4()));
     std::fs::create_dir_all(&rollout_home).expect("rollout home");
     let hardening = crate::state::HardeningDefaults::for_config(&server_config);
     AppState {
         runtime,
+        host_dispatch: Arc::new(NoOpHostDispatchGateway),
+        consent_broker: Arc::new(apxm_core::types::consent::NoOpConsentBroker),
+        host_consent_broker: Arc::new(crate::consent_broker::ConsentBroker::new()),
         agent_registry: Arc::new(DashMap::new()),
         task_manager: crate::tasks::TaskQueueManager::new(),
         checkpoint_store: crate::checkpoints::CheckpointStore::new(),

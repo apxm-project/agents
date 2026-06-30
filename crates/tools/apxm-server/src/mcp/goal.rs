@@ -9,7 +9,6 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::time::Duration;
 
-use apxm_backends::LLMRequest;
 use apxm_core::constants::mcp::tools as mcp_tool_names;
 use apxm_core::constants::orchestration::admission as goal_admission;
 use apxm_core::events::kind;
@@ -28,6 +27,7 @@ use apxm_runtime::{
     AGENT_ROUTE_CAPABILITIES, AGENT_ROUTE_SELECTOR_DETERMINISTIC, AgentRouteCandidate,
     AgentRouteDecision, AgentRouteRequest, AgentRouteSource, AgentRouter, AgentRoutingError,
 };
+use apxm_server_api::LLMRequest;
 use axum::Json;
 use axum::extract::State;
 use serde::{Deserialize, Serialize};
@@ -1718,7 +1718,8 @@ async fn model_goal_planning(
     request: &GoalStartArgs,
     max_workers: usize,
 ) -> Result<PlannedWorkers, ApiError> {
-    let router = state.runtime.model_router().ok_or_else(|| {
+    let rt = state.runtime();
+    let router = rt.model_router().ok_or_else(|| {
         ApiError::bad_request(
             "goal_start planning.mode=model requires APXM server runtime ModelRouter",
         )

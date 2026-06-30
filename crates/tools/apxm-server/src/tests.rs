@@ -24,6 +24,7 @@ use apxm_core::types::execution::{DagMetadata, ExecutionDag, Node, NodeMetadata}
 use apxm_core::types::values::Value;
 use apxm_runtime::capability::executor::CapabilityExecutor;
 use apxm_runtime::capability::metadata::CapabilityMetadata;
+use apxm_server_api::{AgentRuntimeApi, RuntimeApiAdapter};
 use apxm_runtime::{
     DefaultBackend, ExecRequest, ExecResult, IsolationLevel, ModelRouterConfig, Runtime,
     RuntimeConfig, SandboxBackend, SandboxCapabilities, SandboxContext, SandboxError,
@@ -36,6 +37,8 @@ use axum::http::{Request, StatusCode};
 use dashmap::DashMap;
 use http_body_util::BodyExt;
 use tower::ServiceExt;
+
+use apxm_runtime::host_dispatch::NoOpHostDispatchGateway;
 
 use crate::checkpoints::CheckpointStore;
 use crate::execute::ExecuteResponse;
@@ -388,6 +391,7 @@ async fn test_state_with_skill_roots_and_execution_store(
     let mut runtime = Arc::new(runtime);
     let skill_library = SkillLibrary::new(skill_roots);
     install_test_runtime_bridges(&mut runtime, skill_library.clone());
+    let runtime: Arc<dyn AgentRuntimeApi> = Arc::new(RuntimeApiAdapter(runtime));
     let server_config = apxm_driver::ServerConfig::default();
     let hardening = crate::state::HardeningDefaults::for_config(&server_config);
     AppState {
@@ -423,6 +427,9 @@ async fn test_state_with_skill_roots_and_execution_store(
         goal_runs: crate::goal_runs::GoalRunRegistry::new(),
         capability_grants: crate::capability_grants::CapabilityGrantStore::new(),
         session_registry: crate::conversations::SessionRegistry::new(),
+        host_dispatch: Arc::new(NoOpHostDispatchGateway),
+        consent_broker: Arc::new(apxm_core::types::consent::NoOpConsentBroker),
+        host_consent_broker: Arc::new(crate::consent_broker::ConsentBroker::new()),
     }
 }
 
@@ -433,6 +440,7 @@ async fn test_state_with_runtime_and_skill_roots(
     let mut runtime = Arc::new(runtime);
     let skill_library = SkillLibrary::new(skill_roots);
     install_test_runtime_bridges(&mut runtime, skill_library.clone());
+    let runtime: Arc<dyn AgentRuntimeApi> = Arc::new(RuntimeApiAdapter(runtime));
     let server_config = apxm_driver::ServerConfig::default();
     let hardening = crate::state::HardeningDefaults::for_config(&server_config);
     AppState {
@@ -466,6 +474,9 @@ async fn test_state_with_runtime_and_skill_roots(
         goal_runs: crate::goal_runs::GoalRunRegistry::new(),
         capability_grants: crate::capability_grants::CapabilityGrantStore::new(),
         session_registry: crate::conversations::SessionRegistry::new(),
+        host_dispatch: Arc::new(NoOpHostDispatchGateway),
+        consent_broker: Arc::new(apxm_core::types::consent::NoOpConsentBroker),
+        host_consent_broker: Arc::new(crate::consent_broker::ConsentBroker::new()),
     }
 }
 
@@ -698,7 +709,8 @@ async fn conversational_agent_discovers_templates_and_runs_with_capability_grant
     let runtime = runtime_with_mock_workflow_backend(backend.clone()).await;
     let mut state = test_state_with_runtime_and_skill_roots(runtime, Vec::new()).await;
     state.server_config.auth.bearer = Some("test-token".to_string());
-    crate::capability_discovery::register(&state.runtime);
+    let rt = state.runtime();
+    crate::capability_discovery::register(&rt);
     state
         .runtime
         .capability_system()

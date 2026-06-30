@@ -5,9 +5,12 @@ use std::time::{Duration, SystemTime};
 
 use apxm_core::events::payload::WarningPayload;
 use apxm_core::events::{ApxmEvent, EventSource};
+use apxm_core::types::consent::ConsentBroker;
 use apxm_driver::ServerConfig;
 use apxm_rollout::{IndexDb, RolloutPaths};
 use apxm_runtime::Runtime;
+use apxm_runtime::host_dispatch::HostDispatchGateway;
+use apxm_server_api::AgentRuntimeApi;
 use dashmap::DashMap;
 use tokio::sync::{Mutex, Notify, OwnedSemaphorePermit, Semaphore, mpsc};
 
@@ -26,7 +29,16 @@ use crate::webhook::WebhookDispatcher;
 
 #[derive(Clone)]
 pub(crate) struct AppState {
-    pub(crate) runtime: Arc<Runtime>,
+    pub(crate) runtime: Arc<dyn AgentRuntimeApi>,
+    /// Host dispatch gateway for kind=host capability routing.
+    /// Replaced by HostDispatchGatewayImpl in `os` when a real Link relay is active.
+    pub(crate) host_dispatch: Arc<dyn HostDispatchGateway>,
+    /// Per-call consent broker. NoOpConsentBroker until os wires the real broker.
+    pub(crate) consent_broker: Arc<dyn ConsentBroker>,
+    /// Per-call host consent broker backing the `prompt/permission` →
+    /// `prompt/approval` loop. Receives approval callbacks at
+    /// `POST /internal/v1/consent/approval`.
+    pub(crate) host_consent_broker: Arc<crate::consent_broker::ConsentBroker>,
     /// In-memory agent registry: name → registration record
     pub(crate) agent_registry: Arc<DashMap<String, AgentRegistration>>,
     /// Task queue manager backing the CLAIM op.
@@ -75,6 +87,15 @@ pub(crate) struct AppState {
     /// endpoint (`POST /v1/conversations/{id}/message`) so the host stays a
     /// dumb pipe (constitution #2).
     pub(crate) session_registry: crate::conversations::SessionRegistry,
+}
+
+impl AppState {
+    /// Access the underlying Runtime for the few wiring sites that need it
+    /// (capability registration, execution dispatch). Handlers should prefer
+    /// the trait methods on `self.runtime` instead of calling this.
+    pub(crate) fn runtime(&self) -> Arc<Runtime> {
+        self.runtime.runtime_arc()
+    }
 }
 
 /// Operational defaults derived from layered server config.

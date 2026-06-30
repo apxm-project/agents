@@ -1,7 +1,7 @@
 use std::collections::VecDeque;
 use std::sync::Arc;
 
-use apxm_runtime::capability::builtins::{FiredSchedule, OnFire};
+use apxm_server_api::{FiredSchedule, OnFire};
 use axum::Json;
 use axum::extract::{Path, State};
 use dashmap::DashMap;

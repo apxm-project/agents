@@ -565,6 +565,7 @@ fn build_agent_spawn_context(
         runner_artifact_dir: Some(runner_artifact_dir),
         context_ref: Some(context_ref),
         workdir_ref: Some(workdir_ref),
+        host_id: None,
     })
 }
 

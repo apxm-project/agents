@@ -61,6 +61,7 @@ mod dispatch;
 pub mod executor;
 pub mod flow_names;
 pub mod graph_lifecycle;
+pub mod host_dispatch;
 pub mod memory;
 pub mod metadata_keys;
 pub mod model_router;
@@ -129,6 +130,11 @@ pub use sandbox::{
 };
 
 pub use python_tools::{PythonToolBridge, PythonToolRegistry, PythonToolWorker};
+
+pub use host_dispatch::{
+    AgentChannelHandle, HostDispatchError, HostDispatchGateway, HostProxyRequest, HostProxyResult,
+    HostToolCall, HostToolError, HostToolResult, NoOpHostDispatchGateway, SpawnOffer,
+};
 
 pub type RuntimeResult<T> = std::result::Result<T, RuntimeError>;
 

@@ -1,4 +1,4 @@
-use apxm_runtime::capability::builtins::guard_url_ssrf;
+use apxm_server_api::guard_url_ssrf;
 use axum::Json;
 use axum::extract::{Path, State};
 use serde::{Deserialize, Serialize};

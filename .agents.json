@@ -1,5 +1,5 @@
 {
-  "project": "apxm",
+  "project": "agents",
   "source_of_truth": ".agents/",
   "agent_configs": {
     "claude": {
@@ -84,5 +84,5 @@
       "description": "Use when building, launching, probing, or running APXM workloads against the Dockerized APXM-vLLM backend, especially on Slurm compute nodes. Enforces Dekk as the authority CLI, persistent service allocations, image-store reuse, and service-exec for commands that need the vLLM endpoint."
     }
   ],
-  "cli": "dekk apxm"
+  "cli": "dekk agents"
 }

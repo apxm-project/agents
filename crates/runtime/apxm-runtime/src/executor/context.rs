@@ -144,6 +144,12 @@ pub struct ExecutionContext {
     /// vocabulary (`subagent_*`, `tool_call_*`, …). See
     /// `crates/runtime/apxm-runtime/src/executor/agent_scope.rs`.
     pub agent_scope_stack: Arc<AgentScopeStack>,
+    /// Host id for this execution, when bound to a specific host.
+    pub host_id: Option<String>,
+    /// Gateway for host dispatch (tool calls, relay egress, agent channels).
+    pub host_dispatch: std::sync::Arc<dyn apxm_core::types::host::HostDispatchGateway>,
+    /// Consent broker for per-call host capability approval.
+    pub consent_broker: std::sync::Arc<dyn apxm_core::types::consent::ConsentBroker>,
 }
 
 impl ExecutionContext {
@@ -241,6 +247,9 @@ impl ExecutionContext {
             current_span_id: None,
             current_scope_id: None,
             agent_scope_stack: Arc::new(AgentScopeStack::new()),
+            host_id: None,
+            host_dispatch: std::sync::Arc::new(crate::host_dispatch::NoOpHostDispatchGateway),
+            consent_broker: std::sync::Arc::new(apxm_core::types::consent::NoOpConsentBroker),
         }
     }
 
@@ -583,6 +592,9 @@ impl ExecutionContext {
             // current agent. The stack is `Arc<Mutex<…>>`, so
             // push/pop in either context is visible to the other.
             agent_scope_stack: Arc::clone(&self.agent_scope_stack),
+            host_id: self.host_id.clone(),
+            host_dispatch: std::sync::Arc::clone(&self.host_dispatch),
+            consent_broker: std::sync::Arc::clone(&self.consent_broker),
         }
     }
 

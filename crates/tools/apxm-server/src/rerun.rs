@@ -406,9 +406,7 @@ mod tests {
         use apxm_core::types::execution::{DagMetadata, ExecutionDag, Node, NodeMetadata};
         use apxm_core::types::operations::AISOperationType;
         use apxm_core::types::values::Value;
-        use apxm_runtime::capability::executor::CapabilityExecutor;
-        use apxm_runtime::capability::metadata::CapabilityMetadata;
-        use apxm_runtime::{Runtime, RuntimeConfig, SchedulerConfig};
+        use apxm_server_api::{AgentRuntimeApi, CapabilityExecutor, CapabilityMetadata, Runtime, RuntimeApiAdapter, RuntimeConfig, SchedulerConfig};
         use async_trait::async_trait;
         use axum::Router;
         use axum::body::Body;
@@ -416,6 +414,8 @@ mod tests {
         use dashmap::DashMap;
         use http_body_util::BodyExt;
         use tower::ServiceExt;
+
+        use apxm_runtime::host_dispatch::NoOpHostDispatchGateway;
 
         use crate::build_app;
         use crate::checkpoints::CheckpointStore;
@@ -574,7 +574,7 @@ timeout_ms = 30000
             let hardening = crate::state::HardeningDefaults::for_config(&server_config);
 
             AppState {
-                runtime: Arc::new(runtime),
+                runtime: Arc::new(RuntimeApiAdapter(Arc::new(runtime))) as Arc<dyn AgentRuntimeApi>,
                 agent_registry: Arc::new(DashMap::new()),
                 task_manager: TaskQueueManager::new(),
                 checkpoint_store: CheckpointStore::new(),
@@ -605,6 +605,9 @@ timeout_ms = 30000
                 capability_grants:
                     crate::capability_grants::CapabilityGrantStore::new(),
                 session_registry: crate::conversations::SessionRegistry::new(),
+                host_dispatch: Arc::new(NoOpHostDispatchGateway),
+                consent_broker: Arc::new(apxm_core::types::consent::NoOpConsentBroker),
+                host_consent_broker: Arc::new(crate::consent_broker::ConsentBroker::new()),
             }
         }
 

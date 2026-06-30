@@ -161,6 +161,8 @@ pub struct AgentSpawnContext {
     pub runner_artifact_dir: Option<String>,
     pub context_ref: Option<String>,
     pub workdir_ref: Option<String>,
+    /// Set for T2 LINK-RUNTIME spawns; selects the `LinkAgentSpawner` path.
+    pub host_id: Option<String>,
 }
 
 /// Trait for spawning external agent processes.

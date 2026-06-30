@@ -72,6 +72,16 @@ impl ApiError {
         }
     }
 
+    pub(crate) fn not_implemented(message: impl Into<String>) -> Self {
+        // 501 Not Implemented — route stub declared; real handler lives elsewhere.
+        Self {
+            status: axum::http::StatusCode::NOT_IMPLEMENTED,
+            message: message.into(),
+            code: ApiFaultCode::InternalError,
+            recovery_hint: None,
+        }
+    }
+
     pub(crate) fn internal_message(message: impl Into<String>) -> Self {
         Self::with_code(ApiFaultCode::InternalError, message, None)
     }

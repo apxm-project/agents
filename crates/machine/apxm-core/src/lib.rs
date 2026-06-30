@@ -44,3 +44,8 @@ pub use types::{
     NodeId, NodeMetadata, NodeSpec, Number, PinMode, PinPolicy, PriorityClass, ScopePolicy,
     ScopeSpec, Token, TokenId, TokenStatus, Value,
 };
+
+pub use types::host;
+pub use types::principal;
+pub use types::consent;
+pub use types::conformance;

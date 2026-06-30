@@ -367,7 +367,7 @@ fn enforce_sandbox_hint(state: &AppState, req: &SkillExecuteRequest) -> Result<(
         return Ok(());
     };
     state
-        .runtime
+        .runtime()
         .sandbox_registry()
         .select(min)
         .map(|_| ())
@@ -695,8 +695,8 @@ async fn run_detached_skill_body(state: AppState, mut prepared: PreparedCompiled
     let session_dir = prepared.session_dir.clone();
     let execution_id = prepared.execution_id.clone();
     let timeout_ms = prepared.timeout_ms;
-    let runtime_execution = state
-        .runtime
+    let rt = state.runtime();
+    let runtime_execution = rt
         .execute_artifact_with_session_emitter_and_metadata(
             prepared.artifact,
             prepared.args,
@@ -803,8 +803,8 @@ async fn execute_compiled_skill(
         .with_skill_provenance(prepared.skill_provenance()),
     );
     let metadata = launch_metadata(&prepared);
-    let runtime_execution = state
-        .runtime
+    let rt = state.runtime();
+    let runtime_execution = rt
         .execute_artifact_with_session_emitter_and_metadata(
             prepared.artifact,
             prepared.args,
@@ -962,7 +962,7 @@ pub(crate) async fn execute_skill_stream(
     let mut prepared = prepare_skill_execution(&state, &id, req)?;
     let admission_id = acquire_admission(&state).await?;
     prepared.admission_id = Some(admission_id.clone());
-    let runtime = Arc::clone(&state.runtime);
+    let runtime = state.runtime();
     let execution_store = state.execution_store.clone();
     let trace_id = prepared.execution_id.clone();
     let tx_task = tx.clone();
