@@ -46,3 +46,4 @@ pub use types::{
 };
 
 pub use types::host;
+pub use types::principal;
