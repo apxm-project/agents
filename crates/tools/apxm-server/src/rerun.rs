@@ -406,9 +406,7 @@ mod tests {
         use apxm_core::types::execution::{DagMetadata, ExecutionDag, Node, NodeMetadata};
         use apxm_core::types::operations::AISOperationType;
         use apxm_core::types::values::Value;
-        use apxm_runtime::capability::executor::CapabilityExecutor;
-        use apxm_runtime::capability::metadata::CapabilityMetadata;
-        use apxm_runtime::{Runtime, RuntimeConfig, SchedulerConfig};
+        use apxm_server_api::{AgentRuntimeApi, CapabilityExecutor, CapabilityMetadata, Runtime, RuntimeApiAdapter, RuntimeConfig, SchedulerConfig};
         use async_trait::async_trait;
         use axum::Router;
         use axum::body::Body;
@@ -574,7 +572,7 @@ timeout_ms = 30000
             let hardening = crate::state::HardeningDefaults::for_config(&server_config);
 
             AppState {
-                runtime: Arc::new(runtime),
+                runtime: Arc::new(RuntimeApiAdapter(Arc::new(runtime))) as Arc<dyn AgentRuntimeApi>,
                 agent_registry: Arc::new(DashMap::new()),
                 task_manager: TaskQueueManager::new(),
                 checkpoint_store: CheckpointStore::new(),

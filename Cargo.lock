@@ -304,6 +304,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "apxm-ais",
+ "async-trait",
  "blake3",
  "chrono",
  "colored",
@@ -429,6 +430,7 @@ dependencies = [
  "apxm-driver",
  "apxm-rollout",
  "apxm-runtime",
+ "apxm-server-api",
  "apxm-skill",
  "async-stream",
  "async-trait",
@@ -459,6 +461,21 @@ dependencies = [
  "tracing-subscriber",
  "utoipa",
  "uuid",
+]
+
+[[package]]
+name = "apxm-server-api"
+version = "0.1.0"
+dependencies = [
+ "apxm-ais",
+ "apxm-backends",
+ "apxm-compiler",
+ "apxm-core",
+ "apxm-runtime",
+ "async-trait",
+ "serde",
+ "serde_json",
+ "tokio",
 ]
 
 [[package]]

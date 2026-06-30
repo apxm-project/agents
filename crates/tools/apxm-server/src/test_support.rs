@@ -6,6 +6,7 @@ use std::time::SystemTime;
 use apxm_backends::llm::backends::MockLLMBackend;
 use apxm_driver::{RunEventsConfig, ServerConfig};
 use apxm_runtime::{ModelRouterConfig, Runtime, RuntimeConfig};
+use apxm_server_api::{AgentRuntimeApi, RuntimeApiAdapter};
 use axum::Router;
 use dashmap::DashMap;
 
@@ -157,6 +158,7 @@ async fn test_state_with_runtime_store(
     let mut runtime = runtime;
     let skill_library = SkillLibrary::new(Vec::new());
     install_test_runtime_bridges(&mut runtime, skill_library.clone());
+    let runtime: Arc<dyn AgentRuntimeApi> = Arc::new(RuntimeApiAdapter(runtime));
     let rollout_home =
         std::env::temp_dir().join(format!("apxm-test-rollout-{}", uuid::Uuid::new_v4()));
     std::fs::create_dir_all(&rollout_home).expect("rollout home");

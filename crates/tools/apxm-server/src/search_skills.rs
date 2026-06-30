@@ -16,9 +16,7 @@ use std::sync::Arc;
 
 use apxm_core::error::RuntimeError;
 use apxm_core::types::values::Value;
-use apxm_runtime::Runtime;
-use apxm_runtime::capability::executor::{CapabilityExecutor, CapabilityResult};
-use apxm_runtime::capability::metadata::CapabilityMetadata;
+use apxm_server_api::{Runtime, CapabilityExecutor, CapabilityResult, CapabilityMetadata};
 use apxm_skill::discovery::{SkillCard, VisibleSet, rank};
 use async_trait::async_trait;
 use tracing::{info, warn};

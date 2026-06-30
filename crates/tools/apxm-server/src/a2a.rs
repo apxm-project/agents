@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 
-use apxm_compiler::{AirEdge, AirModule, AirNode};
+use apxm_server_api::{AirEdge, AirModule, AirNode};
 use apxm_core::constants::graph::attrs as graph_attrs;
 use apxm_core::types::values::Value;
 use apxm_core::types::{AISOperationType, DependencyType};
@@ -240,8 +240,8 @@ pub(crate) async fn a2a_send_task(
             .into_response();
     };
 
-    match state
-        .runtime
+    let runtime = state.runtime();
+    match runtime
         .execute_artifact_with_session(artifact, vec![], None)
         .await
     {

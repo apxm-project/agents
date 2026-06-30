@@ -5,7 +5,7 @@ use std::convert::Infallible;
 use std::time::Duration;
 
 use apxm_core::events::{ApxmEvent, kind as event_kind};
-use apxm_runtime::executor::session_ledger::{self, SessionLedger};
+use apxm_server_api::{session_ledger, SessionLedger, MemorySpace};
 use axum::Json;
 use axum::Router;
 use axum::extract::{Path, Query, State};
@@ -246,7 +246,7 @@ pub(crate) async fn compact_session_for_state(
     let count_key = "conversation:user_count";
     let count = mem
         .read_scoped(
-            apxm_runtime::memory::MemorySpace::Stm,
+            MemorySpace::Stm,
             session_id,
             count_key,
         )
@@ -268,7 +268,7 @@ pub(crate) async fn compact_session_for_state(
     for turn in 1..=fold_through {
         let key = format!("conversation:user:{turn}");
         if let Ok(Some(value)) = mem
-            .read_scoped(apxm_runtime::memory::MemorySpace::Stm, session_id, &key)
+            .read_scoped(MemorySpace::Stm, session_id, &key)
             .await
             && let Some(text) = value.as_str()
         {
@@ -286,7 +286,7 @@ pub(crate) async fn compact_session_for_state(
     let summary = folded.join("\n");
     let _ = mem
         .write_scoped(
-            apxm_runtime::memory::MemorySpace::Stm,
+            MemorySpace::Stm,
             session_id,
             "conversation:summary".to_string(),
             apxm_core::types::Value::String(summary),
@@ -295,12 +295,12 @@ pub(crate) async fn compact_session_for_state(
     for turn in 1..=fold_through {
         let key = format!("conversation:user:{turn}");
         let _ = mem
-            .delete_scoped(apxm_runtime::memory::MemorySpace::Stm, session_id, &key)
+            .delete_scoped(MemorySpace::Stm, session_id, &key)
             .await;
     }
     let _ = mem
         .write_scoped(
-            apxm_runtime::memory::MemorySpace::Stm,
+            MemorySpace::Stm,
             session_id,
             count_key.to_string(),
             apxm_core::types::Value::Number(apxm_core::types::values::Number::Integer(

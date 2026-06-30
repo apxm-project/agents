@@ -19,6 +19,7 @@ members = [
 	"crates/tools/apxm-cli",
 	"crates/tools/apxm-client",
 	"crates/tools/apxm-server",
+	"crates/tools/apxm-server-api",
     # -- Facade ---------
     "crates/apxm",
 ]

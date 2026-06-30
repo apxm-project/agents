@@ -37,6 +37,7 @@ apxm-credentials.workspace = true
 apxm-driver.workspace = true
 apxm-rollout.workspace = true
 apxm-runtime = { workspace = true, features = ["metrics"] }
+apxm-server-api = { path = "../apxm-server-api" }
 chrono.workspace = true
 anyhow.workspace = true
 blake3.workspace = true
