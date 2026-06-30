@@ -159,8 +159,7 @@ fn check_generated_python_dir(
 }
 
 fn default_frontend_codegen_dir() -> PathBuf {
-    Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("../../compiler/frontend/python/apxm/_generated")
+    Path::new(env!("CARGO_MANIFEST_DIR")).join("../../compiler/frontend/python/apxm/_generated")
 }
 
 fn default_typescript_codegen_path() -> PathBuf {

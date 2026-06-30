@@ -14,7 +14,9 @@ use crate::metadata_keys;
 use apxm_core::constants::graph::attrs as graph_attrs;
 use apxm_core::constants::runtime::belief_keys;
 use apxm_core::error::RuntimeError;
-use apxm_core::types::{AISOperationType, GrantStatus, PermissionOperation, RuntimeCapabilityGrant};
+use apxm_core::types::{
+    AISOperationType, GrantStatus, PermissionOperation, RuntimeCapabilityGrant,
+};
 use chrono::{DateTime, Utc};
 
 /// Returns true when runtime `capability_grants` metadata admits a direct write
@@ -80,7 +82,8 @@ async fn enforce_write_boundary(
             let expires_at = std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
                 .unwrap_or_default()
-                .as_secs() as i64 + 30;
+                .as_secs() as i64
+                + 30;
             let prompt = PermissionPrompt {
                 prompt_id: uuid::Uuid::new_v4().to_string(),
                 capability_id: name.to_string(),
@@ -91,7 +94,11 @@ async fn enforce_write_boundary(
                 channel_id: None,
                 description: Some(format!("Host capability '{}' requires consent", name)),
             };
-            match ctx.consent_broker.request_consent(prompt, std::time::Duration::from_secs(30)).await {
+            match ctx
+                .consent_broker
+                .request_consent(prompt, std::time::Duration::from_secs(30))
+                .await
+            {
                 ConsentDecision::Approved(_) | ConsentDecision::NoBroker => Ok(()),
                 ConsentDecision::Denied { reason } => Err(RuntimeError::Capability {
                     capability: name.to_string(),

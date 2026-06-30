@@ -3,8 +3,8 @@ use std::collections::BTreeMap;
 use serde::{Deserialize, Serialize};
 
 use super::common::{
-    validate_non_empty, validate_operations, CapabilitySchemaError, LifecycleBound, PlannerVisibility,
-    RuntimeLimits, Sensitivity,
+    CapabilitySchemaError, LifecycleBound, PlannerVisibility, RuntimeLimits, Sensitivity,
+    validate_non_empty, validate_operations,
 };
 use super::policy::PromptPolicy;
 

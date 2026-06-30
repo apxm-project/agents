@@ -59,11 +59,8 @@ pub enum ConsentDecision {
 /// Studio approval UI). Tests and non-host contexts use `NoOpConsentBroker`.
 #[async_trait::async_trait]
 pub trait ConsentBroker: Send + Sync + 'static {
-    async fn request_consent(
-        &self,
-        prompt: PermissionPrompt,
-        timeout: Duration,
-    ) -> ConsentDecision;
+    async fn request_consent(&self, prompt: PermissionPrompt, timeout: Duration)
+    -> ConsentDecision;
 }
 
 /// Broker that immediately returns NoBroker for every request.

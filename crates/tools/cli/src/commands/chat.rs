@@ -382,7 +382,10 @@ pub async fn chat_command(opts: ChatOptions) -> Result<()> {
         .cloned()
         .collect();
     for binding in required_tool_bindings(&opts) {
-        if !approved_tool_bindings.iter().any(|existing| existing == &binding) {
+        if !approved_tool_bindings
+            .iter()
+            .any(|existing| existing == &binding)
+        {
             approved_tool_bindings.push(binding);
         }
     }

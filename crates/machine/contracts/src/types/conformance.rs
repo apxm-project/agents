@@ -46,11 +46,15 @@ pub struct ConformanceVectorResult {
 pub struct ConformanceHarness;
 
 impl Default for ConformanceHarness {
-    fn default() -> Self { Self }
+    fn default() -> Self {
+        Self
+    }
 }
 
 impl ConformanceHarness {
-    pub fn new() -> Self { Self }
+    pub fn new() -> Self {
+        Self
+    }
 
     /// Returns true iff the report is self-consistent: overall pass matches all vectors passing.
     pub fn verify_report(&self, report: &ConformanceReport) -> bool {
@@ -64,7 +68,12 @@ mod tests {
     use super::*;
 
     fn vector(id: &str, pass: bool) -> ConformanceVectorResult {
-        ConformanceVectorResult { vector_id: id.into(), pass, evidence: None, error: None }
+        ConformanceVectorResult {
+            vector_id: id.into(),
+            pass,
+            evidence: None,
+            error: None,
+        }
     }
 
     #[test]

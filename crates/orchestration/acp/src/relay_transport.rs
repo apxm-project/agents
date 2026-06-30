@@ -20,7 +20,9 @@ use apxm_core::constants::jsonrpc;
 
 use crate::AcpError;
 use crate::constants::json_rpc_errors;
-use crate::protocol::{AcpTransport, JsonRpcError, JsonRpcMessage, JsonRpcRequest, JsonRpcResponse};
+use crate::protocol::{
+    AcpTransport, JsonRpcError, JsonRpcMessage, JsonRpcRequest, JsonRpcResponse,
+};
 use crate::reverse::ReverseHandler;
 
 /// Relay-backed JSON-RPC 2.0 transport for LINK-RUNTIME sessions.
@@ -38,10 +40,7 @@ impl RelayTransport {
     ///
     /// `tx` carries JSON-RPC frames from APXM down to the host ACP child.
     /// `rx` carries JSON-RPC frames from the host ACP child up to APXM.
-    pub fn new(
-        tx: mpsc::Sender<serde_json::Value>,
-        rx: mpsc::Receiver<serde_json::Value>,
-    ) -> Self {
+    pub fn new(tx: mpsc::Sender<serde_json::Value>, rx: mpsc::Receiver<serde_json::Value>) -> Self {
         Self {
             tx,
             rx,
@@ -161,8 +160,12 @@ impl AcpTransport for RelayTransport {
                         }
                         Err(e) => {
                             apxm_acp!(warn, method = %req.method, error = %e, "[relay] reverse request failed");
-                            self.send_error(req_id, json_rpc_errors::INTERNAL_ERROR, &e.to_string())
-                                .await?;
+                            self.send_error(
+                                req_id,
+                                json_rpc_errors::INTERNAL_ERROR,
+                                &e.to_string(),
+                            )
+                            .await?;
                         }
                     }
                 }

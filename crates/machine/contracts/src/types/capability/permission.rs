@@ -2,7 +2,7 @@ use std::collections::BTreeMap;
 
 use serde::{Deserialize, Serialize};
 
-use super::common::{validate_non_empty, CapabilitySchemaError, LifecycleBound, RuntimeLimits};
+use super::common::{CapabilitySchemaError, LifecycleBound, RuntimeLimits, validate_non_empty};
 use super::policy::PromptPolicy;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
@@ -119,7 +119,8 @@ impl PermissionPolicy {
         for resource in &self.resources {
             resource.validate()?;
         }
-        self.prompt_policy.validate_for_operations(&self.operations)?;
+        self.prompt_policy
+            .validate_for_operations(&self.operations)?;
         if let Some(limits) = &self.limits {
             limits.validate()?;
         }

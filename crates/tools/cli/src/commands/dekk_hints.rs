@@ -14,7 +14,8 @@ pub const BACKEND_LIST: &str = "dekk agents backend list";
 pub const BACKEND_ADD_MODEL: &str = "dekk agents backend add-model <name>";
 pub const BACKEND_ADD_GENERIC: &str =
     "dekk agents backend add <name> --type <cloud|onprem|local> --protocol <protocol>";
-pub const BACKEND_ADD_OPENAI: &str = "dekk agents backend add openai --type cloud --protocol openai";
+pub const BACKEND_ADD_OPENAI: &str =
+    "dekk agents backend add openai --type cloud --protocol openai";
 pub const BACKEND_ADD_OLLAMA: &str = "dekk agents backend add ollama --protocol ollama";
 pub const TOOL_ADD_WITH_DESCRIPTION: &str = "dekk agents tool add <name> --description \"...\"";
 #[cfg(not(feature = "driver"))]

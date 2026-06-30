@@ -45,7 +45,7 @@ pub use types::{
     ScopeSpec, Token, TokenId, TokenStatus, Value,
 };
 
+pub use types::conformance;
+pub use types::consent;
 pub use types::host;
 pub use types::principal;
-pub use types::consent;
-pub use types::conformance;

@@ -7,12 +7,12 @@
 // ── Foundation ──────────────────────────────────────────────
 pub mod aam;
 pub mod capability;
+pub mod conformance;
+pub mod consent;
 pub mod goal;
 pub mod host;
 pub mod identifiers;
 pub mod operations;
-pub mod consent;
-pub mod conformance;
 pub mod principal;
 pub mod values;
 
@@ -37,15 +37,15 @@ pub use aam::{
     ScopePolicy, ScopeSpec,
 };
 pub use capability::{
-    AuthMethod, CapabilityDefinition, CapabilityGrant, CapabilityMetadata,
-    CapabilitySchemaError, CapabilityTemplateV1, CAPABILITY_DEFINITION_SCHEMA_V1,
-    CAPABILITY_GRANT_SCHEMA_V1, CAPABILITY_TEMPLATE_SCHEMA_V1, Delegability, GrantProvenance,
-    GrantStatus, Lifecycle, LifecycleBound, PermissionEffect, PermissionOperation,
-    PermissionPolicy, PermissionRule, PermissionScope, PlannerVisibility, Principal,
-    PrincipalKind, PromptMode, PromptPolicy, ResourceHandle, ResourceSelector, RoleAssignment,
-    RoleDefinition, RuntimeLimits, RuntimeSurfaceLimit, RuntimeSurfaceMode, RuntimeSurfacePolicy,
-    Sensitivity,     SubjectContext, SubjectSelector, ToolBinding, ToolBindingHandler, ToolBindingMetadata,
-    RuntimeCapabilityGrant,
+    AuthMethod, CAPABILITY_DEFINITION_SCHEMA_V1, CAPABILITY_GRANT_SCHEMA_V1,
+    CAPABILITY_TEMPLATE_SCHEMA_V1, CapabilityDefinition, CapabilityGrant, CapabilityMetadata,
+    CapabilitySchemaError, CapabilityTemplateV1, Delegability, GrantProvenance, GrantStatus,
+    Lifecycle, LifecycleBound, PermissionEffect, PermissionOperation, PermissionPolicy,
+    PermissionRule, PermissionScope, PlannerVisibility, Principal, PrincipalKind, PromptMode,
+    PromptPolicy, ResourceHandle, ResourceSelector, RoleAssignment, RoleDefinition,
+    RuntimeCapabilityGrant, RuntimeLimits, RuntimeSurfaceLimit, RuntimeSurfaceMode,
+    RuntimeSurfacePolicy, Sensitivity, SubjectContext, SubjectSelector, ToolBinding,
+    ToolBindingHandler, ToolBindingMetadata,
 };
 pub use communicate::{CommunicateProtocol, UnknownProtocol};
 pub use compiler::{
