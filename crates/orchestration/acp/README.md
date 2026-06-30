@@ -41,4 +41,4 @@ claude, codex, gemini, copilot, cursor, pi, droid, kilocode, kimi, kiro, opencod
 |-------|---------|
 | apxm-core | Shared types and error definitions |
 | apxm-runtime | AAM state, capability system |
-| apxm-credentials | Backend credential lookup (Unix only) |
+| apxm-backend-registry | Backend registry and API-key reference lookup |

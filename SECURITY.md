@@ -4,7 +4,8 @@
 
 If you believe you have found a security-sensitive issue in APXM — for example,
 a way for a skill to escape its declared capabilities, an authentication bypass
-on `apxm-server`, or any path that reveals secrets stored under `apxm-credentials`
+on `apxm-server`, or any path that reveals backend API-key material or sealed
+credentials
 — please report it privately rather than opening a public issue.
 
 Email: **randres2011@gmail.com**
@@ -33,7 +34,7 @@ In-scope:
 - The Rust workspace under [`crates/`](crates/).
 - The Python frontend under [`crates/compiler/frontend/python/`](crates/compiler/frontend/python/).
 - The `apxm-server` HTTP and MCP surfaces.
-- The `apxm-credentials` store.
+- The `apxm-backend-registry` backend roster and API-key reference store.
 - Any sample skill or workflow under [`examples/`](examples/) where the
   vulnerability is in APXM machinery rather than an example-specific bug.
 

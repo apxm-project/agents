@@ -1,17 +1,25 @@
-# apxm-credentials
+# apxm-backend-registry
 
-Backend persistence and Docker lifecycle management for APXM.
+Backend registration and API-key reference management for APXM.
 
 ## Overview
 
-`apxm-credentials` manages LLM backend configuration stored in `~/.apxm/config.toml` and provides Docker container lifecycle operations for local backends (Ollama, vLLM).
+`apxm-backend-registry` manages LLM backend configuration stored in
+`$APXM_HOME/config.toml` (default `~/.apxm/config.toml`). It records backend
+protocols, endpoints, model metadata, and API-key or `env:VAR` references.
+
+This crate is not the APXM credential custody plane. Provider OAuth tokens,
+sealed connections, webhook secrets, and tenant/user key hierarchy belong to
+`auth`.
+
+Container lifecycle is not part of this crate. The graph-aware vLLM backend has
+its own operator path under `deploy/vllm/` and `dekk agents vllm ...`.
 
 ## Module Structure
 
 | Module | Description |
 |--------|-------------|
 | `backend` | `BackendStore` for reading/writing backend entries in `config.toml` |
-| `docker` | Docker container start/stop/status for local LLM backends |
 | `mask` | API key masking for display |
 | `validate` | Backend entry validation (required fields, endpoint format) |
 
@@ -29,7 +37,7 @@ Backends are stored in `~/.apxm/config.toml` with `0o600` file permissions. Writ
 name = "openai"
 type = "cloud"
 protocol = "openai"
-api_key = "<API_KEY>"
+api_key = "env:OPENAI_API_KEY"
 models = ["<SERVED_MODEL_ID>"]
 ```
 

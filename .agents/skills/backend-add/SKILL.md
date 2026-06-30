@@ -16,9 +16,8 @@ dekk agents backend list                  # what's registered
 dekk agents backend add                   # register a new backend
 dekk agents backend test <name>           # connectivity probe
 dekk agents backend remove <name>
-dekk agents backend start <name>          # local backends only
-dekk agents backend stop <name>
-dekk agents backend status <name>
+dekk agents backend status <name>         # registry status, not process lifecycle
+dekk agents backend sync-models <name>    # Ollama model discovery
 dekk agents backend add-model <name> <model-id>
 ```
 
@@ -39,14 +38,16 @@ dekk agents backend add-model <name> <model-id>
   one file or fully merge the backend block.
 - For vLLM backends, prefer `dekk agents vllm zoo-apply` over `backend
   add` — the zoo manifest is the operator surface.
+- Backend commands manage registry entries only. Container/image/service
+  lifecycle belongs to `dekk agents vllm ...`.
 
 ## Workflow
 
 ```bash
 # Cloud / on-prem (manual entry):
 dekk agents backend add
-# Follow the prompts; supply api_base, served_model_name, credentials
-# (from env, never literal).
+# Follow the prompts; supply endpoint and API-key reference
+# (`env:NAME`, never a literal secret).
 dekk agents backend test <name>
 dekk agents backend add-model <name> <model.id>
 

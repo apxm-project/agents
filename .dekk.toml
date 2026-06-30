@@ -91,17 +91,14 @@ diff = { run = "apxm session diff", description = "Compare two sessions" }
 clean = { run = "apxm session clean", description = "Clean old sessions" }
 
 [commands.backend]
-description = "Manage inference backends (cloud/onprem/local)"
+description = "Manage registered inference backend endpoints"
 group = "Configuration"
-add = { run = "apxm backend add", description = "Add backend", skill = true }
-list = { run = "apxm backend list", description = "List backends" }
-remove = { run = "apxm backend remove", description = "Remove backend" }
+add = { run = "apxm backend add", description = "Register backend endpoint", skill = true }
+list = { run = "apxm backend list", description = "List registered backends" }
+remove = { run = "apxm backend remove", description = "Remove backend registration" }
 test = { run = "apxm backend test", description = "Test connectivity" }
-start = { run = "apxm backend start", description = "Start local backend" }
-stop = { run = "apxm backend stop", description = "Stop local backend" }
-status = { run = "apxm backend status", description = "Show backend status" }
-logs = { run = "apxm backend logs", description = "Show backend logs" }
-restart = { run = "apxm backend restart", description = "Restart local backend" }
+status = { run = "apxm backend status", description = "Show backend registry status" }
+sync-models = { run = "apxm backend sync-models", description = "Sync installed Ollama models into a backend registration" }
 add-model = { run = "apxm backend add-model", description = "Add model to backend" }
 
 [commands.vllm]

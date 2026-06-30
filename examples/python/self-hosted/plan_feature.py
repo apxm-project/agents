@@ -135,7 +135,7 @@ Initial plan: {initial_plan}
 APXM crate dependency order (bottom-up):
 1. apxm-core (no dependencies on other APXM crates)
 2. apxm-events, apxm-ais, apxm-tools, apxm-sandbox
-3. apxm-credentials, apxm-backends
+3. apxm-backend-registry, apxm-backends
 4. apxm-graph, apxm-artifact
 5. apxm-compiler, apxm-acp
 6. apxm-runtime

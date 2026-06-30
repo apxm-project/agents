@@ -51,7 +51,6 @@ pub use llm::{
     // Structured message types
     ContentPart,
     DEFAULT_VLLM_BASE_URL,
-    DockerConfig,
     // Retry logic
     ErrorClass,
     FunctionCall,

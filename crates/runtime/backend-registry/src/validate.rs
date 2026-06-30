@@ -415,7 +415,6 @@ mod tests {
                 max_output_tokens: None,
                 tags: vec![],
             }],
-            docker: None,
             auto_tool_choice: None,
             supports_structured_outputs: None,
         }

@@ -1,9 +1,9 @@
 [package]
-name = "apxm-credentials"
+name = "apxm-backend-registry"
 version.workspace = true
 edition.workspace = true
 publish = false
-description = "APXM credential store - plaintext TOML-based API key management"
+description = "APXM backend registry and API-key reference management"
 license.workspace = true
 repository.workspace = true
 homepage.workspace = true
