@@ -1,12 +1,12 @@
 # APXM data-layout configuration.
 #
 # Copy this file to `.apxm/config.toml` (gitignored) and edit. The
-# copy happens automatically on the first `dekk apxm install` or
-# `dekk apxm vllm doctor` run. Every key below is optional; with
+# copy happens automatically on the first `dekk agents install` or
+# `dekk agents vllm doctor` run. Every key below is optional; with
 # none set, APXM stores everything under <repo>/.apxm/.
 #
 # Resolution order (highest priority first):
-#   1. CLI flag (e.g. `dekk apxm vllm cache-warm --hf-home ...`)
+#   1. CLI flag (e.g. `dekk agents vllm cache-warm --hf-home ...`)
 #   2. Per-resource env vars (APXM_VLLM_HF_HOME, APXM_VLLM_IMAGE_STORE,
 #      APXM_VLLM_HF_CACHE_ROOTS, APXM_VLLM_MODEL_ROOTS)
 #   3. APXM_HOME env var
