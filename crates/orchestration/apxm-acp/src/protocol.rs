@@ -56,7 +56,7 @@ pub enum JsonRpcMessage {
 /// Abstraction over the JSON-RPC 2.0 transport layer used by ACP sessions.
 ///
 /// `StdioTransport` covers the local subprocess case; `RelayTransport`
-/// covers the T2 LINK-RUNTIME case where the ACP child runs on the host side
+/// covers the LINK-RUNTIME case where the ACP child runs on the host side
 /// and frames are tunnelled over the Link WSS relay.
 #[async_trait::async_trait]
 pub trait AcpTransport: Send + Sync {
@@ -246,7 +246,7 @@ impl StdioTransport {
 }
 
 /// `StdioTransport` implements the `AcpTransport` trait so callers can hold a
-/// `Box<dyn AcpTransport>` and swap in `RelayTransport` for T2 sessions.
+/// `Box<dyn AcpTransport>` and swap in `RelayTransport` for LINK-RUNTIME sessions.
 #[async_trait::async_trait]
 impl AcpTransport for StdioTransport {
     async fn send_request(

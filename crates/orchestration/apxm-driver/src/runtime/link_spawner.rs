@@ -1,4 +1,4 @@
-//! `LinkAgentSpawner` — routes `SPAWN_AGENT` to a T2 LINK-RUNTIME host.
+//! `LinkAgentSpawner` — routes `SPAWN_AGENT` to a LINK-RUNTIME host.
 //!
 //! When a host has been enrolled at the LINK-RUNTIME tier, an APXM-side
 //! `SPAWN_AGENT` operation should delegate the ACP child to the host rather
@@ -26,7 +26,7 @@ use apxm_runtime::process_table::{AgentSpawnContext, AgentSpawner};
 use tokio::sync::{Mutex, mpsc};
 use tracing::debug;
 
-/// A session handle for a relay-backed ACP child running on a T2 host.
+/// A session handle for a relay-backed ACP child running on a LINK-RUNTIME host.
 ///
 /// The handle owns the `RelayTransport` so the prompter can borrow it to send
 /// prompts and receive responses over the Link relay.
@@ -91,7 +91,7 @@ impl Default for LinkHostRegistry {
     }
 }
 
-/// Spawner that delegates `SPAWN_AGENT` to a T2 LINK-RUNTIME host.
+/// Spawner that delegates `SPAWN_AGENT` to a LINK-RUNTIME host.
 pub struct LinkAgentSpawner {
     gateway: Arc<dyn HostDispatchGateway>,
 }
@@ -158,7 +158,7 @@ impl AgentSpawner for LinkAgentSpawner {
                 message: format!("channel '{}' not available after open", channel_handle.channel_id),
             })?;
 
-        debug!(host_id, agent_name, "spawning relay ACP session on T2 host");
+        debug!(host_id, agent_name, "spawning relay ACP session on LINK-RUNTIME host");
 
         let transport = RelayTransport::new(tx, rx);
 
