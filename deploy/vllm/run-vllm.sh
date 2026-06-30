@@ -4,7 +4,7 @@
 #
 # Each Slurm allocation hosts one APXM-vLLM container that serves one
 # model. Multi-instance throughput is achieved by submitting multiple
-# allocations (one per replica) via `dekk apxm vllm zoo-apply`.
+# allocations (one per replica) via `dekk agents vllm zoo-apply`.
 #
 # Multi-node distributed inference (Ray TP+PP across nodes) is
 # intentionally out of scope: the per-deployment shape is constrained to
@@ -56,7 +56,7 @@ cleanup() {
   # Deregister the APXM backend first so subsequent zoo-apply runs do not
   # see a stale registration pointing at a dead endpoint. Best-effort —
   # never let a deregister failure mask the container teardown.
-  dekk apxm backend remove "$BACKEND_NAME" >/dev/null 2>&1 || true
+  dekk agents backend remove "$BACKEND_NAME" >/dev/null 2>&1 || true
   docker rm -f "$CONTAINER_NAME" >/dev/null 2>&1 || true
 }
 trap cleanup EXIT INT TERM
@@ -79,14 +79,14 @@ echo "container_name=${CONTAINER_NAME}"
 
 mkdir -p "$HF_HOME_HOST"
 
-load_cmd=(dekk apxm vllm docker-load --image "$APXM_VLLM_IMAGE")
+load_cmd=(dekk agents vllm docker-load --image "$APXM_VLLM_IMAGE")
 if [ -n "$APXM_VLLM_IMAGE_ARCHIVE" ]; then
   load_cmd+=(--archive "$APXM_VLLM_IMAGE_ARCHIVE")
 fi
 "${load_cmd[@]}"
 
 cmd=(
-  dekk apxm vllm docker-start "$MODEL_REF"
+  dekk agents vllm docker-start "$MODEL_REF"
   --image "$APXM_VLLM_IMAGE"
   --served-model-name "$SERVED_MODEL_ID"
   --backend-name "$BACKEND_NAME"

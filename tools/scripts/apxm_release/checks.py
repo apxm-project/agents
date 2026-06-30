@@ -133,15 +133,6 @@ def _check_rust_publish_guards() -> CheckResult:
     return CheckResult("rust publish guards", True, "all workspace crates are publish=false")
 
 
-def _check_skillpack() -> CheckResult:
-    check = run(
-        [sys.executable, "tools/scripts/validate_pack.py", "crates/tools/apxm-server/skills"],
-        capture=True,
-    )
-    detail = "builtin skill pack validates" if check.returncode == 0 else last_line(check)
-    return CheckResult("skillpack", check.returncode == 0, detail)
-
-
 def _check_dekk_doctor() -> CheckResult:
     if shutil.which("dekk") is None:
         return CheckResult("dekk doctor", False, "dekk not found on PATH")
@@ -201,7 +192,6 @@ def _build_release_binaries() -> int:
             "driver,metrics",
             "--release",
         ],
-        [sys.executable, "tools/scripts/cargo.py", "build", "-p", "apxm-server", "--release"],
     )
     for cmd in commands:
         check = run(cmd)
@@ -226,7 +216,6 @@ def run_checks(args: argparse.Namespace) -> int:
         _check_release_notes(),
         _check_tag_available(),
         _check_rust_publish_guards(),
-        _check_skillpack(),
         _check_dekk_doctor(),
         _check_codegen_current(args.skip_codegen),
         _check_python_tests(args.skip_python_tests),

@@ -104,7 +104,7 @@ The first line of every rollout file pins:
 - `model_provider`, `model_id`, `backend_endpoint`
 - `parent_thread_id` + `tool_use_id_in_parent` on subagent threads
 
-These pins are the regulatory replay envelope. `dekk apxm rollout
+These pins are the regulatory replay envelope. `dekk agents rollout
 archive <thread_id>` (Phase 14.8.F) bundles them with the rollout JSONL
 and the source files into an air-gapped tarball.
 

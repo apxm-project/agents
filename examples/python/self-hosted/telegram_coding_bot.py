@@ -8,7 +8,7 @@ Uses http_post (builtin) to send the reply — no pack capability needed.
 Bot token injected via APXM_TELEGRAM_BOT_TOKEN env var set in OS agent manifest.
 
 Compile:
-  dekk apxm compile examples/python/self-hosted/telegram_coding_bot.py
+  dekk agents compile examples/python/self-hosted/telegram_coding_bot.py
 
 Install:
   mkdir -p ~/.apxm/skills/telegram-coding-bot

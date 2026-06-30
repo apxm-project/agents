@@ -10,9 +10,9 @@ concurrently -- you just declare the edges.
 
 ## Examples
 
-- **fan_out_synthesize.py** -- Plan, fan-out 3 parallel writers, synthesize. `dekk apxm execute examples/python/parallelism/fan_out_synthesize.py`
-- **expert_council.py** -- 5 parallel expert analyses merged into consensus. `dekk apxm execute examples/python/parallelism/expert_council.py`
-- **worker_pool.py** -- Parallel worker pool pattern. `dekk apxm execute examples/python/parallelism/worker_pool.py`
+- **fan_out_synthesize.py** -- Plan, fan-out 3 parallel writers, synthesize. `dekk agents execute examples/python/parallelism/fan_out_synthesize.py`
+- **expert_council.py** -- 5 parallel expert analyses merged into consensus. `dekk agents execute examples/python/parallelism/expert_council.py`
+- **worker_pool.py** -- Parallel worker pool pattern. `dekk agents execute examples/python/parallelism/worker_pool.py`
 
 ## Key API
 

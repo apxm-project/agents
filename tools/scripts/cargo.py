@@ -122,7 +122,7 @@ def _cargo_env(project_root: Path, target_dir: Path, command: list[str]) -> dict
     profile = _command_profile(command)
     project_profile_dir = project_root / PROJECT_TARGET_DIR_NAME / profile
     # The native MLIR bridge is installed into the workspace target/profile
-    # directory by apxm-compiler/build.rs, even when Rust artifacts use the
+    # directory by the compiler build script, even when Rust artifacts use the
     # machine-local CARGO_TARGET_DIR.  dekk sets LD_LIBRARY_PATH to the release
     # install for normal CLI use; prepend the active profile here so debug tests
     # never load a stale release libapxm_compiler_c.so.

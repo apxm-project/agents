@@ -39,7 +39,7 @@ the runtime has resolvable ACP profiles. Built-in names such as `codex` and
 `claude` work when their commands are installed; custom profiles can be added
 with `apxm agent add`. APXM is profile-name agnostic; those names are examples.
 
-For CLI callers, `dekk apxm goal` is the high-level wrapper around this native
+For CLI callers, `dekk agents goal` is the high-level wrapper around this native
 MCP path. By default it lets the server plan the bounded worker request, calls
 `goal_start`, and follows the goal event stream unless `--no-follow` is set.
 Pass repeatable `--worker` and `--depends` only when the worker workflow must be

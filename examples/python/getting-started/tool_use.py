@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """tool_use.py - Workflow that invokes a Python-backed tool.
 
-Usage: dekk apxm execute examples/python/getting-started/tool_use.py
+Usage: dekk agents execute examples/python/getting-started/tool_use.py
 """
 
 from apxm import GraphRecorder, compile, tool

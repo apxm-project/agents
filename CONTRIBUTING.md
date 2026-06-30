@@ -10,42 +10,42 @@ APXM is a Rust workspace with a Python frontend and an MLIR-based compiler.
 The supported install path is [Dekk](https://github.com/randreshg/dekk).
 
 ```bash
-git clone https://github.com/apxm-project/apxm
+git clone https://github.com/apxm-project/agents
 cd apxm
 git submodule update --init --recursive    # apxm-project/vllm under external/vllm
-dekk apxm install --no-interactive
-dekk apxm doctor
+dekk agents install --no-interactive
+dekk agents doctor
 ```
 
-`dekk apxm install` creates a repo-local conda environment with MLIR/LLVM 22
+`dekk agents install` creates a repo-local conda environment with MLIR/LLVM 22
 and pinned tooling, builds the Rust workspace, and installs the Python
-frontend in editable mode. `dekk apxm doctor` is mandatory on every session
+frontend in editable mode. `dekk agents doctor` is mandatory on every session
 start — it prints the resolved environment and refuses to continue if
 anything is misaligned (wrong `CARGO_TARGET_DIR`, missing MLIR, stale image
 store, missing gateway key, etc.).
 
 ## Authority CLI
 
-`dekk apxm` is the only sanctioned entry point. Do not invoke `cargo`,
+`dekk agents` is the only sanctioned entry point. Do not invoke `cargo`,
 `docker`, `srun`, `sbatch`, or `python tools/scripts/*` directly — the env
 contract and process accounting depend on the wrapper. If a needed action
-is not yet wrapped, add a `dekk apxm` subcommand in `.dekk.toml` instead of
+is not yet wrapped, add a `dekk agents` subcommand in `.dekk.toml` instead of
 shelling out.
 
 The common cadences during development:
 
 ```bash
-dekk apxm doctor                # session start
-dekk apxm build                 # release build of apxm-cli
-dekk apxm build-dialect         # rebuild MLIR after .td or C++ shim edits
-dekk apxm codegen               # regen Python frontend bindings after .td edits
-dekk apxm test                  # workspace tests (excludes compiler + cli)
-dekk apxm test-cli              # cli-only (preserves MLIR-linked binary)
-dekk apxm test-python-frontend  # pytest the Python frontend
+dekk agents doctor                # session start
+dekk agents build                 # release build of apxm-cli
+dekk agents build-dialect         # rebuild MLIR after .td or C++ shim edits
+dekk agents codegen               # regen Python frontend bindings after .td edits
+dekk agents test                  # workspace tests (excludes compiler + cli)
+dekk agents test-cli              # cli-only (preserves MLIR-linked binary)
+dekk agents test-python-frontend  # pytest the Python frontend
 ```
 
 Edits to a `.td` file or a TableGen-emitted C++ shim require both
-`dekk apxm build-dialect` and `dekk apxm codegen` before the Rust workspace
+`dekk agents build-dialect` and `dekk agents codegen` before the Rust workspace
 will compile or the Python frontend will see the new op.
 
 ## Lifecycle workflow
@@ -54,33 +54,33 @@ Every non-trivial session routes through six lifecycle skills. They are
 checkpoints, not new bodies of content — the rules live under
 `.agents/skills/_shared/`.
 
-1. `apxm-context` — prime the session (`dekk apxm doctor`,
+1. `context` — prime the session (`dekk agents doctor`,
    `.agents/project.md`, the relevant `_shared/` rule, memory recall).
-2. `apxm-plan` — write a plan before implementing. Required for
+2. `plan` — write a plan before implementing. Required for
    changes touching more than three files, modifying a public API or AIS
    op, introducing a claim, or needing GPU allocation.
-3. `apxm-execute-plan` — drive the plan to completion with
+3. `execute-plan` — drive the plan to completion with
    focused per-phase verification, no scope creep.
-4. `apxm-simplify` — remove copied `_shared/` text, weak
+4. `simplify` — remove copied `_shared/` text, weak
    abstractions, referential comments, and over-large skill bodies before
    declaring done.
-5. `apxm-finish` — pre-claim gate: focused `dekk apxm test`,
-   `dekk apxm doctor`, release checks, secrets scan, and
+5. `finish` — pre-claim gate: focused `dekk agents test`,
+   `dekk agents doctor`, release checks, secrets scan, and
    artifact-placement check.
-6. `apxm-commit` — commit and push gate: no auto-commit,
+6. `commit` — commit and push gate: no auto-commit,
    no push without explicit approval, PRs only for pushed work, push to
    `main` only when explicitly authorized.
 
-Skip `apxm-context` and `apxm-plan` only for typos or single-line edits.
-Never skip `apxm-finish` or `apxm-commit`.
+Skip `context` and `plan` only for typos or single-line edits.
+Never skip `finish` or `commit`.
 
 ## Commit messages
 
 Commit subjects follow the rules at
-[`.agents/skills/_shared/apxm-commit-message-rules.md`](.agents/skills/_shared/apxm-commit-message-rules.md):
+[`.agents/skills/_shared/commit-message-rules.md`](.agents/skills/_shared/commit-message-rules.md):
 allowed types, no AI attribution, no `planNN` scope outside
 `prereg(...)`/`eval(...)`, no `wip` or `fix stuff` subjects. Use
-`dekk apxm commit-lint` when you want the repository checker explicitly.
+`dekk agents commit-lint` when you want the repository checker explicitly.
 
 ## Submitting a change
 
@@ -102,9 +102,9 @@ allowed types, no AI attribution, no `planNN` scope outside
 Releases are cut from a clean, synced `main` checkout:
 
 ```bash
-dekk apxm release check
-dekk apxm release dist
-dekk apxm release publish --yes
+dekk agents release check
+dekk agents release dist
+dekk agents release publish --yes
 ```
 
 `release check` validates git sync, version consistency, changelog coverage,
@@ -113,7 +113,7 @@ Python tests, release notes, and release builds.
 `release dist` writes Python, binary, and source archives plus `SHA256SUMS`
 under `.apxm/releases/vX.Y.Z`. `release publish` uses `gh`; without `--yes`
 it prints the exact release assets and exits without changing GitHub. PyPI
-upload is explicit and separate: `dekk apxm release pypi --yes`.
+upload is explicit and separate: `dekk agents release pypi --yes`.
 
 ## Working on the vLLM fork
 
@@ -125,15 +125,15 @@ without a cherry-pick plan onto that branch.
 The supported serving path is the Dekk-controlled Docker image flow:
 
 ```bash
-dekk apxm vllm doctor
-dekk apxm vllm docker-build --image apxm-vllm-runtime:<TAG> --base-image <VLLM_BASE>
-dekk apxm vllm docker-save  --image apxm-vllm-runtime:<TAG>
+dekk agents vllm doctor
+dekk agents vllm docker-build --image apxm-vllm-runtime:<TAG> --base-image <VLLM_BASE>
+dekk agents vllm docker-save  --image apxm-vllm-runtime:<TAG>
 
 cp deploy/vllm/zoo.example.toml deploy/vllm/zoo.toml   # then edit
-dekk apxm vllm zoo-cache-warm                          # CPU-only shared HF download
-dekk apxm vllm zoo-apply                               # submits Slurm jobs
-dekk apxm vllm service-list                            # watch readiness
-dekk apxm vllm service-exec <NAME> -- dekk apxm execute <GRAPH.py>
+dekk agents vllm zoo-cache-warm                          # CPU-only shared HF download
+dekk agents vllm zoo-apply                               # submits Slurm jobs
+dekk agents vllm service-list                            # watch readiness
+dekk agents vllm service-exec <NAME> -- dekk agents execute <GRAPH.py>
 ```
 
 Configure `.apxm/config.toml` so `data.vllm.hf_cache` and
@@ -147,9 +147,9 @@ the placement rules.
 
 ## Reporting bugs
 
-Open an issue at <https://github.com/apxm-project/apxm/issues> with:
+Open an issue at <https://github.com/apxm-project/agents/issues> with:
 
-- The version (`dekk apxm doctor` output is helpful).
+- The version (`dekk agents doctor` output is helpful).
 - The minimal AIR or Python frontend reproduction.
 - The expected behavior, the observed behavior, and any session
   directory paths or stack traces.
@@ -163,8 +163,8 @@ The SSOT for skill content is `.agents/`. To add a skill:
 
 1. Add `.agents/skills/<name>/SKILL.md` from the template in the
    `apxm-skill-authoring` skill.
-2. Run `dekk apxm skills status` to confirm registration.
-3. Run `dekk apxm skills generate --target all` to regenerate
+2. Run `dekk agents skills status` to confirm registration.
+3. Run `dekk agents skills generate --target all` to regenerate
    `AGENTS.md`, `CLAUDE.md`, `CODEX.md`, `.agents.json`, `.cursorrules`,
    `.github/copilot-instructions.md`, and other generated agent surfaces
    (see `.agents/skills/README.md`).

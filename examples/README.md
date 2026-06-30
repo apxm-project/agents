@@ -15,8 +15,8 @@ compiler figures out *how* to run it efficiently:
 
 ```bash
 # From project root
-dekk apxm doctor
-dekk apxm compile examples/python/getting-started/tool_use.py -o /tmp/apxm-tool-use.apxmobj
+dekk agents doctor
+dekk agents compile examples/python/getting-started/tool_use.py -o /tmp/apxm-tool-use.apxmobj
 ```
 
 Use Dekk for normal runs. It sets up the APXM environment consistently across
@@ -26,15 +26,15 @@ machines.
 
 Required:
 
-- `dekk apxm install --no-interactive`
-- `dekk apxm doctor`
+- `dekk agents install --no-interactive`
+- `dekk agents doctor`
 
 Optional, depending on the example:
 
 - A registered LLM backend for examples that execute `ask`, `think`, or
   `reason` nodes against a real model.
 - Generated typed ACP profile imports for examples that spawn coding agents. Verify
-  them with `dekk apxm agent list` and `dekk apxm agent test <name>`.
+  them with `dekk agents agent list` and `dekk agents agent test <name>`.
 - Node/npm plus the relevant authenticated agent CLI when using APXM ACP
   profiles. The checked-in `claude` profile launches
   `npx -y @agentclientprotocol/claude-agent-acp@^0.24.2`; the checked-in
@@ -46,18 +46,18 @@ Optional, depending on the example:
 
 For backend-free validation, prefer compile-only checks or examples that set
 `mock=True` in Python. Do not bake a model id into a public example; register a
-backend with `dekk apxm backend ...` and select it from the APXM backend
+backend with `dekk agents backend ...` and select it from the APXM backend
 registry.
 
 Most examples use the Python frontend. Dekk can compile Python examples directly:
 
 ```bash
-dekk apxm compile examples/python/getting-started/hello.py -o hello.apxmobj
-dekk apxm run hello.apxmobj
+dekk agents compile examples/python/getting-started/hello.py -o hello.apxmobj
+dekk agents run hello.apxmobj
 ```
 
 > **First time?** See the [docs/](../docs/README.md) overview, then run
-> `dekk apxm doctor` to verify your environment.
+> `dekk agents doctor` to verify your environment.
 
 ## Learning Path
 

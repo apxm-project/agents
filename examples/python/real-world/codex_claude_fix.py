@@ -4,7 +4,7 @@
 Codex analyzes APXM compiler deeply, Claude implements all fixes.
 Both work in the same repo. Codex reads and reports, Claude writes and commits.
 
-Usage: dekk apxm execute examples/python/real-world/codex_claude_fix.py
+Usage: dekk agents execute examples/python/real-world/codex_claude_fix.py
 """
 
 from apxm import GraphRecorder, agent_cwd, compile
@@ -27,14 +27,14 @@ def codex_claude_fix(g: GraphRecorder):
     report = codex.ask(
         "You are a Rust compiler engineer. Do a FULL deep analysis of the APXM compiler. "
         "Read ALL these files carefully:\n\n"
-        "crates/compiler/apxm-compiler/src/air_builder/\n"
-        "crates/compiler/apxm-compiler/src/api/pipeline.rs\n"
-        "crates/compiler/apxm-compiler/src/passes/pipeline.rs\n"
-        "crates/core/apxm-ais/src/operations/definitions.rs\n"
-        "crates/core/apxm-core/src/error/codes.rs\n"
-        "crates/runtime/apxm-runtime/src/executor/handlers/llm.rs\n"
-        "crates/runtime/apxm-runtime/src/model_router/mod.rs\n\n"
-        "Also run: dekk apxm test\n\n"
+        "crates/compiler/pipeline/src/air_builder/\n"
+        "crates/compiler/pipeline/src/api/pipeline.rs\n"
+        "crates/compiler/pipeline/src/passes/pipeline.rs\n"
+        "crates/machine/ais/src/operations/definitions.rs\n"
+        "crates/machine/contracts/src/error/codes.rs\n"
+        "crates/runtime/engine/src/executor/handlers/llm.rs\n"
+        "crates/runtime/engine/src/model_router/mod.rs\n\n"
+        "Also run: dekk agents test\n\n"
         "Report every issue you find: compile warnings, test failures, missing error handling, "
         "TODO/unimplemented sections, performance issues. Be exhaustive with file:line references."
     )
@@ -46,9 +46,9 @@ def codex_claude_fix(g: GraphRecorder):
         "For each issue:\n"
         "1. Read the relevant file(s)\n"
         "2. Make the minimal correct fix\n"
-        "3. Build: dekk apxm build (NEVER bare cargo build)\n"
+        "3. Build: dekk agents build (NEVER bare cargo build)\n"
         "4. Fix any new errors introduced\n"
-        "5. Verify: dekk apxm test (must pass)\n\n"
+        "5. Verify: dekk agents test (must pass)\n\n"
         "When ALL issues are fixed, commit:\n"
         "git add -A && git commit -m 'fix(compiler): comprehensive fixes from codex+claude analysis'"
     )

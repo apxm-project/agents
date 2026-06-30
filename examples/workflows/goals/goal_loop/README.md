@@ -49,9 +49,9 @@ listeners, dedupe, retry, and re-arm behavior.
 From the repository root:
 
 ```bash
-dekk apxm workflow validate examples/workflows/goals/goal_loop/workflow.apxmw
-dekk apxm workflow analyze examples/workflows/goals/goal_loop/workflow.apxmw
-dekk apxm workflow run examples/workflows/goals/goal_loop/workflow.apxmw \
+dekk agents workflow validate examples/workflows/goals/goal_loop/workflow.apxmw
+dekk agents workflow analyze examples/workflows/goals/goal_loop/workflow.apxmw
+dekk agents workflow run examples/workflows/goals/goal_loop/workflow.apxmw \
   goal="ship a bounded APXM improvement" \
   event="manual goal requested" \
   policy="goal_loop.policy.json"

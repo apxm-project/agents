@@ -70,9 +70,9 @@ The `apxm-preregistration` skill walks you through:
 Skipping any of these makes the run unable to back a claim, regardless
 of how good the numbers look.
 
-## `apxm-finish` interlock
+## `finish` interlock
 
-`apxm-finish` will refuse to claim "done" on a claim-bearing run if:
+`finish` will refuse to claim "done" on a claim-bearing run if:
 
 - No matching preregistration exists in `docs/preregistrations/`.
 - The preregistration's commit timestamp is *after* the first artifact

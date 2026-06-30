@@ -70,20 +70,20 @@ examples/python/
 
 ```bash
 # Execute directly through the CLI
-dekk apxm execute examples/python/getting-started/hello.py
+dekk agents execute examples/python/getting-started/hello.py
 
 # Or compile and run separately
-dekk apxm compile examples/python/getting-started/hello.py -O2 -o hello.apxmobj
-dekk apxm run hello.apxmobj
+dekk agents compile examples/python/getting-started/hello.py -O2 -o hello.apxmobj
+dekk agents run hello.apxmobj
 
 # Compare optimization levels
-dekk apxm execute examples/python/optimization/dead_context.py -O0
-dekk apxm execute examples/python/optimization/dead_context.py -O2
+dekk agents execute examples/python/optimization/dead_context.py -O0
+dekk agents execute examples/python/optimization/dead_context.py -O2
 ```
 
 ## Runtime Requirements
 
-Use `dekk apxm ...` for normal runs. Direct `python3` execution is useful for
+Use `dekk agents ...` for normal runs. Direct `python3` execution is useful for
 small mock-backed demos and scripts that explicitly document direct execution,
 but Dekk is the supported path for environment setup.
 
@@ -109,16 +109,16 @@ code and the host must be able to run the configured command. In this checkout:
 Check what is available before executing agent examples:
 
 ```bash
-dekk apxm agent list
-dekk apxm agent test claude
-dekk apxm agent test codex
+dekk agents agent list
+dekk agents agent test claude
+dekk agents agent test codex
 ```
 
 Public examples are model-agnostic. Configure models through:
 
 ```bash
-dekk apxm backend add <name> --type <cloud|onprem|local> --protocol <protocol>
-dekk apxm backend add-model <name> <SERVED_MODEL_ID> --alias <role>
+dekk agents backend add <name> --type <cloud|onprem|local> --protocol <protocol>
+dekk agents backend add-model <name> <SERVED_MODEL_ID> --alias <role>
 ```
 
 vLLM examples use role aliases such as `smoke`, `showcase`, or `benchmark`.
@@ -126,7 +126,7 @@ Those aliases are examples, not default models.
 
 ## API Reference
 
-- **GraphRecorder**: `crates/compiler/apxm-frontend/python/apxm/proxy.py`
-- **AgentHandle / Team**: `crates/compiler/apxm-frontend/python/apxm/sugar.py`
-- **Agent profiles**: `crates/compiler/apxm-frontend/python/apxm/_generated/agents.py`
-- **Model IDs**: `crates/compiler/apxm-frontend/python/apxm/_generated/models.py`
+- **GraphRecorder**: `crates/compiler/frontend/python/apxm/proxy.py`
+- **AgentHandle / Team**: `crates/compiler/frontend/python/apxm/sugar.py`
+- **Agent profiles**: `crates/compiler/frontend/python/apxm/_generated/agents.py`
+- **Model IDs**: `crates/compiler/frontend/python/apxm/_generated/models.py`

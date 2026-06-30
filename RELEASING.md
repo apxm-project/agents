@@ -5,13 +5,13 @@ crates are not yet published — the workspace tracks the release version and wa
 for the public Rust API to stabilize.
 
 Releases are cut **manually** from a maintainer's machine through
-`dekk apxm release`. There is intentionally no GitHub Actions workflow that
+`dekk agents release`. There is intentionally no GitHub Actions workflow that
 auto-publishes: the maintainer's PyPI API token never leaves the local
 environment, and every release is a deliberate human action.
 
 ## Versioning
 
-- **SemVer**, bumped in `crates/compiler/apxm-frontend/python/pyproject.toml`.
+- **SemVer**, bumped in `crates/compiler/frontend/python/pyproject.toml`.
 - `0.x.y` while the AIS dialect is unstable.
 - Bump the **minor** for any AIS op change that consumers might depend
   on (op name, input/output shape, attribute taxonomy).
@@ -38,12 +38,12 @@ environment, and every release is a deliberate human action.
 ## Pre-release checks
 
 ```bash
-dekk apxm release check
+dekk agents release check
 ```
 
 ## Cutting a release
 
-1. Bump `version =` in `crates/compiler/apxm-frontend/python/pyproject.toml`
+1. Bump `version =` in `crates/compiler/frontend/python/pyproject.toml`
    and `[workspace.package].version` in `Cargo.toml`.
 2. Commit:
    `chore(release): bump apxm to v0.X.Y`
@@ -55,20 +55,20 @@ dekk apxm release check
    ```
 5. From a clean checkout of the tagged commit, rebuild the artifacts:
    ```bash
-   dekk apxm release dist
+   dekk agents release dist
    ```
    Artifacts are written under `.apxm/releases/v0.X.Y/`, including the
    Python wheel/sdist, binary archive, source archive, and `SHA256SUMS`.
 6. Upload to PyPI when the Python package is ready:
    ```bash
-   dekk apxm release pypi --yes
+   dekk agents release pypi --yes
    ```
    `twine` reads credentials from `~/.pypirc` (or
    `TWINE_USERNAME`/`TWINE_PASSWORD` env vars). Confirm the upload by
    visiting <https://pypi.org/project/apxm/0.X.Y/>.
 7. Create the GitHub release:
    ```bash
-   dekk apxm release publish --yes
+   dekk agents release publish --yes
    ```
 
 ## Test publishing (optional)
@@ -76,7 +76,7 @@ dekk apxm release check
 To rehearse a release against TestPyPI:
 
 ```bash
-dekk apxm release pypi --repository testpypi --yes
+dekk agents release pypi --repository testpypi --yes
 ```
 
 Requires a separate TestPyPI account + token under a `[testpypi]` block
@@ -88,7 +88,7 @@ pip install --index-url https://test.pypi.org/simple/ apxm==0.X.Y
 
 ## Yanking a release
 
-If a release ships a regression that downstream `apxm-eval`
+If a release ships a regression that downstream `eval`
 consumers depend on, **yank** rather than delete. Yanked
 releases stay installable for pinned users but are skipped by
 `pip install apxm`:

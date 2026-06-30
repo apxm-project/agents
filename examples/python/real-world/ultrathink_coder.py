@@ -3,7 +3,7 @@
 
 3-way parallel planning + synthesis + implementation.
 
-Usage: dekk apxm execute examples/python/real-world/ultrathink_coder.py
+Usage: dekk agents execute examples/python/real-world/ultrathink_coder.py
 """
 
 from apxm import GraphRecorder, agent_cwd, compile
@@ -42,13 +42,13 @@ def ultrathink_coder(g: GraphRecorder, task: str):
         prompt="ultrathink. You are an adversarial reviewer. What already exists that should NOT be re-implemented? "
         "Minimal viable change vs over-engineering? Top 3 failure modes? What NOT to build in v1? "
         "The ONE thing that breaks everything? Be brutal. Adversary wins on scope. "
-        "Read crates/runtime/apxm-runtime/src/model_router/ first. Task: {task_ok}"
+        "Read crates/runtime/engine/src/model_router/ first. Task: {task_ok}"
     )
 
     impl_ = g.think(
         prompt="ultrathink. You are a Rust implementation expert. Produce: complete Rust structs and impl blocks "
         "(not pseudocode), unit tests for happy path and error paths, exact Cargo.toml additions. "
-        "Build command: dekk apxm build. Read relevant source files first. Task: {task_ok}"
+        "Build command: dekk agents build. Read relevant source files first. Task: {task_ok}"
     )
 
     # Synthesize the three perspectives (auto-wired from {arch}, {adv}, {impl_})
@@ -63,7 +63,7 @@ def ultrathink_coder(g: GraphRecorder, task: str):
     prompt = g.think(
         prompt="Write a precise coding agent instruction from this synthesis. Conservative approach first "
         "(minimal, safe), bold approach second (full vision). Start with: cd ~/projects/agents/apxm. "
-        "List exact files with full content. End with: dekk apxm build, fix errors, run tests, git commit. "
+        "List exact files with full content. End with: dekk agents build, fix errors, run tests, git commit. "
         "Synthesis: {synthesis}"
     )
 

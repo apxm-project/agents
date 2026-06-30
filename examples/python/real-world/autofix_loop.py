@@ -11,8 +11,8 @@ The workflow:
 4. Iterates if needed
 
 Usage:
-    dekk apxm execute examples/python/real-world/autofix_loop.py
-    dekk apxm execute examples/python/real-world/autofix_loop.py --emit-session
+    dekk agents execute examples/python/real-world/autofix_loop.py
+    dekk agents execute examples/python/real-world/autofix_loop.py --emit-session
 """
 
 from apxm import DependencyType, GraphRecorder, agent_cwd, compile

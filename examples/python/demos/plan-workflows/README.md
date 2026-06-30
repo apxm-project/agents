@@ -60,7 +60,7 @@ python3 examples/python/demos/plan-workflows/dispatch_open_ended.py \
 
 # Through a service-exec (preferred for cluster use — runs inside the
 # Slurm allocation so the loopback endpoint resolves):
-dekk apxm vllm service-exec <SERVICE_NAME> -- \
+dekk agents vllm service-exec <SERVICE_NAME> -- \
     python3 examples/python/demos/plan-workflows/dispatch_open_ended.py \
     "your request here"
 ```
@@ -98,10 +98,10 @@ true parallel branches the runtime can exploit.
 
   (workspace-only, gitignored)
 - PLAN handler source:
-  [`plan.rs`](../../../../crates/runtime/apxm-runtime/src/executor/handlers/plan.rs)
+  [`plan.rs`](../../../../crates/runtime/engine/src/executor/handlers/plan.rs)
 - PLAN prompt:
-  [`plan_outer_system.md.jinja`](../../../../crates/runtime/apxm-backends/prompts/plan_outer_system.md.jinja)
+  [`plan_outer_system.md.jinja`](../../../../crates/runtime/backends/prompts/plan_outer_system.md.jinja)
 - `TaskDag::validate`:
-  [`task.rs`](../../../../crates/core/apxm-core/src/types/execution/task.rs)
+  [`task.rs`](../../../../crates/machine/contracts/src/types/execution/task.rs)
 - `PlanWorkflowEmittedPayload`:
-  [`payload.rs`](../../../../crates/core/apxm-core/src/events/payload.rs)
+  [`payload.rs`](../../../../crates/machine/contracts/src/events/payload.rs)

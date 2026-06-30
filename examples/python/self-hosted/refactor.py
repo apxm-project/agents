@@ -11,7 +11,7 @@ Graph structure:
 - analyzer → implementer → test_runner → summary
 
 Usage:
-    dekk apxm execute examples/python/self-hosted/refactor.py \
+    dekk agents execute examples/python/self-hosted/refactor.py \
       "apxm-runtime" "Extract scheduler into its own module"
 """
 
@@ -24,7 +24,7 @@ def refactor_workflow(g: GraphRecorder):
     """Refactor a module or crate.
 
     Parameters:
-        target (str): Module/crate name (e.g., "apxm-runtime" or "crates/runtime/apxm-runtime/src/executor/mod.rs")
+        target (str): Module/crate name (e.g., "apxm-runtime" or "crates/runtime/engine/src/executor/mod.rs")
         goal (str): Refactoring goal (e.g., "Extract scheduler into its own module")
     """
     g.param("target", "str")
@@ -82,7 +82,7 @@ Analysis: {analysis}
 
 Follow the step-by-step plan. For each step:
 1. Make the change
-2. Ensure the code still compiles (dekk apxm check)
+2. Ensure the code still compiles (dekk agents check)
 3. Move to the next step
 
 Key guidelines:
@@ -92,8 +92,8 @@ Key guidelines:
 - Use rust-analyzer or clippy to catch broken references
 
 After all changes:
-- Run dekk apxm fmt
-- Run dekk apxm clippy
+- Run dekk agents fmt
+- Run dekk agents clippy
 - Report what was changed (file paths, line counts, moved items)
 
 Be methodical. If something doesn't compile, fix it before moving on.
@@ -115,16 +115,16 @@ Changes: {impl_result}
 Run the test suite:
 
 1. Build the project:
-   dekk apxm build
+   dekk agents build
 
 2. Run all tests:
-   dekk apxm test
+   dekk agents test
 
 3. Run autofix to check examples:
    python3 scripts/apxm-autofix.py
 
 4. Check for warnings:
-   dekk apxm clippy
+   dekk agents clippy
 
 Report:
 - Build status (success/failure)

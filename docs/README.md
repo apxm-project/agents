@@ -14,7 +14,7 @@ backends, Python tools, and sub-agents.
 
 This documentation is the conceptual entry point. For installable, runnable code,
 see [`examples/python/`](../examples/python/). For the live API surface, run
-`dekk apxm ops list`. The crate-level READMEs under `crates/*/apxm-*/README.md`
+`dekk agents ops list`. The crate-level READMEs under `crates/*/apxm-*/README.md`
 document the implementation details and stay close to the code.
 
 ## The Big Picture
@@ -66,13 +66,13 @@ scheduler snapshots.
 APXM is organized in tiers — each layer depends only on layers above it.
 
 ```
-core    →  apxm-core, apxm-ais          (contracts in apxm-core; authoring/codegen specs in apxm-ais)
-compiler→  apxm-compiler, apxm-frontend (AIR → MLIR → .apxmobj)
+machine →  apxm-core, apxm-ais          (contracts in apxm-core; authoring/codegen specs in apxm-ais)
+compiler→  apxm-compiler, Python frontend (AIR → MLIR → .apxmobj)
 runtime →  apxm-runtime, apxm-backends, (execution, LLM I/O, secrets)
            apxm-credentials
-orchestr→  apxm-driver, apxm-acp,       (CLI/library glue, ACP protocol,
+orchestr→  apxm-driver, apxm-acp,       (driver/library glue, ACP protocol,
            apxm-artifact                 artifact load/save)
-tools   →  apxm-cli, apxm-server         (binary, HTTP API)
+tools   →  apxm-cli, apxm-client, apxm  (developer CLI, generated client, facade)
 ```
 
 Each crate has a README under `crates/<tier>/<name>/README.md` describing what it
@@ -101,7 +101,7 @@ workflow metadata and optimization hints, not vLLM-specific runtime policy.
 
 → [compiler/pipeline.md](compiler/pipeline.md) — pipeline diagram and pass-by-pass
 purpose. The live ordering is in
-`crates/compiler/apxm-compiler/src/passes/pipeline.rs`.
+`crates/compiler/pipeline/src/passes/pipeline.rs`.
 
 ## Backend Guides
 
@@ -117,9 +117,9 @@ purpose. The live ordering is in
 ## Trying It Out
 
 ```
-dekk apxm doctor          # verify environment
-dekk apxm ops list        # browse the live AIS surface
-dekk apxm execute …       # run an .air workflow end-to-end
+dekk agents doctor          # verify environment
+dekk agents ops list        # browse the live AIS surface
+dekk agents execute …       # run an .air workflow end-to-end
 ```
 
 Runnable demos live in [`examples/python/`](../examples/python/). The

@@ -4,14 +4,14 @@ Runtime executor, handlers, backend adapters.
 
 ## Skills
 
-- **apxm-backend-add** — register a new APXM inference backend.
-- **apxm-compile-and-execute** — execute graphs via runtime.
-- **apxm-vllm-service** — APXM-vLLM service operation.
+- **backend-add** — register a new APXM inference backend.
+- **compile-and-execute** — execute graphs via runtime.
+- **vllm-service** — APXM-vLLM service operation.
 
 ## Subsystems
 
 - `crates/runtime/` — executor + handlers.
-- `crates/runtime/apxm-backends/` — LLM provider implementations,
+- `crates/runtime/backends/` — LLM provider implementations,
   vLLM-fork glue.
 
 ## Rules

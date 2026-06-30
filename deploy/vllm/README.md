@@ -16,9 +16,9 @@ not the operator runbook.** All operational procedures live in
 ## How a service starts
 
 1. Operator copies `zoo.example.toml` to `zoo.toml` and edits.
-2. `dekk apxm vllm zoo-cache-warm` pulls weights to the shared HF cache.
+2. `dekk agents vllm zoo-cache-warm` pulls weights to the shared HF cache.
    CPU-only; refuses to start if WekaFS free < Σ(weights_gb) × 1.2.
-3. `dekk apxm vllm zoo-apply` expands the manifest, calls
+3. `dekk agents vllm zoo-apply` expands the manifest, calls
    `_start_one_service(...)` per replica, which submits a Slurm job that
    runs `run-vllm.sh`.
 4. The wrapper loads the image (`docker-load`), starts the container, and
@@ -29,9 +29,9 @@ should not call them by hand.
 
 ## Builder policy
 
-`dekk apxm vllm docker-build` uses Docker BuildKit through
+`dekk agents vllm docker-build` uses Docker BuildKit through
 `docker buildx build --load`. Docker's classic builder is not allowed.
-`dekk apxm vllm doctor` must report `docker_buildx_ready=true` before
+`dekk agents vllm doctor` must report `docker_buildx_ready=true` before
 image builds are considered ready.
 
 The Dockerfile takes a single required `--build-arg BASE_IMAGE=…` pinning

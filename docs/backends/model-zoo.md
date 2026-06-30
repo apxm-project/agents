@@ -40,7 +40,7 @@ This document is the getting-started guide. The conceptual contract
 #    APXM_VLLM_HF_HOME still overrides the primary HF cache for one shell.
 
 # 2. Verify host readiness (Docker, buildx, Slurm tools, fork SHA).
-dekk apxm vllm doctor
+dekk agents vllm doctor
 
 # 3. Build the APXM-vLLM runtime image. Pick a tag that records the
 #    APXM + vllm-fork SHAs so artifacts are reproducible.
@@ -49,12 +49,12 @@ VLLM_DIR="${APXM_VLLM_DIR:-../../backends/vllm}"
 VLLM_SHA=$(git -C "$VLLM_DIR" rev-parse --short HEAD)
 IMAGE="apxm-vllm-runtime:${APXM_SHA}-${VLLM_SHA}-post-rebase"
 
-dekk apxm vllm docker-build --image "$IMAGE" \
+dekk agents vllm docker-build --image "$IMAGE" \
     --base-image rocm/vllm-dev:nightly_main_20260411  # or your base
 
 # 4. Save the image to the shared archive store so worker nodes can
 #    docker-load it from WekaFS.
-dekk apxm vllm docker-save --image "$IMAGE"
+dekk agents vllm docker-save --image "$IMAGE"
 ```
 
 The image is portable across nodes via the saved `.tar` in
@@ -127,25 +127,25 @@ backend protocol or shrink TP / `max_model_len` until it fits.
 # Warm the HF cache for every model in the manifest.
 # CPU-only, idempotent. Refuses to start if WekaFS free space <
 # Σ(weights_gb) × 1.2.
-dekk apxm vllm zoo-cache-warm
+dekk agents vllm zoo-cache-warm
 
 # Reconcile: submit Slurm jobs for any manifest entry that does not
 # already have a recorded service. Idempotent — re-runs probe healthy
 # services, never restarts them.
-dekk apxm vllm zoo-apply
+dekk agents vllm zoo-apply
 
 # Watch services come up.
-dekk apxm vllm service-list
+dekk agents vllm service-list
 
 # Probe each endpoint for /v1/models + /v1/apxm/* round-trip.
-dekk apxm vllm probe --port <PORT>
+dekk agents vllm probe --port <PORT>
 
 # Scale a service down to 0 (the only explicit-removal path; zoo-apply
 # never silently cancels jobs that have peer-protection value).
-dekk apxm vllm zoo-scale <NAME> --replicas 0
+dekk agents vllm zoo-scale <NAME> --replicas 0
 
 # Tail logs.
-dekk apxm vllm zoo-logs <NAME>
+dekk agents vllm zoo-logs <NAME>
 ```
 
 `zoo-apply` writes a snapshot of the resolved manifest + Slurm job ids
@@ -157,14 +157,14 @@ moment of submission.
 
 ## Adding a new model
 
-1. `dekk apxm vllm cache-warm <MODEL_REF>` (one-time, CPU-only). APXM
+1. `dekk agents vllm cache-warm <MODEL_REF>` (one-time, CPU-only). APXM
    writes to the primary shared HF cache unless the model is already in
    a configured cache root or `--hf-home` / `hf_home` is supplied.
 2. Append a `[[deployment]]` block to your `deploy/vllm/zoo.toml`.
-3. `dekk apxm vllm zoo-apply` — only the new entry will be submitted.
-4. `dekk apxm vllm probe --port <PORT>` confirms the APXM router is up.
+3. `dekk agents vllm zoo-apply` — only the new entry will be submitted.
+4. `dekk agents vllm probe --port <PORT>` confirms the APXM router is up.
 5. The backend is automatically registered in the APXM config; verify
-   with `dekk apxm backend list`.
+   with `dekk agents backend list`.
 
 Model-specific parser fields (`reasoning_parser`, `tool_call_parser`,
 `enable_auto_tool_choice`) are **never** defaulted by the wrapper. If
@@ -179,7 +179,7 @@ container log will tell you which token is missing.
 The APXM resolver's `find_backend_for_model` collects every backend
 matching the requested model name and dispatches via the configured
 strategy (default round-robin). Unit tests at
-`crates/runtime/apxm-backends/src/llm/registry/resolver.rs` cover the
+`crates/runtime/backends/src/llm/registry/resolver.rs` cover the
 algorithm; a behavioral check inspects the APXM trace after sending N
 requests through the dispatcher.
 
@@ -187,7 +187,7 @@ requests through the dispatcher.
 
 ## Failure modes worth knowing
 
-- **HF cache path looks wrong** — run `dekk apxm vllm doctor` and
+- **HF cache path looks wrong** — run `dekk agents vllm doctor` and
   check `hf_cache`, `hf_cache_roots`, and `model_roots` plus their
   `[source]` tags. Override via `.apxm/config.toml`
   (`data.vllm.hf_cache`, `data.vllm.hf_cache_roots`,
@@ -215,11 +215,11 @@ requests through the dispatcher.
 
 ```bash
 # Remove a service.
-dekk apxm vllm zoo-scale <NAME> --replicas 0
+dekk agents vllm zoo-scale <NAME> --replicas 0
 
 # Remove ALL services NOT in the current manifest (confirmation by
 # explicit flag; this is the only way zoo-apply auto-cancels jobs).
-dekk apxm vllm zoo-apply --prune
+dekk agents vllm zoo-apply --prune
 ```
 
 The APXM backend registry deregistration is wired into the container

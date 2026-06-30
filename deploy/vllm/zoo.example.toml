@@ -2,7 +2,7 @@
 #
 # This file is illustrative. Operators write their own zoo manifest at
 # `deploy/vllm/zoo.toml` (gitignored) or any path passed to
-# `dekk apxm vllm zoo-apply <path>`. The schema is the same.
+# `dekk agents vllm zoo-apply <path>`. The schema is the same.
 #
 # The operator flow covers manifest fields, cache warming, registration, and
 # failure-mode handling as one deployment unit.

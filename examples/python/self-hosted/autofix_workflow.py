@@ -12,7 +12,7 @@ Workflow structure:
 - think: report — summarize what was fixed
 
 Usage:
-    dekk apxm execute examples/python/self-hosted/autofix_workflow.py "examples/python"
+    dekk agents execute examples/python/self-hosted/autofix_workflow.py "examples/python"
 """
 
 from apxm import DependencyType, GraphRecorder, agent_cwd, compile

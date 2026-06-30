@@ -32,7 +32,7 @@ layout = build_layout(__file__)
 # layout.hf_home  (or APXM_VLLM_HF_HOME)
 ```
 
-Confirm the resolved layout at session start: `dekk apxm vllm doctor`.
+Confirm the resolved layout at session start: `dekk agents vllm doctor`.
 
 ## Config resolution order
 
@@ -45,8 +45,8 @@ This has bitten us:
 
 A project-local config with only a `data-dir` override *shadows the
 entire backend block* in `~/.apxm/config.toml`. The symptom is
-"no backends configured" from `dekk apxm execute` despite
-`dekk apxm backend list` showing them.
+"no backends configured" from `dekk agents execute` despite
+`dekk agents backend list` showing them.
 
 **Mitigation**: either keep all config in one file, or fully merge the
 backend block into the project-local file. See
@@ -67,7 +67,7 @@ no-ops without freeing space, and `df` doesn't move. Use `sudo rm`. See
   checked-in smoke-test / evaluation-service manifests; these are
   evidence and may be edited carefully but never overwritten.
 
-`dekk apxm vllm zoo-apply` reconciles state; never edit
+`dekk agents vllm zoo-apply` reconciles state; never edit
 `.apxm/vllm-services/` manually.
 
 ## Boundaries

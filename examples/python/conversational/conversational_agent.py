@@ -6,11 +6,11 @@
 discovery, and a tool-using ASK, then records a fact before returning.
 
 Run (requires a running apxm-server):
-    dekk apxm execute examples/python/conversational/conversational_agent.py --emit-air > agent.air
+    dekk agents execute examples/python/conversational/conversational_agent.py --emit-air > agent.air
     apxm chat --air agent.air --server http://127.0.0.1:18800
 
 Validate without a server:
-    PYTHONPATH=crates/compiler/apxm-frontend/python \\
+    PYTHONPATH=crates/compiler/frontend/python \\
         python3 examples/python/conversational/conversational_agent.py --validate
 """
 

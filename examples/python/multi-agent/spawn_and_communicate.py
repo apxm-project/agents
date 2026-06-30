@@ -4,7 +4,7 @@
 Part 1: Spawn a single agent and send one message.
 Part 2: Two-agent pipeline — analyst produces analysis, summarizer condenses it.
 
-Usage: dekk apxm execute examples/python/multi-agent/spawn_and_communicate.py
+Usage: dekk agents execute examples/python/multi-agent/spawn_and_communicate.py
 """
 
 from apxm import GraphRecorder, agent_cwd, compile

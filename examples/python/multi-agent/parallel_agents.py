@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """parallel_agents.py - Parallel: spawn Claude and Codex, compare their analyses
 
-Usage: dekk apxm execute examples/python/multi-agent/parallel_agents.py
+Usage: dekk agents execute examples/python/multi-agent/parallel_agents.py
 """
 
 from apxm import GraphRecorder, agent_cwd, compile

@@ -14,7 +14,7 @@ Graph structure:
 - think: action_plan — extract concrete next steps
 
 Usage:
-    dekk apxm execute examples/python/self-hosted/explore.py \
+    dekk agents execute examples/python/self-hosted/explore.py \
       "Should we add distributed execution to APXM?"
 """
 

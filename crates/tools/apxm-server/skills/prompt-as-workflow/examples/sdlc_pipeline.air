@@ -1,8 +1,0 @@
-module {
-  func.func @sdlc(%feature: !ais.token {ais.param_name = "feature", ais.param_type = "str"}) -> !ais.token attributes {ais.entry} {
-    %design = ais.ask "Design {feature} with required attributes, runtime behavior, and test strategy." : !ais.token
-    %implement = ais.ask "Implement {feature} from {design} while keeping changes scoped." [%design : !ais.token] {input_names = ["design"]} : !ais.token
-    %review = ais.ask "Review {implement} against {design}; identify required fixes." [%implement, %design : !ais.token, !ais.token] {input_names = ["implement", "design"]} : !ais.token
-    func.return %review : !ais.token
-  }
-}

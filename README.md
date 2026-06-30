@@ -12,16 +12,16 @@ want dispatched and lets the platform decide *how*.
 
 ## What is in this repo
 
-- **AIS dialect** (`crates/core/`) — the public IR contract. TableGen-defined
-  ops; `apxm-core` is the only crate that defines AIS ops.
+- **AIS dialect** (`crates/machine/`) — the public IR contract. TableGen-defined
+  ops; `apxm-core` is the compatibility crate that carries the shared machine types.
 - **Compiler** (`crates/compiler/`) — MLIR pass pipeline + Python frontend
   (decorator DSL → canonical AIR).
 - **Runtime** (`crates/runtime/`) — executor, handlers, backend adapters
   (LLM, local, tool); `apxm-backends` holds the vLLM-fork glue.
-- **Tools** (`crates/tools/`) — `apxm-cli`, `apxm-server` (HTTP + MCP), the
-  one inventory of installed skills that every client reads from.
+- **Tools** (`crates/tools/`) — `apxm-cli` and developer clients. The HTTP server
+  lives in the `server` repo.
 - **`apxm-project/vllm`** — graph-aware vLLM fork. In the APXM coordinator
-  workspace it is checked out as `workspace/backends/vllm`; override with
+  workspace it is checked out as `workspace/vllm`; override with
   `APXM_VLLM_DIR` when running APXM standalone.
 
 ## Getting started
@@ -31,16 +31,16 @@ build, test, and run goes through it so the env contract, target dir, and
 process accounting stay consistent.
 
 ```bash
-git clone https://github.com/apxm-project/apxm-project
-cd apxm-project
+git clone https://github.com/apxm-project/apxm
+cd apxm
 python3 tools/bootstrap.py
-cd workspace/core/apxm
-dekk apxm install --no-interactive
-dekk apxm doctor                              # verify environment
-dekk apxm build                               # release build
+cd workspace/agents
+dekk agents install --no-interactive
+dekk agents doctor                            # verify environment
+dekk agents build                             # release build
 ```
 
-`dekk apxm doctor` is the first command of every session. It prints the
+`dekk agents doctor` is the first command of every session. It prints the
 resolved environment (MLIR/LLVM 22, conda env, `CARGO_TARGET_DIR`, vLLM image
 store, HF cache, service registry) and refuses to continue if anything is
 misaligned.
@@ -71,7 +71,7 @@ misaligned.
 
     Placing the file in `/etc/apparmor.d/` makes it persistent (loaded by
     `apparmor.service` at boot); `apparmor_parser -r` only activates it
-    immediately without a reboot. `dekk apxm doctor` reports whether `bwrap` is
+    immediately without a reboot. `dekk agents doctor` reports whether `bwrap` is
     available. See
     [`docs/integrations/sandbox-acp-seam.md`](docs/integrations/sandbox-acp-seam.md).
 
@@ -80,16 +80,16 @@ misaligned.
 Release work also goes through Dekk:
 
 ```bash
-dekk apxm release check     # readiness checks; no publishing
-dekk apxm release dist      # writes archives + SHA256SUMS under .apxm/releases
-dekk apxm release publish   # dry run by default; pass --yes to publish with gh
+dekk agents release check     # readiness checks; no publishing
+dekk agents release dist      # writes archives + SHA256SUMS under .apxm/releases
+dekk agents release publish   # dry run by default; pass --yes to publish with gh
 ```
 
 `release dist` packages the Python wheel/sdist, release binaries (`apxm`,
-`apxm-server`, `apxm-mcp-server`), runtime libraries, docs, source archive,
+`apxm-server`, `mcp-server`), runtime libraries, docs, source archive,
 and checksums under `.apxm/releases/vX.Y.Z`. GitHub publishing uses `gh` and
 never creates a release unless `--yes` is explicit. PyPI upload is a separate
-maintainer action: `dekk apxm release pypi --yes`.
+maintainer action: `dekk agents release pypi --yes`.
 
 ## Documentation
 
@@ -103,7 +103,7 @@ maintainer action: `dekk apxm release pypi --yes`.
 - [`docs/backends/vllm.md`](docs/backends/vllm.md) — APXM/vLLM contract.
 - [`docs/backends/storage-layout.md`](docs/backends/storage-layout.md) —
   where APXM puts large files (HF cache, image store, artifacts).
-- Run `dekk apxm --help` and `dekk apxm ops list` for live CLI and AIS
+- Run `dekk agents --help` and `dekk agents ops list` for live CLI and AIS
   references.
 
 ## Contributing and license
@@ -117,6 +117,6 @@ For coding agents (Claude Code, Codex CLI, Cursor, Aider, Gemini): read
 [`AGENTS.md`](AGENTS.md) or [`CODEX.md`](CODEX.md) (same text; Codex CLI is
 wired to `AGENTS.md` in `.agents.json`) or [`CLAUDE.md`](CLAUDE.md) (Claude
 Code) before doing any work.
-The 6-skill lifecycle — `apxm-context` → `apxm-plan` →
-`apxm-execute-plan` → `apxm-simplify` → `apxm-finish` → `apxm-commit` — is
+The 6-skill lifecycle — `context` → `plan` →
+`execute-plan` → `simplify` → `finish` → `commit` — is
 the project-wide pattern.

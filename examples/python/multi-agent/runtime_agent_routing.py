@@ -6,8 +6,8 @@ host-discovered route candidates using required_capabilities and
 preferred_profiles, then SPAWN_AGENT returns the selected route metadata.
 
 Usage:
-    dekk apxm agent test codex
-    dekk apxm execute examples/python/multi-agent/runtime_agent_routing.py
+    dekk agents agent test codex
+    dekk agents execute examples/python/multi-agent/runtime_agent_routing.py
 """
 
 from apxm import GraphRecorder, agent_cwd, compile

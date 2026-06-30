@@ -1,9 +1,0 @@
-module {
-  func.func @review(%code: !ais.token {ais.param_name = "code", ais.param_type = "str"}) -> !ais.token attributes {ais.entry} {
-    %security = ais.ask "Review {code} for vulnerabilities and severity." : !ais.token
-    %performance = ais.ask "Review {code} for bottlenecks and optimization opportunities." : !ais.token
-    %maintainability = ais.ask "Review {code} for clarity, structure, and maintainability." : !ais.token
-    %verdict = ais.think "Synthesize {security}, {performance}, and {maintainability} into priority issues and concrete fixes." [%security, %performance, %maintainability : !ais.token, !ais.token, !ais.token] {input_names = ["security", "performance", "maintainability"]} : !ais.token
-    func.return %verdict : !ais.token
-  }
-}

@@ -17,7 +17,7 @@ project conventions and skill defaults.
   first.
 - **No `--no-verify`.** If a hook fails, fix the root cause; never
   re-stage and bypass.
-- **Do not skip commit/release checks.** Run the relevant `dekk apxm`
+- **Do not skip commit/release checks.** Run the relevant `dekk agents`
   gate and fix the root cause when it fails.
 - **No `git commit --amend`** on pushed commits. New commit instead.
 - **No `git add -A` / `git add .`** — name files explicitly so secrets
@@ -39,7 +39,7 @@ project conventions and skill defaults.
 
 - Never commit `LLM_GATEWAY_KEY`, OAuth tokens, HF tokens, or
   `.claude/settings.local.json`.
-- `apxm-finish` scans for these before any commit.
+- `finish` scans for these before any commit.
 
 ## Code style (operating discipline)
 

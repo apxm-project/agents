@@ -7,7 +7,7 @@ APXM's per-node model routing lets you optimize cost, quality, and
 privacy in a single workflow.
 
 Usage:
-  dekk apxm execute examples/python/multi-provider/model_routing.py
+  dekk agents execute examples/python/multi-provider/model_routing.py
 """
 
 from apxm import DependencyType, GraphRecorder, compile

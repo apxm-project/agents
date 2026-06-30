@@ -86,12 +86,12 @@ Right: `prereg(plan09): J/req cell — telecom N=20`.
 - `chore(external/vllm)`: submodule bump; body names the upstream SHA
   and what APXM commits ride on top.
 - `docs(<scope>)`: when touching `.agents/` SSOT, remember to
-  `dekk apxm skills generate --target all` so generated agent files stay synced.
+  `dekk agents skills generate --target all` so generated agent files stay synced.
 
 ## Enforcement
 
-`dekk apxm commit-lint` is the gate (`<message-file>`, `--current` for
-HEAD, or `--range A..B` for a series). The `apxm-commit` skill runs it on
+`dekk agents commit-lint` is the gate (`<message-file>`, `--current` for
+HEAD, or `--range A..B` for a series). The `commit` skill runs it on
 the drafted message as a **blocking** step before every commit — this is
 what catches the banned AI-attribution trailers and untyped subjects. If
 the lint blocks a message, fix the message — never `--no-verify`, never

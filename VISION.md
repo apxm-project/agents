@@ -35,7 +35,7 @@ end to end.
 4. **vLLM dispatch contract.** Backend adapters and the `external/vllm`
    submodule preserve APXM hints until they reach a vLLM server that can act on
    graph-aware scheduling metadata.
-5. **Operational tooling.** `dekk apxm` is the supported entry point for build,
+5. **Operational tooling.** `dekk agents` is the supported entry point for build,
    test, compile, execute, backend, vLLM, MCP, server, and process operations.
 
 ## Boundaries

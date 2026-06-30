@@ -8,11 +8,11 @@ this one program. The host (`apxm chat` or the HTTP server) is a dumb pipe:
 deliver the user message in, render streamed tokens out.
 
 Validate without a server (passes once the Foundational phase lands):
-    PYTHONPATH=crates/compiler/apxm-frontend/python \\
+    PYTHONPATH=crates/compiler/frontend/python \\
         python3 examples/python/conversational/controllable_agent.py --validate
 
 Compile to one self-contained multi-flow artifact:
-    dekk apxm execute examples/python/conversational/controllable_agent.py \\
+    dekk agents execute examples/python/conversational/controllable_agent.py \\
         --emit-air > agent.air
 """
 

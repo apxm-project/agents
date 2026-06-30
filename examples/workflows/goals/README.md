@@ -10,11 +10,11 @@ a resolvable ACP profile when you want the same shape to drive real workers.
 
 Use the smallest surface that matches the job:
 
-- `dekk apxm goal`: an agent or user starts a server-owned goal, APXM
+- `dekk agents goal`: an agent or user starts a server-owned goal, APXM
   materializes bounded worker workflow passes, continues until the gate converges or
   the iteration budget ends, and wakes the caller through the goal event stream
   and `goal_status`.
-- `dekk apxm workflow run`: run a checked-in
+- `dekk agents workflow run`: run a checked-in
   `.apxmw` workflow file after `validate` and `analyze`.
 - `prompt_as_workflow`: ask MCP to synthesize canonical APXM AIR from natural
   language. It is workflow-oriented; worker-spawning goal execution should still
@@ -76,9 +76,9 @@ more work and the iteration budget allows it.
 Run the deterministic pack from the repository root:
 
 ```bash
-dekk apxm workflow validate examples/workflows/goals/goal_loop/workflow.apxmw
-dekk apxm workflow analyze examples/workflows/goals/goal_loop/workflow.apxmw
-dekk apxm workflow run examples/workflows/goals/goal_loop/workflow.apxmw \
+dekk agents workflow validate examples/workflows/goals/goal_loop/workflow.apxmw
+dekk agents workflow analyze examples/workflows/goals/goal_loop/workflow.apxmw
+dekk agents workflow run examples/workflows/goals/goal_loop/workflow.apxmw \
   goal="ship a bounded APXM improvement" \
   event="manual goal requested" \
   policy="goal_loop.policy.json"
@@ -106,9 +106,9 @@ then fans their outputs into a synthesizer.
 Run it from the repository root:
 
 ```bash
-dekk apxm workflow validate examples/workflows/goals/agent_council/workflow.apxmw
-dekk apxm workflow analyze examples/workflows/goals/agent_council/workflow.apxmw
-dekk apxm workflow run examples/workflows/goals/agent_council/workflow.apxmw task="ship native workflow coordination"
+dekk agents workflow validate examples/workflows/goals/agent_council/workflow.apxmw
+dekk agents workflow analyze examples/workflows/goals/agent_council/workflow.apxmw
+dekk agents workflow run examples/workflows/goals/agent_council/workflow.apxmw task="ship native workflow coordination"
 ```
 
 ## Event Feedback Loop
@@ -134,7 +134,7 @@ can relaunch the workflow when feedback says another pass is needed.
 Run it from the repository root:
 
 ```bash
-dekk apxm workflow run examples/workflows/goals/event_feedback_loop/workflow.apxmw event="repository changed"
+dekk agents workflow run examples/workflows/goals/event_feedback_loop/workflow.apxmw event="repository changed"
 ```
 
 ## Approval Gate
@@ -162,7 +162,7 @@ workflow_cancel -> interrupts a running or parked workflow
 
 For the approval example, create checkpoint `examples-approval-cp`, start the
 workflow, then resume or cancel it through the server. The E2E tests in
-`crates/tools/apxm-server/src/tests/mcp.rs` run these checked-in workflows
+`crates/server/src/tests/mcp.rs` run these checked-in workflows
 through `workflow_start`, `workflow_status`, `workflow_events`,
 and `workflow_cancel`.
 
@@ -175,7 +175,7 @@ is not involved. `cancel_background/cancel_parked.apxmw` parks on checkpoint
 `workflow_cancel` when launched through the native MCP workflow tools.
 
 ```bash
-dekk apxm workflow run examples/workflows/goals/cancel_background/background_ok.apxmw \
+dekk agents workflow run examples/workflows/goals/cancel_background/background_ok.apxmw \
   --background \
   --json
 ```

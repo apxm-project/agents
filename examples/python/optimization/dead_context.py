@@ -13,7 +13,7 @@ style.
 
 O0: 5 context values sent to LLM. O2: 2 (3 pruned).
 
-Usage: dekk apxm execute examples/python/optimization/dead_context.py
+Usage: dekk agents execute examples/python/optimization/dead_context.py
 """
 
 from apxm import compile, GraphRecorder
