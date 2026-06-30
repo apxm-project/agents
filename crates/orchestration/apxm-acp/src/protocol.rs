@@ -187,7 +187,7 @@ impl StdioTransport {
     /// Read messages until we get the response matching `expected_id`.
     ///
     /// Dispatches reverse requests and notifications along the way.
-    pub async fn read_response<H: crate::reverse::ReverseHandler>(
+    pub async fn read_response<H: crate::reverse::ReverseHandler + ?Sized>(
         &mut self,
         expected_id: u64,
         handler: &H,
