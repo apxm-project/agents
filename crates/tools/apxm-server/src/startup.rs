@@ -7,6 +7,7 @@ use apxm_core::paths::ApxmPaths;
 use apxm_driver::{ServerConfig, ServerExecutionsConfig};
 use apxm_rollout::{IndexDb, RolloutPaths};
 use apxm_runtime::{Runtime, RuntimeConfig, SchedulerConfig};
+use apxm_core::types::consent::NoOpConsentBroker;
 use apxm_runtime::host_dispatch::NoOpHostDispatchGateway;
 use apxm_server_api::{AgentRuntimeApi, RuntimeApiAdapter};
 use dashmap::DashMap;
@@ -141,6 +142,7 @@ pub(crate) async fn run_server_with_config(server_config: ServerConfig) -> anyho
     let state = AppState {
         runtime,
         host_dispatch: Arc::new(NoOpHostDispatchGateway),
+        consent_broker: Arc::new(NoOpConsentBroker),
         agent_registry: Arc::new(DashMap::new()),
         task_manager,
         checkpoint_store,

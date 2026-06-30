@@ -41,6 +41,7 @@ mod config_layers;
 mod conversations;
 mod credentials;
 mod capability_grants;
+mod enrollment;
 mod error;
 mod execute;
 mod execution_index;

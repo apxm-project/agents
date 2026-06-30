@@ -606,6 +606,7 @@ timeout_ms = 30000
                     crate::capability_grants::CapabilityGrantStore::new(),
                 session_registry: crate::conversations::SessionRegistry::new(),
                 host_dispatch: Arc::new(NoOpHostDispatchGateway),
+                consent_broker: Arc::new(apxm_core::types::consent::NoOpConsentBroker),
             }
         }
 

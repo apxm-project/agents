@@ -922,6 +922,7 @@ mod tests {
         AppState {
             runtime,
             host_dispatch: Arc::new(NoOpHostDispatchGateway),
+            consent_broker: Arc::new(apxm_core::types::consent::NoOpConsentBroker),
             agent_registry: Arc::new(DashMap::new()),
             task_manager: crate::tasks::TaskQueueManager::new(),
             checkpoint_store: crate::checkpoints::CheckpointStore::new(),

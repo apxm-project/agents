@@ -75,6 +75,13 @@ fn enforce_write_boundary(
         .get(metadata_keys::CAPABILITY_GRANTS)
         .map(String::as_str);
     if capability_grant_admits_write(capability_grants, name) {
+        // TODO(band-c-consent): When a ConsentBroker is wired into ExecutionContext,
+        // check consent here for host capabilities (kind=host) with mutating operations.
+        // Flow: build PermissionPrompt from capability name + args_digest + ctx.host_id,
+        // call broker.request_consent(prompt, timeout).await, then map ConsentDecision:
+        //   Approved(_) | NoBroker => Ok(())
+        //   Denied { reason } => Err(RuntimeError::Capability { message: reason })
+        //   TimedOut => Err(RuntimeError::Capability { message: "consent timed out" })
         Ok(())
     } else {
         Err(RuntimeError::Capability {
