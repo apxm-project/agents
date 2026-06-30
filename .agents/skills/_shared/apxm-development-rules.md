@@ -41,7 +41,7 @@ when writing tests load `_shared/apxm-test-rules.md`.
 - **`apxm-core`** owns the AIS dialect. Every other crate consumes it.
   Never define an op outside `apxm-core`.
 - Canonical pass list:
-  `crates/compiler/compiler/src/passes/pipeline.rs::build_pass_list()`.
+  `crates/compiler/pipeline/src/passes/pipeline.rs::build_pass_list()`.
   Add new passes only there.
 - Attribute names: canonical enum in `apxm-core`. Python kwargs, MLIR
   attrs, Rust executors all resolve through it. See the

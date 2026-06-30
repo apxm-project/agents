@@ -14,7 +14,7 @@ Load `_shared/apxm-development-rules.md` before broad work.
 - **AIS ops are defined exclusively in `apxm-core`.** Compiler passes
   consume them; they never define them. See `_shared/apxm-development-rules.md`.
 - **Canonical pass list**:
-  `crates/compiler/compiler/src/passes/pipeline.rs::build_pass_list()`.
+  `crates/compiler/pipeline/src/passes/pipeline.rs::build_pass_list()`.
   Add or reorder passes only there. Do not register passes elsewhere.
 
 ## Cadence after edits

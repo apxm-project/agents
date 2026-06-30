@@ -12,7 +12,7 @@ AIS dialect, MLIR passes, Python frontend codegen.
 
 - **`apxm-core`** defines AIS ops. No exceptions.
 - **Canonical pass list**:
-  `crates/compiler/compiler/src/passes/pipeline.rs::build_pass_list()`.
+  `crates/compiler/pipeline/src/passes/pipeline.rs::build_pass_list()`.
 - **Attribute names** go through the canonical enum in `apxm-core` —
   never literal strings in Python/MLIR/Rust. See
   `feedback_attribute_dual_naming`.
@@ -28,7 +28,7 @@ dekk agents test -p apxm-compiler
 ## Docs
 
 - `docs/compiler/pipeline.md` — the pass pipeline.
-- `crates/compiler/compiler/src/passes/` — pass implementations.
+- `crates/compiler/pipeline/src/passes/` — pass implementations.
 - `crates/compiler/frontend/python/` — Python frontend.
 
 ## Related rules
