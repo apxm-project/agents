@@ -41,6 +41,7 @@ pub struct RecordedChannelClose {
 }
 
 /// Configured response for `call_tool` calls.
+#[allow(dead_code)]
 pub enum CallToolResponse {
     Success(HostToolResult),
     Error(HostDispatchError),
