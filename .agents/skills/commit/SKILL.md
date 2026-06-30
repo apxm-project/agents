@@ -8,7 +8,7 @@ user-invocable: true
 # APXM Commit
 
 Load `_shared/apxm-agent-operating-rules.md` (commit/push discipline)
-and `_shared/commit-message-rules.md` (message contract) before
+and `_shared/apxm-commit-message-rules.md` (message contract) before
 any commit or push. Both are non-negotiable.
 
 ## What this skill does
@@ -23,7 +23,7 @@ any commit or push. Both are non-negotiable.
    and `git diff --staged` before drafting.
 5. **Confirm no unrelated changes staged**. Unstage with
    `git reset HEAD -- <path>` if needed.
-6. **Draft the commit message** per `_shared/commit-message-rules.md`.
+6. **Draft the commit message** per `_shared/apxm-commit-message-rules.md`.
    Allowed types: `feat fix perf refactor docs test chore bench eval prereg sec style`.
    `planNN` scope is valid only for `prereg(...)` / `eval(...)`. No
    AI-attribution trailers (`Co-Authored-By: Claude`, `Generated with …`).

@@ -1,4 +1,4 @@
-# APXM — agent-facing project memory
+# agents — agent-facing project memory
 
 The `.agents/` tree is the single source of truth (SSOT) for every coding
 agent that enters this repository (Claude Code, Codex CLI, Cursor, Aider,
@@ -17,16 +17,17 @@ per `.agents.json`; ACP session output for the `codex` profile also writes
 workflows that look for a Codex-named file. Cursor reads `.cursorrules`;
 GitHub Copilot reads `.github/copilot-instructions.md`.
 
-## 1. What APXM is
+## 1. What agents is
 
-APXM is a graph-aware **dispatch + scheduling layer** for vLLM, with an
-AMD-aligned **CPU/GPU split** so that planning, validation, and analysis stay
-on CPU while inference runs on GPU. Its public surface is an MLIR dialect
-(AIS) plus a Rust runtime plus a vLLM fork that accepts dispatch hints.
+`agents` is the APXM abstract-machine repo: AIS dialect, compiler, runtime,
+capability contracts, context handling, permissions, orchestration, CLI, and
+the profile-backed agent execution path. It is not the whole APXM workspace;
+the `apxm` coordinator owns repo composition, while `server`, `os`, `auth`,
+and `studio` own their own planes.
 
-Do **not** describe APXM as "an agent framework", "an LLM orchestrator", or
-"a multi-agent runtime" — that mischaracterizes the project and confuses
-new contributors. The correct anchor is: *graph-aware dispatch for vLLM*.
+Do **not** describe `agents` as the APXM coordinator, the HTTP server, the OS
+host plane, or only "vLLM dispatch". The correct anchor is: *the abstract
+machine and runtime contracts for APXM agents*.
 
 ## 2. Authority CLI
 
@@ -244,9 +245,9 @@ Each capability composes a **tool_binding** (callable implementation) plus a
 **capability grants** (`grant_*` ids), not bare handler strings.
 
 Canonical terms, forbidden aliases, route naming, and schema versions live in
-the monorepo glossary:
+the coordinator glossary:
 
-- `docs/context/capability-vocabulary.md` — SSOT for APXM-owned capability
+- `../../docs/context/capability-vocabulary.md` — SSOT for APXM-owned capability
   vocabulary (`CapabilityDefinition`, `ToolBinding`, `PermissionPolicy`,
   `CapabilityGrant`, `PermissionOperation`, `PromptPolicy`, …).
 
@@ -329,7 +330,7 @@ push, an overwritten branch, or a tainted benchmark.
 | `commit` | Commit gate — runs simplify + finish first, drafts message in repo log style, lints it with dekk agents commit-lint, commits at a clean stopping point, and pushes only when authorized. Never --force. Does not open PRs. | `.agents/skills/commit/SKILL.md` |
 | `compile-and-execute` | Use when compiling APXM AIR workflows, running .apxmobj artifacts, or executing AIR/IR through the runtime. Enforces dekk agents as the authority CLI and correct artifact placement under .apxm/. | `.agents/skills/compile-and-execute/SKILL.md` |
 | `context` | Prime an APXM session before broad work — runs doctor, reads project.md and the relevant _shared rules, surfaces subsystem ownership, and recalls APXM memory. Run at the start of any session that will touch >1 file or any non-trivial change. | `.agents/skills/context/SKILL.md` |
-| `design-docs` | Use when editing conceptual docs under docs/design/. Gates two shipped failure modes — overclaim (present-tense prose about unwired behaviour) and citation drift (claims with no anchor to shipped code). | `.agents/skills/design-docs/SKILL.md` |
+| `design-docs` | Use when editing conceptual docs under docs/. Gates two shipped failure modes — overclaim (present-tense prose about unwired behaviour) and citation drift (claims with no anchor to shipped code). | `.agents/skills/design-docs/SKILL.md` |
 | `execute-plan` | Drive an APXM plan to completion without scope creep. Tracks phases with the harness's task tracker, runs focused per-phase verification, refuses to add features beyond the plan, and surfaces blockers immediately. Invoke only after plan produces an approved plan. | `.agents/skills/execute-plan/SKILL.md` |
 | `finish` | Pre-claim gate — runs focused dekk agents test, doctor, release checks when relevant, secrets scan, and artifact-placement check before any claim of completion. Refuses to claim done until all pass. | `.agents/skills/finish/SKILL.md` |
 | `fork-vllm-rebase` | Use when rebasing the external/vllm fork onto a new upstream tag, cherry-picking APXM commits, or resolving conflicts in the fork. Covers the G1 build/smoke gate. | `.agents/skills/fork-vllm-rebase/SKILL.md` |

@@ -75,7 +75,7 @@ Right: `prereg(plan09): J/req cell — telecom N=20`.
 ## Per-type expectations
 
 - `prereg(<planNN>)`: subject names the cell/scenario; body cites the
-  preregistration filename under `docs/preregistrations/` and the
+  preregistration filename under `workspace/eval/preregistrations/` and the
   metric/N/concurrency design points. No write-up of results — that
   belongs in an `eval(...)` commit later.
 - `eval(<scenario>)`: subject names the scenario; body cites the

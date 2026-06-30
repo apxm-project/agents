@@ -1,4 +1,4 @@
-# APXM — domain overview
+# agents — domain overview
 
 A one-page orientation for coding agents and humans dropping into this
 repository for the first time. For the agent-facing SSOT, read
@@ -6,13 +6,13 @@ repository for the first time. For the agent-facing SSOT, read
 Codex-named) or [`CLAUDE.md`](CLAUDE.md) (Claude Code). They are generated
 from [`.agents/project.md`](.agents/project.md).
 
-## What APXM is
+## What agents is
 
-A graph-aware **dispatch + scheduling layer** for vLLM, with an
-AMD-aligned **CPU/GPU split**. Planning, validation, and analysis run
-on CPU; inference runs on GPU. The public surface is an MLIR dialect
-(AIS) plus a Rust runtime plus a vLLM fork that accepts dispatch
-hints. Not an "agent framework", not an "LLM orchestrator".
+The APXM abstract-machine repo: AIS dialect, compiler, runtime, capability
+contracts, context handling, permissions, orchestration, CLI, and the
+profile-backed agent execution path. vLLM scheduling remains one backend path,
+not the repo identity. This repo is not the `apxm` coordinator, `server`,
+`os`, `auth`, or `studio`.
 
 ## Where to read more
 
@@ -20,8 +20,8 @@ hints. Not an "agent framework", not an "LLM orchestrator".
 - [`docs/README.md`](docs/README.md) — docs landing.
 - [`docs/pxm/readme.md`](docs/pxm/readme.md) — PXM theory and history.
 - [`docs/pxm/foundations.md`](docs/pxm/foundations.md),
-  [`processes.md`](docs/pxm/processes.md),
-  [`scheduling.md`](docs/pxm/scheduling.md) — design layers.
+  [`docs/pxm/processes.md`](docs/pxm/processes.md),
+  [`docs/pxm/scheduling.md`](docs/pxm/scheduling.md) — design layers.
 - [`docs/compiler/pipeline.md`](docs/compiler/pipeline.md) — the pass
   pipeline.
 - [`docs/backends/storage-layout.md`](docs/backends/storage-layout.md)

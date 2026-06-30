@@ -7,7 +7,7 @@ who encounter evaluation references while working in this repo.
 ## Skills
 
 - **apxm-preregistration** — draft & commit a
-  `docs/preregistrations/` entry before claim-bearing runs.
+  preregistration entry in the `eval` repo before claim-bearing runs.
 - **apxm-priority-lane-bench** — priority-lane benchmark workflow.
 - **apxm-review-council-bench** — review-council benchmark workflow.
 - **apxm-claim-evidence** — write-up + claim card after a run.

@@ -1,7 +1,7 @@
 ---
 name: design-docs
 group: Domain
-description: Use when editing conceptual docs under docs/design/. Gates two shipped failure modes — overclaim (present-tense prose about unwired behaviour) and citation drift (claims with no anchor to shipped code).
+description: Use when editing conceptual docs under docs/. Gates two shipped failure modes — overclaim (present-tense prose about unwired behaviour) and citation drift (claims with no anchor to shipped code).
 user-invocable: true
 ---
 
@@ -9,7 +9,7 @@ user-invocable: true
 
 Load `_shared/apxm-development-rules.md` before broad work.
 
-Use this skill when editing any document under `docs/design/`. Its job is to
+Use this skill when editing conceptual documents under `docs/`. Its job is to
 keep conceptual docs honest: every factual claim about runtime/compiler/server
 behaviour cites a specific file or commit, and aspirational/in-flight sections
 are labelled as such rather than written in the present tense.
@@ -24,7 +24,7 @@ are labelled as such rather than written in the present tense.
    label; otherwise flag them as overclaim candidates.
 3. **Citation resolution** — for each cited path/commit, confirm it exists on
    the current branch. Stale citations are flagged.
-4. **Cross-doc consistency** — if the edit changes a claim other `docs/design/`
+4. **Cross-doc consistency** — if the edit changes a claim other `docs/`
    files repeat, surface those neighbours so the correction fans out.
 
 ## Rules

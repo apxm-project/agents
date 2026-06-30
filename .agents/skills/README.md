@@ -40,7 +40,7 @@ Run in order for any non-trivial session:
 - `backend-add` — register new APXM backends.
 - `ais-op-design` — design-before-code for new AIS ops.
 - `mcp-server` — work on the APXM MCP server.
-- `design-docs` — gate overclaim/citation-drift in `docs/design/`.
+- `design-docs` — gate overclaim/citation-drift in conceptual `docs/`.
 
 Benchmark, preregistration, claim-evidence, and evaluation-artifact
 skills live in the companion repo `apxm-project/eval`.
@@ -55,7 +55,7 @@ Synced across apxm and eval (edit here, copy to eval):
 
 - `_shared/apxm-agent-operating-rules.md` — commit & push discipline
   (no auto-commit, no push without approval), Slurm safety, secrets.
-- `_shared/commit-message-rules.md` — type/scope/subject format,
+- `_shared/apxm-commit-message-rules.md` — type/scope/subject format,
   banned trailers, `dekk agents commit-lint` enforcement.
 - `_shared/apxm-comment-rules.md` — per-language comment conventions.
 - `_shared/apxm-test-rules.md` — test authoring (placement, what to pin).

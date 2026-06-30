@@ -1,4 +1,4 @@
-# APXM — agent-facing project memory
+# agents — agent-facing project memory
 
 The `.agents/` tree is the single source of truth (SSOT) for every coding
 agent that enters this repository (Claude Code, Codex CLI, Cursor, Aider,
@@ -17,16 +17,17 @@ per `.agents.json`; ACP session output for the `codex` profile also writes
 workflows that look for a Codex-named file. Cursor reads `.cursorrules`;
 GitHub Copilot reads `.github/copilot-instructions.md`.
 
-## 1. What APXM is
+## 1. What agents is
 
-APXM is a graph-aware **dispatch + scheduling layer** for vLLM, with an
-AMD-aligned **CPU/GPU split** so that planning, validation, and analysis stay
-on CPU while inference runs on GPU. Its public surface is an MLIR dialect
-(AIS) plus a Rust runtime plus a vLLM fork that accepts dispatch hints.
+`agents` is the APXM abstract-machine repo: AIS dialect, compiler, runtime,
+capability contracts, context handling, permissions, orchestration, CLI, and
+the profile-backed agent execution path. It is not the whole APXM workspace;
+the `apxm` coordinator owns repo composition, while `server`, `os`, `auth`,
+and `studio` own their own planes.
 
-Do **not** describe APXM as "an agent framework", "an LLM orchestrator", or
-"a multi-agent runtime" — that mischaracterizes the project and confuses
-new contributors. The correct anchor is: *graph-aware dispatch for vLLM*.
+Do **not** describe `agents` as the APXM coordinator, the HTTP server, the OS
+host plane, or only "vLLM dispatch". The correct anchor is: *the abstract
+machine and runtime contracts for APXM agents*.
 
 ## 2. Authority CLI
 
@@ -244,9 +245,9 @@ Each capability composes a **tool_binding** (callable implementation) plus a
 **capability grants** (`grant_*` ids), not bare handler strings.
 
 Canonical terms, forbidden aliases, route naming, and schema versions live in
-the monorepo glossary:
+the coordinator glossary:
 
-- `docs/context/capability-vocabulary.md` — SSOT for APXM-owned capability
+- `../../docs/context/capability-vocabulary.md` — SSOT for APXM-owned capability
   vocabulary (`CapabilityDefinition`, `ToolBinding`, `PermissionPolicy`,
   `CapabilityGrant`, `PermissionOperation`, `PromptPolicy`, …).
 
