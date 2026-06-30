@@ -141,7 +141,7 @@ AAM = (
   B: {
     "user_query": String("What is the weather in Tokyo?"),
     "location":   String("Tokyo, JP"),
-    "api_key":    Secret("sk-***"),
+    "credential_ref": CredentialRef("weather/main"),
     "temperature": None  // not yet retrieved
   },
   G: [

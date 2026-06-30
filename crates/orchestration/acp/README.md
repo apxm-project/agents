@@ -13,7 +13,7 @@ Agent Client Protocol (ACP) client for spawning and communicating with coding ag
 | `protocol` | JSON-RPC 2.0 message framing and serialization |
 | `session` | `AcpSession` lifecycle (spawn, send, receive, close) |
 | `registry` | `AgentRegistry` with 15 built-in agent templates |
-| `auth` | API key forwarding and credential injection |
+| `auth` | Host-local env credential lookup for ACP profiles; not durable credential custody |
 | `content` | Structured content types (text, tool results) |
 | `controls` | Permission modes and approval policies |
 | `events` | Session-level event types |

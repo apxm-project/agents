@@ -51,7 +51,9 @@ joins the host network so APXM clients reach the API server on
 For local-only deployments the host is `127.0.0.1`. For shared/remote
 hosts the `--host 0.0.0.0` bind is allowed only with an explicit API key
 (`VLLM_API_KEY` or `--api-key`); without one, the controller refuses to
-start (hard error, not a warning).
+start (hard error, not a warning). That key is process input to the vLLM
+service; APXM backend registry entries still persist only `env:VAR`
+references.
 
 ## Contract reference
 

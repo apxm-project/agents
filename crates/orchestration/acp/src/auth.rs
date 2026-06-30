@@ -1,6 +1,10 @@
 use std::env;
 
-/// Resolve an ACP authentication credential for a given method ID.
+/// Resolve a host-local ACP authentication credential for a given method ID.
+///
+/// This reads process environment variables for local ACP tool profiles only.
+/// Durable provider credential custody belongs to the APXM auth service; APXM
+/// workflow credentials travel as connection ids or scoped materializations.
 ///
 /// Priority order (matching ACPX's exact resolution):
 /// 1. Exact env var: `{method_id}`
