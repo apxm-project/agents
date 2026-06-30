@@ -4,7 +4,7 @@ use serde::{Deserialize, Serialize};
 
 use super::common::{
     CapabilitySchemaError, LifecycleBound, PlannerVisibility, RuntimeLimits, Sensitivity,
-    validate_non_empty, validate_operations,
+    validate_capability_id, validate_non_empty, validate_operations,
 };
 use super::policy::PromptPolicy;
 
@@ -78,7 +78,7 @@ impl CapabilityDefinition {
                 actual: self.schema_version.clone(),
             });
         }
-        validate_non_empty("id", &self.id)?;
+        validate_capability_id(&self.id)?;
         validate_non_empty("description", &self.description)?;
         self.tool.validate()?;
         self.permissions.validate()?;

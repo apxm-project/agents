@@ -40,8 +40,8 @@ pub struct PermissionPrompt {
     pub capability_id: String,
     /// Callable implementation binding checked by the runtime gate.
     pub tool_binding: String,
-    /// The host that owns the capability.
-    pub host_id: String,
+    /// The host that owns the capability, when the prompt is host-scoped.
+    pub host_id: Option<String>,
     /// Operation being attempted under the capability.
     pub operation: String,
     /// Prompt policy selected for this call.
@@ -60,6 +60,12 @@ pub struct PermissionPrompt {
     pub channel_id: Option<String>,
     /// Human-readable description shown on the approval surface.
     pub description: Option<String>,
+    /// Optional stable target reference shown on the approval surface.
+    pub target_ref: Option<String>,
+    /// Optional structured resource metadata shown on the approval surface.
+    pub resource: Option<serde_json::Value>,
+    /// Optional diff/blob reference for high-risk changes.
+    pub diff_ref: Option<serde_json::Value>,
 }
 
 /// Signed approval returned by the consent broker.
@@ -126,7 +132,7 @@ mod tests {
             grant_id: "g1".into(),
             capability_id: "provider.write".into(),
             tool_binding: "provider.write".into(),
-            host_id: "host-1".into(),
+            host_id: Some("host-1".into()),
             operation: "write".into(),
             mode: PromptMode::Confirm,
             subject: None,
@@ -136,6 +142,9 @@ mod tests {
             expires_at: "2026-06-30T00:00:00Z".into(),
             channel_id: None,
             description: None,
+            target_ref: None,
+            resource: None,
+            diff_ref: None,
         };
         let rt = tokio::runtime::Runtime::new().unwrap();
         let decision = rt.block_on(broker.request_consent(prompt, Duration::from_secs(5)));
