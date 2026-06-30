@@ -228,7 +228,7 @@ Both are non-negotiable: skipping either produces silent type drift
 between the Rust runtime, the Python frontend, and the MLIR layer.
 
 The canonical pass list lives at
-`crates/compiler/compiler/src/passes/pipeline.rs::build_pass_list()`.
+`crates/compiler/pipeline/src/passes/pipeline.rs::build_pass_list()`.
 Add new passes there (and only there) so the pipeline stays in one place.
 
 Attribute names must be a single source of truth — see the
