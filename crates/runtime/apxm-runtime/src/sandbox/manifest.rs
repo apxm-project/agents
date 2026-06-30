@@ -17,8 +17,8 @@ use serde::{Deserialize, Serialize};
 /// | Tier | Operations | Min Isolation | Rationale |
 /// |------|-----------|---------------|-----------|
 /// | T0   | THINK, REASON, PLAN, REFLECT, VERIFY, … | None | Pure LLM, no side effects |
-/// | T1   | QMEM, UMEM, SMEM, … | PolicyOnly | Agent memory read/write |
-/// | T2   | ASK (w/ tools), INV, UPDATE_GOAL, EMIT | OsLevel | External I/O |
+/// | LINK-TOOLS    | QMEM, UMEM, SMEM, … | PolicyOnly | Agent memory read/write |
+/// | LINK-RUNTIME  | ASK (w/ tools), INV, UPDATE_GOAL, EMIT | OsLevel | External I/O |
 /// | T3   | GUARD, CLAIM, RELEASE, RESUME, DELEGATE, SPAWN | Container | Multi-agent, resource claims |
 pub mod tier {
     pub const PURE: u8 = 0;
@@ -114,12 +114,12 @@ pub fn classify_op(op: &str) -> (u8, IsolationLevel) {
             (tier::PURE, IsolationLevel::None)
         }
 
-        // T1: Memory operations — read/write agent state
+        // LINK-TOOLS: Memory operations — read/write agent state
         "QMEM" | "UMEM" | "SMEM" | "AMEM" | "RMEM" | "STM_PUT" | "STM_GET" => {
             (tier::MEMORY, IsolationLevel::PolicyOnly)
         }
 
-        // T2: I/O operations — external tool calls, filesystem, network
+        // LINK-RUNTIME: I/O operations — external tool calls, filesystem, network
         "ASK" | "INV" | "UPDATE_GOAL" | "EMIT" | "COMMUNICATE" => {
             (tier::IO, IsolationLevel::OsLevel)
         }
