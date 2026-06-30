@@ -44,7 +44,10 @@ use std::sync::Arc;
 pub struct BackendFactory;
 
 impl BackendFactory {
-    /// Create a backend from provider name (string) and API key.
+    /// Create a backend from provider name and a materialized API key value.
+    ///
+    /// Durable credential custody belongs to auth or the process environment;
+    /// this factory receives only the short-lived value needed by the adapter.
     pub async fn create(
         provider: &str,
         api_key: &str,
