@@ -1,6 +1,6 @@
-//! Relay-backed ACP transport for T2 LINK-RUNTIME hosts.
+//! Relay-backed ACP transport for LINK-RUNTIME hosts.
 //!
-//! In the T2 tier, the host-side ACP child process is spawned on the host
+//! In the LINK-RUNTIME tier, the host-side ACP child process is spawned on the host
 //! machine and its JSON-RPC 2.0 stdio is tunnelled through the Link WSS relay.
 //! `RelayTransport` implements [`AcpTransport`] by driving a pair of async
 //! channels that the relay connection handler owns:
@@ -23,7 +23,7 @@ use crate::constants::json_rpc_errors;
 use crate::protocol::{AcpTransport, JsonRpcError, JsonRpcMessage, JsonRpcRequest, JsonRpcResponse};
 use crate::reverse::ReverseHandler;
 
-/// Relay-backed JSON-RPC 2.0 transport for T2 LINK-RUNTIME sessions.
+/// Relay-backed JSON-RPC 2.0 transport for LINK-RUNTIME sessions.
 ///
 /// Owned by a `LinkAcpSession`. Send/receive use channel halves; the WSS relay
 /// loop drives the underlying connection and exposes only plain JSON values here.

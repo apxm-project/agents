@@ -42,7 +42,7 @@ pub enum HostCustody {
     /// body. Used by T0 DIRECT hosts.
     Inject,
     /// Host receives an APXM-minted PoP JWT (60s, host-bound, scoped).
-    /// Used by T1 LINK-TOOLS and T2 LINK-RUNTIME hosts.
+    /// Used by LINK-TOOLS and LINK-RUNTIME hosts.
     Token,
 }
 
@@ -74,7 +74,7 @@ pub enum ConfinementFsScope {
 }
 
 /// Confinement posture declared in `transport.toml [confinement]`.
-/// Required for T2 hosts; bound to the host principal at enrollment.
+/// Required for LINK-RUNTIME hosts; bound to the host principal at enrollment.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ConfinementProfile {
     pub mechanism: ConfinementMechanism,
@@ -183,7 +183,7 @@ pub enum EnrollError {
     NoReachability,
     #[error("tier_hint {hint} does not match computed tier {computed}")]
     TierMismatch { hint: HostTier, computed: HostTier },
-    #[error("T2 host missing required [confinement] block")]
+    #[error("LINK-RUNTIME host missing required [confinement] block")]
     MissingConfinement,
     #[error("DIRECT host must use custody=inject, got custody=token")]
     CustodyMismatch,
@@ -193,8 +193,8 @@ pub enum EnrollError {
 ///
 /// Rule (first match wins; predicates are mutually exclusive):
 /// 1. `transport="direct"` AND `ingress.public_url` is set → T0 DIRECT
-/// 2. `runtime.local_agent=true` AND op needs local execution → T2 LINK-RUNTIME
-/// 3. `host_id` present → T1 LINK-TOOLS
+/// 2. `runtime.local_agent=true` AND op needs local execution → LINK-RUNTIME
+/// 3. `host_id` present → LINK-TOOLS
 /// 4. Otherwise → EnrollError (fail-closed)
 pub fn select_tier(
     manifest: &TransportManifest,
@@ -220,7 +220,7 @@ pub fn select_tier(
         }
     }
 
-    // T2 requires a confinement block
+    // LINK-RUNTIME requires a confinement block
     if tier == HostTier::LinkRuntime && manifest.confinement.is_none() {
         return Err(EnrollError::MissingConfinement);
     }
@@ -570,7 +570,7 @@ mod tests {
 
     #[test]
     fn spec_vector_t1_link_tools_host_dialed_link_no_local_runtime() {
-        // T1 LINK-TOOLS: host-dialed Link. Host contributes tools/events. Agent runs APXM-side.
+        // LINK-TOOLS: host-dialed Link. Host contributes tools/events. Agent runs APXM-side.
         // Requirement: host_id present, runtime.local_agent=false (or Standard op_kind)
         let m = TransportManifest {
             host_id: Some("browser-x7f".into()),
@@ -586,13 +586,13 @@ mod tests {
         assert_eq!(
             select_tier(&m, &q).unwrap(),
             HostTier::LinkTools,
-            "spec vector T1: enrolled host without local runtime must yield LINK-TOOLS"
+            "spec: LINK-TOOLS — enrolled host without local runtime must yield LINK-TOOLS"
         );
     }
 
     #[test]
     fn spec_vector_t2_link_runtime_host_forks_acp_child_locally() {
-        // T2 LINK-RUNTIME: host-dialed Link. Host also forks an ACP child locally.
+        // LINK-RUNTIME: host-dialed Link. Host also forks an ACP child locally.
         // Requirement: runtime.local_agent=true AND op requires local execution AND confinement set
         let m = TransportManifest {
             host_id: Some("ide-abc".into()),
@@ -613,7 +613,7 @@ mod tests {
         assert_eq!(
             select_tier(&m, &q).unwrap(),
             HostTier::LinkRuntime,
-            "spec vector T2: local_agent host with Spawn op and confinement must yield LINK-RUNTIME"
+            "spec: LINK-RUNTIME — local_agent host with Spawn op and confinement must yield LINK-RUNTIME"
         );
     }
 

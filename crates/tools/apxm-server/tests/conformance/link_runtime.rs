@@ -1,4 +1,4 @@
-//! LINK-RUNTIME mode conformance tests (T2).
+//! LINK-RUNTIME mode conformance tests.
 //!
 //! Spec vectors:
 //! - HostTier::LinkRuntime is selected for hosts with Link AND local_agent=true on a local-exec op.
@@ -133,7 +133,7 @@ async fn spawn_offer_attestation_nonce_distinguishes_runtime_tier() {
     // LINK-TOOLS offers may have empty attestation_nonce; LINK-RUNTIME must not.
     let gw = MockHostDispatchGateway::new();
 
-    // T1 offer: attestation_nonce is an empty string (no confinement).
+    // LINK-TOOLS offer: attestation_nonce is empty (no confinement).
     let lt_offer = SpawnOffer {
         lease_id: "lt-lease".into(),
         channel_id: "lt-chan".into(),
@@ -143,11 +143,11 @@ async fn spawn_offer_attestation_nonce_distinguishes_runtime_tier() {
         mode: Some("link-tools".into()),
         model: None,
         workdir_ref: None,
-        attestation_nonce: String::new(), // empty for T1
+        attestation_nonce: String::new(), // empty for LINK-TOOLS
         extra_env: Default::default(),
     };
 
-    // T2 offer: attestation_nonce is non-empty (confinement attestation required).
+    // LINK-RUNTIME offer: attestation_nonce is non-empty (confinement attestation required).
     let lr_offer = SpawnOffer {
         lease_id: "lr-lease".into(),
         channel_id: "lr-chan".into(),
@@ -157,7 +157,7 @@ async fn spawn_offer_attestation_nonce_distinguishes_runtime_tier() {
         mode: Some("link-runtime".into()),
         model: None,
         workdir_ref: None,
-        attestation_nonce: "lr-nonce-abc".into(), // non-empty for T2
+        attestation_nonce: "lr-nonce-abc".into(), // non-empty for LINK-RUNTIME
         extra_env: Default::default(),
     };
 
@@ -167,11 +167,11 @@ async fn spawn_offer_attestation_nonce_distinguishes_runtime_tier() {
     let offers = gw.spawn_offers().await;
     assert_eq!(offers.len(), 2);
 
-    let t1 = &offers[0];
+    let link_tools_offer = &offers[0];
     let t2 = &offers[1];
 
-    assert!(t1.attestation_nonce.is_empty(), "T1 offer must have empty attestation_nonce");
-    assert!(!t2.attestation_nonce.is_empty(), "T2 offer must have non-empty attestation_nonce");
+    assert!(link_tools_offer.attestation_nonce.is_empty(), "LINK-TOOLS offer must have empty attestation_nonce");
+    assert!(!t2.attestation_nonce.is_empty(), "LINK-RUNTIME offer must have non-empty attestation_nonce");
 }
 
 // ── ACP frame routing end-to-end ──────────────────────────────────────────────
