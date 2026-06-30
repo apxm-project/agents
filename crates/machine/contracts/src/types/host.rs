@@ -189,7 +189,7 @@ pub enum EnrollError {
     TierMismatch { hint: HostTier, computed: HostTier },
     #[error("LINK-RUNTIME host missing required [confinement] block")]
     MissingConfinement,
-    #[error("DIRECT host must use custody=inject, got custody=token")]
+    #[error("DIRECT host must use custody=inject")]
     CustodyMismatch,
 }
 
@@ -227,6 +227,11 @@ pub fn select_tier(
     // LINK-RUNTIME requires a confinement block
     if tier == HostTier::LinkRuntime && manifest.confinement.is_none() {
         return Err(EnrollError::MissingConfinement);
+    }
+
+    // DIRECT egress keeps credentials APXM-side and injects them through /proxy.
+    if tier == HostTier::Direct && manifest.custody != Some(HostCustody::Inject) {
+        return Err(EnrollError::CustodyMismatch);
     }
 
     Ok(tier)
@@ -281,6 +286,13 @@ pub trait HostDispatchGateway: Send + Sync {
         host_id: &str,
         request: HostProxyRequest,
     ) -> Result<HostProxyResult, HostDispatchError>;
+
+    async fn request_permission(
+        &self,
+        host_id: &str,
+        prompt: serde_json::Value,
+        timeout_ms: u64,
+    ) -> Result<HostPromptApproval, HostDispatchError>;
 
     async fn open_agent_channel(
         &self,
@@ -362,6 +374,17 @@ pub struct HostProxyResult {
     #[serde(rename = "ref")]
     pub result_ref: Option<serde_json::Value>,
     pub error: Option<serde_json::Value>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct HostPromptApproval {
+    pub call_id: String,
+    pub grant_id: String,
+    pub approved: bool,
+    pub approvals: Vec<serde_json::Value>,
+    pub reason: Option<String>,
+    pub host_pubkey_hex: Option<String>,
+    pub args_digest: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -510,7 +533,7 @@ mod tests {
 
     #[test]
     fn mixed_host_selects_tier_per_capability() {
-        let m = TransportManifest {
+        let direct = TransportManifest {
             host_id: Some("hybrid".into()),
             ingress: IngressConfig {
                 public_url: Some("https://hooks.hybrid.com/apxm".into()),
@@ -518,10 +541,14 @@ mod tests {
             },
             runtime: RuntimeConfig { local_agent: false },
             tier_hint: None,
-            custody: Some(HostCustody::Token),
+            custody: Some(HostCustody::Inject),
             push: None,
             confinement: None,
             labels: vec![],
+        };
+        let link = TransportManifest {
+            custody: Some(HostCustody::Token),
+            ..direct.clone()
         };
         let q_direct = TierQuery {
             transport: "direct",
@@ -531,8 +558,22 @@ mod tests {
             transport: "link",
             op_kind: Some(OpKind::Standard),
         };
-        assert_eq!(select_tier(&m, &q_direct).unwrap(), HostTier::Direct);
-        assert_eq!(select_tier(&m, &q_link).unwrap(), HostTier::LinkTools);
+        assert_eq!(select_tier(&direct, &q_direct).unwrap(), HostTier::Direct);
+        assert_eq!(select_tier(&link, &q_link).unwrap(), HostTier::LinkTools);
+    }
+
+    #[test]
+    fn direct_with_token_custody_fails_closed() {
+        let mut m = direct_manifest();
+        m.custody = Some(HostCustody::Token);
+        let q = TierQuery {
+            transport: "direct",
+            op_kind: None,
+        };
+        assert!(matches!(
+            select_tier(&m, &q),
+            Err(EnrollError::CustodyMismatch)
+        ));
     }
 
     // ── Spec-vector conformance: the 3 canonical tier archetypes ─────────────
