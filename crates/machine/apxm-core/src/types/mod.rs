@@ -8,8 +8,12 @@
 pub mod aam;
 pub mod capability;
 pub mod goal;
+pub mod host;
 pub mod identifiers;
 pub mod operations;
+pub mod consent;
+pub mod conformance;
+pub mod principal;
 pub mod values;
 
 // ── Execution ──────────────────────────────────────────────

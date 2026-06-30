@@ -2,8 +2,6 @@ use std::collections::HashMap;
 use std::sync::Arc;
 
 use apxm_artifact::Artifact;
-use apxm_compiler::AirModule;
-use apxm_compiler::{Context as CompilerContext, Pipeline as CompilerPipeline};
 use apxm_core::constants::graph::attrs as graph_attrs;
 use apxm_core::constants::orchestration::admission as orchestration_admission;
 use apxm_core::events::payload::{
@@ -15,7 +13,7 @@ use apxm_core::types::AISOperationType;
 use apxm_core::types::execution::Node;
 use apxm_core::types::values::Value as RuntimeValue;
 use apxm_runtime::capability::CapabilitySandboxPreflight;
-use apxm_runtime::{EmitterAdapter, ExecutionEventEmitter};
+use apxm_server_api::{AirModule, CompilerContext, CompilerPipeline, EmitterAdapter, ExecutionEventEmitter};
 use axum::Json;
 use axum::extract::State;
 use axum::http::HeaderMap;
@@ -347,7 +345,7 @@ pub(crate) async fn run_air_inner(
         )) as Arc<dyn ExecutionEventEmitter>
     });
     let execution = state
-        .runtime
+        .runtime()
         .execute_artifact_with_session_emitter_metadata_and_credentials(
             artifact,
             args,
@@ -436,7 +434,7 @@ pub(crate) async fn execute_stream(
     let admission_id = acquire_admission(&state).await?;
     let stream_config = state.server_config.execution_stream;
     let (tx, mut rx) = mpsc::channel::<ApxmEvent>(stream_config.channel_capacity.max(1));
-    let runtime = Arc::clone(&state.runtime);
+    let runtime = state.runtime();
     let mut authority_metadata = capability_grants_metadata(&capability_grants, &imports)?;
     authority_metadata.insert(
         apxm_runtime::metadata_keys::ADMISSION_ID.to_string(),

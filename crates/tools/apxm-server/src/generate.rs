@@ -1,6 +1,6 @@
-use apxm_backends::{
-    LLMRequest, Message as LLMMessage, Role as LLMRole, StreamChunk, ToolChoice, ToolDefinition,
-    llm::wire::response_metadata,
+use apxm_server_api::{
+    LLMRequest, LLMMessage, LLMRole, StreamChunk, ToolChoice, ToolDefinition,
+    response_metadata,
 };
 use axum::Json;
 use axum::extract::State;
@@ -67,7 +67,7 @@ pub(crate) struct GenerateResponse {
     trace_id: String,
 }
 
-fn reasoning_from_response(response: &apxm_backends::LLMResponse) -> String {
+fn reasoning_from_response(response: &apxm_server_api::LLMResponse) -> String {
     response
         .metadata
         .get(response_metadata::REASONING)

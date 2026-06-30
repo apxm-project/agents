@@ -12,6 +12,7 @@ use crate::capability::{
     invoke_capability, list_capability_templates, reindex_capability_templates,
 };
 use crate::checkpoints::{create_checkpoint, get_checkpoint, resume_checkpoint};
+use crate::consent_broker::handle_consent_approval;
 use crate::conversations::post_conversation_message;
 use crate::capability_grants::{mint_capability_grant, revoke_capability_grant};
 use crate::execute::{
@@ -207,6 +208,11 @@ pub(crate) fn build_app(state: AppState) -> Router {
         // Workflow-scoped run history.
         .route(ServerRoute::WorkflowRuns.path(), get(list_workflow_runs))
         .route(ServerRoute::RunsReindex.path(), post(reindex_runs))
+        // Internal-only consent approval callback (host `prompt/approval`).
+        .route(
+            ServerRoute::ConsentApproval.path(),
+            post(handle_consent_approval),
+        )
         // Run summary alias (lighter shape than /v1/executions/{id}).
         .route("/v1/runs/{execution_id}/summary", get(get_run_summary));
 

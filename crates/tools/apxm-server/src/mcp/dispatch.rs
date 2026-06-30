@@ -28,6 +28,7 @@ pub(crate) async fn call_skill_tool(
     tool_name: &str,
     tool_args: &JsonValue,
 ) -> Option<Json<JsonValue>> {
+    let rt = state.runtime();
     match tool_name {
         MCP_TOOL_APXM_SKILLS_LIST => {
             Some(mcp_json_tool_result(id.clone(), state.skill_library.scan()))
@@ -83,7 +84,7 @@ pub(crate) async fn call_skill_tool(
         }
         MCP_TOOL_APXM_PROMPT_AS_WORKFLOW => Some(
             match mcp_tools::prompt_as_workflow_with_recorder(
-                &state.runtime,
+                &rt,
                 tool_args.clone(),
                 Some(Arc::new(HttpWorkflowExecutionRecorder::new(
                     state.execution_store.clone(),
@@ -113,7 +114,7 @@ pub(crate) async fn call_skill_tool(
                 .and_then(|record| serde_json::to_value(record).ok());
             Some(
                 match mcp_tools::trace_fetch_with_config(
-                    Some(&state.runtime),
+                    Some(&rt),
                     execution_record,
                     tool_args.clone(),
                     &state.server_config.mcp,
@@ -127,7 +128,7 @@ pub(crate) async fn call_skill_tool(
         }
         MCP_TOOL_APXM_AAM_RECALL => Some(
             match mcp_tools::aam_recall_with_config(
-                &state.runtime,
+                &rt,
                 tool_args.clone(),
                 &state.server_config.mcp,
             )
@@ -149,7 +150,7 @@ pub(crate) async fn call_skill_tool(
         MCP_TOOL_APXM_CAPABILITY_DISCOVERY => Some(mcp_json_tool_result(
             id.clone(),
             mcp_tools::capability_discovery_with_config(
-                &state.runtime,
+                &rt,
                 tool_args.clone(),
                 &state.server_config.mcp,
             ),

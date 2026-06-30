@@ -8,9 +8,7 @@ use std::sync::Arc;
 
 use apxm_core::error::RuntimeError;
 use apxm_core::types::values::Value;
-use apxm_runtime::capability::CapabilitySystem;
-use apxm_runtime::capability::executor::{CapabilityExecutor, CapabilityResult};
-use apxm_runtime::capability::metadata::CapabilityMetadata;
+use apxm_server_api::{CapabilitySystem, CapabilityExecutor, CapabilityMetadata, CapabilityResult, Runtime};
 use async_trait::async_trait;
 use tracing::{info, warn};
 
@@ -195,7 +193,7 @@ fn match_score(metadata: &CapabilityMetadata, request: &str) -> usize {
         .sum()
 }
 
-pub(crate) fn register(runtime: &apxm_runtime::Runtime) {
+pub(crate) fn register(runtime: &Runtime) {
     let cap: Arc<dyn CapabilityExecutor> = Arc::new(CapabilityDiscoveryCapability::new(
         runtime.capability_system_arc(),
     ));
@@ -214,7 +212,7 @@ pub(crate) fn register(runtime: &apxm_runtime::Runtime) {
 mod tests {
     use super::*;
     use crate::capability::StaticCapability;
-    use apxm_runtime::{Runtime, RuntimeConfig};
+    use apxm_server_api::{Runtime, RuntimeConfig};
 
     #[tokio::test]
     async fn capability_discovery_returns_template_only_results() {

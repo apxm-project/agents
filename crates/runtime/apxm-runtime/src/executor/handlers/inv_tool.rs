@@ -50,7 +50,7 @@ fn capability_grant_expired(expires_at: Option<&str>) -> bool {
 /// Invoke-site capability admission — enforced for EVERY tool call regardless of how
 /// the execution was launched. A direct (write) capability runs only when this
 /// execution's effective capability grants admit its tool binding.
-fn enforce_write_boundary(
+async fn enforce_write_boundary(
     ctx: &ExecutionContext,
     name: &str,
     args: &HashMap<String, Value>,
@@ -75,13 +75,43 @@ fn enforce_write_boundary(
         .get(metadata_keys::CAPABILITY_GRANTS)
         .map(String::as_str);
     if capability_grant_admits_write(capability_grants, name) {
-        Ok(())
+        if ctx.host_id.is_some() {
+            use apxm_core::types::consent::{ConsentDecision, PermissionPrompt};
+            let expires_at = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_secs() as i64 + 30;
+            let prompt = PermissionPrompt {
+                prompt_id: uuid::Uuid::new_v4().to_string(),
+                capability_id: name.to_string(),
+                host_id: ctx.host_id.clone().unwrap_or_default(),
+                subject: None,
+                args_digest: format!("args-len:{}", args.len()),
+                expires_at,
+                channel_id: None,
+                description: Some(format!("Host capability '{}' requires consent", name)),
+            };
+            match ctx.consent_broker.request_consent(prompt, std::time::Duration::from_secs(30)).await {
+                ConsentDecision::Approved(_) | ConsentDecision::NoBroker => Ok(()),
+                ConsentDecision::Denied { reason } => Err(RuntimeError::Capability {
+                    capability: name.to_string(),
+                    message: reason,
+                }),
+                ConsentDecision::TimedOut => Err(RuntimeError::Capability {
+                    capability: name.to_string(),
+                    message: "consent timed out".to_string(),
+                }),
+            }
+        } else {
+            Ok(())
+        }
     } else {
         Err(RuntimeError::Capability {
             capability: name.to_string(),
             message: format!(
-                "capability '{name}' performs writes and is missing a capability grant; \
-                 mint a grant for its tool binding and present grant_* ids in capability_grant_ids"
+                "capability '{}' performs writes and is missing a capability grant; \
+                 mint a grant for its tool binding and present grant_* ids in capability_grant_ids",
+                name
             ),
         })
     }
@@ -200,7 +230,7 @@ pub async fn execute(ctx: &ExecutionContext, node: &Node, inputs: Vec<Value>) ->
     // Invoke-site capability admission for EVERY tool call.
     // call, including artifact-local Python tools that do not exist in the
     // process-wide capability registry.
-    enforce_write_boundary(ctx, &capability_name, &args, python_handler_id.is_some())?;
+    enforce_write_boundary(ctx, &capability_name, &args, python_handler_id.is_some()).await?;
 
     // Python branch is taken iff `bind-tool-handlers` stamped a handler id.
     let raw = if let Some(handler_id) = python_handler_id {

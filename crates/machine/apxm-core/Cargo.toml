@@ -14,6 +14,7 @@ workspace = true
 [dependencies]
 apxm-ais.workspace = true
 anyhow.workspace = true
+async-trait.workspace = true
 blake3.workspace = true
 chrono.workspace = true
 colored.workspace = true
@@ -27,6 +28,10 @@ tracing-subscriber = { workspace = true, optional = true, features = ["serde"] }
 uuid.workspace = true
 which = "8.0"
 dirs.workspace = true
+tokio = { workspace = true, features = ["sync"] }
+
+[dev-dependencies]
+tokio = { workspace = true }
 
 [features]
 tracing-subscriber = ["dep:tracing-subscriber"]

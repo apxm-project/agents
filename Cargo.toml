@@ -1,9 +1,9 @@
 [workspace]
 members = [
-	# ── Core (Foundation) ─────────────────────────
-	"crates/core/apxm-ais",
-	"crates/core/apxm-core",
-	"crates/core/apxm-skill",
+	# ── Machine (AAM/AIS Contracts) ──────────────────────────────────────────
+	"crates/machine/apxm-ais",
+	"crates/machine/apxm-core",
+	"crates/machine/apxm-skill",
 	# ── Compiler (Compilation) ────────────────────
 	"crates/compiler/apxm-compiler",
 	# ── Runtime (Execution + Backend) ─────────────
@@ -19,6 +19,7 @@ members = [
 	"crates/tools/apxm-cli",
 	"crates/tools/apxm-client",
 	"crates/tools/apxm-server",
+	"crates/tools/apxm-server-api",
     # -- Facade ---------
     "crates/apxm",
 ]
@@ -38,9 +39,9 @@ readme = "README.md"
 
 [workspace.dependencies]
 # ── Internal crates ──────────────────────────────────────────
-apxm-ais = { version = "0.1.0", path = "crates/core/apxm-ais" }
-apxm-core = { version = "0.1.0", path = "crates/core/apxm-core" }
-apxm-skill = { version = "0.1.0", path = "crates/core/apxm-skill" }
+apxm-ais = { version = "0.1.0", path = "crates/machine/apxm-ais" }
+apxm-core = { version = "0.1.0", path = "crates/machine/apxm-core" }
+apxm-skill = { version = "0.1.0", path = "crates/machine/apxm-skill" }
 apxm-compiler = { version = "0.1.0", path = "crates/compiler/apxm-compiler" }
 apxm-runtime = { version = "0.1.0", path = "crates/runtime/apxm-runtime" }
 apxm-backends = { version = "0.1.0", path = "crates/runtime/apxm-backends" }
@@ -73,6 +74,8 @@ tokio-stream = "0.1"
 reqwest = { version = "0.12", features = ["json", "rustls-tls"], default-features = false }
 axum = { version = "0.8", features = ["macros"] }
 tower-http = { version = "0.6", features = ["fs", "cors", "limit"] }
+tokio-tungstenite = { version = "0.24", features = ["native-tls"] }
+futures-util = "0.3"
 
 # ── Observability (OTLP) ─────────────────────────────────────
 tracing-opentelemetry = "0.28"
@@ -98,6 +101,7 @@ regex = "1.0"
 tempfile = "3.0"
 colored = "3.0"
 blake3 = "1.5"
+ed25519-dalek = { version = "2", features = ["pkcs8", "serde"] }
 clap = { version = "4.0", features = ["derive"] }
 bpe-openai = "0.3"
 walkdir = "2.0"

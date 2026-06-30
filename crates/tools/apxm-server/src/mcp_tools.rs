@@ -5,8 +5,6 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use apxm_artifact::Artifact;
-use apxm_backends::LLMRequest;
-use apxm_compiler::{Context as CompilerContext, Pipeline as CompilerPipeline};
 use apxm_core::constants::graph::attrs as graph_attrs;
 use apxm_core::constants::{memory as memory_const, session::files as session_files};
 use apxm_core::events::{EventEmitter, EventSource, SkillEventProvenance};
@@ -15,8 +13,9 @@ use apxm_core::types::Value as RuntimeValue;
 use apxm_core::types::{AISOperationType, OptimizationLevel};
 use apxm_driver::ServerMcpConfig;
 use apxm_runtime::capability::CapabilitySandboxPreflight;
-use apxm_runtime::{
-    EmitterAdapter, ExecutionEventEmitter, MemorySpace, Runtime, RuntimeExecutionResult,
+use apxm_server_api::{
+    CompilerContext, CompilerPipeline, EmitterAdapter, ExecutionEventEmitter, LLMRequest,
+    MemorySpace, Runtime, RuntimeExecutionResult,
 };
 use serde_json::{Value as JsonValue, json};
 
