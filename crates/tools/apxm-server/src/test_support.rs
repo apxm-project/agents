@@ -6,6 +6,7 @@ use std::time::SystemTime;
 use apxm_backends::llm::backends::MockLLMBackend;
 use apxm_driver::{RunEventsConfig, ServerConfig};
 use apxm_runtime::{ModelRouterConfig, Runtime, RuntimeConfig};
+use apxm_runtime::host_dispatch::NoOpHostDispatchGateway;
 use apxm_server_api::{AgentRuntimeApi, RuntimeApiAdapter};
 use axum::Router;
 use dashmap::DashMap;
@@ -165,6 +166,7 @@ async fn test_state_with_runtime_store(
     let hardening = crate::state::HardeningDefaults::for_config(&server_config);
     AppState {
         runtime,
+        host_dispatch: Arc::new(NoOpHostDispatchGateway),
         agent_registry: Arc::new(DashMap::new()),
         task_manager: crate::tasks::TaskQueueManager::new(),
         checkpoint_store: crate::checkpoints::CheckpointStore::new(),

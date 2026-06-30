@@ -7,6 +7,7 @@ use apxm_core::paths::ApxmPaths;
 use apxm_driver::{ServerConfig, ServerExecutionsConfig};
 use apxm_rollout::{IndexDb, RolloutPaths};
 use apxm_runtime::{Runtime, RuntimeConfig, SchedulerConfig};
+use apxm_runtime::host_dispatch::NoOpHostDispatchGateway;
 use apxm_server_api::{AgentRuntimeApi, RuntimeApiAdapter};
 use dashmap::DashMap;
 use tokio::sync::Mutex;
@@ -80,7 +81,7 @@ pub(crate) async fn run_server_with_config(server_config: ServerConfig) -> anyho
     //      `/v1/capability-templates` so the studio install-gate sees its
     //      blocks as AVAILABLE without any per-provider Rust.
     let pack_scan_roots = integration_capability_roots();
-    crate::capability::rescan_pack_tools(&runtime, &pack_scan_roots);
+    crate::capability::rescan_pack_tools(&runtime, &pack_scan_roots, Arc::new(NoOpHostDispatchGateway));
     crate::capability_discovery::register(&runtime);
     crate::search_skills::register(&runtime, skill_library.clone());
     let mut runtime_arc = Arc::new(runtime);
@@ -139,6 +140,7 @@ pub(crate) async fn run_server_with_config(server_config: ServerConfig) -> anyho
 
     let state = AppState {
         runtime,
+        host_dispatch: Arc::new(NoOpHostDispatchGateway),
         agent_registry: Arc::new(DashMap::new()),
         task_manager,
         checkpoint_store,

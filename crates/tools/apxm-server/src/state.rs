@@ -8,6 +8,7 @@ use apxm_core::events::{ApxmEvent, EventSource};
 use apxm_driver::ServerConfig;
 use apxm_rollout::{IndexDb, RolloutPaths};
 use apxm_runtime::Runtime;
+use apxm_runtime::host_dispatch::HostDispatchGateway;
 use apxm_server_api::AgentRuntimeApi;
 use dashmap::DashMap;
 use tokio::sync::{Mutex, Notify, OwnedSemaphorePermit, Semaphore, mpsc};
@@ -28,6 +29,9 @@ use crate::webhook::WebhookDispatcher;
 #[derive(Clone)]
 pub(crate) struct AppState {
     pub(crate) runtime: Arc<dyn AgentRuntimeApi>,
+    /// Host dispatch gateway for kind=host capability routing.
+    /// Replaced by HostDispatchGatewayImpl in `os` when a real Link relay is active.
+    pub(crate) host_dispatch: Arc<dyn HostDispatchGateway>,
     /// In-memory agent registry: name → registration record
     pub(crate) agent_registry: Arc<DashMap<String, AgentRegistration>>,
     /// Task queue manager backing the CLAIM op.
