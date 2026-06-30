@@ -41,6 +41,7 @@ apxm-server-api = { path = "../apxm-server-api" }
 chrono.workspace = true
 anyhow.workspace = true
 blake3.workspace = true
+ed25519-dalek.workspace = true
 reqwest.workspace = true
 async-trait.workspace = true
 dashmap.workspace = true
