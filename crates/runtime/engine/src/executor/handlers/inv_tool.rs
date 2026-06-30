@@ -78,7 +78,9 @@ async fn enforce_write_boundary(
         .map(String::as_str);
     if capability_grant_admits_write(capability_grants, name) {
         if ctx.host_id.is_some() {
-            use apxm_core::types::consent::{ConsentDecision, PermissionPrompt, PromptMode, RiskLevel};
+            use apxm_core::types::consent::{
+                ConsentDecision, PermissionPrompt, PromptMode, RiskLevel,
+            };
             let expires_at = (chrono::Utc::now() + chrono::Duration::seconds(30)).to_rfc3339();
             let prompt = PermissionPrompt {
                 prompt_id: uuid::Uuid::new_v4().to_string(),
@@ -86,7 +88,7 @@ async fn enforce_write_boundary(
                 grant_id: "runtime-grant".to_string(),
                 capability_id: name.to_string(),
                 tool_binding: name.to_string(),
-                host_id: ctx.host_id.clone().unwrap_or_default(),
+                host_id: ctx.host_id.clone(),
                 operation: "invoke".to_string(),
                 mode: PromptMode::Confirm,
                 subject: None,
@@ -96,6 +98,9 @@ async fn enforce_write_boundary(
                 expires_at,
                 channel_id: None,
                 description: Some(format!("Host capability '{}' requires consent", name)),
+                target_ref: None,
+                resource: None,
+                diff_ref: None,
             };
             match ctx
                 .consent_broker

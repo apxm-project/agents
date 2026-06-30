@@ -350,18 +350,18 @@ pub struct HostProxyRequest {
     pub url: String,
     pub headers: Option<serde_json::Value>,
     pub body_b64: Option<String>,
-    pub deadline_ms: u64,
+    pub timeout_ms: u64,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct HostProxyResult {
-    pub ok: bool,
+    pub call_id: String,
     pub status: Option<u16>,
     pub headers: Option<serde_json::Value>,
     pub body_b64: Option<String>,
     #[serde(rename = "ref")]
     pub result_ref: Option<serde_json::Value>,
-    pub error: Option<String>,
+    pub error: Option<serde_json::Value>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

@@ -54,12 +54,10 @@ impl ConformanceHarness {
         if report.host_id.is_empty() || report.passed.is_empty() && report.failed.is_empty() {
             return false;
         }
-        !report.failed.iter().any(|failed| {
-            report
-                .passed
-                .iter()
-                .any(|passed| passed == &failed.name)
-        })
+        !report
+            .failed
+            .iter()
+            .any(|failed| report.passed.iter().any(|passed| passed == &failed.name))
     }
 }
 
