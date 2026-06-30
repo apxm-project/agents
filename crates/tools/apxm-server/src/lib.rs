@@ -34,6 +34,7 @@ mod auth;
 mod bind;
 mod call_skill;
 mod capability;
+pub mod consent_broker;
 mod capability_discovery;
 mod checkpoints;
 mod config_layers;
