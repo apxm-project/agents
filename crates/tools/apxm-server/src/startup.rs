@@ -143,6 +143,7 @@ pub(crate) async fn run_server_with_config(server_config: ServerConfig) -> anyho
         runtime,
         host_dispatch: Arc::new(NoOpHostDispatchGateway),
         consent_broker: Arc::new(NoOpConsentBroker),
+        host_consent_broker: Arc::new(crate::consent_broker::ConsentBroker::new()),
         agent_registry: Arc::new(DashMap::new()),
         task_manager,
         checkpoint_store,

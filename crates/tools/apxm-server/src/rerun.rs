@@ -607,6 +607,7 @@ timeout_ms = 30000
                 session_registry: crate::conversations::SessionRegistry::new(),
                 host_dispatch: Arc::new(NoOpHostDispatchGateway),
                 consent_broker: Arc::new(apxm_core::types::consent::NoOpConsentBroker),
+                host_consent_broker: Arc::new(crate::consent_broker::ConsentBroker::new()),
             }
         }
 

@@ -35,6 +35,10 @@ pub(crate) struct AppState {
     pub(crate) host_dispatch: Arc<dyn HostDispatchGateway>,
     /// Per-call consent broker. NoOpConsentBroker until os wires the real broker.
     pub(crate) consent_broker: Arc<dyn ConsentBroker>,
+    /// Per-call host consent broker backing the `prompt/permission` →
+    /// `prompt/approval` loop. Receives approval callbacks at
+    /// `POST /internal/v1/consent/approval`.
+    pub(crate) host_consent_broker: Arc<crate::consent_broker::ConsentBroker>,
     /// In-memory agent registry: name → registration record
     pub(crate) agent_registry: Arc<DashMap<String, AgentRegistration>>,
     /// Task queue manager backing the CLAIM op.
