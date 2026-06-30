@@ -41,7 +41,7 @@
     },
     {
       "name": "design-docs",
-      "description": "Use when editing conceptual docs under docs/design/. Gates two shipped failure modes \u2014 overclaim (present-tense prose about unwired behaviour) and citation drift (claims with no anchor to shipped code)."
+      "description": "Use when editing conceptual docs under docs/. Gates two shipped failure modes \u2014 overclaim (present-tense prose about unwired behaviour) and citation drift (claims with no anchor to shipped code)."
     },
     {
       "name": "execute-plan",
