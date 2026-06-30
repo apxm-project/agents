@@ -8,8 +8,8 @@ Claim-bearing evaluation may also run an equivalent container image built from t
 
 ## Scope
 
-APXM is backend-agnostic. vLLM is an optional LLM backend implemented under the
-normal backend registry. The fork is the `apxm-project/vllm` repo and adds
+APXM is backend-agnostic. vLLM is an optional LLM backend registered through
+the normal backend registry. The fork is the `apxm-project/vllm` repo and adds
 graph-aware OpenAI-compatible endpoints that stock vLLM does not expose.
 
 Bring-up, container build, zoo reconciliation, and operator commands all live

@@ -46,7 +46,10 @@ impl Client {
             let text = resp.text().await.unwrap_or_default();
             return Err(anyhow!("mint returned {status} for {url}: {text}"));
         }
-        let body: serde_json::Value = resp.json().await.with_context(|| format!("bad mint JSON from {url}"))?;
+        let body: serde_json::Value = resp
+            .json()
+            .await
+            .with_context(|| format!("bad mint JSON from {url}"))?;
         body.get("grant_id")
             .and_then(|v| v.as_str())
             .map(str::to_string)

@@ -3,8 +3,8 @@ use std::collections::BTreeMap;
 use serde::{Deserialize, Serialize};
 
 use super::common::{
-    validate_grant_id, validate_non_empty, validate_operations, CapabilitySchemaError, Delegability,
-    Lifecycle, LifecycleBound, RuntimeLimits, Sensitivity,
+    CapabilitySchemaError, Delegability, Lifecycle, LifecycleBound, RuntimeLimits, Sensitivity,
+    validate_grant_id, validate_non_empty, validate_operations,
 };
 use super::permission::{PermissionOperation, PermissionScope, ResourceHandle};
 use super::policy::{PromptPolicy, SubjectContext};
@@ -117,7 +117,7 @@ impl GrantProvenance {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::types::capability::{PromptMode, ResourceHandle, PermissionScope};
+    use crate::types::capability::{PermissionScope, PromptMode, ResourceHandle};
     use std::collections::BTreeMap;
 
     fn scope() -> PermissionScope {

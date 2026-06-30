@@ -343,7 +343,10 @@ pub trait HostDispatchGateway: Send + Sync {
     async fn take_relay_channel(
         &self,
         channel_id: &str,
-    ) -> Option<(tokio::sync::mpsc::Sender<serde_json::Value>, tokio::sync::mpsc::Receiver<serde_json::Value>)> {
+    ) -> Option<(
+        tokio::sync::mpsc::Sender<serde_json::Value>,
+        tokio::sync::mpsc::Receiver<serde_json::Value>,
+    )> {
         let _ = channel_id;
         None
     }
@@ -486,44 +489,68 @@ mod tests {
     #[test]
     fn direct_public_ingress_resolves_to_direct() {
         let m = direct_manifest();
-        let q = TierQuery { transport: "direct", op_kind: None };
+        let q = TierQuery {
+            transport: "direct",
+            op_kind: None,
+        };
         assert_eq!(select_tier(&m, &q).unwrap(), HostTier::Direct);
     }
 
     #[test]
     fn enrolled_host_no_local_runtime_resolves_to_link_tools() {
         let m = link_tools_manifest();
-        let q = TierQuery { transport: "link", op_kind: Some(OpKind::Standard) };
+        let q = TierQuery {
+            transport: "link",
+            op_kind: Some(OpKind::Standard),
+        };
         assert_eq!(select_tier(&m, &q).unwrap(), HostTier::LinkTools);
     }
 
     #[test]
     fn local_agent_spawn_op_resolves_to_link_runtime() {
         let m = link_runtime_manifest();
-        let q = TierQuery { transport: "link", op_kind: Some(OpKind::Spawn) };
+        let q = TierQuery {
+            transport: "link",
+            op_kind: Some(OpKind::Spawn),
+        };
         assert_eq!(select_tier(&m, &q).unwrap(), HostTier::LinkRuntime);
     }
 
     #[test]
     fn no_ingress_no_host_id_fails_closed() {
         let m = TransportManifest::default();
-        let q = TierQuery { transport: "link", op_kind: None };
-        assert!(matches!(select_tier(&m, &q), Err(EnrollError::NoReachability)));
+        let q = TierQuery {
+            transport: "link",
+            op_kind: None,
+        };
+        assert!(matches!(
+            select_tier(&m, &q),
+            Err(EnrollError::NoReachability)
+        ));
     }
 
     #[test]
     fn link_runtime_without_confinement_fails() {
         let mut m = link_runtime_manifest();
         m.confinement = None;
-        let q = TierQuery { transport: "link", op_kind: Some(OpKind::Spawn) };
-        assert!(matches!(select_tier(&m, &q), Err(EnrollError::MissingConfinement)));
+        let q = TierQuery {
+            transport: "link",
+            op_kind: Some(OpKind::Spawn),
+        };
+        assert!(matches!(
+            select_tier(&m, &q),
+            Err(EnrollError::MissingConfinement)
+        ));
     }
 
     #[test]
     fn mixed_host_selects_tier_per_capability() {
         let m = TransportManifest {
             host_id: Some("hybrid".into()),
-            ingress: IngressConfig { public_url: Some("https://hooks.hybrid.com/apxm".into()), webhook_base_path: None },
+            ingress: IngressConfig {
+                public_url: Some("https://hooks.hybrid.com/apxm".into()),
+                webhook_base_path: None,
+            },
             runtime: RuntimeConfig { local_agent: false },
             tier_hint: None,
             custody: Some(HostCustody::Token),
@@ -531,8 +558,14 @@ mod tests {
             confinement: None,
             labels: vec![],
         };
-        let q_direct = TierQuery { transport: "direct", op_kind: None };
-        let q_link = TierQuery { transport: "link", op_kind: Some(OpKind::Standard) };
+        let q_direct = TierQuery {
+            transport: "direct",
+            op_kind: None,
+        };
+        let q_link = TierQuery {
+            transport: "link",
+            op_kind: Some(OpKind::Standard),
+        };
         assert_eq!(select_tier(&m, &q_direct).unwrap(), HostTier::Direct);
         assert_eq!(select_tier(&m, &q_link).unwrap(), HostTier::LinkTools);
     }
@@ -560,7 +593,10 @@ mod tests {
             confinement: None,
             labels: vec![],
         };
-        let q = TierQuery { transport: "direct", op_kind: None };
+        let q = TierQuery {
+            transport: "direct",
+            op_kind: None,
+        };
         assert_eq!(
             select_tier(&m, &q).unwrap(),
             HostTier::Direct,
@@ -582,7 +618,10 @@ mod tests {
             confinement: None,
             labels: vec![],
         };
-        let q = TierQuery { transport: "link", op_kind: Some(OpKind::Standard) };
+        let q = TierQuery {
+            transport: "link",
+            op_kind: Some(OpKind::Standard),
+        };
         assert_eq!(
             select_tier(&m, &q).unwrap(),
             HostTier::LinkTools,
@@ -609,7 +648,10 @@ mod tests {
             }),
             labels: vec![],
         };
-        let q = TierQuery { transport: "link", op_kind: Some(OpKind::Spawn) };
+        let q = TierQuery {
+            transport: "link",
+            op_kind: Some(OpKind::Spawn),
+        };
         assert_eq!(
             select_tier(&m, &q).unwrap(),
             HostTier::LinkRuntime,

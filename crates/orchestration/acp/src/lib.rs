@@ -20,11 +20,11 @@ pub mod aam_bridge;
 pub mod relay_transport;
 
 pub use protocol::AcpTransport;
-pub use relay_transport::RelayTransport;
 pub use registry::{
     AcpAgentProfile, AgentRegistry, CapabilityServerConfig, PermissionMode,
     default_route_capabilities,
 };
+pub use relay_transport::RelayTransport;
 pub use session::AcpSession;
 
 #[derive(Debug, thiserror::Error)]

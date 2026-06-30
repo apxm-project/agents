@@ -127,8 +127,8 @@ fn sync_ollama_models(
 
 #[cfg(feature = "driver")]
 pub async fn backend_command(action: BackendAction, json_output: bool) -> Result<()> {
-    use apxm_backends::llm::{BackendConfig, BackendType, ProviderProtocol};
     use apxm_backend_registry::backend::BackendStore;
+    use apxm_backends::llm::{BackendConfig, BackendType, ProviderProtocol};
     use std::str::FromStr;
 
     let store = BackendStore::open().map_err(|e| anyhow::anyhow!("{e}"))?;

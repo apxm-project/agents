@@ -17,19 +17,17 @@ pub use common::{
     RuntimeLimits, RuntimeSurfaceLimit, RuntimeSurfaceMode, RuntimeSurfacePolicy, Sensitivity,
 };
 pub use definition::{
-    CapabilityDefinition, CapabilityMetadata, CapabilityTemplateV1, CAPABILITY_DEFINITION_SCHEMA_V1,
-    CAPABILITY_TEMPLATE_SCHEMA_V1,
+    CAPABILITY_DEFINITION_SCHEMA_V1, CAPABILITY_TEMPLATE_SCHEMA_V1, CapabilityDefinition,
+    CapabilityMetadata, CapabilityTemplateV1,
 };
-pub use grant::{
-    CapabilityGrant, GrantProvenance, GrantStatus, CAPABILITY_GRANT_SCHEMA_V1,
-};
+pub use grant::{CAPABILITY_GRANT_SCHEMA_V1, CapabilityGrant, GrantProvenance, GrantStatus};
 pub use permission::{
     PermissionEffect, PermissionOperation, PermissionPolicy, PermissionRule, PermissionScope,
     ResourceHandle, ResourceSelector,
 };
 pub use policy::{
-    AuthMethod, Principal, PrincipalKind, PromptMode, PromptPolicy, RoleAssignment,
-    RoleDefinition, SubjectContext, SubjectSelector,
+    AuthMethod, Principal, PrincipalKind, PromptMode, PromptPolicy, RoleAssignment, RoleDefinition,
+    SubjectContext, SubjectSelector,
 };
 pub use tool_binding::{ToolBinding, ToolBindingHandler, ToolBindingMetadata};
 pub use wire::RuntimeCapabilityGrant;

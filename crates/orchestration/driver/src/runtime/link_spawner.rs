@@ -44,7 +44,15 @@ pub struct RelaySessionHandle {
 /// removes them on disconnect.
 pub struct LinkHostRegistry {
     /// host_id → (tx to host, rx from host)
-    hosts: Mutex<HashMap<String, (mpsc::Sender<serde_json::Value>, mpsc::Receiver<serde_json::Value>)>>,
+    hosts: Mutex<
+        HashMap<
+            String,
+            (
+                mpsc::Sender<serde_json::Value>,
+                mpsc::Receiver<serde_json::Value>,
+            ),
+        >,
+    >,
 }
 
 impl LinkHostRegistry {
@@ -80,7 +88,10 @@ impl LinkHostRegistry {
     pub async fn take(
         &self,
         host_id: &str,
-    ) -> Option<(mpsc::Sender<serde_json::Value>, mpsc::Receiver<serde_json::Value>)> {
+    ) -> Option<(
+        mpsc::Sender<serde_json::Value>,
+        mpsc::Receiver<serde_json::Value>,
+    )> {
         self.hosts.lock().await.remove(host_id)
     }
 }
@@ -145,20 +156,30 @@ impl AgentSpawner for LinkAgentSpawner {
             attestation_nonce: nonce,
             extra_env: _extra_env.clone(),
         };
-        let channel_handle = self.gateway.open_agent_channel(host_id, offer)
+        let channel_handle = self
+            .gateway
+            .open_agent_channel(host_id, offer)
             .await
             .map_err(|e| RuntimeError::Operation {
                 op_type: AISOperationType::SpawnAgent,
                 message: format!("open_agent_channel failed: {e}"),
             })?;
-        let (tx, rx) = self.gateway.take_relay_channel(&channel_handle.channel_id)
+        let (tx, rx) = self
+            .gateway
+            .take_relay_channel(&channel_handle.channel_id)
             .await
             .ok_or_else(|| RuntimeError::Operation {
                 op_type: AISOperationType::SpawnAgent,
-                message: format!("channel '{}' not available after open", channel_handle.channel_id),
+                message: format!(
+                    "channel '{}' not available after open",
+                    channel_handle.channel_id
+                ),
             })?;
 
-        debug!(host_id, agent_name, "spawning relay ACP session on LINK-RUNTIME host");
+        debug!(
+            host_id,
+            agent_name, "spawning relay ACP session on LINK-RUNTIME host"
+        );
 
         let transport = RelayTransport::new(tx, rx);
 

@@ -153,7 +153,7 @@ pub enum Commands {
     },
     /// Diagnose compiler/runtime dependencies
     Doctor,
-    /// Manage inference backends (cloud/onprem/local)
+    /// Manage registered inference backend endpoints
     Backend {
         #[command(subcommand)]
         action: BackendAction,
@@ -705,7 +705,7 @@ pub enum BackendAction {
         #[arg(long, default_value = "table")]
         format: String,
     },
-    /// Add a new backend
+    /// Register a new backend endpoint
     Add {
         /// Backend name (e.g., "openai", "local-vllm")
         name: String,

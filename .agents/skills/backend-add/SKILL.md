@@ -77,7 +77,8 @@ dispatch hint is needed), `config/backends.example.toml`,
   hold a broken config silently.
 - Hardcoding `api_base = "http://127.0.0.1:8916"` — port `8916` lints
   as `hardcoded-port-8916` outside the allocator-range default.
-- Adding a credential as a literal in config rather than `env:<NAME>`.
+- Adding a literal API key or auth token to a backend registry entry instead of
+  an `env:<NAME>` reference.
 - Creating a project-local `.apxm/config.toml` that only sets
   `data-dir` (shadows user-global backends).
 - A literal contract string (e.g. `"reuse_group"`) in a handler — promote it
