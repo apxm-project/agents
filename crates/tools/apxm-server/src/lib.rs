@@ -58,6 +58,7 @@ mod mcp_tools;
 mod memory;
 mod metrics;
 mod observability;
+pub(crate) mod os_gateway;
 pub mod openapi;
 pub mod permissions;
 mod principal;

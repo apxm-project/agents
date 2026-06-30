@@ -21,7 +21,7 @@ use apxm_core::error::RuntimeError;
 use apxm_core::types::aam::AamContext;
 use apxm_core::types::operations::AISOperationType;
 use apxm_runtime::agent_router::AgentRouteCandidate;
-use apxm_runtime::host_dispatch::{HostDispatchGateway, SpawnOffer};
+use apxm_runtime::host_dispatch::HostDispatchGateway;
 use apxm_runtime::process_table::{AgentSpawnContext, AgentSpawner};
 use tokio::sync::{Mutex, mpsc};
 use tracing::debug;
@@ -94,12 +94,11 @@ impl Default for LinkHostRegistry {
 /// Spawner that delegates `SPAWN_AGENT` to a T2 LINK-RUNTIME host.
 pub struct LinkAgentSpawner {
     gateway: Arc<dyn HostDispatchGateway>,
-    registry: Arc<LinkHostRegistry>,
 }
 
 impl LinkAgentSpawner {
-    pub fn new(gateway: Arc<dyn HostDispatchGateway>, registry: Arc<LinkHostRegistry>) -> Self {
-        Self { gateway, registry }
+    pub fn new(gateway: Arc<dyn HostDispatchGateway>) -> Self {
+        Self { gateway }
     }
 }
 
@@ -130,41 +129,33 @@ impl AgentSpawner for LinkAgentSpawner {
                 message: "LinkAgentSpawner requires a host_id in the spawn context".to_string(),
             })?;
 
-        // Open the agent channel through the HostDispatchGateway. This performs
-        // the policy check, attestation, and logging side effects, and yields the
-        // `channel_id` that identifies this session. The raw `(tx, rx)` relay pair
-        // is then resolved from `LinkHostRegistry` (the gateway does not surface
-        // the underlying channels; agents never own live Link attachments).
+        use apxm_core::types::host::SpawnOffer;
         let channel_id = uuid::Uuid::new_v4().to_string();
-        let spawn_offer = SpawnOffer {
-            lease_id: uuid::Uuid::new_v4().to_string(),
+        let lease_id = uuid::Uuid::new_v4().to_string();
+        let nonce = uuid::Uuid::new_v4().to_string();
+        let offer = SpawnOffer {
+            lease_id: lease_id.clone(),
             channel_id: channel_id.clone(),
-            accept_by_ms: 0,
+            accept_by_ms: 30_000,
             signed_spawn_envelope: String::new(),
-            profile: _profile_name.to_string(),
+            profile: agent_name.to_string(),
             mode: _mode.map(str::to_string),
             model: _model.map(str::to_string),
-            workdir_ref: _cwd.to_str().map(str::to_string),
-            attestation_nonce: uuid::Uuid::new_v4().to_string(),
+            workdir_ref: None,
+            attestation_nonce: nonce,
             extra_env: _extra_env.clone(),
         };
-
-        let channel_handle = self
-            .gateway
-            .open_agent_channel(host_id, spawn_offer)
+        let channel_handle = self.gateway.open_agent_channel(host_id, offer)
             .await
             .map_err(|e| RuntimeError::Operation {
                 op_type: AISOperationType::SpawnAgent,
-                message: format!("failed to open agent channel on host '{host_id}': {e}"),
+                message: format!("open_agent_channel failed: {e}"),
             })?;
-
-        let (tx, rx) = self
-            .registry
-            .take(host_id)
+        let (tx, rx) = self.gateway.take_relay_channel(&channel_handle.channel_id)
             .await
             .ok_or_else(|| RuntimeError::Operation {
                 op_type: AISOperationType::SpawnAgent,
-                message: format!("host '{host_id}' is not currently link-connected"),
+                message: format!("channel '{}' not available after open", channel_handle.channel_id),
             })?;
 
         debug!(host_id, agent_name, "spawning relay ACP session on T2 host");
