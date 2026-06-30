@@ -82,7 +82,17 @@ pub(crate) async fn run_server_with_config(server_config: ServerConfig) -> anyho
     //      `/v1/capability-templates` so the studio install-gate sees its
     //      blocks as AVAILABLE without any per-provider Rust.
     let pack_scan_roots = integration_capability_roots();
-    crate::capability::rescan_pack_tools(&runtime, &pack_scan_roots, Arc::new(NoOpHostDispatchGateway));
+    let host_dispatch: Arc<dyn apxm_runtime::host_dispatch::HostDispatchGateway> =
+        match std::env::var("APXM_OS_URL").ok().filter(|s| !s.is_empty()) {
+            Some(url) => {
+                info!(%url, "using OsGatewayClient for host dispatch");
+                Arc::new(crate::os_gateway::OsGatewayClient::new(url))
+            }
+            None => {
+                Arc::new(NoOpHostDispatchGateway)
+            }
+        };
+    crate::capability::rescan_pack_tools(&runtime, &pack_scan_roots, host_dispatch.clone());
     crate::capability_discovery::register(&runtime);
     crate::search_skills::register(&runtime, skill_library.clone());
     let mut runtime_arc = Arc::new(runtime);
@@ -141,7 +151,7 @@ pub(crate) async fn run_server_with_config(server_config: ServerConfig) -> anyho
 
     let state = AppState {
         runtime,
-        host_dispatch: Arc::new(NoOpHostDispatchGateway),
+        host_dispatch,
         consent_broker: Arc::new(NoOpConsentBroker),
         host_consent_broker: Arc::new(crate::consent_broker::ConsentBroker::new()),
         agent_registry: Arc::new(DashMap::new()),

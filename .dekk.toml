@@ -1,7 +1,7 @@
-# APXM — dekk apxm install
+# APXM — dekk agents install
 
 [project]
-name = "apxm"
+name = "agents"
 description = "MLIR compiler and runtime for agent graphs"
 
 [environment]

@@ -8,7 +8,6 @@
 //! All host I/O crosses this interface.
 //!
 //! Named HostDispatchGateway per naming-and-infrastructure-plan.md §14.
-//! Legacy name: LinkRegistry (no longer used in agents code).
 
 pub use apxm_core::types::host::{
     AgentChannelHandle, HostDispatchError, HostDispatchGateway, HostProxyRequest, HostProxyResult,
