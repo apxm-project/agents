@@ -7,7 +7,7 @@
 //! Agents NEVER hold live Link sockets or access host attach state directly.
 //! All host I/O crosses this interface.
 //!
-//! Named HostDispatchGateway per naming-and-infrastructure-plan.md §14.
+//! Named HostDispatchGateway because host I/O crosses a single agents-facing gateway.
 
 pub use apxm_core::types::host::{
     AgentChannelHandle, HostDispatchError, HostDispatchGateway, HostProxyRequest, HostProxyResult,

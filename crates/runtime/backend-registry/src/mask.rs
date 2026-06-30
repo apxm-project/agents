@@ -2,7 +2,7 @@
 ///
 /// Registry entries should store `env:VAR` references, not raw keys. Show
 /// references verbatim because they are operator-facing identifiers; mask any
-/// legacy literal defensively.
+/// literal keys defensively.
 pub fn mask_key(reference: &str) -> String {
     if reference.starts_with("env:") {
         return reference.to_string();

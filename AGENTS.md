@@ -244,7 +244,7 @@ Each capability composes a **tool_binding** (callable implementation) plus a
 **permission policy** (authority). Runtime authority flows through typed
 **capability grants** (`grant_*` ids), not bare handler strings.
 
-Canonical terms, forbidden aliases, route naming, and schema versions live in
+Canonical terms, reserved aliases, route naming, and schema versions live in
 the coordinator glossary:
 
 - `../../docs/context/capability-vocabulary.md` — SSOT for APXM-owned capability
@@ -261,7 +261,7 @@ routes, read that doc first and keep code, schemas, and UI copy aligned.
 disk:
 
 - **Build outputs**: `/tmp/apxm-target-$USER` (456 GiB local). `/home`
-  contention has caused random ENOSPC and stale-rustc-cache SIGBUS in
+  contention has caused random ENOSPC and invalid-rustc-cache SIGBUS in
   the past.
 - **HF cache + vLLM images + service registry**: under
   `~/.cache/huggingface-apxm-vllm/hub/` and `.apxm/vllm-images/`; these

@@ -7,27 +7,31 @@
 
 use serde::{Deserialize, Serialize};
 
+use crate::types::principal::HostPrincipal;
+
 // ── Tier ─────────────────────────────────────────────────────────────────────
 
 /// Where the agent process executes. Selected deterministically by
 /// [`select_tier`]; never self-asserted as authoritative.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
-#[serde(rename_all = "kebab-case")]
 pub enum HostTier {
     /// No Link; public webhook in, `/proxy` out. Agent runs APXM-side.
+    #[serde(rename = "DIRECT")]
     Direct,
     /// Host-dialed Link. Host contributes tools/events. Agent runs APXM-side.
+    #[serde(rename = "LINK-TOOLS")]
     LinkTools,
     /// Host-dialed Link. Host also forks an ACP child locally.
+    #[serde(rename = "LINK-RUNTIME")]
     LinkRuntime,
 }
 
 impl std::fmt::Display for HostTier {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            HostTier::Direct => f.write_str("direct"),
-            HostTier::LinkTools => f.write_str("link-tools"),
-            HostTier::LinkRuntime => f.write_str("link-runtime"),
+            HostTier::Direct => f.write_str("DIRECT"),
+            HostTier::LinkTools => f.write_str("LINK-TOOLS"),
+            HostTier::LinkRuntime => f.write_str("LINK-RUNTIME"),
         }
     }
 }
@@ -248,59 +252,15 @@ fn is_local_exec_op(kind: Option<OpKind>) -> bool {
 /// `HostAdapterCard` by the host-sdk manifest renderer.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct HostExecutionManifest {
+    pub execution_id: String,
     pub host_id: String,
     pub tier: HostTier,
-    pub custody_mode: HostCustody,
-    pub transports: Vec<TransportRef>,
-    pub capabilities: Vec<HostCapabilityDecl>,
-    pub triggers: Vec<HostTriggerDecl>,
-    pub runtime: Option<RuntimeConfig>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct TransportRef {
-    pub transport_ref: String,
-    pub mode: String,
-    pub host_id: Option<String>,
-    pub direct_ingress: Option<String>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct HostCapabilityDecl {
-    pub capability_id: String,
-    pub host_id: String,
-    pub transport_ref: String,
-    pub host_op: String,
-    pub tool_binding: String,
-    pub read_only: bool,
-    pub idempotency: HostIdempotency,
-    pub timeout_ms: u64,
-    pub min_confinement: Option<ConfinementProfile>,
-    pub token_scope_refs: Vec<String>,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "kebab-case")]
-pub enum HostIdempotency {
-    None,
-    Optional,
-    Required,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct HostTriggerDecl {
-    pub trigger_id: String,
-    pub transport_ref: String,
-    pub event_type: String,
-    pub qos: HostQos,
-    pub idempotency_source: Option<String>,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "kebab-case")]
-pub enum HostQos {
-    Safety,
-    Bulk,
+    pub capabilities: Vec<String>,
+    pub principal: HostPrincipal,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub created_at: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub expires_at: Option<String>,
 }
 
 // ── HostDispatchGateway ───────────────────────────────────────────────────────

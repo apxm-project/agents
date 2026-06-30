@@ -78,12 +78,8 @@ async fn enforce_write_boundary(
         .map(String::as_str);
     if capability_grant_admits_write(capability_grants, name) {
         if ctx.host_id.is_some() {
-            use apxm_core::types::consent::{ConsentDecision, PermissionPrompt};
-            let expires_at = std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .unwrap_or_default()
-                .as_secs() as i64
-                + 30;
+            use apxm_core::types::consent::{ConsentDecision, PermissionPrompt, PromptMode, RiskLevel};
+            let expires_at = (chrono::Utc::now() + chrono::Duration::seconds(30)).to_rfc3339();
             let prompt = PermissionPrompt {
                 prompt_id: uuid::Uuid::new_v4().to_string(),
                 call_id: uuid::Uuid::new_v4().to_string(),
@@ -92,11 +88,11 @@ async fn enforce_write_boundary(
                 tool_binding: name.to_string(),
                 host_id: ctx.host_id.clone().unwrap_or_default(),
                 operation: "invoke".to_string(),
-                mode: "confirm".to_string(),
+                mode: PromptMode::Confirm,
                 subject: None,
                 args_digest: format!("args-len:{}", args.len()),
                 args_preview: serde_json::json!({ "arg_count": args.len() }),
-                risk_level: "high".to_string(),
+                risk_level: RiskLevel::High,
                 expires_at,
                 channel_id: None,
                 description: Some(format!("Host capability '{}' requires consent", name)),

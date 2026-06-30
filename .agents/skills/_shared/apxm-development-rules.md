@@ -18,7 +18,7 @@ when writing tests load `_shared/apxm-test-rules.md`.
 
 - `CARGO_TARGET_DIR=/tmp/apxm-target-$USER`. `/home` is shared WekaFS
   (50+ tenants); building there contends with other users and randomly
-  fails (ENOSPC, stale-rustc-cache SIGBUS).
+  fails (ENOSPC, invalid-rustc-cache SIGBUS).
 - `MLIR_DIR` / `LLVM_DIR` point at the dekk-managed MLIR/LLVM 22 conda
   env (path `{project}/.dekk/env`).
 - `LLM_GATEWAY_KEY` comes from the shell `env:LLM_GATEWAY_KEY`; never
