@@ -7,6 +7,7 @@ use apxm_core::paths::ApxmPaths;
 use apxm_driver::{ServerConfig, ServerExecutionsConfig};
 use apxm_rollout::{IndexDb, RolloutPaths};
 use apxm_runtime::{Runtime, RuntimeConfig, SchedulerConfig};
+use apxm_server_api::{AgentRuntimeApi, RuntimeApiAdapter};
 use dashmap::DashMap;
 use tokio::sync::Mutex;
 use tracing::{info, warn};
@@ -82,9 +83,9 @@ pub(crate) async fn run_server_with_config(server_config: ServerConfig) -> anyho
     crate::capability::rescan_pack_tools(&runtime, &pack_scan_roots);
     crate::capability_discovery::register(&runtime);
     crate::search_skills::register(&runtime, skill_library.clone());
-    let mut runtime = Arc::new(runtime);
+    let mut runtime_arc = Arc::new(runtime);
     let (skill_resolver, workflow_spawner) = {
-        let runtime_mut = Arc::get_mut(&mut runtime).ok_or_else(|| {
+        let runtime_mut = Arc::get_mut(&mut runtime_arc).ok_or_else(|| {
             anyhow::anyhow!("failed to install runtime bridges after runtime was shared")
         })?;
         let skill_resolver =
@@ -93,8 +94,11 @@ pub(crate) async fn run_server_with_config(server_config: ServerConfig) -> anyho
             apxm_driver::runtime::install_workflow_spawner_unattached(runtime_mut, None);
         (skill_resolver, workflow_spawner)
     };
-    skill_resolver.attach_runtime(&runtime);
-    workflow_spawner.attach_runtime(&runtime);
+    skill_resolver.attach_runtime(&runtime_arc);
+    workflow_spawner.attach_runtime(&runtime_arc);
+
+    // Wrap Runtime in the trait adapter so AppState is decoupled from Arc<Runtime>.
+    let runtime: Arc<dyn AgentRuntimeApi> = Arc::new(RuntimeApiAdapter(runtime_arc));
 
     // Optional outbound lifecycle webhook if configured.
     let webhook_dispatcher = WebhookDispatcher::from_config(&server_config.webhook);

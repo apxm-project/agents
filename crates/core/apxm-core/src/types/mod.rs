@@ -8,6 +8,7 @@
 pub mod aam;
 pub mod capability;
 pub mod goal;
+pub mod host;
 pub mod identifiers;
 pub mod operations;
 pub mod values;

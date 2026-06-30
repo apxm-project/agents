@@ -3,9 +3,7 @@ use std::sync::Arc;
 
 use apxm_core::error::RuntimeError;
 use apxm_core::types::values::Value;
-use apxm_runtime::capability::builtins::guard_url_ssrf;
-use apxm_runtime::capability::executor::{CapabilityExecutor, CapabilityResult};
-use apxm_runtime::capability::metadata::CapabilityMetadata;
+use apxm_server_api::{CapabilityExecutor, CapabilityMetadata, CapabilityResult, Runtime, RuntimeConfig, guard_url_ssrf};
 use async_trait::async_trait;
 use axum::Json;
 use axum::extract::{Path, State};
@@ -111,6 +109,40 @@ impl CapabilityExecutor for StaticCapability {
     }
 }
 
+/// Capability that routes invocations to a host via the HostDispatchGateway.
+/// The gateway is injected at runtime; this struct carries the routing metadata.
+/// The real implementation lives in apxm-runtime; until the gateway is wired,
+/// invocation fails closed with a descriptive error.
+#[derive(Clone)]
+pub(crate) struct HostPluginCapability {
+    pub(crate) metadata: CapabilityMetadata,
+    pub(crate) host_id: String,
+    pub(crate) host_op: String,
+    #[allow(dead_code)]
+    pub(crate) tool_binding: String,
+    #[allow(dead_code)]
+    pub(crate) timeout_ms: u64,
+    #[allow(dead_code)]
+    pub(crate) read_only: bool,
+}
+
+#[async_trait]
+impl CapabilityExecutor for HostPluginCapability {
+    async fn execute(&self, _args: HashMap<String, Value>) -> CapabilityResult<Value> {
+        Err(RuntimeError::Capability {
+            capability: self.metadata.name.clone(),
+            message: format!(
+                "host dispatch gateway not configured for host_id={} host_op={}",
+                self.host_id, self.host_op
+            ),
+        })
+    }
+
+    fn metadata(&self) -> &CapabilityMetadata {
+        &self.metadata
+    }
+}
+
 /// One `[[tool]]` entry in a pack-root `tools.toml` — the declarative block
 /// spec the install-gated catalog renders and the kernel registers.
 #[derive(Debug, Deserialize)]
@@ -150,6 +182,21 @@ struct PackToolDecl {
     /// MCP tool name for kind=mcp (defaults to the capability id).
     #[serde(default)]
     mcp_tool: Option<String>,
+    /// Enrolled host id for kind=host: routes invocations through the
+    /// HostDispatchGateway to a specific Link-attached host.
+    #[serde(default)]
+    host_id: Option<String>,
+    /// Host operation name for kind=host (defaults to the capability id).
+    #[serde(default)]
+    host_op: Option<String>,
+    /// Tool binding for kind=host (defaults to the capability id).
+    #[serde(default)]
+    tool_binding: Option<String>,
+    /// Minimum confinement profile ref for kind=host. Metadata-only for now:
+    /// decoded for forward-compat, not yet threaded into dispatch.
+    #[serde(default)]
+    #[allow(dead_code)]
+    min_confinement: Option<String>,
     /// Optional declared tool version (typeVersion). Metadata-only for now:
     /// decoded for forward-compat (catalog/frontend), not yet threaded into
     /// dispatch — so it is intentionally unread on this path.
@@ -274,6 +321,19 @@ fn capability_from_tool(t: &PackToolDecl) -> Option<Arc<dyn CapabilityExecutor>>
                 ),
             ) as Arc<dyn CapabilityExecutor>
         }),
+        "host" => {
+            let host_id = t.host_id.clone()?;
+            let host_op = t.host_op.clone().unwrap_or_else(|| t.capability.clone());
+            let tool_binding = t.tool_binding.clone().unwrap_or_else(|| t.capability.clone());
+            Some(Arc::new(HostPluginCapability {
+                metadata,
+                host_id,
+                host_op,
+                tool_binding,
+                timeout_ms: 30_000,
+                read_only: t.read_only,
+            }) as Arc<dyn CapabilityExecutor>)
+        }
         other => {
             info!(capability = %t.capability, kind = %other, "skipping tools.toml entry (kind not registerable yet)");
             None
@@ -300,6 +360,18 @@ struct IntegrationCapabilityDecl {
     url: Option<String>,
     #[serde(default)]
     schema: JsonValue,
+    #[serde(default)]
+    server_url: Option<String>,
+    #[serde(default)]
+    mcp_tool: Option<String>,
+    #[serde(default)]
+    host_id: Option<String>,
+    #[serde(default)]
+    host_op: Option<String>,
+    #[serde(default)]
+    tool_binding: Option<String>,
+    #[serde(default)]
+    min_confinement: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -320,8 +392,12 @@ fn pack_tool_from_integration_capability(cap: &IntegrationCapabilityDecl) -> Pac
         read_only: cap.read_only,
         requires_auth: cap.requires_auth,
         schema: cap.schema.clone(),
-        server_url: None,
-        mcp_tool: None,
+        server_url: cap.server_url.clone(),
+        mcp_tool: cap.mcp_tool.clone(),
+        host_id: cap.host_id.clone(),
+        host_op: cap.host_op.clone(),
+        tool_binding: cap.tool_binding.clone(),
+        min_confinement: cap.min_confinement.clone(),
         version: None,
     }
 }
@@ -375,7 +451,7 @@ fn pack_tools_in_dir(pack_dir: &std::path::Path) -> Vec<Arc<dyn CapabilityExecut
 /// and via `POST /v1/capability-templates/reindex` so freshly dropped packs show up
 /// without a server restart.
 pub(crate) fn rescan_pack_tools(
-    runtime: &apxm_runtime::Runtime,
+    runtime: &Runtime,
     roots: &[std::path::PathBuf],
 ) -> u32 {
     let before = runtime.capability_system().list_capabilities().len();
@@ -390,7 +466,7 @@ pub(crate) fn rescan_pack_tools(
 /// registers by its tool binding behind the declared backing kind
 /// (default `provider` → provider.call, REST via apxm-auth /proxy). This is the
 /// keystone that makes capabilities declarative the way skills already are.
-pub(crate) fn register_pack_tools(runtime: &apxm_runtime::Runtime, roots: &[std::path::PathBuf]) {
+pub(crate) fn register_pack_tools(runtime: &Runtime, roots: &[std::path::PathBuf]) {
     let sys = runtime.capability_system();
     let mut total_registered = 0u32;
     for root in roots {
@@ -472,7 +548,8 @@ pub(crate) async fn reindex_capability_templates(
     State(state): State<AppState>,
 ) -> Result<Json<ReindexCapabilityTemplatesResponse>, ApiError> {
     let roots = crate::startup::integration_capability_roots();
-    let registered = rescan_pack_tools(&state.runtime, &roots);
+    let rt = state.runtime();
+    let registered = rescan_pack_tools(&rt, &roots);
     let total = state.runtime.capability_system().list_capabilities().len();
     Ok(Json(ReindexCapabilityTemplatesResponse {
         registered,
@@ -658,7 +735,7 @@ mod tests {
     /// Integration folders register capabilities from `capabilities.toml` only.
     #[tokio::test]
     async fn integration_capabilities_toml_registers_capabilities() {
-        use apxm_runtime::{Runtime, RuntimeConfig};
+        use apxm_server_api::{Runtime, RuntimeConfig};
 
         let root = tempfile::tempdir().expect("integrations root");
         let integration_dir = root.path().join("slack");
@@ -710,7 +787,7 @@ mod tests {
     /// Legacy `tools.toml` packs without `integration.toml` must not register.
     #[tokio::test]
     async fn legacy_tools_toml_without_integration_is_ignored() {
-        use apxm_runtime::{Runtime, RuntimeConfig};
+        use apxm_server_api::{Runtime, RuntimeConfig};
 
         let root = tempfile::tempdir().expect("libs root");
         let pack_dir = root.path().join("legacy-pack");
@@ -741,7 +818,7 @@ mod tests {
 
     #[tokio::test]
     async fn integration_capabilities_toml_registers_read_only_flag() {
-        use apxm_runtime::{Runtime, RuntimeConfig};
+        use apxm_server_api::{Runtime, RuntimeConfig};
 
         let root = tempfile::tempdir().expect("integrations root");
         let integration_dir = root.path().join("weather");
@@ -791,18 +868,18 @@ mod tests {
     }
 
     use crate::state::AppState;
-    use apxm_runtime::{Runtime, RuntimeConfig};
+    use apxm_server_api::{AgentRuntimeApi, Runtime, RuntimeApiAdapter, RuntimeConfig};
     use dashmap::DashMap;
 
     /// Minimal in-memory `AppState` for invoking the capability handler directly
     /// (no TCP port). Mirrors the field set assembled at startup with volatile
     /// in-memory stores so parallel tests do not contend on SQLite files.
     async fn test_state() -> AppState {
-        let runtime = Arc::new(
+        let runtime: Arc<dyn AgentRuntimeApi> = Arc::new(RuntimeApiAdapter(Arc::new(
             Runtime::new(RuntimeConfig::in_memory())
                 .await
                 .expect("in-memory runtime"),
-        );
+        )));
         let server_config = apxm_driver::ServerConfig::default();
         let hardening = crate::state::HardeningDefaults::for_config(&server_config);
         AppState {

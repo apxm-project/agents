@@ -1,0 +1,15 @@
+[package]
+name = "apxm-server-api"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+apxm-core = { path = "../../core/apxm-core" }
+apxm-ais = { path = "../../core/apxm-ais" }
+apxm-runtime = { path = "../../runtime/apxm-runtime" }
+apxm-compiler = { path = "../../compiler/apxm-compiler" }
+apxm-backends = { path = "../../runtime/apxm-backends" }
+async-trait = "0.1"
+tokio = { workspace = true, features = ["full"] }
+serde = { workspace = true }
+serde_json = { workspace = true }

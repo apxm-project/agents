@@ -22,7 +22,7 @@ use std::sync::{Arc, OnceLock, Weak};
 use apxm_artifact::Artifact;
 use apxm_core::error::RuntimeError;
 use apxm_core::types::values::Value;
-use apxm_runtime::{
+use apxm_server_api::{
     CallSkillRequest, CallSkillResult, Runtime, SkillResolver, metadata_keys as metadata,
 };
 use apxm_skill::{CapabilityPolicy, SkillManifest};
@@ -357,7 +357,7 @@ fn derive_child_session_id(request: &CallSkillRequest) -> String {
 /// [`CallSkillResult`] shape: namespace outputs by stringified child
 /// node id and pick the entry/exit token's value as the return value.
 fn project_child_result(
-    child: &apxm_runtime::RuntimeExecutionResult,
+    child: &apxm_server_api::RuntimeExecutionResult,
 ) -> (HashMap<String, Value>, Value) {
     let child_outputs = child
         .all_outputs

@@ -17,7 +17,7 @@ use apxm_core::types::{
     GateStatus, GateVerdict, GoalDecision, OrchestrationWakeOutcome,
     WORKFLOW_TARGET_KIND_WORKFLOW_PATH, decide_goal,
 };
-use apxm_runtime::EmitterAdapter;
+use apxm_server_api::EmitterAdapter;
 use axum::Json;
 use serde::{Deserialize, Serialize};
 use serde_json::{Map as JsonMap, Value as JsonValue};
@@ -499,7 +499,7 @@ async fn run_prepared_workflow(
     );
 
     let cancellation_token = apxm_runtime::CancellationToken::new();
-    let runtime = Arc::clone(&state.runtime);
+    let runtime = state.runtime();
     let orchestration_enabled = prepared.orchestration.is_some();
     // Goal-pass coordinates (iteration, max_iterations) drive the convergence
     // decision once the pass settles. Captured before the artifact moves into
