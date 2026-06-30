@@ -32,7 +32,7 @@ hints. Not an "agent framework", not an "LLM orchestrator".
   for the 15-minute walkthrough.
 - [`docs/vllm-fork.md`](docs/vllm-fork.md) — the
   fork integration contract.
-- `apxm-project/apxm-eval` — preregistrations, evaluation harness, claim
+- `apxm-project/eval` — preregistrations, evaluation harness, claim
   cards, paper drafts, and paper-bound evidence.
 
 ## Phase status
@@ -47,5 +47,5 @@ started; capability negotiation is cosmetic.
 Run the 6 lifecycle skills in order — see [`AGENTS.md`](AGENTS.md)
 §3:
 
-`apxm-context → apxm-plan → apxm-execute-plan → apxm-simplify →
-apxm-finish → apxm-commit`
+`context → plan → execute-plan → simplify →
+finish → commit`

@@ -5,11 +5,11 @@
 `max_iterations` is reached. Tools (web + skills) run inside each act step.
 
 Run (requires a running apxm-server):
-    dekk apxm execute examples/python/conversational/autonomous_agent.py --emit-air > agent.air
+    dekk agents execute examples/python/conversational/autonomous_agent.py --emit-air > agent.air
     apxm run agent.air --server http://127.0.0.1:18800
 
 Validate without a server:
-    PYTHONPATH=crates/compiler/apxm-frontend/python \\
+    PYTHONPATH=crates/compiler/frontend/python \\
         python3 examples/python/conversational/autonomous_agent.py --validate
 """
 

@@ -2,7 +2,7 @@
 
 This note documents the source-level contract between APXM and the APXM
 graph-aware vLLM fork. In the APXM coordinator workspace, the source lives at
-`workspace/backends/vllm`; standalone APXM checkouts can set `APXM_VLLM_DIR`.
+`workspace/vllm`; standalone APXM checkouts can set `APXM_VLLM_DIR`.
 Claim-bearing evaluation may also run an equivalent container image built from that fork. Operator setup lives in
 [`backends/vllm.md`](backends/vllm.md); do not duplicate bring-up steps here.
 
@@ -19,17 +19,17 @@ This page covers only the contract that any equivalent build must satisfy.
 For containerized operation, the requirement is contract equivalence: the image
 must expose the same HTTP routes and request-hint behavior as the source fork,
 and APXM should register it through the Dekk service wrapper or, for an
-already-owned allocation, `dekk apxm vllm probe --endpoint ...` and
-`dekk apxm vllm enable --endpoint ...`.
+already-owned allocation, `dekk agents vllm probe --endpoint ...` and
+`dekk agents vllm enable --endpoint ...`.
 
 ## Fork Source
 
-- Workspace path: `workspace/backends/vllm`
+- Workspace path: `workspace/vllm`
 - Override: `APXM_VLLM_DIR`
 - Expected fork branch: `main`; commit and router verification are the source of
   truth for evaluation evidence.
 - Operator runbook: `docs/backends/vllm.md`
-- Rust backend: `crates/runtime/apxm-backends/src/llm/backends/vllm/backend.rs`
+- Rust backend: `crates/runtime/backends/src/llm/backends/vllm/backend.rs`
 
 If APXM needs graph-aware vLLM behavior, it must talk to a server launched from
 this fork or an equivalent build that exposes the same contract. A stock vLLM
@@ -52,7 +52,7 @@ The fork should also expose the scheduler-capability endpoint:
 The scheduler endpoint returns the live vLLM scheduling policy. APXM treats the
 graph endpoints and scheduler endpoint as required for the graph-aware `vllm`
 backend. A response with `policy != "priority"` means APXM critical-path
-priority hints can round-trip without reordering admission, so `dekk apxm vllm
+priority hints can round-trip without reordering admission, so `dekk agents vllm
 probe` and `enable` reject it.
 
 Node inference still uses the OpenAI-compatible chat route:
@@ -101,9 +101,9 @@ Do not infer tokens or cost from wall-clock time.
 
 Do not treat a backend as graph-aware when any of these are true:
 
-- `dekk apxm vllm doctor` resolves imports outside the configured vLLM checkout.
-- `dekk apxm vllm probe` cannot reach the APXM graph endpoints.
-- `dekk apxm vllm enable <SERVED_MODEL_ID>` cannot find the served id in
+- `dekk agents vllm doctor` resolves imports outside the configured vLLM checkout.
+- `dekk agents vllm probe` cannot reach the APXM graph endpoints.
+- `dekk agents vllm enable <SERVED_MODEL_ID>` cannot find the served id in
   `/v1/models`.
 - The workload routes to a different backend or model than the one enabled.
 

@@ -2,7 +2,7 @@
 
 How the APXM compiler turns an authored agent graph into a runnable, deterministic
 artifact. This document is conceptual — the live ordering and per-target tuning is in
-`crates/compiler/apxm-compiler/src/passes/pipeline.rs::build_pass_list()`.
+`crates/compiler/pipeline/src/passes/pipeline.rs::build_pass_list()`.
 
 ## What the Compiler Does
 
@@ -75,7 +75,7 @@ where the diagnostic pass runs when requested.
 
 ## The Passes
 
-### MLIR passes (current transforms in `crates/compiler/apxm-compiler/mlir/lib/Dialect/AIS/Transforms/`)
+### MLIR passes (current transforms in `crates/compiler/pipeline/mlir/lib/Dialect/AIS/Transforms/`)
 
 | Pass                          | Purpose                                                                        |
 |-------------------------------|--------------------------------------------------------------------------------|
@@ -96,7 +96,7 @@ where the diagnostic pass runs when requested.
 (`Passes.cpp` exists alongside these but only registers them — it is not itself a
 pass.)
 
-### Rust-side passes (in `crates/compiler/apxm-compiler/src/passes/*.rs`)
+### Rust-side passes (in `crates/compiler/pipeline/src/passes/*.rs`)
 
 | Pass                       | Purpose                                                                              |
 |----------------------------|--------------------------------------------------------------------------------------|
@@ -173,7 +173,7 @@ for controlled experiments, but they are not part of O1/O2/O3 defaults:
 ## Where to Read More
 
 - AIS surface: [`pxm/ais.md`](../pxm/ais.md), the operation set the passes are
-  rewriting. For the live op list, run `dekk apxm ops list`.
-- Live source: `crates/compiler/apxm-compiler/src/passes/pipeline.rs` is the
+  rewriting. For the live op list, run `dekk agents ops list`.
+- Live source: `crates/compiler/pipeline/src/passes/pipeline.rs` is the
   ground truth for ordering. The pass implementations live in the per-pass files
   next to it (Rust) and under `mlir/lib/Dialect/AIS/Transforms/` (C++).

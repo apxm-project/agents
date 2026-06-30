@@ -4,7 +4,7 @@
 Claude and Codex propose next ACP features in parallel, then each critiques the other.
 True diamond dataflow with cross-agent context passing.
 
-Usage: dekk apxm execute examples/python/patterns/cross_critique.py
+Usage: dekk agents execute examples/python/patterns/cross_critique.py
 """
 
 from apxm import DependencyType, GraphRecorder, agent_cwd, compile

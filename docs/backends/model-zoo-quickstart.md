@@ -33,7 +33,7 @@ one-shell overrides, but cluster use should not put model weights in
 ## 2. Verify host readiness
 
 ```bash
-dekk apxm vllm doctor
+dekk agents vllm doctor
 ```
 
 Must report `docker_daemon_ready=true`, `docker_buildx_ready=true`,
@@ -48,9 +48,9 @@ VLLM_DIR="${APXM_VLLM_DIR:-../../backends/vllm}"
 VLLM_SHA=$(git -C "$VLLM_DIR" rev-parse --short HEAD)
 IMAGE="apxm-vllm-runtime:${APXM_SHA}-${VLLM_SHA}-post-rebase"
 
-dekk apxm vllm docker-build --image "$IMAGE" \
+dekk agents vllm docker-build --image "$IMAGE" \
     --base-image rocm/vllm-dev:nightly_main_20260411
-dekk apxm vllm docker-save  --image "$IMAGE"
+dekk agents vllm docker-save  --image "$IMAGE"
 ```
 
 The save step writes the image to `.apxm/vllm-images/` so the per-node
@@ -108,7 +108,7 @@ Notes:
 ## 5. Cache-warm the models (CPU-only)
 
 ```bash
-dekk apxm vllm zoo-cache-warm
+dekk agents vllm zoo-cache-warm
 ```
 
 Walks the manifest's `model` fields and downloads each into the primary
@@ -121,7 +121,7 @@ Refuses to start if the cache filesystem has less free space than
 ## 6. Apply the manifest (submits Slurm jobs)
 
 ```bash
-dekk apxm vllm zoo-apply
+dekk agents vllm zoo-apply
 ```
 
 For each manifest entry without an existing recorded service, this
@@ -139,7 +139,7 @@ A `zoo-snapshot.json` is written to
 ## 7. Watch services come up
 
 ```bash
-dekk apxm vllm service-list
+dekk agents vllm service-list
 ```
 
 Prints one row per recorded service with name / port / Slurm state /
@@ -157,7 +157,7 @@ tail -f .apxm/vllm-logs/slurm-apxm-vllm-service-vllm-mini-*.out
 ## 8. Probe end-to-end
 
 ```bash
-dekk apxm vllm probe --port 8916
+dekk agents vllm probe --port 8916
 ```
 
 Round-trips `POST /v1/apxm/graphs/register`,
@@ -166,7 +166,7 @@ Round-trips `POST /v1/apxm/graphs/register`,
 here means the served vLLM is not the APXM fork.
 
 ```bash
-dekk apxm backend list
+dekk agents backend list
 ```
 
 Should show your service registered as an APXM backend.
@@ -189,7 +189,7 @@ Through an APXM workflow:
 export APXM_BENCHMARK_BACKEND=vllm-mini  # disambiguate when zoo has
                                           # multiple `benchmark`
                                           # backends
-dekk apxm execute path/to/your/graph.py -O 2 --json
+dekk agents execute path/to/your/graph.py -O 2 --json
 ```
 
 `APXM_BENCHMARK_BACKEND` (and `APXM_BENCHMARK_MODEL`) are the
@@ -202,10 +202,10 @@ them.
 
 ```bash
 # Scale a service to zero (the only auto-stop path; protects peers).
-dekk apxm vllm zoo-scale vllm-mini --replicas 0
+dekk agents vllm zoo-scale vllm-mini --replicas 0
 
 # Or remove ALL services not in the manifest (requires --prune).
-dekk apxm vllm zoo-apply --prune
+dekk agents vllm zoo-apply --prune
 ```
 
 `zoo-apply` never silently cancels jobs — removing a manifest entry
@@ -216,7 +216,7 @@ prints a peer-protection warning. Use `zoo-scale --replicas 0` or
 
 ## Common pitfalls
 
-- **HF cache path looks wrong** — run `dekk apxm vllm doctor` and
+- **HF cache path looks wrong** — run `dekk agents vllm doctor` and
   check `hf_cache`, `hf_cache_roots`, and `model_roots` plus their
   `[source]` tags. Override via `.apxm/config.toml`
   (`data.vllm.hf_cache`, `data.vllm.hf_cache_roots`,
@@ -238,7 +238,7 @@ prints a peer-protection warning. Use `zoo-scale --replicas 0` or
 - **Service Slurm state stays `R` but `/v1/models` returns nothing** —
   the container exited but the wrapper's `sleep infinity` keeps the
   job alive. Check `docker ps -a` on the node; restart with
-  `dekk apxm vllm zoo-apply` after clearing the state file.
+  `dekk agents vllm zoo-apply` after clearing the state file.
 
 ---
 
@@ -248,7 +248,7 @@ After step 9 succeeds, you have:
 - a Slurm-owned vLLM container serving on `<NODE>:<PORT>` with the
   APXM fork's `/v1/apxm/*` routes
 - an APXM backend entry routing to that endpoint
-- a graph that can execute against it via `dekk apxm execute`
+- a graph that can execute against it via `dekk agents execute`
 - a provenance snapshot at `.apxm/deploy/<TIMESTAMP>/` for any
   benchmark that follows
 

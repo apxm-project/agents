@@ -10,7 +10,7 @@ contract is committed to.
 ## [0.1.0] - 2026-06-10
 
 ### Added
-- `dekk apxm release check`, `release dist`, and `release publish` now provide
+- `dekk agents release check`, `release dist`, and `release publish` now provide
   a first-class release path: readiness checks, `.apxm/releases` archives,
   checksums, and explicit GitHub publishing through `gh`.
 
@@ -79,7 +79,7 @@ contract is committed to.
   migrated off raw string literals.
 
 ### Added — model zoo
-- `dekk apxm vllm zoo-apply | zoo-status | zoo-scale | zoo-cache-warm |
+- `dekk agents vllm zoo-apply | zoo-status | zoo-scale | zoo-cache-warm |
   zoo-logs` — the operator-facing CLI surface for the vLLM service fleet.
   Manifest-driven: `deploy/vllm/zoo.example.toml` (template) +
   `deploy/vllm/zoo.toml` (gitignored operator manifest).
@@ -111,8 +111,8 @@ contract is committed to.
 - Companion fetchers + vendored smoke samples for both.
 
 ### Added — Slurm-fork hardening
-- `crates/runtime/apxm-credentials/src/validate.rs` —
-  `dekk apxm backend test` now probes `/v1/apxm/scheduler` on the
+- `crates/runtime/credentials/src/validate.rs` —
+  `dekk agents backend test` now probes `/v1/apxm/scheduler` on the
   `vllm` protocol path; a backend that serves `/v1/models` but is
   missing the APXM-fork routes fails to validate with a clear "register
   under protocol=openai instead" message (not at first request).

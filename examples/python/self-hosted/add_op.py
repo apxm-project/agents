@@ -11,7 +11,7 @@ Graph structure:
 - spawn reviewer (claude) — reviews both implementations, runs tests
 
 Usage:
-    dekk apxm execute examples/python/self-hosted/add_op.py \
+    dekk agents execute examples/python/self-hosted/add_op.py \
       "SUMMARIZE" "Summarize input text"
 """
 
@@ -48,12 +48,12 @@ Description: {op_description}
 
 definitions.rs is the source of truth: the wire enum + C++ lowering cases
 are generated from it; AISOps.td is a hand-maintained mirror. Read:
-- crates/core/apxm-ais/src/operations/definitions.rs (AISOperationType enum,
+- crates/machine/ais/src/operations/definitions.rs (AISOperationType enum,
   WIRE_INDEXED_OPERATIONS table, the AIS_OPERATIONS OperationSpec list)
-- crates/core/apxm-ais/src/operations/attrs.rs (attribute-name constants)
-- crates/compiler/apxm-compiler/mlir/include/ais/Dialect/AIS/IR/AISOps.td (hand-written dialect)
-- crates/runtime/apxm-runtime/src/executor/handlers/spawn_agent.rs (example handler)
-- crates/runtime/apxm-runtime/src/executor/dispatcher.rs (op -> handler dispatch)
+- crates/machine/ais/src/operations/attrs.rs (attribute-name constants)
+- crates/compiler/pipeline/mlir/include/ais/Dialect/AIS/IR/AISOps.td (hand-written dialect)
+- crates/runtime/engine/src/executor/handlers/spawn_agent.rs (example handler)
+- crates/runtime/engine/src/executor/dispatcher.rs (op -> handler dispatch)
 
 Create a structured plan with:
 1. Wire index (next free index in WIRE_INDEXED_OPERATIONS; append-only, 30 reserved)
@@ -77,17 +77,17 @@ Plan:
 {architect_plan}
 
 You need to modify:
-1. crates/core/apxm-ais/src/operations/definitions.rs
+1. crates/machine/ais/src/operations/definitions.rs
    - Add the AISOperationType variant
    - Append (N, AISOperationType::<OpName>) to WIRE_INDEXED_OPERATIONS (append-only, 30 reserved)
    - Add the OperationSpec entry to AIS_OPERATIONS (category, field schema, example_json, emission)
    - The Display / FromStr / mlir_mnemonic / to_tablegen_name matches are
      exhaustive and will fail to compile until you add each arm — follow the compiler.
 
-2. crates/core/apxm-ais/src/operations/attrs.rs
+2. crates/machine/ais/src/operations/attrs.rs
    - Add each attribute name as a const and list it in ALL_ATTR_NAMES (no string literals).
 
-3. crates/compiler/apxm-compiler/mlir/include/ais/Dialect/AIS/IR/AISOps.td
+3. crates/compiler/pipeline/mlir/include/ais/Dialect/AIS/IR/AISOps.td
    - Hand-write the AIS_<OpName>Op def; its `arguments` mirror the spec fields
      by the SAME attr names (typed OptionalAttr<...>, not bare attr-dict).
    - Do NOT edit ArtifactEmitter.cpp: its lowering cases are generated from
@@ -106,16 +106,16 @@ Plan:
 {architect_plan}
 
 You need to:
-1. Create crates/runtime/apxm-runtime/src/executor/handlers/<op_name>.rs
+1. Create crates/runtime/engine/src/executor/handlers/<op_name>.rs
    - Implement the handler function following the pattern in spawn_agent.rs
    - Extract attributes from the node
    - Execute the operation logic
    - Return a ResultToken
 
 2. Wire up dispatch:
-   - Add `pub mod <op_name>;` to crates/runtime/apxm-runtime/src/executor/handlers/mod.rs
+   - Add `pub mod <op_name>;` to crates/runtime/engine/src/executor/handlers/mod.rs
    - Add a dispatch arm to the `match node.op_type` in
-     crates/runtime/apxm-runtime/src/executor/dispatcher.rs
+     crates/runtime/engine/src/executor/dispatcher.rs
 
 3. Add tests in the handler file
    - Basic success case
@@ -156,8 +156,8 @@ Check:
 5. Error handling is present
 
 Then run:
-  dekk apxm build
-  dekk apxm test
+  dekk agents build
+  dekk agents test
 
 Report:
 - What's correct

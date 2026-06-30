@@ -13,7 +13,7 @@ Graph structure:
 - think: final_plan — structured plan with file paths and test strategy
 
 Usage:
-    dekk apxm execute examples/python/self-hosted/plan_feature.py \
+    dekk agents execute examples/python/self-hosted/plan_feature.py \
       "Add streaming support to LLM backends"
 """
 

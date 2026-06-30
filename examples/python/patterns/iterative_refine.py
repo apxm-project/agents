@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """iterative_refine.py - 3 rounds of REFLECT -> ASK self-refinement
 
-Usage: dekk apxm execute examples/python/patterns/iterative_refine.py
+Usage: dekk agents execute examples/python/patterns/iterative_refine.py
 """
 
 from apxm import compile, GraphRecorder

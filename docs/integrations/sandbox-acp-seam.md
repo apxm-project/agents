@@ -39,7 +39,7 @@ existing capability path.
 - The integration test `test_gap_sandbox_not_called_by_inv_handler` was **stale**
   — it asserted the gap was open without invoking anything. Replaced with
   `test_registry_selected_backend_is_executed`
-  (`crates/runtime/apxm-runtime/tests/sandbox_integration.rs`), which exercises
+  (`crates/runtime/engine/tests/sandbox_integration.rs`), which exercises
   the select→execute sequence the capability path performs.
 
 ## What shipped

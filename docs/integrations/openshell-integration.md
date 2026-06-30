@@ -125,14 +125,14 @@ policy-schema, providers, inference-routing); `developer.nvidia.com/blog/run-aut
 
 Better-built than the OpenClaw-era notes implied:
 
-- **`SandboxBackend` trait + `SandboxRegistry`** (`apxm-runtime/src/sandbox/`):
+- **`SandboxBackend` trait + `SandboxRegistry`** (`crates/runtime/engine/src/sandbox/`):
   `capabilities / is_available / validate / create_session / execute(ExecRequest)
   → ExecResult / destroy_session`. `ExecRequest` already carries
   `read_paths`/`write_paths`/`needs_network`/`needs_process_spawn`/`env`/`timeout` —
   i.e. the inputs to an OpenShell policy.
 - **Two real backends, registered:** `ProcessSandboxBackend` (policy-only fallback)
   + `BubblewrapSandboxBackend` (Linux namespaces, <50 ms) via
-  `configure_sandbox_registry()` (`apxm-driver/.../sandbox.rs:155`); wired with
+  `configure_sandbox_registry()` (`crates/orchestration/driver/src/runtime/sandbox.rs:155`); wired with
   `runtime.set_sandbox_registry()`.
 - **`EXC` op routes through the registry** (`exc.rs:46`, hard-errors with no backend).
 - **apxm's policy is RICHER than OpenShell in places:** capability-granular write
@@ -144,7 +144,7 @@ Better-built than the OpenClaw-era notes implied:
 **The gaps OpenShell (or finishing bubblewrap) would close:**
 - `INV`/most capabilities (`read`/`write`/`http`) don't route through the sandbox —
   only `bash`/`EXC`/`UserTool` do; bash even has a dual direct-exec path.
-- **ACP coding-agent spawn is fully unsandboxed** (`apxm-acp/session.rs`:
+- **ACP coding-agent spawn is fully unsandboxed** (`crates/orchestration/acp/src/session.rs`:
   `tokio::process::Command::new(...).spawn()`); the reverse-handler gives the agent
   host read/write/bash; creds come from the spawner's ambient env.
 - apxm-os `Isolation::{Task,Subprocess}` + `Sandbox::{None,Bubblewrap,Docker,Wasm}`

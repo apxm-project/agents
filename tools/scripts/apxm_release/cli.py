@@ -1,4 +1,4 @@
-"""Argument parsing for `dekk apxm release`."""
+"""Argument parsing for `dekk agents release`."""
 
 from __future__ import annotations
 

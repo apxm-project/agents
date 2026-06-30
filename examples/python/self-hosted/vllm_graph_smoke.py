@@ -2,7 +2,7 @@
 """Small APXM smoke graph for a self-hosted vLLM fork backend.
 
 Usage:
-  dekk apxm execute examples/python/self-hosted/vllm_graph_smoke.py
+  dekk agents execute examples/python/self-hosted/vllm_graph_smoke.py
 
 Routing:
   Register one model under a vLLM backend with alias "smoke", or replace

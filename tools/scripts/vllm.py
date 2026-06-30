@@ -136,7 +136,7 @@ SCANCEL = ToolName.SCANCEL.value
 SINFO = ToolName.SINFO.value
 SQUEUE = ToolName.SQUEUE.value
 SRUN = ToolName.SRUN.value
-MANAGED_BY = "dekk apxm vllm"
+MANAGED_BY = "dekk agents vllm"
 APXM_ROUTER_FILE = VLLM_DIR / "vllm" / "entrypoints" / "openai" / "apxm" / "api_router.py"
 OPENAI_API_SERVER_FILE = VLLM_DIR / "vllm" / "entrypoints" / "openai" / "api_server.py"
 COMMANDS_WITHOUT_EXTRA_ARGS = {
@@ -977,7 +977,7 @@ def enable_cmd(args: argparse.Namespace) -> int:
         _print(
             f"Backend {args.backend_name} is already registered against "
             f"endpoint {existing_endpoint}. `enable` does not reconcile — "
-            f"either remove the backend (`dekk apxm backend remove "
+            f"either remove the backend (`dekk agents backend remove "
             f"{args.backend_name}`) and re-enable, or use `zoo apply` to "
             f"manage drift."
         )
@@ -1170,7 +1170,7 @@ def docker_load_cmd(args: argparse.Namespace) -> int:
         _print(f"APXM image archive not found: {archive}")
         _print(
             "Create it once from a builder node with: "
-            f"dekk apxm vllm docker-save --image {image}"
+            f"dekk agents vllm docker-save --image {image}"
         )
         return 1
 
@@ -1250,7 +1250,7 @@ def cache_warm_cmd(args: argparse.Namespace) -> int:
     if _docker_image_metadata(image) is None:
         _print(
             f"APXM-vLLM image not loaded: {image}\n"
-            f"Load it first with: dekk apxm vllm docker-load --image {image}"
+            f"Load it first with: dekk agents vllm docker-load --image {image}"
         )
         return 1
 
@@ -2217,7 +2217,7 @@ def docker_start_cmd(args: argparse.Namespace, extra_args: list[str]) -> int:
             time.sleep(2.0)
         _print(
             f"Timed out waiting for local_probe_endpoint={endpoint}. "
-            f"Run: dekk apxm vllm docker-logs --port {args.port}"
+            f"Run: dekk agents vllm docker-logs --port {args.port}"
         )
         return 1
     return 0
@@ -2393,7 +2393,7 @@ def _add_model_args(parser: argparse.ArgumentParser) -> None:
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
-        prog="dekk apxm vllm",
+        prog="dekk agents vllm",
         description=(
             "Operate APXM-vLLM through persistent Slurm services, with Docker "
             "image-store controls as allocation-local primitives."

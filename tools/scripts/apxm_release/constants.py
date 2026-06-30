@@ -6,12 +6,12 @@ from pathlib import Path
 
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
-PYTHON_PROJECT = REPO_ROOT / "crates" / "compiler" / "apxm-frontend" / "python"
+PYTHON_PROJECT = REPO_ROOT / "crates" / "compiler" / "frontend" / "python"
 RELEASE_ROOT = REPO_ROOT / ".apxm" / "releases"
 TARGET_RELEASE_DIR = REPO_ROOT / "target" / "release"
 CHECKSUM_FILE = "SHA256SUMS"
 INTERNAL_PREFIX = "apxm"
-RELEASE_BINARIES = ("apxm", "apxm-server", "apxm-mcp-server")
+RELEASE_BINARIES = ("apxm",)
 RELEASE_DOCS = (
     "README.md",
     "CHANGELOG.md",

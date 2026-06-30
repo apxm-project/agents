@@ -31,7 +31,7 @@ the `main` branch and the most recent tagged release receive security fixes.
 In-scope:
 
 - The Rust workspace under [`crates/`](crates/).
-- The Python frontend under [`crates/compiler/apxm-frontend/python/`](crates/compiler/apxm-frontend/python/).
+- The Python frontend under [`crates/compiler/frontend/python/`](crates/compiler/frontend/python/).
 - The `apxm-server` HTTP and MCP surfaces.
 - The `apxm-credentials` store.
 - Any sample skill or workflow under [`examples/`](examples/) where the

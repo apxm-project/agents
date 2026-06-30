@@ -3,7 +3,7 @@
 > **Implementation:** this vision is realized by the *agent-in-program*
 > feature — see `examples/python/conversational/controllable_agent.py`,
 > `examples/python/conversational/README.md`, and the conversational tests under
-> `crates/tools/apxm-cli/`. The acceptance fixture is
+> `crates/tools/cli/`. The acceptance fixture is
 > `examples/python/conversational/controllable_agent.py`: one
 > `ConversationalAgent(...)` program carrying the loop, turns, context/compaction,
 > `@hook` lifecycle control, skills, and sub-agents, with the host as a dumb pipe.
@@ -25,7 +25,7 @@ authoring ergonomics, middleware, and a working prototype). file:line throughout
 Today's `apxm chat` is the **worst of both worlds**:
 
 - the conversation **loop is in Rust** (host-resident REPL, `chat.rs:7-9,167` — self-describes as "the host-resident conversational loop; the runtime stays single-shot, one DAG = one turn"), **and**
-- the **turn body is a bare single `ais.ask`** (`apxm-ais/src/chat.rs:95`), with *all* the real agent logic — context injection, skill awareness, compaction — **also hardcoded in Rust host code** (`chat.rs:208-284`).
+- the **turn body is a bare single `ais.ask`** (`crates/machine/ais/src/chat.rs:95`), with *all* the real agent logic — context injection, skill awareness, compaction — **also hardcoded in Rust host code** (`chat.rs:208-284`).
 
 So nothing meaningful is in APXM. The vision is to **move the turn body and its
 cross-cutting concerns into APXM** (program + middleware + dynamic prompts). The
@@ -47,7 +47,7 @@ boundary is.
 | Concern | In APXM today? | Evidence |
 |---|---|---|
 | **Turn body as a program** (QMEM→ASK→UMEM→FENCE, tools, skill calls) | ✅ YES — validated | prototype `conversational_agent.py` compiles to valid AIR; `examples/python/conversational/chat_agent.py` is the high-water mark |
-| **Authoring it simply** | ✅ YES — ~5–15 lines | Python frontend `@compile` + `g.ask(...)` + `Agent(instructions=, tools=)`; template auto-wiring (`{var}` → data edge); `@tool` 1-liner (`apxm-frontend/python/apxm/{proxy,agent}.py`) |
+| **Authoring it simply** | ✅ YES — ~5–15 lines | Python frontend `@compile` + `g.ask(...)` + `Agent(instructions=, tools=)`; template auto-wiring (`{var}` → data edge); `@tool` 1-liner (`crates/compiler/frontend/python/apxm/{proxy,agent}.py`) |
 | **Static system prompt** | ✅ YES | `system_prompt=` attr, read at `llm/mod.rs:114` |
 | **Tools in the ASK** | ✅ YES (native tool-calling loop, max 10 iters) | `tool_dispatch.rs:381`; `tool_groups=["web"]` |
 | **Middleware around every node incl. ASK** | ✅ PRIMITIVE EXISTS (unused for this) | `OperationMiddleware` with `Next` continuation, pre/post/short-circuit, per-op `applies_to`, child-inherited (`executor/middleware.rs:49`) |

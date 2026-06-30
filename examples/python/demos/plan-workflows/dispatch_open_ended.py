@@ -23,7 +23,7 @@ Usage:
 
 Backend selection: the PLAN node honors `backend=` / `model=` /
 `route=` like any other op. This demo uses `APXM_BENCHMARK_BACKEND` to
-match the benchmark workloads' convention so the same `dekk apxm
+match the benchmark workloads' convention so the same `dekk agents
 backend add` setup works.
 
 Sandbox / preview: pass `--dry-run` to skip execution and print the
@@ -62,7 +62,7 @@ def _build_dispatch_graph(request: str):
     @compile(default_provider=VLLM, default_route=VLLM_ROUTE)
     def dispatch_graph(g: GraphRecorder):
         # The PLAN handler's runtime behaviour (see
-        # crates/runtime/apxm-runtime/src/executor/handlers/plan.rs):
+        # crates/runtime/engine/src/executor/handlers/plan.rs):
         # when the LLM response includes inner_plan.task_dag, the
         # handler validates -> links -> splices -> executes the inner workflow
         # automatically. No additional workflow nodes are needed here.

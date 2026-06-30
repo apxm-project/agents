@@ -1,9 +1,0 @@
-module {
-  func.func @refactor(%target: !ais.token {ais.param_name = "target", ais.param_type = "str"}, %goal: !ais.token {ais.param_name = "goal", ais.param_type = "str"}) -> !ais.token attributes {ais.entry} {
-    %analysis = ais.ask "Read {target}; produce current structure, proposed structure for {goal}, impact analysis, and ordered refactor plan." : !ais.token
-    %implementation = ais.ask "Implement the refactor from {analysis}. Keep behavior stable and report touched files." [%analysis : !ais.token] {input_names = ["analysis"]} : !ais.token
-    %verification = ais.ask "Run build, tests, and formatting checks for {implementation}. Fix breakage if localized." [%implementation : !ais.token] {input_names = ["implementation"]} : !ais.token
-    %summary = ais.think "Summarize {analysis}, {implementation}, and {verification}: files changed, behavior risk, verification result, and remaining work." [%analysis, %implementation, %verification : !ais.token, !ais.token, !ais.token] {input_names = ["analysis", "implementation", "verification"]} : !ais.token
-    func.return %summary : !ais.token
-  }
-}

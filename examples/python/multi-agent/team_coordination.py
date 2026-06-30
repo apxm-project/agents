@@ -4,7 +4,7 @@
 Demonstrates g.team(), team.add(), handle.ask(), team.wait_all(),
 and team.merge() for coordinating multiple agents.
 
-Usage: dekk apxm execute examples/python/multi-agent/team_coordination.py
+Usage: dekk agents execute examples/python/multi-agent/team_coordination.py
 """
 
 from apxm import DependencyType, GraphRecorder, agent_cwd, compile

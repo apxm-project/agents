@@ -42,6 +42,6 @@ pretending that every workflow must contain a recursive scheduler loop.
 The theory documented here is realized in the compiler and runtime. For
 implementation details, see the crate READMEs:
 
-- [apxm-compiler](../../crates/compiler/apxm-compiler/README.md): MLIR pipeline, [optimization pipeline](../compiler/pipeline.md), artifact format
-- [apxm-runtime](../../crates/runtime/apxm-runtime/README.md): dataflow scheduler, memory hierarchy, concrete multi-agent primitives
-- [apxm-ais](../../crates/core/apxm-ais/README.md): 43 AIS operations, attributes, types
+- [apxm-compiler](../../crates/compiler/pipeline/README.md): MLIR pipeline, [optimization pipeline](../compiler/pipeline.md), artifact format
+- [apxm-runtime](../../crates/runtime/engine/README.md): dataflow scheduler, memory hierarchy, concrete multi-agent primitives
+- [apxm-ais](../../crates/machine/ais/README.md): 43 AIS operations, attributes, types

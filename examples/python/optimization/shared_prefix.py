@@ -5,7 +5,7 @@ A shared system prompt is prepended to 3 parallel specialized queries.
 The compiler can emit shared-prefix hints for graph-aware backends. Backend
 cache behavior must be verified from emitted metrics.
 
-Usage: dekk apxm execute examples/python/optimization/shared_prefix.py
+Usage: dekk agents execute examples/python/optimization/shared_prefix.py
 """
 
 from apxm import DependencyType, compile, GraphRecorder

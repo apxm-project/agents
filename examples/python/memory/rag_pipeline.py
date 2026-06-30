@@ -3,7 +3,7 @@
 
 Recall from LTM, answer with context, verify, and store.
 
-Usage: dekk apxm execute examples/python/memory/rag_pipeline.py
+Usage: dekk agents execute examples/python/memory/rag_pipeline.py
 """
 
 from apxm import DependencyType, compile, GraphRecorder

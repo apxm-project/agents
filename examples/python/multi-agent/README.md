@@ -12,8 +12,8 @@ teams with barrier synchronization and result merging.
 
 Some examples import typed APXM ACP profiles from `apxm._generated.agents`.
 Others use `agent_route="auto"` and let the runtime choose a profile from the
-same inventory. Use `dekk apxm agent list` to confirm the profiles exist and
-`dekk apxm agent test <name>` before executing a workflow. The checked-in
+same inventory. Use `dekk agents agent list` to confirm the profiles exist and
+`dekk agents agent test <name>` before executing a workflow. The checked-in
 profiles require Node/npm plus the corresponding authenticated agent setup:
 
 - `claude` runs `npx -y @agentclientprotocol/claude-agent-acp@^0.24.2` and
@@ -23,13 +23,13 @@ profiles require Node/npm plus the corresponding authenticated agent setup:
 
 ## Examples
 
-- **spawn_and_communicate.py** -- Basic spawn + communicate, then two-agent pipeline. `dekk apxm execute examples/python/multi-agent/spawn_and_communicate.py`
-- **runtime_agent_routing.py** -- Leave the profile unpinned and let APXM route to a resolvable ACP profile by capability/preference. `dekk apxm execute examples/python/multi-agent/runtime_agent_routing.py`
-- **parallel_agents.py** -- Multiple agents working in parallel. `dekk apxm execute examples/python/multi-agent/parallel_agents.py`
-- **negotiation.py** -- Multi-agent negotiation to consensus. `dekk apxm execute examples/python/multi-agent/negotiation.py`
-- **team_coordination.py** -- Team sugar: g.team(), add(), wait_all(), merge(). `dekk apxm execute examples/python/multi-agent/team_coordination.py`
+- **spawn_and_communicate.py** -- Basic spawn + communicate, then two-agent pipeline. `dekk agents execute examples/python/multi-agent/spawn_and_communicate.py`
+- **runtime_agent_routing.py** -- Leave the profile unpinned and let APXM route to a resolvable ACP profile by capability/preference. `dekk agents execute examples/python/multi-agent/runtime_agent_routing.py`
+- **parallel_agents.py** -- Multiple agents working in parallel. `dekk agents execute examples/python/multi-agent/parallel_agents.py`
+- **negotiation.py** -- Multi-agent negotiation to consensus. `dekk agents execute examples/python/multi-agent/negotiation.py`
+- **team_coordination.py** -- Team sugar: g.team(), add(), wait_all(), merge(). `dekk agents execute examples/python/multi-agent/team_coordination.py`
 
-Native AIR companion: `dekk apxm execute examples/workflows/agent-routing/runtime_agent_routing.air`
+Native AIR companion: `dekk agents execute examples/workflows/agent-routing/runtime_agent_routing.air`
 
 ## Key API
 
@@ -61,5 +61,5 @@ team.merge("results")
 
 ## Learn More
 
-- [Sugar API](../../../crates/compiler/apxm-frontend/python/apxm/sugar.py)
-- [Agent profiles](../../../crates/compiler/apxm-frontend/python/apxm/_generated/agents.py)
+- [Sugar API](../../../crates/compiler/frontend/python/apxm/sugar.py)
+- [Agent profiles](../../../crates/compiler/frontend/python/apxm/_generated/agents.py)

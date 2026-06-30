@@ -6,7 +6,7 @@ when writing tests load `_shared/apxm-test-rules.md`.
 
 ## Authority CLI
 
-- `dekk apxm` is the only sanctioned entry point for build, test,
+- `dekk agents` is the only sanctioned entry point for build, test,
   compile, execute, codegen, doctor, backend, vLLM, MCP, processes.
 - Never invoke `cargo`, `docker`, `srun`, `sbatch`, or
   `python tools/scripts/cargo.py` directly. Going through Dekk preserves the env
@@ -27,13 +27,13 @@ when writing tests load `_shared/apxm-test-rules.md`.
 ## Cadences
 
 - Edited a `.td` file (TableGen op) or TableGen-emitted C++ shim?
-  `dekk apxm build-dialect` **then** `dekk apxm codegen` before
+  `dekk agents build-dialect` **then** `dekk agents codegen` before
   building the Rust workspace or running Python frontend tests.
 - Iterating? Prefer focused commands:
-  `dekk apxm test -p <crate>` over `dekk apxm test-all`.
-  `dekk apxm check` for a fast type-check, `dekk apxm fmt` to format,
-  `dekk apxm clippy` to lint (deny-warnings).
-- Pre-PR? `dekk apxm test-all` + `dekk apxm test-cli` (CLI requires the
+  `dekk agents test -p <crate>` over `dekk agents test-all`.
+  `dekk agents check` for a fast type-check, `dekk agents fmt` to format,
+  `dekk agents clippy` to lint (deny-warnings).
+- Pre-PR? `dekk agents test-all` + `dekk agents test-cli` (CLI requires the
   MLIR-linked binary, hence the separate command).
 
 ## Ownership
@@ -41,7 +41,7 @@ when writing tests load `_shared/apxm-test-rules.md`.
 - **`apxm-core`** owns the AIS dialect. Every other crate consumes it.
   Never define an op outside `apxm-core`.
 - Canonical pass list:
-  `crates/compiler/apxm-compiler/src/passes/pipeline.rs::build_pass_list()`.
+  `crates/compiler/compiler/src/passes/pipeline.rs::build_pass_list()`.
   Add new passes only there.
 - Attribute names: canonical enum in `apxm-core`. Python kwargs, MLIR
   attrs, Rust executors all resolve through it. See the
@@ -59,19 +59,19 @@ when writing tests load `_shared/apxm-test-rules.md`.
   `apxm_mcp_install.py`). Keep public names in
   `.dekk.toml`; put larger implementations in a script-local package.
   The shared APXM/vLLM operational names live in the `apxm` Python package at
-  `crates/compiler/apxm-frontend/python/`.
+  `crates/compiler/frontend/python/`.
 
 ## Targeted verification
 
 After each phase of work, run the smallest correct check:
 
-- Need a fast compile-only signal? `dekk apxm check`.
-- Touched one crate's source? `dekk apxm test -p <crate>`.
-- Touched the CLI? `dekk apxm test-cli`.
-- Touched a `.td`? `dekk apxm build-dialect && dekk apxm codegen`,
+- Need a fast compile-only signal? `dekk agents check`.
+- Touched one crate's source? `dekk agents test -p <crate>`.
+- Touched the CLI? `dekk agents test-cli`.
+- Touched a `.td`? `dekk agents build-dialect && dekk agents codegen`,
   *then* the test commands.
-- Touched the Python frontend? `dekk apxm test-python-frontend`.
-- Touched a vLLM zoo manifest? `dekk apxm vllm zoo-status`.
+- Touched the Python frontend? `dekk agents test-python-frontend`.
+- Touched a vLLM zoo manifest? `dekk agents vllm zoo-status`.
 
-Run `dekk apxm doctor` if anything in `dekk env`, the conda env, or the
+Run `dekk agents doctor` if anything in `dekk env`, the conda env, or the
 binary toolchain feels off.

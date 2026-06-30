@@ -5,7 +5,7 @@
 # (manifest -> sbatch -> service-list -> probe -> /v1/models).
 #
 # Cache-warm both models before applying:
-#   dekk apxm vllm zoo cache-warm deploy/vllm/zoo.test-g2.toml
+#   dekk agents vllm zoo cache-warm deploy/vllm/zoo.test-g2.toml
 
 schema_version = 1
 

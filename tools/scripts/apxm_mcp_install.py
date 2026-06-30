@@ -327,7 +327,7 @@ def command_uninstall(args: argparse.Namespace) -> int:
 
 
 def build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(prog="dekk apxm mcp")
+    parser = argparse.ArgumentParser(prog="dekk agents mcp")
     subparsers = parser.add_subparsers(dest="command", required=True)
     for command in Command:
         sub = subparsers.add_parser(command.value)

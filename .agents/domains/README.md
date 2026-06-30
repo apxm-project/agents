@@ -14,7 +14,7 @@ cut across them.
   contracts
 
 Benchmarks, preregistration, claim cards, and the paper live in the
-companion repo `apxm-project/apxm-eval`.
+companion repo `apxm-project/eval`.
 
 The skills themselves live in flat layout under
 `.agents/skills/<name>/SKILL.md` (adapter-compatible). These

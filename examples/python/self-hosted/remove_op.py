@@ -10,7 +10,7 @@ Graph structure:
 - spawn verifier (claude) — runs build + tests to ensure nothing broke
 
 Usage:
-    dekk apxm execute examples/python/self-hosted/remove_op.py "OBSOLETE_OP"
+    dekk agents execute examples/python/self-hosted/remove_op.py "OBSOLETE_OP"
 """
 
 from apxm import DependencyType, GraphRecorder, agent_cwd, compile
@@ -35,11 +35,11 @@ def remove_op_workflow(g: GraphRecorder):
 
 Check:
 1. Where is this operation defined?
-   - crates/core/apxm-ais/src/definitions.rs (enum variant)
-   - crates/compiler/apxm-compiler/mlir/AISOps.td (TableGen def)
-   - crates/compiler/apxm-compiler/src/lower/ArtifactEmitter.cpp (lowering)
-   - crates/runtime/apxm-runtime/src/executor/handlers/<op>.rs (handler)
-   - crates/runtime/apxm-runtime/src/executor/mod.rs (dispatcher)
+   - crates/machine/ais/src/definitions.rs (enum variant)
+   - crates/compiler/pipeline/mlir/AISOps.td (TableGen def)
+   - crates/compiler/pipeline/src/lower/ArtifactEmitter.cpp (lowering)
+   - crates/runtime/engine/src/executor/handlers/<op>.rs (handler)
+   - crates/runtime/engine/src/executor/mod.rs (dispatcher)
 
 2. What code uses this operation?
    - Search examples/ for usage
@@ -74,15 +74,15 @@ Output a structured removal plan:
 Analysis: {impact_analysis}
 
 Remove from:
-1. crates/core/apxm-ais/src/definitions.rs
+1. crates/machine/ais/src/definitions.rs
    - Remove enum variant
    - Remove from from_wire_index() match (or add a comment "// Reserved: <wire_index>")
 
-2. crates/compiler/apxm-compiler/mlir/AISOps.td
+2. crates/compiler/pipeline/mlir/AISOps.td
    - Remove def AIS_<OpName>Op block
    - Add comment if wire index is reserved
 
-3. crates/compiler/apxm-compiler/src/lower/ArtifactEmitter.cpp
+3. crates/compiler/pipeline/src/lower/ArtifactEmitter.cpp
    - Remove case from emitAISOperation() switch
 
 Be careful:
@@ -100,10 +100,10 @@ Be careful:
 Analysis: {impact_analysis}
 
 Remove from:
-1. crates/runtime/apxm-runtime/src/executor/handlers/<op>.rs
+1. crates/runtime/engine/src/executor/handlers/<op>.rs
    - Delete the entire file
 
-2. crates/runtime/apxm-runtime/src/executor/mod.rs
+2. crates/runtime/engine/src/executor/mod.rs
    - Remove mod <op> declaration
    - Remove match arm from execute_node()
 
@@ -139,10 +139,10 @@ Runtime changes: {runtime_removal}
 Run the verification steps:
 
 1. Build the project:
-   dekk apxm build
+   dekk agents build
 
 2. Run all tests:
-   dekk apxm test
+   dekk agents test
 
 3. Run autofix to catch any missed references:
    python3 scripts/apxm-autofix.py

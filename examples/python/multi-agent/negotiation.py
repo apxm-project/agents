@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """negotiate_consensus.py - Two agents negotiate to reach consensus
 
-Usage: dekk apxm execute examples/python/multi-agent/negotiation.py
+Usage: dekk agents execute examples/python/multi-agent/negotiation.py
 """
 
 from apxm import GraphRecorder, agent_cwd, compile

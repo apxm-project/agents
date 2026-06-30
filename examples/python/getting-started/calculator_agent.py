@@ -2,7 +2,7 @@
 
 Usage:
   python3 examples/python/getting-started/calculator_agent.py
-  dekk apxm execute examples/python/getting-started/calculator_agent.py
+  dekk agents execute examples/python/getting-started/calculator_agent.py
 """
 
 from apxm import Agent, GraphRecorder, compile, run, tool

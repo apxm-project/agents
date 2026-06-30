@@ -70,30 +70,30 @@ Every non-trivial session ceremonially routes through 6 lifecycle skills.
 They are thin orchestrators (≤100 lines each) — they do not contain rule
 content themselves; they point at `_shared/` rules.
 
-1. **`apxm-context`** — prime the session: `dekk agents doctor`,
+1. **`context`** — prime the session: `dekk agents doctor`,
    read `.agents/project.md`, pull the relevant `_shared/` rule, recall
    memory, confirm subsystem ownership. Run before any work touching >1
    file.
-2. **`apxm-plan`** — write a plan before implementing. Required
+2. **`plan`** — write a plan before implementing. Required
    for changes that touch >3 files, modify a public API/AIS op, introduce
    a claim, or need GPU allocation.
-3. **`apxm-execute-plan`** — drive an approved plan to
+3. **`execute-plan`** — drive an approved plan to
    completion with the current harness task tracker, focused per-phase
    verification, no scope creep.
-4. **`apxm-simplify`** — remove copied `_shared/` text, weak
+4. **`simplify`** — remove copied `_shared/` text, weak
    abstractions, referential comments, and over-large skill bodies before
    declaring done.
-5. **`apxm-finish`** — pre-claim gate: run focused
+5. **`finish`** — pre-claim gate: run focused
    `dekk agents test`, `dekk agents doctor`, release checks, secrets scan,
    artifact-placement check. Refuse to claim "done" until all pass.
-6. **`apxm-commit`** — commit/push gate: enforce the
+6. **`commit`** — commit/push gate: enforce the
    user's commit rules — no auto-commit, no push without explicit
    approval, PRs only for pushed work, push to `main` only when explicitly
    authorized.
 
 This is the *ironbear pattern* — each skill is a checkpoint, not a body of
 new content. Skills inside the lifecycle can invoke domain skills (e.g.
-`apxm-vllm-service` for vLLM service operations).
+`vllm-service` for vLLM service operations).
 
 ## 4. Repo layout
 
@@ -104,9 +104,9 @@ new content. Skills inside the lifecycle can invoke domain skills (e.g.
     TableGen-driven MLIR.
   - `crates/runtime/` — executor, handlers, backend adapters (LLM, local,
     tool).
-  - `crates/runtime/apxm-backends/` — LLM provider implementations,
+  - `crates/runtime/backends/` — LLM provider implementations,
     vLLM-fork glue.
-  - `crates/tools/apxm-cli/` — `apxm` binary subcommands.
+  - `crates/tools/cli/` — `apxm` binary subcommands.
 - **`external/vllm/`** — git submodule, vLLM fork on branch
   `apxm-rebase-v0.21.0` (upstream v0.21.0 + 5 APXM commits at
   `apxm-project/vllm`). Never edit upstream files there directly without a
@@ -114,7 +114,7 @@ new content. Skills inside the lifecycle can invoke domain skills (e.g.
 - **`tools/scripts/`** — Python entrypoints Dekk calls into (`cargo.py`,
   `vllm.py`, `release.py`, `apxm_mcp_install.py`). Larger command implementations live in a
   script-local package such as `apxm_release/`.
-- **`crates/compiler/apxm-frontend/python/apxm/`** — installable `apxm`
+- **`crates/compiler/frontend/python/apxm/`** — installable `apxm`
   Python package. `apxm.contract` owns the APXM/vLLM operational names
   (env vars, routes, dataclasses, `build_layout()`); `apxm.data_config`
   resolves the `.apxm/` data buckets.
@@ -205,7 +205,7 @@ source of truth — refer to them, don't duplicate the literal.
 
 ## 8. Preregistration before claims
 
-The `apxm-finish` lifecycle skill in this repo does not enforce a
+The `finish` lifecycle skill in this repo does not enforce a
 preregistration check; quality and perf claim workflows (preregistrations,
 benchmarks, claim cards, write-ups) live with the consuming evaluation
 harness, not in the runtime. Claim-bearing runs against the core runtime
@@ -228,7 +228,7 @@ Both are non-negotiable: skipping either produces silent type drift
 between the Rust runtime, the Python frontend, and the MLIR layer.
 
 The canonical pass list lives at
-`crates/compiler/apxm-compiler/src/passes/pipeline.rs::build_pass_list()`.
+`crates/compiler/compiler/src/passes/pipeline.rs::build_pass_list()`.
 Add new passes there (and only there) so the pipeline stays in one place.
 
 Attribute names must be a single source of truth — see the
@@ -290,7 +290,7 @@ supported migration procedure.
 - **`scancel`** a Slurm job owned by `apxm`. Always allocate a
   fresh service job alongside.
 - **Commit secrets**: `LLM_GATEWAY_KEY`, OAuth tokens, HF tokens.
-  `apxm-finish` scans for these.
+  `finish` scans for these.
 - **Commit generated artifacts**: `.apxm/`, `zoo.toml`, `slurm-*.out`,
   `.apxmobj` files, benchmark CSVs.
 - **Bypass `dekk agents`** for normal work — raw `cargo`/`docker`/`srun`
@@ -309,7 +309,7 @@ supported migration procedure.
 - Any edit to `~/.apxm/config.toml`, `~/.bashrc`, `~/.gitconfig`,
   systemd units, cron entries, or `.claude/settings.local.json`.
 - Cross-crate refactors and changes to public APIs / AIS ops — these
-  warrant `apxm-plan` first.
+  warrant `plan` first.
 
 ### When in doubt
 

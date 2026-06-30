@@ -5,8 +5,8 @@ Self-hosted workflow that audits the APXM project for issues.
 
 Graph structure:
 - spawn architect (claude)
-- exc: run build check (dekk apxm build 2>&1)
-- exc: run test check (dekk apxm test-all --quiet 2>&1)
+- exc: run build check (dekk agents build 2>&1)
+- exc: run test check (dekk agents test-all --quiet 2>&1)
 - exc: run autofix check (python3 scripts/apxm-autofix.py --report-only)
 - exc: run policy check (python3 scripts/apxm-policy-check.py)
 - exc: count TODOs/FIXMEs/stubs
@@ -15,7 +15,7 @@ Graph structure:
 - think: generate actionable recommendations
 
 Usage:
-    dekk apxm execute examples/python/self-hosted/audit.py "full"
+    dekk agents execute examples/python/self-hosted/audit.py "full"
 """
 
 from apxm import DependencyType, GraphRecorder, agent_cwd, compile
@@ -40,7 +40,7 @@ def audit(g: GraphRecorder):
     build_result = architect.ask(prompt="""Run APXM build and capture warnings/errors:
 
 Execute:
-  dekk apxm build 2>&1
+  dekk agents build 2>&1
 
 Parse the output and report:
 - Build status (success/failure)
@@ -68,7 +68,7 @@ Output JSON:
     test_result = architect.ask(prompt="""Run APXM test suite and report results:
 
 Execute:
-  dekk apxm test-all --quiet 2>&1
+  dekk agents test-all --quiet 2>&1
 
 Parse the output and report:
 - Test status (all pass/some failures)
@@ -150,8 +150,8 @@ Output JSON:
     todo_result = architect.ask(prompt="""Count TODOs, FIXMEs, and stub handlers in runtime and compiler:
 
 Execute:
-  grep -r "TODO\\|FIXME" crates/apxm-runtime crates/apxm-compiler --include="*.rs" | wc -l
-  grep -r "stub\\|unimplemented" crates/runtime/apxm-runtime/src/executor/handlers --include="*.rs" | wc -l
+  grep -r "TODO\\|FIXME" crates/runtime/engine crates/compiler/pipeline --include="*.rs" | wc -l
+  grep -r "stub\\|unimplemented" crates/runtime/engine/src/executor/handlers --include="*.rs" | wc -l
 
 Report:
 - Total TODOs/FIXMEs
@@ -173,14 +173,14 @@ Output JSON:
     missing_ops_result = architect.ask(prompt="""Check for missing AIS operations in artifact emitter:
 
 Compare:
-1. AIS operations defined in crates/core/apxm-ais/src/operations/definitions.rs (AISOperationType enum)
-2. Operations mapped in crates/compiler/apxm-compiler/mlir/lib/Dialect/AIS/Conversion/Artifact/ArtifactEmitter.cpp (mapOperation function)
+1. AIS operations defined in crates/machine/ais/src/operations/definitions.rs (AISOperationType enum)
+2. Operations mapped in crates/compiler/pipeline/mlir/lib/Dialect/AIS/Conversion/Artifact/ArtifactEmitter.cpp (mapOperation function)
 
 Report any operations defined in Rust but missing from the C++ emitter.
 
 Execute:
-  grep "^\\s*[A-Z][a-zA-Z]*," crates/core/apxm-ais/src/operations/definitions.rs | wc -l
-  grep "Case<.*Op>" crates/compiler/apxm-compiler/mlir/lib/Dialect/AIS/Conversion/Artifact/ArtifactEmitter.cpp | wc -l
+  grep "^\\s*[A-Z][a-zA-Z]*," crates/machine/ais/src/operations/definitions.rs | wc -l
+  grep "Case<.*Op>" crates/compiler/pipeline/mlir/lib/Dialect/AIS/Conversion/Artifact/ArtifactEmitter.cpp | wc -l
 
 Output JSON:
 {{

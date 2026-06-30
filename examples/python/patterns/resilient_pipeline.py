@@ -8,7 +8,7 @@ the result. APXM provides automatic resilience:
 - Provider health tracking (unhealthy backends are deprioritized)
 - Each COMMUNICATE node is atomic -- the scheduler handles failures
 
-Usage: dekk apxm execute examples/python/patterns/resilient_pipeline.py
+Usage: dekk agents execute examples/python/patterns/resilient_pipeline.py
 """
 
 from apxm import GraphRecorder, agent_cwd, compile

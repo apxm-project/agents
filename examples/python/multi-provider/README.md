@@ -10,7 +10,7 @@ per-node so each task gets the right trade-off.
 
 ## Examples
 
-- **model_routing.py** -- Route a support ticket through fast, local, and powerful models. `dekk apxm execute examples/python/multi-provider/model_routing.py`
+- **model_routing.py** -- Route a support ticket through fast, local, and powerful models. `dekk agents execute examples/python/multi-provider/model_routing.py`
 
 ## Requirements
 
@@ -19,11 +19,11 @@ The example expects `fast`, `local-sensitive`, `powerful`, and `formatter` to
 resolve through the APXM backend registry:
 
 ```bash
-dekk apxm backend list
-dekk apxm backend add-model <backend> <SERVED_MODEL_ID> --alias fast
-dekk apxm backend add-model <backend> <SERVED_MODEL_ID> --alias local-sensitive
-dekk apxm backend add-model <backend> <SERVED_MODEL_ID> --alias powerful
-dekk apxm backend add-model <backend> <SERVED_MODEL_ID> --alias formatter
+dekk agents backend list
+dekk agents backend add-model <backend> <SERVED_MODEL_ID> --alias fast
+dekk agents backend add-model <backend> <SERVED_MODEL_ID> --alias local-sensitive
+dekk agents backend add-model <backend> <SERVED_MODEL_ID> --alias powerful
+dekk agents backend add-model <backend> <SERVED_MODEL_ID> --alias formatter
 ```
 
 ## Key API
@@ -44,5 +44,5 @@ solution = g.reason(
 
 ## Learn More
 
-- [Model IDs](../../../crates/compiler/apxm-frontend/python/apxm/_generated/models.py)
-- [Backend configuration](../../../crates/runtime/apxm-backends/README.md) (or run `dekk apxm ops list`)
+- [Model IDs](../../../crates/compiler/frontend/python/apxm/_generated/models.py)
+- [Backend configuration](../../../crates/runtime/backends/README.md) (or run `dekk agents ops list`)

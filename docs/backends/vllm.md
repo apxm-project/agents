@@ -1,7 +1,7 @@
 # vLLM backend (concept)
 
 This document defines the **contract** between APXM and the `apxm-project/vllm`
-fork. In the coordinator workspace APXM resolves it at `workspace/backends/vllm/`.
+fork. In the coordinator workspace APXM resolves it at `workspace/vllm/`.
 It is intentionally not a runbook — operational procedures
 (start, scale, log, probe) live in
 [`docs/backends/model-zoo.md`](model-zoo.md).
@@ -44,7 +44,7 @@ backend is guaranteed to support the full graph contract.
 
 Every chat/completion request that APXM emits against the fork carries a
 `vllm_xargs.apxm` object inside `extra_body`. The schema (see
-`crates/core/apxm-core/src/constants/llm.rs`):
+`crates/machine/contracts/src/constants/llm.rs`):
 
 ```json
 {
@@ -66,7 +66,7 @@ request's completion.
 ## What runs the fork
 
 Operationally: **the zoo manifest is the only way.** Operators write a
-`[[deployment]]` entry in `deploy/vllm/zoo.toml` and call `dekk apxm vllm
+`[[deployment]]` entry in `deploy/vllm/zoo.toml` and call `dekk agents vllm
 zoo-apply`. See [`docs/backends/model-zoo.md`](model-zoo.md) for the full
 runbook, manifest schema, the three deployment shapes, the port allocator,
 and failure modes.

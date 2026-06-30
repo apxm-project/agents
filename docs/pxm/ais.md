@@ -33,7 +33,7 @@ The AIS operations are organized across multiple categories. Run `apxm ops list`
 | **ErrorHandling** | TRY_CATCH | Exception handling with recovery subgraphs |
 | **Identity** | NOP, IDENTITY | Pass-through operations for graph structuring |
 
-For per-operation details and examples, see the [apxm-ais README](../../crates/core/apxm-ais/README.md).
+For per-operation details and examples, see the [apxm-ais README](../../crates/machine/ais/README.md).
 
 `COMMUNICATE`, `DELEGATE`, `NEGOTIATE`, `HANDOFF`, and `SPAWN_AGENT` are executable
 coordination primitives. They are not an agent hierarchy model. Hosts such as
@@ -117,7 +117,7 @@ This explicit mapping of reads and writes enables the compiler to perform side-e
 
 ## MLIR Dialect
 
-AIS is implemented as an MLIR dialect with custom operations, types, and verifiers. See [apxm-compiler](../../crates/compiler/apxm-compiler/README.md) for the full pipeline.
+AIS is implemented as an MLIR dialect with custom operations, types, and verifiers. See [apxm-compiler](../../crates/compiler/pipeline/README.md) for the full pipeline.
 
 ```mlir
 %0 = "ais.ask"(%prompt, %ctx) {
@@ -140,8 +140,8 @@ Each operation carries:
 - [PXM Foundations](foundations.md) -- the five separations and the ISA contract
 - [AAM: Agent Abstract Machine](aam.md) -- the state model AIS operates on
 - [Compute in PXMs](compute.md) -- how AIS operations compare to six classical PXM compute models
-- [apxm-ais README](../../crates/core/apxm-ais/README.md) -- per-operation reference
-- [Compiler Pipeline](../../crates/compiler/apxm-compiler/README.md) -- how AIS maps to MLIR
+- [apxm-ais README](../../crates/machine/ais/README.md) -- per-operation reference
+- [Compiler Pipeline](../../crates/compiler/pipeline/README.md) -- how AIS maps to MLIR
 - [Optimization Pipeline](../compiler/pipeline.md) -- compiler passes that transform AIS graphs
 
 ---

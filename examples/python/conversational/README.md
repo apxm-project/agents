@@ -25,7 +25,7 @@ A conversational agent in APXM is **two layers**:
 
 ```bash
 # Author the agent body and emit its AIR
-dekk apxm execute examples/python/conversational/chat_agent.py --emit-air > chat.air
+dekk agents execute examples/python/conversational/chat_agent.py --emit-air > chat.air
 
 # Start a server, then drive the agent conversationally
 apxm chat --air chat.air

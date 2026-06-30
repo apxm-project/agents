@@ -10,8 +10,8 @@ optimization) into end-to-end workflows that solve real problems.
 ## Requirements
 
 Most workflows in this directory spawn APXM ACP profiles such as
-`claude` and `codex`. Verify the profiles with `dekk apxm agent list` and
-test the local CLI/auth setup with `dekk apxm agent test <name>` before
+`claude` and `codex`. Verify the profiles with `dekk agents agent list` and
+test the local CLI/auth setup with `dekk agents agent test <name>` before
 executing them.
 
 - `claude` runs `npx -y @agentclientprotocol/claude-agent-acp@^0.24.2` and
@@ -21,11 +21,11 @@ executing them.
 
 ## Examples
 
-- **code_review_council.py** -- Multi-agent code review with parallel reviewers. `dekk apxm execute examples/python/real-world/code_review_council.py`
-- **sdlc_pipeline.py** -- Full SDLC: architect designs, coder implements, reviewer verifies. `dekk apxm execute examples/python/real-world/sdlc_pipeline.py`
-- **ultrathink_coder.py** -- Extended reasoning for complex coding tasks. `dekk apxm execute examples/python/real-world/ultrathink_coder.py`
-- **codex_claude_fix.py** -- Claude diagnoses, Codex fixes, Claude verifies. `dekk apxm execute examples/python/real-world/codex_claude_fix.py`
-- **autofix_loop.py** -- Automated validate/fix/verify pipeline. `dekk apxm execute examples/python/real-world/autofix_loop.py`
+- **code_review_council.py** -- Multi-agent code review with parallel reviewers. `dekk agents execute examples/python/real-world/code_review_council.py`
+- **sdlc_pipeline.py** -- Full SDLC: architect designs, coder implements, reviewer verifies. `dekk agents execute examples/python/real-world/sdlc_pipeline.py`
+- **ultrathink_coder.py** -- Extended reasoning for complex coding tasks. `dekk agents execute examples/python/real-world/ultrathink_coder.py`
+- **codex_claude_fix.py** -- Claude diagnoses, Codex fixes, Claude verifies. `dekk agents execute examples/python/real-world/codex_claude_fix.py`
+- **autofix_loop.py** -- Automated validate/fix/verify pipeline. `dekk agents execute examples/python/real-world/autofix_loop.py`
 
 ## Key API
 

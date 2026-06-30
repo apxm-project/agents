@@ -5,9 +5,9 @@ coordinate APXM ACP agent profiles and optional self-hosted vLLM routes.
 
 ## Requirements
 
-- Run through Dekk: `dekk apxm execute ...`.
+- Run through Dekk: `dekk agents execute ...`.
 - Agent workflows require APXM ACP profile imports and authenticated local CLIs.
-  Check them with `dekk apxm agent list` and `dekk apxm agent test <name>`.
+  Check them with `dekk agents agent list` and `dekk agents agent test <name>`.
 - The checked-in `claude` profile uses
   `npx -y @agentclientprotocol/claude-agent-acp@^0.24.2`; the checked-in
   `codex` profile uses `npx -y @zed-industries/codex-acp@^0.16.0`.
@@ -85,7 +85,7 @@ All workflows follow the same pattern:
 ### Execute a workflow
 
 ```bash
-dekk apxm execute examples/python/self-hosted/add_op.py \
+dekk agents execute examples/python/self-hosted/add_op.py \
   "MyNewOp" "A new operation that does X"
 ```
 
@@ -93,10 +93,10 @@ dekk apxm execute examples/python/self-hosted/add_op.py \
 
 ```bash
 RUN_DIR="$(mktemp -d)"
-dekk apxm compile \
+dekk agents compile \
   examples/python/self-hosted/add_op.py \
   -o "${RUN_DIR}/add_op.apxmobj"
-dekk apxm run "${RUN_DIR}/add_op.apxmobj" \
+dekk agents run "${RUN_DIR}/add_op.apxmobj" \
   "MyNewOp" "A new operation that does X"
 ```
 
@@ -104,7 +104,7 @@ dekk apxm run "${RUN_DIR}/add_op.apxmobj" \
 
 ```bash
 RUN_DIR="$(mktemp -d)"
-dekk apxm execute \
+dekk agents execute \
   --emit-session "${RUN_DIR}/session" \
   examples/python/self-hosted/add_op.py \
   "MyNewOp" "A new operation that does X"
@@ -121,7 +121,7 @@ cat "${RUN_DIR}/session"/*/results.json
 
 ```bash
 RUN_DIR="$(mktemp -d)"
-dekk apxm execute \
+dekk agents execute \
   --emit-session "${RUN_DIR}/session" \
   examples/python/self-hosted/add_op.py \
   "CHECKPOINT" "Save execution state for later resume"

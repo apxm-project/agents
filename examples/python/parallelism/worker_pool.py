@@ -3,7 +3,7 @@
 
 Workers process tasks in parallel, then aggregate results.
 
-Usage: dekk apxm execute examples/python/parallelism/worker_pool.py
+Usage: dekk agents execute examples/python/parallelism/worker_pool.py
 """
 
 from apxm import DependencyType, compile, GraphRecorder

@@ -4,10 +4,10 @@ vLLM zoo, service management, Slurm, storage layout.
 
 ## Skills
 
-- **apxm-vllm-service** — operate the APXM-vLLM service path.
-- **apxm-model-zoo-operate** — manage `deploy/vllm/zoo*.toml`
+- **vllm-service** — operate the APXM-vLLM service path.
+- **model-zoo-operate** — manage `deploy/vllm/zoo*.toml`
   manifests.
-- **apxm-fork-vllm-rebase** — rebase the `external/vllm` fork.
+- **fork-vllm-rebase** — rebase the `external/vllm` fork.
 
 ## Deploy order (non-negotiable)
 

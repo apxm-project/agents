@@ -5,7 +5,7 @@ Claude (architect) designs the feature, Codex (coder) implements it,
 Claude (reviewer) verifies the result. Each stage receives the previous
 output as context, enforced by the compiler's data dependency analysis.
 
-Usage: dekk apxm execute examples/python/real-world/sdlc_pipeline.py
+Usage: dekk agents execute examples/python/real-world/sdlc_pipeline.py
 """
 
 from apxm import DependencyType, GraphRecorder, agent_cwd, compile
@@ -36,7 +36,7 @@ def sdlc_pipeline(g: GraphRecorder):
     implement_prompt = g.ask(
         name="build_implement_prompt",
         prompt="Based on this design spec, write the stub implementation:\n"
-        "1. Rust handler: crates/runtime/apxm-runtime/src/executor/handlers/checkpoint.rs\n"
+        "1. Rust handler: crates/runtime/engine/src/executor/handlers/checkpoint.rs\n"
         "2. Dispatcher match arm in dispatcher.rs\n"
         "Keep it compilable. Follow existing handler patterns.\n\n"
         "Design spec:\n{design}"

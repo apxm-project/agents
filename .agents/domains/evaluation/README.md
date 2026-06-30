@@ -1,7 +1,7 @@
 # Domain — evaluation
 
 Benchmarks, preregistration, claim cards, and paper-bound evidence now live in
-`apxm-project/apxm-eval`. This domain file is a pointer for APXM core agents
+`apxm-project/eval`. This domain file is a pointer for APXM core agents
 who encounter evaluation references while working in this repo.
 
 ## Skills
@@ -17,13 +17,13 @@ who encounter evaluation references while working in this repo.
 
 Every claim-bearing run requires a **committed preregistration before
 the run starts**. The current gate lives with the eval harness in
-`apxm-project/apxm-eval`; APXM core does not host paper drafts or claim cards.
+`apxm-project/eval`; APXM core does not host paper drafts or claim cards.
 
 ## Layout
 
 Raw run artifacts written by APXM core land at
 `.apxm/evaluation/<scenario>/runs/<UTC>/`. Preregistrations, claim
-cards, and scenario write-ups live in `apxm-project/apxm-eval`; that
+cards, and scenario write-ups live in `apxm-project/eval`; that
 repo owns its own layout.
 
 ## Paired-arm benchmarks

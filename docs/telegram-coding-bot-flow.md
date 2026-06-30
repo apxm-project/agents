@@ -184,7 +184,7 @@ Steps 1–10: identical to 2a above, with detach=true in SkillExecuteRequest.
 
 ### 3a. Two compile paths and when to use each
 
-**Path A — standalone `dekk apxm compile` (local, no server)**
+**Path A — standalone `dekk agents compile` (local, no server)**
 
 Calls `generate_artifact_with_manifest(None, manifest)`. The `known_caps`
 set passed to `tool_binding_check_dag` is empty (hardwired, no flag overrides
@@ -235,14 +235,14 @@ compile-on-deploy. Use this path for any skill that uses pack capabilities
      b3sum skill.apxmobj   → record as artifact_hash = "blake3:<hex>"
 
 6. Verify:
-     dekk apxm doctor
+     dekk agents doctor
 ```
 
 ### 3c. The E712 and E900 errors
 
 **E712 (tool binding check)**: fires during compilation when an `inv_tool`
 node names a capability not in the known_caps set. With standalone compile
-(`dekk apxm compile`), known_caps is empty, so any pack capability fails E712.
+(`dekk agents compile`), known_caps is empty, so any pack capability fails E712.
 Fix: compile via `POST /v1/compile-artifact` instead.
 
 **E900 (null return from FFI)**: fires from `ffi/utils.rs:handle_null_result`
@@ -399,7 +399,7 @@ def main(payload: str) -> str:
     })
 ```
 
-Compile with: `dekk apxm compile telegram_reply_skill.py` (no pack caps, so
+Compile with: `dekk agents compile telegram_reply_skill.py` (no pack caps, so
 standalone compile works). Place result at
 `~/.apxm/skills/telegram-coding-bot/skill.apxmobj` with matching `skill.toml`.
 
@@ -484,7 +484,7 @@ form tried, or `NormalizeAgentGraph` rejecting the inter-op value constraints).
 definition for `CommunicateOp` and its verifier constraints have not been read;
 the correct SSA form is not confirmed.
 
-**Next step:** read `apxm-ais/src/mlir/lib/Dialect/AIS/AIS.cpp` verifier for
+**Next step:** read `crates/compiler/pipeline/mlir/lib/Dialect/AIS/IR/AISOps.cpp` verifier for
 `CommunicateOp`; emit a minimal reproduce AIR; POST to `/v1/compile-artifact`
 and capture full server stderr.
 
@@ -493,7 +493,7 @@ and capture full server stderr.
 **Status:** if apxm-server is not started with ACP spawn capability enabled,
 `spawn_agent.rs` line 142 returns "No AgentSpawner configured. Cannot spawn
 ACP agent." This is a runtime failure, not a compile failure. Whether the
-current stack startup (`dekk apxm stack up` or equivalent) enables the
+current stack startup (`dekk agents stack up` or equivalent) enables the
 AgentSpawner is not confirmed.
 
 **Next step:** check apxm-server startup args and confirm AgentSpawner is

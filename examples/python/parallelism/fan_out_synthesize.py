@@ -8,7 +8,7 @@ the results.
 O0: sections run sequentially (~3x slower).
 O2: compiler detects independent nodes and schedules them concurrently.
 
-Usage: dekk apxm execute examples/python/parallelism/fan_out_synthesize.py
+Usage: dekk agents execute examples/python/parallelism/fan_out_synthesize.py
 """
 
 from apxm import compile, GraphRecorder

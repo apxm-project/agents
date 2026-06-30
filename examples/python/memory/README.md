@@ -10,7 +10,7 @@ can reason about and optimize.
 
 ## Examples
 
-- **rag_pipeline.py** -- Query memory, inject context, update knowledge. `dekk apxm execute examples/python/memory/rag_pipeline.py`
+- **rag_pipeline.py** -- Query memory, inject context, update knowledge. `dekk agents execute examples/python/memory/rag_pipeline.py`
 
 ## Key API
 

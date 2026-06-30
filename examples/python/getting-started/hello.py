@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """hello.py - Minimal agent that asks a question
 
-Usage: dekk apxm execute examples/python/getting-started/hello.py
+Usage: dekk agents execute examples/python/getting-started/hello.py
 """
 
 from apxm import compile, GraphRecorder

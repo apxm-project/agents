@@ -14,9 +14,9 @@ enforced.
 
 ## Examples
 
-- **dead_context.py** -- Dead context elimination: 5 inputs at O0, 2 at O2. `dekk apxm execute examples/python/optimization/dead_context.py`
-- **shared_prefix.py** -- Explicit shared-prefix experiment. `dekk apxm execute examples/python/optimization/shared_prefix.py`
-- **optimization_showcase.py** -- All optimizations in one workflow. `dekk apxm execute examples/python/optimization/optimization_showcase.py`
+- **dead_context.py** -- Dead context elimination: 5 inputs at O0, 2 at O2. `dekk agents execute examples/python/optimization/dead_context.py`
+- **shared_prefix.py** -- Explicit shared-prefix experiment. `dekk agents execute examples/python/optimization/shared_prefix.py`
+- **optimization_showcase.py** -- All optimizations in one workflow. `dekk agents execute examples/python/optimization/optimization_showcase.py`
 
 ## Key API
 
@@ -26,8 +26,8 @@ ctx1 | analysis  # Used (referenced as {ctx1})
 ctx2 | analysis  # Dead -- template doesn't reference {ctx2}
 
 # Compare optimization levels
-# dekk apxm execute workflow.py -O0   # No optimizations
-# dekk apxm execute workflow.py -O2   # Standard production-safe optimizations
+# dekk agents execute workflow.py -O0   # No optimizations
+# dekk agents execute workflow.py -O2   # Standard production-safe optimizations
 ```
 
 ## Learn More

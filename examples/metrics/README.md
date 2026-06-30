@@ -8,10 +8,10 @@ This example shows the APXM metrics hierarchy:
 
 Run the live graph with a configured ACP profile. The graph uses
 `example-acp-profile` as a placeholder; replace it with any APXM ACP profile
-resolvable by the runtime, for example one shown by `dekk apxm agent list`.
+resolvable by the runtime, for example one shown by `dekk agents agent list`.
 
 ```sh
-dekk apxm execute examples/metrics/spawn-agent-graph-metrics.air \
+dekk agents execute examples/metrics/spawn-agent-graph-metrics.air \
   --emit-session /tmp/apxm-metrics-session \
   --emit-metrics /tmp/apxm-graph-metrics.json
 ```

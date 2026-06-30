@@ -8,8 +8,8 @@ Demonstrates default APXM compiler optimizations:
 4. Dead context elimination -- unused inputs are pruned
 
 Usage:
-  dekk apxm execute examples/python/optimization/optimization_showcase.py -O0
-  dekk apxm execute examples/python/optimization/optimization_showcase.py -O2
+  dekk agents execute examples/python/optimization/optimization_showcase.py -O0
+  dekk agents execute examples/python/optimization/optimization_showcase.py -O2
 """
 
 from apxm import DependencyType, compile, GraphRecorder

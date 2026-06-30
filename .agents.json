@@ -20,67 +20,67 @@
   },
   "skills": [
     {
-      "name": "apxm-ais-op-design",
+      "name": "ais-op-design",
       "description": "Use before adding or modifying an AIS op in apxm-core. Enforces the design-before-code gate, the canonical-attribute rule, the definitions.rs source-of-truth layer map, and the build-dialect + codegen cadence."
     },
     {
-      "name": "apxm-backend-add",
+      "name": "backend-add",
       "description": "Use when registering a new APXM inference backend (cloud, on-prem, or local). Enforces hard-fail-at-config-time resolver behavior."
     },
     {
-      "name": "apxm-commit",
-      "description": "Commit gate \u2014 runs apxm-simplify + apxm-finish first, drafts message in repo log style, lints it with dekk apxm commit-lint, commits at a clean stopping point, and pushes only when authorized. Never --force. Does not open PRs."
+      "name": "commit",
+      "description": "Commit gate \u2014 runs simplify + finish first, drafts message in repo log style, lints it with dekk agents commit-lint, commits at a clean stopping point, and pushes only when authorized. Never --force. Does not open PRs."
     },
     {
-      "name": "apxm-compile-and-execute",
-      "description": "Use when compiling APXM AIR workflows, running .apxmobj artifacts, or executing AIR/IR through the runtime. Enforces dekk apxm as the authority CLI and correct artifact placement under .apxm/."
+      "name": "compile-and-execute",
+      "description": "Use when compiling APXM AIR workflows, running .apxmobj artifacts, or executing AIR/IR through the runtime. Enforces dekk agents as the authority CLI and correct artifact placement under .apxm/."
     },
     {
-      "name": "apxm-context",
+      "name": "context",
       "description": "Prime an APXM session before broad work \u2014 runs doctor, reads project.md and the relevant _shared rules, surfaces subsystem ownership, and recalls APXM memory. Run at the start of any session that will touch >1 file or any non-trivial change."
     },
     {
-      "name": "apxm-design-docs",
+      "name": "design-docs",
       "description": "Use when editing conceptual docs under docs/design/. Gates two shipped failure modes \u2014 overclaim (present-tense prose about unwired behaviour) and citation drift (claims with no anchor to shipped code)."
     },
     {
-      "name": "apxm-execute-plan",
-      "description": "Drive an APXM plan to completion without scope creep. Tracks phases with the harness's task tracker, runs focused per-phase verification, refuses to add features beyond the plan, and surfaces blockers immediately. Invoke only after apxm-plan produces an approved plan."
+      "name": "execute-plan",
+      "description": "Drive an APXM plan to completion without scope creep. Tracks phases with the harness's task tracker, runs focused per-phase verification, refuses to add features beyond the plan, and surfaces blockers immediately. Invoke only after plan produces an approved plan."
     },
     {
-      "name": "apxm-finish",
-      "description": "Pre-claim gate \u2014 runs focused dekk apxm test, doctor, release checks when relevant, secrets scan, and artifact-placement check before any claim of completion. Refuses to claim done until all pass."
+      "name": "finish",
+      "description": "Pre-claim gate \u2014 runs focused dekk agents test, doctor, release checks when relevant, secrets scan, and artifact-placement check before any claim of completion. Refuses to claim done until all pass."
     },
     {
-      "name": "apxm-fork-vllm-rebase",
+      "name": "fork-vllm-rebase",
       "description": "Use when rebasing the external/vllm fork onto a new upstream tag, cherry-picking APXM commits, or resolving conflicts in the fork. Covers the G1 build/smoke gate."
     },
     {
-      "name": "apxm-goal-orchestrator",
-      "description": "Use when an agent should turn a complex APXM goal into a bounded worker workflow, execute it through APXM, wait on goal events/status, and synthesize verified artifacts. Covers `dekk apxm goal`, `goal_start`, `goal_*`, workflow drill-down, and `prompt_as_workflow` selection."
+      "name": "goal-orchestrator",
+      "description": "Use when an agent should turn a complex APXM goal into a bounded worker workflow, execute it through APXM, wait on goal events/status, and synthesize verified artifacts. Covers `dekk agents goal`, `goal_start`, `goal_*`, workflow drill-down, and `prompt_as_workflow` selection."
     },
     {
-      "name": "apxm-mcp-server",
-      "description": "Use when working on APXM MCP surfaces: the Rust HTTP `/v1/mcp` endpoint, the Rust stdio `apxm-mcp-server` binary, or cross-agent MCP registration. Prefer server-owned HTTP MCP for workflow/orchestration control."
+      "name": "mcp-server",
+      "description": "Use when working on APXM MCP surfaces: the Rust HTTP `/v1/mcp` endpoint, the Rust stdio `mcp-server` binary, or cross-agent MCP registration. Prefer server-owned HTTP MCP for workflow/orchestration control."
     },
     {
-      "name": "apxm-mlir-pass-development",
+      "name": "mlir-pass-development",
       "description": "Use when adding, modifying, or reordering MLIR passes in the APXM compiler pipeline. Enforces the single pass-list source of truth, the AIS-core ownership rule, and the build-dialect + codegen cadence after .td edits."
     },
     {
-      "name": "apxm-model-zoo-operate",
+      "name": "model-zoo-operate",
       "description": "Use when adding, scaling, or probing models in the vLLM zoo (deploy/vllm/zoo*.toml). Enforces docker-load then cache-warm then zoo-apply then service-exec/status; use the zoo surface only."
     },
     {
-      "name": "apxm-plan",
+      "name": "plan",
       "description": "Produce a written plan before non-trivial APXM implementation. Required for changes touching >3 files, modifying a public API or AIS op, or needing Slurm GPU allocation. Enforces APXM-specific gates (AIS-op-vs-compose decision, dialect-codegen impact)."
     },
     {
-      "name": "apxm-simplify",
-      "description": "Pre-finish review pass \u2014 remove copied _shared text, weak abstractions, referential comments, and over-large skill bodies before claiming completion. Mandatory before apxm-finish and any commit."
+      "name": "simplify",
+      "description": "Pre-finish review pass \u2014 remove copied _shared text, weak abstractions, referential comments, and over-large skill bodies before claiming completion. Mandatory before finish and any commit."
     },
     {
-      "name": "apxm-vllm-service",
+      "name": "vllm-service",
       "description": "Use when building, launching, probing, or running APXM workloads against the Dockerized APXM-vLLM backend, especially on Slurm compute nodes. Enforces Dekk as the authority CLI, persistent service allocations, image-store reuse, and service-exec for commands that need the vLLM endpoint."
     }
   ],

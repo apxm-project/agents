@@ -30,7 +30,7 @@ stays inside the checkout.
 ## 1. Hugging Face model cache
 
 The vLLM container bind-mounts the resolved cache path at `/models/hf`
-and reads model weights from there. `dekk apxm vllm zoo-cache-warm`
+and reads model weights from there. `dekk agents vllm zoo-cache-warm`
 writes into the same directory using the Hugging Face hub layout
 (`hub/models--<org>--<name>/blobs|snapshots|refs`). Optional
 `data.vllm.hf_cache_roots` entries are searched read-only before
@@ -40,8 +40,8 @@ duplicating weights.
 
 ### Configuration (preferred: config file)
 
-Set the path once in `.apxm/config.toml`. `dekk apxm install` and
-`dekk apxm vllm doctor` materialize it from `.apxm/config.example.toml`
+Set the path once in `.apxm/config.toml`. `dekk agents install` and
+`dekk agents vllm doctor` materialize it from `.apxm/config.example.toml`
 on first run, so editing it is the only manual step.
 
 ```toml
@@ -67,7 +67,7 @@ Resolution order (highest priority first):
 4. Project config `<repo>/.apxm/config.toml`
 5. Default: `<repo>/.apxm/<bucket>/`
 
-`dekk apxm vllm doctor` prints the resolved layout with source
+`dekk agents vllm doctor` prints the resolved layout with source
 attribution per field — use it to confirm an override took effect.
 
 ### Local model roots
@@ -143,13 +143,13 @@ The symlink lets every doc that still says
 follow symlinks at resolution time. Update `.apxm/config.toml` once
 you're confident.
 
-Stop any running `dekk apxm vllm` service before relocating; the
+Stop any running `dekk agents vllm` service before relocating; the
 container does not handle the bind-mount source disappearing
 mid-flight.
 
 ## 2. Saved vLLM Docker images (`.apxm/vllm-images/`)
 
-`dekk apxm vllm docker-save` writes each built image as a
+`dekk agents vllm docker-save` writes each built image as a
 `.docker.tar` into `.apxm/vllm-images/`. The per-service Slurm wrapper
 runs `docker-load` on the allocated node before launching the
 container, so the tarball must be readable from any node that Slurm
@@ -186,10 +186,10 @@ appear under `examples/` or in the docs source tree.
 The controller already runs two pre-checks; rely on them rather than
 your memory:
 
-- `dekk apxm vllm doctor` reports the resolved `hf_cache`,
+- `dekk agents vllm doctor` reports the resolved `hf_cache`,
   `hf_cache_roots`, and `model_roots`; run `df -h` on those paths before
   large downloads.
-- `dekk apxm vllm zoo-cache-warm` refuses to start when the HF cache
+- `dekk agents vllm zoo-cache-warm` refuses to start when the HF cache
   filesystem has less free space than `Σ(weights_gb) × 1.2`.
 
 For a fast shared-storage check after a long benchmark run:

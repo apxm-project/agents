@@ -7,7 +7,7 @@ description: "The formal state model underpinning every A-PXM agent: Beliefs, Go
 
 The AAM defines **what an agent is** at any point in time. It is the state model that every AIS instruction reads from and writes to. Without a formal state model, agent behavior is scattered across Python closures, global variables, and implicit LLM context -- making it impossible to reason about, optimize, or verify.
 
-> For implementation details, see [apxm-runtime](../../crates/runtime/apxm-runtime/README.md).
+> For implementation details, see [apxm-runtime](../../crates/runtime/engine/README.md).
 
 ## Formal Definition
 
@@ -102,7 +102,7 @@ Append-only execution trace recording every operation the agent has performed, i
 
 Beyond the agent's own memory lies the external world: RAG systems, tool APIs, and human-in-the-loop interfaces. These are accessed through typed AIS instructions (INV, COMM) rather than direct memory operations. This tier is conceptual -- it frames how external data sources relate to the memory hierarchy, not an actual memory tier in the runtime.
 
-For the full comparative analysis of memory across PXMs, see [memory.md](memory.md). For implementation details, see [apxm-runtime](../../crates/runtime/apxm-runtime/README.md).
+For the full comparative analysis of memory across PXMs, see [memory.md](memory.md). For implementation details, see [apxm-runtime](../../crates/runtime/engine/README.md).
 
 ## Concurrency Model
 
