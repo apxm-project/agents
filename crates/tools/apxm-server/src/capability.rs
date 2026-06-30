@@ -3,6 +3,7 @@ use std::sync::Arc;
 
 use apxm_core::error::RuntimeError;
 use apxm_core::types::values::Value;
+use apxm_runtime::host_dispatch::{HostDispatchGateway, HostToolCall, NoOpHostDispatchGateway};
 use apxm_server_api::{CapabilityExecutor, CapabilityMetadata, CapabilityResult, Runtime, RuntimeConfig, guard_url_ssrf};
 use async_trait::async_trait;
 use axum::Json;
@@ -118,23 +119,56 @@ pub(crate) struct HostPluginCapability {
     pub(crate) metadata: CapabilityMetadata,
     pub(crate) host_id: String,
     pub(crate) host_op: String,
-    #[allow(dead_code)]
     pub(crate) tool_binding: String,
-    #[allow(dead_code)]
     pub(crate) timeout_ms: u64,
-    #[allow(dead_code)]
     pub(crate) read_only: bool,
+    pub(crate) gateway: Arc<dyn HostDispatchGateway>,
 }
 
 #[async_trait]
 impl CapabilityExecutor for HostPluginCapability {
-    async fn execute(&self, _args: HashMap<String, Value>) -> CapabilityResult<Value> {
-        Err(RuntimeError::Capability {
+    async fn execute(&self, args: HashMap<String, Value>) -> CapabilityResult<Value> {
+        let call_id = uuid::Uuid::new_v4().to_string();
+        let args_json: serde_json::Value = serde_json::Value::Object(
+            args.iter()
+                .filter_map(|(k, v)| v.to_json().ok().map(|j| (k.clone(), j)))
+                .collect(),
+        );
+        let args_digest = format!("sha256-stub-{}", args.len());
+        let call = HostToolCall {
+            call_id,
+            capability_id: self.metadata.name.clone(),
+            host_op: self.host_op.clone(),
+            tool_binding: self.tool_binding.clone(),
+            args: args_json,
+            args_digest,
+            grant_ref: None,
+            timeout_ms: self.timeout_ms,
+            idempotency_key: None,
+            subject: None,
+        };
+        let result = self
+            .gateway
+            .call_tool(&self.host_id, call)
+            .await
+            .map_err(|e| RuntimeError::Capability {
+                capability: self.metadata.name.clone(),
+                message: e.to_string(),
+            })?;
+        if !result.ok {
+            let msg = result
+                .error
+                .map(|e| e.message)
+                .unwrap_or_else(|| "host returned error".to_string());
+            return Err(RuntimeError::Capability {
+                capability: self.metadata.name.clone(),
+                message: msg,
+            });
+        }
+        let val = result.value.unwrap_or(serde_json::Value::Null);
+        Value::try_from(val).map_err(|e| RuntimeError::Capability {
             capability: self.metadata.name.clone(),
-            message: format!(
-                "host dispatch gateway not configured for host_id={} host_op={}",
-                self.host_id, self.host_op
-            ),
+            message: format!("value conversion failed: {e}"),
         })
     }
 
@@ -251,7 +285,7 @@ fn normalize_pack_schema(capability: &str, schema: &JsonValue) -> JsonValue {
 /// the keystone that makes capabilities declarative the way skills already are.
 /// Build the capability executor for one declared tool (None if its kind is not
 /// registerable yet, e.g. `mcp`).
-fn capability_from_tool(t: &PackToolDecl) -> Option<Arc<dyn CapabilityExecutor>> {
+fn capability_from_tool(t: &PackToolDecl, gateway: Arc<dyn HostDispatchGateway>) -> Option<Arc<dyn CapabilityExecutor>> {
     let kind = t.kind.as_deref().unwrap_or("provider");
     let schema = normalize_pack_schema(&t.capability, &t.schema);
     let mut metadata = CapabilityMetadata::new(
@@ -332,6 +366,7 @@ fn capability_from_tool(t: &PackToolDecl) -> Option<Arc<dyn CapabilityExecutor>>
                 tool_binding,
                 timeout_ms: 30_000,
                 read_only: t.read_only,
+                gateway: gateway.clone(),
             }) as Arc<dyn CapabilityExecutor>)
         }
         other => {
@@ -405,6 +440,7 @@ fn pack_tool_from_integration_capability(cap: &IntegrationCapabilityDecl) -> Pac
 /// Read `capabilities.toml` from an integration folder (`integration.toml` present).
 fn integration_capabilities_in_dir(
     integration_dir: &std::path::Path,
+    gateway: Arc<dyn HostDispatchGateway>,
 ) -> Vec<Arc<dyn CapabilityExecutor>> {
     if !integration_dir.join("integration.toml").is_file() {
         return Vec::new();
@@ -426,7 +462,7 @@ fn integration_capabilities_in_dir(
     file.capability
         .iter()
         .map(pack_tool_from_integration_capability)
-        .filter_map(|tool| capability_from_tool(&tool))
+        .filter_map(|tool| capability_from_tool(&tool, gateway.clone()))
         .collect()
 }
 
@@ -443,7 +479,7 @@ fn pack_tools_in_dir(pack_dir: &std::path::Path) -> Vec<Arc<dyn CapabilityExecut
             return Vec::new();
         }
     };
-    file.tool.iter().filter_map(capability_from_tool).collect()
+    file.tool.iter().filter_map(|tool| capability_from_tool(tool, Arc::new(NoOpHostDispatchGateway))).collect()
 }
 
 /// Reindex installed pack `tools.toml` files and register any new template bindings.
@@ -453,9 +489,10 @@ fn pack_tools_in_dir(pack_dir: &std::path::Path) -> Vec<Arc<dyn CapabilityExecut
 pub(crate) fn rescan_pack_tools(
     runtime: &Runtime,
     roots: &[std::path::PathBuf],
+    gateway: Arc<dyn HostDispatchGateway>,
 ) -> u32 {
     let before = runtime.capability_system().list_capabilities().len();
-    register_pack_tools(runtime, roots);
+    register_pack_tools(runtime, roots, gateway);
     let after = runtime.capability_system().list_capabilities().len();
     after.saturating_sub(before) as u32
 }
@@ -466,7 +503,7 @@ pub(crate) fn rescan_pack_tools(
 /// registers by its tool binding behind the declared backing kind
 /// (default `provider` → provider.call, REST via apxm-auth /proxy). This is the
 /// keystone that makes capabilities declarative the way skills already are.
-pub(crate) fn register_pack_tools(runtime: &Runtime, roots: &[std::path::PathBuf]) {
+pub(crate) fn register_pack_tools(runtime: &Runtime, roots: &[std::path::PathBuf], gateway: Arc<dyn HostDispatchGateway>) {
     let sys = runtime.capability_system();
     let mut total_registered = 0u32;
     for root in roots {
@@ -485,7 +522,7 @@ pub(crate) fn register_pack_tools(runtime: &Runtime, roots: &[std::path::PathBuf
                 continue;
             }
             root_seen += 1;
-            for cap in integration_capabilities_in_dir(&pack_dir) {
+            for cap in integration_capabilities_in_dir(&pack_dir, gateway.clone()) {
                 // register() errors if already present (builtin / re-scan) — fine.
                 let name = cap.metadata().name.clone();
                 match sys.register(cap) {
@@ -549,7 +586,7 @@ pub(crate) async fn reindex_capability_templates(
 ) -> Result<Json<ReindexCapabilityTemplatesResponse>, ApiError> {
     let roots = crate::startup::integration_capability_roots();
     let rt = state.runtime();
-    let registered = rescan_pack_tools(&rt, &roots);
+    let registered = rescan_pack_tools(&rt, &roots, state.host_dispatch.clone());
     let total = state.runtime.capability_system().list_capabilities().len();
     Ok(Json(ReindexCapabilityTemplatesResponse {
         registered,
@@ -696,7 +733,7 @@ mod tests {
             url = "https://slack.com/api/chat.postMessage"
         "#;
         let file: PackToolsFile = toml::from_str(raw).expect("parse provider tools.toml");
-        let cap = capability_from_tool(&file.tool[0]).expect("provider cap builds");
+        let cap = capability_from_tool(&file.tool[0], Arc::new(NoOpHostDispatchGateway)).expect("provider cap builds");
         assert!(
             cap.metadata().requires_auth,
             "provider blocks default to requires_auth=true"
@@ -775,7 +812,7 @@ mod tests {
         let runtime = Runtime::new(RuntimeConfig::in_memory())
             .await
             .expect("build in-memory runtime");
-        register_pack_tools(&runtime, &[root.path().to_path_buf()]);
+        register_pack_tools(&runtime, &[root.path().to_path_buf()], Arc::new(NoOpHostDispatchGateway));
 
         let sys = runtime.capability_system();
         assert!(
@@ -808,7 +845,7 @@ mod tests {
         let runtime = Runtime::new(RuntimeConfig::in_memory())
             .await
             .expect("build in-memory runtime");
-        register_pack_tools(&runtime, &[root.path().to_path_buf()]);
+        register_pack_tools(&runtime, &[root.path().to_path_buf()], Arc::new(NoOpHostDispatchGateway));
 
         assert!(
             !runtime.capability_system().has_capability("legacy.only"),
@@ -856,7 +893,7 @@ mod tests {
         let runtime = Runtime::new(RuntimeConfig::in_memory())
             .await
             .expect("build in-memory runtime");
-        register_pack_tools(&runtime, &[root.path().to_path_buf()]);
+        register_pack_tools(&runtime, &[root.path().to_path_buf()], Arc::new(NoOpHostDispatchGateway));
         let weather = runtime
             .capability_system()
             .list_capabilities()
@@ -884,6 +921,7 @@ mod tests {
         let hardening = crate::state::HardeningDefaults::for_config(&server_config);
         AppState {
             runtime,
+            host_dispatch: Arc::new(NoOpHostDispatchGateway),
             agent_registry: Arc::new(DashMap::new()),
             task_manager: crate::tasks::TaskQueueManager::new(),
             checkpoint_store: crate::checkpoints::CheckpointStore::new(),

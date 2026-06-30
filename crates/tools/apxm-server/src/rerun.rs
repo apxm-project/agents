@@ -415,6 +415,8 @@ mod tests {
         use http_body_util::BodyExt;
         use tower::ServiceExt;
 
+        use apxm_runtime::host_dispatch::NoOpHostDispatchGateway;
+
         use crate::build_app;
         use crate::checkpoints::CheckpointStore;
         use crate::executions::ExecutionStore;
@@ -603,6 +605,7 @@ timeout_ms = 30000
                 capability_grants:
                     crate::capability_grants::CapabilityGrantStore::new(),
                 session_registry: crate::conversations::SessionRegistry::new(),
+                host_dispatch: Arc::new(NoOpHostDispatchGateway),
             }
         }
 

@@ -38,6 +38,8 @@ use dashmap::DashMap;
 use http_body_util::BodyExt;
 use tower::ServiceExt;
 
+use apxm_runtime::host_dispatch::NoOpHostDispatchGateway;
+
 use crate::checkpoints::CheckpointStore;
 use crate::execute::ExecuteResponse;
 use crate::executions::ExecutionStore;
@@ -425,6 +427,7 @@ async fn test_state_with_skill_roots_and_execution_store(
         goal_runs: crate::goal_runs::GoalRunRegistry::new(),
         capability_grants: crate::capability_grants::CapabilityGrantStore::new(),
         session_registry: crate::conversations::SessionRegistry::new(),
+        host_dispatch: Arc::new(NoOpHostDispatchGateway),
     }
 }
 
@@ -469,6 +472,7 @@ async fn test_state_with_runtime_and_skill_roots(
         goal_runs: crate::goal_runs::GoalRunRegistry::new(),
         capability_grants: crate::capability_grants::CapabilityGrantStore::new(),
         session_registry: crate::conversations::SessionRegistry::new(),
+        host_dispatch: Arc::new(NoOpHostDispatchGateway),
     }
 }
 

@@ -47,3 +47,5 @@ pub use types::{
 
 pub use types::host;
 pub use types::principal;
+pub use types::consent;
+pub use types::conformance;
