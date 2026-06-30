@@ -10,8 +10,8 @@
 //! Named HostDispatchGateway because host I/O crosses a single agents-facing gateway.
 
 pub use apxm_core::types::host::{
-    AgentChannelHandle, HostDispatchError, HostDispatchGateway, HostProxyRequest, HostProxyResult,
-    HostToolCall, HostToolError, HostToolResult, SpawnOffer,
+    AgentChannelHandle, HostDispatchError, HostDispatchGateway, HostPromptApproval,
+    HostProxyRequest, HostProxyResult, HostToolCall, HostToolError, HostToolResult, SpawnOffer,
 };
 
 /// A no-op gateway used in tests or when no host dispatch is configured.
@@ -37,6 +37,17 @@ impl HostDispatchGateway for NoOpHostDispatchGateway {
         _host_id: &str,
         _request: HostProxyRequest,
     ) -> Result<HostProxyResult, HostDispatchError> {
+        Err(HostDispatchError::Transport(
+            "no host dispatch gateway configured".into(),
+        ))
+    }
+
+    async fn request_permission(
+        &self,
+        _host_id: &str,
+        _prompt: serde_json::Value,
+        _timeout_ms: u64,
+    ) -> Result<HostPromptApproval, HostDispatchError> {
         Err(HostDispatchError::Transport(
             "no host dispatch gateway configured".into(),
         ))

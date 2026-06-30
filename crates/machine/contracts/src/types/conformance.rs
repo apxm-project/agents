@@ -2,6 +2,39 @@ use serde::{Deserialize, Serialize};
 
 use crate::types::host::HostTier;
 
+pub const PROFILE_DIRECT: &str = "public-webhook-t0";
+pub const PROFILE_LINK_TOOLS: &str = "browser-mv3-t1";
+pub const PROFILE_LINK_RUNTIME: &str = "host-runtime-t2";
+
+pub const VECTOR_DIRECT_HOST_ID_PRESENT: &str = "tier.direct.host_id_present";
+pub const VECTOR_DIRECT_MODE_DECLARED: &str = "tier.direct.mode_declared";
+pub const VECTOR_LINK_TOOLS_HOST_ID_PRESENT: &str = "tier.link_tools.host_id_present";
+pub const VECTOR_LINK_TOOLS_MODE_DECLARED: &str = "tier.link_tools.mode_declared";
+pub const VECTOR_LINK_RUNTIME_HOST_ID_PRESENT: &str = "tier.link_runtime.host_id_present";
+pub const VECTOR_LINK_RUNTIME_MODE_DECLARED: &str = "tier.link_runtime.mode_declared";
+
+pub fn profile_for_tier(tier: HostTier) -> &'static str {
+    match tier {
+        HostTier::Direct => PROFILE_DIRECT,
+        HostTier::LinkTools => PROFILE_LINK_TOOLS,
+        HostTier::LinkRuntime => PROFILE_LINK_RUNTIME,
+    }
+}
+
+pub fn vectors_for_tier(tier: HostTier) -> &'static [&'static str] {
+    match tier {
+        HostTier::Direct => &[VECTOR_DIRECT_HOST_ID_PRESENT, VECTOR_DIRECT_MODE_DECLARED],
+        HostTier::LinkTools => &[
+            VECTOR_LINK_TOOLS_HOST_ID_PRESENT,
+            VECTOR_LINK_TOOLS_MODE_DECLARED,
+        ],
+        HostTier::LinkRuntime => &[
+            VECTOR_LINK_RUNTIME_HOST_ID_PRESENT,
+            VECTOR_LINK_RUNTIME_MODE_DECLARED,
+        ],
+    }
+}
+
 /// Signed conformance report produced by a host-sdk conformance harness.
 ///
 /// Mirrors `apxm.conformance-report.v1`: passed vector ids are flat strings;
@@ -48,10 +81,26 @@ impl ConformanceHarness {
         Self
     }
 
-    /// Returns true iff the report has a host id, at least one result, and no
-    /// vector appears in both `passed[]` and `failed[]`.
+    /// Returns true iff the report has a host id, declares the canonical profile
+    /// for its tier, carries at least one result, uses only tier-owned vector
+    /// ids, and no vector appears in both `passed[]` and `failed[]`.
     pub fn verify_report(&self, report: &ConformanceReport) -> bool {
         if report.host_id.is_empty() || report.passed.is_empty() && report.failed.is_empty() {
+            return false;
+        }
+        if report.profile != profile_for_tier(report.tier) {
+            return false;
+        }
+        let allowed = vectors_for_tier(report.tier);
+        if report
+            .passed
+            .iter()
+            .any(|passed| !allowed.contains(&passed.as_str()))
+            || report
+                .failed
+                .iter()
+                .any(|failed| !allowed.contains(&failed.name.as_str()))
+        {
             return false;
         }
         !report
@@ -83,7 +132,13 @@ mod tests {
     #[test]
     fn consistent_pass_report_verifies() {
         let h = ConformanceHarness::new();
-        let r = report(vec!["v1", "v2"], vec![]);
+        let r = report(
+            vec![
+                VECTOR_LINK_TOOLS_HOST_ID_PRESENT,
+                VECTOR_LINK_TOOLS_MODE_DECLARED,
+            ],
+            vec![],
+        );
         assert!(h.verify_report(&r));
     }
 
@@ -99,6 +154,21 @@ mod tests {
                 expected: None,
             }],
         );
+        assert!(!h.verify_report(&r));
+    }
+
+    #[test]
+    fn cross_tier_vector_fails_verify() {
+        let h = ConformanceHarness::new();
+        let r = report(vec![VECTOR_DIRECT_HOST_ID_PRESENT], vec![]);
+        assert!(!h.verify_report(&r));
+    }
+
+    #[test]
+    fn wrong_profile_fails_verify() {
+        let h = ConformanceHarness::new();
+        let mut r = report(vec![VECTOR_LINK_TOOLS_HOST_ID_PRESENT], vec![]);
+        r.profile = PROFILE_DIRECT.into();
         assert!(!h.verify_report(&r));
     }
 }
