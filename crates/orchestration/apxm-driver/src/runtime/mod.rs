@@ -24,6 +24,8 @@ use apxm_runtime::NoOpLinker;
 use inner_plan::CompilerInnerPlanLinker;
 pub mod agents;
 use agents::configure_agent_registry;
+pub mod link_spawner;
+pub use link_spawner::{LinkAgentSpawner, LinkHostRegistry, RelaySessionHandle};
 mod workflow_spawn;
 use workflow_spawn::DriverWorkflowSpawner;
 
