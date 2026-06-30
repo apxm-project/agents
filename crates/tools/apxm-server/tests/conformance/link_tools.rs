@@ -1,4 +1,4 @@
-//! LINK-TOOLS mode conformance tests (T1).
+//! LINK-TOOLS mode conformance tests.
 //!
 //! Spec vectors:
 //! - HostTier::LinkTools is selected for hosts with Link but no local runtime.
