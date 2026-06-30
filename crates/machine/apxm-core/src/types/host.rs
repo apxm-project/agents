@@ -339,6 +339,14 @@ pub trait HostDispatchGateway: Send + Sync {
         channel_id: &str,
         reason: &str,
     ) -> Result<(), HostDispatchError>;
+
+    async fn take_relay_channel(
+        &self,
+        channel_id: &str,
+    ) -> Option<(tokio::sync::mpsc::Sender<serde_json::Value>, tokio::sync::mpsc::Receiver<serde_json::Value>)> {
+        let _ = channel_id;
+        None
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
