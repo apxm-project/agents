@@ -37,8 +37,7 @@ contract is committed to.
 - Default workload for `examples/python/benchmarks/concurrent_matrix.py`
   switched to `workloads/pin_demo.py` — the previous default
   `stress/prefix_fanout_concurrent.py` is documented as
-  engine-crashing in
-  `examples/python/benchmarks/KNOWN-ISSUES.md`.
+  engine-crashing in earlier benchmark notes.
 
 ### Added — dispatch-IR honesty closure
 - **Runtime-time capability gating** — `evaluate_required_capabilities`
@@ -163,5 +162,5 @@ This is the first public-ready iteration of the repository.
 - `examples/python/demos/gemma4/` rewritten as "three skill-library proof
   points" — the workflow source files are unchanged in intent; only the
   framing, the README, and the `pyproject.toml` description are updated.
-- `docs/design/apxm-aware-codex-skill-libraries.md` opens with the
-  fragmented-skills problem before the integration scope.
+- The skill-library design docs open with the fragmented-skills problem before
+  the integration scope.

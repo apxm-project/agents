@@ -36,21 +36,21 @@ there — do not add an ignore guard to mask the bug.
 A run is *claim-bearing* if its output backs:
 
 - The APXM paper in `apxm-project/eval`.
-- A claim card under `docs/claims/`.
+- A claim card in the `eval` repo.
 - A benchmark number cited in a PR description, README, or `docs/`.
 - A "X is faster than Y" / "X matches Y in quality" assertion.
 - Any external write-up consuming this harness's evidence.
 
 Claim-bearing runs require **all** of:
 
-1. A committed preregistration under `docs/preregistrations/` *before*
+1. A committed preregistration in `workspace/eval/preregistrations/` *before*
    the run starts. See `apxm-preregistration` for the template.
 2. Execution through `dekk agents vllm service-exec <service> -- ...` so
    the service allocation is the recorded GPU context.
 3. Artifacts written under `.apxm/evaluation/<scenario>/runs/<UTC>/`.
-4. A write-up under `docs/evaluation/<scenario>/` citing the
+4. A write-up in `workspace/eval/evidence/reports/` citing the
    preregistration commit SHA and the artifact path.
-5. (If paper-bound) a claim card under `docs/claims/<id>.md`.
+5. (If paper-bound) a claim card in the `eval` repo.
 
 `finish` refuses to claim completion of a claim-bearing run if the
 preregistration commit isn't present, or if artifacts landed outside

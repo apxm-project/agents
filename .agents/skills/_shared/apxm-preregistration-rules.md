@@ -12,7 +12,7 @@ the result can't be reverse-engineered from the data.
 
 ## File layout
 
-- Location: `docs/preregistrations/<UTC>-<descriptor>.md`.
+- Location: `workspace/eval/preregistrations/<UTC>-<descriptor>.md`.
 - Naming: `<YYYYMMDDTHHMMSS>Z-<plan>-<scenario>-<arm>.md`.
   Example: `20260521T040539Z-apxm-priority-lane-c16-bg16.md`.
 - Append-only. Once committed, do not edit. If the protocol changes,
@@ -54,8 +54,8 @@ What hypothesis or claim does this run back?
 `.apxm/evaluation/<scenario>/runs/<UTC>/`
 
 ## Linked outputs (filled after run)
-- Write-up: docs/evaluation/<scenario>/<UTC>.md
-- Claim card: docs/claims/<id>.md (if paper-bound)
+- Write-up: workspace/eval/evidence/reports/<scenario>/<UTC>.md
+- Claim card: eval repo evidence bundle (if paper-bound)
 ```
 
 ## When to invoke this skill
@@ -74,14 +74,14 @@ of how good the numbers look.
 
 `finish` will refuse to claim "done" on a claim-bearing run if:
 
-- No matching preregistration exists in `docs/preregistrations/`.
+- No matching preregistration exists in `workspace/eval/preregistrations/`.
 - The preregistration's commit timestamp is *after* the first artifact
   in `.apxm/evaluation/<scenario>/runs/<UTC>/`.
 - The write-up doesn't cite the preregistration commit SHA.
 
 ## Existing examples
 
-See `docs/preregistrations/` for the existing corpus (Plan 04 cross
+See `workspace/eval/preregistrations/` for the existing corpus (Plan 04 cross
 system, Plan 05 tau2 airline/retail/telecom, Plan 09 J/req, priority
 lane c=16/c=32, review council). Read 2–3 before drafting your own to
 match style.

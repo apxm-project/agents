@@ -1,18 +1,17 @@
-# Contributing to APXM
+# Contributing to agents
 
-APXM is a graph-aware dispatch and scheduling layer for vLLM. The runtime,
-the MLIR dialect, the Python frontend, and the vendored vLLM fork at
-`external/vllm` live here. This guide covers working on this repo.
+`agents` is the APXM graph runtime, compiler, and CLI. The optional graph-aware
+vLLM fork is a backend checkout, not part of this repo. This guide covers
+working on `agents`.
 
 ## Getting set up
 
-APXM is a Rust workspace with a Python frontend and an MLIR-based compiler.
+`agents` is a Rust workspace with a Python frontend and an MLIR-based compiler.
 The supported install path is [Dekk](https://github.com/randreshg/dekk).
 
 ```bash
 git clone https://github.com/apxm-project/agents
-cd apxm
-git submodule update --init --recursive    # apxm-project/vllm under external/vllm
+cd agents
 dekk agents install --no-interactive
 dekk agents doctor
 ```
@@ -77,7 +76,7 @@ Never skip `finish` or `commit`.
 ## Commit messages
 
 Commit subjects follow the rules at
-[`.agents/skills/_shared/commit-message-rules.md`](.agents/skills/_shared/commit-message-rules.md):
+[`apxm-commit-message-rules.md`](.agents/skills/_shared/apxm-commit-message-rules.md):
 allowed types, no AI attribution, no `planNN` scope outside
 `prereg(...)`/`eval(...)`, no `wip` or `fix stuff` subjects. Use
 `dekk agents commit-lint` when you want the repository checker explicitly.

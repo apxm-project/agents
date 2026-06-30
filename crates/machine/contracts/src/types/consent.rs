@@ -4,20 +4,34 @@ use serde::{Deserialize, Serialize};
 
 /// A per-call consent request sent to the host's prompt surface.
 ///
-/// The consent broker must receive this and return a SignedApproval within
+/// The consent broker must receive this and return signed approvals within
 /// the timeout before the operation proceeds. Fail-closed: timeout → deny.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PermissionPrompt {
     /// Stable identifier for this specific consent request.
     pub prompt_id: String,
+    /// Stable tool-call identifier this prompt guards.
+    pub call_id: String,
+    /// Runtime grant that admitted the call before consent was required.
+    pub grant_id: String,
     /// The capability being requested.
     pub capability_id: String,
+    /// Callable implementation binding checked by the runtime gate.
+    pub tool_binding: String,
     /// The host that owns the capability.
     pub host_id: String,
+    /// Operation being attempted under the capability.
+    pub operation: String,
+    /// Prompt policy selected for this call.
+    pub mode: String,
     /// Subject bound to this session (None for owner-only calls).
-    pub subject: Option<String>,
+    pub subject: Option<serde_json::Value>,
     /// Deterministic digest of the call args (SHA-256 hex or simplified stub).
     pub args_digest: String,
+    /// Human-visible preview of the arguments being approved.
+    pub args_preview: serde_json::Value,
+    /// Risk level selected by policy.
+    pub risk_level: String,
     /// Unix timestamp (seconds) after which this prompt expires.
     pub expires_at: i64,
     /// ACP channel id for relay-connected hosts (None for DIRECT hosts).
@@ -29,22 +43,19 @@ pub struct PermissionPrompt {
 /// Signed approval returned by the consent broker.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct SignedApproval {
-    pub prompt_id: String,
-    pub approved: bool,
-    pub approver: String,
-    /// Unix timestamp when the approval was issued.
-    pub issued_at: i64,
-    /// Ed25519 signature over (prompt_id || approved || issued_at || scope_hash).
+    pub signer_subject: String,
+    pub signer_display: Option<String>,
+    /// Ed25519 signature over canonical apxm.prompt-approval.v1.
     pub signature: String,
-    /// Hash of the capability scope granted by this approval.
-    pub scope_hash: Option<String>,
+    /// RFC3339 timestamp when the approval was issued.
+    pub signed_at: String,
 }
 
 /// Result of a consent check.
 #[derive(Debug, Clone, PartialEq)]
 pub enum ConsentDecision {
     /// Approved with a signed approval record.
-    Approved(SignedApproval),
+    Approved(Vec<SignedApproval>),
     /// Denied (host or user explicitly rejected).
     Denied { reason: String },
     /// Approval not received within the timeout window. Fail-closed → deny.
@@ -89,10 +100,17 @@ mod tests {
         let broker = NoOpConsentBroker;
         let prompt = PermissionPrompt {
             prompt_id: "p1".into(),
+            call_id: "c1".into(),
+            grant_id: "g1".into(),
             capability_id: "provider.write".into(),
+            tool_binding: "provider.write".into(),
             host_id: "host-1".into(),
+            operation: "write".into(),
+            mode: "confirm".into(),
             subject: None,
             args_digest: "sha256-stub-3".into(),
+            args_preview: serde_json::json!({}),
+            risk_level: "high".into(),
             expires_at: 9999999999,
             channel_id: None,
             description: None,

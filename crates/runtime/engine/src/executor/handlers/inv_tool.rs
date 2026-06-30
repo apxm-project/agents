@@ -86,10 +86,17 @@ async fn enforce_write_boundary(
                 + 30;
             let prompt = PermissionPrompt {
                 prompt_id: uuid::Uuid::new_v4().to_string(),
+                call_id: uuid::Uuid::new_v4().to_string(),
+                grant_id: "runtime-grant".to_string(),
                 capability_id: name.to_string(),
+                tool_binding: name.to_string(),
                 host_id: ctx.host_id.clone().unwrap_or_default(),
+                operation: "invoke".to_string(),
+                mode: "confirm".to_string(),
                 subject: None,
                 args_digest: format!("args-len:{}", args.len()),
+                args_preview: serde_json::json!({ "arg_count": args.len() }),
+                risk_level: "high".to_string(),
                 expires_at,
                 channel_id: None,
                 description: Some(format!("Host capability '{}' requires consent", name)),

@@ -1,14 +1,15 @@
-# APXM
+# agents
 
-APXM is a **graph-aware dispatch and scheduling layer for vLLM**. It splits the
-work across an AMD-aligned CPU/GPU boundary: planning, validation, compilation,
-and analysis stay on CPU; inference runs on GPU through a vLLM fork that
-accepts dispatch hints. The public surface is an MLIR dialect (AIS), a Rust
-runtime, and a vLLM fork at `apxm-project/vllm`.
+`agents` is the APXM abstract-machine repo: AIS dialect, compiler, runtime,
+capability contracts, context handling, permissions, orchestration, CLI, and
+the profile-backed agent execution path. It is not the whole APXM workspace;
+the `apxm` coordinator owns repo composition, while `server`, `os`, `auth`,
+and `studio` own their own planes.
 
-APXM sits underneath the frameworks and orchestrators that call vLLM — a
-typed IR plus a runtime that lets higher-level systems express *what* they
-want dispatched and lets the platform decide *how*.
+The public surface here is a typed IR plus runtime contracts that let higher
+level systems express *what* they want executed while the runtime decides *how*
+to admit, schedule, and dispatch it. The vLLM glue remains in this repo as one
+backend path, not as the repo identity.
 
 ## What is in this repo
 
@@ -31,10 +32,8 @@ build, test, and run goes through it so the env contract, target dir, and
 process accounting stay consistent.
 
 ```bash
-git clone https://github.com/apxm-project/apxm
-cd apxm
-python3 tools/bootstrap.py
-cd workspace/agents
+git clone https://github.com/apxm-project/agents
+cd agents
 dekk agents install --no-interactive
 dekk agents doctor                            # verify environment
 dekk agents build                             # release build

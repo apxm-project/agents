@@ -40,8 +40,8 @@ In-scope:
 
 Out of scope (please report upstream):
 
-- The bundled [`external/vllm`](external/vllm) fork (report to the vLLM project,
-  or to `apxm-server` only if the bug is in APXM's wrapping of vLLM).
+- The optional vLLM fork/backend checkout (report to the vLLM project, or to
+  APXM only if the bug is in APXM's wrapping of vLLM).
 - Third-party agent CLIs invoked over ACP (Claude Code, Codex, etc.).
 
 ## Hall of fame

@@ -7,7 +7,7 @@ agents modifying the toolchain must follow the project's own dev rules.
 
 Self-hosted dev tasks are authored as APXM graphs / goal bundles, never
 ad-hoc Python. The rule prose is the source of truth; the workflow is the
-machine-checking arm — mirror the way `commit-message-rules.md`
+machine-checking arm — mirror the way `apxm-commit-message-rules.md`
 pairs with `check_commit_message.py`.
 
 ## The four contracts

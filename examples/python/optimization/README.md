@@ -32,4 +32,4 @@ ctx2 | analysis  # Dead -- template doesn't reference {ctx2}
 
 ## Learn More
 
-- [benchmarks/stress/](../benchmarks/stress/) -- Stress tests for each optimization pass
+- [`crates/runtime/backends/benches/`](../../../crates/runtime/backends/benches/) -- backend stress and scheduling benches
