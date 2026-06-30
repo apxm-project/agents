@@ -37,7 +37,7 @@ fn render_runtime_parameter_placeholders(
 ) -> RuntimeResult<String> {
     let mut out = template.to_string();
 
-    // Preserve the legacy explicit named form first.
+    // Preserve the explicit named form first.
     for (param_name, param_value) in named {
         let placeholder = format!("{{{{{param_name}}}}}");
         out = out.replace(&placeholder, &value_to_template_string(param_value));
@@ -318,7 +318,7 @@ impl SchedulerState {
         for n in &dag.nodes {
             let mut node = n.clone();
             // Substitute flow parameters in all string attributes. This includes
-            // legacy `{{PARAM_NAME}}`, positional `{0}`, and named JSON selectors
+            // `{{PARAM_NAME}}`, positional `{0}`, and named JSON selectors
             // such as `{data.event.subject}`.
             if !param_map.is_empty() || !positional_map.is_empty() {
                 for (key, value) in node.attributes.iter_mut() {

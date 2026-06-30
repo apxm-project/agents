@@ -7,9 +7,9 @@ runtime `PythonToolBridge` dispatches tools and hooks through one mechanism
 hook into the artifact's hooks sidecar; later a `REGISTER_HOOK` op lowers
 the binding so it travels inside the artifact (AIR-portable, constitution #3).
 
-This module owns the NEW conversational lifecycle hooks. The legacy
-subprocess-`command=` hooks in ``config.HookConfig`` are a separate, older
-surface and are unaffected here.
+This module owns conversational lifecycle hooks. The retired
+subprocess-`command=` hooks in ``config.HookConfig`` are a separate surface and
+are unaffected here.
 """
 
 from __future__ import annotations

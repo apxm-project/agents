@@ -70,8 +70,8 @@ Repo-local (not synced):
   ownership, codegen cadence, reuse-first. (apxm only)
 - `_shared/apxm-self-host-rules.md` — contract for self-hosted dev
   workflows (APXM builds itself). (apxm only)
-- `eval/.agents/skills/_shared/apxm-no-legacy-rules.md` — eval-only
-  no-legacy lint discipline. (eval only)
+- `eval/.agents/skills/_shared/apxm-current-layout-rules.md` — eval-only
+  current-layout lint discipline. (eval only)
 
 ## How to add a skill
 

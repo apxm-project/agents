@@ -59,7 +59,7 @@ def before_turn(ctx):
 @hook(on=LifecycleEvent.PRE_TOOL, match="lookup", mode=HookMode.GATE)
 def guard_lookup(ctx, call):
     ctx.log("pre_tool:lookup")
-    if call.args["symbol"] == "FORBIDDEN":
+    if call.args["symbol"] == "DENIED":
         return ctx.deny("symbol not permitted")
     return ctx.edit_args({**call.args, "symbol": call.args["symbol"].upper()})
 

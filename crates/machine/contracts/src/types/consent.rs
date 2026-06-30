@@ -2,6 +2,28 @@ use std::time::Duration;
 
 use serde::{Deserialize, Serialize};
 
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub enum PromptMode {
+    #[serde(rename = "confirm")]
+    Confirm,
+    #[serde(rename = "dual_control")]
+    DualControl,
+    #[serde(rename = "external_signoff")]
+    ExternalSignoff,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub enum RiskLevel {
+    #[serde(rename = "low")]
+    Low,
+    #[serde(rename = "medium")]
+    Medium,
+    #[serde(rename = "high")]
+    High,
+    #[serde(rename = "critical")]
+    Critical,
+}
+
 /// A per-call consent request sent to the host's prompt surface.
 ///
 /// The consent broker must receive this and return signed approvals within
@@ -23,7 +45,7 @@ pub struct PermissionPrompt {
     /// Operation being attempted under the capability.
     pub operation: String,
     /// Prompt policy selected for this call.
-    pub mode: String,
+    pub mode: PromptMode,
     /// Subject bound to this session (None for owner-only calls).
     pub subject: Option<serde_json::Value>,
     /// Deterministic digest of the call args (SHA-256 hex or simplified stub).
@@ -31,9 +53,9 @@ pub struct PermissionPrompt {
     /// Human-visible preview of the arguments being approved.
     pub args_preview: serde_json::Value,
     /// Risk level selected by policy.
-    pub risk_level: String,
-    /// Unix timestamp (seconds) after which this prompt expires.
-    pub expires_at: i64,
+    pub risk_level: RiskLevel,
+    /// RFC3339 timestamp after which this prompt expires.
+    pub expires_at: String,
     /// ACP channel id for relay-connected hosts (None for DIRECT hosts).
     pub channel_id: Option<String>,
     /// Human-readable description shown on the approval surface.
@@ -106,12 +128,12 @@ mod tests {
             tool_binding: "provider.write".into(),
             host_id: "host-1".into(),
             operation: "write".into(),
-            mode: "confirm".into(),
+            mode: PromptMode::Confirm,
             subject: None,
             args_digest: "sha256-stub-3".into(),
             args_preview: serde_json::json!({}),
-            risk_level: "high".into(),
-            expires_at: 9999999999,
+            risk_level: RiskLevel::High,
+            expires_at: "2026-06-30T00:00:00Z".into(),
             channel_id: None,
             description: None,
         };

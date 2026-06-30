@@ -46,14 +46,14 @@ Wrong: `fix(ultrathink): foo` — name the actual subsystem touched.
 
 Right: `prereg(plan09): J/req cell — telecom N=20`.
 
-## Forbidden in subject
+## Excluded from subject
 
 - Filler: `wip`, `fix stuff`, `misc`, `tweaks`, `…`, `tmp`.
 - Tool / agent names: `ultrathink`, `claude`, `codex`, `cursor` as a
   scope. (`fix(ultrathink): …` is wrong — name the subsystem instead.)
 - Emoji (`✨`, `🚀`, `🤖`, etc.).
 
-## Forbidden in body
+## Excluded from body
 
 - AI-attribution lines:
   - `Co-Authored-By: Claude …`

@@ -40,11 +40,11 @@ PLAN_SCOPE_TYPES: frozenset[str] = frozenset({"prereg", "eval"})
 PLAN_SCOPE_RE = re.compile(r"^plan-?\d{1,3}$")
 SCOPE_SHAPE_RE = re.compile(r"^[A-Za-z][A-Za-z0-9_/\-]*$")
 
-FORBIDDEN_SCOPE_NAMES: frozenset[str] = frozenset({
+RESERVED_SCOPE_NAMES: frozenset[str] = frozenset({
     "ultrathink", "claude", "codex", "cursor", "aider", "copilot",
 })
 
-FORBIDDEN_SUBJECT_WORDS: frozenset[str] = frozenset({
+RESERVED_SUBJECT_WORDS: frozenset[str] = frozenset({
     "wip", "tmp", "misc", "tweaks",
 })
 
@@ -180,9 +180,9 @@ def _lint_subject(subject: str) -> list[Finding]:
                     "plan-scope-spelling",
                     f"use `plan{scope.split('-', 1)[1]}` (no hyphen) instead of `{scope}`",
                 ))
-        elif scope_lower in FORBIDDEN_SCOPE_NAMES:
+        elif scope_lower in RESERVED_SCOPE_NAMES:
             findings.append(Finding(
-                "forbidden-scope",
+                "reserved-scope",
                 f"scope `{scope}` names a tool/agent, not a subsystem; rename",
             ))
         elif not SCOPE_SHAPE_RE.match(scope):
@@ -197,11 +197,11 @@ def _lint_subject(subject: str) -> list[Finding]:
         ))
 
     body_lower = body_text.lower()
-    for word in FORBIDDEN_SUBJECT_WORDS:
+    for word in RESERVED_SUBJECT_WORDS:
         if re.search(rf"\b{re.escape(word)}\b", body_lower):
             findings.append(Finding(
-                "forbidden-subject-word",
-                f"forbidden word `{word}` in subject",
+                "reserved-subject-word",
+                f"reserved word `{word}` in subject",
             ))
     return findings
 

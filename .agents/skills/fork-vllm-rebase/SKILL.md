@@ -56,7 +56,7 @@ Load `_shared/apxm-development-rules.md` before broad work.
 - The 4 `/v1/apxm/*` routes are the public contract — see
   `apxm_vllm_boundary` memory. Breaking them breaks every claim-bearing
   bench.
-- BaseHTTPMiddleware is forbidden in the fork — see
+- BaseHTTPMiddleware is excluded in the fork — see
   `feedback_basehttpmiddleware_breaks_chat`. Use raw ASGI middleware
   on scope/receive/send instead.
 
