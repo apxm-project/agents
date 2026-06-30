@@ -17,6 +17,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value as JsonValue, json};
 use std::collections::HashMap;
 use std::env;
+use std::fmt::Write as _;
 
 /// Model registration metadata attached to a backend.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -73,7 +74,7 @@ pub struct BackendRegistration {
 impl BackendRegistration {
     pub fn from_backend_config(backend: &BackendConfig) -> Result<Self> {
         let api_key = match backend.api_key.as_deref() {
-            Some(key) => resolve_env_reference(key, "api_key", &backend.name)?,
+            Some(key) => resolve_secret_reference(key, "api_key", &backend.name)?,
             None if backend.backend_type == BackendType::Local
                 || backend.protocol == ProviderProtocol::Ollama
                 || backend.protocol == ProviderProtocol::Vllm =>
@@ -82,7 +83,7 @@ impl BackendRegistration {
             }
             None => {
                 return Err(anyhow!(
-                    "Missing API key for backend '{}'. Set `api_key` or use `env:VAR`.",
+                    "Missing API-key reference for backend '{}'. Set `api_key = \"env:VAR\"`.",
                     backend.name
                 ));
             }
@@ -106,7 +107,11 @@ impl BackendRegistration {
             .headers
             .iter()
             .map(|(key, value)| {
-                let resolved = resolve_env_reference(value, key, &backend.name)?;
+                let resolved = if is_sensitive_header(key) {
+                    resolve_secret_reference(value, key, &backend.name)?
+                } else {
+                    resolve_env_reference(value, key, &backend.name)?
+                };
                 Ok((key.clone(), resolved))
             })
             .collect::<Result<HashMap<_, _>>>()?;
@@ -265,6 +270,30 @@ fn resolve_env_reference(value: &str, field: &str, backend_name: &str) -> Result
     }
 }
 
+fn resolve_secret_reference(value: &str, field: &str, backend_name: &str) -> Result<String> {
+    if !value.starts_with(config_keys::ENV_PREFIX) {
+        let mut message = String::new();
+        let _ = write!(
+            &mut message,
+            "Backend '{}' field '{}' must be an env:VAR reference, not a literal secret. Durable credential custody belongs to auth.",
+            backend_name, field
+        );
+        return Err(anyhow!(message));
+    }
+    resolve_env_reference(value, field, backend_name)
+}
+
+fn is_sensitive_header(name: &str) -> bool {
+    let lower = name.to_ascii_lowercase();
+    lower == "authorization"
+        || lower.contains("api-key")
+        || lower.contains("apikey")
+        || lower.contains("key")
+        || lower.contains("token")
+        || lower.contains("secret")
+        || lower.contains("subscription-key")
+}
+
 /// Merge `ANTHROPIC_CUSTOM_HEADERS` (multi-line `Name: value`) into backend headers.
 fn merge_custom_headers_from_env(
     protocol: ProviderProtocol,
@@ -360,5 +389,57 @@ impl RegistryPolicy {
         }
 
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn backend(api_key: Option<&str>, extra_headers: HashMap<String, String>) -> BackendConfig {
+        BackendConfig {
+            name: "openai".to_string(),
+            backend_type: BackendType::Cloud,
+            protocol: ProviderProtocol::OpenAI,
+            endpoint: Some("https://api.openai.com/v1".to_string()),
+            api_key: api_key.map(str::to_string),
+            headers: extra_headers,
+            models: vec![],
+            auto_tool_choice: None,
+            supports_structured_outputs: None,
+        }
+    }
+
+    #[test]
+    fn backend_registration_rejects_literal_api_key() {
+        let err =
+            BackendRegistration::from_backend_config(&backend(Some("sk-literal"), HashMap::new()))
+                .unwrap_err();
+        assert!(err.to_string().contains("env:VAR reference"));
+    }
+
+    #[test]
+    fn backend_registration_rejects_literal_sensitive_header() {
+        let mut backend = backend(None, HashMap::new());
+        backend.backend_type = BackendType::Local;
+        let mut headers = HashMap::new();
+        headers.insert("Authorization".to_string(), "Bearer literal".to_string());
+        backend.headers = headers;
+        let err = BackendRegistration::from_backend_config(&backend).unwrap_err();
+        assert!(err.to_string().contains("env:VAR reference"));
+    }
+
+    #[test]
+    fn backend_registration_allows_literal_non_sensitive_header() {
+        let mut headers = HashMap::new();
+        headers.insert("X-Trace".to_string(), "trace-id".to_string());
+        let err =
+            BackendRegistration::from_backend_config(&backend(Some("env:OPENAI_API_KEY"), headers))
+                .unwrap_err();
+        assert!(
+            err.to_string()
+                .contains("Environment variable 'OPENAI_API_KEY' not set"),
+            "unexpected error: {err}"
+        );
     }
 }

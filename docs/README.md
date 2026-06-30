@@ -69,7 +69,7 @@ APXM is organized in tiers — each layer depends only on layers above it.
 machine →  apxm-core, apxm-ais          (contracts in apxm-core; authoring/codegen specs in apxm-ais)
 compiler→  apxm-compiler, Python frontend (AIR → MLIR → .apxmobj)
 runtime →  apxm-runtime, apxm-backends, (execution, LLM I/O,
-           apxm-backend-registry         backend registry)
+           apxm-backend-registry         backend registry; refs only)
 orchestr→  apxm-driver, apxm-acp,       (driver/library glue, ACP protocol,
            apxm-artifact                 artifact load/save)
 tools   →  apxm-cli, apxm-client, apxm  (developer CLI, generated client, facade)

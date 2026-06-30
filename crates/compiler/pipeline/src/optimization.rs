@@ -365,11 +365,20 @@ fn resolve_backend_json(prompt_table: &toml::value::Table) -> Result<String> {
         })
         .unwrap_or_default();
 
+    let api_key = string_field(backend_table, toml_keys::API_KEY);
+    if let Some(api_key) = api_key
+        && !api_key.starts_with("env:")
+    {
+        return Err(compiler_config_error(
+            "Compiler prompt tuning backend api_key must be an env:VAR reference; raw secrets belong in auth or the process environment",
+        ));
+    }
+
     let request = DspyBackendRequest {
         protocol,
         model,
         endpoint: string_field(backend_table, toml_keys::ENDPOINT),
-        api_key: string_field(backend_table, toml_keys::API_KEY),
+        api_key,
         headers,
     };
     serde_json::to_string(&request).map_err(CompilerError::Json)

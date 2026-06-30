@@ -6,11 +6,12 @@ Backend registration and API-key reference management for APXM.
 
 `apxm-backend-registry` manages LLM backend configuration stored in
 `$APXM_HOME/config.toml` (default `~/.apxm/config.toml`). It records backend
-protocols, endpoints, model metadata, and API-key or `env:VAR` references.
+protocols, endpoints, model metadata, and API-key references.
 
 This crate is not the APXM credential custody plane. Provider OAuth tokens,
 sealed connections, webhook secrets, and tenant/user key hierarchy belong to
-`auth`.
+`auth`. When a backend needs bearer material, the registry stores only an
+`env:VAR` reference. Raw API keys and sensitive literal headers are rejected.
 
 Container lifecycle is not part of this crate. The graph-aware vLLM backend has
 its own operator path under `deploy/vllm/` and `dekk agents vllm ...`.
