@@ -537,6 +537,86 @@ mod tests {
         assert_eq!(select_tier(&m, &q_link).unwrap(), HostTier::LinkTools);
     }
 
+    // ── Spec-vector conformance: the 3 canonical tier archetypes ─────────────
+    //
+    // These tests pin the exact (manifest, query) → tier mapping that the spec
+    // defines. They are the normative reference; other tests may extend coverage
+    // but must not contradict these vectors.
+
+    #[test]
+    fn spec_vector_t0_direct_no_link_webhook_in_proxy_out() {
+        // T0 DIRECT: no Link; public webhook in, /proxy out. Agent runs APXM-side.
+        // Requirement: transport="direct" AND ingress.public_url is set → T0
+        let m = TransportManifest {
+            host_id: None, // no Link identity required for T0
+            tier_hint: None,
+            custody: Some(HostCustody::Inject), // T0 uses custody=inject
+            ingress: IngressConfig {
+                public_url: Some("https://hooks.saas.example/apxm".into()),
+                webhook_base_path: None,
+            },
+            runtime: RuntimeConfig { local_agent: false },
+            push: None,
+            confinement: None,
+            labels: vec![],
+        };
+        let q = TierQuery { transport: "direct", op_kind: None };
+        assert_eq!(
+            select_tier(&m, &q).unwrap(),
+            HostTier::Direct,
+            "spec vector T0: public-ingress direct transport must yield DIRECT"
+        );
+    }
+
+    #[test]
+    fn spec_vector_t1_link_tools_host_dialed_link_no_local_runtime() {
+        // T1 LINK-TOOLS: host-dialed Link. Host contributes tools/events. Agent runs APXM-side.
+        // Requirement: host_id present, runtime.local_agent=false (or Standard op_kind)
+        let m = TransportManifest {
+            host_id: Some("browser-x7f".into()),
+            tier_hint: None,
+            custody: Some(HostCustody::Token),
+            ingress: IngressConfig::default(),
+            runtime: RuntimeConfig { local_agent: false },
+            push: None,
+            confinement: None,
+            labels: vec![],
+        };
+        let q = TierQuery { transport: "link", op_kind: Some(OpKind::Standard) };
+        assert_eq!(
+            select_tier(&m, &q).unwrap(),
+            HostTier::LinkTools,
+            "spec vector T1: enrolled host without local runtime must yield LINK-TOOLS"
+        );
+    }
+
+    #[test]
+    fn spec_vector_t2_link_runtime_host_forks_acp_child_locally() {
+        // T2 LINK-RUNTIME: host-dialed Link. Host also forks an ACP child locally.
+        // Requirement: runtime.local_agent=true AND op requires local execution AND confinement set
+        let m = TransportManifest {
+            host_id: Some("ide-abc".into()),
+            tier_hint: None,
+            custody: Some(HostCustody::Token),
+            ingress: IngressConfig::default(),
+            runtime: RuntimeConfig { local_agent: true },
+            push: None,
+            confinement: Some(ConfinementProfile {
+                mechanism: ConfinementMechanism::OsSandbox,
+                network: ConfinementNetwork::EgressAllowlist,
+                fs_scope: ConfinementFsScope::WorkdirOnly,
+                writable: true,
+            }),
+            labels: vec![],
+        };
+        let q = TierQuery { transport: "link", op_kind: Some(OpKind::Spawn) };
+        assert_eq!(
+            select_tier(&m, &q).unwrap(),
+            HostTier::LinkRuntime,
+            "spec vector T2: local_agent host with Spawn op and confinement must yield LINK-RUNTIME"
+        );
+    }
+
     #[test]
     fn confinement_satisfaction_ordering() {
         let strong = ConfinementProfile {
