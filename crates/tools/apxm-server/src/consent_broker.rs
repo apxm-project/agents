@@ -17,10 +17,15 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
+use axum::Json;
+use axum::extract::State;
+use serde::Deserialize;
 use tokio::sync::{Mutex, oneshot};
 use tracing::{debug, warn};
 
 use apxm_core::types::host::HostDispatchGateway;
+
+use crate::state::AppState;
 
 /// Default time the broker waits for host approval before failing closed.
 const CONSENT_TTL: Duration = Duration::from_secs(120);
@@ -216,6 +221,79 @@ impl ConsentBroker {
         let _ = record.tx.send(outcome);
         Ok(())
     }
+}
+
+/// Decode a lowercase/uppercase hex string into bytes. Rejects odd-length and
+/// non-hex input. Kept local to avoid a `hex` crate dependency for the two
+/// fixed-width fields (32-byte pubkey, 64-byte signature) on this route.
+fn decode_hex(s: &str) -> Result<Vec<u8>, ()> {
+    if s.len() % 2 != 0 {
+        return Err(());
+    }
+    let nibble = |c: u8| -> Result<u8, ()> {
+        match c {
+            b'0'..=b'9' => Ok(c - b'0'),
+            b'a'..=b'f' => Ok(c - b'a' + 10),
+            b'A'..=b'F' => Ok(c - b'A' + 10),
+            _ => Err(()),
+        }
+    };
+    s.as_bytes()
+        .chunks_exact(2)
+        .map(|p| Ok((nibble(p[0])? << 4) | nibble(p[1])?))
+        .collect()
+}
+
+/// Body of a `POST /internal/v1/consent/approval` callback.
+///
+/// Dispatched internally when the host returns a `prompt/approval` frame UP
+/// the Link. Fields are hex-encoded over the wire so the route stays a plain
+/// JSON surface; the handler decodes them before verification.
+#[derive(Debug, Deserialize)]
+pub(crate) struct ConsentApprovalRequest {
+    pub(crate) call_id: String,
+    pub(crate) approved: bool,
+    pub(crate) host_pubkey_hex: String,
+    pub(crate) signature_hex: String,
+    pub(crate) args_digest: String,
+}
+
+/// Internal-only handler for consent approval callbacks.
+///
+/// Decodes the host pubkey + signature from hex and forwards to
+/// [`ConsentBroker::record_approval`], which verifies the Ed25519 signature and
+/// resolves the waiting consent request. Fails closed on bad hex or an invalid
+/// signature.
+pub(crate) async fn handle_consent_approval(
+    State(state): State<AppState>,
+    Json(body): Json<ConsentApprovalRequest>,
+) -> Result<Json<serde_json::Value>, crate::error::ApiError> {
+    let pubkey_bytes = decode_hex(&body.host_pubkey_hex)
+        .map_err(|_| crate::error::ApiError::bad_request("host_pubkey_hex is not valid hex"))?;
+    let sig_bytes = decode_hex(&body.signature_hex)
+        .map_err(|_| crate::error::ApiError::bad_request("signature_hex is not valid hex"))?;
+
+    state
+        .host_consent_broker
+        .record_approval(
+            &body.call_id,
+            body.approved,
+            &pubkey_bytes,
+            &sig_bytes,
+            &body.args_digest,
+        )
+        .await
+        .map_err(|e| match e {
+            ConsentError::InvalidSignature => {
+                crate::error::ApiError::bad_request("invalid approval signature")
+            }
+            ConsentError::Timeout(_) => {
+                crate::error::ApiError::conflict("consent request expired")
+            }
+            other => crate::error::ApiError::internal_message(other.to_string()),
+        })?;
+
+    Ok(Json(serde_json::json!({ "accepted": true })))
 }
 
 #[cfg(test)]

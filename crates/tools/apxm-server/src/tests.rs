@@ -429,6 +429,7 @@ async fn test_state_with_skill_roots_and_execution_store(
         session_registry: crate::conversations::SessionRegistry::new(),
         host_dispatch: Arc::new(NoOpHostDispatchGateway),
         consent_broker: Arc::new(apxm_core::types::consent::NoOpConsentBroker),
+        host_consent_broker: Arc::new(crate::consent_broker::ConsentBroker::new()),
     }
 }
 
@@ -475,6 +476,7 @@ async fn test_state_with_runtime_and_skill_roots(
         session_registry: crate::conversations::SessionRegistry::new(),
         host_dispatch: Arc::new(NoOpHostDispatchGateway),
         consent_broker: Arc::new(apxm_core::types::consent::NoOpConsentBroker),
+        host_consent_broker: Arc::new(crate::consent_broker::ConsentBroker::new()),
     }
 }
 

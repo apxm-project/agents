@@ -923,6 +923,7 @@ mod tests {
             runtime,
             host_dispatch: Arc::new(NoOpHostDispatchGateway),
             consent_broker: Arc::new(apxm_core::types::consent::NoOpConsentBroker),
+            host_consent_broker: Arc::new(crate::consent_broker::ConsentBroker::new()),
             agent_registry: Arc::new(DashMap::new()),
             task_manager: crate::tasks::TaskQueueManager::new(),
             checkpoint_store: crate::checkpoints::CheckpointStore::new(),
