@@ -4,8 +4,8 @@ version.workspace = true
 edition.workspace = true
 
 [dependencies]
-apxm-core = { path = "../../core/apxm-core" }
-apxm-ais = { path = "../../core/apxm-ais" }
+apxm-core = { path = "../../machine/apxm-core" }
+apxm-ais = { path = "../../machine/apxm-ais" }
 apxm-runtime = { path = "../../runtime/apxm-runtime" }
 apxm-compiler = { path = "../../compiler/apxm-compiler" }
 apxm-backends = { path = "../../runtime/apxm-backends" }

@@ -32,6 +32,7 @@ tempfile.workspace = true
 parking_lot.workspace = true
 tracing.workspace = true
 chrono.workspace = true
+uuid.workspace = true
 
 [features]
 metrics = ["apxm-runtime/metrics", "apxm-backends/metrics"]

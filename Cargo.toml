@@ -1,9 +1,9 @@
 [workspace]
 members = [
-	# ── Core (Foundation) ─────────────────────────
-	"crates/core/apxm-ais",
-	"crates/core/apxm-core",
-	"crates/core/apxm-skill",
+	# ── Machine (AAM/AIS Contracts) ──────────────────────────────────────────
+	"crates/machine/apxm-ais",
+	"crates/machine/apxm-core",
+	"crates/machine/apxm-skill",
 	# ── Compiler (Compilation) ────────────────────
 	"crates/compiler/apxm-compiler",
 	# ── Runtime (Execution + Backend) ─────────────
@@ -39,9 +39,9 @@ readme = "README.md"
 
 [workspace.dependencies]
 # ── Internal crates ──────────────────────────────────────────
-apxm-ais = { version = "0.1.0", path = "crates/core/apxm-ais" }
-apxm-core = { version = "0.1.0", path = "crates/core/apxm-core" }
-apxm-skill = { version = "0.1.0", path = "crates/core/apxm-skill" }
+apxm-ais = { version = "0.1.0", path = "crates/machine/apxm-ais" }
+apxm-core = { version = "0.1.0", path = "crates/machine/apxm-core" }
+apxm-skill = { version = "0.1.0", path = "crates/machine/apxm-skill" }
 apxm-compiler = { version = "0.1.0", path = "crates/compiler/apxm-compiler" }
 apxm-runtime = { version = "0.1.0", path = "crates/runtime/apxm-runtime" }
 apxm-backends = { version = "0.1.0", path = "crates/runtime/apxm-backends" }

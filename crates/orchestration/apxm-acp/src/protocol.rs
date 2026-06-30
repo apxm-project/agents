@@ -53,6 +53,39 @@ pub enum JsonRpcMessage {
     ReverseRequest(JsonRpcRequest),
 }
 
+/// Abstraction over the JSON-RPC 2.0 transport layer used by ACP sessions.
+///
+/// `StdioTransport` covers the local subprocess case; `RelayTransport`
+/// covers the T2 LINK-RUNTIME case where the ACP child runs on the host side
+/// and frames are tunnelled over the Link WSS relay.
+#[async_trait::async_trait]
+pub trait AcpTransport: Send + Sync {
+    async fn send_request(
+        &mut self,
+        method: &str,
+        params: Option<serde_json::Value>,
+    ) -> Result<u64, crate::AcpError>;
+
+    async fn send_response(
+        &mut self,
+        id: serde_json::Value,
+        result: serde_json::Value,
+    ) -> Result<(), crate::AcpError>;
+
+    async fn send_error(
+        &mut self,
+        id: serde_json::Value,
+        code: i64,
+        message: &str,
+    ) -> Result<(), crate::AcpError>;
+
+    async fn read_response_raw(
+        &mut self,
+        expected_id: u64,
+        handler: &(dyn crate::reverse::ReverseHandler + Send + Sync),
+    ) -> Result<serde_json::Value, crate::AcpError>;
+}
+
 /// NDJson transport over a child process's stdio.
 pub struct StdioTransport {
     stdin: ChildStdin,
@@ -209,6 +242,44 @@ impl StdioTransport {
     /// Consume the transport, returning the stdin handle (for explicit close).
     pub fn into_stdin(self) -> ChildStdin {
         self.stdin
+    }
+}
+
+/// `StdioTransport` implements the `AcpTransport` trait so callers can hold a
+/// `Box<dyn AcpTransport>` and swap in `RelayTransport` for T2 sessions.
+#[async_trait::async_trait]
+impl AcpTransport for StdioTransport {
+    async fn send_request(
+        &mut self,
+        method: &str,
+        params: Option<serde_json::Value>,
+    ) -> Result<u64, AcpError> {
+        self.send_request(method, params).await
+    }
+
+    async fn send_response(
+        &mut self,
+        id: serde_json::Value,
+        result: serde_json::Value,
+    ) -> Result<(), AcpError> {
+        self.send_response(id, result).await
+    }
+
+    async fn send_error(
+        &mut self,
+        id: serde_json::Value,
+        code: i64,
+        message: &str,
+    ) -> Result<(), AcpError> {
+        self.send_error(id, code, message).await
+    }
+
+    async fn read_response_raw(
+        &mut self,
+        expected_id: u64,
+        handler: &(dyn crate::reverse::ReverseHandler + Send + Sync),
+    ) -> Result<serde_json::Value, AcpError> {
+        self.read_response(expected_id, handler).await
     }
 }
 
