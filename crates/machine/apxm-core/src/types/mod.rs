@@ -11,6 +11,7 @@ pub mod goal;
 pub mod host;
 pub mod identifiers;
 pub mod operations;
+pub mod principal;
 pub mod values;
 
 // ── Execution ──────────────────────────────────────────────
