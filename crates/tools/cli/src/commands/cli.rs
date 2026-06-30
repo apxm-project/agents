@@ -718,7 +718,7 @@ pub enum BackendAction {
         /// API endpoint URL
         #[arg(long)]
         endpoint: Option<String>,
-        /// Optional backend API key (omit to read from env or enter interactively)
+        /// Optional backend API-key reference (`env:VAR`; raw keys are rejected)
         #[arg(long)]
         api_key: Option<String>,
         /// Extra headers as key=value pairs

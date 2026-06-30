@@ -40,6 +40,8 @@ dekk agents backend add-model <name> <model-id>
   add` — the zoo manifest is the operator surface.
 - Backend commands manage registry entries only. Container/image/service
   lifecycle belongs to `dekk agents vllm ...`.
+- Backend auth fields are references only. Use `env:<NAME>` for API keys and
+  sensitive headers; durable OAuth/API-key custody belongs to `auth`.
 
 ## Workflow
 

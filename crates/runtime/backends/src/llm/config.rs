@@ -61,7 +61,7 @@ pub struct BackendConfig {
     pub protocol: ProviderProtocol,
     /// API endpoint URL.
     pub endpoint: Option<String>,
-    /// API key or `env:VAR_NAME` reference.
+    /// API-key reference. Raw API keys are rejected; use `env:VAR_NAME`.
     pub api_key: Option<String>,
     /// Custom HTTP headers.
     #[serde(default)]

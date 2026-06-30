@@ -1,4 +1,5 @@
 use crate::BackendError;
+use crate::backend::validate_backend_references;
 use apxm_backends::llm::catalog::{default_model_for_protocol, resolve_builtin_provider};
 use apxm_backends::llm::{
     BackendConfig, ProviderProtocol, normalize_anthropic_gateway_endpoint,
@@ -70,6 +71,7 @@ fn materialize_validation_backend_with_env<F>(
 where
     F: Fn(&str) -> Option<String>,
 {
+    validate_backend_references(backend)?;
     let mut materialized = backend.clone();
 
     if let Some(api_key) = backend.api_key.as_deref() {
@@ -448,5 +450,16 @@ mod tests {
             materialized.headers.get("X-Trace"),
             Some(&"trace-id".to_string())
         );
+    }
+
+    #[test]
+    fn validation_rejects_literal_api_key_before_materializing() {
+        let mut backend = anthropic_backend();
+        backend.api_key = Some("literal-secret".to_string());
+        let err = materialize_validation_backend_with_env(&backend, |_| None).unwrap_err();
+        assert!(matches!(
+            err,
+            BackendError::LiteralSecretReference { field, .. } if field == "api_key"
+        ));
     }
 }

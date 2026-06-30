@@ -2,7 +2,8 @@
 //!
 //! This module provides the [`BackendStore`] for managing the APXM backend
 //! registry. Backends include deployment type, protocol, model metadata, and
-//! API-key references for provider access.
+//! API-key references for provider access. Raw credential custody belongs to
+//! the auth plane, not this registry.
 
 use apxm_backends::llm::{BackendConfig, ModelConfig, normalize_endpoint_for_protocol};
 use apxm_core::env::apxm_home;
@@ -17,6 +18,7 @@ const CONFIG_FILENAME: &str = "config.toml";
 const CONFIG_KEY_BACKENDS: &str = "backends";
 const FILE_HEADER: &str = "# APXM Configuration - Managed by `apxm backend`\n\
                             # Permissions: 0600 (owner read/write only)\n\n";
+const ENV_REFERENCE_PREFIX: &str = "env:";
 
 #[derive(Debug, Error)]
 pub enum BackendError {
@@ -45,6 +47,11 @@ pub enum BackendError {
         "Config file at {path} has insecure permissions ({mode:o}). Fix with: chmod 600 {path}"
     )]
     InsecurePermissions { path: String, mode: u32 },
+
+    #[error(
+        "Backend '{backend}' field '{field}' must be an env:VAR reference, not a literal secret. Durable credential custody belongs to auth."
+    )]
+    LiteralSecretReference { backend: String, field: String },
 }
 
 #[derive(Debug, Clone, Default)]
@@ -156,6 +163,7 @@ impl BackendStore {
     /// the endpoint is normalized to include `/v1` so that downstream code
     /// can append resource paths directly (e.g. `/chat/completions`, `/models`).
     pub fn add(&self, mut backend: BackendConfig) -> Result<(), BackendError> {
+        validate_backend_references(&backend)?;
         let mut file = self.read_file()?;
         if file.backends.iter().any(|b| b.name == backend.name) {
             return Err(BackendError::AlreadyExists {
@@ -194,6 +202,7 @@ impl BackendStore {
 
     /// Update a backend by name.
     pub fn update(&self, name: &str, backend: BackendConfig) -> Result<(), BackendError> {
+        validate_backend_references(&backend)?;
         let mut file = self.read_file()?;
         let pos = file
             .backends
@@ -240,9 +249,112 @@ impl BackendStore {
 fn normalize_endpoint(backend: &mut BackendConfig) {
     if let Some(ref mut url) = backend.endpoint {
         // Defer `/v1` normalization until env references are resolved at runtime.
-        if url.starts_with("env:") {
+        if url.starts_with(ENV_REFERENCE_PREFIX) {
             return;
         }
         *url = normalize_endpoint_for_protocol(backend.protocol, url);
+    }
+}
+
+/// Enforce the registry/auth split before writing backend config.
+///
+/// The registry is allowed to remember where a secret can be resolved
+/// (`env:VAR`) but never the secret value itself. Auth remains the durable
+/// credential custodian for OAuth/API-key connections; deployment code can
+/// materialize short-lived values into env vars at the process boundary.
+pub fn validate_backend_references(backend: &BackendConfig) -> Result<(), BackendError> {
+    if let Some(api_key) = backend.api_key.as_deref() {
+        require_env_reference(&backend.name, "api_key", api_key)?;
+    }
+
+    for (name, value) in &backend.headers {
+        if is_sensitive_header(name) {
+            require_env_reference(&backend.name, &format!("headers.{name}"), value)?;
+        }
+    }
+
+    Ok(())
+}
+
+fn require_env_reference(backend: &str, field: &str, value: &str) -> Result<(), BackendError> {
+    let var_name = value.strip_prefix(ENV_REFERENCE_PREFIX).unwrap_or_default();
+    if var_name.is_empty() || var_name.contains(char::is_whitespace) {
+        return Err(BackendError::LiteralSecretReference {
+            backend: backend.to_string(),
+            field: field.to_string(),
+        });
+    }
+    Ok(())
+}
+
+fn is_sensitive_header(name: &str) -> bool {
+    let lower = name.to_ascii_lowercase();
+    lower == "authorization"
+        || lower.contains("api-key")
+        || lower.contains("apikey")
+        || lower.contains("key")
+        || lower.contains("token")
+        || lower.contains("secret")
+        || lower.contains("subscription-key")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use apxm_backends::llm::{BackendType, ProviderProtocol};
+    use std::collections::HashMap;
+
+    fn backend_with_secret_fields(
+        api_key: Option<&str>,
+        headers: HashMap<String, String>,
+    ) -> BackendConfig {
+        BackendConfig {
+            name: "openai".to_string(),
+            backend_type: BackendType::Cloud,
+            protocol: ProviderProtocol::OpenAI,
+            endpoint: Some("https://api.openai.com/v1".to_string()),
+            api_key: api_key.map(str::to_string),
+            headers,
+            models: vec![],
+            auto_tool_choice: None,
+            supports_structured_outputs: None,
+        }
+    }
+
+    #[test]
+    fn rejects_literal_api_key_reference() {
+        let backend = backend_with_secret_fields(Some("sk-literal"), HashMap::new());
+        let err = validate_backend_references(&backend).unwrap_err();
+        assert!(matches!(
+            err,
+            BackendError::LiteralSecretReference { field, .. } if field == "api_key"
+        ));
+    }
+
+    #[test]
+    fn accepts_env_api_key_reference() {
+        let backend = backend_with_secret_fields(Some("env:OPENAI_API_KEY"), HashMap::new());
+        validate_backend_references(&backend).unwrap();
+    }
+
+    #[test]
+    fn rejects_literal_sensitive_header_value() {
+        let mut headers = HashMap::new();
+        headers.insert("X-Custom-Gateway-Key".to_string(), "literal".to_string());
+        let backend = backend_with_secret_fields(Some("env:OPENAI_API_KEY"), headers);
+        let err = validate_backend_references(&backend).unwrap_err();
+        assert!(matches!(
+            err,
+            BackendError::LiteralSecretReference { field, .. }
+                if field == "headers.X-Custom-Gateway-Key"
+        ));
+    }
+
+    #[test]
+    fn accepts_literal_non_sensitive_header_value() {
+        let mut headers = HashMap::new();
+        headers.insert("X-Trace".to_string(), "trace-id".to_string());
+        let backend = backend_with_secret_fields(Some("env:OPENAI_API_KEY"), headers);
+        validate_backend_references(&backend).unwrap();
     }
 }

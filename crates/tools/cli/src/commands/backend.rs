@@ -126,9 +126,22 @@ fn sync_ollama_models(
 }
 
 #[cfg(feature = "driver")]
+fn ensure_env_reference(value: &str, flag: &str) -> Result<()> {
+    let Some(var_name) = value.strip_prefix("env:") else {
+        anyhow::bail!("{flag} must be an env:VAR reference; raw secrets belong in auth.");
+    };
+    if var_name.is_empty() || var_name.contains(char::is_whitespace) {
+        anyhow::bail!("{flag} must be an env:VAR reference with a non-empty variable name.");
+    }
+    Ok(())
+}
+
+#[cfg(feature = "driver")]
 pub async fn backend_command(action: BackendAction, json_output: bool) -> Result<()> {
     use apxm_backend_registry::backend::BackendStore;
-    use apxm_backends::llm::{BackendConfig, BackendType, ProviderProtocol};
+    use apxm_backends::llm::{
+        BackendConfig, BackendType, ProviderProtocol, resolve_builtin_provider,
+    };
     use std::str::FromStr;
 
     let store = BackendStore::open().map_err(|e| anyhow::anyhow!("{e}"))?;
@@ -150,6 +163,7 @@ pub async fn backend_command(action: BackendAction, json_output: bool) -> Result
                 protocol,
                 ProviderProtocol::Ollama | ProviderProtocol::Vllm | ProviderProtocol::Mock
             );
+            let provider_spec = resolve_builtin_provider(&protocol.to_string());
 
             // Ollama smart defaults: type=local if not specified
             let backend_type = if r#type.is_empty() && is_ollama {
@@ -167,17 +181,20 @@ pub async fn backend_command(action: BackendAction, json_output: bool) -> Result
                 endpoint
             };
 
-            // API key not needed for local backends or protocols that support unauthenticated local/on-prem serving.
-            let api_key = if api_key.is_some()
-                || backend_type == BackendType::Local
-                || api_key_not_required
-            {
-                api_key
+            // The backend registry stores references only. Auth remains the durable
+            // credential custodian; deployment code may materialize an env var at
+            // process start, but this config never stores the secret value.
+            let api_key = if let Some(api_key) = api_key {
+                ensure_env_reference(&api_key, "--api-key")?;
+                Some(api_key)
+            } else if backend_type == BackendType::Local || api_key_not_required {
+                None
+            } else if let Some(env_var) = provider_spec.and_then(|spec| spec.api_key_env_var) {
+                Some(format!("env:{env_var}"))
             } else {
-                eprint!("Enter backend API key for {name} (or press Enter to skip): ");
-                let key = rpassword::read_password()
-                    .map_err(|e| anyhow::anyhow!("Failed to read API key: {e}"))?;
-                if key.is_empty() { None } else { Some(key) }
+                anyhow::bail!(
+                    "Backend '{name}' requires an API-key reference. Pass --api-key env:VAR; raw secrets belong in auth or the process environment."
+                );
             };
 
             let headers: std::collections::HashMap<String, String> = header.into_iter().collect();

@@ -1,8 +1,19 @@
-/// Mask an API key for display, showing first 4 and last 4 characters.
-pub fn mask_key(key: &str) -> String {
-    if key.len() <= 8 {
+/// Display a backend API-key reference safely.
+///
+/// Registry entries should store `env:VAR` references, not raw keys. Show
+/// references verbatim because they are operator-facing identifiers; mask any
+/// legacy literal defensively.
+pub fn mask_key(reference: &str) -> String {
+    if reference.starts_with("env:") {
+        return reference.to_string();
+    }
+    if reference.len() <= 8 {
         "****".to_string()
     } else {
-        format!("{}...{}", &key[..4], &key[key.len() - 4..])
+        format!(
+            "{}...{}",
+            &reference[..4],
+            &reference[reference.len() - 4..]
+        )
     }
 }
