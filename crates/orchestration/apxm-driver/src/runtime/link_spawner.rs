@@ -23,7 +23,7 @@ use apxm_core::types::operations::AISOperationType;
 use apxm_runtime::agent_router::AgentRouteCandidate;
 use apxm_runtime::process_table::{AgentSpawnContext, AgentSpawner};
 use tokio::sync::{Mutex, mpsc};
-use tracing::{debug, warn};
+use tracing::debug;
 
 /// A session handle for a relay-backed ACP child running on a T2 host.
 ///
@@ -128,6 +128,14 @@ impl AgentSpawner for LinkAgentSpawner {
                 message: "LinkAgentSpawner requires a host_id in the spawn context".to_string(),
             })?;
 
+        // TODO(band-d): replace direct registry access with
+        // `HostDispatchGateway::open_agent_channel(host_id, agent_name, …)`.
+        // `HostDispatchGateway` is available via `apxm_runtime::HostDispatchGateway`
+        // (re-exported from `apxm-runtime`). The gateway returns an
+        // `AgentChannelHandle` whose channel_id can then be resolved back to the
+        // (tx, rx) pair from a channel store, decoupling the spawner from the
+        // raw `LinkHostRegistry`.  The spawner should hold an
+        // `Arc<dyn HostDispatchGateway>` rather than `Arc<LinkHostRegistry>`.
         let (tx, rx) = self
             .registry
             .take(host_id)
