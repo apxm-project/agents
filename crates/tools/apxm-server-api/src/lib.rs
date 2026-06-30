@@ -28,6 +28,7 @@ pub use apxm_runtime::capability::executor::{
     CapabilityExecutor,
     CapabilityResult,
 };
+pub use apxm_runtime::host_dispatch::{HostDispatchGateway, NoOpHostDispatchGateway};
 pub use apxm_runtime::capability::metadata::CapabilityMetadata;
 pub use apxm_runtime::capability::builtins::guard_url_ssrf;
 pub use apxm_runtime::capability::builtins::{FiredSchedule, OnFire};
@@ -72,6 +73,9 @@ pub trait AgentRuntimeApi: Send + Sync + 'static {
     fn runtime(&self) -> &Runtime;
     fn runtime_arc(&self) -> Arc<Runtime>;
 
+    /// Access the host dispatch gateway for kind=host capability routing.
+    fn host_dispatch(&self) -> Arc<dyn apxm_runtime::host_dispatch::HostDispatchGateway>;
+
     /// Shut down the runtime.
     fn shutdown(&self);
 }
@@ -110,6 +114,10 @@ impl AgentRuntimeApi for RuntimeApiAdapter {
 
     fn runtime_arc(&self) -> Arc<Runtime> {
         Arc::clone(&self.0)
+    }
+
+    fn host_dispatch(&self) -> Arc<dyn apxm_runtime::host_dispatch::HostDispatchGateway> {
+        Arc::new(apxm_runtime::host_dispatch::NoOpHostDispatchGateway)
     }
 
     fn shutdown(&self) {

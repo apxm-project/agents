@@ -5,6 +5,7 @@ use std::time::{Duration, SystemTime};
 
 use apxm_core::events::payload::WarningPayload;
 use apxm_core::events::{ApxmEvent, EventSource};
+use apxm_core::types::consent::ConsentBroker;
 use apxm_driver::ServerConfig;
 use apxm_rollout::{IndexDb, RolloutPaths};
 use apxm_runtime::Runtime;
@@ -32,6 +33,8 @@ pub(crate) struct AppState {
     /// Host dispatch gateway for kind=host capability routing.
     /// Replaced by HostDispatchGatewayImpl in `os` when a real Link relay is active.
     pub(crate) host_dispatch: Arc<dyn HostDispatchGateway>,
+    /// Per-call consent broker. NoOpConsentBroker until os wires the real broker.
+    pub(crate) consent_broker: Arc<dyn ConsentBroker>,
     /// In-memory agent registry: name → registration record
     pub(crate) agent_registry: Arc<DashMap<String, AgentRegistration>>,
     /// Task queue manager backing the CLAIM op.
