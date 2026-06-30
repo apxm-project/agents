@@ -29,7 +29,7 @@ uuid.workspace = true
 
 [target.'cfg(unix)'.dependencies]
 libc = "0.2"
-apxm-credentials.workspace = true
+apxm-backend-registry.workspace = true
 
 [dev-dependencies]
 tempfile.workspace = true

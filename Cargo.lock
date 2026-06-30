@@ -147,8 +147,8 @@ dependencies = [
 name = "apxm-acp"
 version = "0.1.0"
 dependencies = [
+ "apxm-backend-registry",
  "apxm-core",
- "apxm-credentials",
  "apxm-runtime",
  "async-trait",
  "dashmap",
@@ -185,6 +185,19 @@ dependencies = [
  "blake3",
  "serde",
  "thiserror 2.0.18",
+]
+
+[[package]]
+name = "apxm-backend-registry"
+version = "0.1.0"
+dependencies = [
+ "apxm-backends",
+ "apxm-core",
+ "reqwest 0.12.28",
+ "serde",
+ "tempfile",
+ "thiserror 2.0.18",
+ "toml",
 ]
 
 [[package]]
@@ -230,11 +243,11 @@ dependencies = [
  "apxm-acp",
  "apxm-ais",
  "apxm-artifact",
+ "apxm-backend-registry",
  "apxm-backends",
  "apxm-client",
  "apxm-compiler",
  "apxm-core",
- "apxm-credentials",
  "apxm-driver",
  "apxm-rollout",
  "apxm-runtime",
@@ -322,28 +335,15 @@ dependencies = [
 ]
 
 [[package]]
-name = "apxm-credentials"
-version = "0.1.0"
-dependencies = [
- "apxm-backends",
- "apxm-core",
- "reqwest 0.12.28",
- "serde",
- "tempfile",
- "thiserror 2.0.18",
- "toml",
-]
-
-[[package]]
 name = "apxm-driver"
 version = "0.1.0"
 dependencies = [
  "apxm-acp",
  "apxm-artifact",
+ "apxm-backend-registry",
  "apxm-backends",
  "apxm-compiler",
  "apxm-core",
- "apxm-credentials",
  "apxm-runtime",
  "async-trait",
  "chrono",

@@ -209,7 +209,7 @@ pub use catalog::{
     models_for_protocol, models_for_provider, resolve_builtin_model, resolve_builtin_provider,
     resolve_provider_spec,
 };
-pub use config::{BackendConfig, BackendType, DockerConfig, ModelConfig};
+pub use config::{BackendConfig, BackendType, ModelConfig};
 pub use protocol::{
     ProviderProtocol, ProviderSpec, normalize_anthropic_gateway_endpoint,
     normalize_endpoint_for_protocol,

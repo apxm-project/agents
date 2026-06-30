@@ -2,7 +2,7 @@
 //!
 //! These structures describe registered LLM backends, their deployment mode,
 //! and the models they serve. They live with backend ownership because their
-//! semantics are interpreted by backend adapters and credential tooling.
+//! semantics are interpreted by backend adapters and backend-registry tooling.
 
 use super::ProviderProtocol;
 use serde::{Deserialize, Serialize};
@@ -69,8 +69,6 @@ pub struct BackendConfig {
     /// Models hosted on this backend.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub models: Vec<ModelConfig>,
-    /// Optional local container metadata.
-    pub docker: Option<DockerConfig>,
     /// Whether this backend accepts automatic tool selection.
     #[serde(default)]
     pub auto_tool_choice: Option<bool>,
@@ -117,24 +115,4 @@ pub struct ModelConfig {
     /// Arbitrary classification tags.
     #[serde(default)]
     pub tags: Vec<String>,
-}
-
-/// Optional local container metadata for backend lifecycle tooling.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct DockerConfig {
-    /// Container image name.
-    pub image: String,
-    /// Additional command-line arguments.
-    #[serde(default)]
-    pub args: Vec<String>,
-    /// Environment variables set in the container.
-    #[serde(default)]
-    pub env: HashMap<String, String>,
-    /// Override the container default command.
-    #[serde(default)]
-    pub command: Vec<String>,
-    /// Path to local model weights.
-    pub model_path: Option<String>,
-    /// Number of GPUs for tensor parallelism.
-    pub tensor_parallel: Option<usize>,
 }

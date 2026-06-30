@@ -1,10 +1,9 @@
-//! Backend management (cloud / on-prem / local containers).
+//! Backend registry management (cloud / on-prem / local endpoints).
 
 #[cfg(feature = "driver")]
 use std::collections::HashSet;
 
 use anyhow::Result;
-use apxm_credentials::docker::{ContainerStatus, DockerManager};
 use colored::Colorize;
 
 use super::cli::*;
@@ -63,7 +62,7 @@ fn ollama_model_caps(base_url: &str, model_name: &str) -> (bool, bool, usize) {
 
 #[cfg(feature = "driver")]
 fn sync_ollama_models(
-    store: &apxm_credentials::backend::BackendStore,
+    store: &apxm_backend_registry::backend::BackendStore,
     backend_name: &str,
     base_url: &str,
     existing: &std::collections::HashSet<String>,
@@ -129,7 +128,7 @@ fn sync_ollama_models(
 #[cfg(feature = "driver")]
 pub async fn backend_command(action: BackendAction, json_output: bool) -> Result<()> {
     use apxm_backends::llm::{BackendConfig, BackendType, ProviderProtocol};
-    use apxm_credentials::backend::BackendStore;
+    use apxm_backend_registry::backend::BackendStore;
     use std::str::FromStr;
 
     let store = BackendStore::open().map_err(|e| anyhow::anyhow!("{e}"))?;
@@ -191,7 +190,6 @@ pub async fn backend_command(action: BackendAction, json_output: bool) -> Result
                 api_key,
                 headers,
                 models: vec![],
-                docker: None,
                 auto_tool_choice: None,
                 supports_structured_outputs: None,
             };
@@ -258,7 +256,7 @@ pub async fn backend_command(action: BackendAction, json_output: bool) -> Result
                 let key_display = backend
                     .api_key
                     .as_deref()
-                    .map(|k| apxm_credentials::mask::mask_key(k))
+                    .map(|k| apxm_backend_registry::mask::mask_key(k))
                     .unwrap_or_else(|| "<none>".to_string());
 
                 println!(
@@ -312,7 +310,7 @@ pub async fn backend_command(action: BackendAction, json_output: bool) -> Result
             print_section_header("Testing Backends");
             let mut all_ok = true;
             for backend in &backends_to_test {
-                match apxm_credentials::validate::validate_backend(backend).await {
+                match apxm_backend_registry::validate::validate_backend(backend).await {
                     Ok(msg) => print_status_line(&backend.name, Status::Ok, &msg),
                     Err(e) => {
                         print_status_line(&backend.name, Status::Error, &e.to_string());
@@ -322,36 +320,6 @@ pub async fn backend_command(action: BackendAction, json_output: bool) -> Result
             }
             if !all_ok {
                 return Err(anyhow::anyhow!("Some backends failed validation"));
-            }
-        }
-        BackendAction::Start { name } => {
-            let backend = store
-                .get(&name)
-                .map_err(|e| anyhow::anyhow!("{e}"))?
-                .ok_or_else(|| anyhow::anyhow!("Backend '{name}' not found"))?;
-
-            let container_id = DockerManager::start(&backend)
-                .map_err(|e| anyhow::anyhow!("Failed to start backend: {e}"))?;
-
-            if json_output {
-                println!(
-                    "{{\"status\":\"ok\",\"backend\":\"{name}\",\"container_id\":\"{container_id}\"}}"
-                );
-            } else {
-                print_section_header("Backend Started");
-                print_status_line("Backend", Status::Ok, &name);
-                print_status_line("Container ID", Status::Ok, &container_id);
-            }
-        }
-        BackendAction::Stop { name } => {
-            DockerManager::stop_by_name(&name)
-                .map_err(|e| anyhow::anyhow!("Failed to stop backend: {e}"))?;
-
-            if json_output {
-                println!("{{\"status\":\"ok\",\"backend\":\"{name}\",\"action\":\"stopped\"}}");
-            } else {
-                print_section_header("Backend Stopped");
-                print_status_line("Backend", Status::Ok, &name);
             }
         }
         BackendAction::Status { name } => {
@@ -367,64 +335,35 @@ pub async fn backend_command(action: BackendAction, json_output: bool) -> Result
             };
 
             if json_output {
-                let mut statuses = Vec::new();
-                for backend in &backends_to_check {
-                    if backend.backend_type == BackendType::Local {
-                        let status = DockerManager::status(&backend.name)
-                            .unwrap_or(ContainerStatus::NotFound);
-                        statuses.push(serde_json::json!({
+                let statuses: Vec<_> = backends_to_check
+                    .iter()
+                    .map(|backend| {
+                        serde_json::json!({
                             "backend": backend.name,
-                            "status": status.to_string()
-                        }));
-                    }
-                }
+                            "type": backend.backend_type,
+                            "protocol": backend.protocol,
+                            "endpoint": backend.endpoint,
+                            "models": backend.models.len(),
+                        })
+                    })
+                    .collect();
                 println!("{}", serde_json::to_string_pretty(&statuses)?);
             } else {
                 print_section_header("Backend Status");
                 for backend in &backends_to_check {
-                    if backend.backend_type == BackendType::Local {
-                        let status = DockerManager::status(&backend.name)
-                            .unwrap_or(ContainerStatus::NotFound);
-                        let status_display = match status {
-                            ContainerStatus::Running => Status::Ok,
-                            ContainerStatus::Stopped => Status::Warning,
-                            ContainerStatus::NotFound => Status::Error,
-                        };
-                        print_status_line(&backend.name, status_display, &status.to_string());
-                    }
+                    let endpoint = backend.endpoint.as_deref().unwrap_or("<default>");
+                    print_status_line(
+                        &backend.name,
+                        Status::Ok,
+                        &format!(
+                            "{} {} endpoint={} models={}",
+                            backend.backend_type,
+                            backend.protocol,
+                            endpoint,
+                            backend.models.len()
+                        ),
+                    );
                 }
-            }
-        }
-        BackendAction::Logs { name, tail } => {
-            let container_id = DockerManager::get_container_id(&name)
-                .map_err(|e| anyhow::anyhow!("Failed to get container ID: {e}"))?
-                .ok_or_else(|| anyhow::anyhow!("Container not found for backend '{name}'"))?;
-
-            let logs = DockerManager::logs(&container_id, tail)
-                .map_err(|e| anyhow::anyhow!("Failed to get logs: {e}"))?;
-
-            if json_output {
-                println!(
-                    "{{\"status\":\"ok\",\"backend\":\"{name}\",\"logs\":{}}}",
-                    serde_json::to_string(&logs)?
-                );
-            } else {
-                println!("{}", logs);
-            }
-        }
-        BackendAction::Restart { name } => {
-            let container_id = DockerManager::get_container_id(&name)
-                .map_err(|e| anyhow::anyhow!("Failed to get container ID: {e}"))?
-                .ok_or_else(|| anyhow::anyhow!("Container not found for backend '{name}'"))?;
-
-            DockerManager::restart(&container_id)
-                .map_err(|e| anyhow::anyhow!("Failed to restart backend: {e}"))?;
-
-            if json_output {
-                println!("{{\"status\":\"ok\",\"backend\":\"{name}\",\"action\":\"restarted\"}}");
-            } else {
-                print_section_header("Backend Restarted");
-                print_status_line("Backend", Status::Ok, &name);
             }
         }
         BackendAction::SyncModels { name, endpoint } => {

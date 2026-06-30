@@ -111,7 +111,7 @@ contract is committed to.
 - Companion fetchers + vendored smoke samples for both.
 
 ### Added — Slurm-fork hardening
-- `crates/runtime/credentials/src/validate.rs` —
+- `crates/runtime/backend-registry/src/validate.rs` —
   `dekk agents backend test` now probes `/v1/apxm/scheduler` on the
   `vllm` protocol path; a backend that serves `/v1/models` but is
   missing the APXM-fork routes fails to validate with a clear "register

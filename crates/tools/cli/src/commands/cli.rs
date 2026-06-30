@@ -735,33 +735,10 @@ pub enum BackendAction {
         /// Backend name to test (omit to test all)
         name: Option<String>,
     },
-    /// Start a local backend container
-    Start {
-        /// Backend name
-        name: String,
-    },
-    /// Stop a local backend container
-    Stop {
-        /// Backend name
-        name: String,
-    },
-    /// Show status of local backend containers
+    /// Show backend registry status
     Status {
         /// Backend name (omit to show all)
         name: Option<String>,
-    },
-    /// Show logs from a local backend container
-    Logs {
-        /// Backend name
-        name: String,
-        /// Number of lines to show (default: 50)
-        #[arg(long, default_value = "50")]
-        tail: usize,
-    },
-    /// Restart a local backend container
-    Restart {
-        /// Backend name
-        name: String,
     },
     /// Sync installed Ollama models into a registered backend
     SyncModels {

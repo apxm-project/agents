@@ -70,7 +70,7 @@ pub fn doctor_command(config: Option<PathBuf>, json_output: bool) -> Result<()> 
 
     // --- Backends ---
     let (backend_count, backend_names): (usize, Vec<String>) =
-        match apxm_credentials::BackendStore::open() {
+        match apxm_backend_registry::BackendStore::open() {
             Ok(store) => match store.list() {
                 Ok(backends) => {
                     let names: Vec<String> = backends.iter().map(|b| b.name.clone()).collect();

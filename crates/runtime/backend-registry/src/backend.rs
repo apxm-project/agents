@@ -2,7 +2,7 @@
 //!
 //! This module provides the [`BackendStore`] for managing the APXM backend
 //! registry. Backends include deployment type, protocol, model metadata, and
-//! Docker configuration for local deployments.
+//! API-key references for provider access.
 
 use apxm_backends::llm::{BackendConfig, ModelConfig, normalize_endpoint_for_protocol};
 use apxm_core::env::apxm_home;
@@ -74,7 +74,7 @@ impl BackendStore {
     ///
     /// Routes through [`apxm_core::env::apxm_home`], the workspace's
     /// single source of truth for the global home directory. Project-local
-    /// `.apxm/` directories are intentionally ignored: backend credentials
+    /// `.apxm/` directories are intentionally ignored: backend registrations
     /// are a per-instance concern, not a per-checkout concern, and the
     /// multi-instance contract is "one `APXM_HOME` per `apxm-server`".
     pub fn open() -> Result<Self, BackendError> {
