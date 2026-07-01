@@ -105,6 +105,7 @@ impl RetryStrategy {
 
         // Permanent errors
         if error_str.contains("unauthorized")
+            || error_str.contains("forbidden")
             || error_str.contains("401")
             || error_str.contains("403")
             || error_str.contains("invalid")
@@ -188,5 +189,19 @@ impl RetryStrategy {
 impl Default for RetryStrategy {
     fn default() -> Self {
         RetryStrategy::new(RetryConfig::default())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{ErrorClass, RetryStrategy};
+
+    #[test]
+    fn classifies_textual_forbidden_errors_as_permanent() {
+        let strategy = RetryStrategy::default();
+        let err = anyhow::anyhow!("provider returned forbidden");
+
+        assert_eq!(strategy.classify_error(&err), ErrorClass::Permanent);
+        assert!(!strategy.should_retry(&err, 0));
     }
 }
