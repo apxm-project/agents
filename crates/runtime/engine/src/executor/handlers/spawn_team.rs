@@ -1,14 +1,17 @@
 use super::{
     ExecutionContext, Node, Result, Value, get_optional_string_attribute, get_string_attribute,
 };
+use crate::executor::capability_admission::metadata_admits_write;
 use crate::team::TeamRegistry;
 use apxm_core::apxm_op;
 use apxm_core::constants::graph::attrs as graph_attrs;
+use apxm_core::constants::orchestration::admission as orchestration_admission;
 use apxm_core::constants::runtime::response_keys;
 use apxm_core::error::RuntimeError;
 use std::collections::HashMap;
 
 pub async fn execute(ctx: &ExecutionContext, node: &Node, _inputs: Vec<Value>) -> Result<Value> {
+    enforce_spawn_team_admission(ctx, node)?;
     let team_name = get_string_attribute(node, graph_attrs::TEAM_NAME)?;
     let cwd = get_optional_string_attribute(node, graph_attrs::CWD)?;
 
@@ -92,4 +95,17 @@ pub async fn execute(ctx: &ExecutionContext, node: &Node, _inputs: Vec<Value>) -
     result.insert(response_keys::MEMBERS.to_string(), Value::Object(spawned));
 
     Ok(Value::Object(result))
+}
+
+fn enforce_spawn_team_admission(ctx: &ExecutionContext, node: &Node) -> Result<()> {
+    if metadata_admits_write(&ctx.metadata, orchestration_admission::SPAWN_TEAM) {
+        return Ok(());
+    }
+    Err(RuntimeError::Capability {
+        capability: orchestration_admission::SPAWN_TEAM.to_string(),
+        message: format!(
+            "{:?} performs process spawning and is missing a capability grant; mint a grant for its tool binding and present grant_* ids in capability_grant_ids",
+            node.op_type
+        ),
+    })
 }

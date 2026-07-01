@@ -24,10 +24,12 @@ use crate::agent_router::{
     AgentRouteRequest, AgentRouter,
 };
 use crate::constants::env as runtime_env;
+use crate::executor::capability_admission::metadata_admits_write;
 use crate::metadata_keys as metadata;
 use crate::process_table::AgentSpawnContext;
 use apxm_core::apxm_op;
 use apxm_core::constants::graph::attrs as graph_attrs;
+use apxm_core::constants::orchestration::admission as orchestration_admission;
 use apxm_core::constants::runtime::context_stack as context_stack_consts;
 use apxm_core::constants::runtime::{belief_keys, response_keys};
 use apxm_core::error::RuntimeError;
@@ -48,6 +50,9 @@ pub async fn execute(ctx: &ExecutionContext, node: &Node, _inputs: Vec<Value>) -
         get_optional_string_list_attribute(node, graph_attrs::PREFERRED_PROFILES)?;
     let wants_route =
         route_mode.is_some() || !required_capabilities.is_empty() || !preferred_profiles.is_empty();
+    if initial_profile.is_some() || wants_route {
+        enforce_spawn_agent_admission(ctx, node)?;
+    }
 
     apxm_op!(info,
         execution_id = %ctx.execution_id,
@@ -484,6 +489,19 @@ pub async fn execute(ctx: &ExecutionContext, node: &Node, _inputs: Vec<Value>) -
     Ok(Value::Object(agent_info))
 }
 
+fn enforce_spawn_agent_admission(ctx: &ExecutionContext, node: &Node) -> Result<()> {
+    if metadata_admits_write(&ctx.metadata, orchestration_admission::SPAWN_AGENT) {
+        return Ok(());
+    }
+    Err(RuntimeError::Capability {
+        capability: orchestration_admission::SPAWN_AGENT.to_string(),
+        message: format!(
+            "{:?} performs process spawning and is missing a capability grant; mint a grant for its tool binding and present grant_* ids in capability_grant_ids",
+            node.op_type
+        ),
+    })
+}
+
 fn build_agent_spawn_context(
     ctx: &ExecutionContext,
     node: &Node,
@@ -782,5 +800,53 @@ fn project_aam_context(ctx: &ExecutionContext, node_id: u64, profile: &str) -> A
         goals,
         capabilities,
         system_prompt,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::enforce_spawn_agent_admission;
+    use crate::aam::Aam;
+    use crate::capability::CapabilitySystem;
+    use crate::executor::ExecutionContext;
+    use crate::memory::{MemoryConfig, MemorySystem};
+    use apxm_backends::LLMRegistry;
+    use apxm_core::constants::orchestration::admission as orchestration_admission;
+    use apxm_core::types::{AISOperationType, Node};
+    use std::sync::Arc;
+
+    async fn test_context() -> ExecutionContext {
+        let memory = Arc::new(
+            MemorySystem::new(MemoryConfig::in_memory_ltm())
+                .await
+                .expect("memory"),
+        );
+        let aam = Aam::new();
+        let capability_system = Arc::new(CapabilitySystem::with_aam(aam.clone()));
+        ExecutionContext::new(memory, Arc::new(LLMRegistry::new()), capability_system, aam)
+    }
+
+    #[tokio::test]
+    async fn process_spawn_requires_spawn_agent_grant_metadata() {
+        let mut ctx = test_context().await;
+        let node = Node::new(1, AISOperationType::SpawnAgent);
+
+        let err =
+            enforce_spawn_agent_admission(&ctx, &node).expect_err("missing grant must fail closed");
+        assert!(err.to_string().contains("missing a capability grant"));
+
+        ctx.metadata.insert(
+            crate::metadata_keys::CAPABILITY_GRANTS.to_string(),
+            serde_json::json!([{
+                "grant_id": "grant_spawn_agent_fixture",
+                "tool_binding": orchestration_admission::SPAWN_AGENT,
+                "operations": ["write"],
+                "expires_at": null,
+                "status": "active"
+            }])
+            .to_string(),
+        );
+
+        enforce_spawn_agent_admission(&ctx, &node).expect("matching grant admits process spawn");
     }
 }

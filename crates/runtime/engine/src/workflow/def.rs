@@ -80,6 +80,7 @@ impl WorkflowStep {
             parent_session_dir: None,
             parent_scope_id: None,
             spawn_node_id: None,
+            authority_metadata: HashMap::new(),
         }
     }
 }

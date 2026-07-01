@@ -110,6 +110,8 @@ pub struct WorkflowInvocation {
     pub parent_scope_id: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub spawn_node_id: Option<u64>,
+    #[serde(default, skip_serializing_if = "HashMap::is_empty")]
+    pub authority_metadata: HashMap<String, String>,
 }
 
 const fn default_await_result() -> bool {

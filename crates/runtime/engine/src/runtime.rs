@@ -860,6 +860,13 @@ impl Runtime {
         cancellation_token: Option<CancellationToken>,
         tool_credentials: Option<HashMap<String, String>>,
     ) -> Result<RuntimeExecutionResult, RuntimeError> {
+        if !Self::python_sandbox_required() && artifact_has_python_tools_section(&artifact) {
+            return Err(RuntimeError::Capability {
+                capability: python_tools::CAPABILITY_NAME.to_string(),
+                message: "python tool artifacts require APXM_SANDBOX_PYTHON".to_string(),
+            });
+        }
+
         let _lane_permit = if let Some(ref sid) = session_id {
             Some(self.session_lane_guard.acquire(sid).await)
         } else {
@@ -1175,6 +1182,13 @@ fn graph_id_from_dag(dag: &ExecutionDag) -> String {
 /// Artifact section kind for Python tool manifests.
 const PYTHON_TOOLS_SECTION_KIND: &str = python_tools::CAPABILITY_NAME;
 
+fn artifact_has_python_tools_section(artifact: &Artifact) -> bool {
+    artifact
+        .sections()
+        .iter()
+        .any(|section| section.kind == PYTHON_TOOLS_SECTION_KIND)
+}
+
 /// Extract a `PythonToolBridge` from an artifact's `python_tools` section, if present.
 ///
 /// The section's `data` field is the UTF-8 JSON array produced by the Python
@@ -1343,7 +1357,7 @@ fn parse_flow_name(name: &str) -> (String, String) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use apxm_artifact::ArtifactMetadata;
+    use apxm_artifact::{ArtifactMetadata, ArtifactSection};
     use apxm_core::constants::graph::attrs as graph_attrs;
     use apxm_core::types::execution::FlowParameter;
     use apxm_core::types::{AISOperationType, DagMetadata, Node, Value};
@@ -1432,5 +1446,26 @@ mod tests {
             .execute_artifact_with_args(spawn_artifact, Vec::new())
             .await
             .unwrap();
+    }
+
+    #[tokio::test]
+    async fn python_tool_sections_require_sandbox_flag() {
+        let runtime = Runtime::new(RuntimeConfig::in_memory()).await.unwrap();
+        let mut artifact = artifact(vec![single_node_dag(
+            "main",
+            true,
+            Node::new(1, AISOperationType::Nop),
+        )]);
+        artifact.add_section(ArtifactSection {
+            kind: python_tools::CAPABILITY_NAME.to_string(),
+            data: b"[]".to_vec(),
+        });
+
+        let err = runtime
+            .execute_artifact_with_args(artifact, Vec::new())
+            .await
+            .expect_err("python section must fail closed without sandbox opt-in");
+
+        assert!(err.to_string().contains("APXM_SANDBOX_PYTHON"));
     }
 }
