@@ -10,44 +10,11 @@ use super::{
     template::{input_names_from_node, render_named},
 };
 use crate::capability::CapabilitySandboxPreflight;
-use crate::metadata_keys;
+use crate::executor::capability_admission::metadata_admits_write;
 use apxm_core::constants::graph::attrs as graph_attrs;
 use apxm_core::constants::runtime::belief_keys;
 use apxm_core::error::RuntimeError;
-use apxm_core::types::{
-    AISOperationType, GrantStatus, PermissionOperation, RuntimeCapabilityGrant,
-};
-use chrono::{DateTime, Utc};
-
-/// Returns true when runtime `capability_grants` metadata admits a direct write
-/// to `tool_binding`. Missing, malformed, expired, or non-mutating grants fail closed.
-fn capability_grant_admits_write(metadata: Option<&str>, tool_binding: &str) -> bool {
-    let Some(metadata) = metadata else {
-        return false;
-    };
-    let Ok(grants) = serde_json::from_str::<Vec<RuntimeCapabilityGrant>>(metadata) else {
-        return false;
-    };
-    grants.into_iter().any(|grant| {
-        grant.status == GrantStatus::Active
-            && grant.tool_binding == tool_binding
-            && grant
-                .operations
-                .iter()
-                .copied()
-                .any(PermissionOperation::is_mutating)
-            && !capability_grant_expired(grant.expires_at.as_deref())
-    })
-}
-
-fn capability_grant_expired(expires_at: Option<&str>) -> bool {
-    let Some(expires_at) = expires_at else {
-        return false;
-    };
-    DateTime::parse_from_rfc3339(expires_at)
-        .map(|expires_at| expires_at.with_timezone(&Utc) <= Utc::now())
-        .unwrap_or(true)
-}
+use apxm_core::types::AISOperationType;
 
 /// Invoke-site capability admission — enforced for EVERY tool call regardless of how
 /// the execution was launched. A direct (write) capability runs only when this
@@ -72,11 +39,7 @@ async fn enforce_write_boundary(
     } else if !unregistered_requires_delegation {
         return Ok(());
     }
-    let capability_grants = ctx
-        .metadata
-        .get(metadata_keys::CAPABILITY_GRANTS)
-        .map(String::as_str);
-    if capability_grant_admits_write(capability_grants, name) {
+    if metadata_admits_write(&ctx.metadata, name) {
         if ctx.host_id.is_some() {
             use apxm_core::types::consent::{
                 ConsentDecision, PermissionPrompt, PromptMode, RiskLevel,
@@ -504,59 +467,5 @@ mod tests {
             err.to_string()
                 .contains("params_json must be a JSON object")
         );
-    }
-
-    #[test]
-    fn capability_grant_admits_write_requires_runtime_minted_tool_binding_grant() {
-        let metadata = serde_json::json!([{
-            "grant_id": "grant_fixture",
-            "tool_binding": "fixture.write",
-            "operations": ["write"],
-            "expires_at": null,
-            "status": "active"
-        }])
-        .to_string();
-
-        assert!(capability_grant_admits_write(
-            Some(&metadata),
-            "fixture.write"
-        ));
-        assert!(!capability_grant_admits_write(
-            Some(&metadata),
-            "other.write"
-        ));
-        assert!(!capability_grant_admits_write(
-            Some("not capability grant metadata"),
-            "fixture.write"
-        ));
-    }
-
-    #[test]
-    fn capability_grant_admits_write_rejects_expired_or_non_mutating_grants() {
-        let expired = serde_json::json!([{
-            "grant_id": "grant_fixture",
-            "tool_binding": "fixture.write",
-            "operations": ["write"],
-            "expires_at": "2000-01-01T00:00:00Z",
-            "status": "active"
-        }])
-        .to_string();
-        let read_only = serde_json::json!([{
-            "grant_id": "grant_fixture",
-            "tool_binding": "fixture.write",
-            "operations": ["read"],
-            "expires_at": null,
-            "status": "active"
-        }])
-        .to_string();
-
-        assert!(!capability_grant_admits_write(
-            Some(&expired),
-            "fixture.write"
-        ));
-        assert!(!capability_grant_admits_write(
-            Some(&read_only),
-            "fixture.write"
-        ));
     }
 }

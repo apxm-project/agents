@@ -13,6 +13,7 @@
 //! discovery (RFC 9728/8414/8707) for first-connect is an apxm-auth concern; this
 //! bridge consumes the resolved token.
 
+use super::guard_url_ssrf_pinned;
 use crate::capability::{
     executor::{CapabilityExecutor, CapabilityResult},
     metadata::CapabilityMetadata,
@@ -22,6 +23,7 @@ use async_trait::async_trait;
 use reqwest::Client;
 use serde_json::{Value as JsonValue, json};
 use std::collections::HashMap;
+use std::net::SocketAddr;
 use std::sync::OnceLock;
 
 const MCP_PROTOCOL_VERSION: &str = "2025-11-25";
@@ -37,6 +39,47 @@ fn shared_client() -> &'static Client {
             .build()
             .unwrap_or_default()
     })
+}
+
+/// Reuse the hardened HTTP capability's address-aware SSRF guard, but keep MCP
+/// transport on public HTTPS only.
+async fn guard_server_url_pinned(cap: &str, raw: &str) -> CapabilityResult<Vec<SocketAddr>> {
+    let deny = |m: String| RuntimeError::Capability {
+        capability: cap.to_string(),
+        message: m,
+    };
+    let url = reqwest::Url::parse(raw).map_err(|e| deny(format!("invalid url: {e}")))?;
+    if url.scheme() != "https" {
+        return Err(deny(format!(
+            "scheme '{}' not allowed (https only)",
+            url.scheme()
+        )));
+    }
+    guard_url_ssrf_pinned(cap, raw).await
+}
+
+/// Choose a request client for the vetted MCP endpoint. When the server URL was
+/// resolved by name, pin the connect to those exact vetted addresses to close
+/// the DNS-rebind window while preserving the bridge's no-redirect policy.
+fn mcp_client_for(url: &str, addrs: &[SocketAddr]) -> std::borrow::Cow<'static, Client> {
+    if addrs.is_empty() {
+        return std::borrow::Cow::Borrowed(shared_client());
+    }
+    let Some(host) = reqwest::Url::parse(url)
+        .ok()
+        .and_then(|u| u.host_str().map(str::to_string))
+    else {
+        return std::borrow::Cow::Borrowed(shared_client());
+    };
+    match Client::builder()
+        .timeout(std::time::Duration::from_secs(DEFAULT_TIMEOUT_SECS))
+        .redirect(reqwest::redirect::Policy::none())
+        .resolve_to_addrs(&host, addrs)
+        .build()
+    {
+        Ok(client) => std::borrow::Cow::Owned(client),
+        Err(_) => std::borrow::Cow::Borrowed(shared_client()),
+    }
 }
 
 fn auth_base() -> String {
@@ -83,19 +126,6 @@ fn enc(seg: &str) -> String {
         }
     }
     out
-}
-
-/// Basic SSRF gate: only http(s); plaintext http allowed for loopback only.
-fn url_allowed(url: &str) -> bool {
-    if let Some(rest) = url.strip_prefix("https://") {
-        return !rest.is_empty();
-    }
-    if let Some(rest) = url.strip_prefix("http://") {
-        return rest.starts_with("127.0.0.1")
-            || rest.starts_with("localhost")
-            || rest.starts_with("[::1]");
-    }
-    false
 }
 
 /// Content pin of an MCP server's advertised `tools/list` (rug-pull defense).
@@ -160,7 +190,7 @@ impl McpBridgeCapability {
                 json!({
                     "type": "object",
                     "properties": {
-                        "server_url": { "type": "string", "description": "MCP server URL (https, or http loopback)" },
+                        "server_url": { "type": "string", "description": "MCP server URL (public https only)" },
                         "tool": { "type": "string", "description": "MCP tool name to call" },
                         "arguments": { "type": "object", "description": "Tool arguments" },
                         "credential": { "type": "string", "description": "apxm-auth connection id; token-forwarded to the server" }
@@ -235,11 +265,7 @@ impl CapabilityExecutor for McpBridgeCapability {
             .clone()
             .or_else(|| as_json("tool").and_then(|j| j.as_str().map(String::from)))
             .ok_or_else(|| cap_err("missing `tool`".into()))?;
-        if !url_allowed(&server_url) {
-            return Err(cap_err(format!(
-                "server_url failed egress policy: {server_url}"
-            )));
-        }
+        let pinned = guard_server_url_pinned(&self.metadata.name, &server_url).await?;
         let arguments = as_json("arguments").unwrap_or_else(|| json!({}));
 
         let body = json!({
@@ -248,7 +274,8 @@ impl CapabilityExecutor for McpBridgeCapability {
             "method": "tools/call",
             "params": { "name": tool, "arguments": arguments }
         });
-        let mut req = shared_client()
+        let client = mcp_client_for(&server_url, &pinned);
+        let mut req = client
             .post(&server_url)
             .header("MCP-Protocol-Version", MCP_PROTOCOL_VERSION)
             .header("Accept", "application/json, text/event-stream")
@@ -298,5 +325,85 @@ impl CapabilityExecutor for McpBridgeCapability {
 
     fn metadata(&self) -> &CapabilityMetadata {
         &self.metadata
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use wiremock::MockServer;
+
+    fn arg(s: &str) -> Value {
+        Value::String(s.to_string())
+    }
+
+    impl McpBridgeCapability {
+        fn with_base(base: impl Into<String>) -> Self {
+            let mut cap = Self::new();
+            cap.base = Some(base.into());
+            cap
+        }
+    }
+
+    #[tokio::test]
+    async fn execute_rejects_metadata_and_private_server_urls() {
+        let cap = McpBridgeCapability::new();
+
+        for server_url in [
+            "https://169.254.169.254/latest/meta-data/",
+            "https://10.0.0.5/tools",
+        ] {
+            let mut args = HashMap::new();
+            args.insert("server_url".into(), arg(server_url));
+            args.insert("tool".into(), arg("status"));
+
+            let err = cap
+                .execute(args)
+                .await
+                .expect_err("blocked server_url must fail");
+            let rendered = format!("{err}");
+            assert!(
+                rendered.contains("blocked"),
+                "expected blocked-address error for {server_url}, got {rendered}"
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn guard_accepts_public_https_server_url() {
+        let addrs = guard_server_url_pinned("mcp.call", "https://example.com/")
+            .await
+            .expect("public https URL should pass the guard");
+        assert!(
+            !addrs.is_empty(),
+            "DNS-backed public hosts should return pinned addrs"
+        );
+    }
+
+    #[tokio::test]
+    async fn rejected_server_url_does_not_resolve_credentials() {
+        let auth = MockServer::start().await;
+        let cap = McpBridgeCapability::with_base(auth.uri());
+
+        let mut args = HashMap::new();
+        args.insert(
+            "server_url".into(),
+            arg("https://169.254.169.254/latest/meta-data/"),
+        );
+        args.insert("tool".into(), arg("status"));
+        args.insert("credential".into(), arg("conn1"));
+        args.insert("arguments".into(), Value::Object(HashMap::new()));
+
+        let err = cap
+            .execute(args)
+            .await
+            .expect_err("guard should fail before auth resolution");
+        assert!(format!("{err}").contains("blocked"));
+
+        let requests = auth.received_requests().await.unwrap();
+        assert!(
+            requests.is_empty(),
+            "credential resolution must not run when server_url is rejected"
+        );
     }
 }

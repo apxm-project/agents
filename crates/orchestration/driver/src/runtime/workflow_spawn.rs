@@ -79,6 +79,7 @@ impl DriverWorkflowSpawner {
                         Path::new(&path),
                         invocation.args.clone(),
                         &session_base_dir,
+                        &invocation,
                         parent_emitter,
                         cancellation_token,
                     )
@@ -149,18 +150,19 @@ impl DriverWorkflowSpawner {
                     None,
                     emitter,
                     Some(session_dir.to_string_lossy().to_string()),
-                    HashMap::new(),
+                    invocation.authority_metadata.clone(),
                     cancellation_token,
                 )
                 .await
         } else {
             runtime
-                .execute_artifact_with_session_and_emitter(
+                .execute_artifact_with_session_emitter_and_metadata(
                     artifact,
                     ordered_args,
                     None,
                     emitter,
                     Some(session_dir.to_string_lossy().to_string()),
+                    invocation.authority_metadata.clone(),
                 )
                 .await
         };
@@ -226,18 +228,19 @@ impl DriverWorkflowSpawner {
                     None,
                     emitter,
                     Some(session_dir.to_string_lossy().to_string()),
-                    HashMap::new(),
+                    invocation.authority_metadata.clone(),
                     cancellation_token,
                 )
                 .await
         } else {
             runtime
-                .execute_artifact_with_session_and_emitter(
+                .execute_artifact_with_session_emitter_and_metadata(
                     artifact,
                     ordered_args,
                     None,
                     emitter,
                     Some(session_dir.to_string_lossy().to_string()),
+                    invocation.authority_metadata.clone(),
                 )
                 .await
         };
@@ -262,6 +265,7 @@ impl DriverWorkflowSpawner {
         workflow_path: &Path,
         args: HashMap<String, serde_json::Value>,
         session_base_dir: &Path,
+        invocation: &WorkflowInvocation,
         parent_emitter: Option<Arc<dyn ExecutionEventEmitter>>,
         cancellation_token: Option<CancellationToken>,
     ) -> Result<WorkflowSpawnResult, RuntimeError> {
@@ -401,6 +405,7 @@ impl DriverWorkflowSpawner {
                 let mut child_invocation = step.spawn_invocation(&base_dir, resolved_params);
                 child_invocation.session_root =
                     Some(workflow_session_dir.to_string_lossy().to_string());
+                child_invocation.authority_metadata = invocation.authority_metadata.clone();
 
                 apxm_runtime::workflow::write_workflow_step_started(
                     &workflow_session_dir,

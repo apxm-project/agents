@@ -55,6 +55,7 @@ pub async fn execute(ctx: &ExecutionContext, node: &Node, inputs: Vec<Value>) ->
         parent_session_dir: ctx.metadata.get(metadata::SESSION_DIR).cloned(),
         parent_scope_id: Some(ctx.scope_id().to_string()),
         spawn_node_id: Some(node.id),
+        authority_metadata: inherited_authority_metadata(&ctx.metadata),
     };
 
     let result = ctx
@@ -83,6 +84,22 @@ pub async fn execute(ctx: &ExecutionContext, node: &Node, inputs: Vec<Value>) ->
     }
 
     Ok(Value::Object(payload))
+}
+
+fn inherited_authority_metadata(metadata_map: &HashMap<String, String>) -> HashMap<String, String> {
+    [
+        metadata::CAPABILITY_GRANTS,
+        metadata::SIDE_EFFECT_POLICY,
+        metadata::VISIBLE_SKILLS,
+        metadata::TOOL_CALL_BUDGETS,
+    ]
+    .into_iter()
+    .filter_map(|key| {
+        metadata_map
+            .get(key)
+            .map(|value| (key.to_string(), value.clone()))
+    })
+    .collect()
 }
 
 fn parse_target(target_kind: &str, target: &str) -> Result<WorkflowTarget> {
@@ -218,4 +235,47 @@ fn parse_exact_placeholder(value: &str) -> Option<&str> {
         return None;
     }
     Some(inner)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::inherited_authority_metadata;
+    use crate::metadata_keys as metadata;
+    use std::collections::HashMap;
+
+    #[test]
+    fn inherited_authority_metadata_copies_only_execution_authority() {
+        let source = HashMap::from([
+            (
+                metadata::CAPABILITY_GRANTS.to_string(),
+                "[{\"grant_id\":\"grant_fixture\"}]".to_string(),
+            ),
+            (
+                metadata::TOOL_CALL_BUDGETS.to_string(),
+                "{\"http_post\":1}".to_string(),
+            ),
+            (
+                metadata::SESSION_DIR.to_string(),
+                "/tmp/session".to_string(),
+            ),
+            ("tool_credentials".to_string(), "secret".to_string()),
+        ]);
+
+        let inherited = inherited_authority_metadata(&source);
+
+        assert_eq!(
+            inherited
+                .get(metadata::CAPABILITY_GRANTS)
+                .map(String::as_str),
+            Some("[{\"grant_id\":\"grant_fixture\"}]")
+        );
+        assert_eq!(
+            inherited
+                .get(metadata::TOOL_CALL_BUDGETS)
+                .map(String::as_str),
+            Some("{\"http_post\":1}")
+        );
+        assert!(!inherited.contains_key(metadata::SESSION_DIR));
+        assert!(!inherited.contains_key("tool_credentials"));
+    }
 }
