@@ -105,7 +105,6 @@ impl RetryStrategy {
 
         // Permanent errors
         if error_str.contains("unauthorized")
-            || error_str.contains("forbidden")
             || error_str.contains("401")
             || error_str.contains("403")
             || error_str.contains("invalid")
