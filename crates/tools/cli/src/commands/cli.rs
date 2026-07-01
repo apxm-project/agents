@@ -539,7 +539,7 @@ pub enum CodegenAction {
         #[arg(long)]
         check: bool,
     },
-    /// Generate TypeScript types into the GUI frontend
+    /// Generate TypeScript types into the Studio frontend
     Typescript {
         /// Output file path for generated TypeScript
         #[arg(long)]
@@ -548,7 +548,7 @@ pub enum CodegenAction {
         #[arg(long)]
         check: bool,
     },
-    /// Generate TypeScript event kind constants into the GUI frontend
+    /// Generate TypeScript event kind constants into the Studio frontend
     EventKinds {
         /// Output file path for generated TypeScript event kinds
         #[arg(long)]
@@ -606,7 +606,7 @@ pub enum SessionAction {
 pub enum ProcessAction {
     /// List APXM job processes visible from this worktree
     List {
-        /// Include long-running APXM services such as apxm-server and apxm-gui
+        /// Include long-running APXM services such as apxm-server and apxm-studio
         #[arg(long)]
         include_services: bool,
         /// Include repo-local vLLM server/controller processes
@@ -621,7 +621,7 @@ pub enum ProcessAction {
         /// Send SIGKILL instead of SIGTERM
         #[arg(long, short)]
         force: bool,
-        /// Include long-running APXM services such as apxm-server and apxm-gui
+        /// Include long-running APXM services such as apxm-server and apxm-studio
         #[arg(long)]
         include_services: bool,
         /// Include repo-local vLLM server/controller processes

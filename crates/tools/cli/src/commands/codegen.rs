@@ -163,8 +163,8 @@ fn default_frontend_codegen_dir() -> PathBuf {
 }
 
 fn default_typescript_codegen_path() -> PathBuf {
-    // apxm-gui is retired (merged into apxm-studio); generated TS lives in-repo
-    // so apxm is self-contained. Consumers (apxm-studio) vendor/import it.
+    // Generated TS lives in-repo so APXM is self-contained. Consumers
+    // (apxm-studio) vendor/import it.
     Path::new(env!("CARGO_MANIFEST_DIR")).join("generated/typescript/generated.ts")
 }
 
