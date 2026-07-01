@@ -16,7 +16,7 @@ const WORKFLOW_RUN_COMMAND: &str = "run";
 const APXM_BINARY: &str = "apxm";
 const DEKK_BINARY: &str = "dekk";
 const APXM_SERVER_BINARY: &str = "apxm-server";
-const APXM_GUI_BINARY: &str = "apxm-gui";
+const APXM_STUDIO_BINARY: &str = "apxm-studio";
 const VLLM_ENTRYPOINT: &str = "vllm.entrypoints.cli.main";
 const VLLM_SCRIPT: &str = "tools/scripts/vllm.py";
 
@@ -267,10 +267,10 @@ fn is_apxm_job_command(args: &[String]) -> bool {
 fn matches_apxm_service(cmdline: &[String]) -> bool {
     cmdline.iter().any(|arg| {
         let name = basename(arg);
-        name == APXM_SERVER_BINARY || name == APXM_GUI_BINARY
+        name == APXM_SERVER_BINARY || name == APXM_STUDIO_BINARY
     }) || cmdline
         .windows(2)
-        .any(|window| basename(&window[0]) == APXM_BINARY && window[1].as_str() == "gui")
+        .any(|window| basename(&window[0]) == APXM_BINARY && window[1].as_str() == "studio")
 }
 
 fn matches_vllm_process(cmdline: &[String]) -> bool {

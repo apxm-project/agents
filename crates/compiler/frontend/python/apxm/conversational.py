@@ -106,7 +106,7 @@ class MultiFlowArtifact:
 
 
 class ConversationalAgent:
-    """Declarative whole-agent builder. See `contracts/python-api.md`."""
+    """Declarative whole-agent builder exposed by the Python frontend."""
 
     def __init__(
         self,
