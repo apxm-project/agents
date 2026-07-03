@@ -58,10 +58,6 @@ pub mod env {
     pub const APXM_RUN_EVENT_DEFAULT_LIMIT: &str = "APXM_RUN_EVENT_DEFAULT_LIMIT";
     /// Maximum page size for `/v1/runs/{id}/events`.
     pub const APXM_RUN_EVENT_MAX_LIMIT: &str = "APXM_RUN_EVENT_MAX_LIMIT";
-    /// Outbound lifecycle webhook URL for run events.
-    pub const APXM_RUN_WEBHOOK_URL: &str = "APXM_RUN_WEBHOOK_URL";
-    /// Outbound lifecycle webhook request timeout, in seconds.
-    pub const APXM_RUN_WEBHOOK_TIMEOUT_SECS: &str = "APXM_RUN_WEBHOOK_TIMEOUT_SECS";
     /// Server rollout writer event queue capacity.
     pub const APXM_ROLLOUT_EVENT_BUFFER: &str = "APXM_ROLLOUT_EVENT_BUFFER";
     /// Server rollout payload spill threshold, in bytes.
