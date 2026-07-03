@@ -1,0 +1,30 @@
+[package]
+name = "apxm-observability"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+authors.workspace = true
+publish = false
+description = "Shared telemetry bootstrap for every APXM service: uniform JSON logging, OTLP trace export, and W3C traceparent extraction/propagation."
+
+[lints]
+workspace = true
+
+[dependencies]
+tracing.workspace = true
+tracing-subscriber.workspace = true
+tracing-opentelemetry.workspace = true
+opentelemetry.workspace = true
+opentelemetry-otlp.workspace = true
+opentelemetry_sdk.workspace = true
+http.workspace = true
+
+# Optional: outgoing-request header injection helpers for services that call
+# other services over HTTP (server -> os relay, studio -> server/auth/os).
+reqwest = { workspace = true, optional = true }
+
+[features]
+default = []
+reqwest = ["dep:reqwest"]
