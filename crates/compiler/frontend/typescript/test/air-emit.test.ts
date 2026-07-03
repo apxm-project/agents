@@ -79,4 +79,75 @@ describe("to_air() emission", () => {
     const result = runProvenanceCheck(g.toAir());
     expect(result.ok, result.output).toBe(true);
   });
+
+  // WF-3 manual cross-check: the Python reference emitter's new vector
+  // fixtures (workspace/contracts/vectors/air/{multi_agent_delegate,
+  // capability_pipeline, checkpoint_pipeline}.air) each cover a flow shape;
+  // these three cases build the same shape with the TS builder and confirm
+  // it independently produces grammar-valid AIR too. Byte-identical output
+  // between the two frontends is a separate, later milestone (TSF-4) — this
+  // only proves both frontends can express the shape and pass the shared
+  // grammar gate.
+  describe("WF-3 cross-check against the Python vector fixture shapes", () => {
+    it("multi_agent_delegate: spawn_agent + delegate + communicate", () => {
+      const g = new GraphBuilder("multi_agent_delegate");
+      const worker = g.spawnAgent({ agentName: "worker", agentRoute: "auto" });
+      const task = g.delegate({
+        name: "delegate_task",
+        taskSpec: "Summarize the quarterly report.",
+        targetAgent: "worker",
+      });
+      g.addEdge(worker, task, "Control");
+      const reply = g.communicate({
+        name: "collect_result",
+        targetAgent: "worker",
+        message: "Findings so far: {task}. Send back your final summary.",
+        inputs: { task },
+      });
+      g.done(reply);
+
+      const result = runProvenanceCheck(g.toAir());
+      expect(result.ok, result.output).toBe(true);
+    });
+
+    it("capability_pipeline: chained capability invocations", () => {
+      // Note: unlike ask()/communicate(), invokeCapability() does not accept
+      // an `inputs` map (its options type has no such field and its `...rest`
+      // spread does not filter one out — passing one would leak a NodeRef
+      // into node attributes). Wire the dependency explicitly instead.
+      const g = new GraphBuilder("capability_pipeline");
+      const lookup = g.invokeCapability({
+        name: "invoke_lookup",
+        capability: "lookup_docs",
+        params: { query: "release checklist" },
+      });
+      const digest = g.invokeCapability({
+        name: "invoke_digest",
+        capability: "summarize_text",
+        params: "{\"text\": \"{lookup}\"}",
+      });
+      g.addEdge(lookup, digest);
+      g.done(digest);
+
+      const result = runProvenanceCheck(g.toAir());
+      expect(result.ok, result.output).toBe(true);
+    });
+
+    it("checkpoint_pipeline: ask -> checkpoint -> ask", () => {
+      const g = new GraphBuilder("checkpoint_pipeline");
+      const draft = g.ask({ name: "draft_notes", prompt: "Draft release notes for version {version}." });
+      const gate = g.checkpoint("await_signoff");
+      g.addEdge(draft, gate, "Control");
+      const final = g.ask({
+        name: "polish_notes",
+        prompt: "Polish this release-notes draft:\n\n{draft}",
+        inputs: { draft },
+      });
+      g.addEdge(gate, final, "Control");
+      g.done(final);
+
+      const result = runProvenanceCheck(g.toAir());
+      expect(result.ok, result.output).toBe(true);
+    });
+  });
 });

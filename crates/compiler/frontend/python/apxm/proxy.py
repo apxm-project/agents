@@ -1549,6 +1549,27 @@ class GraphRecorder:
         )
 
     def to_graph(self) -> ApxmGraph:
+        """Snapshot the recorded operations into an :class:`ApxmGraph`.
+
+        This is the authoring/lowering boundary: everything before this call
+        is Python-side bookkeeping (``g.ask()``, ``g.spawn_agent()``, ...
+        appending to ``self._nodes``/``self._edges``); everything after is
+        the shared frontend-internal graph model (WF-3) — see
+        ``crates/compiler/frontend/python/docs/graph-model.md`` for the
+        formal field-by-field contract that TypeScript's ``@apxm/frontend``
+        mirrors. Returns a defensive-copied ``ApxmGraph`` (new lists/dict;
+        further recorder mutations do not retroactively change a graph
+        already returned here) with ``name``/``nodes``/``edges``/
+        ``parameters``/``metadata`` taken verbatim from the recorder's
+        current state, after validating that every recorded backend route
+        (see ``apxm.backends.validate_graph_routes``) resolves.
+
+        ``to_air()`` (below) is exactly ``self.to_graph().to_air()`` plus the
+        python-tools sidecar comment; ``to_graph()`` is the seam other
+        frontend-internal tooling (tests, :meth:`ApxmGraph.merge`,
+        :func:`apxm.ir.validate_against_apxm`) uses to inspect or transform
+        the graph before that final MLIR emission step.
+        """
         from .backends import validate_graph_routes
 
         validate_graph_routes(self._nodes)

@@ -6,6 +6,8 @@ Python frontend for authoring APXM graphs.
 
 The compiler frontend is a pure-Python package that lets users define APXM graphs using a `@compile()` decorator and `GraphRecorder` proxy. The recorder captures operation calls, builds an in-memory graph, and emits `.air` (MLIR text in the AIS dialect) for the compiler pipeline.
 
+`GraphRecorder.to_graph()` produces `ApxmGraph` — the shared frontend-internal graph model that TypeScript's `@apxm/frontend` package (`typescript/`) mirrors. See [`python/docs/graph-model.md`](python/docs/graph-model.md) for the formal field-by-field contract (WF-3).
+
 ## Package Structure
 
 | Module | Description |
