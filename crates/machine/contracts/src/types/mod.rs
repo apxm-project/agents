@@ -102,3 +102,5 @@ pub use source_format::{ApxmPathFormat, ArtifactFormat, GraphSourceFormat};
 pub use values::{Number, Token, TokenId, TokenStatus, Value};
 
 pub use config::InstructionConfig;
+
+pub use apxm_ais::memory::{MemoryTier, MemoryTierParseError};

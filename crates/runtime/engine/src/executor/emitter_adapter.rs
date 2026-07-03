@@ -440,4 +440,26 @@ impl ExecutionEventEmitter for EmitterAdapter {
     fn emit_memoization_hit(&self, node_id: u64) {
         self.emit(MemoizationHitPayload { node_id });
     }
+
+    fn emit_approval_request(
+        &self,
+        agent_code: &str,
+        tool_name: &str,
+        approval_id: &str,
+        risk_level: &str,
+    ) {
+        self.emit(ApprovalRequestPayload {
+            agent_code: agent_code.to_string(),
+            tool_name: tool_name.to_string(),
+            approval_id: approval_id.to_string(),
+            risk_level: risk_level.to_string(),
+        });
+    }
+
+    fn emit_approval_resolved(&self, approval_id: &str, decision: &str) {
+        self.emit(ApprovalResolvedPayload {
+            approval_id: approval_id.to_string(),
+            decision: decision.to_string(),
+        });
+    }
 }

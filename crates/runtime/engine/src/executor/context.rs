@@ -399,8 +399,25 @@ impl ExecutionContext {
     ) -> Result<apxm_core::types::values::Value, apxm_core::error::RuntimeError> {
         self.charge_tool_call(name)?;
         self.inject_tool_credential(name, &mut args);
+        let agent_code_owned = self
+            .agent_scope_stack
+            .peek()
+            .map(|s| s.agent_code.clone())
+            .or_else(|| self.current_agent.as_ref().map(|a| a.name.clone()));
+        let pre_ctx = crate::capability::interceptor::PreInvokeContext {
+            registry: self.capability_system.registry(),
+            consent_broker: self.consent_broker.as_ref(),
+            event_emitter: self
+                .event_emitter
+                .as_ref()
+                .map(|e| e.as_ref() as &dyn crate::ExecutionEventEmitter),
+            host_id: self.host_id.as_deref(),
+            agent_code: agent_code_owned.as_deref(),
+            grant_id: None,
+            permission_timeout: crate::capability::interceptor::PreInvokeContext::permission_timeout_from_env(),
+        };
         self.capability_system
-            .invoke_with_timeout(name, args, timeout)
+            .invoke_with_timeout_ctx(name, args, timeout, Some(&pre_ctx))
             .await
     }
 

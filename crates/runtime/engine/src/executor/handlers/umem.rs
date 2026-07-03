@@ -4,7 +4,7 @@ use super::{
     ExecutionContext, Node, Result, Value, get_input, get_optional_string_attribute,
     get_string_attribute,
 };
-use crate::{aam::TransitionLabel, memory::MemorySpace};
+use crate::{aam::TransitionLabel, memory::{MemorySpace, parse_memory_space}};
 use apxm_core::constants::graph::attrs as graph_attrs;
 
 /// Execute UMEM operation - Store value in specified memory tier
@@ -27,7 +27,7 @@ pub async fn execute(ctx: &ExecutionContext, node: &Node, inputs: Vec<Value>) ->
 
     // Determine memory space
     let space = match memory_tier.as_deref() {
-        Some(tier) => tier.parse::<MemorySpace>()?,
+        Some(tier) => parse_memory_space(tier)?,
         None => MemorySpace::Stm, // Default to STM
     };
 

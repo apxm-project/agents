@@ -7,16 +7,15 @@
 
 mod config;
 mod episodic;
-mod facts;
 mod ltm;
 mod stm;
 
 pub use config::MemoryConfig;
 pub use episodic::{EpisodicEntry, EpisodicMemory};
-pub use facts::{Fact, FactFilter, FactResult};
 pub use ltm::LongTermMemory;
 pub use stm::ShortTermMemory;
 
+use apxm_core::types::MemoryTier;
 use apxm_core::constants::memory as mem_const;
 use apxm_core::error::RuntimeError;
 use std::path::PathBuf;
@@ -25,31 +24,15 @@ use std::sync::Arc;
 type Result<T> = std::result::Result<T, RuntimeError>;
 const SCOPE_KEY_PREFIX: &str = "__scope__/";
 
-/// Memory space identifier for routing operations
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum MemorySpace {
-    /// Short-term, volatile memory (fast cache)
-    Stm,
-    /// Long-term, persistent memory (durable storage)
-    Ltm,
-    /// Episodic trace memory (execution history)
-    Episodic,
-}
+/// Memory space identifier — alias of the contract [`MemoryTier`].
+pub type MemorySpace = MemoryTier;
 
-impl std::str::FromStr for MemorySpace {
-    type Err = RuntimeError;
-
-    fn from_str(s: &str) -> std::result::Result<Self, Self::Err> {
-        match s.to_ascii_lowercase().as_str() {
-            mem_const::STM => Ok(MemorySpace::Stm),
-            mem_const::LTM => Ok(MemorySpace::Ltm),
-            mem_const::EPISODIC => Ok(MemorySpace::Episodic),
-            other => Err(RuntimeError::Memory {
-                message: format!("Unknown memory tier: {}", other),
-                space: Some(other.to_string()),
-            }),
-        }
-    }
+/// Parse a memory tier string into [`MemorySpace`], mapping parse errors to runtime errors.
+pub fn parse_memory_space(s: &str) -> Result<MemorySpace> {
+    s.parse::<MemoryTier>().map_err(|e| RuntimeError::Memory {
+        message: e.to_string(),
+        space: Some(s.to_string()),
+    })
 }
 
 /// Unified memory system coordinating all three tiers

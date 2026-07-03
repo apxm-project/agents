@@ -8,6 +8,7 @@ mod common;
 mod definition;
 mod grant;
 mod permission;
+mod permission_vocabulary;
 mod policy;
 mod tool_binding;
 mod wire;
@@ -24,6 +25,11 @@ pub use grant::{CAPABILITY_GRANT_SCHEMA_V1, CapabilityGrant, GrantProvenance, Gr
 pub use permission::{
     PermissionEffect, PermissionOperation, PermissionPolicy, PermissionRule, PermissionScope,
     ResourceHandle, ResourceSelector,
+};
+pub use permission_vocabulary::{
+    ApprovalPosture, AuditPayloadPolicy, CredentialScope, DecisionReason, GrantState,
+    OperationClass, PermissionDecision, PermissionDecisionKind, PermissionPolicyV1,
+    PermissionScopeKind, PERMISSION_POLICY_SCHEMA_V1, RiskLevel,
 };
 pub use policy::{
     AuthMethod, Principal, PrincipalKind, PromptMode, PromptPolicy, RoleAssignment, RoleDefinition,

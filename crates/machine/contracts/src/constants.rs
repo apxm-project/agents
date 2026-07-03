@@ -82,6 +82,9 @@ pub mod env {
     pub const APXM_SERVER_MAX_BODY_BYTES: &str = "APXM_SERVER_MAX_BODY_BYTES";
     /// Graceful shutdown rollout flush timeout in seconds.
     pub const APXM_SERVER_DRAIN_TIMEOUT_SECS: &str = "APXM_SERVER_DRAIN_TIMEOUT_SECS";
+
+    /// Max seconds the runtime waits for host consent on `requires_approval` capabilities.
+    pub const APXM_PERMISSION_TIMEOUT_SECS: &str = "APXM_PERMISSION_TIMEOUT_SECS";
     /// Maximum scheduler concurrency for server-owned runtime work.
     pub const APXM_RUNTIME_MAX_CONCURRENCY: &str = "APXM_RUNTIME_MAX_CONCURRENCY";
     /// Maximum scheduler in-flight work for server-owned runtime work.
@@ -374,7 +377,7 @@ pub mod capabilities {
     pub use apxm_ais::capabilities::groups;
     pub use apxm_ais::capabilities::{
         AGENT_MANAGEMENT_BUILTINS, BASH, BUILTINS, CAPABILITY_DISCOVERY, HTTP_GET, HTTP_POST,
-        MANAGE_TASK, MEMORY_SEARCH_FACTS, MEMORY_STORE_FACT, READ, SCHEDULE, SEARCH_SKILLS,
+        MANAGE_TASK, READ, SCHEDULE, SEARCH_SKILLS,
         SEARCH_WEB, STANDARD_BUILTINS, WRITE,
     };
 }
