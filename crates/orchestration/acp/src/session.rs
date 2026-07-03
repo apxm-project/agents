@@ -356,6 +356,11 @@ impl AcpSession {
     pub fn turn_count(&self) -> u32 {
         self.turn_count
     }
+
+    /// OS process id of the spawned agent, if it hasn't already been reaped.
+    pub fn pid(&self) -> Option<u32> {
+        self.child.id()
+    }
 }
 
 impl Drop for AcpSession {

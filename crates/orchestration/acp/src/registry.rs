@@ -118,8 +118,16 @@ pub fn default_route_capabilities() -> Vec<String> {
 
 /// Registry of ACP agent profiles.
 ///
-/// **Templates** are the 15 built-in profile definitions (read-only reference
-/// data with known commands, descriptions, route capabilities, and timeouts).
+/// **Templates** are the built-in profile definitions (read-only reference
+/// data). Three are tuned, verified working-set profiles with known-good
+/// commands, descriptions, route capabilities, and timeouts: `claude`,
+/// `codex`, `gemini`. A fourth, [`reg_consts::CUSTOM_TEMPLATE_NAME`], is a
+/// generic custom-command template: it carries no working command and exists
+/// to document the shape of an [`AcpAgentProfile`] for any other
+/// ACP-speaking CLI. Rather than hardcoding a Rust variant per CLI, those
+/// agents are added through configuration — copy the custom template into
+/// `~/.apxm/agents.toml` (or run `apxm agent add <name> --command "..."`)
+/// with `command` set to that CLI's ACP invocation.
 ///
 /// **User profiles** are entries in `~/.apxm/agents.toml`. Built-in templates
 /// are also resolvable by name, and user profiles override templates with the
@@ -166,7 +174,9 @@ impl AgentRegistry {
         }
     }
 
-    /// Build the 15 built-in template profiles.
+    /// Build the built-in template set: the tuned working-set profiles
+    /// (`claude`, `codex`, `gemini`) plus one generic custom-command
+    /// template ([`reg_consts::CUSTOM_TEMPLATE_NAME`]).
     fn build_templates() -> BTreeMap<String, AcpAgentProfile> {
         let mut templates = BTreeMap::new();
 
@@ -195,90 +205,6 @@ impl AgentRegistry {
                 dg,
                 timeouts::GEMINI_SESSION_TIMEOUT_MS,
             ),
-            (
-                "copilot",
-                "copilot --acp --stdio",
-                "GitHub Copilot ACP profile for coding assistance, repository edits, and review.",
-                dg,
-                dt,
-            ),
-            (
-                "pi",
-                "npx pi-acp@^0.0.22",
-                "Pi ACP profile for general reasoning and coding-agent tasks when the Pi CLI is installed.",
-                dg,
-                dt,
-            ),
-            (
-                "cursor",
-                "cursor-agent acp",
-                "Cursor agent ACP profile for codebase navigation, edits, and verification.",
-                dg,
-                dt,
-            ),
-            (
-                "droid",
-                "droid exec --output-format acp",
-                "Droid ACP profile for repository tasks exposed through Droid's ACP output mode.",
-                dg,
-                dt,
-            ),
-            (
-                "kilocode",
-                "npx -y @kilocode/cli acp",
-                "Kilo Code ACP profile for implementation, command execution, and verification tasks.",
-                dg,
-                dt,
-            ),
-            (
-                "kimi",
-                "kimi acp",
-                "Kimi ACP profile for coding, analysis, and review tasks.",
-                dg,
-                dt,
-            ),
-            (
-                "kiro",
-                "kiro-cli-chat acp",
-                "Kiro ACP profile for coding-agent tasks through kiro-cli-chat.",
-                dg,
-                dt,
-            ),
-            (
-                "opencode",
-                "npx -y opencode-ai acp",
-                "OpenCode ACP profile for implementation, command execution, and code review.",
-                dg,
-                dt,
-            ),
-            (
-                "qoder",
-                "qodercli --acp",
-                "Qoder ACP profile for repository implementation and review workflows.",
-                timeouts::QODER_CLOSE_GRACE_MS,
-                dt,
-            ),
-            (
-                "qwen",
-                "qwen --acp",
-                "Qwen ACP profile for coding, analysis, workflow planning, and verification.",
-                dg,
-                dt,
-            ),
-            (
-                "trae",
-                "traecli acp serve",
-                "Trae ACP profile for codebase implementation and review tasks.",
-                dg,
-                dt,
-            ),
-            (
-                "iflow",
-                "iflow --experimental-acp",
-                "iFlow experimental ACP profile for repository analysis and implementation tasks.",
-                dg,
-                dt,
-            ),
         ];
 
         for &(name, cmd, description, grace, timeout) in entries {
@@ -301,6 +227,11 @@ impl AgentRegistry {
                 },
             );
         }
+
+        templates.insert(
+            reg_consts::CUSTOM_TEMPLATE_NAME.to_string(),
+            custom_command_template(default_route_capabilities),
+        );
 
         templates
     }
@@ -442,6 +373,44 @@ impl AgentRegistry {
     }
 }
 
+/// Build the generic custom-command template.
+///
+/// This is a config-driven stand-in for any ACP-speaking coding-agent CLI
+/// that isn't part of the tuned working set (`claude`, `codex`, `gemini`).
+/// It intentionally ships with an empty `command` — that's not a bug in the
+/// template, it's the point: an empty command never resolves to a runnable
+/// executable (see [`resolvable_command_program`]), so this entry can never
+/// be selected as a live route candidate by accident. To actually spawn one
+/// of these agents, set `command` via `apxm agent add <name> --command
+/// "<cli> <acp-flag>"` or by copying this profile into `~/.apxm/agents.toml`
+/// under a new name.
+fn custom_command_template(route_capabilities: Vec<String>) -> AcpAgentProfile {
+    AcpAgentProfile {
+        command: String::new(),
+        description: Some(
+            "Generic custom-command profile for any ACP-speaking CLI outside \
+             the tuned working set (claude, codex, gemini) — for example \
+             copilot, pi, cursor, droid, kilocode, kimi, kiro, opencode, \
+             qoder, qwen, trae, or iflow. Set `command` to that CLI's ACP \
+             invocation via `apxm agent add <name> --command \"...\"`, or \
+             copy this profile into ~/.apxm/agents.toml with `command` \
+             filled in; no dedicated Rust template is required."
+                .to_string(),
+        ),
+        close_grace_ms: timeouts::DEFAULT_CLOSE_GRACE_MS,
+        session_create_timeout_ms: timeouts::DEFAULT_SESSION_TIMEOUT_MS,
+        permission_mode: PermissionMode::default(),
+        env: BTreeMap::new(),
+        default_mode: None,
+        default_model: None,
+        route_capabilities,
+        system_prompt: None,
+        skip_preamble: false,
+        capabilities: Vec::new(),
+        sandbox: false,
+    }
+}
+
 fn resolvable_command_program(command: &str) -> Option<String> {
     let parts = shell_words::split(command).ok()?;
     let program = parts
@@ -463,18 +432,92 @@ fn resolvable_program(program: &str) -> Option<String> {
     })
 }
 
-fn profile_runtime_dependencies_available(profile: &str) -> bool {
-    let dependencies = match profile {
-        "pi" => &["pi"][..],
-        _ => &[][..],
-    };
-    dependencies
-        .iter()
-        .all(|program| resolvable_program(program).is_some())
+/// Extra runtime dependencies (beyond the resolvable command program itself)
+/// that a profile needs before it's a live route candidate.
+///
+/// Empty for the current working-set templates (`claude`, `codex`, `gemini`)
+/// and the generic `custom` template, which resolve entirely through
+/// [`resolvable_command_program`]. Kept as a hook rather than removed
+/// outright: a user profile added via config may still need this if its
+/// wrapper command (e.g. `npx some-cli`) resolves even when the underlying
+/// tool isn't installed.
+fn profile_runtime_dependencies_available(_profile: &str) -> bool {
+    true
 }
 
 #[derive(Debug, Serialize, Deserialize, Default)]
 struct UserAgentsFile {
     #[serde(default)]
     agents: BTreeMap<String, AcpAgentProfile>,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn template_roster_is_trimmed_to_the_working_set_plus_one_custom_template() {
+        let templates = AgentRegistry::builtin_templates();
+        let mut names: Vec<&str> = templates.keys().map(String::as_str).collect();
+        names.sort_unstable();
+        assert_eq!(
+            names,
+            vec!["claude", "codex", "custom", "gemini"],
+            "the working set (claude, codex, gemini) plus the generic custom \
+             template should be the entire built-in roster — no more \
+             hardcoded per-CLI variants"
+        );
+    }
+
+    #[test]
+    fn working_set_templates_have_real_resolvable_commands() {
+        let templates = AgentRegistry::builtin_templates();
+        for name in ["claude", "codex", "gemini"] {
+            let profile = templates.get(name).unwrap_or_else(|| panic!("missing {name}"));
+            assert!(
+                !profile.command.trim().is_empty(),
+                "{name} must have a concrete command"
+            );
+        }
+    }
+
+    #[test]
+    fn custom_template_has_no_command_and_is_never_a_route_candidate() {
+        let templates = AgentRegistry::builtin_templates();
+        let custom = templates
+            .get(reg_consts::CUSTOM_TEMPLATE_NAME)
+            .expect("custom template must exist");
+        assert!(
+            custom.command.is_empty(),
+            "the generic custom template must not ship a runnable command"
+        );
+        assert!(resolvable_command_program(&custom.command).is_none());
+    }
+
+    #[test]
+    fn custom_template_becomes_spawnable_once_a_command_is_configured() {
+        let mut profile = AgentRegistry::builtin_templates()
+            .remove(reg_consts::CUSTOM_TEMPLATE_NAME)
+            .unwrap();
+        // Simulate a user filling in the generic template for some other
+        // ACP-speaking CLI, e.g. one of the twelve no longer hardcoded here.
+        profile.command = "echo not-a-real-acp-cli".to_string();
+        assert_eq!(
+            resolvable_command_program(&profile.command),
+            Some("echo".to_string())
+        );
+    }
+
+    #[test]
+    fn get_falls_through_to_templates_for_working_set_names() {
+        let registry = AgentRegistry {
+            templates: AgentRegistry::builtin_templates(),
+            user_profiles: BTreeMap::new(),
+        };
+        assert!(registry.get("claude").is_some());
+        assert!(registry.get("codex").is_some());
+        assert!(registry.get("gemini").is_some());
+        assert!(registry.get("custom").is_some());
+        assert!(registry.get("does-not-exist").is_none());
+    }
 }

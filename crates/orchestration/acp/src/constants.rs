@@ -184,8 +184,6 @@ pub mod wire {
 pub mod timeouts {
     /// Grace period after closing stdin before SIGTERM (ms).
     pub const DEFAULT_CLOSE_GRACE_MS: u64 = 100;
-    /// Extended grace for agents that need longer (e.g. qoder) (ms).
-    pub const QODER_CLOSE_GRACE_MS: u64 = 750;
     /// Default session create timeout (ms).
     pub const DEFAULT_SESSION_TIMEOUT_MS: u64 = 30_000;
     /// Claude-specific session create timeout (ms).
@@ -219,6 +217,8 @@ pub mod registry {
         "# APXM ACP Agent Profiles\n# User overrides — managed by `apxm agent`\n\n";
     /// File name for user agent config.
     pub const AGENTS_FILENAME: &str = "agents.toml";
+    /// Name of the built-in generic custom-command template.
+    pub const CUSTOM_TEMPLATE_NAME: &str = "custom";
 
     /// JSON output keys for `agent list` / `agent templates`.
     pub mod json_keys {
