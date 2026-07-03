@@ -23,7 +23,6 @@
 //! name = "fast-draft"
 //! description = "Fast, cost-effective models for drafting and iteration"
 //! tags = ["draft", "fast", "cheap"]
-//! max_cost_per_1k_input = 0.0003
 //!
 //!   [[profile.candidate]]
 //!   model = "claude-sonnet-4-5@20250929"

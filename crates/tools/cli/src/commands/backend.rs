@@ -105,15 +105,12 @@ fn sync_ollama_models(
                 id: model_name.to_string(),
                 aliases: vec![],
                 context_window: ctx_window,
-                cost_per_1k_input: 0.0,
-                cost_per_1k_output: 0.0,
                 supports_vision,
                 supports_functions,
                 supports_thinking: false,
                 supports_custom_temperature: None,
                 supports_structured_outputs: None,
                 max_output_tokens: None,
-                tags: vec![],
             };
             store
                 .add_model(backend_name, model)
@@ -434,12 +431,9 @@ pub async fn backend_command(action: BackendAction, json_output: bool) -> Result
             model_id,
             alias,
             context_window,
-            cost_input,
-            cost_output,
             supports_vision,
             supports_functions,
             supports_thinking,
-            tag,
         } => {
             use apxm_backends::llm::ModelConfig;
 
@@ -447,15 +441,12 @@ pub async fn backend_command(action: BackendAction, json_output: bool) -> Result
                 id: model_id.clone(),
                 aliases: alias,
                 context_window,
-                cost_per_1k_input: cost_input,
-                cost_per_1k_output: cost_output,
                 supports_vision,
                 supports_functions,
                 supports_thinking,
                 supports_custom_temperature: None,
                 supports_structured_outputs: None,
                 max_output_tokens: None,
-                tags: tag,
             };
 
             store
