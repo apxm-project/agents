@@ -144,6 +144,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "apxm-aam"
+version = "0.1.0"
+dependencies = [
+ "apxm-core",
+ "chrono",
+ "parking_lot",
+ "priority-queue",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "apxm-acp"
 version = "0.1.0"
 dependencies = [
@@ -347,6 +359,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "apxm-memory"
+version = "0.1.0"
+dependencies = [
+ "apxm-backends",
+ "apxm-core",
+ "chrono",
+ "serde",
+ "serde_json",
+ "tokio",
+ "tracing",
+ "uuid",
+]
+
+[[package]]
 name = "apxm-rollout"
 version = "0.1.0"
 dependencies = [
@@ -370,9 +396,11 @@ name = "apxm-runtime"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "apxm-aam",
  "apxm-artifact",
  "apxm-backends",
  "apxm-core",
+ "apxm-memory",
  "async-trait",
  "base64 0.22.1",
  "blake3",
@@ -386,7 +414,6 @@ dependencies = [
  "num_cpus",
  "once_cell",
  "parking_lot",
- "priority-queue",
  "regex",
  "reqwest 0.12.28",
  "rusqlite",
