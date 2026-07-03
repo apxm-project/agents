@@ -786,15 +786,6 @@ fn emit_node(
                 ty: MlirValueType::Token,
             }))
         }
-        AISOperationType::Negotiate => emit_simple_op(
-            state,
-            node,
-            &inputs,
-            &[graph_attrs::PROPOSAL, graph_attrs::TEMPLATE_STR],
-            "{input}",
-            &[graph_attrs::PROPOSAL, graph_attrs::TEMPLATE_STR],
-            Some(('(', ')')),
-        ),
         AISOperationType::FlowCall => emit_simple_op(
             state,
             node,
@@ -942,39 +933,6 @@ fn emit_node(
             &[graph_attrs::GOAL_ID, graph_attrs::GOAL],
             Some(('[', ']')),
         ),
-        AISOperationType::Guard => emit_simple_op(
-            state,
-            node,
-            &inputs,
-            &[graph_attrs::CONDITION, graph_attrs::TEMPLATE_STR],
-            "true",
-            &[graph_attrs::CONDITION, graph_attrs::TEMPLATE_STR],
-            Some(('(', ')')),
-        ),
-        AISOperationType::Claim => {
-            let queue = get_string_attr(&node.attributes, &[graph_attrs::QUEUE, graph_attrs::KEY])
-                .unwrap_or_else(|| "default".to_string());
-            let lease_ms = get_u64_attr(&node.attributes, graph_attrs::LEASE_MS);
-            let attrs = extra_attr_dict(
-                &node.attributes,
-                &[graph_attrs::QUEUE, graph_attrs::KEY, graph_attrs::LEASE_MS],
-            );
-            let result = format!("%n{}", node.id);
-            let lease_str = lease_ms
-                .map(|ms| format!(" lease_ms {ms}"))
-                .unwrap_or_default();
-
-            state.emit(format!(
-                "    {result} = ais.claim {}{}{} : !ais.token",
-                quote_string(&queue),
-                lease_str,
-                attrs
-            ));
-            Ok(Some(MlirValueRef {
-                ssa: result,
-                ty: MlirValueType::Token,
-            }))
-        }
         AISOperationType::Pause => emit_simple_op(
             state,
             node,
@@ -1012,15 +970,6 @@ fn emit_node(
             &[graph_attrs::AGENT_NAME],
             "agent",
             &[graph_attrs::AGENT_NAME],
-            Some(('(', ')')),
-        ),
-        AISOperationType::SpawnTeam => emit_simple_op(
-            state,
-            node,
-            &[],
-            &[graph_attrs::TEAM_NAME],
-            "team",
-            &[graph_attrs::TEAM_NAME],
             Some(('(', ')')),
         ),
         AISOperationType::RegisterCapability => emit_simple_op(
@@ -1212,10 +1161,6 @@ fn get_string_attr(attributes: &HashMap<String, Value>, keys: &[&str]) -> Option
     keys.iter()
         .find_map(|key| attributes.get(*key))
         .and_then(value_to_string)
-}
-
-fn get_u64_attr(attributes: &HashMap<String, Value>, key: &str) -> Option<u64> {
-    attributes.get(key).and_then(Value::as_u64)
 }
 
 fn get_string_array_attr(attributes: &HashMap<String, Value>, key: &str) -> Vec<String> {

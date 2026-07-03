@@ -1277,58 +1277,6 @@ class GraphRecorder:
         attrs = self._apply_policy(attrs, attributes)
         return self._add_node(name, graph_keys.OP_UPDATE_GOAL, attrs)
 
-    def guard(
-        self,
-        name: str | None = None,
-        *,
-        condition: str | None = None,
-        error_message: str | None = None,
-        on_fail: str = "halt",
-        source: NodeRef | None = None,
-        **attributes: Any,
-    ) -> NodeRef:
-        """Enforce preconditions before execution continues (GUARD)."""
-        if name is None:
-            name = self._auto_name(graph_keys.OP_GUARD)
-        if condition is None:
-            raise ValueError("guard() missing required keyword argument: 'condition'")
-        attrs: dict[str, Any] = {
-            graph_keys.CONDITION: condition,
-            graph_keys.ON_FAIL: on_fail,
-        }
-        if error_message is not None:
-            attrs[graph_keys.ERROR_MESSAGE] = error_message
-        attrs = self._apply_policy(attrs, attributes)
-        node = self._add_node(name, graph_keys.OP_GUARD, attrs)
-        if source is not None:
-            self.add_edge(source, node)
-        return node
-
-    def claim(
-        self,
-        name: str | None = None,
-        *,
-        queue: str | None = None,
-        lease_ms: int | None = None,
-        max_wait_ms: int | None = None,
-        server_url: str | None = None,
-        **attributes: Any,
-    ) -> NodeRef:
-        """Atomically claim a task from a shared work queue (CLAIM)."""
-        if name is None:
-            name = self._auto_name(graph_keys.OP_CLAIM)
-        if queue is None:
-            raise ValueError("claim() missing required keyword argument: 'queue'")
-        attrs: dict[str, Any] = {graph_keys.QUEUE: queue}
-        if lease_ms is not None:
-            attrs[graph_keys.LEASE_MS] = lease_ms
-        if max_wait_ms is not None:
-            attrs[graph_keys.MAX_WAIT_MS] = max_wait_ms
-        if server_url is not None:
-            attrs[graph_keys.SERVER_URL] = server_url
-        attrs = self._apply_policy(attrs, attributes)
-        return self._add_node(name, graph_keys.OP_CLAIM, attrs)
-
     def pause(
         self,
         name: str | None = None,
@@ -1432,31 +1380,6 @@ class GraphRecorder:
         attrs = self._apply_policy(attrs, attributes)
         return self._add_node(name, graph_keys.OP_DELEGATE, attrs)
 
-    def negotiate(
-        self,
-        name: str | None = None,
-        *,
-        parties: list[str] | None = None,
-        proposal: str | None = None,
-        max_rounds: int | None = None,
-        **attributes: Any,
-    ) -> NodeRef:
-        """Multi-agent negotiation protocol for consensus building (NEGOTIATE)."""
-        if name is None:
-            name = self._auto_name(graph_keys.OP_NEGOTIATE)
-        if parties is None:
-            raise ValueError("negotiate() missing required keyword argument: 'parties'")
-        if proposal is None:
-            raise ValueError("negotiate() missing required keyword argument: 'proposal'")
-        attrs: dict[str, Any] = {
-            graph_keys.PARTIES: list(parties),
-            graph_keys.PROPOSAL: proposal,
-        }
-        if max_rounds is not None:
-            attrs[graph_keys.MAX_ROUNDS] = max_rounds
-        attrs = self._apply_policy(attrs, attributes)
-        return self._add_node(name, graph_keys.OP_NEGOTIATE, attrs)
-
     def nop(self, name: str | None = None, **attributes: Any) -> NodeRef:
         """No-op passthrough with no side effects or AAM transition (NOP)."""
         if name is None:
@@ -1527,31 +1450,6 @@ class GraphRecorder:
         node = self._add_node(name, graph_keys.OP_SPAWN_AGENT, attrs)
         self._agent_session_nodes[agent_name] = node
         return node
-
-    def spawn_team(
-        self,
-        name: str | None = None,
-        *,
-        team_name: str | None = None,
-        cwd: str | None = None,
-        **attributes: Any,
-    ) -> NodeRef:
-        """Spawn a named team of agents (SPAWN_TEAM).
-
-        The team roster is resolved by the runtime from ``~/.apxm/teams.toml``
-        keyed by ``team_name``; members are not enumerated here. For ad-hoc,
-        workflow-local teams use ``g.team(...).add(...)`` (the N-spawn_agent
-        sugar) instead.
-        """
-        if name is None:
-            name = self._auto_name(graph_keys.OP_SPAWN_TEAM)
-        if team_name is None:
-            raise ValueError("spawn_team() missing required keyword argument: 'team_name'")
-        attrs: dict[str, Any] = {graph_keys.TEAM_NAME: team_name}
-        if cwd is not None:
-            attrs[graph_keys.CWD] = cwd
-        attrs = self._apply_policy(attrs, attributes)
-        return self._add_node(name, graph_keys.OP_SPAWN_TEAM, attrs)
 
     def register_capability(
         self,

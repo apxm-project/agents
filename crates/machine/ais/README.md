@@ -18,7 +18,7 @@ Canonical AIS operation definitions shared by compiler and runtime.
 | `types` | `Value` type used in operation parameters |
 | `validation` | Operation field validation (`validate_operation`, `missing_required_fields`) |
 
-## Operations (43 total)
+## Operations (41 total)
 
 | Category | Operations |
 |----------|------------|
@@ -26,14 +26,17 @@ Canonical AIS operation definitions shared by compiler and runtime.
 | Memory | QMEM, UMEM |
 | LLM/Reasoning | ASK, THINK, REASON, PLAN, REFLECT, VERIFY |
 | Tools | INV, EXC, PRINT |
-| Control Flow | JUMP, BRANCH_ON_VALUE, LOOP_START, LOOP_END, RETURN, SWITCH, FLOW_CALL, WORKFLOW_SPAWN |
+| Control Flow | JUMP, BRANCH_ON_VALUE, LOOP_START, LOOP_END, RETURN, SWITCH, FLOW_CALL, WORKFLOW_SPAWN, CALL_SKILL |
 | Synchronization | MERGE, FENCE, WAIT_ALL, CHECKPOINT |
 | Error Handling | TRY_CATCH, ERR |
-| Communication | COMMUNICATE |
-| Goal/State | UPDATE_GOAL, GUARD, CLAIM, PAUSE, RESUME |
-| Coordination | DELEGATE, NEGOTIATE, SPAWN_AGENT, REGISTER_CAPABILITY, AUTONOMOUS |
+| Communication | COMMUNICATE, HANDOFF |
+| Goal/State | UPDATE_GOAL, PAUSE, RESUME |
+| Coordination | DELEGATE, SPAWN_AGENT, REGISTER_CAPABILITY, REGISTER_HOOK, AUTONOMOUS |
 | Identity | NOP, IDENTITY |
 | Internal | CONST_STR, YIELD |
+
+NEGOTIATE, SPAWN_TEAM, GUARD, and CLAIM were removed (RT-1): measured zero
+emissions across the example/test/studio-lowering corpus.
 
 ## Key Exports
 
@@ -52,13 +55,13 @@ Every attribute name used in operation specs, MLIR TableGen, runtime handlers, a
 
 | Domain | Constants |
 |--------|-----------|
-| Agent/Identity | `agent_name`, `team_name`, `flow_name`, `profile`, `node_name`, `mode`, `cwd` |
+| Agent/Identity | `agent_name`, `flow_name`, `profile`, `node_name`, `mode`, `cwd` |
 | LLM/Model | `model`, `provider`, `temperature`, `system_prompt`, `token_budget`, `output_schema`, `max_schema_retries`, `backend`, `max_tool_iterations`, `budget` |
 | Template/Prompt | `template_str`, `prompt`, `template` |
 | Memory | `query`, `memory_tier`, `key`, `value`, `limit` |
 | Capability/Tools | `capability`, `params_json`, `tools_enabled`, `tools`, `code`, `interpreter`, `capability_name`, `description`, `parameters_schema` |
 | Communication | `message`, `recipient`, `target`, `protocol` |
-| Goals/Reasoning | `goal`, `goal_id`, `priority`, `condition`, `evidence`, `claim` |
+| Goals/Reasoning | `goal`, `goal_id`, `priority`, `evidence`, `claim` |
 | Control Flow | `label`, `true_label`, `false_label`, `case_labels`, `try_label`, `catch_label`, `recovery_template` |
 | Optimization Hints | `cached_system_prompt`, `memoizable`, `warmup_candidate`, `shared_prefix_est_tokens`, `downstream_nodes`, `reuse_group`, `est_template_tokens` |
 

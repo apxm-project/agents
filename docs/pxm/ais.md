@@ -29,13 +29,13 @@ The AIS operations are organized across multiple categories. Run `apxm ops list`
 | **ControlFlow** | BRANCH_ON_VALUE, SWITCH, FLOW_CALL | Conditional routing and sub-flow invocation |
 | **Synchronization** | MERGE, WAIT_ALL, FENCE | Synchronization barriers and token collection |
 | **Communication** | COMMUNICATE | Inter-agent messaging |
-| **Coordination** | DELEGATE, NEGOTIATE | Multi-agent task distribution |
+| **Coordination** | DELEGATE | Multi-agent task distribution |
 | **ErrorHandling** | TRY_CATCH | Exception handling with recovery subgraphs |
 | **Identity** | NOP, IDENTITY | Pass-through operations for graph structuring |
 
 For per-operation details and examples, see the [apxm-ais README](../../crates/machine/ais/README.md).
 
-`COMMUNICATE`, `DELEGATE`, `NEGOTIATE`, `HANDOFF`, and `SPAWN_AGENT` are executable
+`COMMUNICATE`, `DELEGATE`, `HANDOFF`, and `SPAWN_AGENT` are executable
 coordination primitives. They are not an agent hierarchy model. Hosts such as
 `apxm-os` may use topology policy to decide whether these operations are allowed,
 but APXM runtime receives only the admitted concrete target. See

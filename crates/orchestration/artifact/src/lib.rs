@@ -1,6 +1,6 @@
 //! Artifact loader and parser for compiled `.apxmobj` files.
 //!
-//! Reads the APXM binary wire format (version 1, magic `b"APXM"`) produced by
+//! Reads the APXM binary wire format (version 2, magic `b"APXM"`) produced by
 //! the MLIR compiler, validates integrity via BLAKE3 checksums, and deserializes
 //! the execution DAG from the artifact container.
 
@@ -16,7 +16,10 @@ use thiserror::Error;
 mod wire;
 
 const MAGIC: &[u8; 4] = b"APXM";
-const VERSION: u32 = 1;
+// Bumped 1 -> 2 in RT-1: NEGOTIATE, SPAWN_TEAM, GUARD, and CLAIM were deleted
+// from the AIS operation-kind wire table (indices 26, 27, 32, 39 retired), so
+// artifacts produced before this change are no longer wire-compatible.
+const VERSION: u32 = 2;
 
 // Wire format header layout: [MAGIC][VERSION][PAYLOAD_LEN][HASH][FLAGS]
 const SIZE_MAGIC: usize = 4;

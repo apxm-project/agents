@@ -4,7 +4,7 @@
 //! Both the compiler and runtime depend on this crate to ensure consistent operation
 //! semantics across the entire system.
 //!
-//! ## Operations (44 total)
+//! ## Operations (41 total)
 //!
 //! | Category | Operations |
 //! |----------|------------|
@@ -16,10 +16,15 @@
 //! | Synchronization | MERGE, FENCE, WAIT_ALL |
 //! | Error Handling | TRY_CATCH, ERR |
 //! | Communication | COMMUNICATE, HANDOFF |
-//! | Goal/State | UPDATE_GOAL, GUARD, CLAIM, PAUSE, RESUME |
-//! | Coordination | DELEGATE, NEGOTIATE, SPAWN_AGENT, SPAWN_TEAM, REGISTER_CAPABILITY, AUTONOMOUS, CHECKPOINT |
+//! | Goal/State | UPDATE_GOAL, PAUSE, RESUME |
+//! | Coordination | DELEGATE, SPAWN_AGENT, REGISTER_CAPABILITY, REGISTER_HOOK, AUTONOMOUS, CHECKPOINT |
 //! | Identity | NOP, IDENTITY |
 //! | Internal | CONST_STR, YIELD |
+//!
+//! NEGOTIATE, SPAWN_TEAM, GUARD, and CLAIM were deleted (RT-1): measured
+//! zero emissions across the example/test/studio-lowering corpus. This is a
+//! `.apxmobj` wire-format break; see [`operations::WIRE_INDEXED_OPERATIONS`]
+//! for the retired indices.
 
 pub mod aam;
 pub mod attrs;

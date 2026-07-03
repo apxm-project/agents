@@ -864,52 +864,6 @@ def AIS_UpdateGoalOp : AIS_Op<"update_goal",
   let hasVerifier = 1;
 }
 
-def AIS_GuardOp : AIS_Op<"guard",
-    [MemoryEffects<[MemRead<AIS_BeliefResource>]>]> {
-  let summary = "Conditional guard on belief state";
-  let description = [{
-    Evaluates a condition against current beliefs. If the condition is met,
-    passes through the input; otherwise blocks or returns a default value.
-
-    Example:
-    ```mlir
-    %result = ais.guard "user_authenticated" (%input : !ais.token) : !ais.token
-    ```
-  }];
-  let arguments = (ins
-    StrAttr:$condition,
-    Optional<AIS_AnyTokenHandleOrGoal>:$input
-  );
-  let results = (outs AIS_TokenType:$result);
-  let assemblyFormat = [{
-    $condition (`(` $input^ `:` type($input) `)`)? attr-dict `:` type($result)
-  }];
-  let hasVerifier = 1;
-}
-
-def AIS_ClaimOp : AIS_Op<"claim", [Pure]> {
-  let summary = "Claim exclusive access to a resource queue";
-  let description = [{
-    Attempts to claim exclusive access to a named resource queue with an
-    optional lease duration. Used for coordination between agents.
-
-    Example:
-    ```mlir
-    %lease = ais.claim "work_queue" : !ais.token
-    %lease = ais.claim "work_queue" {lease_ms = 5000 : i64} : !ais.token
-    ```
-  }];
-  let arguments = (ins
-    StrAttr:$queue,
-    OptionalAttr<I64Attr>:$lease_ms
-  );
-  let results = (outs AIS_TokenType:$result);
-  let assemblyFormat = [{
-    $queue attr-dict `:` type($result)
-  }];
-  let hasVerifier = 1;
-}
-
 def AIS_PauseOp : AIS_Op<"pause",
     [MemoryEffects<[MemWrite<AIS_EpisodicResource>]>]> {
   let summary = "Pause execution with checkpoint";
@@ -981,28 +935,6 @@ def AIS_SpawnAgentOp : AIS_Op<"spawn_agent"> {
   let hasVerifier = 1;
 }
 
-def AIS_SpawnTeamOp : AIS_Op<"spawn_team"> {
-  let summary = "Spawn all members of a team";
-  let description = [{
-    Spawns all members of a team, expanding to N SPAWN_AGENT operations.
-    This is a convenience op for multi-agent coordination patterns.
-
-    Example:
-    ```mlir
-    %team = ais.spawn_team "research_team" : !ais.token
-    ```
-  }];
-  let arguments = (ins
-    StrAttr:$team_name,
-    OptionalAttr<StrAttr>:$profile
-  );
-  let results = (outs AIS_TokenType:$result);
-  let assemblyFormat = [{
-    $team_name attr-dict `:` type($result)
-  }];
-  let hasVerifier = 1;
-}
-
 def AIS_RegisterCapabilityOp : AIS_Op<"register_capability"> {
   let summary = "Register a new capability in the runtime registry";
   let arguments = (ins
@@ -1062,29 +994,6 @@ def AIS_DelegateOp : AIS_Op<"delegate"> {
   let results = (outs AIS_TokenType:$result);
   let assemblyFormat = [{
     $task_spec (`to` $target_agent^)? (`(` $inputs^ `:` type($inputs) `)`)? attr-dict `:` type($result)
-  }];
-  let hasVerifier = 1;
-}
-
-def AIS_NegotiateOp : AIS_Op<"negotiate"> {
-  let summary = "Multi-agent negotiation protocol";
-  let description = [{
-    Runs a negotiation round over `proposal` among `parties` (an attr list) for
-    up to `max_rounds`. The proposal text is the primary; parties/max_rounds ride
-    the attr-dict (matching the frontend emitter and the runtime handler).
-
-    Example:
-    ```mlir
-    %r = ais.negotiate "ship date" {parties = ["a", "b"], max_rounds = 3 : i64} : !ais.token
-    ```
-  }];
-  let arguments = (ins
-    StrAttr:$proposal,
-    Variadic<AIS_TokenType>:$inputs
-  );
-  let results = (outs AIS_TokenType:$result);
-  let assemblyFormat = [{
-    $proposal (`(` $inputs^ `:` type($inputs) `)`)? attr-dict `:` type($result)
   }];
   let hasVerifier = 1;
 }

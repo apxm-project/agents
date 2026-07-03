@@ -467,8 +467,7 @@ fn graph_edge_kind_for_consumer(op: AISOperationType) -> &'static str {
         AISOperationType::SpawnAgent
         | AISOperationType::Communicate
         | AISOperationType::Handoff
-        | AISOperationType::Delegate
-        | AISOperationType::SpawnTeam => "dispatch",
+        | AISOperationType::Delegate => "dispatch",
         _ => "synthesis_feed",
     }
 }

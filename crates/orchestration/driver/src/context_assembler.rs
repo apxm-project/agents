@@ -151,7 +151,6 @@ impl ContextAssembler {
             graph_attrs::MESSAGE,
             graph_attrs::GOAL,
             graph_attrs::QUERY,
-            graph_attrs::CONDITION,
         ] {
             if let Some(text) = meta.attributes.get(key).and_then(|v| v.as_str())
                 && !text.trim().is_empty()

@@ -186,8 +186,6 @@ pub mod runtime {
     pub mod belief_keys {
         pub const STAGED_PREFIX: &str = "_stage:";
         pub const DELEGATE_PREFIX: &str = "_delegate:";
-        pub const NEGOTIATE_ACTIVE: &str = "_negotiate_active";
-        pub const NEGOTIATE_PROPOSAL: &str = "_negotiate_proposal";
         pub const AUTONOMOUS_NODE_PREFIX: &str = "_autonomous_node:";
         pub const IDENTITY_NODE_PREFIX: &str = "_identity_node:";
         pub const SPAWNED_AGENT_PREFIX: &str = "_spawned_agent:";
@@ -202,7 +200,6 @@ pub mod runtime {
         pub const FLOW_CALL_OUTPUT_PREFIX: &str = "_flow_call_outputs:";
         pub const FLOW_ARG_PREFIX: &str = "_flow_arg_";
         pub const BRANCH_PREFIX: &str = "_branch:";
-        pub const GUARD_PREFIX: &str = "_guard:";
         pub const SWITCH_PREFIX: &str = "_switch:";
         pub const INV_PREFIX: &str = "_inv:";
         pub const LLM_RESULT_PREFIX: &str = "_llm_result:";
@@ -212,8 +209,6 @@ pub mod runtime {
         pub const ERR_PREFIX: &str = "_err:";
         pub const PAUSE_PREFIX: &str = "_pause:";
         pub const RESUME_PREFIX: &str = "_resume:";
-        pub const CLAIM_PREFIX: &str = "_claim:";
-        pub const CLAIM_TOKEN_PREFIX: &str = "_claim_token:";
         pub const EXC_PREFIX: &str = "exc:";
         pub const CHECKPOINT_SNAPSHOT_PREFIX: &str = "_checkpoint_snapshot:";
         pub const LOOP_START_PREFIX: &str = "_loop_start:";
@@ -231,8 +226,6 @@ pub mod runtime {
 
     pub mod transition_labels {
         pub const IDENTITY: &str = "identity";
-        pub const NEGOTIATE_START: &str = "negotiate_start";
-        pub const NEGOTIATE_COMPLETE: &str = "negotiate_complete";
         pub const SCOPE_INHERIT_BELIEF: &str = "scope:inherit_belief";
         pub const SCOPE_FILTER_BELIEF: &str = "scope:filter_belief";
         pub const SCOPE_INHERIT_CAPABILITY: &str = "scope:inherit_capability";
@@ -394,7 +387,6 @@ pub mod agent_tools {
 pub mod orchestration {
     pub mod admission {
         pub const SPAWN_AGENT: &str = "SPAWN_AGENT";
-        pub const SPAWN_TEAM: &str = "SPAWN_TEAM";
     }
 
     pub mod execution_status {
@@ -802,12 +794,9 @@ pub mod defaults {
     // URLs / output budget re-exported from `apxm-ais` (single source of truth).
     pub use apxm_ais::defaults::{DEFAULT_OS_URL, DEFAULT_OUTPUT_TOKEN_BUDGET, DEFAULT_SERVER_URL};
     pub const DEFAULT_TIMEOUT_MS: u64 = 30_000;
-    pub const DEFAULT_LEASE_MS: u64 = 60_000;
-    pub const DEFAULT_MAX_WAIT_MS: u64 = 5_000;
     pub const DEFAULT_MEMORY_LIMIT: u64 = 10;
     pub const DEFAULT_MAX_RETRIES: u32 = 3;
     pub const DEFAULT_MAX_CONTEXT_TOKENS: usize = 8192;
-    pub const DEFAULT_MAX_NEGOTIATE_ROUNDS: usize = 3;
     pub const DEFAULT_DESCRIPTION: &str = "Dynamically registered capability";
 
     // Resource governance limits

@@ -112,14 +112,11 @@ pub fn operation_effects(op: &AISOperationType) -> OperationEffects {
 
         // Coordination
         AISOperationType::UpdateGoal => OperationEffects::new().read(Goals).write(Goals),
-        AISOperationType::Guard => OperationEffects::new().read(Beliefs),
-        AISOperationType::Claim => OperationEffects::new().write(ShortTermMemory),
         AISOperationType::Pause => OperationEffects::new(),
         AISOperationType::Resume => OperationEffects::new().write(ShortTermMemory),
 
         // Multi-agent coordination
         AISOperationType::Delegate => OperationEffects::new().read(Beliefs).write(Beliefs),
-        AISOperationType::Negotiate => OperationEffects::new().read(Beliefs).write(Beliefs),
 
         // Identity Operations
         AISOperationType::Nop => OperationEffects::new(),
@@ -127,7 +124,6 @@ pub fn operation_effects(op: &AISOperationType) -> OperationEffects {
 
         // Self-Organization
         AISOperationType::SpawnAgent => OperationEffects::new().write(Capabilities),
-        AISOperationType::SpawnTeam => OperationEffects::new().write(Capabilities),
         AISOperationType::RegisterCapability => OperationEffects::new().write(Capabilities),
         AISOperationType::RegisterHook => OperationEffects::new().write(Capabilities),
 
