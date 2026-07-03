@@ -389,10 +389,14 @@ impl ModelRouter {
     }
 
     /// Select a backend and consume one rate-limit token before dispatch.
-    pub(crate) async fn select_for_dispatch(
-        &self,
-        request: &LLMRequest,
-    ) -> anyhow::Result<RoutingDecision> {
+    ///
+    /// Public so callers that dispatch outside of [`ModelRouter::generate`]
+    /// (e.g. streaming handlers that must apply the resolved backend/model to
+    /// a request before handing it to a streaming registry call) can still
+    /// route through policy + circuit breakers + rate limits rather than
+    /// picking a backend directly. `explicit request.backend`/`request.model`
+    /// still win inside `select()` — precedence is unchanged.
+    pub async fn select_for_dispatch(&self, request: &LLMRequest) -> anyhow::Result<RoutingDecision> {
         let decision = self.select(request)?;
         let backend_id = &decision.backend;
         let key = format!("backend:{}", backend_id);
