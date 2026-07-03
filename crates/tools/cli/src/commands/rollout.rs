@@ -11,8 +11,8 @@ use std::path::{Path, PathBuf};
 use anyhow::{Context, Result, anyhow};
 use apxm_core::events::ApxmEvent;
 use apxm_rollout::{
-    IndexDb, RolloutPaths, RolloutPayload, ThreadIndexEntry, load_rollout, rebuild_index_from_disk,
-    reconstruct_history,
+    CompactionReport, IndexDb, RetentionPolicy, RolloutPaths, RolloutPayload, ThreadIndexEntry,
+    compact, load_rollout, rebuild_index_from_disk, reconstruct_history,
 };
 use flate2::Compression;
 use flate2::write::GzEncoder;
@@ -43,6 +43,18 @@ pub struct RolloutArchiveOptions {
 pub struct RolloutReplayOptions {
     pub thread_id: String,
     pub home: Option<PathBuf>,
+}
+
+/// OBS-2 retention/compaction options — see [`apxm_rollout::retention`].
+#[derive(Debug, Default, Clone)]
+pub struct RolloutCompactOptions {
+    pub home: Option<PathBuf>,
+    /// Override the rollout max-age policy (days). Falls back to
+    /// `APXM_RETENTION_ROLLOUT_MAX_AGE_DAYS` / the built-in default.
+    pub max_age_days: Option<u64>,
+    /// Override the blob GC grace period (hours). Falls back to
+    /// `APXM_RETENTION_BLOB_GC_GRACE_HOURS` / the built-in default.
+    pub blob_grace_hours: Option<u64>,
 }
 
 fn resolve_paths(override_home: Option<PathBuf>) -> RolloutPaths {
@@ -208,6 +220,37 @@ pub async fn rollout_archive_command(opts: RolloutArchiveOptions) -> Result<Path
     }
     builder.finish().context("tar finalize failed")?;
     Ok(output)
+}
+
+/// `apxm rollout compact` — OBS-2 retention pass over agents-owned durable
+/// state: archives rollout JSONL bodies older than the max-age policy
+/// (index row survives with `status = archived`) and collects blobs no
+/// longer referenced by any rollout. Never touches the memory tier — this
+/// crate has no dependency on `apxm-memory`/`apxm-backends`.
+pub async fn rollout_compact_command(opts: RolloutCompactOptions) -> Result<CompactionReport> {
+    let paths = resolve_paths(opts.home);
+    let mut policy = RetentionPolicy::from_env();
+    if let Some(days) = opts.max_age_days {
+        policy.rollout_max_age = std::time::Duration::from_secs(days * 24 * 3600);
+    }
+    if let Some(hours) = opts.blob_grace_hours {
+        policy.blob_gc_grace = std::time::Duration::from_secs(hours * 3600);
+    }
+    let report = compact(&paths, &policy)
+        .await
+        .context("retention compaction failed")?;
+    println!(
+        "rollouts: scanned={} archived={} bytes_reclaimed={}",
+        report.rollouts.scanned, report.rollouts.archived, report.rollouts.bytes_reclaimed
+    );
+    println!(
+        "blobs:    scanned={} deleted={} retained={} bytes_reclaimed={}",
+        report.blobs.scanned,
+        report.blobs.deleted,
+        report.blobs.retained,
+        report.blobs.bytes_reclaimed
+    );
+    Ok(report)
 }
 
 fn append_file<W: std::io::Write>(
