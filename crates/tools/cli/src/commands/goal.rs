@@ -17,7 +17,7 @@ use apxm_core::types::OrchestrationWorkspaceMode;
 use apxm_core::types::{AISOperationType, OrchestrationTransport, OrchestrationWorkspaceCleanup};
 use serde_json::{Map as JsonMap, Value as JsonValue, json};
 
-use apxm_client::Client;
+use crate::client::Client;
 
 use super::cli::GoalArgs;
 

@@ -6,7 +6,7 @@ use anyhow::{Context, Result, anyhow};
 use reqwest::Response;
 use serde::Serialize;
 
-use crate::{Client, ClientInfo};
+use super::{Client, ClientInfo};
 
 /// `POST /v1/execute/stream` body (subset used by thin clients).
 #[derive(Debug, Clone, Serialize, Default)]

@@ -245,7 +245,6 @@ dependencies = [
  "apxm-artifact",
  "apxm-backend-registry",
  "apxm-backends",
- "apxm-client",
  "apxm-compiler",
  "apxm-core",
  "apxm-driver",
@@ -259,10 +258,16 @@ dependencies = [
  "dirs 5.0.1",
  "flate2",
  "futures",
+ "openapiv3",
+ "prettyplease",
+ "progenitor",
+ "progenitor-client",
  "reqwest 0.13.4",
  "rusqlite",
  "serde",
  "serde_json",
+ "serde_yaml",
+ "syn",
  "tar",
  "tempfile",
  "tokio",
@@ -270,24 +275,6 @@ dependencies = [
  "toml",
  "tracing-subscriber",
  "walkdir",
-]
-
-[[package]]
-name = "apxm-client"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "futures",
- "openapiv3",
- "prettyplease",
- "progenitor",
- "progenitor-client",
- "reqwest 0.13.4",
- "serde",
- "serde_json",
- "serde_yaml",
- "syn",
- "tokio",
 ]
 
 [[package]]

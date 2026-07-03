@@ -2,7 +2,7 @@
 
 use serde_json::Value as JsonValue;
 
-use crate::types;
+use super::types;
 
 /// Parsed server permission prompt from an SSE `ApxmEvent` JSON frame.
 #[derive(Debug, Clone, PartialEq, Eq)]

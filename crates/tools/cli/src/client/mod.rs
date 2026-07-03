@@ -1,10 +1,13 @@
 //! Typed HTTP client for [`apxm-server`](https://github.com/apxm-project/server).
 //!
 //! Session/permission bindings are generated from `openapi/openapi-session-v1.yaml`
-//! Execute-stream helpers live in [`execute`] until the
+//! (see `build.rs`). Execute-stream helpers live in [`execute`] until the
 //! OpenAPI contract grows those paths.
+//!
+//! Folded into `apxm-cli` (RT-5) — this was previously the standalone
+//! `apxm-client` crate; it has no consumer outside this binary.
 
-include!(concat!(env!("OUT_DIR"), "/codegen.rs"));
+include!(concat!(env!("OUT_DIR"), "/apxm_client_codegen.rs"));
 
 pub mod events;
 pub mod execute;
@@ -21,7 +24,7 @@ pub fn client_for_sse(base: &str) -> Client {
     Client::new_with_client(base.trim_end_matches('/'), http)
 }
 
-/// Re-export reqwest so CLI consumers share one version with generated client.
+/// Re-export reqwest so CLI consumers share one version with the generated client.
 pub use reqwest;
 
 #[cfg(test)]

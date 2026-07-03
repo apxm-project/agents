@@ -11,8 +11,8 @@ use std::path::PathBuf;
 
 use anyhow::{Context, Result, anyhow};
 use apxm_ais::chat::{self, COMPACT_AT_TOKENS, KEEP_RECENT_TURNS, Role};
-use apxm_client::reqwest;
-use apxm_client::{
+use crate::client::reqwest;
+use crate::client::{
     Client, ClientInfo, DEFAULT_SERVER_BASE, client_for_sse, execute::ExecuteRequest,
     types::SessionStatus,
 };

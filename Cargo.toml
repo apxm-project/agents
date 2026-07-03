@@ -17,7 +17,6 @@ members = [
 	"crates/orchestration/artifact",
 	# ── Tools (CLI + developer clients) ───────────
 	"crates/tools/cli",
-	"crates/tools/client",
     # -- Facade ---------
     "crates/facade",
 ]
@@ -49,7 +48,6 @@ apxm-driver = { version = "0.1.0", path = "crates/orchestration/driver" }
 apxm-acp = { version = "0.1.0", path = "crates/orchestration/acp" }
 apxm-artifact = { version = "0.1.0", path = "crates/orchestration/artifact" }
 apxm = { version = "0.1.0", path = "crates/facade"}
-apxm-client = { version = "0.1.0", path = "crates/tools/client" }
 
 # ── Serialization ────────────────────────────────────────────
 serde = { version = "1.0", features = ["derive"] }

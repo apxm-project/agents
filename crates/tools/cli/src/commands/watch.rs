@@ -10,8 +10,8 @@
 use std::io::Write as _;
 
 use anyhow::{Context, Result, anyhow};
-use apxm_client::reqwest;
-use apxm_client::{
+use crate::client::reqwest;
+use crate::client::{
     ClientInfo, DEFAULT_SERVER_BASE, client_for_sse,
     events::{event_kind, parse_approval_prompt},
 };
