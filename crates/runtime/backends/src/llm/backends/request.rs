@@ -155,6 +155,11 @@ pub struct LLMRequest {
     pub backend: Option<String>,
     /// Explicitly requested model (for routing)
     pub model: Option<String>,
+    /// Semantic model tier (e.g. "reasoning-tier") to resolve via
+    /// `ProfileRouter` into a concrete `model` before `ModelRouter::select`
+    /// runs. Ignored once `backend`/`model` is explicitly set — explicit
+    /// routing always wins over a profile.
+    pub model_profile: Option<String>,
     /// AIS operation type used for intelligent routing.
     pub operation_type: Option<AISOperationType>,
     /// Tools available for the LLM to call
@@ -192,6 +197,7 @@ impl LLMRequest {
             metadata: HashMap::new(),
             backend: None,
             model: None,
+            model_profile: None,
             operation_type: None,
             tools: None,
             tool_choice: None,
@@ -335,6 +341,13 @@ impl LLMRequest {
     /// Set explicit model for routing.
     pub fn with_model(mut self, model: impl Into<String>) -> Self {
         self.model = Some(model.into());
+        self
+    }
+
+    /// Set a semantic model profile (e.g. "reasoning-tier") to resolve into a
+    /// concrete model via `ProfileRouter` before `ModelRouter::select` runs.
+    pub fn with_model_profile(mut self, profile: impl Into<String>) -> Self {
+        self.model_profile = Some(profile.into());
         self
     }
 

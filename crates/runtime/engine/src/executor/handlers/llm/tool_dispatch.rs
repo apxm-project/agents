@@ -228,11 +228,16 @@ async fn execute_delegate(
         return ToolResult::error(&tool_call.id, "delegate requires a non-empty 'task'");
     }
 
-    // Synthetic specialist node: inherits the coordinator's backend/model,
-    // scoped to the requested tool groups. It does NOT carry `enable_delegate`,
-    // so specialists are leaf agents that cannot recurse.
+    // Synthetic specialist node: inherits the coordinator's backend/model
+    // (and model_profile), scoped to the requested tool groups. It does NOT
+    // carry `enable_delegate`, so specialists are leaf agents that cannot
+    // recurse.
     let mut synth = Node::new(parent_node.id, AISOperationType::Ask);
-    for attr in [graph_attrs::MODEL, graph_attrs::BACKEND] {
+    for attr in [
+        graph_attrs::MODEL,
+        graph_attrs::BACKEND,
+        graph_attrs::MODEL_PROFILE,
+    ] {
         if let Some(value) = parent_node.attributes.get(attr) {
             synth.attributes.insert(attr.to_string(), value.clone());
         }

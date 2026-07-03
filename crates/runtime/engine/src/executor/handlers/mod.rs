@@ -43,6 +43,7 @@ pub mod warmup;
 pub mod workflow_spawn;
 
 use super::{ExecutionContext, Result};
+use crate::model_router::ProfileRouter;
 use anyhow::Error as AnyhowError;
 use apxm_backends::llm::wire::response_metadata;
 use apxm_backends::{LLMRequest, LLMResponse, StreamingBackendError};
@@ -115,7 +116,76 @@ pub fn apply_llm_request_routing_from_node(
     if let Some(model) = get_optional_string_attribute(node, graph_attrs::MODEL)? {
         request = request.with_model(model);
     }
+    if let Some(profile) = get_optional_string_attribute(node, graph_attrs::MODEL_PROFILE)? {
+        request = request.with_model_profile(profile);
+    }
     Ok(request)
+}
+
+/// Resolve a node's `model_profile` (or, absent that, the execution's
+/// package-level default profile) into a concrete `model` on the request,
+/// narrowing the candidate the normal `ModelRouter::select` ranks over.
+///
+/// Runs **before** `ModelRouter::select`/`select_for_dispatch` so profile
+/// resolution always happens first (RTG-5, decision 4: "profiles resolve to
+/// candidates, then `ModelRouter::select` ranks them").
+///
+/// Precedence (explicit wins, platform.md rule 1):
+/// 1. Request already carries an explicit `backend` or `model` (from a
+///    node-level `BACKEND`/`MODEL` attribute, or a prior resolution) — no
+///    profile lookup, unchanged.
+/// 2. Node-level `model_profile` attribute.
+/// 3. `ExecutionContext::default_model_profile` — the owning package's
+///    `agent.toml [runtime].default_model_profile`, when threaded in by the
+///    host loading the package.
+/// 4. Neither router nor registry attached, or profile has no healthy
+///    candidate — falls through unchanged so `ModelRouter::select` still
+///    runs its normal full-candidate-set routing rather than failing the
+///    request outright.
+pub fn resolve_model_profile(ctx: &ExecutionContext, mut request: LLMRequest) -> LLMRequest {
+    if request.backend.is_some() || request.model.is_some() {
+        return request;
+    }
+
+    let Some(profile_name) = request
+        .model_profile
+        .clone()
+        .or_else(|| ctx.default_model_profile.clone())
+    else {
+        return request;
+    };
+
+    let (Some(model_router), Some(profile_registry)) =
+        (&ctx.model_router, &ctx.profile_registry)
+    else {
+        tracing::debug!(
+            profile = %profile_name,
+            "model_profile set but ModelRouter/ProfileRegistry unavailable; \
+             falling back to normal routing"
+        );
+        return request;
+    };
+
+    let profile_router =
+        ProfileRouter::new(profile_registry, model_router, model_router.model_registry());
+    match profile_router.select_from_profile(&profile_name) {
+        Ok(model) => {
+            tracing::debug!(
+                profile = %profile_name,
+                model = %model,
+                "Resolved model_profile to candidate model before ModelRouter::select"
+            );
+            request = request.with_model(model);
+        }
+        Err(e) => {
+            tracing::warn!(
+                profile = %profile_name,
+                error = %e,
+                "model_profile resolution failed; falling back to full candidate set"
+            );
+        }
+    }
+    request
 }
 
 /// Preserve the routing identity of an LLM request across retries or continuations.
@@ -128,6 +198,9 @@ pub fn copy_llm_request_routing(mut request: LLMRequest, source: &LLMRequest) ->
     }
     if let Some(model) = &source.model {
         request = request.with_model(model.clone());
+    }
+    if let Some(profile) = &source.model_profile {
+        request = request.with_model_profile(profile.clone());
     }
     if let Some(extra_body) = &source.extra_body {
         request = request.with_extra_body(extra_body.clone());
@@ -237,6 +310,12 @@ async fn execute_llm_request_with_node_name(
     if ctx.cancellation_token.is_cancelled() {
         return Err(RuntimeError::SchedulerCancelled);
     }
+
+    // Resolve model_profile -> candidate model (RTG-5) before either dispatch
+    // path runs ModelRouter::select. No-op when the request already carries
+    // an explicit backend/model or declares no profile.
+    let resolved = resolve_model_profile(ctx, request.clone());
+    let request = &resolved;
 
     // Use streaming path when an event emitter is available so we can
     // emit token-by-token events. The default generate_stream() impl
@@ -559,4 +638,215 @@ pub fn extract_json_from_markdown(content: &str) -> Option<String> {
     }
 
     None
+}
+
+#[cfg(test)]
+mod model_profile_routing_tests {
+    use super::*;
+    use crate::aam::Aam;
+    use crate::capability::CapabilitySystem;
+    use crate::memory::{MemoryConfig, MemorySystem};
+    use crate::model_router::registry::{ModelEntry, ModelRegistry};
+    use crate::model_router::{ModelRouter, ModelRouterConfig, ProfileRegistry, RoutingTarget};
+    use apxm_backends::LLMRegistry;
+    use apxm_backends::llm::backends::MockLLMBackend;
+    use apxm_core::model_profiles::{ModelProfile, ProfileCandidate};
+    use apxm_core::types::AISOperationType;
+    use std::sync::Arc;
+
+    /// Two backends ("cheap", "expensive") with sharply different costs, so a
+    /// `Cost`-targeted `select` would normally prefer "cheap" — proving that
+    /// when a `model_profile` narrows the field to "expensive" only, that
+    /// narrowing (not the cost ranking) determines the outcome.
+    fn router_with_cheap_and_expensive() -> ModelRouter {
+        let llm_registry = Arc::new(LLMRegistry::new());
+        let model_registry = Arc::new(ModelRegistry::new());
+
+        llm_registry
+            .register("cheap", MockLLMBackend::static_response("ok"))
+            .expect("register cheap backend");
+        model_registry.register(ModelEntry {
+            name: "cheap-model".to_string(),
+            backend: "cheap".to_string(),
+            cost_per_1k_input: 0.01,
+            cost_per_1k_output: 0.01,
+            ..Default::default()
+        });
+
+        llm_registry
+            .register("expensive", MockLLMBackend::static_response("ok"))
+            .expect("register expensive backend");
+        model_registry.register(ModelEntry {
+            name: "expensive-model".to_string(),
+            backend: "expensive".to_string(),
+            cost_per_1k_input: 10.0,
+            cost_per_1k_output: 10.0,
+            ..Default::default()
+        });
+
+        let config = ModelRouterConfig {
+            target: RoutingTarget::Cost,
+            ..Default::default()
+        };
+        ModelRouter::with_model_registry(llm_registry, model_registry, config)
+            .expect("router construction")
+    }
+
+    fn single_candidate_profile_registry() -> ProfileRegistry {
+        let registry = ProfileRegistry::new();
+        registry.register(ModelProfile {
+            name: "single-tier".to_string(),
+            description: "only the expensive model".to_string(),
+            tags: vec![],
+            min_context_window: None,
+            candidates: vec![ProfileCandidate {
+                model: "expensive-model".to_string(),
+                priority: 1,
+            }],
+        });
+        registry
+    }
+
+    async fn test_context() -> ExecutionContext {
+        let memory = Arc::new(
+            MemorySystem::new(MemoryConfig::in_memory_ltm())
+                .await
+                .expect("memory"),
+        );
+        let aam = Aam::new();
+        let capability_system = Arc::new(CapabilitySystem::with_aam(aam.clone()));
+        ExecutionContext::new(memory, Arc::new(LLMRegistry::new()), capability_system, aam)
+    }
+
+    fn ask_request() -> LLMRequest {
+        LLMRequest::new("hello").with_operation_type(AISOperationType::Ask)
+    }
+
+    #[tokio::test]
+    async fn no_model_profile_leaves_full_candidate_set_unchanged() {
+        let router = Arc::new(router_with_cheap_and_expensive());
+        let profiles = Arc::new(single_candidate_profile_registry());
+        let mut ctx = test_context().await;
+        ctx.model_router = Some(Arc::clone(&router));
+        ctx.profile_registry = Some(profiles);
+
+        let request = ask_request();
+        let resolved = resolve_model_profile(&ctx, request.clone());
+        assert!(
+            resolved.model.is_none(),
+            "no model_profile set: request must be unchanged"
+        );
+
+        // Normal Cost-targeted routing picks the cheap backend.
+        let decision = router.select(&resolved).expect("selection succeeds");
+        assert_eq!(decision.backend, "cheap");
+    }
+
+    #[tokio::test]
+    async fn node_model_profile_narrows_candidates_before_select() {
+        let router = Arc::new(router_with_cheap_and_expensive());
+        let profiles = Arc::new(single_candidate_profile_registry());
+        let mut ctx = test_context().await;
+        ctx.model_router = Some(Arc::clone(&router));
+        ctx.profile_registry = Some(profiles);
+
+        let request = ask_request().with_model_profile("single-tier");
+        let resolved = resolve_model_profile(&ctx, request);
+        assert_eq!(resolved.model.as_deref(), Some("expensive-model"));
+
+        // Even though Cost target would otherwise pick "cheap", the profile
+        // narrowed the candidate set to the single expensive model, so that
+        // backend is selected regardless of cost ranking.
+        let decision = router.select(&resolved).expect("selection succeeds");
+        assert_eq!(decision.backend, "expensive");
+    }
+
+    #[tokio::test]
+    async fn package_default_model_profile_applies_when_node_declares_none() {
+        let router = Arc::new(router_with_cheap_and_expensive());
+        let profiles = Arc::new(single_candidate_profile_registry());
+        let mut ctx = test_context().await;
+        ctx.model_router = Some(Arc::clone(&router));
+        ctx.profile_registry = Some(profiles);
+        ctx.default_model_profile = Some("single-tier".to_string());
+
+        // Node/request declares no model_profile of its own.
+        let request = ask_request();
+        let resolved = resolve_model_profile(&ctx, request);
+        assert_eq!(resolved.model.as_deref(), Some("expensive-model"));
+
+        let decision = router.select(&resolved).expect("selection succeeds");
+        assert_eq!(decision.backend, "expensive");
+    }
+
+    #[tokio::test]
+    async fn explicit_node_model_profile_overrides_package_default() {
+        let router = Arc::new(router_with_cheap_and_expensive());
+        let profiles = ProfileRegistry::new();
+        profiles.register(ModelProfile {
+            name: "single-tier".to_string(),
+            description: "only the expensive model".to_string(),
+            tags: vec![],
+            min_context_window: None,
+            candidates: vec![ProfileCandidate {
+                model: "expensive-model".to_string(),
+                priority: 1,
+            }],
+        });
+        profiles.register(ModelProfile {
+            name: "cheap-tier".to_string(),
+            description: "only the cheap model".to_string(),
+            tags: vec![],
+            min_context_window: None,
+            candidates: vec![ProfileCandidate {
+                model: "cheap-model".to_string(),
+                priority: 1,
+            }],
+        });
+        let mut ctx = test_context().await;
+        ctx.model_router = Some(Arc::clone(&router));
+        ctx.profile_registry = Some(Arc::new(profiles));
+        // Package default says "cheap-tier"...
+        ctx.default_model_profile = Some("cheap-tier".to_string());
+
+        // ...but the node explicitly declares "single-tier", which must win.
+        let request = ask_request().with_model_profile("single-tier");
+        let resolved = resolve_model_profile(&ctx, request);
+        assert_eq!(resolved.model.as_deref(), Some("expensive-model"));
+    }
+
+    #[tokio::test]
+    async fn explicit_request_model_bypasses_profile_resolution_entirely() {
+        let router = Arc::new(router_with_cheap_and_expensive());
+        let profiles = Arc::new(single_candidate_profile_registry());
+        let mut ctx = test_context().await;
+        ctx.model_router = Some(Arc::clone(&router));
+        ctx.profile_registry = Some(profiles);
+
+        // Explicit model wins over any model_profile (explicit wins, rule 1).
+        let request = ask_request()
+            .with_model("cheap-model")
+            .with_model_profile("single-tier");
+        let resolved = resolve_model_profile(&ctx, request);
+        assert_eq!(
+            resolved.model.as_deref(),
+            Some("cheap-model"),
+            "explicit request.model must not be overridden by model_profile"
+        );
+    }
+
+    #[test]
+    fn apply_llm_request_routing_from_node_reads_model_profile_attribute() {
+        use apxm_core::types::execution::Node;
+
+        let mut node = Node::new(1, AISOperationType::Ask);
+        node.attributes.insert(
+            graph_attrs::MODEL_PROFILE.to_string(),
+            Value::from("reasoning-tier"),
+        );
+
+        let request =
+            apply_llm_request_routing_from_node(LLMRequest::new("hi"), &node).expect("routing ok");
+        assert_eq!(request.model_profile.as_deref(), Some("reasoning-tier"));
+    }
 }
