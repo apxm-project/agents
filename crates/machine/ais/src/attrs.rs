@@ -17,6 +17,13 @@ pub const CWD: &str = "cwd";
 
 // -- LLM / model --
 pub const MODEL: &str = "model";
+/// Semantic model tier (e.g. "reasoning-tier", "fast-draft") resolved via
+/// `ProfileRouter`/`ProfileRegistry` at dispatch time, before
+/// `ModelRouter::select` runs. Distinct from [`PROFILE`] (agent/context-stack
+/// profile). Node-level `MODEL`/`BACKEND` still win when set (explicit wins);
+/// an unset node value falls back to the owning package's
+/// `agent.toml [runtime].default_model_profile`, when threaded in by the host.
+pub const MODEL_PROFILE: &str = "model_profile";
 pub const PROVIDER: &str = "provider";
 pub const API_KEY: &str = "api_key";
 pub const BASE_URL: &str = "base_url";
@@ -297,6 +304,7 @@ pub const ALL_ATTR_NAMES: &[&str] = &[
     MODE,
     CWD,
     MODEL,
+    MODEL_PROFILE,
     PROVIDER,
     API_KEY,
     BASE_URL,

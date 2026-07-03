@@ -1,7 +1,7 @@
 //! Runtime coordinator - Main entry point for the APxM runtime
 
 use crate::metadata_keys as metadata;
-use crate::model_router::{ModelRouter, ModelRouterConfig};
+use crate::model_router::{ModelRouter, ModelRouterConfig, ProfileRegistry};
 use crate::python_tools;
 use crate::python_tools::{PythonHandlerBridge, PythonHandlerRegistry};
 use crate::sandbox::SandboxRegistry;
@@ -99,6 +99,13 @@ pub struct RuntimeConfig {
     /// aggregates only.
     #[serde(default)]
     pub metrics_level: apxm_core::types::MetricsLevel,
+    /// Package-level default `model_profile` (RTG-5), sourced from the
+    /// owning package's `agent.toml [runtime].default_model_profile` by the
+    /// host loading the package. Applied to LLM requests whose node declares
+    /// no `model_profile` of its own; an explicit node-level `model_profile`
+    /// (or `model`/`backend`) always overrides this default.
+    #[serde(default)]
+    pub default_model_profile: Option<String>,
 }
 
 impl RuntimeConfig {
@@ -113,6 +120,7 @@ impl RuntimeConfig {
             llm_tool_dispatch: LlmToolDispatchConfig::default(),
             optimization_target: OptimizationTarget::Balanced,
             metrics_level: apxm_core::types::MetricsLevel::default(),
+            default_model_profile: None,
         }
     }
 
@@ -125,6 +133,12 @@ impl RuntimeConfig {
     /// Set a global token budget for each execution.
     pub fn with_token_budget(mut self, budget: u64) -> Self {
         self.token_budget = Some(budget);
+        self
+    }
+
+    /// Set the package-level default `model_profile`.
+    pub fn with_default_model_profile(mut self, profile: impl Into<String>) -> Self {
+        self.default_model_profile = Some(profile.into());
         self
     }
 }
@@ -175,6 +189,9 @@ pub struct Runtime {
     process_table: Arc<ProcessTable>,
     /// Optional ModelRouter for dynamic backend/model selection with circuit breakers.
     model_router: Option<Arc<ModelRouter>>,
+    /// Optional ProfileRegistry, instantiated beside `model_router` (RTG-5),
+    /// resolving `model_profile` node attributes into candidate models.
+    profile_registry: Option<Arc<ProfileRegistry>>,
     /// Agent warm pool for reusing spawned agent sessions.
     agent_pool: Arc<AgentPool>,
     /// Dispatcher middleware cloned into each execution context.
@@ -233,6 +250,7 @@ impl Runtime {
             sandbox_registry: Arc::new(SandboxRegistry::new()),
             process_table: Arc::new(ProcessTable::new()),
             model_router: None,
+            profile_registry: None,
             agent_pool,
             middlewares: Vec::new(),
             execution_hooks: Vec::new(),
@@ -296,6 +314,10 @@ impl Runtime {
         if let Some(ref router) = self.model_router {
             ctx.model_router = Some(Arc::clone(router));
         }
+        if let Some(ref registry) = self.profile_registry {
+            ctx.profile_registry = Some(Arc::clone(registry));
+        }
+        ctx.default_model_profile = self.config.default_model_profile.clone();
         if let Some(bridge) = python_handler_bridge {
             ctx = ctx.with_python_handler_bridge(bridge);
         }
@@ -440,6 +462,33 @@ impl Runtime {
     /// Get a reference to the model router, if one is attached.
     pub fn model_router(&self) -> Option<&Arc<ModelRouter>> {
         self.model_router.as_ref()
+    }
+
+    /// Attach a ProfileRegistry to the runtime (RTG-5).
+    ///
+    /// Once set, every [`ExecutionContext`] built by this runtime will have
+    /// the registry available, letting the LLM dispatch path resolve a
+    /// node's `model_profile` attribute into a candidate model — via a
+    /// transient `ProfileRouter` built alongside `model_router` — before
+    /// `ModelRouter::select` runs.
+    pub fn set_profile_registry(&mut self, registry: Arc<ProfileRegistry>) {
+        self.profile_registry = Some(registry);
+    }
+
+    /// Load `~/.apxm/model_profiles.toml` and attach the registry.
+    ///
+    /// Convenience method mirroring `init_model_router` — call after LLM
+    /// backends and the model router are configured so profile resolution is
+    /// available from the first request. A missing config file yields an
+    /// empty (inert) registry rather than an error.
+    pub fn init_profile_registry(&mut self) {
+        self.profile_registry = Some(Arc::new(ProfileRegistry::load_from_default_path()));
+        tracing::info!("ProfileRegistry initialized");
+    }
+
+    /// Get a reference to the profile registry, if one is attached.
+    pub fn profile_registry(&self) -> Option<&Arc<ProfileRegistry>> {
+        self.profile_registry.as_ref()
     }
 
     /// Execute a DAG with parallel dataflow execution

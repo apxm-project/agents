@@ -97,6 +97,11 @@ impl RuntimeExecutor {
             .init_model_router(router_config)
             .map_err(DriverError::Runtime)?;
 
+        // Instantiate ProfileRegistry beside ModelRouter (RTG-5): loads
+        // `~/.apxm/model_profiles.toml` so `model_profile` node attributes
+        // resolve to a candidate model before `ModelRouter::select` runs.
+        runtime.init_profile_registry();
+
         let sandbox_registry = configure_sandbox_registry();
         runtime.set_sandbox_registry(std::sync::Arc::clone(&sandbox_registry));
 

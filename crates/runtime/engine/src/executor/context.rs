@@ -37,7 +37,7 @@ use super::skill_resolver::{NoOpSkillResolver, SkillResolver};
 use super::timing_tracker::TimingTracker;
 use super::token_accounting::TokenAccountant;
 use super::workflow_spawner::{NoOpWorkflowSpawner, WorkflowSpawner};
-use crate::model_router::ModelRouter;
+use crate::model_router::{ModelRouter, ProfileRegistry};
 use crate::runtime::LlmToolDispatchConfig;
 
 /// Execution context passed to all operation handlers.
@@ -116,6 +116,15 @@ pub struct ExecutionContext {
     pub context_stack: Option<Arc<ContextStack>>,
     /// When set, LLM handler delegates backend selection here instead of `llm_registry`.
     pub model_router: Option<Arc<ModelRouter>>,
+    /// Registry of semantic model profiles (`~/.apxm/model_profiles.toml`).
+    /// Paired with `model_router` to resolve a node's `model_profile`
+    /// attribute into a concrete model before `ModelRouter::select` runs.
+    pub profile_registry: Option<Arc<ProfileRegistry>>,
+    /// Package-level default `model_profile`, threaded in from the owning
+    /// package's `agent.toml [runtime].default_model_profile` by the host
+    /// that loads the package. Used when a node declares no `model_profile`
+    /// of its own.
+    pub default_model_profile: Option<String>,
     pub agent_pool: Arc<AgentPool>,
     /// Python tool bridge for dispatching INV_CAP calls backed by
     /// `@apxm.tool`-decorated Python handlers. `None` when no Python
@@ -240,6 +249,8 @@ impl ExecutionContext {
             process_table: Arc::new(ProcessTable::new()),
             context_stack: None,
             model_router: None,
+            profile_registry: None,
+            default_model_profile: None,
             agent_pool: Arc::new(AgentPool::new(4, std::time::Duration::from_secs(300))),
             python_handler_bridge: None,
             hook_registry: None,
@@ -598,6 +609,8 @@ impl ExecutionContext {
             process_table: Arc::clone(&self.process_table),
             context_stack: self.context_stack.as_ref().map(Arc::clone),
             model_router: self.model_router.as_ref().map(Arc::clone),
+            profile_registry: self.profile_registry.as_ref().map(Arc::clone),
+            default_model_profile: self.default_model_profile.clone(),
             agent_pool: Arc::clone(&self.agent_pool),
             python_handler_bridge: self.python_handler_bridge.as_ref().map(Arc::clone),
             hook_registry: self.hook_registry.as_ref().map(Arc::clone),
@@ -636,6 +649,19 @@ impl ExecutionContext {
     /// Attach a ModelRouter for dynamic backend/model selection with circuit breakers.
     pub fn with_model_router(mut self, router: Arc<ModelRouter>) -> Self {
         self.model_router = Some(router);
+        self
+    }
+
+    /// Attach a ProfileRegistry for resolving `model_profile` node attributes.
+    pub fn with_profile_registry(mut self, registry: Arc<ProfileRegistry>) -> Self {
+        self.profile_registry = Some(registry);
+        self
+    }
+
+    /// Set the package-level default `model_profile` (from `agent.toml
+    /// [runtime].default_model_profile`), used when a node declares none.
+    pub fn with_default_model_profile(mut self, profile: impl Into<String>) -> Self {
+        self.default_model_profile = Some(profile.into());
         self
     }
 
