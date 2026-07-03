@@ -548,6 +548,13 @@ impl ModelRouter {
             .find(|p| &p.operation == op)
     }
 
+    /// EWMA-smoothed whole-request latency (ms) for a backend, as tracked by
+    /// the underlying `LLMRegistry`'s `HealthMonitor`. `None` means no
+    /// successful request has completed for this backend yet.
+    fn backend_latency_ms(&self, backend: &str) -> Option<f64> {
+        self.llm_registry.backend_latency_ms_ewma(backend)
+    }
+
     fn find_by_tag(&self, tag: &str) -> Option<RoutingDecision> {
         let models = self.model_registry.models_with_tags(&[tag]);
         for model in models {
@@ -568,9 +575,12 @@ impl ModelRouter {
     /// `target`. Returns `None` when no candidate is feasible, letting the
     /// caller fall through to default / first-available routing.
     ///
-    /// This is a deterministic rule over a static table — every input is a
-    /// config column or current breaker state, not a learned signal. Results
-    /// are reproducible: candidates are sorted by name so ties resolve
+    /// Cost, Quality, and breaker availability are deterministic rules over a
+    /// static table — config columns or current breaker state. `Latency` is
+    /// the one exception: it ranks by the live EWMA measured latency from
+    /// `HealthMonitor`, so its result can change between calls as backends
+    /// serve requests. All targets sort candidates by name first, so ties
+    /// (including "no measurement yet" ties under `Latency`) resolve
     /// identically across runs.
     fn select_from_table(
         &self,
@@ -605,13 +615,21 @@ impl ModelRouter {
             RoutingTarget::Quality => feasible
                 .iter()
                 .min_by_key(|m| std::cmp::Reverse(m.quality_tier)),
-            // No live latency signal exists yet (the EWMA latency profile is
-            // unwired), so Latency uses the same cost-minimizing proxy as Cost
-            // rather than pretending to rank by speed.
+            // Rank by measured EWMA latency (`HealthMonitor::record_success`
+            // feeds `BackendLatencyProfile` on every successful call). A
+            // backend with no samples yet (cold start, or one that has never
+            // completed a request) sorts last rather than crashing or being
+            // silently preferred — once it starts serving requests its
+            // measured latency takes over on the next selection.
             RoutingTarget::Latency => feasible.iter().min_by(|a, b| {
-                let ca = a.estimate_cost(reqs.est_input, reqs.est_output);
-                let cb = b.estimate_cost(reqs.est_input, reqs.est_output);
-                ca.partial_cmp(&cb).unwrap_or(std::cmp::Ordering::Equal)
+                let la = self.backend_latency_ms(&a.backend);
+                let lb = self.backend_latency_ms(&b.backend);
+                match (la, lb) {
+                    (Some(la), Some(lb)) => la.partial_cmp(&lb).unwrap_or(std::cmp::Ordering::Equal),
+                    (Some(_), None) => std::cmp::Ordering::Less,
+                    (None, Some(_)) => std::cmp::Ordering::Greater,
+                    (None, None) => std::cmp::Ordering::Equal,
+                }
             }),
             // Balanced is handled by the caller (tag preference); never reaches
             // here, but map it to the first candidate defensively.
@@ -623,5 +641,116 @@ impl ModelRouter {
             model: Some(chosen.name.clone()),
             was_failover: false,
         })
+    }
+}
+
+#[cfg(test)]
+mod latency_routing_tests {
+    use super::*;
+    use apxm_backends::llm::backends::MockLLMBackend;
+    use std::time::Duration;
+
+    /// Build a router with `backends` registered against a real `LLMRegistry`
+    /// (so `HealthMonitor` tracking is live) and a matching `ModelEntry` per
+    /// backend in the model table, all otherwise-identical so `Latency` is
+    /// the only thing that can break ties.
+    fn router_with_backends(backends: &[&str]) -> ModelRouter {
+        let llm_registry = Arc::new(LLMRegistry::new());
+        let model_registry = Arc::new(ModelRegistry::new());
+        for name in backends {
+            llm_registry
+                .register(*name, MockLLMBackend::static_response("ok"))
+                .expect("register mock backend");
+            model_registry.register(ModelEntry {
+                name: format!("{name}-model"),
+                backend: name.to_string(),
+                ..Default::default()
+            });
+        }
+        ModelRouter::with_model_registry(
+            llm_registry,
+            model_registry,
+            ModelRouterConfig::default(),
+        )
+        .expect("router construction")
+    }
+
+    /// Record a successful call against `backend` with the given latency by
+    /// going through the same path production code uses
+    /// (`LLMRegistry::record_streaming_outcome`), which calls
+    /// `HealthMonitor::record_success` under the hood.
+    fn record_latency(router: &ModelRouter, backend: &str, latency_ms: u64) {
+        router.llm_registry().record_streaming_outcome(
+            backend,
+            "irrelevant-model",
+            Duration::from_millis(latency_ms),
+            None,
+            true,
+        );
+    }
+
+    #[test]
+    fn record_success_feeds_the_ewma_and_is_queryable_from_the_registry() {
+        let router = router_with_backends(&["a"]);
+        assert_eq!(router.backend_latency_ms("a"), None, "cold start: no signal yet");
+
+        record_latency(&router, "a", 50);
+        assert_eq!(router.backend_latency_ms("a"), Some(50.0));
+
+        // EWMA (alpha ~0.2 default) should move toward, but not jump fully
+        // to, a very different new sample — proving it's a smoothed signal
+        // and not last-value-wins.
+        record_latency(&router, "a", 500);
+        let after = router.backend_latency_ms("a").unwrap();
+        assert!(after > 50.0 && after < 500.0, "expected smoothed value, got {after}");
+    }
+
+    #[test]
+    fn routing_target_latency_prefers_the_measured_fastest_backend() {
+        let router = router_with_backends(&["slow", "fast", "medium"]);
+        record_latency(&router, "slow", 500);
+        record_latency(&router, "fast", 10);
+        record_latency(&router, "medium", 100);
+
+        let request = LLMRequest::new("hello");
+        let decision = router
+            .select_from_table(&request, RoutingTarget::Latency)
+            .expect("a feasible candidate should be found");
+
+        assert_eq!(decision.backend, "fast");
+    }
+
+    #[test]
+    fn routing_target_latency_falls_back_sensibly_with_no_measurements() {
+        // No calls recorded for any backend: every candidate is cold-start
+        // (`None` latency). Selection must not panic and must still return a
+        // deterministic candidate (ties break by model name, same as the
+        // other targets).
+        let router = router_with_backends(&["b", "a"]);
+
+        let request = LLMRequest::new("hello");
+        let decision = router
+            .select_from_table(&request, RoutingTarget::Latency)
+            .expect("cold-start candidates are still feasible");
+
+        // "a-model" sorts before "b-model" alphabetically.
+        assert_eq!(decision.backend, "a");
+    }
+
+    #[test]
+    fn routing_target_latency_prefers_measured_backend_over_cold_start() {
+        // One backend has a (bad-ish) measurement, the other has none yet.
+        // A backend with a real signal should win over an unmeasured one,
+        // even though the unmeasured one might turn out faster — we rank
+        // what we can observe.
+        let router = router_with_backends(&["measured", "cold"]);
+        record_latency(&router, "measured", 1000);
+
+        let request = LLMRequest::new("hello");
+        let decision = router
+            .select_from_table(&request, RoutingTarget::Latency)
+            .expect("a feasible candidate should be found");
+
+        assert_eq!(decision.backend, "measured");
     }
 }

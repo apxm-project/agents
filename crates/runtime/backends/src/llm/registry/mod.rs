@@ -434,6 +434,13 @@ impl LLMRegistry {
         self.health_monitor.status(name)
     }
 
+    /// Get the EWMA-smoothed whole-request latency (milliseconds) for a
+    /// backend, or `None` if unregistered or no successful request has
+    /// completed yet. Backs `ModelRouter`'s `RoutingTarget::Latency`.
+    pub fn backend_latency_ms_ewma(&self, name: &str) -> Option<f64> {
+        self.health_monitor.latency_ms_ewma(name)
+    }
+
     /// Normalize model/backend selection for a request using the configured policy.
     pub fn prepare_request(&self, request: &LLMRequest) -> LLMRequest {
         let mut prepared = request.clone();

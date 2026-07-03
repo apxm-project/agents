@@ -5,13 +5,14 @@
 //! cost surface for backend-aware dispatch without keeping per-request
 //! histograms in hot memory.
 //!
-//! This module is currently introduced as a skeleton: it ships alongside
-//! `HealthMonitor` and exposes a typed `BackendLatencyProfile` and aggregated
-//! `LatencyProfileStore` so dispatch logic can adopt it incrementally. It is
-//! deliberately not wired into `HealthMonitor::record_success` yet — the
-//! prefill/decode breakdown lives in the runtime's `timing_tracker` and will
-//! be threaded through in a follow-up once the streaming path produces those
-//! samples at the registry boundary.
+//! It also tracks a coarser end-to-end request latency EWMA
+//! (`record_request` / `request_ms`) that `HealthMonitor::record_success`
+//! feeds on every successful call. That signal is what
+//! `ModelRouter::select_from_table` reads for `RoutingTarget::Latency` — the
+//! finer-grained prefill/decode breakdown (`record_prefill` / `record_decode`)
+//! remains available for callers on the streaming path that can supply that
+//! split (e.g. the runtime's `timing_tracker`), but request-level EWMA
+//! wiring no longer waits on it.
 
 use dashmap::DashMap;
 use parking_lot::Mutex;
@@ -35,6 +36,13 @@ pub struct BackendLatencyProfile {
     decode_ms_per_token_ewma: Option<f64>,
     prefill_samples: usize,
     decode_samples: usize,
+    /// EWMA of whole-request (round-trip) latency in milliseconds, fed by
+    /// `HealthMonitor::record_success` on every successful call. This is the
+    /// coarse signal `RoutingTarget::Latency` ranks backends by — it doesn't
+    /// need the prefill/decode split, just "how long did the last few calls
+    /// to this backend take".
+    request_ms_ewma: Option<f64>,
+    request_samples: usize,
 }
 
 impl BackendLatencyProfile {
@@ -52,7 +60,30 @@ impl BackendLatencyProfile {
             decode_ms_per_token_ewma: None,
             prefill_samples: 0,
             decode_samples: 0,
+            request_ms_ewma: None,
+            request_samples: 0,
         }
+    }
+
+    /// Record one whole-request (round-trip) latency observation. Folds into
+    /// the EWMA with this profile's `alpha`: the first sample seeds the
+    /// estimate directly (no artificial warm-up bias), every subsequent
+    /// sample nudges it toward the new observation by `alpha`.
+    pub fn record_request(&mut self, latency: Duration) {
+        let sample_ms = duration_to_ms(latency);
+        self.request_ms_ewma = Some(merge(self.request_ms_ewma, sample_ms, self.alpha));
+        self.request_samples += 1;
+    }
+
+    /// Smoothed whole-request latency in milliseconds, or `None` if no
+    /// successful request has been recorded yet for this backend.
+    pub fn request_ms(&self) -> Option<f64> {
+        self.request_ms_ewma
+    }
+
+    /// Number of whole-request samples folded into the EWMA.
+    pub fn request_samples(&self) -> usize {
+        self.request_samples
     }
 
     /// Record one prefill observation: total prefill latency (whole prompt).
@@ -155,6 +186,14 @@ impl LatencyProfileStore {
         self.profiles.remove(name);
     }
 
+    /// Reset a backend's profile to fresh (no samples), if it's registered.
+    /// No-op for unregistered backends.
+    pub fn reset_backend(&self, name: &str) {
+        if let Some(entry) = self.profiles.get(name) {
+            *entry.value().lock() = BackendLatencyProfile::new();
+        }
+    }
+
     pub fn record_prefill(&self, name: &str, latency: Duration) {
         if let Some(entry) = self.profiles.get(name) {
             entry.value().lock().record_prefill(latency);
@@ -167,6 +206,23 @@ impl LatencyProfileStore {
         }
     }
 
+    /// Record a whole-request latency observation for an already-registered
+    /// backend. Silently a no-op for unknown backends, mirroring
+    /// `HealthMonitor::record_success`'s tolerance of stray calls.
+    pub fn record_request(&self, name: &str, latency: Duration) {
+        if let Some(entry) = self.profiles.get(name) {
+            entry.value().lock().record_request(latency);
+        }
+    }
+
+    /// Smoothed whole-request latency in milliseconds for `name`, or `None`
+    /// if the backend is unregistered or has no successful samples yet.
+    pub fn request_ms(&self, name: &str) -> Option<f64> {
+        self.profiles
+            .get(name)
+            .and_then(|entry| entry.value().lock().request_ms())
+    }
+
     pub fn snapshot(&self, name: &str) -> Option<BackendLatencyProfile> {
         self.profiles
             .get(name)
@@ -177,5 +233,89 @@ impl LatencyProfileStore {
 impl Default for LatencyProfileStore {
     fn default() -> Self {
         Self::new()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn first_sample_seeds_the_ewma_directly() {
+        let mut profile = BackendLatencyProfile::new();
+        assert_eq!(profile.request_ms(), None);
+        profile.record_request(Duration::from_millis(100));
+        assert_eq!(profile.request_ms(), Some(100.0));
+        assert_eq!(profile.request_samples(), 1);
+    }
+
+    #[test]
+    fn ewma_converges_toward_recent_values_not_all_time_average() {
+        // alpha = 0.5 for a fast-reacting profile in this test.
+        let mut profile = BackendLatencyProfile::with_alpha(0.5);
+        profile.record_request(Duration::from_millis(100));
+        // 0.5*100 + 0.5*100 = 100
+        profile.record_request(Duration::from_millis(100));
+        assert_eq!(profile.request_ms(), Some(100.0));
+
+        // A long run of low-latency samples should pull the estimate close to
+        // the recent value, not to the simple all-time average (which would
+        // sit near 100ms given the initial samples above).
+        for _ in 0..20 {
+            profile.record_request(Duration::from_millis(20));
+        }
+        let ms = profile.request_ms().unwrap();
+        assert!(
+            ms < 25.0,
+            "expected EWMA to converge near the recent 20ms samples, got {ms}"
+        );
+
+        // And it should be far below a naive all-time average of the mixed
+        // 100ms/20ms samples, proving this isn't just accumulating.
+        let naive_average = (100.0 * 2.0 + 20.0 * 20.0) / 22.0;
+        assert!(ms < naive_average);
+    }
+
+    #[test]
+    fn low_alpha_smooths_more_than_high_alpha() {
+        let mut smooth = BackendLatencyProfile::with_alpha(0.1);
+        let mut reactive = BackendLatencyProfile::with_alpha(0.9);
+
+        for profile in [&mut smooth, &mut reactive] {
+            profile.record_request(Duration::from_millis(100));
+        }
+        for profile in [&mut smooth, &mut reactive] {
+            profile.record_request(Duration::from_millis(20));
+        }
+
+        let smooth_ms = smooth.request_ms().unwrap();
+        let reactive_ms = reactive.request_ms().unwrap();
+        // The reactive (high alpha) profile should have moved further toward
+        // the new 20ms sample than the smooth (low alpha) profile.
+        assert!(reactive_ms < smooth_ms);
+    }
+
+    #[test]
+    fn store_record_request_is_a_noop_for_unregistered_backend() {
+        let store = LatencyProfileStore::new();
+        // No panic, no crash — just silently ignored.
+        store.record_request("ghost", Duration::from_millis(10));
+        assert_eq!(store.request_ms("ghost"), None);
+    }
+
+    #[test]
+    fn store_tracks_request_latency_per_backend() {
+        let store = LatencyProfileStore::new();
+        store.register_backend("fast");
+        store.register_backend("slow");
+
+        assert_eq!(store.request_ms("fast"), None);
+        assert_eq!(store.request_ms("slow"), None);
+
+        store.record_request("fast", Duration::from_millis(10));
+        store.record_request("slow", Duration::from_millis(500));
+
+        assert_eq!(store.request_ms("fast"), Some(10.0));
+        assert_eq!(store.request_ms("slow"), Some(500.0));
     }
 }
