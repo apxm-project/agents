@@ -203,9 +203,6 @@ pub struct ServerConfig {
     /// `/v1/runs/{id}/events/stream` replay/live transport controls.
     pub run_events: RunEventsConfig,
 
-    /// Outbound lifecycle webhook transport controls.
-    pub webhook: ServerWebhookConfig,
-
     /// Durable rollout writer controls.
     pub rollout: ServerRolloutConfig,
 
@@ -386,23 +383,6 @@ impl Default for RunEventsConfig {
             max_list_limit: 500,
             default_events_limit: 500,
             max_events_limit: 2_000,
-        }
-    }
-}
-
-/// Outbound run lifecycle webhook configuration.
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
-#[serde(default)]
-pub struct ServerWebhookConfig {
-    pub url: Option<String>,
-    pub timeout_secs: u64,
-}
-
-impl Default for ServerWebhookConfig {
-    fn default() -> Self {
-        Self {
-            url: None,
-            timeout_secs: 5,
         }
     }
 }
