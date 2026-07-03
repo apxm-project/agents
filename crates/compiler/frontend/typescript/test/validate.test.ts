@@ -19,7 +19,7 @@ describe("validateWorkflowDraft", () => {
     const result = validateWorkflowDraft({
       schema_version: "apxm.workflow-draft.v1",
       name: "echo-flow",
-      nodes: [{ id: "ask-1", kind: "ask", label: "Ask user" }],
+      nodes: [{ id: "ask-1", kind: "text", label: "Ask user" }],
       edges: [],
     });
     expect(result.valid).toBe(true);
