@@ -13,7 +13,7 @@ export const WORKFLOW_DRAFT_V1_SCHEMA = {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "apxm.workflow-draft.v1",
   "title": "WorkflowDraft",
-  "description": "Canvas-oriented workflow document exchanged between authoring surfaces. Lowered to AIR via frontends; never a wire execution input.",
+  "description": "Canvas-oriented workflow document exchanged between authoring surfaces (Gao drafts, Studio persistence, host-product workflow exports). Lowered to AIR via a frontend's to_air(); never a wire execution input. Draft = canvas doc minus layout — node/canvas position is UI presentation state and travels in a separate layout sidecar, never in this document (WF-1).",
   "type": "object",
   "required": [
     "schema_version",
@@ -34,6 +34,14 @@ export const WORKFLOW_DRAFT_V1_SCHEMA = {
     "description": {
       "type": "string"
     },
+    "parameters": {
+      "type": "array",
+      "description": "Declared workflow parameters (name/type/required), not parameter values.",
+      "items": {
+        "$ref": "#/$defs/DraftParameter"
+      },
+      "default": []
+    },
     "nodes": {
       "type": "array",
       "items": {
@@ -46,17 +54,78 @@ export const WORKFLOW_DRAFT_V1_SCHEMA = {
         "$ref": "#/$defs/DraftEdge"
       }
     },
-    "parameters": {
+    "capability_grants": {
+      "type": "array",
+      "description": "Capability ids the operator granted this draft permission to invoke. Every capability-bearing node's `config.capability` must be a member of this set (WF-1 'ungranted capability' rule).",
+      "items": {
+        "type": "string",
+        "minLength": 1
+      },
+      "default": []
+    },
+    "capability_prompt_token": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "description": "Opaque server-issued proof that the operator approved this draft's graph hash and its write capabilities."
+    },
+    "tool_call_budgets": {
       "type": "object",
-      "additionalProperties": true
+      "additionalProperties": {
+        "type": "integer",
+        "minimum": 0
+      }
+    },
+    "tool_credentials": {
+      "type": "object",
+      "description": "Credential *path* references only (e.g. `slack/api_token`) — never inline secret values.",
+      "additionalProperties": {
+        "type": "string"
+      }
+    },
+    "imports": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "owner": {
+      "type": [
+        "string",
+        "null"
+      ]
     }
   },
   "$defs": {
+    "DraftParameter": {
+      "type": "object",
+      "required": [
+        "name",
+        "type"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "name": {
+          "type": "string",
+          "minLength": 1
+        },
+        "type": {
+          "type": "string",
+          "minLength": 1
+        },
+        "required": {
+          "type": "boolean",
+          "default": false
+        }
+      }
+    },
     "DraftNode": {
       "type": "object",
       "required": [
         "id",
-        "kind"
+        "kind",
+        "label"
       ],
       "additionalProperties": false,
       "properties": {
@@ -65,39 +134,65 @@ export const WORKFLOW_DRAFT_V1_SCHEMA = {
           "minLength": 1
         },
         "kind": {
-          "type": "string",
-          "minLength": 1
+          "$ref": "#/$defs/DraftNodeKind"
         },
         "label": {
           "type": "string"
         },
         "config": {
           "type": "object",
-          "additionalProperties": true
-        },
-        "capability_id": {
-          "type": "string"
+          "additionalProperties": true,
+          "default": {}
         }
       }
+    },
+    "DraftNodeKind": {
+      "type": "string",
+      "description": "Canonical draft node vocabulary (WF-1). Mirrors Studio's canvas.rs NodeKind (snake_case) and the kinds Gao is permitted to author. Unknown kinds are rejected — a new kind requires a schema bump, not silent pass-through.",
+      "enum": [
+        "llm",
+        "acp_agent",
+        "synthesize",
+        "tool",
+        "memory_write",
+        "memory_read",
+        "merge",
+        "text",
+        "output",
+        "cron_trigger",
+        "webhook_trigger",
+        "watch_trigger",
+        "channel_trigger",
+        "mcp_trigger",
+        "a2a_trigger",
+        "process_trigger",
+        "polling_trigger"
+      ]
     },
     "DraftEdge": {
       "type": "object",
       "required": [
-        "from",
-        "to"
+        "source",
+        "target"
       ],
       "additionalProperties": false,
       "properties": {
-        "from": {
+        "source": {
           "type": "string",
           "minLength": 1
         },
-        "to": {
+        "target": {
           "type": "string",
           "minLength": 1
         },
-        "label": {
-          "type": "string"
+        "kind": {
+          "type": "string",
+          "enum": [
+            "data",
+            "control",
+            "effect"
+          ],
+          "default": "data"
         }
       }
     }
