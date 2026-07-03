@@ -6,6 +6,7 @@
 
 // ── Foundation ──────────────────────────────────────────────
 pub mod aam;
+pub mod agent_definition;
 pub mod capability;
 pub mod conformance;
 pub mod consent;
@@ -35,6 +36,10 @@ pub mod source_format;
 pub use aam::{
     AamContext, CapabilityProjection, CapabilityRecord, CompletionPolicy, GoalProjection, GoalTree,
     ScopePolicy, ScopeSpec,
+};
+pub use agent_definition::{
+    AGENT_DEFINITION_SCHEMA_V1, AgentDefinition, AgentDefinitionError, AgentEntry, AgentHierarchy,
+    AgentTrigger,
 };
 pub use capability::{
     AuthMethod, CAPABILITY_DEFINITION_SCHEMA_V1, CAPABILITY_GRANT_SCHEMA_V1,
