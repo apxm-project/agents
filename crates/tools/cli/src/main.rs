@@ -280,8 +280,9 @@ async fn run_cli(cli: Cli) -> Result<()> {
 #[cfg(feature = "driver")]
 async fn rollout_action(action: commands::RolloutAction) -> Result<()> {
     use commands::rollout::{
-        RolloutArchiveOptions, RolloutListOptions, RolloutReplayOptions, rollout_archive_command,
-        rollout_list_command, rollout_replay_command,
+        RolloutArchiveOptions, RolloutCompactOptions, RolloutListOptions, RolloutReplayOptions,
+        rollout_archive_command, rollout_compact_command, rollout_list_command,
+        rollout_replay_command,
     };
     match action {
         commands::RolloutAction::List {
@@ -319,6 +320,18 @@ async fn rollout_action(action: commands::RolloutAction) -> Result<()> {
             })
             .await?;
             println!("wrote archive: {}", path.display());
+            Ok(())
+        }
+        commands::RolloutAction::Compact {
+            max_age_days,
+            blob_grace_hours,
+        } => {
+            rollout_compact_command(RolloutCompactOptions {
+                home: None,
+                max_age_days,
+                blob_grace_hours,
+            })
+            .await?;
             Ok(())
         }
     }

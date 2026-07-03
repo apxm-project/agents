@@ -515,6 +515,17 @@ pub enum RolloutAction {
         #[arg(long = "skill-dir")]
         skill_dir: Option<PathBuf>,
     },
+    /// Run the OBS-2 retention/compaction pass: archive expired rollout
+    /// bodies (index row survives with `status=archived`) and collect
+    /// unreferenced spilled blobs. Never touches the memory tier.
+    Compact {
+        /// Override the rollout max-age policy, in days.
+        #[arg(long = "max-age-days")]
+        max_age_days: Option<u64>,
+        /// Override the blob GC grace period, in hours.
+        #[arg(long = "blob-grace-hours")]
+        blob_grace_hours: Option<u64>,
+    },
 }
 
 #[derive(Subcommand)]

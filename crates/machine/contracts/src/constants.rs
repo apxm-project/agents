@@ -62,6 +62,12 @@ pub mod env {
     pub const APXM_ROLLOUT_EVENT_BUFFER: &str = "APXM_ROLLOUT_EVENT_BUFFER";
     /// Server rollout payload spill threshold, in bytes.
     pub const APXM_ROLLOUT_SPILL_THRESHOLD_BYTES: &str = "APXM_ROLLOUT_SPILL_THRESHOLD_BYTES";
+    /// Retention: rollout max age (days) before compaction archives its content.
+    /// See state-layout.v1 `sessions/rollouts` (class=durable). OBS-2.
+    pub const APXM_RETENTION_ROLLOUT_MAX_AGE_DAYS: &str = "APXM_RETENTION_ROLLOUT_MAX_AGE_DAYS";
+    /// Retention: grace period (hours) an unreferenced blob must sit idle
+    /// before GC deletes it, to avoid racing an in-flight spill write.
+    pub const APXM_RETENTION_BLOB_GC_GRACE_HOURS: &str = "APXM_RETENTION_BLOB_GC_GRACE_HOURS";
     /// Bind address for the APXM server (e.g. 127.0.0.1:18800).
     pub const APXM_SERVER_ADDR: &str = "APXM_SERVER_ADDR";
     /// Opt-in: require a bearer token on mutating routes (fail-closed when set).

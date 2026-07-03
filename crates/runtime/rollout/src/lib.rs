@@ -11,6 +11,7 @@ pub mod line;
 pub mod loader;
 pub mod paths;
 pub mod recorder;
+pub mod retention;
 
 pub use index::{IndexDb, IndexError, ThreadIndexEntry, rebuild_index_from_disk};
 pub use line::{
@@ -22,6 +23,10 @@ pub use loader::{ConversationTree, LoadError, LoadStats, load_rollout, reconstru
 pub use paths::{RolloutPaths, blob_path_for, rollout_path_for, subagent_path_for};
 pub use recorder::{
     PartialMeta, RolloutRecorder, RolloutRecorderConfig, RolloutWriteError, now_rfc3339,
+};
+pub use retention::{
+    ARCHIVED_STATUS, BlobGcReport, CompactionError, CompactionReport, RetentionPolicy,
+    RolloutCompactionReport, compact, compact_rollouts, gc_blobs,
 };
 
 /// Wire-schema version. Bump MAJOR for incompatible changes; readers reject
