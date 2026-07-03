@@ -69,9 +69,6 @@ pub struct ModelProfile {
     /// Optional minimum context window requirement (in tokens).
     #[serde(default)]
     pub min_context_window: Option<usize>,
-    /// Optional maximum cost ceiling per 1K input tokens (USD).
-    #[serde(default)]
-    pub max_cost_per_1k_input: Option<f64>,
     /// Prioritized candidate models (runtime selects first healthy).
     #[serde(rename = "candidate", default)]
     pub candidates: Vec<ProfileCandidate>,

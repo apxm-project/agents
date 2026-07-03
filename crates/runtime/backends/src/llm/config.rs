@@ -88,12 +88,6 @@ pub struct ModelConfig {
     /// Maximum context window in tokens. `0` means unknown.
     #[serde(default)]
     pub context_window: usize,
-    /// Cost per 1000 input tokens in USD. `0.0` means free or unknown.
-    #[serde(default)]
-    pub cost_per_1k_input: f64,
-    /// Cost per 1000 output tokens in USD. `0.0` means free or unknown.
-    #[serde(default)]
-    pub cost_per_1k_output: f64,
     /// Whether the model supports vision/image inputs.
     #[serde(default)]
     pub supports_vision: bool,
@@ -112,7 +106,4 @@ pub struct ModelConfig {
     /// Maximum output tokens per request.
     #[serde(default)]
     pub max_output_tokens: Option<usize>,
-    /// Arbitrary classification tags.
-    #[serde(default)]
-    pub tags: Vec<String>,
 }

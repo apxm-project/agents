@@ -776,12 +776,6 @@ pub enum BackendAction {
         /// Maximum context window in tokens
         #[arg(long, default_value = "0")]
         context_window: usize,
-        /// Cost per 1K input tokens (USD)
-        #[arg(long, default_value = "0.0")]
-        cost_input: f64,
-        /// Cost per 1K output tokens (USD)
-        #[arg(long, default_value = "0.0")]
-        cost_output: f64,
         /// Model supports image inputs
         #[arg(long)]
         supports_vision: bool,
@@ -791,9 +785,6 @@ pub enum BackendAction {
         /// Model supports extended thinking
         #[arg(long)]
         supports_thinking: bool,
-        /// Classification tags
-        #[arg(long)]
-        tag: Vec<String>,
     },
 }
 
