@@ -1,7 +1,7 @@
 use super::require_string_arg;
 use crate::capability::{
     executor::{CapabilityExecutor, CapabilityResult},
-    metadata::CapabilityMetadata,
+    metadata::RuntimeCapability,
 };
 use crate::sandbox::constants::{executables, shell_args};
 use crate::sandbox::{ExecRequest, IsolationLevel};
@@ -114,7 +114,7 @@ impl BashConfig {
 }
 
 pub struct BashCapability {
-    metadata: CapabilityMetadata,
+    metadata: RuntimeCapability,
     config: BashConfig,
 }
 
@@ -125,7 +125,7 @@ impl BashCapability {
 
     pub fn with_config(config: BashConfig) -> Self {
         Self {
-            metadata: CapabilityMetadata::new(
+            metadata: RuntimeCapability::new(
                 apxm_core::constants::capabilities::BASH,
                 "Execute shell commands with policy enforcement",
                 serde_json::json!({
@@ -286,7 +286,7 @@ impl CapabilityExecutor for BashCapability {
         })
     }
 
-    fn metadata(&self) -> &CapabilityMetadata {
+    fn metadata(&self) -> &RuntimeCapability {
         &self.metadata
     }
 

@@ -9,7 +9,7 @@ use std::collections::{HashMap, HashSet};
 use std::time::Duration;
 
 use crate::ExecutionEventEmitter;
-use super::metadata::CapabilityMetadata;
+use super::metadata::RuntimeCapability;
 use super::registry::CapabilityRegistry;
 
 /// Default approval wait when `APXM_PERMISSION_TIMEOUT_SECS` is unset (matches server broker TTL).
@@ -135,7 +135,7 @@ pub async fn pre_invoke_ctx(
 }
 
 /// Collect capability names that declare `requires_auth`.
-pub fn requires_auth_names(metadata: &[CapabilityMetadata]) -> HashSet<String> {
+pub fn requires_auth_names(metadata: &[RuntimeCapability]) -> HashSet<String> {
     metadata
         .iter()
         .filter(|m| m.requires_auth)
@@ -144,7 +144,7 @@ pub fn requires_auth_names(metadata: &[CapabilityMetadata]) -> HashSet<String> {
 }
 
 /// Collect capability names that declare `requires_approval`.
-pub fn requires_approval_names(metadata: &[CapabilityMetadata]) -> HashSet<String> {
+pub fn requires_approval_names(metadata: &[RuntimeCapability]) -> HashSet<String> {
     metadata
         .iter()
         .filter(|m| m.requires_approval)
@@ -313,10 +313,10 @@ mod tests {
 
     fn gated_echo() -> Arc<dyn CapabilityExecutor> {
         let schema = serde_json::json!({"type": "object"});
-        let meta = CapabilityMetadata::new("gated-echo", "echo with approval", schema)
+        let meta = RuntimeCapability::new("gated-echo", "echo with approval", schema)
             .with_requires_approval();
         struct GatedEcho {
-            meta: CapabilityMetadata,
+            meta: RuntimeCapability,
         }
         #[async_trait::async_trait]
         impl CapabilityExecutor for GatedEcho {
@@ -326,7 +326,7 @@ mod tests {
             ) -> Result<Value, apxm_core::error::RuntimeError> {
                 EchoCapability::new().execute(args).await
             }
-            fn metadata(&self) -> &CapabilityMetadata {
+            fn metadata(&self) -> &RuntimeCapability {
                 &self.meta
             }
         }

@@ -3,20 +3,20 @@
 
 use crate::capability::{
     executor::{CapabilityExecutor, CapabilityResult},
-    metadata::CapabilityMetadata,
+    metadata::RuntimeCapability,
 };
 use apxm_core::types::values::{Number, Value};
 use async_trait::async_trait;
 use std::collections::HashMap;
 
 pub struct CountTokensCapability {
-    metadata: CapabilityMetadata,
+    metadata: RuntimeCapability,
 }
 
 impl CountTokensCapability {
     pub fn new() -> Self {
         Self {
-            metadata: CapabilityMetadata::new(
+            metadata: RuntimeCapability::new(
                 "count_tokens",
                 "Estimate the token count of a string (chars/4). Use to decide \
                  when to compact/summarize conversation context.",
@@ -50,7 +50,7 @@ impl CapabilityExecutor for CountTokensCapability {
         Ok(Value::Number(Number::Integer(Self::estimate(text))))
     }
 
-    fn metadata(&self) -> &CapabilityMetadata {
+    fn metadata(&self) -> &RuntimeCapability {
         &self.metadata
     }
 }

@@ -16,7 +16,7 @@
 use super::guard_url_ssrf_pinned;
 use crate::capability::{
     executor::{CapabilityExecutor, CapabilityResult},
-    metadata::CapabilityMetadata,
+    metadata::RuntimeCapability,
 };
 use apxm_core::{error::RuntimeError, types::Value};
 use async_trait::async_trait;
@@ -163,7 +163,7 @@ pub fn verify_tool_pin(tools: &JsonValue, pinned: &str) -> bool {
 }
 
 pub struct McpBridgeCapability {
-    metadata: CapabilityMetadata,
+    metadata: RuntimeCapability,
     /// apxm-auth base override (tests). None = APXM_AUTH_URL.
     base: Option<String>,
     /// Baked server URL / tool name when registered per-tool (kind=mcp); when
@@ -184,7 +184,7 @@ impl McpBridgeCapability {
             base: None,
             server_url: None,
             tool: None,
-            metadata: CapabilityMetadata::new(
+            metadata: RuntimeCapability::new(
                 "mcp.call",
                 "Call a tool on an external MCP server (tools/call over Streamable HTTP)",
                 json!({
@@ -213,7 +213,7 @@ impl McpBridgeCapability {
     ) -> Self {
         let mut c = Self::new();
         c.metadata =
-            CapabilityMetadata::new(name, description, c.metadata.parameters_schema.clone())
+            RuntimeCapability::new(name, description, c.metadata.parameters_schema.clone())
                 .with_returns("string")
                 .with_groups(vec!["mcp".to_string(), "provider".to_string()])
                 .with_latency(800);
@@ -323,7 +323,7 @@ impl CapabilityExecutor for McpBridgeCapability {
         Ok(Value::String(out))
     }
 
-    fn metadata(&self) -> &CapabilityMetadata {
+    fn metadata(&self) -> &RuntimeCapability {
         &self.metadata
     }
 }

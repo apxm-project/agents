@@ -87,7 +87,7 @@ fn register_user_tools(capability_system: &CapabilitySystem) -> Result<(), Drive
         if capability_system.has_capability(&tool.name) {
             continue;
         }
-        let metadata = apxm_runtime::capability::metadata::CapabilityMetadata::new(
+        let metadata = apxm_runtime::capability::metadata::RuntimeCapability::new(
             &tool.name,
             &tool.description,
             serde_json::json!({}),
@@ -122,7 +122,7 @@ struct UserToolEntry {
 }
 
 struct UserToolCapability {
-    metadata: apxm_runtime::capability::metadata::CapabilityMetadata,
+    metadata: apxm_runtime::capability::metadata::RuntimeCapability,
     command: String,
     args: Vec<String>,
     timeout_ms: u64,
@@ -154,7 +154,7 @@ impl apxm_runtime::capability::executor::CapabilityExecutor for UserToolCapabili
         ))
     }
 
-    fn metadata(&self) -> &apxm_runtime::capability::metadata::CapabilityMetadata {
+    fn metadata(&self) -> &apxm_runtime::capability::metadata::RuntimeCapability {
         &self.metadata
     }
 
