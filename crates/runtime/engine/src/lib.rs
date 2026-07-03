@@ -51,7 +51,10 @@
     clippy::unwrap_or_default
 )]
 
-pub mod aam;
+/// Agent Abstract Machine — re-exported from the standalone `apxm-aam` crate
+/// so existing `apxm_runtime::aam::...` import paths keep working after the
+/// RT-6 sub-crate extraction.
+pub use apxm_aam as aam;
 pub mod agent_pool;
 pub mod agent_router;
 pub mod capability;
@@ -62,7 +65,10 @@ pub mod executor;
 pub mod flow_names;
 pub mod graph_lifecycle;
 pub mod host_dispatch;
-pub mod memory;
+/// Three-tier memory system — re-exported from the standalone `apxm-memory`
+/// crate so existing `apxm_runtime::memory::...` import paths keep working
+/// after the RT-6 sub-crate extraction.
+pub use apxm_memory as memory;
 pub mod metadata_keys;
 pub mod model_router;
 pub mod observability;

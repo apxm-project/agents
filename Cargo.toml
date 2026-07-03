@@ -8,6 +8,8 @@ members = [
 	"crates/compiler/pipeline",
 	# ── Runtime (Execution + Backend) ─────────────
 	"crates/runtime/engine",
+	"crates/runtime/aam",
+	"crates/runtime/memory",
 	"crates/runtime/backends",
 	"crates/runtime/backend-registry",
 	"crates/runtime/rollout",
@@ -41,6 +43,8 @@ apxm-core = { version = "0.1.0", path = "crates/machine/contracts" }
 apxm-skill = { version = "0.1.0", path = "crates/machine/skill" }
 apxm-compiler = { version = "0.1.0", path = "crates/compiler/pipeline" }
 apxm-runtime = { version = "0.1.0", path = "crates/runtime/engine" }
+apxm-aam = { version = "0.1.0", path = "crates/runtime/aam" }
+apxm-memory = { version = "0.1.0", path = "crates/runtime/memory" }
 apxm-backends = { version = "0.1.0", path = "crates/runtime/backends" }
 apxm-backend-registry = { version = "0.1.0", path = "crates/runtime/backend-registry" }
 apxm-rollout = { version = "0.1.0", path = "crates/runtime/rollout" }
