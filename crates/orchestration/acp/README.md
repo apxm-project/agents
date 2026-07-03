@@ -4,7 +4,7 @@ Agent Client Protocol (ACP) client for spawning and communicating with coding ag
 
 ## Overview
 
-`apxm-acp` spawns coding agents (Claude, Codex, Gemini CLI, Copilot, Cursor, and 10 others) as subprocesses, speaks JSON-RPC 2.0 over stdin/stdout, and integrates agent sessions with the APXM runtime's AAM memory and capability systems.
+`apxm-acp` spawns coding agents as subprocesses, speaks JSON-RPC 2.0 over stdin/stdout, and integrates agent sessions with the APXM runtime's AAM memory and capability systems. Three CLIs (Claude, Codex, Gemini) are a tuned, verified working set with dedicated templates; any other ACP-speaking CLI (Copilot, Cursor, and the like) is added through configuration via the generic custom-command template rather than a hardcoded Rust variant.
 
 ## Module Structure
 
@@ -12,7 +12,7 @@ Agent Client Protocol (ACP) client for spawning and communicating with coding ag
 |--------|-------------|
 | `protocol` | JSON-RPC 2.0 message framing and serialization |
 | `session` | `AcpSession` lifecycle (spawn, send, receive, close) |
-| `registry` | `AgentRegistry` with 15 built-in agent templates |
+| `registry` | `AgentRegistry`: 3 tuned working-set templates + 1 generic custom-command template |
 | `auth` | Host-local env credential lookup for ACP profiles; not durable credential custody |
 | `content` | Structured content types (text, tool results) |
 | `controls` | Permission modes and approval policies |
@@ -31,9 +31,10 @@ Agent Client Protocol (ACP) client for spawning and communicating with coding ag
 - `CapabilityServerConfig` -- MCP server config provisioned to agent sessions
 - `AcpError` -- error type covering spawn, protocol, timeout, and permission failures
 
-## Built-in Agent Templates (15)
+## Built-in Agent Templates
 
-claude, codex, gemini, copilot, cursor, pi, droid, kilocode, kimi, kiro, opencode, qoder, qwen, trae, iflow.
+- **Working set (tuned):** `claude`, `codex`, `gemini` — verified commands, descriptions, and timeouts.
+- **`custom`:** generic custom-command template. Ships with an empty `command` (never a live route candidate) and documents how to add any other ACP-speaking CLI — e.g. copilot, pi, cursor, droid, kilocode, kimi, kiro, opencode, qoder, qwen, trae, iflow — via `apxm agent add <name> --command "..."` or a `~/.apxm/agents.toml` entry, with no dedicated Rust variant required.
 
 ## Dependencies
 
