@@ -77,7 +77,7 @@ pub fn operation_effects(op: &AISOperationType) -> OperationEffects {
         AISOperationType::Verify => OperationEffects::new().read(Beliefs),
 
         // Tool / Invocation
-        AISOperationType::InvTool => OperationEffects::new().read(Capabilities),
+        AISOperationType::InvCap => OperationEffects::new().read(Capabilities),
         AISOperationType::Exc => OperationEffects::new(),
         AISOperationType::Print => OperationEffects::new(),
 

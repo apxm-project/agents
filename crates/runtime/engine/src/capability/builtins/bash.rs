@@ -230,7 +230,7 @@ impl BashCapability {
             write_paths,
             needs_network: false,
             needs_process_spawn: true,
-            origin_op: Some(AISOperationType::InvTool.to_string()),
+            origin_op: Some(AISOperationType::InvCap.to_string()),
             ..ExecRequest::default()
         })
     }

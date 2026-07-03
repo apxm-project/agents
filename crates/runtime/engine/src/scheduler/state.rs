@@ -1746,7 +1746,7 @@ mod tests {
     #[test]
     fn test_new_substitutes_dotted_json_runtime_parameters_in_tool_params() {
         let mut node = make_node(1, vec![20], vec![10]);
-        node.op_type = AISOperationType::InvTool;
+        node.op_type = AISOperationType::InvCap;
         node.attributes.insert(
             apxm_core::constants::graph::attrs::PARAMS_JSON.to_string(),
             Value::String(r#"{"chat_id":"{data.event.subject}","text":"{respond}"}"#.to_string()),
@@ -1788,7 +1788,7 @@ mod tests {
     #[test]
     fn test_new_rejects_unresolved_dotted_json_runtime_parameter() {
         let mut node = make_node(1, vec![], vec![10]);
-        node.op_type = AISOperationType::InvTool;
+        node.op_type = AISOperationType::InvCap;
         node.attributes.insert(
             apxm_core::constants::graph::attrs::PARAMS_JSON.to_string(),
             Value::String(r#"{"chat_id":"{data.event.missing}"}"#.to_string()),

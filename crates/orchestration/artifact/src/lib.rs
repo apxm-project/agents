@@ -123,7 +123,7 @@ impl Artifact {
     }
 
     /// Mutable access to DAGs for dispatch-time data injection, such as
-    /// apxm-auth-resolved credential headers on `inv_tool` node attributes.
+    /// apxm-auth-resolved credential headers on `inv_cap` node attributes.
     pub fn dags_mut(&mut self) -> &mut [ExecutionDag] {
         &mut self.dags
     }

@@ -7,8 +7,8 @@
 //!   O3 - Aggressive: O2-safe passes iterated to fixed-point convergence
 
 use super::PassManager;
-use super::bind_tool_handlers::BIND_TOOL_HANDLERS_PASS_NAME;
-use super::tool_binding::TOOL_BINDING_PASS_NAME;
+use super::bind_capability_handlers::BIND_CAPABILITY_HANDLERS_PASS_NAME;
+use super::capability_binding::CAPABILITY_BINDING_PASS_NAME;
 use apxm_core::error::compiler::Result;
 use apxm_core::types::compiler::metadata as passes;
 use apxm_core::types::{OptimizationLevel, OptimizationTarget};
@@ -41,19 +41,19 @@ const CANONICALIZER: &str = passes::CANONICALIZER.name;
 const CSE: &str = passes::CSE.name;
 const SYMBOL_DCE: &str = passes::SYMBOL_DCE.name;
 
-/// Rust-only validation pass that checks tool capability bindings.
-/// Runs after the canonicalizer to validate INV_TOOL/REGISTER_CAPABILITY
+/// Rust-only validation pass that checks capability bindings.
+/// Runs after the canonicalizer to validate INV_CAP/REGISTER_CAPABILITY
 /// consistency.
-const TOOL_BINDING: &str = TOOL_BINDING_PASS_NAME;
+const CAPABILITY_BINDING: &str = CAPABILITY_BINDING_PASS_NAME;
 
 /// Rust-only pass that copies `python_handler_id` from REGISTER_CAPABILITY
-/// onto matching INV_TOOL nodes. Runs after tool-binding-check.
-const BIND_TOOL_HANDLERS: &str = BIND_TOOL_HANDLERS_PASS_NAME;
+/// onto matching INV_CAP nodes. Runs after capability-binding-check.
+const BIND_CAPABILITY_HANDLERS: &str = BIND_CAPABILITY_HANDLERS_PASS_NAME;
 
 /// Names that are tracked in the pipeline list but are *not* dispatched
 /// through the MLIR PassManager — they run as Rust-side transforms on the
 /// `AirModule` instead.
-const RUST_ONLY_PASSES: &[&str] = &[TOOL_BINDING, BIND_TOOL_HANDLERS];
+const RUST_ONLY_PASSES: &[&str] = &[CAPABILITY_BINDING, BIND_CAPABILITY_HANDLERS];
 
 pub fn is_mlir_pass(name: &str) -> bool {
     !RUST_ONLY_PASSES.contains(&name)
@@ -129,8 +129,8 @@ pub fn build_pass_list(
                     TEMPLATE_SPECIALIZATION,
                     DEAD_CONTEXT_ELIMINATION,
                     CANONICALIZER,
-                    TOOL_BINDING,
-                    BIND_TOOL_HANDLERS,
+                    CAPABILITY_BINDING,
+                    BIND_CAPABILITY_HANDLERS,
                 ]
                 .iter()
                 .map(|s| s.to_string()),
@@ -156,7 +156,7 @@ pub fn build_pass_list(
                 OptimizationTarget::Tokens => {
                     // Prioritize context reduction
                     passes.extend(
-                        [CANONICALIZER, TOOL_BINDING, BIND_TOOL_HANDLERS]
+                        [CANONICALIZER, CAPABILITY_BINDING, BIND_CAPABILITY_HANDLERS]
                             .iter()
                             .map(|s| s.to_string()),
                     );
@@ -164,7 +164,7 @@ pub fn build_pass_list(
                 OptimizationTarget::Cost => {
                     // Prioritize safe dead-code cleanup.
                     passes.extend(
-                        [CANONICALIZER, TOOL_BINDING, BIND_TOOL_HANDLERS]
+                        [CANONICALIZER, CAPABILITY_BINDING, BIND_CAPABILITY_HANDLERS]
                             .iter()
                             .map(|s| s.to_string()),
                     );
@@ -174,7 +174,7 @@ pub fn build_pass_list(
                     // analysis only emits metadata for prompts that are already
                     // prefix-compatible.
                     passes.extend(
-                        [SCHEDULING, CANONICALIZER, TOOL_BINDING, BIND_TOOL_HANDLERS]
+                        [SCHEDULING, CANONICALIZER, CAPABILITY_BINDING, BIND_CAPABILITY_HANDLERS]
                             .iter()
                             .map(|s| s.to_string()),
                     );
@@ -182,7 +182,7 @@ pub fn build_pass_list(
                 OptimizationTarget::Balanced => {
                     // Default ordering
                     passes.extend(
-                        [CANONICALIZER, TOOL_BINDING, BIND_TOOL_HANDLERS]
+                        [CANONICALIZER, CAPABILITY_BINDING, BIND_CAPABILITY_HANDLERS]
                             .iter()
                             .map(|s| s.to_string()),
                     );
@@ -214,8 +214,8 @@ pub fn build_pass_list(
                     DEAD_CONTEXT_ELIMINATION,
                     SCHEDULING,
                     CANONICALIZER,
-                    TOOL_BINDING,
-                    BIND_TOOL_HANDLERS,
+                    CAPABILITY_BINDING,
+                    BIND_CAPABILITY_HANDLERS,
                 ]
                 .iter()
                 .map(|s| s.to_string())
@@ -225,8 +225,8 @@ pub fn build_pass_list(
                     TEMPLATE_SPECIALIZATION,
                     DEAD_CONTEXT_ELIMINATION,
                     CANONICALIZER,
-                    TOOL_BINDING,
-                    BIND_TOOL_HANDLERS,
+                    CAPABILITY_BINDING,
+                    BIND_CAPABILITY_HANDLERS,
                 ]
                 .iter()
                 .map(|s| s.to_string())
@@ -236,8 +236,8 @@ pub fn build_pass_list(
                     DEAD_CONTEXT_ELIMINATION,
                     SCHEDULING,
                     CANONICALIZER,
-                    TOOL_BINDING,
-                    BIND_TOOL_HANDLERS,
+                    CAPABILITY_BINDING,
+                    BIND_CAPABILITY_HANDLERS,
                 ]
                 .iter()
                 .map(|s| s.to_string())

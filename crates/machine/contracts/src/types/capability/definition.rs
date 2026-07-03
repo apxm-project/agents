@@ -16,7 +16,7 @@ pub const CAPABILITY_DEFINITION_SCHEMA_V1: &str = "apxm.capability-definition.v1
 pub struct CapabilityTemplateV1 {
     pub schema_version: String,
     pub template_key: String,
-    pub tool_binding: String,
+    pub capability_binding: String,
     pub operations: Vec<super::permission::PermissionOperation>,
     pub resource_selector: super::permission::ResourceSelector,
     pub scope: super::permission::PermissionScope,
@@ -45,7 +45,7 @@ impl CapabilityTemplateV1 {
             });
         }
         validate_non_empty("template_key", &self.template_key)?;
-        validate_non_empty("tool_binding", &self.tool_binding)?;
+        validate_non_empty("capability_binding", &self.capability_binding)?;
         validate_operations(&self.operations)?;
         self.resource_selector.validate()?;
         self.scope.validate()?;
@@ -65,7 +65,7 @@ pub struct CapabilityDefinition {
     pub schema_version: String,
     pub id: String,
     pub description: String,
-    pub tool: super::tool_binding::ToolBinding,
+    pub tool: super::capability_binding::CapabilityBinding,
     pub permissions: super::permission::PermissionPolicy,
     pub metadata: CapabilityMetadata,
 }

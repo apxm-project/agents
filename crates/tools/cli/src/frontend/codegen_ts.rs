@@ -17,7 +17,7 @@ pub fn render_generated_typescript() -> String {
     render_ts_field_spec(&mut buf);
     render_ts_op_spec(&mut buf);
     render_ts_dependency_types(&mut buf);
-    render_ts_tool_groups(&mut buf);
+    render_ts_capability_groups(&mut buf);
     render_ts_operations(&mut buf, &ops);
     render_ts_categories(&mut buf, &ops);
     render_ts_attr_constants(&mut buf);
@@ -45,10 +45,10 @@ fn render_ts_dependency_types(buf: &mut String) {
     buf.push_str("}\n\n");
 }
 
-fn render_ts_tool_groups(buf: &mut String) {
+fn render_ts_capability_groups(buf: &mut String) {
     use apxm_core::constants::capabilities::groups;
 
-    const TOOL_GROUPS: &[(&str, &str)] = &[
+    const CAPABILITY_GROUPS: &[(&str, &str)] = &[
         ("FILE", groups::FILE),
         ("FILE_READ", groups::FILE_READ),
         ("FILE_WRITE", groups::FILE_WRITE),
@@ -63,7 +63,7 @@ fn render_ts_tool_groups(buf: &mut String) {
     ];
 
     buf.push_str("export enum ToolGroup {\n");
-    for (ident, value) in TOOL_GROUPS {
+    for (ident, value) in CAPABILITY_GROUPS {
         buf.push_str(&format!("  {ident} = {},\n", ts_string(value)));
     }
     buf.push_str("}\n\n");

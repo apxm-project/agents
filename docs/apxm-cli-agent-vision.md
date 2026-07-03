@@ -49,7 +49,7 @@ boundary is.
 | **Turn body as a program** (QMEM→ASK→UMEM→FENCE, tools, skill calls) | ✅ YES — validated | prototype `conversational_agent.py` compiles to valid AIR; `examples/python/conversational/chat_agent.py` is the high-water mark |
 | **Authoring it simply** | ✅ YES — ~5–15 lines | Python frontend `@compile` + `g.ask(...)` + `Agent(instructions=, tools=)`; template auto-wiring (`{var}` → data edge); `@tool` 1-liner (`crates/compiler/frontend/python/apxm/{proxy,agent}.py`) |
 | **Static system prompt** | ✅ YES | `system_prompt=` attr, read at `llm/mod.rs:114` |
-| **Tools in the ASK** | ✅ YES (native tool-calling loop, max 10 iters) | `tool_dispatch.rs:381`; `tool_groups=["web"]` |
+| **Tools in the ASK** | ✅ YES (native tool-calling loop, max 10 iters) | `tool_dispatch.rs:381`; `capability_groups=["web"]` |
 | **Middleware around every node incl. ASK** | ✅ PRIMITIVE EXISTS (unused for this) | `OperationMiddleware` with `Next` continuation, pre/post/short-circuit, per-op `applies_to`, child-inherited (`executor/middleware.rs:49`) |
 | **Tool-level interceptors** | ✅ | `CapabilityInterceptor` Allow/Deny/EditArgs (`capability/interceptor.rs`) |
 | **Lifecycle hooks** | ✅ (observer) | `ExecutionHook`, subprocess hooks |
@@ -74,7 +74,7 @@ Keep "one DAG = one turn"; the host loop stays tiny (read input, thread
 - the **turn body becomes a real, editable APXM program** (default ships rich; user-overridable — `apxm chat --air my_agent.air` *already exists*, `chat.rs:141`);
 - the three cross-cutting concerns move out of Rust host code into **`OperationMiddleware` layers + a registered tool**, all on existing primitives:
   - **Context injection** → an `OperationMiddleware` filtered to `op==Ask` that loads the AGENTS.md→CLAUDE.md→MEMORY.md hierarchy + AAM beliefs and prepends to the prompt (or fills the system prompt). Reuses `ContextStack`/`ContextAssembler`. Closes GAP-C without a new op.
-  - **Skill discovery by description** → a `search_skills` **tool** (INV_TOOL) backed by the existing `fastembed` embedder over skill `name`+`description`; the model calls it like any tool (progressive disclosure / "tool search" pattern). Add `when_to_use`+`tags` to `SkillManifest`.
+  - **Skill discovery by description** → a `search_skills` **tool** (INV_CAP) backed by the existing `fastembed` embedder over skill `name`+`description`; the model calls it like any tool (progressive disclosure / "tool search" pattern). Add `when_to_use`+`tags` to `SkillManifest`.
   - **Compaction** → a post-ASK middleware (or in-graph `CALL_SKILL` to a registered `summarize` skill) instead of the Rust post-hook in `chat.rs:259`.
 
 This delivers the *whole* "reads AGENTS.md + discovers skills by description +

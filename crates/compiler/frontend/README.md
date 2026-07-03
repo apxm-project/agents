@@ -71,7 +71,7 @@ from apxm import (
     compile,
 )
 
-@compile(default_policy=NodePolicy(tool_groups=["web"], token_budget=256))
+@compile(default_policy=NodePolicy(capability_groups=["web"], token_budget=256))
 def workflow(g: GraphRecorder, topic: str):
     draft = g.ask(name="draft", prompt=f"Research {{topic}}")
     g.done(draft)

@@ -4,7 +4,7 @@
 from apxm import GraphRecorder, NodePolicy, ToolGroup, compile
 
 
-@compile(default_policy=NodePolicy(tool_groups=[ToolGroup.WEB], token_budget=256))
+@compile(default_policy=NodePolicy(capability_groups=[ToolGroup.WEB], token_budget=256))
 def research_brief(g: GraphRecorder, topic: str):
     plan = g.ask(
         name="plan",
@@ -13,7 +13,7 @@ def research_brief(g: GraphRecorder, topic: str):
     brief = g.ask(
         name="brief",
         prompt="Write the brief using the plan: {plan}",
-        policy=NodePolicy(tool_groups=[ToolGroup.FILE_READ], token_budget=128),
+        policy=NodePolicy(capability_groups=[ToolGroup.FILE_READ], token_budget=128),
     )
     g.done(brief)
 

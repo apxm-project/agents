@@ -48,9 +48,9 @@
       "bytes": 89
     },
     {
-      "op": "INV_TOOL",
-      "example_json": "{\"id\": 2, \"op\": \"INV_TOOL\", \"attributes\": {\"capability\": \"web_search\", \"params_json\": \"{\\\"query\\\":\\\"rust ownership\\\"}\"}}",
-      "bytes": 120
+      "op": "INV_CAP",
+      "example_json": "{\"id\": 2, \"op\": \"INV_CAP\", \"attributes\": {\"capability\": \"web_search\", \"params_json\": \"{\\\"query\\\":\\\"rust ownership\\\"}\"}}",
+      "bytes": 119
     },
     {
       "op": "EXC",
@@ -174,8 +174,8 @@
     },
     {
       "op": "REGISTER_HOOK",
-      "example_json": "{\\\"id\\\": 4, \\\"op\\\": \\\"REGISTER_HOOK\\\", \\\"attributes\\\": {\\\"hook_event\\\": \\\"pre_tool\\\", \\\"hook_match\\\": \\\"lookup\\\", \\\"hook_mode\\\": \\\"gate\\\", \\\"python_hook_handler_id\\\": \\\"sha256:...\\\"}}",
-      "bytes": 183
+      "example_json": "{\\\"id\\\": 4, \\\"op\\\": \\\"REGISTER_HOOK\\\", \\\"attributes\\\": {\\\"hook_event\\\": \\\"pre_cap\\\", \\\"hook_match\\\": \\\"lookup\\\", \\\"hook_mode\\\": \\\"gate\\\", \\\"python_hook_handler_id\\\": \\\"sha256:...\\\"}}",
+      "bytes": 182
     },
     {
       "op": "AUTONOMOUS",

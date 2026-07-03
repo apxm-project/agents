@@ -19,7 +19,7 @@ pub struct CapabilityGrant {
     pub capability: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub template_key: Option<String>,
-    pub tool_binding: String,
+    pub capability_binding: String,
     pub resource: ResourceHandle,
     pub operations: Vec<PermissionOperation>,
     pub subject: SubjectContext,
@@ -55,7 +55,7 @@ impl CapabilityGrant {
         if let Some(template_key) = &self.template_key {
             validate_non_empty("template_key", template_key)?;
         }
-        validate_non_empty("tool_binding", &self.tool_binding)?;
+        validate_non_empty("capability_binding", &self.capability_binding)?;
         validate_operations(&self.operations)?;
         self.resource.validate()?;
         self.subject.validate()?;
@@ -161,7 +161,7 @@ mod tests {
             grant_id: "grant_01jz_runtime_minted".to_string(),
             capability: "github.issue.create".to_string(),
             template_key: Some("github.issue.create".to_string()),
-            tool_binding: "github.issue".to_string(),
+            capability_binding: "github.issue".to_string(),
             resource: ResourceHandle {
                 kind: "github_issue_set".to_string(),
                 uri: Some("github://apxm-project/agents/issues".to_string()),
@@ -259,7 +259,7 @@ mod tests {
             "schema_version": CAPABILITY_GRANT_SCHEMA_V1,
             "grant_id": "grant_01jz_runtime_minted",
             "capability": "github.issue.create",
-            "tool_binding": "github.issue",
+            "capability_binding": "github.issue",
             "resource": {"kind": "github_issue_set", "uri": "github://apxm-project/agents/issues"},
             "operations": ["create"],
             "subject": {"principal_id": "user:rafael", "delegation_mode": "on_behalf_of"},

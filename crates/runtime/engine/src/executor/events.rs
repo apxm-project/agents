@@ -378,11 +378,11 @@ pub trait ExecutionEventEmitter: Send + Sync {
     ) {
     }
 
-    /// An INV_TOOL node inside an agent scope began a tool call.
+    /// An INV_CAP node inside an agent scope began a tool call.
     fn emit_tool_call_begin(&self, _agent_code: &str, _tool_name: &str, _argument_keys: &[String]) {
     }
 
-    /// An INV_TOOL node inside an agent scope returned a result.
+    /// An INV_CAP node inside an agent scope returned a result.
     fn emit_tool_call_end(
         &self,
         _agent_code: &str,

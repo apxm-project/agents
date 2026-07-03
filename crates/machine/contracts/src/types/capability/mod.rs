@@ -1,6 +1,6 @@
 //! Typed capability abstract machine schema.
 //!
-//! A **capability** is the first-class APXM unit composed of a [`ToolBinding`]
+//! A **capability** is the first-class APXM unit composed of a [`CapabilityBinding`]
 //! plus a [`PermissionPolicy`]. [`CapabilityGrant`] records are runtime-minted
 //! authority objects; they are the only records that can authorize external action.
 
@@ -10,7 +10,7 @@ mod grant;
 mod permission;
 mod permission_vocabulary;
 mod policy;
-mod tool_binding;
+mod capability_binding;
 mod wire;
 
 pub use common::{
@@ -35,5 +35,5 @@ pub use policy::{
     AuthMethod, Principal, PrincipalKind, PromptMode, PromptPolicy, RoleAssignment, RoleDefinition,
     SubjectContext, SubjectSelector,
 };
-pub use tool_binding::{ToolBinding, ToolBindingHandler, ToolBindingMetadata};
+pub use capability_binding::{CapabilityBinding, CapabilityBindingHandler, CapabilityBindingMetadata};
 pub use wire::RuntimeCapabilityGrant;

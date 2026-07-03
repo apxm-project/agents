@@ -284,7 +284,7 @@ HOOK_PAYLOAD_KEY: Final[str] = "__apxm_hook__"
 
 
 class _HookCall:
-    """The guarded tool call passed to a pre/post_tool hook."""
+    """The guarded tool call passed to a pre/post_cap hook."""
 
     def __init__(self, name: str, args: dict[str, Any]) -> None:
         self.name = name
@@ -417,10 +417,10 @@ def _invoke_hook(fn: Any, event: str, payload: dict[str, Any], req_id: str = "")
     ctx = _HookCtx(payload, req_id)
     if event in (LifecycleEvent.SESSION_START.value, LifecycleEvent.PRE_ASK.value):
         ret = fn(ctx)
-    elif event == LifecycleEvent.PRE_TOOL.value:
+    elif event == LifecycleEvent.PRE_CAP.value:
         call = payload.get("call", {})
         ret = fn(ctx, _HookCall(call.get("name", ""), call.get("args", {})))
-    elif event == LifecycleEvent.POST_TOOL.value:
+    elif event == LifecycleEvent.POST_CAP.value:
         call = payload.get("call", {})
         ret = fn(ctx, _HookCall(call.get("name", ""), {}), payload.get("result"))
     elif event in (LifecycleEvent.POST_ASK.value, LifecycleEvent.POST_TURN.value):

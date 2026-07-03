@@ -30,12 +30,12 @@ pub struct ToolDescriptor {
 }
 
 /// Registry of Python-backed tools, keyed by capability name.
-pub struct PythonToolRegistry {
+pub struct PythonHandlerRegistry {
     /// name -> descriptor
     tools: HashMap<String, ToolDescriptor>,
 }
 
-impl PythonToolRegistry {
+impl PythonHandlerRegistry {
     /// Build a registry from a list of tool descriptors.
     pub fn from_descriptors(descriptors: Vec<ToolDescriptor>) -> Self {
         let tools = descriptors

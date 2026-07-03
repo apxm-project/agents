@@ -314,8 +314,8 @@
       "example_json": "{\"id\": 5, \"op\": \"VERIFY\", \"attributes\": {\"claim\": \"The solar system has eight planets.\"}}"
     },
     {
-      "op": "INV_TOOL",
-      "rust_variant": "InvTool",
+      "op": "INV_CAP",
+      "rust_variant": "InvCap",
       "name": "InvokeTool",
       "category": "tools",
       "description": "Call external tool with structured params; store result",
@@ -340,7 +340,7 @@
           "ref_type": null
         }
       ],
-      "example_json": "{\"id\": 2, \"op\": \"INV_TOOL\", \"attributes\": {\"capability\": \"web_search\", \"params_json\": \"{\\\"query\\\":\\\"rust ownership\\\"}\"}}"
+      "example_json": "{\"id\": 2, \"op\": \"INV_CAP\", \"attributes\": {\"capability\": \"web_search\", \"params_json\": \"{\\\"query\\\":\\\"rust ownership\\\"}\"}}"
     },
     {
       "op": "EXC",
@@ -1127,7 +1127,7 @@
       "name": "RegisterCapability",
       "category": "coordination",
       "description": "Register a new capability (tool) in the runtime registry",
-      "long_description": "Dynamically registers a new capability in the runtime's capability registry. The capability becomes available for INV_TOOL operations after registration. Returns a confirmation with the registered capability name.",
+      "long_description": "Dynamically registers a new capability in the runtime's capability registry. The capability becomes available for INV_CAP operations after registration. Returns a confirmation with the registered capability name.",
       "latency": "low",
       "wire_index": 36,
       "is_pseudo_op": false,
@@ -1168,7 +1168,7 @@
       "name": "RegisterHook",
       "category": "coordination",
       "description": "Register an author lifecycle hook into the artifact hook registry",
-      "long_description": "Registers one author lifecycle hook (a Python handler bound to a lifecycle event) into the per-artifact hook registry. Mirrors REGISTER_CAPABILITY: the binding travels inside the artifact (AIR-portable) and the handler is dispatched via the same Python tool bridge as @tool. The runtime applies pre/post_tool hooks at the tool dispatch sites, pre/post_ask as Ask middleware, and session_start as an awaited pre-step.",
+      "long_description": "Registers one author lifecycle hook (a Python handler bound to a lifecycle event) into the per-artifact hook registry. Mirrors REGISTER_CAPABILITY: the binding travels inside the artifact (AIR-portable) and the handler is dispatched via the same Python tool bridge as @tool. The runtime applies pre/post_cap hooks at the tool dispatch sites, pre/post_ask as Ask middleware, and session_start as an awaited pre-step.",
       "latency": "low",
       "wire_index": 43,
       "is_pseudo_op": false,
@@ -1201,7 +1201,7 @@
           "ref_type": null
         }
       ],
-      "example_json": "{\\\"id\\\": 4, \\\"op\\\": \\\"REGISTER_HOOK\\\", \\\"attributes\\\": {\\\"hook_event\\\": \\\"pre_tool\\\", \\\"hook_match\\\": \\\"lookup\\\", \\\"hook_mode\\\": \\\"gate\\\", \\\"python_hook_handler_id\\\": \\\"sha256:...\\\"}}"
+      "example_json": "{\\\"id\\\": 4, \\\"op\\\": \\\"REGISTER_HOOK\\\", \\\"attributes\\\": {\\\"hook_event\\\": \\\"pre_cap\\\", \\\"hook_match\\\": \\\"lookup\\\", \\\"hook_mode\\\": \\\"gate\\\", \\\"python_hook_handler_id\\\": \\\"sha256:...\\\"}}"
     },
     {
       "op": "AUTONOMOUS",

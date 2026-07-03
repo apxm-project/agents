@@ -10,17 +10,17 @@
 //! - [`PassMetrics`] / [`PipelineDiagnostics`]: Per-pass timing and change tracking
 //! - Registry functions: Pass management
 
-pub mod bind_tool_handlers;
+pub mod bind_capability_handlers;
 mod manager;
 pub mod metrics;
 mod pipeline;
 pub mod profile;
 mod registry;
-pub mod tool_binding;
+pub mod capability_binding;
 pub mod validate_model_allowlist;
 
-pub use bind_tool_handlers::{
-    BIND_TOOL_HANDLERS_PASS_NAME, bind_python_handlers_to_dag, bind_tool_handlers,
+pub use bind_capability_handlers::{
+    BIND_CAPABILITY_HANDLERS_PASS_NAME, bind_python_handlers_to_dag, bind_capability_handlers,
 };
 pub use manager::PassManager;
 pub use metrics::{PassMetrics, PipelineDiagnostics};
@@ -29,7 +29,7 @@ pub use pipeline::{
 };
 pub use profile::{ExecutionProfile, NodeProfile, ProfileError};
 pub use registry::{find_pass, get_pass_count, get_pass_info, list_passes};
-pub use tool_binding::{
-    PythonToolManifestEntry, TOOL_BINDING_PASS_NAME, tool_binding_check, tool_binding_check_dag,
+pub use capability_binding::{
+    PythonCapabilityManifestEntry, CAPABILITY_BINDING_PASS_NAME, capability_binding_check, capability_binding_check_dag,
 };
 pub use validate_model_allowlist::validate_model_allowlist;

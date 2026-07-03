@@ -171,7 +171,7 @@ impl apxm_runtime::capability::executor::CapabilityExecutor for UserToolCapabili
             stdin_data: Some(json_input),
             timeout: std::time::Duration::from_millis(self.timeout_ms),
             needs_network: true,
-            origin_op: Some(AISOperationType::InvTool.to_string()),
+            origin_op: Some(AISOperationType::InvCap.to_string()),
             ..apxm_runtime::sandbox::ExecRequest::default()
         })
     }

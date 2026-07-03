@@ -179,7 +179,7 @@ pub fn chat_air(opts: &ChatAirOptions) -> String {
             .map(|g| format!("\"{g}\""))
             .collect::<Vec<_>>()
             .join(", ");
-        attrs.push(format!("tool_groups = [{list}]"));
+        attrs.push(format!("capability_groups = [{list}]"));
     }
     let attr_dict = if attrs.is_empty() {
         String::new()
@@ -233,7 +233,7 @@ pub fn acp_chat_air(opts: &ChatAcpAirOptions) -> String {
 }
 
 /// Parse the tool binding / capability id out of an admission-denial message.
-/// Matches server preflight, runtime INV_TOOL admission, spawn admission, and
+/// Matches server preflight, runtime INV_CAP admission, spawn admission, and
 /// python-backed handler checks.
 pub fn parse_denied_capability(body: &str) -> Option<String> {
     let is_denial = body.contains("performs writes")
@@ -304,6 +304,6 @@ mod tests {
             skills: true,
             ..ChatAirOptions::default()
         });
-        assert!(air.contains(r#"tool_groups = ["discovery", "skills"]"#));
+        assert!(air.contains(r#"capability_groups = ["discovery", "skills"]"#));
     }
 }

@@ -5,8 +5,8 @@
 //! Hooks are dispatched over the SAME python tool bridge as `@tool`
 //! (constitution #4). A hook handler receives a JSON payload describing the
 //! event and returns a decision object the runtime applies:
-//!   - `pre_tool`  → allow | deny(reason) | edit_args(args)
-//!   - `post_tool` → replace_result(x) | (none)
+//!   - `pre_cap`  → allow | deny(reason) | edit_args(args)
+//!   - `post_cap` → replace_result(x) | (none)
 //!   - `pre_ask`   → prepend_system(text) | set_system(text) | (none)
 //!
 //! Failure semantics: a `gate` hook that errors fails CLOSED (the guarded
@@ -166,8 +166,8 @@ async fn host_llm_ask(
     Ok(JsonValue::String(response.content))
 }
 
-/// Decision returned by a `pre_tool` hook.
-pub enum PreToolDecision {
+/// Decision returned by a `pre_cap` hook.
+pub enum PreCapDecision {
     Allow,
     Deny(String),
     EditArgs(HashMap<String, Value>),
@@ -226,9 +226,9 @@ fn remaining_budget(ctx: &ExecutionContext) -> JsonValue {
     }
 }
 
-/// Run all matching `pre_tool` hooks for `tool_name`, threading edited args.
+/// Run all matching `pre_cap` hooks for `tool_name`, threading edited args.
 /// Returns the (possibly edited) args, or `Err` if a hook denied the call.
-pub async fn run_pre_tool_hooks(
+pub async fn run_pre_cap_hooks(
     ctx: &ExecutionContext,
     tool_name: &str,
     args: HashMap<String, Value>,
@@ -236,11 +236,11 @@ pub async fn run_pre_tool_hooks(
     let Some(registry) = ctx.hook_registry() else {
         return Ok(args);
     };
-    let bindings = registry.matching(HookEvent::PreTool, tool_name);
+    let bindings = registry.matching(HookEvent::PreCap, tool_name);
     if bindings.is_empty() {
         return Ok(args);
     }
-    let Some(bridge) = ctx.python_tool_bridge.as_ref() else {
+    let Some(bridge) = ctx.python_handler_bridge.as_ref() else {
         return Ok(args);
     };
 
@@ -250,7 +250,7 @@ pub async fn run_pre_tool_hooks(
             serde_json::to_value(&current).unwrap_or(JsonValue::Object(Default::default()));
         let payload = json!({
             HOOK_PAYLOAD_KEY: {
-                "event": "pre_tool",
+                "event": "pre_cap",
                 "remaining_budget": remaining_budget(ctx),
                 "call": { "name": tool_name, "args": args_json },
             }
@@ -264,64 +264,64 @@ pub async fn run_pre_tool_hooks(
             )
             .await
         {
-            Ok(decision) => match parse_pre_tool_decision(decision) {
-                PreToolDecision::Allow => {}
-                PreToolDecision::Deny(reason) => {
+            Ok(decision) => match parse_pre_cap_decision(decision) {
+                PreCapDecision::Allow => {}
+                PreCapDecision::Deny(reason) => {
                     return Err(RuntimeError::Capability {
                         capability: tool_name.to_string(),
-                        message: format!("denied by pre_tool hook: {reason}"),
+                        message: format!("denied by pre_cap hook: {reason}"),
                     });
                 }
-                PreToolDecision::EditArgs(new_args) => current = new_args,
+                PreCapDecision::EditArgs(new_args) => current = new_args,
             },
             Err(e) => {
                 // Gate hooks fail closed; observe hooks continue.
                 if binding.mode == HookMode::Gate {
                     return Err(RuntimeError::Capability {
                         capability: tool_name.to_string(),
-                        message: format!("pre_tool gate hook failed (fail-closed): {e}"),
+                        message: format!("pre_cap gate hook failed (fail-closed): {e}"),
                     });
                 }
-                tracing::warn!(tool = %tool_name, error = %e, "observe pre_tool hook failed; continuing");
+                tracing::warn!(tool = %tool_name, error = %e, "observe pre_cap hook failed; continuing");
             }
         }
     }
     Ok(current)
 }
 
-fn parse_pre_tool_decision(decision: JsonValue) -> PreToolDecision {
+fn parse_pre_cap_decision(decision: JsonValue) -> PreCapDecision {
     let Some(obj) = decision.as_object() else {
-        return PreToolDecision::Allow;
+        return PreCapDecision::Allow;
     };
     match obj.get("decision").and_then(|v| v.as_str()) {
-        Some("deny") => PreToolDecision::Deny(
+        Some("deny") => PreCapDecision::Deny(
             obj.get("reason")
                 .and_then(|v| v.as_str())
                 .unwrap_or("denied")
                 .to_string(),
         ),
         Some("edit_args") => match obj.get("args") {
-            Some(JsonValue::Object(m)) => PreToolDecision::EditArgs(
+            Some(JsonValue::Object(m)) => PreCapDecision::EditArgs(
                 m.iter()
                     .map(|(k, v)| (k.clone(), json_to_value(v.clone())))
                     .collect(),
             ),
-            _ => PreToolDecision::Allow,
+            _ => PreCapDecision::Allow,
         },
-        _ => PreToolDecision::Allow,
+        _ => PreCapDecision::Allow,
     }
 }
 
-/// Run all matching `post_tool` hooks; returns the (possibly replaced) result.
-pub async fn run_post_tool_hooks(ctx: &ExecutionContext, tool_name: &str, result: Value) -> Value {
+/// Run all matching `post_cap` hooks; returns the (possibly replaced) result.
+pub async fn run_post_cap_hooks(ctx: &ExecutionContext, tool_name: &str, result: Value) -> Value {
     let Some(registry) = ctx.hook_registry() else {
         return result;
     };
-    let bindings = registry.matching(HookEvent::PostTool, tool_name);
+    let bindings = registry.matching(HookEvent::PostCap, tool_name);
     if bindings.is_empty() {
         return result;
     }
-    let Some(bridge) = ctx.python_tool_bridge.as_ref() else {
+    let Some(bridge) = ctx.python_handler_bridge.as_ref() else {
         return result;
     };
 
@@ -330,7 +330,7 @@ pub async fn run_post_tool_hooks(ctx: &ExecutionContext, tool_name: &str, result
         let result_json = serde_json::to_value(&current).unwrap_or(JsonValue::Null);
         let payload = json!({
             HOOK_PAYLOAD_KEY: {
-                "event": "post_tool",
+                "event": "post_cap",
                 "call": { "name": tool_name },
                 "result": result_json,
             }
@@ -352,9 +352,9 @@ pub async fn run_post_tool_hooks(ctx: &ExecutionContext, tool_name: &str, result
                     current = json_to_value(r.clone());
                 }
             }
-            // post_tool is observe-style: surface + continue (never fail closed).
+            // post_cap is observe-style: surface + continue (never fail closed).
             Err(e) => {
-                tracing::warn!(tool = %tool_name, error = %e, "post_tool hook failed; continuing")
+                tracing::warn!(tool = %tool_name, error = %e, "post_cap hook failed; continuing")
             }
         }
     }
@@ -377,7 +377,7 @@ async fn fire_lifecycle_hooks(
     if bindings.is_empty() {
         return Ok(());
     }
-    let Some(bridge) = ctx.python_tool_bridge.as_ref() else {
+    let Some(bridge) = ctx.python_handler_bridge.as_ref() else {
         return Ok(());
     };
     for binding in bindings {
@@ -427,7 +427,7 @@ pub async fn run_post_turn_hooks(ctx: &ExecutionContext, reply: &str) {
     if bindings.is_empty() {
         return;
     }
-    let Some(bridge) = ctx.python_tool_bridge.as_ref() else {
+    let Some(bridge) = ctx.python_handler_bridge.as_ref() else {
         return;
     };
 
@@ -516,7 +516,7 @@ pub async fn run_pre_ask_hooks(
     if bindings.is_empty() {
         return Ok(None);
     }
-    let Some(bridge) = ctx.python_tool_bridge.as_ref() else {
+    let Some(bridge) = ctx.python_handler_bridge.as_ref() else {
         return Ok(None);
     };
 

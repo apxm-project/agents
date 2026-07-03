@@ -32,12 +32,12 @@ pub struct ExecuteRequest {
 
 impl Client {
     /// `POST /v1/capability-grants` — mint a runtime grant for a tool binding.
-    pub async fn mint_capability_grant(&self, tool_binding: &str) -> Result<String> {
+    pub async fn mint_capability_grant(&self, capability_binding: &str) -> Result<String> {
         let url = format!("{}/v1/capability-grants", self.baseurl());
         let resp = self
             .client()
             .post(&url)
-            .json(&serde_json::json!({ "tool_binding": tool_binding }))
+            .json(&serde_json::json!({ "capability_binding": capability_binding }))
             .send()
             .await
             .with_context(|| format!("failed to POST {url}"))?;

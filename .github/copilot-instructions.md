@@ -240,7 +240,7 @@ resolve through it, never via duplicated string literals.
 ## 10. Capability abstract machine vocabulary
 
 APXM models **capabilities** as the first-class abstract-machine unit.
-Each capability composes a **tool_binding** (callable implementation) plus a
+Each capability composes a **capability_binding** (callable implementation) plus a
 **permission policy** (authority). Runtime authority flows through typed
 **capability grants** (`grant_*` ids), not bare handler strings.
 
@@ -248,11 +248,11 @@ Canonical terms, reserved aliases, route naming, and schema versions live in
 the coordinator glossary:
 
 - `../../docs/context/capability-vocabulary.md` — SSOT for APXM-owned capability
-  vocabulary (`CapabilityDefinition`, `ToolBinding`, `PermissionPolicy`,
+  vocabulary (`CapabilityDefinition`, `CapabilityBinding`, `PermissionPolicy`,
   `CapabilityGrant`, `PermissionOperation`, `PromptPolicy`, …).
 
 When touching capability registry, admission, pack schemas, AIS
-`REGISTER_CAPABILITY` / `INV_TOOL.capability`, or server `/v1/capability-templates`
+`REGISTER_CAPABILITY` / `INV_CAP.capability`, or server `/v1/capability-templates`
 routes, read that doc first and keep code, schemas, and UI copy aligned.
 
 ## 11. Storage layout

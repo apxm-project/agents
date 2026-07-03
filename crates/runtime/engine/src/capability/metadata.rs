@@ -183,8 +183,8 @@ mod tests {
     use super::*;
     use apxm_core::types::capability::{
         CAPABILITY_DEFINITION_SCHEMA_V1, CapabilityMetadata as ContractCapabilityMetadata,
-        PermissionEffect, PermissionPolicy, PromptPolicy, ResourceSelector, ToolBinding,
-        ToolBindingHandler,
+        PermissionEffect, PermissionPolicy, PromptPolicy, ResourceSelector, CapabilityBinding,
+        CapabilityBindingHandler,
     };
 
     #[test]
@@ -193,9 +193,9 @@ mod tests {
             schema_version: CAPABILITY_DEFINITION_SCHEMA_V1.to_string(),
             id: "slack.post_message".to_string(),
             description: "Post a Slack message".to_string(),
-            tool: ToolBinding {
+            tool: CapabilityBinding {
                 id: "slack.post".to_string(),
-                handler: ToolBindingHandler::PackHandler,
+                handler: CapabilityBindingHandler::PackHandler,
                 parameters_schema: serde_json::json!({"type": "object"}),
                 returns: "json".to_string(),
             },
@@ -232,9 +232,9 @@ mod tests {
             schema_version: CAPABILITY_DEFINITION_SCHEMA_V1.to_string(),
             id: "files.read".to_string(),
             description: "Read a file".to_string(),
-            tool: ToolBinding {
+            tool: CapabilityBinding {
                 id: "files.read".to_string(),
-                handler: ToolBindingHandler::Builtin,
+                handler: CapabilityBindingHandler::Builtin,
                 parameters_schema: serde_json::json!({"type": "object"}),
                 returns: "json".to_string(),
             },

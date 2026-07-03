@@ -5,8 +5,8 @@ use apxm_core::types::{GrantStatus, PermissionOperation, RuntimeCapabilityGrant}
 use chrono::{DateTime, Utc};
 
 /// Returns true when runtime `capability_grants` metadata admits a direct write
-/// to `tool_binding`. Missing, malformed, expired, or non-mutating grants fail closed.
-pub(crate) fn capability_grant_admits_write(metadata: Option<&str>, tool_binding: &str) -> bool {
+/// to `capability_binding`. Missing, malformed, expired, or non-mutating grants fail closed.
+pub(crate) fn capability_grant_admits_write(metadata: Option<&str>, capability_binding: &str) -> bool {
     let Some(metadata) = metadata else {
         return false;
     };
@@ -15,7 +15,7 @@ pub(crate) fn capability_grant_admits_write(metadata: Option<&str>, tool_binding
     };
     grants.into_iter().any(|grant| {
         grant.status == GrantStatus::Active
-            && grant.tool_binding == tool_binding
+            && grant.capability_binding == capability_binding
             && grant
                 .operations
                 .iter()
@@ -27,13 +27,13 @@ pub(crate) fn capability_grant_admits_write(metadata: Option<&str>, tool_binding
 
 pub(crate) fn metadata_admits_write(
     metadata: &std::collections::HashMap<String, String>,
-    tool_binding: &str,
+    capability_binding: &str,
 ) -> bool {
     capability_grant_admits_write(
         metadata
             .get(metadata_keys::CAPABILITY_GRANTS)
             .map(String::as_str),
-        tool_binding,
+        capability_binding,
     )
 }
 
@@ -51,10 +51,10 @@ mod tests {
     use super::capability_grant_admits_write;
 
     #[test]
-    fn admits_write_requires_runtime_minted_tool_binding_grant() {
+    fn admits_write_requires_runtime_minted_capability_binding_grant() {
         let metadata = serde_json::json!([{
             "grant_id": "grant_fixture",
-            "tool_binding": "fixture.write",
+            "capability_binding": "fixture.write",
             "operations": ["write"],
             "expires_at": null,
             "status": "active"
@@ -79,7 +79,7 @@ mod tests {
     fn admits_write_rejects_expired_or_non_mutating_grants() {
         let expired = serde_json::json!([{
             "grant_id": "grant_fixture",
-            "tool_binding": "fixture.write",
+            "capability_binding": "fixture.write",
             "operations": ["write"],
             "expires_at": "2000-01-01T00:00:00Z",
             "status": "active"
@@ -87,7 +87,7 @@ mod tests {
         .to_string();
         let read_only = serde_json::json!([{
             "grant_id": "grant_fixture",
-            "tool_binding": "fixture.write",
+            "capability_binding": "fixture.write",
             "operations": ["read"],
             "expires_at": null,
             "status": "active"

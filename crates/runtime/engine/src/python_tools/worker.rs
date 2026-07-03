@@ -82,8 +82,8 @@ fn pythonpath_with_source_frontend() -> Option<std::ffi::OsString> {
 /// Handle to the Python tool worker subprocess.
 ///
 /// Manages a single child process that serves tool invocations over NDJSON.
-/// Thread-safe: can be shared via `Arc<PythonToolWorker>` across executor tasks.
-pub struct PythonToolWorker {
+/// Thread-safe: can be shared via `Arc<PythonHandlerWorker>` across executor tasks.
+pub struct PythonHandlerWorker {
     /// Sender for writing NDJSON lines to worker stdin.
     stdin_tx: tokio::sync::Mutex<tokio::process::ChildStdin>,
     /// Pending response channels, keyed by req_id. An awaiting call receives a
@@ -103,7 +103,7 @@ pub struct PythonToolWorker {
     next_id: std::sync::atomic::AtomicU64,
 }
 
-impl PythonToolWorker {
+impl PythonHandlerWorker {
     /// Spawn the Python tool worker subprocess.
     ///
     /// The `manifest_json` is written to a temp file whose path is passed as

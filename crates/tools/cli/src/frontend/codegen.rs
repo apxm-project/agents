@@ -391,8 +391,8 @@ fn render_emission_fn(buf: &mut String, spec: &FrontendEmissionSpec) {
         op
     ));
 
-    if spec.op == AISOperationType::InvTool {
-        render_inv_tool_emission_fn(buf);
+    if spec.op == AISOperationType::InvCap {
+        render_inv_cap_emission_fn(buf);
         return;
     }
 
@@ -517,7 +517,7 @@ fn render_emission_fn(buf: &mut String, spec: &FrontendEmissionSpec) {
     }
 }
 
-fn render_inv_tool_emission_fn(buf: &mut String) {
+fn render_inv_cap_emission_fn(buf: &mut String) {
     // Context operands (data inputs) — required so a `{name}` placeholder in
     // params_json resolves against an operand/input_names at runtime.
     buf.push_str(
@@ -544,7 +544,7 @@ fn render_inv_tool_emission_fn(buf: &mut String) {
     ));
     buf.push_str("    kw_str = f' {{{\", \".join(kw_parts)}}}' if kw_parts else \"\"\n");
     buf.push_str(
-        "    return f\"{ssa_name} = ais.inv_tool{primary}{positional}{syn_kw}{ctx}{kw_str} : !ais.token\"\n\n\n",
+        "    return f\"{ssa_name} = ais.inv_cap{primary}{positional}{syn_kw}{ctx}{kw_str} : !ais.token\"\n\n\n",
     );
 }
 

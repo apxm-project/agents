@@ -52,7 +52,7 @@ example uses constructs that pass `apxm validate` (the text-AIR path that
 |------|-----------|---------------|
 | recall | `g.query_memory` | session-scoped QMEM read of a prior turn's note |
 | plan | `g.reason` | intent planning over the transcript |
-| answer | `g.ask(tool_groups=[...])` | tool-using turn (group is self-enabling, least privilege) |
+| answer | `g.ask(capability_groups=[...])` | tool-using turn (group is self-enabling, least privilege) |
 | research | `g.spawn_agent` + `g.delegate` | inline sub-agent registration plus focused delegation |
 | reply | `g.ask` | synthesizing the user-facing answer |
 | remember | `g.update_memory` + `g.fence` | ordered UMEM write for the next turn |
@@ -126,9 +126,9 @@ handlers as the REST API:
 
 ### Security: one no-widen boundary, enforced at the invoke chokepoint
 
-The write boundary is enforced at the runtime `inv_tool` invoke site (not only
+The write boundary is enforced at the runtime `inv_cap` invoke site (not only
 the server's static pre-flight), so it holds for **every** path — raw execute,
 `CALL_SKILL` child workflows, workflow starts, and `SPAWN_AGENT`. Direct writes
 run only when the execution presents a runtime-minted `grant_*` capability
-grant whose `tool_binding` matches the invoked capability. Read-only and
+grant whose `capability_binding` matches the invoked capability. Read-only and
 sandboxed capabilities are always allowed.

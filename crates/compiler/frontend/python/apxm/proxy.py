@@ -423,7 +423,7 @@ class GraphRecorder:
         **attributes: Any,
     ) -> NodeRef:
         if name is None:
-            name = self._auto_name(graph_keys.OP_INV_TOOL)
+            name = self._auto_name(graph_keys.OP_INV_CAP)
         if capability is None:
             raise ValueError("invoke() missing required keyword argument: 'capability'")
         attrs: dict[str, Any] = {graph_keys.CAPABILITY: normalize_capability(capability)}
@@ -443,7 +443,7 @@ class GraphRecorder:
             if auto_pairs:
                 attrs[graph_keys.INPUT_NAMES] = [n for n, _ in auto_pairs]
         attrs = self._apply_policy(attrs, attributes)
-        node = self._add_node(name, graph_keys.OP_INV_TOOL, attrs)
+        node = self._add_node(name, graph_keys.OP_INV_CAP, attrs)
         for _name, ref in auto_pairs:
             self.add_edge(ref, node)
         return node
@@ -563,7 +563,7 @@ class GraphRecorder:
         self._python_tool_registration_nodes[tool.handler_id] = register
         return register
 
-    def invoke_tool(
+    def invoke_capability(
         self,
         tool: FunctionTool,
         name: str | None = None,
@@ -575,13 +575,13 @@ class GraphRecorder:
         """Register and invoke a Python @tool function.
 
         Keyword arguments are treated as tool parameters so simple tools can be
-        called as ``g.invoke_tool(search_docs, query="...")``. Use ``params``
+        called as ``g.invoke_capability(search_docs, query="...")``. Use ``params``
         when a tool parameter name conflicts with recorder options.
         """
         if not isinstance(tool, FunctionTool):
-            raise TypeError("invoke_tool() expects a @tool-decorated FunctionTool")
+            raise TypeError("invoke_capability() expects a @tool-decorated FunctionTool")
         if params is not None and tool_args:
-            raise TypeError("invoke_tool() accepts either params= or keyword tool arguments, not both")
+            raise TypeError("invoke_capability() accepts either params= or keyword tool arguments, not both")
 
         invocation_params = params if params is not None else tool_args or None
         invocation_attributes = dict(node_attributes or {})

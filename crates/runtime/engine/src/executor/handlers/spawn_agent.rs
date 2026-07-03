@@ -454,7 +454,7 @@ pub async fn execute(ctx: &ExecutionContext, node: &Node, _inputs: Vec<Value>) -
 
     // Layer 2 — push an agent scope and bracket it with
     // `subagent_spawn_begin` / `subagent_spawn_end`. Subsequent ASK /
-    // INV_TOOL handlers see a non-empty stack and emit paired Layer 2
+    // INV_CAP handlers see a non-empty stack and emit paired Layer 2
     // events tagged with this `agent_code`. The scope's pop site lives
     // in the spawned subgraph's terminal handler — see the engine
     // bracket below; for now we leave the scope on the stack so the
@@ -839,7 +839,7 @@ mod tests {
             crate::metadata_keys::CAPABILITY_GRANTS.to_string(),
             serde_json::json!([{
                 "grant_id": "grant_spawn_agent_fixture",
-                "tool_binding": orchestration_admission::SPAWN_AGENT,
+                "capability_binding": orchestration_admission::SPAWN_AGENT,
                 "operations": ["write"],
                 "expires_at": null,
                 "status": "active"

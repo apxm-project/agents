@@ -45,7 +45,7 @@ result = worker.ask("{formatted}")
 research = g.call(
     helper_flow,
     topic=topic,
-    node_policy=NodePolicy(tool_groups=["file:read"], token_budget=128),
+    node_policy=NodePolicy(capability_groups=["file:read"], token_budget=128),
 )
 
 # Cross the execution boundary instead of inlining/calling a registered flow

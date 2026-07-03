@@ -51,7 +51,7 @@ def conversational_agent(g: GraphRecorder, conversation: str):
             "Most relevant skill (by description):\n{skill}"
         ),
         system_prompt=PERSONA,      # middleware may enrich this at runtime
-        tool_groups=[ToolGroup.WEB],
+        capability_groups=[ToolGroup.WEB],
     )
 
     # Record a fact for later turns, fenced so the write is ordered.

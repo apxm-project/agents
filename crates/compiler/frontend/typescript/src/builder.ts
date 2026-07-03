@@ -253,7 +253,7 @@ export class GraphBuilder {
     return node;
   }
 
-  /** Invoke a runtime capability/tool (INV_TOOL). Python's `invoke()`. */
+  /** Invoke a runtime capability/tool (INV_CAP). Python's `invoke()`. */
   invokeCapability(options: InvokeCapabilityOptions): NodeRef {
     const { name, capability, params, inputs, ...rest } = options;
     const paramsStr = typeof params === "object" && params !== null ? JSON.stringify(params) : params;
@@ -264,7 +264,7 @@ export class GraphBuilder {
       input_names: inputNames.length > 0 ? inputNames : undefined,
       ...rest,
     };
-    const node = this.addNode(name ?? this.autoName("INV_TOOL"), "INV_TOOL", attrs);
+    const node = this.addNode(name ?? this.autoName("INV_CAP"), "INV_CAP", attrs);
     this.wireInputs(node, inputs);
     return node;
   }

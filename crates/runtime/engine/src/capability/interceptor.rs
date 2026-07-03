@@ -91,7 +91,7 @@ pub async fn pre_invoke_ctx(
             .unwrap_or("runtime-grant")
             .to_string(),
         capability_id: name.to_string(),
-        tool_binding: name.to_string(),
+        capability_binding: name.to_string(),
         host_id: ctx.host_id.map(str::to_string),
         operation: "invoke".to_string(),
         mode: PromptMode::Confirm,
@@ -186,7 +186,7 @@ pub trait CapabilityInterceptor: Send + Sync {
 /// needs authentication but is invoked without a resolved credential is denied in
 /// strict mode, or warned about otherwise (advisory is the default so legitimate
 /// unauthenticated tools keep working). Because every tool call — both the graph
-/// `INV_TOOL` path and the in-`ASK`-node model loop — funnels through
+/// `INV_CAP` path and the in-`ASK`-node model loop — funnels through
 /// `invoke_with_timeout`, this is a single always-invoked policy-enforcement
 /// point. It is composed by the trusted runtime, never by the AIR program.
 pub struct PermissionInterceptor {

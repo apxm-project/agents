@@ -67,7 +67,7 @@ pub async fn execute(ctx: &ExecutionContext, node: &Node, _inputs: Vec<Value>) -
         // in the entry flow. Awaited async pre-step via the bridge (NOT the dead
         // sync ExecutionHook); a gate failure fails closed.
         if event == HookEvent::SessionStart
-            && let Some(bridge) = ctx.python_tool_bridge.as_ref()
+            && let Some(bridge) = ctx.python_handler_bridge.as_ref()
         {
             let payload = serde_json::json!({
                 "__apxm_hook__": { "event": "session_start" }

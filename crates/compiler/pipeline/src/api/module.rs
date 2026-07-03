@@ -101,7 +101,7 @@ impl Module {
     pub fn generate_artifact_with_manifest(
         &self,
         module_name: Option<&str>,
-        manifest: Option<&[crate::passes::PythonToolManifestEntry]>,
+        manifest: Option<&[crate::passes::PythonCapabilityManifestEntry]>,
     ) -> Result<Artifact> {
         self.generate_artifact_with_manifest_and_caps(
             module_name,
@@ -112,13 +112,13 @@ impl Module {
 
     /// Like [`generate_artifact_with_manifest`], but `known_caps` declares
     /// capabilities the host already has registered at runtime (provider/pack
-    /// blocks). They satisfy the tool-binding check (E712) alongside builtins and
+    /// blocks). They satisfy the capability-binding check (E712) alongside builtins and
     /// in-graph `REGISTER_CAPABILITY` nodes — a standalone compile passes an empty
     /// set and stays strict.
     pub fn generate_artifact_with_manifest_and_caps(
         &self,
         module_name: Option<&str>,
-        manifest: Option<&[crate::passes::PythonToolManifestEntry]>,
+        manifest: Option<&[crate::passes::PythonCapabilityManifestEntry]>,
         known_caps: &std::collections::HashSet<String>,
     ) -> Result<Artifact> {
         let payload = self.emit_artifact_payload(module_name)?;
@@ -127,11 +127,11 @@ impl Module {
             .map_err(invalid_input_error)?;
         crate::token_estimate::refine_token_estimates(&mut dags);
 
-        // Post-MLIR tool-binding-check: validate INV_TOOL ↔ REGISTER_CAPABILITY
+        // Post-MLIR capability-binding-check: validate INV_CAP ↔ REGISTER_CAPABILITY
         // and copy `python_handler_id` from registrations onto invocations.
         // W721/W723 warnings are logged here (non-fatal).
         for dag in &mut dags {
-            let warnings = crate::passes::tool_binding_check_dag(dag, manifest, known_caps)?;
+            let warnings = crate::passes::capability_binding_check_dag(dag, manifest, known_caps)?;
             for w in &warnings {
                 eprintln!("warning[{}]: {}", w.code, w.message);
             }
@@ -152,7 +152,7 @@ impl Module {
         self.generate_artifact_bytes_with_name(None)
     }
 
-    /// Artifact bytes with host-declared `known_caps` for the tool-binding check.
+    /// Artifact bytes with host-declared `known_caps` for the capability-binding check.
     pub fn generate_artifact_bytes_with_known_caps(
         &self,
         known_caps: &std::collections::HashSet<String>,

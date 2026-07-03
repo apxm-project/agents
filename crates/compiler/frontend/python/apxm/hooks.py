@@ -2,7 +2,7 @@
 
 A hook reuses the SAME invocation path as `@tool`: it produces a stable
 `handler_id` and registers the callable in the shared tool registry, so the
-runtime `PythonToolBridge` dispatches tools and hooks through one mechanism
+runtime `PythonHandlerBridge` dispatches tools and hooks through one mechanism
 (constitution #4 — one Python-handler mechanism). The frontend records each
 hook into the artifact's hooks sidecar; later a `REGISTER_HOOK` op lowers
 the binding so it travels inside the artifact (AIR-portable, constitution #3).
@@ -25,8 +25,8 @@ class LifecycleEvent(str, Enum):
     POST_TURN = "post_turn"
     PRE_ASK = "pre_ask"
     POST_ASK = "post_ask"
-    PRE_TOOL = "pre_tool"
-    POST_TOOL = "post_tool"
+    PRE_CAP = "pre_cap"
+    POST_CAP = "post_cap"
 
 
 class HookMode(str, Enum):
@@ -40,7 +40,7 @@ GATE_LIFECYCLE_EVENTS: frozenset[str] = frozenset(
         LifecycleEvent.SESSION_START.value,
         LifecycleEvent.PRE_TURN.value,
         LifecycleEvent.PRE_ASK.value,
-        LifecycleEvent.PRE_TOOL.value,
+        LifecycleEvent.PRE_CAP.value,
     }
 )
 HOOK_MODES: frozenset[str] = frozenset(mode.value for mode in HookMode)
