@@ -111,10 +111,11 @@ describe("to_air() emission", () => {
     });
 
     it("capability_pipeline: chained capability invocations", () => {
-      // Note: unlike ask()/communicate(), invokeCapability() does not accept
-      // an `inputs` map (its options type has no such field and its `...rest`
-      // spread does not filter one out — passing one would leak a NodeRef
-      // into node attributes). Wire the dependency explicitly instead.
+      // invokeCapability() accepts an `inputs` map like ask()/communicate()
+      // (TSF-4 fix); this fixture wires the dependency explicitly instead
+      // since `digest`'s params template references `{lookup}` inside a
+      // literal JSON string rather than via the templated-attribute
+      // auto-wiring path.
       const g = new GraphBuilder("capability_pipeline");
       const lookup = g.invokeCapability({
         name: "invoke_lookup",
