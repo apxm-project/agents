@@ -91,6 +91,38 @@ export interface RegisterCapabilityOptions {
   [extra: string]: unknown;
 }
 
+export interface PauseOptions {
+  name?: string;
+  message: string;
+  checkpointId?: string;
+  timeoutMs?: number;
+  inputs?: Record<string, NodeRef>;
+  [extra: string]: unknown;
+}
+
+export interface ResumeOptions {
+  name?: string;
+  checkpoint: string;
+  pollMaxAttempts?: number;
+  pollIntervalMs?: number;
+  serverUrl?: string;
+  inputs?: Record<string, NodeRef>;
+  [extra: string]: unknown;
+}
+
+export interface AutonomousOptions {
+  name?: string;
+  prompt: string;
+  maxIterations?: number;
+  model?: string;
+  provider?: string;
+  backend?: string;
+  systemPrompt?: string;
+  temperature?: number;
+  inputs?: Record<string, NodeRef>;
+  [extra: string]: unknown;
+}
+
 function dropUndefined(attrs: Attrs): Attrs {
   const out: Attrs = {};
   for (const [k, v] of Object.entries(attrs)) {
@@ -283,6 +315,53 @@ export class GraphBuilder {
       ...rest,
     };
     return this.addNode(name ?? this.autoName("REGISTER_CAPABILITY"), "REGISTER_CAPABILITY", attrs);
+  }
+
+  /** Suspend execution pending human-in-the-loop review (PAUSE). Attributes
+   * (message/checkpointId/timeoutMs) are runtime-only metadata — the current
+   * op-spec emits no text for them, only the node's Data-dependency operands. */
+  pause(options: PauseOptions): NodeRef {
+    const { name, message, checkpointId, timeoutMs, inputs, ...rest } = options;
+    const attrs: Attrs = { message, checkpoint_id: checkpointId, timeout_ms: timeoutMs, ...rest };
+    const node = this.addNode(name ?? this.autoName("PAUSE"), "PAUSE", attrs);
+    this.wireInputs(node, inputs);
+    return node;
+  }
+
+  /** Resume a suspended PAUSE checkpoint (RESUME). Attributes (checkpoint id,
+   * polling config) are runtime-only metadata — the current op-spec emits no
+   * text for them, only the node's Data-dependency operands. */
+  resume(options: ResumeOptions): NodeRef {
+    const { name, checkpoint, pollMaxAttempts, pollIntervalMs, serverUrl, inputs, ...rest } = options;
+    const attrs: Attrs = {
+      checkpoint,
+      poll_max_attempts: pollMaxAttempts,
+      poll_interval_ms: pollIntervalMs,
+      server_url: serverUrl,
+      ...rest,
+    };
+    const node = this.addNode(name ?? this.autoName("RESUME"), "RESUME", attrs);
+    this.wireInputs(node, inputs);
+    return node;
+  }
+
+  /** Run a goal-directed autonomous loop (AUTONOMOUS). */
+  autonomous(options: AutonomousOptions): NodeRef {
+    const { name, prompt, maxIterations, model, provider, backend, systemPrompt, temperature, inputs, ...rest } =
+      options;
+    const attrs: Attrs = {
+      prompt,
+      max_iterations: maxIterations,
+      model,
+      provider,
+      backend,
+      system_prompt: systemPrompt,
+      temperature,
+      ...rest,
+    };
+    const node = this.addNode(name ?? this.autoName("AUTONOMOUS"), "AUTONOMOUS", attrs);
+    this.wireInputs(node, inputs);
+    return node;
   }
 
   /** Insert a checkpoint barrier (fence with checkpoint semantics). */
