@@ -59,9 +59,9 @@ impl CapabilityRegistry {
     /// Register a capability, replacing any existing one of the same name.
     ///
     /// Dynamic HTTP capabilities are re-registered every turn by hosts whose
-    /// tool surface is context-scoped (e.g. CLIC re-registers the project's
-    /// tools each conversation turn). Re-registration must overwrite rather
-    /// than fail so the latest schema/endpoint wins.
+    /// tool surface is context-scoped (e.g. a host app re-registers the
+    /// project's tools each conversation turn). Re-registration must
+    /// overwrite rather than fail so the latest schema/endpoint wins.
     pub fn register_or_replace(
         &self,
         capability: Arc<dyn CapabilityExecutor>,
