@@ -1097,8 +1097,8 @@ impl_event_payload!(TurnBoundaryPayload, kind::TURN_BOUNDARY);
 // Emitted alongside the Layer 1 graph events whenever the executor is
 // inside an agent scope. See `crates/runtime/engine/src/executor/
 // agent_scope.rs` for the scope primitive and CLAUDE.md §10 for the
-// canonical pairing rules. Field shapes mirror CLIC's
-// `ClicDispatchEventKind` payloads so the relay can stop translating.
+// canonical pairing rules. Field shapes mirror the host app's dispatch
+// event-kind payloads so the relay can stop translating.
 // ===========================================================================
 
 /// The outermost executor entry began — a user turn started.
@@ -1106,7 +1106,7 @@ impl_event_payload!(TurnBoundaryPayload, kind::TURN_BOUNDARY);
 pub struct TurnStartedPayload {
     /// APXM execution id for this turn.
     pub execution_id: String,
-    /// Optional CLIC-facing turn id (when one was supplied by the caller).
+    /// Optional host-facing turn id (when one was supplied by the caller).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub turn_id: Option<String>,
     /// Optional human-readable label for the top-level agent (e.g. "Cleo").
@@ -1281,7 +1281,7 @@ pub struct ApprovalRequestPayload {
     pub agent_code: String,
     /// Tool name being gated.
     pub tool_name: String,
-    /// Stable approval id (CLIC-issued where available).
+    /// Stable approval id (host-issued where available).
     pub approval_id: String,
     /// Coarse risk classification (`"low"` | `"medium"` | `"high"`).
     pub risk_level: String,

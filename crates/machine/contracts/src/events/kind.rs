@@ -195,8 +195,8 @@ pub const TURN_BOUNDARY: EventKind =
 // These are emitted alongside the existing Layer 1 graph events
 // whenever the executor is inside an agent scope (see
 // `crates/runtime/engine/src/executor/agent_scope.rs`). They are
-// snake_case and mirror CLIC's `ClicDispatchEventKind` so the relay
-// can stop translating.
+// snake_case and mirror the host app's dispatch event-kind vocabulary so
+// the relay can stop translating.
 pub const TURN_STARTED: EventKind = EventKind::new("turn_started", EventCategory::Lifecycle, false);
 pub const TURN_COMPLETE: EventKind =
     EventKind::new("turn_complete", EventCategory::Lifecycle, true);
