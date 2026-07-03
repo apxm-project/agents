@@ -1,7 +1,7 @@
 //! Shared SSE permission prompt handling for chat and watch.
 
 use anyhow::Result;
-use apxm_client::{
+use crate::client::{
     Client,
     events::{parse_approval_prompt, prompt_permission_decision},
     types::{PermissionResponse, PermissionResponseDecision},

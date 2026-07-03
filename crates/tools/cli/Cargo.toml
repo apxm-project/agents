@@ -18,7 +18,9 @@ name = "apxm"
 path = "src/main.rs"
 
 [dependencies]
-apxm-client.workspace = true
+# Typed apxm-server HTTP client (folded in from the former standalone
+# apxm-client crate, RT-5 — no consumer outside this binary).
+progenitor-client.workspace = true
 apxm-core.workspace = true
 apxm-ais.workspace = true
 apxm-backends.workspace = true
@@ -60,6 +62,12 @@ tempfile.workspace = true
 
 [build-dependencies]
 apxm-core.workspace = true
+# apxm-server client codegen (folded in from apxm-client, RT-5).
+progenitor.workspace = true
+openapiv3.workspace = true
+serde_yaml.workspace = true
+prettyplease = "0.2"
+syn = "2.0"
 
 [features]
 default = []

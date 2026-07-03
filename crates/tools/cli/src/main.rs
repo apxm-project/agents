@@ -16,6 +16,10 @@
     clippy::struct_field_names
 )]
 
+// Typed apxm-server HTTP client (folded in from the former standalone
+// apxm-client crate, RT-5). `goal` uses it unconditionally; `chat`/`watch`/
+// `sse_permissions` use it under the `driver` feature only.
+mod client;
 mod commands;
 // Only the driver-gated `chat` command consumes this; gate it to match so the
 // default (non-driver) build doesn't compile it as dead code.

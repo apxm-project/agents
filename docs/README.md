@@ -72,7 +72,8 @@ runtime →  apxm-runtime, apxm-backends, (execution, LLM I/O,
            apxm-backend-registry         backend registry; refs only)
 orchestr→  apxm-driver, apxm-acp,       (driver/library glue, ACP protocol,
            apxm-artifact                 artifact load/save)
-tools   →  apxm-cli, apxm-client, apxm  (developer CLI, generated client, facade)
+tools   →  apxm-cli, apxm             (developer CLI incl. generated apxm-server
+                                        client as a module, facade)
 ```
 
 Each crate has a README under `crates/<tier>/<name>/README.md` describing what it
