@@ -99,7 +99,7 @@ export const ASK: OpSpec = {
   op: "ASK",
   name: "Ask",
   category: "reasoning" as OpCategory,
-  description: "Simple Q&A with LLM (no extended thinking) - LOW latency",
+  description: "Simple Q&A with LLM (no extended thinking)",
   longDescription: "Sends a prompt to the configured LLM and returns the response. The lightest LLM operation — no chain-of-thought or extended thinking. Use for straightforward questions, classifications, extractions, or reformulations. Template strings support named `{input}` interpolation for dataflow inputs via the node's `input_names` array.",
   latency: "medium",
   fields: [
@@ -117,7 +117,7 @@ export const THINK: OpSpec = {
   op: "THINK",
   name: "Think",
   category: "reasoning" as OpCategory,
-  description: "Extended thinking with token_budget - HIGH latency",
+  description: "Extended thinking with token_budget",
   longDescription: "Activates extended thinking (chain-of-thought) with a configurable token budget. The LLM produces internal reasoning before the final answer. Use for complex multi-step problems, math, code generation, or planning that benefits from deliberate reasoning. The budget controls how many tokens the model can spend thinking.",
   latency: "high",
   fields: [
@@ -136,7 +136,7 @@ export const REASON: OpSpec = {
   op: "REASON",
   name: "Reason",
   category: "reasoning" as OpCategory,
-  description: "Structured reasoning with belief/goal updates - MEDIUM latency",
+  description: "Structured reasoning with belief/goal updates",
   longDescription: "Performs structured reasoning that can update the agent's beliefs and goals (AAM state). Unlike ASK, the runtime parses the LLM response for belief and goal mutations. Use when the agent needs to update its internal state based on new information. Supports structured JSON output mode.",
   latency: "medium",
   fields: [
@@ -541,43 +541,6 @@ export const UPDATE_GOAL: OpSpec = {
   exampleJson: "{\"id\": 3, \"op\": \"UPDATE_GOAL\", \"attributes\": {\"goal_id\": \"optimize_latency\", \"action\": \"set\", \"priority\": 2}}",
 } as const;
 
-export const GUARD: OpSpec = {
-  op: "GUARD",
-  name: "Guard",
-  category: "control_flow" as OpCategory,
-  description: "Enforce preconditions: halt or skip based on condition",
-  longDescription: "Evaluates a condition expression against the input token. If the condition fails, the guard either halts execution with an error or skips the downstream subgraph (configurable via on_fail). Use to enforce invariants like confidence thresholds, non-null checks, or content validation.",
-  latency: "none",
-  fields: [
-    { name: "condition", description: "Condition expression: '> 0.8', '!= null', 'not_empty', etc.", required: true, refType: null },
-    { name: "error_message", description: "Message on failure", required: false, refType: null },
-    { name: "on_fail", description: "Failure mode: halt (default) or skip", required: false, refType: null },
-  ],
-  producesOutput: true,
-  needsSubmission: false,
-  minInputs: 1,
-  exampleJson: "{\"id\": 3, \"op\": \"GUARD\", \"attributes\": {\"condition\": \"> 0.8\", \"on_fail\": \"skip\", \"error_message\": \"Confidence too low\"}}",
-} as const;
-
-export const CLAIM: OpSpec = {
-  op: "CLAIM",
-  name: "Claim",
-  category: "communication" as OpCategory,
-  description: "Atomically claim a task from a shared work queue via APXM server",
-  longDescription: "Claims a task from a distributed work queue managed by the APXM server. The claim is atomic — only one agent gets each task. The claimed task is leased for a configurable duration. If the agent doesn't complete within the lease, the task returns to the queue for other agents.",
-  latency: "low",
-  fields: [
-    { name: "queue", description: "Queue name to claim from", required: true, refType: null },
-    { name: "lease_ms", description: "Lease duration in ms (default: 60000)", required: false, refType: null },
-    { name: "max_wait_ms", description: "Max time to wait for a task (default: 5000)", required: false, refType: null },
-    { name: "server_url", description: "Override APXM_SERVER_URL env var", required: false, refType: null },
-  ],
-  producesOutput: true,
-  needsSubmission: true,
-  minInputs: 0,
-  exampleJson: "{\"id\": 2, \"op\": \"CLAIM\", \"attributes\": {\"queue\": \"review_tasks\", \"lease_ms\": 30000}}",
-} as const;
-
 export const PAUSE: OpSpec = {
   op: "PAUSE",
   name: "Pause",
@@ -635,24 +598,6 @@ export const DELEGATE: OpSpec = {
   exampleJson: "{\\\"id\\\": 3, \\\"op\\\": \\\"DELEGATE\\\", \\\"attributes\\\": {\\\"task_spec\\\": \\\"Analyze the dataset\\\", \\\"target_agent\\\": \\\"analyst\\\"}}",
 } as const;
 
-export const NEGOTIATE: OpSpec = {
-  op: "NEGOTIATE",
-  name: "Negotiate",
-  category: "coordination" as OpCategory,
-  description: "Multi-agent negotiation protocol for consensus building",
-  longDescription: "Initiates a multi-party negotiation protocol among a set of agents. A proposal is circulated to all parties for a configurable number of rounds. Returns the consensus result or a timeout if no agreement is reached.",
-  latency: "high",
-  fields: [
-    { name: "parties", description: "List of agent names participating in negotiation", required: true, refType: null },
-    { name: "proposal", description: "The proposal to negotiate on", required: true, refType: null },
-    { name: "max_rounds", description: "Maximum negotiation rounds (default: 3)", required: false, refType: null },
-  ],
-  producesOutput: true,
-  needsSubmission: true,
-  minInputs: 0,
-  exampleJson: "{\\\"id\\\": 4, \\\"op\\\": \\\"NEGOTIATE\\\", \\\"attributes\\\": {\\\"parties\\\": [\\\"agent_a\\\", \\\"agent_b\\\"], \\\"proposal\\\": \\\"Choose the best approach\\\", \\\"max_rounds\\\": 3}}",
-} as const;
-
 export const NOP: OpSpec = {
   op: "NOP",
   name: "Nop",
@@ -707,23 +652,6 @@ export const SPAWN_AGENT: OpSpec = {
   needsSubmission: true,
   minInputs: 0,
   exampleJson: "{\"id\": 1, \"op\": \"SPAWN_AGENT\", \"attributes\": {\"agent_name\": \"worker\", \"profile\": \"example-acp-profile\", \"mode\": \"architect\"}}",
-} as const;
-
-export const SPAWN_TEAM: OpSpec = {
-  op: "SPAWN_TEAM",
-  name: "SpawnTeam",
-  category: "coordination" as OpCategory,
-  description: "Spawn all members of a team (expands to N SPAWN_AGENT operations)",
-  longDescription: "Spawns all members of a named team definition from ~/.apxm/teams.toml. Each member is spawned with its configured role, profile, and optional system_prompt. Returns an object containing all spawned agent identifiers. Team definitions are loaded from the TeamRegistry at runtime.",
-  latency: "medium",
-  fields: [
-    { name: "team_name", description: "Name of the team to spawn (from ~/.apxm/teams.toml)", required: true, refType: null },
-    { name: "cwd", description: "Working directory for all team member subprocesses (defaults to current dir)", required: false, refType: null },
-  ],
-  producesOutput: true,
-  needsSubmission: true,
-  minInputs: 0,
-  exampleJson: "{\"id\": 1, \"op\": \"SPAWN_TEAM\", \"attributes\": {\"team_name\": \"ultrathink\", \"cwd\": \"/path/to/project\"}}",
 } as const;
 
 export const REGISTER_CAPABILITY: OpSpec = {
@@ -868,16 +796,12 @@ export const ALL_OPERATIONS: readonly OpSpec[] = [
   COMMUNICATE,
   HANDOFF,
   UPDATE_GOAL,
-  GUARD,
-  CLAIM,
   PAUSE,
   RESUME,
   DELEGATE,
-  NEGOTIATE,
   NOP,
   IDENTITY,
   SPAWN_AGENT,
-  SPAWN_TEAM,
   REGISTER_CAPABILITY,
   REGISTER_HOOK,
   AUTONOMOUS,
@@ -901,7 +825,6 @@ export type OpCategory =
 
 export const ATTR = {
   AGENT_NAME: "agent_name",
-  TEAM_NAME: "team_name",
   FLOW_NAME: "flow_name",
   PROFILE: "profile",
   AGENT_ROUTE: "agent_route",
@@ -963,7 +886,6 @@ export const ATTR = {
   GOAL: "goal",
   GOAL_ID: "goal_id",
   PRIORITY: "priority",
-  CONDITION: "condition",
   EVIDENCE: "evidence",
   CLAIM: "claim",
   GUARDRAIL_KIND: "guardrail_kind",
@@ -980,7 +902,6 @@ export const ATTR = {
   DEFAULT_REGION: "default_region",
   REGION: "region",
   ON_FAIL: "on_fail",
-  ERROR_MESSAGE: "error_message",
   RETRY_MAX: "retry_max",
   RETRY_BACKOFF_MS: "retry_backoff_ms",
   CONTINUE_ON_ERROR: "continue_on_error",
@@ -994,14 +915,11 @@ export const ATTR = {
   TRACE_ID: "trace_id",
   TRACE: "trace",
   TRACE_QUERY: "trace_query",
-  QUEUE: "queue",
   CHECKPOINT: "checkpoint",
   CHECKPOINT_ID: "checkpoint_id",
   SERVER_URL: "server_url",
   STAGING_ID: "staging_id",
   CONTEXT_KEY: "context_key",
-  LEASE_MS: "lease_ms",
-  MAX_WAIT_MS: "max_wait_ms",
   NOTIFICATION_URL: "notification_url",
   POLL_INTERVAL_MS: "poll_interval_ms",
   POLL_MAX_ATTEMPTS: "poll_max_attempts",
@@ -1012,9 +930,6 @@ export const ATTR = {
   COUNT: "count",
   TASK_SPEC: "task_spec",
   TARGET_AGENT: "target_agent",
-  PARTIES: "parties",
-  PROPOSAL: "proposal",
-  MAX_ROUNDS: "max_rounds",
   ARGS: "args",
   SKILL_ID: "skill_id",
   SESSION_ROOT: "session_root",

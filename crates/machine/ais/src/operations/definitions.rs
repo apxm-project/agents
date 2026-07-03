@@ -1,7 +1,7 @@
 //! AIS Operation Definitions - source of truth
 //!
-//! This module contains the complete specification for all 44 AIS operations
-//! (41 public + 1 metadata + 2 internal). Both the compiler and runtime use
+//! This module contains the complete specification for all 41 AIS operations
+//! (38 public + 1 metadata + 2 internal). Both the compiler and runtime use
 //! these definitions to ensure consistent semantics.
 //!
 //! The artifact wire format and the C++ `OperationKind` enum are *generated*
@@ -22,9 +22,9 @@ use std::fmt;
 
 /// Represents all AIS operation types.
 ///
-/// This enum is the canonical list of operations (44 total):
+/// This enum is the canonical list of operations (41 total):
 /// - 1 metadata operation (AgentOp)
-/// - 41 public operations
+/// - 38 public operations
 /// - 2 internal operations (ConstStr, Yield)
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "SCREAMING_SNAKE_CASE")]
@@ -111,10 +111,6 @@ pub enum AISOperationType {
     // Coordination Operations
     /// Update agent goals at runtime (set/remove/clear).
     UpdateGoal,
-    /// Enforce preconditions before execution continues.
-    Guard,
-    /// Atomically claim a task from a shared work queue.
-    Claim,
     /// Suspend execution pending human-in-the-loop review.
     Pause,
     /// Resume a suspended execution from a PAUSE checkpoint.
@@ -123,8 +119,6 @@ pub enum AISOperationType {
     // Multi-agent coordination operations
     /// Delegate a task to a sub-agent.
     Delegate,
-    /// Multi-agent negotiation protocol.
-    Negotiate,
 
     // Identity Operations
     /// No-op passthrough (no AAM transition).
@@ -135,8 +129,6 @@ pub enum AISOperationType {
     // Self-Organization Operations
     /// Spawn a new agent instance at runtime.
     SpawnAgent,
-    /// Spawn all members of a team (expands to N SPAWN_AGENT operations).
-    SpawnTeam,
     /// Register a new capability in the runtime registry.
     RegisterCapability,
     /// Register an author lifecycle hook into the per-artifact hook registry.
@@ -160,7 +152,9 @@ pub enum AISOperationType {
 /// Canonical AIS artifact wire operation table.
 ///
 /// This table is the single source of truth for operation-kind indexes in the
-/// artifact format. Index 30 is intentionally reserved.
+/// artifact format. Indices 26, 27, 30, 32, and 39 are retired (formerly
+/// GUARD, CLAIM, NEGOTIATE, and SPAWN_TEAM — deleted as unexercised in RT-1;
+/// 30 was always reserved) and must never be reassigned.
 pub const WIRE_INDEXED_OPERATIONS: &[(u32, AISOperationType)] = &[
     (0, AISOperationType::InvTool),
     (1, AISOperationType::Ask),
@@ -188,19 +182,15 @@ pub const WIRE_INDEXED_OPERATIONS: &[(u32, AISOperationType)] = &[
     (23, AISOperationType::Think),
     (24, AISOperationType::Reason),
     (25, AISOperationType::UpdateGoal),
-    (26, AISOperationType::Guard),
-    (27, AISOperationType::Claim),
     (28, AISOperationType::Pause),
     (29, AISOperationType::Resume),
     (31, AISOperationType::Delegate),
-    (32, AISOperationType::Negotiate),
     (33, AISOperationType::Nop),
     (34, AISOperationType::Identity),
     (35, AISOperationType::SpawnAgent),
     (36, AISOperationType::RegisterCapability),
     (37, AISOperationType::Autonomous),
     (38, AISOperationType::Checkpoint),
-    (39, AISOperationType::SpawnTeam),
     (40, AISOperationType::Handoff),
     (41, AISOperationType::WorkflowSpawn),
     (42, AISOperationType::CallSkill),
@@ -249,19 +239,15 @@ impl fmt::Display for AISOperationType {
             AISOperationType::Handoff => write!(f, "HANDOFF"),
             // Coordination
             AISOperationType::UpdateGoal => write!(f, "UPDATE_GOAL"),
-            AISOperationType::Guard => write!(f, "GUARD"),
-            AISOperationType::Claim => write!(f, "CLAIM"),
             AISOperationType::Pause => write!(f, "PAUSE"),
             AISOperationType::Resume => write!(f, "RESUME"),
             // Multi-agent coordination
             AISOperationType::Delegate => write!(f, "DELEGATE"),
-            AISOperationType::Negotiate => write!(f, "NEGOTIATE"),
             // Identity
             AISOperationType::Nop => write!(f, "NOP"),
             AISOperationType::Identity => write!(f, "IDENTITY"),
             // Self-Organization
             AISOperationType::SpawnAgent => write!(f, "SPAWN_AGENT"),
-            AISOperationType::SpawnTeam => write!(f, "SPAWN_TEAM"),
             AISOperationType::RegisterCapability => write!(f, "REGISTER_CAPABILITY"),
             AISOperationType::RegisterHook => write!(f, "REGISTER_HOOK"),
             // Autonomous
@@ -311,16 +297,12 @@ impl std::str::FromStr for AISOperationType {
             "communicate" => Ok(AISOperationType::Communicate),
             "handoff" => Ok(AISOperationType::Handoff),
             "update_goal" => Ok(AISOperationType::UpdateGoal),
-            "guard" => Ok(AISOperationType::Guard),
-            "claim" => Ok(AISOperationType::Claim),
             "pause" => Ok(AISOperationType::Pause),
             "resume" => Ok(AISOperationType::Resume),
             "delegate" => Ok(AISOperationType::Delegate),
-            "negotiate" => Ok(AISOperationType::Negotiate),
             "nop" => Ok(AISOperationType::Nop),
             "identity" => Ok(AISOperationType::Identity),
             "spawn_agent" => Ok(AISOperationType::SpawnAgent),
-            "spawn_team" => Ok(AISOperationType::SpawnTeam),
             "register_capability" => Ok(AISOperationType::RegisterCapability),
             "register_hook" => Ok(AISOperationType::RegisterHook),
             "autonomous" => Ok(AISOperationType::Autonomous),
@@ -365,16 +347,12 @@ impl AISOperationType {
             AISOperationType::Communicate => "communicate",
             AISOperationType::Handoff => "handoff",
             AISOperationType::UpdateGoal => "update_goal",
-            AISOperationType::Guard => "guard",
-            AISOperationType::Claim => "claim",
             AISOperationType::Pause => "pause",
             AISOperationType::Resume => "resume",
             AISOperationType::Delegate => "delegate",
-            AISOperationType::Negotiate => "negotiate",
             AISOperationType::Nop => "nop",
             AISOperationType::Identity => "identity",
             AISOperationType::SpawnAgent => "spawn_agent",
-            AISOperationType::SpawnTeam => "spawn_team",
             AISOperationType::RegisterCapability => "register_capability",
             AISOperationType::RegisterHook => "register_hook",
             AISOperationType::Autonomous => "autonomous",
@@ -411,7 +389,7 @@ impl AISOperationType {
         WIRE_INDEXED_OPERATIONS
     }
 
-    /// Get all operation types (44 total).
+    /// Get all operation types (41 total).
     pub fn all_operations() -> &'static [AISOperationType] {
         &[
             AISOperationType::Agent,
@@ -443,16 +421,12 @@ impl AISOperationType {
             AISOperationType::Communicate,
             AISOperationType::Handoff,
             AISOperationType::UpdateGoal,
-            AISOperationType::Guard,
-            AISOperationType::Claim,
             AISOperationType::Pause,
             AISOperationType::Resume,
             AISOperationType::Delegate,
-            AISOperationType::Negotiate,
             AISOperationType::Nop,
             AISOperationType::Identity,
             AISOperationType::SpawnAgent,
-            AISOperationType::SpawnTeam,
             AISOperationType::RegisterCapability,
             AISOperationType::RegisterHook,
             AISOperationType::Autonomous,
@@ -728,17 +702,6 @@ const EMISSION_LOOP_START: MlirEmissionSpec = MlirEmissionSpec {
     result_type: MlirResultType::Token,
     positional_attrs: &[],
     keywords: &["max_iterations", "label"],
-    syntactic_keywords: &[],
-};
-
-/// Emission spec for NEGOTIATE: `proposal` primary, parties/max_rounds in the
-/// attr-dict, parenthesized token inputs, token result.
-const EMISSION_NEGOTIATE: MlirEmissionSpec = MlirEmissionSpec {
-    primary_attr: Some("proposal"),
-    context_style: ContextStyle::Parenthesized,
-    result_type: MlirResultType::Token,
-    positional_attrs: &[],
-    keywords: &["parties", "max_rounds"],
     syntactic_keywords: &[],
 };
 
@@ -1597,59 +1560,6 @@ pub static AIS_OPERATIONS: &[OperationSpec] = &[
         emission: EMISSION_TOKEN_BRACKETED,
     },
     OperationSpec {
-        op_type: AISOperationType::Guard,
-        name: "Guard",
-        category: OperationCategory::ControlFlow,
-        description: "Enforce preconditions: halt or skip based on condition",
-        long_description: "Evaluates a condition expression against the input token. If the \
-            condition fails, the guard either halts execution with an error or skips the \
-            downstream subgraph (configurable via on_fail). Use to enforce invariants like \
-            confidence thresholds, non-null checks, or content validation.",
-        latency: OperationLatency::None,
-        example_json: Some(
-            r#"{"id": 3, "op": "GUARD", "attributes": {"condition": "> 0.8", "on_fail": "skip", "error_message": "Confidence too low"}}"#,
-        ),
-        fields: &[
-            OperationField::required(
-                attrs::CONDITION,
-                "Condition expression: '> 0.8', '!= null', 'not_empty', etc.",
-            ),
-            OperationField::optional(attrs::ERROR_MESSAGE, "Message on failure"),
-            OperationField::optional(attrs::ON_FAIL, "Failure mode: halt (default) or skip"),
-        ],
-        needs_submission: false,
-        min_inputs: 1,
-        produces_output: true,
-        emission: EMISSION_TOKEN_BRACKETED,
-    },
-    OperationSpec {
-        op_type: AISOperationType::Claim,
-        name: "Claim",
-        category: OperationCategory::Communication,
-        description: "Atomically claim a task from a shared work queue via APXM server",
-        long_description: "Claims a task from a distributed work queue managed by the APXM \
-            server. The claim is atomic — only one agent gets each task. The claimed task \
-            is leased for a configurable duration. If the agent doesn't complete within the \
-            lease, the task returns to the queue for other agents.",
-        latency: OperationLatency::Low,
-        example_json: Some(
-            r#"{"id": 2, "op": "CLAIM", "attributes": {"queue": "review_tasks", "lease_ms": 30000}}"#,
-        ),
-        fields: &[
-            OperationField::required(attrs::QUEUE, "Queue name to claim from"),
-            OperationField::optional(attrs::LEASE_MS, "Lease duration in ms (default: 60000)"),
-            OperationField::optional(
-                attrs::MAX_WAIT_MS,
-                "Max time to wait for a task (default: 5000)",
-            ),
-            OperationField::optional(attrs::SERVER_URL, "Override APXM_SERVER_URL env var"),
-        ],
-        needs_submission: true,
-        min_inputs: 0,
-        produces_output: true,
-        emission: EMISSION_TOKEN_BRACKETED,
-    },
-    OperationSpec {
         op_type: AISOperationType::Pause,
         name: "Pause",
         category: OperationCategory::Communication,
@@ -1747,31 +1657,6 @@ pub static AIS_OPERATIONS: &[OperationSpec] = &[
             keywords: &[],
             syntactic_keywords: &[(super::mlir_keywords::TO, attrs::TARGET_AGENT)],
         },
-    },
-    OperationSpec {
-        op_type: AISOperationType::Negotiate,
-        name: "Negotiate",
-        category: OperationCategory::Coordination,
-        description: "Multi-agent negotiation protocol for consensus building",
-        long_description: "Initiates a multi-party negotiation protocol among a set of agents. \
-            A proposal is circulated to all parties for a configurable number of rounds. \
-            Returns the consensus result or a timeout if no agreement is reached.",
-        latency: OperationLatency::High,
-        example_json: Some(
-            r#"{\"id\": 4, \"op\": \"NEGOTIATE\", \"attributes\": {\"parties\": [\"agent_a\", \"agent_b\"], \"proposal\": \"Choose the best approach\", \"max_rounds\": 3}}"#,
-        ),
-        fields: &[
-            OperationField::required(
-                attrs::PARTIES,
-                "List of agent names participating in negotiation",
-            ),
-            OperationField::required(attrs::PROPOSAL, "The proposal to negotiate on"),
-            OperationField::optional(attrs::MAX_ROUNDS, "Maximum negotiation rounds (default: 3)"),
-        ],
-        needs_submission: true,
-        min_inputs: 0,
-        produces_output: true,
-        emission: EMISSION_NEGOTIATE,
     },
     // ========== Identity Operations ==========
     OperationSpec {
@@ -1879,41 +1764,6 @@ pub static AIS_OPERATIONS: &[OperationSpec] = &[
                 attrs::CWD,
                 attrs::SYSTEM_PROMPT,
             ],
-            syntactic_keywords: &[],
-        },
-    },
-    OperationSpec {
-        op_type: AISOperationType::SpawnTeam,
-        name: "SpawnTeam",
-        category: OperationCategory::Coordination,
-        description: "Spawn all members of a team (expands to N SPAWN_AGENT operations)",
-        long_description: "Spawns all members of a named team definition from ~/.apxm/teams.toml. \
-            Each member is spawned with its configured role, profile, and optional system_prompt. \
-            Returns an object containing all spawned agent identifiers. Team definitions are loaded \
-            from the TeamRegistry at runtime.",
-        latency: OperationLatency::Medium,
-        example_json: Some(
-            r#"{"id": 1, "op": "SPAWN_TEAM", "attributes": {"team_name": "ultrathink", "cwd": "/path/to/project"}}"#,
-        ),
-        fields: &[
-            OperationField::required(
-                attrs::TEAM_NAME,
-                "Name of the team to spawn (from ~/.apxm/teams.toml)",
-            ),
-            OperationField::optional(
-                attrs::CWD,
-                "Working directory for all team member subprocesses (defaults to current dir)",
-            ),
-        ],
-        needs_submission: true,
-        min_inputs: 0,
-        produces_output: true,
-        emission: MlirEmissionSpec {
-            primary_attr: Some(attrs::TEAM_NAME),
-            context_style: ContextStyle::None,
-            result_type: MlirResultType::Token,
-            positional_attrs: &[],
-            keywords: &[attrs::CWD],
             syntactic_keywords: &[],
         },
     },
@@ -2256,13 +2106,13 @@ mod tests {
     fn test_operation_counts() {
         assert_eq!(
             AIS_OPERATIONS.len(),
-            45,
-            "Expected 45 total operations (1 metadata + 42 public + 2 internal)"
+            41,
+            "Expected 41 total operations (1 metadata + 38 public + 2 internal)"
         );
         assert_eq!(
             AISOperationType::all_operations().len(),
-            45,
-            "Expected 45 total operation types"
+            41,
+            "Expected 41 total operation types"
         );
     }
 
@@ -2307,12 +2157,14 @@ mod tests {
             AISOperationType::from_wire_index(29),
             Some(AISOperationType::Resume)
         );
-        // 30 is reserved (unassigned)
-        assert_eq!(
-            AISOperationType::from_wire_index(30),
-            None,
-            "Index 30 is unassigned and must return None"
-        );
+        // 26, 27, 30, 32, and 39 are retired/reserved (unassigned)
+        for retired in [26, 27, 30, 32, 39] {
+            assert_eq!(
+                AISOperationType::from_wire_index(retired),
+                None,
+                "Index {retired} is retired/unassigned and must return None"
+            );
+        }
         // Multi-agent coordination wire indices (31-37)
         assert_eq!(
             AISOperationType::from_wire_index(31),
@@ -2326,11 +2178,6 @@ mod tests {
         assert_eq!(
             AISOperationType::from_wire_index(38),
             Some(AISOperationType::Checkpoint)
-        );
-        // Team operations
-        assert_eq!(
-            AISOperationType::from_wire_index(39),
-            Some(AISOperationType::SpawnTeam)
         );
         // Handoff
         assert_eq!(

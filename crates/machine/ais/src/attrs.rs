@@ -6,7 +6,6 @@
 
 // -- Agent / identity --
 pub const AGENT_NAME: &str = "agent_name";
-pub const TEAM_NAME: &str = "team_name";
 pub const FLOW_NAME: &str = "flow_name";
 pub const PROFILE: &str = "profile";
 pub const AGENT_ROUTE: &str = "agent_route";
@@ -109,7 +108,6 @@ pub const LLM_OPERATION: &str = "llm_operation";
 pub const GOAL: &str = "goal";
 pub const GOAL_ID: &str = "goal_id";
 pub const PRIORITY: &str = "priority";
-pub const CONDITION: &str = "condition";
 pub const EVIDENCE: &str = "evidence";
 pub const CLAIM_TEXT: &str = "claim";
 pub const GUARDRAIL_KIND: &str = "guardrail_kind";
@@ -130,7 +128,6 @@ pub const REGION: &str = "region";
 
 // -- Error handling --
 pub const ON_FAIL: &str = "on_fail";
-pub const ERROR_MESSAGE: &str = "error_message";
 /// Declarative per-node retry/backoff + error-output primitive (additive,
 /// back-compatible). The runtime honors these on ANY node generically:
 ///
@@ -171,14 +168,11 @@ pub const TRACE: &str = "trace";
 pub const TRACE_QUERY: &str = "trace_query";
 
 // -- Server / queue --
-pub const QUEUE: &str = "queue";
 pub const CHECKPOINT: &str = "checkpoint";
 pub const CHECKPOINT_ID: &str = "checkpoint_id";
 pub const SERVER_URL: &str = "server_url";
 pub const STAGING_ID: &str = "staging_id";
 pub const CONTEXT_KEY: &str = "context_key";
-pub const LEASE_MS: &str = "lease_ms";
-pub const MAX_WAIT_MS: &str = "max_wait_ms";
 pub const NOTIFICATION_URL: &str = "notification_url";
 pub const POLL_INTERVAL_MS: &str = "poll_interval_ms";
 pub const POLL_MAX_ATTEMPTS: &str = "poll_max_attempts";
@@ -191,9 +185,6 @@ pub const COUNT: &str = "count";
 // -- Coordination --
 pub const TASK_SPEC: &str = "task_spec";
 pub const TARGET_AGENT: &str = "target_agent";
-pub const PARTIES: &str = "parties";
-pub const PROPOSAL: &str = "proposal";
-pub const MAX_ROUNDS: &str = "max_rounds";
 pub const ARGS: &str = "args";
 pub const SESSION_ROOT: &str = "session_root";
 /// Flow name on the structural flow-definition op.
@@ -284,9 +275,7 @@ pub const TEMPLATE_BEARING_ATTRS: &[&str] = &[
     MESSAGE,
     PARAMS_JSON,
     TASK_SPEC,
-    PROPOSAL,
     GOAL,
-    CONDITION,
     CLAIM_TEXT,
     EVIDENCE,
     TRACE_ID,
@@ -299,7 +288,6 @@ pub const TEMPLATE_BEARING_ATTRS: &[&str] = &[
 /// Verifies that every OperationSpec field references a constant defined here.
 pub const ALL_ATTR_NAMES: &[&str] = &[
     AGENT_NAME,
-    TEAM_NAME,
     FLOW_NAME,
     PROFILE,
     AGENT_ROUTE,
@@ -361,7 +349,6 @@ pub const ALL_ATTR_NAMES: &[&str] = &[
     GOAL,
     GOAL_ID,
     PRIORITY,
-    CONDITION,
     EVIDENCE,
     CLAIM_TEXT,
     GUARDRAIL_KIND,
@@ -378,7 +365,6 @@ pub const ALL_ATTR_NAMES: &[&str] = &[
     DEFAULT_REGION,
     REGION,
     ON_FAIL,
-    ERROR_MESSAGE,
     RETRY_MAX,
     RETRY_BACKOFF_MS,
     CONTINUE_ON_ERROR,
@@ -392,14 +378,11 @@ pub const ALL_ATTR_NAMES: &[&str] = &[
     TRACE_ID,
     TRACE,
     TRACE_QUERY,
-    QUEUE,
     CHECKPOINT,
     CHECKPOINT_ID,
     SERVER_URL,
     STAGING_ID,
     CONTEXT_KEY,
-    LEASE_MS,
-    MAX_WAIT_MS,
     NOTIFICATION_URL,
     POLL_INTERVAL_MS,
     POLL_MAX_ATTEMPTS,
@@ -410,9 +393,6 @@ pub const ALL_ATTR_NAMES: &[&str] = &[
     COUNT,
     TASK_SPEC,
     TARGET_AGENT,
-    PARTIES,
-    PROPOSAL,
-    MAX_ROUNDS,
     ARGS,
     SKILL_ID,
     SESSION_ROOT,

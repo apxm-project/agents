@@ -604,18 +604,14 @@ impl OperationDispatcher {
 
             // Coordination operations
             AISOperationType::UpdateGoal => update_goal::execute(ctx, node, inputs).await,
-            AISOperationType::Guard => guard::execute(ctx, node, inputs).await,
-            AISOperationType::Claim => claim::execute(ctx, node, inputs).await,
             AISOperationType::Pause => pause::execute(ctx, node, inputs).await,
             AISOperationType::Resume => resume::execute(ctx, node, inputs).await,
 
             // Multi-agent operations
             AISOperationType::Delegate => delegate::execute(ctx, node, inputs).await,
-            AISOperationType::Negotiate => negotiate::execute(ctx, node, inputs).await,
             AISOperationType::Nop => nop::execute(ctx, node, inputs).await,
             AISOperationType::Identity => identity::execute(ctx, node, inputs).await,
             AISOperationType::SpawnAgent => spawn_agent::execute(ctx, node, inputs).await,
-            AISOperationType::SpawnTeam => spawn_team::execute(ctx, node, inputs).await,
             AISOperationType::RegisterCapability => {
                 register_capability::execute(ctx, node, inputs).await
             }

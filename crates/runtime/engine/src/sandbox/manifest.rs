@@ -19,7 +19,7 @@ use serde::{Deserialize, Serialize};
 /// | T0   | THINK, REASON, PLAN, REFLECT, VERIFY, … | None | Pure LLM, no side effects |
 /// | LINK-TOOLS    | QMEM, UMEM, SMEM, … | PolicyOnly | Agent memory read/write |
 /// | LINK-RUNTIME  | ASK (w/ tools), INV, UPDATE_GOAL, EMIT | OsLevel | External I/O |
-/// | T3   | GUARD, CLAIM, RELEASE, RESUME, DELEGATE, SPAWN | Container | Multi-agent, resource claims |
+/// | T3   | RELEASE, RESUME, DELEGATE, SPAWN | Container | Multi-agent, resource claims |
 pub mod tier {
     pub const PURE: u8 = 0;
     #[allow(dead_code)] // Reserved for memory-tier classification (not yet wired to runtime)
@@ -125,7 +125,7 @@ pub fn classify_op(op: &str) -> (u8, IsolationLevel) {
         }
 
         // T3: Privileged operations — multi-agent coordination
-        "GUARD" | "CLAIM" | "RELEASE" | "RESUME" | "DELEGATE" | "SPAWN" => {
+        "RELEASE" | "RESUME" | "DELEGATE" | "SPAWN" => {
             (tier::PRIVILEGED, IsolationLevel::Container)
         }
 
