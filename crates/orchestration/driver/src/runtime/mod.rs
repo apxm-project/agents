@@ -46,6 +46,32 @@ fn parse_routing_target(target: Option<&str>) -> apxm_runtime::RoutingTarget {
     }
 }
 
+/// Build the [`apxm_runtime::ModelRouterConfig`]'s `operation_policies` from
+/// `config.chat.routing.operation_routes` — the shared config surface. Every
+/// runtime host (driver/CLI, server) that calls `Runtime::init_model_router`
+/// should feed it through this helper so the per-operation routing policy
+/// (ASK/THINK/etc. -> configured backend/model/target) is consulted
+/// consistently regardless of transport.
+pub fn operation_policies_from_config(
+    apxm_config: &crate::config::ApXmConfig,
+) -> Vec<apxm_runtime::OperationPolicy> {
+    apxm_config
+        .chat
+        .routing
+        .operation_routes
+        .iter()
+        .filter_map(|(op_str, route)| {
+            let operation = op_str.parse::<apxm_core::types::AISOperationType>().ok()?;
+            Some(apxm_runtime::OperationPolicy {
+                operation,
+                model: route.model.clone(),
+                backend: route.backend.clone(),
+                target: parse_routing_target(route.target.as_deref()),
+            })
+        })
+        .collect::<Vec<_>>()
+}
+
 /// Driver runtime executor for compiled DAGs.
 pub struct RuntimeExecutor {
     runtime: Arc<Runtime>,
@@ -64,25 +90,8 @@ impl RuntimeExecutor {
         // Initialize ModelRouter after LLM backends are registered.
         // Populate operation_policies from config.chat.routing.operation_routes so
         // the ModelRouter correctly routes ASK/THINK/etc. to their configured backends.
-        let router_operation_policies = config
-            .apxm_config
-            .chat
-            .routing
-            .operation_routes
-            .iter()
-            .filter_map(|(op_str, route)| {
-                let operation = op_str.parse::<apxm_core::types::AISOperationType>().ok()?;
-                Some(apxm_runtime::OperationPolicy {
-                    operation,
-                    model: route.model.clone(),
-                    backend: route.backend.clone(),
-                    target: parse_routing_target(route.target.as_deref()),
-                })
-            })
-            .collect::<Vec<_>>();
-
         let mut router_config = apxm_runtime::ModelRouterConfig::default();
-        router_config.operation_policies = router_operation_policies;
+        router_config.operation_policies = operation_policies_from_config(&config.apxm_config);
 
         runtime
             .init_model_router(router_config)
@@ -316,4 +325,70 @@ fn build_middlewares(configs: &[MiddlewareConfig]) -> Vec<Arc<dyn OperationMiddl
             }
         })
         .collect()
+}
+
+#[cfg(test)]
+mod operation_policy_tests {
+    use super::operation_policies_from_config;
+    use crate::config::{ApXmConfig, OperationRouteConfig};
+
+    // RTG-1: every runtime host that calls `Runtime::init_model_router` must
+    // feed it `operation_policies` derived from the same shared config
+    // surface (`chat.routing.operation_routes`) — this is the mechanism the
+    // driver/CLI path already relied on, and the server path (see
+    // apxm-server's `runtime_setup.rs`) now reuses this exact helper.
+    #[test]
+    fn builds_operation_policies_from_chat_routing_config() {
+        let mut config = ApXmConfig::default();
+        config.chat.routing.operation_routes.insert(
+            "ask".to_string(),
+            OperationRouteConfig {
+                backend: Some("anthropic".to_string()),
+                model: Some("claude-sonnet".to_string()),
+                target: Some("quality".to_string()),
+            },
+        );
+
+        let policies = operation_policies_from_config(&config);
+
+        assert_eq!(policies.len(), 1);
+        let policy = &policies[0];
+        assert_eq!(policy.operation, apxm_core::types::AISOperationType::Ask);
+        assert_eq!(policy.backend.as_deref(), Some("anthropic"));
+        assert_eq!(policy.model.as_deref(), Some("claude-sonnet"));
+        assert_eq!(policy.target, apxm_runtime::RoutingTarget::Quality);
+    }
+
+    #[test]
+    fn skips_unparseable_operation_names_and_defaults_missing_target() {
+        let mut config = ApXmConfig::default();
+        config.chat.routing.operation_routes.insert(
+            "not_a_real_operation".to_string(),
+            OperationRouteConfig {
+                backend: Some("anthropic".to_string()),
+                model: None,
+                target: None,
+            },
+        );
+        config.chat.routing.operation_routes.insert(
+            "think".to_string(),
+            OperationRouteConfig {
+                backend: Some("openai".to_string()),
+                model: None,
+                target: None,
+            },
+        );
+
+        let policies = operation_policies_from_config(&config);
+
+        assert_eq!(policies.len(), 1);
+        assert_eq!(policies[0].operation, apxm_core::types::AISOperationType::Think);
+        assert_eq!(policies[0].target, apxm_runtime::RoutingTarget::Balanced);
+    }
+
+    #[test]
+    fn empty_operation_routes_yield_empty_policies() {
+        let config = ApXmConfig::default();
+        assert!(operation_policies_from_config(&config).is_empty());
+    }
 }
