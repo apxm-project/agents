@@ -1,4 +1,10 @@
-// AUTO-GENERATED from openapi-session-v1.yaml. DO NOT EDIT BY HAND.
+// Hand-written wire types mirroring openapi-session-v1.yaml + apxm-server
+// session/run handlers. NOT generated — no generator produces this file.
+// Some types here (SessionHistoryResponse, CompactSessionResponse,
+// SessionRole) are consumed by Studio but are not yet modeled in
+// openapi-session-v1.yaml, so a real openapi-typescript codegen step would
+// currently regress on those exports; keep this file in sync by hand until
+// the OpenAPI spec covers the full session surface.
 
 export type TypedErrorClass = "program_fault" | "server_fault";
 
