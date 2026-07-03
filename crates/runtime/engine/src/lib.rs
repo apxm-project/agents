@@ -57,6 +57,7 @@
 pub use apxm_aam as aam;
 pub mod agent_pool;
 pub mod agent_router;
+pub mod agent_scoring;
 pub mod capability;
 mod constants;
 pub mod context_stack;

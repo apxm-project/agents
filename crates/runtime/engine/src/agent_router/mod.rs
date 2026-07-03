@@ -4,6 +4,7 @@
 //! the runtime so goals, workflow orchestration, and future APXM OS callers use
 //! one decision model.
 
+use crate::agent_scoring::{self, ScoringCandidate};
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
 use thiserror::Error;
@@ -211,8 +212,10 @@ impl AgentRouter {
         let mut selected_counts = initial_selected_counts.clone();
         let mut decisions = Vec::with_capacity(requests.len());
         for request in requests {
-            let required_capabilities = normalize_capabilities(&request.required_capabilities);
-            let preferred_profiles = normalize_profiles(&request.preferred_profiles);
+            let required_capabilities =
+                agent_scoring::normalize_capabilities(&request.required_capabilities);
+            let preferred_profiles =
+                agent_scoring::normalize_preferences(&request.preferred_profiles);
             let scores = score_candidates(
                 &normalized_candidates,
                 &required_capabilities,
@@ -355,7 +358,7 @@ struct NormalizedCandidate {
 
 impl NormalizedCandidate {
     fn new((index, candidate): (usize, &AgentRouteCandidate)) -> Self {
-        let capability_names = normalize_capabilities(&candidate.capabilities);
+        let capability_names = agent_scoring::normalize_capabilities(&candidate.capabilities);
         let capabilities = capability_names.iter().cloned().collect::<HashSet<_>>();
         Self {
             profile: candidate.profile.clone(),
@@ -368,9 +371,23 @@ impl NormalizedCandidate {
     }
 
     fn matches_required_capabilities(&self, required_capabilities: &[String]) -> bool {
-        required_capabilities
-            .iter()
-            .all(|required| self.capabilities.contains(required))
+        agent_scoring::matches_required_capabilities(&self.capabilities, required_capabilities)
+    }
+}
+
+/// Adapts `AgentRouter`'s ACP-profile candidate shape onto the shared,
+/// domain-agnostic scoring engine (`agent_scoring`, RTG-10).
+impl ScoringCandidate for NormalizedCandidate {
+    fn scoring_id(&self) -> &str {
+        &self.profile
+    }
+
+    fn scoring_capabilities(&self) -> &HashSet<String> {
+        &self.capabilities
+    }
+
+    fn scoring_index(&self) -> usize {
+        self.index
     }
 }
 
@@ -378,10 +395,7 @@ fn matching_candidates<'a>(
     candidates: &'a [NormalizedCandidate],
     required_capabilities: &[String],
 ) -> Vec<&'a NormalizedCandidate> {
-    candidates
-        .iter()
-        .filter(|candidate| candidate.matches_required_capabilities(required_capabilities))
-        .collect()
+    agent_scoring::matching_candidates(candidates, required_capabilities)
 }
 
 fn score_candidates(
@@ -390,50 +404,25 @@ fn score_candidates(
     preferred_profiles: &[String],
     selected_counts: &HashMap<String, usize>,
 ) -> Vec<AgentRouteScore> {
-    candidates
-        .iter()
-        .map(|candidate| {
-            let mut matched_capabilities = Vec::new();
-            let mut missing_capabilities = Vec::new();
-            for required in required_capabilities {
-                if candidate.capabilities.contains(required) {
-                    matched_capabilities.push(required.clone());
-                } else {
-                    missing_capabilities.push(required.clone());
-                }
-            }
-            let eligible = missing_capabilities.is_empty();
-            let preference_rank = preferred_profiles
-                .iter()
-                .position(|profile| profile == &candidate.profile);
-            let selected_count = selected_counts
-                .get(&candidate.profile)
-                .copied()
-                .unwrap_or(0);
-            let capability_fit_score = capability_fit_score(candidate, required_capabilities.len());
-            let reason = if eligible {
-                format!(
-                    "eligible: selected_count={selected_count}, capability_fit_score={capability_fit_score}"
-                )
-            } else {
-                format!(
-                    "missing required capabilities [{}]",
-                    missing_capabilities.join(", ")
-                )
-            };
-            AgentRouteScore {
-                profile: candidate.profile.clone(),
-                eligible,
-                matched_capabilities,
-                missing_capabilities,
-                selected_count,
-                capability_fit_score,
-                preference_rank,
-                registry_index: candidate.index,
-                reason,
-            }
-        })
-        .collect()
+    agent_scoring::score_candidates(
+        candidates,
+        required_capabilities,
+        preferred_profiles,
+        selected_counts,
+    )
+    .into_iter()
+    .map(|score| AgentRouteScore {
+        profile: score.id,
+        eligible: score.eligible,
+        matched_capabilities: score.matched_capabilities,
+        missing_capabilities: score.missing_capabilities,
+        selected_count: score.usage_count,
+        capability_fit_score: score.capability_fit_score,
+        preference_rank: score.preference_rank,
+        registry_index: score.order_index,
+        reason: score.reason,
+    })
+    .collect()
 }
 
 fn rejected_candidates(scores: &[AgentRouteScore]) -> Vec<AgentRouteRejection> {
@@ -454,53 +443,11 @@ fn select_candidate<'a>(
     preferred_profiles: &[String],
     selected_counts: &HashMap<String, usize>,
 ) -> &'a NormalizedCandidate {
-    eligible
-        .iter()
-        .copied()
-        .min_by_key(|candidate| {
-            let preference_rank = preferred_profiles
-                .iter()
-                .position(|profile| profile == &candidate.profile)
-                .unwrap_or(usize::MAX);
-            (
-                selected_counts
-                    .get(&candidate.profile)
-                    .copied()
-                    .unwrap_or(0),
-                capability_fit_score(candidate, required_count),
-                preference_rank,
-                candidate.index,
-            )
-        })
-        .expect("eligible candidates are non-empty")
+    agent_scoring::select_best(eligible, required_count, preferred_profiles, selected_counts)
 }
 
 fn capability_fit_score(candidate: &NormalizedCandidate, required_count: usize) -> usize {
-    candidate.capabilities.len().saturating_sub(required_count)
-}
-
-fn normalize_capabilities(capabilities: &[String]) -> Vec<String> {
-    let mut normalized = capabilities
-        .iter()
-        .map(|capability| capability.trim().to_ascii_lowercase())
-        .filter(|capability| !capability.is_empty())
-        .collect::<Vec<_>>();
-    normalized.sort();
-    normalized.dedup();
-    normalized
-}
-
-fn normalize_profiles(profiles: &[String]) -> Vec<String> {
-    let mut seen = HashSet::new();
-    let mut normalized = Vec::new();
-    for profile in profiles {
-        let profile = profile.trim();
-        if profile.is_empty() || !seen.insert(profile.to_string()) {
-            continue;
-        }
-        normalized.push(profile.to_string());
-    }
-    normalized
+    agent_scoring::capability_fit_score(&candidate.capabilities, required_count)
 }
 
 fn candidate_snapshot_hash(candidates: &[AgentRouteCandidate]) -> String {
@@ -509,7 +456,7 @@ fn candidate_snapshot_hash(candidates: &[AgentRouteCandidate]) -> String {
         hash_str(&mut hash, &candidate.profile);
         hash_str(&mut hash, candidate.source.as_deref().unwrap_or(""));
         hash_str(&mut hash, &candidate.executable);
-        for capability in normalize_capabilities(&candidate.capabilities) {
+        for capability in agent_scoring::normalize_capabilities(&candidate.capabilities) {
             hash_str(&mut hash, &capability);
         }
         hash_str(&mut hash, candidate.default_mode.as_deref().unwrap_or(""));
@@ -525,4 +472,158 @@ fn hash_str(hash: &mut u64, value: &str) {
     }
     *hash ^= 0xff;
     *hash = hash.wrapping_mul(0x100000001b3);
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn candidate(profile: &str, capabilities: &[&str]) -> AgentRouteCandidate {
+        AgentRouteCandidate {
+            profile: profile.to_string(),
+            description: None,
+            source: None,
+            executable: format!("{profile}.sh"),
+            capabilities: capabilities.iter().map(|c| c.to_string()).collect(),
+            default_mode: None,
+            default_model: None,
+        }
+    }
+
+    fn request(id: &str, required: &[&str], preferred: &[&str]) -> AgentRouteRequest {
+        AgentRouteRequest {
+            id: id.to_string(),
+            profile: None,
+            mode: None,
+            model: None,
+            required_capabilities: required.iter().map(|c| c.to_string()).collect(),
+            preferred_profiles: preferred.iter().map(|c| c.to_string()).collect(),
+            require_agent: false,
+        }
+    }
+
+    /// RTG-10: ACP profile selection goes through the shared `agent_scoring`
+    /// module and produces the exact same decision it did before the
+    /// extraction (least-used, capability fit, preferred, order) — the
+    /// extraction is behavior-preserving for its original consumer.
+    #[test]
+    fn route_requests_selects_least_used_then_tightest_fit_then_preferred_then_order() {
+        let router = AgentRouter::new(vec![
+            candidate("wide", &["read", "write", "execute"]),
+            candidate("tight", &["read"]),
+        ]);
+        let decisions = router
+            .route_requests(&[request("r1", &["read"], &[])])
+            .expect("routing succeeds");
+        assert_eq!(decisions.len(), 1);
+        let decision = &decisions[0];
+        assert_eq!(decision.profile, Some("tight".to_string()));
+        assert_eq!(decision.source, AgentRouteSource::Selected);
+        assert!(decision.reason.contains("least-used"));
+        assert!(decision.reason.contains("tight"));
+
+        // Explanations preserved: both candidates carry a score, the loser
+        // is not treated as a rejection (it was eligible, just not chosen).
+        assert_eq!(decision.candidate_scores.len(), 2);
+        assert!(decision.rejected_candidates.is_empty());
+        let tight_score = decision
+            .candidate_scores
+            .iter()
+            .find(|score| score.profile == "tight")
+            .expect("tight scored");
+        assert!(tight_score.eligible);
+        assert_eq!(tight_score.capability_fit_score, 0);
+    }
+
+    /// Usage counts are the first tie-break: a preferred, tighter-fit,
+    /// earlier-declared candidate still loses to a less-used one.
+    #[test]
+    fn route_requests_least_used_beats_preference_and_order() {
+        let router = AgentRouter::new(vec![
+            candidate("preferred_but_busy", &["read"]),
+            candidate("idle", &["read", "write"]),
+        ]);
+        let mut counts = HashMap::new();
+        counts.insert("preferred_but_busy".to_string(), 3);
+        let decisions = router
+            .route_requests_with_counts(
+                &[request("r1", &["read"], &["preferred_but_busy"])],
+                &counts,
+            )
+            .expect("routing succeeds");
+        assert_eq!(decisions[0].profile, Some("idle".to_string()));
+    }
+
+    /// With usage and fit tied, declared preference wins over pure order.
+    #[test]
+    fn route_requests_preference_breaks_tie_after_usage_and_fit() {
+        let router = AgentRouter::new(vec![
+            candidate("a", &["read"]),
+            candidate("b", &["read"]),
+        ]);
+        let decisions = router
+            .route_requests(&[request("r1", &["read"], &["b"])])
+            .expect("routing succeeds");
+        assert_eq!(decisions[0].profile, Some("b".to_string()));
+        assert!(decisions[0].reason.contains("preferred"));
+    }
+
+    /// With usage, fit, and preference all tied, registry order (earliest
+    /// index) wins.
+    #[test]
+    fn route_requests_falls_back_to_registry_order() {
+        let router = AgentRouter::new(vec![
+            candidate("first", &["read"]),
+            candidate("second", &["read"]),
+        ]);
+        let decisions = router
+            .route_requests(&[request("r1", &["read"], &[])])
+            .expect("routing succeeds");
+        assert_eq!(decisions[0].profile, Some("first".to_string()));
+    }
+
+    /// Missing-capability candidates are explained as rejections, not
+    /// silently dropped.
+    #[test]
+    fn route_requests_explains_rejected_candidates() {
+        let router = AgentRouter::new(vec![
+            candidate("no_write", &["read"]),
+            candidate("full", &["read", "write"]),
+        ]);
+        let decisions = router
+            .route_requests(&[request("r1", &["read", "write"], &[])])
+            .expect("routing succeeds");
+        let decision = &decisions[0];
+        assert_eq!(decision.profile, Some("full".to_string()));
+        assert_eq!(decision.rejected_candidates.len(), 1);
+        assert_eq!(decision.rejected_candidates[0].profile, "no_write");
+        assert_eq!(
+            decision.rejected_candidates[0].missing_capabilities,
+            vec!["write".to_string()]
+        );
+        assert!(
+            decision.rejected_candidates[0]
+                .reason
+                .contains("missing required capabilities")
+        );
+    }
+
+    /// Explicit profile requests bypass scoring for selection but still
+    /// carry the full score/rejection explanation set produced by the
+    /// shared engine.
+    #[test]
+    fn route_requests_explicit_profile_still_populates_explanations() {
+        let router = AgentRouter::new(vec![
+            candidate("chosen", &["read", "write"]),
+            candidate("other", &["read"]),
+        ]);
+        let mut req = request("r1", &["read"], &[]);
+        req.profile = Some("chosen".to_string());
+        let decisions = router
+            .route_requests(&[req])
+            .expect("explicit profile routes");
+        let decision = &decisions[0];
+        assert_eq!(decision.source, AgentRouteSource::Explicit);
+        assert_eq!(decision.candidate_scores.len(), 2);
+    }
 }
