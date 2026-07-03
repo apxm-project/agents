@@ -55,6 +55,7 @@ export interface DelegateOptions {
   name?: string;
   taskSpec: string;
   targetAgent: string;
+  inputs?: Record<string, NodeRef>;
   [extra: string]: unknown;
 }
 
@@ -70,6 +71,7 @@ export interface SpawnAgentOptions {
   cwd?: string;
   capabilities?: string[];
   goals?: string[];
+  inputs?: Record<string, NodeRef>;
   [extra: string]: unknown;
 }
 
@@ -77,6 +79,15 @@ export interface InvokeCapabilityOptions {
   name?: string;
   capability: string;
   params?: string | Record<string, unknown>;
+  inputs?: Record<string, NodeRef>;
+  [extra: string]: unknown;
+}
+
+export interface RegisterCapabilityOptions {
+  name?: string;
+  capabilityName: string;
+  description?: string;
+  parametersSchema?: string | Record<string, unknown>;
   [extra: string]: unknown;
 }
 
@@ -199,9 +210,11 @@ export class GraphBuilder {
 
   /** Delegate a task to a sub-agent for execution (DELEGATE). */
   delegate(options: DelegateOptions): NodeRef {
-    const { name, taskSpec, targetAgent, ...rest } = options;
+    const { name, taskSpec, targetAgent, inputs, ...rest } = options;
     const attrs: Attrs = { task_spec: taskSpec, target_agent: targetAgent, ...rest };
-    return this.addNode(name ?? this.autoName("DELEGATE"), "DELEGATE", attrs);
+    const node = this.addNode(name ?? this.autoName("DELEGATE"), "DELEGATE", attrs);
+    this.wireInputs(node, inputs);
+    return node;
   }
 
   /** Create a new agent instance at runtime (SPAWN_AGENT). */
@@ -218,6 +231,7 @@ export class GraphBuilder {
       cwd,
       capabilities,
       goals,
+      inputs,
       ...rest
     } = options;
     const attrs: Attrs = {
@@ -234,16 +248,41 @@ export class GraphBuilder {
       ...rest,
     };
     const node = this.addNode(name ?? this.autoName("SPAWN_AGENT"), "SPAWN_AGENT", attrs);
+    this.wireInputs(node, inputs);
     this.agentSessionNodes.set(agentName, node);
     return node;
   }
 
   /** Invoke a runtime capability/tool (INV_TOOL). Python's `invoke()`. */
   invokeCapability(options: InvokeCapabilityOptions): NodeRef {
-    const { name, capability, params, ...rest } = options;
+    const { name, capability, params, inputs, ...rest } = options;
     const paramsStr = typeof params === "object" && params !== null ? JSON.stringify(params) : params;
-    const attrs: Attrs = { capability, params_json: paramsStr, ...rest };
-    return this.addNode(name ?? this.autoName("INV_TOOL"), "INV_TOOL", attrs);
+    const inputNames = inputs ? Object.keys(inputs) : [];
+    const attrs: Attrs = {
+      capability,
+      params_json: paramsStr,
+      input_names: inputNames.length > 0 ? inputNames : undefined,
+      ...rest,
+    };
+    const node = this.addNode(name ?? this.autoName("INV_TOOL"), "INV_TOOL", attrs);
+    this.wireInputs(node, inputs);
+    return node;
+  }
+
+  /** Register a runtime capability (REGISTER_CAPABILITY). Python's `register_capability()`. */
+  registerCapability(options: RegisterCapabilityOptions): NodeRef {
+    const { name, capabilityName, description, parametersSchema, ...rest } = options;
+    const schemaStr =
+      typeof parametersSchema === "object" && parametersSchema !== null
+        ? JSON.stringify(parametersSchema)
+        : parametersSchema;
+    const attrs: Attrs = {
+      capability_name: capabilityName,
+      description,
+      parameters_schema: schemaStr,
+      ...rest,
+    };
+    return this.addNode(name ?? this.autoName("REGISTER_CAPABILITY"), "REGISTER_CAPABILITY", attrs);
   }
 
   /** Insert a checkpoint barrier (fence with checkpoint semantics). */
