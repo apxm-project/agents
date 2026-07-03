@@ -24,6 +24,26 @@ export function makeEdge(from: number, to: number, dependency: DependencyType | 
   return { from, to, dependency: normalizeDependencyType(dependency as DependencyType) };
 }
 
+/**
+ * Attribute names that may carry `{name}` placeholders — mirrors Python's
+ * `apxm/_generated/emission.py::TEMPLATE_ATTRS`. Used to rewrite `{param}` to
+ * `{{param}}` for names that are flow parameters (see `_rewriteParamTemplates`).
+ */
+const TEMPLATE_ATTRS: ReadonlySet<string> = new Set([
+  "template_str",
+  "prompt",
+  "template",
+  "message",
+  "params_json",
+  "task_spec",
+  "goal",
+  "claim",
+  "evidence",
+  "trace_id",
+  "discriminant",
+  "recovery_template",
+]);
+
 export interface Parameter {
   readonly name: string;
   readonly typeName: ParamType | string;
@@ -113,6 +133,12 @@ export class ApxmGraph implements ApxmGraphData {
     const produced = new Map<number, string>();
     const lines: string[] = [];
 
+    // Function arguments (parameters) are referenced by templates as
+    // `{name}`, rewritten below to `{{name}}` so the runtime substitutes them
+    // at scheduler init. Compile params are not wired as Data inputs. Mirrors
+    // `apxm.ir.ApxmGraph.to_air`'s param-name rewrite.
+    const paramNames = new Set(this.parameters.map((p) => p.name));
+
     for (const nodeId of order) {
       const node = nodesById.get(nodeId);
       if (!node) continue;
@@ -120,6 +146,19 @@ export class ApxmGraph implements ApxmGraphData {
       const inputs = (incoming.get(nodeId) ?? [])
         .filter((srcId) => produced.has(srcId))
         .map((srcId) => produced.get(srcId)!);
+
+      if (paramNames.size > 0) {
+        const inputNameSet = new Set((node.attributes.input_names as string[] | undefined) ?? []);
+        for (const attrName of Object.keys(node.attributes)) {
+          if (!TEMPLATE_ATTRS.has(attrName)) continue;
+          const text = node.attributes[attrName];
+          if (typeof text !== "string") continue;
+          (node.attributes as Record<string, unknown>)[attrName] = text.replace(
+            /\{(\w+)\}/g,
+            (whole, name: string) => (paramNames.has(name) && !inputNameSet.has(name) ? `{{${name}}}` : whole),
+          );
+        }
+      }
 
       if (node.op === "RETURN") {
         if (inputs.length > 0) produced.set(nodeId, inputs[0]);

@@ -106,6 +106,11 @@ const OP_EMIT_RULES: Partial<Record<OpName, OpEmitRule>> = {
     ignoreAttrs: true,
     excludeFromKw: [],
   },
+  PAUSE: {
+    ctx: "bracket",
+    ignoreAttrs: true,
+    excludeFromKw: [],
+  },
   DELEGATE: {
     primaryField: "task_spec",
     ctx: "paren",
