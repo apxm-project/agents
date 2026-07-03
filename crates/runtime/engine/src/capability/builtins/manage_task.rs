@@ -16,14 +16,14 @@ use super::store::{TaskRow, ToolsStore, now_ms};
 use crate::aam::{Aam, CompletionPolicy, TransitionLabel};
 use crate::capability::{
     executor::{CapabilityExecutor, CapabilityResult},
-    metadata::CapabilityMetadata,
+    metadata::RuntimeCapability,
 };
 
 const CAP: &str = apxm_core::constants::capabilities::MANAGE_TASK;
 
 /// Native task-management capability backed by the AAM goal tree.
 pub struct ManageTaskCapability {
-    metadata: CapabilityMetadata,
+    metadata: RuntimeCapability,
     aam: Aam,
     store: ToolsStore,
 }
@@ -31,7 +31,7 @@ pub struct ManageTaskCapability {
 impl ManageTaskCapability {
     pub fn new(aam: Aam, store: ToolsStore) -> Self {
         Self {
-            metadata: CapabilityMetadata::new(
+            metadata: RuntimeCapability::new(
                 CAP,
                 "Create, update, list, complete, or cancel durable tasks (AAM goals). \
                  Tasks may be nested via parent_id and survive process restarts.",
@@ -328,7 +328,7 @@ impl CapabilityExecutor for ManageTaskCapability {
         }
     }
 
-    fn metadata(&self) -> &CapabilityMetadata {
+    fn metadata(&self) -> &RuntimeCapability {
         &self.metadata
     }
 }

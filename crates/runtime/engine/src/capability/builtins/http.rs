@@ -9,7 +9,7 @@
 use super::require_string_arg;
 use crate::capability::{
     executor::{CapabilityExecutor, CapabilityResult},
-    metadata::CapabilityMetadata,
+    metadata::RuntimeCapability,
 };
 use apxm_core::{constants::capabilities, error::RuntimeError, types::Value};
 use async_trait::async_trait;
@@ -209,7 +209,7 @@ async fn finish(
 
 /// `http_get(url, headers?)` — fetch a URL, return the response body.
 pub struct HttpGetCapability {
-    metadata: CapabilityMetadata,
+    metadata: RuntimeCapability,
 }
 
 impl Default for HttpGetCapability {
@@ -221,7 +221,7 @@ impl Default for HttpGetCapability {
 impl HttpGetCapability {
     pub fn new() -> Self {
         Self {
-            metadata: CapabilityMetadata::new(
+            metadata: RuntimeCapability::new(
                 capabilities::HTTP_GET,
                 "HTTP GET a URL and return the response body",
                 json!({
@@ -254,14 +254,14 @@ impl CapabilityExecutor for HttpGetCapability {
         finish(&self.metadata.name, resp).await
     }
 
-    fn metadata(&self) -> &CapabilityMetadata {
+    fn metadata(&self) -> &RuntimeCapability {
         &self.metadata
     }
 }
 
 /// `http_post(url, body?, headers?)` — POST a JSON/string body, return the body.
 pub struct HttpPostCapability {
-    metadata: CapabilityMetadata,
+    metadata: RuntimeCapability,
 }
 
 impl Default for HttpPostCapability {
@@ -273,7 +273,7 @@ impl Default for HttpPostCapability {
 impl HttpPostCapability {
     pub fn new() -> Self {
         Self {
-            metadata: CapabilityMetadata::new(
+            metadata: RuntimeCapability::new(
                 capabilities::HTTP_POST,
                 "HTTP POST a JSON/string body to a URL and return the response body",
                 json!({
@@ -317,7 +317,7 @@ impl CapabilityExecutor for HttpPostCapability {
         finish(&self.metadata.name, req.send().await).await
     }
 
-    fn metadata(&self) -> &CapabilityMetadata {
+    fn metadata(&self) -> &RuntimeCapability {
         &self.metadata
     }
 }

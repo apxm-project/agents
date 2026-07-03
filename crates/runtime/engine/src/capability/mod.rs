@@ -6,7 +6,7 @@
 //! # Architecture
 //!
 //! - **CapabilityExecutor**: Trait for capability implementations
-//! - **CapabilityMetadata**: Schema and metadata for capabilities
+//! - **RuntimeCapability**: Schema and metadata for capabilities
 //! - **CapabilityRegistry**: Thread-safe storage and lookup
 //! - **CapabilitySystem**: Coordinator for invocation with validation
 //!
@@ -45,7 +45,7 @@ use approval::ApprovalStore;
 use apxm_core::{error::RuntimeError, types::values::Value};
 use executor::{CapabilityExecutor, exec_result_to_value};
 use interceptor::{CapabilityInterceptor, InterceptDecision, PreInvokeContext, pre_invoke_ctx};
-use metadata::CapabilityMetadata;
+use metadata::RuntimeCapability;
 use parking_lot::RwLock;
 use registry::CapabilityRegistry;
 use std::{collections::HashMap, sync::Arc, time::Duration};
@@ -449,12 +449,12 @@ impl CapabilitySystem {
     }
 
     /// List all registered capabilities
-    pub fn list_capabilities(&self) -> Vec<CapabilityMetadata> {
+    pub fn list_capabilities(&self) -> Vec<RuntimeCapability> {
         self.registry.list_metadata()
     }
 
     /// List capabilities whose declared groups intersect the requested set.
-    pub fn list_capabilities_by_groups(&self, groups: &[String]) -> Vec<CapabilityMetadata> {
+    pub fn list_capabilities_by_groups(&self, groups: &[String]) -> Vec<RuntimeCapability> {
         if groups.is_empty() {
             return Vec::new();
         }
@@ -472,7 +472,7 @@ impl CapabilitySystem {
     }
 
     /// Get capability metadata
-    pub fn get_metadata(&self, name: &str) -> Option<CapabilityMetadata> {
+    pub fn get_metadata(&self, name: &str) -> Option<RuntimeCapability> {
         self.registry.get(name).map(|cap| cap.metadata().clone())
     }
 

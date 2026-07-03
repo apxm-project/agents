@@ -4,7 +4,7 @@ use super::{
 };
 use crate::capability::{
     executor::{CapabilityExecutor, CapabilityResult},
-    metadata::CapabilityMetadata,
+    metadata::RuntimeCapability,
 };
 use apxm_core::{constants::capabilities, error::RuntimeError, types::Value};
 use async_trait::async_trait;
@@ -96,7 +96,7 @@ impl Default for WriteConfig {
 }
 
 pub struct WriteCapability {
-    metadata: CapabilityMetadata,
+    metadata: RuntimeCapability,
     config: WriteConfig,
 }
 
@@ -107,7 +107,7 @@ impl WriteCapability {
 
     pub fn with_config(config: WriteConfig) -> Self {
         Self {
-            metadata: CapabilityMetadata::new(
+            metadata: RuntimeCapability::new(
                 apxm_core::constants::capabilities::WRITE,
                 "Write content to a file with policy enforcement",
                 serde_json::json!({
@@ -363,7 +363,7 @@ impl CapabilityExecutor for WriteCapability {
         )))
     }
 
-    fn metadata(&self) -> &CapabilityMetadata {
+    fn metadata(&self) -> &RuntimeCapability {
         &self.metadata
     }
 }

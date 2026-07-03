@@ -4,7 +4,7 @@ use super::{
 };
 use crate::capability::{
     executor::{CapabilityExecutor, CapabilityResult},
-    metadata::CapabilityMetadata,
+    metadata::RuntimeCapability,
 };
 use apxm_core::{constants::capabilities, error::RuntimeError, types::Value};
 use async_trait::async_trait;
@@ -55,7 +55,7 @@ impl Default for ReadConfig {
 }
 
 pub struct ReadCapability {
-    metadata: CapabilityMetadata,
+    metadata: RuntimeCapability,
     config: ReadConfig,
 }
 
@@ -75,7 +75,7 @@ impl ReadCapability {
 
     pub fn with_config(config: ReadConfig) -> Self {
         Self {
-            metadata: CapabilityMetadata::new(
+            metadata: RuntimeCapability::new(
                 apxm_core::constants::capabilities::READ,
                 "Read file contents with path and extension restrictions",
                 serde_json::json!({
@@ -305,7 +305,7 @@ impl CapabilityExecutor for ReadCapability {
         Ok(Value::String(numbered))
     }
 
-    fn metadata(&self) -> &CapabilityMetadata {
+    fn metadata(&self) -> &RuntimeCapability {
         &self.metadata
     }
 }

@@ -11,7 +11,7 @@
 use super::require_string_arg;
 use crate::capability::{
     executor::{CapabilityExecutor, CapabilityResult},
-    metadata::CapabilityMetadata,
+    metadata::RuntimeCapability,
 };
 use apxm_core::{constants::capabilities::groups, error::RuntimeError, types::Value};
 use async_trait::async_trait;
@@ -73,13 +73,13 @@ fn shared_client() -> &'static Client {
 /// `compose_workflow` — validate AIR text and stage it as a runnable workflow
 /// file under the confined staging directory. Returns the staged path.
 pub struct ComposeWorkflowCapability {
-    metadata: CapabilityMetadata,
+    metadata: RuntimeCapability,
 }
 
 impl ComposeWorkflowCapability {
     pub fn new() -> Self {
         Self {
-            metadata: CapabilityMetadata::new(
+            metadata: RuntimeCapability::new(
                 "compose_workflow",
                 "Create a workflow: validate APXM AIR text and save it as a named, \
                  runnable workflow file. Returns the staged path. Pair with \
@@ -138,7 +138,7 @@ impl CapabilityExecutor for ComposeWorkflowCapability {
         Ok(Value::String(path.to_string_lossy().to_string()))
     }
 
-    fn metadata(&self) -> &CapabilityMetadata {
+    fn metadata(&self) -> &RuntimeCapability {
         &self.metadata
     }
 }
@@ -146,13 +146,13 @@ impl CapabilityExecutor for ComposeWorkflowCapability {
 /// `run_workflow` — run a previously staged workflow by name through the
 /// apxm-server's compile endpoint, returning the result text.
 pub struct RunWorkflowCapability {
-    metadata: CapabilityMetadata,
+    metadata: RuntimeCapability,
 }
 
 impl RunWorkflowCapability {
     pub fn new() -> Self {
         Self {
-            metadata: CapabilityMetadata::new(
+            metadata: RuntimeCapability::new(
                 "run_workflow",
                 "Run a workflow previously created with compose_workflow, by name. \
                  Returns the workflow's result text.",
@@ -218,7 +218,7 @@ impl CapabilityExecutor for RunWorkflowCapability {
         Ok(Value::String(content))
     }
 
-    fn metadata(&self) -> &CapabilityMetadata {
+    fn metadata(&self) -> &RuntimeCapability {
         &self.metadata
     }
 }

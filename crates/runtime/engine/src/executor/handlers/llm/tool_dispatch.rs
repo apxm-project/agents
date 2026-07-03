@@ -455,7 +455,7 @@ fn resolve_tool_access(ctx: &ExecutionContext, name: &str) -> Option<ToolAccess>
 
 /// Execute multiple tool calls concurrently, preserving result order.
 ///
-/// Read-only tools (according to `CapabilityMetadata::read_only`) run in full
+/// Read-only tools (according to `RuntimeCapability::read_only`) run in full
 /// parallel. Write tools acquire a per-tool-name `RwLock` so that:
 /// - Multiple read-only calls execute simultaneously.
 /// - Write calls on the same tool name are serialized.

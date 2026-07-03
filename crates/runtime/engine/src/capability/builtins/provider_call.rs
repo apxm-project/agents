@@ -9,7 +9,7 @@
 
 use crate::capability::{
     executor::{CapabilityExecutor, CapabilityResult},
-    metadata::CapabilityMetadata,
+    metadata::RuntimeCapability,
 };
 use apxm_core::{error::RuntimeError, types::Value};
 use async_trait::async_trait;
@@ -141,7 +141,7 @@ fn has_header(headers: &[(String, String)], name: &str) -> bool {
 }
 
 pub struct ProviderCallCapability {
-    metadata: CapabilityMetadata,
+    metadata: RuntimeCapability,
     /// apxm-auth base override; `None` resolves from `APXM_AUTH_URL` at dispatch.
     base: Option<String>,
     /// Named REST mode (set for a declared `kind = "provider"` block): the
@@ -186,7 +186,7 @@ impl ProviderCallCapability {
         Self {
             base: None,
             rest: None,
-            metadata: CapabilityMetadata::new(name, description, schema)
+            metadata: RuntimeCapability::new(name, description, schema)
                 .with_returns("string")
                 .with_groups(vec!["provider".to_string(), "http".to_string()])
                 .with_latency(500),
@@ -233,10 +233,10 @@ impl ProviderCallCapability {
 
     /// Move `metadata` out for a chained `with_*` rebuild, leaving a cheap
     /// placeholder behind (immediately overwritten by the caller).
-    fn take_metadata(&mut self) -> CapabilityMetadata {
+    fn take_metadata(&mut self) -> RuntimeCapability {
         std::mem::replace(
             &mut self.metadata,
-            CapabilityMetadata::new("", "", serde_json::Value::Null),
+            RuntimeCapability::new("", "", serde_json::Value::Null),
         )
     }
 
@@ -244,7 +244,7 @@ impl ProviderCallCapability {
         Self {
             base: None,
             rest: None,
-            metadata: CapabilityMetadata::new(
+            metadata: RuntimeCapability::new(
                 "provider.call",
                 "Authenticated HTTP call to a connected provider (via apxm-auth proxy; secret stays in apxm-auth)",
                 json!({
@@ -454,7 +454,7 @@ impl CapabilityExecutor for ProviderCallCapability {
         Ok(Value::String(out))
     }
 
-    fn metadata(&self) -> &CapabilityMetadata {
+    fn metadata(&self) -> &RuntimeCapability {
         &self.metadata
     }
 }

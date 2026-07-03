@@ -23,7 +23,7 @@ use uuid::Uuid;
 use super::store::{ScheduleRow, ToolsStore, now_ms};
 use crate::capability::{
     executor::{CapabilityExecutor, CapabilityResult},
-    metadata::CapabilityMetadata,
+    metadata::RuntimeCapability,
 };
 
 const CAP: &str = apxm_core::constants::capabilities::SCHEDULE;
@@ -32,7 +32,7 @@ const SCHEDULED_PROMPT_QUEUE: &str = apxm_core::constants::agent_tools::SCHEDULE
 
 /// Native event-driven scheduling capability.
 pub struct ScheduleCapability {
-    metadata: CapabilityMetadata,
+    metadata: RuntimeCapability,
     store: ToolsStore,
     /// Notifies the firer to re-evaluate its next sleep when a schedule is armed.
     arm: Arc<Notify>,
@@ -41,7 +41,7 @@ pub struct ScheduleCapability {
 impl ScheduleCapability {
     pub fn new(store: ToolsStore, arm: Arc<Notify>) -> Self {
         Self {
-            metadata: CapabilityMetadata::new(
+            metadata: RuntimeCapability::new(
                 CAP,
                 "Arm a durable wakeup: one-shot via 'after_secs' or 'at_ms', or \
                  recurring via 'every_secs'. Actions: create, list, get, cancel. \
@@ -233,7 +233,7 @@ impl CapabilityExecutor for ScheduleCapability {
         }
     }
 
-    fn metadata(&self) -> &CapabilityMetadata {
+    fn metadata(&self) -> &RuntimeCapability {
         &self.metadata
     }
 }

@@ -1,7 +1,7 @@
 use super::require_string_arg;
 use crate::capability::{
     executor::{CapabilityExecutor, CapabilityResult},
-    metadata::CapabilityMetadata,
+    metadata::RuntimeCapability,
 };
 use apxm_core::{constants::capabilities, error::RuntimeError, types::Value};
 use async_trait::async_trait;
@@ -89,7 +89,7 @@ struct TavilyResult {
 }
 
 pub struct SearchWebCapability {
-    metadata: CapabilityMetadata,
+    metadata: RuntimeCapability,
     config: SearchWebConfig,
     client: Client,
 }
@@ -101,7 +101,7 @@ impl SearchWebCapability {
 
     pub fn with_config(config: SearchWebConfig) -> Self {
         Self {
-            metadata: CapabilityMetadata::new(
+            metadata: RuntimeCapability::new(
                 apxm_core::constants::capabilities::SEARCH_WEB,
                 "Search the web via Tavily API",
                 serde_json::json!({
@@ -310,7 +310,7 @@ impl CapabilityExecutor for SearchWebCapability {
         Ok(Value::String(output))
     }
 
-    fn metadata(&self) -> &CapabilityMetadata {
+    fn metadata(&self) -> &RuntimeCapability {
         &self.metadata
     }
 }

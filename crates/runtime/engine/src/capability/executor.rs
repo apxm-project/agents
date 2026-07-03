@@ -1,6 +1,6 @@
 //! Capability executor trait and execution infrastructure
 
-use super::metadata::CapabilityMetadata;
+use super::metadata::RuntimeCapability;
 use crate::sandbox::{ExecRequest, ExecResult};
 use apxm_core::{error::RuntimeError, types::values::Value};
 use async_trait::async_trait;
@@ -35,7 +35,7 @@ pub trait CapabilityExecutor: Send + Sync {
     ///
     /// Provides schema, description, and other metadata
     /// used for validation and introspection
-    fn metadata(&self) -> &CapabilityMetadata;
+    fn metadata(&self) -> &RuntimeCapability;
 
     /// If this capability executes by spawning an external process, return
     /// an [`ExecRequest`] describing that process. The capability system will
@@ -78,7 +78,7 @@ pub fn exec_result_to_value(result: ExecResult) -> Value {
 
 /// Built-in echo capability for testing
 pub struct EchoCapability {
-    metadata: CapabilityMetadata,
+    metadata: RuntimeCapability,
 }
 
 impl EchoCapability {
@@ -97,7 +97,7 @@ impl EchoCapability {
         Self {
             // Echo is side-effect-free: mark it read-only so it is not gated by
             // the invoke-site write boundary (and runs without a write lock).
-            metadata: CapabilityMetadata::new("echo", "Echo a message back to the caller", schema)
+            metadata: RuntimeCapability::new("echo", "Echo a message back to the caller", schema)
                 .with_returns("string")
                 .with_latency(10)
                 .with_read_only(),
@@ -125,7 +125,7 @@ impl CapabilityExecutor for EchoCapability {
         Ok(Value::String(format!("Echo: {}", message)))
     }
 
-    fn metadata(&self) -> &CapabilityMetadata {
+    fn metadata(&self) -> &RuntimeCapability {
         &self.metadata
     }
 }
@@ -135,7 +135,7 @@ impl CapabilityExecutor for EchoCapability {
 /// Returns simulated search results for any query.
 /// Useful for demonstrating tool invocation without external dependencies.
 pub struct MockSearchCapability {
-    metadata: CapabilityMetadata,
+    metadata: RuntimeCapability,
 }
 
 impl MockSearchCapability {
@@ -152,7 +152,7 @@ impl MockSearchCapability {
         });
 
         Self {
-            metadata: CapabilityMetadata::new(
+            metadata: RuntimeCapability::new(
                 "search",
                 "Mock search capability that returns simulated results",
                 schema,
@@ -185,7 +185,7 @@ impl CapabilityExecutor for MockSearchCapability {
         )))
     }
 
-    fn metadata(&self) -> &CapabilityMetadata {
+    fn metadata(&self) -> &RuntimeCapability {
         &self.metadata
     }
 }

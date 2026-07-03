@@ -1,6 +1,6 @@
 //! Capability registry for registration and lookup
 
-use super::{executor::CapabilityExecutor, metadata::CapabilityMetadata};
+use super::{executor::CapabilityExecutor, metadata::RuntimeCapability};
 use apxm_backends::JsonSchema;
 use apxm_core::error::RuntimeError;
 use dashmap::DashMap;
@@ -108,7 +108,7 @@ impl CapabilityRegistry {
     }
 
     /// List all capability metadata
-    pub fn list_metadata(&self) -> Vec<CapabilityMetadata> {
+    pub fn list_metadata(&self) -> Vec<RuntimeCapability> {
         self.capabilities
             .iter()
             .map(|entry| entry.value().metadata().clone())
