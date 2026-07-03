@@ -6,18 +6,21 @@
 //!
 //! ## Operations (41 total)
 //!
+//! The table below reflects each operation's actual `OperationCategory` (see
+//! `operations::category`), not an informal grouping — it is kept honest by
+//! `apxm ops list`, which renders operations grouped by this same field.
+//!
 //! | Category | Operations |
 //! |----------|------------|
 //! | Metadata | AGENT |
-//! | Memory | QMEM, UMEM |
-//! | LLM/Reasoning | ASK, THINK, REASON, PLAN, REFLECT, VERIFY |
+//! | Memory | QMEM, UMEM, UPDATE_GOAL |
+//! | Reasoning | ASK, THINK, REASON, PLAN, REFLECT, VERIFY |
 //! | Tools | INV_TOOL, EXC, PRINT |
-//! | Control Flow | JUMP, BRANCH_ON_VALUE, LOOP_START, LOOP_END, RETURN, SWITCH, FLOW_CALL, WORKFLOW_SPAWN, CALL_SKILL |
-//! | Synchronization | MERGE, FENCE, WAIT_ALL |
+//! | Control Flow | JUMP, BRANCH_ON_VALUE, LOOP_START, LOOP_END, RETURN, SWITCH, FLOW_CALL, WORKFLOW_SPAWN, CALL_SKILL, RESUME |
+//! | Synchronization | MERGE, FENCE, WAIT_ALL, CHECKPOINT |
 //! | Error Handling | TRY_CATCH, ERR |
-//! | Communication | COMMUNICATE, HANDOFF |
-//! | Goal/State | UPDATE_GOAL, PAUSE, RESUME |
-//! | Coordination | DELEGATE, SPAWN_AGENT, REGISTER_CAPABILITY, REGISTER_HOOK, AUTONOMOUS, CHECKPOINT |
+//! | Communication | COMMUNICATE, HANDOFF, PAUSE |
+//! | Coordination | DELEGATE, SPAWN_AGENT, REGISTER_CAPABILITY, REGISTER_HOOK, AUTONOMOUS |
 //! | Identity | NOP, IDENTITY |
 //! | Internal | CONST_STR, YIELD |
 //!
@@ -43,9 +46,11 @@ pub use operations::tablegen::generate_tablegen;
 pub use operations::{
     AIS_OPERATIONS, AISOperationType, ARTIFACT_OPERATION_KIND_CASES_FILE,
     ARTIFACT_OPERATION_KIND_ENTRIES_FILE, ContextStyle, MlirEmissionSpec, MlirResultType,
-    OperationCategory, OperationField, OperationLatency, OperationSpec, WIRE_INDEXED_OPERATIONS,
-    generate_artifact_operation_kind_cases, generate_artifact_operation_kind_entries,
-    get_all_operations, get_operation_spec,
+    OP_SPEC_CATALOG_FILE, OP_SPEC_SCHEMA_VERSION, OP_SPEC_VECTORS_FILE,
+    OP_SPEC_VECTORS_SCHEMA_VERSION, OperationCategory, OperationField, OperationLatency,
+    OperationSpec, WIRE_INDEXED_OPERATIONS, generate_artifact_operation_kind_cases,
+    generate_artifact_operation_kind_entries, generate_op_spec_catalog, generate_op_spec_vectors,
+    get_all_operations, get_operation_spec, render_op_spec_files,
 };
 pub use types::Value;
 pub use validation::{

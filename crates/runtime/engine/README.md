@@ -4,7 +4,7 @@ Dataflow execution engine for compiled APXM programs.
 
 ## Overview
 
-`apxm-runtime` executes compiled AIS artifacts using a work-stealing dataflow scheduler. It provides a three-tier AAM memory system, a capability registry for tool integration, a model router with circuit breakers, and 40 operation handlers covering all AIS operations.
+`apxm-runtime` executes compiled AIS artifacts using a work-stealing dataflow scheduler. It provides a three-tier AAM memory system, a capability registry for tool integration, a model router with circuit breakers, and 37 operation handler modules dispatching 39 of the 41 AIS operations (ASK/THINK/REASON share one `llm` handler; AGENT and YIELD are pseudo-ops with no handler and resolve to a no-op in the dispatcher).
 
 ## Module Structure
 
@@ -13,7 +13,7 @@ Dataflow execution engine for compiled APXM programs.
 | `runtime` | `Runtime` and `RuntimeConfig` top-level entry points |
 | `scheduler/` | Dataflow scheduler with work-stealing, lane queues, concurrency control |
 | `executor/` | DAG execution engine, operation dispatch, memoization, cancellation |
-| `executor/handlers/` | 40 operation handlers (one per AIS operation) |
+| `executor/handlers/` | 37 operation handler modules (dispatching 39 of the 41 AIS operations; ASK/THINK/REASON share one `llm` handler) |
 | `executor/pipeline` | Execution pipeline stages |
 | `executor/token_accounting` | Token budget tracking per node |
 | `executor/dag_splicer` | Dynamic DAG splicing for inner plans |

@@ -557,6 +557,15 @@ pub enum CodegenAction {
         #[arg(long)]
         check: bool,
     },
+    /// Generate the op-spec.v1 AIS operation catalog + vectors fixture (TSF-1)
+    OpSpec {
+        /// Output directory for the generated catalog + vectors files
+        #[arg(long)]
+        output_dir: Option<PathBuf>,
+        /// Check that the generated files are up to date without writing them
+        #[arg(long)]
+        check: bool,
+    },
 }
 
 #[derive(Subcommand)]
@@ -695,6 +704,13 @@ pub enum OpsAction {
         /// Operation name (e.g., ASK, THINK, INV, FLOW_CALL)
         name: String,
     },
+    /// Show accumulated op-usage counts from real executions (RT-9)
+    ///
+    /// Reports how many times each AIS operation has actually been
+    /// dispatched by `apxm execute` / `apxm run`, so drift between "ops
+    /// defined" (`apxm ops list`) and "ops actually used" is visible without
+    /// a one-off corpus measurement.
+    Usage,
 }
 
 #[derive(Subcommand)]

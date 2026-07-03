@@ -23,14 +23,13 @@ Canonical AIS operation definitions shared by compiler and runtime.
 | Category | Operations |
 |----------|------------|
 | Metadata | AGENT |
-| Memory | QMEM, UMEM |
-| LLM/Reasoning | ASK, THINK, REASON, PLAN, REFLECT, VERIFY |
-| Tools | INV, EXC, PRINT |
-| Control Flow | JUMP, BRANCH_ON_VALUE, LOOP_START, LOOP_END, RETURN, SWITCH, FLOW_CALL, WORKFLOW_SPAWN, CALL_SKILL |
+| Memory | QMEM, UMEM, UPDATE_GOAL |
+| Reasoning | ASK, THINK, REASON, PLAN, REFLECT, VERIFY |
+| Tools | INV_TOOL, EXC, PRINT |
+| Control Flow | JUMP, BRANCH_ON_VALUE, LOOP_START, LOOP_END, RETURN, SWITCH, FLOW_CALL, WORKFLOW_SPAWN, CALL_SKILL, RESUME |
 | Synchronization | MERGE, FENCE, WAIT_ALL, CHECKPOINT |
 | Error Handling | TRY_CATCH, ERR |
-| Communication | COMMUNICATE, HANDOFF |
-| Goal/State | UPDATE_GOAL, PAUSE, RESUME |
+| Communication | COMMUNICATE, HANDOFF, PAUSE |
 | Coordination | DELEGATE, SPAWN_AGENT, REGISTER_CAPABILITY, REGISTER_HOOK, AUTONOMOUS |
 | Identity | NOP, IDENTITY |
 | Internal | CONST_STR, YIELD |

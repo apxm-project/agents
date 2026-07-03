@@ -181,6 +181,58 @@ pub fn ops_command(action: OpsAction, json_output: bool) -> Result<()> {
                 println!();
             }
         }
+        OpsAction::Usage => {
+            let paths = apxm_core::paths::ApxmPaths::discover()
+                .map_err(|e| anyhow::anyhow!("Failed to resolve APXM paths: {e}"))?;
+            let usage = apxm_runtime::executor::op_usage::read_persisted(&paths)
+                .map_err(|e| anyhow::anyhow!("Failed to read op-usage stats: {e}"))?;
+
+            let total_ops = AIS_OPERATIONS.len();
+            let mut rows: Vec<(String, u64)> = usage.into_iter().collect();
+            rows.sort_by(|a, b| b.1.cmp(&a.1).then_with(|| a.0.cmp(&b.0)));
+            let used_count = rows.len();
+
+            if json_output {
+                let json_rows: Vec<serde_json::Value> = rows
+                    .iter()
+                    .map(|(op, count)| serde_json::json!({"op": op, "count": count}))
+                    .collect();
+                let output = serde_json::json!({
+                    "total_operations_defined": total_ops,
+                    "operations_used": used_count,
+                    "operations_never_used": total_ops.saturating_sub(used_count),
+                    "usage": json_rows,
+                });
+                println!("{}", serde_json::to_string_pretty(&output)?);
+            } else {
+                println!();
+                println!(
+                    "  {} of {} defined operations have recorded dispatches",
+                    used_count.to_string().bold(),
+                    total_ops
+                );
+                println!(
+                    "  {}",
+                    apxm_core::constants::ui::icons::HRULE.repeat(40).dimmed()
+                );
+                if rows.is_empty() {
+                    println!(
+                        "  No usage recorded yet. Run {} or {} to populate this.",
+                        "apxm execute".bold(),
+                        "apxm run".bold()
+                    );
+                } else {
+                    for (op, count) in &rows {
+                        println!("  {:<20} {}", op.bold(), count);
+                    }
+                }
+                println!();
+                println!(
+                    "  Use {} to see the full defined operation catalog.",
+                    "apxm ops list".bold()
+                );
+            }
+        }
     }
     Ok(())
 }

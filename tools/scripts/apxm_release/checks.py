@@ -148,6 +148,7 @@ def _check_codegen_current(skip_codegen: bool) -> CheckResult:
         (["dekk", "apxm", "codegen", "--check"], "Python frontend"),
         (["dekk", "apxm", "codegen-typescript", "--check"], "TypeScript bindings"),
         (["dekk", "apxm", "codegen-event-kinds", "--check"], "event kinds"),
+        (["dekk", "apxm", "codegen-op-spec", "--check"], "op-spec catalog"),
     )
     for command, label in commands:
         check = run(command, capture=True)
@@ -156,7 +157,7 @@ def _check_codegen_current(skip_codegen: bool) -> CheckResult:
     return CheckResult(
         "codegen",
         True,
-        "generated Python frontend, TypeScript bindings, and event kinds are current",
+        "generated Python frontend, TypeScript bindings, event kinds, and op-spec catalog are current",
     )
 
 
