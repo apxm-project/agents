@@ -3,7 +3,7 @@
 use crate::metadata_keys as metadata;
 use crate::model_router::{ModelRouter, ModelRouterConfig};
 use crate::python_tools;
-use crate::python_tools::{PythonToolBridge, PythonToolRegistry};
+use crate::python_tools::{PythonHandlerBridge, PythonHandlerRegistry};
 use crate::sandbox::SandboxRegistry;
 use crate::{
     aam::Aam,
@@ -253,7 +253,7 @@ impl Runtime {
         session_id: Option<String>,
         event_emitter: Option<Arc<dyn ExecutionEventEmitter>>,
         session_dir: Option<String>,
-        python_tool_bridge: Option<Arc<PythonToolBridge>>,
+        python_handler_bridge: Option<Arc<PythonHandlerBridge>>,
     ) -> ExecutionContext {
         let mut ctx = ExecutionContext::new(
             Arc::clone(&self.memory),
@@ -296,8 +296,8 @@ impl Runtime {
         if let Some(ref router) = self.model_router {
             ctx.model_router = Some(Arc::clone(router));
         }
-        if let Some(bridge) = python_tool_bridge {
-            ctx = ctx.with_python_tool_bridge(bridge);
+        if let Some(bridge) = python_handler_bridge {
+            ctx = ctx.with_python_handler_bridge(bridge);
         }
         // Attach a per-artifact hook registry (lifetime = the python tool bridge,
         // inherited by child contexts). REGISTER_HOOK nodes populate it; the
@@ -567,7 +567,7 @@ impl Runtime {
         &self,
         artifact: Artifact,
     ) -> Result<RuntimeExecutionResult, RuntimeError> {
-        let python_bridge = python_tool_bridge_from_artifact(
+        let python_bridge = python_handler_bridge_from_artifact(
             &artifact,
             self.python_worker_sandbox(),
             Self::python_sandbox_required(),
@@ -739,7 +739,7 @@ impl Runtime {
     /// Execute a top-level artifact, seeding metadata AND pre-resolved per-tool
     /// credentials. The host resolves connection ids to bearer
     /// headers and passes them here; the runtime injects them at the trusted
-    /// `invoke_tool` seam so the secret never enters the AIR or the prompt.
+    /// `invoke_capability` seam so the secret never enters the AIR or the prompt.
     #[allow(clippy::too_many_arguments)]
     pub async fn execute_artifact_with_session_emitter_metadata_and_credentials(
         &self,
@@ -873,7 +873,7 @@ impl Runtime {
             None
         };
 
-        let python_bridge = python_tool_bridge_from_artifact(
+        let python_bridge = python_handler_bridge_from_artifact(
             &artifact,
             self.python_worker_sandbox(),
             Self::python_sandbox_required(),
@@ -908,7 +908,7 @@ impl Runtime {
         }
         // Seed the per-tool call budget from metadata. The program /
         // request DECLARES the budget as data; enforcement is the trusted
-        // `ctx.invoke_tool` seam. Child contexts share the counter, so the bound
+        // `ctx.invoke_capability` seam. Child contexts share the counter, so the bound
         // spans the in-process execution tree (called skills, inner DAGs).
         if let Some(budgets) = context
             .metadata
@@ -919,7 +919,7 @@ impl Runtime {
         }
         // Pre-resolved per-tool credentials ride a dedicated context
         // field (NOT the metadata map) so the secret is never serialized into the
-        // propagated metadata or events; the runtime injects it at `invoke_tool`.
+        // propagated metadata or events; the runtime injects it at `invoke_capability`.
         if tool_credentials.is_some() {
             context = context.with_tool_credentials(tool_credentials);
         }
@@ -1189,16 +1189,16 @@ fn artifact_has_python_tools_section(artifact: &Artifact) -> bool {
         .any(|section| section.kind == PYTHON_TOOLS_SECTION_KIND)
 }
 
-/// Extract a `PythonToolBridge` from an artifact's `python_tools` section, if present.
+/// Extract a `PythonHandlerBridge` from an artifact's `python_tools` section, if present.
 ///
 /// The section's `data` field is the UTF-8 JSON array produced by the Python
 /// frontend (`tools.json` sidecar format). Returns `Ok(None)` when the artifact
 /// has no such section, or `Err` if the section is present but malformed.
-fn python_tool_bridge_from_artifact(
+fn python_handler_bridge_from_artifact(
     artifact: &Artifact,
     sandbox: Option<Arc<dyn crate::sandbox::SandboxBackend>>,
     sandbox_required: bool,
-) -> Result<Option<Arc<PythonToolBridge>>, RuntimeError> {
+) -> Result<Option<Arc<PythonHandlerBridge>>, RuntimeError> {
     let section = artifact
         .sections()
         .iter()
@@ -1216,9 +1216,9 @@ fn python_tool_bridge_from_artifact(
         ),
     })?;
 
-    let registry = PythonToolRegistry::from_json(json)?;
+    let registry = PythonHandlerRegistry::from_json(json)?;
     let tool_count = registry.len();
-    let bridge = PythonToolBridge::new(registry).with_sandbox(sandbox, sandbox_required);
+    let bridge = PythonHandlerBridge::new(registry).with_sandbox(sandbox, sandbox_required);
 
     log_info!(
         "runtime",

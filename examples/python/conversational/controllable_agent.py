@@ -28,7 +28,7 @@ from apxm import (
 )
 
 
-# ---- tools & sub-agents (server-path callable via PythonToolBridge) ----------
+# ---- tools & sub-agents (server-path callable via PythonHandlerBridge) ----------
 @tool
 def lookup(symbol: str) -> str:
     """Look up a ticker price."""
@@ -56,17 +56,17 @@ def before_turn(ctx):
     ctx.log("pre_turn")
 
 
-@hook(on=LifecycleEvent.PRE_TOOL, match="lookup", mode=HookMode.GATE)
+@hook(on=LifecycleEvent.PRE_CAP, match="lookup", mode=HookMode.GATE)
 def guard_lookup(ctx, call):
-    ctx.log("pre_tool:lookup")
+    ctx.log("pre_cap:lookup")
     if call.args["symbol"] == "DENIED":
         return ctx.deny("symbol not permitted")
     return ctx.edit_args({**call.args, "symbol": call.args["symbol"].upper()})
 
 
-@hook(on=LifecycleEvent.POST_TOOL, match="*")
+@hook(on=LifecycleEvent.POST_CAP, match="*")
 def redact(ctx, call, result):
-    ctx.log("post_tool")
+    ctx.log("post_cap")
     return ctx.replace_result(scrub_secrets(result))
 
 
@@ -114,7 +114,7 @@ agent = ConversationalAgent(
     persona="You are APXM Assistant. Be precise and concise.",
     memory_space="stm",
     tools=[lookup],
-    tool_groups=[ToolGroup.WEB],
+    capability_groups=[ToolGroup.WEB],
     skills=True,  # real search_skills discovery
     sub_agents=[researcher],  # resolved in the SAME artifact
     compaction=COMPACTION,  # same object the compact() hook reads — keys agree

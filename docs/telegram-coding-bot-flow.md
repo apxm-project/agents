@@ -125,12 +125,12 @@ session. The cue sets `respond = true`.
           → verifies BLAKE3 hash against skill.toml artifact_hash
           → deserializes to Artifact, caches by (skill_id, artifact_hash)
       - validate_static_skill_admission(): checks required_capabilities, side_effect_policy,
-          every INV_TOOL node in the artifact
+          every INV_CAP node in the artifact
 
 11. apxm-runtime execute_artifact_with_session_emitter_and_metadata
       - Executes the compiled AIS DAG node by node
       - For an ask() node: calls the configured LLM backend
-      - For an inv_tool node: dispatches to the named capability handler
+      - For an inv_cap node: dispatches to the named capability handler
       - Session dir: <apxm_paths>/sessions/skills/telegram-coding-bot/
                      apxm-os-<agent-name>-12345/
         (per-conversation context persists across deliveries from same chat_id)
@@ -149,7 +149,7 @@ session. The cue sets `respond = true`.
 
 Used when the skill needs to send a message outside the respond window
 (e.g., after a long-running coding agent session completes). Requires
-`detach = true` on the OS dispatch and `inv_tool "telegram.send_message"`
+`detach = true` on the OS dispatch and `inv_cap "telegram.send_message"`
 in the compiled AIR.
 
 ```
@@ -160,7 +160,7 @@ Steps 1–10: identical to 2a above, with detach=true in SkillExecuteRequest.
 12. Detached skill execution runs asynchronously.
       - AIS DAG executes; may include ais.spawn_agent {profile="codex"} node
         followed by ais.communicate to receive the coding result
-      - After coding completes: inv_tool node with capability="telegram.send_message"
+      - After coding completes: inv_cap node with capability="telegram.send_message"
         - params_json: {"credential": "telegram/main", "chat_id": "...", "text": "..."}
 
 13. APXM_RESOLVE_CREDENTIALS path (if enabled on server):
@@ -187,9 +187,9 @@ Steps 1–10: identical to 2a above, with detach=true in SkillExecuteRequest.
 **Path A — standalone `dekk agents compile` (local, no server)**
 
 Calls `generate_artifact_with_manifest(None, manifest)`. The `known_caps`
-set passed to `tool_binding_check_dag` is empty (hardwired, no flag overrides
-this). Any `inv_tool` node whose capability is not a builtin fails E712. Use
-this path only for skills that use nothing but builtins (`ask`, `inv_tool
+set passed to `capability_binding_check_dag` is empty (hardwired, no flag overrides
+this). Any `inv_cap` node whose capability is not a builtin fails E712. Use
+this path only for skills that use nothing but builtins (`ask`, `inv_cap
 "provider.call"` if registered as builtin, `spawn_agent`, `communicate`,
 `return`, `switch`, `loop`).
 
@@ -240,7 +240,7 @@ compile-on-deploy. Use this path for any skill that uses pack capabilities
 
 ### 3c. The E712 and E900 errors
 
-**E712 (tool binding check)**: fires during compilation when an `inv_tool`
+**E712 (tool binding check)**: fires during compilation when an `inv_cap`
 node names a capability not in the known_caps set. With standalone compile
 (`dekk agents compile`), known_caps is empty, so any pack capability fails E712.
 Fix: compile via `POST /v1/compile-artifact` instead.
@@ -272,7 +272,7 @@ AIR text or the Python source.
 ### 4b. How the token flows in the proactive outbound pattern
 
 ```
-AIR: inv_tool node
+AIR: inv_cap node
   capability = "telegram.send_message"
   params_json = '{"credential": "telegram/main", "chat_id": "...", "text": "..."}'
 
@@ -355,7 +355,7 @@ All of the following are fully supported in a compiled `.apxmobj` artifact
 `is_allowed_static_skill_op`, dispatched by the runtime):
 
 - `ais.ask` — LLM call
-- `ais.inv_tool` — capability dispatch (including pack capabilities)
+- `ais.inv_cap` — capability dispatch (including pack capabilities)
 - `ais.spawn_agent` — ACP subprocess launch (profile="codex" or "claude")
 - `ais.communicate` — send/receive to a spawned agent
 - `ais.switch` — conditional branch
@@ -421,13 +421,13 @@ AIR outline (the Python `@compile` decorator emits this; shown for clarity):
              {model = "codex", task = %payload}    // or use spawn_agent
 %coder   = ais.spawn_agent {profile = "codex", task = %payload}
 %result  = ais.communicate %coder
-%_       = ais.inv_tool "telegram.send_message"
+%_       = ais.inv_cap "telegram.send_message"
              {params_json = '{"credential": "telegram/main",
                               "chat_id": "<extracted>",
                               "text": "<result>"}'}
 ```
 
-The `spawn_agent` + `communicate` + `inv_tool` chain is the correct pattern.
+The `spawn_agent` + `communicate` + `inv_cap` chain is the correct pattern.
 The E900 encountered during investigation is NOT a fundamental limitation; it
 is a verifier rejection of the specific AIR shape tried. The fix is to ensure
 the `communicate` op's recipient is expressed as an SSA operand only (no mixed
@@ -522,7 +522,7 @@ the event while the Codex session continues running detached on the server.
 
 **Fix:** always set `detach = true` on the cue for skills that spawn Codex.
 The server acks 202 immediately and the skill sends the Telegram reply
-asynchronously via `inv_tool "telegram.send_message"` after Codex completes.
+asynchronously via `inv_cap "telegram.send_message"` after Codex completes.
 
 ### 7e. Session context across turns
 
@@ -532,10 +532,10 @@ per-conversation context across multiple webhook deliveries from the same chat.
 The session dir at `<apxm_paths>/sessions/skills/telegram-coding-bot/<session_id>/`
 persists across deliveries. No known gap here; noted for reference.
 
-### 7f. Credential not yet verified end-to-end for the inv_tool path
+### 7f. Credential not yet verified end-to-end for the inv_cap path
 
 **Status:** the respond-mode path (Pattern 1) is confirmed live. The
-`inv_tool "telegram.send_message"` + `APXM_RESOLVE_CREDENTIALS` path
+`inv_cap "telegram.send_message"` + `APXM_RESOLVE_CREDENTIALS` path
 (Pattern 2) has not been verified end-to-end from a compiled skill artifact.
 The credential resolution code path is present and the proxy endpoint is
 implemented in apxm-auth; the integration has not been exercised with the
@@ -543,5 +543,5 @@ actual Telegram pack's `tools.toml`.
 
 **Next step:** install the telegram pack, set `APXM_RESOLVE_CREDENTIALS=1`,
 store the bot token in apxm-auth as connection id `telegram/main`, compile
-a minimal skill with `inv_tool "telegram.send_message"` via
+a minimal skill with `inv_cap "telegram.send_message"` via
 `POST /v1/compile-artifact`, and verify the full proxy path.

@@ -61,7 +61,7 @@ def chat_agent(g: GraphRecorder, conversation: str):
             f"{PERSONA}\n\nProduce a grounded answer to the latest user message, "
             "using tools if they help.\n{conversation}\n\nPlan:\n{plan}"
         ),
-        tool_groups=[ToolGroup.WEB],
+        capability_groups=[ToolGroup.WEB],
     )
 
     # 4. Multi-agent: spawn an inline researcher sub-agent and delegate a

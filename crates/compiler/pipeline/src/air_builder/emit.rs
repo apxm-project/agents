@@ -397,7 +397,7 @@ fn emit_node(
                 ty: MlirValueType::Token,
             }))
         }
-        AISOperationType::InvTool => {
+        AISOperationType::InvCap => {
             let capability = get_string_attr(&node.attributes, &[graph_attrs::CAPABILITY])
                 .unwrap_or_else(|| "unknown_capability".to_string());
             let params_json = get_string_attr(&node.attributes, &[graph_attrs::PARAMS_JSON])
@@ -408,7 +408,7 @@ fn emit_node(
             );
             let result = format!("%n{}", node.id);
             state.emit(format!(
-                "    {result} = ais.inv_tool {} ({}){} : !ais.token",
+                "    {result} = ais.inv_cap {} ({}){} : !ais.token",
                 quote_string(&capability),
                 quote_string(&params_json),
                 attrs

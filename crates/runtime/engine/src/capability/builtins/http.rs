@@ -1,6 +1,6 @@
 //! Built-in HTTP capabilities: `http_get` and `http_post`.
 //!
-//! Let workflow `inv_tool` nodes call HTTP/JSON APIs (e.g. public REST
+//! Let workflow `inv_cap` nodes call HTTP/JSON APIs (e.g. public REST
 //! endpoints) directly. Read-only `http_get` and mutating `http_post`. Auth
 //! tokens arrive as a `headers` object (resolved from a credential by the
 //! caller), never inlined by the compiler. Returns the response body as a

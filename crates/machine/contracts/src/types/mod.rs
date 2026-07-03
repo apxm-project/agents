@@ -49,8 +49,8 @@ pub use capability::{
     PermissionRule, PermissionScope, PlannerVisibility, Principal, PrincipalKind, PromptMode,
     PromptPolicy, ResourceHandle, ResourceSelector, RoleAssignment, RoleDefinition,
     RuntimeCapabilityGrant, RuntimeLimits, RuntimeSurfaceLimit, RuntimeSurfaceMode,
-    RuntimeSurfacePolicy, Sensitivity, SubjectContext, SubjectSelector, ToolBinding,
-    ToolBindingHandler, ToolBindingMetadata,
+    RuntimeSurfacePolicy, Sensitivity, SubjectContext, SubjectSelector, CapabilityBinding,
+    CapabilityBindingHandler, CapabilityBindingMetadata,
 };
 pub use communicate::{CommunicateProtocol, UnknownProtocol};
 pub use compiler::{

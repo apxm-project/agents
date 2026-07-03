@@ -2,7 +2,7 @@
 
 use crate::dispatch::v1::{DispatchIrV1, derive_apxm_hints};
 use crate::metadata_keys as metadata;
-use crate::python_tools::PythonToolBridge;
+use crate::python_tools::PythonHandlerBridge;
 use crate::sandbox::SandboxRegistry;
 use crate::{
     aam::{Aam, ScopeSpec},
@@ -90,7 +90,7 @@ pub struct ExecutionContext {
     /// Per-tool credential headers: capability name → an
     /// `Authorization` header value (e.g. `"Bearer …"`), pre-resolved by the
     /// trusted host from a connection id. Injected into a tool's args at the
-    /// `invoke_tool` seam so a tool acquires its auth token without the secret
+    /// `invoke_capability` seam so a tool acquires its auth token without the secret
     /// ever entering the AIR program or the prompt. `None` = no per-tool auth.
     pub tool_credentials: Option<Arc<std::collections::HashMap<String, String>>>,
     pub warmup_config: WarmupConfig,
@@ -117,10 +117,10 @@ pub struct ExecutionContext {
     /// When set, LLM handler delegates backend selection here instead of `llm_registry`.
     pub model_router: Option<Arc<ModelRouter>>,
     pub agent_pool: Arc<AgentPool>,
-    /// Python tool bridge for dispatching INV_TOOL calls backed by
+    /// Python tool bridge for dispatching INV_CAP calls backed by
     /// `@apxm.tool`-decorated Python handlers. `None` when no Python
     /// tools are registered in the artifact.
-    pub python_tool_bridge: Option<Arc<PythonToolBridge>>,
+    pub python_handler_bridge: Option<Arc<PythonHandlerBridge>>,
     /// Per-artifact registry of program-authored lifecycle hooks (`@hook`),
     /// resolved at load from the hooks sidecar / `REGISTER_HOOK` nodes. Shares
     /// the python tool bridge's lifetime and is inherited by child contexts so
@@ -241,7 +241,7 @@ impl ExecutionContext {
             context_stack: None,
             model_router: None,
             agent_pool: Arc::new(AgentPool::new(4, std::time::Duration::from_secs(300))),
-            python_tool_bridge: None,
+            python_handler_bridge: None,
             hook_registry: None,
             session_ledger: None,
             current_span_id: None,
@@ -376,11 +376,11 @@ impl ExecutionContext {
 
     /// Invoke a capability through the per-tool call budget, using the
     /// capability system's default timeout. Both tool-call paths — the graph
-    /// `INV_TOOL` handler and the in-`ASK`-node model loop — route through here so
+    /// `INV_CAP` handler and the in-`ASK`-node model loop — route through here so
     /// the budget is the single trusted enforcement seam; the `ASK`-node calls are
     /// invisible to node-level middleware, which is why this is a ctx helper rather
     /// than an `OperationMiddleware`.
-    pub async fn invoke_tool(
+    pub async fn invoke_capability(
         &self,
         name: &str,
         mut args: std::collections::HashMap<String, apxm_core::types::values::Value>,
@@ -390,8 +390,8 @@ impl ExecutionContext {
         self.capability_system.invoke(name, args).await
     }
 
-    /// Like [`Self::invoke_tool`] but with an explicit timeout.
-    pub async fn invoke_tool_with_timeout(
+    /// Like [`Self::invoke_capability`] but with an explicit timeout.
+    pub async fn invoke_capability_with_timeout(
         &self,
         name: &str,
         mut args: std::collections::HashMap<String, apxm_core::types::values::Value>,
@@ -599,7 +599,7 @@ impl ExecutionContext {
             context_stack: self.context_stack.as_ref().map(Arc::clone),
             model_router: self.model_router.as_ref().map(Arc::clone),
             agent_pool: Arc::clone(&self.agent_pool),
-            python_tool_bridge: self.python_tool_bridge.as_ref().map(Arc::clone),
+            python_handler_bridge: self.python_handler_bridge.as_ref().map(Arc::clone),
             hook_registry: self.hook_registry.as_ref().map(Arc::clone),
             session_ledger: self.session_ledger.as_ref().map(Arc::clone),
             current_span_id: self.current_span_id.clone(),
@@ -640,8 +640,8 @@ impl ExecutionContext {
     }
 
     /// Set the Python tool bridge for dispatching to `@apxm.tool` handlers.
-    pub fn with_python_tool_bridge(mut self, bridge: Arc<PythonToolBridge>) -> Self {
-        self.python_tool_bridge = Some(bridge);
+    pub fn with_python_handler_bridge(mut self, bridge: Arc<PythonHandlerBridge>) -> Self {
+        self.python_handler_bridge = Some(bridge);
         self
     }
 
@@ -738,9 +738,9 @@ mod tests {
             "message".to_string(),
             apxm_core::types::values::Value::String("hi".to_string()),
         );
-        let first = ctx.invoke_tool("echo", args.clone()).await;
+        let first = ctx.invoke_capability("echo", args.clone()).await;
         assert!(first.is_ok(), "first invoke failed: {:?}", first.err());
-        let err = ctx.invoke_tool("echo", args).await.unwrap_err();
+        let err = ctx.invoke_capability("echo", args).await.unwrap_err();
         assert!(
             err.to_string().contains("session tool budget exhausted"),
             "unexpected error: {err}"

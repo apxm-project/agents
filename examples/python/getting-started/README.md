@@ -11,14 +11,14 @@ and emit `.air` for the compiler. If you're new to APXM, start here.
 
 - **tool_use.py** -- Native Python tool registration and invocation. `dekk agents compile examples/python/getting-started/tool_use.py`
 - **hello.py** -- Hello world: single ASK node. Requires a registered LLM backend for execution. `dekk agents execute examples/python/getting-started/hello.py`
-- **tool_groups_and_policy.py** -- Typed node-policy defaults for tool groups and token budgets. `dekk agents execute examples/python/getting-started/tool_groups_and_policy.py`
+- **capability_groups_and_policy.py** -- Typed node-policy defaults for tool groups and token budgets. `dekk agents execute examples/python/getting-started/capability_groups_and_policy.py`
 
 ## Key API
 
 ```python
 from apxm import GraphRecorder, NodePolicy, compile
 
-@compile(default_policy=NodePolicy(tool_groups=["web"], token_budget=256))
+@compile(default_policy=NodePolicy(capability_groups=["web"], token_budget=256))
 def hello(g: GraphRecorder):
     result = g.ask(name="greet", prompt="Say hello in one sentence.")
     g.done(result)

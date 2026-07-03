@@ -147,7 +147,7 @@ def AIS_UMemOp : AIS_Op<"umem",
 // Capability Operations
 //===----------------------------------------------------------------------===//
 
-def AIS_InvToolOp : AIS_Op<"inv_tool",
+def AIS_InvCapOp : AIS_Op<"inv_cap",
     [MemoryEffects<[MemRead<AIS_CapabilityResource>]>]> {
   let summary = "Invoke capability (tool/API)";
   let description = [{
@@ -155,13 +155,13 @@ def AIS_InvToolOp : AIS_Op<"inv_tool",
 
     `$context` carries optional upstream data operands; `params_json` may
     reference them by name via `{name}` placeholders (resolved against the
-    `input_names` attribute at runtime), so a tool can consume a prior node's
-    output — the same dataflow contract as `ask`.
+    `input_names` attribute at runtime), so a capability can consume a prior
+    node's output — the same dataflow contract as `ask`.
 
     Example:
     ```mlir
-    %result = ais.inv_tool "web_search" ("query") : !ais.token
-    %result = ais.inv_tool "publish" ("{id}") [%ctr : !ais.token] : !ais.token
+    %result = ais.inv_cap "web_search" ("query") : !ais.token
+    %result = ais.inv_cap "publish" ("{id}") [%ctr : !ais.token] : !ais.token
     ```
   }];
   let arguments = (ins

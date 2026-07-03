@@ -38,7 +38,7 @@ fn get_tool_definitions_from_capabilities(ctx: &ExecutionContext) -> Vec<ToolDef
         .into_iter()
         .map(|meta| ToolDefinition::new(&meta.name, &meta.description, meta.parameters_schema))
         .collect();
-    if let Some(bridge) = ctx.python_tool_bridge.as_ref() {
+    if let Some(bridge) = ctx.python_handler_bridge.as_ref() {
         tools.extend(bridge.descriptors().map(|descriptor| {
             ToolDefinition::new(
                 &descriptor.name,
@@ -74,7 +74,7 @@ fn get_tools_by_names(ctx: &ExecutionContext, names: &[String]) -> Vec<ToolDefin
                     meta.parameters_schema,
                 ));
             }
-            ctx.python_tool_bridge
+            ctx.python_handler_bridge
                 .as_ref()
                 .and_then(|bridge| bridge.registry().resolve(name))
                 .map(|descriptor| {
@@ -101,7 +101,7 @@ fn parse_string_array_attr(node: &Node, attr_name: &str) -> Option<Vec<String>> 
 
 pub(crate) fn resolve_ask_tools(ctx: &ExecutionContext, node: &Node) -> Vec<ToolDefinition> {
     let tool_names = parse_string_array_attr(node, graph_attrs::TOOLS);
-    let tool_groups = parse_string_array_attr(node, graph_attrs::TOOL_GROUPS);
+    let capability_groups = parse_string_array_attr(node, graph_attrs::CAPABILITY_GROUPS);
     let tools_enabled_all = node
         .attributes
         .get(graph_attrs::TOOLS_ENABLED)
@@ -118,7 +118,7 @@ pub(crate) fn resolve_ask_tools(ctx: &ExecutionContext, node: &Node) -> Vec<Tool
     }
     // Naming tool groups is additive with explicit tools. A conversational agent
     // commonly has both Python tools and a capability group such as `skills`.
-    if let Some(groups) = tool_groups.as_deref()
+    if let Some(groups) = capability_groups.as_deref()
         && !groups.is_empty()
     {
         explicitly_scoped = true;
@@ -164,7 +164,7 @@ fn delegate_tool_definition() -> ToolDefinition {
                     "type": "string",
                     "description": "The focused subtask for the specialist to investigate and report on."
                 },
-                "tool_groups": {
+                "capability_groups": {
                     "type": "array",
                     "items": {"type": "string"},
                     "description": "Tool groups the sub-agent may use (e.g. a module's tool group)."
@@ -237,9 +237,9 @@ async fn execute_delegate(
             synth.attributes.insert(attr.to_string(), value.clone());
         }
     }
-    if let Some(Value::Array(groups)) = args.get("tool_groups") {
+    if let Some(Value::Array(groups)) = args.get("capability_groups") {
         synth.attributes.insert(
-            graph_attrs::TOOL_GROUPS.to_string(),
+            graph_attrs::CAPABILITY_GROUPS.to_string(),
             Value::Array(groups.clone()),
         );
     }
@@ -307,14 +307,14 @@ async fn execute_tool_call(
         return result;
     }
 
-    if let Some(bridge) = ctx.python_tool_bridge.as_ref() {
+    if let Some(bridge) = ctx.python_handler_bridge.as_ref() {
         if bridge.has_tool(&tool_call.name) {
             let timeout = std::time::Duration::from_millis(
                 apxm_core::constants::defaults::DEFAULT_TIMEOUT_MS,
             );
-            // pre_tool hooks (allow/deny/edit_args) at the bridge dispatch site
+            // pre_cap hooks (allow/deny/edit_args) at the bridge dispatch site
             // (constitution #5). A deny surfaces as a tool error to the model.
-            let edited_args = match crate::executor::hook_driver::run_pre_tool_hooks(
+            let edited_args = match crate::executor::hook_driver::run_pre_cap_hooks(
                 ctx,
                 &tool_call.name,
                 args.clone(),
@@ -333,9 +333,9 @@ async fn execute_tool_call(
                 serde_json::to_value(&edited_args).unwrap_or_else(|_| tool_call.args.clone());
             return match bridge.call(&tool_call.name, json_args, timeout).await {
                 Ok(json_result) => {
-                    // post_tool hooks (replace_result).
+                    // post_cap hooks (replace_result).
                     let raw = Value::try_from(json_result).unwrap_or(Value::Null);
-                    let transformed = crate::executor::hook_driver::run_post_tool_hooks(
+                    let transformed = crate::executor::hook_driver::run_post_cap_hooks(
                         ctx,
                         &tool_call.name,
                         raw,
@@ -371,10 +371,10 @@ async fn execute_tool_call(
         }
     }
 
-    // Native/builtin tool path also runs pre/post_tool hooks (FR-004: each tool
-    // use). A pre_tool deny continues the turn gracefully (m4).
+    // Native/builtin tool path also runs pre/post_cap hooks (FR-004: each tool
+    // use). A pre_cap deny continues the turn gracefully (m4).
     let args =
-        match crate::executor::hook_driver::run_pre_tool_hooks(ctx, &tool_call.name, args).await {
+        match crate::executor::hook_driver::run_pre_cap_hooks(ctx, &tool_call.name, args).await {
             Ok(edited) => edited,
             Err(e) => {
                 if let Some(emitter) = &ctx.event_emitter {
@@ -383,10 +383,10 @@ async fn execute_tool_call(
                 return ToolResult::error(&tool_call.id, e.to_string());
             }
         };
-    match ctx.invoke_tool(&tool_call.name, args).await {
+    match ctx.invoke_capability(&tool_call.name, args).await {
         Ok(result) => {
             let result =
-                crate::executor::hook_driver::run_post_tool_hooks(ctx, &tool_call.name, result)
+                crate::executor::hook_driver::run_post_cap_hooks(ctx, &tool_call.name, result)
                     .await;
             let content = match result {
                 Value::String(s) => s,
@@ -422,7 +422,7 @@ async fn execute_tool_call(
 /// Read-only tools run without locking. Write tools acquire a write lock
 /// keyed by tool name so concurrent writes to the same tool are serialized
 /// while independent tools execute in parallel.
-// Per-capability write serialization is shared with the graph/inv_tool path via
+// Per-capability write serialization is shared with the graph/inv_cap path via
 // `crate::capability::tool_write_lock` so same-name writes serialize on BOTH
 // parallelism engines (not just this in-ASK loop).
 use crate::capability::tool_write_lock::{release_write_lock_if_idle, write_lock_for_tool};
@@ -443,7 +443,7 @@ fn resolve_tool_access(ctx: &ExecutionContext, name: &str) -> Option<ToolAccess>
     }
 
     if ctx
-        .python_tool_bridge
+        .python_handler_bridge
         .as_ref()
         .is_some_and(|bridge| bridge.has_tool(name))
     {

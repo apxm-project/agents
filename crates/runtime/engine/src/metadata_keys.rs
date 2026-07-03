@@ -30,7 +30,7 @@ pub const CALL_SKILL_DEPTH: &str = "call_skill_depth";
 /// admission can enforce `child ⊆ parent`.
 pub const SIDE_EFFECT_POLICY: &str = "side_effect_policy";
 /// JSON array of runtime-minted capability grants presented by the host.
-/// INV_TOOL write admission checks these opaque grants by `tool_binding`; raw
+/// INV_CAP write admission checks these opaque grants by `capability_binding`; raw
 /// callable names are never authority.
 pub const CAPABILITY_GRANTS: &str = "capability_grants";
 /// Comma-joined visible skill set (lib / lib::skill / skill ids). Seeded from

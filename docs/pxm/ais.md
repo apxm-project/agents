@@ -25,7 +25,7 @@ The AIS operations are organized across multiple categories. Run `apxm ops list`
 |----------|-----------|---------|
 | **Reasoning** | ASK, THINK, REASON, PLAN, REFLECT, VERIFY | Language model interactions at different latency tiers |
 | **Memory** | QMEM, UMEM | Three-tier memory access (STM/LTM/Episodic) |
-| **Tools** | INV_TOOL | External tool invocation with typed parameter marshalling |
+| **Tools** | INV_CAP | External tool invocation with typed parameter marshalling |
 | **ControlFlow** | BRANCH_ON_VALUE, SWITCH, FLOW_CALL | Conditional routing and sub-flow invocation |
 | **Synchronization** | MERGE, WAIT_ALL, FENCE | Synchronization barriers and token collection |
 | **Communication** | COMMUNICATE | Inter-agent messaging |

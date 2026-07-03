@@ -57,7 +57,7 @@ agent = ConversationalAgent(
     persona="You are a helpful APXM assistant.",
     memory_space="stm",
     tools=[ping],
-    tool_groups=[ToolGroup.SKILLS],
+    capability_groups=[ToolGroup.SKILLS],
     sub_agents=[researcher],
     loop="in_graph",
 )
@@ -95,7 +95,7 @@ workflow.
 
 Reference bindings:
 
-- `kind = "python_tool"` — local Python function in the package
+- `kind = "python_handler"` — local Python function in the package
 - `kind = "apxm_builtin"` — runtime group such as `skills` or `authoring`
 
 ## Sub-agents

@@ -455,7 +455,7 @@ impl ExecutorEngine {
 /// Map a downstream op type to a GRAPH_EDGE `kind` label for colouring edges in
 /// the observer view.
 ///
-/// - `tool_invocation` when the consumer is an INV_TOOL (the producer
+/// - `tool_invocation` when the consumer is an INV_CAP (the producer
 ///   feeds a tool call)
 /// - `dispatch` when the consumer is a multi-agent op (SPAWN_AGENT,
 ///   COMMUNICATE, HANDOFF, DELEGATE)
@@ -463,7 +463,7 @@ impl ExecutorEngine {
 ///   or aggregation node)
 fn graph_edge_kind_for_consumer(op: AISOperationType) -> &'static str {
     match op {
-        AISOperationType::InvTool => "tool_invocation",
+        AISOperationType::InvCap => "tool_invocation",
         AISOperationType::SpawnAgent
         | AISOperationType::Communicate
         | AISOperationType::Handoff

@@ -39,7 +39,7 @@ CHILD_GRAPH = Path(__file__).with_name("runtime_controls_child.air").resolve()
 HOOK_FIELD_SEPARATOR = "|"
 
 
-@compile(default_policy=NodePolicy(tool_groups=[ToolGroup.WEB], token_budget=128, timeout_ms=5_000))
+@compile(default_policy=NodePolicy(capability_groups=[ToolGroup.WEB], token_budget=128, timeout_ms=5_000))
 def e2e_flow(g: GraphRecorder):
     summary = g.ask(
         name="summary",
@@ -52,14 +52,14 @@ def e2e_flow(g: GraphRecorder):
         session_root=CHILD_SESSIONS_ROOT,
         node_policy=NodePolicy(
             timeout_ms=2_000,
-            tool_groups=[ToolGroup.FILE_READ],
+            capability_groups=[ToolGroup.FILE_READ],
             token_budget=64,
         ),
     )
     final = g.ask(
         name="final",
         prompt="Combine this parent summary {summary} with this child result {child}.",
-        policy=NodePolicy(tool_groups=[ToolGroup.WEB], token_budget=96),
+        policy=NodePolicy(capability_groups=[ToolGroup.WEB], token_budget=96),
     )
     g.done(final)
 

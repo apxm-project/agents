@@ -59,7 +59,7 @@ pub enum AISOperationType {
 
     // Tool Operations
     /// Invoke a tool/capability (NOT for agents — use SPAWN_AGENT).
-    InvTool,
+    InvCap,
     /// Execute code in sandbox.
     Exc,
     /// Print output to stdout.
@@ -156,7 +156,7 @@ pub enum AISOperationType {
 /// GUARD, CLAIM, NEGOTIATE, and SPAWN_TEAM — deleted as unexercised in RT-1;
 /// 30 was always reserved) and must never be reassigned.
 pub const WIRE_INDEXED_OPERATIONS: &[(u32, AISOperationType)] = &[
-    (0, AISOperationType::InvTool),
+    (0, AISOperationType::InvCap),
     (1, AISOperationType::Ask),
     (2, AISOperationType::QMem),
     (3, AISOperationType::UMem),
@@ -214,7 +214,7 @@ impl fmt::Display for AISOperationType {
             AISOperationType::Reflect => write!(f, "REFLECT"),
             AISOperationType::Verify => write!(f, "VERIFY"),
             // Tools
-            AISOperationType::InvTool => write!(f, "INV_TOOL"),
+            AISOperationType::InvCap => write!(f, "INV_CAP"),
             AISOperationType::Exc => write!(f, "EXC"),
             AISOperationType::Print => write!(f, "PRINT"),
             // Control Flow
@@ -277,7 +277,7 @@ impl std::str::FromStr for AISOperationType {
             "plan" => Ok(AISOperationType::Plan),
             "reflect" => Ok(AISOperationType::Reflect),
             "verify" => Ok(AISOperationType::Verify),
-            "inv_tool" => Ok(AISOperationType::InvTool),
+            "inv_cap" => Ok(AISOperationType::InvCap),
             "exc" => Ok(AISOperationType::Exc),
             "print" => Ok(AISOperationType::Print),
             "jump" => Ok(AISOperationType::Jump),
@@ -327,7 +327,7 @@ impl AISOperationType {
             AISOperationType::Plan => "plan",
             AISOperationType::Reflect => "reflect",
             AISOperationType::Verify => "verify",
-            AISOperationType::InvTool => "inv_tool",
+            AISOperationType::InvCap => "inv_cap",
             AISOperationType::Exc => "exc",
             AISOperationType::Print => "print",
             AISOperationType::Jump => "jump",
@@ -401,7 +401,7 @@ impl AISOperationType {
             AISOperationType::Plan,
             AISOperationType::Reflect,
             AISOperationType::Verify,
-            AISOperationType::InvTool,
+            AISOperationType::InvCap,
             AISOperationType::Exc,
             AISOperationType::Print,
             AISOperationType::Jump,
@@ -1021,7 +1021,7 @@ pub static AIS_OPERATIONS: &[OperationSpec] = &[
     },
     // ========== Tool Operations ==========
     OperationSpec {
-        op_type: AISOperationType::InvTool,
+        op_type: AISOperationType::InvCap,
         name: "InvokeTool",
         category: OperationCategory::Tools,
         description: "Call external tool with structured params; store result",
@@ -1032,7 +1032,7 @@ pub static AIS_OPERATIONS: &[OperationSpec] = &[
             node's output token.",
         latency: OperationLatency::Medium,
         example_json: Some(
-            r#"{"id": 2, "op": "INV_TOOL", "attributes": {"capability": "web_search", "params_json": "{\"query\":\"rust ownership\"}"}}"#,
+            r#"{"id": 2, "op": "INV_CAP", "attributes": {"capability": "web_search", "params_json": "{\"query\":\"rust ownership\"}"}}"#,
         ),
         fields: &[
             OperationField::required_ref(
@@ -1773,7 +1773,7 @@ pub static AIS_OPERATIONS: &[OperationSpec] = &[
         category: OperationCategory::Coordination,
         description: "Register a new capability (tool) in the runtime registry",
         long_description: "Dynamically registers a new capability in the runtime's capability \
-            registry. The capability becomes available for INV_TOOL operations after registration. \
+            registry. The capability becomes available for INV_CAP operations after registration. \
             Returns a confirmation with the registered capability name.",
         latency: OperationLatency::Low,
         example_json: Some(
@@ -1821,12 +1821,12 @@ pub static AIS_OPERATIONS: &[OperationSpec] = &[
         long_description: "Registers one author lifecycle hook (a Python handler bound to a \
             lifecycle event) into the per-artifact hook registry. Mirrors REGISTER_CAPABILITY: \
             the binding travels inside the artifact (AIR-portable) and the handler is dispatched \
-            via the same Python tool bridge as @tool. The runtime applies pre/post_tool hooks at \
+            via the same Python tool bridge as @tool. The runtime applies pre/post_cap hooks at \
             the tool dispatch sites, pre/post_ask as Ask middleware, and session_start as an \
             awaited pre-step.",
         latency: OperationLatency::Low,
         example_json: Some(
-            r#"{\"id\": 4, \"op\": \"REGISTER_HOOK\", \"attributes\": {\"hook_event\": \"pre_tool\", \"hook_match\": \"lookup\", \"hook_mode\": \"gate\", \"python_hook_handler_id\": \"sha256:...\"}}"#,
+            r#"{\"id\": 4, \"op\": \"REGISTER_HOOK\", \"attributes\": {\"hook_event\": \"pre_cap\", \"hook_match\": \"lookup\", \"hook_mode\": \"gate\", \"python_hook_handler_id\": \"sha256:...\"}}"#,
         ),
         fields: &[
             OperationField::required(attrs::HOOK_EVENT, "Lifecycle event the hook binds to"),
@@ -2131,7 +2131,7 @@ mod tests {
         // Spot-check key indices matching ArtifactEmitter.cpp OperationKind
         assert_eq!(
             AISOperationType::from_wire_index(0),
-            Some(AISOperationType::InvTool)
+            Some(AISOperationType::InvCap)
         );
         assert_eq!(
             AISOperationType::from_wire_index(1),

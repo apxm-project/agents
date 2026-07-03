@@ -329,7 +329,7 @@ pub struct HostToolCall {
     pub call_id: String,
     pub capability_id: String,
     pub host_op: String,
-    pub tool_binding: String,
+    pub capability_binding: String,
     pub args: serde_json::Value,
     pub args_digest: String,
     pub grant_ref: Option<String>,

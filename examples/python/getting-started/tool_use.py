@@ -19,7 +19,7 @@ def search_docs(query: str) -> str:
 @compile()
 def tool_agent(g: GraphRecorder):
     """Invoke a Python-backed search tool."""
-    results = g.invoke_tool(search_docs, query="APXM Python tool integration")
+    results = g.invoke_capability(search_docs, query="APXM Python tool integration")
 
     summary = g.print(message="TOOL RESULT:\n{results}")
 

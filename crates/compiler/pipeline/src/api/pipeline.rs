@@ -156,7 +156,7 @@ impl<'ctx> Pipeline<'ctx> {
         // resolve_pass_list applies pass_list_override and disable_passes on
         // top of the level/target/no_cse_llm/warn_unconsumed defaults so the
         // diagnostics path agrees with PassManager::from_config. Rust-only
-        // passes (tool-binding-check, bind-tool-handlers) are dispatched outside
+        // passes (capability-binding-check, bind-capability-handlers) are dispatched outside
         // the MLIR pass manager and must not reach it here.
         let pass_names: Vec<String> = pass_names
             .into_iter()

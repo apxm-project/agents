@@ -15,7 +15,7 @@
 //! | Metadata | AGENT |
 //! | Memory | QMEM, UMEM, UPDATE_GOAL |
 //! | Reasoning | ASK, THINK, REASON, PLAN, REFLECT, VERIFY |
-//! | Tools | INV_TOOL, EXC, PRINT |
+//! | Tools | INV_CAP, EXC, PRINT |
 //! | Control Flow | JUMP, BRANCH_ON_VALUE, LOOP_START, LOOP_END, RETURN, SWITCH, FLOW_CALL, WORKFLOW_SPAWN, CALL_SKILL, RESUME |
 //! | Synchronization | MERGE, FENCE, WAIT_ALL, CHECKPOINT |
 //! | Error Handling | TRY_CATCH, ERR |

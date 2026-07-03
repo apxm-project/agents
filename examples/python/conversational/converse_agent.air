@@ -7,7 +7,7 @@
 //   curl localhost:18800/v1/execute -d '{"air": <this>, "args": ["[\"hi\"]"]}'
 module {
   func.func @converse_agent(%turns: !ais.token {ais.param_name = "turns", ais.param_type = "str"}) -> !ais.token attributes {ais.entry} {
-    %reply = ais.autonomous "You are APXM Assistant, a precise conversational agent. Use the transcript for context and keep replies concise." (%turns : !ais.token) {converse = "true", max_iterations = 50 : i64, tool_groups = ["web", "skills"]} : !ais.token
+    %reply = ais.autonomous "You are APXM Assistant, a precise conversational agent. Use the transcript for context and keep replies concise." (%turns : !ais.token) {converse = "true", max_iterations = 50 : i64, capability_groups = ["web", "skills"]} : !ais.token
     func.return %reply : !ais.token
   }
 }

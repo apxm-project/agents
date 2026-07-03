@@ -17,11 +17,11 @@ use apxm_core::types::{
     OperationMetric, execution::Node, operations::AISOperationType, values::Value,
 };
 
-/// Layer 2 context captured at OPERATION_START for an ASK/INV_TOOL node so
+/// Layer 2 context captured at OPERATION_START for an ASK/INV_CAP node so
 /// the matching OPERATION_END can emit the paired terminal event.
 struct Layer2BeginContext {
     agent_code: String,
-    /// Tool name for INV_TOOL; unused for ASK.
+    /// Tool name for INV_CAP; unused for ASK.
     tool_name: Option<String>,
     /// Wall-clock instant when the begin was emitted, for latency_ms on end.
     started_at: std::time::Instant,
@@ -29,7 +29,7 @@ struct Layer2BeginContext {
 
 /// Collect a string array attribute as a list of safe-to-surface argument
 /// keys for Layer 2 `tool_call_begin`.
-fn inv_tool_argument_keys(node: &Node) -> Vec<String> {
+fn inv_cap_argument_keys(node: &Node) -> Vec<String> {
     let Some(params_json) = node
         .attributes
         .get(graph_attrs::PARAMS_JSON)
@@ -227,7 +227,7 @@ impl OperationDispatcher {
 
         // Layer 2 — emit a paired begin event when this op runs inside an
         // agent scope. ASK/THINK/REASON paired with `subagent_llm_call_*`;
-        // INV_TOOL paired with `tool_call_*`. The matching end fires after
+        // INV_CAP paired with `tool_call_*`. The matching end fires after
         // the handler returns (see below) so it sees both the duration and
         // the result shape. Captures the active scope's `agent_code` at
         // begin so the end remains coherent even if a nested SPAWN_AGENT
@@ -267,14 +267,14 @@ impl OperationDispatcher {
                             started_at: op_start,
                         })
                     }
-                    AISOperationType::InvTool => {
+                    AISOperationType::InvCap => {
                         let tool_name = node
                             .attributes
                             .get(graph_attrs::CAPABILITY)
                             .and_then(|v| v.as_string())
                             .cloned()
                             .unwrap_or_default();
-                        let argument_keys = inv_tool_argument_keys(node);
+                        let argument_keys = inv_cap_argument_keys(node);
                         emitter.emit_tool_call_begin(&scope.agent_code, &tool_name, &argument_keys);
                         Some(Layer2BeginContext {
                             agent_code: scope.agent_code.clone(),
@@ -327,7 +327,7 @@ impl OperationDispatcher {
             let tokens = ctx.token_accountant.get_node(node.id);
             let timing = ctx.timing_tracker.get_node(node.id);
 
-            // Layer 2 terminal for ASK/INV_TOOL when the begin captured an
+            // Layer 2 terminal for ASK/INV_CAP when the begin captured an
             // active scope at the same node.
             if let Some(begin) = layer2_begin.as_ref() {
                 let latency_ms = begin.started_at.elapsed().as_millis() as u64;
@@ -349,7 +349,7 @@ impl OperationDispatcher {
                             content_len,
                         );
                     }
-                    AISOperationType::InvTool => {
+                    AISOperationType::InvCap => {
                         let tool_name = begin.tool_name.as_deref().unwrap_or("");
                         let (status, result_keys) = match &result {
                             Ok(value) => (LAYER2_TOOL_STATUS_OK, result_keys_for_layer2(value)),
@@ -576,7 +576,7 @@ impl OperationDispatcher {
             AISOperationType::Verify => verify::execute(ctx, node, inputs).await,
 
             // Invocation operations
-            AISOperationType::InvTool => inv_tool::execute(ctx, node, inputs).await,
+            AISOperationType::InvCap => inv_cap::execute(ctx, node, inputs).await,
 
             // Synchronization operations
             AISOperationType::WaitAll => wait_all::execute(ctx, node, inputs).await,
@@ -666,9 +666,9 @@ mod retry_primitive_tests {
 
     #[test]
     fn error_output_value_carries_structured_error_under_well_known_key() {
-        let node = node(AISOperationType::InvTool);
+        let node = node(AISOperationType::InvCap);
         let err = RuntimeError::Operation {
-            op_type: AISOperationType::InvTool,
+            op_type: AISOperationType::InvCap,
             message: "boom".to_string(),
         };
         let value = OperationDispatcher::error_output_value(&node, &err);

@@ -11,7 +11,7 @@ export const OP_SPEC_SCHEMA_VERSION = "apxm.op-spec.v1";
 export const OP_SPEC_TOTAL_OPERATIONS = 41;
 
 /** Union of every AIS opcode name in the catalog. */
-export type OpName = "AGENT" | "QMEM" | "UMEM" | "ASK" | "THINK" | "REASON" | "PLAN" | "REFLECT" | "VERIFY" | "INV_TOOL" | "EXC" | "PRINT" | "JUMP" | "BRANCH_ON_VALUE" | "LOOP_START" | "LOOP_END" | "RETURN" | "SWITCH" | "FLOW_CALL" | "WORKFLOW_SPAWN" | "CALL_SKILL" | "MERGE" | "FENCE" | "WAIT_ALL" | "TRY_CATCH" | "ERR" | "COMMUNICATE" | "HANDOFF" | "UPDATE_GOAL" | "PAUSE" | "RESUME" | "DELEGATE" | "NOP" | "IDENTITY" | "SPAWN_AGENT" | "REGISTER_CAPABILITY" | "REGISTER_HOOK" | "AUTONOMOUS" | "CHECKPOINT" | "CONST_STR" | "YIELD";
+export type OpName = "AGENT" | "QMEM" | "UMEM" | "ASK" | "THINK" | "REASON" | "PLAN" | "REFLECT" | "VERIFY" | "INV_CAP" | "EXC" | "PRINT" | "JUMP" | "BRANCH_ON_VALUE" | "LOOP_START" | "LOOP_END" | "RETURN" | "SWITCH" | "FLOW_CALL" | "WORKFLOW_SPAWN" | "CALL_SKILL" | "MERGE" | "FENCE" | "WAIT_ALL" | "TRY_CATCH" | "ERR" | "COMMUNICATE" | "HANDOFF" | "UPDATE_GOAL" | "PAUSE" | "RESUME" | "DELEGATE" | "NOP" | "IDENTITY" | "SPAWN_AGENT" | "REGISTER_CAPABILITY" | "REGISTER_HOOK" | "AUTONOMOUS" | "CHECKPOINT" | "CONST_STR" | "YIELD";
 
 /** A single field/attribute an AIS operation accepts. */
 export interface OpField {
@@ -220,9 +220,9 @@ export const OP_SPECS: Readonly<Record<OpName, OpSpec>> = {
     ],
     exampleJson: "{\"id\": 5, \"op\": \"VERIFY\", \"attributes\": {\"claim\": \"The solar system has eight planets.\"}}",
   },
-  "INV_TOOL": {
-    op: "INV_TOOL",
-    rustVariant: "InvTool",
+  "INV_CAP": {
+    op: "INV_CAP",
+    rustVariant: "InvCap",
     name: "InvokeTool",
     category: "tools",
     description: "Call external tool with structured params; store result",
@@ -237,7 +237,7 @@ export const OP_SPECS: Readonly<Record<OpName, OpSpec>> = {
     { name: "capability", required: true, description: "Name of the capability/tool to invoke", refType: "capability" },
     { name: "params_json", required: false, description: "JSON-encoded parameters to pass to the tool", refType: null }
     ],
-    exampleJson: "{\"id\": 2, \"op\": \"INV_TOOL\", \"attributes\": {\"capability\": \"web_search\", \"params_json\": \"{\\\"query\\\":\\\"rust ownership\\\"}\"}}",
+    exampleJson: "{\"id\": 2, \"op\": \"INV_CAP\", \"attributes\": {\"capability\": \"web_search\", \"params_json\": \"{\\\"query\\\":\\\"rust ownership\\\"}\"}}",
   },
   "EXC": {
     op: "EXC",
@@ -736,7 +736,7 @@ export const OP_SPECS: Readonly<Record<OpName, OpSpec>> = {
     name: "RegisterCapability",
     category: "coordination",
     description: "Register a new capability (tool) in the runtime registry",
-    longDescription: "Dynamically registers a new capability in the runtime's capability registry. The capability becomes available for INV_TOOL operations after registration. Returns a confirmation with the registered capability name.",
+    longDescription: "Dynamically registers a new capability in the runtime's capability registry. The capability becomes available for INV_CAP operations after registration. Returns a confirmation with the registered capability name.",
     latency: "low",
     wireIndex: 36,
     isPseudoOp: false,
@@ -757,7 +757,7 @@ export const OP_SPECS: Readonly<Record<OpName, OpSpec>> = {
     name: "RegisterHook",
     category: "coordination",
     description: "Register an author lifecycle hook into the artifact hook registry",
-    longDescription: "Registers one author lifecycle hook (a Python handler bound to a lifecycle event) into the per-artifact hook registry. Mirrors REGISTER_CAPABILITY: the binding travels inside the artifact (AIR-portable) and the handler is dispatched via the same Python tool bridge as @tool. The runtime applies pre/post_tool hooks at the tool dispatch sites, pre/post_ask as Ask middleware, and session_start as an awaited pre-step.",
+    longDescription: "Registers one author lifecycle hook (a Python handler bound to a lifecycle event) into the per-artifact hook registry. Mirrors REGISTER_CAPABILITY: the binding travels inside the artifact (AIR-portable) and the handler is dispatched via the same Python tool bridge as @tool. The runtime applies pre/post_cap hooks at the tool dispatch sites, pre/post_ask as Ask middleware, and session_start as an awaited pre-step.",
     latency: "low",
     wireIndex: 43,
     isPseudoOp: false,
@@ -770,7 +770,7 @@ export const OP_SPECS: Readonly<Record<OpName, OpSpec>> = {
     { name: "hook_mode", required: false, description: "Hook mode: observe or gate", refType: null },
     { name: "python_hook_handler_id", required: true, description: "Stable content-addressed id (sha256:<hex64>) for the Python hook handler", refType: null }
     ],
-    exampleJson: "{\\\"id\\\": 4, \\\"op\\\": \\\"REGISTER_HOOK\\\", \\\"attributes\\\": {\\\"hook_event\\\": \\\"pre_tool\\\", \\\"hook_match\\\": \\\"lookup\\\", \\\"hook_mode\\\": \\\"gate\\\", \\\"python_hook_handler_id\\\": \\\"sha256:...\\\"}}",
+    exampleJson: "{\\\"id\\\": 4, \\\"op\\\": \\\"REGISTER_HOOK\\\", \\\"attributes\\\": {\\\"hook_event\\\": \\\"pre_cap\\\", \\\"hook_match\\\": \\\"lookup\\\", \\\"hook_mode\\\": \\\"gate\\\", \\\"python_hook_handler_id\\\": \\\"sha256:...\\\"}}",
   },
   "AUTONOMOUS": {
     op: "AUTONOMOUS",

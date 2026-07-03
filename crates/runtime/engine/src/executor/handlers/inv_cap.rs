@@ -1,4 +1,4 @@
-//! INV_TOOL operation - Capability invocation with validation and timeout
+//! INV_CAP operation - Capability invocation with validation and timeout
 //!
 //! Invokes registered capabilities/tools through the capability system.
 //! Provides automatic input validation, timeout enforcement, and error handling.
@@ -50,7 +50,7 @@ async fn enforce_write_boundary(
                 call_id: uuid::Uuid::new_v4().to_string(),
                 grant_id: "runtime-grant".to_string(),
                 capability_id: name.to_string(),
-                tool_binding: name.to_string(),
+                capability_binding: name.to_string(),
                 host_id: ctx.host_id.clone(),
                 operation: "invoke".to_string(),
                 mode: PromptMode::Confirm,
@@ -95,7 +95,7 @@ async fn enforce_write_boundary(
     }
 }
 
-/// Execute INV_TOOL operation - Invoke a registered capability
+/// Execute INV_CAP operation - Invoke a registered capability
 ///
 /// # Attributes
 ///
@@ -122,7 +122,7 @@ async fn enforce_write_boundary(
 /// # Example
 ///
 /// ```text
-/// INV_TOOL(capability="echo", timeout_ms=5000) -> result
+/// INV_CAP(capability="echo", timeout_ms=5000) -> result
 /// ```
 pub async fn execute(ctx: &ExecutionContext, node: &Node, inputs: Vec<Value>) -> Result<Value> {
     let capability_name = get_string_attribute(node, graph_attrs::CAPABILITY)?;
@@ -141,13 +141,13 @@ pub async fn execute(ctx: &ExecutionContext, node: &Node, inputs: Vec<Value>) ->
         inputs = inputs.len(),
         timeout_ms = timeout_ms,
         python_handler = ?python_handler_id,
-        "Executing INV_TOOL operation"
+        "Executing INV_CAP operation"
     );
 
     // Convert inputs to HashMap<String, Value> strictly from params_json.
     let mut args = HashMap::new();
 
-    // First, check for params_json attribute (from InvToolOp MLIR)
+    // First, check for params_json attribute (from InvCapOp MLIR)
     if let Some(params_json) = node
         .attributes
         .get(graph_attrs::PARAMS_JSON)
@@ -171,7 +171,7 @@ pub async fn execute(ctx: &ExecutionContext, node: &Node, inputs: Vec<Value>) ->
     if !node.attributes.contains_key(graph_attrs::PARAMS_JSON) && !inputs.is_empty() {
         return Err(RuntimeError::Operation {
             op_type: node.op_type,
-            message: "INV_TOOL inputs require a params_json object with named placeholders"
+            message: "INV_CAP inputs require a params_json object with named placeholders"
                 .to_string(),
         });
     }
@@ -188,12 +188,12 @@ pub async fn execute(ctx: &ExecutionContext, node: &Node, inputs: Vec<Value>) ->
 
     let timeout = std::time::Duration::from_millis(timeout_ms);
 
-    // pre_tool hooks run for EVERY tool — Python-bridge AND native/builtin
+    // pre_cap hooks run for EVERY tool — Python-bridge AND native/builtin
     // capabilities (FR-004, constitution #5). A deny / gate failure does NOT
     // fail the node: the turn continues gracefully with a denial message (m4,
     // matching the LLM tool-loop's graceful `ToolResult::error`).
     let args =
-        match crate::executor::hook_driver::run_pre_tool_hooks(ctx, &capability_name, args).await {
+        match crate::executor::hook_driver::run_pre_cap_hooks(ctx, &capability_name, args).await {
             Ok(edited) => edited,
             Err(e) => {
                 return Ok(Value::String(format!(
@@ -210,15 +210,15 @@ pub async fn execute(ctx: &ExecutionContext, node: &Node, inputs: Vec<Value>) ->
     // process-wide capability registry.
     enforce_write_boundary(ctx, &capability_name, &args, python_handler_id.is_some()).await?;
 
-    // Python branch is taken iff `bind-tool-handlers` stamped a handler id.
+    // Python branch is taken iff `bind-capability-handlers` stamped a handler id.
     let raw = if let Some(handler_id) = python_handler_id {
         tokio::select! {
-            result = execute_python_tool(ctx, &capability_name, &handler_id, &args, timeout) => result?,
+            result = execute_python_handler(ctx, &capability_name, &handler_id, &args, timeout) => result?,
             _ = ctx.cancellation_token.cancelled() => return Err(RuntimeError::SchedulerCancelled),
         }
     } else {
         // Write serialization on the GRAPH path: the dataflow scheduler runs
-        // independent inv_tool nodes concurrently and serializes only by data
+        // independent inv_cap nodes concurrently and serializes only by data
         // dependency, never by tool identity — so a graph with two same-name
         // write nodes could race. Acquire the same per-name write lock the ASK
         // loop uses (shared map) so same-capability writes serialize across both
@@ -233,7 +233,7 @@ pub async fn execute(ctx: &ExecutionContext, node: &Node, inputs: Vec<Value>) ->
             None
         };
         let outcome = tokio::select! {
-            result = ctx.invoke_tool_with_timeout(&capability_name, args, timeout) => {
+            result = ctx.invoke_capability_with_timeout(&capability_name, args, timeout) => {
                 result.map_err(|e| {
                     tracing::error!(
                         capability = %capability_name,
@@ -251,9 +251,9 @@ pub async fn execute(ctx: &ExecutionContext, node: &Node, inputs: Vec<Value>) ->
         }
         outcome
     };
-    // post_tool hooks (replace_result) for both paths.
+    // post_cap hooks (replace_result) for both paths.
     let result =
-        crate::executor::hook_driver::run_post_tool_hooks(ctx, &capability_name, raw).await;
+        crate::executor::hook_driver::run_post_cap_hooks(ctx, &capability_name, raw).await;
     if let Some(emitter) = &ctx.event_emitter {
         emitter.emit_tool_end(&capability_name, &result);
     }
@@ -281,12 +281,12 @@ fn args_from_params_json(
     let parsed = serde_json::from_str::<serde_json::Value>(params_json).map_err(|err| {
         RuntimeError::Operation {
             op_type,
-            message: format!("INV_TOOL params_json is invalid JSON: {err}"),
+            message: format!("INV_CAP params_json is invalid JSON: {err}"),
         }
     })?;
     let obj = parsed.as_object().ok_or_else(|| RuntimeError::Operation {
         op_type,
-        message: "INV_TOOL params_json must be a JSON object".to_string(),
+        message: "INV_CAP params_json must be a JSON object".to_string(),
     })?;
     let mut args = HashMap::new();
     for (k, v) in obj {
@@ -295,7 +295,7 @@ fn args_from_params_json(
         // must reach the capability.
         let value = Value::try_from(v.clone()).map_err(|err| RuntimeError::Operation {
             op_type,
-            message: format!("INV_TOOL params_json value for '{k}' is unsupported: {err}"),
+            message: format!("INV_CAP params_json value for '{k}' is unsupported: {err}"),
         })?;
         args.insert(k.clone(), value);
     }
@@ -326,11 +326,11 @@ fn render_named_in_value(
     Ok(())
 }
 
-/// Dispatch an INV_TOOL call to the Python tool worker bridge.
+/// Dispatch an INV_CAP call to the Python tool worker bridge.
 ///
 /// Converts the `HashMap<String, Value>` args to `serde_json::Value`,
-/// calls into `PythonToolBridge::call`, and converts the result back.
-async fn execute_python_tool(
+/// calls into `PythonHandlerBridge::call`, and converts the result back.
+async fn execute_python_handler(
     ctx: &ExecutionContext,
     capability_name: &str,
     _handler_id: &str,
@@ -338,11 +338,11 @@ async fn execute_python_tool(
     timeout: std::time::Duration,
 ) -> Result<Value> {
     let bridge = ctx
-        .python_tool_bridge
+        .python_handler_bridge
         .as_ref()
         .ok_or_else(|| RuntimeError::Capability {
             capability: capability_name.to_string(),
-            message: "INV_TOOL has python_handler_id but no PythonToolBridge is configured"
+            message: "INV_CAP has python_handler_id but no PythonHandlerBridge is configured"
                 .to_string(),
         })?;
 
@@ -414,7 +414,7 @@ mod tests {
     #[test]
     fn args_from_params_json_preserves_structured_values() {
         let args = args_from_params_json(
-            AISOperationType::InvTool,
+            AISOperationType::InvCap,
             r#"{"chat_id":"chat-42","headers":{"x":"y"},"items":[1,true]}"#,
         )
         .unwrap();
@@ -454,14 +454,14 @@ mod tests {
 
     #[test]
     fn args_from_params_json_rejects_invalid_json() {
-        let err = args_from_params_json(AISOperationType::InvTool, r#"{"chat_id":""bad"}"#)
+        let err = args_from_params_json(AISOperationType::InvCap, r#"{"chat_id":""bad"}"#)
             .expect_err("invalid params_json should fail closed");
         assert!(err.to_string().contains("params_json is invalid JSON"));
     }
 
     #[test]
     fn args_from_params_json_rejects_non_object() {
-        let err = args_from_params_json(AISOperationType::InvTool, r#"["not","object"]"#)
+        let err = args_from_params_json(AISOperationType::InvCap, r#"["not","object"]"#)
             .expect_err("params_json must be object");
         assert!(
             err.to_string()

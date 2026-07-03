@@ -2,7 +2,7 @@
 //!
 //! Provides the Rust side of the subprocess-based Python tool execution
 //! pipeline. The worker process communicates over NDJSON on stdin/stdout
-//! and is lazily spawned on the first Python-backed `INV_TOOL` invocation.
+//! and is lazily spawned on the first Python-backed `INV_CAP` invocation.
 //!
 //! # Architecture
 //!
@@ -29,8 +29,8 @@ pub use constants::{
 pub use protocol::{
     CallRequest, CallResponse, ErrorEnvelope, PROTOCOL_VERSION, WorkerRequest, WorkerResponse,
 };
-pub use registry::{PythonToolRegistry, ToolDescriptor};
-pub use worker::PythonToolWorker;
+pub use registry::{PythonHandlerRegistry, ToolDescriptor};
+pub use worker::PythonHandlerWorker;
 
 use apxm_core::error::RuntimeError;
 use std::sync::Arc;
@@ -40,10 +40,10 @@ use tokio::sync::OnceCell;
 /// Lazy handle to the Python tool worker.
 ///
 /// Wraps `OnceCell` so the subprocess is spawned exactly once, on the
-/// first `INV_TOOL` that targets a Python-backed capability.
-pub struct PythonToolBridge {
-    registry: PythonToolRegistry,
-    worker: OnceCell<Arc<PythonToolWorker>>,
+/// first `INV_CAP` that targets a Python-backed capability.
+pub struct PythonHandlerBridge {
+    registry: PythonHandlerRegistry,
+    worker: OnceCell<Arc<PythonHandlerWorker>>,
     /// Optional OS sandbox backend. When set + available, the python tool/hook
     /// worker is launched confined (bubblewrap): RO root, ephemeral /tmp, no
     /// network. None = run the worker directly (trusted/local).
@@ -54,9 +54,9 @@ pub struct PythonToolBridge {
     sandbox_required: bool,
 }
 
-impl PythonToolBridge {
+impl PythonHandlerBridge {
     /// Create a new bridge from a tool registry.
-    pub fn new(registry: PythonToolRegistry) -> Self {
+    pub fn new(registry: PythonHandlerRegistry) -> Self {
         Self {
             registry,
             worker: OnceCell::new(),
@@ -79,7 +79,7 @@ impl PythonToolBridge {
 
     /// Build from a `tools.json` file path.
     pub fn from_tools_json(path: &std::path::Path) -> Result<Self, RuntimeError> {
-        let registry = PythonToolRegistry::from_file(path)?;
+        let registry = PythonHandlerRegistry::from_file(path)?;
         Ok(Self::new(registry))
     }
 
@@ -115,7 +115,7 @@ impl PythonToolBridge {
             .worker
             .get_or_try_init(|| async {
                 let manifest = self.registry.manifest_json()?;
-                let w = PythonToolWorker::spawn_with_env(
+                let w = PythonHandlerWorker::spawn_with_env(
                     &manifest,
                     &[],
                     self.sandbox.as_ref(),
@@ -145,7 +145,7 @@ impl PythonToolBridge {
             .worker
             .get_or_try_init(|| async {
                 let manifest = self.registry.manifest_json()?;
-                let w = PythonToolWorker::spawn_with_env(
+                let w = PythonHandlerWorker::spawn_with_env(
                     &manifest,
                     &[],
                     self.sandbox.as_ref(),
@@ -177,7 +177,7 @@ impl PythonToolBridge {
             .worker
             .get_or_try_init(|| async {
                 let manifest = self.registry.manifest_json()?;
-                let w = PythonToolWorker::spawn_with_env(
+                let w = PythonHandlerWorker::spawn_with_env(
                     &manifest,
                     &[],
                     self.sandbox.as_ref(),
@@ -193,7 +193,7 @@ impl PythonToolBridge {
     }
 
     /// Access the underlying registry.
-    pub fn registry(&self) -> &PythonToolRegistry {
+    pub fn registry(&self) -> &PythonHandlerRegistry {
         &self.registry
     }
 

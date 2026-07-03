@@ -39,7 +39,7 @@ pub struct PermissionPrompt {
     /// The capability being requested.
     pub capability_id: String,
     /// Callable implementation binding checked by the runtime gate.
-    pub tool_binding: String,
+    pub capability_binding: String,
     /// The host that owns the capability, when the prompt is host-scoped.
     pub host_id: Option<String>,
     /// Operation being attempted under the capability.
@@ -131,7 +131,7 @@ mod tests {
             call_id: "c1".into(),
             grant_id: "g1".into(),
             capability_id: "provider.write".into(),
-            tool_binding: "provider.write".into(),
+            capability_binding: "provider.write".into(),
             host_id: Some("host-1".into()),
             operation: "write".into(),
             mode: PromptMode::Confirm,

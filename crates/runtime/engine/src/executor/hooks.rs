@@ -202,8 +202,8 @@ pub enum HookEvent {
     PostTurn,
     PreAsk,
     PostAsk,
-    PreTool,
-    PostTool,
+    PreCap,
+    PostCap,
 }
 
 impl HookEvent {
@@ -214,8 +214,8 @@ impl HookEvent {
             "post_turn" => Some(Self::PostTurn),
             "pre_ask" => Some(Self::PreAsk),
             "post_ask" => Some(Self::PostAsk),
-            "pre_tool" => Some(Self::PreTool),
-            "post_tool" => Some(Self::PostTool),
+            "pre_cap" => Some(Self::PreCap),
+            "post_cap" => Some(Self::PostCap),
             _ => None,
         }
     }
@@ -227,8 +227,8 @@ impl HookEvent {
             Self::PostTurn => "post_turn",
             Self::PreAsk => "pre_ask",
             Self::PostAsk => "post_ask",
-            Self::PreTool => "pre_tool",
-            Self::PostTool => "post_tool",
+            Self::PreCap => "pre_cap",
+            Self::PostCap => "post_cap",
         }
     }
 
@@ -236,7 +236,7 @@ impl HookEvent {
     pub fn is_pre(&self) -> bool {
         matches!(
             self,
-            Self::SessionStart | Self::PreTurn | Self::PreAsk | Self::PreTool
+            Self::SessionStart | Self::PreTurn | Self::PreAsk | Self::PreCap
         )
     }
 }
@@ -268,7 +268,7 @@ impl HookMode {
 /// One author hook binding: a Python handler bound to a lifecycle event.
 #[derive(Debug, Clone)]
 pub struct HookBinding {
-    /// Python handler id, dispatched via the shared `PythonToolBridge`.
+    /// Python handler id, dispatched via the shared `PythonHandlerBridge`.
     pub handler_id: String,
     pub event: HookEvent,
     /// Glob over tool/op name this hook applies to (`*` = all).
@@ -394,8 +394,8 @@ mod hook_registry_tests {
             "post_turn",
             "pre_ask",
             "post_ask",
-            "pre_tool",
-            "post_tool",
+            "pre_cap",
+            "post_cap",
         ] {
             assert_eq!(HookEvent::parse(s).unwrap().as_str(), s);
         }
@@ -404,9 +404,9 @@ mod hook_registry_tests {
 
     #[test]
     fn only_pre_events_gate() {
-        assert!(HookEvent::PreTool.is_pre());
+        assert!(HookEvent::PreCap.is_pre());
         assert!(HookEvent::SessionStart.is_pre());
-        assert!(!HookEvent::PostTool.is_pre());
+        assert!(!HookEvent::PostCap.is_pre());
         assert!(!HookEvent::PostAsk.is_pre());
     }
 
@@ -456,26 +456,26 @@ mod hook_registry_tests {
         let reg = HookRegistry::new();
         reg.register(HookBinding {
             handler_id: "h1".into(),
-            event: HookEvent::PreTool,
+            event: HookEvent::PreCap,
             match_glob: "lookup".into(),
             mode: HookMode::Gate,
         });
         reg.register(HookBinding {
             handler_id: "h2".into(),
-            event: HookEvent::PreTool,
+            event: HookEvent::PreCap,
             match_glob: "*".into(),
             mode: HookMode::Observe,
         });
         reg.register(HookBinding {
             handler_id: "h3".into(),
-            event: HookEvent::PostTool,
+            event: HookEvent::PostCap,
             match_glob: "*".into(),
             mode: HookMode::Observe,
         });
         assert_eq!(reg.len(), 3);
-        let m = reg.matching(HookEvent::PreTool, "lookup");
+        let m = reg.matching(HookEvent::PreCap, "lookup");
         assert_eq!(m.len(), 2);
-        let m2 = reg.matching(HookEvent::PreTool, "search");
+        let m2 = reg.matching(HookEvent::PreCap, "search");
         assert_eq!(m2.len(), 1);
         assert_eq!(m2[0].handler_id, "h2");
     }

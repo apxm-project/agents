@@ -122,7 +122,7 @@ pub async fn execute(ctx: &ExecutionContext, node: &Node, inputs: Vec<Value>) ->
         let mut action_req =
             apply_llm_request_routing_from_node(LLMRequest::new(action_prompt), node)?;
 
-        // If the autonomous node exposes tools (tool_groups / tools / tools_enabled),
+        // If the autonomous node exposes tools (capability_groups / tools / tools_enabled),
         // run the real model->tool->model loop so the agent can ACT on its decision
         // (actually invoke capabilities), not just describe an action. Opt-in and
         // default-safe: no tool attrs => empty tools => the original text-only path.

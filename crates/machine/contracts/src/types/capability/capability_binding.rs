@@ -4,9 +4,9 @@ use super::common::{CapabilitySchemaError, validate_non_empty};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
-pub enum ToolBindingHandler {
+pub enum CapabilityBindingHandler {
     RustExecutor,
-    PythonTool,
+    PythonHandler,
     PackHandler,
     McpBridge,
     Builtin,
@@ -15,23 +15,23 @@ pub enum ToolBindingHandler {
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
-pub struct ToolBinding {
+pub struct CapabilityBinding {
     pub id: String,
-    pub handler: ToolBindingHandler,
+    pub handler: CapabilityBindingHandler,
     pub parameters_schema: serde_json::Value,
     pub returns: String,
 }
 
-impl ToolBinding {
+impl CapabilityBinding {
     pub fn validate(&self) -> Result<(), CapabilitySchemaError> {
-        validate_non_empty("tool_binding.id", &self.id)?;
-        validate_non_empty("tool_binding.returns", &self.returns)
+        validate_non_empty("capability_binding.id", &self.id)?;
+        validate_non_empty("capability_binding.returns", &self.returns)
     }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
-pub struct ToolBindingMetadata {
+pub struct CapabilityBindingMetadata {
     pub name: String,
     pub description: String,
     pub parameters_schema: serde_json::Value,
@@ -41,9 +41,9 @@ pub struct ToolBindingMetadata {
     pub read_only_hint: bool,
 }
 
-impl ToolBindingMetadata {
+impl CapabilityBindingMetadata {
     pub fn validate(&self) -> Result<(), CapabilitySchemaError> {
-        validate_non_empty("tool_binding.name", &self.name)?;
-        validate_non_empty("tool_binding.description", &self.description)
+        validate_non_empty("capability_binding.name", &self.name)?;
+        validate_non_empty("capability_binding.description", &self.description)
     }
 }

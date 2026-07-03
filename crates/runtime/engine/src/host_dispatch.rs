@@ -95,7 +95,7 @@ mod tests {
             call_id: "c1".into(),
             capability_id: "cap1".into(),
             host_op: "op".into(),
-            tool_binding: "binding".into(),
+            capability_binding: "binding".into(),
             args: serde_json::Value::Null,
             args_digest: "".into(),
             grant_ref: None,

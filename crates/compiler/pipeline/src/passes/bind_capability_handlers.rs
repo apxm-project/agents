@@ -1,10 +1,10 @@
 //! Bind Tool Handlers Pass
 //!
 //! Copies `python_handler_id` from `REGISTER_CAPABILITY` nodes onto their
-//! matching `INV_TOOL` nodes so the runtime can dispatch to the Python tool
+//! matching `INV_CAP` nodes so the runtime can dispatch to the Python tool
 //! worker without a registry lookup.
 //!
-//! Runs AFTER `tool-binding-check` (which validates that every INV_TOOL
+//! Runs AFTER `capability-binding-check` (which validates that every INV_CAP
 //! resolves) and BEFORE lowering.
 //!
 //! Diagnostics:
@@ -21,14 +21,14 @@ use apxm_core::types::{AISOperationType, Value};
 use std::collections::HashMap;
 
 /// Pass name sentinel for pipeline ordering and diagnostics.
-pub const BIND_TOOL_HANDLERS_PASS_NAME: &str = "bind-tool-handlers";
+pub const BIND_CAPABILITY_HANDLERS_PASS_NAME: &str = "bind-capability-handlers";
 
 /// Copy `python_handler_id` from REGISTER_CAPABILITY nodes onto matching
-/// INV_TOOL nodes.
+/// INV_CAP nodes.
 ///
-/// Returns the number of INV_TOOL nodes annotated, or an error if conflicting
+/// Returns the number of INV_CAP nodes annotated, or an error if conflicting
 /// handler IDs are found for the same capability name.
-pub fn bind_tool_handlers(module: &mut AirModule) -> Result<usize> {
+pub fn bind_capability_handlers(module: &mut AirModule) -> Result<usize> {
     // Pass 1: build capability_name -> python_handler_id map from REGISTER_CAPABILITY nodes. Detect conflicts.
     let mut handler_map: HashMap<String, String> = HashMap::new();
     let mut conflicts: Vec<String> = Vec::new();
@@ -81,10 +81,10 @@ pub fn bind_tool_handlers(module: &mut AirModule) -> Result<usize> {
         ))));
     }
 
-    // Pass 2: stamp python_handler_id onto matching INV_TOOL nodes.
+    // Pass 2: stamp python_handler_id onto matching INV_CAP nodes.
     let mut annotated = 0;
     for node in &mut module.nodes {
-        if node.op != AISOperationType::InvTool {
+        if node.op != AISOperationType::InvCap {
             continue;
         }
         let Some(cap_name) = node
@@ -108,9 +108,9 @@ pub fn bind_tool_handlers(module: &mut AirModule) -> Result<usize> {
     Ok(annotated)
 }
 
-/// Same logic as [`bind_tool_handlers`] but on a post-MLIR [`ExecutionDag`].
+/// Same logic as [`bind_capability_handlers`] but on a post-MLIR [`ExecutionDag`].
 ///
-/// Returns the number of INV_TOOL nodes annotated, or `Err` on conflicting
+/// Returns the number of INV_CAP nodes annotated, or `Err` on conflicting
 /// handler IDs (E714).
 pub fn bind_python_handlers_to_dag(dag: &mut ExecutionDag) -> Result<usize> {
     // Pass 1: build capability_name -> python_handler_id map.
@@ -163,10 +163,10 @@ pub fn bind_python_handlers_to_dag(dag: &mut ExecutionDag) -> Result<usize> {
         ))));
     }
 
-    // Pass 2: stamp python_handler_id onto matching INV_TOOL nodes.
+    // Pass 2: stamp python_handler_id onto matching INV_CAP nodes.
     let mut annotated = 0;
     for node in &mut dag.nodes {
-        if node.op_type != AISOperationType::InvTool {
+        if node.op_type != AISOperationType::InvCap {
             continue;
         }
         let Some(cap_name) = node

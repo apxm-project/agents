@@ -155,7 +155,7 @@ fn emit_air_from_python(
 
 /// Python tools sidecar data extracted from the AIR comment, if any.
 #[cfg(feature = "driver")]
-type PythonToolsSidecar = Option<Vec<u8>>;
+type PythonHandlersSidecar = Option<Vec<u8>>;
 
 #[cfg(feature = "driver")]
 fn is_mlir_air_text(text: &str) -> bool {
@@ -174,7 +174,7 @@ fn is_mlir_air_text(text: &str) -> bool {
 pub(super) fn prepare_graph_input(
     input: &Path,
     config_path: Option<&Path>,
-) -> Result<(PathBuf, Option<tempfile::NamedTempFile>, PythonToolsSidecar)> {
+) -> Result<(PathBuf, Option<tempfile::NamedTempFile>, PythonHandlersSidecar)> {
     if is_python_graph_input(input) {
         let (tmp, sidecar) = emit_air_from_python(input, config_path)?;
         return Ok((tmp.path().to_path_buf(), Some(tmp), sidecar));
@@ -383,7 +383,7 @@ pub fn compile_command(
 
         let artifact_start = std::time::Instant::now();
         // Parse manifest from sidecar for orphan @tool detection (W723)
-        let manifest: Option<Vec<apxm_compiler::passes::PythonToolManifestEntry>> =
+        let manifest: Option<Vec<apxm_compiler::passes::PythonCapabilityManifestEntry>> =
             python_tools_sidecar.as_ref().and_then(|data| {
                 serde_json::from_slice(data)
                     .map_err(|e| {

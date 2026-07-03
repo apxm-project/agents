@@ -77,7 +77,7 @@ impl SkillResolver {
             self.push_skill(&mut resolved, recipient);
         }
 
-        if op_type == AISOperationType::InvTool
+        if op_type == AISOperationType::InvCap
             && let Some(capability) = string_attr(attributes, graph_attrs::CAPABILITY)
         {
             self.push_skill(&mut resolved, capability);

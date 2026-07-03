@@ -51,7 +51,7 @@ describe("GraphBuilder", () => {
     });
   });
 
-  it("records a capability invocation (INV_TOOL)", () => {
+  it("records a capability invocation (INV_CAP)", () => {
     const g = new GraphBuilder("capability_flow");
     const invoked = g.invokeCapability({
       capability: "search:web",
@@ -60,7 +60,7 @@ describe("GraphBuilder", () => {
     g.done(invoked);
 
     const graph = g.toGraph();
-    const node = graph.nodes.find((n) => n.op === "INV_TOOL")!;
+    const node = graph.nodes.find((n) => n.op === "INV_CAP")!;
     expect(node.attributes.capability).toBe("search:web");
     expect(node.attributes.params_json).toBe(JSON.stringify({ query: "apxm" }));
   });

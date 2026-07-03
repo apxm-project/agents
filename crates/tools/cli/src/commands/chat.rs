@@ -200,7 +200,7 @@ fn builtin_chat_air(opts: &ChatOptions, context: Option<&str>) -> String {
     }
 }
 
-fn required_tool_bindings(opts: &ChatOptions) -> Vec<String> {
+fn required_capability_bindings(opts: &ChatOptions) -> Vec<String> {
     let mut bindings = opts
         .capability_grant_ids
         .iter()
@@ -234,7 +234,7 @@ async fn resolve_execute_capability_grant_ids(
         .filter(|grant| grant.starts_with("grant_"))
         .cloned()
         .collect::<Vec<_>>();
-    for binding in required_tool_bindings(opts) {
+    for binding in required_capability_bindings(opts) {
         grant_ids.push(client.mint_capability_grant(&binding).await?);
     }
     Ok(grant_ids)
@@ -375,18 +375,18 @@ pub async fn chat_command(opts: ChatOptions) -> Result<()> {
     eprintln!("type a message, or /help for meta-commands; /exit to quit");
 
     let mut convo = Conversation::default();
-    let mut approved_tool_bindings: Vec<String> = opts
+    let mut approved_capability_bindings: Vec<String> = opts
         .capability_grant_ids
         .iter()
         .filter(|grant| !grant.starts_with("grant_"))
         .cloned()
         .collect();
-    for binding in required_tool_bindings(&opts) {
-        if !approved_tool_bindings
+    for binding in required_capability_bindings(&opts) {
+        if !approved_capability_bindings
             .iter()
             .any(|existing| existing == &binding)
         {
-            approved_tool_bindings.push(binding);
+            approved_capability_bindings.push(binding);
         }
     }
     let tool_call_budgets = tool_call_budgets_for_opts(&opts);
@@ -504,7 +504,7 @@ pub async fn chat_command(opts: ChatOptions) -> Result<()> {
             &air,
             &session_id,
             &opts,
-            &mut approved_tool_bindings,
+            &mut approved_capability_bindings,
             &tool_call_budgets,
         )
         .await;
@@ -633,13 +633,13 @@ async fn handle_user_turn(
     air: &str,
     session_id: &str,
     opts: &ChatOptions,
-    approved_tool_bindings: &mut Vec<String>,
+    approved_capability_bindings: &mut Vec<String>,
     tool_call_budgets: &HashMap<String, usize>,
 ) {
     let prompt = convo.render(user_text);
     loop {
         let capability_grant_ids = match client
-            .resolve_capability_grant_ids(&approved_tool_bindings)
+            .resolve_capability_grant_ids(&approved_capability_bindings)
             .await
         {
             Ok(ids) => ids,
@@ -677,8 +677,8 @@ async fn handle_user_turn(
                     eprintln!("(turn skipped — write capability '{cap}' was not granted)");
                     break;
                 }
-                if !approved_tool_bindings.iter().any(|binding| binding == &cap) {
-                    approved_tool_bindings.push(cap);
+                if !approved_capability_bindings.iter().any(|binding| binding == &cap) {
+                    approved_capability_bindings.push(cap);
                 }
             }
             Err(err) => {
@@ -1153,7 +1153,7 @@ mod tests {
     fn built_in_conversational_agent_exposes_capability_discovery() {
         let opts = test_options();
         let air = builtin_chat_air(&opts, Some(capability_discovery_prompt()));
-        assert!(air.contains("tool_groups"));
+        assert!(air.contains("capability_groups"));
         assert!(air.contains("\"discovery\""));
         assert!(air.contains("\"skills\""));
         assert!(air.contains("capability_discovery"));

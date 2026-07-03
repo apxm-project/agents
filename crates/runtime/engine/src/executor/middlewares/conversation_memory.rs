@@ -125,7 +125,7 @@ mod tests {
         // accrue history or fire turn hooks (CONV-2).
         assert!(!mw.applies_to(&ask(false)));
         // Non-ask ops never apply.
-        let inv = Node::new(2, AISOperationType::InvTool);
+        let inv = Node::new(2, AISOperationType::InvCap);
         assert!(!mw.applies_to(&inv));
     }
 }

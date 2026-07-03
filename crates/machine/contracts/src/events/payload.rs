@@ -1202,7 +1202,7 @@ pub struct SubagentLlmCallEndPayload {
 }
 impl_event_payload!(SubagentLlmCallEndPayload, kind::SUBAGENT_LLM_CALL_END);
 
-/// An INV_TOOL node began a tool invocation inside an agent scope.
+/// An INV_CAP node began a tool invocation inside an agent scope.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ToolCallBeginPayload {
     /// Stable code of the agent issuing the tool call.
@@ -1214,7 +1214,7 @@ pub struct ToolCallBeginPayload {
 }
 impl_event_payload!(ToolCallBeginPayload, kind::TOOL_CALL_BEGIN);
 
-/// An INV_TOOL node inside an agent scope returned a result.
+/// An INV_CAP node inside an agent scope returned a result.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ToolCallEndPayload {
     /// Stable code of the agent issuing the tool call.

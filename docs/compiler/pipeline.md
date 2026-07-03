@@ -100,8 +100,8 @@ pass.)
 
 | Pass                       | Purpose                                                                              |
 |----------------------------|--------------------------------------------------------------------------------------|
-| `tool-binding-check`       | Validate that every `INV_TOOL` resolves to a `REGISTER_CAPABILITY` it can dispatch   |
-| `bind-tool-handlers`       | Copy `python_handler_id` from `REGISTER_CAPABILITY` onto each matching `INV_TOOL`    |
+| `capability-binding-check`       | Validate that every `INV_CAP` resolves to a `REGISTER_CAPABILITY` it can dispatch   |
+| `bind-capability-handlers`       | Copy `python_handler_id` from `REGISTER_CAPABILITY` onto each matching `INV_CAP`    |
 | `validate-model-allowlist` | Standalone driver-invoked check that every model id is in the configured allowlist   |
 
 The MLIR passes flow through the MLIR pass manager. The Rust-side artifact checks

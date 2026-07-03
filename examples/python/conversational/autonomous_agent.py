@@ -28,7 +28,7 @@ def autonomous_agent(g: GraphRecorder, goal: str):
     result = g.autonomous(
         prompt=f"{PERSONA}\n\nGoal: {{goal}}",
         max_iterations=8,
-        tool_groups=[ToolGroup.WEB, ToolGroup.SKILLS],
+        capability_groups=[ToolGroup.WEB, ToolGroup.SKILLS],
     )
     g.done(result)
 

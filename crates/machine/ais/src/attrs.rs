@@ -61,7 +61,7 @@ pub const CAPABILITY: &str = "capability";
 pub const PARAMS_JSON: &str = "params_json";
 pub const TOOLS_ENABLED: &str = "tools_enabled";
 pub const TOOLS: &str = "tools";
-pub const TOOL_GROUPS: &str = "tool_groups";
+pub const CAPABILITY_GROUPS: &str = "capability_groups";
 /// Self-declared per-tool call-count budget, a JSON object string
 /// `{"capability": max_calls}`. A DECLARATION the trusted host reads and folds
 /// into the enforced budget — never self-enforced by the program.
@@ -81,7 +81,7 @@ pub const PYTHON_HANDLER_ID: &str = "python_handler_id";
 
 // -- Lifecycle hooks (REGISTER_HOOK) --
 /// Lifecycle event a hook binds to (session_start, pre/post_turn,
-/// pre/post_ask, pre/post_tool).
+/// pre/post_ask, pre/post_cap).
 pub const HOOK_EVENT: &str = "hook_event";
 /// Glob over tool/op name the hook applies to (default `*`).
 pub const HOOK_MATCH: &str = "hook_match";
@@ -328,7 +328,7 @@ pub const ALL_ATTR_NAMES: &[&str] = &[
     PARAMS_JSON,
     TOOLS_ENABLED,
     TOOLS,
-    TOOL_GROUPS,
+    CAPABILITY_GROUPS,
     TOOL_CALL_BUDGETS,
     CODE,
     INTERPRETER,

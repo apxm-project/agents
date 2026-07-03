@@ -252,7 +252,7 @@ pub enum ErrorCode {
     // ========================================================================
     // Tool Binding Errors (E701-E799)
     // ========================================================================
-    /// E712: INV_TOOL.capability does not resolve to any REGISTER_CAPABILITY or known builtin
+    /// E712: INV_CAP.capability does not resolve to any REGISTER_CAPABILITY or known builtin
     UnboundCapability = 712,
     /// E713: python_handler_id on REGISTER_CAPABILITY does not match sha256:<hex64>
     InvalidHandlerId = 713,
@@ -263,7 +263,7 @@ pub enum ErrorCode {
     /// W214: schema-vs-signature drift (best-effort, Python frontend in-process)
     SchemaDrift = 722,
     /// W723: @tool in Python manifest but no REGISTER_CAPABILITY references its handler_id
-    OrphanPythonTool = 723,
+    OrphanPythonHandler = 723,
 
     // ========================================================================
     // Generic Errors (E900-E999)
@@ -365,7 +365,7 @@ impl ErrorCode {
             ErrorCode::ConflictingHandlerId => "E714",
             ErrorCode::UnusedCapability => "E721",
             ErrorCode::SchemaDrift => "E722",
-            ErrorCode::OrphanPythonTool => "W723",
+            ErrorCode::OrphanPythonHandler => "W723",
             ErrorCode::InternalError => "E900",
             ErrorCode::NotImplemented => "E901",
             ErrorCode::InvalidConfiguration => "E902",
@@ -389,7 +389,7 @@ impl ErrorCode {
         } else if code < 600 {
             "semantic"
         } else if code < 800 {
-            "tool-binding"
+            "capability-binding"
         } else {
             "generic"
         }
@@ -410,7 +410,7 @@ impl ErrorCode {
                 | ErrorCode::UncheckedMemoryRead
                 | ErrorCode::UnusedCapability
                 | ErrorCode::SchemaDrift
-                | ErrorCode::OrphanPythonTool
+                | ErrorCode::OrphanPythonHandler
         )
     }
 
@@ -502,7 +502,7 @@ impl ErrorCode {
             714 => Some(ErrorCode::ConflictingHandlerId),
             721 => Some(ErrorCode::UnusedCapability),
             722 => Some(ErrorCode::SchemaDrift),
-            723 => Some(ErrorCode::OrphanPythonTool),
+            723 => Some(ErrorCode::OrphanPythonHandler),
             900 => Some(ErrorCode::InternalError),
             901 => Some(ErrorCode::NotImplemented),
             902 => Some(ErrorCode::InvalidConfiguration),

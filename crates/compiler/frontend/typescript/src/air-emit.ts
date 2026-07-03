@@ -64,7 +64,7 @@ interface OpEmitRule {
   kwFirst?: string[];
   /** Attribute names consumed elsewhere (primary/synKw/positionalParen) and never rendered as a generic `key = value` pair. */
   excludeFromKw: string[];
-  /** Attribute rendered as a quoted `(value)` positional group, e.g. INV_TOOL's `params_json`. */
+  /** Attribute rendered as a quoted `(value)` positional group, e.g. INV_CAP's `params_json`. */
   positionalParenField?: string;
   /** When true, attributes are ignored entirely for text purposes (op always emits bare `ais.op : !ais.token`). */
   ignoreAttrs?: boolean;
@@ -126,7 +126,7 @@ const OP_EMIT_RULES: Partial<Record<OpName, OpEmitRule>> = {
     kwFirst: ["transfer_state"],
     excludeFromKw: ["handoff_from", "handoff_to", "transfer_state"],
   },
-  INV_TOOL: {
+  INV_CAP: {
     primaryField: "capability",
     ctx: "bracket",
     positionalParenField: "params_json",

@@ -10,7 +10,7 @@ use super::permission::PermissionOperation;
 #[serde(deny_unknown_fields)]
 pub struct RuntimeCapabilityGrant {
     pub grant_id: String,
-    pub tool_binding: String,
+    pub capability_binding: String,
     pub operations: Vec<PermissionOperation>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub expires_at: Option<String>,
@@ -21,7 +21,7 @@ impl From<&CapabilityGrant> for RuntimeCapabilityGrant {
     fn from(grant: &CapabilityGrant) -> Self {
         Self {
             grant_id: grant.grant_id.clone(),
-            tool_binding: grant.tool_binding.clone(),
+            capability_binding: grant.capability_binding.clone(),
             operations: grant.operations.clone(),
             expires_at: grant.lifecycle.expires_at.clone(),
             status: grant.status,

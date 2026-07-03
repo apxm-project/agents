@@ -6,7 +6,7 @@
 //! When the agent's subgraph terminates (cleanly or with error), the stack
 //! pops and emits `subagent_done` / `subagent_failed`.
 //!
-//! While the stack is non-empty, ASK and INV_TOOL handlers emit BOTH the
+//! While the stack is non-empty, ASK and INV_CAP handlers emit BOTH the
 //! Layer 1 graph events (`operation_start`, `tool_start`, …) AND their
 //! Layer 2 agent counterparts (`subagent_llm_call_begin`, `tool_call_begin`,
 //! …) — paired via `meta.call_id`. The top of the stack supplies

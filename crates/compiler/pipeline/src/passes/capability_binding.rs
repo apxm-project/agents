@@ -1,12 +1,12 @@
 //! Tool Binding Check Pass
 //!
-//! Validates that every `INV_TOOL.capability` resolves to either an upstream
+//! Validates that every `INV_CAP.capability` resolves to either an upstream
 //! `REGISTER_CAPABILITY` in the same module or a known Rust builtin capability.
 //! Also validates `python_handler_id` format and warns on unused capabilities
 //! and orphan Python tools.
 //!
 //! Diagnostics:
-//! - E712: unbound capability (INV_TOOL references unknown tool)
+//! - E712: unbound capability (INV_CAP references unknown tool)
 //! - E713: invalid `python_handler_id` format (must be `sha256:<hex64>`)
 //! - W721: unused capability (REGISTER_CAPABILITY never invoked)
 //! - W723: orphan Python tool (manifest entry with no matching REGISTER_CAPABILITY)
@@ -27,7 +27,7 @@ use std::collections::{HashMap, HashSet};
 /// relevant to compile-time orphan detection. The compiler crate does not
 /// depend on `apxm-runtime`, so we keep a minimal copy here.
 #[derive(Debug, Clone, Deserialize)]
-pub struct PythonToolManifestEntry {
+pub struct PythonCapabilityManifestEntry {
     /// Unique handler identifier (`sha256:<hash>`).
     pub handler_id: String,
     /// Python module path (e.g. `myapp.tools`).
@@ -37,7 +37,7 @@ pub struct PythonToolManifestEntry {
 }
 
 /// Pass name sentinel for pipeline ordering and diagnostics.
-pub const TOOL_BINDING_PASS_NAME: &str = "tool-binding-check";
+pub const CAPABILITY_BINDING_PASS_NAME: &str = "capability-binding-check";
 
 /// Known builtin capabilities provided by the Rust runtime. Sourced from the
 /// canonical list in apxm-core so the compiler and runtime never drift.
@@ -54,7 +54,7 @@ fn is_valid_handler_id(s: &str) -> bool {
 
 /// Diagnostic emitted by the tool binding check pass.
 #[derive(Debug, Clone)]
-pub struct ToolBindingDiagnostic {
+pub struct CapabilityBindingDiagnostic {
     pub code: ErrorCode,
     pub message: String,
     pub node_name: String,
@@ -68,12 +68,12 @@ pub struct ToolBindingDiagnostic {
 ///
 /// Returns `Ok(diagnostics)` where diagnostics may contain warnings,
 /// or `Err(CompilerError)` if hard errors (E712, E713) are found.
-pub fn tool_binding_check(
+pub fn capability_binding_check(
     module: &AirModule,
-    manifest: Option<&[PythonToolManifestEntry]>,
-) -> Result<Vec<ToolBindingDiagnostic>> {
-    let mut errors: Vec<ToolBindingDiagnostic> = Vec::new();
-    let mut warnings: Vec<ToolBindingDiagnostic> = Vec::new();
+    manifest: Option<&[PythonCapabilityManifestEntry]>,
+) -> Result<Vec<CapabilityBindingDiagnostic>> {
+    let mut errors: Vec<CapabilityBindingDiagnostic> = Vec::new();
+    let mut warnings: Vec<CapabilityBindingDiagnostic> = Vec::new();
 
     // Collect all registered capability names from REGISTER_CAPABILITY nodes.
     let mut registered: HashMap<String, Vec<String>> = HashMap::new();
@@ -91,10 +91,10 @@ pub fn tool_binding_check(
         }
     }
 
-    // Collect all invoked capability names from INV_TOOL nodes and ASK tool lists.
+    // Collect all invoked capability names from INV_CAP nodes and ASK tool lists.
     let mut invoked: HashSet<String> = HashSet::new();
     for node in &module.nodes {
-        if node.op == AISOperationType::InvTool
+        if node.op == AISOperationType::InvCap
             && let Some(cap) = node
                 .attributes
                 .get(attrs::CAPABILITY)
@@ -104,10 +104,10 @@ pub fn tool_binding_check(
 
             // E712: capability must resolve to a REGISTER_CAPABILITY or a builtin.
             if !registered.contains_key(cap) && !BUILTIN_CAPABILITIES.contains(&cap) {
-                errors.push(ToolBindingDiagnostic {
+                errors.push(CapabilityBindingDiagnostic {
                     code: ErrorCode::UnboundCapability,
                     message: format!(
-                        "INV_TOOL node '{}' references capability '{}' which has no \
+                        "INV_CAP node '{}' references capability '{}' which has no \
                              registered tool binding (REGISTER_CAPABILITY) and is not a \
                              known builtin ({})",
                         node.name,
@@ -138,7 +138,7 @@ pub fn tool_binding_check(
                 .and_then(|v| v.as_str())
             && !is_valid_handler_id(handler_id)
         {
-            errors.push(ToolBindingDiagnostic {
+            errors.push(CapabilityBindingDiagnostic {
                 code: ErrorCode::InvalidHandlerId,
                 message: format!(
                     "REGISTER_CAPABILITY node '{}' has invalid python_handler_id \
@@ -154,11 +154,11 @@ pub fn tool_binding_check(
     for (cap_name, reg_nodes) in &registered {
         if !invoked.contains(cap_name) {
             for reg_node in reg_nodes {
-                warnings.push(ToolBindingDiagnostic {
+                warnings.push(CapabilityBindingDiagnostic {
                     code: ErrorCode::UnusedCapability,
                     message: format!(
                         "REGISTER_CAPABILITY '{}' in node '{}' is never invoked by any \
-                         INV_TOOL node or ASK tools list",
+                         INV_CAP node or ASK tools list",
                         cap_name, reg_node,
                     ),
                     node_name: reg_node.clone(),
@@ -183,8 +183,8 @@ pub fn tool_binding_check(
 
         for entry in entries {
             if !referenced_handler_ids.contains(entry.handler_id.as_str()) {
-                warnings.push(ToolBindingDiagnostic {
-                    code: ErrorCode::OrphanPythonTool,
+                warnings.push(CapabilityBindingDiagnostic {
+                    code: ErrorCode::OrphanPythonHandler,
                     message: format!(
                         "@tool '{}' (module '{}') is declared in the Python manifest \
                          but no REGISTER_CAPABILITY node references its handler_id",
@@ -215,17 +215,17 @@ pub fn tool_binding_check(
     Ok(warnings)
 }
 
-/// Same checks as [`tool_binding_check`] but on a post-MLIR [`ExecutionDag`].
+/// Same checks as [`capability_binding_check`] but on a post-MLIR [`ExecutionDag`].
 ///
 /// Returns `Ok(diagnostics)` containing any W721/W723 warnings, or `Err` on
 /// hard errors (E712, E713).
-pub fn tool_binding_check_dag(
+pub fn capability_binding_check_dag(
     dag: &ExecutionDag,
-    manifest: Option<&[PythonToolManifestEntry]>,
+    manifest: Option<&[PythonCapabilityManifestEntry]>,
     known_caps: &HashSet<String>,
-) -> Result<Vec<ToolBindingDiagnostic>> {
-    let mut errors: Vec<ToolBindingDiagnostic> = Vec::new();
-    let mut warnings: Vec<ToolBindingDiagnostic> = Vec::new();
+) -> Result<Vec<CapabilityBindingDiagnostic>> {
+    let mut errors: Vec<CapabilityBindingDiagnostic> = Vec::new();
+    let mut warnings: Vec<CapabilityBindingDiagnostic> = Vec::new();
 
     // Collect all registered capability names from REGISTER_CAPABILITY nodes.
     let mut registered: HashMap<String, Vec<String>> = HashMap::new();
@@ -243,10 +243,10 @@ pub fn tool_binding_check_dag(
         }
     }
 
-    // Collect all invoked capability names from INV_TOOL nodes and ASK tool lists.
+    // Collect all invoked capability names from INV_CAP nodes and ASK tool lists.
     let mut invoked: HashSet<String> = HashSet::new();
     for node in &dag.nodes {
-        if node.op_type == AISOperationType::InvTool
+        if node.op_type == AISOperationType::InvCap
             && let Some(cap) = node
                 .attributes
                 .get(attrs::CAPABILITY)
@@ -262,10 +262,10 @@ pub fn tool_binding_check_dag(
                 && !BUILTIN_CAPABILITIES.contains(&cap)
                 && !known_caps.contains(cap)
             {
-                errors.push(ToolBindingDiagnostic {
+                errors.push(CapabilityBindingDiagnostic {
                     code: ErrorCode::UnboundCapability,
                     message: format!(
-                        "INV_TOOL node #{} references capability '{}' which is not \
+                        "INV_CAP node #{} references capability '{}' which is not \
                              registered by any REGISTER_CAPABILITY node and is not a \
                              known builtin ({})",
                         node.id,
@@ -296,7 +296,7 @@ pub fn tool_binding_check_dag(
                 .and_then(|v| v.as_str())
             && !is_valid_handler_id(handler_id)
         {
-            errors.push(ToolBindingDiagnostic {
+            errors.push(CapabilityBindingDiagnostic {
                 code: ErrorCode::InvalidHandlerId,
                 message: format!(
                     "REGISTER_CAPABILITY node #{} has invalid python_handler_id \
@@ -312,11 +312,11 @@ pub fn tool_binding_check_dag(
     for (cap_name, reg_nodes) in &registered {
         if !invoked.contains(cap_name) {
             for reg_node in reg_nodes {
-                warnings.push(ToolBindingDiagnostic {
+                warnings.push(CapabilityBindingDiagnostic {
                     code: ErrorCode::UnusedCapability,
                     message: format!(
                         "REGISTER_CAPABILITY '{}' in node {} is never invoked by any \
-                         INV_TOOL node or ASK tools list",
+                         INV_CAP node or ASK tools list",
                         cap_name, reg_node,
                     ),
                     node_name: reg_node.clone(),
@@ -341,8 +341,8 @@ pub fn tool_binding_check_dag(
 
         for entry in entries {
             if !referenced_handler_ids.contains(entry.handler_id.as_str()) {
-                warnings.push(ToolBindingDiagnostic {
-                    code: ErrorCode::OrphanPythonTool,
+                warnings.push(CapabilityBindingDiagnostic {
+                    code: ErrorCode::OrphanPythonHandler,
                     message: format!(
                         "@tool '{}' (module '{}') is declared in the Python manifest \
                          but no REGISTER_CAPABILITY node references its handler_id",

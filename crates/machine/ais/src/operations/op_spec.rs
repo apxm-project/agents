@@ -123,7 +123,7 @@ fn rust_variant_name(op: AISOperationType) -> &'static str {
         AISOperationType::Plan => "Plan",
         AISOperationType::Reflect => "Reflect",
         AISOperationType::Verify => "Verify",
-        AISOperationType::InvTool => "InvTool",
+        AISOperationType::InvCap => "InvCap",
         AISOperationType::Exc => "Exc",
         AISOperationType::Print => "Print",
         AISOperationType::Jump => "Jump",

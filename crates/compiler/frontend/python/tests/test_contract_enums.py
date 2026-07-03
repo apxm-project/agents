@@ -17,7 +17,7 @@ from apxm.constants import (
     DEPENDENCY_DATA,
     INPUT_NAMES,
     PARAMS_JSON,
-    TOOL_GROUPS,
+    CAPABILITY_GROUPS,
     TOOL_GROUP_FILE_READ,
     TOOL_GROUP_WEB,
 )
@@ -49,11 +49,11 @@ def test_graph_edge_default_uses_data_dependency():
 
 
 def test_lifecycle_event_and_hook_mode_normalize_to_wire_values():
-    @hook(on=LifecycleEvent.PRE_TOOL, mode=HookMode.GATE)
+    @hook(on=LifecycleEvent.PRE_CAP, mode=HookMode.GATE)
     def guard(ctx, call):
         return ctx.allow()
 
-    assert guard.event == LifecycleEvent.PRE_TOOL.value
+    assert guard.event == LifecycleEvent.PRE_CAP.value
     assert guard.mode == HookMode.GATE.value
 
 
@@ -83,27 +83,27 @@ def test_skill_search_lowers_query_to_search_skills_request():
 def test_tool_group_enum_normalizes_to_wire_value():
     g = GraphRecorder("tool_group_contract")
 
-    node = g.ask(prompt="hello", tool_groups=[ToolGroup.WEB])
+    node = g.ask(prompt="hello", capability_groups=[ToolGroup.WEB])
 
     graph = g.to_graph()
     attrs = graph.nodes[node._node_id - 1].attributes
-    assert attrs[TOOL_GROUPS] == [TOOL_GROUP_WEB]
+    assert attrs[CAPABILITY_GROUPS] == [TOOL_GROUP_WEB]
 
 
 def test_node_policy_accepts_tool_group_enums():
-    policy = NodePolicy(tool_groups=[ToolGroup.WEB, ToolGroup.FILE_READ])
+    policy = NodePolicy(capability_groups=[ToolGroup.WEB, ToolGroup.FILE_READ])
 
     attrs = policy.to_node_attributes()
 
-    assert attrs[TOOL_GROUPS] == [TOOL_GROUP_WEB, TOOL_GROUP_FILE_READ]
+    assert attrs[CAPABILITY_GROUPS] == [TOOL_GROUP_WEB, TOOL_GROUP_FILE_READ]
 
 
 def test_agent_config_accepts_tool_group_enums():
-    agent = AgentConfig(name="typed_agent", tool_groups=[ToolGroup.WEB])
+    agent = AgentConfig(name="typed_agent", capability_groups=[ToolGroup.WEB])
 
     attrs = agent.to_node_attributes()
 
-    assert attrs[TOOL_GROUPS] == [TOOL_GROUP_WEB]
+    assert attrs[CAPABILITY_GROUPS] == [TOOL_GROUP_WEB]
 
 
 def test_invoke_accepts_capability_enum():

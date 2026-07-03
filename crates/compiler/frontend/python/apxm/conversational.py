@@ -114,7 +114,7 @@ class ConversationalAgent:
         persona: str,
         memory_space: str = "stm",
         tools: list[FunctionTool] | None = None,
-        tool_groups: list[ToolGroup | str] | None = None,
+        capability_groups: list[ToolGroup | str] | None = None,
         skills: bool = False,
         sub_agents: list[Agent] | None = None,
         compaction: CompactionPolicy | None = None,
@@ -126,7 +126,7 @@ class ConversationalAgent:
         self.persona = persona
         self.memory_space = memory_space
         self.tools = list(tools or [])
-        self.tool_groups = [normalize_tool_group(group) for group in (tool_groups or [])]
+        self.capability_groups = [normalize_tool_group(group) for group in (capability_groups or [])]
         self.skills = skills
         self.sub_agents = list(sub_agents or [])
         self.compaction = compaction
@@ -169,7 +169,7 @@ class ConversationalAgent:
         hooks_sidecar = [hook_descriptor(h) for h in self.hooks]
 
         # Hooks share the @tool invocation path: add a tool-bridge manifest entry
-        # for each hook handler so the runtime `PythonToolBridge` can resolve and
+        # for each hook handler so the runtime `PythonHandlerBridge` can resolve and
         # dispatch it by handler_id (constitution #4 — one Python-handler path).
         import inspect as _inspect
 
@@ -196,7 +196,7 @@ class ConversationalAgent:
             "loop": self.loop,
             "memory_space": self.memory_space,
             "skills": self.skills,
-            "tool_groups": self.tool_groups,
+            "capability_groups": self.capability_groups,
             "turn_param": TURN_PARAM,
         }
         if self.compaction is not None:
@@ -263,11 +263,11 @@ class ConversationalAgent:
         # `skills=True` wires the real description-based discovery group
         # (`search_skills`) into the turn so the agent can pick a skill by
         # description (constitution: real capability, no stub).
-        groups = list(self.tool_groups)
+        groups = list(self.capability_groups)
         if self.skills:
             groups.append(ToolGroup.SKILLS.value)
         if groups:
-            ask_attrs["tool_groups"] = groups
+            ask_attrs["capability_groups"] = groups
 
         answer = turn.ask(
             name="answer",

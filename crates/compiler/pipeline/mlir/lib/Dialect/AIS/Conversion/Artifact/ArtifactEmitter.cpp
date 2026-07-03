@@ -122,7 +122,7 @@ struct ArtifactNodeMetadata {
 
 struct ArtifactNode {
   uint64_t id = 0;
-  OperationKind opType = OperationKind::InvTool;
+  OperationKind opType = OperationKind::InvCap;
   std::vector<std::pair<std::string, ArtifactValue>> attributes;
   std::vector<uint64_t> inputTokens;
   std::vector<uint64_t> outputTokens;

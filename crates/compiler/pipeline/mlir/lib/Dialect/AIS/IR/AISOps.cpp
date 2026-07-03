@@ -139,10 +139,10 @@ LogicalResult UMemOp::verify() {
 }
 
 //===----------------------------------------------------------------------===//
-// InvToolOp - Invoke Capability
+// InvCapOp - Invoke Capability
 //===----------------------------------------------------------------------===//
 
-LogicalResult InvToolOp::verify() {
+LogicalResult InvCapOp::verify() {
   // Check result is TokenType
   if (failed(verifyType<TokenType>(*this, getResult(), "result must be !ais.token type")))
     return failure();

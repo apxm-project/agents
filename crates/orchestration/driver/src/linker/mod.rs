@@ -252,7 +252,7 @@ impl Linker {
 
 fn python_tools_manifest(
     python_tools_sidecar: Option<&[u8]>,
-) -> Result<Option<Vec<apxm_compiler::passes::PythonToolManifestEntry>>, DriverError> {
+) -> Result<Option<Vec<apxm_compiler::passes::PythonCapabilityManifestEntry>>, DriverError> {
     python_tools_sidecar
         .map(|data| serde_json::from_slice(data).map_err(|e| state_err(e.to_string())))
         .transpose()

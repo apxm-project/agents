@@ -7,7 +7,7 @@ existing capability path.
 
 ## What the investigation found (corrects earlier assumptions)
 
-- **The capability / `INV_TOOL` path is NOT an unsandboxed bypass.**
+- **The capability / `INV_CAP` path is NOT an unsandboxed bypass.**
   `CapabilitySystem::invoke_with_timeout` already routes any capability whose
   `to_exec_request()` returns `Some` through
   `SandboxRegistry::select_for_request` → `create_session` → `execute` →
@@ -81,7 +81,7 @@ an AppArmor profile granting `userns` (see README → System dependencies).
 - **Network isolation**: with `needs_network=false`, `--unshare-net` leaves only
   `lo` and outbound connects fail (`NO_NET`); without it, the network is
   reachable.
-- **Full stack, live server**: `bash` via an `inv_tool` node through
+- **Full stack, live server**: `bash` via an `inv_cap` node through
   `/v1/compile` returns `CONFINED_OK / READ_OK / ETC_BLOCKED` — server → runtime
   → `CapabilitySystem` → `SandboxRegistry` → `BubblewrapSandboxBackend`. The
   previously fail-closed `bash`/EXC paths now run confined.

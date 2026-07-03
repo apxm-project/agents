@@ -107,7 +107,7 @@ class NodePolicy:
     system_prompt: str | None = None
     backend: str | None = None
     tools: list[str] | None = None
-    tool_groups: list[ToolGroup | str] | None = None
+    capability_groups: list[ToolGroup | str] | None = None
     tools_enabled: bool | None = None
     tools_config: ToolsConfig | None = None
     token_budget: int | None = None
@@ -136,7 +136,7 @@ class NodePolicy:
             graph_keys.SYSTEM_PROMPT: self.system_prompt,
             graph_keys.BACKEND: self.backend,
             graph_keys.TOOLS: self.tools,
-            graph_keys.TOOL_GROUPS: _normalize_tool_groups(self.tool_groups),
+            graph_keys.CAPABILITY_GROUPS: _normalize_capability_groups(self.capability_groups),
             graph_keys.TOKEN_BUDGET: self.token_budget,
             graph_keys.OUTPUT_SCHEMA: self.output_schema,
             graph_keys.MAX_SCHEMA_RETRIES: self.max_schema_retries,
@@ -148,8 +148,8 @@ class NodePolicy:
             values[graph_keys.TOOLS_ENABLED] = self.tools_enabled
         elif self.tools is not None:
             values[graph_keys.TOOLS_ENABLED] = len(self.tools) > 0
-        elif self.tool_groups is not None:
-            values[graph_keys.TOOLS_ENABLED] = len(self.tool_groups) > 0
+        elif self.capability_groups is not None:
+            values[graph_keys.TOOLS_ENABLED] = len(self.capability_groups) > 0
 
         if self.tools_config is not None:
             values[graph_keys.TOOLS_CONFIG] = self.tools_config.to_dict()
@@ -304,7 +304,7 @@ class AgentConfig:
     system_prompt: str | None = None
     operation_instructions: dict[str, str] | None = None
     tools: list[str] | None = None
-    tool_groups: list[ToolGroup | str] | None = None
+    capability_groups: list[ToolGroup | str] | None = None
     tools_enabled: bool | None = None
     tools_config: ToolsConfig | None = None
     token_budget: int | None = None
@@ -325,7 +325,7 @@ class AgentConfig:
             temperature=self.temperature,
             system_prompt=self.system_prompt,
             tools=self.tools,
-            tool_groups=self.tool_groups,
+            capability_groups=self.capability_groups,
             tools_enabled=self.tools_enabled,
             tools_config=self.tools_config,
             token_budget=self.token_budget,
@@ -351,7 +351,7 @@ def _toml_value(value: Any) -> str:
     return str(value)
 
 
-def _normalize_tool_groups(groups: list[ToolGroup | str] | None) -> list[str] | None:
+def _normalize_capability_groups(groups: list[ToolGroup | str] | None) -> list[str] | None:
     if groups is None:
         return None
     return [normalize_tool_group(group) for group in groups]

@@ -138,7 +138,7 @@ pub use sandbox::{
     SecurityManifest, ValidationResult,
 };
 
-pub use python_tools::{PythonToolBridge, PythonToolRegistry, PythonToolWorker};
+pub use python_tools::{PythonHandlerBridge, PythonHandlerRegistry, PythonHandlerWorker};
 
 pub use host_dispatch::{
     AgentChannelHandle, HostDispatchError, HostDispatchGateway, HostProxyRequest, HostProxyResult,
