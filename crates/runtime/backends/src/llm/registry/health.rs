@@ -8,6 +8,8 @@ use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
+use super::latency_profile::LatencyProfileStore;
+
 /// Health status of a backend.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 pub enum HealthStatus {
@@ -115,6 +117,10 @@ impl HealthStats {
 pub struct HealthMonitor {
     /// Health statistics per backend
     stats: Arc<DashMap<String, parking_lot::Mutex<HealthStats>>>,
+    /// EWMA-smoothed whole-request latency per backend, fed from every
+    /// `record_success` call. Backs `RoutingTarget::Latency` in
+    /// `ModelRouter::select_from_table`.
+    latency_profiles: LatencyProfileStore,
 }
 
 impl HealthMonitor {
@@ -122,6 +128,7 @@ impl HealthMonitor {
     pub fn new() -> Self {
         HealthMonitor {
             stats: Arc::new(DashMap::new()),
+            latency_profiles: LatencyProfileStore::new(),
         }
     }
 
@@ -131,18 +138,25 @@ impl HealthMonitor {
             name.to_string(),
             parking_lot::Mutex::new(HealthStats::new()),
         );
+        self.latency_profiles.register_backend(name);
     }
 
     /// Unregister a backend from health tracking.
     pub fn unregister_backend(&self, name: &str) {
         self.stats.remove(name);
+        self.latency_profiles.unregister_backend(name);
     }
 
     /// Record a successful request.
+    ///
+    /// Feeds `latency` into both the recent-latencies window used by
+    /// `average_latency` and the backend's EWMA latency profile used by
+    /// `latency_ms_ewma`.
     pub fn record_success(&self, name: &str, latency: Duration) {
         if let Some(entry) = self.stats.get(name) {
             entry.value().lock().record_success(latency);
         }
+        self.latency_profiles.record_request(name, latency);
     }
 
     /// Record a failed request.
@@ -180,6 +194,15 @@ impl HealthMonitor {
             .and_then(|entry| entry.value().lock().average_latency())
     }
 
+    /// Get the EWMA-smoothed whole-request latency (milliseconds) for a
+    /// backend, or `None` if the backend is unregistered or has not yet
+    /// completed a successful request. Callers that need to rank backends
+    /// with no signal yet (cold start) should treat `None` as "unknown, rank
+    /// last" rather than a hard failure.
+    pub fn latency_ms_ewma(&self, name: &str) -> Option<f64> {
+        self.latency_profiles.request_ms(name)
+    }
+
     /// Get total request count for a backend.
     pub fn total_requests(&self, name: &str) -> Option<usize> {
         self.stats
@@ -187,11 +210,12 @@ impl HealthMonitor {
             .map(|entry| entry.value().lock().total_requests)
     }
 
-    /// Reset statistics for a backend.
+    /// Reset statistics for a backend, including its EWMA latency profile.
     pub fn reset(&self, name: &str) {
         if let Some(entry) = self.stats.get(name) {
             *entry.value().lock() = HealthStats::new();
         }
+        self.latency_profiles.reset_backend(name);
     }
 
     /// Get all backend names being monitored.
