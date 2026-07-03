@@ -94,7 +94,10 @@ pub use agent_router::{
 pub use capability::{
     CapabilitySystem,
     flow_registry::FlowRegistry,
-    interceptor::{CapabilityInterceptor, InterceptDecision, PermissionInterceptor},
+    interceptor::{
+        CapabilityInterceptor, InterceptDecision, PermissionInterceptor, PreInvokeContext,
+        pre_invoke_ctx,
+    },
 };
 pub use context_stack::{
     ContextAssembly, ContextFrame, ContextScope, ContextStack, ContextStackConfig,
@@ -109,7 +112,7 @@ pub use executor::{
     WorkflowSpawnResult, WorkflowSpawner,
 };
 pub use graph_lifecycle::BackendGraphLifecycle;
-pub use memory::{Fact, FactFilter, FactResult, MemoryConfig, MemorySpace, MemorySystem};
+pub use memory::{MemoryConfig, MemorySpace, MemorySystem, parse_memory_space};
 pub use model_router::{
     BackendHealth, CircuitBreakerConfig, CircuitState, ModelEntry, ModelRouter, ModelRouterConfig,
     OperationPolicy, RoutingDecision, RoutingTarget,

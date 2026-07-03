@@ -65,8 +65,6 @@ class Capability(str, Enum):
     SEARCH_SKILLS = "search_skills"
     SCHEDULE = "schedule"
     MANAGE_TASK = "manage_task"
-    MEMORY_STORE_FACT = "memory.store_fact"
-    MEMORY_SEARCH_FACTS = "memory.search_facts"
 
 
 def normalize_dependency_type(value: DependencyType | str) -> str:
@@ -118,8 +116,6 @@ CAPABILITY_HTTP_POST = Capability.HTTP_POST.value
 CAPABILITY_SEARCH_SKILLS = Capability.SEARCH_SKILLS.value
 CAPABILITY_SCHEDULE = Capability.SCHEDULE.value
 CAPABILITY_MANAGE_TASK = Capability.MANAGE_TASK.value
-CAPABILITY_MEMORY_STORE_FACT = Capability.MEMORY_STORE_FACT.value
-CAPABILITY_MEMORY_SEARCH_FACTS = Capability.MEMORY_SEARCH_FACTS.value
 
 COMMUNICATE_PROTOCOL_ACP = "acp"
 

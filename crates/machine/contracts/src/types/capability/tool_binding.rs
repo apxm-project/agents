@@ -10,6 +10,7 @@ pub enum ToolBindingHandler {
     PackHandler,
     McpBridge,
     Builtin,
+    Host,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

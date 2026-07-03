@@ -78,6 +78,12 @@ tools   →  apxm-cli, apxm-client, apxm  (developer CLI, generated client, faca
 Each crate has a README under `crates/<tier>/<name>/README.md` describing what it
 owns and how it composes with its neighbors.
 
+## Agent packages
+
+- [Create your first agent package](agent-packages/first-agent.md) — minimal
+  folder contract (`agent.toml`, `prompts/`, `python/`, `capabilities/`) and
+  validation workflow
+
 ## Core Concepts
 
 The runtime is modeled around an abstract machine and a typed instruction set.

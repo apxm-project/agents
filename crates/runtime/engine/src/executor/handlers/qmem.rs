@@ -5,7 +5,7 @@ use super::{
 };
 use crate::{
     aam::{STAGED_BELIEF_PREFIX, TransitionLabel},
-    memory::MemorySpace,
+    memory::{MemorySpace, parse_memory_space},
 };
 use apxm_core::constants::graph::attrs as graph_attrs;
 
@@ -21,7 +21,7 @@ pub async fn execute(ctx: &ExecutionContext, node: &Node, _inputs: Vec<Value>) -
 
     // Determine memory space
     let space = match memory_tier.as_deref() {
-        Some(tier) => tier.parse::<MemorySpace>()?,
+        Some(tier) => parse_memory_space(tier)?,
         None => MemorySpace::Stm, // Default to STM
     };
 

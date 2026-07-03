@@ -339,11 +339,13 @@ class ConversationalAgent:
             _ = loop_node
         else:
             # loop="host": the thin host owns the outer loop; the entry IS the
-            # turn body invocation.
+            # turn body invocation. Bind the entry turn parameter through to the
+            # callee so each execute(args=[message]) dispatches one turn.
             run_turn = entry.flow_call(
                 name="run_turn",
                 agent_name=_CONVERSATION_AGENT,
                 flow_name="turn",
+                args={TURN_PARAM: f"{{{TURN_PARAM}}}"},
             )
             for hn in hook_nodes:
                 entry.add_edge(hn, run_turn, dependency=DependencyType.CONTROL)

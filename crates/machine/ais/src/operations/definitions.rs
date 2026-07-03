@@ -41,12 +41,12 @@ pub enum AISOperationType {
     #[serde(rename = "UMEM")]
     UMem,
 
-    // LLM Operations - Compiler markers for critical path analysis
-    /// Simple Q&A (no extended thinking) - LOW latency marker.
+    // LLM Operations
+    /// Simple Q&A (no extended thinking).
     Ask,
-    /// Extended thinking with budget - HIGH latency marker.
+    /// Extended thinking with token budget.
     Think,
-    /// Structured reasoning with beliefs/goals - MEDIUM latency marker.
+    /// Structured reasoning with beliefs/goals.
     Reason,
 
     // Planning & Analysis Operations
@@ -853,7 +853,7 @@ pub static AIS_OPERATIONS: &[OperationSpec] = &[
         op_type: AISOperationType::Ask,
         name: "Ask",
         category: OperationCategory::Reasoning,
-        description: "Simple Q&A with LLM (no extended thinking) - LOW latency",
+        description: "Simple Q&A with LLM (no extended thinking)",
         long_description: "Sends a prompt to the configured LLM and returns the response. \
             The lightest LLM operation — no chain-of-thought or extended thinking. Use for \
             straightforward questions, classifications, extractions, or reformulations. \
@@ -894,7 +894,7 @@ pub static AIS_OPERATIONS: &[OperationSpec] = &[
         op_type: AISOperationType::Think,
         name: "Think",
         category: OperationCategory::Reasoning,
-        description: "Extended thinking with token_budget - HIGH latency",
+        description: "Extended thinking with token_budget",
         long_description: "Activates extended thinking (chain-of-thought) with a configurable \
             token budget. The LLM produces internal reasoning before the final answer. Use for \
             complex multi-step problems, math, code generation, or planning that benefits from \
@@ -936,7 +936,7 @@ pub static AIS_OPERATIONS: &[OperationSpec] = &[
         op_type: AISOperationType::Reason,
         name: "Reason",
         category: OperationCategory::Reasoning,
-        description: "Structured reasoning with belief/goal updates - MEDIUM latency",
+        description: "Structured reasoning with belief/goal updates",
         long_description: "Performs structured reasoning that can update the agent's beliefs \
             and goals (AAM state). Unlike ASK, the runtime parses the LLM response for belief \
             and goal mutations. Use when the agent needs to update its internal state based on \

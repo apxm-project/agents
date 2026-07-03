@@ -32,6 +32,10 @@ pub struct CapabilityMetadata {
     #[serde(default)]
     pub requires_auth: bool,
 
+    /// Whether invocation must pass the approval gate (consent broker round-trip).
+    #[serde(default)]
+    pub requires_approval: bool,
+
     /// Tags for categorization
     #[serde(default)]
     pub tags: Vec<String>,
@@ -69,6 +73,7 @@ impl CapabilityMetadata {
             cost_estimate: 0.0,
             latency_estimate_ms: default_latency(),
             requires_auth: false,
+            requires_approval: false,
             tags: Vec::new(),
             groups: Vec::new(),
             read_only: false,
@@ -97,6 +102,12 @@ impl CapabilityMetadata {
     /// Mark as requiring authentication
     pub fn with_auth(mut self) -> Self {
         self.requires_auth = true;
+        self
+    }
+
+    /// Mark as requiring explicit approval before invocation.
+    pub fn with_requires_approval(mut self) -> Self {
+        self.requires_approval = true;
         self
     }
 

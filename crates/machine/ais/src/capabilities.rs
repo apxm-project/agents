@@ -19,10 +19,6 @@ pub const SCHEDULE: &str = "schedule";
 /// Task/goal management tool (CRUD over the AAM goal tree).
 pub const MANAGE_TASK: &str = "manage_task";
 
-/// Well-known memory capability ids (server memory routes / per-agent stores).
-pub const MEMORY_STORE_FACT: &str = "memory.store_fact";
-pub const MEMORY_SEARCH_FACTS: &str = "memory.search_facts";
-
 /// Tool-group tags for capability metadata and LLM tool exposure.
 pub mod groups {
     pub const FILE: &str = "file";

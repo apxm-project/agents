@@ -44,7 +44,7 @@ use crate::sandbox::{IsolationLevel, SandboxRegistry, ValidationResult};
 use approval::ApprovalStore;
 use apxm_core::{error::RuntimeError, types::values::Value};
 use executor::{CapabilityExecutor, exec_result_to_value};
-use interceptor::{CapabilityInterceptor, InterceptDecision};
+use interceptor::{CapabilityInterceptor, InterceptDecision, PreInvokeContext, pre_invoke_ctx};
 use metadata::CapabilityMetadata;
 use parking_lot::RwLock;
 use registry::CapabilityRegistry;
@@ -250,6 +250,17 @@ impl CapabilitySystem {
         args: HashMap<String, Value>,
         timeout: Duration,
     ) -> CapabilityResult<Value> {
+        self.invoke_with_timeout_ctx(name, args, timeout, None).await
+    }
+
+    /// Invoke capability with custom timeout and optional approval-gate context.
+    pub async fn invoke_with_timeout_ctx(
+        &self,
+        name: &str,
+        args: HashMap<String, Value>,
+        timeout: Duration,
+        pre_ctx: Option<&PreInvokeContext<'_>>,
+    ) -> CapabilityResult<Value> {
         // Get capability
         let capability = self
             .registry
@@ -268,6 +279,22 @@ impl CapabilitySystem {
         if let Some(cached) = self.approval_store.check(name) {
             match cached {
                 InterceptDecision::Allow => { /* proceed */ }
+                InterceptDecision::Deny { reason } => {
+                    return Err(RuntimeError::Capability {
+                        capability: name.to_string(),
+                        message: reason,
+                    });
+                }
+                InterceptDecision::EditArgs { args: edited } => {
+                    args = edited;
+                }
+            }
+        }
+
+        // Approval gate (requires_approval metadata + consent broker).
+        if let Some(ctx) = pre_ctx {
+            match pre_invoke_ctx(ctx, name, &args).await {
+                InterceptDecision::Allow => {}
                 InterceptDecision::Deny { reason } => {
                     return Err(RuntimeError::Capability {
                         capability: name.to_string(),
