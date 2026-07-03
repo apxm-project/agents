@@ -23,6 +23,7 @@ pub mod inner_plan_linker;
 pub mod memoization;
 mod middleware;
 pub mod middlewares;
+pub mod op_usage;
 pub mod pipeline;
 pub mod session_ledger;
 pub mod skill_resolver;

@@ -197,6 +197,11 @@ impl OperationDispatcher {
             return Err(RuntimeError::SchedulerCancelled);
         }
 
+        // Permanent op-usage counter (RT-9): every dispatched node — including
+        // pseudo-ops like AGENT/YIELD — increments the in-process counter that
+        // `apxm ops usage` reports on. See `executor::op_usage`.
+        super::op_usage::record(node.op_type);
+
         // Push a new child span for this node execution.
         let parent_span_id = ctx.event_emitter.as_ref().and_then(|e| e.current_span_id());
         let node_span_id = uuid::Uuid::new_v4().to_string();

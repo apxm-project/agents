@@ -1,0 +1,191 @@
+{
+  "schema_version": "apxm.op-spec-vectors.v1",
+  "generated_from": "crates/machine/ais/src/operations/definitions.rs",
+  "fixtures": [
+    {
+      "op": "AGENT",
+      "example_json": "{\"id\": 0, \"op\": \"AGENT\", \"attributes\": {\"memory\": {\"stm\": true}, \"beliefs\": {\"role\": \"analyst\"}, \"goals\": [\"summarize data\"], \"capabilities\": [\"search\", \"calculate\"]}}",
+      "bytes": 167
+    },
+    {
+      "op": "QMEM",
+      "example_json": "{\"id\": 2, \"op\": \"QMEM\", \"attributes\": {\"query\": \"user_name\", \"memory_tier\": \"stm\"}}",
+      "bytes": 83
+    },
+    {
+      "op": "UMEM",
+      "example_json": "{\"id\": 3, \"op\": \"UMEM\", \"attributes\": {\"key\": \"summary\", \"value\": \"Rust favors explicit ownership and borrowing.\", \"memory_tier\": \"stm\"}}",
+      "bytes": 137
+    },
+    {
+      "op": "ASK",
+      "example_json": "{\"id\": 1, \"op\": \"ASK\", \"attributes\": {\"template_str\": \"Summarize: {source}\", \"input_names\": [\"source\"]}}",
+      "bytes": 104
+    },
+    {
+      "op": "THINK",
+      "example_json": "{\"id\": 1, \"op\": \"THINK\", \"attributes\": {\"template_str\": \"Solve step by step: {problem}\", \"input_names\": [\"problem\"], \"budget\": 4096}}",
+      "bytes": 133
+    },
+    {
+      "op": "REASON",
+      "example_json": "{\"id\": 1, \"op\": \"REASON\", \"attributes\": {\"template_str\": \"Given {evidence}, update your analysis\", \"input_names\": [\"evidence\"], \"structured\": true}}",
+      "bytes": 148
+    },
+    {
+      "op": "PLAN",
+      "example_json": "{\"id\": 1, \"op\": \"PLAN\", \"attributes\": {\"goal\": \"Research and summarize recent AI papers\", \"constraints\": \"max 5 steps\"}}",
+      "bytes": 120
+    },
+    {
+      "op": "REFLECT",
+      "example_json": "{\"id\": 4, \"op\": \"REFLECT\", \"attributes\": {\"trace_query\": \"last_execution\"}}",
+      "bytes": 75
+    },
+    {
+      "op": "VERIFY",
+      "example_json": "{\"id\": 5, \"op\": \"VERIFY\", \"attributes\": {\"claim\": \"The solar system has eight planets.\"}}",
+      "bytes": 89
+    },
+    {
+      "op": "INV_TOOL",
+      "example_json": "{\"id\": 2, \"op\": \"INV_TOOL\", \"attributes\": {\"capability\": \"web_search\", \"params_json\": \"{\\\"query\\\":\\\"rust ownership\\\"}\"}}",
+      "bytes": 120
+    },
+    {
+      "op": "EXC",
+      "example_json": "{\"id\": 3, \"op\": \"EXC\", \"attributes\": {\"code\": \"print(2 + 2)\"}}",
+      "bytes": 62
+    },
+    {
+      "op": "PRINT",
+      "example_json": "{\"id\": 4, \"op\": \"PRINT\", \"attributes\": {\"message\": \"Result: {result}\", \"input_names\": [\"result\"]}}",
+      "bytes": 98
+    },
+    {
+      "op": "JUMP",
+      "example_json": "{\"id\": 5, \"op\": \"JUMP\", \"attributes\": {\"label\": \"7\"}}",
+      "bytes": 53
+    },
+    {
+      "op": "BRANCH_ON_VALUE",
+      "example_json": "{\"id\": 5, \"op\": \"BRANCH_ON_VALUE\", \"attributes\": {\"value\": \"yes\", \"true_label\": \"6\", \"false_label\": \"7\"}}",
+      "bytes": 105
+    },
+    {
+      "op": "LOOP_START",
+      "example_json": "{\"id\": 3, \"op\": \"LOOP_START\", \"attributes\": {\"count_token\": \"3\"}}",
+      "bytes": 65
+    },
+    {
+      "op": "RETURN",
+      "example_json": "{\"id\": 6, \"op\": \"RETURN\", \"attributes\": {}}",
+      "bytes": 43
+    },
+    {
+      "op": "SWITCH",
+      "example_json": "{\"id\": 3, \"op\": \"SWITCH\", \"attributes\": {\"discriminant\": \"topic_kind\", \"cases\": [{\"label\": \"math\", \"node_id\": 4}, {\"label\": \"code\", \"node_id\": 5}], \"default\": \"6\"}}",
+      "bytes": 164
+    },
+    {
+      "op": "FLOW_CALL",
+      "example_json": "{\"id\": 4, \"op\": \"FLOW_CALL\", \"attributes\": {\"agent_name\": \"researcher\", \"flow_name\": \"analyze\", \"args\": {\"topic\": \"{topic}\"}, \"input_names\": [\"topic\"]}}",
+      "bytes": 152
+    },
+    {
+      "op": "WORKFLOW_SPAWN",
+      "example_json": "{\"id\": 5, \"op\": \"WORKFLOW_SPAWN\", \"attributes\": {\"target_kind\": \"workflow_path\", \"target\": \"workflows/review.apxmw\", \"args\": {\"topic\": \"{topic}\"}, \"input_names\": [\"topic\"], \"await_result\": true}}",
+      "bytes": 195
+    },
+    {
+      "op": "CALL_SKILL",
+      "example_json": "{\"id\": 6, \"op\": \"CALL_SKILL\", \"attributes\": {\"skill_id\": \"apxm-orient@0.2.0\", \"args\": [\"context\"], \"input_names\": [\"context\"]}}",
+      "bytes": 127
+    },
+    {
+      "op": "MERGE",
+      "example_json": "{\"id\": 6, \"op\": \"MERGE\", \"attributes\": {}}",
+      "bytes": 42
+    },
+    {
+      "op": "WAIT_ALL",
+      "example_json": "{\"id\": 5, \"op\": \"WAIT_ALL\", \"attributes\": {}}",
+      "bytes": 45
+    },
+    {
+      "op": "TRY_CATCH",
+      "example_json": "{\"id\": 2, \"op\": \"TRY_CATCH\", \"attributes\": {\"try_label\": \"3\", \"catch_label\": \"4\"}}",
+      "bytes": 82
+    },
+    {
+      "op": "ERR",
+      "example_json": "{\"id\": 4, \"op\": \"ERR\", \"attributes\": {\"recovery_template\": \"retry_with_fallback\"}}",
+      "bytes": 82
+    },
+    {
+      "op": "COMMUNICATE",
+      "example_json": "{\"id\": 3, \"op\": \"COMMUNICATE\", \"attributes\": {\"recipient\": \"reviewer\", \"protocol\": \"acp\"}}",
+      "bytes": 90
+    },
+    {
+      "op": "HANDOFF",
+      "example_json": "{\"id\": 3, \"op\": \"HANDOFF\", \"attributes\": {\"handoff_from\": \"agent_a\", \"handoff_to\": \"agent_b\", \"transfer_state\": true}}",
+      "bytes": 118
+    },
+    {
+      "op": "UPDATE_GOAL",
+      "example_json": "{\"id\": 3, \"op\": \"UPDATE_GOAL\", \"attributes\": {\"goal_id\": \"optimize_latency\", \"action\": \"set\", \"priority\": 2}}",
+      "bytes": 109
+    },
+    {
+      "op": "PAUSE",
+      "example_json": "{\"id\": 5, \"op\": \"PAUSE\", \"attributes\": {\"message\": \"Please review the analysis before proceeding\"}}",
+      "bytes": 99
+    },
+    {
+      "op": "RESUME",
+      "example_json": "{\"id\": 6, \"op\": \"RESUME\", \"attributes\": {\"checkpoint\": \"review_checkpoint_1\"}}",
+      "bytes": 78
+    },
+    {
+      "op": "DELEGATE",
+      "example_json": "{\\\"id\\\": 3, \\\"op\\\": \\\"DELEGATE\\\", \\\"attributes\\\": {\\\"task_spec\\\": \\\"Analyze the dataset\\\", \\\"target_agent\\\": \\\"analyst\\\"}}",
+      "bytes": 122
+    },
+    {
+      "op": "NOP",
+      "example_json": "{\\\"id\\\": 2, \\\"op\\\": \\\"NOP\\\"}",
+      "bytes": 28
+    },
+    {
+      "op": "IDENTITY",
+      "example_json": "{\\\"id\\\": 2, \\\"op\\\": \\\"IDENTITY\\\"}",
+      "bytes": 33
+    },
+    {
+      "op": "SPAWN_AGENT",
+      "example_json": "{\"id\": 1, \"op\": \"SPAWN_AGENT\", \"attributes\": {\"agent_name\": \"worker\", \"profile\": \"example-acp-profile\", \"mode\": \"architect\"}}",
+      "bytes": 125
+    },
+    {
+      "op": "REGISTER_CAPABILITY",
+      "example_json": "{\\\"id\\\": 3, \\\"op\\\": \\\"REGISTER_CAPABILITY\\\", \\\"attributes\\\": {\\\"capability_name\\\": \\\"custom_tool\\\", \\\"description\\\": \\\"A custom analysis tool\\\"}}",
+      "bytes": 145
+    },
+    {
+      "op": "REGISTER_HOOK",
+      "example_json": "{\\\"id\\\": 4, \\\"op\\\": \\\"REGISTER_HOOK\\\", \\\"attributes\\\": {\\\"hook_event\\\": \\\"pre_tool\\\", \\\"hook_match\\\": \\\"lookup\\\", \\\"hook_mode\\\": \\\"gate\\\", \\\"python_hook_handler_id\\\": \\\"sha256:...\\\"}}",
+      "bytes": 183
+    },
+    {
+      "op": "AUTONOMOUS",
+      "example_json": "{\"id\": 3, \"op\": \"AUTONOMOUS\", \"attributes\": {\"prompt\": \"Find the root cause and propose a fix\", \"max_iterations\": 6}}",
+      "bytes": 117
+    },
+    {
+      "op": "CHECKPOINT",
+      "example_json": "{\"id\": 4, \"op\": \"CHECKPOINT\", \"attributes\": {\"checkpoint_id\": \"before_analysis\"}}",
+      "bytes": 81
+    }
+  ]
+}

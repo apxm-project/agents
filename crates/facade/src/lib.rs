@@ -7,7 +7,7 @@
 //! | Crate | Purpose |
 //! |-------|---------|
 //! | `apxm-core` | Shared types, errors, constants, execution graph primitives |
-//! | `apxm-ais` | Agent Instruction Set — 100+ operation specifications |
+//! | `apxm-ais` | Agent Instruction Set — 41 operation specifications |
 //! | `apxm-compiler` | Multi-pass optimization pipeline for agent programs |
 //! | `apxm-runtime` | Execution engine: memory system, scheduler, executor |
 //! | `apxm-backends` | LLM providers (OpenAI, Anthropic, Google, Ollama), storage, prompts |

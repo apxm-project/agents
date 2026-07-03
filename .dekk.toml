@@ -64,6 +64,7 @@ clean-processes = { run = "apxm process stop", description = "Stop APXM job proc
 codegen = { run = "apxm codegen frontend", description = "Regenerate frontend bindings from Core definitions", skill = true, group = "Build & Test" }
 codegen-typescript = { run = "apxm codegen typescript", description = "Regenerate TypeScript frontend bindings from Core definitions", skill = true, group = "Build & Test" }
 codegen-event-kinds = { run = "apxm codegen event-kinds", description = "Regenerate TypeScript event kind constants from Core definitions", skill = true, group = "Build & Test" }
+codegen-op-spec = { run = "apxm codegen op-spec", description = "Regenerate the op-spec.v1 AIS operation catalog + vectors fixture", skill = true, group = "Build & Test" }
 tokenize = { run = "apxm tokenize", description = "Count text with APXM's compiler-side tokenizer", skill = true, group = "Discovery" }
 
 compile = { run = "apxm compile", description = "Compile graph to .apxmobj artifact", skill = true, group = "Compilation" }
@@ -146,6 +147,7 @@ description = "Browse AIS operations"
 group = "Discovery"
 list = { run = "apxm ops list", description = "List all operations" }
 show = { run = "apxm ops show", description = "Show operation details" }
+usage = { run = "apxm ops usage", description = "Show accumulated op-usage counts from real executions (RT-9)" }
 
 [commands.template]
 description = "Browse graph templates"

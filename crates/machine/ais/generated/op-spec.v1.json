@@ -1,0 +1,1359 @@
+{
+  "schema_version": "apxm.op-spec.v1",
+  "generated_from": "crates/machine/ais/src/operations/definitions.rs",
+  "total_operations": 41,
+  "pseudo_op_count": 2,
+  "operations": [
+    {
+      "op": "AGENT",
+      "rust_variant": "Agent",
+      "name": "Agent",
+      "category": "metadata",
+      "description": "Agent structural declaration (memory, beliefs, goals, capabilities)",
+      "long_description": "Declares an agent's identity and initial AAM state. Every graph must have exactly one AGENT node. It configures memory tiers (STM/LTM/Episodic), initial beliefs and goals, and the capabilities the agent can invoke. The runtime uses this to initialize the agent's AAM before executing any other node.",
+      "latency": "none",
+      "wire_index": null,
+      "is_pseudo_op": true,
+      "min_inputs": 0,
+      "produces_output": false,
+      "needs_submission": false,
+      "fields": [
+        {
+          "name": "memory",
+          "required": false,
+          "description": "Memory configuration",
+          "ref_type": null
+        },
+        {
+          "name": "beliefs",
+          "required": false,
+          "description": "Initial beliefs",
+          "ref_type": null
+        },
+        {
+          "name": "goals",
+          "required": false,
+          "description": "Initial goals",
+          "ref_type": null
+        },
+        {
+          "name": "capabilities",
+          "required": false,
+          "description": "Available capabilities",
+          "ref_type": null
+        }
+      ],
+      "example_json": "{\"id\": 0, \"op\": \"AGENT\", \"attributes\": {\"memory\": {\"stm\": true}, \"beliefs\": {\"role\": \"analyst\"}, \"goals\": [\"summarize data\"], \"capabilities\": [\"search\", \"calculate\"]}}"
+    },
+    {
+      "op": "QMEM",
+      "rust_variant": "QMem",
+      "name": "QueryMemory",
+      "category": "memory",
+      "description": "Retrieve data from memory (STM, LTM, or Episodic)",
+      "long_description": "Reads from the agent's memory system. Supports three tiers: STM (short-term, per-execution scratch), LTM (long-term, persists across runs), and Episodic (execution traces). The query string is matched against stored keys. Returns the stored value or null if not found.",
+      "latency": "low",
+      "wire_index": 2,
+      "is_pseudo_op": false,
+      "min_inputs": 0,
+      "produces_output": true,
+      "needs_submission": true,
+      "fields": [
+        {
+          "name": "query",
+          "required": true,
+          "description": "Query string or key to search for",
+          "ref_type": null
+        },
+        {
+          "name": "memory_tier",
+          "required": false,
+          "description": "Target memory tier: stm, ltm, or episodic",
+          "ref_type": null
+        }
+      ],
+      "example_json": "{\"id\": 2, \"op\": \"QMEM\", \"attributes\": {\"query\": \"user_name\", \"memory_tier\": \"stm\"}}"
+    },
+    {
+      "op": "UMEM",
+      "rust_variant": "UMem",
+      "name": "UpdateMemory",
+      "category": "memory",
+      "description": "Persist or update data in memory",
+      "long_description": "Writes a key-value pair to the agent's memory system. If the key already exists, the value is overwritten. Supports the same three memory tiers as QMEM. Use FENCE after UMEM if subsequent QMEM nodes must see the write.",
+      "latency": "low",
+      "wire_index": 3,
+      "is_pseudo_op": false,
+      "min_inputs": 0,
+      "produces_output": true,
+      "needs_submission": true,
+      "fields": [
+        {
+          "name": "key",
+          "required": true,
+          "description": "Key to store the value under",
+          "ref_type": null
+        },
+        {
+          "name": "value",
+          "required": true,
+          "description": "Value to store",
+          "ref_type": null
+        },
+        {
+          "name": "memory_tier",
+          "required": false,
+          "description": "Target memory tier: stm, ltm, or episodic",
+          "ref_type": null
+        }
+      ],
+      "example_json": "{\"id\": 3, \"op\": \"UMEM\", \"attributes\": {\"key\": \"summary\", \"value\": \"Rust favors explicit ownership and borrowing.\", \"memory_tier\": \"stm\"}}"
+    },
+    {
+      "op": "ASK",
+      "rust_variant": "Ask",
+      "name": "Ask",
+      "category": "reasoning",
+      "description": "Simple Q&A with LLM (no extended thinking)",
+      "long_description": "Sends a prompt to the configured LLM and returns the response. The lightest LLM operation — no chain-of-thought or extended thinking. Use for straightforward questions, classifications, extractions, or reformulations. Template strings support named `{input}` interpolation for dataflow inputs via the node's `input_names` array.",
+      "latency": "medium",
+      "wire_index": 1,
+      "is_pseudo_op": false,
+      "min_inputs": 0,
+      "produces_output": true,
+      "needs_submission": true,
+      "fields": [
+        {
+          "name": "template_str",
+          "required": true,
+          "description": "Prompt template for the question",
+          "ref_type": null
+        },
+        {
+          "name": "temperature",
+          "required": false,
+          "description": "Sampling temperature (0.0-1.0)",
+          "ref_type": null
+        },
+        {
+          "name": "model",
+          "required": false,
+          "description": "LLM model override (uses config default)",
+          "ref_type": "model"
+        }
+      ],
+      "example_json": "{\"id\": 1, \"op\": \"ASK\", \"attributes\": {\"template_str\": \"Summarize: {source}\", \"input_names\": [\"source\"]}}"
+    },
+    {
+      "op": "THINK",
+      "rust_variant": "Think",
+      "name": "Think",
+      "category": "reasoning",
+      "description": "Extended thinking with token_budget",
+      "long_description": "Activates extended thinking (chain-of-thought) with a configurable token budget. The LLM produces internal reasoning before the final answer. Use for complex multi-step problems, math, code generation, or planning that benefits from deliberate reasoning. The budget controls how many tokens the model can spend thinking.",
+      "latency": "high",
+      "wire_index": 23,
+      "is_pseudo_op": false,
+      "min_inputs": 0,
+      "produces_output": true,
+      "needs_submission": true,
+      "fields": [
+        {
+          "name": "template_str",
+          "required": true,
+          "description": "Prompt template for deep reasoning",
+          "ref_type": null
+        },
+        {
+          "name": "budget",
+          "required": false,
+          "description": "Token budget for extended thinking",
+          "ref_type": null
+        },
+        {
+          "name": "temperature",
+          "required": false,
+          "description": "Sampling temperature (0.0-1.0)",
+          "ref_type": null
+        },
+        {
+          "name": "model",
+          "required": false,
+          "description": "LLM model override (uses config default)",
+          "ref_type": "model"
+        }
+      ],
+      "example_json": "{\"id\": 1, \"op\": \"THINK\", \"attributes\": {\"template_str\": \"Solve step by step: {problem}\", \"input_names\": [\"problem\"], \"budget\": 4096}}"
+    },
+    {
+      "op": "REASON",
+      "rust_variant": "Reason",
+      "name": "Reason",
+      "category": "reasoning",
+      "description": "Structured reasoning with belief/goal updates",
+      "long_description": "Performs structured reasoning that can update the agent's beliefs and goals (AAM state). Unlike ASK, the runtime parses the LLM response for belief and goal mutations. Use when the agent needs to update its internal state based on new information. Supports structured JSON output mode.",
+      "latency": "medium",
+      "wire_index": 24,
+      "is_pseudo_op": false,
+      "min_inputs": 0,
+      "produces_output": true,
+      "needs_submission": true,
+      "fields": [
+        {
+          "name": "template_str",
+          "required": true,
+          "description": "Prompt template for structured reasoning",
+          "ref_type": null
+        },
+        {
+          "name": "temperature",
+          "required": false,
+          "description": "Sampling temperature (0.0-1.0)",
+          "ref_type": null
+        },
+        {
+          "name": "model",
+          "required": false,
+          "description": "LLM model override (uses config default)",
+          "ref_type": "model"
+        },
+        {
+          "name": "structured",
+          "required": false,
+          "description": "Enable structured JSON output",
+          "ref_type": null
+        }
+      ],
+      "example_json": "{\"id\": 1, \"op\": \"REASON\", \"attributes\": {\"template_str\": \"Given {evidence}, update your analysis\", \"input_names\": [\"evidence\"], \"structured\": true}}"
+    },
+    {
+      "op": "PLAN",
+      "rust_variant": "Plan",
+      "name": "Plan",
+      "category": "reasoning",
+      "description": "Decompose goal into AIS subgraph",
+      "long_description": "Uses the LLM to decompose a high-level goal into a sequence of concrete steps. The output is a structured plan that can be used to drive subsequent nodes. Supports optional constraints to bound the plan space.",
+      "latency": "high",
+      "wire_index": 4,
+      "is_pseudo_op": false,
+      "min_inputs": 0,
+      "produces_output": true,
+      "needs_submission": true,
+      "fields": [
+        {
+          "name": "goal",
+          "required": true,
+          "description": "Goal to decompose into steps",
+          "ref_type": null
+        },
+        {
+          "name": "constraints",
+          "required": false,
+          "description": "Constraints on the plan",
+          "ref_type": null
+        }
+      ],
+      "example_json": "{\"id\": 1, \"op\": \"PLAN\", \"attributes\": {\"goal\": \"Research and summarize recent AI papers\", \"constraints\": \"max 5 steps\"}}"
+    },
+    {
+      "op": "REFLECT",
+      "rust_variant": "Reflect",
+      "name": "Reflect",
+      "category": "reasoning",
+      "description": "Analyze execution trace for self-improvement",
+      "long_description": "Retrieves past execution traces and asks the LLM to analyze them for patterns, failures, or improvements. Useful for iterative refinement loops where the agent learns from its own execution history.",
+      "latency": "medium",
+      "wire_index": 10,
+      "is_pseudo_op": false,
+      "min_inputs": 0,
+      "produces_output": true,
+      "needs_submission": true,
+      "fields": [
+        {
+          "name": "trace_query",
+          "required": true,
+          "description": "Query to retrieve trace for reflection",
+          "ref_type": null
+        },
+        {
+          "name": "reflection_prompt",
+          "required": false,
+          "description": "Custom prompt for reflection",
+          "ref_type": null
+        }
+      ],
+      "example_json": "{\"id\": 4, \"op\": \"REFLECT\", \"attributes\": {\"trace_query\": \"last_execution\"}}"
+    },
+    {
+      "op": "VERIFY",
+      "rust_variant": "Verify",
+      "name": "Verify",
+      "category": "reasoning",
+      "description": "Fact-check outputs against evidence",
+      "long_description": "Cross-references a claim against provided evidence using the LLM. Returns a verification result with confidence score. Use after ASK/THINK/REASON nodes to validate outputs before acting on them. Evidence may be supplied either as a literal attribute or via an incoming Data edge.",
+      "latency": "medium",
+      "wire_index": 11,
+      "is_pseudo_op": false,
+      "min_inputs": 0,
+      "produces_output": true,
+      "needs_submission": true,
+      "fields": [
+        {
+          "name": "claim",
+          "required": true,
+          "description": "Claim to verify",
+          "ref_type": null
+        },
+        {
+          "name": "evidence",
+          "required": false,
+          "description": "Evidence to check against",
+          "ref_type": null
+        }
+      ],
+      "example_json": "{\"id\": 5, \"op\": \"VERIFY\", \"attributes\": {\"claim\": \"The solar system has eight planets.\"}}"
+    },
+    {
+      "op": "INV_TOOL",
+      "rust_variant": "InvTool",
+      "name": "InvokeTool",
+      "category": "tools",
+      "description": "Call external tool with structured params; store result",
+      "long_description": "Invokes a registered capability (tool or function) by name. The capability must be declared in the AGENT node's capabilities list or registered in the runtime's CapabilityRegistry. Parameters are passed via the `params_json` attribute as a JSON object. The tool's return value becomes this node's output token.",
+      "latency": "medium",
+      "wire_index": 0,
+      "is_pseudo_op": false,
+      "min_inputs": 0,
+      "produces_output": true,
+      "needs_submission": true,
+      "fields": [
+        {
+          "name": "capability",
+          "required": true,
+          "description": "Name of the capability/tool to invoke",
+          "ref_type": "capability"
+        },
+        {
+          "name": "params_json",
+          "required": false,
+          "description": "JSON-encoded parameters to pass to the tool",
+          "ref_type": null
+        }
+      ],
+      "example_json": "{\"id\": 2, \"op\": \"INV_TOOL\", \"attributes\": {\"capability\": \"web_search\", \"params_json\": \"{\\\"query\\\":\\\"rust ownership\\\"}\"}}"
+    },
+    {
+      "op": "EXC",
+      "rust_variant": "Exc",
+      "name": "ExecuteCode",
+      "category": "tools",
+      "description": "Run code in a sandboxed environment; update Beliefs",
+      "long_description": "Executes arbitrary code in a sandboxed environment. The sandbox prevents file system access, network calls, and other side effects unless explicitly allowed. The code's stdout/return value becomes the output token. Execution results are also written to the agent's beliefs.",
+      "latency": "low",
+      "wire_index": 8,
+      "is_pseudo_op": false,
+      "min_inputs": 0,
+      "produces_output": true,
+      "needs_submission": true,
+      "fields": [
+        {
+          "name": "code",
+          "required": true,
+          "description": "Code to execute",
+          "ref_type": null
+        },
+        {
+          "name": "sandbox_config",
+          "required": false,
+          "description": "Sandbox configuration",
+          "ref_type": null
+        }
+      ],
+      "example_json": "{\"id\": 3, \"op\": \"EXC\", \"attributes\": {\"code\": \"print(2 + 2)\"}}"
+    },
+    {
+      "op": "PRINT",
+      "rust_variant": "Print",
+      "name": "PrintOutput",
+      "category": "tools",
+      "description": "Print output to stdout for debugging or user display",
+      "long_description": "Writes a message to stdout. Supports named `{input}` template interpolation via `input_names`. Useful for debugging graphs during development or displaying final results to the user. The message is also stored as the output token.",
+      "latency": "none",
+      "wire_index": 22,
+      "is_pseudo_op": false,
+      "min_inputs": 0,
+      "produces_output": false,
+      "needs_submission": true,
+      "fields": [
+        {
+          "name": "message",
+          "required": true,
+          "description": "Message to print",
+          "ref_type": null
+        }
+      ],
+      "example_json": "{\"id\": 4, \"op\": \"PRINT\", \"attributes\": {\"message\": \"Result: {result}\", \"input_names\": [\"result\"]}}"
+    },
+    {
+      "op": "JUMP",
+      "rust_variant": "Jump",
+      "name": "Jump",
+      "category": "control_flow",
+      "description": "Unconditional jump to a labeled instruction",
+      "long_description": "Transfers control flow unconditionally to a target label. The label must correspond to a node ID in the graph. Edges from this node use Control dependency type.",
+      "latency": "none",
+      "wire_index": 14,
+      "is_pseudo_op": false,
+      "min_inputs": 0,
+      "produces_output": false,
+      "needs_submission": false,
+      "fields": [
+        {
+          "name": "label",
+          "required": true,
+          "description": "Target label to jump to",
+          "ref_type": null
+        }
+      ],
+      "example_json": "{\"id\": 5, \"op\": \"JUMP\", \"attributes\": {\"label\": \"7\"}}"
+    },
+    {
+      "op": "BRANCH_ON_VALUE",
+      "rust_variant": "BranchOnValue",
+      "name": "BranchOnValue",
+      "category": "control_flow",
+      "description": "Conditional branch based on token value comparison",
+      "long_description": "Evaluates an input token against a value and branches to one of two labels. If the token matches the value, control goes to label_true; otherwise to label_false. Used for if/else patterns in agent workflows.",
+      "latency": "none",
+      "wire_index": 15,
+      "is_pseudo_op": false,
+      "min_inputs": 1,
+      "produces_output": false,
+      "needs_submission": false,
+      "fields": [
+        {
+          "name": "value",
+          "required": true,
+          "description": "Value to compare against",
+          "ref_type": null
+        },
+        {
+          "name": "true_label",
+          "required": true,
+          "description": "Label if comparison is true",
+          "ref_type": null
+        },
+        {
+          "name": "false_label",
+          "required": true,
+          "description": "Label if comparison is false",
+          "ref_type": null
+        }
+      ],
+      "example_json": "{\"id\": 5, \"op\": \"BRANCH_ON_VALUE\", \"attributes\": {\"value\": \"yes\", \"true_label\": \"6\", \"false_label\": \"7\"}}"
+    },
+    {
+      "op": "LOOP_START",
+      "rust_variant": "LoopStart",
+      "name": "LoopStart",
+      "category": "control_flow",
+      "description": "Begin bounded loop",
+      "long_description": "Marks the beginning of a bounded loop. The count_token specifies how many iterations to execute. Must be paired with a LOOP_END node. The compiler verifies loop bounds at compile time to prevent infinite loops.",
+      "latency": "none",
+      "wire_index": 16,
+      "is_pseudo_op": false,
+      "min_inputs": 0,
+      "produces_output": false,
+      "needs_submission": false,
+      "fields": [
+        {
+          "name": "count_token",
+          "required": true,
+          "description": "Token containing iteration count",
+          "ref_type": null
+        }
+      ],
+      "example_json": "{\"id\": 3, \"op\": \"LOOP_START\", \"attributes\": {\"count_token\": \"3\"}}"
+    },
+    {
+      "op": "LOOP_END",
+      "rust_variant": "LoopEnd",
+      "name": "LoopEnd",
+      "category": "control_flow",
+      "description": "End bounded loop",
+      "long_description": "Marks the end of a bounded loop started by LOOP_START. The runtime decrements the loop counter and branches back to LOOP_START if iterations remain.",
+      "latency": "none",
+      "wire_index": 17,
+      "is_pseudo_op": false,
+      "min_inputs": 0,
+      "produces_output": false,
+      "needs_submission": false,
+      "fields": [],
+      "example_json": null
+    },
+    {
+      "op": "RETURN",
+      "rust_variant": "Return",
+      "name": "Return",
+      "category": "control_flow",
+      "description": "Return from subgraph with result token",
+      "long_description": "Returns a value from a subgraph or flow. The result value is provided via an incoming Data edge.",
+      "latency": "none",
+      "wire_index": 13,
+      "is_pseudo_op": false,
+      "min_inputs": 1,
+      "produces_output": true,
+      "needs_submission": false,
+      "fields": [],
+      "example_json": "{\"id\": 6, \"op\": \"RETURN\", \"attributes\": {}}"
+    },
+    {
+      "op": "SWITCH",
+      "rust_variant": "Switch",
+      "name": "Switch",
+      "category": "control_flow",
+      "description": "Multi-way branch based on string value comparison",
+      "long_description": "Routes execution to one of several branches based on matching a discriminant token against case labels. Each case specifies a label string and a destination node. If no case matches, the default destination is used. The matched branch's result becomes the output token.",
+      "latency": "none",
+      "wire_index": 20,
+      "is_pseudo_op": false,
+      "min_inputs": 1,
+      "produces_output": true,
+      "needs_submission": false,
+      "fields": [
+        {
+          "name": "discriminant",
+          "required": true,
+          "description": "Token to match against case labels",
+          "ref_type": null
+        },
+        {
+          "name": "cases",
+          "required": true,
+          "description": "Array of case label/destination pairs",
+          "ref_type": null
+        },
+        {
+          "name": "default",
+          "required": false,
+          "description": "Default destination if no case matches",
+          "ref_type": null
+        }
+      ],
+      "example_json": "{\"id\": 3, \"op\": \"SWITCH\", \"attributes\": {\"discriminant\": \"topic_kind\", \"cases\": [{\"label\": \"math\", \"node_id\": 4}, {\"label\": \"code\", \"node_id\": 5}], \"default\": \"6\"}}"
+    },
+    {
+      "op": "FLOW_CALL",
+      "rust_variant": "FlowCall",
+      "name": "FlowCall",
+      "category": "control_flow",
+      "description": "Call a flow on another agent with implicit parallelism",
+      "long_description": "Invokes a named flow on a target agent. The target agent executes its flow graph independently and returns the result. Multiple FLOW_CALL nodes can execute in parallel if they have no data dependencies between them. This is the primary mechanism for multi-agent composition.",
+      "latency": "high",
+      "wire_index": 21,
+      "is_pseudo_op": false,
+      "min_inputs": 0,
+      "produces_output": true,
+      "needs_submission": true,
+      "fields": [
+        {
+          "name": "agent_name",
+          "required": true,
+          "description": "Name of the agent to call",
+          "ref_type": null
+        },
+        {
+          "name": "flow_name",
+          "required": true,
+          "description": "Name of the flow to invoke",
+          "ref_type": null
+        },
+        {
+          "name": "args",
+          "required": false,
+          "description": "Arguments to pass to the flow",
+          "ref_type": null
+        }
+      ],
+      "example_json": "{\"id\": 4, \"op\": \"FLOW_CALL\", \"attributes\": {\"agent_name\": \"researcher\", \"flow_name\": \"analyze\", \"args\": {\"topic\": \"{topic}\"}, \"input_names\": [\"topic\"]}}"
+    },
+    {
+      "op": "WORKFLOW_SPAWN",
+      "rust_variant": "WorkflowSpawn",
+      "name": "WorkflowSpawn",
+      "category": "control_flow",
+      "description": "Spawn an external AIR file, artifact, or workflow as a child execution",
+      "long_description": "Invokes an external AIR file, precompiled artifact, or workflow file as a child execution boundary. Arguments are passed by name through the args map. The child run resolves its session root from the explicit node attribute when present, otherwise it inherits the parent execution root.",
+      "latency": "high",
+      "wire_index": 41,
+      "is_pseudo_op": false,
+      "min_inputs": 0,
+      "produces_output": true,
+      "needs_submission": true,
+      "fields": [
+        {
+          "name": "target_kind",
+          "required": true,
+          "description": "Invocation target kind: air_path, artifact_path, or workflow_path",
+          "ref_type": null
+        },
+        {
+          "name": "target",
+          "required": true,
+          "description": "Path of the AIR file, artifact, or workflow to execute",
+          "ref_type": null
+        },
+        {
+          "name": "args",
+          "required": false,
+          "description": "Arguments to pass to the child execution",
+          "ref_type": null
+        },
+        {
+          "name": "session_root",
+          "required": false,
+          "description": "Explicit session root for the child execution",
+          "ref_type": null
+        },
+        {
+          "name": "await_result",
+          "required": false,
+          "description": "Whether to wait for the child result (must be true in the current runtime)",
+          "ref_type": null
+        }
+      ],
+      "example_json": "{\"id\": 5, \"op\": \"WORKFLOW_SPAWN\", \"attributes\": {\"target_kind\": \"workflow_path\", \"target\": \"workflows/review.apxmw\", \"args\": {\"topic\": \"{topic}\"}, \"input_names\": [\"topic\"], \"await_result\": true}}"
+    },
+    {
+      "op": "CALL_SKILL",
+      "rust_variant": "CallSkill",
+      "name": "CallSkill",
+      "category": "control_flow",
+      "description": "Call another skill by manifest identity (id or id@version)",
+      "long_description": "Invokes another skill resolved by manifest identity through the live SkillLibrary, rather than by raw artifact path. Resolution is lazy: the runtime parses `<skill_id>[@<version>]`, looks up the matching .apxmobj, admits the child's required capabilities against the parent's grant, dispatches the child entry DAG, and records the resolved (skill_id, version, artifact_hash) triple in the parent's provenance. Failure modes are typed: InvalidSkillId, SkillNotFound, SkillVersionNotFound, CapabilityWiden, CallSkillDepthExceeded, ChildExecutionFailed.",
+      "latency": "high",
+      "wire_index": 42,
+      "is_pseudo_op": false,
+      "min_inputs": 0,
+      "produces_output": true,
+      "needs_submission": true,
+      "fields": [
+        {
+          "name": "skill_id",
+          "required": true,
+          "description": "Skill identifier: \"id\" (latest) or \"id@version\" (pinned)",
+          "ref_type": null
+        },
+        {
+          "name": "args",
+          "required": false,
+          "description": "Positional arguments forwarded to the child's entry-flow input vector",
+          "ref_type": null
+        },
+        {
+          "name": "input_names",
+          "required": false,
+          "description": "Optional name vector mapping parent outputs onto the child's positional args",
+          "ref_type": null
+        }
+      ],
+      "example_json": "{\"id\": 6, \"op\": \"CALL_SKILL\", \"attributes\": {\"skill_id\": \"apxm-orient@0.2.0\", \"args\": [\"context\"], \"input_names\": [\"context\"]}}"
+    },
+    {
+      "op": "MERGE",
+      "rust_variant": "Merge",
+      "name": "Merge",
+      "category": "synchronization",
+      "description": "Sync parallel paths; aggregate tokens into one",
+      "long_description": "Waits for multiple parallel branches to complete and combines their output tokens into a single aggregated result. Inputs are provided via incoming Data edges.",
+      "latency": "none",
+      "wire_index": 6,
+      "is_pseudo_op": false,
+      "min_inputs": 1,
+      "produces_output": true,
+      "needs_submission": true,
+      "fields": [],
+      "example_json": "{\"id\": 6, \"op\": \"MERGE\", \"attributes\": {}}"
+    },
+    {
+      "op": "FENCE",
+      "rust_variant": "Fence",
+      "name": "Fence",
+      "category": "synchronization",
+      "description": "Memory barrier; order prior QMEM/UMEM operations",
+      "long_description": "Ensures all preceding memory operations (UMEM writes) are visible to subsequent QMEM reads. Without a FENCE, the scheduler may reorder memory operations for parallelism. Place between UMEM and QMEM when ordering matters.",
+      "latency": "none",
+      "wire_index": 7,
+      "is_pseudo_op": false,
+      "min_inputs": 0,
+      "produces_output": false,
+      "needs_submission": true,
+      "fields": [
+        {
+          "name": "ordering",
+          "required": false,
+          "description": "Memory ordering constraint",
+          "ref_type": null
+        }
+      ],
+      "example_json": null
+    },
+    {
+      "op": "WAIT_ALL",
+      "rust_variant": "WaitAll",
+      "name": "WaitAll",
+      "category": "synchronization",
+      "description": "Block until all specified tokens are available",
+      "long_description": "Blocks execution until all listed input tokens are ready. Unlike MERGE, it does not combine the tokens — it simply acts as a synchronization barrier. Inputs are provided via incoming Data edges.",
+      "latency": "none",
+      "wire_index": 5,
+      "is_pseudo_op": false,
+      "min_inputs": 1,
+      "produces_output": true,
+      "needs_submission": true,
+      "fields": [],
+      "example_json": "{\"id\": 5, \"op\": \"WAIT_ALL\", \"attributes\": {}}"
+    },
+    {
+      "op": "TRY_CATCH",
+      "rust_variant": "TryCatch",
+      "name": "TryCatch",
+      "category": "error_handling",
+      "description": "Structured exception handling with recovery subgraph",
+      "long_description": "Wraps a try subgraph with a catch recovery subgraph. If any node in the try subgraph fails, execution transfers to the catch subgraph. The catch subgraph receives the error context and can attempt recovery or graceful degradation.",
+      "latency": "none",
+      "wire_index": 18,
+      "is_pseudo_op": false,
+      "min_inputs": 0,
+      "produces_output": true,
+      "needs_submission": true,
+      "fields": [
+        {
+          "name": "try_label",
+          "required": true,
+          "description": "Subgraph to try executing",
+          "ref_type": null
+        },
+        {
+          "name": "catch_label",
+          "required": true,
+          "description": "Recovery subgraph on failure",
+          "ref_type": null
+        }
+      ],
+      "example_json": "{\"id\": 2, \"op\": \"TRY_CATCH\", \"attributes\": {\"try_label\": \"3\", \"catch_label\": \"4\"}}"
+    },
+    {
+      "op": "ERR",
+      "rust_variant": "Err",
+      "name": "HandleError",
+      "category": "error_handling",
+      "description": "Invoke recovery template on failure; update Goals/Beliefs",
+      "long_description": "Handles an error by invoking a recovery template. The error handler can update the agent's goals and beliefs to reflect the failure and adapt the agent's strategy. Typically used inside TRY_CATCH catch subgraphs.",
+      "latency": "medium",
+      "wire_index": 12,
+      "is_pseudo_op": false,
+      "min_inputs": 0,
+      "produces_output": true,
+      "needs_submission": true,
+      "fields": [
+        {
+          "name": "recovery_template",
+          "required": true,
+          "description": "Error handler / recovery template to invoke",
+          "ref_type": null
+        }
+      ],
+      "example_json": "{\"id\": 4, \"op\": \"ERR\", \"attributes\": {\"recovery_template\": \"retry_with_fallback\"}}"
+    },
+    {
+      "op": "COMMUNICATE",
+      "rust_variant": "Communicate",
+      "name": "Communicate",
+      "category": "communication",
+      "description": "Send message to recipient agent via selected protocol",
+      "long_description": "Sends a message from this agent to another agent. The message is received via input tokens from upstream edges. Supports four protocol dispatch modes: 'local' (default, in-process sub-flow), 'http'/'https' (external APXM agent), 'acp' (ACP subprocess via ProcessTable), and 'broadcast' (fan-out to all agents). The recipient attribute key is 'recipient'.",
+      "latency": "medium",
+      "wire_index": 9,
+      "is_pseudo_op": false,
+      "min_inputs": 0,
+      "produces_output": true,
+      "needs_submission": true,
+      "fields": [
+        {
+          "name": "recipient",
+          "required": true,
+          "description": "Target agent name (or URL for http protocol)",
+          "ref_type": null
+        },
+        {
+          "name": "message",
+          "required": false,
+          "description": "Message content to send",
+          "ref_type": null
+        },
+        {
+          "name": "protocol",
+          "required": false,
+          "description": "Dispatch protocol: local (default), http, https, acp, broadcast",
+          "ref_type": null
+        },
+        {
+          "name": "llm_operation",
+          "required": false,
+          "description": "Semantic LLM operation for analysis when this communication sends an agent prompt",
+          "ref_type": null
+        }
+      ],
+      "example_json": "{\"id\": 3, \"op\": \"COMMUNICATE\", \"attributes\": {\"recipient\": \"reviewer\", \"protocol\": \"acp\"}}"
+    },
+    {
+      "op": "HANDOFF",
+      "rust_variant": "Handoff",
+      "name": "Handoff",
+      "category": "communication",
+      "description": "Hand off execution from one agent to another with optional state transfer",
+      "long_description": "Transfers execution control from a source agent to a target agent. When transfer_state is true, the source agent's context-stack frames are copied to the target agent so it can continue with full conversational context. Emits HANDOFF_START and HANDOFF_END events with span continuity for tracing. The target agent's response becomes this node's output token.",
+      "latency": "medium",
+      "wire_index": 40,
+      "is_pseudo_op": false,
+      "min_inputs": 1,
+      "produces_output": true,
+      "needs_submission": true,
+      "fields": [
+        {
+          "name": "handoff_from",
+          "required": true,
+          "description": "Source agent name",
+          "ref_type": null
+        },
+        {
+          "name": "handoff_to",
+          "required": true,
+          "description": "Target agent name",
+          "ref_type": null
+        },
+        {
+          "name": "payload",
+          "required": false,
+          "description": "Message payload to pass to the target agent",
+          "ref_type": null
+        },
+        {
+          "name": "transfer_state",
+          "required": false,
+          "description": "Whether to copy context-stack frames from source to target (default: true)",
+          "ref_type": null
+        }
+      ],
+      "example_json": "{\"id\": 3, \"op\": \"HANDOFF\", \"attributes\": {\"handoff_from\": \"agent_a\", \"handoff_to\": \"agent_b\", \"transfer_state\": true}}"
+    },
+    {
+      "op": "UPDATE_GOAL",
+      "rust_variant": "UpdateGoal",
+      "name": "UpdateGoal",
+      "category": "memory",
+      "description": "Modify AAM goals at runtime: set, remove, or clear",
+      "long_description": "Dynamically modifies the agent's goal set during execution. Supports three actions: 'set' (upsert a goal with priority), 'remove' (delete a specific goal), and 'clear' (remove all goals). Goal changes are visible to subsequent REASON and REFLECT nodes.",
+      "latency": "none",
+      "wire_index": 25,
+      "is_pseudo_op": false,
+      "min_inputs": 0,
+      "produces_output": true,
+      "needs_submission": false,
+      "fields": [
+        {
+          "name": "goal_id",
+          "required": true,
+          "description": "Goal identifier (used as description key for upsert/remove)",
+          "ref_type": null
+        },
+        {
+          "name": "action",
+          "required": false,
+          "description": "Action to perform: set (default), remove, clear",
+          "ref_type": null
+        },
+        {
+          "name": "priority",
+          "required": false,
+          "description": "Goal priority (u32, default: 1)",
+          "ref_type": null
+        }
+      ],
+      "example_json": "{\"id\": 3, \"op\": \"UPDATE_GOAL\", \"attributes\": {\"goal_id\": \"optimize_latency\", \"action\": \"set\", \"priority\": 2}}"
+    },
+    {
+      "op": "PAUSE",
+      "rust_variant": "Pause",
+      "name": "Pause",
+      "category": "communication",
+      "description": "Suspend execution pending human-in-the-loop review via checkpoint",
+      "long_description": "Creates a checkpoint and suspends execution until a human resumes it via the APXM server API. The pause message is displayed to the human reviewer. Optionally sends a webhook notification. The human can provide input that becomes this node's output token when RESUME is called.",
+      "latency": "high",
+      "wire_index": 28,
+      "is_pseudo_op": false,
+      "min_inputs": 0,
+      "produces_output": true,
+      "needs_submission": true,
+      "fields": [
+        {
+          "name": "message",
+          "required": true,
+          "description": "Human-readable message explaining the pause",
+          "ref_type": null
+        },
+        {
+          "name": "checkpoint_id",
+          "required": false,
+          "description": "Stable checkpoint ID (auto-generated if omitted)",
+          "ref_type": null
+        },
+        {
+          "name": "timeout_ms",
+          "required": false,
+          "description": "Max wait in ms (0 = indefinite, default: 0)",
+          "ref_type": null
+        },
+        {
+          "name": "poll_interval_ms",
+          "required": false,
+          "description": "Polling interval in ms (default: 2000)",
+          "ref_type": null
+        },
+        {
+          "name": "notification_url",
+          "required": false,
+          "description": "Webhook URL to notify on pause creation",
+          "ref_type": null
+        },
+        {
+          "name": "server_url",
+          "required": false,
+          "description": "Override APXM_SERVER_URL env var",
+          "ref_type": null
+        }
+      ],
+      "example_json": "{\"id\": 5, \"op\": \"PAUSE\", \"attributes\": {\"message\": \"Please review the analysis before proceeding\"}}"
+    },
+    {
+      "op": "RESUME",
+      "rust_variant": "Resume",
+      "name": "Resume",
+      "category": "control_flow",
+      "description": "Resume a suspended PAUSE checkpoint; polls server until human resumes; returns human_input",
+      "long_description": "Polls the APXM server for a specific checkpoint until a human resumes it. When resumed, the human's input (if any) becomes this node's output token. Configurable polling interval and max attempts prevent indefinite blocking.",
+      "latency": "high",
+      "wire_index": 29,
+      "is_pseudo_op": false,
+      "min_inputs": 0,
+      "produces_output": true,
+      "needs_submission": true,
+      "fields": [
+        {
+          "name": "checkpoint",
+          "required": true,
+          "description": "Checkpoint ID to resume from",
+          "ref_type": null
+        },
+        {
+          "name": "poll_max_attempts",
+          "required": false,
+          "description": "Max polling attempts (default 60 × 5s = 5 min)",
+          "ref_type": null
+        },
+        {
+          "name": "poll_interval_ms",
+          "required": false,
+          "description": "Interval between polls in ms (default 5000)",
+          "ref_type": null
+        },
+        {
+          "name": "server_url",
+          "required": false,
+          "description": "Override APXM_SERVER_URL env var",
+          "ref_type": null
+        }
+      ],
+      "example_json": "{\"id\": 6, \"op\": \"RESUME\", \"attributes\": {\"checkpoint\": \"review_checkpoint_1\"}}"
+    },
+    {
+      "op": "DELEGATE",
+      "rust_variant": "Delegate",
+      "name": "Delegate",
+      "category": "coordination",
+      "description": "Delegate a task to a sub-agent for execution",
+      "long_description": "Creates a sub-task from a task specification and assigns it to a target agent. Returns a task handle that can be used to track the delegated work. The target agent executes the task independently and reports results back.",
+      "latency": "medium",
+      "wire_index": 31,
+      "is_pseudo_op": false,
+      "min_inputs": 0,
+      "produces_output": true,
+      "needs_submission": true,
+      "fields": [
+        {
+          "name": "task_spec",
+          "required": true,
+          "description": "Description of the task to delegate",
+          "ref_type": null
+        },
+        {
+          "name": "target_agent",
+          "required": true,
+          "description": "Name of the agent to delegate to",
+          "ref_type": null
+        }
+      ],
+      "example_json": "{\\\"id\\\": 3, \\\"op\\\": \\\"DELEGATE\\\", \\\"attributes\\\": {\\\"task_spec\\\": \\\"Analyze the dataset\\\", \\\"target_agent\\\": \\\"analyst\\\"}}"
+    },
+    {
+      "op": "NOP",
+      "rust_variant": "Nop",
+      "name": "Nop",
+      "category": "identity",
+      "description": "No-op passthrough with no side effects or AAM transition",
+      "long_description": "Pure passthrough operation with no side effects and no AAM state transition. Passes through its first input unchanged, or returns Null if no inputs. Useful as a placeholder, sync point, or structural node in graph composition.",
+      "latency": "none",
+      "wire_index": 33,
+      "is_pseudo_op": false,
+      "min_inputs": 0,
+      "produces_output": true,
+      "needs_submission": false,
+      "fields": [],
+      "example_json": "{\\\"id\\\": 2, \\\"op\\\": \\\"NOP\\\"}"
+    },
+    {
+      "op": "IDENTITY",
+      "rust_variant": "Identity",
+      "name": "Identity",
+      "category": "identity",
+      "description": "Identity passthrough that records an AAM identity transition",
+      "long_description": "Like NOP but produces an AAM identity transition (state unchanged but recorded in the execution trace). Useful for observability when you want to mark a point in the graph without changing state.",
+      "latency": "none",
+      "wire_index": 34,
+      "is_pseudo_op": false,
+      "min_inputs": 0,
+      "produces_output": true,
+      "needs_submission": false,
+      "fields": [],
+      "example_json": "{\\\"id\\\": 2, \\\"op\\\": \\\"IDENTITY\\\"}"
+    },
+    {
+      "op": "SPAWN_AGENT",
+      "rust_variant": "SpawnAgent",
+      "name": "SpawnAgent",
+      "category": "coordination",
+      "description": "Create a new agent instance at runtime, optionally as an ACP subprocess",
+      "long_description": "Spawns a new agent instance. Without profile or agent_route, registers a local process for flow-based agents. With profile, spawns that ACP profile. With agent_route='auto', APXM selects an ACP profile from host-supplied route candidates using required_capabilities and preferred_profiles. The agent can then receive COMMUNICATE (protocol 'acp' or 'local') or DELEGATE messages. Returns the agent's identifier and metadata.",
+      "latency": "medium",
+      "wire_index": 35,
+      "is_pseudo_op": false,
+      "min_inputs": 0,
+      "produces_output": true,
+      "needs_submission": true,
+      "fields": [
+        {
+          "name": "agent_name",
+          "required": true,
+          "description": "Name for the new agent",
+          "ref_type": null
+        },
+        {
+          "name": "profile",
+          "required": false,
+          "description": "APXM ACP agent profile. When present, spawns an ACP subprocess",
+          "ref_type": "agent profile"
+        },
+        {
+          "name": "agent_route",
+          "required": false,
+          "description": "Set to 'auto' to let APXM select an ACP profile when profile is omitted",
+          "ref_type": null
+        },
+        {
+          "name": "required_capabilities",
+          "required": false,
+          "description": "Abstract route capabilities required from the selected ACP profile",
+          "ref_type": null
+        },
+        {
+          "name": "preferred_profiles",
+          "required": false,
+          "description": "Preferred APXM ACP profiles used as a tie-breaker after capability fit",
+          "ref_type": null
+        },
+        {
+          "name": "mode",
+          "required": false,
+          "description": "Agent mode to set after spawn (e.g. 'architect', 'code')",
+          "ref_type": null
+        },
+        {
+          "name": "model",
+          "required": false,
+          "description": "Agent-specific model hint accepted by the selected ACP profile",
+          "ref_type": null
+        },
+        {
+          "name": "cwd",
+          "required": false,
+          "description": "Working directory for the agent subprocess (defaults to current dir)",
+          "ref_type": null
+        },
+        {
+          "name": "capabilities",
+          "required": false,
+          "description": "List of capabilities for the new agent",
+          "ref_type": null
+        },
+        {
+          "name": "goals",
+          "required": false,
+          "description": "Initial goals for the new agent",
+          "ref_type": null
+        },
+        {
+          "name": "system_prompt",
+          "required": false,
+          "description": "System prompt / instructions for inline agents — enables HANDOFF/COMMUNICATE dispatch without registering the agent as a separate compiled flow",
+          "ref_type": null
+        }
+      ],
+      "example_json": "{\"id\": 1, \"op\": \"SPAWN_AGENT\", \"attributes\": {\"agent_name\": \"worker\", \"profile\": \"example-acp-profile\", \"mode\": \"architect\"}}"
+    },
+    {
+      "op": "REGISTER_CAPABILITY",
+      "rust_variant": "RegisterCapability",
+      "name": "RegisterCapability",
+      "category": "coordination",
+      "description": "Register a new capability (tool) in the runtime registry",
+      "long_description": "Dynamically registers a new capability in the runtime's capability registry. The capability becomes available for INV_TOOL operations after registration. Returns a confirmation with the registered capability name.",
+      "latency": "low",
+      "wire_index": 36,
+      "is_pseudo_op": false,
+      "min_inputs": 0,
+      "produces_output": true,
+      "needs_submission": true,
+      "fields": [
+        {
+          "name": "capability_name",
+          "required": true,
+          "description": "Name for the capability to register",
+          "ref_type": null
+        },
+        {
+          "name": "description",
+          "required": false,
+          "description": "Human-readable description of the capability",
+          "ref_type": null
+        },
+        {
+          "name": "parameters_schema",
+          "required": false,
+          "description": "JSON schema for capability parameters",
+          "ref_type": null
+        },
+        {
+          "name": "python_handler_id",
+          "required": false,
+          "description": "Stable content-addressed id (sha256:<hex64>) for a Python-backed tool handler",
+          "ref_type": null
+        }
+      ],
+      "example_json": "{\\\"id\\\": 3, \\\"op\\\": \\\"REGISTER_CAPABILITY\\\", \\\"attributes\\\": {\\\"capability_name\\\": \\\"custom_tool\\\", \\\"description\\\": \\\"A custom analysis tool\\\"}}"
+    },
+    {
+      "op": "REGISTER_HOOK",
+      "rust_variant": "RegisterHook",
+      "name": "RegisterHook",
+      "category": "coordination",
+      "description": "Register an author lifecycle hook into the artifact hook registry",
+      "long_description": "Registers one author lifecycle hook (a Python handler bound to a lifecycle event) into the per-artifact hook registry. Mirrors REGISTER_CAPABILITY: the binding travels inside the artifact (AIR-portable) and the handler is dispatched via the same Python tool bridge as @tool. The runtime applies pre/post_tool hooks at the tool dispatch sites, pre/post_ask as Ask middleware, and session_start as an awaited pre-step.",
+      "latency": "low",
+      "wire_index": 43,
+      "is_pseudo_op": false,
+      "min_inputs": 0,
+      "produces_output": true,
+      "needs_submission": true,
+      "fields": [
+        {
+          "name": "hook_event",
+          "required": true,
+          "description": "Lifecycle event the hook binds to",
+          "ref_type": null
+        },
+        {
+          "name": "hook_match",
+          "required": false,
+          "description": "Glob over tool/op name the hook applies to (default *)",
+          "ref_type": null
+        },
+        {
+          "name": "hook_mode",
+          "required": false,
+          "description": "Hook mode: observe or gate",
+          "ref_type": null
+        },
+        {
+          "name": "python_hook_handler_id",
+          "required": true,
+          "description": "Stable content-addressed id (sha256:<hex64>) for the Python hook handler",
+          "ref_type": null
+        }
+      ],
+      "example_json": "{\\\"id\\\": 4, \\\"op\\\": \\\"REGISTER_HOOK\\\", \\\"attributes\\\": {\\\"hook_event\\\": \\\"pre_tool\\\", \\\"hook_match\\\": \\\"lookup\\\", \\\"hook_mode\\\": \\\"gate\\\", \\\"python_hook_handler_id\\\": \\\"sha256:...\\\"}}"
+    },
+    {
+      "op": "AUTONOMOUS",
+      "rust_variant": "Autonomous",
+      "name": "Autonomous",
+      "category": "coordination",
+      "description": "Run a goal-directed autonomous loop with the configured model",
+      "long_description": "Runs an iterative plan / act / evaluate loop against a goal prompt. The node keeps calling the configured model until the goal is achieved or `max_iterations` is reached. Optional backend, model, system prompt, provider, and temperature attributes follow the same routing contract as the other LLM operations.",
+      "latency": "high",
+      "wire_index": 37,
+      "is_pseudo_op": false,
+      "min_inputs": 0,
+      "produces_output": true,
+      "needs_submission": true,
+      "fields": [
+        {
+          "name": "prompt",
+          "required": true,
+          "description": "Goal or objective for the autonomous loop",
+          "ref_type": null
+        },
+        {
+          "name": "max_iterations",
+          "required": false,
+          "description": "Maximum number of plan / act / evaluate iterations before stopping",
+          "ref_type": null
+        },
+        {
+          "name": "backend",
+          "required": false,
+          "description": "Backend override for the autonomous loop",
+          "ref_type": "backend"
+        },
+        {
+          "name": "model",
+          "required": false,
+          "description": "Model override for the autonomous loop",
+          "ref_type": "model"
+        },
+        {
+          "name": "provider",
+          "required": false,
+          "description": "Provider override when backend routing is not used",
+          "ref_type": null
+        },
+        {
+          "name": "system_prompt",
+          "required": false,
+          "description": "System prompt applied to each model call in the loop",
+          "ref_type": null
+        },
+        {
+          "name": "temperature",
+          "required": false,
+          "description": "Sampling temperature for the loop's model calls",
+          "ref_type": null
+        }
+      ],
+      "example_json": "{\"id\": 3, \"op\": \"AUTONOMOUS\", \"attributes\": {\"prompt\": \"Find the root cause and propose a fix\", \"max_iterations\": 6}}"
+    },
+    {
+      "op": "CHECKPOINT",
+      "rust_variant": "Checkpoint",
+      "name": "Checkpoint",
+      "category": "synchronization",
+      "description": "Create a durable execution checkpoint and emit a manifest token",
+      "long_description": "Serializes execution state at a barrier point and persists it under a stable checkpoint identifier. The snapshot captures AAM state plus runtime checkpoint metadata, and emits a manifest token containing the checkpoint id, timestamp, and byte size so downstream nodes can reference the saved state. Execution continues immediately after the snapshot — this is NOT a suspend point (use PAUSE when you need human-gated suspension).",
+      "latency": "low",
+      "wire_index": 38,
+      "is_pseudo_op": false,
+      "min_inputs": 1,
+      "produces_output": true,
+      "needs_submission": false,
+      "fields": [
+        {
+          "name": "checkpoint_id",
+          "required": true,
+          "description": "Stable identifier for this checkpoint",
+          "ref_type": null
+        },
+        {
+          "name": "scope",
+          "required": false,
+          "description": "Snapshot scope: full (default) or local",
+          "ref_type": null
+        },
+        {
+          "name": "storage",
+          "required": false,
+          "description": "Storage backend: fs (default), memory, or custom",
+          "ref_type": null
+        },
+        {
+          "name": "ttl_seconds",
+          "required": false,
+          "description": "Time-to-live for the checkpoint in seconds",
+          "ref_type": null
+        },
+        {
+          "name": "on_fail",
+          "required": false,
+          "description": "Failure mode: halt (default) or continue",
+          "ref_type": null
+        }
+      ],
+      "example_json": "{\"id\": 4, \"op\": \"CHECKPOINT\", \"attributes\": {\"checkpoint_id\": \"before_analysis\"}}"
+    },
+    {
+      "op": "CONST_STR",
+      "rust_variant": "ConstStr",
+      "name": "ConstStr",
+      "category": "internal",
+      "description": "String constant (compiler internal for string literals)",
+      "long_description": "Compiler-internal operation that produces a constant string value. Not available in the public AIS. The compiler generates CONST_STR nodes when lowering template strings to explicit dataflow.",
+      "latency": "none",
+      "wire_index": 19,
+      "is_pseudo_op": false,
+      "min_inputs": 0,
+      "produces_output": true,
+      "needs_submission": false,
+      "fields": [
+        {
+          "name": "value",
+          "required": true,
+          "description": "The string constant value",
+          "ref_type": null
+        }
+      ],
+      "example_json": null
+    },
+    {
+      "op": "YIELD",
+      "rust_variant": "Yield",
+      "name": "Yield",
+      "category": "internal",
+      "description": "Yield value from switch case region (terminates region)",
+      "long_description": "Compiler-internal operation that terminates a switch case region and yields a value to the parent SWITCH node. Not available in the public AIS.",
+      "latency": "none",
+      "wire_index": null,
+      "is_pseudo_op": true,
+      "min_inputs": 1,
+      "produces_output": true,
+      "needs_submission": false,
+      "fields": [
+        {
+          "name": "value",
+          "required": true,
+          "description": "The value to yield from the region",
+          "ref_type": null
+        }
+      ],
+      "example_json": null
+    }
+  ]
+}

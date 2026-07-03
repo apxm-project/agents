@@ -27,6 +27,17 @@ fn load_graph_for_session(input: &std::path::Path) -> Result<apxm_compiler::AirM
     air_graph_from_source(input)
 }
 
+/// Best-effort flush of the permanent op-usage counters (RT-9) accumulated
+/// during this run into `<cache_dir>/op-usage/op-usage.json`. See
+/// `apxm_runtime::executor::op_usage` and `apxm ops usage`. Never fails the
+/// command: usage stats are diagnostic, not part of the execution contract.
+#[cfg(feature = "driver")]
+fn flush_op_usage_stats() {
+    if let Ok(paths) = apxm_core::paths::ApxmPaths::discover() {
+        let _ = apxm_runtime::executor::op_usage::flush_to_disk(&paths);
+    }
+}
+
 #[cfg(feature = "driver")]
 fn setup_session(
     emit_session: &Option<Option<PathBuf>>,
@@ -462,6 +473,7 @@ pub async fn execute_command(
 
     // Gracefully shutdown runtime to close all agent processes
     linker.shutdown();
+    flush_op_usage_stats();
 
     Ok(())
 }
@@ -685,6 +697,7 @@ pub async fn run_command(
 
     // Gracefully shutdown runtime to close all agent processes
     runtime.shutdown();
+    flush_op_usage_stats();
 
     Ok(())
 }
