@@ -40,6 +40,13 @@ pub struct ApxmPaths {
 
 impl ApxmPaths {
     /// Discover paths based on current working directory and environment.
+    ///
+    /// Validates the read-write state root against the `apxm.state-layout.v1`
+    /// contract (see `contracts/schemas/state-layout.v1.json`) before
+    /// returning: a state root that already exists but has the wrong entry
+    /// kind (e.g. a plain file sitting where `sessions/` should be a
+    /// directory) fails fast here instead of surfacing as a confusing I/O
+    /// error deep in the rollout or memory writers.
     pub fn discover() -> io::Result<Self> {
         let cwd = env::current_dir()?;
 
@@ -48,6 +55,8 @@ impl ApxmPaths {
         let home_dir = Self::resolve_home_dir()
             .map_or_else(|_| project_dir.clone(), Self::canonicalize_if_exists);
         let state_dir = Self::canonicalize_if_exists(state_home());
+
+        validate_state_layout(&state_dir)?;
 
         Ok(Self {
             home_dir,
@@ -278,4 +287,127 @@ pub fn session_node_dir_name(node_id: u64, node_name: &str) -> String {
     };
 
     format!("{node_id:02}_{suffix}")
+}
+
+/// A layout entry this service owns under the state root, per
+/// `apxm.state-layout.v1`.
+struct LayoutEntry {
+    /// Path relative to the state root.
+    relative_path: &'static str,
+    /// Whether this entry is expected to be a directory (`true`) or a file
+    /// (`false`) once it exists.
+    is_dir: bool,
+}
+
+/// The `agents`-owned entries of the contracted state layout
+/// (`contracts/schemas/state-layout.v1.json`). Entries that do not exist yet
+/// are fine — they are created on demand by [`ApxmPaths::sessions_dir`],
+/// [`ApxmPaths::memory_dir`], and the rollout writer. Only an existing path
+/// of the *wrong kind* (e.g. a plain file where a directory belongs) is a
+/// layout error.
+const AGENTS_STATE_LAYOUT: &[LayoutEntry] = &[
+    LayoutEntry {
+        relative_path: SESSIONS_DIR,
+        is_dir: true,
+    },
+    LayoutEntry {
+        relative_path: "sessions/rollouts",
+        is_dir: true,
+    },
+    LayoutEntry {
+        relative_path: "sessions/index.sqlite",
+        is_dir: false,
+    },
+    LayoutEntry {
+        relative_path: MEMORY_DIR,
+        is_dir: true,
+    },
+];
+
+/// Validate the on-disk state root against the `agents`-owned entries of
+/// `apxm.state-layout.v1`.
+///
+/// This is a boot-time check, not a migration: it never creates or moves
+/// anything. It only rejects a state root where an existing path has the
+/// wrong kind (file vs. directory) for its contracted role, which would
+/// otherwise surface later as an opaque I/O error from the rollout writer or
+/// the memory store.
+pub fn validate_state_layout(state_root: &Path) -> io::Result<()> {
+    for entry in AGENTS_STATE_LAYOUT {
+        let path = state_root.join(entry.relative_path);
+        let Ok(metadata) = fs::symlink_metadata(&path) else {
+            continue; // not created yet — fine, callers create on demand.
+        };
+        let is_dir = metadata.is_dir();
+        if is_dir != entry.is_dir {
+            let expected = if entry.is_dir { "a directory" } else { "a file" };
+            let found = if is_dir { "a directory" } else { "a file" };
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                format!(
+                    "state-layout.v1 violation: {} must be {expected}, found {found}",
+                    path.display()
+                ),
+            ));
+        }
+    }
+    Ok(())
+}
+
+#[cfg(test)]
+mod state_layout_tests {
+    use super::validate_state_layout;
+    use std::fs;
+    use std::path::PathBuf;
+
+    fn scratch_dir(name: &str) -> PathBuf {
+        let dir = std::env::temp_dir().join(format!(
+            "apxm-core-state-layout-test-{name}-{}-{:?}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        fs::create_dir_all(&dir).unwrap();
+        dir
+    }
+
+    #[test]
+    fn empty_state_root_is_valid() {
+        let dir = scratch_dir("empty");
+        assert!(validate_state_layout(&dir).is_ok());
+        fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn correct_layout_is_valid() {
+        let dir = scratch_dir("correct");
+        fs::create_dir_all(dir.join("sessions/rollouts")).unwrap();
+        fs::create_dir_all(dir.join("memory")).unwrap();
+        fs::write(dir.join("sessions/index.sqlite"), b"").unwrap();
+        assert!(validate_state_layout(&dir).is_ok());
+        fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn file_where_directory_expected_is_rejected() {
+        let dir = scratch_dir("file-for-dir");
+        fs::create_dir_all(&dir.join("sessions")).unwrap();
+        // `sessions/rollouts` must be a directory; make it a file instead.
+        fs::write(dir.join("sessions/rollouts"), b"not a directory").unwrap();
+        let err = validate_state_layout(&dir).unwrap_err();
+        assert_eq!(err.kind(), std::io::ErrorKind::InvalidData);
+        fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn directory_where_file_expected_is_rejected() {
+        let dir = scratch_dir("dir-for-file");
+        // `sessions/index.sqlite` must be a file; make it a directory instead.
+        fs::create_dir_all(dir.join("sessions/index.sqlite")).unwrap();
+        let err = validate_state_layout(&dir).unwrap_err();
+        assert_eq!(err.kind(), std::io::ErrorKind::InvalidData);
+        fs::remove_dir_all(&dir).ok();
+    }
 }
