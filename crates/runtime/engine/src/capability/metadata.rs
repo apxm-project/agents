@@ -262,4 +262,20 @@ mod tests {
         assert!(runtime.read_only);
         assert!(!runtime.requires_approval);
     }
+
+    #[test]
+    fn runtime_capability_projects_to_aam_capability_record() {
+        let runtime = RuntimeCapability::new(
+            "files.read",
+            "Read a file",
+            serde_json::json!({"type": "object"}),
+        )
+        .with_cost(2.5);
+
+        let record: AamCapabilityRecord = (&runtime).into();
+        assert_eq!(record.name, runtime.name);
+        assert_eq!(record.description, runtime.description);
+        assert_eq!(record.schema, runtime.parameters_schema);
+        assert_eq!(record.cost_estimate, runtime.cost_estimate);
+    }
 }
