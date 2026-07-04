@@ -173,6 +173,11 @@ pub enum Commands {
         #[command(subcommand)]
         action: TeamAction,
     },
+    /// Scaffold, lint, build, and install agent packages (AGT-1 folder format)
+    Package {
+        #[command(subcommand)]
+        action: PackageAction,
+    },
     /// Browse AIS operations (the agent instruction set)
     Ops {
         #[command(subcommand)]
@@ -859,6 +864,44 @@ pub enum AgentAction {
     },
     /// List available built-in agent templates
     Templates,
+}
+
+#[derive(Subcommand)]
+pub enum PackageAction {
+    /// Scaffold a new agent-package folder tree (apxm.agent-package.v1).
+    New {
+        /// Package id (also used as the pack_id / agent id).
+        id: String,
+        /// Destination directory (default: ./packages/<id>).
+        #[arg(long)]
+        path: Option<PathBuf>,
+        /// Display name for the agent (default: derived from the id).
+        #[arg(long)]
+        display_name: Option<String>,
+    },
+    /// Validate a package folder against the agent-package.v1 contract and
+    /// check capability-set agreement across agent.toml/capabilities.toml/skills.
+    Lint {
+        /// Package directory to validate (default: current directory).
+        #[arg(default_value = ".")]
+        path: PathBuf,
+    },
+    /// Compile the package's skills and (re)compute the pack integrity hash
+    /// chain, writing the result into pack.toml's [integrity] table.
+    Build {
+        /// Package directory to build (default: current directory).
+        #[arg(default_value = ".")]
+        path: PathBuf,
+    },
+    /// Install a built package to `APXM_HOME/packages/<id>/`.
+    Install {
+        /// Package directory to install (default: current directory).
+        #[arg(default_value = ".")]
+        path: PathBuf,
+        /// Overwrite an existing install at the destination.
+        #[arg(long)]
+        force: bool,
+    },
 }
 
 #[derive(Subcommand)]

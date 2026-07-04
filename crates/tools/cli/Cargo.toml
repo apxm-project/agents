@@ -42,7 +42,9 @@ chrono.workspace = true
 reqwest = { version = "0.13", features = ["blocking", "stream", "json", "rustls"], default-features = false }
 walkdir.workspace = true
 tempfile.workspace = true
-toml = { workspace = true, optional = true }
+toml.workspace = true
+# AGT-2: package new/lint/build/install manifest parsing + integrity hash chain.
+sha2.workspace = true
 rusqlite = { workspace = true, optional = true }
 # Phase 14.8.F — rollout/watch CLI deps. apxm-rollout is the durable
 # transcript layer; tar+flate2 produce the air-gapped reproducibility
@@ -80,7 +82,6 @@ driver = [
     "dep:apxm-artifact",
     "dep:tracing-subscriber",
     "dep:rusqlite",
-    "dep:toml",
     "dep:apxm-rollout",
     "dep:futures",
     "dep:tokio-stream",

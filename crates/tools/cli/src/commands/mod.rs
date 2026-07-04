@@ -20,6 +20,7 @@ pub(crate) mod dekk_hints;
 pub mod execute;
 pub mod goal;
 pub mod ops;
+pub mod package;
 pub mod process;
 #[cfg(feature = "driver")]
 pub mod render;
@@ -52,6 +53,7 @@ pub use compile::*;
 pub use execute::*;
 pub use goal::*;
 pub use ops::*;
+pub use package::*;
 pub use process::*;
 pub use replay::*;
 pub use session::*;
