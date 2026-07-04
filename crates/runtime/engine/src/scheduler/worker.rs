@@ -208,6 +208,19 @@ pub async fn worker_loop(
                 // they aren't using. The node is re-injected when
                 // park_registry::wake(wait_key) makes its output token ready.
                 state.enter_parked();
+                // Narrow park-observability signal (G-6): fire ONLY when this
+                // park's wait_key is exactly the conversation-loop's
+                // session-recv key for this execution's session — not for any
+                // other park reason (PAUSE, generic recv-with-url, etc). A
+                // caller awaiting `SchedulerState::subscribe_session_parked()`
+                // learns "this execution just parked waiting for turn input"
+                // without polling and without conflating it with unrelated
+                // parks.
+                if let Some(session_id) = child_ctx.session_id()
+                    && wait_key == crate::scheduler::park_registry::session_recv_key(session_id)
+                {
+                    state.notify_session_parked(session_id.to_string());
+                }
                 // A session conversation-loop recv re-arms on wake: deliver the
                 // message, then splice a fresh turn flow-call + a fresh recv (the
                 // native loop keystone). Other parks use the plain waker.
