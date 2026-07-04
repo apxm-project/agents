@@ -40,7 +40,8 @@ pub mod registry;
 pub(crate) mod tool_write_lock;
 
 use crate::aam::{Aam, TransitionLabel};
-use crate::sandbox::{IsolationLevel, SandboxRegistry, ValidationResult};
+use crate::sandbox::{SandboxRegistry, ValidationResult};
+use apxm_capability_iface::{ApprovalContext, CapabilityFacade};
 use approval::ApprovalStore;
 use apxm_core::{error::RuntimeError, types::values::Value};
 use executor::{CapabilityExecutor, exec_result_to_value};
@@ -55,22 +56,10 @@ const SANDBOX_DEGRADED_GUARANTEES: &str = "sandbox backend selected with degrade
 /// Result type for capability operations
 type CapabilityResult<T> = Result<T, RuntimeError>;
 
-/// Result of checking whether a capability invocation can be sandboxed.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum CapabilitySandboxPreflight {
-    /// The capability does not request sandbox routing for these arguments.
-    Direct,
-    /// The capability produced an execution request and a compatible backend
-    /// was selected without running the capability.
-    Sandboxed {
-        /// Selected backend name.
-        backend: String,
-        /// Isolation level provided by the selected backend.
-        isolation: IsolationLevel,
-        /// Warnings reported when the backend can only provide degraded guarantees.
-        warnings: Vec<String>,
-    },
-}
+// `CapabilitySandboxPreflight` moved to `apxm-capability-iface` — it's the
+// return type of `CapabilityFacade::sandbox_preflight`. Re-exported so
+// `crate::capability::CapabilitySandboxPreflight` keeps working.
+pub use apxm_capability_iface::CapabilitySandboxPreflight;
 
 /// Main capability system coordinator
 ///
@@ -250,11 +239,18 @@ impl CapabilitySystem {
         args: HashMap<String, Value>,
         timeout: Duration,
     ) -> CapabilityResult<Value> {
-        self.invoke_with_timeout_ctx(name, args, timeout, None).await
+        self.invoke_with_timeout_ctx_raw(name, args, timeout, None)
+            .await
     }
 
     /// Invoke capability with custom timeout and optional approval-gate context.
-    pub async fn invoke_with_timeout_ctx(
+    ///
+    /// `pub(crate)` — the `CapabilityFacade::invoke_with_timeout_ctx` trait
+    /// method (below) is the executor-facing entry point. It takes an
+    /// `ApprovalContext` (no `&CapabilityRegistry` field) and builds the full
+    /// `PreInvokeContext` this method needs itself, from `self.registry`, so
+    /// callers outside this module never need a registry reference.
+    pub(crate) async fn invoke_with_timeout_ctx_raw(
         &self,
         name: &str,
         args: HashMap<String, Value>,
@@ -555,5 +551,78 @@ impl CapabilitySystem {
 impl Default for CapabilitySystem {
     fn default() -> Self {
         Self::new()
+    }
+}
+
+/// Executor's actual `CapabilitySystem` usage surface, expressed as a trait
+/// so `ExecutionContext.capability_system` can be `Arc<dyn CapabilityFacade>`
+/// instead of the concrete type — the fourth and final step in breaking
+/// apxm-runtime's capability/executor/scheduler use-graph cycle (see
+/// `apxm-capability-iface`'s crate docs).
+#[async_trait::async_trait]
+impl CapabilityFacade for CapabilitySystem {
+    async fn invoke(
+        &self,
+        name: &str,
+        args: HashMap<String, Value>,
+    ) -> CapabilityResult<Value> {
+        CapabilitySystem::invoke(self, name, args).await
+    }
+
+    async fn invoke_with_timeout_ctx(
+        &self,
+        name: &str,
+        args: HashMap<String, Value>,
+        timeout: Duration,
+        approval: Option<ApprovalContext<'_>>,
+    ) -> CapabilityResult<Value> {
+        match approval {
+            None => self.invoke_with_timeout_ctx_raw(name, args, timeout, None).await,
+            Some(approval) => {
+                let pre_ctx = PreInvokeContext {
+                    registry: &self.registry,
+                    consent_broker: approval.consent_broker,
+                    event_emitter: approval.event_emitter,
+                    host_id: approval.host_id,
+                    agent_code: approval.agent_code,
+                    grant_id: approval.grant_id,
+                    permission_timeout: approval.permission_timeout,
+                };
+                self.invoke_with_timeout_ctx_raw(name, args, timeout, Some(&pre_ctx))
+                    .await
+            }
+        }
+    }
+
+    fn has_capability(&self, name: &str) -> bool {
+        CapabilitySystem::has_capability(self, name)
+    }
+
+    fn is_read_only(&self, name: &str) -> bool {
+        CapabilitySystem::is_read_only(self, name)
+    }
+
+    fn get_metadata(&self, name: &str) -> Option<RuntimeCapability> {
+        CapabilitySystem::get_metadata(self, name)
+    }
+
+    fn list_capabilities(&self) -> Vec<RuntimeCapability> {
+        CapabilitySystem::list_capabilities(self)
+    }
+
+    fn list_capabilities_by_groups(&self, groups: &[String]) -> Vec<RuntimeCapability> {
+        CapabilitySystem::list_capabilities_by_groups(self, groups)
+    }
+
+    fn set_sandbox_registry(&self, registry: Arc<SandboxRegistry>) {
+        CapabilitySystem::set_sandbox_registry(self, registry)
+    }
+
+    fn sandbox_preflight(
+        &self,
+        name: &str,
+        args: &HashMap<String, Value>,
+    ) -> CapabilityResult<CapabilitySandboxPreflight> {
+        CapabilitySystem::sandbox_preflight(self, name, args)
     }
 }

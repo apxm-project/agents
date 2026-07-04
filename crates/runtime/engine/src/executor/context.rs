@@ -7,7 +7,6 @@ use crate::sandbox::SandboxRegistry;
 use crate::{
     aam::{Aam, ScopeSpec},
     agent_pool::AgentPool,
-    capability::CapabilitySystem,
     capability::flow_registry::FlowRegistry,
     context_stack::ContextStack,
     memory::MemorySystem,
@@ -15,6 +14,7 @@ use crate::{
     workspace::ScopeRegistry,
 };
 use apxm_backends::LLMRegistry;
+use apxm_capability_iface::{ApprovalContext, CapabilityFacade};
 use apxm_core::InstructionConfig;
 use apxm_core::constants::cache;
 use apxm_core::paths::ApxmPaths;
@@ -52,7 +52,7 @@ pub struct ExecutionContext {
     pub session_id: Option<String>,
     pub memory: Arc<MemorySystem>,
     pub llm_registry: Arc<LLMRegistry>,
-    pub capability_system: Arc<CapabilitySystem>,
+    pub capability_system: Arc<dyn CapabilityFacade>,
     pub aam: Aam,
     pub scope_id: String,
     pub scope_registry: Arc<ScopeRegistry>,
@@ -166,7 +166,7 @@ impl ExecutionContext {
     pub fn new(
         memory: Arc<MemorySystem>,
         llm_registry: Arc<LLMRegistry>,
-        capability_system: Arc<CapabilitySystem>,
+        capability_system: Arc<dyn CapabilityFacade>,
         aam: Aam,
     ) -> Self {
         let execution_id = uuid::Uuid::now_v7().to_string();
@@ -268,7 +268,7 @@ impl ExecutionContext {
     pub fn with_inner_plan_support(
         memory: Arc<MemorySystem>,
         llm_registry: Arc<LLMRegistry>,
-        capability_system: Arc<CapabilitySystem>,
+        capability_system: Arc<dyn CapabilityFacade>,
         aam: Aam,
         inner_plan_linker: Arc<dyn InnerPlanLinker>,
         dag_splicer: Arc<dyn DagSplicer>,
@@ -415,8 +415,12 @@ impl ExecutionContext {
             .peek()
             .map(|s| s.agent_code.clone())
             .or_else(|| self.current_agent.as_ref().map(|a| a.name.clone()));
-        let pre_ctx = crate::capability::interceptor::PreInvokeContext {
-            registry: self.capability_system.registry(),
+        // `ApprovalContext` (apxm-capability-iface) — deliberately has no
+        // `&CapabilityRegistry` field, unlike capability's internal
+        // `PreInvokeContext`: the concrete `CapabilityFacade` impl resolves
+        // the named capability's `requires_approval` metadata from its own
+        // registry, so this caller doesn't need a registry reference at all.
+        let approval_ctx = ApprovalContext {
             consent_broker: self.consent_broker.as_ref(),
             event_emitter: self
                 .event_emitter
@@ -428,7 +432,7 @@ impl ExecutionContext {
             permission_timeout: crate::capability::interceptor::PreInvokeContext::permission_timeout_from_env(),
         };
         self.capability_system
-            .invoke_with_timeout_ctx(name, args, timeout, Some(&pre_ctx))
+            .invoke_with_timeout_ctx(name, args, timeout, Some(approval_ctx))
             .await
     }
 
@@ -770,6 +774,95 @@ mod tests {
         assert!(
             err.to_string().contains("session tool budget exhausted"),
             "unexpected error: {err}"
+        );
+    }
+
+    /// A `CapabilityFacade` implementor that is deliberately *not*
+    /// `CapabilitySystem` — proves `ExecutionContext.capability_system:
+    /// Arc<dyn CapabilityFacade>` is a real trait-object seam, not just a
+    /// type alias for the one concrete type.
+    struct StubFacade;
+
+    #[async_trait::async_trait]
+    impl apxm_capability_iface::CapabilityFacade for StubFacade {
+        async fn invoke(
+            &self,
+            name: &str,
+            _args: HashMap<String, apxm_core::types::values::Value>,
+        ) -> Result<apxm_core::types::values::Value, apxm_core::error::RuntimeError> {
+            Ok(apxm_core::types::values::Value::String(format!(
+                "stub:{name}"
+            )))
+        }
+
+        async fn invoke_with_timeout_ctx(
+            &self,
+            name: &str,
+            args: HashMap<String, apxm_core::types::values::Value>,
+            _timeout: std::time::Duration,
+            _approval: Option<ApprovalContext<'_>>,
+        ) -> Result<apxm_core::types::values::Value, apxm_core::error::RuntimeError> {
+            self.invoke(name, args).await
+        }
+
+        fn has_capability(&self, _name: &str) -> bool {
+            true
+        }
+
+        fn is_read_only(&self, _name: &str) -> bool {
+            true
+        }
+
+        fn get_metadata(&self, _name: &str) -> Option<apxm_capability_iface::RuntimeCapability> {
+            None
+        }
+
+        fn list_capabilities(&self) -> Vec<apxm_capability_iface::RuntimeCapability> {
+            Vec::new()
+        }
+
+        fn list_capabilities_by_groups(
+            &self,
+            _groups: &[String],
+        ) -> Vec<apxm_capability_iface::RuntimeCapability> {
+            Vec::new()
+        }
+
+        fn set_sandbox_registry(&self, _registry: Arc<crate::sandbox::SandboxRegistry>) {}
+
+        fn sandbox_preflight(
+            &self,
+            _name: &str,
+            _args: &HashMap<String, apxm_core::types::values::Value>,
+        ) -> Result<
+            apxm_capability_iface::CapabilitySandboxPreflight,
+            apxm_core::error::RuntimeError,
+        > {
+            Ok(apxm_capability_iface::CapabilitySandboxPreflight::Direct)
+        }
+    }
+
+    #[tokio::test]
+    async fn execution_context_accepts_a_non_capability_system_facade() {
+        let memory = Arc::new(
+            MemorySystem::new(MemoryConfig::in_memory_ltm())
+                .await
+                .expect("memory"),
+        );
+        let aam = Aam::new();
+        let ctx = ExecutionContext::new(
+            memory,
+            Arc::new(LLMRegistry::new()),
+            Arc::new(StubFacade),
+            aam,
+        );
+        let result = ctx
+            .invoke_capability("anything", HashMap::new())
+            .await
+            .expect("stub facade invoke");
+        assert_eq!(
+            result,
+            apxm_core::types::values::Value::String("stub:anything".to_string())
         );
     }
 }

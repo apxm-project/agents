@@ -8,7 +8,11 @@ use async_trait::async_trait;
 use std::collections::{HashMap, HashSet};
 use std::time::Duration;
 
-use crate::ExecutionEventEmitter;
+// Imported directly from the interface crate (not via `crate::ExecutionEventEmitter`,
+// which is only a re-export at the `apxm-runtime` lib root) — capability's
+// interceptor pipeline depends on `apxm-capability-iface` for this trait, not
+// on anything in `apxm-runtime`'s own `executor` module.
+use apxm_capability_iface::events::ExecutionEventEmitter;
 use super::metadata::RuntimeCapability;
 use super::registry::CapabilityRegistry;
 
