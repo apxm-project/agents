@@ -17,6 +17,7 @@ apxm-backends.workspace = true
 apxm-artifact.workspace = true
 apxm-aam.workspace = true
 apxm-memory.workspace = true
+apxm-capability-iface.workspace = true
 
 # Async
 tokio = { workspace = true, features = ["rt-multi-thread", "macros", "sync", "time", "rt", "process", "io-util", "fs"] }

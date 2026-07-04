@@ -77,7 +77,12 @@ pub mod process;
 pub mod process_table;
 pub mod python_tools;
 mod runtime;
-pub mod sandbox;
+// `sandbox` moved to `apxm-capability-iface` — it had zero dependencies on
+// other `apxm-runtime` internals, so it was a clean relocation. Re-exported
+// under the same module name so `crate::sandbox::*` and
+// `apxm_runtime::sandbox::*` (external consumers: driver, acp, cli,
+// observability) keep working unchanged.
+pub use apxm_capability_iface::sandbox;
 pub mod scheduler;
 pub mod team;
 #[cfg(any(test, feature = "test-utils"))]
