@@ -661,6 +661,15 @@ async fn execute_llm_once(
             flow_name.map(|s| s.as_str()),
             agent_name,
         );
+        // RT-8: also feed the process-wide meter so `/v1/generate` (which
+        // bypasses this executor path entirely) and the executor path are
+        // observed through one shared counter.
+        crate::executor::token_accounting::global_meter().record_usage(
+            node.id,
+            &response.usage,
+            flow_name.map(|s| s.as_str()),
+            agent_name,
+        );
         if let Some(emitter) = &ctx.event_emitter {
             emitter.emit_token_usage(
                 node.id,

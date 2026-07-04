@@ -370,3 +370,78 @@ pub fn capability_binding_check_dag(
 
     Ok(warnings)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::air_builder::{AirEdge, AirModule, AirNode};
+    use apxm_core::constants::graph::attrs;
+    use apxm_core::error::compiler::CompilerError;
+    use apxm_core::types::{AISOperationType, Value};
+    use std::collections::HashMap;
+
+    fn module_with_unbound_inv_cap() -> AirModule {
+        let mut attributes = HashMap::new();
+        attributes.insert(
+            attrs::CAPABILITY.to_string(),
+            Value::String("not.registered".to_string()),
+        );
+        AirModule {
+            name: "bad_binding".to_string(),
+            nodes: vec![AirNode {
+                id: 1,
+                name: "n1".to_string(),
+                op: AISOperationType::InvCap,
+                attributes,
+            }],
+            edges: Vec::<AirEdge>::new(),
+            parameters: Vec::new(),
+            metadata: HashMap::new(),
+        }
+    }
+
+    /// RT-8: `capability-binding-check` (post-CM-7 rename from
+    /// `tool-binding-check`) must fail compilation for an `INV_CAP` that
+    /// references an unregistered, non-builtin capability — not just print
+    /// a warning. This is the compile-error promotion the RT-8 decision
+    /// record calls for (previously `eprintln!`-only diagnostics would have
+    /// let a bad binding silently reach the runtime).
+    #[test]
+    fn unbound_capability_is_a_hard_compile_error_not_a_warning() {
+        let module = module_with_unbound_inv_cap();
+        let result = capability_binding_check(&module, None);
+        let err = result.expect_err(
+            "an INV_CAP referencing an unregistered, non-builtin capability must fail compilation",
+        );
+        match err {
+            CompilerError::Verification(inner) => {
+                assert_eq!(inner.code, ErrorCode::UnboundCapability);
+                assert!(inner.message.contains("not.registered"));
+            }
+            other => panic!("expected CompilerError::Verification, got {other:?}"),
+        }
+    }
+
+    /// Same check, but against the post-MLIR `ExecutionDag` path
+    /// (`capability_binding_check_dag`), which the compile pipeline actually
+    /// runs after lowering — this is the pipeline-integration-adjacent half
+    /// of the same compile-error guarantee.
+    #[test]
+    fn unbound_capability_is_a_hard_compile_error_on_the_dag_path_too() {
+        use apxm_core::types::execution::ExecutionDag;
+        use apxm_core::types::Node;
+        use std::collections::HashSet;
+
+        let mut node = Node::new(1, AISOperationType::InvCap);
+        node.attributes.insert(
+            attrs::CAPABILITY.to_string(),
+            Value::String("not.registered".to_string()),
+        );
+        let mut dag = ExecutionDag::new();
+        dag.nodes.push(node);
+
+        let known_caps: HashSet<String> = HashSet::new();
+        let result = capability_binding_check_dag(&dag, None, &known_caps);
+        result.expect_err("unbound capability must fail compilation on the DAG path too");
+    }
+}

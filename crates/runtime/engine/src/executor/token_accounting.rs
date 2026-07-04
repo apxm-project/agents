@@ -149,6 +149,24 @@ impl TokenAccountant {
     }
 }
 
+/// Process-wide token meter shared by every entry point that spends tokens,
+/// including deliberate executor bypasses like `/v1/generate` (RT-8: "route
+/// its token accounting through the same meters the engine uses"). Unlike
+/// [`ExecutionContext::token_accountant`] (fresh per execution, reset to zero
+/// at execution start so a run's own snapshot is self-contained), this is one
+/// process-lifetime accumulator: it is the seam that lets a caller assert
+/// "every token spent by this process — executor path or fast path — landed
+/// in one place," without changing the per-execution snapshot semantics the
+/// executor and its tests already depend on.
+static GLOBAL_TOKEN_METER: std::sync::OnceLock<TokenAccountant> = std::sync::OnceLock::new();
+
+/// The process-wide token meter. Both the executor's LLM call handlers
+/// (`executor/handlers/llm/mod.rs`, `.../tool_dispatch.rs`) and
+/// `apxm-server`'s `/v1/generate` fast path record into this same instance.
+pub fn global_meter() -> &'static TokenAccountant {
+    GLOBAL_TOKEN_METER.get_or_init(TokenAccountant::new)
+}
+
 /// Serializable snapshot of token accounting state.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TokenAccountingSnapshot {
