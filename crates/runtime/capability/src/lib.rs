@@ -13,7 +13,7 @@
 //! # Example
 //!
 //! ```rust
-//! use apxm_runtime::capability::{CapabilitySystem, executor::EchoCapability};
+//! use apxm_capability::{CapabilitySystem, executor::EchoCapability};
 //! use std::sync::Arc;
 //!
 //! # async fn example() -> Result<(), Box<dyn std::error::Error>> {
@@ -37,10 +37,10 @@ pub mod flow_registry;
 pub mod interceptor;
 pub mod metadata;
 pub mod registry;
-pub(crate) mod tool_write_lock;
+pub mod tool_write_lock;
 
-use crate::aam::{Aam, TransitionLabel};
-use crate::sandbox::{SandboxRegistry, ValidationResult};
+use apxm_aam::{Aam, TransitionLabel};
+use apxm_capability_iface::sandbox::{SandboxRegistry, ValidationResult};
 use apxm_capability_iface::{ApprovalContext, CapabilityFacade};
 use approval::ApprovalStore;
 use apxm_core::{error::RuntimeError, types::values::Value};
@@ -58,7 +58,7 @@ type CapabilityResult<T> = Result<T, RuntimeError>;
 
 // `CapabilitySandboxPreflight` moved to `apxm-capability-iface` — it's the
 // return type of `CapabilityFacade::sandbox_preflight`. Re-exported so
-// `crate::capability::CapabilitySandboxPreflight` keeps working.
+// `crate::CapabilitySandboxPreflight` keeps working.
 pub use apxm_capability_iface::CapabilitySandboxPreflight;
 
 /// Main capability system coordinator

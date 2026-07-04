@@ -58,7 +58,10 @@ pub use apxm_aam as aam;
 pub mod agent_pool;
 pub mod agent_router;
 pub mod agent_scoring;
-pub mod capability;
+/// Capability system — re-exported from the standalone `apxm-capability`
+/// crate so existing `apxm_runtime::capability::...` import paths keep
+/// working after the RT-6 sub-crate extraction.
+pub use apxm_capability as capability;
 mod constants;
 pub mod context_stack;
 mod dispatch;

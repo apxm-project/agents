@@ -19,7 +19,7 @@ static TOOL_WRITE_LOCKS: once_cell::sync::Lazy<dashmap::DashMap<String, Arc<RwLo
     once_cell::sync::Lazy::new(dashmap::DashMap::new);
 
 /// Get (or create) the write lock for a capability name.
-pub(crate) fn write_lock_for_tool(name: &str) -> Arc<RwLock<()>> {
+pub fn write_lock_for_tool(name: &str) -> Arc<RwLock<()>> {
     TOOL_WRITE_LOCKS
         .entry(name.to_string())
         .or_insert_with(|| Arc::new(RwLock::new(())))
@@ -27,7 +27,7 @@ pub(crate) fn write_lock_for_tool(name: &str) -> Arc<RwLock<()>> {
 }
 
 /// Prune an idle lock entry (no in-flight users) to bound the map size.
-pub(crate) fn release_write_lock_if_idle(name: &str, lock: &Arc<RwLock<()>>) {
+pub fn release_write_lock_if_idle(name: &str, lock: &Arc<RwLock<()>>) {
     TOOL_WRITE_LOCKS.remove_if(name, |_, current| {
         Arc::ptr_eq(current, lock) && Arc::strong_count(current) == 2
     });

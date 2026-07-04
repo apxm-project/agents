@@ -22,7 +22,7 @@ use tokio::sync::Notify;
 use uuid::Uuid;
 
 use super::store::{ScheduleRow, ToolsStore, now_ms};
-use crate::capability::{
+use crate::{
     executor::{CapabilityExecutor, CapabilityResult},
     metadata::RuntimeCapability,
 };

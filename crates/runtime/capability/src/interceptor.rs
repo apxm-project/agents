@@ -256,7 +256,7 @@ impl CapabilityInterceptor for PermissionInterceptor {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::capability::executor::{CapabilityExecutor, EchoCapability};
+    use crate::executor::{CapabilityExecutor, EchoCapability};
     use apxm_core::types::consent::{ConsentBroker, ConsentDecision, SignedApproval};
     use std::sync::Arc;
 

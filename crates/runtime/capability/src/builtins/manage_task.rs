@@ -13,8 +13,8 @@ use apxm_core::types::values::{Number, Value};
 use async_trait::async_trait;
 
 use super::store::{TaskRow, ToolsStore, now_ms};
-use crate::aam::{Aam, CompletionPolicy, TransitionLabel};
-use crate::capability::{
+use apxm_aam::{Aam, CompletionPolicy, TransitionLabel};
+use crate::{
     executor::{CapabilityExecutor, CapabilityResult},
     metadata::RuntimeCapability,
 };

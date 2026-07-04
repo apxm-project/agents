@@ -9,7 +9,7 @@
 //! ever writes under a confined staging directory.
 
 use super::require_string_arg;
-use crate::capability::{
+use crate::{
     executor::{CapabilityExecutor, CapabilityResult},
     metadata::RuntimeCapability,
 };
