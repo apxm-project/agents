@@ -48,10 +48,35 @@ use std::{collections::HashMap, path::Path, sync::Arc};
 /// session loop keeps making progress; this variant only lets the caller stop
 /// waiting once "the next turn boundary was reached" is known, instead of
 /// blocking for the lifetime of the session.
-#[derive(Debug)]
 pub enum ExecutionOutcome {
     Completed(RuntimeExecutionResult),
-    Parked { session_id: String },
+    Parked {
+        session_id: String,
+        /// Handle to the detached background task that keeps running the DAG
+        /// to its eventual real completion (or host cancellation) and
+        /// releases runtime-owned per-execution resources (backend graph
+        /// lifecycle) when that happens.
+        ///
+        /// A caller with its OWN per-execution bookkeeping that must not
+        /// finalize until the execution is truly done (e.g. the server's
+        /// cross-execution admission slot, which the in-graph conversation
+        /// loop parks and un-parks repeatedly across turns) MUST chain onto
+        /// this handle rather than finalizing immediately on `Parked` — the
+        /// execution is NOT done just because it parked once.
+        background: tokio::task::JoinHandle<()>,
+    },
+}
+
+impl std::fmt::Debug for ExecutionOutcome {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Completed(result) => f.debug_tuple("Completed").field(result).finish(),
+            Self::Parked { session_id, .. } => f
+                .debug_struct("Parked")
+                .field("session_id", session_id)
+                .finish_non_exhaustive(),
+        }
+    }
 }
 
 /// Result of DAG execution
@@ -1220,19 +1245,26 @@ impl Runtime {
         match outcome {
             Ok(crate::scheduler::SchedulerOutcome::Parked {
                 session_id,
-                background,
+                background: scheduler_background,
             }) => {
                 // Not done: release the backend graph lifecycle + emit
                 // graph_end only once the background completion actually
-                // finishes, not now.
-                tokio::spawn(async move {
-                    let _ = background.await;
+                // finishes, not now. Exposed as `background` on
+                // `ExecutionOutcome::Parked` too, so a caller with its own
+                // "not really done yet" bookkeeping (e.g. the server's
+                // cross-execution admission slot) can chain onto the SAME
+                // real-completion event instead of guessing when it's safe.
+                let background = tokio::spawn(async move {
+                    let _ = scheduler_background.await;
                     release_graph_lifecycles(&lifecycles).await;
                     if let Some(emitter) = &graph_emitter {
                         emitter.emit_graph_end(&execution_id, node_count, true);
                     }
                 });
-                Ok(ExecutionOutcome::Parked { session_id })
+                Ok(ExecutionOutcome::Parked {
+                    session_id,
+                    background,
+                })
             }
             Ok(crate::scheduler::SchedulerOutcome::Completed((
                 results,
@@ -1778,7 +1810,7 @@ mod tests {
 
         match outcome {
             ExecutionOutcome::Completed(_) => {}
-            ExecutionOutcome::Parked { session_id } => {
+            ExecutionOutcome::Parked { session_id, .. } => {
                 panic!("expected Completed, got Parked({session_id})");
             }
         }
@@ -1819,6 +1851,7 @@ mod tests {
         match outcome {
             ExecutionOutcome::Parked {
                 session_id: observed,
+                ..
             } => {
                 assert_eq!(observed, session_id);
             }
@@ -1875,7 +1908,7 @@ mod tests {
 
         match outcome {
             ExecutionOutcome::Completed(_) => {}
-            ExecutionOutcome::Parked { session_id } => {
+            ExecutionOutcome::Parked { session_id, .. } => {
                 panic!(
                     "a RESUME (non-session-recv) park must not be reported as Parked, got session_id={session_id}"
                 );
