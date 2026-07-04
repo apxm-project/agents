@@ -214,6 +214,20 @@ pub struct SchedulerState {
     /// Key: (delegator_node_id, token_id) - only the delegating node skips publish.
     /// Zero overhead for DAGs without switch operations.
     pub delegated_tokens: Arc<DashSet<(NodeId, TokenId)>>,
+
+    /// Narrow park-observability signal for G-6: fires with `Some(session_id)`
+    /// exactly when a node parks under the conversation-loop's
+    /// `park_registry::session_recv_key(session_id)` wait key (the in-graph
+    /// "waiting for the next turn's message" park) — not for any other park
+    /// reason (PAUSE, generic recv-with-url, etc). A caller that wants to know
+    /// "did this execution just start waiting on turn input" can
+    /// `subscribe_session_parked()` and race the receiver's `changed()` against
+    /// the execution future, instead of blocking until the whole DAG (which may
+    /// run for the lifetime of the session) completes. Kept as a `watch` channel
+    /// (last-value-wins) rather than a general park-event bus: this is
+    /// observability for the one parking case G-6 cares about, not a
+    /// general-purpose per-reason event stream.
+    pub(crate) session_parked_tx: tokio::sync::watch::Sender<Option<String>>,
 }
 
 impl SchedulerState {
@@ -426,6 +440,7 @@ impl SchedulerState {
             execution_stack: Arc::new(Mutex::new(Vec::new())),
             next_promise_token_id: Arc::new(AtomicU64::new(1_000_000)),
             delegated_tokens: Arc::new(DashSet::new()),
+            session_parked_tx: tokio::sync::watch::channel(None).0,
         };
 
         // Initialize readiness tracking and seed ready nodes. On a partial replay
@@ -662,6 +677,24 @@ impl SchedulerState {
     /// Number of nodes currently parked on an external event.
     pub fn parked_count(&self) -> usize {
         self.parked.load(Ordering::SeqCst)
+    }
+
+    /// Fire the narrow session-recv park-observability signal (G-6). Called
+    /// exactly once per session-recv park, from the worker loop, when a node's
+    /// `wait_key` matches `park_registry::session_recv_key(session_id)` for
+    /// this execution's session. `send` failing (no subscribers) is
+    /// expected and harmless — observability is best-effort and never a
+    /// requirement for the park/wake mechanism itself to function.
+    pub(crate) fn notify_session_parked(&self, session_id: String) {
+        let _ = self.session_parked_tx.send(Some(session_id));
+    }
+
+    /// Subscribe to the narrow session-recv park signal. The returned receiver
+    /// observes only session-recv parks (see [`Self::notify_session_parked`]),
+    /// not every park reason in the system. Its `changed()` resolves as soon as
+    /// a session-recv park fires after subscription.
+    pub fn subscribe_session_parked(&self) -> tokio::sync::watch::Receiver<Option<String>> {
+        self.session_parked_tx.subscribe()
     }
 
     /// Record that a node has parked. On the 0->1 transition (the execution

@@ -17,6 +17,39 @@ use apxm_core::error::RuntimeError;
 
 type RuntimeResult<T> = Result<T, RuntimeError>;
 
+/// Result payload shared by [`DataflowScheduler::execute_with_hooks_and_seed`]
+/// and the `Completed` arm of [`SchedulerOutcome`].
+type SchedulerExecutionResult = (
+    std::collections::HashMap<u64, Value>,
+    ExecutionStats,
+    SchedulerMetrics,
+    Option<std::collections::HashMap<u64, Value>>,
+    Option<std::collections::HashMap<u64, Vec<u64>>>,
+);
+
+/// Outcome of [`DataflowScheduler::execute_or_park`]: either the DAG ran to
+/// completion, or a node parked on the conversation-loop's session-recv key
+/// before completion (G-6 narrow park observability).
+///
+/// `Parked` does NOT mean execution stopped — the spawned workers keep running
+/// in the background so the session loop continues to make progress; this
+/// variant only reports that the caller no longer needs to keep waiting on
+/// this particular execution future to know "a turn boundary was reached".
+pub enum SchedulerOutcome {
+    Completed(SchedulerExecutionResult),
+    Parked {
+        session_id: String,
+        /// Handle to the detached background task that joins the still-running
+        /// workers and finishes scheduler-level bookkeeping (stats/hooks) once
+        /// the DAG eventually completes for real (or is cancelled). A caller
+        /// that owns additional per-execution cleanup tied to full completion
+        /// (e.g. releasing backend graph lifecycle state) MUST chain onto this
+        /// handle rather than doing that cleanup immediately — the execution
+        /// is NOT done just because it parked.
+        background: JoinHandle<()>,
+    },
+}
+
 /// Dataflow scheduler for executing DAGs with automatic parallelism.
 ///
 /// Uses token-based dataflow execution:
@@ -243,6 +276,176 @@ impl DataflowScheduler {
         ))
     }
 
+    /// Execute a DAG, but return as soon as EITHER the DAG completes OR a node
+    /// parks on the conversation-loop's session-recv key (G-6 narrow park
+    /// observability) — whichever happens first.
+    ///
+    /// This is a genuinely new entry point: it does not change the behavior of
+    /// [`Self::execute`] / [`Self::execute_with_hooks`] /
+    /// [`Self::execute_with_hooks_and_seed`], which still block until full DAG
+    /// completion exactly as before. Existing callers (`/v1/execute/stream`,
+    /// `apxm chat`) are unaffected.
+    ///
+    /// If a session-recv park fires first, the already-spawned workers are NOT
+    /// cancelled or joined here — they are hand off to a detached background
+    /// task that waits for the eventual real completion (or host
+    /// cancellation) and finalizes bookkeeping (stats, hooks) there, since no
+    /// caller is left waiting on this future's result. The DAG keeps making
+    /// progress; only the "please block until fully done" behavior is relaxed
+    /// for this one entry point.
+    pub async fn execute_or_park(
+        &self,
+        dag: ExecutionDag,
+        executor: Arc<ExecutorEngine>,
+        mut ctx: ExecutionContext,
+        inputs: Vec<Value>,
+        hooks: ExecutionHookContext,
+        replay_seed: Option<&crate::scheduler::replay::ReplaySeed>,
+    ) -> RuntimeResult<SchedulerOutcome> {
+        let start = Instant::now();
+
+        apxm_sched!(info,
+            execution_id = %ctx.execution_id,
+            nodes = dag.nodes.len(),
+            inputs = inputs.len(),
+            max_concurrency = self.config.max_concurrency,
+            max_inflight = self.config.max_inflight,
+            "Starting DAG execution (park-observable)"
+        );
+
+        let dag = self.apply_latency_overrides(dag);
+        self.enforce_cost_budget(&dag)?;
+        hooks.emit_graph_started(dag.nodes.len());
+
+        let metrics = Arc::new(MetricsCollector::new());
+
+        let (mut state, workers) = SchedulerState::new_with_replay(
+            dag,
+            self.config.clone(),
+            metrics.clone(),
+            start,
+            inputs,
+            hooks.clone(),
+            replay_seed,
+        )?;
+        state.admission_id = ctx
+            .metadata
+            .get(crate::metadata_keys::ADMISSION_ID)
+            .cloned();
+        state.cancellation_token = ctx.cancellation_token.clone();
+        state.apply_goal_priorities(&ctx.aam);
+
+        let state = Arc::new(state);
+
+        ctx.dag_splicer = Arc::new(super::splicing::SchedulerDagSplicer::new(Arc::clone(
+            &state,
+        )));
+
+        // Register the completion waiter and the park-observability
+        // subscription BEFORE spawning workers, for the same lost-wakeup
+        // reason as `execute_with_hooks_and_seed`: a fast DAG (or an
+        // immediate park) can otherwise fire before this task first polls,
+        // and `Notify`/`watch` do not replay missed edges to a late waiter.
+        let mut done = std::pin::pin!(state.notify_done.notified());
+        done.as_mut().enable();
+        let mut session_parked_rx = state.subscribe_session_parked();
+
+        spawn_watchdog(Arc::clone(&state));
+        let worker_handles = spawn_workers(state.clone(), workers, executor, ctx);
+
+        apxm_sched!(
+            debug,
+            workers_spawned = worker_handles.len(),
+            "All workers spawned, racing completion vs session-recv park"
+        );
+
+        let already_done =
+            state.remaining.load(std::sync::atomic::Ordering::SeqCst) == 0 || state.is_cancelled();
+
+        if !already_done {
+            let cancellation_token = state.cancellation_token.clone();
+            tokio::select! {
+                _ = &mut done => {}
+                _ = cancellation_token.cancelled() => {
+                    state.set_first_error(RuntimeError::SchedulerCancelled);
+                    state.mark_done();
+                }
+                changed = session_parked_rx.changed() => {
+                    if changed.is_ok()
+                        && let Some(session_id) = session_parked_rx.borrow_and_update().clone()
+                    {
+                        apxm_sched!(
+                            info,
+                            %session_id,
+                            "Execution parked on session-recv; returning Parked without waiting for full completion"
+                        );
+                        let background = tokio::spawn(finalize_parked_background(
+                            Arc::clone(&state),
+                            hooks,
+                            worker_handles,
+                        ));
+                        return Ok(SchedulerOutcome::Parked {
+                            session_id,
+                            background,
+                        });
+                    }
+                    // Sender closed or a spurious/None wakeup (should not
+                    // happen — the sender only ever sends `Some`): fall back
+                    // to waiting for the real completion signal.
+                    done.await;
+                }
+            }
+        }
+
+        for handle in worker_handles {
+            let _ = handle.await;
+        }
+
+        apxm_sched!(debug, "All workers terminated");
+
+        let mut first_error = state.first_error.lock();
+        if let Some(error) = first_error.take() {
+            apxm_sched!(error, error = %error, "DAG execution failed");
+            let stats = state.build_stats();
+            hooks.emit_graph_finished(
+                stats.executed_nodes,
+                stats.failed_nodes,
+                stats.duration_ms,
+                false,
+            );
+            return Err(error);
+        }
+        drop(first_error);
+
+        let results = state.collect_exit_values()?;
+        let (all_outputs, node_output_map) = if self.config.collect_all_outputs {
+            (
+                Some(state.collect_all_values()?),
+                Some(state.node_output_map()),
+            )
+        } else {
+            (None, None)
+        };
+
+        let stats = state.build_stats();
+        hooks.emit_graph_finished(
+            stats.executed_nodes,
+            stats.failed_nodes,
+            stats.duration_ms,
+            stats.failed_nodes == 0,
+        );
+
+        let scheduler_metrics = SchedulerMetrics::from_collector(&state.metrics);
+
+        Ok(SchedulerOutcome::Completed((
+            results,
+            stats,
+            scheduler_metrics,
+            all_outputs,
+            node_output_map,
+        )))
+    }
+
     /// Apply runtime latency tier overrides to DAG nodes.
     ///
     /// For each node that has a `"backend"` attribute matching a key in the
@@ -307,6 +510,49 @@ impl DataflowScheduler {
         }
 
         Ok(())
+    }
+}
+
+/// Finish out a parked execution's bookkeeping in the background once its
+/// caller has already returned [`SchedulerOutcome::Parked`].
+///
+/// No one is awaiting a result at this point, so this only joins the worker
+/// handles (letting the DAG run to its eventual real completion / host
+/// cancellation) and emits the same finishing hooks / logs that
+/// [`DataflowScheduler::execute_or_park`] would have emitted had it stayed
+/// blocked — it does not resurrect the discarded result for anyone to
+/// consume.
+async fn finalize_parked_background(
+    state: Arc<SchedulerState>,
+    hooks: ExecutionHookContext,
+    worker_handles: Vec<JoinHandle<()>>,
+) {
+    for handle in worker_handles {
+        let _ = handle.await;
+    }
+
+    let error = state.first_error.lock().take();
+    let stats = state.build_stats();
+    hooks.emit_graph_finished(
+        stats.executed_nodes,
+        stats.failed_nodes,
+        stats.duration_ms,
+        error.is_none() && stats.failed_nodes == 0,
+    );
+
+    if let Some(error) = error {
+        apxm_sched!(
+            error,
+            error = %error,
+            "Background (previously-parked) execution finished with an error"
+        );
+    } else {
+        apxm_sched!(
+            info,
+            executed = stats.executed_nodes,
+            failed = stats.failed_nodes,
+            "Background (previously-parked) execution completed"
+        );
     }
 }
 

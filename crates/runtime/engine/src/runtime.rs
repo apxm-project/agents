@@ -38,6 +38,22 @@ use apxm_core::{
 use serde::{Deserialize, Serialize};
 use std::{collections::HashMap, path::Path, sync::Arc};
 
+/// Outcome of [`Runtime::execute_artifact_with_session_emitter_and_metadata_or_park`]
+/// (G-6 narrow park observability): either the artifact ran to completion, or
+/// a node parked on the conversation-loop's session-recv key before that —
+/// whichever happened first.
+///
+/// `Parked` does not mean the execution stopped: the DAG keeps running in the
+/// background (see [`crate::scheduler::SchedulerOutcome::Parked`]) so the
+/// session loop keeps making progress; this variant only lets the caller stop
+/// waiting once "the next turn boundary was reached" is known, instead of
+/// blocking for the lifetime of the session.
+#[derive(Debug)]
+pub enum ExecutionOutcome {
+    Completed(RuntimeExecutionResult),
+    Parked { session_id: String },
+}
+
 /// Result of DAG execution
 #[derive(Debug, Clone)]
 pub struct RuntimeExecutionResult {
@@ -793,6 +809,40 @@ impl Runtime {
         .await
     }
 
+    /// Identical to [`Self::execute_artifact_with_session_emitter_and_metadata`],
+    /// except it returns as soon as EITHER the artifact completes OR a node
+    /// parks on the conversation-loop's session-recv key (G-6 narrow park
+    /// observability), whichever happens first.
+    ///
+    /// This is a genuinely new entry point built on
+    /// [`crate::scheduler::DataflowScheduler::execute_or_park`]; it does not
+    /// change the behavior of `execute_artifact_with_session_emitter_and_metadata`
+    /// or any other existing `execute*` method — those still block until full
+    /// completion exactly as before.
+    ///
+    /// Intended caller: a host (e.g. `POST /v1/skills/{id}/execute`) that wants
+    /// to know "this execution just started waiting for the next turn's
+    /// message" without blocking for the lifetime of the conversation session.
+    pub async fn execute_artifact_with_session_emitter_and_metadata_or_park(
+        &self,
+        artifact: Artifact,
+        args: Vec<String>,
+        session_id: Option<String>,
+        event_emitter: Option<Arc<dyn ExecutionEventEmitter>>,
+        session_dir: Option<String>,
+        extra_metadata: HashMap<String, String>,
+    ) -> Result<ExecutionOutcome, RuntimeError> {
+        self.execute_artifact_inner_or_park(
+            artifact,
+            args,
+            session_id,
+            event_emitter,
+            session_dir,
+            extra_metadata,
+        )
+        .await
+    }
+
     /// Execute a top-level artifact, seeding metadata AND pre-resolved per-tool
     /// credentials. The host resolves connection ids to bearer
     /// headers and passes them here; the runtime injects them at the trusted
@@ -1061,6 +1111,180 @@ impl Runtime {
                 .map(|m| m.clone())
                 .unwrap_or_default(),
         })
+    }
+
+    /// Park-observable twin of [`Self::execute_artifact_inner`]. Shares the
+    /// same setup (python bridge, entry DAG resolution, flow registry,
+    /// context/hooks construction, graph-lifecycle registration) but drives
+    /// execution through [`crate::scheduler::DataflowScheduler::execute_or_park`]
+    /// instead of `execute_with_hooks_and_seed`, so it can return as soon as a
+    /// session-recv park is observed instead of only at full completion.
+    ///
+    /// On `Parked`, the backend graph lifecycle is NOT released here — the DAG
+    /// is still running in the background. Lifecycle release + the
+    /// `emit_graph_end` hook are chained onto the scheduler's background
+    /// completion handle instead, so backend graph resources are still
+    /// released exactly once, just later (when the session eventually ends or
+    /// the host cancels it) rather than immediately.
+    async fn execute_artifact_inner_or_park(
+        &self,
+        artifact: Artifact,
+        args: Vec<String>,
+        session_id: Option<String>,
+        event_emitter: Option<Arc<dyn ExecutionEventEmitter>>,
+        session_dir: Option<String>,
+        extra_metadata: HashMap<String, String>,
+    ) -> Result<ExecutionOutcome, RuntimeError> {
+        if !Self::python_sandbox_required() && artifact_has_python_tools_section(&artifact) {
+            return Err(RuntimeError::Capability {
+                capability: python_tools::CAPABILITY_NAME.to_string(),
+                message: "python tool artifacts require APXM_SANDBOX_PYTHON".to_string(),
+            });
+        }
+
+        let _lane_permit = if let Some(ref sid) = session_id {
+            Some(self.session_lane_guard.acquire(sid).await)
+        } else {
+            None
+        };
+
+        let python_bridge = python_handler_bridge_from_artifact(
+            &artifact,
+            self.python_worker_sandbox(),
+            Self::python_sandbox_required(),
+        )?;
+        let entry_dag = find_entry_dag(&artifact)?;
+        let arg_values = bind_args(&entry_dag, args)?;
+
+        let artifact_flow_registry = Arc::new(FlowRegistry::new());
+        for agent in reconstruct_agents_from_artifact(&artifact) {
+            artifact_flow_registry.register_agent(agent);
+        }
+
+        #[cfg(feature = "metrics")]
+        if !extra_metadata.contains_key(metadata::PARENT_EXECUTION_ID) {
+            self.llm_registry.metrics().reset();
+        }
+
+        let mut context = self
+            .build_context_with_bridge(session_id, event_emitter, session_dir, python_bridge)
+            .with_flow_registry(artifact_flow_registry)
+            .with_graph_id(graph_id_from_dag(&entry_dag));
+        for (key, value) in extra_metadata {
+            context.metadata.insert(key, value);
+        }
+        if let Some(budgets) = context
+            .metadata
+            .get(metadata::TOOL_CALL_BUDGETS)
+            .and_then(|raw| serde_json::from_str::<HashMap<String, usize>>(raw).ok())
+        {
+            context = context.with_tool_call_budgets(Some(budgets));
+        }
+        let context = context;
+        let graph_emitter = context.event_emitter.as_ref().map(Arc::clone);
+        let execution_id = context.execution_id.clone();
+        let node_count = entry_dag.nodes.len();
+
+        let dispatch_ir =
+            graph_dispatch_ir_from_dag(&context.graph_id, &context.execution_id, &entry_dag);
+        context.set_dispatch_ir_v1(dispatch_ir.clone());
+        let (lifecycles, _dispatch_fallbacks) =
+            build_graph_lifecycles(&self.llm_registry, &dispatch_ir).await;
+        if let Some(emitter) = &graph_emitter {
+            emitter.emit_graph_start(&execution_id, node_count);
+        }
+        let executor = Arc::new(ExecutorEngine::new(context.clone()));
+        let token_accountant = Arc::clone(&context.token_accountant);
+        let fields_honored = Arc::clone(&context.fields_honored);
+        let graph_metrics = Arc::clone(&context.graph_metrics);
+        let tool_call_counts = Arc::clone(&context.tool_call_counts);
+        let hook_context = ExecutionHookContext::new(
+            context.execution_id.clone(),
+            context.graph_id.clone(),
+            self.execution_hooks.clone(),
+        );
+
+        let replay_seed = replay_seed_from_metadata(&context, &entry_dag);
+        let outcome = self
+            .scheduler
+            .execute_or_park(
+                entry_dag,
+                executor,
+                context,
+                arg_values,
+                hook_context,
+                replay_seed.as_ref(),
+            )
+            .await;
+
+        match outcome {
+            Ok(crate::scheduler::SchedulerOutcome::Parked {
+                session_id,
+                background,
+            }) => {
+                // Not done: release the backend graph lifecycle + emit
+                // graph_end only once the background completion actually
+                // finishes, not now.
+                tokio::spawn(async move {
+                    let _ = background.await;
+                    release_graph_lifecycles(&lifecycles).await;
+                    if let Some(emitter) = &graph_emitter {
+                        emitter.emit_graph_end(&execution_id, node_count, true);
+                    }
+                });
+                Ok(ExecutionOutcome::Parked { session_id })
+            }
+            Ok(crate::scheduler::SchedulerOutcome::Completed((
+                results,
+                stats,
+                scheduler_metrics,
+                all_outputs,
+                node_output_map,
+            ))) => {
+                let graph_status_snapshots = release_graph_lifecycles(&lifecycles).await;
+                if let Some(emitter) = &graph_emitter {
+                    emitter.emit_graph_end(&execution_id, node_count, true);
+                }
+
+                let token_snapshot = token_accountant.snapshot();
+                let graph_metrics_snapshot = graph_metrics.snapshot();
+                let backend_graph_capabilities = self.llm_registry.graph_capabilities();
+                let fields_honored_by_backend = fields_honored.snapshot();
+                let dispatch_ir_metrics = dispatch_ir_accounting_json(
+                    Some(&dispatch_ir),
+                    &backend_graph_capabilities,
+                    &graph_status_snapshots,
+                    &_dispatch_fallbacks,
+                    &fields_honored_by_backend,
+                );
+
+                Ok(ExecutionOutcome::Completed(RuntimeExecutionResult {
+                    results,
+                    stats,
+                    #[cfg(feature = "metrics")]
+                    llm_metrics: self.llm_registry.metrics().aggregate(),
+                    scheduler_metrics,
+                    all_outputs,
+                    node_output_map,
+                    token_snapshot,
+                    graph_metrics_snapshot,
+                    graph_status_snapshots,
+                    backend_graph_capabilities,
+                    dispatch_ir_metrics,
+                    tool_call_counts: tool_call_counts
+                        .lock()
+                        .map(|m| m.clone())
+                        .unwrap_or_default(),
+                }))
+            }
+            Err(error) => {
+                let _graph_status_snapshots = release_graph_lifecycles(&lifecycles).await;
+                if let Some(emitter) = &graph_emitter {
+                    emitter.emit_graph_end(&execution_id, node_count, false);
+                }
+                Err(error)
+            }
+        }
     }
 
     pub fn memory(&self) -> &MemorySystem {
@@ -1524,5 +1748,138 @@ mod tests {
             .expect_err("python section must fail closed without sandbox opt-in");
 
         assert!(err.to_string().contains("APXM_SANDBOX_PYTHON"));
+    }
+
+    // -- G-6 narrow park observability: `execute_artifact_with_session_emitter_and_metadata_or_park` --
+
+    /// Regression-equivalent to the old (blocking) behavior: a normal
+    /// completing artifact returns `Completed` via the new park-observable
+    /// entry point.
+    #[tokio::test]
+    async fn or_park_returns_completed_for_a_normal_execution() {
+        let runtime = Runtime::new(RuntimeConfig::in_memory()).await.unwrap();
+        let art = artifact(vec![single_node_dag(
+            "main",
+            true,
+            Node::new(1, AISOperationType::Nop),
+        )]);
+
+        let outcome = runtime
+            .execute_artifact_with_session_emitter_and_metadata_or_park(
+                art,
+                Vec::new(),
+                None,
+                None,
+                None,
+                HashMap::new(),
+            )
+            .await
+            .expect("execution should succeed");
+
+        match outcome {
+            ExecutionOutcome::Completed(_) => {}
+            ExecutionOutcome::Parked { session_id } => {
+                panic!("expected Completed, got Parked({session_id})");
+            }
+        }
+    }
+
+    /// An execution whose in-graph conversation loop reaches its
+    /// `session_recv` park point returns `Parked { session_id }` promptly —
+    /// as soon as the park happens, not after some fixed timeout and not only
+    /// at full completion (a session-recv park never completes on its own).
+    #[tokio::test]
+    async fn or_park_returns_parked_for_a_session_recv_park() {
+        let runtime = Runtime::new(RuntimeConfig::in_memory()).await.unwrap();
+
+        // AUTONOMOUS mode=recv with no `recv_url` and no seed input parks on
+        // `park_registry::session_recv_key(session_id)` (see
+        // `executor/handlers/autonomous.rs::recv_loop`) instead of completing.
+        let mut node = Node::new(1, AISOperationType::Autonomous);
+        node.set_attribute("mode".to_string(), Value::String("recv".to_string()));
+        let art = artifact(vec![single_node_dag("main", true, node)]);
+
+        let session_id = "test-session-recv-park".to_string();
+
+        let outcome = tokio::time::timeout(
+            std::time::Duration::from_secs(10),
+            runtime.execute_artifact_with_session_emitter_and_metadata_or_park(
+                art,
+                Vec::new(),
+                Some(session_id.clone()),
+                None,
+                None,
+                HashMap::new(),
+            ),
+        )
+        .await
+        .expect("should observe the park promptly, not hang until some timeout")
+        .expect("execution should not error");
+
+        match outcome {
+            ExecutionOutcome::Parked {
+                session_id: observed,
+            } => {
+                assert_eq!(observed, session_id);
+            }
+            ExecutionOutcome::Completed(_) => {
+                panic!("expected Parked — a session-recv park never completes on its own");
+            }
+        }
+    }
+
+    /// An execution that parks for a DIFFERENT reason (RESUME on a checkpoint
+    /// id, not a session-recv key) must NOT be reported as `Parked` through
+    /// this narrow API — it has to keep blocking exactly like the old
+    /// behavior, since G-6's signal is scoped to session-recv parks only.
+    #[tokio::test]
+    async fn or_park_does_not_report_a_non_session_recv_park() {
+        let runtime = Runtime::new(RuntimeConfig::in_memory()).await.unwrap();
+
+        let mut node = Node::new(1, AISOperationType::Resume);
+        node.set_attribute(
+            apxm_core::constants::graph::attrs::CHECKPOINT.to_string(),
+            Value::String("some_other_checkpoint".to_string()),
+        );
+        let art = artifact(vec![single_node_dag("main", true, node)]);
+
+        // Give the RESUME node time to park, then wake it via the ordinary
+        // (non-session-recv) checkpoint wait key so the execution can
+        // complete and the test doesn't hang.
+        let wake_after = async {
+            tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+            crate::scheduler::park_registry::wake(
+                "some_other_checkpoint",
+                Value::String("resumed".to_string()),
+            );
+        };
+
+        let (outcome, _) = tokio::join!(
+            tokio::time::timeout(
+                std::time::Duration::from_secs(10),
+                runtime.execute_artifact_with_session_emitter_and_metadata_or_park(
+                    art,
+                    Vec::new(),
+                    Some("unrelated-session".to_string()),
+                    None,
+                    None,
+                    HashMap::new(),
+                ),
+            ),
+            wake_after,
+        );
+
+        let outcome = outcome
+            .expect("should not hang: a non-session-recv park must not surface as Parked")
+            .expect("execution should complete once woken");
+
+        match outcome {
+            ExecutionOutcome::Completed(_) => {}
+            ExecutionOutcome::Parked { session_id } => {
+                panic!(
+                    "a RESUME (non-session-recv) park must not be reported as Parked, got session_id={session_id}"
+                );
+            }
+        }
     }
 }
