@@ -11,29 +11,11 @@ use apxm_core::types::TokenUsage;
 use parking_lot::RwLock;
 use serde::{Deserialize, Serialize};
 
-/// Per-scope aggregate of input/output tokens.
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
-pub struct TokenUsageSummary {
-    pub input_tokens: usize,
-    pub output_tokens: usize,
-    pub total_tokens: usize,
-    pub call_count: usize,
-    #[serde(default)]
-    pub cached_input_tokens: usize,
-    #[serde(default)]
-    pub reasoning_output_tokens: usize,
-}
-
-impl TokenUsageSummary {
-    fn record_usage(&mut self, usage: &TokenUsage) {
-        self.input_tokens += usage.input_tokens;
-        self.output_tokens += usage.output_tokens;
-        self.total_tokens += usage.total_tokens;
-        self.cached_input_tokens += usage.cached_input_tokens;
-        self.reasoning_output_tokens += usage.reasoning_output_tokens;
-        self.call_count += 1;
-    }
-}
+// `TokenUsageSummary` moved to `apxm-capability-iface` — it's the payload
+// type of `ExecutionEventEmitter::emit_operation_end`, which now lives there
+// too. Re-exported here so `crate::executor::token_accounting::TokenUsageSummary`
+// keeps working unchanged.
+pub use apxm_capability_iface::TokenUsageSummary;
 
 /// Thread-safe token accountant.
 ///
