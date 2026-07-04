@@ -201,7 +201,7 @@ fn titleize(id: &str) -> String {
         .join(" ")
 }
 
-fn package_new(
+pub(crate) fn package_new(
     id: &str,
     path: Option<PathBuf>,
     display_name: Option<String>,
@@ -890,11 +890,31 @@ fn manual_libs_dir(apxm_home: &Path) -> PathBuf {
     apxm_home.join("libs")
 }
 
-fn packages_dir(apxm_home: &Path) -> PathBuf {
+pub(crate) fn packages_dir(apxm_home: &Path) -> PathBuf {
     apxm_home.join("packages")
 }
 
-fn copy_dir_recursive(src: &Path, dst: &Path) -> Result<()> {
+/// Resolve an installed agent-package's `pack.toml` under
+/// `APXM_HOME/packages/<id>/` — the same install destination
+/// [`package_install_to`] writes to. Shared with `org lint`'s member
+/// resolution check (ORG-2) so org-package member references are checked
+/// against the same install layout AGT-2's `package install` created,
+/// rather than a second hand-rolled resolution path.
+pub(crate) fn resolve_installed_package(apxm_home: &Path, id: &str) -> Result<PackToml> {
+    let pack_path = packages_dir(apxm_home).join(id).join("pack.toml");
+    if !pack_path.is_file() {
+        bail!(
+            "agent package '{id}' is not installed under {} (run 'apxm package install' first)",
+            packages_dir(apxm_home).display()
+        );
+    }
+    read_toml(&pack_path)
+}
+
+/// Recursively copy a directory tree. Shared by `package install` and
+/// `org install` (both copy a validated source folder verbatim to an
+/// `APXM_HOME` subtree).
+pub(crate) fn copy_dir_recursive(src: &Path, dst: &Path) -> Result<()> {
     fs::create_dir_all(dst).with_context(|| format!("Failed to create {}", dst.display()))?;
     for entry in fs::read_dir(src).with_context(|| format!("Failed to read {}", src.display()))? {
         let entry = entry?;
@@ -920,7 +940,7 @@ fn package_install(path: &Path, force: bool, json_output: bool) -> Result<()> {
 /// [`package_install`] so tests can point at a tempdir instead of mutating
 /// the process-global `APXM_HOME` env var (this crate denies `unsafe_code`,
 /// which `std::env::set_var` requires in Rust 2024).
-fn package_install_to(
+pub(crate) fn package_install_to(
     path: &Path,
     apxm_home: &Path,
     force: bool,
