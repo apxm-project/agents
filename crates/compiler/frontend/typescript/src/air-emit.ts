@@ -262,12 +262,25 @@ function emitWithRule(rule: OpEmitRule, op: OpName, ssaName: string, attrs: Reco
  * ops). `attrs` is the node's attribute map; `inputs` is the ordered list of
  * already-emitted SSA names this op reads as Data operands.
  */
+/** Ops whose result renders as a trailing `-> !ais.token` instead of the
+ * generic infix `: !ais.token`, and whose dependency operands render as a
+ * bare comma list with no enclosing brackets/parens (matches Python's
+ * `emit_wait_all`/`emit_merge`). */
+const ARROW_RESULT_OPS: ReadonlySet<OpName> = new Set(["WAIT_ALL", "MERGE"]);
+
 export function emitOp(
   op: OpName,
   ssaName: string,
   attrs: Record<string, unknown>,
   inputs: readonly string[],
 ): string {
+  if (ARROW_RESULT_OPS.has(op)) {
+    const lowered = op.toLowerCase();
+    const ctx =
+      inputs.length > 0 ? ` ${inputs.join(", ")} : ${inputs.map(() => "!ais.token").join(", ")}` : "";
+    return `${ssaName} = ais.${lowered}${ctx} -> !ais.token`;
+  }
+
   const rule = OP_EMIT_RULES[op];
   if (rule) {
     return emitWithRule(rule, op, ssaName, attrs, inputs);
