@@ -294,6 +294,36 @@ pub trait ExecutionEventEmitter: Send + Sync {
 
     // ── Scheduler ───────────────────────────────────────────────────
     fn emit_scheduler_decision(&self, _node_id: u64, _delay: Duration, _reason: &str) {}
+
+    // ── Routing (RTG-11) ────────────────────────────────────────────
+    /// A `ModelRouter::select` decision: chosen backend/model, why, and
+    /// every candidate passed over with its own reason. `rejected_candidates`
+    /// entries are `(candidate, backend, reason_kind, reason)` tuples —
+    /// `reason_kind` is always `ModelRouteRejectionReason::as_str()`.
+    #[allow(clippy::too_many_arguments)]
+    fn emit_model_route_decision(
+        &self,
+        _backend: &str,
+        _model: Option<&str>,
+        _was_failover: bool,
+        _reason: &str,
+        _rejected_candidates: &[(String, String, &'static str, String)],
+    ) {
+    }
+
+    /// An `AgentRouter::route_requests` decision: chosen profile, why, and
+    /// every candidate rejected with its own reason. `rejected_candidates`
+    /// entries are `(profile, missing_capabilities, reason)` tuples.
+    fn emit_agent_route_decision(
+        &self,
+        _id: &str,
+        _profile: Option<&str>,
+        _source: &str,
+        _reason: &str,
+        _required_capabilities: &[String],
+        _rejected_candidates: &[(String, Vec<String>, String)],
+    ) {
+    }
     fn emit_head_of_line_block(
         &self,
         _blocker_node: u64,

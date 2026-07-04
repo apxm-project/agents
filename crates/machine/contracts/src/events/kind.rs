@@ -158,6 +158,15 @@ pub const CHECKPOINT_RESTORED: EventKind =
     EventKind::new("checkpoint_restored", EventCategory::Lifecycle, false);
 pub const SCHEDULER_DECISION: EventKind =
     EventKind::new("scheduler_decision", EventCategory::Observability, false);
+/// A `ModelRouter::select` decision (RTG-11): chosen backend/model, why, and
+/// which candidates were passed over. Emitted alongside dispatch so
+/// observers see the full decision, not just the winner.
+pub const MODEL_ROUTE_DECISION: EventKind =
+    EventKind::new("model_route_decision", EventCategory::Observability, false);
+/// An `AgentRouter::route_requests` decision (RTG-10/RTG-11): chosen agent
+/// profile, why, and which candidates were rejected and why.
+pub const AGENT_ROUTE_DECISION: EventKind =
+    EventKind::new("agent_route_decision", EventCategory::Observability, false);
 pub const HEAD_OF_LINE_BLOCK: EventKind =
     EventKind::new("head_of_line_block", EventCategory::Observability, false);
 pub const GPU_UTILIZATION: EventKind =
@@ -264,6 +273,8 @@ pub const CORE_EVENT_KINDS: &[EventKind] = &[
     CHECKPOINT_SAVED,
     CHECKPOINT_RESTORED,
     SCHEDULER_DECISION,
+    MODEL_ROUTE_DECISION,
+    AGENT_ROUTE_DECISION,
     HEAD_OF_LINE_BLOCK,
     GPU_UTILIZATION,
     TOKEN_USAGE,

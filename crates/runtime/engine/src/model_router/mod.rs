@@ -66,6 +66,19 @@ pub enum RoutingTarget {
     Balanced,
 }
 
+impl RoutingTarget {
+    /// Stable wire/metric-label spelling, matching the `serde` snake_case
+    /// values above. Metric labels always read this rather than `Debug`.
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Cost => "cost",
+            Self::Latency => "latency",
+            Self::Quality => "quality",
+            Self::Balanced => "balanced",
+        }
+    }
+}
+
 /// Per-operation-type routing override.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct OperationPolicy {
@@ -110,7 +123,13 @@ impl Default for ModelRouterConfig {
 }
 
 /// Result of a routing decision.
-#[derive(Debug, Clone)]
+///
+/// `reason` and `rejected_candidates` make the decision observable (RTG-11,
+/// `docs/plans/routing.md`): every candidate ModelRouter passed over on the
+/// way to `backend` is recorded with its own rejection reason instead of
+/// being silently dropped, mirroring the `AgentRouteDecision` shape on the
+/// agent-routing side.
+#[derive(Debug, Clone, Default)]
 pub struct RoutingDecision {
     /// Chosen backend name.
     pub backend: String,
@@ -118,6 +137,53 @@ pub struct RoutingDecision {
     pub model: Option<String>,
     /// Whether this decision was constrained by circuit-breaker state.
     pub was_failover: bool,
+    /// Human-readable explanation of why `backend`/`model` were chosen.
+    pub reason: String,
+    /// Candidates considered and passed over before this backend was chosen.
+    pub rejected_candidates: Vec<ModelRouteRejection>,
+}
+
+/// Domain-specific reasons a model-routing candidate was rejected. Routing
+/// rejection reasons don't map onto any CM-3 enum (they describe model
+/// selection, not capability permissioning), so this is a small, bounded,
+/// real Rust enum scoped to routing — same pattern OBS-4 established for
+/// CM-3 enums (`.as_str()` is the only source of the metric label).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ModelRouteRejectionReason {
+    /// The candidate's circuit breaker is open (tripped by recent failures).
+    CircuitBreakerOpen,
+    /// The candidate doesn't satisfy the request's hard constraints (context
+    /// window fit, tool/JSON/vision/thinking/local requirements).
+    RequirementsNotSatisfied,
+    /// The candidate passed the hard constraints but ranked behind the
+    /// chosen candidate for the active `RoutingTarget`.
+    NotBestRanked,
+}
+
+impl ModelRouteRejectionReason {
+    /// Stable wire/metric-label spelling. Always the sole source of the
+    /// `reason` label on `AppMetrics::record_model_route_decision`.
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::CircuitBreakerOpen => "circuit_breaker_open",
+            Self::RequirementsNotSatisfied => "requirements_not_satisfied",
+            Self::NotBestRanked => "not_best_ranked",
+        }
+    }
+}
+
+/// A model-routing candidate rejected before final selection.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ModelRouteRejection {
+    /// Candidate model name.
+    pub candidate: String,
+    /// Candidate's backend.
+    pub backend: String,
+    /// Typed rejection reason (metric label source).
+    pub reason_kind: ModelRouteRejectionReason,
+    /// Human-readable detail.
+    pub reason: String,
 }
 
 /// Hard constraints derived from a request, used to prune the candidate pool
@@ -275,6 +341,11 @@ impl ModelRouter {
     /// Returns a `RoutingDecision` describing the chosen backend/model.
     /// Returns an error if no backend is available.
     pub fn select(&self, request: &LLMRequest) -> anyhow::Result<RoutingDecision> {
+        // Candidates passed over on the way to a decision, across every
+        // precedence step (RTG-11 observability) — carried forward so the
+        // final `RoutingDecision` never silently drops a rejected candidate.
+        let mut rejected_candidates: Vec<ModelRouteRejection> = Vec::new();
+
         // 1. Explicit backend in request → honour it if the breaker allows.
         if let Some(ref backend) = request.backend {
             if self.circuit_breakers.is_available(backend) {
@@ -282,6 +353,8 @@ impl ModelRouter {
                     backend: backend.clone(),
                     model: request.model.clone(),
                     was_failover: false,
+                    reason: "explicit backend override from request".to_string(),
+                    rejected_candidates,
                 });
             }
             // Breaker tripped — fall through to policy routing.
@@ -289,6 +362,12 @@ impl ModelRouter {
                 backend = %backend,
                 "Requested backend tripped; falling back to policy routing"
             );
+            rejected_candidates.push(ModelRouteRejection {
+                candidate: request.model.clone().unwrap_or_default(),
+                backend: backend.clone(),
+                reason_kind: ModelRouteRejectionReason::CircuitBreakerOpen,
+                reason: format!("requested backend '{backend}' circuit breaker is open"),
+            });
         }
 
         // 2. Explicit model in request → resolve to backend via model registry.
@@ -299,6 +378,11 @@ impl ModelRouter {
                         backend: entry.backend.clone(),
                         model: Some(model_name.clone()),
                         was_failover: false,
+                        reason: format!(
+                            "explicit model '{model_name}' resolved to backend '{}' via model registry",
+                            entry.backend
+                        ),
+                        rejected_candidates,
                     });
                 }
                 tracing::warn!(
@@ -306,6 +390,15 @@ impl ModelRouter {
                     backend = %entry.backend,
                     "Model's backend tripped; falling back to policy routing"
                 );
+                rejected_candidates.push(ModelRouteRejection {
+                    candidate: model_name.clone(),
+                    backend: entry.backend.clone(),
+                    reason_kind: ModelRouteRejectionReason::CircuitBreakerOpen,
+                    reason: format!(
+                        "requested model '{model_name}' backend '{}' circuit breaker is open",
+                        entry.backend
+                    ),
+                });
             }
         }
 
@@ -322,8 +415,21 @@ impl ModelRouter {
                         backend: backend.clone(),
                         model: policy.model.clone().or_else(|| request.model.clone()),
                         was_failover: false,
+                        reason: format!(
+                            "operation policy for {:?} pinned backend '{backend}'",
+                            policy.operation
+                        ),
+                        rejected_candidates,
                     });
                 }
+                rejected_candidates.push(ModelRouteRejection {
+                    candidate: policy.model.clone().unwrap_or_default(),
+                    backend: backend.clone(),
+                    reason_kind: ModelRouteRejectionReason::CircuitBreakerOpen,
+                    reason: format!(
+                        "operation policy backend '{backend}' circuit breaker is open"
+                    ),
+                });
             }
         }
 
@@ -341,14 +447,17 @@ impl ModelRouter {
         if target == RoutingTarget::Balanced {
             // Balanced preserves the tag-preference behaviour.
             for tag in &routing.prefer_tags {
-                if let Some(decision) = self.find_by_tag(tag) {
+                if let Some(mut decision) = self.find_by_tag(tag, &mut rejected_candidates) {
+                    decision.rejected_candidates = rejected_candidates;
                     return Ok(decision);
                 }
             }
-        } else if let Some(decision) = self.select_from_table(request, target) {
+        } else if let Some(mut decision) = self.select_from_table(request, target) {
             // Cost / Quality / Latency rank the feasible pool. A `None` here
             // means no candidate satisfied the hard constraints, so we fall
             // through to default / first-available routing below.
+            rejected_candidates.append(&mut decision.rejected_candidates);
+            decision.rejected_candidates = rejected_candidates;
             return Ok(decision);
         }
 
@@ -359,6 +468,8 @@ impl ModelRouter {
                     backend: backend.clone(),
                     model: self.model_registry.default_model(),
                     was_failover: false,
+                    reason: "default backend/model from ModelRegistry config".to_string(),
+                    rejected_candidates,
                 });
             }
         }
@@ -371,17 +482,24 @@ impl ModelRouter {
                     backend: backend.clone(),
                     model: request.model.clone(),
                     was_failover: all_backends.len() > 1,
+                    reason: format!(
+                        "first available healthy backend out of {} known backends",
+                        all_backends.len()
+                    ),
+                    rejected_candidates,
                 });
             }
         }
 
         // 7. Fallback tags from RoutingConfig.
         for tag in &routing.fallback_tags {
-            if let Some(decision) = self.find_by_tag(tag) {
-                return Ok(RoutingDecision {
-                    was_failover: true,
-                    ..decision
-                });
+            if let Some(mut decision) = self.find_by_tag(tag, &mut rejected_candidates) {
+                decision.was_failover = true;
+                decision.reason = format!(
+                    "fallback tag '{tag}' matched after primary routing exhausted"
+                );
+                decision.rejected_candidates = rejected_candidates;
+                return Ok(decision);
             }
         }
 
@@ -509,6 +627,18 @@ impl ModelRouter {
     /// Wraps `LLMRegistry::generate_with_backend` and records circuit-breaker
     /// outcomes automatically.
     pub async fn generate(&self, request: LLMRequest) -> anyhow::Result<LLMResponse> {
+        let (response, _decision) = self.generate_with_decision(request).await?;
+        Ok(response)
+    }
+
+    /// Same as [`Self::generate`] but also returns the [`RoutingDecision`]
+    /// `select_for_dispatch` made, so callers that want to record the
+    /// decision (RTG-11: rollout event / metric) don't have to re-run
+    /// selection themselves (which would double-consume a rate-limit token).
+    pub async fn generate_with_decision(
+        &self,
+        request: LLMRequest,
+    ) -> anyhow::Result<(LLMResponse, RoutingDecision)> {
         let decision = self.select_for_dispatch(&request).await?;
         let backend_name = decision.backend.clone();
 
@@ -530,7 +660,7 @@ impl ModelRouter {
         {
             Ok(response) => {
                 self.record_success(&backend_name);
-                Ok(response)
+                Ok((response, decision))
             }
             Err(e) => {
                 self.record_failure(&backend_name);
@@ -555,18 +685,35 @@ impl ModelRouter {
         self.llm_registry.backend_latency_ms_ewma(backend)
     }
 
-    fn find_by_tag(&self, tag: &str) -> Option<RoutingDecision> {
+    fn find_by_tag(
+        &self,
+        tag: &str,
+        rejected_candidates: &mut Vec<ModelRouteRejection>,
+    ) -> Option<RoutingDecision> {
         let models = self.model_registry.models_with_tags(&[tag]);
+        let mut chosen = None;
         for model in models {
-            if self.circuit_breakers.is_available(&model.backend) {
-                return Some(RoutingDecision {
+            if chosen.is_none() && self.circuit_breakers.is_available(&model.backend) {
+                chosen = Some(RoutingDecision {
                     backend: model.backend.clone(),
                     model: Some(model.name.clone()),
                     was_failover: false,
+                    reason: format!("matched preferred tag '{tag}'"),
+                    rejected_candidates: Vec::new(),
+                });
+            } else if !self.circuit_breakers.is_available(&model.backend) {
+                rejected_candidates.push(ModelRouteRejection {
+                    candidate: model.name.clone(),
+                    backend: model.backend.clone(),
+                    reason_kind: ModelRouteRejectionReason::CircuitBreakerOpen,
+                    reason: format!(
+                        "tag '{tag}' candidate backend '{}' circuit breaker is open",
+                        model.backend
+                    ),
                 });
             }
         }
-        None
+        chosen
     }
 
     /// Price/capability-aware selection: prune the pool to the candidates that
@@ -635,11 +782,62 @@ impl ModelRouter {
             // here, but map it to the first candidate defensively.
             RoutingTarget::Balanced => feasible.first(),
         }?;
+        let chosen_name = chosen.name.clone();
+
+        // Every other candidate in the full table, classified against the
+        // same rules that pruned `feasible` — so the decision never silently
+        // drops why a candidate lost (RTG-11).
+        let rejected_candidates = self
+            .model_registry
+            .list()
+            .into_iter()
+            .filter(|entry| entry.name != chosen_name)
+            .map(|entry| {
+                if !self.circuit_breakers.is_available(&entry.backend) {
+                    ModelRouteRejection {
+                        candidate: entry.name.clone(),
+                        backend: entry.backend.clone(),
+                        reason_kind: ModelRouteRejectionReason::CircuitBreakerOpen,
+                        reason: format!(
+                            "backend '{}' circuit breaker is open",
+                            entry.backend
+                        ),
+                    }
+                } else if !reqs.satisfied_by(&entry) {
+                    ModelRouteRejection {
+                        candidate: entry.name.clone(),
+                        backend: entry.backend.clone(),
+                        reason_kind: ModelRouteRejectionReason::RequirementsNotSatisfied,
+                        reason: format!(
+                            "'{}' does not satisfy the request's hard constraints (context fit / tools / json / thinking / vision / local)",
+                            entry.name
+                        ),
+                    }
+                } else {
+                    ModelRouteRejection {
+                        candidate: entry.name.clone(),
+                        backend: entry.backend.clone(),
+                        reason_kind: ModelRouteRejectionReason::NotBestRanked,
+                        reason: format!(
+                            "feasible but ranked behind '{chosen_name}' for {} target",
+                            target.as_str()
+                        ),
+                    }
+                }
+            })
+            .collect();
 
         Some(RoutingDecision {
             backend: chosen.backend.clone(),
             model: Some(chosen.name.clone()),
             was_failover: false,
+            reason: format!(
+                "{} target selected '{}' (backend '{}')",
+                target.as_str(),
+                chosen.name,
+                chosen.backend
+            ),
+            rejected_candidates,
         })
     }
 }
@@ -654,7 +852,7 @@ mod latency_routing_tests {
     /// (so `HealthMonitor` tracking is live) and a matching `ModelEntry` per
     /// backend in the model table, all otherwise-identical so `Latency` is
     /// the only thing that can break ties.
-    fn router_with_backends(backends: &[&str]) -> ModelRouter {
+    pub(super) fn router_with_backends(backends: &[&str]) -> ModelRouter {
         let llm_registry = Arc::new(LLMRegistry::new());
         let model_registry = Arc::new(ModelRegistry::new());
         for name in backends {
@@ -753,4 +951,108 @@ mod latency_routing_tests {
 
         assert_eq!(decision.backend, "measured");
     }
+}
+
+/// RTG-11: `ModelRouter::select`/`select_from_table` decisions must never
+/// silently drop a rejected candidate — every candidate passed over carries
+/// its own typed reason, observable via `RoutingDecision`.
+#[cfg(test)]
+mod routing_observability_tests {
+    use super::latency_routing_tests_support::router_with_backends;
+    use super::*;
+
+    #[test]
+    fn select_from_table_explains_the_losing_candidate_as_not_best_ranked() {
+        let router = router_with_backends(&["cheap", "pricey"]);
+        // Give "pricey" a higher cost so "cheap" always wins the Cost target,
+        // while both stay feasible (no breaker trip, no unmet requirement).
+        router
+            .model_registry
+            .register(ModelEntry {
+                name: "cheap-model".to_string(),
+                backend: "cheap".to_string(),
+                cost_per_1k_input: 0.001,
+                cost_per_1k_output: 0.001,
+                ..Default::default()
+            });
+        router.model_registry.register(ModelEntry {
+            name: "pricey-model".to_string(),
+            backend: "pricey".to_string(),
+            cost_per_1k_input: 10.0,
+            cost_per_1k_output: 10.0,
+            ..Default::default()
+        });
+
+        let request = LLMRequest::new("hello");
+        let decision = router
+            .select_from_table(&request, RoutingTarget::Cost)
+            .expect("a feasible candidate should be found");
+
+        assert_eq!(decision.backend, "cheap");
+        let rejection = decision
+            .rejected_candidates
+            .iter()
+            .find(|r| r.candidate == "pricey-model")
+            .expect("pricier candidate must be recorded as rejected, not dropped");
+        assert_eq!(rejection.reason_kind, ModelRouteRejectionReason::NotBestRanked);
+        assert!(rejection.reason.contains("cheap-model"));
+    }
+
+    #[test]
+    fn select_from_table_explains_a_tripped_breaker_as_circuit_breaker_open() {
+        let router = router_with_backends(&["healthy", "tripped"]);
+        for _ in 0..10 {
+            router.record_failure("tripped");
+        }
+        assert!(!router.circuit_breakers.is_available("tripped"));
+
+        let request = LLMRequest::new("hello");
+        let decision = router
+            .select_from_table(&request, RoutingTarget::Balanced)
+            .expect("the healthy candidate should still be feasible");
+
+        assert_eq!(decision.backend, "healthy");
+        let rejection = decision
+            .rejected_candidates
+            .iter()
+            .find(|r| r.candidate == "tripped-model")
+            .expect("tripped candidate must be recorded as rejected, not dropped");
+        assert_eq!(
+            rejection.reason_kind,
+            ModelRouteRejectionReason::CircuitBreakerOpen
+        );
+    }
+
+    #[test]
+    fn select_reports_explicit_backend_breaker_trip_as_a_rejected_candidate() {
+        let router = router_with_backends(&["tripped", "fallback"]);
+        for _ in 0..10 {
+            router.record_failure("tripped");
+        }
+
+        let request = LLMRequest::new("hello").with_backend("tripped".to_string());
+        let decision = router.select(&request).expect("fallback should still route");
+
+        // The explicit backend lost, but the loss is observable — not a
+        // silently-dropped preference.
+        assert_ne!(decision.backend, "tripped");
+        let rejection = decision
+            .rejected_candidates
+            .iter()
+            .find(|r| r.backend == "tripped")
+            .expect("explicit backend breaker trip must be recorded as rejected");
+        assert_eq!(
+            rejection.reason_kind,
+            ModelRouteRejectionReason::CircuitBreakerOpen
+        );
+        assert!(!decision.reason.is_empty());
+    }
+}
+
+/// Test-only re-export so `routing_observability_tests` can reuse the mock
+/// backend/registry construction helper defined inside
+/// `latency_routing_tests` without duplicating it.
+#[cfg(test)]
+mod latency_routing_tests_support {
+    pub(super) use super::latency_routing_tests::router_with_backends;
 }
