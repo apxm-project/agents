@@ -111,6 +111,7 @@ bpe-openai = "0.3"
 walkdir = "2.0"
 rusqlite = { version = "0.32", features = ["bundled"] }
 jsonschema = "0.18"
+sha2 = "0.10"
 utoipa = { version = "5.5", features = ["axum_extras"] }
 serde_yaml = "0.9"
 progenitor = "0.14"

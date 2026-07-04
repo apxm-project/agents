@@ -171,6 +171,14 @@ remove = { run = "apxm agent remove", description = "Remove agent" }
 test = { run = "apxm agent test", description = "Test agent" }
 templates = { run = "apxm agent templates", description = "List built-in templates" }
 
+[commands.package]
+description = "Scaffold, lint, build, and install agent packages (AGT-1 folder format)"
+group = "Authoring"
+new = { run = "apxm package new", description = "Scaffold a new agent-package folder tree", skill = true }
+lint = { run = "apxm package lint", description = "Validate a package + capability-set agreement", skill = true }
+build = { run = "apxm package build", description = "Recompute the pack integrity hash chain (+ compile skills)", skill = true }
+install = { run = "apxm package install", description = "Install a built package to APXM_HOME/packages/<id>" }
+
 [commands.cache]
 description = "Manage the MemoCache (response memoization)"
 group = "Configuration"
