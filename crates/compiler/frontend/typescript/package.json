@@ -1,7 +1,6 @@
 {
   "name": "@apxm/frontend",
   "version": "0.1.0",
-  "private": true,
   "type": "module",
   "description": "TypeScript compiler frontend for APXM: records a workflow graph (GraphBuilder, mirroring the Python apxm.proxy.GraphRecorder), emits AIR (.air MLIR-dialect text) via to_air(), and validates workflow-draft.v1 documents. Op tables in src/generated/ are code-generated from crates/machine/ais/generated/op-spec.v1.json (TSF-1).",
   "main": "./dist/index.js",
@@ -12,9 +11,18 @@
       "default": "./dist/index.js"
     }
   },
+  "license": "Apache-2.0",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/apxm-project/agents.git",
+    "directory": "crates/compiler/frontend/typescript"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
   "files": [
     "dist",
-    "src"
+    "LICENSE"
   ],
   "scripts": {
     "codegen": "node scripts/codegen.mjs",
