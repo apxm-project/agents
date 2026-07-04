@@ -895,6 +895,12 @@ pub enum PackageAction {
         /// Package directory to validate (default: current directory).
         #[arg(default_value = ".")]
         path: PathBuf,
+        /// An org package directory whose capabilities/{capabilities,
+        /// permissions}.toml are this package's org-global capability set
+        /// (AGT-5): a skill invoking one of these is not flagged as
+        /// undeclared even though the package itself never joins it.
+        #[arg(long)]
+        org: Option<PathBuf>,
     },
     /// Compile the package's skills and (re)compute the pack integrity hash
     /// chain, writing the result into pack.toml's [integrity] table.
