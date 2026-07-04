@@ -78,6 +78,13 @@ criterion = { version = "0.5", features = ["html_reports"] }
 name = "vllm_hints"
 harness = false
 
+# RT-8: request recording (`RequestMetrics`/`MetricsTracker`, see
+# `src/llm/registry/mod.rs` and `src/llm/observability/mod.rs`) is on by
+# default so the observed path equals the default build — no build flag
+# should determine whether a request got recorded. Opt out explicitly with
+# `default-features = false` if a target genuinely cannot pay the (small,
+# in-memory) bookkeeping cost.
 [features]
+default = ["metrics"]
 metrics = []
 embeddings = ["fastembed"]

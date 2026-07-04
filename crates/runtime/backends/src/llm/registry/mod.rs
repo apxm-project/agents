@@ -1036,3 +1036,37 @@ impl Default for LLMRegistry {
         Self::new()
     }
 }
+
+#[cfg(test)]
+mod request_recording_tests {
+    use super::*;
+    use crate::llm::backends::mock::MockLLMBackend;
+
+    /// RT-8: request recording (`RequestMetrics` via `MetricsTracker`) must
+    /// be part of the default build — no `--features metrics` opt-in should
+    /// be required for the observed path to equal the default build. This
+    /// test only compiles at all if the `metrics` feature (and therefore
+    /// `LLMRegistry::metrics()`, itself `#[cfg(feature = "metrics")]`) is
+    /// active under a plain `cargo test` with no extra `--features` flag —
+    /// which is exactly the guarantee RT-8 asks for.
+    #[tokio::test]
+    async fn request_recording_is_active_without_opting_into_a_feature_flag() {
+        let registry = LLMRegistry::new();
+        registry
+            .register("mock", MockLLMBackend::static_response("hello"))
+            .expect("register mock backend");
+        registry.set_default("mock").expect("set default backend");
+
+        registry
+            .generate(LLMRequest::new("hi"))
+            .await
+            .expect("mock generate succeeds");
+
+        let aggregate = registry.metrics().aggregate();
+        assert!(
+            aggregate.total_requests > 0,
+            "a generate() call on the default build must be recorded by the metrics tracker \
+             with no feature flag required"
+        );
+    }
+}
