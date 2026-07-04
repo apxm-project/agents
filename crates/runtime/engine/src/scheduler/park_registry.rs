@@ -186,3 +186,21 @@ pub fn wake(wait_key: &str, value: Value) -> usize {
     }
     n
 }
+
+/// [`apxm_capability_iface::CapabilityHost`] implementation over this
+/// process-global park registry.
+///
+/// Capability's builtin `schedule` tool calls through
+/// [`CapabilityHost::wake`] instead of naming `park_registry::wake`
+/// directly — the narrow seam that lets capability depend on
+/// `apxm-capability-iface` instead of on `apxm-runtime`'s scheduler module
+/// concretely. Zero-sized: the registry itself is the process-global
+/// [`registry()`] `OnceLock`, not per-instance state.
+#[derive(Debug, Default, Clone, Copy)]
+pub struct ParkRegistryHost;
+
+impl apxm_capability_iface::CapabilityHost for ParkRegistryHost {
+    fn wake(&self, wait_key: &str, value: Value) -> usize {
+        wake(wait_key, value)
+    }
+}
