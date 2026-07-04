@@ -16,8 +16,10 @@
 //! own process config — see [`Config`] for the minimal shape this crate
 //! needs from it).
 
+mod metrics;
 mod traceparent;
 
+pub use metrics::AppMetrics;
 pub use traceparent::{
     extract_traceparent, inject_current_traceparent, traceparent_from_headers,
 };
@@ -146,4 +148,56 @@ pub fn init(config: &Config) -> Result<Option<OtelExporter>, InitError> {
     Ok(Some(OtelExporter {
         endpoint: std::sync::Arc::new(endpoint.to_string()),
     }))
+}
+
+/// Initialize OTLP metric export (OBS-4 decision-5) and return the
+/// decision-5 [`AppMetrics`] instrument set.
+///
+/// Reuses `config.otlp_endpoint` — the same OTLP/HTTP collector that
+/// receives traces also receives metrics, which is normal OTLP practice
+/// (one collector, multiple signal pipelines). When no endpoint is
+/// configured, metrics are still instrumented (so call sites never need to
+/// branch on whether export is enabled) but are recorded into a
+/// non-exporting meter provider and dropped — mirrors [`init`]'s "degrade to
+/// no export, never panic" contract.
+///
+/// Call once, at process startup — independent of [`init`] (traces); a
+/// service typically calls both.
+pub fn init_metrics(config: &Config) -> Result<AppMetrics, InitError> {
+    let endpoint = config
+        .otlp_endpoint
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty());
+
+    let provider = match endpoint {
+        Some(endpoint) => {
+            let exporter = opentelemetry_otlp::MetricExporter::builder()
+                .with_http()
+                .with_endpoint(endpoint)
+                .build()
+                .map_err(|error| InitError(error.to_string()))?;
+
+            let reader = opentelemetry_sdk::metrics::PeriodicReader::builder(
+                exporter,
+                opentelemetry_sdk::runtime::Tokio,
+            )
+            .build();
+
+            opentelemetry_sdk::metrics::SdkMeterProvider::builder()
+                .with_reader(reader)
+                .build()
+        }
+        // No endpoint configured: build a meter provider with no readers.
+        // Instruments still work (recording is a no-op cost, not an error);
+        // nothing is exported anywhere.
+        None => opentelemetry_sdk::metrics::SdkMeterProvider::builder().build(),
+    };
+
+    use opentelemetry::metrics::MeterProvider as _;
+
+    opentelemetry::global::set_meter_provider(provider.clone());
+
+    let meter = provider.meter(config.service_name);
+    Ok(AppMetrics::new(&meter))
 }

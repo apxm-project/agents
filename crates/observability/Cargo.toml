@@ -20,10 +20,19 @@ opentelemetry.workspace = true
 opentelemetry-otlp.workspace = true
 opentelemetry_sdk.workspace = true
 http.workspace = true
+# CM-3 typed permission-decision vocabulary — metric labels must go through
+# `PermissionDecisionKind::as_str()` etc, never ad-hoc strings (OBS-4
+# decision-5). `apxm-core` has no dependency back on this crate, so this is
+# not a cycle.
+apxm-core.workspace = true
 
 # Optional: outgoing-request header injection helpers for services that call
 # other services over HTTP (server -> os relay, studio -> server/auth/os).
 reqwest = { workspace = true, optional = true }
+
+[dev-dependencies]
+opentelemetry_sdk = { workspace = true, features = ["testing"] }
+tokio = { workspace = true, features = ["rt-multi-thread", "macros"] }
 
 [features]
 default = []
