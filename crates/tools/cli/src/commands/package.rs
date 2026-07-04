@@ -76,10 +76,15 @@ pub struct AgentToml {
     pub kind: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub domain: Option<String>,
-    /// Path relative to `python/` to the Python-frontend entry.
-    pub entry: String,
+    /// Path relative to `python/` to the Python-frontend entry. Optional:
+    /// a package with no entry (and no custom code) is loaded as a
+    /// pure-declarative `ConversationalAgent` built straight from `[runtime]`
+    /// + `[[hooks]]` by the server-side loader (AGT-3/AGT-7) — no Python
+    /// file required.
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub runtime: Option<toml::Value>,
+    pub entry: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub runtime: Option<RuntimeToml>,
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub prompts: BTreeMap<String, String>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
@@ -99,6 +104,23 @@ pub struct HookToml {
     pub r#match: Option<String>,
     pub mode: String,
     pub handler: String,
+}
+
+/// `agent.toml`'s `[runtime]` table — the single source of truth for every
+/// `ConversationalAgent` knob (AGT-7). `loop`/`memory_space`/`session_prefix`
+/// are the knobs known today; `extra` keeps the table forward-compatible
+/// with knobs added later without a schema break (mirrors `CapabilityEntry`/
+/// `PermissionEntry`'s `#[serde(flatten)] extra` pattern above).
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct RuntimeToml {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub r#loop: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub memory_space: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub session_prefix: Option<String>,
+    #[serde(flatten)]
+    pub extra: toml::Table,
 }
 
 /// Projection of the optional `hierarchy.toml`.
@@ -637,19 +659,48 @@ fn check_schema_shape(pkg: &LoadedPackage) -> Vec<String> {
             pkg.pack.pack_id, pkg.agent.id
         ));
     }
-    if !pkg.agent.entry.ends_with(".py") {
-        errors.push(format!(
-            "agent.toml: entry '{}' must be a .py path (entries are Python only)",
-            pkg.agent.entry
-        ));
-    } else {
-        let entry_path = pkg.root.join("python").join(&pkg.agent.entry);
-        if !entry_path.is_file() {
-            errors.push(format!(
-                "agent.toml: entry '{}' does not exist at {}",
-                pkg.agent.entry,
-                entry_path.display()
-            ));
+    match &pkg.agent.entry {
+        None => {
+            // No entry ⇒ pure-declarative ConversationalAgent (AGT-7): the
+            // loader builds it straight from [runtime] + [[hooks]], so
+            // [runtime].loop must be present and unambiguous.
+            if pkg
+                .agent
+                .runtime
+                .as_ref()
+                .and_then(|r| r.r#loop.as_deref())
+                .is_none()
+            {
+                errors.push(
+                    "agent.toml: no entry declared, so [runtime] loop is required to build a \
+                     pure-declarative ConversationalAgent"
+                        .to_string(),
+                );
+            }
+        }
+        Some(entry) => {
+            if !entry.ends_with(".py") {
+                errors.push(format!(
+                    "agent.toml: entry '{entry}' must be a .py path (entries are Python only)"
+                ));
+            } else {
+                let entry_path = pkg.root.join("python").join(entry);
+                if !entry_path.is_file() {
+                    errors.push(format!(
+                        "agent.toml: entry '{entry}' does not exist at {}",
+                        entry_path.display()
+                    ));
+                }
+            }
+        }
+    }
+    if let Some(runtime) = &pkg.agent.runtime {
+        if let Some(loop_mode) = &runtime.r#loop {
+            if loop_mode != "host" && loop_mode != "in_graph" {
+                errors.push(format!(
+                    "agent.toml: [runtime] loop '{loop_mode}' must be 'host' or 'in_graph'"
+                ));
+            }
         }
     }
     for hook in &pkg.agent.hooks {
@@ -697,6 +748,141 @@ fn check_schema_shape(pkg: &LoadedPackage) -> Vec<String> {
     errors
 }
 
+/// A `@hook(...)` call site found by statically scanning the package's
+/// `python/` tree.
+struct ProgrammaticHook {
+    file: String,
+    line: usize,
+    event: Option<String>,
+    r#match: Option<String>,
+    mode: Option<String>,
+}
+
+/// Extract `key="value"`/`key='value'` from a raw `@hook(...)` argument
+/// string. Best-effort: only literal-string keyword arguments are
+/// recognized (a hook that computes its event/mode dynamically is not
+/// statically checkable and is skipped, not flagged — this lint fails
+/// closed on *detectable* contradictions, it does not claim to prove their
+/// absence).
+fn extract_kwarg(args: &str, key: &str) -> Option<String> {
+    // Accept `key = "value"` / `key='value'`.
+    let needle = key;
+    let mut search_from = 0;
+    while let Some(rel) = args[search_from..].find(&needle) {
+        let pos = search_from + rel;
+        // Ensure this is a whole keyword token, not a substring of another
+        // identifier (e.g. "match" inside "rematch").
+        let boundary_ok = pos == 0
+            || !args.as_bytes()[pos - 1].is_ascii_alphanumeric() && args.as_bytes()[pos - 1] != b'_';
+        if !boundary_ok {
+            search_from = pos + needle.len();
+            continue;
+        }
+        let rest = args[pos + needle.len()..].trim_start();
+        if let Some(rest) = rest.strip_prefix('=') {
+            let rest = rest.trim_start();
+            for quote in ['"', '\''] {
+                if let Some(rest) = rest.strip_prefix(quote) {
+                    if let Some(end) = rest.find(quote) {
+                        return Some(rest[..end].to_string());
+                    }
+                }
+            }
+        }
+        search_from = pos + needle.len();
+    }
+    None
+}
+
+/// Statically scan every `.py` file under `python/` for `@hook(on=…,
+/// match=…, mode=…)` call sites (AGT-7 lint: manifest/entry contradiction
+/// check). This is a textual scan, not a Python parse/AST — it is
+/// deliberately conservative (see [`extract_kwarg`]) rather than a full
+/// interpreter, matching the rest of this module's "hand-port the schema's
+/// checks without vendoring a runtime" approach.
+fn find_programmatic_hooks(python_dir: &Path) -> Vec<ProgrammaticHook> {
+    let mut hooks = Vec::new();
+    if !python_dir.is_dir() {
+        return hooks;
+    }
+    for entry in walkdir::WalkDir::new(python_dir)
+        .into_iter()
+        .filter_map(Result::ok)
+    {
+        if !entry.file_type().is_file() {
+            continue;
+        }
+        if entry.path().extension().and_then(|e| e.to_str()) != Some("py") {
+            continue;
+        }
+        let Ok(text) = fs::read_to_string(entry.path()) else {
+            continue;
+        };
+        let rel = entry
+            .path()
+            .strip_prefix(python_dir)
+            .unwrap_or(entry.path())
+            .display()
+            .to_string();
+        let mut search_from = 0usize;
+        while let Some(rel_idx) = text[search_from..].find("@hook(") {
+            let start = search_from + rel_idx;
+            let args_start = start + "@hook(".len();
+            let Some(close_rel) = text[args_start..].find(')') else {
+                break;
+            };
+            let args = &text[args_start..args_start + close_rel];
+            let line = text[..start].matches('\n').count() + 1;
+            hooks.push(ProgrammaticHook {
+                file: rel.clone(),
+                line,
+                event: extract_kwarg(args, "on"),
+                r#match: extract_kwarg(args, "match"),
+                mode: extract_kwarg(args, "mode"),
+            });
+            search_from = args_start + close_rel + 1;
+        }
+    }
+    hooks
+}
+
+/// AGT-7: entry code may add hooks programmatically (`@hook`) but must never
+/// *contradict* what `agent.toml`'s `[[hooks]]` already declares for the
+/// same `(event, match)` pair — a different `mode` there is a silent
+/// footgun (an author reads the manifest and gets the entry's behavior
+/// instead), so it is a lint error, not a warning.
+fn check_hook_contradictions(pkg: &LoadedPackage) -> Vec<String> {
+    let mut errors = Vec::new();
+    let python_dir = pkg.root.join("python");
+    let programmatic = find_programmatic_hooks(&python_dir);
+
+    for declared in &pkg.agent.hooks {
+        let declared_match = declared.r#match.clone().unwrap_or_else(|| "*".to_string());
+        for found in &programmatic {
+            let (Some(event), Some(mode)) = (found.event.as_deref(), found.mode.as_deref()) else {
+                continue;
+            };
+            if event != declared.event {
+                continue;
+            }
+            let found_match = found.r#match.clone().unwrap_or_else(|| "*".to_string());
+            if found_match != declared_match {
+                continue;
+            }
+            if mode != declared.mode {
+                errors.push(format!(
+                    "agent.toml declares hook on event '{}' match '{}' with mode '{}', but \
+                     python/{}:{} registers @hook(on=\"{event}\", match=\"{found_match}\", \
+                     mode=\"{mode}\") — entry code must not contradict the manifest",
+                    declared.event, declared_match, declared.mode, found.file, found.line
+                ));
+            }
+        }
+    }
+
+    errors
+}
+
 fn semver_like(version: &str) -> bool {
     // SemVer core: MAJOR.MINOR.PATCH, optionally with -prerelease/+build.
     let core = version.split(['-', '+']).next().unwrap_or(version);
@@ -709,6 +895,7 @@ fn package_lint(path: &Path, json_output: bool) -> Result<()> {
 
     let mut errors = check_schema_shape(&pkg);
     errors.extend(check_capability_drift(&pkg));
+    errors.extend(check_hook_contradictions(&pkg));
     for unrecognized in find_unrecognized_files(path)? {
         errors.push(format!(
             "unrecognized file '{unrecognized}' is not part of the agent-package.v1 folder contract"
@@ -1012,7 +1199,7 @@ mod tests {
 
         let agent: AgentToml = read_toml(&root.join("agent.toml")).unwrap();
         assert_eq!(agent.id, "demo");
-        assert_eq!(agent.entry, "demo_agent.py");
+        assert_eq!(agent.entry.as_deref(), Some("demo_agent.py"));
         assert_eq!(agent.skills, vec!["demo-skill".to_string()]);
 
         let skill: SkillToml = read_toml(&root.join("skills/demo-skill/skill.toml")).unwrap();
@@ -1108,6 +1295,82 @@ mod tests {
         .unwrap();
         let err = package_lint(&root, true).expect_err("undeclared skill capability must fail lint");
         assert!(err.to_string().contains("lint error"));
+    }
+
+    #[test]
+    fn lint_catches_manifest_entry_hook_contradiction() {
+        // AGT-7 vector: agent.toml declares a `gate` hook on pre_cap/*, but
+        // the entry file programmatically registers the SAME (event, match)
+        // as `observe` — a silent contradiction the lint must catch.
+        let tmp = tempdir().unwrap();
+        let root = tmp.path().join("contradicts");
+        scaffold(&root, "contradicts");
+
+        let agent_toml = fs::read_to_string(root.join("agent.toml")).unwrap();
+        let agent_toml = format!(
+            "{agent_toml}\n[[hooks]]\nevent = \"pre_cap\"\nmatch = \"*\"\nmode = \"gate\"\nhandler = \"capabilities/handlers/guard.py:check\"\n"
+        );
+        fs::write(root.join("agent.toml"), agent_toml).unwrap();
+
+        fs::write(
+            root.join("python/contradicts_agent.py"),
+            "from apxm import hook\n\n\
+             @hook(on=\"pre_cap\", match=\"*\", mode=\"observe\")\n\
+             def check(ctx):\n    return None\n",
+        )
+        .unwrap();
+
+        let err = package_lint(&root, true).expect_err("manifest/entry hook contradiction must fail lint");
+        assert!(
+            err.to_string().contains("lint error"),
+            "expected a lint error, got: {err}"
+        );
+    }
+
+    #[test]
+    fn lint_allows_matching_programmatic_hook() {
+        // Same (event, match, mode) declared in both places is not a
+        // contradiction — entry code may re-affirm what the manifest says.
+        let tmp = tempdir().unwrap();
+        let root = tmp.path().join("agrees");
+        scaffold(&root, "agrees");
+
+        let agent_toml = fs::read_to_string(root.join("agent.toml")).unwrap();
+        let agent_toml = format!(
+            "{agent_toml}\n[[hooks]]\nevent = \"pre_cap\"\nmatch = \"*\"\nmode = \"gate\"\nhandler = \"capabilities/handlers/guard.py:check\"\n"
+        );
+        fs::write(root.join("agent.toml"), agent_toml).unwrap();
+
+        fs::write(
+            root.join("python/agrees_agent.py"),
+            "from apxm import hook\n\n\
+             @hook(on=\"pre_cap\", match=\"*\", mode=\"gate\")\n\
+             def check(ctx):\n    return None\n",
+        )
+        .unwrap();
+
+        package_lint(&root, true).expect("matching programmatic hook must not fail lint");
+    }
+
+    #[test]
+    fn lint_allows_no_entry_with_runtime_loop() {
+        // Pure-declarative ConversationalAgent (AGT-7): no entry file, but
+        // [runtime].loop is declared, so there is nothing ambiguous for the
+        // loader to instantiate.
+        let tmp = tempdir().unwrap();
+        let root = tmp.path().join("declarative");
+        scaffold(&root, "declarative");
+
+        let agent_toml = fs::read_to_string(root.join("agent.toml")).unwrap();
+        let agent_toml = agent_toml
+            .lines()
+            .filter(|l| !l.starts_with("entry ="))
+            .collect::<Vec<_>>()
+            .join("\n");
+        fs::write(root.join("agent.toml"), agent_toml).unwrap();
+        fs::remove_file(root.join("python/declarative_agent.py")).unwrap();
+
+        package_lint(&root, true).expect("entry-less declarative package should lint clean");
     }
 
     #[test]

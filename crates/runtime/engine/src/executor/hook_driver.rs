@@ -244,6 +244,18 @@ pub async fn run_pre_cap_hooks(
         return Ok(args);
     };
 
+    // CM #5 layering (AGT-7 Priority 3): a `gate` hook may only NARROW what
+    // the joined capability's own policy already allows — it can never
+    // widen. `requires_approval` on the capability's metadata is the
+    // baseline; a gate hook cannot launder an approval-gated capability into
+    // an auto-allow. This is fail-closed: a widening attempt is rejected,
+    // not silently downgraded to observe.
+    let requires_approval = ctx
+        .capability_system
+        .get_metadata(tool_name)
+        .map(|meta| meta.requires_approval)
+        .unwrap_or(false);
+
     let mut current = args;
     for binding in bindings {
         let args_json =
@@ -265,7 +277,19 @@ pub async fn run_pre_cap_hooks(
             .await
         {
             Ok(decision) => match parse_pre_cap_decision(decision) {
-                PreCapDecision::Allow => {}
+                PreCapDecision::Allow => {
+                    if gate_decision_would_widen(binding.mode, requires_approval, true) {
+                        return Err(RuntimeError::Capability {
+                            capability: tool_name.to_string(),
+                            message: format!(
+                                "gate hook '{}' attempted to widen permissions (auto-allow) on \
+                                 a capability whose policy requires approval; rejected — a hook \
+                                 may only narrow the capability's own policy, never widen it",
+                                binding.handler_id
+                            ),
+                        });
+                    }
+                }
                 PreCapDecision::Deny(reason) => {
                     return Err(RuntimeError::Capability {
                         capability: tool_name.to_string(),
@@ -287,6 +311,20 @@ pub async fn run_pre_cap_hooks(
         }
     }
     Ok(current)
+}
+
+/// CM #5 layering (AGT-7 Priority 3): would applying this `pre_cap` decision
+/// let a `gate` hook grant more than the capability's own baseline policy
+/// already allows? Only an `observe`-mode hook or a capability whose
+/// baseline does not require approval may pass an unconditional `allow`
+/// through untouched; a `gate` hook sitting in front of an approval-gated
+/// capability can narrow (deny / leave the approval requirement standing)
+/// but never launder it into an auto-allow. `is_allow` is passed rather
+/// than `&PreCapDecision` so this stays a plain, easily-tested predicate
+/// (only `Allow` is ever a widening risk — `Deny` and `EditArgs` cannot
+/// widen the *permission* decision).
+fn gate_decision_would_widen(mode: HookMode, capability_requires_approval: bool, is_allow: bool) -> bool {
+    mode == HookMode::Gate && capability_requires_approval && is_allow
 }
 
 fn parse_pre_cap_decision(decision: JsonValue) -> PreCapDecision {
@@ -572,4 +610,38 @@ pub async fn run_pre_ask_hooks(
         }
     }
     Ok(if changed { Some(system) } else { None })
+}
+
+#[cfg(test)]
+mod gate_narrowing_tests {
+    use super::*;
+
+    /// AGT-7 vector: a `gate` hook attempting to widen (auto-allow) a
+    /// capability whose baseline policy requires approval is rejected.
+    #[test]
+    fn gate_hook_allow_on_approval_gated_capability_is_a_widen_attempt() {
+        assert!(gate_decision_would_widen(HookMode::Gate, true, true));
+    }
+
+    #[test]
+    fn gate_hook_allow_on_already_open_capability_is_not_a_widen_attempt() {
+        // No approval requirement to begin with — nothing to widen past.
+        assert!(!gate_decision_would_widen(HookMode::Gate, false, true));
+    }
+
+    #[test]
+    fn observe_hook_never_gates_so_never_widens() {
+        // Observe-mode hooks cannot control the outcome at all (constitution
+        // #5's mode split), so they are never a widening risk regardless of
+        // the capability's baseline.
+        assert!(!gate_decision_would_widen(HookMode::Observe, true, true));
+    }
+
+    #[test]
+    fn non_allow_decisions_never_widen() {
+        // Deny/edit-args can only narrow or leave the call's shape alone —
+        // only an unconditional Allow can widen past a baseline approval
+        // requirement.
+        assert!(!gate_decision_would_widen(HookMode::Gate, true, false));
+    }
 }

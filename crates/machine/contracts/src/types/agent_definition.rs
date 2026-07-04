@@ -41,13 +41,69 @@ pub struct AgentDefinition {
     pub hierarchy: Option<AgentHierarchy>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub triggers: Vec<AgentTrigger>,
+    /// `[runtime]` from `agent.toml` — the single source of truth for every
+    /// `ConversationalAgent` knob (AGT-7): loop/memory_space/session_prefix.
+    /// When `entry.flow` is empty, `runtime.loop` is what lets a
+    /// pure-declarative package be instantiated with no Python entry file
+    /// (see [`AgentEntry::flow`]).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub runtime: Option<AgentRuntime>,
+    /// `[[hooks]]` from `agent.toml` (AGT-7): manifest-declared lifecycle
+    /// hooks, lowered the same way whether the package has a custom entry
+    /// (where entry code may add MORE hooks, but must never contradict
+    /// these — a lint check, not a runtime one) or no entry at all (where
+    /// these are the agent's only hooks).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub hooks: Vec<AgentHook>,
+}
+
+/// `[runtime]` — every `ConversationalAgent` knob declarable in the
+/// manifest (AGT-7). Kept an open shape (`extra`) so knobs added later don't
+/// need a schema break, mirroring the AGT-2 toolchain's `RuntimeToml`. Extra
+/// values are stringly-typed to keep this derive-`Eq`-able (unlike
+/// `toml::Value`/`serde_json::Value`, which carry floats).
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct AgentRuntime {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub r#loop: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub memory_space: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub session_prefix: Option<String>,
+    #[serde(flatten, default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub extra: BTreeMap<String, String>,
+}
+
+/// One `[[hooks]]` entry: a manifest-declared binding of a lifecycle event to
+/// a handler in `capabilities/handlers/` (AGT-7). `event`/`mode` are kept as
+/// open strings here (not the Python frontend's `LifecycleEvent`/`HookMode`
+/// enums) so contracts does not have to track the frontend's vocabulary —
+/// the AGT-2 toolchain's lint validates the closed set at author time.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct AgentHook {
+    pub event: String,
+    #[serde(default = "default_hook_match")]
+    pub r#match: String,
+    pub mode: String,
+    pub handler: String,
+}
+
+fn default_hook_match() -> String {
+    "*".to_string()
 }
 
 /// The agent's package entry point.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct AgentEntry {
-    /// Path/reference to the entry flow (e.g. an AIR file).
+    /// Path/reference to the entry flow (e.g. an AIR file). May be empty
+    /// (AGT-7) for a **pure-declarative** package with no custom Python
+    /// entry — the loader then instantiates a `ConversationalAgent` straight
+    /// from `AgentDefinition::runtime` + `AgentDefinition::hooks` instead.
+    /// [`AgentDefinition::validate`] requires `runtime.loop` to be set
+    /// whenever `flow` is empty, so there is always an unambiguous loop mode
+    /// to build.
     pub flow: String,
     /// Optional named loop/driver within the entry flow.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -89,7 +145,9 @@ pub enum AgentDefinitionError {
     },
     #[error("id must not be empty")]
     EmptyId,
-    #[error("entry.flow must not be empty")]
+    #[error(
+        "entry.flow must not be empty unless runtime.loop is set (AGT-7 pure-declarative agent)"
+    )]
     EmptyEntryFlow,
     #[error("trigger id must not be empty")]
     EmptyTriggerId,
@@ -108,7 +166,16 @@ impl AgentDefinition {
         if self.id.trim().is_empty() {
             return Err(AgentDefinitionError::EmptyId);
         }
-        if self.entry.flow.trim().is_empty() {
+        // AGT-7: an empty entry.flow is only valid for a pure-declarative
+        // agent — one whose [runtime].loop is set, so the loader has an
+        // unambiguous loop mode to build a ConversationalAgent from (no
+        // Python entry file needed).
+        let is_pure_declarative = self
+            .runtime
+            .as_ref()
+            .and_then(|r| r.r#loop.as_deref())
+            .is_some();
+        if self.entry.flow.trim().is_empty() && !is_pure_declarative {
             return Err(AgentDefinitionError::EmptyEntryFlow);
         }
         for trigger in &self.triggers {
@@ -176,6 +243,8 @@ impl From<&Agent> for AgentDefinition {
                 .collect(),
             hierarchy: None,
             triggers: Vec::new(),
+            runtime: None,
+            hooks: Vec::new(),
         }
     }
 }
@@ -205,6 +274,18 @@ mod tests {
                 kind: "webhook".to_string(),
                 config: None,
             }],
+            runtime: Some(AgentRuntime {
+                r#loop: Some("in_graph".to_string()),
+                memory_space: Some("stm".to_string()),
+                session_prefix: Some("demo".to_string()),
+                extra: BTreeMap::new(),
+            }),
+            hooks: vec![AgentHook {
+                event: "pre_cap".to_string(),
+                r#match: "*".to_string(),
+                mode: "gate".to_string(),
+                handler: "capabilities/handlers/guard.py:check".to_string(),
+            }],
         }
     }
 
@@ -227,9 +308,21 @@ mod tests {
     }
 
     #[test]
-    fn rejects_empty_entry_flow() {
+    fn empty_entry_flow_is_valid_for_pure_declarative_agent_with_runtime_loop() {
+        // AGT-7: a package with no entry file at all is valid as long as
+        // [runtime].loop tells the loader which ConversationalAgent loop to
+        // build — nothing ambiguous is left for it to guess.
         let mut def = sample();
         def.entry.flow = String::new();
+        def.validate()
+            .expect("empty entry.flow is valid when runtime.loop is set");
+    }
+
+    #[test]
+    fn rejects_empty_entry_flow_without_runtime_loop() {
+        let mut def = sample();
+        def.entry.flow = String::new();
+        def.runtime = None;
         assert_eq!(def.validate(), Err(AgentDefinitionError::EmptyEntryFlow));
     }
 
