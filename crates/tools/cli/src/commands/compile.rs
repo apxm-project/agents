@@ -160,6 +160,244 @@ pub(super) fn emit_air_from_python(
 #[cfg(feature = "driver")]
 type PythonHandlersSidecar = Option<Vec<u8>>;
 
+// ---------------------------------------------------------------------------
+// `apxm compile-service` — the cross-repo process contract Server (and any
+// other non-`agents` caller) uses to compile an agent package's Python entry
+// (with `@hook`/`@tool` registrations) into host-loop AIR, without shelling
+// out to Python itself or reaching into this repo's file layout. This is the
+// canonical, agents-owned home for the driver/PYTHONPATH logic Studio's
+// `crates/studio/src/aircompile.rs::agent_package_to_air` previously
+// duplicated across the service boundary.
+// ---------------------------------------------------------------------------
+
+/// Python driver invoked for an agent-package entry (`main = Agent(...).compile()`).
+/// Mirrors the shape of the plain-flow `DRIVER` script above, but looks up the
+/// package convention's `main` binding instead of any `to_air`-shaped value,
+/// and forwards an optional loop-override positional (`sys.argv[2]`) the
+/// entry script's `_resolve_loop` reads — see AGT-7 in
+/// `docs/agent-packages/first-agent.md` for why this is a positional argument
+/// and not an ad hoc env var.
+#[cfg(feature = "driver")]
+const AGENT_PACKAGE_DRIVER: &str = r#"
+import importlib.util, sys
+path = sys.argv[1]
+spec = importlib.util.spec_from_file_location("apxm_cli_agent_package", path)
+mod = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(mod)
+main = getattr(mod, "main", None)
+if main is None or not hasattr(main, "to_air"):
+    print("NO_MAIN", file=sys.stderr); sys.exit(3)
+sys.stdout.write(main.to_air())
+"#;
+
+/// Minimal projection of `agent.toml` used only to resolve the Python entry
+/// when the caller does not pass `--entry` explicitly. Every other manifest
+/// field is out of scope here (the full projection lives in
+/// `commands::package::AgentToml` / server's `agent_packages.rs`).
+#[cfg(feature = "driver")]
+#[derive(serde::Deserialize)]
+struct AgentManifestEntry {
+    entry: Option<String>,
+}
+
+/// Resolve the `python/`-relative entry path for a package root: the
+/// caller's explicit override, or `agent.toml`'s declared `entry` field.
+#[cfg(feature = "driver")]
+fn resolve_package_entry_rel(package_root: &Path, entry_override: Option<&str>) -> Result<String> {
+    if let Some(entry) = entry_override {
+        return Ok(entry.trim_start_matches("python/").to_string())
+            .map(|e| format!("python/{e}"));
+    }
+    let manifest_path = package_root.join("agent.toml");
+    let text = std::fs::read_to_string(&manifest_path)
+        .with_context(|| format!("Failed to read {}", manifest_path.display()))?;
+    let manifest: AgentManifestEntry = toml::from_str(&text)
+        .with_context(|| format!("Failed to parse {}", manifest_path.display()))?;
+    let entry = manifest.entry.ok_or_else(|| {
+        anyhow::anyhow!(
+            "package '{}' has no `entry` set in agent.toml and no --entry override was given \
+             (a package with no Python entry is pure-declarative and does not need compile-service)",
+            package_root.display()
+        )
+    })?;
+    Ok(format!("python/{}", entry.trim_start_matches("python/")))
+}
+
+/// Compile a bundled conversational agent package's Python entry into
+/// canonical host-loop AIR text, exactly as `agent_package_to_air` (formerly
+/// duplicated in Studio) invokes the frontend: same PYTHONPATH assembly
+/// (frontend + package root + `python/`), same driver shape, same loop
+/// override and `GAO_WEB_TOOLS` convention.
+///
+/// # Cross-repo I/O contract
+///
+/// This is the exact contract `apxm compile-service` exposes on stdout/stderr
+/// for callers in other repos (Server) that invoke this binary as a
+/// subprocess instead of duplicating a private path dependency on this repo's
+/// Python frontend:
+///
+/// - **Input**: a single positional argument, the package directory
+///   (containing `pack.toml`, `agent.toml`, and `python/<entry>`). No stdin
+///   is read.
+/// - `--entry <path>`: override the entry instead of reading `agent.toml`.
+/// - `--host-loop`: pass the `"host"` loop-override positional the entry
+///   script's `_resolve_loop` reads (the same override Studio's
+///   host-controlled chat surface used to pass directly). Omit to honor the
+///   package manifest's declared `[runtime].loop`.
+/// - `--web-tools`: sets `GAO_WEB_TOOLS=true` for entries that gate optional
+///   web-search tool registration on it.
+/// - **stdout**: on success, ONLY the emitted AIR text — the raw MLIR the
+///   Python frontend wrote, including any `; __apxm_python_tools__ ...` /
+///   `; __apxm_hooks__ ...` sidecar comment lines. No other text is ever
+///   written to stdout; all progress/log/diagnostic output goes to stderr.
+/// - **Exit code**: `0` on success. Nonzero on any failure (missing package,
+///   missing/unresolved entry, Python interpreter not found, frontend raised
+///   an exception, or empty/non-AIR output), with a human-readable message on
+///   stderr.
+#[cfg(feature = "driver")]
+pub fn compile_service_command(
+    package: PathBuf,
+    entry: Option<String>,
+    host_loop: bool,
+    web_tools: bool,
+    config: Option<PathBuf>,
+) -> Result<()> {
+    let air = emit_air_from_agent_package(
+        &package,
+        entry.as_deref(),
+        host_loop,
+        web_tools,
+        config.as_deref(),
+    )?;
+
+    // Only the AIR text goes to stdout, written byte-for-byte as the frontend
+    // produced it (no added trailing newline) — this is the process contract
+    // Server relies on to capture stdout verbatim as the compiled AIR.
+    use std::io::Write;
+    let stdout = std::io::stdout();
+    let mut handle = stdout.lock();
+    handle.write_all(air.as_bytes())?;
+    Ok(())
+}
+
+/// Core logic behind `apxm compile-service`, factored out from the stdout-
+/// writing wrapper above so it can be exercised directly by tests (including
+/// the Studio-equivalence fixture test) without spawning a subprocess.
+#[cfg(feature = "driver")]
+fn emit_air_from_agent_package(
+    package: &Path,
+    entry: Option<&str>,
+    host_loop: bool,
+    web_tools: bool,
+    config: Option<&Path>,
+) -> Result<String> {
+    if !package.is_dir() {
+        return Err(anyhow::anyhow!(
+            "'{}' is not a directory",
+            package.display()
+        ));
+    }
+    let entry_rel = resolve_package_entry_rel(package, entry)?;
+    let entry_path = package.join(&entry_rel);
+    if !entry_path.is_file() {
+        return Err(anyhow::anyhow!(
+            "missing agent entry file: {}",
+            entry_path.display()
+        ));
+    }
+
+    let repo_root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../..");
+    let python_frontend = repo_root.join("crates/compiler/frontend/python");
+    let python_root = package.join("python");
+
+    let mut pythonpath_entries = vec![python_frontend, package.to_path_buf(), python_root];
+    if let Some(existing) = env::var_os(apxm_env::PYTHONPATH) {
+        pythonpath_entries.extend(env::split_paths(&existing));
+    }
+    let pythonpath = env::join_paths(pythonpath_entries)
+        .context("Failed to build PYTHONPATH for APXM agent-package frontend")?;
+
+    // AGT-7: no ad-hoc `GAO_LOOP` env var — `[runtime].loop` in the package's
+    // `agent.toml` is the declared source of truth; a host-controlled caller
+    // (Studio, or now Server compiling for host-loop execution) overrides it
+    // via this explicit positional, never a magic env var private to one
+    // agent. An empty argument means "no override, use the manifest".
+    let loop_override = if host_loop { "host" } else { "" };
+
+    let mut output = None;
+    for candidate in ["python3", "python"] {
+        let mut command = std::process::Command::new(candidate);
+        command
+            .arg("-c")
+            .arg(AGENT_PACKAGE_DRIVER)
+            .arg(&entry_path)
+            .arg(loop_override)
+            .env(apxm_env::PYTHONPATH, &pythonpath)
+            .env(
+                "GAO_WEB_TOOLS",
+                if web_tools { "true" } else { "false" },
+            );
+        if let Some(config_path) = &config {
+            command.env(apxm_env::APXM_CONFIG, config_path);
+        }
+        match command.output() {
+            Ok(result) => {
+                output = Some(result);
+                break;
+            }
+            Err(err) if err.kind() == std::io::ErrorKind::NotFound => continue,
+            Err(err) => {
+                return Err(anyhow::anyhow!(
+                    "Failed to run agent package {} with {}: {}",
+                    package.display(),
+                    candidate,
+                    err
+                ));
+            }
+        }
+    }
+
+    let output = output.ok_or_else(|| {
+        anyhow::anyhow!("Python interpreter not found on PATH (tried python3, python)")
+    })?;
+
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        return Err(anyhow::anyhow!(
+            "Agent package {} failed: {}",
+            package.display(),
+            stderr.trim()
+        ));
+    }
+
+    let air = String::from_utf8(output.stdout).with_context(|| {
+        format!(
+            "Agent package {} did not emit valid UTF-8",
+            package.display()
+        )
+    })?;
+    let trimmed = air.trim();
+    if trimmed.is_empty() {
+        return Err(anyhow::anyhow!(
+            "Agent package {} produced no .air output",
+            package.display()
+        ));
+    }
+    if !(trimmed.starts_with(';')
+        || trimmed.starts_with('%')
+        || trimmed.starts_with("module")
+        || trimmed.starts_with("func.func"))
+    {
+        return Err(anyhow::anyhow!(
+            "Agent package {} did not emit recognizable .air text on stdout.\n\
+             Expected MLIR text starting with 'module', 'func.func', ';', or '%'.",
+            package.display()
+        ));
+    }
+
+    Ok(air)
+}
+
 #[cfg(feature = "driver")]
 fn is_mlir_air_text(text: &str) -> bool {
     use apxm_core::constants::mlir::syntax as mlir_syntax;
@@ -536,6 +774,54 @@ pub(super) fn air_graph_from_source(input: &Path) -> Result<apxm_compiler::AirMo
 mod tests {
     use super::*;
     use apxm_core::constants::mlir::syntax as mlir_syntax;
+
+    /// Equivalence proof for the G-1/AGT-4/G-3/ST-A2 gap fix: `apxm
+    /// compile-service` (via [`emit_air_from_agent_package`]) must produce
+    /// byte-identical host-loop AIR to what Studio's
+    /// `crates/studio/src/aircompile.rs::agent_package_to_air` emits for the
+    /// same real package, so Server can invoke this CLI as a subprocess
+    /// instead of duplicating Studio's private path dependency on this
+    /// repo's Python frontend.
+    ///
+    /// The fixture (`tests/fixtures/gao_host_loop.air`) was captured directly
+    /// from Studio's `agent_package_to_air(gao_root, "python/gao_agent.py",
+    /// studio_chat = true, web_tools = false, None)` — see
+    /// `workspace/studio/crates/studio/tests/gao_air_equivalence.rs` in the
+    /// sibling `studio` checkout, which generates it.
+    ///
+    /// This test locates the real bundled `gao` agent package the way it
+    /// exists in this coordinator's `workspace/` layout
+    /// (`workspace/studio/agents/gao`, overridable via `GAO_PACKAGE_DIR` for
+    /// other checkouts) and skips (rather than failing) when that sibling
+    /// checkout isn't present, since `agents` does not hard-depend on
+    /// `studio`'s repo layout in an ordinary standalone clone.
+    #[test]
+    fn compile_service_matches_studio_agent_package_to_air_for_gao() {
+        let gao_root = std::env::var_os("GAO_PACKAGE_DIR")
+            .map(std::path::PathBuf::from)
+            .unwrap_or_else(|| {
+                Path::new(env!("CARGO_MANIFEST_DIR")).join("../../../../../studio/agents/gao")
+            });
+        if !gao_root.is_dir() {
+            eprintln!(
+                "skipping compile_service_matches_studio_agent_package_to_air_for_gao: \
+                 no sibling studio checkout at {} (set GAO_PACKAGE_DIR to override)",
+                gao_root.display()
+            );
+            return;
+        }
+
+        let air = emit_air_from_agent_package(&gao_root, None, true, false, None)
+            .expect("apxm compile-service must compile the real gao package");
+
+        let fixture = include_str!("../../tests/fixtures/gao_host_loop.air");
+        assert_eq!(
+            air, fixture,
+            "apxm compile-service output diverged from Studio's agent_package_to_air \
+             fixture for the real gao package — regenerate the fixture only if the \
+             divergence is an intentional, reviewed frontend change"
+        );
+    }
 
     #[test]
     fn mlir_air_text_accepts_leading_sidecar_comments() {

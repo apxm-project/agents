@@ -156,6 +156,12 @@ async fn run_cli(cli: Cli) -> Result<()> {
             cli.config,
             embed_manifest,
         ),
+        Commands::CompileService {
+            package,
+            entry,
+            host_loop,
+            web_tools,
+        } => compile_service_command(package, entry, host_loop, web_tools, cli.config),
         Commands::Decompile { artifact, output } => decompile_command(artifact, output),
         Commands::Execute {
             input,
