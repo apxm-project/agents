@@ -44,7 +44,7 @@ pub mod warmup;
 pub mod workflow_spawn;
 
 use super::{ExecutionContext, Result};
-use crate::model_router::ProfileRouter;
+use crate::model_router::{ProfileRouter, RoutingDecision};
 use anyhow::Error as AnyhowError;
 use apxm_backends::llm::wire::response_metadata;
 use apxm_backends::{LLMRequest, LLMResponse, StreamingBackendError};
@@ -359,6 +359,34 @@ async fn execute_llm_request_with_node_name(
     Ok(response)
 }
 
+/// Forward a [`RoutingDecision`] to the execution event emitter (RTG-11).
+/// Shared helper so model-routing observability stays identical regardless
+/// of call site.
+fn emit_model_route_decision_event(
+    emitter: &dyn crate::executor::events::ExecutionEventEmitter,
+    decision: &RoutingDecision,
+) {
+    let rejected: Vec<(String, String, &'static str, String)> = decision
+        .rejected_candidates
+        .iter()
+        .map(|rejection| {
+            (
+                rejection.candidate.clone(),
+                rejection.backend.clone(),
+                rejection.reason_kind.as_str(),
+                rejection.reason.clone(),
+            )
+        })
+        .collect();
+    emitter.emit_model_route_decision(
+        &decision.backend,
+        decision.model.as_deref(),
+        decision.was_failover,
+        &decision.reason,
+        &rejected,
+    );
+}
+
 /// A tool call being accumulated from streaming chunks.
 struct PendingToolCall {
     id: String,
@@ -395,6 +423,13 @@ async fn execute_llm_request_streaming(
         req.backend = Some(decision.backend.clone());
         if let Some(ref m) = decision.model {
             req.model = Some(m.clone());
+        }
+
+        // RTG-11: make the routing decision observable — a rollout event
+        // carrying the chosen backend/model, why, and every rejected
+        // candidate with its own reason (never silently dropped).
+        if let Some(emitter) = &ctx.event_emitter {
+            emit_model_route_decision_event(emitter.as_ref(), &decision);
         }
 
         (Some(decision), ctx.llm_registry.prepare_request(&req))

@@ -406,6 +406,61 @@ impl ExecutionEventEmitter for EmitterAdapter {
         });
     }
 
+    fn emit_model_route_decision(
+        &self,
+        backend: &str,
+        model: Option<&str>,
+        was_failover: bool,
+        reason: &str,
+        rejected_candidates: &[(String, String, &'static str, String)],
+    ) {
+        self.emit(ModelRouteDecisionPayload {
+            backend: backend.to_string(),
+            model: model.map(str::to_string),
+            was_failover,
+            reason: reason.to_string(),
+            rejected_candidates: rejected_candidates
+                .iter()
+                .map(
+                    |(candidate, backend, reason_kind, reason)| ModelRouteRejectionPayload {
+                        candidate: candidate.clone(),
+                        backend: backend.clone(),
+                        reason_kind: (*reason_kind).to_string(),
+                        reason: reason.clone(),
+                    },
+                )
+                .collect(),
+        });
+    }
+
+    fn emit_agent_route_decision(
+        &self,
+        id: &str,
+        profile: Option<&str>,
+        source: &str,
+        reason: &str,
+        required_capabilities: &[String],
+        rejected_candidates: &[(String, Vec<String>, String)],
+    ) {
+        self.emit(AgentRouteDecisionPayload {
+            id: id.to_string(),
+            profile: profile.map(str::to_string),
+            source: source.to_string(),
+            reason: reason.to_string(),
+            required_capabilities: required_capabilities.to_vec(),
+            rejected_candidates: rejected_candidates
+                .iter()
+                .map(
+                    |(profile, missing_capabilities, reason)| AgentRouteRejectionPayload {
+                        profile: profile.clone(),
+                        missing_capabilities: missing_capabilities.clone(),
+                        reason: reason.clone(),
+                    },
+                )
+                .collect(),
+        });
+    }
+
     fn emit_head_of_line_block(
         &self,
         blocker_node: u64,
@@ -461,5 +516,123 @@ impl ExecutionEventEmitter for EmitterAdapter {
             approval_id: approval_id.to_string(),
             decision: decision.to_string(),
         });
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use parking_lot::Mutex as PlMutex;
+
+    /// Captures every emitted `ApxmEvent` so tests can inspect the decoded
+    /// payload without a real rollout/SSE sink (RTG-11).
+    #[derive(Default)]
+    struct CapturingEmitter {
+        events: PlMutex<Vec<ApxmEvent>>,
+    }
+
+    impl EventEmitter for CapturingEmitter {
+        fn emit(&self, event: ApxmEvent) {
+            self.events.lock().push(event);
+        }
+    }
+
+    fn adapter_with_capture() -> (EmitterAdapter, Arc<CapturingEmitter>) {
+        let capture = Arc::new(CapturingEmitter::default());
+        let adapter = EmitterAdapter::new(
+            capture.clone() as Arc<dyn EventEmitter>,
+            EventSource::Runtime,
+            "trace-rtg11",
+        );
+        (adapter, capture)
+    }
+
+    /// RTG-11: a model-routing decision becomes a `model_route_decision`
+    /// event whose payload carries the chosen backend/model, the reason,
+    /// and every rejected candidate with its own reason — nothing silently
+    /// dropped.
+    #[test]
+    fn emit_model_route_decision_carries_chosen_reason_and_rejected_candidates() {
+        let (adapter, capture) = adapter_with_capture();
+        let rejected = vec![(
+            "gpt-slow".to_string(),
+            "openai".to_string(),
+            "circuit_breaker_open",
+            "backend 'openai' circuit breaker is open".to_string(),
+        )];
+        adapter.emit_model_route_decision(
+            "vllm",
+            Some("llama-70b"),
+            false,
+            "cost target selected 'llama-70b' (backend 'vllm')",
+            &rejected,
+        );
+
+        let events = capture.events.lock();
+        assert_eq!(events.len(), 1);
+        let event = &events[0];
+        assert_eq!(event.kind().name(), "model_route_decision");
+        let payload = event
+            .payload
+            .downcast_ref::<ModelRouteDecisionPayload>()
+            .expect("model route decision payload");
+        assert_eq!(payload.backend, "vllm");
+        assert_eq!(payload.model.as_deref(), Some("llama-70b"));
+        assert!(!payload.was_failover);
+        assert_eq!(
+            payload.reason,
+            "cost target selected 'llama-70b' (backend 'vllm')"
+        );
+        assert_eq!(payload.rejected_candidates.len(), 1);
+        assert_eq!(payload.rejected_candidates[0].candidate, "gpt-slow");
+        assert_eq!(payload.rejected_candidates[0].reason_kind, "circuit_breaker_open");
+        assert_eq!(
+            payload.rejected_candidates[0].reason,
+            "backend 'openai' circuit breaker is open"
+        );
+    }
+
+    /// RTG-11: an agent-routing decision becomes an `agent_route_decision`
+    /// event whose payload carries the chosen profile, the reason, and
+    /// every rejected candidate with its own missing-capability reason.
+    #[test]
+    fn emit_agent_route_decision_carries_chosen_reason_and_rejected_candidates() {
+        let (adapter, capture) = adapter_with_capture();
+        let rejected = vec![(
+            "reviewer-profile".to_string(),
+            vec!["execute".to_string()],
+            "missing required capabilities [execute]".to_string(),
+        )];
+        adapter.emit_agent_route_decision(
+            "worker-1",
+            Some("planner-profile"),
+            "selected",
+            "selected least-used eligible profile 'planner-profile' with capability fit score 0",
+            &["planner".to_string(), "read".to_string()],
+            &rejected,
+        );
+
+        let events = capture.events.lock();
+        assert_eq!(events.len(), 1);
+        let event = &events[0];
+        assert_eq!(event.kind().name(), "agent_route_decision");
+        let payload = event
+            .payload
+            .downcast_ref::<AgentRouteDecisionPayload>()
+            .expect("agent route decision payload");
+        assert_eq!(payload.id, "worker-1");
+        assert_eq!(payload.profile.as_deref(), Some("planner-profile"));
+        assert_eq!(payload.source, "selected");
+        assert_eq!(payload.required_capabilities, vec!["planner", "read"]);
+        assert_eq!(payload.rejected_candidates.len(), 1);
+        assert_eq!(payload.rejected_candidates[0].profile, "reviewer-profile");
+        assert_eq!(
+            payload.rejected_candidates[0].missing_capabilities,
+            vec!["execute".to_string()]
+        );
+        assert_eq!(
+            payload.rejected_candidates[0].reason,
+            "missing required capabilities [execute]"
+        );
     }
 }

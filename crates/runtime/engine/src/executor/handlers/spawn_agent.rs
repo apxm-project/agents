@@ -643,7 +643,7 @@ async fn resolve_spawn_agent_route(
         true,
     );
     let profile_counts = ctx.process_table.external_profile_counts();
-    AgentRouter::new(candidates)
+    let decision = AgentRouter::new(candidates)
         .route_requests_with_counts(&[request], &profile_counts)
         .map_err(|error| RuntimeError::Operation {
             op_type: node.op_type,
@@ -654,7 +654,44 @@ async fn resolve_spawn_agent_route(
         .ok_or_else(|| RuntimeError::Operation {
             op_type: node.op_type,
             message: "SPAWN_AGENT routing returned no decision".to_string(),
+        })?;
+
+    // RTG-11: make the routing decision observable — a rollout event
+    // carrying the chosen profile, why, and every rejected candidate with
+    // its own reason (never silently dropped).
+    if let Some(emitter) = &ctx.event_emitter {
+        emit_agent_route_decision_event(emitter.as_ref(), &decision);
+    }
+
+    Ok(decision)
+}
+
+/// Forward an [`AgentRouteDecision`] to the execution event emitter (RTG-11).
+/// Shared by both `AgentRouter` consumers in this crate so the observability
+/// shape stays identical regardless of call site.
+pub(crate) fn emit_agent_route_decision_event(
+    emitter: &dyn crate::executor::events::ExecutionEventEmitter,
+    decision: &AgentRouteDecision,
+) {
+    let rejected: Vec<(String, Vec<String>, String)> = decision
+        .rejected_candidates
+        .iter()
+        .map(|rejection| {
+            (
+                rejection.profile.clone(),
+                rejection.missing_capabilities.clone(),
+                rejection.reason.clone(),
+            )
         })
+        .collect();
+    emitter.emit_agent_route_decision(
+        &decision.id,
+        decision.profile.as_deref(),
+        decision.source.as_str(),
+        &decision.reason,
+        &decision.required_capabilities,
+        &rejected,
+    );
 }
 
 fn validate_route_capabilities(node: &Node, capabilities: &[String]) -> Result<()> {

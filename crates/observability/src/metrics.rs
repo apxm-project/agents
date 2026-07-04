@@ -12,6 +12,15 @@
 //!   capability invocations by [`apxm_core::types::capability::PermissionDecisionKind`]
 //! - journal depth + dead-letter count (gauges)
 //! - token usage (RT-8 feed)
+//! - model/agent routing decisions (RTG-11, `docs/plans/routing.md`),
+//!   labeled by outcome (`chosen`/`rejected`) and a typed reason. Routing
+//!   rejection reasons (circuit breaker open, capability mismatch, ...) have
+//!   no CM-3 analog, so callers pass `.as_str()` from the routing-owning
+//!   crate's own bounded enum (`apxm_runtime::model_router::
+//!   ModelRouteRejectionReason`, `apxm_runtime::agent_router::
+//!   AgentRouteSource`) rather than a string built ad hoc — this crate has
+//!   no dependency on the runtime crate, so the label type itself can't be
+//!   enforced here, but every caller in this workspace sources it from one.
 //!
 //! Quota consumption (ORG) is out of scope here — deferred, no ORG quota
 //! tracker was found with confidence at OBS-4 implementation time.
@@ -40,6 +49,9 @@ pub struct AppMetrics {
     dead_letter_count: Gauge<u64>,
 
     token_usage_total: Counter<u64>,
+
+    model_route_decisions_total: Counter<u64>,
+    agent_route_decisions_total: Counter<u64>,
 }
 
 impl AppMetrics {
@@ -91,6 +103,18 @@ impl AppMetrics {
             token_usage_total: meter
                 .u64_counter("apxm.tokens.usage")
                 .with_description("Token usage (RT-8 token accounting fed into OTLP).")
+                .build(),
+            model_route_decisions_total: meter
+                .u64_counter("apxm.routing.model.decisions")
+                .with_description(
+                    "Model-routing decisions (RTG-11), labeled by outcome (chosen/rejected), target, and reason.",
+                )
+                .build(),
+            agent_route_decisions_total: meter
+                .u64_counter("apxm.routing.agent.decisions")
+                .with_description(
+                    "Agent-routing decisions (RTG-11), labeled by outcome (chosen/rejected), source, and reason.",
+                )
                 .build(),
         }
     }
@@ -178,6 +202,64 @@ impl AppMetrics {
     pub fn record_token_usage(&self, count: u64, token_kind: &'static str) {
         self.token_usage_total
             .add(count, &[KeyValue::new("token_kind", token_kind)]);
+    }
+
+    /// Record the winning candidate of a model-routing decision (RTG-11).
+    /// `target`, when the decision came from the price/capability table, is
+    /// the active `RoutingTarget::as_str()` value
+    /// (`"cost"`/`"latency"`/`"quality"`/`"balanced"`) — `None` for
+    /// decisions made earlier in `ModelRouter::select`'s precedence order
+    /// (explicit backend/model, operation policy, default, first-available).
+    pub fn record_model_route_chosen(&self, target: Option<&'static str>, backend: &str) {
+        self.model_route_decisions_total.add(
+            1,
+            &[
+                KeyValue::new("outcome", "chosen"),
+                KeyValue::new("target", target.unwrap_or("n/a")),
+                KeyValue::new("backend", backend.to_string()),
+            ],
+        );
+    }
+
+    /// Record one rejected candidate from a model-routing decision (RTG-11).
+    /// `reason` must be sourced from `ModelRouteRejectionReason::as_str()` —
+    /// a candidate rejection is never surfaced only as free text.
+    pub fn record_model_route_rejected(&self, reason: &'static str) {
+        self.model_route_decisions_total.add(
+            1,
+            &[
+                KeyValue::new("outcome", "rejected"),
+                KeyValue::new("reason", reason),
+            ],
+        );
+    }
+
+    /// Record the winning candidate of an agent-routing decision (RTG-10/
+    /// RTG-11). `source` must be sourced from `AgentRouteSource::as_str()`
+    /// (`"explicit"`/`"selected"`/`"deterministic"`).
+    pub fn record_agent_route_chosen(&self, source: &'static str) {
+        self.agent_route_decisions_total.add(
+            1,
+            &[
+                KeyValue::new("outcome", "chosen"),
+                KeyValue::new("source", source),
+            ],
+        );
+    }
+
+    /// Record one rejected candidate from an agent-routing decision. Agent
+    /// routing rejections are always a missing-capability mismatch today
+    /// (`agent_scoring::score_candidates`), so the reason label is the fixed
+    /// `"missing_capability"` — a real, bounded value rather than the free
+    /// -text explanation string (which still rides the rollout event).
+    pub fn record_agent_route_rejected(&self) {
+        self.agent_route_decisions_total.add(
+            1,
+            &[
+                KeyValue::new("outcome", "rejected"),
+                KeyValue::new("reason", "missing_capability"),
+            ],
+        );
     }
 }
 
@@ -274,6 +356,60 @@ mod tests {
             errors[0].contains(&("route".to_string(), "/v1/generate".to_string()))
         );
         assert!(errors[0].contains(&("method".to_string(), "POST".to_string())));
+    }
+
+    /// RTG-11: a model-routing decision feeds one `chosen` data point for
+    /// the winner and one `rejected` data point per passed-over candidate —
+    /// the rejection is observable in the metric, not just the rollout event.
+    #[tokio::test(flavor = "multi_thread")]
+    async fn model_route_decision_records_chosen_and_rejected_outcomes() {
+        let (metrics, exporter, provider) = test_metrics();
+
+        metrics.record_model_route_chosen(Some("cost"), "vllm");
+        metrics.record_model_route_rejected("circuit_breaker_open");
+        metrics.record_model_route_rejected("not_best_ranked");
+
+        provider.force_flush().unwrap();
+
+        let datapoints = find_sum_datapoint_labels(&exporter, "apxm.routing.model.decisions");
+        assert_eq!(datapoints.len(), 3);
+
+        let has = |pairs: &[(&str, &str)]| {
+            datapoints.iter().any(|labels| {
+                pairs.iter().all(|(key, value)| {
+                    labels.contains(&(key.to_string(), value.to_string()))
+                })
+            })
+        };
+        assert!(has(&[("outcome", "chosen"), ("target", "cost"), ("backend", "vllm")]));
+        assert!(has(&[("outcome", "rejected"), ("reason", "circuit_breaker_open")]));
+        assert!(has(&[("outcome", "rejected"), ("reason", "not_best_ranked")]));
+    }
+
+    /// RTG-11: an agent-routing decision feeds one `chosen` data point for
+    /// the winner and one `rejected` data point per candidate that failed
+    /// the required-capability check.
+    #[tokio::test(flavor = "multi_thread")]
+    async fn agent_route_decision_records_chosen_and_rejected_outcomes() {
+        let (metrics, exporter, provider) = test_metrics();
+
+        metrics.record_agent_route_chosen("selected");
+        metrics.record_agent_route_rejected();
+
+        provider.force_flush().unwrap();
+
+        let datapoints = find_sum_datapoint_labels(&exporter, "apxm.routing.agent.decisions");
+        assert_eq!(datapoints.len(), 2);
+
+        let has = |pairs: &[(&str, &str)]| {
+            datapoints.iter().any(|labels| {
+                pairs.iter().all(|(key, value)| {
+                    labels.contains(&(key.to_string(), value.to_string()))
+                })
+            })
+        };
+        assert!(has(&[("outcome", "chosen"), ("source", "selected")]));
+        assert!(has(&[("outcome", "rejected"), ("reason", "missing_capability")]));
     }
 
     /// Round-trip every `PermissionDecisionKind` variant through `as_str()`
