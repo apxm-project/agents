@@ -151,6 +151,25 @@ describe("TSF-4: TS/Python AIR emission parity", () => {
     expect(tsAir).toBe(pyAir);
   });
 
+  it("reliability_wait_all: ask/think reliability kwargs + wait_all byte-matches the Python reference", () => {
+    const g = new GraphBuilder("reliability_wait_all");
+    const a = g.ask({
+      name: "fetch_a",
+      prompt: "Fetch part A.",
+      token_budget: 500,
+      retry_max: 3,
+      retry_backoff_ms: 200,
+      continue_on_error: true,
+    });
+    const b = g.think({ name: "fetch_b", prompt: "Fetch part B.", effort: "high" });
+    const joined = g.waitAll("joined", a, b);
+    g.done(joined);
+
+    const tsAir = g.toAir();
+    const pyAir = stripHeaderComment(readFixture("reliability_wait_all")).replace(/\n$/, "");
+    expect(tsAir).toBe(pyAir);
+  });
+
   it("runtime_agent_routing: spawn_agent with routing attrs byte-matches the Python reference", () => {
     const g = new GraphBuilder("runtime_agent_routing");
     const worker = g.spawnAgent({

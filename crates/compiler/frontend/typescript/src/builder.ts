@@ -190,32 +190,34 @@ export class GraphBuilder {
 
   /** Simple Q&A with an LLM, no extended thinking (ASK). */
   ask(options: AskOptions): NodeRef {
-    const name = options.name ?? this.autoName("ASK");
-    const inputNames = options.inputs ? Object.keys(options.inputs) : [];
+    const { name, prompt, model, temperature, systemPrompt, inputs, ...rest } = options;
+    const inputNames = inputs ? Object.keys(inputs) : [];
     const attrs: Attrs = {
-      template_str: options.prompt,
-      model: options.model,
-      temperature: options.temperature,
-      system_prompt: options.systemPrompt,
+      template_str: prompt,
+      model,
+      temperature,
+      system_prompt: systemPrompt,
       input_names: inputNames.length > 0 ? inputNames : undefined,
+      ...rest,
     };
-    const node = this.addNode(name, "ASK", attrs);
-    this.wireInputs(node, options.inputs);
+    const node = this.addNode(name ?? this.autoName("ASK"), "ASK", attrs);
+    this.wireInputs(node, inputs);
     return node;
   }
 
   /** Extended chain-of-thought reasoning turn (THINK). */
   think(options: AskOptions): NodeRef {
-    const name = options.name ?? this.autoName("THINK");
-    const inputNames = options.inputs ? Object.keys(options.inputs) : [];
+    const { name, prompt, model, temperature, systemPrompt: _systemPrompt, inputs, ...rest } = options;
+    const inputNames = inputs ? Object.keys(inputs) : [];
     const attrs: Attrs = {
-      template_str: options.prompt,
-      model: options.model,
-      temperature: options.temperature,
+      template_str: prompt,
+      model,
+      temperature,
       input_names: inputNames.length > 0 ? inputNames : undefined,
+      ...rest,
     };
-    const node = this.addNode(name, "THINK", attrs);
-    this.wireInputs(node, options.inputs);
+    const node = this.addNode(name ?? this.autoName("THINK"), "THINK", attrs);
+    this.wireInputs(node, inputs);
     return node;
   }
 
