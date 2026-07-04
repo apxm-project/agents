@@ -21,6 +21,7 @@ use crate::executor::ExecutionContext;
 use crate::executor::ExecutorEngine;
 use crate::executor::pipeline::{is_blocking_wait_op, is_pure_llm_op};
 use crate::observability::WorkerLocalMetrics;
+use crate::scheduler::context_view::SchedulerCtx;
 use crate::scheduler::internal_state::TokenState;
 use crate::scheduler::queue::Priority;
 use crate::scheduler::state::SchedulerState;
@@ -244,7 +245,7 @@ pub async fn worker_loop(
 /// wake splices a fresh turn + recv. Otherwise `None` (a plain one-shot park).
 fn session_loop_rearm_spec(
     node: &std::sync::Arc<apxm_core::types::Node>,
-    ctx: &crate::executor::ExecutionContext,
+    ctx: &dyn SchedulerCtx,
 ) -> Option<crate::scheduler::park_registry::RearmSpec> {
     use apxm_core::types::operations::AISOperationType;
     if node.op_type != AISOperationType::Autonomous {
@@ -254,7 +255,7 @@ fn session_loop_rearm_spec(
     if attr("mode") != Some("recv") || attr("recv_once") != Some("false") {
         return None;
     }
-    let session_id = ctx.session_id.as_ref()?.to_string();
+    let session_id = ctx.session_id()?.to_string();
     let turn_flow = attr("turn_flow")?.to_string();
     let turn_agent = attr("turn_agent")?.to_string();
     let turn_param = attr("turn_param")?.to_string();
@@ -307,8 +308,8 @@ fn op_start(state: &SchedulerState, node_id: NodeId, node: &Node, worker_id: usi
     state.emit_node_started(node_id, node, worker_id);
 }
 
-fn emit_scheduler_events(state: &SchedulerState, ctx: &ExecutionContext, node_id: NodeId) {
-    let Some(emitter) = ctx.event_emitter.as_ref() else {
+fn emit_scheduler_events(state: &SchedulerState, ctx: &dyn SchedulerCtx, node_id: NodeId) {
+    let Some(emitter) = ctx.event_emitter() else {
         return;
     };
 
@@ -607,7 +608,7 @@ fn calculate_backoff(cfg: &crate::scheduler::config::SchedulerConfig, attempt: u
 
 struct WorkerEvent<'a> {
     state: &'a SchedulerState,
-    ctx: &'a ExecutionContext,
+    ctx: &'a dyn SchedulerCtx,
     node_id: NodeId,
     node: &'a Node,
     outputs: &'a [TokenId],
@@ -646,7 +647,7 @@ async fn handle_success(
     #[cfg(feature = "metrics")]
     local_metrics.record_token_routing(routing_start.elapsed());
 
-    if let Some(emitter) = &event.ctx.event_emitter {
+    if let Some(emitter) = event.ctx.event_emitter() {
         emitter.emit_node_output(event.node_id, &value);
     }
 
@@ -820,7 +821,7 @@ fn finish_one(state: &SchedulerState) {
 
 /// Record an episodic memory event.
 async fn record_event(
-    ctx: &ExecutionContext,
+    ctx: &dyn SchedulerCtx,
     node_id: NodeId,
     node: &Node,
     event_type: &str,
@@ -853,7 +854,7 @@ async fn record_event(
     let _ = ctx
         .memory()
         .record_episodic_event(
-            ctx.execution_id.clone(),
+            ctx.execution_id().to_string(),
             event_type,
             Value::Object(fields.into_iter().collect()),
             Some(node_id),
