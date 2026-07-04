@@ -59,8 +59,11 @@ fn extract_python_tools_sidecar(air: &str) -> (String, Option<Vec<u8>>) {
     (filtered, sidecar)
 }
 
+/// AGT-5: `pub(super)` (not private) so `commands::package`'s skill-build
+/// step can drive the same Python-frontend AIR emission `apxm compile`
+/// itself uses, rather than duplicating the PYTHONPATH/subprocess dance.
 #[cfg(feature = "driver")]
-fn emit_air_from_python(
+pub(super) fn emit_air_from_python(
     input: &Path,
     config_path: Option<&Path>,
 ) -> Result<(tempfile::NamedTempFile, Option<Vec<u8>>)> {
