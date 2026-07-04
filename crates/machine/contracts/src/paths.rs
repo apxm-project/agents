@@ -23,7 +23,6 @@ const COMPILER_DIR: &str = "compiler";
 const LOGS_DIR: &str = "logs";
 const SESSIONS_DIR: &str = "sessions";
 const MEMORY_DIR: &str = "memory";
-const LIBS_DIR: &str = "libs";
 const INTEGRATIONS_DIR: &str = "integrations";
 
 /// Resolved APXM directories for the current process.
@@ -135,25 +134,6 @@ impl ApxmPaths {
     /// created on demand.
     pub fn memory_dir(&self) -> io::Result<PathBuf> {
         Self::ensure_subdir_at(&self.state_dir, MEMORY_DIR)
-    }
-
-    /// Deployed workflow/skill library roots ordered by precedence (`<project>/.apxm/libs`
-    /// then `<home>/.apxm/libs`). Executable skill packs live here; integration
-    /// catalog definitions are discovered via [`Self::integrations_dirs`].
-    ///
-    /// This is a *read* surface: roots that do not exist are still returned (the
-    /// scanner tolerates a missing directory), so a fresh install with no packs
-    /// is a no-op rather than an error.
-    pub fn libs_dirs(&self) -> Vec<PathBuf> {
-        let mut dirs = Vec::with_capacity(2);
-        if self.project_dir.is_dir() {
-            dirs.push(self.project_dir.join(LIBS_DIR));
-        }
-        let home_libs = self.home_dir.join(LIBS_DIR);
-        if !dirs.contains(&home_libs) {
-            dirs.push(home_libs);
-        }
-        dirs
     }
 
     /// Integration catalog roots ordered by precedence.

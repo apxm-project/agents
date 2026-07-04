@@ -450,7 +450,7 @@ fn load_package(root: &Path) -> Result<LoadedPackage> {
 /// JSON schema's `patternProperties`). Anything else fails validation ("no
 /// package-private layout").
 fn recognized_relpath(rel: &str) -> bool {
-    if matches!(rel, "pack.toml" | "agent.toml" | "hierarchy.toml") {
+    if matches!(rel, "pack.toml" | "agent.toml" | "hierarchy.toml" | "README.md") {
         return true;
     }
     let parts: Vec<&str> = rel.split('/').collect();
@@ -460,7 +460,12 @@ fn recognized_relpath(rel: &str) -> bool {
         ["prompts", f] => f.ends_with(".md"),
         ["python", f] => f.ends_with(".py"),
         ["skills", _id, "skill.toml"] => true,
-        ["skills", _id, f] => *f == "SKILL.md" || *f == "prompt.md" || *f == "skill.air" || *f == "skill.apxmobj",
+        // SKILL.md / prompt.md are the primary prose; a skill may also carry
+        // supplementary authored `.md` docs (e.g. a canvas/contract reference)
+        // alongside them, plus its optional compiled artifacts.
+        ["skills", _id, f] => {
+            f.ends_with(".md") || *f == "skill.air" || *f == "skill.apxmobj"
+        }
         ["skills", _id, "examples", f] => f.ends_with(".air"),
         ["examples", f] => f.ends_with(".md"),
         ["tests", f] => !f.is_empty(),
