@@ -379,6 +379,16 @@ pub async fn execute(ctx: &ExecutionContext, node: &Node, inputs: Vec<Value>) ->
 
     let dataflow_prompt = dataflow_system_prompt(node, &inputs);
     let mut system_prompt = resolve_system_prompt(ctx, node, mode, dataflow_prompt)?;
+    // A `pre_turn` hook (G-3) may have rendered a prompt supplement for the
+    // top-level turn currently in flight (e.g. Gao's Studio-context hook).
+    // Consume it once (`take`) so a later sub-ask in the same turn does not
+    // re-prepend it. Applied before `pre_ask` so `pre_ask` hooks still see —
+    // and may further prepend/override — the combined text.
+    if mode == LlmMode::Ask
+        && let Some(turn_supplement) = ctx.pending_turn_prompt_supplement.write().take()
+    {
+        system_prompt = format!("{turn_supplement}\n{system_prompt}");
+    }
     // pre_ask hooks may prepend/replace the system prompt (in-program context
     // injection; constitution #5). Ask mode only; gate hooks fail closed.
     if mode == LlmMode::Ask
