@@ -44,7 +44,7 @@ mod token_usage;
 pub mod events;
 pub mod sandbox;
 
-pub use facade::{ApprovalContext, CapabilityFacade};
+pub use facade::{ApprovalContext, CapabilityFacade, CapabilitySandboxPreflight};
 pub use host::CapabilityHost;
 pub use metadata::RuntimeCapability;
 pub use token_usage::TokenUsageSummary;

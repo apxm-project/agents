@@ -273,10 +273,18 @@ impl Runtime {
         session_dir: Option<String>,
         python_handler_bridge: Option<Arc<PythonHandlerBridge>>,
     ) -> ExecutionContext {
+        // Bound to a concrete `Arc<CapabilitySystem>` local first: passing
+        // `Arc::clone(&self.capability_system)` directly would fix `Arc::clone`'s
+        // generic `T` from the call's expected `Arc<dyn CapabilityFacade>` type
+        // before checking the argument, which fails to unify with the actual
+        // `&Arc<CapabilitySystem>` receiver. Binding the concrete type first,
+        // then passing that binding, lets the unsize coercion apply normally
+        // at the `ExecutionContext::new` argument position.
+        let capability_system: Arc<CapabilitySystem> = Arc::clone(&self.capability_system);
         let mut ctx = ExecutionContext::new(
             Arc::clone(&self.memory),
             Arc::clone(&self.llm_registry),
-            Arc::clone(&self.capability_system),
+            capability_system,
             self.aam.clone(),
         );
         ctx.session_id = session_id;

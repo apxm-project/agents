@@ -26,7 +26,28 @@ use async_trait::async_trait;
 
 use crate::events::ExecutionEventEmitter;
 use crate::metadata::RuntimeCapability;
-use crate::sandbox::SandboxRegistry;
+use crate::sandbox::{IsolationLevel, SandboxRegistry};
+
+/// Result of checking whether a capability invocation can be sandboxed —
+/// moved here (from `apxm-runtime`'s `capability` module) because it's the
+/// return type of [`CapabilityFacade::sandbox_preflight`], the write-boundary
+/// admission check every direct (non-read-only) tool call goes through
+/// (`executor::handlers::inv_cap::enforce_write_boundary`).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum CapabilitySandboxPreflight {
+    /// The capability does not request sandbox routing for these arguments.
+    Direct,
+    /// The capability produced an execution request and a compatible backend
+    /// was selected without running the capability.
+    Sandboxed {
+        /// Selected backend name.
+        backend: String,
+        /// Isolation level provided by the selected backend.
+        isolation: IsolationLevel,
+        /// Warnings reported when the backend can only provide degraded guarantees.
+        warnings: Vec<String>,
+    },
+}
 
 /// Approval-gate context for [`CapabilityFacade::invoke_with_timeout_ctx`].
 ///
@@ -86,4 +107,16 @@ pub trait CapabilityFacade: Send + Sync {
     /// Set the sandbox registry used to route capability execution through
     /// sandbox backends.
     fn set_sandbox_registry(&self, registry: Arc<SandboxRegistry>);
+
+    /// Check whether a capability invocation would route through a
+    /// compatible sandbox backend, without executing the capability.
+    ///
+    /// Load-bearing for the write-boundary admission check every direct
+    /// (non-read-only) tool call goes through: a capability that would run
+    /// sandboxed is treated as admitted without needing an explicit grant.
+    fn sandbox_preflight(
+        &self,
+        name: &str,
+        args: &HashMap<String, Value>,
+    ) -> Result<CapabilitySandboxPreflight, RuntimeError>;
 }
