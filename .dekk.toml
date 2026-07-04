@@ -179,6 +179,13 @@ lint = { run = "apxm package lint", description = "Validate a package + capabili
 build = { run = "apxm package build", description = "Recompute the pack integrity hash chain (+ compile skills)", skill = true }
 install = { run = "apxm package install", description = "Install a built package to APXM_HOME/packages/<id>" }
 
+[commands.integration]
+description = "Scaffold, lint, and install integration packages (apxm.integration-package.v1)"
+group = "Authoring"
+new = { run = "apxm integration new", description = "Scaffold a new integration-package folder tree", skill = true }
+lint = { run = "apxm integration lint", description = "Validate the six files + joined capability/permission policy", skill = true }
+install = { run = "apxm integration install", description = "Install to APXM_HOME/integrations/<id> (+ best-effort workspace mirror)" }
+
 [commands.cache]
 description = "Manage the MemoCache (response memoization)"
 group = "Configuration"

@@ -183,6 +183,11 @@ pub enum Commands {
         #[command(subcommand)]
         action: OrgAction,
     },
+    /// Scaffold, lint, and install integration packages (apxm.integration-package.v1)
+    Integration {
+        #[command(subcommand)]
+        action: IntegrationAction,
+    },
     /// Browse AIS operations (the agent instruction set)
     Ops {
         #[command(subcommand)]
@@ -933,6 +938,40 @@ pub enum OrgAction {
     /// Install an org package to `APXM_HOME/orgs/<id>/`.
     Install {
         /// Org-package directory to install (default: current directory).
+        #[arg(default_value = ".")]
+        path: PathBuf,
+        /// Overwrite an existing install at the destination.
+        #[arg(long)]
+        force: bool,
+    },
+}
+
+#[derive(Subcommand)]
+pub enum IntegrationAction {
+    /// Scaffold a new integration-package folder tree (apxm.integration-package.v1).
+    New {
+        /// Integration id (also used as integration.toml's integration_id/provider).
+        id: String,
+        /// Destination directory (default: ./integrations/<id>).
+        #[arg(long)]
+        path: Option<PathBuf>,
+        /// Display name for the provider (default: derived from the id).
+        #[arg(long)]
+        display_name: Option<String>,
+    },
+    /// Validate an integration-package folder: the six files exist and parse,
+    /// and every capability has a joined permissions.toml policy entry
+    /// (write-capable capabilities must default to approval-required).
+    Lint {
+        /// Integration-package directory to validate (default: current directory).
+        #[arg(default_value = ".")]
+        path: PathBuf,
+    },
+    /// Install an integration package to `APXM_HOME/integrations/<id>/`,
+    /// best-effort mirroring to `$APXM_WORKSPACE_ROOT/integrations/<id>/`
+    /// (the root auth-ms/apxm-os/Studio scan) when that env var is set.
+    Install {
+        /// Integration-package directory to install (default: current directory).
         #[arg(default_value = ".")]
         path: PathBuf,
         /// Overwrite an existing install at the destination.
