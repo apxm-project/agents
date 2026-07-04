@@ -14,7 +14,7 @@
 //! bridge consumes the resolved token.
 
 use super::guard_url_ssrf_pinned;
-use crate::capability::{
+use crate::{
     executor::{CapabilityExecutor, CapabilityResult},
     metadata::RuntimeCapability,
 };

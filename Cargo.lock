@@ -248,6 +248,33 @@ dependencies = [
 ]
 
 [[package]]
+name = "apxm-capability"
+version = "0.1.0"
+dependencies = [
+ "apxm-aam",
+ "apxm-backends",
+ "apxm-capability-iface",
+ "apxm-core",
+ "async-trait",
+ "base64 0.22.1",
+ "blake3",
+ "chrono",
+ "dashmap",
+ "once_cell",
+ "parking_lot",
+ "reqwest 0.12.28",
+ "rusqlite",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "thiserror 2.0.18",
+ "tokio",
+ "tracing",
+ "uuid",
+ "wiremock",
+]
+
+[[package]]
 name = "apxm-capability-iface"
 version = "0.1.0"
 dependencies = [
@@ -431,6 +458,7 @@ dependencies = [
  "apxm-aam",
  "apxm-artifact",
  "apxm-backends",
+ "apxm-capability",
  "apxm-capability-iface",
  "apxm-core",
  "apxm-memory",

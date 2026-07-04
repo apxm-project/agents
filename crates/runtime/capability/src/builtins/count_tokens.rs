@@ -1,7 +1,7 @@
 //! `count_tokens` — estimate the token size of a string (chars/4 heuristic,
 //! matching the chat compaction budget). Read-only and pure.
 
-use crate::capability::{
+use crate::{
     executor::{CapabilityExecutor, CapabilityResult},
     metadata::RuntimeCapability,
 };

@@ -2,7 +2,7 @@ use super::{
     canonicalize_path_or_existing_ancestor, canonicalize_policy_path, normalize_path_lexically,
     require_string_arg,
 };
-use crate::capability::{
+use crate::{
     executor::{CapabilityExecutor, CapabilityResult},
     metadata::RuntimeCapability,
 };

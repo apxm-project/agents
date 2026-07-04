@@ -7,7 +7,7 @@
 //! provider, so onboarding a connector needs no per-provider Rust — a pack just
 //! declares an action block whose capability is `provider.call`.
 
-use crate::capability::{
+use crate::{
     executor::{CapabilityExecutor, CapabilityResult},
     metadata::RuntimeCapability,
 };

@@ -1,10 +1,10 @@
 use super::require_string_arg;
-use crate::capability::{
+use crate::{
     executor::{CapabilityExecutor, CapabilityResult},
     metadata::RuntimeCapability,
 };
-use crate::sandbox::constants::{executables, shell_args};
-use crate::sandbox::{ExecRequest, IsolationLevel};
+use apxm_capability_iface::sandbox::constants::{executables, shell_args};
+use apxm_capability_iface::sandbox::{ExecRequest, IsolationLevel};
 use apxm_core::{
     error::RuntimeError,
     types::{AISOperationType, Value},

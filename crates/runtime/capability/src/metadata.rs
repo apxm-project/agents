@@ -7,6 +7,6 @@
 //! `AamCapabilityRecord` conversion impl here either (neither type is local
 //! to `apxm-runtime` anymore) — so that impl moved with it.
 
-// Re-exported so `crate::capability::metadata::RuntimeCapability` and
+// Re-exported so `crate::metadata::RuntimeCapability` and
 // `apxm_runtime::capability::metadata::RuntimeCapability` keep working.
 pub use apxm_capability_iface::RuntimeCapability;

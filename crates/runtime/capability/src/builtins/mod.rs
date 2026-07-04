@@ -25,7 +25,7 @@ pub use authoring::{ComposeWorkflowCapability, RunWorkflowCapability};
 pub use bash::{BashCapability, BashConfig};
 pub use count_tokens::CountTokensCapability;
 pub use http::{HttpGetCapability, HttpPostCapability, guard_url_ssrf, guard_url_ssrf_pinned};
-pub(crate) use http::{client_for, shared_client};
+pub use http::{client_for, shared_client};
 pub use mcp_bridge::McpBridgeCapability;
 pub use provider_call::ProviderCallCapability;
 pub use read::{ReadCapability, ReadConfig};

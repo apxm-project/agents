@@ -7,7 +7,7 @@
 //! string.
 
 use super::require_string_arg;
-use crate::capability::{
+use crate::{
     executor::{CapabilityExecutor, CapabilityResult},
     metadata::RuntimeCapability,
 };
@@ -126,7 +126,7 @@ fn hardened_redirect_policy() -> reqwest::redirect::Policy {
 /// (`.resolve_to_addrs` overrides only the name→address mapping), so virtual
 /// hosting and certificate validation still work. An IP-literal URL (empty
 /// `addrs`) reuses the shared client — there is no name to rebind.
-pub(crate) fn client_for(url: &str, addrs: &[SocketAddr]) -> std::borrow::Cow<'static, Client> {
+pub fn client_for(url: &str, addrs: &[SocketAddr]) -> std::borrow::Cow<'static, Client> {
     if addrs.is_empty() {
         return std::borrow::Cow::Borrowed(shared_client());
     }
@@ -152,7 +152,7 @@ pub(crate) fn client_for(url: &str, addrs: &[SocketAddr]) -> std::borrow::Cow<'s
 /// One process-wide HTTP client, built lazily on first use (never at startup /
 /// capability construction — building a reqwest client eagerly during runtime
 /// setup wedged the executor's completion path).
-pub(crate) fn shared_client() -> &'static Client {
+pub fn shared_client() -> &'static Client {
     static CLIENT: OnceLock<Client> = OnceLock::new();
     CLIENT.get_or_init(|| {
         Client::builder()
