@@ -178,6 +178,11 @@ pub enum Commands {
         #[command(subcommand)]
         action: PackageAction,
     },
+    /// Scaffold, lint, and install organization packages (ORG-1 folder format)
+    Org {
+        #[command(subcommand)]
+        action: OrgAction,
+    },
     /// Browse AIS operations (the agent instruction set)
     Ops {
         #[command(subcommand)]
@@ -896,6 +901,38 @@ pub enum PackageAction {
     /// Install a built package to `APXM_HOME/packages/<id>/`.
     Install {
         /// Package directory to install (default: current directory).
+        #[arg(default_value = ".")]
+        path: PathBuf,
+        /// Overwrite an existing install at the destination.
+        #[arg(long)]
+        force: bool,
+    },
+}
+
+#[derive(Subcommand)]
+pub enum OrgAction {
+    /// Scaffold a new organization-package folder tree (apxm.org-package.v1).
+    New {
+        /// Org id (also used as org.toml's org_id).
+        id: String,
+        /// Destination directory (default: ./orgs/<id>).
+        #[arg(long)]
+        path: Option<PathBuf>,
+        /// Display name for the org (default: derived from the id).
+        #[arg(long)]
+        display_name: Option<String>,
+    },
+    /// Validate an org-package folder: member resolution, tree
+    /// well-formedness, member-hierarchy/topology consistency, and
+    /// capability-mask validity against the org's global capability set.
+    Lint {
+        /// Org-package directory to validate (default: current directory).
+        #[arg(default_value = ".")]
+        path: PathBuf,
+    },
+    /// Install an org package to `APXM_HOME/orgs/<id>/`.
+    Install {
+        /// Org-package directory to install (default: current directory).
         #[arg(default_value = ".")]
         path: PathBuf,
         /// Overwrite an existing install at the destination.

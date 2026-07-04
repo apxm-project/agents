@@ -211,6 +211,7 @@ async fn run_cli(cli: Cli) -> Result<()> {
         Commands::Agent { action } => agent_command(action, cli.json).await,
         Commands::Team { action } => team_command(action, cli.json),
         Commands::Package { action } => package_command(action, cli.json),
+        Commands::Org { action } => org_command(action, cli.json),
         Commands::Ops { action } => ops_command(action, cli.json),
         Commands::Validate {
             input,
@@ -347,6 +348,7 @@ async fn run_cli_no_driver(cli: Cli) -> Result<()> {
         Commands::Agent { action } => agent_command(action, cli.json).await,
         Commands::Team { action } => team_command(action, cli.json),
         Commands::Package { action } => package_command(action, cli.json),
+        Commands::Org { action } => org_command(action, cli.json),
         Commands::Ops { action } => ops_command(action, cli.json),
         Commands::Validate {
             input,
