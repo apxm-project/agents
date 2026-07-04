@@ -886,15 +886,6 @@ fn package_build(path: &Path, json_output: bool) -> Result<()> {
 // package install
 // ---------------------------------------------------------------------
 
-/// `$HOME/.apxm/libs` — the manual pre-AGT-3 install convention this
-/// command replaces (see `studio/crates/studio/src/apps.rs`,
-/// `server/crates/core/src/skill_resources.rs`). We never touch it, but we
-/// warn loudly if a same-id pack is already sitting there so an operator
-/// doesn't end up with two divergent copies loaded from two roots.
-fn manual_libs_dir(apxm_home: &Path) -> PathBuf {
-    apxm_home.join("libs")
-}
-
 pub(crate) fn packages_dir(apxm_home: &Path) -> PathBuf {
     apxm_home.join("packages")
 }
@@ -968,31 +959,12 @@ pub(crate) fn package_install_to(
         .with_context(|| format!("Failed to create {}", packages_dir(apxm_home).display()))?;
     copy_dir_recursive(path, &dest)?;
 
-    let manual_libs_pack = manual_libs_dir(apxm_home).join(&pkg.agent.id);
-    let manual_libs_warning = if manual_libs_pack.is_dir() {
-        Some(format!(
-            "warning: '{}' is also present under the manual ~/.apxm/libs/ convention \
-             ({}). apxm package install does NOT migrate or remove it; both roots will be \
-             scanned independently until the manual copy is removed by hand — this can load \
-             two divergent copies of the same package id.",
-            pkg.agent.id,
-            manual_libs_pack.display()
-        ))
-    } else {
-        None
-    };
-
-    if let Some(warning) = &manual_libs_warning {
-        eprintln!("{warning}");
-    }
-
     if json_output {
         println!(
             "{}",
             serde_json::to_string_pretty(&serde_json::json!({
                 "id": pkg.agent.id,
                 "installed_to": dest.display().to_string(),
-                "manual_libs_conflict": manual_libs_warning,
             }))?
         );
     } else {
@@ -1252,22 +1224,22 @@ mod tests {
     }
 
     #[test]
-    fn install_warns_on_manual_libs_conflict_without_migrating() {
+    fn install_ignores_manual_libs_dir() {
+        // AGT-4 hard cutover: `~/.apxm/libs` is no longer a load or scan root.
+        // Install must place the pack under packages/ and neither read nor touch
+        // any stale copy sitting under the old libs convention.
         let tmp = tempdir().unwrap();
         let root = tmp.path().join("conflicted");
         scaffold(&root, "conflicted");
         let fake_home = tempdir().unwrap();
 
-        // Simulate a pre-existing manual ~/.apxm/libs/<id> install.
         let manual = fake_home.path().join("libs").join("conflicted");
         fs::create_dir_all(&manual).unwrap();
-        fs::write(manual.join("marker.txt"), "manual copy, must survive untouched").unwrap();
+        fs::write(manual.join("marker.txt"), "stale libs copy, left untouched").unwrap();
 
         package_install_to(&root, fake_home.path(), false, true).expect("install ok");
 
-        // install must not remove or alter the manual copy.
         assert!(manual.join("marker.txt").is_file());
-        // ...and must have placed the new copy under packages/.
         assert!(
             fake_home
                 .path()
