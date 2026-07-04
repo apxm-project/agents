@@ -327,6 +327,32 @@ fn gate_decision_would_widen(mode: HookMode, capability_requires_approval: bool,
     mode == HookMode::Gate && capability_requires_approval && is_allow
 }
 
+/// Fold one `pre_turn` hook's decision into the running supplement (G-3).
+/// `set_system` replaces; `prepend_system` stacks ahead of whatever earlier
+/// `pre_turn` hooks already contributed (first-registered ends up innermost,
+/// matching `pre_ask`'s prepend order). Anything else (missing/unknown
+/// `decision`, non-object, no `text`) is a no-op — pure function, no I/O.
+fn apply_pre_turn_decision(supplement: Option<String>, decision: &JsonValue) -> Option<String> {
+    let Some(obj) = decision.as_object() else {
+        return supplement;
+    };
+    match obj.get("decision").and_then(|v| v.as_str()) {
+        Some("set_system") => obj
+            .get("text")
+            .and_then(|v| v.as_str())
+            .map(str::to_string)
+            .or(supplement),
+        Some("prepend_system") => match obj.get("text").and_then(|v| v.as_str()) {
+            Some(t) => Some(match supplement {
+                Some(prev) => format!("{t}\n{prev}"),
+                None => t.to_string(),
+            }),
+            None => supplement,
+        },
+        _ => supplement,
+    }
+}
+
 fn parse_pre_cap_decision(decision: JsonValue) -> PreCapDecision {
     let Some(obj) = decision.as_object() else {
         return PreCapDecision::Allow;
@@ -441,13 +467,66 @@ async fn fire_lifecycle_hooks(
 }
 
 /// Fire `pre_turn` hooks (before the turn's ask). Gate-capable (fail-closed).
-pub async fn run_pre_turn_hooks(ctx: &ExecutionContext) -> Result<(), RuntimeError> {
-    fire_lifecycle_hooks(
-        ctx,
-        HookEvent::PreTurn,
-        json!({ HOOK_PAYLOAD_KEY: { "event": "pre_turn", "remaining_budget": remaining_budget(ctx) } }),
-    )
-    .await
+///
+/// `turn_context` is the turn's structured `context` field (e.g. Studio's Gao
+/// client snapshot, G-3) when the host supplies one — `None` today for every
+/// caller, since no reserved turn parameter yet threads an arbitrary
+/// per-turn JSON payload from the compiled AIR's bound inputs down to this
+/// call the way `user_message` is threaded (see `ConversationMemoryMiddleware`
+/// and `ConversationalAgent.TURN_PARAM` in the Python frontend). A hook that
+/// wants Studio's snapshot today receives `context: null` and degrades
+/// gracefully; wiring a second bound turn input is tracked as the G-3 gap.
+///
+/// Like `pre_ask`, a hook may return a `set_system`/`prepend_system` decision;
+/// the (possibly combined, first-wins-then-chains) text is returned so the
+/// caller can stash it where the ask handler's system-prompt composition picks
+/// it up (`ExecutionContext::pending_turn_prompt_supplement`).
+pub async fn run_pre_turn_hooks(
+    ctx: &ExecutionContext,
+    turn_context: Option<JsonValue>,
+) -> Result<Option<String>, RuntimeError> {
+    let Some(registry) = ctx.hook_registry() else {
+        return Ok(None);
+    };
+    let bindings = registry.for_event(HookEvent::PreTurn);
+    if bindings.is_empty() {
+        return Ok(None);
+    }
+    let Some(bridge) = ctx.python_handler_bridge.as_ref() else {
+        return Ok(None);
+    };
+
+    let mut supplement: Option<String> = None;
+    for binding in bindings {
+        let payload = json!({
+            HOOK_PAYLOAD_KEY: {
+                "event": "pre_turn",
+                "remaining_budget": remaining_budget(ctx),
+                "context": turn_context.clone().unwrap_or(JsonValue::Null),
+            }
+        });
+        match bridge
+            .call_hook_with_host(
+                &binding.handler_id,
+                payload,
+                HOOK_DEADLINE,
+                |method, params| dispatch_host_call(ctx, method, params),
+            )
+            .await
+        {
+            Ok(decision) => supplement = apply_pre_turn_decision(supplement, &decision),
+            Err(e) => {
+                if binding.mode == HookMode::Gate {
+                    return Err(RuntimeError::Operation {
+                        op_type: apxm_core::types::operations::AISOperationType::Ask,
+                        message: format!("pre_turn gate hook failed (fail-closed): {e}"),
+                    });
+                }
+                tracing::warn!(error = %e, "observe pre_turn hook failed; continuing");
+            }
+        }
+    }
+    Ok(supplement)
 }
 
 /// Fire `post_turn` hooks (after the turn's reply). The payload is enriched with
@@ -643,5 +722,57 @@ mod gate_narrowing_tests {
         // only an unconditional Allow can widen past a baseline approval
         // requirement.
         assert!(!gate_decision_would_widen(HookMode::Gate, true, false));
+    }
+}
+
+#[cfg(test)]
+mod pre_turn_decision_tests {
+    use super::*;
+
+    #[test]
+    fn prepend_system_with_no_prior_supplement_sets_it() {
+        let decision = json!({ "decision": "prepend_system", "text": "A" });
+        assert_eq!(
+            apply_pre_turn_decision(None, &decision),
+            Some("A".to_string())
+        );
+    }
+
+    #[test]
+    fn prepend_system_stacks_ahead_of_prior_supplement() {
+        let decision = json!({ "decision": "prepend_system", "text": "B" });
+        let result = apply_pre_turn_decision(Some("A".to_string()), &decision);
+        assert_eq!(result, Some("B\nA".to_string()));
+    }
+
+    #[test]
+    fn set_system_replaces_prior_supplement() {
+        let decision = json!({ "decision": "set_system", "text": "B" });
+        let result = apply_pre_turn_decision(Some("A".to_string()), &decision);
+        assert_eq!(result, Some("B".to_string()));
+    }
+
+    #[test]
+    fn unknown_decision_is_a_no_op() {
+        let decision = json!({ "decision": "allow" });
+        assert_eq!(
+            apply_pre_turn_decision(Some("A".to_string()), &decision),
+            Some("A".to_string())
+        );
+    }
+
+    #[test]
+    fn missing_text_is_a_no_op() {
+        let decision = json!({ "decision": "prepend_system" });
+        assert_eq!(apply_pre_turn_decision(None, &decision), None);
+    }
+
+    #[test]
+    fn non_object_decision_is_a_no_op() {
+        let decision = JsonValue::Null;
+        assert_eq!(
+            apply_pre_turn_decision(Some("A".to_string()), &decision),
+            Some("A".to_string())
+        );
     }
 }

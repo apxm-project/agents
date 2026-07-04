@@ -66,7 +66,13 @@ impl OperationMiddleware for ConversationMemoryMiddleware {
         next: Next<'_>,
     ) -> Result<Value> {
         // pre_turn hooks fire before the turn's ask (gate-capable → fail-closed).
-        crate::executor::hook_driver::run_pre_turn_hooks(ctx).await?;
+        // `None` context: no reserved second turn parameter threads an
+        // arbitrary per-turn payload (e.g. Studio's Gao client snapshot) down
+        // to this call yet (G-3 gap; see `run_pre_turn_hooks` doc comment).
+        let supplement = crate::executor::hook_driver::run_pre_turn_hooks(ctx, None).await?;
+        if let Some(text) = supplement {
+            *ctx.pending_turn_prompt_supplement.write() = Some(text);
+        }
         let result = next.run(ctx, node, inputs).await;
         if let Ok(Value::String(answer)) = &result {
             // post_ask + post_turn hooks fire with the reply (observe; FR-005).

@@ -159,6 +159,14 @@ pub struct ExecutionContext {
     pub host_dispatch: std::sync::Arc<dyn apxm_core::types::host::HostDispatchGateway>,
     /// Consent broker for per-call host capability approval.
     pub consent_broker: std::sync::Arc<dyn apxm_core::types::consent::ConsentBroker>,
+    /// Prompt-supplement text a `pre_turn` hook rendered for the turn currently
+    /// in flight (`set_system`/`prepend_system` decision; G-3). `pre_turn` fires
+    /// before the top-level ask, in an outer middleware
+    /// (`ConversationMemoryMiddleware`), so this is how its decision reaches the
+    /// ask handler's system-prompt composition deeper in the call stack —
+    /// mirrors the `dispatch_ir_v1` interior-mutability pattern above. `pre_ask`
+    /// hooks still run afterward and may further override/prepend on top.
+    pub pending_turn_prompt_supplement: Arc<parking_lot::RwLock<Option<String>>>,
 }
 
 impl ExecutionContext {
@@ -261,6 +269,7 @@ impl ExecutionContext {
             host_id: None,
             host_dispatch: std::sync::Arc::new(crate::host_dispatch::NoOpHostDispatchGateway),
             consent_broker: std::sync::Arc::new(apxm_core::types::consent::NoOpConsentBroker),
+            pending_turn_prompt_supplement: Arc::new(parking_lot::RwLock::new(None)),
         }
     }
 
@@ -629,6 +638,10 @@ impl ExecutionContext {
             host_id: self.host_id.clone(),
             host_dispatch: std::sync::Arc::clone(&self.host_dispatch),
             consent_broker: std::sync::Arc::clone(&self.consent_broker),
+            // Shared, not reset: a spawned/called child never re-fires
+            // `pre_turn` (the turn marker gates it to the top-level ask), so
+            // there is nothing child-local to isolate here.
+            pending_turn_prompt_supplement: Arc::clone(&self.pending_turn_prompt_supplement),
         }
     }
 
