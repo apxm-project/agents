@@ -3,6 +3,7 @@
 
 use super::super::{
     ExecutionContext, Node, Result, Value, execute_llm_request_for_node, get_string_attribute,
+    target_resolution::resolve_target_or_passthrough,
     template::{input_names_from_node, render_named},
 };
 use crate::aam::{ScopeSpec, TransitionLabel};
@@ -122,6 +123,12 @@ pub(super) async fn execute_local(
             message: "COMMUNICATE requires 'recipient' attribute for local protocol".to_string(),
         });
     }
+
+    // RTG-8: `topic:`/`capability:` targets resolve to a concrete member
+    // through the routing pipeline before the exact lookup below; anything
+    // else (including bare exact ids) passes through unchanged.
+    let resolved_recipient = resolve_target_or_passthrough(&ctx.flow_registry, recipient)?;
+    let recipient = resolved_recipient.as_str();
 
     tracing::info!(
         execution_id = %ctx.execution_id,
@@ -325,4 +332,166 @@ async fn communicate_inline_agent(
 
     let response = execute_llm_request_for_node(ctx, node, "COMMUNICATE", &request).await?;
     Ok(Some(Value::String(response.content)))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::aam::Aam;
+    use crate::capability::CapabilitySystem;
+    use crate::memory::{MemoryConfig, MemorySystem};
+    use apxm_backends::LLMRegistry;
+    use apxm_core::types::{
+        Agent, AgentFlow, AgentMetadata, CapabilityDeclaration, DagMetadata, ExecutionDag,
+    };
+    use std::sync::Arc;
+
+    async fn test_context() -> ExecutionContext {
+        let memory = Arc::new(
+            MemorySystem::new(MemoryConfig::in_memory_ltm())
+                .await
+                .expect("memory"),
+        );
+        let aam = Aam::new();
+        let capability_system = Arc::new(CapabilitySystem::with_aam(aam.clone()));
+        ExecutionContext::new(memory, Arc::new(LLMRegistry::new()), capability_system, aam)
+    }
+
+    /// A trivial single-NOP-node flow so a registered agent has a runnable
+    /// `communicate`/`main` flow without exercising the scheduler beyond a
+    /// NOP.
+    fn trivial_dag(flow_name: &str) -> ExecutionDag {
+        let mut node = Node::new(1, AISOperationType::Nop);
+        node.add_output_token(1);
+        ExecutionDag {
+            nodes: vec![node],
+            edges: Vec::new(),
+            entry_nodes: vec![1],
+            exit_nodes: vec![1],
+            metadata: DagMetadata {
+                name: Some(flow_name.to_string()),
+                is_entry: true,
+                parameters: Vec::new(),
+            },
+        }
+    }
+
+    fn agent_with(name: &str, capabilities: &[&str], discoverable: &[&str]) -> Agent {
+        let execution_dag = trivial_dag(crate::flow_names::COMMUNICATE);
+        let flow = AgentFlow {
+            name: crate::flow_names::COMMUNICATE.to_string(),
+            is_entry: true,
+            parameters: Vec::new(),
+            task_dag: None,
+            execution_dag,
+        };
+        Agent {
+            name: name.to_string(),
+            metadata: AgentMetadata {
+                memories: Vec::new(),
+                capabilities: capabilities
+                    .iter()
+                    .map(|c| CapabilityDeclaration {
+                        name: c.to_string(),
+                        description: None,
+                    })
+                    .collect(),
+                tools: Vec::new(),
+                discoverable: discoverable.iter().map(|d| d.to_string()).collect(),
+                context: None,
+            },
+            flows: [(flow.name.clone(), flow)].into_iter().collect(),
+        }
+    }
+
+    fn node_with(recipient: &str) -> Node {
+        let mut node = Node::new(2, AISOperationType::Communicate);
+        node.set_attribute(
+            graph_attrs::RECIPIENT.to_string(),
+            Value::String(recipient.to_string()),
+        );
+        node
+    }
+
+    /// Regression (RTG-8): an exact-id recipient with no registered flow and
+    /// no inline STM agent info fails with exactly the same "not found" hint
+    /// as before target-grammar resolution was added.
+    #[tokio::test]
+    async fn exact_id_recipient_unchanged_not_found_error() {
+        let ctx = test_context().await;
+        let node = node_with("support");
+
+        let err = execute_local(&ctx, &node, "support", Value::String("hi".to_string()))
+            .await
+            .expect_err("no flow, no STM info");
+        match err {
+            RuntimeError::Operation { message, .. } => {
+                assert!(
+                    message.contains("COMMUNICATE target 'support' not found")
+                        || message.contains("has no 'communicate' or 'main' flow"),
+                    "unexpected message: {message}"
+                );
+            }
+            other => panic!("expected Operation error, got {other:?}"),
+        }
+    }
+
+    /// RTG-8: `topic:<subject>` resolves to a concrete registered member via
+    /// the routing pipeline before the exact flow lookup runs.
+    #[tokio::test]
+    async fn topic_recipient_resolves_and_executes() {
+        let ctx = test_context().await;
+        ctx.flow_registry
+            .register_agent(agent_with("billing", &[], &["receivables"]));
+        let node = node_with("topic:receivables");
+
+        let result = execute_local(
+            &ctx,
+            &node,
+            "topic:receivables",
+            Value::String("please reconcile".to_string()),
+        )
+        .await
+        .expect("resolves and executes");
+        // The trivial NOP sub-flow returns Null; success (not an error) is
+        // the signal that resolution found "billing" and dispatched to it.
+        assert_eq!(result, Value::Null);
+    }
+
+    /// RTG-8: `capability:<cap-id>` resolves to the declaring member.
+    #[tokio::test]
+    async fn capability_recipient_resolves_and_executes() {
+        let ctx = test_context().await;
+        ctx.flow_registry
+            .register_agent(agent_with("writer", &["draft_report"], &[]));
+        let node = node_with("capability:draft_report");
+
+        let result = execute_local(
+            &ctx,
+            &node,
+            "capability:draft_report",
+            Value::String("draft it".to_string()),
+        )
+        .await
+        .expect("resolves and executes");
+        assert_eq!(result, Value::Null);
+    }
+
+    /// RTG-8: zero candidates for a routed target never falls back to a
+    /// broadcast — it's a typed no-route error (platform.md rule 5).
+    #[tokio::test]
+    async fn topic_recipient_with_no_candidate_returns_no_route_error() {
+        let ctx = test_context().await;
+        let node = node_with("topic:receivables");
+
+        let err = execute_local(
+            &ctx,
+            &node,
+            "topic:receivables",
+            Value::String("hi".to_string()),
+        )
+        .await
+        .expect_err("no agent declares this topic");
+        assert!(matches!(err, RuntimeError::NoRouteFound { .. }));
+    }
 }

@@ -142,6 +142,18 @@ pub enum RuntimeError {
         /// Reason why the task is invalid.
         reason: String,
     },
+
+    /// Target-grammar routing found no eligible candidate and no org-declared
+    /// default member exists to fall back to (platform.md rule 5: no
+    /// candidate ⇒ default member or a typed no-route error — never silent
+    /// broadcast).
+    #[error("No route found for target '{target}': {reason}")]
+    NoRouteFound {
+        /// The original routed target expression (e.g. `topic:receivables`).
+        target: String,
+        /// Why no route was found (e.g. no candidates, none eligible).
+        reason: String,
+    },
 }
 
 impl RuntimeError {
@@ -240,6 +252,11 @@ impl RuntimeError {
             RuntimeError::InvalidTask { reason } => {
                 ("invalid_task", reason.clone(), serde_json::Value::Null)
             }
+            RuntimeError::NoRouteFound { target, reason } => (
+                "no_route_found",
+                format!("No route found for target '{}': {}", target, reason),
+                serde_json::json!({ "target": target, "reason": reason }),
+            ),
         };
         serde_json::json!({
             "kind": kind,
@@ -288,6 +305,15 @@ impl RuntimeError {
             "executor" => RuntimeError::Executor(message),
             "state" => RuntimeError::State(message),
             "invalid_task" => RuntimeError::InvalidTask { reason: message },
+            "no_route_found" => RuntimeError::NoRouteFound {
+                target: value
+                    .get("details")
+                    .and_then(|d| d.get("target"))
+                    .and_then(|t| t.as_str())
+                    .unwrap_or("")
+                    .to_string(),
+                reason: message,
+            },
             _ => RuntimeError::Executor(format!("Unknown error kind '{}': {}", kind, message)),
         })
     }

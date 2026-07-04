@@ -32,6 +32,7 @@ pub mod resume; // RESUME handler
 pub mod return_op;
 pub mod spawn_agent;
 pub mod switch;
+pub mod target_resolution;
 pub mod template;
 pub mod try_catch;
 pub mod umem;
