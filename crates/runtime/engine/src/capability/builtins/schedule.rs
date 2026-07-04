@@ -3,8 +3,8 @@
 //! `create` arms a wakeup (one-shot via `after_secs`/`at_ms`, or recurring via
 //! `every_secs`), persisted in the [`ToolsStore`] so it survives a restart. The
 //! tool returns immediately; firing is done by a background [`spawn_firer`] task
-//! that, when a schedule comes due, delivers through the runtime's
-//! `park_registry::wake` bridge and the host-provided `OnFire` hook, then
+//! that, when a schedule comes due, delivers through the host-provided
+//! [`CapabilityHost`] wake bridge and the host-provided `OnFire` hook, then
 //! advances/retires the row. `apxm-server` uses the hook to enqueue prompt
 //! wakeups into its existing CLAIM task queue.
 //!
@@ -14,6 +14,7 @@
 use std::collections::HashMap;
 use std::sync::Arc;
 
+use apxm_capability_iface::CapabilityHost;
 use apxm_core::constants::capabilities::groups;
 use apxm_core::types::values::{Number, Value};
 use async_trait::async_trait;
@@ -292,16 +293,26 @@ fn advance_recurring(row: &ScheduleRow, now: i64) -> Option<i64> {
     Some(next)
 }
 
-/// Fire every schedule that is due as of now. Delivers each row's payload through
-/// `park_registry::wake` and the optional `on_fire` hook, then retires one-shots
-/// and re-arms recurring rows. Returns the number of schedules fired.
-pub fn fire_due(store: &ToolsStore, on_fire: Option<&OnFire>) -> usize {
+/// Fire every schedule that is due as of now. Delivers each row's payload
+/// through the [`CapabilityHost`]'s wake-notification bridge and the optional
+/// `on_fire` hook, then retires one-shots and re-arms recurring rows. Returns
+/// the number of schedules fired.
+///
+/// Takes `host: &dyn CapabilityHost` rather than calling
+/// `crate::scheduler::park_registry::wake` directly — this is capability's
+/// one touchpoint on the scheduler, narrowed to the trait `apxm-runtime`'s
+/// scheduler implements (see [`crate::scheduler::park_registry::ParkRegistryHost`]).
+pub fn fire_due(
+    store: &ToolsStore,
+    host: &dyn CapabilityHost,
+    on_fire: Option<&OnFire>,
+) -> usize {
     let now = now_ms();
     let due = store.due_schedules(now).unwrap_or_default();
     let mut fired = 0;
     for row in due {
         let value = parse_payload(&row.payload);
-        let _woken = crate::scheduler::park_registry::wake(&row.id, value);
+        let _woken = host.wake(&row.id, value);
         if let Some(cb) = on_fire {
             cb(FiredSchedule {
                 id: row.id.clone(),
@@ -335,6 +346,7 @@ fn parse_payload(payload: &str) -> Value {
 /// schedules, and repeats. Returns the task handle.
 pub fn spawn_firer(
     store: ToolsStore,
+    host: Arc<dyn CapabilityHost>,
     arm: Arc<Notify>,
     on_fire: Option<OnFire>,
 ) -> tokio::task::JoinHandle<()> {
@@ -349,11 +361,11 @@ pub fn spawn_firer(
                 Some(ts) => {
                     let now = now_ms();
                     if ts <= now {
-                        fire_due(&store, on_fire.as_ref());
+                        fire_due(&store, host.as_ref(), on_fire.as_ref());
                     } else {
                         let wait = std::time::Duration::from_millis((ts - now) as u64);
                         tokio::select! {
-                            () = tokio::time::sleep(wait) => { fire_due(&store, on_fire.as_ref()); }
+                            () = tokio::time::sleep(wait) => { fire_due(&store, host.as_ref(), on_fire.as_ref()); }
                             () = arm.notified() => { /* re-evaluate with the new schedule */ }
                         }
                     }
@@ -474,5 +486,72 @@ mod cron {
             t += Duration::minutes(1);
         }
         Err(format!("no cron match within a year for '{expr}'"))
+    }
+}
+
+#[cfg(test)]
+mod fire_due_tests {
+    use super::*;
+    use parking_lot::Mutex;
+
+    /// Records every `wake` call instead of touching the real park registry —
+    /// proves `fire_due` goes through `CapabilityHost` and never needs to name
+    /// `apxm-runtime`'s scheduler module directly.
+    #[derive(Default)]
+    struct RecordingHost {
+        woken: Mutex<Vec<(String, Value)>>,
+    }
+
+    impl CapabilityHost for RecordingHost {
+        fn wake(&self, wait_key: &str, value: Value) -> usize {
+            self.woken.lock().push((wait_key.to_string(), value));
+            1
+        }
+    }
+
+    fn armed_row(id: &str, due_ms: i64) -> ScheduleRow {
+        ScheduleRow {
+            id: id.to_string(),
+            kind: "once".to_string(),
+            every_secs: None,
+            cron: None,
+            next_fire_ms: due_ms,
+            recurring: false,
+            prompt: None,
+            payload: "{}".to_string(),
+            status: "armed".to_string(),
+            created_at_ms: now_ms(),
+            last_fired_ms: None,
+        }
+    }
+
+    #[test]
+    fn fire_due_wakes_through_capability_host_not_park_registry_directly() {
+        let store = ToolsStore::in_memory().expect("in-memory store");
+        store
+            .upsert_schedule(&armed_row("sched-1", now_ms() - 1_000))
+            .expect("arm schedule");
+        let host = RecordingHost::default();
+
+        let fired = fire_due(&store, &host, None);
+
+        assert_eq!(fired, 1);
+        let woken = host.woken.lock();
+        assert_eq!(woken.len(), 1);
+        assert_eq!(woken[0].0, "sched-1");
+    }
+
+    #[test]
+    fn fire_due_is_noop_when_nothing_is_due() {
+        let store = ToolsStore::in_memory().expect("in-memory store");
+        store
+            .upsert_schedule(&armed_row("sched-future", now_ms() + 60_000))
+            .expect("arm schedule");
+        let host = RecordingHost::default();
+
+        let fired = fire_due(&store, &host, None);
+
+        assert_eq!(fired, 0);
+        assert!(host.woken.lock().is_empty());
     }
 }
