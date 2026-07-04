@@ -139,3 +139,56 @@ impl Client {
             .with_context(|| format!("invalid JSON from {url}"))
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+    use tokio::net::TcpListener;
+
+    /// `apxm chat`'s in-program-loop path (`run_dumb_pipe`, `chat.rs`) and
+    /// apxm-os's channel-chat convergence target (G-6) both name
+    /// `POST /v1/conversations/{session_id}/message` as the shared turn-input
+    /// primitive (`server/crates/core/src/conversations.rs`,
+    /// `CONVERSATION_MESSAGE` route constant). This pins the CLI side of that
+    /// contract: the exact path shape and body — so a change to either drifts
+    /// loudly instead of silently.
+    #[tokio::test]
+    async fn post_conversation_message_hits_the_shared_turn_input_route() {
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+
+        let server = tokio::spawn(async move {
+            let (mut sock, _) = listener.accept().await.unwrap();
+            let mut buf = vec![0u8; 4096];
+            let n = sock.read(&mut buf).await.unwrap();
+            let request = String::from_utf8_lossy(&buf[..n]).to_string();
+            sock.write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 2\r\n\r\n{}")
+                .await
+                .unwrap();
+            request
+        });
+
+        let client = Client::new(&format!("http://{addr}"));
+        let resp = client
+            .post_conversation_message("sess-abc123", "hello there")
+            .await
+            .expect("request should succeed against the stub server");
+        assert!(resp.status().is_success());
+
+        let request = server.await.unwrap();
+        let request_line = request.lines().next().unwrap_or_default();
+        assert_eq!(
+            request_line, "POST /v1/conversations/sess-abc123/message HTTP/1.1",
+            "apxm chat must address the session-scoped turn-input route, not a bespoke path"
+        );
+        let body = request.split("\r\n\r\n").nth(1).unwrap_or_default();
+        let parsed: serde_json::Value = serde_json::from_str(body.trim_end_matches('\0'))
+            .expect("body must be JSON");
+        assert_eq!(
+            parsed,
+            serde_json::json!({ "message": "hello there" }),
+            "wire body must match ConversationMessageRequest {{ message }} on the server"
+        );
+    }
+}
