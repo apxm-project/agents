@@ -11,6 +11,7 @@
 pub mod admission_registry;
 pub mod concurrency_control;
 pub mod config;
+pub mod context_view;
 pub mod dataflow;
 pub mod lane_queue;
 pub mod park_registry;
@@ -28,6 +29,7 @@ pub(crate) mod internal_state;
 
 // Public exports
 pub use config::SchedulerConfig;
+pub use context_view::SchedulerCtx;
 pub use dataflow::DataflowScheduler;
 pub use lane_queue::SessionLaneGuard;
 pub use queue::{Priority, PriorityQueue};
