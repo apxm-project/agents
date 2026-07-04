@@ -80,6 +80,28 @@ pub enum Commands {
         #[arg(long = "embed-manifest", value_name = "skill.toml")]
         embed_manifest: Option<PathBuf>,
     },
+    /// Compile an agent package's Python entry (with `@hook`/`@tool`
+    /// registrations) to host-loop AIR on stdout. This is the cross-repo
+    /// process contract Server invokes as a subprocess instead of reaching
+    /// into this repo's Python frontend directly — see
+    /// `commands::compile::compile_service_command` for the exact I/O
+    /// contract (stdout carries ONLY the emitted AIR; errors + logs go to
+    /// stderr; nonzero exit on failure).
+    CompileService {
+        /// Package directory (contains pack.toml, agent.toml, python/<entry>)
+        package: PathBuf,
+        /// Override the python/-relative entry (default: agent.toml's `entry`)
+        #[arg(long)]
+        entry: Option<String>,
+        /// Pass the "host" loop override (the same override Studio's
+        /// host-controlled chat surface used to pass) instead of the
+        /// manifest's declared [runtime].loop.
+        #[arg(long)]
+        host_loop: bool,
+        /// Enable optional web-tools registration for entries that gate on it.
+        #[arg(long)]
+        web_tools: bool,
+    },
     /// Decompile an artifact back to AIR
     Decompile {
         /// Input artifact file (.apxmobj)
