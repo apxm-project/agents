@@ -7,7 +7,7 @@
 //! The artifact wire format and the C++ `OperationKind` enum are *generated*
 //! from `WIRE_INDEXED_OPERATIONS` (via `artifact_wire.rs`), and the enum
 //! formatters and runtime dispatcher are exhaustive matches — none can drift.
-//! The MLIR dialect (`AISOps.td`) is a hand-maintained mirror; its attribute
+//! The MLIR dialect (`AISOps.td`) is a hand-maintained declaration; its attribute
 //! names are tied back to the canonical `attrs` registry by the
 //! `tablegen_attrs_are_canonical` test below.
 
@@ -153,7 +153,7 @@ pub enum AISOperationType {
 ///
 /// This table is the single source of truth for operation-kind indexes in the
 /// artifact format. Indices 26, 27, 30, 32, and 39 are retired (formerly
-/// GUARD, CLAIM, NEGOTIATE, and SPAWN_TEAM — deleted as unexercised in RT-1;
+/// GUARD, CLAIM, NEGOTIATE, and SPAWN_TEAM — deleted as unexercised in ;
 /// 30 was always reserved) and must never be reassigned.
 pub const WIRE_INDEXED_OPERATIONS: &[(u32, AISOperationType)] = &[
     (0, AISOperationType::InvCap),
@@ -1819,11 +1819,10 @@ pub static AIS_OPERATIONS: &[OperationSpec] = &[
         category: OperationCategory::Coordination,
         description: "Register an author lifecycle hook into the artifact hook registry",
         long_description: "Registers one author lifecycle hook (a Python handler bound to a \
-            lifecycle event) into the per-artifact hook registry. Mirrors REGISTER_CAPABILITY: \
-            the binding travels inside the artifact (AIR-portable) and the handler is dispatched \
-            via the same Python tool bridge as @tool. The runtime applies pre/post_cap hooks at \
-            the tool dispatch sites, pre/post_ask as Ask middleware, and session_start as an \
-            awaited pre-step.",
+            lifecycle event) into the per-artifact hook registry. The binding travels inside the \
+            artifact (AIR-portable) and the handler is dispatched via the same Python tool bridge \
+            as @tool. The runtime applies pre/post_cap hooks at the tool dispatch sites, \
+            pre/post_ask as Ask middleware, and session_start as an awaited pre-step.",
         latency: OperationLatency::Low,
         example_json: Some(
             r#"{\"id\": 4, \"op\": \"REGISTER_HOOK\", \"attributes\": {\"hook_event\": \"pre_cap\", \"hook_match\": \"lookup\", \"hook_mode\": \"gate\", \"python_hook_handler_id\": \"sha256:...\"}}"#,

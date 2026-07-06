@@ -128,8 +128,8 @@ pub fn apply_llm_request_routing_from_node(
 /// narrowing the candidate the normal `ModelRouter::select` ranks over.
 ///
 /// Runs **before** `ModelRouter::select`/`select_for_dispatch` so profile
-/// resolution always happens first (RTG-5, decision 4: "profiles resolve to
-/// candidates, then `ModelRouter::select` ranks them").
+/// resolution always happens first: profiles resolve to candidates, then
+/// `ModelRouter::select` ranks them.
 ///
 /// Precedence (explicit wins, platform.md rule 1):
 /// 1. Request already carries an explicit `backend` or `model` (from a
@@ -156,8 +156,7 @@ pub fn resolve_model_profile(ctx: &ExecutionContext, mut request: LLMRequest) ->
         return request;
     };
 
-    let (Some(model_router), Some(profile_registry)) =
-        (&ctx.model_router, &ctx.profile_registry)
+    let (Some(model_router), Some(profile_registry)) = (&ctx.model_router, &ctx.profile_registry)
     else {
         tracing::debug!(
             profile = %profile_name,
@@ -167,8 +166,11 @@ pub fn resolve_model_profile(ctx: &ExecutionContext, mut request: LLMRequest) ->
         return request;
     };
 
-    let profile_router =
-        ProfileRouter::new(profile_registry, model_router, model_router.model_registry());
+    let profile_router = ProfileRouter::new(
+        profile_registry,
+        model_router,
+        model_router.model_registry(),
+    );
     match profile_router.select_from_profile(&profile_name) {
         Ok(model) => {
             tracing::debug!(
@@ -312,7 +314,7 @@ async fn execute_llm_request_with_node_name(
         return Err(RuntimeError::SchedulerCancelled);
     }
 
-    // Resolve model_profile -> candidate model (RTG-5) before either dispatch
+    // Resolve model_profile -> candidate model before either dispatch
     // path runs ModelRouter::select. No-op when the request already carries
     // an explicit backend/model or declares no profile.
     let resolved = resolve_model_profile(ctx, request.clone());
@@ -359,7 +361,7 @@ async fn execute_llm_request_with_node_name(
     Ok(response)
 }
 
-/// Forward a [`RoutingDecision`] to the execution event emitter (RTG-11).
+/// Forward a [`RoutingDecision`] to the execution event emitter.
 /// Shared helper so model-routing observability stays identical regardless
 /// of call site.
 fn emit_model_route_decision_event(
@@ -425,7 +427,7 @@ async fn execute_llm_request_streaming(
             req.model = Some(m.clone());
         }
 
-        // RTG-11: make the routing decision observable — a rollout event
+        // make the routing decision observable — a rollout event
         // carrying the chosen backend/model, why, and every rejected
         // candidate with its own reason (never silently dropped).
         if let Some(emitter) = &ctx.event_emitter {

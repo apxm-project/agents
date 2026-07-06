@@ -88,7 +88,7 @@ async fn enforce_write_boundary(
             capability: name.to_string(),
             message: format!(
                 "capability '{}' performs writes and is missing a capability grant; \
-                 mint a grant for its tool binding and present grant_* ids in capability_grant_ids",
+ mint a grant for its tool binding and present grant_* ids in capability_grant_ids",
                 name
             ),
         })
@@ -137,11 +137,11 @@ pub async fn execute(ctx: &ExecutionContext, node: &Node, inputs: Vec<Value>) ->
         .map(|s| s.to_string());
 
     tracing::debug!(
-        capability = %capability_name,
-        inputs = inputs.len(),
-        timeout_ms = timeout_ms,
-        python_handler = ?python_handler_id,
-        "Executing INV_CAP operation"
+     capability = %capability_name,
+     inputs = inputs.len(),
+     timeout_ms = timeout_ms,
+     python_handler = ?python_handler_id,
+     "Executing INV_CAP operation"
     );
 
     // Convert inputs to HashMap<String, Value> strictly from params_json.
@@ -159,8 +159,8 @@ pub async fn execute(ctx: &ExecutionContext, node: &Node, inputs: Vec<Value>) ->
     // Substitute `{name}` placeholders in every string-valued arg with the
     // corresponding upstream input, looked up via the node's `input_names`
     // parallel array. Example:
-    //   input_names: ["query"]
-    //   params_json: {"agent": "mock-agent", "prompt": "{query}"}
+    // input_names: ["query"]
+    // params_json: {"agent": "mock-agent", "prompt": "{query}"}
     if !inputs.is_empty() {
         let input_names = input_names_from_node(node);
         for val in args.values_mut() {
@@ -189,7 +189,7 @@ pub async fn execute(ctx: &ExecutionContext, node: &Node, inputs: Vec<Value>) ->
     let timeout = std::time::Duration::from_millis(timeout_ms);
 
     // pre_cap hooks run for EVERY tool — Python-bridge AND native/builtin
-    // capabilities (FR-004, constitution #5). A deny / gate failure does NOT
+    // capabilities. A deny / gate failure does NOT
     // fail the node: the turn continues gracefully with a denial message (m4,
     // matching the LLM tool-loop's graceful `ToolResult::error`).
     let args =
@@ -210,11 +210,12 @@ pub async fn execute(ctx: &ExecutionContext, node: &Node, inputs: Vec<Value>) ->
     // process-wide capability registry.
     enforce_write_boundary(ctx, &capability_name, &args, python_handler_id.is_some()).await?;
 
-    // Python branch is taken iff `bind-capability-handlers` stamped a handler id.
-    let raw = if let Some(handler_id) = python_handler_id {
+    // Script-handler branch: stamped by bind-capability-handlers or resolved by bridge.
+    let raw = if python_handler_id.is_some() || script_handler_for_capability(ctx, &capability_name)
+    {
         tokio::select! {
-            result = execute_python_handler(ctx, &capability_name, &handler_id, &args, timeout) => result?,
-            _ = ctx.cancellation_token.cancelled() => return Err(RuntimeError::SchedulerCancelled),
+        result = execute_script_handler(ctx, &capability_name, &args, timeout) => result?,
+        _ = ctx.cancellation_token.cancelled() => return Err(RuntimeError::SchedulerCancelled),
         }
     } else {
         // Write serialization on the GRAPH path: the dataflow scheduler runs
@@ -233,18 +234,18 @@ pub async fn execute(ctx: &ExecutionContext, node: &Node, inputs: Vec<Value>) ->
             None
         };
         let outcome = tokio::select! {
-            result = ctx.invoke_capability_with_timeout(&capability_name, args, timeout) => {
-                result.map_err(|e| {
-                    tracing::error!(
-                        capability = %capability_name,
-                        error = %e,
-                        "Capability invocation failed"
-                    );
-                    e
-                })?
-            }
-            _ = ctx.cancellation_token.cancelled() => return Err(RuntimeError::SchedulerCancelled),
-        };
+         result = ctx.invoke_capability_with_timeout(&capability_name, args, timeout) => {
+         result.map_err(|e| {
+         tracing::error!(
+         capability = %capability_name,
+         error = %e,
+         "Capability invocation failed"
+        );
+         e
+         })?
+         }
+         _ = ctx.cancellation_token.cancelled() => return Err(RuntimeError::SchedulerCancelled),
+         };
         if let Some((lock, guard)) = write_guard {
             drop(guard);
             crate::capability::tool_write_lock::release_write_lock_if_idle(&capability_name, &lock);
@@ -252,15 +253,14 @@ pub async fn execute(ctx: &ExecutionContext, node: &Node, inputs: Vec<Value>) ->
         outcome
     };
     // post_cap hooks (replace_result) for both paths.
-    let result =
-        crate::executor::hook_driver::run_post_cap_hooks(ctx, &capability_name, raw).await;
+    let result = crate::executor::hook_driver::run_post_cap_hooks(ctx, &capability_name, raw).await;
     if let Some(emitter) = &ctx.event_emitter {
         emitter.emit_tool_end(&capability_name, &result);
     }
 
     tracing::info!(
-        capability = %capability_name,
-        "Capability invocation successful"
+     capability = %capability_name,
+     "Capability invocation successful"
     );
 
     // Record capability invocation in AAM
@@ -326,52 +326,69 @@ fn render_named_in_value(
     Ok(())
 }
 
-/// Dispatch an INV_CAP call to the Python tool worker bridge.
-///
-/// Converts the `HashMap<String, Value>` args to `serde_json::Value`,
-/// calls into `PythonHandlerBridge::call`, and converts the result back.
-async fn execute_python_handler(
+fn script_handler_for_capability(ctx: &ExecutionContext, capability_name: &str) -> bool {
+    ctx.python_handler_bridge
+        .as_ref()
+        .is_some_and(|bridge| bridge.has_tool(capability_name))
+        || ctx
+            .typescript_handler_bridge
+            .as_ref()
+            .is_some_and(|bridge| bridge.has_tool(capability_name))
+}
+
+/// Dispatch an INV_CAP call to a Python or TypeScript tool worker bridge.
+async fn execute_script_handler(
     ctx: &ExecutionContext,
     capability_name: &str,
-    _handler_id: &str,
     args: &HashMap<String, Value>,
     timeout: std::time::Duration,
 ) -> Result<Value> {
-    let bridge = ctx
-        .python_handler_bridge
-        .as_ref()
-        .ok_or_else(|| RuntimeError::Capability {
-            capability: capability_name.to_string(),
-            message: "INV_CAP has python_handler_id but no PythonHandlerBridge is configured"
-                .to_string(),
-        })?;
-
-    // Convert Value args to serde_json::Value for the wire protocol.
     let json_args =
         serde_json::to_value(args).map_err(|e| RuntimeError::Serialization(e.to_string()))?;
 
     tracing::debug!(
-        capability = %capability_name,
-        timeout_ms = timeout.as_millis() as u64,
-        "Dispatching to Python tool worker"
+     capability = %capability_name,
+     timeout_ms = timeout.as_millis() as u64,
+     "Dispatching to script tool worker"
     );
+
+    if let Some(bridge) = ctx.python_handler_bridge.as_ref() {
+        if bridge.has_tool(capability_name) {
+            let json_result = bridge.call(capability_name, json_args.clone(), timeout).await.map_err(|e| {
+ tracing::error!(capability = %capability_name, error = %e, "Python tool invocation failed");
+ RuntimeError::Capability {
+ capability: capability_name.to_string(),
+ message: format!("Python tool failed: {}", e),
+ }
+ })?;
+            return json_to_value(json_result);
+        }
+    }
+
+    let bridge =
+        ctx.typescript_handler_bridge
+            .as_ref()
+            .ok_or_else(|| RuntimeError::Capability {
+                capability: capability_name.to_string(),
+                message: "INV_CAP has script handler id but no handler bridge is configured"
+                    .to_string(),
+            })?;
 
     let json_result = bridge
         .call(capability_name, json_args, timeout)
         .await
         .map_err(|e| {
             tracing::error!(
-                capability = %capability_name,
-                error = %e,
-                "Python tool invocation failed"
+             capability = %capability_name,
+             error = %e,
+             "TypeScript tool invocation failed"
             );
             RuntimeError::Capability {
                 capability: capability_name.to_string(),
-                message: format!("Python tool failed: {}", e),
+                message: format!("TypeScript tool failed: {}", e),
             }
         })?;
 
-    // Convert serde_json::Value back to Value.
     json_to_value(json_result)
 }
 
@@ -430,8 +447,8 @@ mod tests {
     #[test]
     fn render_named_in_value_resolves_nested_params_json_placeholders() {
         let mut value = Value::try_from(serde_json::json!({
-            "headers": { "x-chat": "{message.chat.id}" },
-            "items": ["literal", "{reply}"]
+        "headers": { "x-chat": "{message.chat.id}" },
+        "items": ["literal", "{reply}"]
         }))
         .unwrap();
         let inputs = vec![
@@ -445,8 +462,8 @@ mod tests {
         assert_eq!(
             value,
             Value::try_from(serde_json::json!({
-                "headers": { "x-chat": "chat-42" },
-                "items": ["literal", "hello"]
+            "headers": { "x-chat": "chat-42" },
+            "items": ["literal", "hello"]
             }))
             .unwrap()
         );

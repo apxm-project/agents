@@ -1,0 +1,2 @@
+# Gao is a top-level agent with no parent and no delegated children today.
+permitted_children = []

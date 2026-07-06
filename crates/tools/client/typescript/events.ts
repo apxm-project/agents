@@ -1,4 +1,4 @@
-// SSE permission prompt helpers (mirrors apxm-client Rust events.rs).
+// SSE permission prompt helpers aligned with apxm-client Rust events.rs.
 
 import type { PermissionResponseDecision } from "./types";
 

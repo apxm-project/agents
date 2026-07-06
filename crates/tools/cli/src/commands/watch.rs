@@ -9,12 +9,12 @@
 
 use std::io::Write as _;
 
-use anyhow::{Context, Result, anyhow};
 use crate::client::reqwest;
 use crate::client::{
     ClientInfo, DEFAULT_SERVER_BASE, client_for_sse,
     events::{event_kind, parse_approval_prompt},
 };
+use anyhow::{Context, Result, anyhow};
 use apxm_core::events::ApxmEvent;
 use futures::StreamExt;
 use serde_json::Value as JsonValue;
@@ -29,7 +29,7 @@ pub struct WatchOptions {
     pub thread_id: String,
     pub server_base: String,
     /// Optional explicit node_id to drill into via /v1/runs/<id>/nodes/<n>
-    /// before the live stream starts. Mirrors the chat panel's drawer.
+    /// before the live stream starts. Same behavior as the chat panel's drawer.
     pub expand_node_id: Option<u64>,
 }
 

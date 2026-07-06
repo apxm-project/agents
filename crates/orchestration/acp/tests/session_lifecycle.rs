@@ -1,7 +1,7 @@
 //! Session lifecycle tests: spawn -> (prompt) -> clean exit.
 //!
 //! `apxm-acp` is the live `SPAWN_AGENT` backend (see
-//! `docs/plans/runtime-simplification.md` RT-4) but previously shipped with
+//! the runtime simplification work but previously shipped with
 //! no tests at all. These exercise the real subprocess spawn / JSON-RPC
 //! handshake / close path end to end against a fixture agent.
 
@@ -69,8 +69,13 @@ async fn close_lets_a_cooperative_agent_exit_on_its_own() {
     let session = AcpSession::spawn("fixture", &profile, dir.path(), &aam, None)
         .await
         .expect("spawn");
-    let pid = session.pid().expect("child should have a pid while running");
-    assert!(support::process_alive(pid), "child should be running before close");
+    let pid = session
+        .pid()
+        .expect("child should have a pid while running");
+    assert!(
+        support::process_alive(pid),
+        "child should be running before close"
+    );
 
     session.close().await;
 

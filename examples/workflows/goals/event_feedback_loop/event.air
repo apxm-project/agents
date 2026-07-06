@@ -1,5 +1,0 @@
-module {
-  func.func @event(%arg0: !ais.token {ais.param_name = "event", ais.param_type = "str"}) -> !ais.token attributes {ais.entry} {
-    func.return %arg0 : !ais.token
-  }
-}

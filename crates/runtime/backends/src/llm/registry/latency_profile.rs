@@ -163,8 +163,7 @@ fn duration_to_ms(latency: Duration) -> f64 {
     (latency.as_secs_f64()) * 1000.0
 }
 
-/// Thread-safe per-backend EWMA store. Mirrors the shape of `HealthMonitor`
-/// so callers can hold one of each side-by-side without juggling locks.
+/// Thread-safe per-backend EWMA store.
 pub struct LatencyProfileStore {
     profiles: Arc<DashMap<String, Mutex<BackendLatencyProfile>>>,
 }
@@ -207,8 +206,7 @@ impl LatencyProfileStore {
     }
 
     /// Record a whole-request latency observation for an already-registered
-    /// backend. Silently a no-op for unknown backends, mirroring
-    /// `HealthMonitor::record_success`'s tolerance of stray calls.
+    /// backend. Silently a no-op for unknown backends.
     pub fn record_request(&self, name: &str, latency: Duration) {
         if let Some(entry) = self.profiles.get(name) {
             entry.value().lock().record_request(latency);

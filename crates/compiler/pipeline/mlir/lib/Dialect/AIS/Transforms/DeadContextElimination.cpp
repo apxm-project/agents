@@ -90,7 +90,7 @@ struct DeadContextEliminationPass : impl::DeadContextEliminationBase<DeadContext
       APXM_AIS_DEBUG("No dead context found");
     }
 
-    // Phase B Task 7: per-pass stats drained by apxm_module_drain_pass_stats.
+    // Per-pass stats are drained by apxm_module_drain_pass_stats.
     // fired_count = number of LLM ops that lost at least one context entry.
     const std::size_t irSizeAfter = computeModuleIRTextLength(module);
     const int64_t irDelta = static_cast<int64_t>(irSizeAfter)

@@ -3,8 +3,7 @@ use apxm_backends::llm::ProviderProtocol;
 use apxm_backends::llm::catalog::{BUILTIN_MODELS, BUILTIN_PROVIDERS};
 use apxm_core::constants;
 use apxm_core::types::operations::{
-    AISOperationType, ContextStyle, MlirResultType, OperationCategory, OperationField,
-    get_all_operations,
+    AISOperationType, OperationCategory, OperationField, get_all_operations,
 };
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -45,21 +44,6 @@ pub struct FrontendAgentTemplate {
     pub source: String,
     pub default_mode: Option<String>,
     pub default_model: Option<String>,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct FrontendEmissionSpec {
-    pub op: AISOperationType,
-    pub mlir_mnemonic: String,
-    pub primary_attr: Option<String>,
-    pub context_style: String,
-    pub result_type: String,
-    pub positional_attrs: Vec<String>,
-    pub keywords: Vec<String>,
-    /// Syntactic-keyword attributes emitted as `<keyword> "<value>"` between
-    /// the primary attribute and the operand list. Pairs are
-    /// `(literal_keyword, attr_name)`.
-    pub syntactic_keywords: Vec<(String, String)>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -217,49 +201,6 @@ pub fn agent_templates() -> Vec<FrontendAgentTemplate> {
             source: "template".to_string(),
             default_mode: profile.default_mode,
             default_model: profile.default_model,
-        })
-        .collect()
-}
-
-pub fn emission_specs() -> Vec<FrontendEmissionSpec> {
-    get_all_operations()
-        .map(|spec| {
-            let context_style = match spec.emission.context_style {
-                ContextStyle::Bracketed => "Bracketed",
-                ContextStyle::Parenthesized => "Parenthesized",
-                ContextStyle::Direct => "Direct",
-                ContextStyle::None => "None",
-            };
-            let result_type = match spec.emission.result_type {
-                MlirResultType::Token => "Token",
-                MlirResultType::Handle => "Handle",
-                MlirResultType::Void => "Void",
-            };
-            FrontendEmissionSpec {
-                op: spec.op_type,
-                mlir_mnemonic: spec.op_type.mlir_mnemonic().to_string(),
-                primary_attr: spec.emission.primary_attr.map(|s| s.to_string()),
-                context_style: context_style.to_string(),
-                result_type: result_type.to_string(),
-                positional_attrs: spec
-                    .emission
-                    .positional_attrs
-                    .iter()
-                    .map(|s| s.to_string())
-                    .collect(),
-                keywords: spec
-                    .emission
-                    .keywords
-                    .iter()
-                    .map(|s| s.to_string())
-                    .collect(),
-                syntactic_keywords: spec
-                    .emission
-                    .syntactic_keywords
-                    .iter()
-                    .map(|(kw, attr)| (kw.to_string(), attr.to_string()))
-                    .collect(),
-            }
         })
         .collect()
 }

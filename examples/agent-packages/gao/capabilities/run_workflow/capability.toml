@@ -1,0 +1,5 @@
+id = "run_workflow"
+description = "Run a staged workflow and return its result."
+kind = "builtin"
+binding = "authoring"
+read_only = false

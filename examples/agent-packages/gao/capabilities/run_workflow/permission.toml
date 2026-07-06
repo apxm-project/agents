@@ -1,0 +1,3 @@
+capability = "run_workflow"
+decision = "ask"
+reason = "Runs a staged workflow."

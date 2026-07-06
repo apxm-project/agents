@@ -1,7 +1,7 @@
 //! Shared conversational-chat primitives — transcript rendering, the chat /
 //! summarize AIR, and the compaction budget shared by the `apxm chat` CLI and
-//! the apxm-studio backend so they stay identical. (The TS frontend mirrors
-//! this contract; these values are the spec.)
+//! the apxm-studio backend so they stay identical. These values are the
+//! frontend contract.
 
 use crate::capabilities::groups;
 

@@ -411,7 +411,7 @@ fn validate_template_placeholders(module: &AirModule) -> Result<(), AirError> {
             .unwrap_or(0)
             .saturating_sub(structural_data_count);
 
-        // Length sanity: input_names mirrors the incoming Data edges.
+        // Length sanity: input_names must match the incoming Data edges.
         if !input_names.is_empty() && input_names.len() != in_count {
             return Err(AirError::Validation(format!(
                 "node '{}' (id={}, op={}): input_names has {} entries but \
@@ -434,7 +434,11 @@ fn validate_template_placeholders(module: &AirModule) -> Result<(), AirError> {
                 continue;
             }
             let Value::String(template) = attr_val else {
-                continue;
+                return Err(AirError::Validation(format!(
+                    "node '{}' (id={}, op={}, attr={}): template-bearing attribute \
+                     must be a string.",
+                    node.name, node.id, node.op, attr_key
+                )));
             };
             check_template_placeholders(template, attr_key, node, &input_set, &param_names)?;
         }

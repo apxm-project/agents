@@ -1,7 +1,7 @@
 //! W3C `traceparent` extraction and propagation.
 //!
 //! Two levels are provided, matching the two call sites that already exist
-//! in the codebase (`os-listeners::relay_http`, HOST WS-B, already landed):
+//! in the codebase (`os-listeners::relay_http`):
 //!
 //! 1. [`traceparent_from_headers`] — read the raw header string, for
 //!    services that only want to attach it to a span/log line as an
@@ -101,8 +101,8 @@ mod tests {
     use tracing_subscriber::layer::SubscriberExt;
 
     /// Real span-linking (`set_parent`/`context`) only does anything once a
-    /// `tracing-opentelemetry` layer backed by a real SDK tracer is active —
-    /// mirrors what [`crate::init`] installs in production, scoped to the
+    /// `tracing-opentelemetry` layer backed by a real SDK tracer is active.
+    /// This installs the same subscriber shape as [`crate::init`], scoped to the
     /// current thread for the duration of `f` so tests don't race a global
     /// subscriber.
     fn with_test_subscriber<F: FnOnce()>(f: F) {
@@ -199,7 +199,9 @@ mod tests {
             let trace_id = "5b8aa5a2d2c872e8321cf37308d69df2";
             hop0.insert(
                 "traceparent",
-                format!("00-{trace_id}-051581bf3cb55c13-01").parse().unwrap(),
+                format!("00-{trace_id}-051581bf3cb55c13-01")
+                    .parse()
+                    .unwrap(),
             );
 
             let span1 = tracing::info_span!("hop1");

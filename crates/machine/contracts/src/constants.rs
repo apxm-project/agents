@@ -23,6 +23,11 @@ pub mod env {
     pub const APXM_DISABLE_HINTS: &str = "APXM_DISABLE_HINTS";
     /// Makes Python graph files emit AIR to stdout for the Rust compiler driver.
     pub const APXM_EMIT_AIR: &str = "APXM_EMIT_AIR";
+    /// Path to the `apxm` binary a child frontend process invokes for AIR
+    /// emission (`emit-air`). The compile pipeline sets this to its own
+    /// executable so the frontend routes to the same single Rust printer instead
+    /// of falling back to `dekk agents emit-air`.
+    pub const APXM_BIN: &str = "APXM_BIN";
     /// Enables the in-process mock backend for tests and offline benchmarks.
     pub const APXM_MOCK_BACKEND: &str = "APXM_MOCK_BACKEND";
     /// Configures mock backend latency in milliseconds.
@@ -63,7 +68,7 @@ pub mod env {
     /// Server rollout payload spill threshold, in bytes.
     pub const APXM_ROLLOUT_SPILL_THRESHOLD_BYTES: &str = "APXM_ROLLOUT_SPILL_THRESHOLD_BYTES";
     /// Retention: rollout max age (days) before compaction archives its content.
-    /// See state-layout.v1 `sessions/rollouts` (class=durable). OBS-2.
+    /// See state-layout.v1 `sessions/rollouts` (class=durable). .
     pub const APXM_RETENTION_ROLLOUT_MAX_AGE_DAYS: &str = "APXM_RETENTION_ROLLOUT_MAX_AGE_DAYS";
     /// Retention: grace period (hours) an unreferenced blob must sit idle
     /// before GC deletes it, to avoid racing an in-flight spill write.
@@ -338,10 +343,6 @@ pub mod mcp {
     }
 
     pub mod tools {
-        pub const APXM_GOAL_START: &str = "goal_start";
-        pub const APXM_GOAL_STATUS: &str = "goal_status";
-        pub const APXM_GOAL_EVENTS: &str = "goal_events";
-        pub const APXM_GOAL_CANCEL: &str = "goal_cancel";
         pub const APXM_WORKFLOW_START: &str = "workflow_start";
         pub const APXM_WORKFLOW_STATUS: &str = "workflow_status";
         pub const APXM_WORKFLOW_EVENTS: &str = "workflow_events";
@@ -372,8 +373,7 @@ pub mod capabilities {
     pub use apxm_ais::capabilities::groups;
     pub use apxm_ais::capabilities::{
         AGENT_MANAGEMENT_BUILTINS, BASH, BUILTINS, CAPABILITY_DISCOVERY, HTTP_GET, HTTP_POST,
-        MANAGE_TASK, READ, SCHEDULE, SEARCH_SKILLS,
-        SEARCH_WEB, STANDARD_BUILTINS, WRITE,
+        MANAGE_TASK, READ, SCHEDULE, SEARCH_SKILLS, SEARCH_WEB, STANDARD_BUILTINS, WRITE,
     };
 }
 
@@ -505,6 +505,8 @@ pub mod extensions {
     pub const AIR: &str = "air";
     /// Python frontend source that emits canonical AIR.
     pub const PYTHON: &str = "py";
+    /// TypeScript frontend source that emits canonical AIR.
+    pub const TYPESCRIPT: &str = "ts";
     /// Compiled artifact extension.
     pub const ARTIFACT: &str = "apxmobj";
     /// Structured JSON data extension for metrics, sessions, manifests,
@@ -580,8 +582,8 @@ pub mod session {
     }
 
     /// JSON keys serialized into `metrics.json` by the runtime's
-    /// `TokenAccountingSnapshot::to_json`. Mirrored by `MetricsKeys` on the
-    /// Python side; tier-3 budget enforcement relies on these.
+    /// `TokenAccountingSnapshot::to_json`. Python-side `MetricsKeys` uses the
+    /// same contract; tier-3 budget enforcement relies on these.
     pub mod metrics_keys {
         pub const TOKEN_ACCOUNTING: &str = "token_accounting";
         pub const TOTAL: &str = "total";

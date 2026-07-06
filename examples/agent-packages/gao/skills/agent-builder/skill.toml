@@ -1,0 +1,4 @@
+id = "agent-builder"
+description = "Create APXM agent packages and compose sub-agents."
+compiled = false
+capabilities = ["read_local_skill"]

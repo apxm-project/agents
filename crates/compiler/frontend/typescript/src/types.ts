@@ -1,4 +1,4 @@
-/** Dependency kind carried by a graph edge — mirrors apxm.constants.DependencyType. */
+/** Dependency kind carried by a graph edge. */
 export type DependencyType = "Data" | "Control" | "Effect";
 
 const DEPENDENCY_TYPES: ReadonlySet<DependencyType> = new Set([
@@ -19,7 +19,7 @@ export function normalizeDependencyType(value: DependencyType | string): Depende
   return found;
 }
 
-/** Parameter type names accepted by the APXM runtime (mirrors VALID_PARAM_TYPES). */
+/** Parameter type names accepted by the APXM runtime. */
 export type ParamType = "str" | "int" | "float" | "bool" | "json";
 
 export const VALID_PARAM_TYPES: ReadonlySet<ParamType> = new Set([

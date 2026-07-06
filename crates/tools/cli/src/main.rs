@@ -17,14 +17,10 @@
 )]
 
 // Typed apxm-server HTTP client (folded in from the former standalone
-// apxm-client crate, RT-5). `goal` uses it unconditionally; `chat`/`watch`/
+// apxm-client crate, ). `goal` uses it unconditionally; `chat`/`watch`/
 // `sse_permissions` use it under the `driver` feature only.
 mod client;
 mod commands;
-// Only the driver-gated `chat` command consumes this; gate it to match so the
-// default (non-driver) build doesn't compile it as dead code.
-#[cfg(feature = "driver")]
-mod context_assembly;
 mod frontend;
 
 use anyhow::Result;
@@ -156,12 +152,9 @@ async fn run_cli(cli: Cli) -> Result<()> {
             cli.config,
             embed_manifest,
         ),
-        Commands::CompileService {
-            package,
-            entry,
-            host_loop,
-            web_tools,
-        } => compile_service_command(package, entry, host_loop, web_tools, cli.config),
+        Commands::CompileService { package, web_tools } => {
+            compile_service_command(package, web_tools, cli.config)
+        }
         Commands::Decompile { artifact, output } => decompile_command(artifact, output),
         Commands::Execute {
             input,
@@ -228,6 +221,7 @@ async fn run_cli(cli: Cli) -> Result<()> {
         Commands::Template { action } => template_command(action, cli.json),
         Commands::Explain { target } => explain_command(&target, cli.json),
         Commands::Codegen { action } => codegen_command(action, cli.json),
+        Commands::EmitAir { input } => emit_air_command(input),
         Commands::Replay { session } => replay_command(session),
         Commands::Session { action } => session_command(action, cli.json),
         Commands::Process { action } => process_command(action, cli.json),
@@ -236,50 +230,27 @@ async fn run_cli(cli: Cli) -> Result<()> {
         Commands::Tokenize { text, file, model } => tokenize_command(text, file, model, cli.json),
         Commands::Watch { thread_id, expand } => watch_command(thread_id, expand).await,
         Commands::Rollout { action } => rollout_action(action).await,
-        Commands::Goal(args) => goal_command(args, cli.json).await,
         Commands::Chat {
+            package,
             air,
             server,
             session_id,
             capability_grant_ids,
             import,
-            tools,
             backend,
             model,
-            agent,
-            agent_mode,
-            agent_model,
-            tree,
-            monitor_url,
-            max_turns,
-            max_events,
-            tool_budget,
-            tool_cap,
-            tool_auth,
             owner,
-            author,
         } => {
             commands::chat::chat_command(commands::chat::ChatOptions {
+                package,
                 air,
                 server,
                 session_id,
                 capability_grant_ids,
                 import,
-                tools,
                 backend,
                 model,
-                agent,
-                agent_mode,
-                agent_model,
-                tree,
-                monitor_url,
-                max_turns,
-                max_events,
-                tool_budget,
-                tool_cap,
-                tool_auth,
                 owner,
-                author,
             })
             .await
         }
@@ -366,13 +337,13 @@ async fn run_cli_no_driver(cli: Cli) -> Result<()> {
         Commands::Template { action } => template_command(action, cli.json),
         Commands::Explain { target } => explain_command(&target, cli.json),
         Commands::Codegen { action } => codegen_command(action, cli.json),
+        Commands::EmitAir { input } => emit_air_command(input),
         Commands::Replay { session } => replay_command(session),
         Commands::Session { action } => session_command(action, cli.json),
         Commands::Process { action } => process_command(action, cli.json),
         Commands::Workflow { action } => workflow_command_no_driver(action, cli.json),
         Commands::Cache { action } => cache_command(action, cli.json),
         Commands::Tokenize { text, file, model } => tokenize_command(text, file, model, cli.json),
-        Commands::Goal(args) => goal_command(args, cli.json).await,
         Commands::Watch { .. } | Commands::Rollout { .. } | Commands::Chat { .. } => {
             Err(anyhow::anyhow!(
                 "apxm watch / apxm rollout / apxm chat require the `driver` feature. Rebuild through `{}`, then re-run the command.",

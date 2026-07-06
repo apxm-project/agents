@@ -2,13 +2,17 @@
   "name": "@apxm/frontend",
   "version": "0.1.0",
   "type": "module",
-  "description": "TypeScript compiler frontend for APXM: records a workflow graph (GraphBuilder, mirroring the Python apxm.proxy.GraphRecorder), emits AIR (.air MLIR-dialect text) via to_air(), and validates workflow-draft.v1 documents. Op tables in src/generated/ are code-generated from crates/machine/ais/generated/op-spec.v1.json (TSF-1).",
+  "description": "TypeScript compiler frontend for APXM: records workflow graphs, emits AIR, and validates workflow-draft.v1 documents. Op tables in src/generated/ are code-generated from crates/machine/ais/generated/op-spec.v1.json.",
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
   "exports": {
     ".": {
       "types": "./dist/index.d.ts",
       "default": "./dist/index.js"
+    },
+    "./workflow-draft": {
+      "types": "./dist/workflow-draft.d.ts",
+      "default": "./dist/workflow-draft.js"
     }
   },
   "license": "Apache-2.0",
@@ -26,7 +30,11 @@
   ],
   "scripts": {
     "codegen": "node scripts/codegen.mjs",
-    "build": "tsc -p tsconfig.json",
+    "codegen:check": "node scripts/codegen.mjs --check",
+    "compile-handlers": "node scripts/compile-handlers.mjs",
+    "clean": "node -e \"require('fs').rmSync('dist',{recursive:true,force:true})\"",
+    "build": "npm run clean && tsc -p tsconfig.json",
+    "prepack": "npm run build",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "test": "vitest run",
     "test:watch": "vitest"
@@ -35,6 +43,7 @@
     "ajv": "^8.17.1"
   },
   "devDependencies": {
+    "@types/node": "^26.1.0",
     "typescript": "^5.6.3",
     "vitest": "^2.1.4"
   }

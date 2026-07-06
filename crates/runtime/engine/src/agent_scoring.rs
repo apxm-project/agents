@@ -1,27 +1,15 @@
-//! Shared candidate-scoring engine (RTG-10, routing.md decision 6).
+//! Shared candidate-scoring engine.
 //!
-//! `AgentRouter` (ACP profile selection, `agent_router.rs`) and — once org
-//! members exist as a candidate set — org topic/role resolution both need
-//! the same deterministic, explainable tie-break: candidates are filtered to
-//! those matching a set of required capabilities, then the best one is
-//! chosen by least-used count, capability fit, declared preference, and
-//! finally declaration order. This module is that one scoring engine: it
-//! knows nothing about ACP profiles or org members, only about scoreable
-//! candidates that expose a stable id, a capability set, and a declaration
-//! index.
+//! `AgentRouter` (ACP profile selection, `agent_router.rs`) and org
+//! topic/role resolution share the same deterministic, explainable tie-break:
+//! candidates are filtered to those matching a set of required capabilities,
+//! then the best one is chosen by least-used count, capability fit, declared
+//! preference, and finally declaration order. This module knows nothing about
+//! ACP profiles or org members, only about scoreable candidates that expose a
+//! stable id, a capability set, and a declaration index.
 //!
-//! Extraction note: the tie-break precedence implemented here — **least-used
-//! → capability fit → preferred → order** — is the precedence `AgentRouter`
-//! already shipped with (`selected_count` compared before
-//! `capability_fit_score` in the old `select_candidate` min-key tuple).
-//! `docs/plans/routing.md` (decision 6 / RTG-10) describes the target
-//! precedence in prose as "capability fit → least-used → preferred → order".
-//! This extraction is intentionally **behavior-preserving** for the existing
-//! ACP profile consumer (routing.md's own RTG-10 wording), so the
-//! already-implemented least-used-first order is kept rather than reordered
-//! to match the prose; reordering would change today's ACP profile selection
-//! results and is left for a follow-up if the prose order is what's wanted
-//! once org-member resolution actually lands.
+//! Tie-break precedence is **least-used → capability fit → preferred → order**,
+//! matching `AgentRouter`'s existing `selected_count`-first selection key.
 
 use std::collections::{HashMap, HashSet};
 
@@ -187,8 +175,7 @@ pub fn rejected_candidates(scores: &[ScoreEntry]) -> Vec<RejectedCandidate> {
 
 /// Pick the best eligible candidate. Tie-break precedence, in order:
 /// **least-used → capability fit (tightest) → preferred (earliest) →
-/// declaration order (earliest)**. See the module doc for why this order —
-/// not the "capability fit first" prose in routing.md — is what ships today.
+/// declaration order (earliest)**. This preserves the existing routing order.
 pub fn select_best<'a, C: ScoringCandidate>(
     eligible: &[&'a C],
     required_count: usize,

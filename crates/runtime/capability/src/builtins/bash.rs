@@ -309,7 +309,7 @@ fn command_matches_allowed(command: &str, allowed: &str) -> bool {
     {
         return false;
     }
-    !has_disallowed_shell_syntax(suffix)
+    !has_blocked_shell_syntax(suffix)
 }
 
 fn command_matches_blocked(command: &str, blocked: &str) -> bool {
@@ -453,7 +453,7 @@ fn rm_args_have_recursive_force(tokens: &[String]) -> bool {
     recursive && force
 }
 
-fn has_disallowed_shell_syntax(value: &str) -> bool {
+fn has_blocked_shell_syntax(value: &str) -> bool {
     let mut in_single_quote = false;
     let mut in_double_quote = false;
     let mut escaped = false;

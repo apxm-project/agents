@@ -31,7 +31,11 @@ trigger (cron/watch/webhook/channel/a2a) → CueEvent → Dispatcher
   HTTP (clean boundary; nothing runs unsandboxed in-process).
 - `target_server` per agent manifest (default `http://127.0.0.1:18800`).
 
-## The sandbox boundary (who confines what)
+## Permission and Sandbox Boundaries
+
+Runtime admission decides whether a capability may be invoked. The sandbox
+provides confinement evidence before admission and enforces isolation after
+admission; it is not the permission decision engine.
 
 The sandbox lives **inside apxm-server** (the `SandboxRegistry`: bubblewrap when
 available, else policy-only process). It confines EXC and process-spawning
@@ -42,7 +46,8 @@ Two things cross the wire to control it:
 
 1. **`capability_grant_ids`** (studio → `/v1/execute*`): opaque
    runtime-minted capability grants. A non-read-only, non-sandboxed
-   capability runs only if a presented `grant_*` id authorizes its tool binding.
+   capability runs only if runtime admission accepts a presented `grant_*` id
+   for its tool binding.
    Templates discovered through capability discovery are authoring metadata only.
 
 2. **`sandbox_hint`** (os → `/v1/skills/{id}/execute`): the minimum isolation an

@@ -273,7 +273,7 @@ class GraphRecorder:
 
         # A NodeRef bound to `system_prompt_input` becomes a dataflow operand
         # under the reserved `__system` input name; the runtime then uses its
-        # value as the system prompt instead of the static attribute (FR-005).
+        # value as the system prompt instead of the static attribute.
         input_names = [n for n, _ in auto_pairs]
         if system_prompt_input is not None:
             input_names.append(graph_keys.SYSTEM_PROMPT_INPUT)
@@ -1554,10 +1554,10 @@ class GraphRecorder:
         This is the authoring/lowering boundary: everything before this call
         is Python-side bookkeeping (``g.ask()``, ``g.spawn_agent()``, ...
         appending to ``self._nodes``/``self._edges``); everything after is
-        the shared frontend-internal graph model (WF-3) — see
+        the shared frontend-internal graph model — see
         ``crates/compiler/frontend/python/docs/graph-model.md`` for the
-        formal field-by-field contract that TypeScript's ``@apxm/frontend``
-        mirrors. Returns a defensive-copied ``ApxmGraph`` (new lists/dict;
+        formal field-by-field contract implemented by TypeScript's
+        ``@apxm/frontend``. Returns a defensive-copied ``ApxmGraph`` (new lists/dict;
         further recorder mutations do not retroactively change a graph
         already returned here) with ``name``/``nodes``/``edges``/
         ``parameters``/``metadata`` taken verbatim from the recorder's

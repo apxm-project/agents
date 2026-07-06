@@ -39,10 +39,10 @@ pub mod metadata;
 pub mod registry;
 pub mod tool_write_lock;
 
+use approval::ApprovalStore;
 use apxm_aam::{Aam, TransitionLabel};
 use apxm_capability_iface::sandbox::{SandboxRegistry, ValidationResult};
 use apxm_capability_iface::{ApprovalContext, CapabilityFacade};
-use approval::ApprovalStore;
 use apxm_core::{error::RuntimeError, types::values::Value};
 use executor::{CapabilityExecutor, exec_result_to_value};
 use interceptor::{CapabilityInterceptor, InterceptDecision, PreInvokeContext, pre_invoke_ctx};
@@ -287,7 +287,7 @@ impl CapabilitySystem {
             }
         }
 
-        // Approval gate (requires_approval metadata + consent broker).
+        // Approval gate for calls marked `requires_approval`.
         if let Some(ctx) = pre_ctx {
             match pre_invoke_ctx(ctx, name, &args).await {
                 InterceptDecision::Allow => {}
@@ -561,11 +561,7 @@ impl Default for CapabilitySystem {
 /// `apxm-capability-iface`'s crate docs).
 #[async_trait::async_trait]
 impl CapabilityFacade for CapabilitySystem {
-    async fn invoke(
-        &self,
-        name: &str,
-        args: HashMap<String, Value>,
-    ) -> CapabilityResult<Value> {
+    async fn invoke(&self, name: &str, args: HashMap<String, Value>) -> CapabilityResult<Value> {
         CapabilitySystem::invoke(self, name, args).await
     }
 
@@ -577,7 +573,10 @@ impl CapabilityFacade for CapabilitySystem {
         approval: Option<ApprovalContext<'_>>,
     ) -> CapabilityResult<Value> {
         match approval {
-            None => self.invoke_with_timeout_ctx_raw(name, args, timeout, None).await,
+            None => {
+                self.invoke_with_timeout_ctx_raw(name, args, timeout, None)
+                    .await
+            }
             Some(approval) => {
                 let pre_ctx = PreInvokeContext {
                     registry: &self.registry,

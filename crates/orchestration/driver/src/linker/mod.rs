@@ -83,6 +83,85 @@ pub struct LinkMetrics {
     pub runtime_time: std::time::Duration,
 }
 
+#[derive(Debug, Clone, Copy, Default)]
+struct FrontendHandlerSidecars<'a> {
+    python_tools: Option<&'a [u8]>,
+    typescript_tools: Option<&'a [u8]>,
+}
+
+impl<'a> FrontendHandlerSidecars<'a> {
+    const fn new(python_tools: Option<&'a [u8]>, typescript_tools: Option<&'a [u8]>) -> Self {
+        Self {
+            python_tools,
+            typescript_tools,
+        }
+    }
+
+    fn python_manifest(
+        self,
+    ) -> Result<Option<Vec<apxm_compiler::passes::PythonCapabilityManifestEntry>>, DriverError>
+    {
+        self.python_tools
+            .map(|data| serde_json::from_slice(data).map_err(|e| state_err(e.to_string())))
+            .transpose()
+    }
+
+    fn append_to_artifact(self, artifact: &mut Artifact) {
+        let sidecars = [
+            HandlerSidecar::new(
+                apxm_runtime::python_tools::CAPABILITY_NAME,
+                self.python_tools,
+            ),
+            HandlerSidecar::new(
+                apxm_runtime::typescript_tools::CAPABILITY_NAME,
+                self.typescript_tools,
+            ),
+        ];
+        add_artifact_sidecars(
+            artifact,
+            sidecars
+                .iter()
+                .map(|sidecar| sidecar as &dyn ArtifactSidecar),
+        );
+    }
+}
+
+trait ArtifactSidecar {
+    fn section_kind(&self) -> &'static str;
+    fn data(&self) -> Option<&[u8]>;
+
+    fn append_to(&self, artifact: &mut Artifact) {
+        if let Some(data) = self.data() {
+            artifact.add_section(ArtifactSection {
+                kind: self.section_kind().into(),
+                data: data.to_vec(),
+            });
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy)]
+struct HandlerSidecar<'a> {
+    section_kind: &'static str,
+    data: Option<&'a [u8]>,
+}
+
+impl<'a> HandlerSidecar<'a> {
+    const fn new(section_kind: &'static str, data: Option<&'a [u8]>) -> Self {
+        Self { section_kind, data }
+    }
+}
+
+impl ArtifactSidecar for HandlerSidecar<'_> {
+    fn section_kind(&self) -> &'static str {
+        self.section_kind
+    }
+
+    fn data(&self) -> Option<&[u8]> {
+        self.data
+    }
+}
+
 /// High-level linker that coordinates compiler and runtime execution.
 pub struct Linker {
     /// MLIR compiler required for AIR-to-artifact compilation.
@@ -119,7 +198,7 @@ impl Linker {
 
     /// Compile canonical AIR graph source into an executable artifact.
     pub fn compile_graph(&self, input: &Path) -> Result<Artifact, DriverError> {
-        self.compile_graph_inner(input, None)
+        self.compile_graph_inner(input, FrontendHandlerSidecars::default())
             .map(|(artifact, _)| artifact)
     }
 
@@ -131,13 +210,13 @@ impl Linker {
         &self,
         input: &Path,
     ) -> Result<(Artifact, Option<serde_json::Value>), DriverError> {
-        self.compile_graph_inner(input, None)
+        self.compile_graph_inner(input, FrontendHandlerSidecars::default())
     }
 
     fn compile_graph_inner(
         &self,
         input: &Path,
-        python_tools_sidecar: Option<&[u8]>,
+        handler_sidecars: FrontendHandlerSidecars<'_>,
     ) -> Result<(Artifact, Option<serde_json::Value>), DriverError> {
         let Some(ref compiler) = self.compiler else {
             return Err(DriverError::Driver(
@@ -158,9 +237,9 @@ impl Linker {
             let (module, diagnostics) =
                 compiler.compile_air_with_config_and_diagnostics(&air_text, config)?;
             let diagnostics_json = Some(diagnostics.to_json());
-            let manifest = python_tools_manifest(python_tools_sidecar)?;
+            let manifest = handler_sidecars.python_manifest()?;
             let mut artifact = module.generate_artifact_with_manifest(None, manifest.as_deref())?;
-            add_python_tools_section(&mut artifact, python_tools_sidecar);
+            handler_sidecars.append_to_artifact(&mut artifact);
 
             let dag = artifact
                 .entry_dag()
@@ -187,8 +266,15 @@ impl Linker {
         event_emitter: Option<Arc<dyn ExecutionEventEmitter>>,
         session_dir: Option<&Path>,
     ) -> Result<LinkResult, DriverError> {
-        self.run_graph_with_python_tools_sidecar(input, args, event_emitter, session_dir, None)
-            .await
+        self.run_graph_with_python_tools_sidecar(
+            input,
+            args,
+            event_emitter,
+            session_dir,
+            None,
+            None,
+        )
+        .await
     }
 
     /// Compile graph input and execute with an optional Python tools sidecar
@@ -200,12 +286,16 @@ impl Linker {
         event_emitter: Option<Arc<dyn ExecutionEventEmitter>>,
         session_dir: Option<&Path>,
         python_tools_sidecar: Option<Vec<u8>>,
+        typescript_tools_sidecar: Option<Vec<u8>>,
     ) -> Result<LinkResult, DriverError> {
         log_info!("driver", "Compiling graph {}", input.display());
         #[cfg(feature = "metrics")]
         let compile_start = std::time::Instant::now();
-        let (artifact, compiler_diagnostics) =
-            self.compile_graph_inner(input, python_tools_sidecar.as_deref())?;
+        let handler_sidecars = FrontendHandlerSidecars::new(
+            python_tools_sidecar.as_deref(),
+            typescript_tools_sidecar.as_deref(),
+        );
+        let (artifact, compiler_diagnostics) = self.compile_graph_inner(input, handler_sidecars)?;
         #[cfg(feature = "metrics")]
         let compile_time = compile_start.elapsed();
 
@@ -250,19 +340,11 @@ impl Linker {
     }
 }
 
-fn python_tools_manifest(
-    python_tools_sidecar: Option<&[u8]>,
-) -> Result<Option<Vec<apxm_compiler::passes::PythonCapabilityManifestEntry>>, DriverError> {
-    python_tools_sidecar
-        .map(|data| serde_json::from_slice(data).map_err(|e| state_err(e.to_string())))
-        .transpose()
-}
-
-fn add_python_tools_section(artifact: &mut Artifact, python_tools_sidecar: Option<&[u8]>) {
-    if let Some(data) = python_tools_sidecar {
-        artifact.add_section(ArtifactSection {
-            kind: apxm_runtime::python_tools::CAPABILITY_NAME.into(),
-            data: data.to_vec(),
-        });
+fn add_artifact_sidecars<'a>(
+    artifact: &mut Artifact,
+    sidecars: impl IntoIterator<Item = &'a dyn ArtifactSidecar>,
+) {
+    for sidecar in sidecars {
+        sidecar.append_to(artifact);
     }
 }

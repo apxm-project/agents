@@ -35,7 +35,7 @@ Two direct answers:
 So the work is **finish the interface you already own**, not adopt a new system:
 
 1. **P0 (no OpenShell, the real security win):** route `INV`/capability dispatch
-   through the registry (mirror `EXC`); **sandbox the unsandboxed ACP coding-agent
+   through the registry like `EXC`; **sandbox the unsandboxed ACP coding-agent
    spawn** via the backend (fast bubblewrap); enforce apxm-os's inert `sandbox`
    field as an isolation level. A few hundred lines, zero new deps, no NVIDIA.
 2. **P1 (optional backing):** `OpenShellBackend: SandboxBackend` behind a config
@@ -182,7 +182,7 @@ IsolationLevel::Container (or Hypervisor if MicroVM driver).
 **Credentials — apxm-auth stays sole custodian.** Add `env_var` to `ProviderRecipe`
 and a `GET /v1/connections/{id}/env-bundle` endpoint; at sandbox creation the
 caller resolves the bundle from apxm-auth and hands it to OpenShell as a provider
-(env-placeholder injection). Better than today's `agents.toml` ambient-env hand-off
+(env-placeholder injection). Prefer this over `agents.toml` ambient-env hand-off
 (rotation, OAuth refresh, audit, per-sandbox scope). For apxm-controlled calls,
 prefer apxm-auth `/proxy` (secret never enters the sandbox at all); env-injection
 is the path for third-party coding CLIs that read keys from env.
@@ -217,7 +217,7 @@ deps; the backend lives in apxm-runtime/driver.
 
 ## 5. Recommendation & phased plan
 - **P0 — finish the native sandbox (no OpenShell, do now):** route `INV`/capability
-  dispatch through `SandboxRegistry` (mirror `exc.rs`); sandbox `AcpSession::spawn`
+  dispatch through `SandboxRegistry`; sandbox `AcpSession::spawn`
   via the backend; map apxm-os `sandbox` field → `min_isolation`. Closes the
   unsandboxed-bash/write + unsandboxed-coding-agent holes with bubblewrap, zero deps.
 - **P1 — OpenShell as an opt-in backend:** `OpenShellBackend: SandboxBackend` behind

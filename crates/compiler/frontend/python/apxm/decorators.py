@@ -5,7 +5,11 @@ import json
 import os
 from typing import TYPE_CHECKING, Any, Callable
 
-from .constants import ENV_APXM_EMIT_AIR, ENV_FLAG_ENABLED, PYTHON_TOOLS_AIR_COMMENT_PREFIX
+from .constants import (
+    ENV_APXM_EMIT_AIR,
+    ENV_FLAG_ENABLED,
+    PYTHON_TOOLS_AIR_COMMENT_PREFIX,
+)
 from .execution import CompiledFlow, ExecutionMode, ExecutionResult
 from .ir import Parameter
 from .proxy import GraphRecorder
@@ -198,11 +202,9 @@ class _CompiledFunction:
 
             validate_graph_routes(graph.nodes)
 
-        # Emit AIR from the stamped graph so subprocess fallback preserves
-        # default backend/model/provider attributes. Re-attach the python tool
-        # sidecar comment that GraphRecorder normally prepends.
         air_text = graph.to_air()
         python_tools = getattr(recorder, "_python_tools", None)
+        self._python_tools = list(python_tools or [])
         if python_tools:
             manifest = json.dumps(python_tools, separators=(",", ":"))
             air_text = f"{PYTHON_TOOLS_AIR_COMMENT_PREFIX}{manifest}\n{air_text}"

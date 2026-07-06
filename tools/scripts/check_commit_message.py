@@ -91,7 +91,7 @@ class Finding:
 
 
 def _strip_comments(message: str) -> str:
-    # Mirrors git's commit message cleanup: lines starting with '#'
+    # Same cleanup as git commit messages: lines starting with '#'
     # are stripped before the message is recorded.
     return "\n".join(
         line for line in message.splitlines() if not line.startswith("#")

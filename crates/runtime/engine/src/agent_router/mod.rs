@@ -376,7 +376,7 @@ impl NormalizedCandidate {
 }
 
 /// Adapts `AgentRouter`'s ACP-profile candidate shape onto the shared,
-/// domain-agnostic scoring engine (`agent_scoring`, RTG-10).
+/// domain-agnostic scoring engine (`agent_scoring`, ).
 impl ScoringCandidate for NormalizedCandidate {
     fn scoring_id(&self) -> &str {
         &self.profile
@@ -443,7 +443,12 @@ fn select_candidate<'a>(
     preferred_profiles: &[String],
     selected_counts: &HashMap<String, usize>,
 ) -> &'a NormalizedCandidate {
-    agent_scoring::select_best(eligible, required_count, preferred_profiles, selected_counts)
+    agent_scoring::select_best(
+        eligible,
+        required_count,
+        preferred_profiles,
+        selected_counts,
+    )
 }
 
 fn capability_fit_score(candidate: &NormalizedCandidate, required_count: usize) -> usize {
@@ -502,7 +507,7 @@ mod tests {
         }
     }
 
-    /// RTG-10: ACP profile selection goes through the shared `agent_scoring`
+    /// ACP profile selection goes through the shared `agent_scoring`
     /// module and produces the exact same decision it did before the
     /// extraction (least-used, capability fit, preferred, order) — the
     /// extraction is behavior-preserving for its original consumer.
@@ -557,10 +562,7 @@ mod tests {
     /// With usage and fit tied, declared preference wins over pure order.
     #[test]
     fn route_requests_preference_breaks_tie_after_usage_and_fit() {
-        let router = AgentRouter::new(vec![
-            candidate("a", &["read"]),
-            candidate("b", &["read"]),
-        ]);
+        let router = AgentRouter::new(vec![candidate("a", &["read"]), candidate("b", &["read"])]);
         let decisions = router
             .route_requests(&[request("r1", &["read"], &["b"])])
             .expect("routing succeeds");

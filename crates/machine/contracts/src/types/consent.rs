@@ -24,10 +24,10 @@ pub enum RiskLevel {
     Critical,
 }
 
-/// A per-call consent request sent to the host's prompt surface.
+/// A per-call approval request sent to the host's prompt surface.
 ///
-/// The consent broker must receive this and return signed approvals within
-/// the timeout before the operation proceeds. Fail-closed: timeout → deny.
+/// Runtime admission waits for signed approvals within the timeout before the
+/// operation proceeds. Fail-closed: timeout → deny.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PermissionPrompt {
     /// Stable identifier for this specific consent request.
@@ -68,7 +68,7 @@ pub struct PermissionPrompt {
     pub diff_ref: Option<serde_json::Value>,
 }
 
-/// Signed approval returned by the consent broker.
+/// Signed approval returned by an approval surface.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct SignedApproval {
     pub signer_subject: String,
@@ -88,24 +88,21 @@ pub enum ConsentDecision {
     Denied { reason: String },
     /// Approval not received within the timeout window. Fail-closed → deny.
     TimedOut,
-    /// No consent broker is configured. Caller decides whether to allow.
+    /// No approval surface is configured. Caller decides whether to allow.
     NoBroker,
 }
 
-/// Async interface for per-call consent routing.
-///
-/// The `os` repo implements the real broker (routes to host prompt surface or
-/// Studio approval UI). Tests and non-host contexts use `NoOpConsentBroker`.
+/// Async interface for per-call approval routing.
 #[async_trait::async_trait]
 pub trait ConsentBroker: Send + Sync + 'static {
     async fn request_consent(&self, prompt: PermissionPrompt, timeout: Duration)
     -> ConsentDecision;
 }
 
-/// Broker that immediately returns NoBroker for every request.
+/// Approval router that immediately returns NoBroker for every request.
 ///
-/// Used when no host prompt surface is configured. Callers that treat NoBroker
-/// as allow must be explicit about that decision in their enforcement logic.
+/// Callers that treat NoBroker as allow must be explicit about that decision
+/// in their enforcement logic.
 pub struct NoOpConsentBroker;
 
 #[async_trait::async_trait]

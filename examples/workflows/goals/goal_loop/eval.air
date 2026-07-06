@@ -1,7 +1,0 @@
-module {
-  func.func @eval(%arg0: !ais.token {ais.param_name = "pass_result", ais.param_type = "str"}) -> !ais.token attributes {ais.entry} {
-    %label = ais.const_str "eval: status=pass|needs_more|blocked|unsafe; evidence follows:" : !ais.token
-    %out = ais.merge %label, %arg0 : !ais.token, !ais.token -> !ais.token
-    func.return %out : !ais.token
-  }
-}

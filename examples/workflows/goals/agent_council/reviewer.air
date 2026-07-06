@@ -1,7 +1,0 @@
-module {
-  func.func @reviewer(%arg0: !ais.token {ais.param_name = "task", ais.param_type = "str"}) -> !ais.token attributes {ais.entry} {
-    %label = ais.const_str "reviewer:" : !ais.token
-    %out = ais.merge %label, %arg0 : !ais.token, !ais.token -> !ais.token
-    func.return %out : !ais.token
-  }
-}

@@ -32,8 +32,8 @@ Run in order for any non-trivial session:
 
 - `vllm-service` — APXM-vLLM service operation (existing).
 - `compile-and-execute` — compile graphs and run `.apxmobj`.
-- `goal-orchestrator` — create, start, and follow bounded APXM goal
-  orchestration passes through `dekk agents goal` or workflow MCP tools.
+- `frontend-implementation` — compiler frontend work across Rust
+  `AirModule`, TypeScript `@apxm/frontend`, Python `apxm`, and AIR lowering.
 - `mlir-pass-development` — add/modify MLIR passes.
 - `fork-vllm-rebase` — rebase the `external/vllm` fork.
 - `model-zoo-operate` — operate the vLLM zoo manifests.

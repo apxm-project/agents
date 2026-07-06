@@ -62,10 +62,10 @@ def main():
     print(f"Edges: {len(graph.edges)}")
     print()
 
-    # Print graph as canonical .air
-    print("AIR Representation:")
+    # Print AIR emitted by the Python frontend.
+    print("AIR:")
     print("=" * 60)
-    print(graph.to_air())
+    print(research_workflow.to_air())
 
 
 if __name__ == "__main__":

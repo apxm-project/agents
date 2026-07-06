@@ -525,7 +525,7 @@ mod tests {
     use parking_lot::Mutex as PlMutex;
 
     /// Captures every emitted `ApxmEvent` so tests can inspect the decoded
-    /// payload without a real rollout/SSE sink (RTG-11).
+    /// payload without a real rollout/SSE sink.
     #[derive(Default)]
     struct CapturingEmitter {
         events: PlMutex<Vec<ApxmEvent>>,
@@ -547,7 +547,7 @@ mod tests {
         (adapter, capture)
     }
 
-    /// RTG-11: a model-routing decision becomes a `model_route_decision`
+    /// a model-routing decision becomes a `model_route_decision`
     /// event whose payload carries the chosen backend/model, the reason,
     /// and every rejected candidate with its own reason — nothing silently
     /// dropped.
@@ -585,14 +585,17 @@ mod tests {
         );
         assert_eq!(payload.rejected_candidates.len(), 1);
         assert_eq!(payload.rejected_candidates[0].candidate, "gpt-slow");
-        assert_eq!(payload.rejected_candidates[0].reason_kind, "circuit_breaker_open");
+        assert_eq!(
+            payload.rejected_candidates[0].reason_kind,
+            "circuit_breaker_open"
+        );
         assert_eq!(
             payload.rejected_candidates[0].reason,
             "backend 'openai' circuit breaker is open"
         );
     }
 
-    /// RTG-11: an agent-routing decision becomes an `agent_route_decision`
+    /// an agent-routing decision becomes an `agent_route_decision`
     /// event whose payload carries the chosen profile, the reason, and
     /// every rejected candidate with its own missing-capability reason.
     #[test]

@@ -5,6 +5,8 @@ AIS dialect, MLIR passes, Python frontend codegen.
 ## Skills
 
 - **ais-op-design** — design-before-code gate for new AIS ops.
+- **frontend-implementation** — Rust/TypeScript/Python frontend lowering,
+  op-catalog consumption, and the single Rust AIR printer boundary.
 - **mlir-pass-development** — add/modify MLIR passes.
 - **compile-and-execute** — validate, compile, run `.apxmobj`.
 
@@ -30,6 +32,8 @@ dekk agents test -p apxm-compiler
 - `docs/compiler/pipeline.md` — the pass pipeline.
 - `crates/compiler/pipeline/src/passes/` — pass implementations.
 - `crates/compiler/frontend/python/` — Python frontend.
+- `crates/compiler/frontend/typescript/` — TypeScript frontend.
+- `crates/compiler/pipeline/src/air_builder/` — Rust AIR graph and printer.
 
 ## Related rules
 

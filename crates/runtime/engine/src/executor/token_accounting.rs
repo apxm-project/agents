@@ -132,7 +132,7 @@ impl TokenAccountant {
 }
 
 /// Process-wide token meter shared by every entry point that spends tokens,
-/// including deliberate executor bypasses like `/v1/generate` (RT-8: "route
+/// including deliberate executor bypasses like `/v1/generate` ("route
 /// its token accounting through the same meters the engine uses"). Unlike
 /// [`ExecutionContext::token_accountant`] (fresh per execution, reset to zero
 /// at execution start so a run's own snapshot is self-contained), this is one

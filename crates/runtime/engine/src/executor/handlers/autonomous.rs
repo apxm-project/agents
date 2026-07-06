@@ -128,8 +128,8 @@ pub async fn execute(ctx: &ExecutionContext, node: &Node, inputs: Vec<Value>) ->
         // default-safe: no tool attrs => empty tools => the original text-only path.
         //
         // Caveat: the backend capability check goes through `ctx.llm_registry`,
-        // which may differ from a node-routed ModelRouter backend; this mirrors
-        // the ASK handler's check exactly (llm/mod.rs).
+        // which may differ from a node-routed ModelRouter backend; this uses
+        // the same check as the ASK handler (llm/mod.rs).
         let tools = resolve_node_tools(ctx, node);
         let action_content = if tools.is_empty() {
             execute_llm_request_for_node(ctx, node, "autonomous_action", &action_req)
@@ -301,7 +301,7 @@ async fn converse_loop(ctx: &ExecutionContext, node: &Node, inputs: Vec<Value>) 
 
 /// Run one agent turn for `prompt`: a tool-using turn when the node exposes tools
 /// and the backend supports auto tool choice, otherwise a plain text turn.
-/// Shared by `converse_loop` and `recv_loop` (mirrors the ASK path).
+/// Shared by `converse_loop` and `recv_loop`.
 async fn run_agent_turn(
     ctx: &ExecutionContext,
     node: &Node,

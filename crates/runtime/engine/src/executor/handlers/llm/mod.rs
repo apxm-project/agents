@@ -92,12 +92,11 @@ impl From<&AISOperationType> for LlmMode {
 }
 
 /// Reserved `input_names` entry that carries the system prompt as a dataflow
-/// value instead of the static `system_prompt` attribute. Mirrored by the
-/// Python frontend's `ask(system_prompt_input=...)` surface.
+/// value instead of the static `system_prompt` attribute.
 pub(crate) const SYSTEM_PROMPT_INPUT: &str = "__system";
 
 /// Extract a dataflow system-prompt operand, if one is bound to the reserved
-/// `__system` input name. Enables in-program context injection (FR-005/FR-009):
+/// `__system` input name. Enables in-program context injection:
 /// a `pre_ask` hook or an upstream node can supply the system prompt as a value
 /// rather than a static attribute.
 fn dataflow_system_prompt(node: &Node, inputs: &[Value]) -> Option<String> {
@@ -133,8 +132,8 @@ fn resolve_system_prompt(
             ctx.instruction_config.reason.as_ref(),
             "reason_system",
             "You are a helpful AI assistant. When providing structured responses, \
-             use JSON format with fields: belief_updates (object), new_goals (array), \
-             and result (any type).",
+ use JSON format with fields: belief_updates (object), new_goals (array), \
+ and result (any type).",
         ),
     };
     // A dataflow operand bound to `__system` takes precedence over the static
@@ -165,13 +164,13 @@ pub(crate) fn attach_graph_hints(
         && let Some(hints) = ctx.dispatch_hints_for_node(node_id)
     {
         apxm_llm!(debug,
-            execution_id = %ctx.execution_id,
-            graph_id = %ctx.graph_id,
-            node_id = node.id,
-            priority_class = ?hints.priority_class,
-            reuse_group = ?hints.reuse_group,
-            downstream = hints.downstream_nodes.len(),
-            "Built APXM graph hints from DispatchIrV1"
+         execution_id = %ctx.execution_id,
+         graph_id = %ctx.graph_id,
+         node_id = node.id,
+         priority_class = ?hints.priority_class,
+         reuse_group = ?hints.reuse_group,
+         downstream = hints.downstream_nodes.len(),
+         "Built APXM graph hints from DispatchIrV1"
         );
         return request.with_apxm_hints(hints);
     }
@@ -203,13 +202,13 @@ pub(crate) fn attach_graph_hints(
     }
 
     apxm_llm!(debug,
-        execution_id = %ctx.execution_id,
-        graph_id = %ctx.graph_id,
-        node_id = node.id,
-        priority_class = ?hints.priority_class,
-        reuse_group = ?hints.reuse_group,
-        downstream = hints.downstream_nodes.len(),
-        "Built APXM graph hints for backend scheduling"
+     execution_id = %ctx.execution_id,
+     graph_id = %ctx.graph_id,
+     node_id = node.id,
+     priority_class = ?hints.priority_class,
+     reuse_group = ?hints.reuse_group,
+     downstream = hints.downstream_nodes.len(),
+     "Built APXM graph hints for backend scheduling"
     );
 
     request.with_apxm_hints(hints)
@@ -254,16 +253,16 @@ fn attach_cache_salt(mut request: LLMRequest, cache_salt: String) -> LLMRequest 
 
 /// Resolution chain for the vLLM `cache_salt`:
 ///
-///   1. Explicit `vllm_cache_salt` node attribute — author intent always wins.
-///      A value of `"none"` (or empty) disables salting entirely.
-///   2. Compiler-stamped `shared_prefix_group` — the SharedPrefixAnalysis
-///      pass marks sibling nodes that share a bit-identical leading prompt.
-///      Salting by `{graph_id}:{group}` lets the vLLM prefix cache survive
-///      across executions of the same graph for grouped nodes, while the
-///      benchmark harness can still keep ungrouped nodes execution-isolated
-///      via `APXM_VLLM_CACHE_SALT=execution`.
-///   3. Env var fallback (`APXM_VLLM_CACHE_SALT`) — harness iteration
-///      isolation for ungrouped nodes.
+/// 1. Explicit `vllm_cache_salt` node attribute — author intent always wins.
+/// A value of `"none"` (or empty) disables salting entirely.
+/// 2. Compiler-stamped `shared_prefix_group` — the SharedPrefixAnalysis
+/// pass marks sibling nodes that share a bit-identical leading prompt.
+/// Salting by `{graph_id}:{group}` lets the vLLM prefix cache survive
+/// across executions of the same graph for grouped nodes, while the
+/// benchmark harness can still keep ungrouped nodes execution-isolated
+/// via `APXM_VLLM_CACHE_SALT=execution`.
+/// 3. Env var fallback (`APXM_VLLM_CACHE_SALT`) — harness iteration
+/// isolation for ungrouped nodes.
 fn apply_vllm_request_overrides_from_node(
     ctx: &ExecutionContext,
     node: &Node,
@@ -379,8 +378,8 @@ pub async fn execute(ctx: &ExecutionContext, node: &Node, inputs: Vec<Value>) ->
 
     let dataflow_prompt = dataflow_system_prompt(node, &inputs);
     let mut system_prompt = resolve_system_prompt(ctx, node, mode, dataflow_prompt)?;
-    // A `pre_turn` hook (G-3) may have rendered a prompt supplement for the
-    // top-level turn currently in flight (e.g. Gao's Studio-context hook).
+    // A `pre_turn` hook may have rendered a prompt supplement for the
+    // top-level turn currently in flight.
     // Consume it once (`take`) so a later sub-ask in the same turn does not
     // re-prepend it. Applied before `pre_ask` so `pre_ask` hooks still see —
     // and may further prepend/override — the combined text.
@@ -432,18 +431,18 @@ pub async fn execute(ctx: &ExecutionContext, node: &Node, inputs: Vec<Value>) ->
                     })?;
             if backend.supports_auto_tool_choice() {
                 apxm_llm!(debug,
-                    execution_id = %ctx.execution_id,
-                    tool_count = tools.len(),
-                    "Attaching tools to ASK request"
+                 execution_id = %ctx.execution_id,
+                 tool_count = tools.len(),
+                 "Attaching tools to ASK request"
                 );
                 request = request.with_tools(tools).with_tool_choice(ToolChoice::Auto);
             } else {
                 apxm_llm!(warn,
-                    execution_id = %ctx.execution_id,
-                    backend = %backend_name,
-                    tool_count = tools.len(),
-                    "Backend does not support tool_choice=\"auto\"; proceeding \
-                     text-only for this ASK (tools dropped this turn)"
+                 execution_id = %ctx.execution_id,
+                 backend = %backend_name,
+                 tool_count = tools.len(),
+                 "Backend does not support tool_choice=\"auto\"; proceeding \
+                 text-only for this ASK (tools dropped this turn)"
                 );
             }
         }
@@ -469,10 +468,10 @@ pub async fn execute(ctx: &ExecutionContext, node: &Node, inputs: Vec<Value>) ->
 
         if attempt > 0 {
             apxm_llm!(warn,
-                execution_id = %ctx.execution_id,
-                mode = mode_name,
-                attempt = attempt,
-                "Retrying LLM operation"
+             execution_id = %ctx.execution_id,
+             mode = mode_name,
+             attempt = attempt,
+             "Retrying LLM operation"
             );
 
             // Exponential backoff
@@ -497,12 +496,12 @@ pub async fn execute(ctx: &ExecutionContext, node: &Node, inputs: Vec<Value>) ->
                             &validation_error_text,
                         );
                         apxm_llm!(
-                            warn,
-                            execution_id = %ctx.execution_id,
-                            retry = schema_retries_used,
-                            max_schema_retries = max_schema_retries,
-                            error = %validation_error_text,
-                            "Retrying ASK due to output_schema validation failure"
+                         warn,
+                         execution_id = %ctx.execution_id,
+                         retry = schema_retries_used,
+                         max_schema_retries = max_schema_retries,
+                         error = %validation_error_text,
+                         "Retrying ASK due to output_schema validation failure"
                         );
                         continue;
                     }
@@ -513,11 +512,11 @@ pub async fn execute(ctx: &ExecutionContext, node: &Node, inputs: Vec<Value>) ->
             Err(e) => {
                 last_error = Some(e);
                 apxm_llm!(debug,
-                    execution_id = %ctx.execution_id,
-                    mode = mode_name,
-                    attempt = attempt,
-                    error = %last_error.as_ref().unwrap(),
-                    "LLM attempt failed"
+                 execution_id = %ctx.execution_id,
+                 mode = mode_name,
+                 attempt = attempt,
+                 error = %last_error.as_ref().unwrap(),
+                 "LLM attempt failed"
                 );
             }
         }
@@ -579,9 +578,9 @@ async fn execute_llm_once(
         && let Some(cached) = ctx.response_cache.get(key)
     {
         apxm_llm!(debug,
-            execution_id = %ctx.execution_id,
-            mode = mode_name,
-            "Memoization cache hit"
+         execution_id = %ctx.execution_id,
+         mode = mode_name,
+         "Memoization cache hit"
         );
         if let Some(emitter) = &ctx.event_emitter {
             emitter.emit_memoization_hit(node.id);
@@ -611,10 +610,10 @@ async fn execute_llm_once(
     }
 
     apxm_llm!(debug,
-        execution_id = %ctx.execution_id,
-        mode = mode_name,
-        prompt_len = request.prompt.len(),
-        "Sending LLM request"
+     execution_id = %ctx.execution_id,
+     mode = mode_name,
+     prompt_len = request.prompt.len(),
+     "Sending LLM request"
     );
 
     // Execute LLM request through registry.
@@ -671,7 +670,7 @@ async fn execute_llm_once(
             flow_name.map(|s| s.as_str()),
             agent_name,
         );
-        // RT-8: also feed the process-wide meter so `/v1/generate` (which
+        // also feed the process-wide meter so `/v1/generate` (which
         // bypasses this executor path entirely) and the executor path are
         // observed through one shared counter.
         crate::executor::token_accounting::global_meter().record_usage(
@@ -707,19 +706,19 @@ async fn execute_llm_once(
     }
 
     apxm_llm!(info,
-        execution_id = %ctx.execution_id,
-        mode = mode_name,
-        response_len = content.len(),
-        tokens_in = response.usage.input_tokens,
-        tokens_out = response.usage.output_tokens,
-        "LLM response received"
+     execution_id = %ctx.execution_id,
+     mode = mode_name,
+     response_len = content.len(),
+     tokens_in = response.usage.input_tokens,
+     tokens_out = response.usage.output_tokens,
+     "LLM response received"
     );
 
     apxm_llm!(trace,
-        execution_id = %ctx.execution_id,
-        mode = mode_name,
-        raw_response = %content,
-        "LLM model response content"
+     execution_id = %ctx.execution_id,
+     mode = mode_name,
+     raw_response = %content,
+     "LLM model response content"
     );
 
     // Process response based on mode

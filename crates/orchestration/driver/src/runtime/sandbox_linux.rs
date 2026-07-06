@@ -294,7 +294,7 @@ fn resolve_working_directory(
             })
         }
         None => Ok(WorkingDirectory {
-            // Mirror the real host path: it exists under the read-only root, so
+            // Use the real host path: it exists under the read-only root, so
             // it can be re-bound writable. A synthetic mountpoint can't be
             // created on the read-only root.
             host: session.fallback_workdir.clone(),

@@ -83,7 +83,7 @@ constexpr llvm::StringLiteral STDIN = "<stdin>";
 }  // namespace input
 
 /// MLIR attribute names set by AIS passes.
-/// These mirror the canonical AIS graph attribute contract in apxm-ais.
+/// These follow the canonical AIS graph attribute contract in apxm-ais.
 namespace attrs {
 
 constexpr llvm::StringLiteral DIALECT_ATTR_PREFIX = "ais.";
@@ -131,7 +131,7 @@ constexpr llvm::StringLiteral ESTIMATED_DYNAMIC_TOKENS = "ais.estimated_dynamic_
 constexpr llvm::StringLiteral SHARED_PREFIX_GROUP_PREFIX = "shared_prefix_analysis_";
 
 // ---- Operation-level attributes (no ais. prefix) ----
-// These mirror the canonical graph attrs exported through apxm-core and match
+// These follow the canonical graph attrs exported through apxm-core and match
 // ODS TableGen definitions.
 // No "ais." prefix because these are op arguments, not pass annotations.
 constexpr llvm::StringLiteral PRIORITY = "priority";

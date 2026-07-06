@@ -1,10 +1,8 @@
-//! `apxm integration new|lint|install` — the INT-2 toolchain for the
-//! canonical integration-package folder format (`apxm.integration-package.v1`,
-//! `workspace/contracts/schemas/integration-package.v1.json`,
-//! `docs/plans/integration-packages.md`).
+//! `apxm integration new|lint|install` — the toolchain for the
+//! canonical integration-package folder format (`apxm.integration-package.v1`).
 //!
-//! This module is the integration-level sibling of [`super::package`] (AGT-2)
-//! and [`super::org`] (ORG-2): same module organization, same
+//! This module is the integration-level sibling of [`super::package`]
+//! and [`super::org`]: same module organization, same
 //! manifest-projection-from-schema approach (hand ported into Rust structs
 //! rather than loading the JSON schema at runtime), same lint reporting
 //! style, same install-to-`APXM_HOME` pattern. The contract schema only
@@ -13,23 +11,21 @@
 //! real packs under `studio/integrations/` (slack, generic-http, …) plus
 //! `docs/guides/integrations.md`.
 //!
-//! Per `docs/plans/integration-packages.md` decision #1, the six files are
-//! the pre-existing five (`integration.toml`, `provider.toml`,
+//! The six files are the pre-existing five (`integration.toml`, `provider.toml`,
 //! `capabilities.toml`, `triggers.toml`, `connector.toml`) **plus
 //! `permissions.toml`** — the policy half of every declared capability,
-//! using the same CM-3 permission vocabulary
+//! using the same permission vocabulary
 //! (`crates/machine/contracts/src/types/capability/permission_vocabulary.rs`):
 //! `operation_class`, `risk_level`, `approval_posture`, `scope`,
 //! `credential_scope`, `audit_payload`. A capability entry with no policy
-//! entry fails lint (the same "joined capability" rule AGT-1/ORG-1 already
-//! enforce for agent/org packages — one capability grammar across all three
+//! entry fails lint (the same "joined capability" rule already enforced for
+//! agent/org packages — one capability grammar across all three
 //! pack families).
 //!
-//! ## Fan-out (decision #2)
+//! ## Fan-out
 //!
-//! Investigation (`docs/plans/integration-packages.md`, `workspace/*/scripts`,
-//! and each consumer's own source) found that auth-ms, apxm-server, apxm-os,
-//! and Studio do **not** register integrations via any push/HTTP API — they
+//! Each consumer's own source shows that auth-ms, apxm-server, apxm-os, and
+//! Studio do **not** register integrations via any push/HTTP API — they
 //! all discover the catalog by *scanning a shared filesystem root* at their
 //! own startup/reindex time:
 //!
@@ -55,12 +51,12 @@
 //! No consumer exposes (or is guaranteed to have running/reachable) a
 //! network registration endpoint for this from a CLI context. So `integration
 //! install` fans out the pack the same way `sync_integrations` already does:
-//! it always copies to `APXM_HOME/integrations/<id>/` (the AGT-2/ORG-2
+//! it always copies to `APXM_HOME/integrations/<id>/` (the /
 //! convention, and one of `server`'s own scan roots), and — best-effort, so a
-//! missing/unreachable shared workspace never fails the install — mirrors the
+//! missing/unreachable shared workspace never fails the install — copies the
 //! same copy to `$APXM_WORKSPACE_ROOT/integrations/<id>/` when
 //! `APXM_WORKSPACE_ROOT` is set, which is the root auth-ms, apxm-os, and
-//! Studio actually scan. A failure to mirror is a warning, not an error: the
+//! Studio actually scan. A failure to copy is a warning, not an error: the
 //! `APXM_HOME` copy is always the source of truth this command guarantees.
 
 use std::fs;
@@ -96,7 +92,7 @@ pub struct IntegrationToml {
 }
 
 /// `integration.toml`'s `[files]` table: sibling file references (relative
-/// paths within the pack). `permissions` is INT-1/INT-2's addition — the
+/// paths within the pack). `permissions` is /'s addition — the
 /// existing eleven packs' `integration.toml` predate it.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct FilesToml {
@@ -122,8 +118,8 @@ pub struct CapabilitiesRefToml {
 /// `capabilities.toml` — array of provider action definitions. Shape taken
 /// verbatim from the real packs (`studio/integrations/slack/capabilities.toml`,
 /// `.../generic-http/capabilities.toml`): advisory flags only
-/// (`read_only`/`requires_auth`), no permission policy — that lives in the
-/// new `permissions.toml` (INT-1 decision #1).
+/// (`read_only`/`requires_auth`), no permission policy; that lives in
+/// `permissions.toml`.
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct CapabilitiesToml {
     #[serde(default, rename = "capability")]
@@ -151,8 +147,8 @@ pub struct CapabilityEntry {
     pub schema: Option<String>,
 }
 
-/// `permissions.toml` — one policy entry per joined capability id (INT-1's
-/// six-file addition, decision #1). Field names mirror the CM-3 permission
+/// `permissions.toml` — one policy entry per joined capability id. Field names
+/// use the permission
 /// vocabulary (`apxm.permission-policy.v1`) exactly:
 /// `operation_class`/`risk_level`/`approval_posture`/`scope`/
 /// `credential_scope`/`audit_payload` — see
@@ -179,10 +175,9 @@ pub struct PermissionEntry {
     pub audit_payload: Option<String>,
 }
 
-/// INT-3's provenance default (`docs/plans/integration-packages.md`
-/// non-negotiable #8): write-capable capabilities default to
+/// Write-capable capabilities default to
 /// approval-required; read-only capabilities default to auto (no gate).
-/// `auto` is the CM-3 `ApprovalPosture::Auto` value; any other posture
+/// `auto` is the `ApprovalPosture::Auto` value; any other posture
 /// (`confirm`, `dual_control`, `external_signoff`) counts as
 /// "approval-required" for lint purposes.
 const POSTURE_AUTO: &str = "auto";
@@ -270,7 +265,7 @@ fn integration_new(
     let send_cap = format!("{id}.send");
 
     // integration.toml — the manifest. `[files]` includes `permissions`
-    // (INT-1's addition), unlike the eleven pre-INT packs.
+    // ('s addition), unlike the eleven pre-INT packs.
     let integration_toml = format!(
         "schema_version = 1\n\
          profile_version = \"integration/v1\"\n\
@@ -330,11 +325,11 @@ fn integration_new(
     write_new_file(&root.join("capabilities.toml"), &capabilities_toml)?;
 
     // permissions.toml — the policy half, one [[permission]] per
-    // capabilities.toml entry, defaults per INT-3's provenance rule: auto
+    // capabilities.toml entry: auto
     // for read_only, approval-required (confirm) otherwise.
     let permissions_toml = format!(
         "# One [[permission]] per capabilities.toml entry (by id) — the policy\n\
-         # half of every capability (apxm.integration-package.v1 decision #1).\n\
+         # half of every capability.\n\
          # A capability with no matching entry here fails `apxm integration lint`.\n\
          [[permission]]\n\
          capability = \"{probe_cap}\"\n\
@@ -473,10 +468,13 @@ fn load_integration(root: &Path) -> Result<LoadedIntegration> {
 fn semver_like(version: &str) -> bool {
     let core = version.split(['-', '+']).next().unwrap_or(version);
     let parts: Vec<&str> = core.split('.').collect();
-    parts.len() == 3 && parts.iter().all(|p| !p.is_empty() && p.chars().all(|c| c.is_ascii_digit()))
+    parts.len() == 3
+        && parts
+            .iter()
+            .all(|p| !p.is_empty() && p.chars().all(|c| c.is_ascii_digit()))
 }
 
-/// Structural checks mirroring `apxm.integration-package.v1`'s required
+/// Structural checks for `apxm.integration-package.v1`'s required
 /// fields and the folder contract's own identity rules.
 fn check_schema_shape(pkg: &LoadedIntegration) -> Vec<String> {
     let mut errors = Vec::new();
@@ -501,11 +499,10 @@ fn check_schema_shape(pkg: &LoadedIntegration) -> Vec<String> {
     errors
 }
 
-/// The INT-1/INT-2 "joined capability" check (decision #1): every
+/// Joined capability check: every
 /// `capabilities.toml` entry must have a matching `permissions.toml` entry
-/// or it "is not a capability" and fails lint — same rule AGT-1/ORG-1
-/// already enforce, applied to the integration-package family. Also checks
-/// INT-3's provenance default: a non-read_only (write) capability's posture
+/// or it "is not a capability" and fails lint. Also checks
+/// the provenance default: a non-read_only (write) capability's posture
 /// must not be `auto` — write-capable capabilities are approval-required.
 fn check_capability_policy_join(pkg: &LoadedIntegration) -> Vec<String> {
     use std::collections::BTreeMap;
@@ -524,7 +521,7 @@ fn check_capability_policy_join(pkg: &LoadedIntegration) -> Vec<String> {
                 errors.push(format!(
                     "capability '{}' is declared in capabilities.toml but has no matching entry \
                      in permissions.toml — an entry with no permission policy is not a \
-                     capability (apxm.integration-package.v1 decision #1)",
+                     capability",
                     cap.id
                 ));
             }
@@ -533,8 +530,7 @@ fn check_capability_policy_join(pkg: &LoadedIntegration) -> Vec<String> {
                     errors.push(format!(
                         "capability '{}' is write-capable (read_only = false) but \
                          permissions.toml sets approval_posture = 'auto' — write-capable \
-                         capabilities default to approval-required (non-negotiable #8, \
-                         docs/plans/integration-packages.md)",
+                         capabilities default to approval-required",
                         cap.id
                     ));
                 }
@@ -625,9 +621,9 @@ fn integration_install(path: &Path, force: bool, json_output: bool) -> Result<()
 }
 
 /// Installs an integration package under an explicit `apxm_home` root, and
-/// best-effort mirrors it to `<workspace_root>/integrations/<id>/` when a
+/// best-effort copies it to `<workspace_root>/integrations/<id>/` when a
 /// workspace root is given — see the module doc comment's "Fan-out" section
-/// for why this filesystem mirror (not an HTTP push) is the correct fan-out
+/// for why this filesystem copy (not an HTTP push) is the correct fan-out
 /// mechanism to auth-ms/apxm-os/Studio. Split out from [`integration_install`]
 /// so tests can point at tempdirs instead of mutating the process-global
 /// `APXM_HOME`/`APXM_WORKSPACE_ROOT` env vars (this crate denies
@@ -663,13 +659,14 @@ pub(crate) fn integration_install_to(
         .with_context(|| format!("Failed to create {}", integrations_dir(apxm_home).display()))?;
     copy_dir_recursive(path, &dest)?;
 
-    // Best-effort fan-out mirror: the shared workspace root every
+    // Best-effort fan-out copy: the shared workspace root every
     // non-server consumer (auth-ms, apxm-os, Studio) actually scans. Never
     // fails the install — a missing/unreachable shared workspace is normal
     // outside a co-located dev/CI stack.
-    let mirror_warning = workspace_root.and_then(|root| mirror_to_workspace_root(path, &id, root, force));
+    let workspace_copy_warning =
+        workspace_root.and_then(|root| copy_to_workspace_root(path, &id, root, force));
 
-    if let Some(warning) = &mirror_warning {
+    if let Some(warning) = &workspace_copy_warning {
         eprintln!("{warning}");
     }
 
@@ -679,7 +676,7 @@ pub(crate) fn integration_install_to(
             serde_json::to_string_pretty(&serde_json::json!({
                 "id": id,
                 "installed_to": dest.display().to_string(),
-                "workspace_mirror_warning": mirror_warning,
+                "workspace_copy_warning": workspace_copy_warning,
             }))?
         );
     } else {
@@ -689,18 +686,23 @@ pub(crate) fn integration_install_to(
     Ok(())
 }
 
-/// Mirrors `path` to `<workspace_root>/integrations/<id>/`, matching
+/// Copies `path` to `<workspace_root>/integrations/<id>/`, matching
 /// `studio/scripts/stack-lib.sh::sync_integrations`'s own precedent for
 /// keeping every scanner's catalog in sync. Returns a human-readable warning
 /// string on any failure; the caller treats this as best-effort and never
 /// fails the install because of it.
-fn mirror_to_workspace_root(path: &Path, id: &str, workspace_root: &Path, force: bool) -> Option<String> {
+fn copy_to_workspace_root(
+    path: &Path,
+    id: &str,
+    workspace_root: &Path,
+    force: bool,
+) -> Option<String> {
     let dest = workspace_root.join("integrations").join(id);
 
     if dest.exists() {
         if !force {
             return Some(format!(
-                "warning: could not mirror to workspace-shared catalog at '{}' — destination \
+                "warning: could not copy to workspace-shared catalog at '{}' — destination \
                  already exists (pass --force to overwrite); auth-ms/apxm-os/Studio will keep \
                  seeing their previously-synced copy until this is resolved by hand",
                 dest.display()
@@ -708,7 +710,7 @@ fn mirror_to_workspace_root(path: &Path, id: &str, workspace_root: &Path, force:
         }
         if let Err(err) = fs::remove_dir_all(&dest) {
             return Some(format!(
-                "warning: could not mirror to workspace-shared catalog at '{}': {err}",
+                "warning: could not copy to workspace-shared catalog at '{}': {err}",
                 dest.display()
             ));
         }
@@ -723,7 +725,7 @@ fn mirror_to_workspace_root(path: &Path, id: &str, workspace_root: &Path, force:
     }
     if let Err(err) = copy_dir_recursive(path, &dest) {
         return Some(format!(
-            "warning: could not mirror to workspace-shared catalog at '{}': {err}",
+            "warning: could not copy to workspace-shared catalog at '{}': {err}",
             dest.display()
         ));
     }
@@ -778,7 +780,10 @@ mod tests {
             .iter()
             .find(|p| p.capability == "demo.probe")
             .unwrap();
-        assert_eq!(probe_policy.approval_posture, "auto", "read_only capability defaults to auto");
+        assert_eq!(
+            probe_policy.approval_posture, "auto",
+            "read_only capability defaults to auto"
+        );
         let send_policy = permissions
             .permission
             .iter()
@@ -808,7 +813,7 @@ mod tests {
         scaffold(&root, "nopolicy");
 
         // Drop the permissions.toml entry for the write capability — a
-        // capability without a policy half is not a capability (decision #1).
+        // capability without a policy half is not a capability.
         fs::write(
             root.join("permissions.toml"),
             "[[permission]]\n\
@@ -828,7 +833,7 @@ mod tests {
         scaffold(&root, "badposture");
 
         // The write capability ('badposture.send') is auto-postured — a
-        // policy violation of the INT-3 provenance default.
+        // policy violation of the  provenance default.
         fs::write(
             root.join("permissions.toml"),
             "[[permission]]\n\
@@ -850,8 +855,9 @@ mod tests {
         let pkg = load_integration(&root).unwrap();
         let errors = check_capability_policy_join(&pkg);
         assert!(
-            errors.iter().any(|e| e.contains("badposture.send")
-                && e.contains("approval-required")),
+            errors
+                .iter()
+                .any(|e| e.contains("badposture.send") && e.contains("approval-required")),
             "expected the write/approval-posture violation message, got: {errors:?}"
         );
     }
@@ -920,17 +926,18 @@ mod tests {
         scaffold(&root, "dupe");
         let fake_home = tempdir().unwrap();
 
-        integration_install_to(&root, fake_home.path(), None, false, true).expect("first install ok");
+        integration_install_to(&root, fake_home.path(), None, false, true)
+            .expect("first install ok");
         let second = integration_install_to(&root, fake_home.path(), None, false, true);
         let err = second.expect_err("second install without --force must fail");
         assert!(err.to_string().contains("already exists"));
     }
 
     #[test]
-    fn install_mirrors_to_workspace_root_when_given() {
+    fn install_copies_to_workspace_root_when_given() {
         let tmp = tempdir().unwrap();
-        let root = tmp.path().join("mirrored");
-        scaffold(&root, "mirrored");
+        let root = tmp.path().join("shared_copy");
+        scaffold(&root, "shared_copy");
         let fake_home = tempdir().unwrap();
         let fake_workspace = tempdir().unwrap();
 
@@ -943,34 +950,37 @@ mod tests {
         )
         .expect("install ok");
 
-        let dest = fake_home.path().join("integrations").join("mirrored");
-        assert!(dest.join("integration.toml").is_file(), "APXM_HOME copy must exist");
+        let dest = fake_home.path().join("integrations").join("shared_copy");
+        assert!(
+            dest.join("integration.toml").is_file(),
+            "APXM_HOME copy must exist"
+        );
 
-        let mirrored = fake_workspace
+        let shared_copy = fake_workspace
             .path()
             .join("integrations")
-            .join("mirrored")
+            .join("shared_copy")
             .join("integration.toml");
-        assert!(mirrored.is_file(), "workspace-shared mirror must exist");
+        assert!(shared_copy.is_file(), "workspace-shared copy must exist");
     }
 
     #[test]
-    fn install_mirror_failure_does_not_fail_install() {
+    fn install_workspace_copy_failure_does_not_fail_install() {
         let tmp = tempdir().unwrap();
-        let root = tmp.path().join("mirror-fail");
-        scaffold(&root, "mirror-fail");
+        let root = tmp.path().join("copy-fail");
+        scaffold(&root, "copy-fail");
         let fake_home = tempdir().unwrap();
 
         // A workspace root that is actually a *file* (not a directory) makes
-        // the mirror copy fail; the install itself must still succeed.
+        // the workspace copy fail; the install itself must still succeed.
         let bogus_workspace_marker = tempdir().unwrap();
         let bogus_workspace = bogus_workspace_marker.path().join("not-a-dir");
         fs::write(&bogus_workspace, "not a directory").unwrap();
 
         integration_install_to(&root, fake_home.path(), Some(&bogus_workspace), false, true)
-            .expect("install must succeed even when the best-effort mirror fails");
+            .expect("install must succeed even when the best-effort workspace copy fails");
 
-        let dest = fake_home.path().join("integrations").join("mirror-fail");
+        let dest = fake_home.path().join("integrations").join("copy-fail");
         assert!(dest.join("integration.toml").is_file());
     }
 }

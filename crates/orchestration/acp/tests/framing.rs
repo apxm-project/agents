@@ -36,7 +36,11 @@ struct NoOpHandler;
 
 #[async_trait]
 impl ReverseHandler for NoOpHandler {
-    async fn handle(&self, method: &str, _params: serde_json::Value) -> Result<serde_json::Value, AcpError> {
+    async fn handle(
+        &self,
+        method: &str,
+        _params: serde_json::Value,
+    ) -> Result<serde_json::Value, AcpError> {
         panic!("unexpected reverse request: {method}");
     }
 }
@@ -99,7 +103,11 @@ struct CapturingHandler {
 
 #[async_trait]
 impl ReverseHandler for CapturingHandler {
-    async fn handle(&self, method: &str, _params: serde_json::Value) -> Result<serde_json::Value, AcpError> {
+    async fn handle(
+        &self,
+        method: &str,
+        _params: serde_json::Value,
+    ) -> Result<serde_json::Value, AcpError> {
         panic!("unexpected reverse request: {method}");
     }
 
@@ -120,7 +128,10 @@ async fn notifications_are_dispatched_before_the_final_response() {
         seen: std::sync::Mutex::new(Vec::new()),
     };
 
-    let id = transport.send_request("fire_notification", None).await.unwrap();
+    let id = transport
+        .send_request("fire_notification", None)
+        .await
+        .unwrap();
     let result = transport.read_response(id, &handler).await.unwrap();
     assert_eq!(result, serde_json::json!({"ok": true}));
 
@@ -140,7 +151,11 @@ struct ReversePongHandler;
 
 #[async_trait]
 impl ReverseHandler for ReversePongHandler {
-    async fn handle(&self, method: &str, params: serde_json::Value) -> Result<serde_json::Value, AcpError> {
+    async fn handle(
+        &self,
+        method: &str,
+        params: serde_json::Value,
+    ) -> Result<serde_json::Value, AcpError> {
         assert_eq!(method, "myreverse");
         assert_eq!(params, serde_json::json!({"foo": "bar"}));
         Ok(serde_json::json!({"pong": true}))

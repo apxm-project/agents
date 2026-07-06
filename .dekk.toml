@@ -53,54 +53,56 @@ test = { run = "python tools/scripts/cargo.py test --workspace --exclude apxm-co
 test-all = { run = "python tools/scripts/cargo.py test --workspace", description = "All tests (requires MLIR)", group = "Build & Test" }
 test-cli = { run = "python tools/scripts/cargo.py test -p apxm-cli --features driver,metrics --release", description = "Run CLI tests with driver (preserves MLIR-linked binary)", group = "Build & Test" }
 test-python-frontend = { run = "python -m pytest crates/compiler/frontend/python/tests -q", description = "Run Python frontend tests", group = "Build & Test" }
-check = { run = "python tools/scripts/cargo.py check --workspace", description = "Type-check the workspace without producing binaries", group = "Build & Test" }
+check = { run = "python tools/scripts/cargo.py run -p apxm-cli -- codegen op-spec --check && python tools/scripts/cargo.py run -p apxm-cli -- codegen frontend --check && npm --prefix crates/compiler/frontend/typescript run codegen:check && python tools/scripts/cargo.py check --workspace", description = "Check frontend generated metadata drift, then type-check the workspace", group = "Build & Test" }
 fmt = { run = "python tools/scripts/cargo.py fmt", description = "Format Rust sources (cargo fmt)", group = "Build & Test" }
 clippy = { run = "python tools/scripts/cargo.py clippy -- -D warnings", description = "Lint Rust sources, denying warnings (cargo clippy)", group = "Build & Test" }
 clean = { run = "python tools/scripts/cargo.py clean", description = "Clean", group = "Build & Test" }
 scrub-rustc-cache = { run = "python tools/scripts/cargo.py scrub-sigbus-cache", description = "Remove stale rustc SIGBUS diagnostics from Cargo caches", group = "Build & Test" }
-stop = { run = "apxm process stop", description = "Stop APXM compile/run/execute/workflow jobs", group = "Configuration" }
-clean-processes = { run = "apxm process stop", description = "Stop APXM job processes without cleaning build outputs", group = "Configuration" }
+stop = { run = "python tools/scripts/apxm_cli.py process stop", description = "Stop APXM compile/run/execute/workflow jobs", group = "Configuration" }
+clean-processes = { run = "python tools/scripts/apxm_cli.py process stop", description = "Stop APXM job processes without cleaning build outputs", group = "Configuration" }
 
-codegen = { run = "apxm codegen frontend", description = "Regenerate frontend bindings from Core definitions", skill = true, group = "Build & Test" }
-codegen-typescript = { run = "apxm codegen typescript", description = "Regenerate TypeScript frontend bindings from Core definitions", skill = true, group = "Build & Test" }
-codegen-event-kinds = { run = "apxm codegen event-kinds", description = "Regenerate TypeScript event kind constants from Core definitions", skill = true, group = "Build & Test" }
-codegen-op-spec = { run = "apxm codegen op-spec", description = "Regenerate the op-spec.v1 AIS operation catalog + vectors fixture", skill = true, group = "Build & Test" }
-tokenize = { run = "apxm tokenize", description = "Count text with APXM's compiler-side tokenizer", skill = true, group = "Discovery" }
+codegen = { run = "python tools/scripts/apxm_cli.py codegen frontend", description = "Regenerate frontend bindings from Core definitions", skill = true, group = "Build & Test" }
+check-frontend-codegen = { run = "python tools/scripts/cargo.py run -p apxm-cli -- codegen op-spec --check && python tools/scripts/cargo.py run -p apxm-cli -- codegen frontend --check && npm --prefix crates/compiler/frontend/typescript run codegen:check", description = "Check AIS op-spec plus Python/TypeScript frontend generated metadata for drift", group = "Build & Test" }
+codegen-typescript = { run = "python tools/scripts/apxm_cli.py codegen typescript", description = "Regenerate TypeScript frontend bindings from Core definitions", skill = true, group = "Build & Test" }
+codegen-event-kinds = { run = "python tools/scripts/apxm_cli.py codegen event-kinds", description = "Regenerate TypeScript event kind constants from Core definitions", skill = true, group = "Build & Test" }
+codegen-op-spec = { run = "python tools/scripts/apxm_cli.py codegen op-spec", description = "Regenerate the op-spec.v1 AIS operation catalog + vectors fixture", skill = true, group = "Build & Test" }
+emit-air = { run = "python tools/scripts/apxm_cli.py emit-air", description = "Emit canonical AIR from frontend graph JSON through the Rust AirModule printer", skill = true, group = "Authoring" }
+tokenize = { run = "python tools/scripts/apxm_cli.py tokenize", description = "Count text with APXM's compiler-side tokenizer", skill = true, group = "Discovery" }
 
-compile = { run = "apxm compile", description = "Compile graph to .apxmobj artifact", skill = true, group = "Compilation" }
-execute = { run = "apxm execute", description = "Compile and execute a graph", skill = true, group = "Compilation" }
-run = { run = "apxm run", description = "Run a pre-compiled .apxmobj artifact", skill = true, group = "Compilation" }
-decompile = { run = "apxm decompile", description = "Reverse-map artifact back to AIR", group = "Compilation" }
-doctor = { run = "apxm doctor", description = "Diagnose the real APXM compiler/runtime environment", group = "Configuration" }
+compile = { run = "python tools/scripts/apxm_cli.py compile", description = "Compile graph to .apxmobj artifact", skill = true, group = "Compilation" }
+execute = { run = "python tools/scripts/apxm_cli.py execute", description = "Compile and execute a graph", skill = true, group = "Compilation" }
+run = { run = "python tools/scripts/apxm_cli.py run", description = "Run a pre-compiled .apxmobj artifact", skill = true, group = "Compilation" }
+decompile = { run = "python tools/scripts/apxm_cli.py decompile", description = "Reverse-map artifact back to AIR", group = "Compilation" }
+doctor = { run = "python tools/scripts/apxm_cli.py doctor", description = "Diagnose the real APXM compiler/runtime environment", group = "Configuration" }
 commit-lint = { run = "python tools/scripts/check_commit_message.py", description = "Lint a commit message file, --current (HEAD), or --range REV1..REV2", group = "Configuration" }
 
-gui = { run = "apxm gui", description = "Launch the web-based GUI dashboard", skill = true, group = "Authoring" }
-watch = { run = "apxm watch", description = "Stream a live run's dispatch tree from apxm-server (Phase 14.8.F)", group = "Observability" }
-chat = { run = "apxm chat", description = "Run the APXM conversational REPL over apxm-server", group = "Authoring" }
-validate = { run = "apxm validate", description = "Validate graph against AIS contract", skill = true, group = "Authoring" }
-analyze = { run = "apxm analyze", description = "Analyze parallelism and critical path", group = "Authoring" }
-explain = { run = "apxm explain", description = "Human-readable summary of a graph", group = "Authoring" }
-goal = { run = "apxm goal", description = "Start, follow, inspect, or cancel a bounded APXM goal run", group = "Goals & Workflows" }
-workflow = { run = "apxm workflow", description = "Run, validate, analyze, and follow APXM workflow files", group = "Goals & Workflows" }
+gui = { run = "python tools/scripts/apxm_cli.py gui", description = "Launch the web-based GUI dashboard", skill = true, group = "Authoring" }
+watch = { run = "python tools/scripts/apxm_cli.py watch", description = "Stream a live run's dispatch tree from apxm-server (Phase 14.8.F)", group = "Observability" }
+chat = { run = "python tools/scripts/apxm_cli.py chat", description = "Run the APXM conversational REPL over apxm-server", group = "Authoring" }
+validate = { run = "python tools/scripts/apxm_cli.py validate", description = "Validate graph against AIS contract", skill = true, group = "Authoring" }
+analyze = { run = "python tools/scripts/apxm_cli.py analyze", description = "Analyze parallelism and critical path", group = "Authoring" }
+explain = { run = "python tools/scripts/apxm_cli.py explain", description = "Human-readable summary of a graph", group = "Authoring" }
+goal = { run = "python tools/scripts/apxm_cli.py goal", description = "Start, follow, inspect, or cancel a bounded APXM goal run", group = "Goals & Workflows" }
+workflow = { run = "python tools/scripts/apxm_cli.py workflow", description = "Run, validate, analyze, and follow APXM workflow files", group = "Goals & Workflows" }
 
 [commands.session]
 description = "Inspect APXM execution session outputs"
 group = "Observability"
-list = { run = "apxm session list", description = "List execution sessions" }
-inspect = { run = "apxm session inspect", description = "Show detailed information about a session" }
-diff = { run = "apxm session diff", description = "Compare two sessions" }
-clean = { run = "apxm session clean", description = "Clean old sessions" }
+list = { run = "python tools/scripts/apxm_cli.py session list", description = "List execution sessions" }
+inspect = { run = "python tools/scripts/apxm_cli.py session inspect", description = "Show detailed information about a session" }
+diff = { run = "python tools/scripts/apxm_cli.py session diff", description = "Compare two sessions" }
+clean = { run = "python tools/scripts/apxm_cli.py session clean", description = "Clean old sessions" }
 
 [commands.backend]
 description = "Manage registered inference backend endpoints"
 group = "Configuration"
-add = { run = "apxm backend add", description = "Register backend endpoint", skill = true }
-list = { run = "apxm backend list", description = "List registered backends" }
-remove = { run = "apxm backend remove", description = "Remove backend registration" }
-test = { run = "apxm backend test", description = "Test connectivity" }
-status = { run = "apxm backend status", description = "Show backend registry status" }
-sync-models = { run = "apxm backend sync-models", description = "Sync installed Ollama models into a backend registration" }
-add-model = { run = "apxm backend add-model", description = "Add model to backend" }
+add = { run = "python tools/scripts/apxm_cli.py backend add", description = "Register backend endpoint", skill = true }
+list = { run = "python tools/scripts/apxm_cli.py backend list", description = "List registered backends" }
+remove = { run = "python tools/scripts/apxm_cli.py backend remove", description = "Remove backend registration" }
+test = { run = "python tools/scripts/apxm_cli.py backend test", description = "Test connectivity" }
+status = { run = "python tools/scripts/apxm_cli.py backend status", description = "Show backend registry status" }
+sync-models = { run = "python tools/scripts/apxm_cli.py backend sync-models", description = "Sync installed Ollama models into a backend registration" }
+add-model = { run = "python tools/scripts/apxm_cli.py backend add-model", description = "Add model to backend" }
 
 [commands.vllm]
 description = "Operate APXM-vLLM through Dekk-controlled Slurm services and Docker image primitives"
@@ -145,66 +147,66 @@ pypi = { run = "python tools/scripts/release.py pypi", description = "Upload Pyt
 [commands.ops]
 description = "Browse AIS operations"
 group = "Discovery"
-list = { run = "apxm ops list", description = "List all operations" }
-show = { run = "apxm ops show", description = "Show operation details" }
-usage = { run = "apxm ops usage", description = "Show accumulated op-usage counts from real executions (RT-9)" }
+list = { run = "python tools/scripts/apxm_cli.py ops list", description = "List all operations" }
+show = { run = "python tools/scripts/apxm_cli.py ops show", description = "Show operation details" }
+usage = { run = "python tools/scripts/apxm_cli.py ops usage", description = "Show accumulated op-usage counts from real executions" }
 
 [commands.template]
 description = "Browse graph templates"
 group = "Discovery"
-list = { run = "apxm template list", description = "List templates" }
-show = { run = "apxm template show", description = "Show template" }
+list = { run = "python tools/scripts/apxm_cli.py template list", description = "List templates" }
+show = { run = "python tools/scripts/apxm_cli.py template show", description = "Show template" }
 
 [commands.tool]
 description = "Manage external tool registrations"
 group = "Configuration"
-add = { run = "apxm tool add", description = "Register tool" }
-list = { run = "apxm tool list", description = "List tools" }
-remove = { run = "apxm tool remove", description = "Remove tool" }
+add = { run = "python tools/scripts/apxm_cli.py tool add", description = "Register tool" }
+list = { run = "python tools/scripts/apxm_cli.py tool list", description = "List tools" }
+remove = { run = "python tools/scripts/apxm_cli.py tool remove", description = "Remove tool" }
 
 [commands.agent]
 description = "Manage ACP agent profiles"
 group = "Configuration"
-list = { run = "apxm agent list", description = "List registered agents" }
-add = { run = "apxm agent add", description = "Register agent profile" }
-remove = { run = "apxm agent remove", description = "Remove agent" }
-test = { run = "apxm agent test", description = "Test agent" }
-templates = { run = "apxm agent templates", description = "List built-in templates" }
+list = { run = "python tools/scripts/apxm_cli.py agent list", description = "List registered agents" }
+add = { run = "python tools/scripts/apxm_cli.py agent add", description = "Register agent profile" }
+remove = { run = "python tools/scripts/apxm_cli.py agent remove", description = "Remove agent" }
+test = { run = "python tools/scripts/apxm_cli.py agent test", description = "Test agent" }
+templates = { run = "python tools/scripts/apxm_cli.py agent templates", description = "List built-in templates" }
 
 [commands.package]
-description = "Scaffold, lint, build, and install agent packages (AGT-1 folder format)"
+description = "Scaffold, lint, build, and install agent packages ( folder format)"
 group = "Authoring"
-new = { run = "apxm package new", description = "Scaffold a new agent-package folder tree", skill = true }
-lint = { run = "apxm package lint", description = "Validate a package + capability-set agreement", skill = true }
-build = { run = "apxm package build", description = "Recompute the pack integrity hash chain (+ compile skills)", skill = true }
-install = { run = "apxm package install", description = "Install a built package to APXM_HOME/packages/<id>" }
+new = { run = "python tools/scripts/apxm_cli.py package new", description = "Scaffold a new agent-package folder tree", skill = true }
+lint = { run = "python tools/scripts/apxm_cli.py package lint", description = "Validate a package + capability-set agreement", skill = true }
+build = { run = "python tools/scripts/apxm_cli.py package build", description = "Recompute the pack integrity hash chain (+ compile skills)", skill = true }
+install = { run = "python tools/scripts/apxm_cli.py package install", description = "Install a built package to APXM_HOME/packages/<id>" }
 
 [commands.integration]
 description = "Scaffold, lint, and install integration packages (apxm.integration-package.v1)"
 group = "Authoring"
-new = { run = "apxm integration new", description = "Scaffold a new integration-package folder tree", skill = true }
-lint = { run = "apxm integration lint", description = "Validate the six files + joined capability/permission policy", skill = true }
-install = { run = "apxm integration install", description = "Install to APXM_HOME/integrations/<id> (+ best-effort workspace mirror)" }
+new = { run = "python tools/scripts/apxm_cli.py integration new", description = "Scaffold a new integration-package folder tree", skill = true }
+lint = { run = "python tools/scripts/apxm_cli.py integration lint", description = "Validate the six files + joined capability/permission policy", skill = true }
+install = { run = "python tools/scripts/apxm_cli.py integration install", description = "Install to APXM_HOME/integrations/<id> (+ best-effort workspace mirror)" }
 
 [commands.cache]
 description = "Manage the MemoCache (response memoization)"
 group = "Configuration"
-stats = { run = "apxm cache stats", description = "Show cache statistics" }
-clear = { run = "apxm cache clear", description = "Clear all cached entries" }
-export = { run = "apxm cache export", description = "Export cache to JSON" }
+stats = { run = "python tools/scripts/apxm_cli.py cache stats", description = "Show cache statistics" }
+clear = { run = "python tools/scripts/apxm_cli.py cache clear", description = "Clear all cached entries" }
+export = { run = "python tools/scripts/apxm_cli.py cache export", description = "Export cache to JSON" }
 
 [commands.process]
 description = "Inspect and stop APXM job processes"
 group = "Configuration"
-list = { run = "apxm process list", description = "List APXM compile/run/execute/workflow jobs" }
-stop = { run = "apxm process stop", description = "Stop APXM compile/run/execute/workflow jobs" }
+list = { run = "python tools/scripts/apxm_cli.py process list", description = "List APXM compile/run/execute/workflow jobs" }
+stop = { run = "python tools/scripts/apxm_cli.py process stop", description = "Stop APXM compile/run/execute/workflow jobs" }
 
 [commands.rollout]
 description = "Inspect and replay per-thread rollout transcripts (Phase 14.8.F)"
 group = "Observability"
-list = { run = "apxm rollout list", description = "List recent rollouts from the SQLite index" }
-replay = { run = "apxm rollout replay", description = "Replay a rollout JSONL as a monospace tree" }
-archive = { run = "apxm rollout archive", description = "Bundle rollout + blobs + skill source into a .tar.gz" }
+list = { run = "python tools/scripts/apxm_cli.py rollout list", description = "List recent rollouts from the SQLite index" }
+replay = { run = "python tools/scripts/apxm_cli.py rollout replay", description = "Replay a rollout JSONL as a monospace tree" }
+archive = { run = "python tools/scripts/apxm_cli.py rollout archive", description = "Bundle rollout + blobs + skill source into a .tar.gz" }
 
 [install]
 wrap = { name = "apxm", target = "target/release/apxm" }

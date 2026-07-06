@@ -106,7 +106,7 @@ Three shipped patterns (all valid; pick by scope):
 |---------|-------------|--------|
 | `sub_agents=[Agent(...)]` | Specialists compiled into the same artifact | `apxm/conversational.py` |
 | `g.spawn_agent` + `g.delegate` | Explicit delegation steps in a workflow graph | `examples/python/conversational/chat_agent.py` |
-| APXM goal orchestration | Bounded worker fan-out/fan-in with server-owned lifecycle | `.agents/skills/goal-orchestrator/SKILL.md` |
+| `.apxmw` workflow execution | Server-owned workflow lifecycle for reusable multi-step work | `examples/workflows/` |
 
 ## Optional support
 

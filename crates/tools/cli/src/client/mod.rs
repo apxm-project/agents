@@ -4,7 +4,7 @@
 //! (see `build.rs`). Execute-stream helpers live in [`execute`] until the
 //! OpenAPI contract grows those paths.
 //!
-//! Folded into `apxm-cli` (RT-5) — this was previously the standalone
+//! Folded into `apxm-cli` — this was previously the standalone
 //! `apxm-client` crate; it has no consumer outside this binary.
 
 include!(concat!(env!("OUT_DIR"), "/apxm_client_codegen.rs"));

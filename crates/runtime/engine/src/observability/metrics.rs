@@ -253,8 +253,8 @@ mod enabled {
         pub token_routing_us: f64,
     }
 
-    /// Per-worker, single-threaded accumulator that mirrors the additive
-    /// counters of `MetricsCollector`. Flushed into the shared collector on
+    /// Per-worker, single-threaded accumulator for the additive counters in
+    /// `MetricsCollector`. Flushed into the shared collector on
     /// a coarse cadence (every `WORKER_METRICS_FLUSH_OPS` ops) and on Drop,
     /// so per-op recording stays in private cache lines.
     #[derive(Debug)]

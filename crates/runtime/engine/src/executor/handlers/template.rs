@@ -214,7 +214,7 @@ mod tests {
     }
 
     #[test]
-    fn input_names_from_node_accepts_legacy_single_string() {
+    fn input_names_from_node_accepts_compat_single_string() {
         let mut node = Node::new(1, AISOperationType::Ask);
         node.attributes = HashMap::from([(
             graph_attrs::INPUT_NAMES.to_string(),

@@ -1,0 +1,90 @@
+{
+  "_comment": "Bundled snapshot of Studio's canvas node-kind catalog (kind/title/category), sourced from packages/widget-canvas/src/nodes/specs.ts::NODE_SPECS. Studio has no server-reachable endpoint that exports this catalog yet (only the bare kind-name enum is duplicated, in contracts/schemas/workflow-draft.v1.json). Until Studio adds one, this file is the source the pre_turn context hook reads, and must be kept in sync by hand when NODE_SPECS changes.",
+  "kinds": [
+    {
+      "kind": "cron_trigger",
+      "title": "Cron Trigger",
+      "category": "trigger"
+    },
+    {
+      "kind": "webhook_trigger",
+      "title": "Webhook Trigger",
+      "category": "trigger"
+    },
+    {
+      "kind": "polling_trigger",
+      "title": "Polling Trigger",
+      "category": "trigger"
+    },
+    {
+      "kind": "watch_trigger",
+      "title": "File Watch Trigger",
+      "category": "trigger"
+    },
+    {
+      "kind": "channel_trigger",
+      "title": "Channel Trigger (social)",
+      "category": "trigger"
+    },
+    {
+      "kind": "mcp_trigger",
+      "title": "MCP Tool Trigger",
+      "category": "trigger"
+    },
+    {
+      "kind": "a2a_trigger",
+      "title": "A2A Inbound Trigger",
+      "category": "trigger"
+    },
+    {
+      "kind": "process_trigger",
+      "title": "Process Monitor Trigger",
+      "category": "trigger"
+    },
+    {
+      "kind": "llm",
+      "title": "LLM Call",
+      "category": "llm"
+    },
+    {
+      "kind": "acp_agent",
+      "title": "Spawn Agent (Claude Code / Codex)",
+      "category": "llm"
+    },
+    {
+      "kind": "synthesize",
+      "title": "Synthesize",
+      "category": "logic"
+    },
+    {
+      "kind": "tool",
+      "title": "Tool / Integration",
+      "category": "tool"
+    },
+    {
+      "kind": "memory_write",
+      "title": "Memory \u2014 Write",
+      "category": "memory"
+    },
+    {
+      "kind": "memory_read",
+      "title": "Memory \u2014 Recall",
+      "category": "memory"
+    },
+    {
+      "kind": "merge",
+      "title": "Merge / Join",
+      "category": "logic"
+    },
+    {
+      "kind": "text",
+      "title": "Text",
+      "category": "logic"
+    },
+    {
+      "kind": "output",
+      "title": "Output",
+      "category": "output"
+    }
+  ]
+}

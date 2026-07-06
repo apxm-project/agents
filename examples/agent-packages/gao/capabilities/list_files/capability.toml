@@ -1,0 +1,5 @@
+id = "list_files"
+description = "List files under declared read roots."
+kind = "runtime"
+binding = "fs.list"
+read_only = true

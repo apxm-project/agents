@@ -62,9 +62,9 @@ pub trait StorageBackend: Send + Sync {
         Ok(results)
     }
 
-    /// Vector/semantic search (placeholder for future implementation)
+    /// Vector/semantic search.
     async fn search_vector(&self, _query: &str, limit: usize) -> StorageResult<Vec<SearchResult>> {
-        // Default to regular search for now
+        // Default to regular search.
         self.search(_query, limit).await
     }
 

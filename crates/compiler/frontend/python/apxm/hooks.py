@@ -63,7 +63,7 @@ def normalize_hook_mode(value: HookMode | str) -> str:
 
 
 def _make_handler_id(fn: Callable[..., Any]) -> str:
-    """Stable handler id from module:qualname (mirrors @tool)."""
+    """Stable handler id from module:qualname."""
     module = getattr(fn, "__module__", "__unknown__") or "__unknown__"
     qualname = getattr(fn, "__qualname__", fn.__name__)
     key = f"{module}:{qualname}"
@@ -142,7 +142,7 @@ def hook(
 
 
 def hook_descriptor(h: HookFn) -> dict[str, Any]:
-    """Build the artifact hooks-sidecar descriptor for a hook (mirrors tools)."""
+    """Build the artifact hooks-sidecar descriptor for a hook."""
     import inspect
 
     module = getattr(h.fn, "__module__", "__unknown__") or "__unknown__"

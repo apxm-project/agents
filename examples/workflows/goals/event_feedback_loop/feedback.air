@@ -1,7 +1,0 @@
-module {
-  func.func @feedback(%arg0: !ais.token {ais.param_name = "eval", ais.param_type = "str"}) -> !ais.token attributes {ais.entry} {
-    %label = ais.const_str "feedback:" : !ais.token
-    %out = ais.merge %label, %arg0 : !ais.token, !ais.token -> !ais.token
-    func.return %out : !ais.token
-  }
-}

@@ -27,7 +27,7 @@ fn load_graph_for_session(input: &std::path::Path) -> Result<apxm_compiler::AirM
     air_graph_from_source(input)
 }
 
-/// Best-effort flush of the permanent op-usage counters (RT-9) accumulated
+/// Best-effort flush of the permanent op-usage counters accumulated
 /// during this run into `<cache_dir>/op-usage/op-usage.json`. See
 /// `apxm_runtime::executor::op_usage` and `apxm ops usage`. Never fails the
 /// command: usage stats are diagnostic, not part of the execution contract.
@@ -277,7 +277,7 @@ pub async fn execute_command(
     let mut linker_config =
         LinkerConfig::from_apxm_config(apxm_config).with_pipeline_config(pipeline_config);
     linker_config.runtime_config.metrics_level = emit_metrics_level;
-    let (graph_input, _python_air, python_tools_sidecar) =
+    let (graph_input, _frontend_air, python_tools_sidecar, typescript_tools_sidecar) =
         prepare_graph_input(&input, config.as_deref())?;
 
     // Enable all-outputs collection when session output is requested
@@ -337,6 +337,7 @@ pub async fn execute_command(
             emitter_dyn,
             writer.as_ref().map(|w| w.session_dir()),
             python_tools_sidecar,
+            typescript_tools_sidecar,
         )
         .await
     {

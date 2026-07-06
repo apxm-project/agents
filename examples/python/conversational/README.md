@@ -113,10 +113,6 @@ handlers as the REST API:
 - `ops_list` (PURE): the AIS op vocabulary.
 - `run` (side-effecting): compile + run canonical AIR; writes require
   runtime-minted `capability_grant_ids`.
-- `goal_start` (side-effecting): starts a server-owned goal. Explicit workers
-  are used when provided; otherwise APXM materializes bounded worker workflow
-  passes. Returns `goal_id`, workflow status/events/cancel handles, session
-  directories, and goal artifacts.
 - `workflow_start/status/events/cancel` (side-effecting): launch, observe,
   and stop checked-in `.apxmw` workflows through server-owned control handles.
 - `prompt_as_workflow`: synthesize canonical AIR workflows from natural language.

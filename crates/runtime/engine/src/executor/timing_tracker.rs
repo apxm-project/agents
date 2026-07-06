@@ -1,7 +1,6 @@
 //! Per-node prefill/decode wall-time tracker.
 //!
-//! Mirrors [`TokenAccountant`](super::token_accounting::TokenAccountant): the LLM
-//! handler records timing per node, and the dispatcher reads it back when emitting
+//! The LLM handler records timing per node, and the dispatcher reads it back when emitting
 //! the operation-end event so it lands in `CompletedNodeInfo`.
 
 use std::collections::HashMap;

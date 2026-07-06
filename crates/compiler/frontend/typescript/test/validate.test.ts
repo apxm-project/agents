@@ -46,7 +46,7 @@ describe("validateWorkflowDraft", () => {
     expect(result.valid).toBe(false);
   });
 
-  it("matches every WF-2 contracts vector fixture's expected_valid", () => {
+  it("matches every  contracts vector fixture's expected_valid", () => {
     const raw = readFileSync(VECTOR_PATH, "utf-8");
     const vectors: DraftVector[] = JSON.parse(raw);
     expect(vectors.length).toBeGreaterThan(0);

@@ -66,16 +66,15 @@ impl OperationMiddleware for ConversationMemoryMiddleware {
         next: Next<'_>,
     ) -> Result<Value> {
         // pre_turn hooks fire before the turn's ask (gate-capable → fail-closed).
-        // `None` context: no reserved second turn parameter threads an
-        // arbitrary per-turn payload (e.g. Studio's Gao client snapshot) down
-        // to this call yet (G-3 gap; see `run_pre_turn_hooks` doc comment).
+        // `None` context: this turn did not bind an additional structured
+        // payload for pre-turn hooks.
         let supplement = crate::executor::hook_driver::run_pre_turn_hooks(ctx, None).await?;
         if let Some(text) = supplement {
             *ctx.pending_turn_prompt_supplement.write() = Some(text);
         }
         let result = next.run(ctx, node, inputs).await;
         if let Ok(Value::String(answer)) = &result {
-            // post_ask + post_turn hooks fire with the reply (observe; FR-005).
+            // post_ask + post_turn hooks fire with the reply (observe;).
             crate::executor::hook_driver::run_post_ask_hooks(ctx, answer).await;
             crate::executor::hook_driver::run_post_turn_hooks(ctx, answer).await;
             let scope = ctx.memory_scope().to_string();
@@ -128,7 +127,7 @@ mod tests {
         // The top-level turn ask carries the marker the frontend stamps.
         assert!(mw.applies_to(&ask(true)));
         // A sub-agent ask shares the session scope but is unmarked: it must NOT
-        // accrue history or fire turn hooks (CONV-2).
+        // accrue history or fire turn hooks.
         assert!(!mw.applies_to(&ask(false)));
         // Non-ask ops never apply.
         let inv = Node::new(2, AISOperationType::InvCap);

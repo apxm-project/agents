@@ -1,0 +1,4 @@
+id = "list_local_skills"
+description = "List Gao-owned local skills."
+kind = "typescript_handler"
+read_only = true

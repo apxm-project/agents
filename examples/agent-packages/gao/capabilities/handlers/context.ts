@@ -1,0 +1,326 @@
+import { readFileSync } from "node:fs";
+import { dirname, join, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
+
+import type { HookContext } from "@apxm/frontend";
+
+export const SUMMARY_KEY = "gao:conversation:summary";
+
+const MAX_SUPPLEMENT_TOKENS = 24_000;
+const CHARS_PER_TOKEN_ESTIMATE = 4;
+const MAX_CONFIG_CHARS = 500;
+
+const SENSITIVE_KEY =
+  /(?:api[_-]?key|token|secret|password|credential|auth)/i;
+
+const STUDIO_URL_ENV = "APXM_STUDIO_URL";
+const STUDIO_SERVICE_TOKEN_ENV = "APXM_STUDIO_SERVICE_TOKEN";
+const INVENTORY_PATH = "/api/gao/capability-inventory";
+
+const PROMPT_PATHS: Record<string, string> = {
+  persona: "prompts/persona.md",
+  workflow_authoring: "prompts/workflow-authoring.md",
+  terminology: "prompts/apxm-terminology.md",
+  safety: "prompts/safety.md",
+  response_style: "prompts/response-style.md",
+};
+
+const PROMPT_ORDER = [
+  "persona",
+  "terminology",
+  "workflow_authoring",
+  "safety",
+  "response_style",
+] as const;
+
+let cachedRoot: string | null = null;
+
+export function packageRoot(): string {
+  if (cachedRoot) {
+    return cachedRoot;
+  }
+  const here = dirname(fileURLToPath(import.meta.url));
+  cachedRoot = resolve(here, "..", "..");
+  return cachedRoot;
+}
+
+function readText(relativePath: string): string {
+  const root = packageRoot();
+  const path = resolve(root, relativePath);
+  if (!path.startsWith(root)) {
+    throw new Error(`path escapes Gao package: ${relativePath}`);
+  }
+  return readFileSync(path, "utf8").trim();
+}
+
+export function prompt(name: string): string {
+  const relative = PROMPT_PATHS[name];
+  if (!relative) {
+    throw new Error(`unknown prompt: ${name}`);
+  }
+  return readText(relative);
+}
+
+function redactValue(key: string, value: unknown): unknown {
+  if (SENSITIVE_KEY.test(key)) {
+    return "<redacted>";
+  }
+  if (typeof value === "string" && value.length > MAX_CONFIG_CHARS) {
+    return `${value.slice(0, MAX_CONFIG_CHARS)}…`;
+  }
+  if (value && typeof value === "object" && !Array.isArray(value)) {
+    return redactConfig(value as Record<string, unknown>);
+  }
+  if (Array.isArray(value)) {
+    return value.map((item, index) => redactValue(String(index), item));
+  }
+  return value;
+}
+
+function redactConfig(config: Record<string, unknown>): Record<string, unknown> {
+  return Object.fromEntries(
+    Object.entries(config ?? {}).map(([key, value]) => [key, redactValue(key, value)]),
+  );
+}
+
+function redactSnapshot(snapshot: Record<string, unknown>): Record<string, unknown> {
+  const out = JSON.parse(JSON.stringify(snapshot ?? {})) as Record<string, unknown>;
+  const canvas = out.canvas;
+  if (canvas && typeof canvas === "object" && !Array.isArray(canvas)) {
+    const nodes = (canvas as Record<string, unknown>).nodes;
+    if (Array.isArray(nodes)) {
+      for (const node of nodes) {
+        if (node && typeof node === "object" && !Array.isArray(node)) {
+          const config = (node as Record<string, unknown>).config;
+          if (config && typeof config === "object" && !Array.isArray(config)) {
+            (node as Record<string, unknown>).config = redactConfig(
+              config as Record<string, unknown>,
+            );
+          }
+        }
+      }
+    }
+  }
+  return out;
+}
+
+function loadNodeKindCatalog(): Array<Record<string, string>> {
+  try {
+    const raw = readFileSync(join(packageRoot(), "shared", "node_kinds.json"), "utf8");
+    const data = JSON.parse(raw) as { kinds?: Array<Record<string, string>> };
+    return Array.isArray(data.kinds) ? data.kinds : [];
+  } catch {
+    return [];
+  }
+}
+
+function renderNodeKindCatalog(): string {
+  const kinds = loadNodeKindCatalog();
+  if (kinds.length === 0) {
+    return "(node-kind catalog unavailable)";
+  }
+  const byCategory = new Map<string, string[]>();
+  for (const entry of kinds) {
+    const category = String(entry.category ?? "other");
+    const line = `- \`${entry.kind}\` — ${entry.title ?? entry.kind}`;
+    const bucket = byCategory.get(category) ?? [];
+    bucket.push(line);
+    byCategory.set(category, bucket);
+  }
+  const lines: string[] = [];
+  for (const category of [...byCategory.keys()].sort()) {
+    lines.push(`**${category}**`);
+    lines.push(...(byCategory.get(category) ?? []));
+  }
+  return lines.join("\n");
+}
+
+async function fetchCapabilityInventory(): Promise<Record<string, unknown> | null> {
+  const baseUrl = process.env[STUDIO_URL_ENV]?.trim();
+  if (!baseUrl) {
+    return null;
+  }
+  const headers: Record<string, string> = {};
+  const token = process.env[STUDIO_SERVICE_TOKEN_ENV]?.trim();
+  if (token) {
+    headers.Authorization = `Bearer ${token}`;
+  }
+  try {
+    const response = await fetch(`${baseUrl.replace(/\/$/, "")}${INVENTORY_PATH}`, {
+      headers,
+      signal: AbortSignal.timeout(5_000),
+    });
+    if (!response.ok) {
+      return null;
+    }
+    const data = (await response.json()) as unknown;
+    return data && typeof data === "object" && !Array.isArray(data)
+      ? (data as Record<string, unknown>)
+      : null;
+  } catch {
+    return null;
+  }
+}
+
+function renderCapabilityInventorySection(
+  inventory: Record<string, unknown> | null,
+): string {
+  if (!inventory) {
+    return (
+      `(capability inventory unavailable in this environment — set \`${STUDIO_URL_ENV}\` ` +
+      "to reach the Studio BFF)"
+    );
+  }
+  const ready = (inventory.ready as Array<Record<string, unknown>> | undefined) ?? [];
+  const needsConnect =
+    (inventory.needsConnect as Array<Record<string, unknown>> | undefined) ?? [];
+  const readyLine =
+    ready.map((entry) => String(entry.capability ?? "")).filter(Boolean).join(", ") || "(none)";
+  const lines = [`- Ready now: ${readyLine}`];
+  if (needsConnect.length > 0) {
+    const needs = needsConnect
+      .map(
+        (entry) =>
+          `${entry.capability ?? "unknown"} (${entry.reason ?? "not connected"})`,
+      )
+      .join(", ");
+    lines.push(`- Needs connection: ${needs}`);
+  }
+  return lines.join("\n");
+}
+
+function renderPackagePrompts(): string {
+  const parts: string[] = [];
+  for (const name of PROMPT_ORDER) {
+    try {
+      parts.push(prompt(name));
+    } catch {
+      continue;
+    }
+  }
+  return parts.join("\n\n");
+}
+
+function renderPageSection(snapshot: Record<string, unknown>): string {
+  const page = (snapshot.page as Record<string, unknown> | undefined) ?? {};
+  const lines = [
+    `- View: ${page.view ?? "(unknown)"}`,
+    `- Chat surface: ${page.chatSurface ?? "(unknown)"}`,
+  ];
+  const tab = page.activeTab as Record<string, unknown> | undefined;
+  if (tab) {
+    lines.push(`- Active tab: ${tab.name ?? "(unnamed)"} (${tab.id ?? "?"})`);
+  }
+  return lines.join("\n");
+}
+
+function renderWorkflowSection(snapshot: Record<string, unknown>): string {
+  const workflow = (snapshot.workflow as Record<string, unknown> | undefined) ?? {};
+  const lines = [`- Mode: ${workflow.mode ?? "(unknown)"}`];
+  if (workflow.runError) {
+    lines.push(`- Run error: ${workflow.runError}`);
+  }
+  const grants = workflow.capabilityGrants;
+  if (Array.isArray(grants) && grants.length > 0) {
+    lines.push(`- Workflow capability grants: ${grants.join(", ")}`);
+  }
+  return lines.join("\n");
+}
+
+function renderCanvasSection(snapshot: Record<string, unknown>): string {
+  const canvas = (snapshot.canvas as Record<string, unknown> | undefined) ?? {};
+  const lines = [
+    `- Graph: ${canvas.nodeCount ?? 0} node(s), ${canvas.edgeCount ?? 0} edge(s)`,
+  ];
+  if (canvas.selectedNodeId) {
+    lines.push(`- Selected node id: ${canvas.selectedNodeId}`);
+  }
+  const nodes = canvas.nodes;
+  if (Array.isArray(nodes) && nodes.length > 0) {
+    lines.push(`- Nodes JSON:\n\`\`\`json\n${JSON.stringify(nodes, null, 2)}\n\`\`\``);
+  }
+  return lines.join("\n");
+}
+
+function renderRunEvidenceSection(snapshot: Record<string, unknown>): string | null {
+  const runEvidence = snapshot.runEvidence;
+  if (!Array.isArray(runEvidence) || runEvidence.length === 0) {
+    return null;
+  }
+  return `\`\`\`json\n${JSON.stringify(runEvidence, null, 2)}\n\`\`\``;
+}
+
+function renderOpenDocsSection(snapshot: Record<string, unknown>): string | null {
+  const page = (snapshot.page as Record<string, unknown> | undefined) ?? {};
+  const openTabs = page.openTabs;
+  if (!Array.isArray(openTabs) || openTabs.length <= 1) {
+    return null;
+  }
+  const labels = openTabs.map((tab) => {
+    const record = tab as Record<string, unknown>;
+    const active = record.active ? " (active)" : "";
+    return `${record.name ?? "tab"}${active}`;
+  });
+  return `- Open tabs: ${labels.join(", ")}`;
+}
+
+function tokenCount(text: string, ctx: HookContext): number {
+  try {
+    return Math.max(1, ctx.count_tokens(text));
+  } catch {
+    return Math.max(1, Math.floor(text.length / CHARS_PER_TOKEN_ESTIMATE));
+  }
+}
+
+function renderSections(sections: Array<[string, string | null | undefined]>): string {
+  const header = "Studio operator context (read-only snapshot for this turn):";
+  const body = sections
+    .filter(([, text]) => Boolean(text))
+    .map(([title, text]) => `## ${title}\n${text}`)
+    .join("\n\n");
+  return body ? `${header}\n\n${body}` : header;
+}
+
+export async function renderStudioContextSupplement(
+  ctx: HookContext,
+  snapshotInput: unknown,
+): Promise<string> {
+  const snapshot = redactSnapshot(
+    snapshotInput && typeof snapshotInput === "object" && !Array.isArray(snapshotInput)
+      ? (snapshotInput as Record<string, unknown>)
+      : {},
+  );
+  const inventory = await fetchCapabilityInventory();
+
+  const coreSections: Array<[string, string]> = [
+    ["Package prompts", renderPackagePrompts()],
+    ["Page", renderPageSection(snapshot)],
+    ["Workflow", renderWorkflowSection(snapshot)],
+    ["Canvas", renderCanvasSection(snapshot)],
+    ["Studio node kinds", renderNodeKindCatalog()],
+    ["Available capabilities", renderCapabilityInventorySection(inventory)],
+  ];
+
+  let optionalSections: Array<[string, string | null]> = [
+    ["Run evidence", renderRunEvidenceSection(snapshot)],
+    ["Open tabs", renderOpenDocsSection(snapshot)],
+  ].filter((entry): entry is [string, string] => entry[1] != null);
+
+  let text = renderSections([...coreSections, ...optionalSections]);
+
+  while (tokenCount(text, ctx) > MAX_SUPPLEMENT_TOKENS && optionalSections.length > 0) {
+    optionalSections = optionalSections.slice(1);
+    text = renderSections([...coreSections, ...optionalSections]);
+  }
+
+  if (tokenCount(text, ctx) > MAX_SUPPLEMENT_TOKENS) {
+    const budgetChars = MAX_SUPPLEMENT_TOKENS * CHARS_PER_TOKEN_ESTIMATE;
+    if (text.length > budgetChars) {
+      text =
+        text.slice(0, budgetChars) +
+        `\n\n[Context truncated at the ${MAX_SUPPLEMENT_TOKENS}-token budget.]`;
+    }
+  }
+
+  return text;
+}

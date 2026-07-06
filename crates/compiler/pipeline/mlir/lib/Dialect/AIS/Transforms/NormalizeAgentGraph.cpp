@@ -102,7 +102,7 @@ struct NormalizeAgentGraphPass : impl::NormalizeAgentGraphBase<NormalizeAgentGra
     APXM_AIS_INFO(llvm::formatv("Normalized {0} attributes (ctx_dedup={1}, str_norm={2})",
                                totalNormalized, stats.contextDedups, stats.stringNorms));
 
-    // Phase B Task 7: per-pass stats drained by apxm_module_drain_pass_stats.
+    // Per-pass stats are drained by apxm_module_drain_pass_stats.
     const std::size_t irSizeAfter = computeModuleIRTextLength(module);
     const int64_t irDelta = static_cast<int64_t>(irSizeAfter)
                           - static_cast<int64_t>(irSizeBefore);

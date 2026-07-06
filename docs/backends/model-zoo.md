@@ -14,7 +14,7 @@ This document is the getting-started guide. The conceptual contract
 
 - One vLLM container per service, scheduled by Slurm onto any node in
   the cluster.
-- Model-agnostic: any model vLLM can load (HF id, local path, mirror)
+- Model-agnostic: any model vLLM can load (HF id, local path, registry alias)
   is a one-line entry in the manifest. APXM can search multiple HF cache
   roots and bind-mount shared local model roots without copying weights.
 - Three deployment shapes out of the box: single-instance,

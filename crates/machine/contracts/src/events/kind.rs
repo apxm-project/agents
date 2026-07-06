@@ -131,23 +131,6 @@ pub const EXECUTION_STARTED: EventKind =
     EventKind::new("execution_started", EventCategory::Lifecycle, false);
 pub const EXECUTE_COMPLETE: EventKind =
     EventKind::new("execute_complete", EventCategory::Lifecycle, true);
-pub const ORCHESTRATOR_SLEEP: EventKind =
-    EventKind::new("orchestrator_sleep", EventCategory::Lifecycle, false);
-pub const ORCHESTRATOR_WAKE: EventKind =
-    EventKind::new("orchestrator_wake", EventCategory::Lifecycle, true);
-// Goal-convergence event kinds. A goal is a bounded sequence of admitted
-// goal passes that runs until a typed gate verdict reports the goal
-// is met (or a bound is hit). These make the convergence decision a runtime,
-// observable fact rather than an instruction the goal prompt is
-// trusted to honor. They are non-terminal: a pass still ends on
-// EXECUTE_COMPLETE / ORCHESTRATOR_WAKE, and the goal decision rides alongside.
-pub const GOAL_GATE_VERDICT: EventKind =
-    EventKind::new("goal_gate_verdict", EventCategory::Lifecycle, false);
-pub const GOAL_CONVERGED: EventKind =
-    EventKind::new("goal_converged", EventCategory::Lifecycle, false);
-pub const GOAL_NEEDS_ANOTHER_PASS: EventKind =
-    EventKind::new("goal_needs_another_pass", EventCategory::Lifecycle, false);
-pub const GOAL_HALTED: EventKind = EventKind::new("goal_halted", EventCategory::Lifecycle, false);
 pub const MEMORY_READ: EventKind =
     EventKind::new("memory_read", EventCategory::Observability, false);
 pub const MEMORY_WRITE: EventKind =
@@ -158,12 +141,12 @@ pub const CHECKPOINT_RESTORED: EventKind =
     EventKind::new("checkpoint_restored", EventCategory::Lifecycle, false);
 pub const SCHEDULER_DECISION: EventKind =
     EventKind::new("scheduler_decision", EventCategory::Observability, false);
-/// A `ModelRouter::select` decision (RTG-11): chosen backend/model, why, and
+/// A `ModelRouter::select` decision: chosen backend/model, why, and
 /// which candidates were passed over. Emitted alongside dispatch so
 /// observers see the full decision, not just the winner.
 pub const MODEL_ROUTE_DECISION: EventKind =
     EventKind::new("model_route_decision", EventCategory::Observability, false);
-/// An `AgentRouter::route_requests` decision (RTG-10/RTG-11): chosen agent
+/// An `AgentRouter::route_requests` decision: chosen agent
 /// profile, why, and which candidates were rejected and why.
 pub const AGENT_ROUTE_DECISION: EventKind =
     EventKind::new("agent_route_decision", EventCategory::Observability, false);
@@ -204,7 +187,7 @@ pub const TURN_BOUNDARY: EventKind =
 // These are emitted alongside the existing Layer 1 graph events
 // whenever the executor is inside an agent scope (see
 // `crates/runtime/engine/src/executor/agent_scope.rs`). They are
-// snake_case and mirror the host app's dispatch event-kind vocabulary so
+// snake_case and follow the host app's dispatch event-kind vocabulary so
 // the relay can stop translating.
 pub const TURN_STARTED: EventKind = EventKind::new("turn_started", EventCategory::Lifecycle, false);
 pub const TURN_COMPLETE: EventKind =
@@ -262,12 +245,6 @@ pub const CORE_EVENT_KINDS: &[EventKind] = &[
     WORKFLOW_FINISHED,
     EXECUTION_STARTED,
     EXECUTE_COMPLETE,
-    ORCHESTRATOR_SLEEP,
-    ORCHESTRATOR_WAKE,
-    GOAL_GATE_VERDICT,
-    GOAL_CONVERGED,
-    GOAL_NEEDS_ANOTHER_PASS,
-    GOAL_HALTED,
     MEMORY_READ,
     MEMORY_WRITE,
     CHECKPOINT_SAVED,

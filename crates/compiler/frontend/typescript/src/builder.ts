@@ -1,13 +1,12 @@
 /**
- * `GraphBuilder` mirrors the public recording surface of Python's
- * `apxm.proxy.GraphRecorder`: each method appends one `GraphNode` (an AIS
- * op) to an internal graph and returns a `NodeRef` handle other calls can
- * wire up as a Data/Control/Effect dependency.
+ * `GraphBuilder` is the TypeScript recording surface: each method appends one
+ * `GraphNode` (an AIS op) to an internal graph and returns a `NodeRef` handle
+ * other calls can wire up as a Data/Control/Effect dependency.
  *
  * Deviation from Python: `GraphRecorder` auto-wires `{name}` placeholders in
  * template strings by inspecting the caller's Python stack frames for a
  * local variable bound to a `NodeRef`. TypeScript has no equivalent to frame
- * introspection, so this builder takes the same wiring explicitly via an
+ * introspection, so this builder takes dependency bindings explicitly via an
  * `inputs: Record<string, NodeRef>` map — the placeholder name is the key,
  * the dependency is the value. The resulting graph shape (`template_str` /
  * `message` attribute plus an `input_names` array and matching Data edges)
@@ -131,7 +130,7 @@ function dropUndefined(attrs: Attrs): Attrs {
   return out;
 }
 
-/** Records builder calls into an `ApxmGraph`. Mirrors `apxm.proxy.GraphRecorder`. */
+/** Records builder calls into an `ApxmGraph`. */
 export class GraphBuilder {
   private readonly name: string;
   private nextId = 1;
@@ -170,7 +169,7 @@ export class GraphBuilder {
     this.edges.push(makeEdge(from.nodeId, to.nodeId, dependency));
   }
 
-  /** Declare a compile-time flow parameter (chainable, mirrors `.param()`). */
+  /** Declare a compile-time flow parameter. */
   param(name: string, typeName: ParamType | string = "str"): this {
     if (this.parameters.some((p) => p.name === name)) {
       throw new Error(`parameter '${name}' already exists`);
@@ -409,7 +408,7 @@ export class GraphBuilder {
     });
   }
 
-  /** Emit canonical `.air` MLIR text for the recorded graph. */
+  /** Emit AIR for the recorded graph. */
   toAir(): string {
     return this.toGraph().toAir();
   }

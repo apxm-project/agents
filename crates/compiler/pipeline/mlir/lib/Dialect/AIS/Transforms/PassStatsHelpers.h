@@ -1,6 +1,6 @@
 // PassStatsHelpers.h
 //
-// Phase B Task 7 helper. Each AIS transform pass writes two module-level
+// Each AIS transform pass writes two module-level
 // IntegerAttrs the apxm_module_drain_pass_stats CAPI then drains:
 //
 //   <pass-argument>_fired_count    : how many rewrites the pass committed

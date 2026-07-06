@@ -1,0 +1,2 @@
+capability = "read_local_skill"
+decision = "allow"

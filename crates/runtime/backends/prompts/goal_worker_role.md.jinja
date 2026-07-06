@@ -5,7 +5,7 @@ Execute the work described by the planner/controller for this bounded pass.
 {% elif kind == "verifier" -%}
 Verify the result and report evidence.
 {% elif kind == "reviewer" -%}
-Review the goal output as '{{ worker_id }}', preserving risks, dissent, missing evidence, and follow-up recommendations.
+Review the goal output as '{{ worker_id }}', preserving risks, dissent, missing evidence, and recommended next steps.
 {% else -%}
 Complete the '{{ worker_id }}' worker slice.
 {% endif -%}

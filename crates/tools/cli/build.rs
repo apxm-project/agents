@@ -10,7 +10,7 @@
 //!    script applies the canonical rpaths explicitly.
 //! 2. Generate the typed HTTP client (`src/client/mod.rs`) from
 //!    `openapi/openapi-session-v1.yaml` via `progenitor` — folded in from the
-//!    former standalone `apxm-client` crate (RT-5); it had no consumer
+//!    former standalone `apxm-client` crate; it had no consumer
 //!    outside this binary.
 
 use std::env;

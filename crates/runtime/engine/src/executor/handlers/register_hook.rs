@@ -1,6 +1,6 @@
 //! REGISTER_HOOK operation — register an author lifecycle hook.
 //!
-//! Mirrors REGISTER_CAPABILITY: a belief-style registration node whose binding
+//! Belief-style registration node whose binding
 //! (event, match glob, mode, python handler id) is recorded into the
 //! per-artifact [`crate::executor::hooks::HookRegistry`] on `ExecutionContext`.
 //! The handler is dispatched later via the SAME python tool bridge as `@tool`
@@ -66,14 +66,21 @@ pub async fn execute(ctx: &ExecutionContext, node: &Node, _inputs: Vec<Value>) -
         // session_start fires once, now — registration happens at session start
         // in the entry flow. Awaited async pre-step via the bridge (NOT the dead
         // sync ExecutionHook); a gate failure fails closed.
-        if event == HookEvent::SessionStart
-            && let Some(bridge) = ctx.python_handler_bridge.as_ref()
-        {
+        if event == HookEvent::SessionStart {
             let payload = serde_json::json!({
                 "__apxm_hook__": { "event": "session_start" }
             });
             let deadline = std::time::Duration::from_secs(30);
-            if let Err(e) = bridge.call_hook(&handler_id, payload, deadline).await {
+            let hook_result = if let Some(bridge) = ctx.python_handler_bridge.as_ref() {
+                bridge
+                    .call_hook(&handler_id, payload.clone(), deadline)
+                    .await
+            } else if let Some(bridge) = ctx.typescript_handler_bridge.as_ref() {
+                bridge.call_hook(&handler_id, payload, deadline).await
+            } else {
+                Ok(serde_json::Value::Null)
+            };
+            if let Err(e) = hook_result {
                 if mode == HookMode::Gate {
                     return Err(RuntimeError::Operation {
                         op_type: node.op_type,

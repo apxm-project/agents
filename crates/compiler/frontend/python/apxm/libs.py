@@ -4,8 +4,8 @@ This module is the Python counterpart of ``import foo; foo.bar()`` for a
 compiled APXM skill pack. ``load(skill_id)`` resolves a skill by manifest
 id through the running ``apxm-server`` (the same loader the HTTP and MCP
 surfaces use) and returns a :class:`SkillHandle`. ``SkillHandle.invoke``
-posts to ``/v1/skills/{id}/execute`` and returns a :class:`SkillResult`
-that mirrors the server's ``ExecuteResponse``.
+    posts to ``/v1/skills/{id}/execute`` and returns a :class:`SkillResult`
+    with the server execution response fields.
 
 Server reuse
 ============
@@ -39,8 +39,7 @@ from . import execution as _execution
 from .errors import ServerError
 
 # Route paths stay centralized so Python skill calls do not drift from the
-# server-owned HTTP surface. The Python client mirrors the path shape but
-# resolves the skill id at call time.
+# server-owned HTTP surface. The skill id is resolved at call time.
 _SKILL_DETAIL_PATH = "/v1/skills/{id}"
 _SKILL_EXECUTE_PATH = "/v1/skills/{id}/execute"
 
@@ -49,7 +48,7 @@ _SKILL_EXECUTE_PATH = "/v1/skills/{id}/execute"
 class SkillResult:
     """Result of a :meth:`SkillHandle.invoke` call.
 
-    Mirrors the server's ``ExecuteResponse`` plus the wrapping
+    Contains the server execution response fields plus the wrapping
     ``execution_id`` returned by ``/v1/skills/{id}/execute``. ``content``
     is the first string output if present, ``results`` is the full
     ``{token: value}`` map (including any ``node_output_map`` style
@@ -219,9 +218,8 @@ def _kwargs_to_args(
 
 def _run_sync(coro: Any) -> Any:
     """Run an awaitable synchronously even when a running event loop is
-    present (e.g. inside Jupyter). Mirrors
-    :meth:`apxm.execution.CompiledFlow.run_sync` so library callers do
-    not need to know whether the underlying transport is async.
+    present (e.g. inside Jupyter), so library callers do not need to know
+    whether the underlying transport is async.
     """
     result: list[Any] = []
     error: list[BaseException] = []

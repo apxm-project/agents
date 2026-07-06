@@ -1,0 +1,5 @@
+id = "compose_workflow"
+description = "Validate AIR and stage a workflow under the runtime staging directory."
+kind = "builtin"
+binding = "authoring"
+read_only = false

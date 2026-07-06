@@ -117,11 +117,11 @@ pub async fn worker_loop(
         state.record_progress();
 
         apxm_op!(debug,
-            worker = worker_id,
-            node_id = node_id,
-            op_type = ?node.op_type,
-            inputs = node.input_tokens.len(),
-            "Dispatching operation"
+         worker = worker_id,
+         node_id = node_id,
+         op_type = ?node.op_type,
+         inputs = node.input_tokens.len(),
+         "Dispatching operation"
         );
 
         // Collect inputs (must all be ready) - timed when metrics enabled
@@ -208,7 +208,7 @@ pub async fn worker_loop(
                 // they aren't using. The node is re-injected when
                 // park_registry::wake(wait_key) makes its output token ready.
                 state.enter_parked();
-                // Narrow park-observability signal (G-6): fire ONLY when this
+                // Narrow park-observability signal: fire ONLY when this
                 // park's wait_key is exactly the conversation-loop's
                 // session-recv key for this execution's session — not for any
                 // other park reason (PAUSE, generic recv-with-url, etc). A
@@ -273,7 +273,7 @@ fn session_loop_rearm_spec(
     let turn_agent = attr("turn_agent")?.to_string();
     let turn_param = attr("turn_param")?.to_string();
     // Bound the loop to the recv node's max_iterations (default 100), so the
-    // park re-arm cannot splice turn+recv nodes without limit (CONV-1).
+    // park re-arm cannot splice turn+recv nodes without limit.
     let max_turns = node
         .attributes
         .get(apxm_core::constants::graph::attrs::MAX_ITERATIONS)
@@ -555,11 +555,11 @@ async fn execute_with_retries(
                 }
 
                 apxm_op!(debug,
-                    worker = worker_id,
-                    node_id = node.id,
-                    attempt = attempt + 1,
-                    error = %error,
-                    "Operation attempt failed"
+                 worker = worker_id,
+                 node_id = node.id,
+                 attempt = attempt + 1,
+                 error = %error,
+                 "Operation attempt failed"
                 );
 
                 last_error = Some(error);
@@ -639,12 +639,12 @@ async fn handle_success(
     let duration_ms = event.start_time.elapsed().as_millis();
 
     apxm_op!(debug,
-        node_id = event.node_id,
-        op_type = ?event.node.op_type,
-        duration_ms = duration_ms,
-        attempts = attempts,
-        output_tokens = event.outputs.len(),
-        "Operation completed successfully"
+     node_id = event.node_id,
+     op_type = ?event.node.op_type,
+     duration_ms = duration_ms,
+     attempts = attempts,
+     output_tokens = event.outputs.len(),
+     "Operation completed successfully"
     );
 
     // Update counters
@@ -695,12 +695,12 @@ async fn handle_failure(event: &WorkerEvent<'_>, error: RuntimeError, attempts: 
     let duration_ms = event.start_time.elapsed().as_millis();
 
     apxm_op!(error,
-        node_id = event.node_id,
-        op_type = ?event.node.op_type,
-        duration_ms = duration_ms,
-        attempts = attempts,
-        error = %error,
-        "Operation failed"
+     node_id = event.node_id,
+     op_type = ?event.node.op_type,
+     duration_ms = duration_ms,
+     attempts = attempts,
+     error = %error,
+     "Operation failed"
     );
 
     // Update counters

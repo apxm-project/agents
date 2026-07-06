@@ -7,6 +7,7 @@ use super::common::{CapabilitySchemaError, validate_non_empty};
 pub enum CapabilityBindingHandler {
     RustExecutor,
     PythonHandler,
+    TypeScriptHandler,
     PackHandler,
     McpBridge,
     Builtin,

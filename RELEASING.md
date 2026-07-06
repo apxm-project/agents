@@ -108,7 +108,7 @@ even after a yank.
 
 Per masterplan decision D6, packages built out of this private repo publish
 to npm as **Apache-2.0-licensed, compiled-artifact-only** packages (`dist/`
-+ typings + `LICENSE`, no `src/` mirror) even though the `agents` repo
++ typings + `LICENSE`, no duplicated `src/`) even though the `agents` repo
 itself stays MIT. This applies to:
 
 - `@apxm/frontend` (`crates/compiler/frontend/typescript/`)

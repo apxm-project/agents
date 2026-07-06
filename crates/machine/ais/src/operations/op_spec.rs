@@ -1,4 +1,4 @@
-//! `op-spec.v1` catalog generation (TSF-1).
+//! `op-spec.v1` catalog generation.
 //!
 //! Emits a canonical, machine-readable snapshot of every AIS operation
 //! (name, category, arity/operand shape, docs, and whether it is a
@@ -233,7 +233,7 @@ mod drift_gate {
         PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("generated")
     }
 
-    /// TSF-1 drift gate: the committed `op-spec.v1.json` / vectors file must
+    /// Drift gate: the committed `op-spec.v1.json` / vectors file must
     /// always equal a fresh render of `AIS_OPERATIONS`. If `definitions.rs`
     /// changes (an op is added/removed/edited) without regenerating the
     /// catalog via `apxm codegen op-spec`, this test fails the build —

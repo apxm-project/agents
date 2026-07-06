@@ -4,7 +4,10 @@ use super::{
     ExecutionContext, Node, Result, Value, get_input, get_optional_string_attribute,
     get_string_attribute,
 };
-use crate::{aam::TransitionLabel, memory::{MemorySpace, parse_memory_space}};
+use crate::{
+    aam::TransitionLabel,
+    memory::{MemorySpace, parse_memory_space},
+};
 use apxm_core::constants::graph::attrs as graph_attrs;
 
 /// Execute UMEM operation - Store value in specified memory tier

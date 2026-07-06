@@ -1,0 +1,3 @@
+capability = "bash"
+decision = "ask"
+reason = "Executes shell commands on the host."

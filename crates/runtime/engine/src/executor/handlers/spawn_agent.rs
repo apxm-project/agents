@@ -455,10 +455,8 @@ pub async fn execute(ctx: &ExecutionContext, node: &Node, _inputs: Vec<Value>) -
     // Layer 2 — push an agent scope and bracket it with
     // `subagent_spawn_begin` / `subagent_spawn_end`. Subsequent ASK /
     // INV_CAP handlers see a non-empty stack and emit paired Layer 2
-    // events tagged with this `agent_code`. The scope's pop site lives
-    // in the spawned subgraph's terminal handler — see the engine
-    // bracket below; for now we leave the scope on the stack so the
-    // remainder of the run benefits.
+    // events tagged with this `agent_code`. The scope remains on the stack
+    // until the spawned subgraph's terminal handler closes it.
     let parent_span_id = ctx.agent_scope_stack.peek().map(|s| s.span_id);
     let span_id = format!("agent-{}-{}", agent_name, node.id);
     ctx.agent_scope_stack
@@ -656,7 +654,7 @@ async fn resolve_spawn_agent_route(
             message: "SPAWN_AGENT routing returned no decision".to_string(),
         })?;
 
-    // RTG-11: make the routing decision observable — a rollout event
+    // make the routing decision observable — a rollout event
     // carrying the chosen profile, why, and every rejected candidate with
     // its own reason (never silently dropped).
     if let Some(emitter) = &ctx.event_emitter {
@@ -666,7 +664,7 @@ async fn resolve_spawn_agent_route(
     Ok(decision)
 }
 
-/// Forward an [`AgentRouteDecision`] to the execution event emitter (RTG-11).
+/// Forward an [`AgentRouteDecision`] to the execution event emitter.
 /// Shared by both `AgentRouter` consumers in this crate so the observability
 /// shape stays identical regardless of call site.
 pub(crate) fn emit_agent_route_decision_event(

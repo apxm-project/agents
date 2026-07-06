@@ -23,7 +23,7 @@ members = [
 	"crates/tools/cli",
     # -- Facade ---------
     "crates/facade",
-	# ── Observability (shared telemetry bootstrap, OBS-3) ─────────
+	# ── Observability (shared telemetry bootstrap, ) ─────────
 	"crates/observability",
 ]
 

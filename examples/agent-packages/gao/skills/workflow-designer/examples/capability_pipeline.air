@@ -1,0 +1,18 @@
+// capability_pipeline.air — register a runtime capability, then chain two
+// capability invocations where the second consumes the first's output
+// (REGISTER_CAPABILITY + INV_CAP x2).
+//
+// Fills a gap in the  vector set: none of the original three fixtures
+// exercise capability registration/invocation, the most common op family in
+// authored workflows. Generated from Python's `GraphRecorder.to_graph().to_air()`
+// reference emitter.
+//
+//   apxm validate capability_pipeline.air
+module {
+  func.func @capability_pipeline() -> !ais.token attributes {ais.entry} {
+    %register_lookup = ais.register_capability "lookup_docs" {description = "Look up internal documentation by query.", parameters_schema = "{\"type\": \"object\", \"properties\": {\"query\": {\"type\": \"string\"}}}"} : !ais.token
+    %invoke_lookup = ais.inv_cap "lookup_docs" ("{\"query\": \"release checklist\"}") : !ais.token
+    %invoke_digest = ais.inv_cap "summarize_text" ("{\"text\": \"{lookup}\"}") [%invoke_lookup : !ais.token] {input_names = ["lookup"]} : !ais.token
+    func.return %invoke_digest : !ais.token
+  }
+}

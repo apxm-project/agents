@@ -66,7 +66,7 @@ def optimization_showcase(g: GraphRecorder):
         "500-word summary with key insights and recommendations."
     )
 
-    # Independent follow-up checks.
+    # Independent review checks.
     review = g.think(
         name="review",
         prompt="Review this synthesis:\n{synthesis}\n\n"

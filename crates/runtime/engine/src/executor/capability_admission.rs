@@ -6,7 +6,10 @@ use chrono::{DateTime, Utc};
 
 /// Returns true when runtime `capability_grants` metadata admits a direct write
 /// to `capability_binding`. Missing, malformed, expired, or non-mutating grants fail closed.
-pub(crate) fn capability_grant_admits_write(metadata: Option<&str>, capability_binding: &str) -> bool {
+pub(crate) fn capability_grant_admits_write(
+    metadata: Option<&str>,
+    capability_binding: &str,
+) -> bool {
     let Some(metadata) = metadata else {
         return false;
     };

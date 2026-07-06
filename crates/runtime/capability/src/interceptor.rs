@@ -12,9 +12,9 @@ use std::time::Duration;
 // which is only a re-export at the `apxm-runtime` lib root) — capability's
 // interceptor pipeline depends on `apxm-capability-iface` for this trait, not
 // on anything in `apxm-runtime`'s own `executor` module.
-use apxm_capability_iface::events::ExecutionEventEmitter;
 use super::metadata::RuntimeCapability;
 use super::registry::CapabilityRegistry;
+use apxm_capability_iface::events::ExecutionEventEmitter;
 
 /// Default approval wait when `APXM_PERMISSION_TIMEOUT_SECS` is unset (matches server broker TTL).
 pub const DEFAULT_PERMISSION_TIMEOUT_SECS: u64 = 120;
@@ -80,7 +80,7 @@ pub async fn pre_invoke_ctx(
     let args_preview = serde_json::to_value(args).unwrap_or_else(|_| serde_json::json!({}));
     let expires_at = (chrono::Utc::now()
         + chrono::Duration::seconds(ctx.permission_timeout.as_secs() as i64))
-        .to_rfc3339();
+    .to_rfc3339();
 
     let agent_code = ctx.agent_code.unwrap_or("runtime");
     if let Some(emitter) = ctx.event_emitter {
@@ -90,10 +90,7 @@ pub async fn pre_invoke_ctx(
     let prompt = PermissionPrompt {
         prompt_id: prompt_id.clone(),
         call_id,
-        grant_id: ctx
-            .grant_id
-            .unwrap_or("runtime-grant")
-            .to_string(),
+        grant_id: ctx.grant_id.unwrap_or("runtime-grant").to_string(),
         capability_id: name.to_string(),
         capability_binding: name.to_string(),
         host_id: ctx.host_id.map(str::to_string),
@@ -184,8 +181,8 @@ pub trait CapabilityInterceptor: Send + Sync {
     async fn post_invoke(&self, _name: &str, _result: &Value) {}
 }
 
-/// Production permission gate, registered by the host at the trusted
-/// invoke chokepoint to complement the in-handler write boundary. It activates
+/// Permission gate registered at the trusted invoke chokepoint to complement
+/// the in-handler write boundary. It activates
 /// the `requires_auth` capability-metadata flag: a capability that declares it
 /// needs authentication but is invoked without a resolved credential is denied in
 /// strict mode, or warned about otherwise (advisory is the default so legitimate
@@ -360,10 +357,7 @@ mod tests {
             permission_timeout: Duration::from_secs(5),
         };
         let mut args = HashMap::new();
-        args.insert(
-            "message".to_string(),
-            Value::String("hi".to_string()),
-        );
+        args.insert("message".to_string(), Value::String("hi".to_string()));
         let decision = pre_invoke_ctx(&ctx, "gated-echo", &args).await;
         assert!(matches!(decision, InterceptDecision::Allow));
         assert_eq!(emitter.requests.lock().len(), 1);

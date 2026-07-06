@@ -499,11 +499,10 @@ pub fn generate_tablegen() -> String {
 
 /// Get MLIR operation specs for all operations.
 ///
-/// This returns the extended specs with MLIR-specific metadata.
-/// In the future, this should be defined directly in definitions.rs,
-/// but for now we derive it from the base specs.
+/// This returns the extended specs with MLIR-specific metadata derived from the
+/// base specs.
 pub fn get_mlir_operation_specs() -> Vec<MlirOperationSpec> {
-    // For now, create basic specs from the base definitions.
+    // Create basic specs from the base definitions.
     // This will be expanded to include full MLIR metadata.
     get_all_operations().map(derive_mlir_spec).collect()
 }

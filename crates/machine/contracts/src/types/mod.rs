@@ -25,7 +25,6 @@ pub mod graph_hints;
 pub mod graph_metrics;
 pub mod intents;
 pub mod metrics;
-pub mod orchestration;
 
 // ── Domain ─────────────────────────────────────────────────
 pub mod compiler;
@@ -43,14 +42,14 @@ pub use agent_definition::{
 };
 pub use capability::{
     AuthMethod, CAPABILITY_DEFINITION_SCHEMA_V1, CAPABILITY_GRANT_SCHEMA_V1,
-    CAPABILITY_TEMPLATE_SCHEMA_V1, CapabilityDefinition, CapabilityGrant, CapabilityMetadata,
+    CAPABILITY_TEMPLATE_SCHEMA_V1, CapabilityBinding, CapabilityBindingHandler,
+    CapabilityBindingMetadata, CapabilityDefinition, CapabilityGrant, CapabilityMetadata,
     CapabilitySchemaError, CapabilityTemplateV1, Delegability, GrantProvenance, GrantStatus,
     Lifecycle, LifecycleBound, PermissionEffect, PermissionOperation, PermissionPolicy,
     PermissionRule, PermissionScope, PlannerVisibility, Principal, PrincipalKind, PromptMode,
     PromptPolicy, ResourceHandle, ResourceSelector, RoleAssignment, RoleDefinition,
     RuntimeCapabilityGrant, RuntimeLimits, RuntimeSurfaceLimit, RuntimeSurfaceMode,
-    RuntimeSurfacePolicy, Sensitivity, SubjectContext, SubjectSelector, CapabilityBinding,
-    CapabilityBindingHandler, CapabilityBindingMetadata,
+    RuntimeSurfacePolicy, Sensitivity, SubjectContext, SubjectSelector,
 };
 pub use communicate::{CommunicateProtocol, UnknownProtocol};
 pub use compiler::{
@@ -69,9 +68,7 @@ pub use execution::{
     WORKFLOW_TARGET_KIND_WORKFLOW_PATH, WorkflowInvocation, WorkflowInvocationKind, WorkflowNode,
     WorkflowTarget,
 };
-pub use goal::{
-    GateStatus, GateVerdict, Goal, GoalDecision, GoalId, GoalStatus, decide as decide_goal,
-};
+pub use goal::{Goal, GoalId, GoalStatus};
 pub use graph_hints::{
     ApxmGraphHints, BackendGraphCapabilities, CompilerHints, GraphBackendKind, GraphMetadata,
     GraphStatusSnapshot, NodeSpec, PinMode, PinPolicy, PriorityClass,
@@ -89,12 +86,6 @@ pub use models::{
     FinishReason, LLMResponse, ModelCapabilities, ModelInfo, TimingBreakdown, TokenUsage, ToolCall,
     ToolResult,
 };
-pub use orchestration::{
-    OrchestrationStartStatus, OrchestrationTransport, OrchestrationWakeOutcome,
-    OrchestrationWorkspaceCleanup, OrchestrationWorkspaceMode, UnknownOrchestrationTransport,
-    UnknownOrchestrationWorkspaceCleanup, UnknownOrchestrationWorkspaceMode,
-};
-
 pub use operations::metadata::{
     AIS_OPERATIONS, ContextStyle, MlirEmissionSpec, MlirResultType, OperationField,
     OperationLatency, OperationSpec, ReferenceType, ValidationError, WIRE_INDEXED_OPERATIONS,

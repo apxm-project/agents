@@ -97,7 +97,7 @@ impl RuntimeExecutor {
             .init_model_router(router_config)
             .map_err(DriverError::Runtime)?;
 
-        // Instantiate ProfileRegistry beside ModelRouter (RTG-5): loads
+        // Instantiate ProfileRegistry beside ModelRouter: loads
         // `~/.apxm/model_profiles.toml` so `model_profile` node attributes
         // resolve to a candidate model before `ModelRouter::select` runs.
         runtime.init_profile_registry();
@@ -123,7 +123,7 @@ impl RuntimeExecutor {
         ));
 
         // Use CompilerInnerPlanLinker when MLIR is available, otherwise fall back to
-        // NoOpLinker (graph-direct mode). Mirrors how Linker handles MLIR unavailability.
+        // NoOpLinker (graph-direct mode). Same behavior as Linker when MLIR is unavailable.
         let report = MlirEnvReport::detect();
         report.apply_env();
         if report.is_ready() {
@@ -337,7 +337,7 @@ mod operation_policy_tests {
     use super::operation_policies_from_config;
     use crate::config::{ApXmConfig, OperationRouteConfig};
 
-    // RTG-1: every runtime host that calls `Runtime::init_model_router` must
+    // every runtime host that calls `Runtime::init_model_router` must
     // feed it `operation_policies` derived from the same shared config
     // surface (`chat.routing.operation_routes`) — this is the mechanism the
     // driver/CLI path already relied on, and the server path (see
@@ -387,7 +387,10 @@ mod operation_policy_tests {
         let policies = operation_policies_from_config(&config);
 
         assert_eq!(policies.len(), 1);
-        assert_eq!(policies[0].operation, apxm_core::types::AISOperationType::Think);
+        assert_eq!(
+            policies[0].operation,
+            apxm_core::types::AISOperationType::Think
+        );
         assert_eq!(policies[0].target, apxm_runtime::RoutingTarget::Balanced);
     }
 

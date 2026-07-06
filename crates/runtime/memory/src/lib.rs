@@ -15,9 +15,9 @@ pub use episodic::{EpisodicEntry, EpisodicMemory};
 pub use ltm::LongTermMemory;
 pub use stm::ShortTermMemory;
 
-use apxm_core::types::MemoryTier;
 use apxm_core::constants::memory as mem_const;
 use apxm_core::error::RuntimeError;
+use apxm_core::types::MemoryTier;
 use std::path::PathBuf;
 use std::sync::Arc;
 
@@ -167,7 +167,7 @@ impl MemorySystem {
     ///
     /// STM/LTM keys are physically namespaced by `scope_id` and returned with
     /// the scope prefix stripped so callers continue to work with logical keys.
-    /// Episodic memory remains global for now.
+    /// Episodic memory is global.
     pub async fn search_scoped(
         &self,
         space: MemorySpace,

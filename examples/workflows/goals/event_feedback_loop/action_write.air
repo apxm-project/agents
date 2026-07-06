@@ -1,7 +1,0 @@
-module {
-  func.func @action_write(%arg0: !ais.token {ais.param_name = "trigger", ais.param_type = "str"}) -> !ais.token attributes {ais.entry} {
-    %label = ais.const_str "action.write:" : !ais.token
-    %out = ais.merge %label, %arg0 : !ais.token, !ais.token -> !ais.token
-    func.return %out : !ais.token
-  }
-}

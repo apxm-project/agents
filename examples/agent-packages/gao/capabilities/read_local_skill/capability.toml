@@ -1,0 +1,4 @@
+id = "read_local_skill"
+description = "Read a Gao-owned skill document."
+kind = "typescript_handler"
+read_only = true

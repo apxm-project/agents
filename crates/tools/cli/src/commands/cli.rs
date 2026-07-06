@@ -1,6 +1,6 @@
 //! CLI type definitions for APXM.
 
-use clap::{Args, Parser, Subcommand};
+use clap::{Parser, Subcommand};
 use std::path::PathBuf;
 
 use apxm_core::types::{MetricsLevel, OptimizationTarget};
@@ -80,25 +80,16 @@ pub enum Commands {
         #[arg(long = "embed-manifest", value_name = "skill.toml")]
         embed_manifest: Option<PathBuf>,
     },
-    /// Compile an agent package's Python entry (with `@hook`/`@tool`
-    /// registrations) to host-loop AIR on stdout. This is the cross-repo
-    /// process contract Server invokes as a subprocess instead of reaching
-    /// into this repo's Python frontend directly — see
+    /// Compile an agent package declaratively to AIR on stdout. This is the
+    /// cross-repo process contract Server invokes as a subprocess instead of
+    /// reaching into this repo's Python frontend directly — see
     /// `commands::compile::compile_service_command` for the exact I/O
     /// contract (stdout carries ONLY the emitted AIR; errors + logs go to
     /// stderr; nonzero exit on failure).
     CompileService {
-        /// Package directory (contains pack.toml, agent.toml, python/<entry>)
+        /// Package directory (contains pack.toml, agent.toml, capabilities/)
         package: PathBuf,
-        /// Override the python/-relative entry (default: agent.toml's `entry`)
-        #[arg(long)]
-        entry: Option<String>,
-        /// Pass the "host" loop override (the same override Studio's
-        /// host-controlled chat surface used to pass) instead of the
-        /// manifest's declared [runtime].loop.
-        #[arg(long)]
-        host_loop: bool,
-        /// Enable optional web-tools registration for entries that gate on it.
+        /// Enable optional web-tools registration in the emitted ASK node.
         #[arg(long)]
         web_tools: bool,
     },
@@ -195,12 +186,12 @@ pub enum Commands {
         #[command(subcommand)]
         action: TeamAction,
     },
-    /// Scaffold, lint, build, and install agent packages (AGT-1 folder format)
+    /// Scaffold, lint, build, and install agent packages.
     Package {
         #[command(subcommand)]
         action: PackageAction,
     },
-    /// Scaffold, lint, and install organization packages (ORG-1 folder format)
+    /// Scaffold, lint, and install organization packages.
     Org {
         #[command(subcommand)]
         action: OrgAction,
@@ -242,6 +233,14 @@ pub enum Commands {
     Codegen {
         #[command(subcommand)]
         action: CodegenAction,
+    },
+    /// Emit canonical AIR from frontend graph JSON.
+    ///
+    /// Reads the shared FrontendGraph DTO shape from a file or stdin and prints
+    /// AIR through the Rust AirModule printer.
+    EmitAir {
+        /// Frontend graph JSON file. Omit to read stdin.
+        input: Option<PathBuf>,
     },
     /// Replay a session trace as a timeline
     Replay {
@@ -295,22 +294,24 @@ pub enum Commands {
         #[command(subcommand)]
         action: RolloutAction,
     },
-    /// Start, follow, inspect, or cancel a bounded APXM goal run.
-    ///
-    /// Sends the task to APXM server, which owns worker admission,
-    /// workflow execution, events, cancellation, and sessions.
-    Goal(GoalArgs),
     /// Interactive conversational REPL over a running apxm-server.
     ///
-    /// Each user message runs one execution of the agent graph, threading a
-    /// stable session id (so server-side memory accrues across turns) and a
-    /// client-side transcript. Defaults to a built-in single-ASK chat graph;
-    /// pass `--air` to drive a custom conversational agent authored in the
-    /// Python frontend.
+    /// Requires `--package <id>` (alias `--agent`) for server-backed chat
+    /// (`POST /v1/agents/packages/{{id}}/sessions`) or `--air <path>` for a
+    /// custom in-graph artifact with an in-program recv loop.
     Chat {
-        /// AIR graph driven each turn (path to a `.air` file). Defaults to the
-        /// built-in chat graph (a single ASK over a `{conversation}` param).
-        #[arg(long)]
+        /// Agent package id for thin server-backed chat. Starts
+        /// `POST /v1/agents/packages/{{id}}/sessions` and pipes stdin turns to the
+        /// server session.
+        #[arg(
+            long = "package",
+            alias = "agent",
+            value_name = "ID",
+            conflicts_with = "air"
+        )]
+        package: Option<String>,
+        /// AIR graph with an in-program recv loop (path to a `.air` file).
+        #[arg(long, conflicts_with = "package")]
         air: Option<std::path::PathBuf>,
         /// apxm-server base URL (default $APXM_SERVER_BASE or
         /// http://127.0.0.1:18800).
@@ -328,193 +329,17 @@ pub enum Commands {
         /// scoping; shared-tier skills are always visible. Empty = unrestricted.
         #[arg(long = "import", value_name = "LIB")]
         import: Vec<String>,
-        /// Enable the agent's web tool group each turn (the runtime runs
-        /// independent tool calls in parallel). Ignored when `--air` is set.
-        #[arg(long)]
-        tools: bool,
-        /// Pin each direct-ASK turn to a registered backend by name (as listed by
-        /// `GET /v1/models`). Ignored when `--air` or `--agent` is set.
+        /// Pin package chat to a registered backend by name (as listed by
+        /// `GET /v1/models`).
         #[arg(long, value_name = "NAME")]
         backend: Option<String>,
-        /// Pin each direct-ASK turn to a specific model id. Ignored when `--air`
-        /// or `--agent` is set; use `--agent-model` for ACP agents.
+        /// Pin package chat to a specific model id.
         #[arg(long, value_name = "ID")]
         model: Option<String>,
-        /// Run each chat turn through a spawned ACP agent profile, such as `claude`.
-        #[arg(long = "agent", value_name = "PROFILE", conflicts_with = "air")]
-        agent: Option<String>,
-        /// ACP mode for `--agent`, such as `architect`.
-        #[arg(long = "agent-mode", value_name = "MODE", requires = "agent")]
-        agent_mode: Option<String>,
-        /// ACP model request for `--agent`, used when the profile supports model control.
-        #[arg(long = "agent-model", value_name = "MODEL", requires = "agent")]
-        agent_model: Option<String>,
-        /// Render the full per-agent event tree each turn instead of just the
-        /// assistant's text.
-        #[arg(long)]
-        tree: bool,
-        /// Subscribe to an apxm-os control-plane event stream at this base URL
-        /// (e.g. http://127.0.0.1:9090). Each cue event (process output, file
-        /// change, cron, webhook) becomes a turn, so the agent reacts to external
-        /// events without a human typing — the REPL stays interactive too.
-        #[arg(long = "monitor-url", value_name = "URL")]
-        monitor_url: Option<String>,
-        /// Bound the conversation to at most N substantive turns. A stdin turn at
-        /// the cap is soft-blocked (warns; `/continue` extends by N); an
-        /// event-driven turn at the cap is dropped. Clamped to the operator
-        /// ceiling $APXM_CHAT_MAX_TURNS_CEILING when set.
-        #[arg(long = "max-turns", value_name = "N")]
-        max_turns: Option<usize>,
-        /// Bound event-driven (monitor cue) turns to at most N; events past the
-        /// cap are dropped while stdin stays interactive. Clamped to
-        /// $APXM_CHAT_MAX_EVENTS_CEILING when set.
-        #[arg(long = "max-events", value_name = "N")]
-        max_events: Option<usize>,
-        /// Per-tool call budget for one turn's whole execution tree, as `CAP=N`
-        /// (repeatable). Enforced by the runtime's trusted invoke seam; a
-        /// spawned-agent fan-out cannot exceed it. Each N is clamped to the
-        /// operator ceiling $APXM_TOOL_CALL_BUDGET_CEILING when set.
-        #[arg(long = "tool-budget", value_name = "CAP=N")]
-        tool_budget: Vec<String>,
-        /// Per-tool call cap for the whole conversation, as `CAP=N` (repeatable).
-        /// Tracked across turns by the host; the per-turn budget sent to the
-        /// runtime is the lower of this remaining cap and any --tool-budget.
-        #[arg(long = "tool-cap", value_name = "CAP=N")]
-        tool_cap: Vec<String>,
-        /// Bind a tool to an apxm-auth connection for its auth token, as
-        /// `CAP=CONNECTION_ID` (repeatable). The server resolves the token
-        /// (scoped to --owner) and the runtime injects it at the tool's invoke
-        /// seam; the secret never enters the AIR or the prompt.
-        #[arg(long = "tool-auth", value_name = "CAP=CONNECTION_ID")]
-        tool_auth: Vec<String>,
-        /// Tenant/owner scope for --tool-auth credential resolution.
+        /// Tenant/owner scope for credential resolution.
         #[arg(long = "owner", value_name = "OWNER")]
         owner: Option<String>,
-        /// Let the agent create and run workflows by exposing authoring tools.
-        /// Ignored when `--air`/`--agent` set.
-        #[arg(long = "author")]
-        author: bool,
     },
-}
-
-#[derive(Args, Debug, Clone)]
-pub struct GoalArgs {
-    /// Goal/task for APXM to decompose and supervise.
-    #[arg(value_name = "TASK")]
-    pub task: Option<String>,
-
-    /// Print status for an existing goal id.
-    #[arg(long, value_name = "GOAL_ID")]
-    pub status: Option<String>,
-
-    /// Print retained events for an existing goal id.
-    #[arg(long, value_name = "GOAL_ID")]
-    pub events: Option<String>,
-
-    /// Cancel an in-flight goal id.
-    #[arg(long, value_name = "GOAL_ID")]
-    pub cancel: Option<String>,
-
-    /// apxm-server base URL (default $APXM_SERVER_BASE or http://127.0.0.1:18800).
-    #[arg(long)]
-    pub server: Option<String>,
-
-    /// Reuse a caller-provided goal session id.
-    #[arg(long = "session-id", hide = true)]
-    pub session_id: Option<String>,
-
-    /// Optional repository, product, or run context passed to workers.
-    #[arg(long)]
-    pub context: Option<String>,
-
-    /// Optional event payload/reason that triggered this goal pass.
-    #[arg(long)]
-    pub event: Option<String>,
-
-    /// Optional trigger rule or source for this goal pass.
-    #[arg(long)]
-    pub trigger: Option<String>,
-
-    /// Pin an explicit worker as ID[:ROLE[:PROFILE]]. Repeat to override auto-planning.
-    #[arg(long = "worker", value_name = "ID[:ROLE[:PROFILE]]")]
-    pub workers: Vec<String>,
-
-    /// Dependencies for explicit workers as WORKER=DEP1,DEP2. Repeat to shape phases.
-    #[arg(long = "depends", value_name = "WORKER=DEP1,DEP2")]
-    pub depends: Vec<String>,
-
-    /// Bind unprofiled explicit workers to resolvable ACP profiles selected by APXM.
-    #[arg(long = "use-agents")]
-    pub use_agents: bool,
-
-    /// ACP profile for the default planner worker.
-    #[arg(long = "planner", value_name = "PROFILE")]
-    pub planner_profile: Option<String>,
-
-    /// ACP profile for the default executor worker.
-    #[arg(long = "executor", value_name = "PROFILE")]
-    pub executor_profile: Option<String>,
-
-    /// Optional reviewer/critic profile or ID[:ROLE[:PROFILE]]. Repeat for more reviewers.
-    #[arg(long = "critic", value_name = "PROFILE|ID[:ROLE[:PROFILE]]")]
-    pub critics: Vec<String>,
-
-    /// Optional reviewer profile or ID[:ROLE[:PROFILE]]. Repeat for more reviewers.
-    #[arg(long = "reviewer", value_name = "PROFILE|ID[:ROLE[:PROFILE]]")]
-    pub reviewers: Vec<String>,
-
-    /// ACP profile for the default verifier worker.
-    #[arg(long = "verifier", value_name = "PROFILE")]
-    pub verifier_profile: Option<String>,
-
-    /// ACP profile for the final gate/eval supervisor.
-    #[arg(long = "supervisor", value_name = "PROFILE")]
-    pub supervisor_profile: Option<String>,
-
-    /// Workspace allocation mode: session, shared, or git_worktree.
-    #[arg(long = "workspace", default_value = "session")]
-    pub workspace: String,
-
-    /// Repository root for shared or git_worktree workspace modes.
-    #[arg(long = "repo-root")]
-    pub repo_root: Option<PathBuf>,
-
-    /// Git ref used when --workspace git_worktree is selected.
-    #[arg(long = "base-ref", default_value = "HEAD")]
-    pub base_ref: String,
-
-    /// Runtime-minted capability grant id forwarded to APXM (repeatable).
-    #[arg(long = "capability-grant-id", value_name = "GRANT_ID")]
-    pub capability_grant_ids: Vec<String>,
-
-    /// Mint a runtime grant for the SPAWN_AGENT tool binding (via --capability-grant-id or auto when profiles are used).
-    #[arg(long = "delegate-spawn", hide = true)]
-    pub delegate_spawn: bool,
-
-    /// Skill library / id to import into the goal run's visible set.
-    #[arg(long = "import", value_name = "LIB")]
-    pub import: Vec<String>,
-
-    /// Materialize and validate the generated workflow bundle without starting it.
-    #[arg(long = "dry-run")]
-    pub dry_run: bool,
-
-    /// Maximum server-owned passes to run until the gate verdict converges.
-    /// Defaults to 1 (a single pass).
-    #[arg(long = "max-iterations", value_name = "N")]
-    pub max_iterations: Option<usize>,
-
-    /// Start the goal but do not follow the goal event stream.
-    #[arg(long = "no-follow")]
-    pub no_follow: bool,
-
-    /// Event page size while following.
-    #[arg(long = "limit", default_value_t = 100, hide = true)]
-    pub limit: usize,
-
-    /// Stop following after this many seconds without cancelling the run.
-    #[arg(long = "timeout-secs")]
-    pub timeout_secs: Option<u64>,
 }
 
 #[derive(Subcommand)]
@@ -552,7 +377,7 @@ pub enum RolloutAction {
         #[arg(long = "skill-dir")]
         skill_dir: Option<PathBuf>,
     },
-    /// Run the OBS-2 retention/compaction pass: archive expired rollout
+    /// Run the  retention/compaction pass: archive expired rollout
     /// bodies (index row survives with `status=archived`) and collect
     /// unreferenced spilled blobs. Never touches the memory tier.
     Compact {
@@ -605,7 +430,7 @@ pub enum CodegenAction {
         #[arg(long)]
         check: bool,
     },
-    /// Generate the op-spec.v1 AIS operation catalog + vectors fixture (TSF-1)
+    /// Generate the op-spec.v1 AIS operation catalog + vectors fixture
     OpSpec {
         /// Output directory for the generated catalog + vectors files
         #[arg(long)]
@@ -752,7 +577,7 @@ pub enum OpsAction {
         /// Operation name (e.g., ASK, THINK, INV, FLOW_CALL)
         name: String,
     },
-    /// Show accumulated op-usage counts from real executions (RT-9)
+    /// Show accumulated op-usage counts from real executions
     ///
     /// Reports how many times each AIS operation has actually been
     /// dispatched by `apxm execute` / `apxm run`, so drift between "ops
@@ -910,6 +735,15 @@ pub enum PackageAction {
         /// Display name for the agent (default: derived from the id).
         #[arg(long)]
         display_name: Option<String>,
+        /// Scaffold template (`looped-agent` or `gao`).
+        #[arg(long, default_value = "looped-agent")]
+        template: String,
+    },
+    /// Regenerate aggregate manifests from capability/skill folders
+    Sync {
+        /// Package directory to sync (default: current directory).
+        #[arg(default_value = ".")]
+        path: PathBuf,
     },
     /// Validate a package folder against the agent-package.v1 contract and
     /// check capability-set agreement across agent.toml/capabilities.toml/skills.
@@ -919,7 +753,7 @@ pub enum PackageAction {
         path: PathBuf,
         /// An org package directory whose capabilities/{capabilities,
         /// permissions}.toml are this package's org-global capability set
-        /// (AGT-5): a skill invoking one of these is not flagged as
+        ///: a skill invoking one of these is not flagged as
         /// undeclared even though the package itself never joins it.
         #[arg(long)]
         org: Option<PathBuf>,
@@ -996,7 +830,7 @@ pub enum IntegrationAction {
         path: PathBuf,
     },
     /// Install an integration package to `APXM_HOME/integrations/<id>/`,
-    /// best-effort mirroring to `$APXM_WORKSPACE_ROOT/integrations/<id>/`
+    /// best-effort copy to `$APXM_WORKSPACE_ROOT/integrations/<id>/`
     /// (the root auth-ms/apxm-os/Studio scan) when that env var is set.
     Install {
         /// Integration-package directory to install (default: current directory).

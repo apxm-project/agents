@@ -45,7 +45,7 @@ pub struct RolloutReplayOptions {
     pub home: Option<PathBuf>,
 }
 
-/// OBS-2 retention/compaction options — see [`apxm_rollout::retention`].
+///  retention/compaction options — see [`apxm_rollout::retention`].
 #[derive(Debug, Default, Clone)]
 pub struct RolloutCompactOptions {
     pub home: Option<PathBuf>,
@@ -222,7 +222,7 @@ pub async fn rollout_archive_command(opts: RolloutArchiveOptions) -> Result<Path
     Ok(output)
 }
 
-/// `apxm rollout compact` — OBS-2 retention pass over agents-owned durable
+/// `apxm rollout compact` —  retention pass over agents-owned durable
 /// state: archives rollout JSONL bodies older than the max-age policy
 /// (index row survives with `status = archived`) and collects blobs no
 /// longer referenced by any rollout. Never touches the memory tier — this

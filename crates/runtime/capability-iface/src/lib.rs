@@ -3,14 +3,14 @@
 //!
 //! # Why this crate exists
 //!
-//! `apxm-runtime` (`crates/runtime/engine`) currently hosts three modules —
-//! `scheduler`, `executor`, and `capability` — that form a genuine three-way
+//! `apxm-runtime` currently hosts three modules — `scheduler`, `executor`, and
+//! `capability` — that form a genuine three-way
 //! `use`-graph cycle: executor dispatches through the scheduler, the scheduler
 //! calls back into executor context/hooks, and capability's builtin `schedule`
 //! tool calls the scheduler's park registry directly while executor's
 //! `ExecutionContext` holds a concrete `Arc<CapabilitySystem>`. Because all
 //! three live in one crate today, the cycle isn't a *compile* problem — but it
-//! blocks ever splitting them into separate crates (RT-6), since a naive split
+//! blocks ever splitting them into separate crates, since a naive split
 //! would recreate the cycle at the `Cargo.toml` dependency level.
 //!
 //! This crate is the trait seam that breaks it. It defines:
@@ -29,12 +29,8 @@
 //!   `CapabilitySystem`, so `ExecutionContext.capability_system` can hold
 //!   `Arc<dyn CapabilityFacade>` instead of the concrete type.
 //!
-//! Everything still physically lives in `apxm-runtime` for now (this crate
-//! does not extract `CapabilitySystem`'s implementation, nor the scheduler's
-//! implementation) — but neither `apxm-runtime`'s executor/scheduler modules
-//! nor its capability module need to name each other's concrete types for
-//! these four touchpoints anymore; they only need to name this crate's
-//! traits/types.
+//! This crate carries the shared traits and types; concrete runtime
+//! implementations remain in their owning modules.
 
 mod facade;
 mod host;

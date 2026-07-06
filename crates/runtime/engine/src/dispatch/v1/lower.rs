@@ -2,9 +2,8 @@
 //!
 //! `lower_graph` builds a `DispatchIrV1` from compiled `GraphMetadata` plus the
 //! per-node `ApxmGraphHints` already produced by the runtime. `derive_apxm_hints`
-//! goes the other way for one node, so the vLLM adapter can keep emitting
-//! today's `extra_body.vllm_xargs.apxm` payload from the new IR without any
-//! field loss.
+//! goes the other way for one node, preserving the `extra_body.vllm_xargs.apxm`
+//! payload shape without field loss.
 //!
 //! This is the round-trip path the design note requires before Dispatch IR can
 //! claim to "preserve the existing fields". See

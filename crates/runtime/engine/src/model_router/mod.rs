@@ -124,11 +124,10 @@ impl Default for ModelRouterConfig {
 
 /// Result of a routing decision.
 ///
-/// `reason` and `rejected_candidates` make the decision observable (RTG-11,
-/// `docs/plans/routing.md`): every candidate ModelRouter passed over on the
+/// `reason` and `rejected_candidates` make the decision observable: every
+/// candidate ModelRouter passed over on the
 /// way to `backend` is recorded with its own rejection reason instead of
-/// being silently dropped, mirroring the `AgentRouteDecision` shape on the
-/// agent-routing side.
+/// being silently dropped, matching the agent-routing observability shape.
 #[derive(Debug, Clone, Default)]
 pub struct RoutingDecision {
     /// Chosen backend name.
@@ -144,10 +143,10 @@ pub struct RoutingDecision {
 }
 
 /// Domain-specific reasons a model-routing candidate was rejected. Routing
-/// rejection reasons don't map onto any CM-3 enum (they describe model
+/// rejection reasons don't map onto any permission enum (they describe model
 /// selection, not capability permissioning), so this is a small, bounded,
-/// real Rust enum scoped to routing — same pattern OBS-4 established for
-/// CM-3 enums (`.as_str()` is the only source of the metric label).
+/// real Rust enum scoped to routing; `.as_str()` is the only source of the
+/// metric label.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum ModelRouteRejectionReason {
@@ -342,7 +341,7 @@ impl ModelRouter {
     /// Returns an error if no backend is available.
     pub fn select(&self, request: &LLMRequest) -> anyhow::Result<RoutingDecision> {
         // Candidates passed over on the way to a decision, across every
-        // precedence step (RTG-11 observability) — carried forward so the
+        // precedence step ( observability) — carried forward so the
         // final `RoutingDecision` never silently drops a rejected candidate.
         let mut rejected_candidates: Vec<ModelRouteRejection> = Vec::new();
 
@@ -426,9 +425,7 @@ impl ModelRouter {
                     candidate: policy.model.clone().unwrap_or_default(),
                     backend: backend.clone(),
                     reason_kind: ModelRouteRejectionReason::CircuitBreakerOpen,
-                    reason: format!(
-                        "operation policy backend '{backend}' circuit breaker is open"
-                    ),
+                    reason: format!("operation policy backend '{backend}' circuit breaker is open"),
                 });
             }
         }
@@ -495,9 +492,8 @@ impl ModelRouter {
         for tag in &routing.fallback_tags {
             if let Some(mut decision) = self.find_by_tag(tag, &mut rejected_candidates) {
                 decision.was_failover = true;
-                decision.reason = format!(
-                    "fallback tag '{tag}' matched after primary routing exhausted"
-                );
+                decision.reason =
+                    format!("fallback tag '{tag}' matched after primary routing exhausted");
                 decision.rejected_candidates = rejected_candidates;
                 return Ok(decision);
             }
@@ -514,7 +510,10 @@ impl ModelRouter {
     /// route through policy + circuit breakers + rate limits rather than
     /// picking a backend directly. `explicit request.backend`/`request.model`
     /// still win inside `select()` — precedence is unchanged.
-    pub async fn select_for_dispatch(&self, request: &LLMRequest) -> anyhow::Result<RoutingDecision> {
+    pub async fn select_for_dispatch(
+        &self,
+        request: &LLMRequest,
+    ) -> anyhow::Result<RoutingDecision> {
         let decision = self.select(request)?;
         let backend_id = &decision.backend;
         let key = format!("backend:{}", backend_id);
@@ -633,7 +632,7 @@ impl ModelRouter {
 
     /// Same as [`Self::generate`] but also returns the [`RoutingDecision`]
     /// `select_for_dispatch` made, so callers that want to record the
-    /// decision (RTG-11: rollout event / metric) don't have to re-run
+    /// decision (rollout event / metric) don't have to re-run
     /// selection themselves (which would double-consume a rate-limit token).
     pub async fn generate_with_decision(
         &self,
@@ -772,7 +771,9 @@ impl ModelRouter {
                 let la = self.backend_latency_ms(&a.backend);
                 let lb = self.backend_latency_ms(&b.backend);
                 match (la, lb) {
-                    (Some(la), Some(lb)) => la.partial_cmp(&lb).unwrap_or(std::cmp::Ordering::Equal),
+                    (Some(la), Some(lb)) => {
+                        la.partial_cmp(&lb).unwrap_or(std::cmp::Ordering::Equal)
+                    }
                     (Some(_), None) => std::cmp::Ordering::Less,
                     (None, Some(_)) => std::cmp::Ordering::Greater,
                     (None, None) => std::cmp::Ordering::Equal,
@@ -786,7 +787,7 @@ impl ModelRouter {
 
         // Every other candidate in the full table, classified against the
         // same rules that pruned `feasible` — so the decision never silently
-        // drops why a candidate lost (RTG-11).
+        // drops why a candidate lost.
         let rejected_candidates = self
             .model_registry
             .list()
@@ -865,12 +866,8 @@ mod latency_routing_tests {
                 ..Default::default()
             });
         }
-        ModelRouter::with_model_registry(
-            llm_registry,
-            model_registry,
-            ModelRouterConfig::default(),
-        )
-        .expect("router construction")
+        ModelRouter::with_model_registry(llm_registry, model_registry, ModelRouterConfig::default())
+            .expect("router construction")
     }
 
     /// Record a successful call against `backend` with the given latency by
@@ -890,7 +887,11 @@ mod latency_routing_tests {
     #[test]
     fn record_success_feeds_the_ewma_and_is_queryable_from_the_registry() {
         let router = router_with_backends(&["a"]);
-        assert_eq!(router.backend_latency_ms("a"), None, "cold start: no signal yet");
+        assert_eq!(
+            router.backend_latency_ms("a"),
+            None,
+            "cold start: no signal yet"
+        );
 
         record_latency(&router, "a", 50);
         assert_eq!(router.backend_latency_ms("a"), Some(50.0));
@@ -900,7 +901,10 @@ mod latency_routing_tests {
         // and not last-value-wins.
         record_latency(&router, "a", 500);
         let after = router.backend_latency_ms("a").unwrap();
-        assert!(after > 50.0 && after < 500.0, "expected smoothed value, got {after}");
+        assert!(
+            after > 50.0 && after < 500.0,
+            "expected smoothed value, got {after}"
+        );
     }
 
     #[test]
@@ -953,7 +957,7 @@ mod latency_routing_tests {
     }
 }
 
-/// RTG-11: `ModelRouter::select`/`select_from_table` decisions must never
+/// `ModelRouter::select`/`select_from_table` decisions must never
 /// silently drop a rejected candidate — every candidate passed over carries
 /// its own typed reason, observable via `RoutingDecision`.
 #[cfg(test)]
@@ -966,15 +970,13 @@ mod routing_observability_tests {
         let router = router_with_backends(&["cheap", "pricey"]);
         // Give "pricey" a higher cost so "cheap" always wins the Cost target,
         // while both stay feasible (no breaker trip, no unmet requirement).
-        router
-            .model_registry
-            .register(ModelEntry {
-                name: "cheap-model".to_string(),
-                backend: "cheap".to_string(),
-                cost_per_1k_input: 0.001,
-                cost_per_1k_output: 0.001,
-                ..Default::default()
-            });
+        router.model_registry.register(ModelEntry {
+            name: "cheap-model".to_string(),
+            backend: "cheap".to_string(),
+            cost_per_1k_input: 0.001,
+            cost_per_1k_output: 0.001,
+            ..Default::default()
+        });
         router.model_registry.register(ModelEntry {
             name: "pricey-model".to_string(),
             backend: "pricey".to_string(),
@@ -994,7 +996,10 @@ mod routing_observability_tests {
             .iter()
             .find(|r| r.candidate == "pricey-model")
             .expect("pricier candidate must be recorded as rejected, not dropped");
-        assert_eq!(rejection.reason_kind, ModelRouteRejectionReason::NotBestRanked);
+        assert_eq!(
+            rejection.reason_kind,
+            ModelRouteRejectionReason::NotBestRanked
+        );
         assert!(rejection.reason.contains("cheap-model"));
     }
 
@@ -1031,7 +1036,9 @@ mod routing_observability_tests {
         }
 
         let request = LLMRequest::new("hello").with_backend("tripped".to_string());
-        let decision = router.select(&request).expect("fallback should still route");
+        let decision = router
+            .select(&request)
+            .expect("fallback should still route");
 
         // The explicit backend lost, but the loss is observable — not a
         // silently-dropped preference.

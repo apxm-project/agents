@@ -1,14 +1,13 @@
-//! `apxm org new|lint|install` — the ORG-2 toolchain for the canonical
-//! organization-package folder format (ORG-1, `apxm.org-package.v1` /
-//! `apxm.org-topology.v1`, `workspace/contracts/schemas/org-package.v1.json`
-//! and `org-topology.v1.json`).
+//! `apxm org new|lint|install` — the toolchain for the canonical
+//! organization-package folder format (`apxm.org-package.v1` /
+//! `apxm.org-topology.v1`).
 //!
-//! This module is the org-level sibling of [`super::package`] (AGT-2): same
+//! This module is the org-level sibling of [`super::package`]: same
 //! module organization, same manifest-projection-from-schema approach (hand
 //! ported into Rust structs rather than loading the JSON schema at runtime —
 //! this repo does not vendor or path-depend on the sibling `contracts`
 //! repo), same lint reporting style, same install-to-`APXM_HOME` pattern.
-//! Where a check can reuse AGT-2's own logic (installed-package resolution,
+//! Where a check can reuse the package command logic (installed-package resolution,
 //! the joined capabilities/permissions grammar, `hierarchy.toml`'s
 //! parent/permitted_children shape, recursive directory copy) it does —
 //! see the `use super::package::{...}` imports below — rather than
@@ -20,8 +19,8 @@
 //! second resolve-and-read of the installed package's `hierarchy.toml` — is
 //! what `org lint`'s hierarchy-consistency check compares against
 //! `topology.toml`'s tree edges; this is the schema's own design ("carried
-//! here so org-package lint (ORG-2) can check consistency ... without
-//! resolving the referenced package") and matches ORG-1's
+//! here so org-package lint can check consistency ... without
+//! resolving the referenced package") and matches the
 //! `invalid-member-hierarchy-contradicts-topology-tree` vector, which
 //! exercises exactly this snapshot-vs-tree contradiction with no reference
 //! to an installed package at all.
@@ -78,7 +77,7 @@ pub struct MemberEntry {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub capability_mask: Option<CapabilityMaskToml>,
     /// Snapshot of the referenced package's own `hierarchy.toml`
-    /// (`apxm.agent-package.v1#/properties/hierarchy`, CM-4's
+    /// (`apxm.agent-package.v1#/properties/hierarchy`, 's
     /// `AgentDefinition.hierarchy`). Reused verbatim from
     /// [`super::package::HierarchyToml`] — same shape.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -353,7 +352,7 @@ fn load_org(root: &Path) -> Result<LoadedOrg> {
 // ---------------------------------------------------------------------
 
 /// Minimal SemVer core parse (`MAJOR.MINOR.PATCH`, prerelease/build metadata
-/// ignored) — mirrors `package.rs::semver_like`'s tolerance, adding the
+/// ignored) — uses `package.rs::semver_like`'s tolerance, adding the
 /// numeric triple needed for requirement satisfaction.
 fn parse_semver_core(version: &str) -> Option<(u64, u64, u64)> {
     let core = version.split(['-', '+']).next().unwrap_or(version);
@@ -372,7 +371,7 @@ fn parse_semver_core(version: &str) -> Option<(u64, u64, u64)> {
 /// `>=` requirement), and `~` (same major.minor, `>=` requirement).
 /// Unparseable requirements/versions fall back to an exact string
 /// comparison — no `semver` crate dependency exists in this workspace
-/// today (see AGT-2's `semver_like`, which only validates shape).
+/// today (see `semver_like`, which only validates shape).
 fn version_satisfies(requirement: &str, actual: &str) -> bool {
     let requirement = requirement.trim();
     if let Some(rest) = requirement.strip_prefix('^') {
@@ -393,8 +392,8 @@ fn version_satisfies(requirement: &str, actual: &str) -> bool {
     }
 }
 
-/// Check 1 (ORG-2): every member reference must resolve to an installed
-/// agent-package (`APXM_HOME/packages/<id>/`, AGT-2's install layout) whose
+/// Check 1: every member reference must resolve to an installed
+/// agent-package (`APXM_HOME/packages/<id>/`, 's install layout) whose
 /// version satisfies the member's version requirement.
 fn check_member_resolution(members: &MembersToml, apxm_home: &Path) -> Vec<String> {
     let mut errors = Vec::new();
@@ -420,7 +419,7 @@ fn check_member_resolution(members: &MembersToml, apxm_home: &Path) -> Vec<Strin
     errors
 }
 
-/// Check 2 (ORG-2): `topology.toml`'s tree must have exactly one root and
+/// Check 2: `topology.toml`'s tree must have exactly one root and
 /// no cycles. Real cycle detection via DFS coloring, not just "trust the
 /// format".
 fn check_tree_well_formed(tree: &TreeToml) -> Vec<String> {
@@ -443,8 +442,7 @@ fn check_tree_well_formed(tree: &TreeToml) -> Vec<String> {
             .entry(edge.parent.as_str())
             .or_default()
             .push(edge.child.as_str());
-        if let Some(existing_parent) = parent_of.insert(edge.child.as_str(), edge.parent.as_str())
-        {
+        if let Some(existing_parent) = parent_of.insert(edge.child.as_str(), edge.parent.as_str()) {
             if existing_parent != edge.parent.as_str() {
                 errors.push(format!(
                     "topology.tree: node '{}' has multiple parents ('{}' and '{}') — not a tree",
@@ -544,9 +542,9 @@ fn check_tree_well_formed(tree: &TreeToml) -> Vec<String> {
     errors
 }
 
-/// Check 3 (ORG-2): a member's own `hierarchy` snapshot (parent /
-/// permitted_children, CM-4 shape) must not contradict `topology.tree`'s
-/// edges. Mirrors ORG-1's
+/// Check 3: a member's own `hierarchy` snapshot (parent /
+/// permitted_children shape) must not contradict `topology.tree`'s
+/// edges. Uses the
 /// `invalid-member-hierarchy-contradicts-topology-tree` vector.
 fn check_hierarchy_consistency(members: &MembersToml, tree: &TreeToml) -> Vec<String> {
     let mut errors = Vec::new();
@@ -573,7 +571,7 @@ fn check_hierarchy_consistency(members: &MembersToml, tree: &TreeToml) -> Vec<St
                         "members['{}'].hierarchy.parent ('{}') is inconsistent with \
                          topology.tree (edge declares parent '{}') — organization-packages.md \
                          'The package': a member's own hierarchy.toml must be consistent with \
-                         topology.toml, lint error otherwise (ORG-2).",
+                         topology.toml, lint error otherwise.",
                         member.id, declared_parent, actual_parent
                     ));
                 }
@@ -609,10 +607,13 @@ fn check_hierarchy_consistency(members: &MembersToml, tree: &TreeToml) -> Vec<St
     errors
 }
 
-/// Check 4 (ORG-2): every `capability_mask.grant`/`deny` entry must
+/// Check 4: every `capability_mask.grant`/`deny` entry must
 /// reference a capability declared in the org's own
 /// `capabilities/capabilities.toml` — no masking undeclared capabilities.
-fn check_capability_mask_validity(members: &MembersToml, capabilities: &CapabilitiesToml) -> Vec<String> {
+fn check_capability_mask_validity(
+    members: &MembersToml,
+    capabilities: &CapabilitiesToml,
+) -> Vec<String> {
     let mut errors = Vec::new();
     let declared: BTreeSet<&str> = capabilities
         .capability
@@ -638,16 +639,19 @@ fn check_capability_mask_validity(members: &MembersToml, capabilities: &Capabili
     errors
 }
 
-/// Structural check (mirrors AGT-1's joined-capability rule, per
+/// Structural check using the joined-capability rule from
 /// org-package.v1's own description: "A global without a matching
 /// permissions.toml policy entry fails lint"): every
 /// `capabilities/capabilities.toml` entry needs a matching
 /// `capabilities/permissions.toml` entry to be a real (joined) global
-/// capability, and vice versa. Not one of the four required ORG-2 checks,
-/// but the same AGT-1 precedent `check_capability_mask_validity` (check 4)
+/// capability, and vice versa. Not one of the four required org checks,
+/// but the same  precedent `check_capability_mask_validity` (check 4)
 /// depends on: `declared` there is only meaningful once the global set
 /// itself is join-consistent.
-fn check_global_capability_join(capabilities: &CapabilitiesToml, permissions: &PermissionsToml) -> Vec<String> {
+fn check_global_capability_join(
+    capabilities: &CapabilitiesToml,
+    permissions: &PermissionsToml,
+) -> Vec<String> {
     let mut errors = Vec::new();
     let declared: BTreeSet<&str> = capabilities
         .capability
@@ -711,11 +715,20 @@ fn org_lint_at(path: &Path, apxm_home: &Path, json_output: bool) -> Result<()> {
         }
     }
 
-    errors.extend(check_global_capability_join(&org.capabilities, &org.permissions));
+    errors.extend(check_global_capability_join(
+        &org.capabilities,
+        &org.permissions,
+    ));
     errors.extend(check_member_resolution(&org.members, apxm_home));
     errors.extend(check_tree_well_formed(&org.topology.tree));
-    errors.extend(check_hierarchy_consistency(&org.members, &org.topology.tree));
-    errors.extend(check_capability_mask_validity(&org.members, &org.capabilities));
+    errors.extend(check_hierarchy_consistency(
+        &org.members,
+        &org.topology.tree,
+    ));
+    errors.extend(check_capability_mask_validity(
+        &org.members,
+        &org.capabilities,
+    ));
 
     if json_output {
         println!(
@@ -810,13 +823,14 @@ mod tests {
         org_new(id, Some(dir.to_path_buf()), None, true).expect("scaffold ok");
     }
 
-    /// Scaffold + install a minimal agent-package (AGT-1) under `apxm_home`
+    /// Scaffold + install a minimal agent-package under `apxm_home`
     /// so org-level member-resolution tests have something real to resolve
     /// against, at the given version.
     fn install_agent_package(apxm_home: &Path, id: &str, version: &str) {
         let tmp = tempdir().unwrap();
         let root = tmp.path().join(id);
-        package_new(id, Some(root.clone()), None, true).expect("agent package scaffold ok");
+        package_new(id, Some(root.clone()), None, "looped-agent", true)
+            .expect("agent package scaffold ok");
         let pack_toml = fs::read_to_string(root.join("pack.toml")).unwrap();
         fs::write(
             root.join("pack.toml"),
@@ -868,8 +882,8 @@ mod tests {
         assert!(err.to_string().contains("already exists"));
     }
 
-    /// Builds a valid two-member org package (root -> child), mirroring the
-    /// ORG-1 vector `valid-two-level-tree-with-global-capability-mask-and-delegation`.
+    /// Builds a valid two-member org package (root -> child), using the
+    ///  vector `valid-two-level-tree-with-global-capability-mask-and-delegation`.
     fn build_valid_org(root: &Path, apxm_home: &Path) {
         scaffold(root, "valid-org");
         install_agent_package(apxm_home, "root-pkg", "0.1.0");
@@ -1048,14 +1062,16 @@ mod tests {
         };
         let errors = check_tree_well_formed(&bad_tree);
         assert!(
-            errors.iter().any(|e| e.contains("expected exactly one root")),
+            errors
+                .iter()
+                .any(|e| e.contains("expected exactly one root")),
             "expected a multi-root error, got: {errors:?}"
         );
     }
 
     #[test]
     fn lint_catches_hierarchy_contradicting_topology() {
-        // Mirrors ORG-1's `invalid-member-hierarchy-contradicts-topology-tree`
+        // Uses the `invalid-member-hierarchy-contradicts-topology-tree`
         // vector: child-agent's own hierarchy.parent says 'other-agent', but
         // topology.tree declares its parent as 'root-agent'.
         let tmp = tempdir().unwrap();
@@ -1109,7 +1125,7 @@ mod tests {
         );
 
         // Re-run just the targeted check to assert on the exact message
-        // shape (mirrors the ORG-1 vector's `expected_error`).
+        // shape from the vector's `expected_error`.
         let org = load_org(&root).unwrap();
         let errors = check_hierarchy_consistency(&org.members, &org.topology.tree);
         assert!(

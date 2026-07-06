@@ -1,4 +1,4 @@
-// Hand-written wire types mirroring openapi-session-v1.yaml + apxm-server
+// Hand-written wire types aligned with openapi-session-v1.yaml + apxm-server
 // session/run handlers. NOT generated — no generator produces this file.
 // Some types here (SessionHistoryResponse, CompactSessionResponse,
 // SessionRole) are consumed by Studio but are not yet modeled in
