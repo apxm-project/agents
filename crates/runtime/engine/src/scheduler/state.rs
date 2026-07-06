@@ -155,7 +155,7 @@ pub struct SchedulerState {
     /// by session id. The park-based recv re-arm increments this each turn and
     /// stops re-arming once the recv node's `max_iterations` cap is reached, so a
     /// long-lived session loop is bounded rather than splicing nodes forever
-    /// (CONV-1: bounds the previously-unbounded re-arm growth).
+    ///.
     pub(crate) rearm_turns: Arc<DashMap<String, u64>>,
 
     // Work-stealing scheduler (encapsulated)
@@ -215,7 +215,7 @@ pub struct SchedulerState {
     /// Zero overhead for DAGs without switch operations.
     pub delegated_tokens: Arc<DashSet<(NodeId, TokenId)>>,
 
-    /// Narrow park-observability signal for G-6: fires with `Some(session_id)`
+    /// Narrow park-observability signal for fires with `Some(session_id)`
     /// exactly when a node parks under the conversation-loop's
     /// `park_registry::session_recv_key(session_id)` wait key (the in-graph
     /// "waiting for the next turn's message" park) — not for any other park
@@ -225,7 +225,7 @@ pub struct SchedulerState {
     /// the execution future, instead of blocking until the whole DAG (which may
     /// run for the lifetime of the session) completes. Kept as a `watch` channel
     /// (last-value-wins) rather than a general park-event bus: this is
-    /// observability for the one parking case G-6 cares about, not a
+    /// observability for the one parking case cares about, not a
     /// general-purpose per-reason event stream.
     pub(crate) session_parked_tx: tokio::sync::watch::Sender<Option<String>>,
 }
@@ -473,7 +473,7 @@ impl SchedulerState {
 
     /// Record one more delivered turn for an in-graph session loop and return the
     /// running count. The park re-arm uses this to stop re-arming once the recv
-    /// node's `max_iterations` cap is reached (CONV-1: bound the loop).
+    /// node's `max_iterations` cap is reached.
     pub(crate) fn next_rearm_turn(&self, session_id: &str) -> u64 {
         let mut entry = self.rearm_turns.entry(session_id.to_string()).or_insert(0);
         *entry += 1;
@@ -679,7 +679,7 @@ impl SchedulerState {
         self.parked.load(Ordering::SeqCst)
     }
 
-    /// Fire the narrow session-recv park-observability signal (G-6). Called
+    /// Fire the narrow session-recv park-observability signal. Called
     /// exactly once per session-recv park, from the worker loop, when a node's
     /// `wait_key` matches `park_registry::session_recv_key(session_id)` for
     /// this execution's session. `send` failing (no subscribers) is
@@ -994,10 +994,10 @@ fn materialize_graph_state(
         for &token_id in &node.output_tokens {
             if tokens.contains_key(&token_id) {
                 tracing::debug!(
-                    node_id = node.id,
-                    token_id = token_id,
-                    node_outputs = ?node.output_tokens,
-                    "Duplicate producer detected"
+                 node_id = node.id,
+                 token_id = token_id,
+                 node_outputs = ?node.output_tokens,
+                 "Duplicate producer detected"
                 );
                 return Err(RuntimeError::SchedulerDuplicateProducer { token_id });
             }
@@ -1061,7 +1061,7 @@ mod tests {
 
     /// Helper: build a linear 2-node DAG.
     ///
-    ///   [Node 1] --token 10--> [Node 2]
+    /// [Node 1] --token 10--> [Node 2]
     ///
     /// Node 1 has no inputs (entry); Node 2 has no outgoing edges (exit).
     fn two_node_dag() -> ExecutionDag {
@@ -1080,8 +1080,8 @@ mod tests {
 
     /// Helper: build a fan-out 3-node DAG.
     ///
-    ///   [Node 1] --token 10--> [Node 2]
-    ///            \--token 11--> [Node 3]
+    /// [Node 1] --token 10--> [Node 2]
+    /// \--token 11--> [Node 3]
     ///
     fn fan_out_dag() -> ExecutionDag {
         let n1 = make_node(1, vec![], vec![10, 11]);
@@ -1800,7 +1800,7 @@ mod tests {
 
         let metrics = Arc::new(MetricsCollector::new());
         let data = Value::try_from(serde_json::json!({
-            "event": { "subject": "chat-\"42\"\nnext", "payload": { "text": "hi" } }
+        "event": { "subject": "chat-\"42\"\nnext", "payload": { "text": "hi" } }
         }))
         .unwrap();
         let (state, _) =
@@ -1842,7 +1842,7 @@ mod tests {
 
         let metrics = Arc::new(MetricsCollector::new());
         let data = Value::try_from(serde_json::json!({
-            "event": { "subject": "chat-42" }
+        "event": { "subject": "chat-42" }
         }))
         .unwrap();
         let err = match SchedulerState::new(dag, test_config(), metrics, Instant::now(), vec![data])

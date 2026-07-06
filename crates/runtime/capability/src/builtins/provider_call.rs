@@ -500,7 +500,7 @@ struct ProxyResp {
     status: u16,
     #[serde(default)]
     body_b64: Option<String>,
-    /// Upstream `Retry-After` mirrored by apxm-auth: delta-seconds or HTTP-date.
+    /// Upstream `Retry-After` returned by apxm-auth: delta-seconds or HTTP-date.
     #[serde(default)]
     retry_after: Option<String>,
 }

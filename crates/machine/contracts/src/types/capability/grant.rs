@@ -271,7 +271,7 @@ mod tests {
             "lifecycle": {"bound": "task", "expires_at": "2026-06-24T21:00:00Z"},
             "provenance": {"minted_by": "apxm-server", "policy_version": "capability-policy.v1", "request_id": "req_123"},
             "status": "active",
-            "legacy_name": "github.create_issue"
+            "old_name": "github.create_issue"
         });
 
         assert!(serde_json::from_value::<CapabilityGrant>(raw).is_err());

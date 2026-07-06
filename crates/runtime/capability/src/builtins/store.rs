@@ -2,9 +2,9 @@
 //!
 //! One SQLite file (see `apxm_core::constants::agent_tools::STORE_FILENAME`
 //! under the state home) holds two tables:
-//! `schedules` (armed one-shot / recurring wakeups) and `tasks` (a flat mirror
-//! of the AAM goal tree so tasks survive a process restart). The pattern mirrors
-//! `apxm-server`'s `CheckpointStore`: a single `Connection` behind a `Mutex`,
+//! `schedules` (armed one-shot / recurring wakeups) and `tasks` (a flat
+//! projection of the AAM goal tree so tasks survive a process restart). It uses
+//! a single `Connection` behind a `Mutex`,
 //! `CREATE TABLE IF NOT EXISTS` at open, WAL journaling, and short synchronous
 //! statements that are never held across an `.await`.
 

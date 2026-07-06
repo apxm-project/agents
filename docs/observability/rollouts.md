@@ -2,7 +2,7 @@
 
 The rollout layer is the durable, per-thread, append-only JSONL store the
 apxm runtime writes alongside its in-memory `RunEventBus`. Every event
-that lands in the bus is mirrored here so `/v1/runs/...` survives a
+that lands in the bus is persisted here so `/v1/runs/...` survives a
 restart and regulators can replay a run byte-identically.
 
 This document is the source of truth for the wire schema. The Rust
@@ -140,7 +140,7 @@ Readers fetch the blob on demand via `GET /v1/runs/<thread_id>/blobs/<blob_ref>`
 
 ## Index sidecar
 
-`sessions/index.sqlite` mirrors `SessionMeta` rows for fast list/lookup:
+`sessions/index.sqlite` indexes `SessionMeta` rows for fast list/lookup:
 
 ```sql
 CREATE TABLE threads (

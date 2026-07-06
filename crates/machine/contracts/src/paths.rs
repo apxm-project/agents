@@ -320,7 +320,11 @@ pub fn validate_state_layout(state_root: &Path) -> io::Result<()> {
         };
         let is_dir = metadata.is_dir();
         if is_dir != entry.is_dir {
-            let expected = if entry.is_dir { "a directory" } else { "a file" };
+            let expected = if entry.is_dir {
+                "a directory"
+            } else {
+                "a file"
+            };
             let found = if is_dir { "a directory" } else { "a file" };
             return Err(io::Error::new(
                 io::ErrorKind::InvalidData,

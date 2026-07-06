@@ -88,7 +88,7 @@ struct DspyOptimizePass : impl::DspyOptimizeBase<DspyOptimizePass> {
     APXM_AIS_DEBUG_HEADER(DspyOptimize);
     ModuleOp module = getOperation();
 
-    // Phase B Task 7: capture IR size at entry; fire writePassStats on every
+    // Capture IR size at entry; fire writePassStats on every
     // exit path via an RAII guard so early returns still publish stats.
     unsigned optimized = 0;
     const std::size_t irSizeBefore = computeModuleIRTextLength(module);

@@ -6,11 +6,10 @@ use apxm_core::types::{Number, Value};
 use std::collections::{BTreeSet, HashMap};
 use std::fmt::Write;
 
-/// The AIS value types. The emitter currently produces only `Token`-typed SSA
-/// values; `Handle`/`Goal` complete the model and are rendered by `format_type`
-/// (and coerced in `BranchOnValue`) for when typed emission lands.
+/// The AIS value types. The emitter produces `Token`-typed SSA values;
+/// `Handle`/`Goal` complete the type model and are rendered by `format_type`.
 #[derive(Clone, Debug)]
-#[allow(dead_code)] // complete type model; Handle/Goal not yet constructed
+#[allow(dead_code)] // Complete type model; not every variant is constructed.
 enum MlirValueType {
     Token,
     Handle { space: String },
@@ -68,6 +67,20 @@ fn node_uses_flow_params(node: &AirNode, params: &[AirParam]) -> bool {
 }
 
 pub fn emit_air(module: &AirModule) -> Result<String, AirError> {
+    let function = emit_function(module)?;
+    Ok(format!("module {{\n{function}}}\n"))
+}
+
+pub fn emit_program(modules: &[AirModule]) -> Result<String, AirError> {
+    let mut mlir = String::from("module {\n");
+    for module in modules {
+        mlir.push_str(&emit_function(module)?);
+    }
+    mlir.push_str("}\n");
+    Ok(mlir)
+}
+
+fn emit_function(module: &AirModule) -> Result<String, AirError> {
     module.validate()?;
 
     let nodes_by_id = module
@@ -227,7 +240,6 @@ pub fn emit_air(module: &AirModule) -> Result<String, AirError> {
     };
 
     let mut mlir = String::new();
-    mlir.push_str("module {\n");
     let _ = writeln!(
         mlir,
         "  func.func @{}({}) -> !ais.token{} {{",
@@ -238,7 +250,6 @@ pub fn emit_air(module: &AirModule) -> Result<String, AirError> {
         mlir.push('\n');
     }
     mlir.push_str("  }\n");
-    mlir.push_str("}\n");
 
     Ok(mlir)
 }

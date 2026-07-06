@@ -47,6 +47,15 @@ fn get_tool_definitions_from_capabilities(ctx: &ExecutionContext) -> Vec<ToolDef
             )
         }));
     }
+    if let Some(bridge) = ctx.typescript_handler_bridge.as_ref() {
+        tools.extend(bridge.descriptors().map(|descriptor| {
+            ToolDefinition::new(
+                &descriptor.name,
+                &descriptor.description,
+                descriptor.schema.clone(),
+            )
+        }));
+    }
     tools
 }
 
@@ -83,6 +92,17 @@ fn get_tools_by_names(ctx: &ExecutionContext, names: &[String]) -> Vec<ToolDefin
                         &descriptor.description,
                         descriptor.schema.clone(),
                     )
+                })
+                .or_else(|| {
+                    ctx.typescript_handler_bridge.as_ref().and_then(|bridge| {
+                        bridge.registry().resolve(name).map(|descriptor| {
+                            ToolDefinition::new(
+                                &descriptor.name,
+                                &descriptor.description,
+                                descriptor.schema.clone(),
+                            )
+                        })
+                    })
                 })
         })
         .collect()
@@ -144,7 +164,7 @@ fn dedupe_tools_by_name(tools: &mut Vec<ToolDefinition>) {
 
 fn delegate_enabled(node: &Node) -> bool {
     // Accept either a JSON bool (`true`) or the AIR string attribute (`"true"`),
-    // mirroring how converse-mode nodes are authored.
+    // because converse-mode nodes may author either representation.
     node.attributes
         .get(graph_attrs::ENABLE_DELEGATE)
         .map(|v| v.as_bool() == Some(true) || v.as_str() == Some("true"))
@@ -155,22 +175,22 @@ fn delegate_tool_definition() -> ToolDefinition {
     ToolDefinition::new(
         DELEGATE_TOOL,
         "Delegate a focused subtask to a specialist sub-agent that runs with the \
-         named tool groups and returns its findings. Issue several delegate calls \
-         in one turn to investigate multiple areas in parallel.",
+ named tool groups and returns its findings. Issue several delegate calls \
+ in one turn to investigate multiple areas in parallel.",
         serde_json::json!({
-            "type": "object",
-            "properties": {
-                "task": {
-                    "type": "string",
-                    "description": "The focused subtask for the specialist to investigate and report on."
-                },
-                "capability_groups": {
-                    "type": "array",
-                    "items": {"type": "string"},
-                    "description": "Tool groups the sub-agent may use (e.g. a module's tool group)."
-                }
-            },
-            "required": ["task"]
+        "type": "object",
+        "properties": {
+        "task": {
+        "type": "string",
+        "description": "The focused subtask for the specialist to investigate and report on."
+        },
+        "capability_groups": {
+        "type": "array",
+        "items": {"type": "string"},
+        "description": "Tool groups the sub-agent may use (e.g. a module's tool group)."
+        }
+        },
+        "required": ["task"]
         }),
     )
 }
@@ -200,8 +220,8 @@ pub(crate) fn inject_visible_skill_imports(
 /// Execute a single tool call.
 ///
 /// Dispatch order:
-///   1. Python tool bridge (if attached and the tool name is registered).
-///   2. Rust capability system (built-ins and Rust-registered capabilities).
+/// 1. Python tool bridge (if attached and the tool name is registered).
+/// 2. Rust capability system (built-ins and Rust-registered capabilities).
 ///
 /// LLM-issued `tool_calls` carry only a name + JSON args, so the runtime
 /// resolves them by name; the bridge's manifest (loaded from the artifact's
@@ -250,8 +270,8 @@ async fn execute_delegate(
     }
 
     let persona = "You are a focused specialist sub-agent. Investigate ONLY the \
-        delegated task using your tools, then report concise, factual findings with \
-        no preamble. If a needed tool is unavailable, say so plainly.";
+ delegated task using your tools, then report concise, factual findings with \
+ no preamble. If a needed tool is unavailable, say so plainly.";
     let req = match apply_llm_request_routing_from_node(
         LLMRequest::new(task).with_system_prompt(persona),
         &synth,
@@ -283,10 +303,10 @@ async fn execute_tool_call(
     tool_call: &ToolCall,
 ) -> ToolResult {
     apxm_llm!(debug,
-        execution_id = %ctx.execution_id,
-        tool_name = %tool_call.name,
-        tool_id = %tool_call.id,
-        "Executing tool call"
+     execution_id = %ctx.execution_id,
+     tool_name = %tool_call.name,
+     tool_id = %tool_call.id,
+     "Executing tool call"
     );
 
     let mut args: HashMap<String, Value> = match &tool_call.args {
@@ -314,70 +334,16 @@ async fn execute_tool_call(
 
     if let Some(bridge) = ctx.python_handler_bridge.as_ref() {
         if bridge.has_tool(&tool_call.name) {
-            let timeout = std::time::Duration::from_millis(
-                apxm_core::constants::defaults::DEFAULT_TIMEOUT_MS,
-            );
-            // pre_cap hooks (allow/deny/edit_args) at the bridge dispatch site
-            // (constitution #5). A deny surfaces as a tool error to the model.
-            let edited_args = match crate::executor::hook_driver::run_pre_cap_hooks(
-                ctx,
-                &tool_call.name,
-                args.clone(),
-            )
-            .await
-            {
-                Ok(a) => a,
-                Err(e) => {
-                    if let Some(emitter) = &ctx.event_emitter {
-                        emitter.emit_tool_end(&tool_call.name, &Value::String(e.to_string()));
-                    }
-                    return ToolResult::error(&tool_call.id, e.to_string());
-                }
-            };
-            let json_args =
-                serde_json::to_value(&edited_args).unwrap_or_else(|_| tool_call.args.clone());
-            return match bridge.call(&tool_call.name, json_args, timeout).await {
-                Ok(json_result) => {
-                    // post_cap hooks (replace_result).
-                    let raw = Value::try_from(json_result).unwrap_or(Value::Null);
-                    let transformed = crate::executor::hook_driver::run_post_cap_hooks(
-                        ctx,
-                        &tool_call.name,
-                        raw,
-                    )
-                    .await;
-                    let content = match transformed {
-                        Value::String(s) => s,
-                        other => other.to_string(),
-                    };
-                    if let Some(emitter) = &ctx.event_emitter {
-                        emitter.emit_tool_end(&tool_call.name, &Value::String(content.clone()));
-                    }
-                    apxm_llm!(info,
-                        execution_id = %ctx.execution_id,
-                        tool_name = %tool_call.name,
-                        "Python tool call succeeded"
-                    );
-                    ToolResult::success(&tool_call.id, content)
-                }
-                Err(e) => {
-                    if let Some(emitter) = &ctx.event_emitter {
-                        emitter.emit_tool_end(&tool_call.name, &Value::String(e.to_string()));
-                    }
-                    apxm_llm!(warn,
-                        execution_id = %ctx.execution_id,
-                        tool_name = %tool_call.name,
-                        error = %e,
-                        "Python tool call failed"
-                    );
-                    ToolResult::error(&tool_call.id, e.to_string())
-                }
-            };
+            return dispatch_script_tool_call(ctx, node, tool_call, args, "Python").await;
+        }
+    }
+    if let Some(bridge) = ctx.typescript_handler_bridge.as_ref() {
+        if bridge.has_tool(&tool_call.name) {
+            return dispatch_script_tool_call(ctx, node, tool_call, args, "TypeScript").await;
         }
     }
 
-    // Native/builtin tool path also runs pre/post_cap hooks (FR-004: each tool
-    // use). A pre_cap deny continues the turn gracefully (m4).
+    // Native/builtin tool path also runs pre/post_cap hooks. A pre_cap deny continues the turn gracefully (m4).
     let args =
         match crate::executor::hook_driver::run_pre_cap_hooks(ctx, &tool_call.name, args).await {
             Ok(edited) => edited,
@@ -401,9 +367,9 @@ async fn execute_tool_call(
                 emitter.emit_tool_end(&tool_call.name, &Value::String(content.clone()));
             }
             apxm_llm!(info,
-                execution_id = %ctx.execution_id,
-                tool_name = %tool_call.name,
-                "Tool call succeeded"
+             execution_id = %ctx.execution_id,
+             tool_name = %tool_call.name,
+             "Tool call succeeded"
             );
             ToolResult::success(&tool_call.id, content)
         }
@@ -412,10 +378,10 @@ async fn execute_tool_call(
                 emitter.emit_tool_end(&tool_call.name, &Value::String(e.to_string()));
             }
             apxm_llm!(warn,
-                execution_id = %ctx.execution_id,
-                tool_name = %tool_call.name,
-                error = %e,
-                "Tool call failed"
+             execution_id = %ctx.execution_id,
+             tool_name = %tool_call.name,
+             error = %e,
+             "Tool call failed"
             );
             ToolResult::error(&tool_call.id, e.to_string())
         }
@@ -455,7 +421,88 @@ fn resolve_tool_access(ctx: &ExecutionContext, name: &str) -> Option<ToolAccess>
         return Some(ToolAccess::Write);
     }
 
+    if ctx
+        .typescript_handler_bridge
+        .as_ref()
+        .is_some_and(|bridge| bridge.has_tool(name))
+    {
+        return Some(ToolAccess::Write);
+    }
+
     None
+}
+
+async fn dispatch_script_tool_call(
+    ctx: &ExecutionContext,
+    _node: &Node,
+    tool_call: &ToolCall,
+    args: HashMap<String, Value>,
+    label: &str,
+) -> ToolResult {
+    let timeout =
+        std::time::Duration::from_millis(apxm_core::constants::defaults::DEFAULT_TIMEOUT_MS);
+    let edited_args =
+        match crate::executor::hook_driver::run_pre_cap_hooks(ctx, &tool_call.name, args).await {
+            Ok(a) => a,
+            Err(e) => {
+                if let Some(emitter) = &ctx.event_emitter {
+                    emitter.emit_tool_end(&tool_call.name, &Value::String(e.to_string()));
+                }
+                return ToolResult::error(&tool_call.id, e.to_string());
+            }
+        };
+    let json_args = serde_json::to_value(&edited_args).unwrap_or_else(|_| tool_call.args.clone());
+    let bridge_call = async {
+        if let Some(bridge) = ctx.python_handler_bridge.as_ref() {
+            if bridge.has_tool(&tool_call.name) {
+                return bridge
+                    .call(&tool_call.name, json_args.clone(), timeout)
+                    .await;
+            }
+        }
+        let bridge = ctx.typescript_handler_bridge.as_ref().ok_or_else(|| {
+            apxm_core::error::RuntimeError::Capability {
+                capability: tool_call.name.clone(),
+                message: format!("no {label} handler bridge configured"),
+            }
+        })?;
+        bridge.call(&tool_call.name, json_args, timeout).await
+    };
+
+    match bridge_call.await {
+        Ok(json_result) => {
+            let raw = Value::try_from(json_result).unwrap_or(Value::Null);
+            let transformed =
+                crate::executor::hook_driver::run_post_cap_hooks(ctx, &tool_call.name, raw).await;
+            let content = match transformed {
+                Value::String(s) => s,
+                other => other.to_string(),
+            };
+            if let Some(emitter) = &ctx.event_emitter {
+                emitter.emit_tool_end(&tool_call.name, &Value::String(content.clone()));
+            }
+            apxm_llm!(info,
+             execution_id = %ctx.execution_id,
+             tool_name = %tool_call.name,
+             bridge = %label,
+             "Script tool call succeeded"
+            );
+            ToolResult::success(&tool_call.id, content)
+        }
+        Err(e) => {
+            if let Some(emitter) = &ctx.event_emitter {
+                emitter.emit_tool_end(&tool_call.name, &Value::String(e.to_string()));
+            }
+            apxm_llm!(warn,
+             execution_id = %ctx.execution_id,
+             tool_name = %tool_call.name,
+             bridge = %label,
+             error = %e,
+             "Script tool call failed"
+            );
+            ToolResult::error(&tool_call.id, e.to_string())
+        }
+    }
 }
 
 /// Execute multiple tool calls concurrently, preserving result order.
@@ -477,11 +524,11 @@ async fn execute_tool_calls_parallel(
     let max_parallel = max_parallel_tool_calls(ctx, tool_calls.len());
     let batches = tool_calls.len().div_ceil(max_parallel);
     apxm_llm!(info,
-        execution_id = %ctx.execution_id,
-        tool_count = tool_calls.len(),
-        max_parallel = max_parallel,
-        batches = batches,
-        "Dispatching tool calls in parallel"
+     execution_id = %ctx.execution_id,
+     tool_count = tool_calls.len(),
+     max_parallel = max_parallel,
+     batches = batches,
+     "Dispatching tool calls in parallel"
     );
 
     let mut results = Vec::with_capacity(tool_calls.len());
@@ -617,11 +664,11 @@ pub(crate) async fn execute_ask_with_tools(
         }
 
         apxm_llm!(debug,
-            execution_id = %ctx.execution_id,
-            iteration = iteration,
-            prompt_len = current_request.prompt.len(),
-            tool_count = current_request.tools.as_ref().map(|t| t.len()).unwrap_or(0),
-            "Sending ASK request with tools"
+         execution_id = %ctx.execution_id,
+         iteration = iteration,
+         prompt_len = current_request.prompt.len(),
+         tool_count = current_request.tools.as_ref().map(|t| t.len()).unwrap_or(0),
+         "Sending ASK request with tools"
         );
 
         let llm_start = std::time::Instant::now();
@@ -651,7 +698,7 @@ pub(crate) async fn execute_ask_with_tools(
                 flow_name.map(|s| s.as_str()),
                 agent_name,
             );
-            // RT-8: also feed the process-wide meter so `/v1/generate`
+            // also feed the process-wide meter so `/v1/generate`
             // (which bypasses this executor path entirely) and the executor
             // path are observed through one shared counter.
             crate::executor::token_accounting::global_meter().record_usage(
@@ -673,23 +720,23 @@ pub(crate) async fn execute_ask_with_tools(
         total_output_tokens += response.usage.output_tokens;
 
         apxm_llm!(info,
-            execution_id = %ctx.execution_id,
-            iteration = iteration,
-            response_len = response.content.len(),
-            tool_calls = response.tool_calls.len(),
-            tokens_in = response.usage.input_tokens,
-            tokens_out = response.usage.output_tokens,
-            "ASK response received"
+         execution_id = %ctx.execution_id,
+         iteration = iteration,
+         response_len = response.content.len(),
+         tool_calls = response.tool_calls.len(),
+         tokens_in = response.usage.input_tokens,
+         tokens_out = response.usage.output_tokens,
+         "ASK response received"
         );
 
         if response.tool_calls.is_empty() {
             apxm_llm!(info,
-                execution_id = %ctx.execution_id,
-                iterations = iteration + 1,
-                total_tokens_in = total_input_tokens,
-                total_tokens_out = total_output_tokens,
-                tools_invoked = tools_invoked_count,
-                "ASK tool loop completed"
+             execution_id = %ctx.execution_id,
+             iterations = iteration + 1,
+             total_tokens_in = total_input_tokens,
+             total_tokens_out = total_output_tokens,
+             tools_invoked = tools_invoked_count,
+             "ASK tool loop completed"
             );
             ctx.timing_tracker
                 .record(node.id, total_prefill_ms, total_decode_ms);
@@ -758,9 +805,9 @@ pub(crate) async fn execute_ask_with_tools(
     }
 
     apxm_llm!(warn,
-        execution_id = %ctx.execution_id,
-        max_iterations = max_iterations,
-        "ASK tool loop exceeded max iterations"
+     execution_id = %ctx.execution_id,
+     max_iterations = max_iterations,
+     "ASK tool loop exceeded max iterations"
     );
     ctx.timing_tracker
         .record(node.id, total_prefill_ms, total_decode_ms);

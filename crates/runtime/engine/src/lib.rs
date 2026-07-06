@@ -53,14 +53,14 @@
 
 /// Agent Abstract Machine — re-exported from the standalone `apxm-aam` crate
 /// so existing `apxm_runtime::aam::...` import paths keep working after the
-/// RT-6 sub-crate extraction.
+///  sub-crate extraction.
 pub use apxm_aam as aam;
 pub mod agent_pool;
 pub mod agent_router;
 pub mod agent_scoring;
 /// Capability system — re-exported from the standalone `apxm-capability`
 /// crate so existing `apxm_runtime::capability::...` import paths keep
-/// working after the RT-6 sub-crate extraction.
+/// working after the  sub-crate extraction.
 pub use apxm_capability as capability;
 mod constants;
 pub mod context_stack;
@@ -71,7 +71,7 @@ pub mod graph_lifecycle;
 pub mod host_dispatch;
 /// Three-tier memory system — re-exported from the standalone `apxm-memory`
 /// crate so existing `apxm_runtime::memory::...` import paths keep working
-/// after the RT-6 sub-crate extraction.
+/// after the  sub-crate extraction.
 pub use apxm_memory as memory;
 pub mod metadata_keys;
 pub mod model_router;
@@ -80,6 +80,7 @@ pub mod process;
 pub mod process_table;
 pub mod python_tools;
 mod runtime;
+pub mod typescript_tools;
 // `sandbox` moved to `apxm-capability-iface` — it had zero dependencies on
 // other `apxm-runtime` internals, so it was a clean relocation. Re-exported
 // under the same module name so `crate::sandbox::*` and
@@ -150,6 +151,9 @@ pub use sandbox::{
 };
 
 pub use python_tools::{PythonHandlerBridge, PythonHandlerRegistry, PythonHandlerWorker};
+pub use typescript_tools::{
+    TypeScriptHandlerBridge, TypeScriptHandlerRegistry, TypeScriptHandlerWorker,
+};
 
 pub use host_dispatch::{
     AgentChannelHandle, HostDispatchError, HostDispatchGateway, HostProxyRequest, HostProxyResult,

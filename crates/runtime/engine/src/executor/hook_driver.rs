@@ -5,9 +5,9 @@
 //! Hooks are dispatched over the SAME python tool bridge as `@tool`
 //! (constitution #4). A hook handler receives a JSON payload describing the
 //! event and returns a decision object the runtime applies:
-//!   - `pre_cap`  → allow | deny(reason) | edit_args(args)
-//!   - `post_cap` → replace_result(x) | (none)
-//!   - `pre_ask`   → prepend_system(text) | set_system(text) | (none)
+//! - `pre_cap` → allow | deny(reason) | edit_args(args)
+//! - `post_cap` → replace_result(x) | (none)
+//! - `pre_ask` → prepend_system(text) | set_system(text) | (none)
 //!
 //! Failure semantics: a `gate` hook that errors fails CLOSED (the guarded
 //! action is denied and the error surfaced); an `observe` hook that errors
@@ -26,6 +26,46 @@ use crate::memory::MemorySpace;
 
 const HOOK_DEADLINE: Duration = Duration::from_secs(30);
 const HOOK_PAYLOAD_KEY: &str = "__apxm_hook__";
+
+async fn call_hook_with_host_bridge<F, Fut>(
+    ctx: &ExecutionContext,
+    handler_id: &str,
+    payload: JsonValue,
+    deadline: Duration,
+    host: F,
+) -> Result<JsonValue, RuntimeError>
+where
+    F: Fn(String, JsonValue) -> Fut + Clone,
+    Fut: std::future::Future<Output = std::result::Result<JsonValue, String>>,
+{
+    if let Some(bridge) = ctx.python_handler_bridge.as_ref() {
+        match bridge
+            .call_hook_with_host(handler_id, payload.clone(), deadline, {
+                let host = host.clone();
+                move |method, params| host(method, params)
+            })
+            .await
+        {
+            Ok(value) => return Ok(value),
+            Err(err) => {
+                if ctx.typescript_handler_bridge.is_none() {
+                    return Err(err);
+                }
+            }
+        }
+    }
+    if let Some(bridge) = ctx.typescript_handler_bridge.as_ref() {
+        return bridge
+            .call_hook_with_host(handler_id, payload, deadline, move |method, params| {
+                host(method, params)
+            })
+            .await;
+    }
+    Err(RuntimeError::Capability {
+        capability: "hooks".into(),
+        message: "hook dispatch requested but no handler bridge is configured".into(),
+    })
+}
 
 /// Service a worker-initiated host call (e.g. `ctx.summarize` → `llm.ask`) with
 /// the SAME `ExecutionContext` that owns the hook, so the hook's LLM call runs
@@ -133,9 +173,9 @@ async fn host_mem_read(
 
 /// One-shot LLM ask for hooks. Calls the backend DIRECTLY (non-streaming, no
 /// event emitter, no nested `pre_ask` hooks). This is deliberate:
-///   - no emitter → a hook's own LLM call (e.g. compaction's summarize) never
-///     leaks tokens into the USER's reply stream;
-///   - no nested hooks → no `pre_ask → llm → pre_ask` re-entrancy.
+/// - no emitter → a hook's own LLM call (e.g. compaction's summarize) never
+/// leaks tokens into the USER's reply stream;
+/// - no nested hooks → no `pre_ask → llm → pre_ask` re-entrancy.
 ///
 /// Routes through the ModelRouter when present (circuit breakers + policy).
 async fn host_llm_ask(
@@ -240,11 +280,11 @@ pub async fn run_pre_cap_hooks(
     if bindings.is_empty() {
         return Ok(args);
     }
-    let Some(bridge) = ctx.python_handler_bridge.as_ref() else {
+    if ctx.python_handler_bridge.is_none() && ctx.typescript_handler_bridge.is_none() {
         return Ok(args);
-    };
+    }
 
-    // CM #5 layering (AGT-7 Priority 3): a `gate` hook may only NARROW what
+    // CM #5 layering (Priority 3): a `gate` hook may only NARROW what
     // the joined capability's own policy already allows — it can never
     // widen. `requires_approval` on the capability's metadata is the
     // baseline; a gate hook cannot launder an approval-gated capability into
@@ -261,20 +301,20 @@ pub async fn run_pre_cap_hooks(
         let args_json =
             serde_json::to_value(&current).unwrap_or(JsonValue::Object(Default::default()));
         let payload = json!({
-            HOOK_PAYLOAD_KEY: {
-                "event": "pre_cap",
-                "remaining_budget": remaining_budget(ctx),
-                "call": { "name": tool_name, "args": args_json },
-            }
+        HOOK_PAYLOAD_KEY: {
+        "event": "pre_cap",
+        "remaining_budget": remaining_budget(ctx),
+        "call": { "name": tool_name, "args": args_json },
+        }
         });
-        match bridge
-            .call_hook_with_host(
-                &binding.handler_id,
-                payload,
-                HOOK_DEADLINE,
-                |method, params| dispatch_host_call(ctx, method, params),
-            )
-            .await
+        match call_hook_with_host_bridge(
+            ctx,
+            &binding.handler_id,
+            payload,
+            HOOK_DEADLINE,
+            |method, params| dispatch_host_call(ctx, method, params),
+        )
+        .await
         {
             Ok(decision) => match parse_pre_cap_decision(decision) {
                 PreCapDecision::Allow => {
@@ -283,8 +323,8 @@ pub async fn run_pre_cap_hooks(
                             capability: tool_name.to_string(),
                             message: format!(
                                 "gate hook '{}' attempted to widen permissions (auto-allow) on \
-                                 a capability whose policy requires approval; rejected — a hook \
-                                 may only narrow the capability's own policy, never widen it",
+ a capability whose policy requires approval; rejected — a hook \
+ may only narrow the capability's own policy, never widen it",
                                 binding.handler_id
                             ),
                         });
@@ -313,7 +353,7 @@ pub async fn run_pre_cap_hooks(
     Ok(current)
 }
 
-/// CM #5 layering (AGT-7 Priority 3): would applying this `pre_cap` decision
+/// CM #5 layering (Priority 3): would applying this `pre_cap` decision
 /// let a `gate` hook grant more than the capability's own baseline policy
 /// already allows? Only an `observe`-mode hook or a capability whose
 /// baseline does not require approval may pass an unconditional `allow`
@@ -323,11 +363,15 @@ pub async fn run_pre_cap_hooks(
 /// than `&PreCapDecision` so this stays a plain, easily-tested predicate
 /// (only `Allow` is ever a widening risk — `Deny` and `EditArgs` cannot
 /// widen the *permission* decision).
-fn gate_decision_would_widen(mode: HookMode, capability_requires_approval: bool, is_allow: bool) -> bool {
+fn gate_decision_would_widen(
+    mode: HookMode,
+    capability_requires_approval: bool,
+    is_allow: bool,
+) -> bool {
     mode == HookMode::Gate && capability_requires_approval && is_allow
 }
 
-/// Fold one `pre_turn` hook's decision into the running supplement (G-3).
+/// Fold one `pre_turn` hook's decision into the running supplement.
 /// `set_system` replaces; `prepend_system` stacks ahead of whatever earlier
 /// `pre_turn` hooks already contributed (first-registered ends up innermost,
 /// matching `pre_ask`'s prepend order). Anything else (missing/unknown
@@ -385,28 +429,28 @@ pub async fn run_post_cap_hooks(ctx: &ExecutionContext, tool_name: &str, result:
     if bindings.is_empty() {
         return result;
     }
-    let Some(bridge) = ctx.python_handler_bridge.as_ref() else {
+    if ctx.python_handler_bridge.is_none() && ctx.typescript_handler_bridge.is_none() {
         return result;
-    };
+    }
 
     let mut current = result;
     for binding in bindings {
         let result_json = serde_json::to_value(&current).unwrap_or(JsonValue::Null);
         let payload = json!({
-            HOOK_PAYLOAD_KEY: {
-                "event": "post_cap",
-                "call": { "name": tool_name },
-                "result": result_json,
-            }
+        HOOK_PAYLOAD_KEY: {
+        "event": "post_cap",
+        "call": { "name": tool_name },
+        "result": result_json,
+        }
         });
-        match bridge
-            .call_hook_with_host(
-                &binding.handler_id,
-                payload,
-                HOOK_DEADLINE,
-                |method, params| dispatch_host_call(ctx, method, params),
-            )
-            .await
+        match call_hook_with_host_bridge(
+            ctx,
+            &binding.handler_id,
+            payload,
+            HOOK_DEADLINE,
+            |method, params| dispatch_host_call(ctx, method, params),
+        )
+        .await
         {
             Ok(decision) => {
                 if let Some(obj) = decision.as_object()
@@ -428,7 +472,7 @@ pub async fn run_post_cap_hooks(ctx: &ExecutionContext, tool_name: &str, result:
 /// Fire turn/ask-level lifecycle hooks (`pre_turn`/`post_turn`/`post_ask`) that
 /// have no tool/op name to match against — they are observed for their side
 /// effects (logging, memory writes via the handler). A `gate` failure on a
-/// pre-event fails closed; observe failures surface and continue (FR-014).
+/// pre-event fails closed; observe failures surface and continue.
 async fn fire_lifecycle_hooks(
     ctx: &ExecutionContext,
     event: HookEvent,
@@ -441,18 +485,18 @@ async fn fire_lifecycle_hooks(
     if bindings.is_empty() {
         return Ok(());
     }
-    let Some(bridge) = ctx.python_handler_bridge.as_ref() else {
+    if ctx.python_handler_bridge.is_none() && ctx.typescript_handler_bridge.is_none() {
         return Ok(());
-    };
+    }
     for binding in bindings {
-        if let Err(e) = bridge
-            .call_hook_with_host(
-                &binding.handler_id,
-                payload.clone(),
-                HOOK_DEADLINE,
-                |method, params| dispatch_host_call(ctx, method, params),
-            )
-            .await
+        if let Err(e) = call_hook_with_host_bridge(
+            ctx,
+            &binding.handler_id,
+            payload.clone(),
+            HOOK_DEADLINE,
+            |method, params| dispatch_host_call(ctx, method, params),
+        )
+        .await
         {
             if binding.mode == HookMode::Gate {
                 return Err(RuntimeError::Operation {
@@ -468,14 +512,9 @@ async fn fire_lifecycle_hooks(
 
 /// Fire `pre_turn` hooks (before the turn's ask). Gate-capable (fail-closed).
 ///
-/// `turn_context` is the turn's structured `context` field (e.g. Studio's Gao
-/// client snapshot, G-3) when the host supplies one — `None` today for every
-/// caller, since no reserved turn parameter yet threads an arbitrary
-/// per-turn JSON payload from the compiled AIR's bound inputs down to this
-/// call the way `user_message` is threaded (see `ConversationMemoryMiddleware`
-/// and `ConversationalAgent.TURN_PARAM` in the Python frontend). A hook that
-/// wants Studio's snapshot today receives `context: null` and degrades
-/// gracefully; wiring a second bound turn input is tracked as the G-3 gap.
+/// `turn_context` is the turn's structured `context` field when the host
+/// supplies one. `None` means the compiled AIR did not bind an additional
+/// per-turn JSON payload for this call.
 ///
 /// Like `pre_ask`, a hook may return a `set_system`/`prepend_system` decision;
 /// the (possibly combined, first-wins-then-chains) text is returned so the
@@ -492,27 +531,27 @@ pub async fn run_pre_turn_hooks(
     if bindings.is_empty() {
         return Ok(None);
     }
-    let Some(bridge) = ctx.python_handler_bridge.as_ref() else {
+    if ctx.python_handler_bridge.is_none() && ctx.typescript_handler_bridge.is_none() {
         return Ok(None);
-    };
+    }
 
     let mut supplement: Option<String> = None;
     for binding in bindings {
         let payload = json!({
-            HOOK_PAYLOAD_KEY: {
-                "event": "pre_turn",
-                "remaining_budget": remaining_budget(ctx),
-                "context": turn_context.clone().unwrap_or(JsonValue::Null),
-            }
+        HOOK_PAYLOAD_KEY: {
+        "event": "pre_turn",
+        "remaining_budget": remaining_budget(ctx),
+        "context": turn_context.clone().unwrap_or(JsonValue::Null),
+        }
         });
-        match bridge
-            .call_hook_with_host(
-                &binding.handler_id,
-                payload,
-                HOOK_DEADLINE,
-                |method, params| dispatch_host_call(ctx, method, params),
-            )
-            .await
+        match call_hook_with_host_bridge(
+            ctx,
+            &binding.handler_id,
+            payload,
+            HOOK_DEADLINE,
+            |method, params| dispatch_host_call(ctx, method, params),
+        )
+        .await
         {
             Ok(decision) => supplement = apply_pre_turn_decision(supplement, &decision),
             Err(e) => {
@@ -544,30 +583,30 @@ pub async fn run_post_turn_hooks(ctx: &ExecutionContext, reply: &str) {
     if bindings.is_empty() {
         return;
     }
-    let Some(bridge) = ctx.python_handler_bridge.as_ref() else {
+    if ctx.python_handler_bridge.is_none() && ctx.typescript_handler_bridge.is_none() {
         return;
-    };
+    }
 
     // The hook reads whatever it wants on demand — the transcript window via
     // `ctx.recall_window(n)` (mem.recent, user-chosen `n`) and any prior state
     // via `ctx.recall(key)` (mem.read). The runtime bakes no window size or key;
     // we hand IN only the reply and remaining budget.
     let base = json!({
-        "event": "post_turn",
-        "reply": reply,
-        "remaining_budget": remaining_budget(ctx),
+    "event": "post_turn",
+    "reply": reply,
+    "remaining_budget": remaining_budget(ctx),
     });
 
     for binding in bindings {
         let payload = json!({ HOOK_PAYLOAD_KEY: base.clone() });
-        match bridge
-            .call_hook_with_host(
-                &binding.handler_id,
-                payload,
-                HOOK_DEADLINE,
-                |method, params| dispatch_host_call(ctx, method, params),
-            )
-            .await
+        match call_hook_with_host_bridge(
+            ctx,
+            &binding.handler_id,
+            payload,
+            HOOK_DEADLINE,
+            |method, params| dispatch_host_call(ctx, method, params),
+        )
+        .await
         {
             Ok(decision) => apply_hook_writes(ctx, &decision).await,
             Err(e) => {
@@ -633,9 +672,9 @@ pub async fn run_pre_ask_hooks(
     if bindings.is_empty() {
         return Ok(None);
     }
-    let Some(bridge) = ctx.python_handler_bridge.as_ref() else {
+    if ctx.python_handler_bridge.is_none() && ctx.typescript_handler_bridge.is_none() {
         return Ok(None);
-    };
+    }
 
     // The hook recalls context on demand via `ctx.recall_window(n)` (mem.recent),
     // choosing how much to pull — no fixed window is baked into the payload.
@@ -643,20 +682,20 @@ pub async fn run_pre_ask_hooks(
     let mut changed = false;
     for binding in bindings {
         let payload = json!({
-            HOOK_PAYLOAD_KEY: {
-                "event": "pre_ask",
-                "remaining_budget": remaining_budget(ctx),
-                "system": system,
-            }
+        HOOK_PAYLOAD_KEY: {
+        "event": "pre_ask",
+        "remaining_budget": remaining_budget(ctx),
+        "system": system,
+        }
         });
-        match bridge
-            .call_hook_with_host(
-                &binding.handler_id,
-                payload,
-                HOOK_DEADLINE,
-                |method, params| dispatch_host_call(ctx, method, params),
-            )
-            .await
+        match call_hook_with_host_bridge(
+            ctx,
+            &binding.handler_id,
+            payload,
+            HOOK_DEADLINE,
+            |method, params| dispatch_host_call(ctx, method, params),
+        )
+        .await
         {
             Ok(decision) => {
                 if let Some(obj) = decision.as_object() {
@@ -692,10 +731,26 @@ pub async fn run_pre_ask_hooks(
 }
 
 #[cfg(test)]
+mod script_bridge_tests {
+    /// Guard used before dispatching lifecycle hooks.
+    fn script_handler_bridge_available(python: bool, typescript: bool) -> bool {
+        python || typescript
+    }
+
+    #[test]
+    fn hook_driver_accepts_python_or_typescript_bridge() {
+        assert!(!script_handler_bridge_available(false, false));
+        assert!(script_handler_bridge_available(true, false));
+        assert!(script_handler_bridge_available(false, true));
+        assert!(script_handler_bridge_available(true, true));
+    }
+}
+
+#[cfg(test)]
 mod gate_narrowing_tests {
     use super::*;
 
-    /// AGT-7 vector: a `gate` hook attempting to widen (auto-allow) a
+    /// vector: a `gate` hook attempting to widen (auto-allow) a
     /// capability whose baseline policy requires approval is rejected.
     #[test]
     fn gate_hook_allow_on_approval_gated_capability_is_a_widen_attempt() {

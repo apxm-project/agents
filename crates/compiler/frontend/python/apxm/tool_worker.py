@@ -298,9 +298,8 @@ class _HookCtx:
 
     def __init__(self, payload: dict[str, Any], req_id: str = "") -> None:
         self.remaining_budget = payload.get("remaining_budget")
-        # The turn's structured `context` field (e.g. Studio's Gao client
-        # snapshot, G-3) when the host supplies one; `None` otherwise. Only
-        # `pre_turn` payloads carry this key today.
+        # The turn's structured `context` field when the host supplies one.
+        # Only `pre_turn` payloads carry this key.
         self.context = payload.get("context")
         # The parent call's req_id, stamped on host_calls this hook raises.
         self._req_id = req_id

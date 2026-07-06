@@ -1,15 +1,15 @@
 /**
- * Validates documents against the `workflow-draft.v1` JSON Schema (WF-2
+ * Validates documents against the `workflow-draft.v1` JSON Schema (
  * contracts, `workspace/contracts/schemas/workflow-draft.v1.json`). The
  * schema is vendored into `src/generated/workflow-draft-schema.ts` by
  * `npm run codegen`; this module wires it up to `ajv` and layers the two
- * semantic checks a JSON Schema can't express on its own (WF-1): every
+ * semantic checks a JSON Schema can't express on its own: every
  * capability-bearing node's `config.capability` must be a member of the
- * draft's `capability_grants`, and the edge graph must be acyclic. These are
- * mirrored by `workspace/contracts/tools/validate_contracts.py`
+ * draft's `capability_grants`, and the edge graph must be acyclic. Keep these
+ * rules aligned with `workspace/contracts/tools/validate_contracts.py`
  * (`workflow_draft_errors`) and
  * `workspace/studio/crates/studio/src/workflow_draft.rs`
- * (`WorkflowDraft::validate`) — keep all three in lockstep.
+ * (`WorkflowDraft::validate`).
  */
 // The workflow-draft.v1 schema declares `$schema:
 // https://json-schema.org/draft/2020-12/schema`; ajv's default export only
@@ -26,8 +26,7 @@ const ajv = new Ajv2020({ allErrors: true, strict: false });
 const validateFn = ajv.compile(WORKFLOW_DRAFT_V1_SCHEMA);
 
 /** Node kinds whose `config.capability` must be declared in the draft's
- * `capability_grants`. Mirrors `WORKFLOW_DRAFT_CAPABILITY_NODE_KINDS` in the
- * contracts Python validator and `is_capability_kind` in the Rust validator. */
+ * `capability_grants`. */
 const CAPABILITY_NODE_KINDS = new Set(["tool", "memory_write", "memory_read"]);
 
 interface DraftNodeLike {

@@ -1,4 +1,4 @@
-/** Kahn's-algorithm topological sort, mirroring apxm.utils.topological_sort. */
+/** Kahn's-algorithm topological sort. */
 export function topologicalSort(nodeIds: readonly number[], edges: readonly (readonly [number, number])[]): number[] {
   const adjacency = new Map<number, number[]>();
   const inDegree = new Map<number, number>();

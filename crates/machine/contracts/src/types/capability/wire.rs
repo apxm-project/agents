@@ -31,11 +31,13 @@ impl From<&CapabilityGrant> for RuntimeCapabilityGrant {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-    use super::super::common::{Delegability, Lifecycle, LifecycleBound, RuntimeLimits, Sensitivity};
+    use super::super::common::{
+        Delegability, Lifecycle, LifecycleBound, RuntimeLimits, Sensitivity,
+    };
     use super::super::grant::{CAPABILITY_GRANT_SCHEMA_V1, GrantProvenance};
     use super::super::permission::{PermissionScope, ResourceHandle};
     use super::super::policy::{PromptMode, PromptPolicy, SubjectContext};
+    use super::*;
     use std::collections::BTreeMap;
 
     fn grant() -> CapabilityGrant {

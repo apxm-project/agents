@@ -1,11 +1,11 @@
 //! Shared SSE permission prompt handling for chat and watch.
 
-use anyhow::Result;
 use crate::client::{
     Client,
     events::{parse_approval_prompt, prompt_permission_decision},
     types::{PermissionResponse, PermissionResponseDecision},
 };
+use anyhow::Result;
 use serde_json::Value as JsonValue;
 
 /// If `json` carries an `approval_request`, prompt on the terminal and reply on

@@ -1,0 +1,5 @@
+id = "write_file"
+description = "Write a file under declared write roots."
+kind = "runtime"
+binding = "fs.write"
+read_only = false

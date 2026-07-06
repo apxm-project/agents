@@ -16,8 +16,8 @@
 //!
 //! A coordinator agent can SPAWN_AGENT sub-agents that in turn SPAWN_AGENT
 //! more sub-agents. Each scope nests; the executor needs to know *which*
-//! agent owns the operation currently running. The stack mirrors
-//! call-stack semantics with no shared-mutable-state surprises (push and
+//! agent owns the operation currently running. The stack follows call-stack
+//! semantics with no shared-mutable-state surprises (push and
 //! pop are wrapped in `&self` methods over a `Mutex<Vec<…>>`).
 //!
 //! ## Thread / task model

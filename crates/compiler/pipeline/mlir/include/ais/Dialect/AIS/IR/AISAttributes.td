@@ -3,7 +3,7 @@
  * @brief Attribute definitions for the AIS dialect.
  *
  * The file defines two kinds of attributes:
- * 1. Enum attributes that mirror C++ enums (AISTierKind, AISIntentKind).
+ * 1. Enum attributes aligned with C++ enums (AISTierKind, AISIntentKind).
  *    The helper templates `AIS_I32Enum` and `AIS_I32EnumAttr` remove
  *    repetition and guarantee a uniform assembly format `<value>`.
  * 2. Free-standing attributes that capture optimisation metadata produced
@@ -20,7 +20,7 @@ include "mlir/IR/EnumAttr.td"
 include "mlir/IR/BuiltinAttributes.td"
 include "ais/Dialect/AIS/IR/AISDialect.td"
 
-// Enum helper mirroring the ARTS style.
+// Enum helper using the ARTS style.
 class AIS_I32Enum<string name, string description, list<I32EnumAttrCase> cases>
     : I32EnumAttr<name, description, cases> {
   let cppNamespace = "::mlir::ais";

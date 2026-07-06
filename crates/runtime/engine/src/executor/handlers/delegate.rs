@@ -7,9 +7,9 @@
 //! ## Attributes
 //! - `task_spec`     (required): description of the task to delegate
 //! - `target_agent`  (required): name of the agent to delegate to; accepts
-//!   the platform target grammar (`docs/plans/platform.md` §5) —
+//!   the platform target grammar —
 //!   `topic:<subject>` and `capability:<cap-id>` are resolved to a concrete
-//!   registered agent via `target_resolution` (RTG-8) before the exact-id
+//!   registered agent via `target_resolution` before the exact-id
 //!   lookup below runs; anything else is treated as an exact id, unchanged.
 
 use super::{
@@ -29,7 +29,7 @@ use std::collections::HashMap;
 pub async fn execute(ctx: &ExecutionContext, node: &Node, inputs: Vec<Value>) -> Result<Value> {
     let task_spec = get_string_attribute(node, graph_attrs::TASK_SPEC)?;
     let raw_target = get_string_attribute(node, graph_attrs::TARGET_AGENT)?;
-    // RTG-8: `topic:`/`capability:` targets resolve to a concrete member
+    // `topic:`/`capability:` targets resolve to a concrete member
     // through the routing pipeline before the exact lookup below; anything
     // else (including bare exact ids) passes through unchanged.
     let target_agent = resolve_target_or_passthrough(&ctx.flow_registry, &raw_target)?;
@@ -60,7 +60,7 @@ pub async fn execute(ctx: &ExecutionContext, node: &Node, inputs: Vec<Value>) ->
         found
     };
 
-    // Inline fallback (mirrors HANDOFF): when the target has no sibling
+    // Inline fallback: when the target has no sibling
     // `delegate`/`main` flow in the artifact, look up `agent_info:<target>` in
     // STM (written by SPAWN_AGENT) and dispatch the task as a one-shot LLM ASK
     // against that agent's config. This makes `delegate(researcher)` work for an
@@ -188,8 +188,8 @@ pub async fn execute(ctx: &ExecutionContext, node: &Node, inputs: Vec<Value>) ->
 
 /// Inline fallback dispatch when the target sub-agent has no registered flow.
 ///
-/// Mirrors `handoff_inline_agent`: reads `agent_info:<target>` from STM (written
-/// by SPAWN_AGENT) and, if it carries a `system_prompt`/`backend`/`model`,
+/// Reads `agent_info:<target>` from STM (written by SPAWN_AGENT) and, if it
+/// carries a `system_prompt`/`backend`/`model`,
 /// dispatches the task spec as a one-shot LLM ASK against that agent's config.
 /// Returns `Ok(None)` when no usable inline agent info is present so the caller
 /// can surface the original "not found" error.
@@ -333,7 +333,7 @@ mod tests {
         node
     }
 
-    /// Regression (RTG-8): an exact-id target with no registered flow and no
+    /// Regression: an exact-id target with no registered flow and no
     /// inline STM agent info fails with exactly the same "not found" message
     /// as before target-grammar resolution was added — the exact lookup
     /// itself is unchanged.
@@ -357,7 +357,7 @@ mod tests {
         }
     }
 
-    /// RTG-8: `topic:<subject>` resolves to a concrete registered member via
+    /// `topic:<subject>` resolves to a concrete registered member via
     /// the routing pipeline, and DELEGATE proceeds exactly as if that member
     /// had been named directly.
     #[tokio::test]
@@ -380,7 +380,7 @@ mod tests {
         assert!(task_handle.starts_with("delegate_billing_"));
     }
 
-    /// RTG-8: `capability:<cap-id>` resolves to the declaring member.
+    /// `capability:<cap-id>` resolves to the declaring member.
     #[tokio::test]
     async fn capability_target_resolves_and_executes() {
         let ctx = test_context().await;
@@ -401,7 +401,7 @@ mod tests {
         assert!(task_handle.starts_with("delegate_writer_"));
     }
 
-    /// RTG-8: zero candidates for a routed target never falls back to a
+    /// zero candidates for a routed target never falls back to a
     /// broadcast — it's a typed no-route error (platform.md rule 5).
     #[tokio::test]
     async fn topic_target_with_no_candidate_returns_no_route_error() {

@@ -2,7 +2,7 @@
 //!
 //! This crate is the foundational durability layer the runtime builds on top of:
 //! every event
-//! the in-memory `RunEventBus` records is mirrored here so `/v1/runs/...`
+//! the in-memory `RunEventBus` records is appended here so `/v1/runs/...`
 //! survives a restart and the regulatory replay story has a source of
 //! truth.
 

@@ -91,5 +91,5 @@ an AppArmor profile granting `userns` (see README → System dependencies).
 - The full `SessionConfig` / `SpawnRequest` / `SessionHandle` trait evolution
   (see `sandbox-interface.md` on the `investigate/openshell` branch).
 - Tighter per-path *read restriction* (curated base mount instead of binding all
-  of `/`) for confidentiality, beyond today's read-only-whole-root model.
+  of `/`) for confidentiality.
 - Opt-in heavy backings (OpenShell, firecracker, gVisor) behind feature flags.

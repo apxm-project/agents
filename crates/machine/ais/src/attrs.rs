@@ -230,9 +230,9 @@ pub const REUSE_GROUP: &str = "shared_prefix_group";
 pub const EST_TEMPLATE_TOKENS: &str = "est_template_tokens";
 
 // -- Graph-aware backend hints --
-// Mirrors of MLIR Constants.h::attrs::* (with ais. prefix). Written by the
-// MLIR PromptCanonicalization + AssignPriority passes; ArtifactEmitter strips
-// the prefix into the bare graph attrs the runtime accepts.
+// Graph-aware backend hints written with the `ais.` prefix by the MLIR
+// PromptCanonicalization + AssignPriority passes; ArtifactEmitter strips the
+// prefix into the bare graph attrs the runtime accepts.
 pub const AIS_SHARED_PREFIX_GROUP: &str = "ais.shared_prefix_group";
 pub const AIS_SHARED_PREFIX_EST_TOKENS: &str = "ais.shared_prefix_est_tokens";
 pub const AIS_SHARED_PREFIX_GROUP_SIZE: &str = "ais.shared_prefix_group_size";

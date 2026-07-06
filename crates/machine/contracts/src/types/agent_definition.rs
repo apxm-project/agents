@@ -1,6 +1,6 @@
 //! Canonical agent definition (`apxm.agent-definition.v1`).
 //!
-//! Mirrors `workspace/contracts/schemas/agent-definition.v1.json`, the
+//! Implements `workspace/contracts/schemas/agent-definition.v1.json`, the
 //! normative schema for "what an agent is": identity, entry point, prompts,
 //! declared capabilities (by reference to [`super::capability::CapabilityDefinition`]
 //! ids), a hierarchy edge (parent/permitted-children), and trigger
@@ -42,13 +42,13 @@ pub struct AgentDefinition {
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub triggers: Vec<AgentTrigger>,
     /// `[runtime]` from `agent.toml` — the single source of truth for every
-    /// `ConversationalAgent` knob (AGT-7): loop/memory_space/session_prefix.
+    /// `ConversationalAgent` knob: loop/memory_space/session_prefix.
     /// When `entry.flow` is empty, `runtime.loop` is what lets a
     /// pure-declarative package be instantiated with no Python entry file
     /// (see [`AgentEntry::flow`]).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub runtime: Option<AgentRuntime>,
-    /// `[[hooks]]` from `agent.toml` (AGT-7): manifest-declared lifecycle
+    /// `[[hooks]]` from `agent.toml`: manifest-declared lifecycle
     /// hooks, lowered the same way whether the package has a custom entry
     /// (where entry code may add MORE hooks, but must never contradict
     /// these — a lint check, not a runtime one) or no entry at all (where
@@ -58,8 +58,8 @@ pub struct AgentDefinition {
 }
 
 /// `[runtime]` — every `ConversationalAgent` knob declarable in the
-/// manifest (AGT-7). Kept an open shape (`extra`) so knobs added later don't
-/// need a schema break, mirroring the AGT-2 toolchain's `RuntimeToml`. Extra
+/// manifest. Kept an open shape (`extra`) so knobs added later don't
+/// need a schema break. Extra
 /// values are stringly-typed to keep this derive-`Eq`-able (unlike
 /// `toml::Value`/`serde_json::Value`, which carry floats).
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -75,10 +75,10 @@ pub struct AgentRuntime {
 }
 
 /// One `[[hooks]]` entry: a manifest-declared binding of a lifecycle event to
-/// a handler in `capabilities/handlers/` (AGT-7). `event`/`mode` are kept as
+/// a handler in `capabilities/handlers/`. `event`/`mode` are kept as
 /// open strings here (not the Python frontend's `LifecycleEvent`/`HookMode`
 /// enums) so contracts does not have to track the frontend's vocabulary —
-/// the AGT-2 toolchain's lint validates the closed set at author time.
+/// the package toolchain's lint validates the closed set at author time.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct AgentHook {
@@ -98,7 +98,7 @@ fn default_hook_match() -> String {
 #[serde(deny_unknown_fields)]
 pub struct AgentEntry {
     /// Path/reference to the entry flow (e.g. an AIR file). May be empty
-    /// (AGT-7) for a **pure-declarative** package with no custom Python
+    /// for a **pure-declarative** package with no custom Python
     /// entry — the loader then instantiates a `ConversationalAgent` straight
     /// from `AgentDefinition::runtime` + `AgentDefinition::hooks` instead.
     /// [`AgentDefinition::validate`] requires `runtime.loop` to be set
@@ -145,9 +145,7 @@ pub enum AgentDefinitionError {
     },
     #[error("id must not be empty")]
     EmptyId,
-    #[error(
-        "entry.flow must not be empty unless runtime.loop is set (AGT-7 pure-declarative agent)"
-    )]
+    #[error("entry.flow must not be empty unless runtime.loop is set ( pure-declarative agent)")]
     EmptyEntryFlow,
     #[error("trigger id must not be empty")]
     EmptyTriggerId,
@@ -166,7 +164,7 @@ impl AgentDefinition {
         if self.id.trim().is_empty() {
             return Err(AgentDefinitionError::EmptyId);
         }
-        // AGT-7: an empty entry.flow is only valid for a pure-declarative
+        // an empty entry.flow is only valid for a pure-declarative
         // agent — one whose [runtime].loop is set, so the loader has an
         // unambiguous loop mode to build a ConversationalAgent from (no
         // Python entry file needed).
@@ -309,7 +307,7 @@ mod tests {
 
     #[test]
     fn empty_entry_flow_is_valid_for_pure_declarative_agent_with_runtime_loop() {
-        // AGT-7: a package with no entry file at all is valid as long as
+        // a package with no entry file at all is valid as long as
         // [runtime].loop tells the loader which ConversationalAgent loop to
         // build — nothing ambiguous is left for it to guess.
         let mut def = sample();

@@ -21,7 +21,7 @@ export interface OpField {
   readonly refType: string | null;
 }
 
-/** Full metadata for one AIS operation, mirrored from op-spec.v1.json. */
+/** Full metadata for one AIS operation generated from op-spec.v1.json. */
 export interface OpSpec {
   readonly op: OpName;
   readonly rustVariant: string;
@@ -757,7 +757,7 @@ export const OP_SPECS: Readonly<Record<OpName, OpSpec>> = {
     name: "RegisterHook",
     category: "coordination",
     description: "Register an author lifecycle hook into the artifact hook registry",
-    longDescription: "Registers one author lifecycle hook (a Python handler bound to a lifecycle event) into the per-artifact hook registry. Mirrors REGISTER_CAPABILITY: the binding travels inside the artifact (AIR-portable) and the handler is dispatched via the same Python tool bridge as @tool. The runtime applies pre/post_cap hooks at the tool dispatch sites, pre/post_ask as Ask middleware, and session_start as an awaited pre-step.",
+    longDescription: "Registers one author lifecycle hook (a Python handler bound to a lifecycle event) into the per-artifact hook registry. The binding travels inside the artifact (AIR-portable) and the handler is dispatched via the same Python tool bridge as @tool. The runtime applies pre/post_cap hooks at the tool dispatch sites, pre/post_ask as Ask middleware, and session_start as an awaited pre-step.",
     latency: "low",
     wireIndex: 43,
     isPseudoOp: false,
@@ -859,7 +859,7 @@ export const OP_SPECS: Readonly<Record<OpName, OpSpec>> = {
 /** All operation specs as an array, in catalog order. */
 export const ALL_OPERATIONS: readonly OpSpec[] = Object.values(OP_SPECS);
 
-/** Opcodes that never produce a result token (void ops in AIR emission). */
+/** Opcodes that never produce a result token. */
 export const VOID_OPS: ReadonlySet<OpName> = new Set(
   ALL_OPERATIONS.filter((spec) => !spec.producesOutput).map((spec) => spec.op),
 );

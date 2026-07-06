@@ -44,7 +44,7 @@ pub struct RuntimeCapability {
     #[serde(default)]
     pub requires_auth: bool,
 
-    /// Whether invocation must pass the approval gate (consent broker round-trip).
+    /// Whether invocation must pass the approval gate.
     #[serde(default)]
     pub requires_approval: bool,
 
@@ -71,9 +71,12 @@ fn default_latency() -> u64 {
 
 fn operations_read_only(operations: &[PermissionOperation]) -> bool {
     !operations.is_empty()
-        && operations
-            .iter()
-            .all(|op| matches!(op, PermissionOperation::Read | PermissionOperation::List | PermissionOperation::Search))
+        && operations.iter().all(|op| {
+            matches!(
+                op,
+                PermissionOperation::Read | PermissionOperation::List | PermissionOperation::Search
+            )
+        })
 }
 
 impl RuntimeCapability {
@@ -191,9 +194,9 @@ impl From<&RuntimeCapability> for AamCapabilityRecord {
 mod tests {
     use super::*;
     use apxm_core::types::capability::{
-        CAPABILITY_DEFINITION_SCHEMA_V1, CapabilityMetadata as ContractCapabilityMetadata,
-        PermissionEffect, PermissionPolicy, PromptPolicy, ResourceSelector, CapabilityBinding,
-        CapabilityBindingHandler,
+        CAPABILITY_DEFINITION_SCHEMA_V1, CapabilityBinding, CapabilityBindingHandler,
+        CapabilityMetadata as ContractCapabilityMetadata, PermissionEffect, PermissionPolicy,
+        PromptPolicy, ResourceSelector,
     };
 
     #[test]

@@ -375,6 +375,8 @@ def emit_air_if_requested(flow: Any) -> bool:
     if air_text is None:
         graph = getattr(flow, "_graph", None)
         air_text = graph.to_air() if graph is not None else None
+    if air_text is None and hasattr(flow, "to_air"):
+        air_text = flow.to_air()
     if air_text is None:
         raise TypeError("emit_air_if_requested expects a compiled APXM flow")
     print(air_text)
@@ -624,9 +626,8 @@ class CompiledFlow:
                     "session_id is only supported by the HTTP server path; "
                     "remove local-only execution options or unset session_id"
                 )
-            return self._fallback_subprocess(*args, execution=execution)
+            return self._run_local_subprocess(*args, execution=execution)
 
-        # Try HTTP first
         try:
             client = await _get_client()
             response = await client.post("/v1/execute", json=request_body)
@@ -635,23 +636,14 @@ class CompiledFlow:
                     f"Server returned {response.status_code}: {response.text}"
                 )
             return ExecutionResult.from_response(response.json())
-        except RuntimeError:
-            # httpx not installed, fall through to subprocess
-            pass
+        except RuntimeError as exc:
+            raise ServerError(str(exc)) from exc
         except Exception as exc:
-            # Connection refused or other HTTP error -- try subprocess
             if "httpx" in type(exc).__module__:
-                pass
-            else:
-                raise
-
-        # Subprocess fallback (stdin, no temp files)
-        if execution.session_id is not None:
-            raise ServerError(
-                "session_id requires the HTTP server. "
-                "Start it with: dekk agents server"
-            )
-        return self._fallback_subprocess(*args, execution=execution)
+                raise ServerError(
+                    f"Cannot reach APXM server at {_server_url()}: {exc}"
+                ) from exc
+            raise
 
     def run_sync(
         self,
@@ -743,7 +735,7 @@ class CompiledFlow:
         request.update(execution.server_request_fields())
         return request
 
-    def _fallback_subprocess(
+    def _run_local_subprocess(
         self,
         *args: Any,
         execution: ExecutionOptions | None = None,
@@ -754,9 +746,6 @@ class CompiledFlow:
         apxm_bin = _find_apxm_binary()
         execution = execution or ExecutionOptions()
 
-        # Use pre-captured AIR text when available; otherwise fall back
-        # to ApxmGraph.to_air(). Strip the sidecar comment (if present)
-        # because the MLIR parser does not understand `;` comments.
         runtime_graph = _graph_with_execution_overrides(self._graph, execution)
         if runtime_graph is self._graph:
             air_text = self._air_text if self._air_text else self._graph.to_air()

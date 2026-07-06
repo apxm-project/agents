@@ -12,6 +12,7 @@ use crate::constants::extensions;
 pub enum GraphSourceFormat {
     Air,
     PythonFrontend,
+    TypeScriptFrontend,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -32,6 +33,9 @@ impl ApxmPathFormat {
         match path.extension().and_then(|ext| ext.to_str()) {
             Some(extensions::AIR) => Self::GraphSource(GraphSourceFormat::Air),
             Some(extensions::PYTHON) => Self::GraphSource(GraphSourceFormat::PythonFrontend),
+            Some(extensions::TYPESCRIPT) => {
+                Self::GraphSource(GraphSourceFormat::TypeScriptFrontend)
+            }
             Some(extensions::ARTIFACT) => Self::Artifact(ArtifactFormat::ApxmObj),
             Some(extensions::JSON_DATA) => Self::JsonData,
             _ => Self::Unknown,
@@ -46,7 +50,27 @@ impl ApxmPathFormat {
         matches!(self, Self::GraphSource(GraphSourceFormat::PythonFrontend))
     }
 
+    pub fn is_typescript_frontend(self) -> bool {
+        matches!(
+            self,
+            Self::GraphSource(GraphSourceFormat::TypeScriptFrontend)
+        )
+    }
+
     pub fn is_json_data(self) -> bool {
         matches!(self, Self::JsonData)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn classifies_frontend_sources_and_json_data() {
+        assert!(ApxmPathFormat::from_path(Path::new("flow.air")).is_air_source());
+        assert!(ApxmPathFormat::from_path(Path::new("flow.py")).is_python_frontend());
+        assert!(ApxmPathFormat::from_path(Path::new("flow.ts")).is_typescript_frontend());
+        assert!(ApxmPathFormat::from_path(Path::new("metrics.json")).is_json_data());
     }
 }

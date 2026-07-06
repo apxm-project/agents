@@ -1,4 +1,4 @@
-//! Retention & compaction for agents-owned durable state (OBS-2).
+//! Retention & compaction for agents-owned durable state.
 //!
 //! Scope, by state-layout.v1 vector:
 //!   (a) expired rollout compaction — a rollout JSONL older than its max-age
@@ -44,8 +44,8 @@ pub const ARCHIVED_STATUS: &str = "archived";
 
 /// Retention policy for agents-owned durable state.
 ///
-/// `sessions/rollouts` and `sessions/index.sqlite` are `class = durable`
-/// per `workspace/contracts/schemas/state-layout.v1.json`; retention here
+/// `sessions/rollouts` and `sessions/index.sqlite` are `class = durable`;
+/// retention here
 /// means "shrink the bulky JSONL body and mark the index row archived",
 /// never "delete the index row" or "delete memory stores".
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -537,9 +537,14 @@ mod tests {
             .unwrap();
         recorder.close().await.unwrap();
 
-        let blobs_dir = paths.rollout_sidecar_dir("thread-blobs", started).join("blobs");
+        let blobs_dir = paths
+            .rollout_sidecar_dir("thread-blobs", started)
+            .join("blobs");
         let referenced_count_before = std::fs::read_dir(&blobs_dir).unwrap().count();
-        assert_eq!(referenced_count_before, 1, "expected exactly one real spilled blob");
+        assert_eq!(
+            referenced_count_before, 1,
+            "expected exactly one real spilled blob"
+        );
 
         // Plant an orphan blob nobody points at.
         let orphan_path = blobs_dir.join("deadbeefdeadbeefdeadbeefdeadbeef.json");
@@ -611,7 +616,10 @@ mod tests {
             blob_gc_grace: Duration::ZERO,
         };
         let report = compact(&paths, &policy).await.unwrap();
-        assert_eq!(report.rollouts.archived, 1, "sanity: compaction did real work");
+        assert_eq!(
+            report.rollouts.archived, 1,
+            "sanity: compaction did real work"
+        );
 
         let ltm_after = std::fs::read(&ltm_path).unwrap();
         let episodes_after = std::fs::read(&episodes_path).unwrap();

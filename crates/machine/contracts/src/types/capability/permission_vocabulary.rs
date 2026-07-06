@@ -17,8 +17,7 @@ pub enum OperationClass {
 impl OperationClass {
     /// Wire-shape (`snake_case`) string for this variant. Used as the single
     /// source of truth for both serde and non-serde contexts (e.g. metric
-    /// labels — OBS-4 decision-5 requires typed-enum labels, never ad-hoc
-    /// strings).
+    /// labels, which must use typed enum values rather than ad-hoc strings).
     pub fn as_str(&self) -> &'static str {
         match self {
             Self::Read => "read",

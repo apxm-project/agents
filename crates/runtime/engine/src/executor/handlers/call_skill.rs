@@ -188,8 +188,7 @@ fn invalid_skill_id(raw: &str, reason: &str) -> RuntimeError {
 }
 
 /// Resolve the positional + named argument vectors a `CALL_SKILL` op
-/// forwards to its child. Mirrors `flow_call::resolve_flow_call_args`'s
-/// shape but stays lean: the cross-skill ABI is positional-by-default
+/// forwards to its child. The cross-skill ABI is positional-by-default
 /// and named arguments are only consulted when the parent provided an
 /// `args` map.
 fn resolve_args(node: &Node, inputs: &[Value]) -> Result<(Vec<Value>, HashMap<String, Value>)> {

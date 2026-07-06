@@ -1,0 +1,3 @@
+capability = "write_file"
+decision = "ask"
+reason = "Writes files on the host."

@@ -1,0 +1,20 @@
+// approval_gate.air — a draft, a human-approval PAUSE barrier, and the
+// RESUME that continues past it (ASK + PAUSE + RESUME).
+//
+//  regeneration: the original  fixture (a single bare
+// `ais.resume "<checkpoint-id>"`) predates the current op-spec-driven
+// emitter. In the current op-spec, PAUSE and RESUME both ignore their
+// attributes for text purposes (checkpoint id / message / timeout are
+// runtime-only metadata, not rendered into AIR) — only their
+// Data-dependency operands render, as a `[...]` bracket. Regenerated from
+// Python's `GraphRecorder.to_graph().to_air()` reference emitter.
+//
+//   apxm validate approval_gate.air
+module {
+  func.func @approval_gate() -> !ais.token attributes {ais.entry} {
+    %draft_change = ais.ask "Propose a change to review." : !ais.token
+    %await_approval = ais.pause [%draft_change : !ais.token] : !ais.token
+    %resumed = ais.resume [%await_approval : !ais.token] : !ais.token
+    func.return %resumed : !ais.token
+  }
+}

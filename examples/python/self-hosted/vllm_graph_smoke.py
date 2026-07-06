@@ -8,7 +8,7 @@ Routing:
   Register one model under a vLLM backend with alias "smoke", or replace
   SMOKE_ROUTE with another explicit registered backend/model selector.
 
-The APXM compiler driver sets the emit flag when it needs AIR.
+The APXM compiler driver requests AIR from this frontend source.
 """
 
 from apxm import GraphRecorder, compile, emit_air_if_requested

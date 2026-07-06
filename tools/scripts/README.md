@@ -7,7 +7,7 @@ script-local package when a command grows beyond one responsibility.
 ## Command Wrappers
 
 - `cargo.py` owns APXM Cargo invocation details: machine-local target dirs,
-  MLIR library path handling, release binary mirroring, dialect rebuilds, and
+  MLIR library path handling, release binary staging, dialect rebuilds, and
   cache cleanup.
 - `vllm.py` owns APXM-vLLM operator workflows. Keep the public surface under
   `dekk agents vllm`.

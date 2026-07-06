@@ -339,6 +339,7 @@ dependencies = [
  "anyhow",
  "apxm-ais",
  "apxm-artifact",
+ "apxm-backends",
  "apxm-core",
  "bindgen",
  "blake3",

@@ -2,7 +2,7 @@
   "name": "@apxm/client",
   "version": "0.1.0",
   "type": "module",
-  "description": "Hand-written TypeScript wire types for apxm-server session/run APIs, mirroring openapi-session-v1.yaml + runs.rs (not code-generated)",
+  "description": "Hand-written TypeScript wire types for apxm-server session/run APIs, aligned with openapi-session-v1.yaml + runs.rs (not code-generated)",
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
   "exports": {

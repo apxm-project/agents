@@ -22,10 +22,10 @@ use serde::{Deserialize, Serialize};
 /// | T3   | RELEASE, RESUME, DELEGATE, SPAWN | Container | Multi-agent, resource claims |
 pub mod tier {
     pub const PURE: u8 = 0;
-    #[allow(dead_code)] // Reserved for memory-tier classification (not yet wired to runtime)
+    #[allow(dead_code)] // Reserved for memory-tier classification.
     pub const MEMORY: u8 = 1;
     pub const IO: u8 = 2;
-    #[allow(dead_code)] // Reserved for privileged operations (not yet wired to runtime)
+    #[allow(dead_code)] // Reserved for privileged operations.
     pub const PRIVILEGED: u8 = 3;
 }
 
@@ -104,7 +104,7 @@ impl SecurityManifest {
 }
 
 /// Classify an AIS operation into its sandbox tier.
-#[allow(dead_code)] // Planned for static analysis phase, not yet wired
+#[allow(dead_code)] // Static analysis helper.
 pub fn classify_op(op: &str) -> (u8, IsolationLevel) {
     match op {
         // T0: Pure LLM operations — no side effects

@@ -22,8 +22,8 @@ pairs with `check_commit_message.py`.
    `crates/.../foo.rs` into a prompt string.
 3. **No hardcoded provider profiles.** Do not name `claude`, `codex`, or
    any vendor in a workflow. Declare roles (`architect`, `dev`,
-   `reviewer`) and bind providers at the edge — `goal-orchestrator`
-   requires that no provider-specific host is assumed.
+   `reviewer`) and bind providers at the edge. No workflow should assume a
+   provider-specific host exists.
 4. **Control flow lives in the graph, not the agent.** Use
    `BRANCH_ON_VALUE` / fan-in nodes; do not delegate "iterate until
    tests pass" to an agent's internal loop. Note the scheduler fires a

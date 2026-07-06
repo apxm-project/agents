@@ -137,4 +137,4 @@ if __name__ == "__main__":
             print(f"  WARN:  {warn}")
         sys.exit(0 if result.valid else 1)
 
-    print(main.to_air())
+    print("Compile this multi-flow agent with `dekk agents compile`; AIR is printed by the Rust compiler path.")

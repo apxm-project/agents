@@ -6,8 +6,6 @@
 //! ```text
 //! JSON / TaskDag / programmatic ──→ AirModule ──→ .air text ──→ Pipeline::compile()
 //! ```
-//!
-//! The Python frontend has its own `to_air()` and does not use this crate.
 
 use apxm_core::types::{AISOperationType, DependencyType, Value};
 use serde::{Deserialize, Serialize};
@@ -15,6 +13,7 @@ use std::collections::HashMap;
 use thiserror::Error;
 
 mod emit;
+mod frontend_graph;
 mod validate;
 
 #[derive(Debug, Error)]
@@ -78,6 +77,28 @@ impl AirModule {
     }
 }
 
+/// A multi-flow AIR program emitted as one MLIR `module { ... }`.
+///
+/// Each [`AirModule`] is one `func.func` inside the enclosing MLIR module.
+/// Frontends that author multiple flows still hand Rust graph modules; the AIR
+/// text assembly stays in this crate.
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+pub struct AirProgram {
+    #[serde(default)]
+    pub modules: Vec<AirModule>,
+}
+
+impl AirProgram {
+    pub fn new(modules: Vec<AirModule>) -> Self {
+        Self { modules }
+    }
+
+    /// Emit valid `.air` (MLIR text) for this multi-flow program.
+    pub fn to_air(&self) -> Result<String, AirError> {
+        emit::emit_program(&self.modules)
+    }
+}
+
 /// Builder for constructing an [`AirModule`] programmatically.
 pub struct AirModuleBuilder {
     name: String,
@@ -116,6 +137,27 @@ impl AirModuleBuilder {
             attributes,
         });
         id
+    }
+
+    /// Add a node with a caller-owned stable ID.
+    ///
+    /// Frontend graph formats already assign stable IDs. Preserve them so
+    /// diagnostics and node maps stay attributable across lowering.
+    pub fn node_with_id(
+        &mut self,
+        id: u64,
+        name: impl Into<String>,
+        op: AISOperationType,
+        attributes: HashMap<String, Value>,
+    ) -> &mut Self {
+        self.next_id = self.next_id.max(id.saturating_add(1));
+        self.nodes.push(AirNode {
+            id,
+            name: name.into(),
+            op,
+            attributes,
+        });
+        self
     }
 
     pub fn edge(&mut self, from: u64, to: u64, dependency: DependencyType) -> &mut Self {
@@ -158,3 +200,7 @@ impl AirModuleBuilder {
         }
     }
 }
+
+pub use frontend_graph::{
+    FrontendEdge, FrontendGraph, FrontendGraphError, FrontendNode, FrontendParameter,
+};

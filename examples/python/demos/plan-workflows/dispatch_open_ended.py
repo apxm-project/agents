@@ -87,9 +87,8 @@ def _parse_args() -> argparse.Namespace:
         "--dry-run",
         action="store_true",
         help=(
-            "Compile the dispatch graph and print its AIR text without "
-            "calling any LLM backend. Useful for inspecting the prompt "
-            "shape before hitting a live service."
+            "Print the dispatch AIR without calling any LLM backend. "
+            "Useful for inspecting the prompt shape before hitting a live service."
         ),
     )
     return p.parse_args()
@@ -100,7 +99,7 @@ def main() -> int:
     graph = _build_dispatch_graph(args.request)
 
     if args.dry_run:
-        print(graph._graph.to_air())
+        print(graph.to_air())
         return 0
 
     import apxm

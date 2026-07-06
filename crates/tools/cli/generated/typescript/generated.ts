@@ -678,7 +678,7 @@ export const REGISTER_HOOK: OpSpec = {
   name: "RegisterHook",
   category: "coordination" as OpCategory,
   description: "Register an author lifecycle hook into the artifact hook registry",
-  longDescription: "Registers one author lifecycle hook (a Python handler bound to a lifecycle event) into the per-artifact hook registry. Mirrors REGISTER_CAPABILITY: the binding travels inside the artifact (AIR-portable) and the handler is dispatched via the same Python tool bridge as @tool. The runtime applies pre/post_cap hooks at the tool dispatch sites, pre/post_ask as Ask middleware, and session_start as an awaited pre-step.",
+  longDescription: "Registers one author lifecycle hook (a Python handler bound to a lifecycle event) into the per-artifact hook registry. The binding travels inside the artifact (AIR-portable) and the handler is dispatched via the same Python tool bridge as @tool. The runtime applies pre/post_cap hooks at the tool dispatch sites, pre/post_ask as Ask middleware, and session_start as an awaited pre-step.",
   latency: "low",
   fields: [
     { name: "hook_event", description: "Lifecycle event the hook binds to", required: true, refType: null },
@@ -834,6 +834,7 @@ export const ATTR = {
   MODE: "mode",
   CWD: "cwd",
   MODEL: "model",
+  MODEL_PROFILE: "model_profile",
   PROVIDER: "provider",
   API_KEY: "api_key",
   BASE_URL: "base_url",

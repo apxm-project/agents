@@ -60,12 +60,6 @@ export enum CoreEventKind {
   WORKFLOW_FINISHED = "workflow_finished",
   EXECUTION_STARTED = "execution_started",
   EXECUTE_COMPLETE = "execute_complete",
-  ORCHESTRATOR_SLEEP = "orchestrator_sleep",
-  ORCHESTRATOR_WAKE = "orchestrator_wake",
-  GOAL_GATE_VERDICT = "goal_gate_verdict",
-  GOAL_CONVERGED = "goal_converged",
-  GOAL_NEEDS_ANOTHER_PASS = "goal_needs_another_pass",
-  GOAL_HALTED = "goal_halted",
   MEMORY_READ = "memory_read",
   MEMORY_WRITE = "memory_write",
   CHECKPOINT_SAVED = "checkpoint_saved",
@@ -129,12 +123,6 @@ export const WORKFLOW_STEP_COMPLETED = kind(CoreEventKind.WORKFLOW_STEP_COMPLETE
 export const WORKFLOW_FINISHED = kind(CoreEventKind.WORKFLOW_FINISHED, EventCategoryKind.LIFECYCLE);
 export const EXECUTION_STARTED = kind(CoreEventKind.EXECUTION_STARTED, EventCategoryKind.LIFECYCLE);
 export const EXECUTE_COMPLETE = kind(CoreEventKind.EXECUTE_COMPLETE, EventCategoryKind.LIFECYCLE, true);
-export const ORCHESTRATOR_SLEEP = kind(CoreEventKind.ORCHESTRATOR_SLEEP, EventCategoryKind.LIFECYCLE);
-export const ORCHESTRATOR_WAKE = kind(CoreEventKind.ORCHESTRATOR_WAKE, EventCategoryKind.LIFECYCLE, true);
-export const GOAL_GATE_VERDICT = kind(CoreEventKind.GOAL_GATE_VERDICT, EventCategoryKind.LIFECYCLE);
-export const GOAL_CONVERGED = kind(CoreEventKind.GOAL_CONVERGED, EventCategoryKind.LIFECYCLE);
-export const GOAL_NEEDS_ANOTHER_PASS = kind(CoreEventKind.GOAL_NEEDS_ANOTHER_PASS, EventCategoryKind.LIFECYCLE);
-export const GOAL_HALTED = kind(CoreEventKind.GOAL_HALTED, EventCategoryKind.LIFECYCLE);
 export const MEMORY_READ = kind(CoreEventKind.MEMORY_READ, EventCategoryKind.OBSERVABILITY);
 export const MEMORY_WRITE = kind(CoreEventKind.MEMORY_WRITE, EventCategoryKind.OBSERVABILITY);
 export const CHECKPOINT_SAVED = kind(CoreEventKind.CHECKPOINT_SAVED, EventCategoryKind.LIFECYCLE);
@@ -198,12 +186,6 @@ export const CORE_EVENT_KINDS = [
   WORKFLOW_FINISHED,
   EXECUTION_STARTED,
   EXECUTE_COMPLETE,
-  ORCHESTRATOR_SLEEP,
-  ORCHESTRATOR_WAKE,
-  GOAL_GATE_VERDICT,
-  GOAL_CONVERGED,
-  GOAL_NEEDS_ANOTHER_PASS,
-  GOAL_HALTED,
   MEMORY_READ,
   MEMORY_WRITE,
   CHECKPOINT_SAVED,

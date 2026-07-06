@@ -143,7 +143,7 @@ A-PXM formalizes agent memory into three tiers, each with distinct semantics and
 | **LTM** (Long-Term Memory) | "What do I know?" | Persistent knowledge -- user preferences, cached facts, learned associations that survive across sessions | Read-write, durable |
 | **Episodic** | "What have I done?" | Execution traces -- timestamped records of every operation, enabling self-reflection and auditing | Append-only, durable |
 
-The design mirrors cognitive models of human memory (working, semantic, autobiographical), giving flow authors intuitive semantics when deciding where to store data.
+The design follows cognitive models of human memory (working, semantic, autobiographical), giving flow authors intuitive semantics when deciding where to store data.
 
 ### Memory Operations as First-Class AIS Instructions
 
@@ -164,7 +164,7 @@ These are **nodes in the dataflow DAG**, not opaque side effects. The compiler c
 
 ### Cross-Agent Memory Isolation
 
-Agents do not share memory. Cross-agent data exchange uses the `COMM` and `FLOW_CALL` instructions, which are explicit message-passing operations in the DAG. This mirrors the actor model's isolation guarantee: an agent's memory tiers are private to that agent. A receiving agent can write received data into its own memory via UMEM, but the sender's memory is never directly accessible.
+Agents do not share memory. Cross-agent data exchange uses the `COMM` and `FLOW_CALL` instructions, which are explicit message-passing operations in the DAG. This follows the actor model's isolation guarantee: an agent's memory tiers are private to that agent. A receiving agent can write received data into its own memory via UMEM, but the sender's memory is never directly accessible.
 
 | Scenario | Guarantee |
 |----------|-----------|

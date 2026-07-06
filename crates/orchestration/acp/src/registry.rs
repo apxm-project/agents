@@ -473,7 +473,9 @@ mod tests {
     fn working_set_templates_have_real_resolvable_commands() {
         let templates = AgentRegistry::builtin_templates();
         for name in ["claude", "codex", "gemini"] {
-            let profile = templates.get(name).unwrap_or_else(|| panic!("missing {name}"));
+            let profile = templates
+                .get(name)
+                .unwrap_or_else(|| panic!("missing {name}"));
             assert!(
                 !profile.command.trim().is_empty(),
                 "{name} must have a concrete command"

@@ -1,0 +1,97 @@
+[
+  {
+    "handler_id": "sha256:5334724835a9d4dfd3387b67f27a70af8f0cb9fe5c893a8daffc248f0d81817b",
+    "module": "capabilities/explain_permission/handler",
+    "qualname": "explainPermission",
+    "name": "explain_permission",
+    "description": "Explain the operator approval Gao needs before using an APXM capability.",
+    "schema": {},
+    "source_file": "capabilities/explain_permission/handler.ts"
+  },
+  {
+    "handler_id": "sha256:1d4c1c5b89751aa41566fd5d4bfdaea05e78ee55c440b44760939124dca970e4",
+    "module": "capabilities/handlers/hooks",
+    "qualname": "compactConversation",
+    "name": "hook",
+    "event": "post_turn",
+    "match": "*",
+    "mode": "observe",
+    "source_file": "capabilities/handlers/hooks.ts"
+  },
+  {
+    "handler_id": "sha256:779068ce9fc6467bbaeee53b212c341948d294945ab9a688f263cfe6385bdc03",
+    "module": "capabilities/handlers/hooks",
+    "qualname": "gateComposeWorkflow",
+    "name": "hook",
+    "event": "pre_cap",
+    "match": "compose_workflow",
+    "mode": "gate",
+    "source_file": "capabilities/handlers/hooks.ts"
+  },
+  {
+    "handler_id": "sha256:a9cbca786979f6154722f881b02d096ffc52a336e63dd6a752edb70045b73086",
+    "module": "capabilities/handlers/hooks",
+    "qualname": "injectApxmContext",
+    "name": "hook",
+    "event": "pre_ask",
+    "match": "*",
+    "mode": "observe",
+    "source_file": "capabilities/handlers/hooks.ts"
+  },
+  {
+    "handler_id": "sha256:794f374be7b7c14fda5cfa9f3b68f80e9ec84363151a34944b81b725387ecc6a",
+    "module": "capabilities/handlers/hooks",
+    "qualname": "injectContext",
+    "name": "hook",
+    "event": "pre_turn",
+    "match": "*",
+    "mode": "observe",
+    "source_file": "capabilities/handlers/hooks.ts"
+  },
+  {
+    "handler_id": "sha256:8ac10333b82f0498b7f71652cf589343e9f5820ee90059a73c2b8fdb7cf3a564",
+    "module": "capabilities/handlers/hooks",
+    "qualname": "redactToolResults",
+    "name": "hook",
+    "event": "post_cap",
+    "match": "*",
+    "mode": "observe",
+    "source_file": "capabilities/handlers/hooks.ts"
+  },
+  {
+    "handler_id": "sha256:ad260e3bad22e48287998b4df384151dde5f18f462658496c9e080383b4da774",
+    "module": "capabilities/list_local_skills/handler",
+    "qualname": "listLocalSkills",
+    "name": "list_local_skills",
+    "description": "List Gao-owned local skills.",
+    "schema": {},
+    "source_file": "capabilities/list_local_skills/handler.ts"
+  },
+  {
+    "handler_id": "sha256:82da83328aebb541cb78febe90c47e06a4518deb9e4e3cc64eb9c72db6837204",
+    "module": "capabilities/plan_workflow/handler",
+    "qualname": "planWorkflow",
+    "name": "plan_workflow",
+    "description": "Turn a natural-language request into a structured APXM workflow design plan.",
+    "schema": {},
+    "source_file": "capabilities/plan_workflow/handler.ts"
+  },
+  {
+    "handler_id": "sha256:cf6703f02f1d242dac5e0880df49b6bb5c2081f5b141a0681de2cffc4673943b",
+    "module": "capabilities/prepare_validation/handler",
+    "qualname": "prepareValidation",
+    "name": "prepare_validation",
+    "description": "Prepare a structured APXM validation request for a workflow artifact.",
+    "schema": {},
+    "source_file": "capabilities/prepare_validation/handler.ts"
+  },
+  {
+    "handler_id": "sha256:e805ffe5e824ab048fc25bbcde1c2b8b6e3da43c932fb071f571f59559468730",
+    "module": "capabilities/read_local_skill/handler",
+    "qualname": "readLocalSkill",
+    "name": "read_local_skill",
+    "description": "Read a Gao-owned skill document by skill id.",
+    "schema": {},
+    "source_file": "capabilities/read_local_skill/handler.ts"
+  }
+]

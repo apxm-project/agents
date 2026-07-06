@@ -1,4 +1,4 @@
-//! RTG-2 grep gate (decision 3, `docs/plans/routing.md`): `models.toml`
+//! Source gate: `models.toml`
 //! `ModelEntry` (`crates/runtime/engine/src/model_router/registry.rs`) is the
 //! one-and-only cost table in this repo. The dead cost/tag fields that used
 //! to live on `BackendConfig`/`ModelConfig` and on `ModelProfile`
@@ -99,7 +99,7 @@ fn cost_per_1k_field_lives_on_exactly_one_struct() {
         owners,
         BTreeSet::from(["ModelEntry".to_string()]),
         "cost_per_1k_* fields must live on exactly one struct (models.toml's \
-         ModelEntry, decision 3 of docs/plans/routing.md); found: {owners:?}. \
+         ModelEntry); found: {owners:?}. \
          If you added a new cost field, either put it on ModelEntry or update \
          this gate deliberately."
     );

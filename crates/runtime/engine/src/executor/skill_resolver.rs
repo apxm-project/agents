@@ -46,7 +46,7 @@ pub struct CallSkillRequest {
 /// Successful result of a `CALL_SKILL` invocation.
 #[derive(Debug, Clone)]
 pub struct CallSkillResult {
-    /// Resolved skill id (mirrors the request).
+    /// Resolved skill id from the request.
     pub resolved_skill_id: String,
     /// Resolved version that the host actually loaded.
     pub resolved_version: String,

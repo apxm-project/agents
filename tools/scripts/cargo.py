@@ -177,7 +177,7 @@ def _copy_file(source: Path, destination: Path) -> None:
             pass
 
 
-def _mirror_release_outputs(project_root: Path, target_dir: Path) -> None:
+def _stage_release_outputs(project_root: Path, target_dir: Path) -> None:
     source = target_dir / RELEASE_PROFILE_DIR_NAME
     if not source.is_dir():
         return
@@ -252,7 +252,7 @@ def _build_dialect(project_root: Path, target_dir: Path) -> int:
 
     result = _build_cli(project_root, target_dir)
     if result == 0:
-        _mirror_release_outputs(project_root, target_dir)
+        _stage_release_outputs(project_root, target_dir)
     return result
 
 
@@ -318,7 +318,7 @@ def main(argv: list[str]) -> int:
 
     result = _run([CARGO, *argv], project_root=project_root, target_dir=target_dir)
     if result == 0 and argv[0] == CargoCommand.BUILD.value and RELEASE_FLAG in argv:
-        _mirror_release_outputs(project_root, target_dir)
+        _stage_release_outputs(project_root, target_dir)
     return result
 
 

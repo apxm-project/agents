@@ -1,0 +1,24 @@
+// converse_agent.air — a recall step followed by a conversational
+// AUTONOMOUS loop that consumes it (ASK + AUTONOMOUS, converse=true).
+//
+//  regeneration: the original  fixture referenced the flow
+// parameter directly as an `ais.autonomous` operand (`%turns`) and named
+// the parameter itself in the SSA value (`%turns` instead of `%argN`).
+// Neither is producible by the current op-spec-driven emitter: flow
+// parameters are always emitted as positional `%argN` values (see
+// `research_pipeline` in `ir.py`'s docstring), and they are resolved by the
+// runtime via `{name}` template substitution at scheduler init — rewritten
+// to `{{name}}` in template attrs, never wired as a Data operand. Here the
+// conversational turn depends on an explicit ASK step (`load_history`)
+// instead, which is what the current op-spec is able to express. Regenerated
+// from Python's `GraphRecorder.to_graph().to_air()` reference emitter
+//.
+//
+//   apxm validate converse_agent.air
+module {
+  func.func @converse_agent(%arg0: !ais.token {ais.param_name = "turns", ais.param_type = "str"}) -> !ais.token attributes {ais.entry} {
+    %load_history = ais.ask "Summarize recent context for {{turns}}." : !ais.token
+    %reply = ais.autonomous "You are APXM Assistant, a precise conversational agent. Use the transcript for context and keep replies concise." (%load_history : !ais.token) {max_iterations = 50 : i64, converse = "true", tool_groups = ["web", "skills"]} : !ais.token
+    func.return %reply : !ais.token
+  }
+}

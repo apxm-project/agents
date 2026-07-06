@@ -197,7 +197,7 @@ impl OperationDispatcher {
             return Err(RuntimeError::SchedulerCancelled);
         }
 
-        // Permanent op-usage counter (RT-9): every dispatched node — including
+        // Permanent op-usage counter: every dispatched node — including
         // pseudo-ops like AGENT/YIELD — increments the in-process counter that
         // `apxm ops usage` reports on. See `executor::op_usage`.
         super::op_usage::record(node.op_type);

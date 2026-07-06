@@ -3,8 +3,8 @@
 The Python frontend for [APXM](https://github.com/apxm-project/agents),
 the graph-aware dispatch + scheduling layer for vLLM.
 
-This package lets you author APXM workflows in Python and emit typed
-AIR (APXM IR) graphs that the APXM runtime compiles and executes.
+This package lets you author APXM workflows in Python and emit AIR that the
+APXM compiler/runtime executes.
 
 ## Quick start
 
@@ -38,8 +38,8 @@ print(hello.to_air())
 
 ## Running workflows
 
-The Python package emits AIR graphs. Executing them requires the APXM
-runtime — install it separately and use the `dekk agents` CLI:
+The Python package emits AIR. Executing it requires the APXM runtime/compiler
+— install it separately and use the `dekk agents` CLI:
 
 ```bash
 dekk agents execute path/to/workflow.py

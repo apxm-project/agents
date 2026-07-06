@@ -19,7 +19,7 @@ path = "src/main.rs"
 
 [dependencies]
 # Typed apxm-server HTTP client (folded in from the former standalone
-# apxm-client crate, RT-5 — no consumer outside this binary).
+# apxm-client crate, - no consumer outside this binary).
 progenitor-client.workspace = true
 apxm-core.workspace = true
 apxm-ais.workspace = true
@@ -43,10 +43,10 @@ reqwest = { version = "0.13", features = ["blocking", "stream", "json", "rustls"
 walkdir.workspace = true
 tempfile.workspace = true
 toml.workspace = true
-# AGT-2: package new/lint/build/install manifest parsing + integrity hash chain.
+# package new/lint/build/install manifest parsing + integrity hash chain.
 sha2.workspace = true
 rusqlite = { workspace = true, optional = true }
-# Phase 14.8.F — rollout/watch CLI deps. apxm-rollout is the durable
+# Phase 14.8.F â- rollout/watch CLI deps. apxm-rollout is the durable
 # transcript layer; tar+flate2 produce the air-gapped reproducibility
 # tarball; futures/tokio-stream drive the SSE byte-stream parser.
 apxm-rollout = { workspace = true, optional = true }
@@ -61,10 +61,16 @@ serde_json.workspace = true
 apxm-skill.workspace = true
 tokio = { workspace = true, features = ["rt", "rt-multi-thread", "macros", "io-util"] }
 tempfile.workspace = true
+toml.workspace = true
+
+[[test]]
+name = "gao_e2e"
+path = "tests/fixtures/gao_e2e.rs"
+required-features = ["driver"]
 
 [build-dependencies]
 apxm-core.workspace = true
-# apxm-server client codegen (folded in from apxm-client, RT-5).
+# apxm-server client codegen (folded in from apxm-client, ).
 progenitor.workspace = true
 openapiv3.workspace = true
 serde_yaml.workspace = true

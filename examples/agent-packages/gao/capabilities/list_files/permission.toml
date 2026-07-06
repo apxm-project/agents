@@ -1,0 +1,2 @@
+capability = "list_files"
+decision = "allow"

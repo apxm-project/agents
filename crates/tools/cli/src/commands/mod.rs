@@ -18,7 +18,7 @@ pub mod compile;
 pub(crate) mod dekk_hints;
 #[cfg(feature = "driver")]
 pub mod execute;
-pub mod goal;
+pub mod frontend_air;
 pub mod integration;
 pub mod ops;
 pub mod org;
@@ -53,7 +53,7 @@ pub use codegen::*;
 pub use compile::*;
 #[cfg(feature = "driver")]
 pub use execute::*;
-pub use goal::*;
+pub use frontend_air::*;
 pub use integration::*;
 pub use ops::*;
 pub use org::*;

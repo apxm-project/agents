@@ -282,7 +282,7 @@ struct CondenseOpsPass : impl::CondenseOpsBase<CondenseOpsPass> {
                   << stats.umemChains << " UMEM chains, removed "
                   << stats.opsCondensed << " redundant ops");
 
-    // Phase B Task 7: per-pass stats drained by apxm_module_drain_pass_stats.
+    // Per-pass stats are drained by apxm_module_drain_pass_stats.
     // fired_count = total chains condensed (each chain is one rewrite).
     const std::size_t irSizeAfter = computeModuleIRTextLength(module);
     const int64_t irDelta = static_cast<int64_t>(irSizeAfter)

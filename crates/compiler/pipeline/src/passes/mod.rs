@@ -11,16 +11,21 @@
 //! - Registry functions: Pass management
 
 pub mod bind_capability_handlers;
+pub mod capability_binding;
 mod manager;
 pub mod metrics;
 mod pipeline;
 pub mod profile;
 mod registry;
-pub mod capability_binding;
+pub mod select_backend;
 pub mod validate_model_allowlist;
 
 pub use bind_capability_handlers::{
-    BIND_CAPABILITY_HANDLERS_PASS_NAME, bind_python_handlers_to_dag, bind_capability_handlers,
+    BIND_CAPABILITY_HANDLERS_PASS_NAME, bind_capability_handlers, bind_python_handlers_to_dag,
+};
+pub use capability_binding::{
+    CAPABILITY_BINDING_PASS_NAME, PythonCapabilityManifestEntry, capability_binding_check,
+    capability_binding_check_dag,
 };
 pub use manager::PassManager;
 pub use metrics::{PassMetrics, PipelineDiagnostics};
@@ -29,7 +34,7 @@ pub use pipeline::{
 };
 pub use profile::{ExecutionProfile, NodeProfile, ProfileError};
 pub use registry::{find_pass, get_pass_count, get_pass_info, list_passes};
-pub use capability_binding::{
-    PythonCapabilityManifestEntry, CAPABILITY_BINDING_PASS_NAME, capability_binding_check, capability_binding_check_dag,
+pub use select_backend::{
+    SelectBackendError, parse_backend_catalog_toml, select_backend, select_backend_from_toml,
 };
 pub use validate_model_allowlist::validate_model_allowlist;

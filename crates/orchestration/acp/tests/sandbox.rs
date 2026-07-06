@@ -114,7 +114,11 @@ async fn spawn_consults_the_sandbox_backend_when_one_is_supplied() {
     .expect("spawn with a sandbox backend should still succeed");
 
     let calls = backend.calls();
-    assert_eq!(calls.len(), 1, "wrap_command should be called exactly once per spawn");
+    assert_eq!(
+        calls.len(),
+        1,
+        "wrap_command should be called exactly once per spawn"
+    );
     assert_eq!(calls[0].program, "python3");
     assert_eq!(calls[0].args, vec![script.to_string_lossy().to_string()]);
     assert_eq!(calls[0].cwd, dir.path());
@@ -161,7 +165,11 @@ async fn terminal_manager_consults_the_sandbox_backend_for_agent_opened_terminal
     tokio::time::sleep(std::time::Duration::from_millis(100)).await;
 
     let calls = backend.calls();
-    assert_eq!(calls.len(), 1, "terminal/create must go through wrap_command");
+    assert_eq!(
+        calls.len(),
+        1,
+        "terminal/create must go through wrap_command"
+    );
     assert_eq!(calls[0].program, "echo");
     assert_eq!(calls[0].args, vec!["confined".to_string()]);
     assert!(calls[0].needs_network);

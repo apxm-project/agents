@@ -16,7 +16,7 @@ use thiserror::Error;
 mod wire;
 
 const MAGIC: &[u8; 4] = b"APXM";
-// Bumped 1 -> 2 in RT-1: NEGOTIATE, SPAWN_TEAM, GUARD, and CLAIM were deleted
+// Bumped 1 -> 2 in NEGOTIATE, SPAWN_TEAM, GUARD, and CLAIM were deleted
 // from the AIS operation-kind wire table (indices 26, 27, 32, 39 retired), so
 // artifacts produced before this change are no longer wire-compatible.
 const VERSION: u32 = 2;

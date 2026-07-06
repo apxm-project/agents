@@ -6,14 +6,14 @@
 
 /**
  * Vendored copy of workflow-draft.v1.json from workspace/contracts/schemas/.
- * Source of truth: workspace/contracts/schemas/workflow-draft.v1.json (WF-2).
+ * Source of truth: workspace/contracts/schemas/workflow-draft.v1.json.
  * Re-vendor with: npm run codegen.
  */
 export const WORKFLOW_DRAFT_V1_SCHEMA = {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "apxm.workflow-draft.v1",
   "title": "WorkflowDraft",
-  "description": "Canvas-oriented workflow document exchanged between authoring surfaces (Gao drafts, Studio persistence, host-product workflow exports). Lowered to AIR via a frontend's to_air(); never a wire execution input. Draft = canvas doc minus layout — node/canvas position is UI presentation state and travels in a separate layout sidecar, never in this document (WF-1).",
+  "description": "Canvas-oriented workflow document exchanged between authoring surfaces (Gao drafts, Studio persistence, host-product workflow exports). Lowered to AIR via a frontend's to_air(); never a wire execution input. Draft = canvas doc minus layout — node/canvas position is UI presentation state and travels in a separate layout sidecar, never in this document.",
   "type": "object",
   "required": [
     "schema_version",
@@ -56,7 +56,7 @@ export const WORKFLOW_DRAFT_V1_SCHEMA = {
     },
     "capability_grants": {
       "type": "array",
-      "description": "Capability ids the operator granted this draft permission to invoke. Every capability-bearing node's `config.capability` must be a member of this set (WF-1 'ungranted capability' rule).",
+      "description": "Capability ids the operator granted this draft permission to invoke. Every capability-bearing node's `config.capability` must be a member of this set.",
       "items": {
         "type": "string",
         "minLength": 1
@@ -148,7 +148,7 @@ export const WORKFLOW_DRAFT_V1_SCHEMA = {
     },
     "DraftNodeKind": {
       "type": "string",
-      "description": "Canonical draft node vocabulary (WF-1). Mirrors Studio's canvas.rs NodeKind (snake_case) and the kinds Gao is permitted to author. Unknown kinds are rejected — a new kind requires a schema bump, not silent pass-through.",
+      "description": "Canonical draft node vocabulary. Studio canvas documents and Gao-authored drafts must use these snake_case kind values. Unknown kinds are rejected: a new kind requires a schema bump, not silent pass-through.",
       "enum": [
         "llm",
         "acp_agent",

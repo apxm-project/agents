@@ -1,6 +1,6 @@
-//! Permanent AIS operation-usage counter (RT-9).
+//! Permanent AIS operation-usage counter.
 //!
-//! RT-1 justified pruning `NEGOTIATE`/`SPAWN_TEAM`/`GUARD`/`CLAIM` with a
+//!  justified pruning `NEGOTIATE`/`SPAWN_TEAM`/`GUARD`/`CLAIM` with a
 //! one-off measurement of op usage against the example/test/studio-lowering
 //! corpus; that instrumentation was never committed, so the next drift
 //! between "operations defined" (`AIS_OPERATIONS`) and "operations actually

@@ -56,6 +56,10 @@
       "description": "Use when rebasing the external/vllm fork onto a new upstream tag, cherry-picking APXM commits, or resolving conflicts in the fork. Covers the G1 build/smoke gate."
     },
     {
+      "name": "frontend-implementation",
+      "description": "Use when changing APXM compiler frontends: Rust AirModule, TypeScript @apxm/frontend, Python apxm, frontend codegen, or Studio/source lowering into AIR."
+    },
+    {
       "name": "goal-orchestrator",
       "description": "Use when an agent should turn a complex APXM goal into a bounded worker workflow, execute it through APXM, wait on goal events/status, and synthesize verified artifacts. Covers `dekk agents goal`, `goal_start`, `goal_*`, workflow drill-down, and `prompt_as_workflow` selection."
     },

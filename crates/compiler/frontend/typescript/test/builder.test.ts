@@ -27,8 +27,8 @@ describe("GraphBuilder", () => {
     expect(communicateNode.attributes.message).toBe("status?");
 
     // spawn -> delegate, delegate -> communicate (explicit), and an implicit
-    // spawn-session -> communicate Data edge (mirrors GraphRecorder session
-    // tracking so COMMUNICATE always depends on its target's SPAWN_AGENT).
+    // spawn-session -> communicate Data edge so COMMUNICATE always depends on
+    // its target's SPAWN_AGENT.
     const edgePairs = graph.edges.map((e) => [e.from, e.to, e.dependency]);
     expect(edgePairs).toContainEqual([spawnNode.id, delegateNode.id, "Data"]);
     expect(edgePairs).toContainEqual([delegateNode.id, communicateNode.id, "Data"]);
@@ -74,6 +74,53 @@ describe("GraphBuilder", () => {
     const node = graph.nodes.find((n) => n.name === "fence")!;
     expect(node.op).toBe("FENCE");
     expect(node.attributes.checkpoint).toBe(true);
+  });
+
+  it("serializes the compiler FrontendGraph DTO shape", () => {
+    const g = new GraphBuilder("dto_flow", { is_entry: true });
+    g.param("topic", "str");
+    const answer = g.ask({ name: "answer", prompt: "Research: {topic}" });
+    const invoked = g.invokeCapability({
+      name: "lookup",
+      capability: "search:web",
+      params: { query: "apxm" },
+      inputs: { answer },
+    });
+    g.done(invoked);
+
+    expect(g.toGraph().toDict()).toEqual({
+      name: "dto_flow",
+      nodes: [
+        {
+          id: answer.nodeId,
+          name: "answer",
+          op: "ASK",
+          attributes: { template_str: "Research: {topic}" },
+        },
+        {
+          id: invoked.nodeId,
+          name: "lookup",
+          op: "INV_CAP",
+          attributes: {
+            capability: "search:web",
+            params_json: JSON.stringify({ query: "apxm" }),
+            input_names: ["answer"],
+          },
+        },
+        {
+          id: invoked.nodeId + 1,
+          name: "return",
+          op: "RETURN",
+          attributes: {},
+        },
+      ],
+      edges: [
+        { from: answer.nodeId, to: invoked.nodeId, dependency: "Data" },
+        { from: invoked.nodeId, to: invoked.nodeId + 1, dependency: "Data" },
+      ],
+      parameters: [{ name: "topic", type_name: "str" }],
+      metadata: { is_entry: true },
+    });
   });
 
   it("rejects duplicate node names", () => {

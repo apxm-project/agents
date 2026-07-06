@@ -23,9 +23,8 @@ use std::collections::{HashMap, HashSet};
 
 /// Lightweight manifest entry for a Python `@tool`-decorated function.
 ///
-/// Mirrors the fields of `ToolDescriptor` (from `apxm-runtime`) that are
-/// relevant to compile-time orphan detection. The compiler crate does not
-/// depend on `apxm-runtime`, so we keep a minimal copy here.
+/// Minimal Python tool manifest fields relevant to compile-time orphan
+/// detection. The compiler crate does not depend on `apxm-runtime`.
 #[derive(Debug, Clone, Deserialize)]
 pub struct PythonCapabilityManifestEntry {
     /// Unique handler identifier (`sha256:<hash>`).
@@ -400,10 +399,10 @@ mod tests {
         }
     }
 
-    /// RT-8: `capability-binding-check` (post-CM-7 rename from
+    /// `capability-binding-check` (post- rename from
     /// `tool-binding-check`) must fail compilation for an `INV_CAP` that
     /// references an unregistered, non-builtin capability — not just print
-    /// a warning. This is the compile-error promotion the RT-8 decision
+    /// a warning. This is the compile-error promotion the  decision
     /// record calls for (previously `eprintln!`-only diagnostics would have
     /// let a bad binding silently reach the runtime).
     #[test]
@@ -428,8 +427,8 @@ mod tests {
     /// of the same compile-error guarantee.
     #[test]
     fn unbound_capability_is_a_hard_compile_error_on_the_dag_path_too() {
-        use apxm_core::types::execution::ExecutionDag;
         use apxm_core::types::Node;
+        use apxm_core::types::execution::ExecutionDag;
         use std::collections::HashSet;
 
         let mut node = Node::new(1, AISOperationType::InvCap);

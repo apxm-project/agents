@@ -30,7 +30,7 @@
 //!   need the entire struct (capability system, AAM, agent pool, ...).
 //!
 //! Narrowing those call sites would require a trait-ified dispatch boundary
-//! between the scheduler and executor — that's the actual RT-6 crate-split
+//! between the scheduler and executor — that's the actual  crate-split
 //! work, out of scope here.
 
 use std::sync::Arc;

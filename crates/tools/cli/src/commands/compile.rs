@@ -17,6 +17,8 @@ use apxm_core::constants::extensions;
 use apxm_core::types::ApxmPathFormat;
 #[cfg(feature = "driver")]
 use apxm_driver::compiler::Compiler;
+#[cfg(feature = "driver")]
+use serde::Deserialize;
 
 #[cfg(feature = "driver")]
 use super::implementations::{load_config, parse_opt_level};
@@ -26,10 +28,17 @@ fn is_python_graph_input(input: &Path) -> bool {
     ApxmPathFormat::from_path(input).is_python_frontend()
 }
 
+#[cfg(feature = "driver")]
+fn is_typescript_graph_input(input: &Path) -> bool {
+    ApxmPathFormat::from_path(input).is_typescript_frontend()
+}
+
 /// Sentinel prefix emitted by the Python frontend in a `;` comment when
 /// `@tool`-decorated functions are registered via `Agent`.
 #[cfg(feature = "driver")]
 const PYTHON_TOOLS_PREFIX: &str = "; __apxm_python_tools__ ";
+#[cfg(feature = "driver")]
+const TYPESCRIPT_TOOLS_PREFIX: &str = "; __apxm_typescript_tools__ ";
 /// Any APXM sidecar comment line (e.g. `; __apxm_hooks__ ...`). These `;`-lines
 /// are metadata the MLIR parser cannot read and MUST be stripped before compile.
 /// Only the python-tools sidecar is captured for the bridge; the rest (hooks)
@@ -42,13 +51,22 @@ const SIDECAR_LINE_PREFIX: &str = "; __apxm_";
 /// Returns `(air_without_sidecar, Option<json_bytes>)`.
 #[cfg(feature = "driver")]
 fn extract_python_tools_sidecar(air: &str) -> (String, Option<Vec<u8>>) {
-    let mut sidecar: Option<Vec<u8>> = None;
+    let (filtered, python, typescript) = extract_handler_sidecars(air);
+    let _ = typescript;
+    (filtered, python)
+}
+
+#[cfg(feature = "driver")]
+fn extract_handler_sidecars(air: &str) -> (String, Option<Vec<u8>>, Option<Vec<u8>>) {
+    let mut python: Option<Vec<u8>> = None;
+    let mut typescript: Option<Vec<u8>> = None;
     let mut filtered = String::with_capacity(air.len());
     for line in air.lines() {
         if let Some(json_str) = line.strip_prefix(PYTHON_TOOLS_PREFIX) {
-            sidecar = Some(json_str.as_bytes().to_vec());
+            python = Some(json_str.as_bytes().to_vec());
+        } else if let Some(json_str) = line.strip_prefix(TYPESCRIPT_TOOLS_PREFIX) {
+            typescript = Some(json_str.as_bytes().to_vec());
         } else if line.starts_with(SIDECAR_LINE_PREFIX) {
-            // Other APXM sidecar comment (e.g. __apxm_hooks__): strip, don't capture.
         } else {
             if !filtered.is_empty() {
                 filtered.push('\n');
@@ -56,10 +74,21 @@ fn extract_python_tools_sidecar(air: &str) -> (String, Option<Vec<u8>>) {
             filtered.push_str(line);
         }
     }
-    (filtered, sidecar)
+    (filtered, python, typescript)
 }
 
-/// AGT-5: `pub(super)` (not private) so `commands::package`'s skill-build
+/// Rewrite the `@apxm/frontend` bare import specifier to the built TypeScript
+/// frontend entrypoint so standalone `.ts` source files can run without a local
+/// `node_modules/` install next to each workflow file.
+#[cfg(feature = "driver")]
+fn rewrite_frontend_import(source: &str, frontend_dist_index: &Path) -> String {
+    let dist_url = format!("file://{}", frontend_dist_index.display());
+    source
+        .replace("\"@apxm/frontend\"", &format!("\"{dist_url}\""))
+        .replace("'@apxm/frontend'", &format!("'{dist_url}'"))
+}
+
+/// `pub(super)` (not private) so `commands::package`'s skill-build
 /// step can drive the same Python-frontend AIR emission `apxm compile`
 /// itself uses, rather than duplicating the PYTHONPATH/subprocess dance.
 #[cfg(feature = "driver")]
@@ -82,6 +111,10 @@ pub(super) fn emit_air_from_python(
 
     let pythonpath = env::join_paths(pythonpath_entries)
         .context("Failed to build PYTHONPATH for APXM Python frontend")?;
+    // Route the frontend's AIR emission back to this same binary's single Rust
+    // printer (`apxm emit-air`) instead of `dekk agents emit-air`, so compile is
+    // self-contained and version-consistent.
+    let apxm_exe = env::current_exe().ok();
     let mut output = None;
     for candidate in ["python3", "python"] {
         let mut command = std::process::Command::new(candidate);
@@ -89,6 +122,9 @@ pub(super) fn emit_air_from_python(
             .arg(input)
             .env(apxm_env::PYTHONPATH, &pythonpath)
             .env(apxm_env::APXM_EMIT_AIR, apxm_env::flag_values::ENABLED);
+        if let Some(exe) = apxm_exe.as_ref() {
+            command.env(apxm_env::APXM_BIN, exe);
+        }
         if let Some(config_path) = config_path {
             command.env(apxm_env::APXM_CONFIG, config_path);
         }
@@ -143,7 +179,6 @@ pub(super) fn emit_air_from_python(
         ));
     }
 
-    // Extract python_tools sidecar before writing AIR to tempfile
     let (clean_air, sidecar) = extract_python_tools_sidecar(&air);
 
     let mut tmp = tempfile::Builder::new()
@@ -156,78 +191,120 @@ pub(super) fn emit_air_from_python(
     Ok((tmp, sidecar))
 }
 
+/// Run TypeScript frontend source through Node and capture the AIR it emits.
+#[cfg(feature = "driver")]
+pub(super) fn emit_air_from_typescript_text(input: &Path) -> Result<String> {
+    use anyhow::bail;
+
+    let repo_root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../..");
+    let frontend_dist = repo_root.join("crates/compiler/frontend/typescript/dist/index.js");
+    if !frontend_dist.is_file() {
+        bail!(
+            "TypeScript frontend is not built: expected {} (run 'npm run build' in \
+             crates/compiler/frontend/typescript first)",
+            frontend_dist.display()
+        );
+    }
+
+    let source = std::fs::read_to_string(input)
+        .with_context(|| format!("Failed to read {}", input.display()))?;
+    let rewritten = rewrite_frontend_import(&source, &frontend_dist);
+
+    let mut tmp = tempfile::Builder::new()
+        .suffix(".ts")
+        .tempfile()
+        .context("Failed to create temporary TypeScript frontend source")?;
+    {
+        use std::io::Write;
+        tmp.write_all(rewritten.as_bytes())
+            .context("Failed to write rewritten TypeScript frontend source")?;
+        tmp.flush()
+            .context("Failed to flush temporary TypeScript frontend source")?;
+    }
+
+    // Route the frontend's AIR emission back to this same binary's single Rust
+    // printer (`apxm emit-air`) instead of `dekk agents emit-air`.
+    let apxm_exe = env::current_exe().ok();
+    let mut node_command = std::process::Command::new("node");
+    node_command.arg(tmp.path());
+    if let Some(exe) = apxm_exe.as_ref() {
+        node_command.env(apxm_env::APXM_BIN, exe);
+    }
+    let output = node_command.output().map_err(|err| {
+        anyhow::anyhow!(
+            "Failed to run Node on TypeScript frontend source {}: {err} (is Node.js installed?)",
+            input.display()
+        )
+    })?;
+
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        return Err(anyhow::anyhow!(
+            "TypeScript frontend source {} failed: {}",
+            input.display(),
+            stderr.trim()
+        ));
+    }
+
+    let air = String::from_utf8(output.stdout).with_context(|| {
+        format!(
+            "TypeScript frontend source {} did not emit valid UTF-8",
+            input.display()
+        )
+    })?;
+    let trimmed = air.trim();
+    if trimmed.is_empty() {
+        return Err(anyhow::anyhow!(
+            "TypeScript frontend source {} produced no .air output",
+            input.display()
+        ));
+    }
+    if !(trimmed.starts_with(';')
+        || trimmed.starts_with('%')
+        || trimmed.starts_with("module")
+        || trimmed.starts_with("func.func"))
+    {
+        return Err(anyhow::anyhow!(
+            "TypeScript frontend source {} did not emit recognizable .air text on stdout.\n\
+             Expected MLIR text starting with 'module', 'func.func', ';', or '%'.",
+            input.display()
+        ));
+    }
+    Ok(air)
+}
+
+#[cfg(feature = "driver")]
+fn emit_air_from_typescript(input: &Path) -> Result<(tempfile::NamedTempFile, Option<Vec<u8>>)> {
+    use std::io::Write;
+
+    let air = emit_air_from_typescript_text(input)?;
+    let (clean_air, _python, typescript) = extract_handler_sidecars(&air);
+
+    let mut tmp = tempfile::Builder::new()
+        .suffix(".air")
+        .tempfile()
+        .context("Failed to create temporary .air file")?;
+    tmp.write_all(clean_air.as_bytes())
+        .context("Failed to write emitted .air to temporary file")?;
+    tmp.flush().context("Failed to flush temporary .air file")?;
+    Ok((tmp, typescript))
+}
+
 /// Python tools sidecar data extracted from the AIR comment, if any.
 #[cfg(feature = "driver")]
 type PythonHandlersSidecar = Option<Vec<u8>>;
+#[cfg(feature = "driver")]
+type TypeScriptHandlersSidecar = Option<Vec<u8>>;
 
 // ---------------------------------------------------------------------------
 // `apxm compile-service` — the cross-repo process contract Server (and any
-// other non-`agents` caller) uses to compile an agent package's Python entry
-// (with `@hook`/`@tool` registrations) into host-loop AIR, without shelling
-// out to Python itself or reaching into this repo's file layout. This is the
-// canonical, agents-owned home for the driver/PYTHONPATH logic Studio's
-// `crates/studio/src/aircompile.rs::agent_package_to_air` previously
-// duplicated across the service boundary.
+// other non-`agents` caller) uses to compile an agent package declaratively
+// into AIR, without reaching into this repo's file layout. This is the
+// canonical, agents-owned home for declarative package AIR emission across the
+// service boundary.
 // ---------------------------------------------------------------------------
 
-/// Python driver invoked for an agent-package entry (`main = Agent(...).compile()`).
-/// Mirrors the shape of the plain-flow `DRIVER` script above, but looks up the
-/// package convention's `main` binding instead of any `to_air`-shaped value,
-/// and forwards an optional loop-override positional (`sys.argv[2]`) the
-/// entry script's `_resolve_loop` reads — see AGT-7 in
-/// `docs/agent-packages/first-agent.md` for why this is a positional argument
-/// and not an ad hoc env var.
-#[cfg(feature = "driver")]
-const AGENT_PACKAGE_DRIVER: &str = r#"
-import importlib.util, sys
-path = sys.argv[1]
-spec = importlib.util.spec_from_file_location("apxm_cli_agent_package", path)
-mod = importlib.util.module_from_spec(spec)
-spec.loader.exec_module(mod)
-main = getattr(mod, "main", None)
-if main is None or not hasattr(main, "to_air"):
-    print("NO_MAIN", file=sys.stderr); sys.exit(3)
-sys.stdout.write(main.to_air())
-"#;
-
-/// Minimal projection of `agent.toml` used only to resolve the Python entry
-/// when the caller does not pass `--entry` explicitly. Every other manifest
-/// field is out of scope here (the full projection lives in
-/// `commands::package::AgentToml` / server's `agent_packages.rs`).
-#[cfg(feature = "driver")]
-#[derive(serde::Deserialize)]
-struct AgentManifestEntry {
-    entry: Option<String>,
-}
-
-/// Resolve the `python/`-relative entry path for a package root: the
-/// caller's explicit override, or `agent.toml`'s declared `entry` field.
-#[cfg(feature = "driver")]
-fn resolve_package_entry_rel(package_root: &Path, entry_override: Option<&str>) -> Result<String> {
-    if let Some(entry) = entry_override {
-        return Ok(entry.trim_start_matches("python/").to_string())
-            .map(|e| format!("python/{e}"));
-    }
-    let manifest_path = package_root.join("agent.toml");
-    let text = std::fs::read_to_string(&manifest_path)
-        .with_context(|| format!("Failed to read {}", manifest_path.display()))?;
-    let manifest: AgentManifestEntry = toml::from_str(&text)
-        .with_context(|| format!("Failed to parse {}", manifest_path.display()))?;
-    let entry = manifest.entry.ok_or_else(|| {
-        anyhow::anyhow!(
-            "package '{}' has no `entry` set in agent.toml and no --entry override was given \
-             (a package with no Python entry is pure-declarative and does not need compile-service)",
-            package_root.display()
-        )
-    })?;
-    Ok(format!("python/{}", entry.trim_start_matches("python/")))
-}
-
-/// Compile a bundled conversational agent package's Python entry into
-/// canonical host-loop AIR text, exactly as `agent_package_to_air` (formerly
-/// duplicated in Studio) invokes the frontend: same PYTHONPATH assembly
-/// (frontend + package root + `python/`), same driver shape, same loop
-/// override and `GAO_WEB_TOOLS` convention.
+/// Compile a bundled conversational agent package into canonical AIR text.
 ///
 /// # Cross-repo I/O contract
 ///
@@ -237,38 +314,21 @@ fn resolve_package_entry_rel(package_root: &Path, entry_override: Option<&str>) 
 /// Python frontend:
 ///
 /// - **Input**: a single positional argument, the package directory
-///   (containing `pack.toml`, `agent.toml`, and `python/<entry>`). No stdin
+///   (containing `pack.toml`, `agent.toml`, and `capabilities/`). No stdin
 ///   is read.
-/// - `--entry <path>`: override the entry instead of reading `agent.toml`.
-/// - `--host-loop`: pass the `"host"` loop-override positional the entry
-///   script's `_resolve_loop` reads (the same override Studio's
-///   host-controlled chat surface used to pass directly). Omit to honor the
-///   package manifest's declared `[runtime].loop`.
-/// - `--web-tools`: sets `GAO_WEB_TOOLS=true` for entries that gate optional
-///   web-search tool registration on it.
-/// - **stdout**: on success, ONLY the emitted AIR text — the raw MLIR the
-///   Python frontend wrote, including any `; __apxm_python_tools__ ...` /
-///   `; __apxm_hooks__ ...` sidecar comment lines. No other text is ever
-///   written to stdout; all progress/log/diagnostic output goes to stderr.
-/// - **Exit code**: `0` on success. Nonzero on any failure (missing package,
-///   missing/unresolved entry, Python interpreter not found, frontend raised
-///   an exception, or empty/non-AIR output), with a human-readable message on
-///   stderr.
+/// - `--web-tools`: include the web capability group in the emitted ASK node.
+/// - **stdout**: on success, ONLY emitted AIR text, including any
+///   `; __apxm_typescript_tools__ ...` sidecar comment lines. No other text is
+///   ever written to stdout; all progress/log/diagnostic output goes to stderr.
+/// - **Exit code**: `0` on success. Nonzero on any failure, with a
+///   human-readable message on stderr.
 #[cfg(feature = "driver")]
 pub fn compile_service_command(
     package: PathBuf,
-    entry: Option<String>,
-    host_loop: bool,
     web_tools: bool,
-    config: Option<PathBuf>,
+    _config: Option<PathBuf>,
 ) -> Result<()> {
-    let air = emit_air_from_agent_package(
-        &package,
-        entry.as_deref(),
-        host_loop,
-        web_tools,
-        config.as_deref(),
-    )?;
+    let air = emit_air_from_agent_package(&package, web_tools)?;
 
     // Only the AIR text goes to stdout, written byte-for-byte as the frontend
     // produced it (no added trailing newline) — this is the process contract
@@ -284,118 +344,237 @@ pub fn compile_service_command(
 /// writing wrapper above so it can be exercised directly by tests (including
 /// the Studio-equivalence fixture test) without spawning a subprocess.
 #[cfg(feature = "driver")]
-fn emit_air_from_agent_package(
-    package: &Path,
-    entry: Option<&str>,
-    host_loop: bool,
-    web_tools: bool,
-    config: Option<&Path>,
-) -> Result<String> {
+pub(crate) fn emit_air_from_agent_package(package: &Path, web_tools: bool) -> Result<String> {
     if !package.is_dir() {
         return Err(anyhow::anyhow!(
             "'{}' is not a directory",
             package.display()
         ));
     }
-    let entry_rel = resolve_package_entry_rel(package, entry)?;
-    let entry_path = package.join(&entry_rel);
-    if !entry_path.is_file() {
-        return Err(anyhow::anyhow!(
-            "missing agent entry file: {}",
-            entry_path.display()
-        ));
+
+    emit_air_from_declarative_package(package, web_tools)
+}
+
+#[cfg(feature = "driver")]
+#[derive(Debug, Deserialize)]
+struct DeclarativeHookToml {
+    event: String,
+    #[serde(rename = "match")]
+    hook_match: Option<String>,
+    mode: String,
+    handler: String,
+}
+
+#[cfg(feature = "driver")]
+#[derive(Debug, Deserialize, Default)]
+struct DeclarativeRuntimeToml {
+    #[serde(default, rename = "loop")]
+    runtime_loop: Option<toml::Value>,
+}
+
+#[cfg(feature = "driver")]
+#[derive(Debug, Deserialize)]
+struct DeclarativeAgentToml {
+    #[serde(default)]
+    hooks: Vec<DeclarativeHookToml>,
+    #[serde(default)]
+    runtime: Option<DeclarativeRuntimeToml>,
+    #[serde(default)]
+    prompts: std::collections::BTreeMap<String, String>,
+}
+
+#[cfg(feature = "driver")]
+fn declarative_turn_param(agent: &DeclarativeAgentToml) -> String {
+    agent
+        .runtime
+        .as_ref()
+        .and_then(|runtime| runtime.runtime_loop.as_ref())
+        .and_then(|value| value.get("turn_param"))
+        .and_then(|value| value.as_str())
+        .unwrap_or("user_message")
+        .to_string()
+}
+
+#[cfg(feature = "driver")]
+fn declarative_loop_mode(agent: &DeclarativeAgentToml) -> String {
+    agent
+        .runtime
+        .as_ref()
+        .and_then(|runtime| runtime.runtime_loop.as_ref())
+        .and_then(|value| value.get("mode"))
+        .and_then(|value| value.as_str())
+        .unwrap_or("host")
+        .to_string()
+}
+
+#[cfg(feature = "driver")]
+fn declarative_loop_rearms(agent: &DeclarativeAgentToml) -> bool {
+    agent
+        .runtime
+        .as_ref()
+        .and_then(|runtime| runtime.runtime_loop.as_ref())
+        .and_then(|value| value.get("rearm"))
+        .and_then(|value| value.as_bool())
+        .unwrap_or(true)
+}
+
+#[cfg(feature = "driver")]
+fn manifest_entry_matches_handler(entry: &serde_json::Value, handler: &str) -> bool {
+    let entry_qual = entry.get("qualname").and_then(|v| v.as_str()).unwrap_or("");
+    let entry_source = entry
+        .get("source_file")
+        .and_then(|v| v.as_str())
+        .unwrap_or("")
+        .replace('\\', "/");
+
+    if let Some((path_part, qualname)) = handler.split_once(':') {
+        let path_part = path_part.trim_start_matches("./").replace('\\', "/");
+        return entry_qual == qualname
+            && (entry_source.ends_with(&path_part)
+                || entry_source.ends_with(&format!("{path_part}.ts")));
     }
 
-    let repo_root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../..");
-    let python_frontend = repo_root.join("crates/compiler/frontend/python");
-    let python_root = package.join("python");
+    let normalized = handler.replace('.', "/").replace('\\', "/");
+    let Some((path_part, qualname)) = normalized.rsplit_once('/') else {
+        return entry_qual == handler;
+    };
+    entry_qual == qualname
+        && (entry_source.ends_with(path_part)
+            || entry_source.ends_with(&format!("{path_part}.ts"))
+            || entry_source.contains(&format!("/{path_part}.ts")))
+}
 
-    let mut pythonpath_entries = vec![python_frontend, package.to_path_buf(), python_root];
-    if let Some(existing) = env::var_os(apxm_env::PYTHONPATH) {
-        pythonpath_entries.extend(env::split_paths(&existing));
-    }
-    let pythonpath = env::join_paths(pythonpath_entries)
-        .context("Failed to build PYTHONPATH for APXM agent-package frontend")?;
-
-    // AGT-7: no ad-hoc `GAO_LOOP` env var — `[runtime].loop` in the package's
-    // `agent.toml` is the declared source of truth; a host-controlled caller
-    // (Studio, or now Server compiling for host-loop execution) overrides it
-    // via this explicit positional, never a magic env var private to one
-    // agent. An empty argument means "no override, use the manifest".
-    let loop_override = if host_loop { "host" } else { "" };
-
-    let mut output = None;
-    for candidate in ["python3", "python"] {
-        let mut command = std::process::Command::new(candidate);
-        command
-            .arg("-c")
-            .arg(AGENT_PACKAGE_DRIVER)
-            .arg(&entry_path)
-            .arg(loop_override)
-            .env(apxm_env::PYTHONPATH, &pythonpath)
-            .env(
-                "GAO_WEB_TOOLS",
-                if web_tools { "true" } else { "false" },
-            );
-        if let Some(config_path) = &config {
-            command.env(apxm_env::APXM_CONFIG, config_path);
+#[cfg(feature = "driver")]
+fn resolve_declarative_handler_id(handler: &str, manifest: &[serde_json::Value]) -> Result<String> {
+    for entry in manifest {
+        if manifest_entry_matches_handler(entry, handler) {
+            return entry
+                .get("handler_id")
+                .and_then(|v| v.as_str())
+                .map(str::to_string)
+                .ok_or_else(|| {
+                    anyhow::anyhow!("manifest entry for '{handler}' missing handler_id")
+                });
         }
-        match command.output() {
-            Ok(result) => {
-                output = Some(result);
-                break;
-            }
-            Err(err) if err.kind() == std::io::ErrorKind::NotFound => continue,
-            Err(err) => {
-                return Err(anyhow::anyhow!(
-                    "Failed to run agent package {} with {}: {}",
-                    package.display(),
-                    candidate,
-                    err
-                ));
-            }
-        }
     }
+    Err(anyhow::anyhow!(
+        "hook handler '{handler}' not found in capabilities/handlers/tools.json; run package build first"
+    ))
+}
 
-    let output = output.ok_or_else(|| {
-        anyhow::anyhow!("Python interpreter not found on PATH (tried python3, python)")
-    })?;
+#[cfg(feature = "driver")]
+fn emit_air_from_declarative_package(package: &Path, web_tools: bool) -> Result<String> {
+    use apxm_ais::chat::escape_air_string;
 
-    if !output.status.success() {
-        let stderr = String::from_utf8_lossy(&output.stderr);
-        return Err(anyhow::anyhow!(
-            "Agent package {} failed: {}",
-            package.display(),
-            stderr.trim()
-        ));
-    }
+    let agent_path = package.join("agent.toml");
+    let agent_text = std::fs::read_to_string(&agent_path)
+        .with_context(|| format!("Failed to read {}", agent_path.display()))?;
+    let agent: DeclarativeAgentToml = toml::from_str(&agent_text)
+        .with_context(|| format!("Failed to parse {}", agent_path.display()))?;
 
-    let air = String::from_utf8(output.stdout).with_context(|| {
-        format!(
-            "Agent package {} did not emit valid UTF-8",
-            package.display()
+    let tools_path = package.join("capabilities/handlers/tools.json");
+    let manifest: Vec<serde_json::Value> = if tools_path.is_file() {
+        serde_json::from_str(
+            &std::fs::read_to_string(&tools_path)
+                .with_context(|| format!("Failed to read {}", tools_path.display()))?,
         )
-    })?;
-    let trimmed = air.trim();
-    if trimmed.is_empty() {
-        return Err(anyhow::anyhow!(
-            "Agent package {} produced no .air output",
-            package.display()
-        ));
-    }
-    if !(trimmed.starts_with(';')
-        || trimmed.starts_with('%')
-        || trimmed.starts_with("module")
-        || trimmed.starts_with("func.func"))
-    {
-        return Err(anyhow::anyhow!(
-            "Agent package {} did not emit recognizable .air text on stdout.\n\
-             Expected MLIR text starting with 'module', 'func.func', ';', or '%'.",
-            package.display()
+        .with_context(|| format!("Failed to parse {}", tools_path.display()))?
+    } else {
+        Vec::new()
+    };
+
+    let persona = agent
+        .prompts
+        .get("persona")
+        .map(|rel| package.join(rel))
+        .filter(|path| path.is_file())
+        .and_then(|path| std::fs::read_to_string(path).ok())
+        .unwrap_or_default();
+
+    let turn_param = declarative_turn_param(&agent);
+    let loop_mode = declarative_loop_mode(&agent);
+    let loop_rearms = declarative_loop_rearms(&agent);
+    let use_recv_loop = loop_mode == "recv" && loop_rearms;
+
+    let mut prefix = String::new();
+    if !manifest.is_empty() {
+        prefix.push_str(&format!(
+            "{TYPESCRIPT_TOOLS_PREFIX}{}\n",
+            serde_json::to_string(&manifest)?
         ));
     }
 
-    Ok(air)
+    let mut main_body = String::new();
+    for (idx, hook) in agent.hooks.iter().enumerate() {
+        let handler_id = resolve_declarative_handler_id(&hook.handler, &manifest)?;
+        let name = format!("register_hook_{idx}");
+        main_body.push_str(&format!(
+            "    %{name} = ais.register_hook \"{}\" {{hook_match = \"{}\", hook_mode = \"{}\", python_hook_handler_id = \"{}\"}} : !ais.token\n",
+            hook.event,
+            hook.hook_match.as_deref().unwrap_or("*"),
+            hook.mode,
+            handler_id,
+        ));
+    }
+
+    if use_recv_loop {
+        let persona_attr = if persona.trim().is_empty() {
+            String::new()
+        } else {
+            format!("system_prompt = \"{}\"", escape_air_string(persona.trim()))
+        };
+        let mut recv_attrs = vec![
+            "mode = \"recv\"".to_string(),
+            "recv_once = \"false\"".to_string(),
+            "turn_agent = \"conversation\"".to_string(),
+            "turn_flow = \"turn\"".to_string(),
+            format!("turn_param = \"{turn_param}\""),
+        ];
+        if !persona_attr.is_empty() {
+            recv_attrs.push(persona_attr);
+        }
+        main_body.push_str(&format!(
+            "    %turn_loop = ais.autonomous \"{}\" {{{}}} (%arg0 : !ais.token) : !ais.token\n",
+            escape_air_string(persona.trim()),
+            recv_attrs.join(", "),
+        ));
+        main_body.push_str("    func.return %turn_loop : !ais.token\n");
+    } else {
+        main_body.push_str(&format!(
+            "    %run_turn = ais.flow_call \"conversation\" \"turn\" {{args = {{{turn_param} = \"{{{turn_param}}}\"}}, input_names = [\"{turn_param}\"]}} (%arg0 : !ais.token) : !ais.token\n"
+        ));
+        main_body.push_str("    %done = ais.done %run_turn : !ais.token\n");
+        main_body.push_str("    func.return %done : !ais.token\n");
+    }
+
+    let mut ask_attrs = vec!["conversational_turn = \"true\"".to_string()];
+    if !persona.trim().is_empty() {
+        ask_attrs.push(format!(
+            "system_prompt = \"{}\"",
+            escape_air_string(persona.trim())
+        ));
+    }
+    let mut groups = vec!["discovery"];
+    if web_tools {
+        groups.push("web");
+    }
+    ask_attrs.push(format!(
+        "capability_groups = [{}]",
+        groups
+            .iter()
+            .map(|group| format!("\"{group}\""))
+            .collect::<Vec<_>>()
+            .join(", ")
+    ));
+
+    let turn_body = format!(
+        "  func.func @conversation.turn(%arg0: !ais.token {{ais.param_name = \"{turn_param}\", ais.param_type = \"str\"}}) -> !ais.token {{\n    %answer = ais.ask \"{{{turn_param}}}\" {{{}}} : !ais.token\n    %turn_done = ais.done %answer : !ais.token\n    func.return %turn_done : !ais.token\n  }}\n",
+        ask_attrs.join(", ")
+    );
+
+    Ok(format!(
+        "{prefix}module {{\n  func.func @main(%arg0: !ais.token {{ais.param_name = \"{turn_param}\", ais.param_type = \"str\"}}) -> !ais.token attributes {{ais.entry}} {{\n{main_body}  }}\n{turn_body}}}\n"
+    ))
 }
 
 #[cfg(feature = "driver")]
@@ -415,25 +594,35 @@ fn is_mlir_air_text(text: &str) -> bool {
 pub(super) fn prepare_graph_input(
     input: &Path,
     config_path: Option<&Path>,
-) -> Result<(PathBuf, Option<tempfile::NamedTempFile>, PythonHandlersSidecar)> {
+) -> Result<(
+    PathBuf,
+    Option<tempfile::NamedTempFile>,
+    PythonHandlersSidecar,
+    TypeScriptHandlersSidecar,
+)> {
     if is_python_graph_input(input) {
         let (tmp, sidecar) = emit_air_from_python(input, config_path)?;
-        return Ok((tmp.path().to_path_buf(), Some(tmp), sidecar));
+        return Ok((tmp.path().to_path_buf(), Some(tmp), sidecar, None));
+    }
+
+    if is_typescript_graph_input(input) {
+        let (tmp, sidecar) = emit_air_from_typescript(input)?;
+        return Ok((tmp.path().to_path_buf(), Some(tmp), None, sidecar));
     }
 
     let input_format = ApxmPathFormat::from_path(input);
     if input_format.is_json_data() {
         return Err(anyhow::anyhow!(
             ".json is structured data for metrics, sessions, manifests, diagnostics, and API envelopes. \
-             Graph source input must be .air, or a Python frontend source that emits .air."
+             Graph source input must be .air, .py, or .ts frontend source that emits .air."
         ));
     }
 
     if input_format.is_air_source() {
         let air = std::fs::read_to_string(input)
             .with_context(|| format!("Failed to read {}", input.display()))?;
-        let (clean_air, sidecar) = extract_python_tools_sidecar(&air);
-        if sidecar.is_some() {
+        let (clean_air, python_sidecar, typescript_sidecar) = extract_handler_sidecars(&air);
+        if python_sidecar.is_some() || typescript_sidecar.is_some() {
             use std::io::Write;
 
             let mut tmp = tempfile::Builder::new()
@@ -444,18 +633,23 @@ pub(super) fn prepare_graph_input(
                 .context("Failed to write stripped .air to temporary file")?;
             tmp.flush()
                 .context("Failed to flush stripped .air temporary file")?;
-            return Ok((tmp.path().to_path_buf(), Some(tmp), sidecar));
+            return Ok((
+                tmp.path().to_path_buf(),
+                Some(tmp),
+                python_sidecar,
+                typescript_sidecar,
+            ));
         }
     }
 
     if !input_format.is_air_source() {
         return Err(anyhow::anyhow!(
-            "Unsupported workflow input '{}'. Use .air for canonical workflow source, .py for a frontend source, or .apxmobj with 'dekk agents run'.",
+            "Unsupported workflow input '{}'. Use .air for canonical workflow source, .py or .ts for frontend source, or .apxmobj with 'dekk agents run'.",
             input.display()
         ));
     }
 
-    Ok((input.to_path_buf(), None, None))
+    Ok((input.to_path_buf(), None, None, None))
 }
 
 #[cfg(feature = "driver")]
@@ -545,11 +739,14 @@ pub fn compile_command(
     } else {
         input.clone()
     };
-    let (graph_input, _python_air, python_tools_sidecar) = if input_source.is_dir() {
-        unreachable!("directory inputs are resolved to a canonical .air source before compilation")
-    } else {
-        prepare_graph_input(&input_source, compiler_config_path.as_deref())?
-    };
+    let (graph_input, _frontend_air, python_tools_sidecar, typescript_tools_sidecar) =
+        if input_source.is_dir() {
+            unreachable!(
+                "directory inputs are resolved to a canonical .air source before compilation"
+            )
+        } else {
+            prepare_graph_input(&input_source, compiler_config_path.as_deref())?
+        };
 
     let compile_start = std::time::Instant::now();
     let compiler = Compiler::with_opt_level(opt).context("Failed to initialize compiler")?;
@@ -645,6 +842,13 @@ pub fn compile_command(
             });
         }
 
+        if let Some(sidecar_data) = &typescript_tools_sidecar {
+            artifact.add_section(apxm_artifact::ArtifactSection {
+                kind: apxm_runtime::typescript_tools::CAPABILITY_NAME.into(),
+                data: sidecar_data.clone(),
+            });
+        }
+
         // Embed the supplied skill.toml as an apxm.skill_manifest.v1 section.
         // The embedded copy has artifact_hash stripped (it cannot live inside
         // the artifact it hashes); the server's
@@ -668,7 +872,7 @@ pub fn compile_command(
             .map_err(|err| anyhow::anyhow!("Failed to serialize artifact: {err}"))?;
         let artifact_time = artifact_start.elapsed();
 
-        let out_path = output.unwrap_or_else(|| graph_input.with_extension(extensions::ARTIFACT));
+        let out_path = output.unwrap_or_else(|| input_source.with_extension(extensions::ARTIFACT));
         std::fs::write(&out_path, &bytes)
             .with_context(|| format!("Failed to write {}", out_path.display()))?;
 
@@ -724,7 +928,7 @@ pub fn compile_command(
     }
 
     Err(anyhow::anyhow!(
-        "Input '{}' is not canonical AIR. Graph source must be .air, or a Python frontend source that emits .air.",
+        "Input '{}' is not canonical AIR. Graph source must be .air, .py, or .ts frontend source that emits .air.",
         input_source.display()
     ))
 }
@@ -775,54 +979,6 @@ mod tests {
     use super::*;
     use apxm_core::constants::mlir::syntax as mlir_syntax;
 
-    /// Equivalence proof for the G-1/AGT-4/G-3/ST-A2 gap fix: `apxm
-    /// compile-service` (via [`emit_air_from_agent_package`]) must produce
-    /// byte-identical host-loop AIR to what Studio's
-    /// `crates/studio/src/aircompile.rs::agent_package_to_air` emits for the
-    /// same real package, so Server can invoke this CLI as a subprocess
-    /// instead of duplicating Studio's private path dependency on this
-    /// repo's Python frontend.
-    ///
-    /// The fixture (`tests/fixtures/gao_host_loop.air`) was captured directly
-    /// from Studio's `agent_package_to_air(gao_root, "python/gao_agent.py",
-    /// studio_chat = true, web_tools = false, None)` — see
-    /// `workspace/studio/crates/studio/tests/gao_air_equivalence.rs` in the
-    /// sibling `studio` checkout, which generates it.
-    ///
-    /// This test locates the real bundled `gao` agent package the way it
-    /// exists in this coordinator's `workspace/` layout
-    /// (`workspace/studio/agents/gao`, overridable via `GAO_PACKAGE_DIR` for
-    /// other checkouts) and skips (rather than failing) when that sibling
-    /// checkout isn't present, since `agents` does not hard-depend on
-    /// `studio`'s repo layout in an ordinary standalone clone.
-    #[test]
-    fn compile_service_matches_studio_agent_package_to_air_for_gao() {
-        let gao_root = std::env::var_os("GAO_PACKAGE_DIR")
-            .map(std::path::PathBuf::from)
-            .unwrap_or_else(|| {
-                Path::new(env!("CARGO_MANIFEST_DIR")).join("../../../../../studio/agents/gao")
-            });
-        if !gao_root.is_dir() {
-            eprintln!(
-                "skipping compile_service_matches_studio_agent_package_to_air_for_gao: \
-                 no sibling studio checkout at {} (set GAO_PACKAGE_DIR to override)",
-                gao_root.display()
-            );
-            return;
-        }
-
-        let air = emit_air_from_agent_package(&gao_root, None, true, false, None)
-            .expect("apxm compile-service must compile the real gao package");
-
-        let fixture = include_str!("../../tests/fixtures/gao_host_loop.air");
-        assert_eq!(
-            air, fixture,
-            "apxm compile-service output diverged from Studio's agent_package_to_air \
-             fixture for the real gao package — regenerate the fixture only if the \
-             divergence is an intentional, reviewed frontend change"
-        );
-    }
-
     #[test]
     fn mlir_air_text_accepts_leading_sidecar_comments() {
         let text = format!(
@@ -844,6 +1000,27 @@ mod tests {
     #[test]
     fn mlir_air_text_rejects_json_graph() {
         assert!(!is_mlir_air_text("{\"nodes\": []}"));
+    }
+
+    #[test]
+    fn extracts_python_and_typescript_sidecars() {
+        let air = concat!(
+            "; __apxm_python_tools__ [{\"handler_id\":\"py\"}]\n",
+            "; __apxm_typescript_tools__ [{\"handler_id\":\"ts\"}]\n",
+            "module {\n}\n",
+        );
+
+        let (clean, python, typescript) = extract_handler_sidecars(air);
+
+        assert_eq!(clean, "module {\n}");
+        assert_eq!(
+            python.as_deref(),
+            Some(br#"[{"handler_id":"py"}]"#.as_slice())
+        );
+        assert_eq!(
+            typescript.as_deref(),
+            Some(br#"[{"handler_id":"ts"}]"#.as_slice())
+        );
     }
 
     #[test]

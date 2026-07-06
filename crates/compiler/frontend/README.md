@@ -6,7 +6,7 @@ Python frontend for authoring APXM graphs.
 
 The compiler frontend is a pure-Python package that lets users define APXM graphs using a `@compile()` decorator and `GraphRecorder` proxy. The recorder captures operation calls, builds an in-memory graph, and emits `.air` (MLIR text in the AIS dialect) for the compiler pipeline.
 
-`GraphRecorder.to_graph()` produces `ApxmGraph` — the shared frontend-internal graph model that TypeScript's `@apxm/frontend` package (`typescript/`) mirrors. See [`python/docs/graph-model.md`](python/docs/graph-model.md) for the formal field-by-field contract (WF-3).
+`GraphRecorder.to_graph()` produces `ApxmGraph` — the shared frontend-internal graph model used by TypeScript's `@apxm/frontend` package (`typescript/`). See [`python/docs/graph-model.md`](python/docs/graph-model.md) for the formal field-by-field contract.
 
 ## Package Structure
 
@@ -31,7 +31,6 @@ The compiler frontend is a pure-Python package that lets users define APXM graph
 | `operations.py` | All AIS operation types and metadata from the shared contract |
 | `constants.py` | Graph attribute constants from the shared contract |
 | `agents.py` | Built-in agent profiles from `apxm-acp` |
-| `emission.py` | MLIR emission helpers |
 | `providers.py` | Built-in provider specs and protocols from `apxm-backends` |
 | `models.py` | Built-in model metadata from `apxm-backends` |
 
@@ -119,4 +118,4 @@ code = g.ask(name="code", prompt="Implement: {plan}")          # auto-wires from
 2. Calls function with `GraphRecorder` + placeholder arguments
 3. User code creates nodes via `g.ask()`, `g.think()`, etc.
 4. `GraphRecorder` returns `ApxmGraph`
-5. `CompiledFlow` serializes graph → subprocess `apxm execute` → results
+5. `CompiledFlow` serializes graph → HTTP `/v1/execute` → results

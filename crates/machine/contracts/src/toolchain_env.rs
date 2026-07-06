@@ -2,7 +2,7 @@
 //!
 //! **Organization:** Runtime (`MlirEnvReport`), CLI (`apxm-cli`), driver (`apxm-driver`), and
 //! `build.rs` scripts (`apxm-compiler`, `apxm-cli`) should import names from here so spellings never
-//! drift. Dekk mirrors these keys via `.dekk.toml` `[env]` — keep that table aligned when adding keys.
+//! drift. Keep Dekk's `.dekk.toml` `[env]` table aligned when adding keys.
 //!
 //! Bindgen/`clang-sys` uses [`LIBCLANG_PATH`]; file naming patterns for `libclang` stay in
 //! the compiler build script (platform-specific binaries, not OS env contracts).

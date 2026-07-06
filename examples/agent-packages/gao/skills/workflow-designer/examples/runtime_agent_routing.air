@@ -1,0 +1,18 @@
+// runtime_agent_routing.air — spawn an agent with runtime ACP-profile
+// routing: `agent_route = "auto"` lets APXM select a profile matching the
+// declared `required_capabilities`, preferring `preferred_profiles` when
+// available (SPAWN_AGENT).
+//
+//  regeneration: the original  fixture quoted attribute keys
+// (`"agent_route"` instead of `agent_route`) and used `ais.return` instead
+// of `func.return` — syntax neither frontend's current op-spec-driven
+// emitter produces. Regenerated from Python's
+// `GraphRecorder.to_graph().to_air()` reference emitter.
+//
+//   apxm validate runtime_agent_routing.air
+module {
+  func.func @runtime_agent_routing() -> !ais.token attributes {ais.entry} {
+    %routed_worker = ais.spawn_agent "routed_worker" {agent_route = "auto", required_capabilities = ["execute"], preferred_profiles = ["codex"]} : !ais.token
+    func.return %routed_worker : !ais.token
+  }
+}

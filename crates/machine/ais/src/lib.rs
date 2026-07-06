@@ -24,7 +24,7 @@
 //! | Identity | NOP, IDENTITY |
 //! | Internal | CONST_STR, YIELD |
 //!
-//! NEGOTIATE, SPAWN_TEAM, GUARD, and CLAIM were deleted (RT-1): measured
+//! NEGOTIATE, SPAWN_TEAM, GUARD, and CLAIM were deleted: measured
 //! zero emissions across the example/test/studio-lowering corpus. This is a
 //! `.apxmobj` wire-format break; see [`operations::WIRE_INDEXED_OPERATIONS`]
 //! for the retired indices.

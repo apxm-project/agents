@@ -1,8 +1,6 @@
-//! Platform target-grammar resolution for `DELEGATE`/`COMMUNICATE` (RTG-8,
-//! `docs/plans/routing.md`).
+//! Platform target-grammar resolution for `DELEGATE`/`COMMUNICATE`.
 //!
-//! The platform target grammar (`docs/plans/platform.md` §5) accepts, at
-//! every entry point:
+//! The platform target grammar accepts, at every entry point:
 //!
 //! ```text
 //!  name:<agent>          → stage 1 only (explicit, exact lookup)
@@ -19,30 +17,24 @@
 //! an unprefixed exact id) is left untouched and falls through to that
 //! unchanged exact lookup.
 //!
-//! ## What's implemented vs. the full five-table pipeline
+//! ## Local routing contract
 //!
-//! This repo has no local subject/topic router (that's RTG-7, seeded from
-//! org `routing.toml`, and lives in the `os` repo). In its absence, `topic:`
-//! resolution here is scored against each registered agent's declared
+//! This repo has no local subject/topic router; that service is seeded from
+//! org `routing.toml` and lives in the `os` repo. `topic:` resolution here is
+//! scored against each registered agent's declared
 //! **discoverable** names (`AgentMetadata::discoverable` — "discoverable
 //! capability/tool names", the closest local analog to "subjects this agent
 //! answers to", platform.md rule 3: "agent packages declare what they
 //! answer"). `capability:` resolution is scored against each agent's
 //! declared **capabilities** (`AgentMetadata::capabilities`). Both reuse the
-//! shared RTG-10 scoring engine (`agent_scoring`) for the
+//! shared  scoring engine (`agent_scoring`) for the
 //! capability-fit/least-used/preferred/order tie-break (stage 4) over the
 //! candidate set filtered by the requested subject/capability (stage 2/3).
 //!
-//! Stage 5 (admission — `delegates_to`/`directory_policy`, "may the caller
-//! route to the chosen candidate?") has no local representation either
-//! (org topology is an `os`/`ORG` concept); this module does not enforce
-//! admission. Likewise, an org-declared **default member** fallback
-//! (platform.md rule 5, "no candidate ⇒ the org's declared default member")
-//! has no local config surface in this repo — org routing config is owned
-//! by the `os` repo (RTG-7). Both gaps are expected cross-repo follow-ups;
-//! see `docs/plans/routing.md` RTG-7/RTG-8. Locally, zero eligible
-//! candidates always yields the typed [`RuntimeError::NoRouteFound`] error
-//! — never a silent broadcast to every candidate.
+//! Admission (`delegates_to`/`directory_policy`) and org-default fallback are
+//! OS-owned topology concerns. This module does not enforce them. Locally, zero
+//! eligible candidates always yields the typed [`RuntimeError::NoRouteFound`]
+//! error, never a silent broadcast to every candidate.
 
 use std::collections::HashSet;
 
@@ -105,7 +97,7 @@ impl ScoringCandidate for AgentTargetCandidate {
 
 /// Resolve a parsed [`RoutedTarget`] into a concrete registered agent name
 /// using the org-member candidate set from the [`FlowRegistry`] and the
-/// shared RTG-10 scoring engine.
+/// shared  scoring engine.
 ///
 /// Returns the chosen agent's name, or [`RuntimeError::NoRouteFound`] when
 /// no registered agent declares the requested subject/capability. Never
@@ -310,7 +302,7 @@ mod tests {
     fn resolve_topic_uses_scoring_engine_for_ties() {
         // Both declare the topic; "idle" has never been used so with no
         // usage counts supplied both start at zero — the tighter capability
-        // fit (fewer extra discoverable entries) wins per RTG-10 precedence.
+        // fit (fewer extra discoverable entries) wins per  precedence.
         let registry = registry_with(vec![
             agent_with("wide", &[], &["receivables", "payables", "invoices"]),
             agent_with("tight", &[], &["receivables"]),

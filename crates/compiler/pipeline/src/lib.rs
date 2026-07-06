@@ -31,11 +31,15 @@ pub mod passes;
 pub mod template;
 pub mod token_estimate;
 
-pub use air_builder::{AirEdge, AirError, AirModule, AirModuleBuilder, AirNode, AirParam};
+pub use air_builder::{
+    AirEdge, AirError, AirModule, AirModuleBuilder, AirNode, AirParam, AirProgram, FrontendEdge,
+    FrontendGraph, FrontendGraphError, FrontendNode, FrontendParameter,
+};
 pub use api::{Context, Module, Pipeline};
 pub use passes::{
     ExecutionProfile, NodeProfile, PassManager, PassMetrics, PipelineDiagnostics, ProfileError,
-    find_pass, get_pass_count, get_pass_info, list_passes,
+    SelectBackendError, find_pass, get_pass_count, get_pass_info, list_passes,
+    parse_backend_catalog_toml, select_backend, select_backend_from_toml,
 };
 
 pub use apxm_core::error::compiler::{CompilerError, Result};

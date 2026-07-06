@@ -300,7 +300,7 @@ struct AssignPriorityPass : impl::AssignPriorityBase<AssignPriorityPass> {
                   << ", high=" << stats.highPrio
                   << ", normal=" << stats.normalPrio);
 
-    // Phase B Task 7: per-pass stats drained by apxm_module_drain_pass_stats.
+    // Per-pass stats are drained by apxm_module_drain_pass_stats.
     // fired_count = total ops that received a priority annotation.
     const uint64_t totalAnnotated = static_cast<uint64_t>(stats.criticalPrio)
                                   + stats.highPrio + stats.normalPrio;

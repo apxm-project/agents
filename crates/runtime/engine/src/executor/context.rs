@@ -4,6 +4,7 @@ use crate::dispatch::v1::{DispatchIrV1, derive_apxm_hints};
 use crate::metadata_keys as metadata;
 use crate::python_tools::PythonHandlerBridge;
 use crate::sandbox::SandboxRegistry;
+use crate::typescript_tools::TypeScriptHandlerBridge;
 use crate::{
     aam::{Aam, ScopeSpec},
     agent_pool::AgentPool,
@@ -84,8 +85,7 @@ pub struct ExecutionContext {
     /// invoke seam — never by the AIR program itself.
     pub tool_call_budgets: Option<Arc<std::collections::HashMap<String, usize>>>,
     /// Consumed per-tool call counts. Shared (`Arc`) into child contexts so a
-    /// spawned-agent / called-skill fan-out cannot multiply the budget — mirrors
-    /// `consumed_tokens`.
+    /// spawned-agent / called-skill fan-out cannot multiply the budget.
     pub tool_call_counts: Arc<std::sync::Mutex<std::collections::HashMap<String, usize>>>,
     /// Per-tool credential headers: capability name → an
     /// `Authorization` header value (e.g. `"Bearer …"`), pre-resolved by the
@@ -130,6 +130,9 @@ pub struct ExecutionContext {
     /// `@apxm.tool`-decorated Python handlers. `None` when no Python
     /// tools are registered in the artifact.
     pub python_handler_bridge: Option<Arc<PythonHandlerBridge>>,
+    /// TypeScript tool bridge for `@tool` / hook handlers compiled from the
+    /// TypeScript frontend. `None` when no TypeScript tools are registered.
+    pub typescript_handler_bridge: Option<Arc<TypeScriptHandlerBridge>>,
     /// Per-artifact registry of program-authored lifecycle hooks (`@hook`),
     /// resolved at load from the hooks sidecar / `REGISTER_HOOK` nodes. Shares
     /// the python tool bridge's lifetime and is inherited by child contexts so
@@ -160,11 +163,11 @@ pub struct ExecutionContext {
     /// Consent broker for per-call host capability approval.
     pub consent_broker: std::sync::Arc<dyn apxm_core::types::consent::ConsentBroker>,
     /// Prompt-supplement text a `pre_turn` hook rendered for the turn currently
-    /// in flight (`set_system`/`prepend_system` decision; G-3). `pre_turn` fires
+    /// in flight (`set_system`/`prepend_system` decision; ). `pre_turn` fires
     /// before the top-level ask, in an outer middleware
     /// (`ConversationMemoryMiddleware`), so this is how its decision reaches the
-    /// ask handler's system-prompt composition deeper in the call stack —
-    /// mirrors the `dispatch_ir_v1` interior-mutability pattern above. `pre_ask`
+    /// ask handler's system-prompt composition deeper in the call stack.
+    /// `pre_ask`
     /// hooks still run afterward and may further override/prepend on top.
     pub pending_turn_prompt_supplement: Arc<parking_lot::RwLock<Option<String>>>,
 }
@@ -261,6 +264,7 @@ impl ExecutionContext {
             default_model_profile: None,
             agent_pool: Arc::new(AgentPool::new(4, std::time::Duration::from_secs(300))),
             python_handler_bridge: None,
+            typescript_handler_bridge: None,
             hook_registry: None,
             session_ledger: None,
             current_span_id: None,
@@ -438,7 +442,8 @@ impl ExecutionContext {
             host_id: self.host_id.as_deref(),
             agent_code: agent_code_owned.as_deref(),
             grant_id: None,
-            permission_timeout: crate::capability::interceptor::PreInvokeContext::permission_timeout_from_env(),
+            permission_timeout:
+                crate::capability::interceptor::PreInvokeContext::permission_timeout_from_env(),
         };
         self.capability_system
             .invoke_with_timeout_ctx(name, args, timeout, Some(approval_ctx))
@@ -626,6 +631,7 @@ impl ExecutionContext {
             default_model_profile: self.default_model_profile.clone(),
             agent_pool: Arc::clone(&self.agent_pool),
             python_handler_bridge: self.python_handler_bridge.as_ref().map(Arc::clone),
+            typescript_handler_bridge: self.typescript_handler_bridge.as_ref().map(Arc::clone),
             hook_registry: self.hook_registry.as_ref().map(Arc::clone),
             session_ledger: self.session_ledger.as_ref().map(Arc::clone),
             current_span_id: self.current_span_id.clone(),
@@ -685,6 +691,12 @@ impl ExecutionContext {
     /// Set the Python tool bridge for dispatching to `@apxm.tool` handlers.
     pub fn with_python_handler_bridge(mut self, bridge: Arc<PythonHandlerBridge>) -> Self {
         self.python_handler_bridge = Some(bridge);
+        self
+    }
+
+    /// Set the TypeScript tool bridge for dispatching to `@tool` / hook handlers.
+    pub fn with_typescript_handler_bridge(mut self, bridge: Arc<TypeScriptHandlerBridge>) -> Self {
+        self.typescript_handler_bridge = Some(bridge);
         self
     }
 
@@ -847,10 +859,8 @@ mod tests {
             &self,
             _name: &str,
             _args: &HashMap<String, apxm_core::types::values::Value>,
-        ) -> Result<
-            apxm_capability_iface::CapabilitySandboxPreflight,
-            apxm_core::error::RuntimeError,
-        > {
+        ) -> Result<apxm_capability_iface::CapabilitySandboxPreflight, apxm_core::error::RuntimeError>
+        {
             Ok(apxm_capability_iface::CapabilitySandboxPreflight::Direct)
         }
     }

@@ -180,18 +180,6 @@ fn boxed_core_payload_from_json(
         boxed!(ExecutionStartedPayload)
     } else if kind_name == kind::EXECUTE_COMPLETE.name() {
         boxed!(ExecuteCompletePayload)
-    } else if kind_name == kind::ORCHESTRATOR_SLEEP.name() {
-        boxed!(OrchestratorSleepPayload)
-    } else if kind_name == kind::ORCHESTRATOR_WAKE.name() {
-        boxed!(OrchestratorWakePayload)
-    } else if kind_name == kind::GOAL_GATE_VERDICT.name() {
-        boxed!(GoalGateVerdictPayload)
-    } else if kind_name == kind::GOAL_CONVERGED.name() {
-        boxed!(GoalConvergedPayload)
-    } else if kind_name == kind::GOAL_NEEDS_ANOTHER_PASS.name() {
-        boxed!(GoalNeedsAnotherPassPayload)
-    } else if kind_name == kind::GOAL_HALTED.name() {
-        boxed!(GoalHaltedPayload)
     } else if kind_name == kind::MEMORY_READ.name() {
         boxed!(MemoryReadPayload)
     } else if kind_name == kind::MEMORY_WRITE.name() {
@@ -820,81 +808,6 @@ pub struct ExecuteCompletePayload {
 }
 impl_event_payload!(ExecuteCompletePayload, kind::EXECUTE_COMPLETE);
 
-/// Native goal caller parked after launching a server-owned workflow.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct OrchestratorSleepPayload {
-    pub execution_id: String,
-    pub session_id: String,
-    pub session_dir: String,
-    pub workflow_path: String,
-    pub bundle_dir: String,
-    pub artifacts: serde_json::Value,
-    pub plan: serde_json::Value,
-    pub control: serde_json::Value,
-    pub wake_on: Vec<String>,
-    pub event_loop: String,
-}
-impl_event_payload!(OrchestratorSleepPayload, kind::ORCHESTRATOR_SLEEP);
-
-/// Native goal wake event emitted when the workflow reaches a terminal state.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct OrchestratorWakePayload {
-    pub execution_id: String,
-    pub session_id: String,
-    pub terminal_event: String,
-    pub outcome: String,
-    pub reason: String,
-}
-impl_event_payload!(OrchestratorWakePayload, kind::ORCHESTRATOR_WAKE);
-
-/// Typed gate verdict emitted after a bounded goal pass. Mirrors
-/// [`crate::types::goal::GateVerdict`] plus the pass coordinates so observers
-/// can see exactly what the gate decided and where in the budget it occurred.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct GoalGateVerdictPayload {
-    pub execution_id: String,
-    /// Zero-based index of the pass that produced this verdict.
-    pub iteration: usize,
-    pub max_iterations: usize,
-    /// Wire spelling of the gate status (`done` / `needs_more` / `blocked` / `unsafe`).
-    pub status: String,
-    pub reason: String,
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub remaining: Vec<String>,
-}
-impl_event_payload!(GoalGateVerdictPayload, kind::GOAL_GATE_VERDICT);
-
-/// The goal converged: the gate reported the goal is met.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct GoalConvergedPayload {
-    pub execution_id: String,
-    pub iteration: usize,
-    pub reason: String,
-}
-impl_event_payload!(GoalConvergedPayload, kind::GOAL_CONVERGED);
-
-/// The goal needs another admitted pass; the runtime decided to iterate.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct GoalNeedsAnotherPassPayload {
-    pub execution_id: String,
-    pub iteration: usize,
-    /// Zero-based index of the next pass to run.
-    pub next_iteration: usize,
-    pub reason: String,
-}
-impl_event_payload!(GoalNeedsAnotherPassPayload, kind::GOAL_NEEDS_ANOTHER_PASS);
-
-/// The goal stopped without converging: blocked, unsafe, or pass budget spent.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct GoalHaltedPayload {
-    pub execution_id: String,
-    pub iteration: usize,
-    pub reason: String,
-    /// True when halting solely because the pass budget was exhausted.
-    pub exhausted: bool,
-}
-impl_event_payload!(GoalHaltedPayload, kind::GOAL_HALTED);
-
 /// A memory read event.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct MemoryReadPayload {
@@ -943,8 +856,7 @@ pub struct SchedulerDecisionPayload {
 }
 impl_event_payload!(SchedulerDecisionPayload, kind::SCHEDULER_DECISION);
 
-/// A model-routing candidate rejected before final selection (RTG-11). Mirrors
-/// `apxm_runtime::model_router::ModelRouteRejection` without creating a
+/// A model-routing candidate rejected before final selection. Kept here without creating a
 /// dependency from `apxm-core` back onto the runtime crate.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ModelRouteRejectionPayload {
@@ -960,8 +872,8 @@ pub struct ModelRouteRejectionPayload {
     pub reason: String,
 }
 
-/// A `ModelRouter::select` decision, made observable (RTG-11,
-/// `docs/plans/routing.md`): the chosen backend/model, why it was chosen,
+/// Routing metadata emitted by `ModelRouter::select`: the chosen backend/model,
+/// why it was chosen,
 /// and every candidate that was passed over with its own reason.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ModelRouteDecisionPayload {
@@ -980,8 +892,7 @@ pub struct ModelRouteDecisionPayload {
 }
 impl_event_payload!(ModelRouteDecisionPayload, kind::MODEL_ROUTE_DECISION);
 
-/// An agent-routing candidate rejected before final selection. Mirrors
-/// `apxm_runtime::agent_router::AgentRouteRejection`.
+/// An agent-routing candidate rejected before final selection.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AgentRouteRejectionPayload {
     /// Candidate profile name.
@@ -993,7 +904,7 @@ pub struct AgentRouteRejectionPayload {
     pub reason: String,
 }
 
-/// An `AgentRouter::route_requests` decision, made observable (RTG-11): the
+/// An `AgentRouter::route_requests` decision, made observable: the
 /// chosen agent profile, why, and which candidates were rejected and why.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AgentRouteDecisionPayload {
@@ -1175,7 +1086,7 @@ impl_event_payload!(TurnBoundaryPayload, kind::TURN_BOUNDARY);
 // Emitted alongside the Layer 1 graph events whenever the executor is
 // inside an agent scope. See `crates/runtime/engine/src/executor/
 // agent_scope.rs` for the scope primitive and CLAUDE.md §10 for the
-// canonical pairing rules. Field shapes mirror the host app's dispatch
+// canonical pairing rules. Field shapes follow the host app's dispatch
 // event-kind payloads so the relay can stop translating.
 // ===========================================================================
 

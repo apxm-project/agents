@@ -174,9 +174,14 @@ pub fn build_pass_list(
                     // analysis only emits metadata for prompts that are already
                     // prefix-compatible.
                     passes.extend(
-                        [SCHEDULING, CANONICALIZER, CAPABILITY_BINDING, BIND_CAPABILITY_HANDLERS]
-                            .iter()
-                            .map(|s| s.to_string()),
+                        [
+                            SCHEDULING,
+                            CANONICALIZER,
+                            CAPABILITY_BINDING,
+                            BIND_CAPABILITY_HANDLERS,
+                        ]
+                        .iter()
+                        .map(|s| s.to_string()),
                     );
                 }
                 OptimizationTarget::Balanced => {

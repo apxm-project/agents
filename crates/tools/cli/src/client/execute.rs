@@ -1,10 +1,10 @@
-//! Hand-rolled execute/turn paths not yet in the session OpenAPI contract.
+//! Execute and turn client paths outside the generated session client.
 
 use std::collections::HashMap;
 
 use anyhow::{Context, Result, anyhow};
 use reqwest::Response;
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 
 use super::{Client, ClientInfo};
 
@@ -28,6 +28,27 @@ pub struct ExecuteRequest {
     pub owner: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub user_text: Option<String>,
+}
+
+/// `POST /v1/agents/packages/{id}/sessions` request body.
+#[derive(Debug, Clone, Serialize, Default)]
+pub struct CreatePackageSessionRequest {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub system_prompt: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub backend: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub model: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub session_id: Option<String>,
+}
+
+/// `POST /v1/agents/packages/{id}/sessions` response.
+#[derive(Debug, Clone, Deserialize)]
+pub struct CreatePackageSessionResponse {
+    pub session_id: String,
+    pub events_url: String,
+    pub stream_url: String,
 }
 
 impl Client {
@@ -89,6 +110,35 @@ impl Client {
             .with_context(|| format!("bad revoke JSON from {url}"))
     }
 
+    /// `POST /v1/agents/packages/{package_id}/sessions` — start a thin package chat session.
+    pub async fn create_package_session(
+        &self,
+        package_id: &str,
+        req: &CreatePackageSessionRequest,
+    ) -> Result<CreatePackageSessionResponse> {
+        let url = format!(
+            "{}/v1/agents/packages/{package_id}/sessions",
+            self.baseurl()
+        );
+        let resp = self
+            .client()
+            .post(&url)
+            .json(req)
+            .send()
+            .await
+            .with_context(|| format!("failed to POST {url}"))?;
+        if !resp.status().is_success() {
+            let status = resp.status();
+            let text = resp.text().await.unwrap_or_default();
+            return Err(anyhow!(
+                "package session returned {status} for {url}: {text}"
+            ));
+        }
+        resp.json()
+            .await
+            .with_context(|| format!("bad package session JSON from {url}"))
+    }
+
     /// `POST /v1/execute/stream` — raw SSE response for the caller to render.
     pub async fn execute_stream(&self, req: &ExecuteRequest) -> Result<Response> {
         let url = format!("{}/v1/execute/stream", self.baseurl());
@@ -147,7 +197,7 @@ mod tests {
     use tokio::net::TcpListener;
 
     /// `apxm chat`'s in-program-loop path (`run_dumb_pipe`, `chat.rs`) and
-    /// apxm-os's channel-chat convergence target (G-6) both name
+    /// apxm-os's channel-chat convergence target both name
     /// `POST /v1/conversations/{session_id}/message` as the shared turn-input
     /// primitive (`server/crates/core/src/conversations.rs`,
     /// `CONVERSATION_MESSAGE` route constant). This pins the CLI side of that
@@ -183,8 +233,8 @@ mod tests {
             "apxm chat must address the session-scoped turn-input route, not a bespoke path"
         );
         let body = request.split("\r\n\r\n").nth(1).unwrap_or_default();
-        let parsed: serde_json::Value = serde_json::from_str(body.trim_end_matches('\0'))
-            .expect("body must be JSON");
+        let parsed: serde_json::Value =
+            serde_json::from_str(body.trim_end_matches('\0')).expect("body must be JSON");
         assert_eq!(
             parsed,
             serde_json::json!({ "message": "hello there" }),

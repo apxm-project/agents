@@ -30,17 +30,6 @@ MCP should stay a thin interface over APXM server/runtime capabilities.
   `skill_call`.
 - Workflow control: `workflow_start`, `workflow_status`,
   `workflow_events`, `workflow_cancel`.
-- Native orchestration: `goal_start`, `goal_status`, `goal_events`,
-  `goal_cancel`.
-
-`goal_start` compiles a bounded task/worker plan into a server-owned goal run.
-The orchestrator agent calls it once, records the returned `goal_id`, then
-sleeps until `/v1/goals/{goal_id}/events/stream` or `goal_events` returns
-aggregate `orchestrator_wake`, `error`, or `turn_aborted`, or `goal_status`
-reports a terminal state. Use the current `execution_id` only for workflow
-drill-down. Real ACP workers require a runtime-minted capability grant for
-the `SPAWN_AGENT` tool binding, passed as a `grant_*` id in
-`capability_grant_ids`.
 
 ## Stdio MCP Tools
 
@@ -88,5 +77,4 @@ handler literals.
 
 - Putting business logic in the MCP server. It is a thin shim.
 - Accepting secrets as tool arguments.
-- Adding a second orchestration status/events/cancel control plane. Use
-  `goal_status/events/cancel` for runs started by `goal_start`.
+- Adding a second orchestration status/events/cancel control plane.

@@ -124,7 +124,7 @@ pub(super) async fn execute_local(
         });
     }
 
-    // RTG-8: `topic:`/`capability:` targets resolve to a concrete member
+    // `topic:`/`capability:` targets resolve to a concrete member
     // through the routing pipeline before the exact lookup below; anything
     // else (including bare exact ids) passes through unchanged.
     let resolved_recipient = resolve_target_or_passthrough(&ctx.flow_registry, recipient)?;
@@ -413,7 +413,7 @@ mod tests {
         node
     }
 
-    /// Regression (RTG-8): an exact-id recipient with no registered flow and
+    /// Regression: an exact-id recipient with no registered flow and
     /// no inline STM agent info fails with exactly the same "not found" hint
     /// as before target-grammar resolution was added.
     #[tokio::test]
@@ -436,7 +436,7 @@ mod tests {
         }
     }
 
-    /// RTG-8: `topic:<subject>` resolves to a concrete registered member via
+    /// `topic:<subject>` resolves to a concrete registered member via
     /// the routing pipeline before the exact flow lookup runs.
     #[tokio::test]
     async fn topic_recipient_resolves_and_executes() {
@@ -458,7 +458,7 @@ mod tests {
         assert_eq!(result, Value::Null);
     }
 
-    /// RTG-8: `capability:<cap-id>` resolves to the declaring member.
+    /// `capability:<cap-id>` resolves to the declaring member.
     #[tokio::test]
     async fn capability_recipient_resolves_and_executes() {
         let ctx = test_context().await;
@@ -477,7 +477,7 @@ mod tests {
         assert_eq!(result, Value::Null);
     }
 
-    /// RTG-8: zero candidates for a routed target never falls back to a
+    /// zero candidates for a routed target never falls back to a
     /// broadcast — it's a typed no-route error (platform.md rule 5).
     #[tokio::test]
     async fn topic_recipient_with_no_candidate_returns_no_route_error() {

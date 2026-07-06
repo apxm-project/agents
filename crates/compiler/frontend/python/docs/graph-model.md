@@ -6,12 +6,10 @@ frontend-internal graph model**. It is produced by
 in-memory result of recording a Python-authored flow (`@compile()` /
 `g.<op>()` calls) before it is lowered to `.air` text.
 
-Python is the **reference emitter**: TypeScript's `@apxm/frontend` package
-(`crates/compiler/frontend/typescript/src/graph.ts`) mirrors this exact
-shape and is checked against it for structural parity. This document is
-that contract, written down once so both frontends (and anyone adding a
-third) can be verified against it without reading two implementations
-side by side.
+Python and TypeScript both emit AIR from this graph shape. TypeScript's
+`@apxm/frontend` package (`crates/compiler/frontend/typescript/src/graph.ts`)
+uses the same fields so each frontend can be verified against one shared
+contract without reading two implementations side by side.
 
 ## What this is not
 
@@ -84,10 +82,8 @@ identical.
 
 ## Field semantics
 
-- **`nodes` order** is recording order, not execution order. `to_air()`
-  topologically sorts by `edges` before emitting; TS's emitter does the
-  same (`topologicalSort` in both `apxm/utils.py` and
-  `typescript/src/utils.ts`).
+- **`nodes` order** is recording order, not execution order. AIR emission
+  topologically sorts by `edges` in the Rust builder that both frontends call.
 - **`edges[].dependency`** — only `"Data"` edges become SSA operands in
   emitted MLIR (an op's declared inputs are its incoming Data edges, in
   edge order). `"Control"` and `"Effect"` edges affect topological
@@ -103,13 +99,9 @@ identical.
   they reach `ApxmGraph` — `GraphRecorder`'s op methods (`g.ask()`,
   `g.spawn_agent()`, ...) normalize Python-native inputs (dicts to JSON
   strings where the op expects a JSON blob, enums to their string value,
-  etc.) before storing them. `_generated/emission.py`'s per-op emitters
-  decide which attributes become MLIR positional operands, `to "..."`
-  syntax, or `{key = value}` keyword attributes; an attribute an emitter
-  doesn't reference is silently dropped from the emitted text (it is not
-  an error — several structural ops, e.g. `PAUSE`/`RESUME`/`FENCE`,
-  currently emit no attributes at all beyond the bare op and its data
-  operands).
+  etc.) before storing them. The Rust AIR builder decides which attributes
+  become MLIR positional operands, `to "..."` syntax, or `{key = value}`
+  keyword attributes.
 
 ## Producing this shape
 
@@ -121,22 +113,22 @@ greeting = g.ask(name="greet", prompt="Greet {name} warmly.")
 g.done(greeting)
 
 graph = g.to_graph()        # -> ApxmGraph
-air = graph.to_air()        # -> ".air" MLIR text
-# or, equivalently and including the python-tools sidecar comment:
+air = graph.to_air()        # -> AIR text emitted by the Rust AIR builder
+# or, equivalently and including python-tools metadata:
 air = g.to_air()
 ```
 
 `GraphRecorder.to_graph()` validates every recorded backend route
 (`apxm.backends.validate_graph_routes`) and returns a defensive copy: the
 `ApxmGraph` it returns is independent of further mutations to the
-recorder. `to_air()` is exactly `to_graph().to_air()` plus, when Python
-`@tool`-decorated functions were registered, a leading
-`// apxm:python-tools ...` sidecar comment carrying their manifest.
+recorder. The compiler path consumes AIR plus, when Python
+`@tool`-decorated functions were registered, sidecar metadata carrying their
+manifest.
 
-## Cross-frontend parity vectors
+## Cross-frontend AIR vectors
 
-The `.air` output both frontends must independently produce
-grammar-valid text for lives in the coordinator's
+The `.air` output frontends must independently produce grammar-valid text for
+lives in the coordinator's
 `workspace/contracts/vectors/air/` vector set (WF-2, hardened under WF-3).
 See that directory's `manifest.json` for the fixture list and
 [`air-grammar.md`](../../../../../contracts/docs/air-grammar.md) for the

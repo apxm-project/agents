@@ -1,14 +1,13 @@
 //! `apxm-observability` — one telemetry bootstrap for every APXM service.
 //!
-//! Extracted from `apxm-server`'s original `observability.rs` (OBS-3) so
-//! server/os/auth/studio share exactly one definition of:
+//! Shared telemetry bootstrap for server, OS, auth, and Studio:
 //!
 //! - structured logging (`tracing_subscriber`, plain or `APXM_LOG_FORMAT=json`)
 //! - OTLP trace export (`tracing-opentelemetry` + `opentelemetry-otlp`), when
 //!   an endpoint is configured
 //! - W3C `traceparent` extraction from an inbound request and propagation
 //!   into outgoing spans/requests, so a trace stays one continuous trace
-//!   across every service-to-service hop (joint acceptance with HOST WS-B,
+//!   across every service-to-service hop (joint host-plane acceptance,
 //!   already landed in `os` — see `os-listeners::relay_http`).
 //!
 //! Each service keeps its own `main`/service-startup call site; this crate
@@ -20,9 +19,7 @@ mod metrics;
 mod traceparent;
 
 pub use metrics::AppMetrics;
-pub use traceparent::{
-    extract_traceparent, inject_current_traceparent, traceparent_from_headers,
-};
+pub use traceparent::{extract_traceparent, inject_current_traceparent, traceparent_from_headers};
 
 #[cfg(feature = "reqwest")]
 pub use traceparent::inject_traceparent_reqwest;
@@ -150,16 +147,15 @@ pub fn init(config: &Config) -> Result<Option<OtelExporter>, InitError> {
     }))
 }
 
-/// Initialize OTLP metric export (OBS-4 decision-5) and return the
-/// decision-5 [`AppMetrics`] instrument set.
+/// Initialize OTLP metric export and return the [`AppMetrics`] instrument set.
 ///
 /// Reuses `config.otlp_endpoint` — the same OTLP/HTTP collector that
 /// receives traces also receives metrics, which is normal OTLP practice
 /// (one collector, multiple signal pipelines). When no endpoint is
 /// configured, metrics are still instrumented (so call sites never need to
 /// branch on whether export is enabled) but are recorded into a
-/// non-exporting meter provider and dropped — mirrors [`init`]'s "degrade to
-/// no export, never panic" contract.
+/// non-exporting meter provider and dropped. This keeps the same "degrade to
+/// no export, never panic" contract as [`init`].
 ///
 /// Call once, at process startup — independent of [`init`] (traces); a
 /// service typically calls both.

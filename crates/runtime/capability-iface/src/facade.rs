@@ -1,15 +1,13 @@
 //! Executor's actual usage surface of `CapabilitySystem`.
 //!
-//! This is *not* a mirror of `CapabilitySystem`'s full public API (which also
+//! This is not `CapabilitySystem`'s full public API (which also
 //! has registration, interceptor management, AAM wiring, approval-store
 //! access, ...) — it is exactly the methods `apxm-runtime`'s executor module
 //! calls on `ExecutionContext.capability_system` from outside the capability
-//! module itself (verified against the real call sites in `context.rs`,
-//! `handlers/inv_cap.rs`, `handlers/llm/tool_dispatch.rs`, and
-//! `executor/hook_driver.rs`).
+//! module itself.
 //!
-//! [`ApprovalContext`] mirrors capability's internal `PreInvokeContext` minus
-//! its `registry: &CapabilityRegistry` field: the only thing that field was
+//! [`ApprovalContext`] carries capability pre-invoke fields minus its
+//! `registry: &CapabilityRegistry` field: the only thing that field was
 //! used for (checking one capability's `requires_approval` metadata) is
 //! something the concrete `invoke_with_timeout_ctx` implementation can — and,
 //! after this seam, does — resolve itself from its own registry, so the
@@ -28,11 +26,10 @@ use crate::events::ExecutionEventEmitter;
 use crate::metadata::RuntimeCapability;
 use crate::sandbox::{IsolationLevel, SandboxRegistry};
 
-/// Result of checking whether a capability invocation can be sandboxed —
-/// moved here (from `apxm-runtime`'s `capability` module) because it's the
-/// return type of [`CapabilityFacade::sandbox_preflight`], the write-boundary
-/// admission check every direct (non-read-only) tool call goes through
-/// (`executor::handlers::inv_cap::enforce_write_boundary`).
+/// Result of checking whether a capability invocation can be sandboxed.
+///
+/// Runtime admission uses this as confinement evidence for the write boundary;
+/// the sandbox backend itself does not decide permission.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum CapabilitySandboxPreflight {
     /// The capability does not request sandbox routing for these arguments.
@@ -73,11 +70,8 @@ pub struct ApprovalContext<'a> {
 #[async_trait]
 pub trait CapabilityFacade: Send + Sync {
     /// Invoke a capability by name with validation, no approval gate.
-    async fn invoke(
-        &self,
-        name: &str,
-        args: HashMap<String, Value>,
-    ) -> Result<Value, RuntimeError>;
+    async fn invoke(&self, name: &str, args: HashMap<String, Value>)
+    -> Result<Value, RuntimeError>;
 
     /// Invoke a capability with an explicit timeout and optional
     /// approval-gate context.
@@ -111,9 +105,11 @@ pub trait CapabilityFacade: Send + Sync {
     /// Check whether a capability invocation would route through a
     /// compatible sandbox backend, without executing the capability.
     ///
-    /// Load-bearing for the write-boundary admission check every direct
-    /// (non-read-only) tool call goes through: a capability that would run
-    /// sandboxed is treated as admitted without needing an explicit grant.
+    /// Load-bearing for the runtime write-boundary admission check every direct
+    /// (non-read-only) tool call goes through. A capability that will run in a
+    /// compatible sandbox can be admitted without an explicit grant because the
+    /// runtime has verified confinement first; the sandbox backend is still not
+    /// the policy decision engine.
     fn sandbox_preflight(
         &self,
         name: &str,

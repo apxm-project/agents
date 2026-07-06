@@ -14,7 +14,6 @@ use apxm_core::types::values::Value;
 
 use crate::token_usage::TokenUsageSummary;
 
-
 /// Optional observer for execution events.
 ///
 /// Implementors receive fine-grained lifecycle callbacks during DAG
@@ -187,7 +186,7 @@ pub trait ExecutionEventEmitter: Send + Sync {
     // ── Scheduler ───────────────────────────────────────────────────
     fn emit_scheduler_decision(&self, _node_id: u64, _delay: Duration, _reason: &str) {}
 
-    // ── Routing (RTG-11) ────────────────────────────────────────────
+    // ── Routing ────────────────────────────────────────────
     /// A `ModelRouter::select` decision: chosen backend/model, why, and
     /// every candidate passed over with its own reason. `rejected_candidates`
     /// entries are `(candidate, backend, reason_kind, reason)` tuples —

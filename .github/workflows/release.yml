@@ -1,9 +1,9 @@
 name: release
 
 # Tag-triggered publish pipeline for the TypeScript packages built out of
-# this (private) repo. Per masterplan decision D6, both packages publish to
-# npm as Apache-2.0-licensed, compiled-artifact-only packages (dist/ + typings
-# + LICENSE, no source mirror) even though this repo itself stays MIT.
+# this private repo. Both packages publish to npm as Apache-2.0-licensed,
+# compiled-artifact-only packages (dist/ + typings + LICENSE) even though
+# this repo itself stays MIT.
 #
 # Convention: push a tag matching one of
 #   frontend-v<version>   -> build+typecheck+test+publish @apxm/frontend to npm

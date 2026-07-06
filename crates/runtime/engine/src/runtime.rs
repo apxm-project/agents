@@ -5,6 +5,8 @@ use crate::model_router::{ModelRouter, ModelRouterConfig, ProfileRegistry};
 use crate::python_tools;
 use crate::python_tools::{PythonHandlerBridge, PythonHandlerRegistry};
 use crate::sandbox::SandboxRegistry;
+use crate::typescript_tools;
+use crate::typescript_tools::{TypeScriptHandlerBridge, TypeScriptHandlerRegistry};
 use crate::{
     aam::Aam,
     agent_pool::AgentPool,
@@ -39,7 +41,7 @@ use serde::{Deserialize, Serialize};
 use std::{collections::HashMap, path::Path, sync::Arc};
 
 /// Outcome of [`Runtime::execute_artifact_with_session_emitter_and_metadata_or_park`]
-/// (G-6 narrow park observability): either the artifact ran to completion, or
+/// ( narrow park observability): either the artifact ran to completion, or
 /// a node parked on the conversation-loop's session-recv key before that —
 /// whichever happened first.
 ///
@@ -140,7 +142,7 @@ pub struct RuntimeConfig {
     /// aggregates only.
     #[serde(default)]
     pub metrics_level: apxm_core::types::MetricsLevel,
-    /// Package-level default `model_profile` (RTG-5), sourced from the
+    /// Package-level default `model_profile`, sourced from the
     /// owning package's `agent.toml [runtime].default_model_profile` by the
     /// host loading the package. Applied to LLM requests whose node declares
     /// no `model_profile` of its own; an explicit node-level `model_profile`
@@ -230,7 +232,7 @@ pub struct Runtime {
     process_table: Arc<ProcessTable>,
     /// Optional ModelRouter for dynamic backend/model selection with circuit breakers.
     model_router: Option<Arc<ModelRouter>>,
-    /// Optional ProfileRegistry, instantiated beside `model_router` (RTG-5),
+    /// Optional ProfileRegistry, instantiated beside `model_router`,
     /// resolving `model_profile` node attributes into candidate models.
     profile_registry: Option<Arc<ProfileRegistry>>,
     /// Agent warm pool for reusing spawned agent sessions.
@@ -304,7 +306,7 @@ impl Runtime {
         event_emitter: Option<Arc<dyn ExecutionEventEmitter>>,
         session_dir: Option<String>,
     ) -> ExecutionContext {
-        self.build_context_with_bridge(session_id, event_emitter, session_dir, None)
+        self.build_context_with_bridge(session_id, event_emitter, session_dir, None, None)
     }
 
     fn build_context_with_bridge(
@@ -313,6 +315,7 @@ impl Runtime {
         event_emitter: Option<Arc<dyn ExecutionEventEmitter>>,
         session_dir: Option<String>,
         python_handler_bridge: Option<Arc<PythonHandlerBridge>>,
+        typescript_handler_bridge: Option<Arc<TypeScriptHandlerBridge>>,
     ) -> ExecutionContext {
         // Bound to a concrete `Arc<CapabilitySystem>` local first: passing
         // `Arc::clone(&self.capability_system)` directly would fix `Arc::clone`'s
@@ -369,6 +372,9 @@ impl Runtime {
         ctx.default_model_profile = self.config.default_model_profile.clone();
         if let Some(bridge) = python_handler_bridge {
             ctx = ctx.with_python_handler_bridge(bridge);
+        }
+        if let Some(bridge) = typescript_handler_bridge {
+            ctx = ctx.with_typescript_handler_bridge(bridge);
         }
         // Attach a per-artifact hook registry (lifetime = the python tool bridge,
         // inherited by child contexts). REGISTER_HOOK nodes populate it; the
@@ -513,7 +519,7 @@ impl Runtime {
         self.model_router.as_ref()
     }
 
-    /// Attach a ProfileRegistry to the runtime (RTG-5).
+    /// Attach a ProfileRegistry to the runtime.
     ///
     /// Once set, every [`ExecutionContext`] built by this runtime will have
     /// the registry available, letting the LLM dispatch path resolve a
@@ -526,7 +532,7 @@ impl Runtime {
 
     /// Load `~/.apxm/model_profiles.toml` and attach the registry.
     ///
-    /// Convenience method mirroring `init_model_router` — call after LLM
+    /// Convenience method for model profile setup — call after LLM
     /// backends and the model router are configured so profile resolution is
     /// available from the first request. A missing config file yields an
     /// empty (inert) registry rather than an error.
@@ -670,6 +676,11 @@ impl Runtime {
             self.python_worker_sandbox(),
             Self::python_sandbox_required(),
         )?;
+        let typescript_bridge = typescript_handler_bridge_from_artifact(
+            &artifact,
+            self.python_worker_sandbox(),
+            Self::python_sandbox_required(),
+        )?;
         let entry_dag = find_entry_dag(&artifact)?;
 
         let agents = reconstruct_agents_from_artifact(&artifact);
@@ -699,7 +710,7 @@ impl Runtime {
         self.llm_registry.metrics().reset();
 
         let context = self
-            .build_context_with_bridge(None, None, None, python_bridge)
+            .build_context_with_bridge(None, None, None, python_bridge, typescript_bridge)
             .with_flow_registry(artifact_flow_registry)
             .with_graph_id(graph_id_from_dag(&entry_dag));
         let dispatch_ir =
@@ -836,7 +847,7 @@ impl Runtime {
 
     /// Identical to [`Self::execute_artifact_with_session_emitter_and_metadata`],
     /// except it returns as soon as EITHER the artifact completes OR a node
-    /// parks on the conversation-loop's session-recv key (G-6 narrow park
+    /// parks on the conversation-loop's session-recv key ( narrow park
     /// observability), whichever happens first.
     ///
     /// This is a genuinely new entry point built on
@@ -1010,6 +1021,11 @@ impl Runtime {
             self.python_worker_sandbox(),
             Self::python_sandbox_required(),
         )?;
+        let typescript_bridge = typescript_handler_bridge_from_artifact(
+            &artifact,
+            self.python_worker_sandbox(),
+            Self::python_sandbox_required(),
+        )?;
         let entry_dag = find_entry_dag(&artifact)?;
         let arg_values = bind_args(&entry_dag, args)?;
 
@@ -1029,7 +1045,13 @@ impl Runtime {
         }
 
         let mut context = self
-            .build_context_with_bridge(session_id, event_emitter, session_dir, python_bridge)
+            .build_context_with_bridge(
+                session_id,
+                event_emitter,
+                session_dir,
+                python_bridge,
+                typescript_bridge,
+            )
             .with_flow_registry(artifact_flow_registry)
             .with_graph_id(graph_id_from_dag(&entry_dag));
         if let Some(cancellation_token) = cancellation_token {
@@ -1178,6 +1200,11 @@ impl Runtime {
             self.python_worker_sandbox(),
             Self::python_sandbox_required(),
         )?;
+        let typescript_bridge = typescript_handler_bridge_from_artifact(
+            &artifact,
+            self.python_worker_sandbox(),
+            Self::python_sandbox_required(),
+        )?;
         let entry_dag = find_entry_dag(&artifact)?;
         let arg_values = bind_args(&entry_dag, args)?;
 
@@ -1192,7 +1219,13 @@ impl Runtime {
         }
 
         let mut context = self
-            .build_context_with_bridge(session_id, event_emitter, session_dir, python_bridge)
+            .build_context_with_bridge(
+                session_id,
+                event_emitter,
+                session_dir,
+                python_bridge,
+                typescript_bridge,
+            )
             .with_flow_registry(artifact_flow_registry)
             .with_graph_id(graph_id_from_dag(&entry_dag));
         for (key, value) in extra_metadata {
@@ -1543,6 +1576,44 @@ fn python_handler_bridge_from_artifact(
     Ok(Some(Arc::new(bridge)))
 }
 
+const TYPESCRIPT_TOOLS_SECTION_KIND: &str = typescript_tools::CAPABILITY_NAME;
+
+fn typescript_handler_bridge_from_artifact(
+    artifact: &Artifact,
+    sandbox: Option<Arc<dyn crate::sandbox::SandboxBackend>>,
+    sandbox_required: bool,
+) -> Result<Option<Arc<TypeScriptHandlerBridge>>, RuntimeError> {
+    let section = artifact
+        .sections()
+        .iter()
+        .find(|s| s.kind == TYPESCRIPT_TOOLS_SECTION_KIND);
+
+    let Some(section) = section else {
+        return Ok(None);
+    };
+
+    let json = std::str::from_utf8(&section.data).map_err(|e| RuntimeError::Capability {
+        capability: typescript_tools::CAPABILITY_NAME.into(),
+        message: format!(
+            "{} section is not valid UTF-8: {}",
+            TYPESCRIPT_TOOLS_SECTION_KIND, e
+        ),
+    })?;
+
+    let registry = TypeScriptHandlerRegistry::from_json(json)?;
+    let tool_count = registry.len();
+    let bridge = TypeScriptHandlerBridge::new(registry).with_sandbox(sandbox, sandbox_required);
+
+    log_info!(
+        "runtime",
+        tools = tool_count,
+        "Loaded TypeScript tool bridge from artifact ({} tool(s))",
+        tool_count
+    );
+
+    Ok(Some(Arc::new(bridge)))
+}
+
 fn find_entry_dag(artifact: &Artifact) -> Result<ExecutionDag, RuntimeError> {
     artifact.entry_dag().cloned().ok_or_else(|| {
         let name = artifact
@@ -1782,7 +1853,7 @@ mod tests {
         assert!(err.to_string().contains("APXM_SANDBOX_PYTHON"));
     }
 
-    // -- G-6 narrow park observability: `execute_artifact_with_session_emitter_and_metadata_or_park` --
+    // --  narrow park observability: `execute_artifact_with_session_emitter_and_metadata_or_park` --
 
     /// Regression-equivalent to the old (blocking) behavior: a normal
     /// completing artifact returns `Completed` via the new park-observable
@@ -1864,7 +1935,7 @@ mod tests {
     /// An execution that parks for a DIFFERENT reason (RESUME on a checkpoint
     /// id, not a session-recv key) must NOT be reported as `Parked` through
     /// this narrow API — it has to keep blocking exactly like the old
-    /// behavior, since G-6's signal is scoped to session-recv parks only.
+    /// behavior, since this signal is scoped to session-recv parks only.
     #[tokio::test]
     async fn or_park_does_not_report_a_non_session_recv_park() {
         let runtime = Runtime::new(RuntimeConfig::in_memory()).await.unwrap();

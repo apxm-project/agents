@@ -29,7 +29,7 @@ pub(crate) struct RearmSpec {
     pub(crate) turn_param: String,
     /// Session id keying the per-session turn counter, and the max turns to
     /// re-arm (the recv node's `max_iterations`). Once the running count reaches
-    /// the cap the loop stops re-arming, so a session is bounded (CONV-1).
+    /// the cap the loop stops re-arming, so a session is bounded.
     pub(crate) session_id: String,
     pub(crate) max_turns: u64,
 }
@@ -84,9 +84,9 @@ impl ParkWaker {
                 crate::executor::session_ledger::charge_turn_for_wake(&spec.session_id)
             {
                 tracing::info!(
-                    session_id = %spec.session_id,
-                    %msg,
-                    "session turn cap exceeded; denying turn at recv re-arm"
+                 session_id = %spec.session_id,
+                 %msg,
+                 "session turn cap exceeded; denying turn at recv re-arm"
                 );
                 self.state.wake_parked_node(
                     &self.outputs,
@@ -94,7 +94,7 @@ impl ParkWaker {
                 );
                 return;
             }
-            // Bound the loop (CONV-1): count this delivered turn and only re-arm
+            // Bound the loop: count this delivered turn and only re-arm
             // while under the recv node's max_iterations cap. At the cap we skip
             // the re-arm so the recv completes and the session loop ends, instead
             // of splicing fresh turn+recv nodes forever.
@@ -111,10 +111,10 @@ impl ParkWaker {
                 }
             } else {
                 tracing::info!(
-                    session_id = %spec.session_id,
-                    turn,
-                    max_turns = spec.max_turns,
-                    "session turn cap reached; not re-arming (in-graph loop ends)"
+                 session_id = %spec.session_id,
+                 turn,
+                 max_turns = spec.max_turns,
+                 "session turn cap reached; not re-arming (in-graph loop ends)"
                 );
             }
         }

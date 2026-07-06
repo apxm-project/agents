@@ -1,11 +1,62 @@
 /**
- * Graph IR mirroring apxm.ir (GraphNode/GraphEdge/Parameter/ApxmGraph) from
- * the Python frontend, plus the `to_air()` MLIR emitter.
+ * Graph IR for the TypeScript frontend: nodes, edges, parameters, metadata.
  */
-import { emitOp, isVoidOp, quote } from "./air-emit.js";
 import type { OpName } from "./generated/ops.js";
-import { topologicalSort } from "./utils.js";
 import { type DependencyType, normalizeDependencyType, type ParamType } from "./types.js";
+
+type ProcessLike = {
+  env?: Record<string, string | undefined>;
+  getBuiltinModule?: (specifier: string) => unknown;
+};
+
+type SpawnSync = (
+  command: string,
+  args: readonly string[],
+  options: { input: string; encoding: "utf8" },
+) => { status: number | null; stdout: string; stderr: string; error?: Error };
+
+class FrontendAirCommandError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "FrontendAirCommandError";
+  }
+}
+
+class FrontendAirEmitter {
+  private constructor(
+    private readonly spawnSync: SpawnSync,
+    private readonly command: string,
+    private readonly args: readonly string[],
+  ) {}
+
+  static fromRuntime(processLike: ProcessLike | undefined): FrontendAirEmitter {
+    const getBuiltinModule = processLike?.getBuiltinModule;
+    if (!getBuiltinModule) {
+      throw new FrontendAirCommandError("ApxmGraph.toAir requires Node.js process builtins");
+    }
+    const childProcess = getBuiltinModule("node:child_process") as { spawnSync: SpawnSync };
+    // Single path to the one Rust printer: `apxm emit-air`. APXM_BIN overrides
+    // which binary (the compile pipeline sets it to its own executable);
+    // otherwise `apxm` must be on PATH.
+    const apxmBin = processLike?.env?.APXM_BIN || "apxm";
+    return new FrontendAirEmitter(childProcess.spawnSync, apxmBin, ["emit-air"]);
+  }
+
+  emit(input: unknown): string {
+    const result = this.spawnSync(this.command, this.args, {
+      input: JSON.stringify(input),
+      encoding: "utf8",
+    });
+    if (result.error) {
+      throw result.error;
+    }
+    if (result.status !== 0) {
+      const detail = result.stderr.trim() || `exit status ${result.status}`;
+      throw new FrontendAirCommandError(`${this.command} ${this.args.join(" ")} failed: ${detail}`);
+    }
+    return result.stdout;
+  }
+}
 
 export interface GraphNode {
   readonly id: number;
@@ -23,26 +74,6 @@ export interface GraphEdge {
 export function makeEdge(from: number, to: number, dependency: DependencyType | string = "Data"): GraphEdge {
   return { from, to, dependency: normalizeDependencyType(dependency as DependencyType) };
 }
-
-/**
- * Attribute names that may carry `{name}` placeholders — mirrors Python's
- * `apxm/_generated/emission.py::TEMPLATE_ATTRS`. Used to rewrite `{param}` to
- * `{{param}}` for names that are flow parameters (see `_rewriteParamTemplates`).
- */
-const TEMPLATE_ATTRS: ReadonlySet<string> = new Set([
-  "template_str",
-  "prompt",
-  "template",
-  "message",
-  "params_json",
-  "task_spec",
-  "goal",
-  "claim",
-  "evidence",
-  "trace_id",
-  "discriminant",
-  "recovery_template",
-]);
 
 export interface Parameter {
   readonly name: string;
@@ -87,146 +118,18 @@ export class ApxmGraph implements ApxmGraphData {
     };
   }
 
-  /** Emit a full `module { func.func @name(...) { ... } }` MLIR text block. */
+  /** Emit a full `module { func.func @name(...) { ... } }` AIR block. */
   toAir(): string {
-    const body = this._emitBodyLines();
-    return this._wrapFuncLines(body);
+    return emitAirFromFrontendGraph(this.toDict());
   }
 
-  /** Emit just the `func.func @name(...) { ... }` block, no `module` wrapper. */
+  /** Emit just the `func.func @name(...) { ... }` block, no module wrapper. */
   toFuncAir(): string {
     const air = this.toAir();
-    const lines = air.split("\n");
-    let body = lines;
-    if (body.length > 0 && body[0].trim() === "module {") body = body.slice(1);
-    if (body.length > 0 && body[body.length - 1].trim() === "}") body = body.slice(0, -1);
-    return body.join("\n");
-  }
-
-  private _emitBodyLines(): string[] {
-    const nodeIds = this.nodes.map((n) => n.id);
-    const edgePairs: [number, number][] = this.edges.map((e) => [e.from, e.to]);
-
-    let order: number[];
-    try {
-      order = topologicalSort(nodeIds, edgePairs);
-    } catch {
-      order = nodeIds;
-    }
-
-    const incoming = new Map<number, number[]>();
-    const outgoing = new Map<number, number[]>();
-    for (const id of nodeIds) {
-      incoming.set(id, []);
-      outgoing.set(id, []);
-    }
-    for (const edge of this.edges) {
-      if (incoming.has(edge.from) && incoming.has(edge.to)) {
-        if (edge.dependency === "Data") {
-          incoming.get(edge.to)!.push(edge.from);
-        }
-        outgoing.get(edge.from)!.push(edge.to);
-      }
-    }
-
-    const nodesById = new Map(this.nodes.map((n) => [n.id, n]));
-    const produced = new Map<number, string>();
-    const lines: string[] = [];
-
-    // Function arguments (parameters) are referenced by templates as
-    // `{name}`, rewritten below to `{{name}}` so the runtime substitutes them
-    // at scheduler init. Compile params are not wired as Data inputs. Mirrors
-    // `apxm.ir.ApxmGraph.to_air`'s param-name rewrite.
-    const paramNames = new Set(this.parameters.map((p) => p.name));
-
-    for (const nodeId of order) {
-      const node = nodesById.get(nodeId);
-      if (!node) continue;
-      const ssaName = `%${node.name}`;
-      const inputs = (incoming.get(nodeId) ?? [])
-        .filter((srcId) => produced.has(srcId))
-        .map((srcId) => produced.get(srcId)!);
-
-      if (paramNames.size > 0) {
-        const inputNameSet = new Set((node.attributes.input_names as string[] | undefined) ?? []);
-        for (const attrName of Object.keys(node.attributes)) {
-          if (!TEMPLATE_ATTRS.has(attrName)) continue;
-          const text = node.attributes[attrName];
-          if (typeof text !== "string") continue;
-          (node.attributes as Record<string, unknown>)[attrName] = text.replace(
-            /\{(\w+)\}/g,
-            (whole, name: string) => (paramNames.has(name) && !inputNameSet.has(name) ? `{{${name}}}` : whole),
-          );
-        }
-      }
-
-      if (node.op === "RETURN") {
-        if (inputs.length > 0) produced.set(nodeId, inputs[0]);
-        continue;
-      }
-
-      const mlirLine = emitOp(node.op, ssaName, node.attributes, inputs);
-      if (mlirLine) lines.push(`    ${mlirLine}`);
-
-      if (!isVoidOp(node.op)) {
-        produced.set(nodeId, ssaName);
-      } else if (inputs.length > 0) {
-        produced.set(nodeId, inputs[0]);
-      }
-    }
-
-    const exitNodes = nodeIds.filter((id) => (outgoing.get(id) ?? []).length === 0);
-    let returnVals = exitNodes.filter((id) => produced.has(id)).map((id) => produced.get(id)!);
-
-    if (returnVals.length === 0) {
-      for (let i = order.length - 1; i >= 0; i -= 1) {
-        const id = order[i];
-        if (produced.has(id)) {
-          returnVals = [produced.get(id)!];
-          break;
-        }
-      }
-    }
-
-    if (returnVals.length > 0) {
-      if (returnVals.length === 1) {
-        lines.push(`    func.return ${returnVals[0]} : !ais.token`);
-      } else {
-        const merged = "%ret_merge";
-        const operands = returnVals.join(", ");
-        const types = returnVals.map(() => "!ais.token").join(", ");
-        lines.push(`    ${merged} = ais.merge ${operands} : ${types} -> !ais.token`);
-        lines.push(`    func.return ${merged} : !ais.token`);
-      }
-    } else {
-      lines.push(`    %result = ais.const_str ${quote("result")} : !ais.token`);
-      lines.push("    func.return %result : !ais.token");
-    }
-
-    return lines;
-  }
-
-  private _wrapFuncLines(bodyLines: string[]): string {
-    const funcName = sanitizeFlowName(this.name);
-    const args = this.parameters.map(
-      (param, i) => `%arg${i}: !ais.token {ais.param_name = "${param.name}", ais.param_type = "${param.typeName}"}`,
-    );
-    const argsStr = args.join(", ");
-
-    let isEntry = this.metadata.is_entry ?? true;
-    if (typeof isEntry === "string") {
-      isEntry = ["true", "1", "yes"].includes(isEntry.toLowerCase());
-    } else {
-      isEntry = Boolean(isEntry);
-    }
-    const attrsStr = isEntry ? " attributes {ais.entry}" : "";
-
-    const mlirLines = ["module {"];
-    mlirLines.push(`  func.func @${funcName}(${argsStr}) -> !ais.token${attrsStr} {`);
-    mlirLines.push(...bodyLines);
-    mlirLines.push("  }");
-    mlirLines.push("}");
-    return mlirLines.join("\n");
+    let lines = air.split("\n");
+    if (lines.length > 0 && lines[0].trim() === "module {") lines = lines.slice(1);
+    if (lines.length > 0 && lines[lines.length - 1].trim() === "}") lines = lines.slice(0, -1);
+    return lines.join("\n");
   }
 }
 
@@ -239,9 +142,12 @@ export function sanitizeFlowName(name: string): string {
   return sanitized || "unnamed_flow";
 }
 
-/** Serialize multiple captured graphs into one `module { func.func @A ... }`. */
+/** Serialize multiple captured graphs into one AIR module. */
 export function emitMultiFlowModule(graphs: readonly ApxmGraph[]): string {
-  if (graphs.length === 0) return "module {\n}";
-  const blocks = graphs.map((g) => g.toFuncAir());
-  return `module {\n${blocks.join("\n")}\n}`;
+  return emitAirFromFrontendGraph(graphs.map((graph) => graph.toDict()));
+}
+
+function emitAirFromFrontendGraph(input: unknown): string {
+  const processLike = (globalThis as { process?: ProcessLike }).process;
+  return FrontendAirEmitter.fromRuntime(processLike).emit(input);
 }

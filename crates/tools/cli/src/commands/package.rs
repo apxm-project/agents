@@ -1,26 +1,22 @@
-//! `apxm package new|lint|build|install` — the AGT-2 toolchain for the
-//! canonical agent-package folder format (AGT-1, `apxm.agent-package.v1`,
-//! `workspace/contracts/schemas/agent-package.v1.json`).
+//! `apxm package new|lint|build|install` — the toolchain for the
+//! canonical agent-package folder format (`apxm.agent-package.v1`).
 //!
 //! The folder contract, required/optional files, and integrity hash-chain
 //! algorithm are hand-ported from that schema into the Rust checks below
-//! (the same pattern `ApxmPaths::discover` uses for `apxm.state-layout.v1`
-//! in `crates/machine/contracts/src/paths.rs`) rather than loading the JSON
-//! schema file at runtime — this repo does not vendor or path-depend on the
-//! sibling `contracts` repo.
+//! rather than loading the JSON schema file at runtime.
 //!
 //! Capability-set drift (agent.toml vs capabilities/capabilities.toml vs
 //! capabilities/permissions.toml vs skills/) is enforced as a lint ERROR
-//! per the plan's non-negotiable. No hand-rolled equivalent of this check
-//! was found elsewhere in the workspace at the AGT-1 schema's grammar (the
+//! as a package invariant. No hand-rolled equivalent of this check
+//! was found elsewhere in the workspace at the schema's grammar (the
 //! only existing "undeclared capability" check is
 //! `server/crates/core/src/skills.rs::validate_inv_cap_node`, which compares
 //! a *compiled skill artifact's* INV_CAP nodes against a manifest's
 //! `declared_tools` set — a different, narrower check over compiled AIR, not
 //! over the package's authored `capabilities.toml`/`permissions.toml`/
 //! `agent.toml` triple). This module's drift check is therefore a fresh
-//! implementation of the AGT-1 "joined capability" semantics described in
-//! `docs/plans/agent-package-format.md`, not a port of that server check.
+//! implementation of the  "joined capability" semantics described in
+//! the package schema, not a port of that server check.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
@@ -54,7 +50,7 @@ pub struct PackToml {
     pub integrity: Option<IntegrityToml>,
 }
 
-/// Mirrors `agent-package.v1#/properties/integrity`.
+/// Implements `agent-package.v1#/properties/integrity`.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct IntegrityToml {
     pub algorithm: String,
@@ -82,7 +78,7 @@ pub struct AgentToml {
     /// Path relative to `python/` to the Python-frontend entry. Optional:
     /// a package with no entry (and no custom code) is loaded as a
     /// pure-declarative `ConversationalAgent` built straight from `[runtime]`
-    /// + `[[hooks]]` by the server-side loader (AGT-3/AGT-7) — no Python
+    /// + `[[hooks]]` by the server-side loader — no Python
     /// file required.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub entry: Option<String>,
@@ -109,21 +105,71 @@ pub struct HookToml {
     pub handler: String,
 }
 
+/// `[runtime.loop]` table for recv/re-arm looped agents.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RuntimeLoopTable {
+    pub mode: String,
+    #[serde(default)]
+    pub rearm: bool,
+    pub turn_param: String,
+}
+
+/// `[runtime]` loop: string (`host`/`in_graph`) or nested `[runtime.loop]`
+/// table (`mode`, `rearm`, `turn_param`).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(untagged)]
+pub enum LoopToml {
+    StringMode(String),
+    Config(RuntimeLoopTable),
+}
+
 /// `agent.toml`'s `[runtime]` table — the single source of truth for every
-/// `ConversationalAgent` knob (AGT-7). `loop`/`memory_space`/`session_prefix`
+/// `ConversationalAgent` knob. `loop`/`memory_space`/`session_prefix`
 /// are the knobs known today; `extra` keeps the table forward-compatible
-/// with knobs added later without a schema break (mirrors `CapabilityEntry`/
+/// with knobs added later without a schema break (same open-shape rule as `CapabilityEntry`/
 /// `PermissionEntry`'s `#[serde(flatten)] extra` pattern above).
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct RuntimeToml {
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub r#loop: Option<String>,
+    pub r#loop: Option<LoopToml>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub memory_space: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub session_prefix: Option<String>,
     #[serde(flatten)]
     pub extra: toml::Table,
+}
+
+fn runtime_has_loop(runtime: &RuntimeToml) -> bool {
+    match &runtime.r#loop {
+        Some(LoopToml::StringMode(value)) => !value.trim().is_empty(),
+        Some(LoopToml::Config(_)) => true,
+        None => false,
+    }
+}
+
+fn validate_runtime_loop(runtime: &RuntimeToml) -> Option<String> {
+    match &runtime.r#loop {
+        Some(LoopToml::StringMode(loop_mode)) => {
+            if loop_mode != "host" && loop_mode != "in_graph" {
+                Some(format!(
+                    "agent.toml: [runtime] loop '{loop_mode}' must be 'host' or 'in_graph'"
+                ))
+            } else {
+                None
+            }
+        }
+        Some(LoopToml::Config(table)) => {
+            if table.mode.trim().is_empty() {
+                Some("agent.toml: [runtime.loop] mode must not be empty".to_string())
+            } else if table.turn_param.trim().is_empty() {
+                Some("agent.toml: [runtime.loop] turn_param must not be empty".to_string())
+            } else {
+                None
+            }
+        }
+        None => None,
+    }
 }
 
 /// Projection of the optional `hierarchy.toml`.
@@ -135,12 +181,8 @@ pub struct HierarchyToml {
     pub permitted_children: Vec<String>,
 }
 
-/// `capabilities/capabilities.toml` — array of capability definitions. This
-/// grammar is not yet standardized by a published `capability-definition.v1`
-/// schema in `contracts/schemas/` (CM-1 is still pending); the shape below
-/// follows the one worked example in the workspace
-/// (`studio/agents/gao/capabilities/capabilities.toml`, pre-canonical dialect)
-/// simplified to what AGT-1's lint needs: a stable `id` per capability.
+/// `capabilities/capabilities.toml` — array of package capability ids used by
+/// package lint.
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct CapabilitiesToml {
     #[serde(default, rename = "capability")]
@@ -157,7 +199,7 @@ pub struct CapabilityEntry {
 }
 
 /// `capabilities/permissions.toml` — one policy entry per joined capability
-/// id (the AGT-1 "joined capability" rule: every `capabilities.toml` entry
+/// id (the  "joined capability" rule: every `capabilities.toml` entry
 /// must have a matching permission policy here or it is not a capability).
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct PermissionsToml {
@@ -174,10 +216,8 @@ pub struct PermissionEntry {
     pub extra: toml::Table,
 }
 
-/// AGT-5: recognized skill frontend source languages. A skill's `skill.air`
-/// may be authored through either frontend because the two emitters are
-/// vector-locked byte-identical (TSF-4); the package hash chain does not
-/// care which language authored a skill.
+/// recognized skill frontend source languages. Python and TypeScript
+/// sources emit AIR from their frontend packages.
 pub const FRONTEND_PYTHON: &str = "python";
 pub const FRONTEND_TYPESCRIPT: &str = "typescript";
 
@@ -185,7 +225,7 @@ fn default_frontend() -> String {
     FRONTEND_PYTHON.to_string()
 }
 
-/// `skills/<id>/skill.toml` — always present per skill (AGT-1).
+/// `skills/<id>/skill.toml` — always present per skill.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SkillToml {
     pub id: String,
@@ -195,10 +235,10 @@ pub struct SkillToml {
     #[serde(default)]
     pub compiled: bool,
     /// Capability ids this skill invokes; each must be in the package's
-    /// joined capability set (AGT-5).
+    /// joined capability set.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub capabilities: Vec<String>,
-    /// AGT-5: which frontend authored this skill's compiled source
+    /// which frontend authored this skill's compiled source
     /// (`skills/<id>/skill.py` for `"python"`, `skills/<id>/skill.ts` for
     /// `"typescript"`). Only meaningful when `compiled = true`; defaults to
     /// `"python"` so skill.toml files written before this field existed keep
@@ -227,12 +267,12 @@ pub fn package_command(action: super::PackageAction, json_output: bool) -> Resul
             id,
             path,
             display_name,
-        } => package_new(&id, path, display_name, json_output),
+            template,
+        } => package_new(&id, path, display_name, &template, json_output),
+        super::PackageAction::Sync { path } => package_sync(&path, json_output),
         super::PackageAction::Lint { path, org } => package_lint(&path, org, json_output),
         super::PackageAction::Build { path } => package_build(&path, json_output),
-        super::PackageAction::Install { path, force } => {
-            package_install(&path, force, json_output)
-        }
+        super::PackageAction::Install { path, force } => package_install(&path, force, json_output),
     }
 }
 
@@ -258,6 +298,7 @@ pub(crate) fn package_new(
     id: &str,
     path: Option<PathBuf>,
     display_name: Option<String>,
+    template: &str,
     json_output: bool,
 ) -> Result<()> {
     if id.trim().is_empty() {
@@ -271,42 +312,95 @@ pub(crate) fn package_new(
         );
     }
 
+    match template {
+        "looped-agent" => package_new_looped_agent(id, &root, display_name, json_output),
+        "gao" => package_new_from_gao_example(id, &root, display_name, json_output),
+        other => bail!("unknown package template '{other}' (expected 'looped-agent' or 'gao')"),
+    }
+}
+
+pub(crate) fn gao_example_package_dir() -> PathBuf {
+    Path::new(env!("CARGO_MANIFEST_DIR")).join("../../../examples/agent-packages/gao")
+}
+
+fn package_new_from_gao_example(
+    id: &str,
+    root: &Path,
+    display_name: Option<String>,
+    json_output: bool,
+) -> Result<()> {
+    let example = gao_example_package_dir();
+    if !example.is_dir() {
+        bail!(
+            "gao template requires {} (examples/agent-packages/gao); run with --template looped-agent instead",
+            example.display()
+        );
+    }
+    copy_dir_recursive(&example, root)?;
+    rewrite_scaffolded_identity(root, id, display_name)?;
+    package_sync(root, json_output)?;
+    print_package_scaffolded(id, root, json_output)
+}
+
+fn rewrite_scaffolded_identity(root: &Path, id: &str, display_name: Option<String>) -> Result<()> {
+    let display_name = display_name.unwrap_or_else(|| titleize(id));
+    let pack_path = root.join("pack.toml");
+    let mut pack: PackToml = read_toml(&pack_path)?;
+    pack.pack_id = id.to_string();
+    fs::write(&pack_path, toml::to_string_pretty(&pack)?)?;
+
+    let agent_path = root.join("agent.toml");
+    let mut agent: AgentToml = read_toml(&agent_path)?;
+    agent.id = id.to_string();
+    agent.display_name = Some(display_name);
+    if let Some(runtime) = agent.runtime.as_mut() {
+        runtime.session_prefix = Some(id.to_string());
+    }
+    fs::write(&agent_path, toml::to_string_pretty(&agent)?)?;
+    Ok(())
+}
+
+fn package_new_looped_agent(
+    id: &str,
+    root: &Path,
+    display_name: Option<String>,
+    json_output: bool,
+) -> Result<()> {
     let display_name = display_name.unwrap_or_else(|| titleize(id));
     let template_skill_id = format!("{id}-skill");
 
-    // pack.toml
-    let pack_toml = format!(
-        "pack_id = \"{id}\"\nversion = \"0.1.0\"\nlicense = \"MIT\"\n\n\
-         [source]\ntype = \"local\"\n\n\
-         [compile]\nfrontend = \"python\"\n"
-    );
-    write_new_file(&root.join("pack.toml"), &pack_toml)?;
+    write_new_file(
+        &root.join("pack.toml"),
+        &format!(
+            "pack_id = \"{id}\"\nversion = \"0.1.0\"\nlicense = \"MIT\"\n\n\
+             [source]\ntype = \"local\"\n\n\
+             [compile]\nfrontend = \"typescript\"\n"
+        ),
+    )?;
 
-    // agent.toml
-    // NB: TOML has no way to return to top-level keys once a `[table]`
-    // header has been opened, so every bare (non-table) key must come
-    // before the first `[runtime]`/`[prompts]`/`[chat]` table header.
-    let agent_toml = format!(
-        "id = \"{id}\"\n\
-         display_name = \"{display_name}\"\n\
-         kind = \"conversational\"\n\
-         domain = \"{id}\"\n\
-         entry = \"{id}_agent.py\"\n\
-         capabilities = []\n\
-         skills = [\"{template_skill_id}\"]\n\n\
-         [runtime]\n\
-         loop = \"in_graph\"\n\
-         memory_space = \"stm\"\n\
-         session_prefix = \"{id}\"\n\n\
-         [prompts]\n\
-         persona = \"prompts/persona.md\"\n\n\
-         [chat]\n\
-         capability_discovery = true\n"
-    );
-    write_new_file(&root.join("agent.toml"), &agent_toml)?;
+    write_new_file(
+        &root.join("agent.toml"),
+        &format!(
+            "id = \"{id}\"\n\
+             display_name = \"{display_name}\"\n\
+             kind = \"agent\"\n\
+             domain = \"{id}\"\n\
+             capabilities = []\n\
+             skills = [\"{template_skill_id}\"]\n\n\
+             [runtime]\n\
+             memory_space = \"stm\"\n\
+             session_prefix = \"{id}\"\n\n\
+             [runtime.loop]\n\
+             mode = \"recv\"\n\
+             rearm = true\n\
+             turn_param = \"user_message\"\n\n\
+             [prompts]\n\
+             persona = \"prompts/persona.md\"\n\n\
+             [chat]\n\
+             capability_discovery = true\n"
+        ),
+    )?;
 
-    // hierarchy.toml (optional per schema; scaffolded empty so authors see
-    // the shape without being forced to declare a parent).
     write_new_file(
         &root.join("hierarchy.toml"),
         "# Optional: this agent's parent and the children it may spawn/delegate to.\n\
@@ -314,41 +408,45 @@ pub(crate) fn package_new(
          permitted_children = []\n",
     )?;
 
-    // capabilities/
     write_new_file(
-        &root.join("capabilities/capabilities.toml"),
-        "# capability-definition.v1 entries. Every entry here must have a\n\
-         # matching capabilities/permissions.toml entry (the joined capability)\n\
-         # or `apxm package lint` fails.\n",
+        &root.join("package.json"),
+        &format!("{{\n  \"name\": \"{id}\",\n  \"private\": true,\n  \"type\": \"module\"\n}}\n"),
     )?;
     write_new_file(
-        &root.join("capabilities/permissions.toml"),
-        "# One [[permission]] per capabilities.toml entry (by id).\n",
+        &root.join("tsconfig.json"),
+        "{\n  \"compilerOptions\": {\n    \"target\": \"ES2022\",\n    \"module\": \"ESNext\",\n    \"moduleResolution\": \"bundler\",\n    \"strict\": true\n  }\n}\n",
     )?;
 
-    // prompts/
+    scaffold_capability_folder(
+        root,
+        "list_files",
+        "List files under declared read roots.",
+        "runtime",
+        "fs.list",
+        true,
+        "allow",
+    )?;
+    scaffold_capability_folder(
+        root,
+        "read_file",
+        "Read a file under declared read roots.",
+        "runtime",
+        "fs.read",
+        true,
+        "allow",
+    )?;
+
+    write_new_file(
+        &root.join("capabilities/handlers/hooks.ts"),
+        "// Sample hook handlers for a looped agent package.\n\
+         export function injectContext(_ctx: unknown): null {\n  return null;\n}\n",
+    )?;
+
     write_new_file(
         &root.join("prompts/persona.md"),
         &format!("# {display_name}\n\nDescribe this agent's persona here.\n"),
     )?;
 
-    // python entry
-    write_new_file(
-        &root.join(format!("python/{id}_agent.py")),
-        &format!(
-            "\"\"\"{display_name} — entry point.\n\n\
-             Entries are Python only (masterplan D2). Author this with either the\n\
-             high-level ConversationalAgent wrapper or bare @compile/GraphRecorder.\n\
-             \"\"\"\n\n\
-             from apxm import compile, GraphRecorder\n\n\n\
-             @compile()\n\
-             def {id}_agent(g: GraphRecorder, message: str):\n\
-             \x20\x20\x20\x20ask = g.ask(name=\"respond\", prompt=\"{{message}}\")\n\
-             \x20\x20\x20\x20g.done(source=ask)\n"
-        ),
-    )?;
-
-    // one example skill, prompt-only (compiled = false)
     write_new_file(
         &root.join(format!("skills/{template_skill_id}/skill.toml")),
         &format!(
@@ -367,7 +465,6 @@ pub(crate) fn package_new(
         "Prompt body for this skill goes here.\n",
     )?;
 
-    // examples/ and tests/
     write_new_file(
         &root.join("examples/basic.md"),
         &format!("# Example\n\nA worked example for the `{id}` package.\n"),
@@ -377,6 +474,38 @@ pub(crate) fn package_new(
         "Package tests (run by the linter/CI) go here.\n",
     )?;
 
+    package_sync(root, json_output)?;
+    print_package_scaffolded(id, root, json_output)
+}
+
+fn scaffold_capability_folder(
+    root: &Path,
+    cap_id: &str,
+    description: &str,
+    kind: &str,
+    binding: &str,
+    read_only: bool,
+    decision: &str,
+) -> Result<()> {
+    let dir = root.join("capabilities").join(cap_id);
+    write_new_file(
+        &dir.join("capability.toml"),
+        &format!(
+            "id = \"{cap_id}\"\n\
+             description = \"{description}\"\n\
+             kind = \"{kind}\"\n\
+             binding = \"{binding}\"\n\
+             read_only = {read_only}\n"
+        ),
+    )?;
+    write_new_file(
+        &dir.join("permission.toml"),
+        &format!("capability = \"{cap_id}\"\ndecision = \"{decision}\"\n"),
+    )?;
+    Ok(())
+}
+
+fn print_package_scaffolded(id: &str, root: &Path, json_output: bool) -> Result<()> {
     if json_output {
         println!(
             "{}",
@@ -391,6 +520,7 @@ pub(crate) fn package_new(
         print_status_line(id, Status::Ok, &root.display().to_string());
         println!();
         println!("Next steps:");
+        println!("  apxm package sync {}", root.display());
         println!("  apxm package lint {}", root.display());
         println!("  apxm package build {}", root.display());
         println!("  apxm package install {}", root.display());
@@ -404,6 +534,257 @@ fn write_new_file(path: &Path, contents: &str) -> Result<()> {
             .with_context(|| format!("Failed to create {}", parent.display()))?;
     }
     fs::write(path, contents).with_context(|| format!("Failed to write {}", path.display()))
+}
+
+const SYNC_GENERATED_HEADER: &str = "# Generated by apxm package sync; edit folders instead.\n";
+
+fn capability_kind(entry: &CapabilityEntry) -> Option<&str> {
+    entry.extra.get("kind").and_then(|value| value.as_str())
+}
+
+fn validate_flat_capability_id(pack_id: &str, cap_id: &str, folder: &str) -> Result<()> {
+    if cap_id != folder {
+        bail!(
+            "capability folder '{folder}' declares id '{cap_id}' in capability.toml; ids must match their folder name"
+        );
+    }
+    if cap_id.contains('.') {
+        bail!(
+            "capability id '{cap_id}' must be flat (no '.' segments); edit capabilities/{folder}/ instead"
+        );
+    }
+    let prefix = format!("{pack_id}.");
+    if cap_id.starts_with(&prefix) {
+        bail!(
+            "capability id '{cap_id}' must not embed the package id prefix '{pack_id}.'; use flat ids"
+        );
+    }
+    Ok(())
+}
+
+fn scan_capability_folders(
+    root: &Path,
+    pack_id: &str,
+) -> Result<(Vec<CapabilityEntry>, Vec<PermissionEntry>)> {
+    let caps_dir = root.join("capabilities");
+    if !caps_dir.is_dir() {
+        return Ok((Vec::new(), Vec::new()));
+    }
+
+    let mut capabilities = Vec::new();
+    let mut permissions = Vec::new();
+    let mut entries: Vec<_> = fs::read_dir(&caps_dir)
+        .with_context(|| format!("Failed to read {}", caps_dir.display()))?
+        .collect::<std::io::Result<Vec<_>>>()?;
+    entries.sort_by_key(|entry| entry.path());
+
+    for entry in entries {
+        let path = entry.path();
+        if !path.is_dir() {
+            continue;
+        }
+        let folder = entry.file_name().to_string_lossy().into_owned();
+        if folder == "handlers" {
+            continue;
+        }
+
+        let cap_path = path.join("capability.toml");
+        let perm_path = path.join("permission.toml");
+        if !cap_path.is_file() {
+            bail!(
+                "capability folder '{}' is missing required capability.toml",
+                path.display()
+            );
+        }
+        if !perm_path.is_file() {
+            bail!(
+                "capability folder '{}' is missing required permission.toml",
+                path.display()
+            );
+        }
+
+        let cap: CapabilityEntry = read_toml(&cap_path)?;
+        let perm: PermissionEntry = read_toml(&perm_path)?;
+        validate_flat_capability_id(pack_id, &cap.id, &folder)?;
+        if perm.capability != cap.id {
+            bail!(
+                "capability folder '{folder}': permission.toml capability '{}' does not match capability id '{}'",
+                perm.capability,
+                cap.id
+            );
+        }
+        if capability_kind(&cap) == Some("typescript_handler") && !path.join("handler.ts").is_file()
+        {
+            bail!(
+                "capability '{folder}' has kind = \"typescript_handler\" but is missing handler.ts"
+            );
+        }
+
+        capabilities.push(cap);
+        permissions.push(perm);
+    }
+
+    Ok((capabilities, permissions))
+}
+
+fn scan_skill_ids(root: &Path) -> Result<Vec<String>> {
+    let skills_dir = root.join("skills");
+    if !skills_dir.is_dir() {
+        return Ok(Vec::new());
+    }
+    let mut out = Vec::new();
+    let mut entries: Vec<_> = fs::read_dir(&skills_dir)
+        .with_context(|| format!("Failed to read {}", skills_dir.display()))?
+        .collect::<std::io::Result<Vec<_>>>()?;
+    entries.sort_by_key(|entry| entry.path());
+    for entry in entries {
+        let path = entry.path();
+        if !path.is_dir() {
+            continue;
+        }
+        let skill_toml = path.join("skill.toml");
+        if !skill_toml.is_file() {
+            bail!(
+                "skill directory '{}' is missing required skill.toml",
+                path.display()
+            );
+        }
+        let skill: SkillToml = read_toml(&skill_toml)?;
+        out.push(skill.id);
+    }
+    Ok(out)
+}
+
+fn write_generated_capabilities_toml(path: &Path, capabilities: &[CapabilityEntry]) -> Result<()> {
+    let mut lines = vec![SYNC_GENERATED_HEADER.to_string()];
+    for cap in capabilities {
+        lines.push("[[capability]]".to_string());
+        lines.push(format!("id = \"{}\"", cap.id));
+        if let Some(description) = &cap.description {
+            lines.push(format!(
+                "description = \"{}\"",
+                description.replace('\\', "\\\\").replace('"', "\\\"")
+            ));
+        }
+        for (key, value) in &cap.extra {
+            lines.push(format!("{key} = {}", format_toml_value(value)));
+        }
+        lines.push(String::new());
+    }
+    fs::write(path, lines.join("\n")).with_context(|| format!("Failed to write {}", path.display()))
+}
+
+fn write_generated_permissions_toml(path: &Path, permissions: &[PermissionEntry]) -> Result<()> {
+    let mut lines = vec![SYNC_GENERATED_HEADER.to_string()];
+    for perm in permissions {
+        lines.push("[[permission]]".to_string());
+        lines.push(format!("capability = \"{}\"", perm.capability));
+        if let Some(decision) = &perm.decision {
+            lines.push(format!("decision = \"{decision}\""));
+        }
+        for (key, value) in &perm.extra {
+            lines.push(format!("{key} = {}", format_toml_value(value)));
+        }
+        lines.push(String::new());
+    }
+    fs::write(path, lines.join("\n")).with_context(|| format!("Failed to write {}", path.display()))
+}
+
+fn format_toml_value(value: &toml::Value) -> String {
+    match value {
+        toml::Value::String(s) => format!("\"{}\"", s.replace('\\', "\\\\").replace('"', "\\\"")),
+        toml::Value::Integer(i) => i.to_string(),
+        toml::Value::Float(f) => f.to_string(),
+        toml::Value::Boolean(b) => b.to_string(),
+        toml::Value::Array(arr) => {
+            let items: Vec<String> = arr.iter().map(format_toml_value).collect();
+            format!("[{}]", items.join(", "))
+        }
+        other => other.to_string(),
+    }
+}
+
+fn update_agent_inventories(root: &Path, capabilities: &[String], skills: &[String]) -> Result<()> {
+    let path = root.join("agent.toml");
+    let text =
+        fs::read_to_string(&path).with_context(|| format!("Failed to read {}", path.display()))?;
+    let mut doc: toml::Value =
+        toml::from_str(&text).with_context(|| format!("Failed to parse {}", path.display()))?;
+    let Some(table) = doc.as_table_mut() else {
+        bail!("agent.toml must be a TOML table");
+    };
+    table.insert(
+        "capabilities".into(),
+        toml::Value::Array(
+            capabilities
+                .iter()
+                .map(|cap| toml::Value::String(cap.clone()))
+                .collect(),
+        ),
+    );
+    table.insert(
+        "skills".into(),
+        toml::Value::Array(
+            skills
+                .iter()
+                .map(|skill| toml::Value::String(skill.clone()))
+                .collect(),
+        ),
+    );
+    fs::write(
+        &path,
+        toml::to_string_pretty(&doc).context("Failed to serialize agent.toml")?,
+    )
+    .with_context(|| format!("Failed to write {}", path.display()))
+}
+
+pub(crate) fn package_sync(root: &Path, json_output: bool) -> Result<()> {
+    if !root.is_dir() {
+        bail!("'{}' is not a directory", root.display());
+    }
+    let pack_path = root.join("pack.toml");
+    let agent_path = root.join("agent.toml");
+    if !pack_path.is_file() {
+        bail!("missing required file: {}", pack_path.display());
+    }
+    if !agent_path.is_file() {
+        bail!("missing required file: {}", agent_path.display());
+    }
+    let pack: PackToml = read_toml(&pack_path)?;
+
+    let (capabilities, permissions) = scan_capability_folders(root, &pack.pack_id)?;
+    let capability_ids: Vec<String> = capabilities.iter().map(|cap| cap.id.clone()).collect();
+    let skill_ids = scan_skill_ids(root)?;
+
+    fs::create_dir_all(root.join("capabilities"))
+        .with_context(|| format!("Failed to create {}", root.join("capabilities").display()))?;
+    write_generated_capabilities_toml(&root.join("capabilities/capabilities.toml"), &capabilities)?;
+    write_generated_permissions_toml(&root.join("capabilities/permissions.toml"), &permissions)?;
+    update_agent_inventories(root, &capability_ids, &skill_ids)?;
+
+    if json_output {
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&serde_json::json!({
+                "path": root.display().to_string(),
+                "capabilities": capability_ids,
+                "skills": skill_ids,
+                "status": "synced",
+            }))?
+        );
+    } else {
+        print_section_header("Package Sync");
+        print_status_line(
+            &pack.pack_id,
+            Status::Ok,
+            &format!(
+                "{} capabilities, {} skills regenerated",
+                capability_ids.len(),
+                skill_ids.len()
+            ),
+        );
+    }
+    Ok(())
 }
 
 // ---------------------------------------------------------------------
@@ -503,20 +884,35 @@ fn load_package(root: &Path) -> Result<LoadedPackage> {
 /// JSON schema's `patternProperties`). Anything else fails validation ("no
 /// package-private layout").
 fn recognized_relpath(rel: &str) -> bool {
-    if matches!(rel, "pack.toml" | "agent.toml" | "hierarchy.toml" | "README.md") {
+    if matches!(
+        rel,
+        "pack.toml"
+            | "agent.toml"
+            | "hierarchy.toml"
+            | "README.md"
+            | "package.json"
+            | "tsconfig.json"
+    ) {
         return true;
     }
     let parts: Vec<&str> = rel.split('/').collect();
     match parts.as_slice() {
         ["capabilities", "capabilities.toml" | "permissions.toml"] => true,
-        ["capabilities", "handlers", f] => f.ends_with(".py"),
+        ["capabilities", "handlers", f] => {
+            f.ends_with(".py") || f.ends_with(".ts") || *f == "tools.json"
+        }
+        [
+            "capabilities",
+            id,
+            "capability.toml" | "permission.toml" | "handler.ts",
+        ] if *id != "handlers" => true,
         ["prompts", f] => f.ends_with(".md"),
         ["python", f] => f.ends_with(".py"),
         ["skills", _id, "skill.toml"] => true,
         // SKILL.md / prompt.md are the primary prose; a skill may also carry
         // supplementary authored `.md` docs (e.g. a canvas/contract reference)
         // alongside them, plus its optional compiled artifacts and — for a
-        // `compiled = true` skill (AGT-5) — the single frontend source file
+        // `compiled = true` skill — the single frontend source file
         // (`skill.py` or `skill.ts`) that emits its `skill.air`.
         ["skills", _id, f] => {
             f.ends_with(".md")
@@ -582,12 +978,12 @@ fn find_unrecognized_files(root: &Path) -> Result<Vec<String>> {
 }
 
 /// Load the org-global joined capability set (declared ∩ permitted, same
-/// join rule AGT-1 uses at the package level and ORG-2's
+/// join rule used at the package level and
 /// `check_global_capability_join` uses at the org level) from an org
 /// package's own `capabilities/capabilities.toml` +
-/// `capabilities/permissions.toml`, for AGT-5's "package lint validates
+/// `capabilities/permissions.toml`, so package lint validates
 /// every skill's capability references against the package's joined
-/// capability set (and org globals once ORG lands)".
+/// capability set and the org-global joined set.
 ///
 /// Missing files are treated as an empty global set (no org context, or an
 /// org package that declares no globals) rather than an error — this
@@ -622,13 +1018,13 @@ fn load_org_global_capabilities(org_root: &Path) -> Result<BTreeSet<String>> {
         .collect())
 }
 
-/// The AGT-1 capability-set agreement check: agent.toml's declared
+/// The  capability-set agreement check: agent.toml's declared
 /// capabilities must resolve into `capabilities.toml`, every
 /// `capabilities.toml` entry must have a matching `permissions.toml` entry
 /// (the "joined capability" — otherwise it "is not a capability and fails
 /// lint"), every `agent.toml` skill reference must be a real `skills/<id>/`
 /// directory, and every skill's own declared capabilities must be in the
-/// package's joined set (or, per AGT-5, in `org_globals` — an org-global
+/// package's joined set (or, per , in `org_globals` — an org-global
 /// capability is real without needing a package-local permissions.toml
 /// entry; the org package that owns it already joined it at the org level).
 /// Returns human-readable error strings; empty = clean.
@@ -654,7 +1050,7 @@ fn check_capability_drift(pkg: &LoadedPackage, org_globals: &BTreeSet<String>) -
             errors.push(format!(
                 "capability '{cap}' is declared in capabilities/capabilities.toml but has no \
                  matching entry in capabilities/permissions.toml — an entry with no permission \
-                 policy is not a capability (AGT-1)"
+                 policy is not a capability"
             ));
         }
     }
@@ -675,7 +1071,7 @@ fn check_capability_drift(pkg: &LoadedPackage, org_globals: &BTreeSet<String>) -
         .collect();
 
     // agent.toml capabilities must resolve into the joined set, or be an
-    // org-global capability (already joined at the org level — AGT-5).
+    // org-global capability (already joined at the org level — ).
     for cap in &pkg.agent.capabilities {
         if org_globals.contains(cap.as_str()) {
             continue;
@@ -704,7 +1100,7 @@ fn check_capability_drift(pkg: &LoadedPackage, org_globals: &BTreeSet<String>) -
     }
 
     // Every skill's own capability references must be inside the joined set,
-    // or be an org-global capability (AGT-5) — a skill invoking an
+    // or be an org-global capability — a skill invoking an
     // org-global capability must not be falsely flagged as undeclared.
     for skill in &pkg.skills {
         for cap in &skill.capabilities {
@@ -722,7 +1118,7 @@ fn check_capability_drift(pkg: &LoadedPackage, org_globals: &BTreeSet<String>) -
     errors
 }
 
-/// Structural + required-field checks mirroring `agent-package.v1`'s
+/// Structural + required-field checks for `agent-package.v1`'s
 /// `required` arrays (`pack.pack_id`/`version`, `agent.id`/`entry`, the
 /// `id == pack_id == agent.id` identity rule, `entry` must end in `.py`,
 /// hooks must use a known event/mode).
@@ -749,19 +1145,17 @@ fn check_schema_shape(pkg: &LoadedPackage) -> Vec<String> {
     }
     match &pkg.agent.entry {
         None => {
-            // No entry ⇒ pure-declarative ConversationalAgent (AGT-7): the
-            // loader builds it straight from [runtime] + [[hooks]], so
-            // [runtime].loop must be present and unambiguous.
+            // No entry ⇒ pure-declarative agent: the loader builds it straight from
+            // [runtime] + [[hooks]], so [runtime].loop must be present.
             if pkg
                 .agent
                 .runtime
                 .as_ref()
-                .and_then(|r| r.r#loop.as_deref())
-                .is_none()
+                .is_none_or(|runtime| !runtime_has_loop(runtime))
             {
                 errors.push(
                     "agent.toml: no entry declared, so [runtime] loop is required to build a \
-                     pure-declarative ConversationalAgent"
+                     pure-declarative agent"
                         .to_string(),
                 );
             }
@@ -783,12 +1177,8 @@ fn check_schema_shape(pkg: &LoadedPackage) -> Vec<String> {
         }
     }
     if let Some(runtime) = &pkg.agent.runtime {
-        if let Some(loop_mode) = &runtime.r#loop {
-            if loop_mode != "host" && loop_mode != "in_graph" {
-                errors.push(format!(
-                    "agent.toml: [runtime] loop '{loop_mode}' must be 'host' or 'in_graph'"
-                ));
-            }
+        if let Some(message) = validate_runtime_loop(runtime) {
+            errors.push(message);
         }
     }
     for hook in &pkg.agent.hooks {
@@ -802,7 +1192,10 @@ fn check_schema_shape(pkg: &LoadedPackage) -> Vec<String> {
             "post_cap",
         ];
         if !VALID_EVENTS.contains(&hook.event.as_str()) {
-            errors.push(format!("agent.toml: hook event '{}' is not a recognized lifecycle event", hook.event));
+            errors.push(format!(
+                "agent.toml: hook event '{}' is not a recognized lifecycle event",
+                hook.event
+            ));
         }
         if hook.mode != "observe" && hook.mode != "gate" {
             errors.push(format!(
@@ -824,13 +1217,14 @@ fn check_schema_shape(pkg: &LoadedPackage) -> Vec<String> {
         }
         if skill.compiled {
             let skill_dir = pkg.root.join("skills").join(&skill.id);
-            if !skill_dir.join("skill.air").is_file() && !skill_dir.join("skill.apxmobj").is_file() {
+            if !skill_dir.join("skill.air").is_file() && !skill_dir.join("skill.apxmobj").is_file()
+            {
                 errors.push(format!(
                     "skill '{}' declares compiled = true but has neither skill.air nor skill.apxmobj",
                     skill.id
                 ));
             }
-            // AGT-5: a compiled skill must resolve to a real frontend source
+            // a compiled skill must resolve to a real frontend source
             // file (`skill.py`/`skill.ts` per its declared `frontend`) — the
             // thing `package build` actually recompiles.
             if let Err(err) = skill_source_path(&pkg.root, skill) {
@@ -867,7 +1261,8 @@ fn extract_kwarg(args: &str, key: &str) -> Option<String> {
         // Ensure this is a whole keyword token, not a substring of another
         // identifier (e.g. "match" inside "rematch").
         let boundary_ok = pos == 0
-            || !args.as_bytes()[pos - 1].is_ascii_alphanumeric() && args.as_bytes()[pos - 1] != b'_';
+            || !args.as_bytes()[pos - 1].is_ascii_alphanumeric()
+                && args.as_bytes()[pos - 1] != b'_';
         if !boundary_ok {
             search_from = pos + needle.len();
             continue;
@@ -889,7 +1284,7 @@ fn extract_kwarg(args: &str, key: &str) -> Option<String> {
 }
 
 /// Statically scan every `.py` file under `python/` for `@hook(on=…,
-/// match=…, mode=…)` call sites (AGT-7 lint: manifest/entry contradiction
+/// match=…, mode=…)` call sites ( lint: manifest/entry contradiction
 /// check). This is a textual scan, not a Python parse/AST — it is
 /// deliberately conservative (see [`extract_kwarg`]) rather than a full
 /// interpreter, matching the rest of this module's "hand-port the schema's
@@ -940,7 +1335,7 @@ fn find_programmatic_hooks(python_dir: &Path) -> Vec<ProgrammaticHook> {
     hooks
 }
 
-/// AGT-7: entry code may add hooks programmatically (`@hook`) but must never
+/// entry code may add hooks programmatically (`@hook`) but must never
 /// *contradict* what `agent.toml`'s `[[hooks]]` already declares for the
 /// same `(event, match)` pair — a different `mode` there is a silent
 /// footgun (an author reads the manifest and gets the entry's behavior
@@ -981,10 +1376,13 @@ fn semver_like(version: &str) -> bool {
     // SemVer core: MAJOR.MINOR.PATCH, optionally with -prerelease/+build.
     let core = version.split(['-', '+']).next().unwrap_or(version);
     let parts: Vec<&str> = core.split('.').collect();
-    parts.len() == 3 && parts.iter().all(|p| !p.is_empty() && p.chars().all(|c| c.is_ascii_digit()))
+    parts.len() == 3
+        && parts
+            .iter()
+            .all(|p| !p.is_empty() && p.chars().all(|c| c.is_ascii_digit()))
 }
 
-fn package_lint(path: &Path, org: Option<PathBuf>, json_output: bool) -> Result<()> {
+pub(crate) fn package_lint(path: &Path, org: Option<PathBuf>, json_output: bool) -> Result<()> {
     let pkg = load_package(path)?;
     let org_globals = match &org {
         Some(org_root) => load_org_global_capabilities(org_root)
@@ -995,7 +1393,7 @@ fn package_lint(path: &Path, org: Option<PathBuf>, json_output: bool) -> Result<
     let mut errors = check_schema_shape(&pkg);
     errors.extend(check_capability_drift(&pkg, &org_globals));
     errors.extend(check_hook_contradictions(&pkg));
-    // AGT-5: a hand-edited compiled artifact is a lint error in every
+    // a hand-edited compiled artifact is a lint error in every
     // dialect. This is the "lighter-weight check" documented on
     // `detect_hand_edited_artifact` — comparing recorded vs current hashes,
     // not recompiling — which is cheap enough to run unconditionally (lint
@@ -1045,7 +1443,7 @@ fn package_lint(path: &Path, org: Option<PathBuf>, json_output: bool) -> Result<
 }
 
 // ---------------------------------------------------------------------
-// package build — integrity hash chain (AGT-1 `integrity` schema)
+// package build — integrity hash chain ( `integrity` schema)
 // ---------------------------------------------------------------------
 
 fn sha256_hex(bytes: &[u8]) -> String {
@@ -1055,11 +1453,11 @@ fn sha256_hex(bytes: &[u8]) -> String {
     digest.iter().map(|b| format!("{b:02x}")).collect()
 }
 
-/// Genesis `prev_hash` for the first chain link — 64 zeros, per AGT-1.
+/// Genesis `prev_hash` for the first chain link — 64 zeros, per .
 const GENESIS_HASH: &str = "0000000000000000000000000000000000000000000000000000000000000000";
 const _GENESIS_HASH_IS_64_HEX_CHARS: () = assert!(GENESIS_HASH.len() == 64);
 
-/// Compute the AGT-1 integrity hash chain over `files` (relpath -> content
+/// Compute the  integrity hash chain over `files` (relpath -> content
 /// digest), in ascending relpath order. Each link's hash is
 /// `sha256(prev_hash || path || file_digest)` (UTF-8 byte concatenation of
 /// the two hex digests and the path string); `chain[0].prev_hash` is 64
@@ -1094,7 +1492,7 @@ fn compute_integrity(files: &BTreeMap<String, String>) -> IntegrityToml {
 
 /// Digest of `pack.toml` for the integrity chain, with the `[integrity]`
 /// table itself stripped first — `pack_hash` cannot cover its own value.
-/// Mirrors `compile.rs::strip_artifact_hash_for_embed`'s "strip before hash"
+/// Applies `compile.rs::strip_artifact_hash_for_embed`'s "strip before hash"
 /// pattern for the same reason (`skill.toml`'s `artifact_hash` field there).
 /// Because this strip is applied on every (re)build, the digest is stable
 /// across rebuilds regardless of whatever stale `[integrity]` table happens
@@ -1118,8 +1516,7 @@ fn digest_recognized_files(root: &Path) -> Result<BTreeMap<String, String>> {
             files.insert(rel, pack_toml_digest_for_chain(&pack)?);
             continue;
         }
-        let bytes =
-            fs::read(&abs).with_context(|| format!("Failed to read {}", abs.display()))?;
+        let bytes = fs::read(&abs).with_context(|| format!("Failed to read {}", abs.display()))?;
         files.insert(rel, sha256_hex(&bytes));
     }
     Ok(files)
@@ -1156,13 +1553,13 @@ fn sha256_hex_file(path: &Path) -> Result<String> {
     Ok(sha256_hex(&bytes))
 }
 
-/// AGT-5 hand-edited-artifact detection, shared by `package lint` (a light,
+/// Hand-edited-artifact detection, shared by `package lint` (a light,
 /// metadata-only check — see the doc comment on `package_lint`'s call site)
 /// and `package build` (a hard pre-compile gate — see `package_build`).
 ///
-/// Semantics (documented explicitly because AGT-5's "a `skill.air` whose
-/// hash doesn't match its recorded source is a build error" is otherwise
-/// ambiguous about *which* recorded hash / which mismatch triggers it):
+/// Semantics: a `skill.air` whose hash doesn't match its recorded source is a
+/// build error, but the check must be precise about which recorded hash and
+/// which mismatch triggers it.
 /// `skill.toml` remembers, from the last successful compiled build of a
 /// skill, both `source_hash` (hash of the frontend source file compiled)
 /// and `air_hash` (hash of the `skill.air` that compile produced). If the
@@ -1213,90 +1610,6 @@ fn detect_hand_edited_artifact(root: &Path, skill: &SkillToml) -> Result<Option<
     Ok(None)
 }
 
-/// Rewrite the `@apxm/frontend` bare import specifier in TypeScript skill
-/// source to the frontend package's built entry point. Skill directories
-/// are not npm packages with `@apxm/frontend` installed under
-/// `node_modules/`, so (mirroring the role `PYTHONPATH` plays for
-/// [`super::compile::emit_air_from_python`]) the specifier is resolved by
-/// this textual rewrite instead of Node module resolution.
-#[cfg(feature = "driver")]
-fn rewrite_frontend_import(source: &str, frontend_dist_index: &Path) -> String {
-    let dist_url = format!("file://{}", frontend_dist_index.display());
-    source
-        .replace("\"@apxm/frontend\"", &format!("\"{dist_url}\""))
-        .replace("'@apxm/frontend'", &format!("'{dist_url}'"))
-}
-
-/// Run a TypeScript skill source file through Node's built-in TypeScript
-/// support (Node >= 22.6 strips type annotations natively; no `tsc`/`tsx`
-/// build step is required) and capture the AIR text it prints to stdout —
-/// the TypeScript-frontend analog of `emit_air_from_python`'s "run the
-/// source file, capture stdout" contract. The skill source is expected to
-/// import `GraphBuilder` from `"@apxm/frontend"`, build a graph, and
-/// `console.log(g.toAir())` at module scope.
-#[cfg(feature = "driver")]
-fn emit_air_from_typescript(input: &Path) -> Result<String> {
-    let repo_root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../..");
-    let frontend_dist = repo_root.join("crates/compiler/frontend/typescript/dist/index.js");
-    if !frontend_dist.is_file() {
-        bail!(
-            "TypeScript frontend is not built: expected {} (run 'npm run build' in \
-             crates/compiler/frontend/typescript first)",
-            frontend_dist.display()
-        );
-    }
-
-    let source = fs::read_to_string(input)
-        .with_context(|| format!("Failed to read {}", input.display()))?;
-    let rewritten = rewrite_frontend_import(&source, &frontend_dist);
-
-    let mut tmp = tempfile::Builder::new()
-        .suffix(".ts")
-        .tempfile()
-        .context("Failed to create temporary TypeScript skill source")?;
-    {
-        use std::io::Write;
-        tmp.write_all(rewritten.as_bytes())
-            .context("Failed to write rewritten TypeScript skill source")?;
-        tmp.flush()
-            .context("Failed to flush temporary TypeScript skill source")?;
-    }
-
-    let output = std::process::Command::new("node")
-        .arg(tmp.path())
-        .output()
-        .map_err(|err| {
-            anyhow!(
-                "Failed to run Node on TypeScript skill {}: {err} (is Node.js installed?)",
-                input.display()
-            )
-        })?;
-
-    if !output.status.success() {
-        let stderr = String::from_utf8_lossy(&output.stderr);
-        return Err(anyhow!(
-            "TypeScript skill {} failed: {}",
-            input.display(),
-            stderr.trim()
-        ));
-    }
-
-    let air = String::from_utf8(output.stdout).with_context(|| {
-        format!(
-            "TypeScript skill {} did not emit valid UTF-8",
-            input.display()
-        )
-    })?;
-    let trimmed = air.trim();
-    if trimmed.is_empty() {
-        return Err(anyhow!(
-            "TypeScript skill {} produced no .air output (expected console.log(g.toAir()))",
-            input.display()
-        ));
-    }
-    Ok(trimmed.to_string())
-}
-
 /// Compile one `compiled = true` skill's frontend source into `skill.air`,
 /// then convert that AIR into `skill.apxmobj` via the same
 /// `apxm_driver::compiler::Compiler` pipeline `apxm compile` drives.
@@ -1319,13 +1632,14 @@ fn compile_skill(root: &Path, skill: &SkillToml) -> Result<(String, String)> {
                 })?;
             fs::read_to_string(tmp.path()).context("Failed to read emitted AIR")?
         }
-        FRONTEND_TYPESCRIPT => emit_air_from_typescript(&source_path).with_context(|| {
-            format!(
-                "Failed to compile skill '{}' from {}",
-                skill.id,
-                source_path.display()
-            )
-        })?,
+        FRONTEND_TYPESCRIPT => super::compile::emit_air_from_typescript_text(&source_path)
+            .with_context(|| {
+                format!(
+                    "Failed to compile skill '{}' from {}",
+                    skill.id,
+                    source_path.display()
+                )
+            })?,
         other => bail!("skill '{}': unknown frontend '{other}'", skill.id),
     };
 
@@ -1381,7 +1695,108 @@ fn write_skill_build_hashes(
     fs::write(&path, text).with_context(|| format!("Failed to write {}", path.display()))
 }
 
-fn package_build(path: &Path, json_output: bool) -> Result<()> {
+fn collect_typescript_handler_sources(root: &Path) -> Result<Vec<PathBuf>> {
+    let mut sources = BTreeSet::new();
+    let handlers_dir = root.join("capabilities/handlers");
+    if handlers_dir.is_dir() {
+        for entry in fs::read_dir(&handlers_dir)
+            .with_context(|| format!("Failed to read {}", handlers_dir.display()))?
+        {
+            let path = entry?.path();
+            if path.extension().and_then(|ext| ext.to_str()) == Some("ts") {
+                sources.insert(path);
+            }
+        }
+    }
+
+    let caps_dir = root.join("capabilities");
+    if caps_dir.is_dir() {
+        for entry in fs::read_dir(&caps_dir)
+            .with_context(|| format!("Failed to read {}", caps_dir.display()))?
+        {
+            let path = entry?.path();
+            if !path.is_dir() {
+                continue;
+            }
+            let cap_path = path.join("capability.toml");
+            if !cap_path.is_file() {
+                continue;
+            }
+            let cap: CapabilityEntry = read_toml(&cap_path)?;
+            if capability_kind(&cap) == Some("typescript_handler") {
+                let handler = path.join("handler.ts");
+                if handler.is_file() {
+                    sources.insert(handler);
+                }
+            }
+        }
+    }
+
+    Ok(sources.into_iter().collect())
+}
+
+fn compile_package_handlers(root: &Path) -> Result<()> {
+    let pack: PackToml = read_toml(&root.join("pack.toml"))?;
+    let frontend = pack
+        .compile
+        .as_ref()
+        .and_then(|value| value.get("frontend"))
+        .and_then(|value| value.as_str())
+        .unwrap_or(FRONTEND_PYTHON);
+    if frontend != FRONTEND_TYPESCRIPT {
+        return Ok(());
+    }
+
+    let root = root.canonicalize().with_context(|| {
+        format!(
+            "Failed to resolve absolute path for package root {}",
+            root.display()
+        )
+    })?;
+    let sources = collect_typescript_handler_sources(&root)?;
+    if sources.is_empty() {
+        return Ok(());
+    }
+
+    let repo_root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../..");
+    let ts_frontend = repo_root.join("crates/compiler/frontend/typescript");
+    let out = root.join("capabilities/handlers/tools.json");
+    fs::create_dir_all(out.parent().expect("tools.json has parent"))
+        .with_context(|| format!("Failed to create {}", out.parent().unwrap().display()))?;
+
+    let source_args: Vec<String> = sources
+        .iter()
+        .map(|source| source.to_string_lossy().into_owned())
+        .collect();
+
+    let node_path = ts_frontend.join("node_modules");
+    let root_abs = root.canonicalize().unwrap_or_else(|_| root.to_path_buf());
+    let status = std::process::Command::new("npm")
+        .current_dir(&ts_frontend)
+        .env("NODE_PATH", &node_path)
+        .arg("run")
+        .arg("compile-handlers")
+        .arg("--")
+        .arg("--root")
+        .arg(root_abs.to_string_lossy().as_ref())
+        .arg("--out")
+        .arg(out.to_string_lossy().as_ref())
+        .args(&source_args)
+        .status()
+        .with_context(|| {
+            format!(
+                "Failed to run npm run compile-handlers in {}",
+                ts_frontend.display()
+            )
+        })?;
+    if !status.success() {
+        bail!("npm run compile-handlers failed for package handlers");
+    }
+    Ok(())
+}
+
+pub(crate) fn package_build(path: &Path, json_output: bool) -> Result<()> {
+    package_sync(path, false)?;
     let mut pkg = load_package(path)?;
     let mut compiled_skills: Vec<String> = Vec::new();
 
@@ -1389,7 +1804,7 @@ fn package_build(path: &Path, json_output: bool) -> Result<()> {
         if !skill.compiled {
             continue;
         }
-        // Hard gate (AGT-5 "hash-mismatch build error"): refuse to silently
+        // Hard gate ( "hash-mismatch build error"): refuse to silently
         // clobber a hand-edited skill.air rather than compiling over it —
         // see `detect_hand_edited_artifact`'s doc comment for the exact
         // mismatch this catches.
@@ -1401,7 +1816,7 @@ fn package_build(path: &Path, json_output: bool) -> Result<()> {
         compiled_skills.push(skill.id.clone());
     }
 
-    // The hash chain is computed from the package's current on-disk files —
+    compile_package_handlers(path)?;
     // i.e. the FINAL post-compilation artifacts (freshly written
     // skill.air/skill.apxmobj and the skill.toml files just updated with
     // source_hash/air_hash), not the pre-compilation source tree. pack.toml
@@ -1454,8 +1869,8 @@ pub(crate) fn packages_dir(apxm_home: &Path) -> PathBuf {
 /// Resolve an installed agent-package's `pack.toml` under
 /// `APXM_HOME/packages/<id>/` — the same install destination
 /// [`package_install_to`] writes to. Shared with `org lint`'s member
-/// resolution check (ORG-2) so org-package member references are checked
-/// against the same install layout AGT-2's `package install` created,
+/// resolution check so org-package member references are checked
+/// against the same install layout `package install` created,
 /// rather than a second hand-rolled resolution path.
 pub(crate) fn resolve_installed_package(apxm_home: &Path, id: &str) -> Result<PackToml> {
     let pack_path = packages_dir(apxm_home).join(id).join("pack.toml");
@@ -1482,7 +1897,11 @@ pub(crate) fn copy_dir_recursive(src: &Path, dst: &Path) -> Result<()> {
             copy_dir_recursive(&src_path, &dst_path)?;
         } else if file_type.is_file() {
             fs::copy(&src_path, &dst_path).with_context(|| {
-                format!("Failed to copy {} to {}", src_path.display(), dst_path.display())
+                format!(
+                    "Failed to copy {} to {}",
+                    src_path.display(),
+                    dst_path.display()
+                )
             })?;
         }
     }
@@ -1541,7 +1960,7 @@ mod tests {
     use tempfile::tempdir;
 
     fn scaffold(dir: &Path, id: &str) {
-        package_new(id, Some(dir.to_path_buf()), None, true).expect("scaffold ok");
+        package_new(id, Some(dir.to_path_buf()), None, "looped-agent", true).expect("scaffold ok");
     }
 
     #[test]
@@ -1556,8 +1975,12 @@ mod tests {
             "hierarchy.toml",
             "capabilities/capabilities.toml",
             "capabilities/permissions.toml",
+            "capabilities/list_files/capability.toml",
+            "capabilities/read_file/capability.toml",
+            "capabilities/handlers/hooks.ts",
+            "package.json",
+            "tsconfig.json",
             "prompts/persona.md",
-            "python/demo_agent.py",
             "skills/demo-skill/skill.toml",
             "skills/demo-skill/SKILL.md",
             "skills/demo-skill/prompt.md",
@@ -1570,11 +1993,32 @@ mod tests {
         let pack: PackToml = read_toml(&root.join("pack.toml")).unwrap();
         assert_eq!(pack.pack_id, "demo");
         assert_eq!(pack.version, "0.1.0");
+        assert_eq!(
+            pack.compile
+                .as_ref()
+                .and_then(|value| value.get("frontend"))
+                .and_then(|value| value.as_str()),
+            Some("typescript")
+        );
 
         let agent: AgentToml = read_toml(&root.join("agent.toml")).unwrap();
         assert_eq!(agent.id, "demo");
-        assert_eq!(agent.entry.as_deref(), Some("demo_agent.py"));
+        assert!(agent.entry.is_none());
+        assert_eq!(agent.kind.as_deref(), Some("agent"));
+        assert_eq!(agent.capabilities, vec!["list_files", "read_file"]);
         assert_eq!(agent.skills, vec!["demo-skill".to_string()]);
+        match agent
+            .runtime
+            .as_ref()
+            .and_then(|runtime| runtime.r#loop.as_ref())
+        {
+            Some(LoopToml::Config(table)) => {
+                assert_eq!(table.mode, "recv");
+                assert!(table.rearm);
+                assert_eq!(table.turn_param, "user_message");
+            }
+            other => panic!("expected [runtime.loop] table, got {other:?}"),
+        }
 
         let skill: SkillToml = read_toml(&root.join("skills/demo-skill/skill.toml")).unwrap();
         assert_eq!(skill.id, "demo-skill");
@@ -1590,7 +2034,7 @@ mod tests {
         let tmp = tempdir().unwrap();
         let root = tmp.path().join("demo");
         scaffold(&root, "demo");
-        let err = package_new("demo", Some(root.clone()), None, true).unwrap_err();
+        let err = package_new("demo", Some(root.clone()), None, "looped-agent", true).unwrap_err();
         assert!(err.to_string().contains("already exists"));
     }
 
@@ -1601,25 +2045,21 @@ mod tests {
         scaffold(&root, "clean");
 
         // Add one joined capability referenced by agent.toml and used by the skill.
+        fs::create_dir_all(root.join("capabilities/clean_example")).unwrap();
         fs::write(
-            root.join("capabilities/capabilities.toml"),
-            "[[capability]]\nid = \"clean.example\"\ndescription = \"demo\"\n",
+            root.join("capabilities/clean_example/capability.toml"),
+            "id = \"clean_example\"\ndescription = \"demo\"\n",
         )
         .unwrap();
         fs::write(
-            root.join("capabilities/permissions.toml"),
-            "[[permission]]\ncapability = \"clean.example\"\ndecision = \"allow\"\n",
+            root.join("capabilities/clean_example/permission.toml"),
+            "capability = \"clean_example\"\ndecision = \"allow\"\n",
         )
         .unwrap();
-        let agent_toml = fs::read_to_string(root.join("agent.toml")).unwrap();
-        fs::write(
-            root.join("agent.toml"),
-            agent_toml.replace("capabilities = []", "capabilities = [\"clean.example\"]"),
-        )
-        .unwrap();
+        package_sync(&root, true).unwrap();
         fs::write(
             root.join("skills/clean-skill/skill.toml"),
-            "id = \"clean-skill\"\ncompiled = false\ncapabilities = [\"clean.example\"]\n",
+            "id = \"clean-skill\"\ncompiled = false\ncapabilities = [\"clean_example\"]\n",
         )
         .unwrap();
 
@@ -1633,10 +2073,10 @@ mod tests {
         scaffold(&root, "drift");
 
         // agent.toml references a capability that capabilities.toml never declares.
-        let agent_toml = fs::read_to_string(root.join("agent.toml")).unwrap();
-        fs::write(
-            root.join("agent.toml"),
-            agent_toml.replace("capabilities = []", "capabilities = [\"drift.undeclared\"]"),
+        update_agent_inventories(
+            &root,
+            &["drift.undeclared".to_string()],
+            &["drift-skill".to_string()],
         )
         .unwrap();
 
@@ -1644,13 +2084,14 @@ mod tests {
         assert!(err.to_string().contains("lint error"));
 
         // Now declare the capability but withhold its permissions entry —
-        // "not a capability" per AGT-1.
+        // "not a capability" per .
         fs::write(
             root.join("capabilities/capabilities.toml"),
             "[[capability]]\nid = \"drift.undeclared\"\n",
         )
         .unwrap();
-        let err = package_lint(&root, None, true).expect_err("missing permission entry must fail lint");
+        let err =
+            package_lint(&root, None, true).expect_err("missing permission entry must fail lint");
         assert!(
             err.to_string().contains("lint error"),
             "expected a lint error, got: {err}"
@@ -1667,13 +2108,14 @@ mod tests {
             "id = \"skill-drift-skill\"\ncompiled = false\ncapabilities = [\"nowhere.declared\"]\n",
         )
         .unwrap();
-        let err = package_lint(&root, None, true).expect_err("undeclared skill capability must fail lint");
+        let err = package_lint(&root, None, true)
+            .expect_err("undeclared skill capability must fail lint");
         assert!(err.to_string().contains("lint error"));
     }
 
     #[test]
     fn lint_catches_manifest_entry_hook_contradiction() {
-        // AGT-7 vector: agent.toml declares a `gate` hook on pre_cap/*, but
+        //  vector: agent.toml declares a `gate` hook on pre_cap/*, but
         // the entry file programmatically registers the SAME (event, match)
         // as `observe` — a silent contradiction the lint must catch.
         let tmp = tempdir().unwrap();
@@ -1686,6 +2128,7 @@ mod tests {
         );
         fs::write(root.join("agent.toml"), agent_toml).unwrap();
 
+        fs::create_dir_all(root.join("python")).unwrap();
         fs::write(
             root.join("python/contradicts_agent.py"),
             "from apxm import hook\n\n\
@@ -1694,7 +2137,8 @@ mod tests {
         )
         .unwrap();
 
-        let err = package_lint(&root, None, true).expect_err("manifest/entry hook contradiction must fail lint");
+        let err = package_lint(&root, None, true)
+            .expect_err("manifest/entry hook contradiction must fail lint");
         assert!(
             err.to_string().contains("lint error"),
             "expected a lint error, got: {err}"
@@ -1715,6 +2159,7 @@ mod tests {
         );
         fs::write(root.join("agent.toml"), agent_toml).unwrap();
 
+        fs::create_dir_all(root.join("python")).unwrap();
         fs::write(
             root.join("python/agrees_agent.py"),
             "from apxm import hook\n\n\
@@ -1728,21 +2173,10 @@ mod tests {
 
     #[test]
     fn lint_allows_no_entry_with_runtime_loop() {
-        // Pure-declarative ConversationalAgent (AGT-7): no entry file, but
-        // [runtime].loop is declared, so there is nothing ambiguous for the
-        // loader to instantiate.
+        // Pure-declarative looped agent: no entry file, [runtime.loop] declared.
         let tmp = tempdir().unwrap();
         let root = tmp.path().join("declarative");
         scaffold(&root, "declarative");
-
-        let agent_toml = fs::read_to_string(root.join("agent.toml")).unwrap();
-        let agent_toml = agent_toml
-            .lines()
-            .filter(|l| !l.starts_with("entry ="))
-            .collect::<Vec<_>>()
-            .join("\n");
-        fs::write(root.join("agent.toml"), agent_toml).unwrap();
-        fs::remove_file(root.join("python/declarative_agent.py")).unwrap();
 
         package_lint(&root, None, true).expect("entry-less declarative package should lint clean");
     }
@@ -1862,7 +2296,7 @@ mod tests {
 
     #[test]
     fn install_ignores_manual_libs_dir() {
-        // AGT-4 hard cutover: `~/.apxm/libs` is no longer a load or scan root.
+        //  hard cutover: `~/.apxm/libs` is no longer a load or scan root.
         // Install must place the pack under packages/ and neither read nor touch
         // any stale copy sitting under the old libs convention.
         let tmp = tempdir().unwrap();
@@ -1886,7 +2320,7 @@ mod tests {
     }
 
     // -----------------------------------------------------------------
-    // AGT-5: skill compilation, hand-edit/hash-drift detection, org globals
+    // skill compilation, hand-edit/hash-drift detection, org globals
     // -----------------------------------------------------------------
 
     /// Scaffold a `compiled = true` skill directory with the given frontend
@@ -1896,7 +2330,9 @@ mod tests {
         fs::create_dir_all(&dir).unwrap();
         fs::write(
             dir.join("skill.toml"),
-            format!("id = \"{id}\"\ncompiled = true\nfrontend = \"{frontend}\"\ncapabilities = []\n"),
+            format!(
+                "id = \"{id}\"\ncompiled = true\nfrontend = \"{frontend}\"\ncapabilities = []\n"
+            ),
         )
         .unwrap();
         fs::write(dir.join("SKILL.md"), format!("# {id}\n")).unwrap();
@@ -1909,29 +2345,24 @@ mod tests {
         fs::write(dir.join(filename), source).unwrap();
     }
 
-    const PYTHON_SKILL_SOURCE: &str = "from apxm import GraphRecorder, compile\n\n\n\
+    const PYTHON_SKILL_SOURCE: &str = "from apxm import GraphRecorder, compile, emit_air_if_requested\n\n\n\
          @compile()\n\
          def my_skill(g: GraphRecorder):\n\
          \x20\x20\x20\x20ask = g.ask(name=\"respond\", prompt=\"Describe the weather today.\")\n\
          \x20\x20\x20\x20g.done(source=ask)\n\n\n\
          if __name__ == \"__main__\":\n\
-         \x20\x20\x20\x20print(my_skill._graph.to_air())\n";
+         \x20\x20\x20\x20emit_air_if_requested(my_skill)\n";
 
     /// Same graph shape as [`PYTHON_SKILL_SOURCE`] (one `ask` -> `done`, same
-    /// name/prompt), authored through `@apxm/frontend`'s `GraphBuilder`
-    /// instead — TSF-4 parity ("the emitters are vector-locked
-    /// byte-identical") means these two sources must compile to a
-    /// byte-identical `skill.air`.
+    /// name/prompt), authored through `@apxm/frontend`'s `GraphBuilder`.
+    /// TypeScript emits AIR directly from the generated op catalog.
     fn typescript_skill_source() -> String {
-        let repo_root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../..");
-        let dist = repo_root.join("crates/compiler/frontend/typescript/dist/index.js");
-        format!(
-            "import {{ GraphBuilder }} from \"{}\";\n\n\
+        String::from(
+            "import { GraphBuilder } from \"@apxm/frontend\";\n\n\
              const g = new GraphBuilder(\"my_skill\");\n\
-             const ask = g.ask({{ name: \"respond\", prompt: \"Describe the weather today.\" }});\n\
+             const ask = g.ask({ name: \"respond\", prompt: \"Describe the weather today.\" });\n\
              g.done(ask);\n\
              console.log(g.toAir());\n",
-            dist.display()
         )
     }
 
@@ -1948,7 +2379,12 @@ mod tests {
         let tmp = tempdir().unwrap();
         let root = tmp.path().join("py-skill");
         scaffold(&root, "py-skill");
-        add_compiled_skill(&root, "py-skill-skill", FRONTEND_PYTHON, PYTHON_SKILL_SOURCE);
+        add_compiled_skill(
+            &root,
+            "py-skill-skill",
+            FRONTEND_PYTHON,
+            PYTHON_SKILL_SOURCE,
+        );
         // Replace the scaffolded prompt-only skill.toml with the compiled one
         // (scaffold() already created skills/py-skill-skill/{SKILL.md,prompt.md}
         // with compiled = false; add_compiled_skill above overwrote skill.toml
@@ -1995,41 +2431,36 @@ mod tests {
         assert!(air.contains("ais.ask \"Describe the weather today.\""));
     }
 
-    /// TSF-4 parity, exercised end-to-end through `package build` rather than
-    /// through the frontends' own unit tests: a Python-authored and a
-    /// TypeScript-authored skill with the same graph shape must compile to
-    /// byte-identical `skill.air`. Skipped (not faked) if either toolchain
-    /// isn't invokable in this sandbox: the MLIR toolchain (`driver`
-    /// feature) or `node` on PATH.
+    ///  frontend guardrail, exercised end-to-end through `package build`:
+    /// a TypeScript-authored skill emits AIR and the package builder compiles
+    /// it. Skipped (not faked) if either toolchain isn't invokable in this
+    /// sandbox: the MLIR toolchain (`driver` feature) or `node` on PATH.
     #[cfg(feature = "driver")]
     #[test]
-    fn python_and_typescript_frontends_emit_byte_identical_air() {
+    fn typescript_skill_emits_air() {
         if !node_available() {
             eprintln!(
-                "skipping python_and_typescript_frontends_emit_byte_identical_air: `node` not found on PATH"
+                "skipping typescript_skill_uses_rust_printer_from_graph_dto: `node` not found on PATH"
             );
             return;
         }
         let tmp = tempdir().unwrap();
-
-        let py_root = tmp.path().join("py-parity");
-        scaffold(&py_root, "py-parity");
-        add_compiled_skill(&py_root, "py-parity-skill", FRONTEND_PYTHON, PYTHON_SKILL_SOURCE);
-        package_build(&py_root, true).expect("python build ok");
-        let py_air = fs::read_to_string(py_root.join("skills/py-parity-skill/skill.air")).unwrap();
-
-        let ts_root = tmp.path().join("ts-parity");
-        scaffold(&ts_root, "ts-parity");
+        let ts_root = tmp.path().join("ts-one-printer");
+        scaffold(&ts_root, "ts-one-printer");
         let ts_source = typescript_skill_source();
-        add_compiled_skill(&ts_root, "ts-parity-skill", FRONTEND_TYPESCRIPT, &ts_source);
+        add_compiled_skill(
+            &ts_root,
+            "ts-one-printer-skill",
+            FRONTEND_TYPESCRIPT,
+            &ts_source,
+        );
         package_build(&ts_root, true).expect("typescript build ok");
-        let ts_air = fs::read_to_string(ts_root.join("skills/ts-parity-skill/skill.air")).unwrap();
+        let ts_air =
+            fs::read_to_string(ts_root.join("skills/ts-one-printer-skill/skill.air")).unwrap();
 
-        // Both graphs are named "my_skill" inside the source (the package/
-        // skill ids differ, but the AIR module name comes from the graph's
-        // own name, not the skill id), so the emitted AIR text is directly
-        // comparable byte-for-byte.
-        assert_eq!(py_air, ts_air, "python and typescript frontends must emit byte-identical AIR for equivalent graphs");
+        assert!(ts_air.contains("module {"));
+        assert!(ts_air.contains("func.func @my_skill"));
+        assert!(ts_air.contains("ais.ask \"Describe the weather today.\""));
     }
 
     #[cfg(not(feature = "driver"))]
@@ -2038,7 +2469,12 @@ mod tests {
         let tmp = tempdir().unwrap();
         let root = tmp.path().join("nodriver");
         scaffold(&root, "nodriver");
-        add_compiled_skill(&root, "nodriver-skill", FRONTEND_PYTHON, PYTHON_SKILL_SOURCE);
+        add_compiled_skill(
+            &root,
+            "nodriver-skill",
+            FRONTEND_PYTHON,
+            PYTHON_SKILL_SOURCE,
+        );
 
         let err = package_build(&root, true).expect_err("compiling requires the driver feature");
         assert!(err.to_string().contains("driver feature"));
@@ -2054,7 +2490,12 @@ mod tests {
         let tmp = tempdir().unwrap();
         let root = tmp.path().join("handedit");
         scaffold(&root, "handedit");
-        add_compiled_skill(&root, "handedit-skill", FRONTEND_PYTHON, PYTHON_SKILL_SOURCE);
+        add_compiled_skill(
+            &root,
+            "handedit-skill",
+            FRONTEND_PYTHON,
+            PYTHON_SKILL_SOURCE,
+        );
 
         let dir = root.join("skills/handedit-skill");
         let original_air = "module {\n  func.func @handedit() -> !ais.token attributes {ais.entry} {\n    %r = ais.ask \"original\" : !ais.token\n    func.return %r : !ais.token\n  }\n}\n";
@@ -2071,7 +2512,11 @@ mod tests {
         .unwrap();
 
         // Hand-edit skill.air without touching the source.
-        fs::write(dir.join("skill.air"), "module {\n  hand edited garbage\n}\n").unwrap();
+        fs::write(
+            dir.join("skill.air"),
+            "module {\n  hand edited garbage\n}\n",
+        )
+        .unwrap();
 
         let err = package_lint(&root, None, true).expect_err("hand-edited artifact must fail lint");
         assert!(
@@ -2114,7 +2559,11 @@ mod tests {
         // Hand-edit skill.air without touching the source: current air hash
         // no longer matches the recorded air_hash, even though source_hash
         // still matches current source — the unambiguous hand-edit signal.
-        fs::write(dir.join("skill.air"), "module {\n  hand edited garbage\n}\n").unwrap();
+        fs::write(
+            dir.join("skill.air"),
+            "module {\n  hand edited garbage\n}\n",
+        )
+        .unwrap();
 
         let err = package_build(&root, true)
             .expect_err("build must refuse to recompile over a hand-edited artifact");
@@ -2139,19 +2588,19 @@ mod tests {
             PYTHON_SKILL_SOURCE,
         );
 
-        let skill: SkillToml = read_toml(
-            &root
-                .join("skills/firstbuild-skill/skill.toml"),
-        )
-        .unwrap();
-        assert!(detect_hand_edited_artifact(&root, &skill).unwrap().is_none());
+        let skill: SkillToml = read_toml(&root.join("skills/firstbuild-skill/skill.toml")).unwrap();
+        assert!(
+            detect_hand_edited_artifact(&root, &skill)
+                .unwrap()
+                .is_none()
+        );
     }
 
     #[test]
     fn lint_allows_org_global_capability_without_local_join() {
         // A skill invoking an org-global capability must not be falsely
-        // flagged as undeclared, even though the package itself never joins
-        // it locally (AGT-5: "and org globals once ORG lands").
+        // flagged as undeclared when the package itself does not join it
+        // locally.
         let tmp = tempdir().unwrap();
         let root = tmp.path().join("orgmember");
         scaffold(&root, "orgmember");
@@ -2162,7 +2611,8 @@ mod tests {
         .unwrap();
 
         // Without --org, the org-global capability is undeclared: lint fails.
-        let err = package_lint(&root, None, true).expect_err("undeclared capability must fail lint");
+        let err =
+            package_lint(&root, None, true).expect_err("undeclared capability must fail lint");
         assert!(err.to_string().contains("lint error"));
 
         // Scaffold a minimal org package declaring that capability as a
@@ -2213,5 +2663,13 @@ mod tests {
         let err = package_lint(&root, Some(org_root), true)
             .expect_err("a capability absent from both the package and org globals must fail lint");
         assert!(err.to_string().contains("lint error"));
+    }
+
+    #[cfg(feature = "driver")]
+    mod gao_e2e {
+        include!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../../examples/agent-packages/gao/tests/e2e_manifest.rs"
+        ));
     }
 }

@@ -13,11 +13,11 @@ use apxm_core::types::values::{Number, Value};
 use async_trait::async_trait;
 
 use super::store::{TaskRow, ToolsStore, now_ms};
-use apxm_aam::{Aam, CompletionPolicy, TransitionLabel};
 use crate::{
     executor::{CapabilityExecutor, CapabilityResult},
     metadata::RuntimeCapability,
 };
+use apxm_aam::{Aam, CompletionPolicy, TransitionLabel};
 
 const CAP: &str = apxm_core::constants::capabilities::MANAGE_TASK;
 

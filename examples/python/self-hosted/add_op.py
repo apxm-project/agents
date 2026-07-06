@@ -47,7 +47,7 @@ Operation name: {op_name}
 Description: {op_description}
 
 definitions.rs is the source of truth: the wire enum + C++ lowering cases
-are generated from it; AISOps.td is a hand-maintained mirror. Read:
+are generated from it; AISOps.td is the hand-maintained dialect declaration. Read:
 - crates/machine/ais/src/operations/definitions.rs (AISOperationType enum,
   WIRE_INDEXED_OPERATIONS table, the AIS_OPERATIONS OperationSpec list)
 - crates/machine/ais/src/operations/attrs.rs (attribute-name constants)
@@ -88,7 +88,7 @@ You need to modify:
    - Add each attribute name as a const and list it in ALL_ATTR_NAMES (no string literals).
 
 3. crates/compiler/pipeline/mlir/include/ais/Dialect/AIS/IR/AISOps.td
-   - Hand-write the AIS_<OpName>Op def; its `arguments` mirror the spec fields
+   - Hand-write the AIS_<OpName>Op def; its `arguments` use the spec fields
      by the SAME attr names (typed OptionalAttr<...>, not bare attr-dict).
    - Do NOT edit ArtifactEmitter.cpp: its lowering cases are generated from
      WIRE_INDEXED_OPERATIONS unless the op needs bespoke lowering.

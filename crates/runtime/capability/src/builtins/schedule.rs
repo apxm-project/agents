@@ -302,11 +302,7 @@ fn advance_recurring(row: &ScheduleRow, now: i64) -> Option<i64> {
 /// `crate::scheduler::park_registry::wake` directly — this is capability's
 /// one touchpoint on the scheduler, narrowed to the trait `apxm-runtime`'s
 /// scheduler implements (see [`crate::scheduler::park_registry::ParkRegistryHost`]).
-pub fn fire_due(
-    store: &ToolsStore,
-    host: &dyn CapabilityHost,
-    on_fire: Option<&OnFire>,
-) -> usize {
+pub fn fire_due(store: &ToolsStore, host: &dyn CapabilityHost, on_fire: Option<&OnFire>) -> usize {
     let now = now_ms();
     let due = store.due_schedules(now).unwrap_or_default();
     let mut fired = 0;

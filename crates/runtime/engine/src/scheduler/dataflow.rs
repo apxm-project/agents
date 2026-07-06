@@ -29,7 +29,7 @@ type SchedulerExecutionResult = (
 
 /// Outcome of [`DataflowScheduler::execute_or_park`]: either the DAG ran to
 /// completion, or a node parked on the conversation-loop's session-recv key
-/// before completion (G-6 narrow park observability).
+/// before completion ( narrow park observability).
 ///
 /// `Parked` does NOT mean execution stopped — the spawned workers keep running
 /// in the background so the session loop continues to make progress; this
@@ -277,7 +277,7 @@ impl DataflowScheduler {
     }
 
     /// Execute a DAG, but return as soon as EITHER the DAG completes OR a node
-    /// parks on the conversation-loop's session-recv key (G-6 narrow park
+    /// parks on the conversation-loop's session-recv key ( narrow park
     /// observability) — whichever happens first.
     ///
     /// This is a genuinely new entry point: it does not change the behavior of

@@ -7,7 +7,7 @@
 //!
 //! The recorder is the single mount point the apxm event sink fan-out talks
 //! to: every event that lands on the in-memory [`crate::IndexDb`]/`RunEventBus`
-//! is mirrored here for durable replay.
+//! is appended here for durable replay.
 
 use std::path::PathBuf;
 use std::sync::Arc;
