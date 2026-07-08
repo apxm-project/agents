@@ -50,20 +50,51 @@ fn node_uses_flow_params(node: &AirNode, params: &[AirParam]) -> bool {
         return false;
     }
 
+    let param_names = params
+        .iter()
+        .map(|param| param.name.as_str())
+        .collect::<BTreeSet<_>>();
+    if get_string_array_attr(&node.attributes, graph_attrs::INPUT_NAMES)
+        .iter()
+        .any(|name| param_names.contains(name.as_str()))
+    {
+        return true;
+    }
+    if let Some(value) = node.attributes.get("turn_param")
+        && value_contains_flow_param(value, &param_names)
+    {
+        return true;
+    }
+    if let Some(value) = node.attributes.get(graph_attrs::ARGS)
+        && value_contains_flow_param(value, &param_names)
+    {
+        return true;
+    }
+
     for attr_name in graph_attrs::TEMPLATE_BEARING_ATTRS {
         if let Some(value) = node.attributes.get(*attr_name)
-            && let Some(text) = value.as_str()
+            && value_contains_flow_param(value, &param_names)
         {
-            for param in params {
-                let pattern = format!("{{{{{}}}}}", param.name);
-                if text.contains(&pattern) {
-                    return true;
-                }
-            }
+            return true;
         }
     }
 
     false
+}
+
+fn value_contains_flow_param(value: &Value, param_names: &BTreeSet<&str>) -> bool {
+    match value {
+        Value::String(text) => param_names.iter().any(|name| {
+            text.contains(&format!("{{{{{name}}}}}")) || text.contains(&format!("{{{name}}}"))
+        }),
+        Value::Array(values) => values
+            .iter()
+            .any(|value| value_contains_flow_param(value, param_names)),
+        Value::Object(values) => values
+            .values()
+            .any(|value| value_contains_flow_param(value, param_names)),
+        Value::Null | Value::Bool(_) | Value::Number(_) | Value::Token(_) => false,
+    }
 }
 
 pub fn emit_air(module: &AirModule) -> Result<String, AirError> {
@@ -797,15 +828,30 @@ fn emit_node(
                 ty: MlirValueType::Token,
             }))
         }
-        AISOperationType::FlowCall => emit_simple_op(
-            state,
-            node,
-            &inputs,
-            &[graph_attrs::FLOW_NAME, "flow", graph_attrs::TARGET],
-            "unknown_flow",
-            &[graph_attrs::FLOW_NAME, "flow", graph_attrs::TARGET],
-            Some(('(', ')')),
-        ),
+        AISOperationType::FlowCall => {
+            let agent_name = get_string_attr(
+                &node.attributes,
+                &[graph_attrs::AGENT_NAME, graph_attrs::TARGET],
+            )
+            .unwrap_or_else(|| "agent".to_string());
+            let flow_name = get_string_attr(&node.attributes, &[graph_attrs::FLOW_NAME, "flow"])
+                .unwrap_or_else(|| "unknown_flow".to_string());
+            let attrs = flow_call_attr_dict(node);
+            let result = format!("%n{}", node.id);
+            let context = format_context(&inputs, '(', ')');
+
+            state.emit(format!(
+                "    {result} = ais.flow_call {} {}{}{} : !ais.token",
+                quote_string(&agent_name),
+                quote_string(&flow_name),
+                context,
+                attrs
+            ));
+            Ok(Some(MlirValueRef {
+                ssa: result,
+                ty: MlirValueType::Token,
+            }))
+        }
         AISOperationType::WorkflowSpawn => {
             let target_kind = get_string_attr(&node.attributes, &[graph_attrs::TARGET_KIND])
                 .ok_or_else(|| {
@@ -1035,6 +1081,59 @@ fn emit_node(
     }
 }
 
+fn flow_call_attr_dict(node: &AirNode) -> String {
+    let mut attributes = node.attributes.clone();
+    attributes
+        .entry(graph_attrs::NODE_NAME.to_string())
+        .or_insert_with(|| Value::String(node.name.clone()));
+    for consumed in [
+        graph_attrs::AGENT_NAME,
+        graph_attrs::FLOW_NAME,
+        "flow",
+        graph_attrs::TARGET,
+    ] {
+        attributes.remove(consumed);
+    }
+
+    let mut items = attributes
+        .iter()
+        .filter_map(|(key, value)| {
+            if graph_attrs::MLIR_DERIVED_BARE_ATTRS.contains(&key.as_str())
+                || !is_valid_attr_name(key)
+            {
+                return None;
+            }
+            if key == graph_attrs::ARGS
+                && let Value::Object(args) = value
+            {
+                return Some(format!("{key} = {}", value_object_to_mlir_dict(args)));
+            }
+            Some(format!("{key} = {}", value_to_mlir_attr(value)))
+        })
+        .collect::<Vec<_>>();
+
+    items.sort();
+    if items.is_empty() {
+        String::new()
+    } else {
+        format!(" {{{}}}", items.join(", "))
+    }
+}
+
+fn value_object_to_mlir_dict(map: &HashMap<String, Value>) -> String {
+    let mut items = map
+        .iter()
+        .filter_map(|(key, value)| {
+            if !is_valid_attr_name(key) {
+                return None;
+            }
+            Some(format!("{key} = {}", value_to_mlir_attr(value)))
+        })
+        .collect::<Vec<_>>();
+    items.sort();
+    format!("{{{}}}", items.join(", "))
+}
+
 #[allow(clippy::too_many_arguments)]
 fn emit_simple_op(
     state: &mut EmitState,
@@ -1217,11 +1316,7 @@ fn extra_attr_dict(attributes: &HashMap<String, Value>, consumed: &[&str]) -> St
             {
                 return None;
             }
-            Some(format!(
-                "{} = {}",
-                quote_string(key),
-                value_to_mlir_attr(value)
-            ))
+            Some(format!("{key} = {}", value_to_mlir_attr(value)))
         })
         .collect::<Vec<_>>();
 

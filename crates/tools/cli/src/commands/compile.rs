@@ -88,7 +88,24 @@ fn rewrite_frontend_import(source: &str, frontend_dist_index: &Path) -> String {
         .replace("'@apxm/frontend'", &format!("'{dist_url}'"))
 }
 
-/// `pub(super)` (not private) so `commands::package`'s skill-build
+#[cfg(feature = "driver")]
+fn current_apxm_exe() -> Option<PathBuf> {
+    let current = env::current_exe().ok()?;
+    let file_name = current.file_name()?.to_str()?;
+    if let Some(parent) = current.parent()
+        && parent.file_name().and_then(|name| name.to_str()) == Some("deps")
+        && file_name.starts_with("apxm-")
+        && let Some(profile_dir) = parent.parent()
+    {
+        let candidate = profile_dir.join(format!("apxm{}", std::env::consts::EXE_SUFFIX));
+        if candidate.is_file() {
+            return Some(candidate);
+        }
+    }
+    Some(current)
+}
+
+/// `pub(super)` (not private) so `commands::agent`'s skill-build
 /// step can drive the same Python-frontend AIR emission `apxm compile`
 /// itself uses, rather than duplicating the PYTHONPATH/subprocess dance.
 #[cfg(feature = "driver")]
@@ -114,7 +131,7 @@ pub(super) fn emit_air_from_python(
     // Route the frontend's AIR emission back to this same binary's single Rust
     // printer (`apxm emit-air`), so compile is self-contained and
     // version-consistent.
-    let apxm_exe = env::current_exe().ok();
+    let apxm_exe = current_apxm_exe();
     let mut output = None;
     for candidate in ["python3", "python"] {
         let mut command = std::process::Command::new(candidate);
@@ -224,7 +241,7 @@ pub(super) fn emit_air_from_typescript_text(input: &Path) -> Result<String> {
 
     // Route the frontend's AIR emission back to this same binary's single Rust
     // printer (`apxm emit-air`).
-    let apxm_exe = env::current_exe().ok();
+    let apxm_exe = current_apxm_exe();
     let mut node_command = std::process::Command::new("node");
     node_command.arg(tmp.path());
     if let Some(exe) = apxm_exe.as_ref() {
@@ -298,13 +315,13 @@ type TypeScriptHandlersSidecar = Option<Vec<u8>>;
 
 // ---------------------------------------------------------------------------
 // `apxm compile-service` — the cross-repo process contract Server (and any
-// other non-`agents` caller) uses to compile an agent package declaratively
+// other non-`agents` caller) uses to compile an agent declaratively
 // into AIR, without reaching into this repo's file layout. This is the
-// canonical, agents-owned home for declarative package AIR emission across the
+// canonical, agents-owned home for declarative agent AIR emission across the
 // service boundary.
 // ---------------------------------------------------------------------------
 
-/// Compile a bundled conversational agent package into canonical AIR text.
+/// Compile a bundled conversational agent into canonical AIR text.
 ///
 /// # Cross-repo I/O contract
 ///
@@ -313,8 +330,8 @@ type TypeScriptHandlersSidecar = Option<Vec<u8>>;
 /// subprocess instead of duplicating a private path dependency on this repo's
 /// Python frontend:
 ///
-/// - **Input**: a single positional argument, the package directory
-///   (containing `pack.toml`, `agent.toml`, and `capabilities/`). No stdin
+/// - **Input**: a single positional argument, the agent directory
+///   (containing `agent.toml`, generated `integrity.toml`, and `capabilities/`). No stdin
 ///   is read.
 /// - `--web-tools`: include the web capability group in the emitted ASK node.
 /// - **stdout**: on success, ONLY emitted AIR text, including any
@@ -324,11 +341,11 @@ type TypeScriptHandlersSidecar = Option<Vec<u8>>;
 ///   human-readable message on stderr.
 #[cfg(feature = "driver")]
 pub fn compile_service_command(
-    package: PathBuf,
+    agent_dir: PathBuf,
     web_tools: bool,
     _config: Option<PathBuf>,
 ) -> Result<()> {
-    let air = emit_air_from_agent_package(&package, web_tools)?;
+    let air = emit_air_from_agent(&agent_dir, web_tools)?;
 
     // Only the AIR text goes to stdout, written byte-for-byte as the frontend
     // produced it (no added trailing newline) — this is the process contract
@@ -344,15 +361,15 @@ pub fn compile_service_command(
 /// writing wrapper above so it can be exercised directly by tests (including
 /// the Studio-equivalence fixture test) without spawning a subprocess.
 #[cfg(feature = "driver")]
-pub(crate) fn emit_air_from_agent_package(package: &Path, web_tools: bool) -> Result<String> {
-    if !package.is_dir() {
+pub(crate) fn emit_air_from_agent(agent_dir: &Path, web_tools: bool) -> Result<String> {
+    if !agent_dir.is_dir() {
         return Err(anyhow::anyhow!(
             "'{}' is not a directory",
-            package.display()
+            agent_dir.display()
         ));
     }
 
-    emit_air_from_declarative_package(package, web_tools)
+    emit_air_from_declarative_agent(agent_dir, web_tools)
 }
 
 #[cfg(feature = "driver")]
@@ -458,21 +475,26 @@ fn resolve_declarative_handler_id(handler: &str, manifest: &[serde_json::Value])
         }
     }
     Err(anyhow::anyhow!(
-        "hook handler '{handler}' not found in capabilities/handlers/tools.json; run package build first"
+        "hook handler '{handler}' not found in capabilities/handlers/tools.json; run agent build first"
     ))
 }
 
 #[cfg(feature = "driver")]
-fn emit_air_from_declarative_package(package: &Path, web_tools: bool) -> Result<String> {
-    use apxm_ais::chat::escape_air_string;
+fn emit_air_from_declarative_agent(agent_dir: &Path, web_tools: bool) -> Result<String> {
+    use apxm_compiler::{
+        AirModule, AirProgram, FrontendEdge, FrontendGraph, FrontendNode, FrontendParameter,
+    };
+    use apxm_core::constants::graph::{attrs as graph_attrs, metadata as graph_meta};
+    use apxm_core::types::{AISOperationType, DependencyType, Value};
+    use std::collections::HashMap;
 
-    let agent_path = package.join("agent.toml");
+    let agent_path = agent_dir.join("agent.toml");
     let agent_text = std::fs::read_to_string(&agent_path)
         .with_context(|| format!("Failed to read {}", agent_path.display()))?;
     let agent: DeclarativeAgentToml = toml::from_str(&agent_text)
         .with_context(|| format!("Failed to parse {}", agent_path.display()))?;
 
-    let tools_path = package.join("capabilities/handlers/tools.json");
+    let tools_path = agent_dir.join("capabilities/handlers/tools.json");
     let manifest: Vec<serde_json::Value> = if tools_path.is_file() {
         serde_json::from_str(
             &std::fs::read_to_string(&tools_path)
@@ -486,7 +508,7 @@ fn emit_air_from_declarative_package(package: &Path, web_tools: bool) -> Result<
     let persona = agent
         .prompts
         .get("persona")
-        .map(|rel| package.join(rel))
+        .map(|rel| agent_dir.join(rel))
         .filter(|path| path.is_file())
         .and_then(|path| std::fs::read_to_string(path).ok())
         .unwrap_or_default();
@@ -496,85 +518,194 @@ fn emit_air_from_declarative_package(package: &Path, web_tools: bool) -> Result<
     let loop_rearms = declarative_loop_rearms(&agent);
     let use_recv_loop = loop_mode == "recv" && loop_rearms;
 
-    let mut prefix = String::new();
+    let mut sidecar = String::new();
     if !manifest.is_empty() {
-        prefix.push_str(&format!(
+        sidecar.push_str(&format!(
             "{TYPESCRIPT_TOOLS_PREFIX}{}\n",
             serde_json::to_string(&manifest)?
         ));
     }
 
-    let mut main_body = String::new();
+    let parameter = FrontendParameter {
+        name: turn_param.clone(),
+        type_name: "str".to_string(),
+    };
+
+    let mut nodes = Vec::new();
     for (idx, hook) in agent.hooks.iter().enumerate() {
         let handler_id = resolve_declarative_handler_id(&hook.handler, &manifest)?;
-        let name = format!("register_hook_{idx}");
-        main_body.push_str(&format!(
-            "    %{name} = ais.register_hook \"{}\" {{hook_match = \"{}\", hook_mode = \"{}\", python_hook_handler_id = \"{}\"}} : !ais.token\n",
-            hook.event,
-            hook.hook_match.as_deref().unwrap_or("*"),
-            hook.mode,
-            handler_id,
-        ));
+        nodes.push(FrontendNode {
+            id: idx as u64 + 1,
+            name: format!("register_hook_{idx}"),
+            op: AISOperationType::RegisterHook,
+            attributes: HashMap::from([
+                (
+                    graph_attrs::HOOK_EVENT.to_string(),
+                    Value::String(hook.event.clone()),
+                ),
+                (
+                    graph_attrs::HOOK_MATCH.to_string(),
+                    Value::String(hook.hook_match.clone().unwrap_or_else(|| "*".to_string())),
+                ),
+                (
+                    graph_attrs::HOOK_MODE.to_string(),
+                    Value::String(hook.mode.clone()),
+                ),
+                (
+                    graph_attrs::PYTHON_HOOK_HANDLER_ID.to_string(),
+                    Value::String(handler_id),
+                ),
+            ]),
+        });
     }
+
+    let run_node_id = nodes.len() as u64 + 1;
+    let return_node_id = run_node_id + 1;
+    let edges = Vec::from([FrontendEdge {
+        from: run_node_id,
+        to: return_node_id,
+        dependency: DependencyType::Data,
+    }]);
 
     if use_recv_loop {
-        let persona_attr = if persona.trim().is_empty() {
-            String::new()
-        } else {
-            format!("system_prompt = \"{}\"", escape_air_string(persona.trim()))
-        };
-        let mut recv_attrs = vec![
-            "mode = \"recv\"".to_string(),
-            "recv_once = \"false\"".to_string(),
-            "turn_agent = \"conversation\"".to_string(),
-            "turn_flow = \"turn\"".to_string(),
-            format!("turn_param = \"{turn_param}\""),
-        ];
-        if !persona_attr.is_empty() {
-            recv_attrs.push(persona_attr);
+        let mut attrs = HashMap::from([
+            (
+                graph_attrs::PROMPT.to_string(),
+                Value::String(persona.trim().to_string()),
+            ),
+            (
+                graph_attrs::MODE.to_string(),
+                Value::String("recv".to_string()),
+            ),
+            ("recv_once".to_string(), Value::String("false".to_string())),
+            (
+                "turn_agent".to_string(),
+                Value::String("conversation".to_string()),
+            ),
+            ("turn_flow".to_string(), Value::String("turn".to_string())),
+            ("turn_param".to_string(), Value::String(turn_param.clone())),
+            (
+                graph_attrs::INPUT_NAMES.to_string(),
+                Value::Array(vec![Value::String(turn_param.clone())]),
+            ),
+        ]);
+        if !persona.trim().is_empty() {
+            attrs.insert(
+                graph_attrs::SYSTEM_PROMPT.to_string(),
+                Value::String(persona.trim().to_string()),
+            );
         }
-        main_body.push_str(&format!(
-            "    %turn_loop = ais.autonomous \"{}\" {{{}}} (%arg0 : !ais.token) : !ais.token\n",
-            escape_air_string(persona.trim()),
-            recv_attrs.join(", "),
-        ));
-        main_body.push_str("    func.return %turn_loop : !ais.token\n");
+        nodes.push(FrontendNode {
+            id: run_node_id,
+            name: "turn_loop".to_string(),
+            op: AISOperationType::Autonomous,
+            attributes: attrs,
+        });
     } else {
-        main_body.push_str(&format!(
-            "    %run_turn = ais.flow_call \"conversation\" \"turn\" {{args = {{{turn_param} = \"{{{turn_param}}}\"}}, input_names = [\"{turn_param}\"]}} (%arg0 : !ais.token) : !ais.token\n"
-        ));
-        main_body.push_str("    %done = ais.done %run_turn : !ais.token\n");
-        main_body.push_str("    func.return %done : !ais.token\n");
+        nodes.push(FrontendNode {
+            id: run_node_id,
+            name: "run_turn".to_string(),
+            op: AISOperationType::FlowCall,
+            attributes: HashMap::from([
+                (
+                    graph_attrs::AGENT_NAME.to_string(),
+                    Value::String("conversation".to_string()),
+                ),
+                (
+                    graph_attrs::FLOW_NAME.to_string(),
+                    Value::String("turn".to_string()),
+                ),
+                (
+                    graph_attrs::ARGS.to_string(),
+                    Value::Object(HashMap::from([(
+                        turn_param.clone(),
+                        Value::String(format!("{{{turn_param}}}")),
+                    )])),
+                ),
+                (
+                    graph_attrs::INPUT_NAMES.to_string(),
+                    Value::Array(vec![Value::String(turn_param.clone())]),
+                ),
+            ]),
+        });
     }
 
-    let mut ask_attrs = vec!["conversational_turn = \"true\"".to_string()];
+    nodes.push(FrontendNode {
+        id: return_node_id,
+        name: "return_turn".to_string(),
+        op: AISOperationType::Return,
+        attributes: HashMap::new(),
+    });
+
+    let main_graph = FrontendGraph {
+        name: "main".to_string(),
+        nodes,
+        edges,
+        parameters: vec![parameter.clone()],
+        metadata: HashMap::from([(graph_meta::IS_ENTRY.to_string(), Value::Bool(true))]),
+    };
+
+    let mut ask_attrs = HashMap::from([
+        (
+            graph_attrs::TEMPLATE_STR.to_string(),
+            Value::String(format!("{{{turn_param}}}")),
+        ),
+        (
+            "conversational_turn".to_string(),
+            Value::String("true".to_string()),
+        ),
+    ]);
     if !persona.trim().is_empty() {
-        ask_attrs.push(format!(
-            "system_prompt = \"{}\"",
-            escape_air_string(persona.trim())
-        ));
+        ask_attrs.insert(
+            graph_attrs::SYSTEM_PROMPT.to_string(),
+            Value::String(persona.trim().to_string()),
+        );
     }
     let mut groups = vec!["discovery"];
     if web_tools {
         groups.push("web");
     }
-    ask_attrs.push(format!(
-        "capability_groups = [{}]",
-        groups
-            .iter()
-            .map(|group| format!("\"{group}\""))
-            .collect::<Vec<_>>()
-            .join(", ")
-    ));
-
-    let turn_body = format!(
-        "  func.func @conversation.turn(%arg0: !ais.token {{ais.param_name = \"{turn_param}\", ais.param_type = \"str\"}}) -> !ais.token {{\n    %answer = ais.ask \"{{{turn_param}}}\" {{{}}} : !ais.token\n    %turn_done = ais.done %answer : !ais.token\n    func.return %turn_done : !ais.token\n  }}\n",
-        ask_attrs.join(", ")
+    ask_attrs.insert(
+        graph_attrs::CAPABILITY_GROUPS.to_string(),
+        Value::Array(
+            groups
+                .into_iter()
+                .map(|group| Value::String(group.to_string()))
+                .collect(),
+        ),
     );
 
-    Ok(format!(
-        "{prefix}module {{\n  func.func @main(%arg0: !ais.token {{ais.param_name = \"{turn_param}\", ais.param_type = \"str\"}}) -> !ais.token attributes {{ais.entry}} {{\n{main_body}  }}\n{turn_body}}}\n"
-    ))
+    let turn_graph = FrontendGraph {
+        name: "conversation.turn".to_string(),
+        nodes: vec![
+            FrontendNode {
+                id: 1,
+                name: "answer".to_string(),
+                op: AISOperationType::Ask,
+                attributes: ask_attrs,
+            },
+            FrontendNode {
+                id: 2,
+                name: "return_answer".to_string(),
+                op: AISOperationType::Return,
+                attributes: HashMap::new(),
+            },
+        ],
+        edges: vec![FrontendEdge {
+            from: 1,
+            to: 2,
+            dependency: DependencyType::Data,
+        }],
+        parameters: vec![parameter],
+        metadata: HashMap::from([(graph_meta::IS_ENTRY.to_string(), Value::Bool(false))]),
+    };
+
+    let modules = [main_graph, turn_graph]
+        .iter()
+        .map(FrontendGraph::to_air_module)
+        .collect::<std::result::Result<Vec<AirModule>, _>>()?;
+    let air = AirProgram::new(modules).to_air()?;
+    Ok(format!("{sidecar}{air}"))
 }
 
 #[cfg(feature = "driver")]
@@ -977,7 +1108,61 @@ pub(super) fn air_graph_from_source(input: &Path) -> Result<apxm_compiler::AirMo
 #[cfg(all(test, feature = "driver"))]
 mod tests {
     use super::*;
+    use apxm_compiler::{Context, Module, Pipeline};
     use apxm_core::constants::mlir::syntax as mlir_syntax;
+    use apxm_core::types::OptimizationLevel;
+    use std::fs;
+    use tempfile::tempdir;
+
+    fn write_declarative_agent(mode: &str) -> tempfile::TempDir {
+        let tmp = tempdir().expect("temp agent");
+        let root = tmp.path();
+        fs::create_dir_all(root.join("capabilities/handlers")).expect("handlers dir");
+        fs::write(root.join("persona.md"), "You are concise.\n").expect("persona");
+        fs::write(
+            root.join("agent.toml"),
+            format!(
+                r#"
+id = "demo"
+
+[runtime.loop]
+mode = "{mode}"
+rearm = true
+turn_param = "user_message"
+
+[prompts]
+persona = "persona.md"
+
+[[hooks]]
+event = "pre_turn"
+match = "*"
+mode = "observe"
+handler = "hooks.pre_turn"
+"#
+            ),
+        )
+        .expect("agent toml");
+        fs::write(
+            root.join("capabilities/handlers/tools.json"),
+            r#"[{"source_file":"hooks.ts","qualname":"pre_turn","handler_id":"sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}]"#,
+        )
+        .expect("tools manifest");
+        tmp
+    }
+
+    fn assert_cli_air_round_trips(air: &str) {
+        let (clean_air, _python, _typescript) = extract_handler_sidecars(air);
+        assert!(!clean_air.contains("ais.done"));
+        assert!(clean_air.contains("ais.return"));
+
+        let context = Context::new().expect("compiler context");
+        let parsed = Module::parse(&context, &clean_air).expect("Module::parse accepts CLI AIR");
+        parsed.verify().expect("parsed module verifies");
+
+        Pipeline::with_opt_level(&context, OptimizationLevel::O0)
+            .compile(&clean_air)
+            .expect("O0 compile accepts CLI AIR");
+    }
 
     #[test]
     fn mlir_air_text_accepts_leading_sidecar_comments() {
@@ -1021,6 +1206,31 @@ mod tests {
             typescript.as_deref(),
             Some(br#"[{"handler_id":"ts"}]"#.as_slice())
         );
+    }
+
+    #[test]
+    fn declarative_host_loop_air_round_trips_through_mlir_parser() {
+        let agent_dir = write_declarative_agent("host");
+        let air = emit_air_from_agent(agent_dir.path(), true).expect("declarative AIR");
+
+        assert!(air.starts_with(TYPESCRIPT_TOOLS_PREFIX));
+        assert!(air.contains("ais.register_hook \"pre_turn\""));
+        assert!(air.contains("ais.flow_call \"conversation\" \"turn\""));
+        assert!(air.contains("args = {user_message = \"{user_message}\"}"));
+        assert!(air.contains("capability_groups = [\"discovery\", \"web\"]"));
+        assert_cli_air_round_trips(&air);
+    }
+
+    #[test]
+    fn declarative_recv_loop_air_round_trips_through_mlir_parser() {
+        let agent_dir = write_declarative_agent("recv");
+        let air = emit_air_from_agent(agent_dir.path(), false).expect("declarative AIR");
+
+        assert!(air.contains("ais.autonomous"));
+        assert!(air.contains("mode = \"recv\""));
+        assert!(air.contains("recv_once = \"false\""));
+        assert!(air.contains("capability_groups = [\"discovery\"]"));
+        assert_cli_air_round_trips(&air);
     }
 
     #[test]

@@ -17,11 +17,16 @@ display_name = "Gao"
 domain = "apxm"
 id = "gao"
 kind = "agent"
+license = "MIT"
 skills = [
     "agent-builder",
     "workflow-designer",
     "workflow-reviewer",
 ]
+version = "0.1.0"
+
+[compile]
+frontend = "typescript"
 
 [[hooks]]
 event = "pre_turn"
@@ -65,3 +70,6 @@ session_prefix = "gao"
 mode = "recv"
 rearm = true
 turn_param = "user_message"
+
+[source]
+type = "local"

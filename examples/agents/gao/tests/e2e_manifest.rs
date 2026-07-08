@@ -1,18 +1,19 @@
-// End-to-end fixture for the ultrathin looped `gao` example package.
+// End-to-end fixture for the ultrathin looped `gao` example agent.
 //
-// Exercised from `crates/tools/cli/src/commands/package.rs` via
-// `cargo test --features driver -p apxm-cli package:: gao`.
+// Exercised from `crates/tools/cli/src/commands/agent.rs` via
+// `cargo test --features driver -p apxm-cli agent:: gao`.
 //
 // Cross-repo server coverage lives in
 // `workspace/server/crates/server/src/tests.rs`:
-// `agent_package_compile_endpoint_compiles_real_gao_package_via_agents_cli`.
+// `agent_compile_endpoint_compiles_real_gao_via_agents_cli`.
 
 use std::fs;
 use std::path::Path;
 
-use crate::commands::compile::emit_air_from_agent_package;
+use crate::commands::compile::emit_air_from_agent;
+use tempfile::TempDir;
 
-use super::super::{gao_example_package_dir, package_build, package_lint, package_sync, PackToml};
+use super::super::{agent_build, agent_lint, agent_sync, gao_example_agent_dir, IntegrityToml};
 
 fn node_available() -> bool {
     std::process::Command::new("node")
@@ -29,20 +30,28 @@ fn npm_available() -> bool {
 }
 
 fn require_gao_example() -> std::path::PathBuf {
-    let root = gao_example_package_dir();
+    let root = gao_example_agent_dir();
     assert!(
-        root.join("pack.toml").is_file(),
+        root.join("agent.toml").is_file(),
         "gao example missing at {}",
         root.display()
     );
     root
 }
 
+fn copy_gao_example() -> TempDir {
+    let tmp = tempfile::tempdir().expect("gao tempdir");
+    let root = tmp.path().join("gao");
+    copy_dir_all(&require_gao_example(), &root).expect("copy gao fixture");
+    tmp
+}
+
 #[test]
 fn gao_example_sync_and_lint_pass() {
-    let root = require_gao_example();
-    package_sync(&root, true).expect("gao package sync");
-    package_lint(&root, None, true).expect("gao package lint");
+    let tmp = copy_gao_example();
+    let root = tmp.path().join("gao");
+    agent_sync(&root, true).expect("gao agent sync");
+    agent_lint(&root, None, true).expect("gao agent lint");
 }
 
 #[test]
@@ -51,15 +60,16 @@ fn gao_example_build_seals_integrity() {
         eprintln!("skipping gao_example_build_seals_integrity: node/npm not on PATH");
         return;
     }
-    let root = require_gao_example();
-    package_build(&root, true).expect("gao package build");
-    let pack: PackToml = toml::from_str(
-        &fs::read_to_string(root.join("pack.toml")).expect("read pack.toml"),
+    let tmp = copy_gao_example();
+    let root = tmp.path().join("gao");
+    agent_build(&root, true).expect("gao agent build");
+    let integrity: IntegrityToml = toml::from_str(
+        &fs::read_to_string(root.join("integrity.toml")).expect("read integrity.toml"),
     )
-    .expect("parse pack.toml");
+    .expect("parse integrity.toml");
     assert!(
-        pack.integrity.is_some(),
-        "build must write [integrity] for gao"
+        integrity.algorithm == "sha256" && !integrity.chain.is_empty(),
+        "build must write generated integrity.toml for gao"
     );
 }
 
@@ -69,12 +79,13 @@ fn gao_example_build_writes_tools_json_manifest() {
         eprintln!("skipping gao_example_build_writes_tools_json_manifest: node/npm not on PATH");
         return;
     }
-    let root = require_gao_example();
-    package_build(&root, true).expect("gao package build");
+    let tmp = copy_gao_example();
+    let root = tmp.path().join("gao");
+    agent_build(&root, true).expect("gao agent build");
     let tools_json = root.join("capabilities/handlers/tools.json");
     assert!(
         tools_json.is_file(),
-        "typescript package build must emit capabilities/handlers/tools.json"
+        "typescript agent build must emit capabilities/handlers/tools.json"
     );
     let manifest: Vec<serde_json::Value> =
         serde_json::from_str(&fs::read_to_string(&tools_json).unwrap()).unwrap();
@@ -107,10 +118,11 @@ fn gao_compile_service_declarative_emits_recv_loop_air() {
         );
         return;
     }
-    let root = require_gao_example();
-    package_build(&root, true).expect("gao package build must succeed before compile-service");
+    let tmp = copy_gao_example();
+    let root = tmp.path().join("gao");
+    agent_build(&root, true).expect("gao agent build must succeed before compile-service");
 
-    let air = emit_air_from_agent_package(&root, false)
+    let air = emit_air_from_agent(&root, false)
         .expect("declarative compile-service AIR for gao");
 
     assert!(air.contains("mode = \"recv\""), "expected in-graph recv loop");
@@ -137,7 +149,7 @@ fn gao_sync_rejects_package_prefixed_capability_id() {
     let tmp = tempfile::tempdir().unwrap();
     let root = tmp.path().join("gao-bad-cap");
     fs::create_dir_all(root.join("capabilities/bad_cap")).unwrap();
-    copy_dir_all(&gao_example_package_dir(), &root).unwrap();
+    copy_dir_all(&gao_example_agent_dir(), &root).unwrap();
     fs::write(
         root.join("capabilities/bad_cap/capability.toml"),
         "id = \"gao.bad_cap\"\ndescription = \"bad\"\n",
@@ -149,7 +161,7 @@ fn gao_sync_rejects_package_prefixed_capability_id() {
     )
     .unwrap();
 
-    let err = package_sync(&root, true).expect_err("prefixed capability id must fail sync/lint");
+    let err = agent_sync(&root, true).expect_err("prefixed capability id must fail sync/lint");
     let message = err.to_string();
     assert!(
         message.contains("must not embed the package id prefix")
@@ -163,7 +175,7 @@ fn gao_sync_rejects_package_prefixed_capability_id() {
 fn gao_sync_rejects_typescript_handler_without_handler_ts() {
     let tmp = tempfile::tempdir().unwrap();
     let root = tmp.path().join("gao-missing-handler");
-    copy_dir_all(&gao_example_package_dir(), &root).unwrap();
+    copy_dir_all(&gao_example_agent_dir(), &root).unwrap();
     fs::create_dir_all(root.join("capabilities/missing_handler")).unwrap();
     fs::write(
         root.join("capabilities/missing_handler/capability.toml"),
@@ -177,7 +189,7 @@ fn gao_sync_rejects_typescript_handler_without_handler_ts() {
     .unwrap();
 
     let err =
-        package_sync(&root, true).expect_err("typescript_handler without handler.ts must fail");
+        agent_sync(&root, true).expect_err("typescript_handler without handler.ts must fail");
     let message = err.to_string();
     assert!(
         message.contains("typescript_handler") && message.contains("handler.ts"),

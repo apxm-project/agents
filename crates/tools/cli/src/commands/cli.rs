@@ -80,15 +80,15 @@ pub enum Commands {
         #[arg(long = "embed-manifest", value_name = "skill.toml")]
         embed_manifest: Option<PathBuf>,
     },
-    /// Compile an agent package declaratively to AIR on stdout. This is the
+    /// Compile an agent declaratively to AIR on stdout. This is the
     /// cross-repo process contract Server invokes as a subprocess instead of
     /// reaching into this repo's Python frontend directly — see
     /// `commands::compile::compile_service_command` for the exact I/O
     /// contract (stdout carries ONLY the emitted AIR; errors + logs go to
     /// stderr; nonzero exit on failure).
     CompileService {
-        /// Package directory (contains pack.toml, agent.toml, capabilities/)
-        package: PathBuf,
+        /// Agent directory (contains agent.toml, integrity.toml, and capabilities/)
+        agent_dir: PathBuf,
         /// Enable optional web-tools registration in the emitted ASK node.
         #[arg(long)]
         web_tools: bool,
@@ -176,20 +176,20 @@ pub enum Commands {
         #[command(subcommand)]
         action: ToolAction,
     },
-    /// Manage ACP agent profiles for INV(acp) nodes
-    Agent {
+    /// Manage ACP profiles for INV(acp) nodes
+    Acp {
         #[command(subcommand)]
-        action: AgentAction,
+        action: AcpAction,
     },
     /// Manage agent teams from ~/.apxm/teams.toml
     Team {
         #[command(subcommand)]
         action: TeamAction,
     },
-    /// Scaffold, lint, build, and install agent packages.
-    Package {
+    /// Scaffold, sync, lint, build, and install agents.
+    Agent {
         #[command(subcommand)]
-        action: PackageAction,
+        action: AgentAction,
     },
     /// Scaffold, lint, and install organization packages.
     Org {
@@ -296,22 +296,17 @@ pub enum Commands {
     },
     /// Interactive conversational REPL over a running apxm-server.
     ///
-    /// Requires `--package <id>` (alias `--agent`) for server-backed chat
-    /// (`POST /v1/agents/packages/{{id}}/sessions`) or `--air <path>` for a
+    /// Requires `--agent <id>` for server-backed chat
+    /// (`POST /v1/agents/{{id}}/sessions`) or `--air <path>` for a
     /// custom in-graph artifact with an in-program recv loop.
     Chat {
-        /// Agent package id for thin server-backed chat. Starts
-        /// `POST /v1/agents/packages/{{id}}/sessions` and pipes stdin turns to the
+        /// Agent id for thin server-backed chat. Starts
+        /// `POST /v1/agents/{{id}}/sessions` and pipes stdin turns to the
         /// server session.
-        #[arg(
-            long = "package",
-            alias = "agent",
-            value_name = "ID",
-            conflicts_with = "air"
-        )]
-        package: Option<String>,
+        #[arg(long = "agent", value_name = "ID", conflicts_with = "air")]
+        agent: Option<String>,
         /// AIR graph with an in-program recv loop (path to a `.air` file).
-        #[arg(long, conflicts_with = "package")]
+        #[arg(long, conflicts_with = "agent")]
         air: Option<std::path::PathBuf>,
         /// apxm-server base URL (default $APXM_SERVER_BASE or
         /// http://127.0.0.1:18800).
@@ -329,11 +324,11 @@ pub enum Commands {
         /// scoping; shared-tier skills are always visible. Empty = unrestricted.
         #[arg(long = "import", value_name = "LIB")]
         import: Vec<String>,
-        /// Pin package chat to a registered backend by name (as listed by
+        /// Pin agent chat to a registered backend by name (as listed by
         /// `GET /v1/models`).
         #[arg(long, value_name = "NAME")]
         backend: Option<String>,
-        /// Pin package chat to a specific model id.
+        /// Pin agent chat to a specific model id.
         #[arg(long, value_name = "ID")]
         model: Option<String>,
         /// Tenant/owner scope for credential resolution.
@@ -684,7 +679,7 @@ pub enum ToolAction {
 }
 
 #[derive(Subcommand)]
-pub enum AgentAction {
+pub enum AcpAction {
     /// List available ACP agent profiles
     List,
     /// Register an agent profile (from template or custom command)
@@ -724,12 +719,12 @@ pub enum AgentAction {
 }
 
 #[derive(Subcommand)]
-pub enum PackageAction {
-    /// Scaffold a new agent-package folder tree (apxm.agent-package.v1).
+pub enum AgentAction {
+    /// Scaffold a new agent folder tree (apxm.agent.v1).
     New {
-        /// Package id (also used as the pack_id / agent id).
+        /// Agent id.
         id: String,
-        /// Destination directory (default: ./packages/<id>).
+        /// Destination directory (default: ./agents/<id>).
         #[arg(long)]
         path: Option<PathBuf>,
         /// Display name for the agent (default: derived from the id).
@@ -741,33 +736,32 @@ pub enum PackageAction {
     },
     /// Regenerate aggregate manifests from capability/skill folders
     Sync {
-        /// Package directory to sync (default: current directory).
+        /// Agent directory to sync (default: current directory).
         #[arg(default_value = ".")]
         path: PathBuf,
     },
-    /// Validate a package folder against the agent-package.v1 contract and
+    /// Validate an agent folder against the apxm.agent.v1 contract and
     /// check capability-set agreement across agent.toml/capabilities.toml/skills.
     Lint {
-        /// Package directory to validate (default: current directory).
+        /// Agent directory to validate (default: current directory).
         #[arg(default_value = ".")]
         path: PathBuf,
         /// An org package directory whose capabilities/{capabilities,
-        /// permissions}.toml are this package's org-global capability set
+        /// permissions}.toml are this agent's org-global capability set
         ///: a skill invoking one of these is not flagged as
-        /// undeclared even though the package itself never joins it.
+        /// undeclared even though the agent itself never joins it.
         #[arg(long)]
         org: Option<PathBuf>,
     },
-    /// Compile the package's skills and (re)compute the pack integrity hash
-    /// chain, writing the result into pack.toml's [integrity] table.
+    /// Compile the agent's skills and generate integrity.toml.
     Build {
-        /// Package directory to build (default: current directory).
+        /// Agent directory to build (default: current directory).
         #[arg(default_value = ".")]
         path: PathBuf,
     },
-    /// Install a built package to `APXM_HOME/packages/<id>/`.
+    /// Install a built agent to `APXM_HOME/agents/<id>/`.
     Install {
-        /// Package directory to install (default: current directory).
+        /// Agent directory to install (default: current directory).
         #[arg(default_value = ".")]
         path: PathBuf,
         /// Overwrite an existing install at the destination.

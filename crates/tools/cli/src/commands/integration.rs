@@ -1,7 +1,7 @@
 //! `apxm integration new|lint|install` — the toolchain for the
 //! canonical integration-package folder format (`apxm.integration-package.v1`).
 //!
-//! This module is the integration-level sibling of [`super::package`]
+//! This module is the integration-level sibling of [`super::agent`]
 //! and [`super::org`]: same module organization, same
 //! manifest-projection-from-schema approach (hand ported into Rust structs
 //! rather than loading the JSON schema at runtime), same lint reporting
@@ -65,8 +65,8 @@ use std::path::{Path, PathBuf};
 use anyhow::{Context, Result, anyhow, bail};
 use serde::{Deserialize, Serialize};
 
+use super::agent::copy_dir_recursive;
 use super::implementations::{Status, print_section_header, print_status_line};
-use super::package::copy_dir_recursive;
 
 // ---------------------------------------------------------------------
 // On-disk manifest shapes (apxm.integration-package.v1 projections)

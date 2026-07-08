@@ -1,0 +1,42 @@
+[
+  {
+    "handler_id": "sha256:32cab73ca341e4936e29d4539cd0c891e2339da1e42eb60cd7688eb6d27588cc",
+    "module": "capabilities/handlers/hooks",
+    "qualname": "compact_conversation",
+    "name": "hook",
+    "event": "post_turn",
+    "match": "*",
+    "mode": "observe",
+    "source_file": "capabilities/handlers/hooks.ts"
+  },
+  {
+    "handler_id": "sha256:06bb3640206c7d1c673f5c6d11f3fd05b6faaea62e380904978ab16a1847b184",
+    "module": "capabilities/handlers/hooks",
+    "qualname": "inject_context",
+    "name": "hook",
+    "event": "pre_turn",
+    "match": "*",
+    "mode": "observe",
+    "source_file": "capabilities/handlers/hooks.ts"
+  },
+  {
+    "handler_id": "sha256:8630b92da4c2112e2f043283e1088d9c049eaf0b8fe0e2d04b4eb5a28f0f22bc",
+    "module": "capabilities/handlers/hooks",
+    "qualname": "read_back_summary",
+    "name": "hook",
+    "event": "pre_ask",
+    "match": "*",
+    "mode": "observe",
+    "source_file": "capabilities/handlers/hooks.ts"
+  },
+  {
+    "handler_id": "sha256:0d9bd66acf4cd7f1d70ca12736d4fd9c36be6a08c52c00f271ea407376a440c6",
+    "module": "capabilities/handlers/hooks",
+    "qualname": "redact_tool_results",
+    "name": "hook",
+    "event": "post_cap",
+    "match": "*",
+    "mode": "observe",
+    "source_file": "capabilities/handlers/hooks.ts"
+  }
+]

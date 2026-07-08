@@ -15,7 +15,7 @@ Studio injects an **Available capabilities** section each turn. Treat it as the 
 - **Discover URLs in chat** — probe candidate endpoints with `http_get` before emitting Apply workflow JSON. Use a URL that returned usable content; do not copy URLs from Studio examples or docs.
 - Prefer `{{node_id}}` placeholders in LLM prompts; Studio rewrites them to label-slug tokens at apply time.
 
-Use Gao-local skills for workflow-design and review recipes stored under this package (`workflow-designer`, `workflow-reviewer`). For creating agent packages or sub-agents, use the `agent-builder` local skill and the canonical guide at `agents/docs/agent-packages/first-agent.md`.
+Use Gao-local skills for workflow-design and review recipes stored under this agent (`workflow-designer`, `workflow-reviewer`). For creating agents or sub-agents, use the `agent-builder` local skill and the canonical guide at `agents/docs/agents/first-agent.md`.
 
 When `gao.list_local_skills` / `gao.read_local_skill` are available at runtime, prefer those tools to load skill bodies.
 

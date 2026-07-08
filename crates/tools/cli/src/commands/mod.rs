@@ -5,6 +5,7 @@ use std::fmt;
 pub mod cli;
 pub mod implementations;
 
+pub mod acp;
 pub mod agent;
 pub mod analysis;
 #[cfg(feature = "driver")]
@@ -22,7 +23,6 @@ pub mod frontend_air;
 pub mod integration;
 pub mod ops;
 pub mod org;
-pub mod package;
 pub mod process;
 #[cfg(feature = "driver")]
 pub mod render;
@@ -43,6 +43,7 @@ pub mod workflow;
 
 pub use cli::*;
 
+pub use acp::*;
 pub use agent::*;
 pub use analysis::*;
 #[cfg(feature = "driver")]
@@ -57,7 +58,6 @@ pub use frontend_air::*;
 pub use integration::*;
 pub use ops::*;
 pub use org::*;
-pub use package::*;
 pub use process::*;
 pub use replay::*;
 pub use session::*;
