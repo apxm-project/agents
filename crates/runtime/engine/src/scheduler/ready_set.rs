@@ -182,37 +182,6 @@ impl ReadySet {
         Ok(newly_ready)
     }
 
-    /// Check if a specific node is ready.
-    ///
-    /// Returns true if the node has no pending inputs.
-    #[cfg(test)]
-    pub fn is_ready(&self, node_id: NodeId) -> bool {
-        !self.pending_inputs.contains_key(&node_id)
-    }
-
-    /// Get the pending input count for a node.
-    ///
-    /// Returns 0 if the node is ready or not tracked.
-    #[cfg(test)]
-    pub fn pending_count(&self, node_id: NodeId) -> usize {
-        self.pending_inputs
-            .get(&node_id)
-            .map(|v| *v.value())
-            .unwrap_or(0)
-    }
-
-    /// Get the total number of nodes with pending inputs.
-    #[cfg(test)]
-    pub fn len(&self) -> usize {
-        self.pending_inputs.len()
-    }
-
-    /// Check if all nodes are ready (no pending inputs).
-    #[cfg(test)]
-    pub fn is_empty(&self) -> bool {
-        self.pending_inputs.is_empty()
-    }
-
     /// Get a snapshot of all pending counts for diagnostics.
     pub(crate) fn snapshot(&self) -> Vec<(NodeId, usize)> {
         let mut snapshot: Vec<_> = self

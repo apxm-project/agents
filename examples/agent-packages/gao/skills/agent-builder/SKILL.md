@@ -55,7 +55,7 @@ package's files (including a skill's prose) means re-running the package
 build/hash step, not hand-patching the manifest — a stale chain fails
 validation even if every individual file digest still looks right.
 
-> Gao's own package (`agents/gao/`) predates the full AGT-1 layout — it has
+> Gao's own package (`agents/gao/`) predates the full package layout — it has
 > `agent.toml`, `capabilities/`, `prompts/`, `python/`, and prompt-only
 > `skills/<id>/` folders (no `skill.toml` yet), but no `pack.toml` or
 > integrity chain. Teach operators the schema above for *new* packages

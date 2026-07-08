@@ -180,13 +180,6 @@ impl TokenBucket {
         // Delta is positive to debit more, negative to credit back
         self.tokens = (self.tokens - delta).max(0.0).min(self.capacity);
     }
-
-    #[cfg(test)]
-    fn available_tokens(&self, now: Instant) -> f64 {
-        let mut clone = self.clone();
-        clone.refill(now);
-        clone.tokens
-    }
 }
 
 /// Rate limiter with per-backend token buckets.
@@ -308,14 +301,5 @@ impl<C: Clock> RateLimiter<C> {
             let delta = actual - estimated;
             state.bucket.adjust(now, delta);
         }
-    }
-
-    #[cfg(test)]
-    fn available_tokens(&self, backend: &str) -> Option<f64> {
-        let now = self.clock.now();
-        let guard = self.buckets.lock().expect("rate limiter mutex poisoned");
-        guard
-            .get(backend)
-            .map(|state| state.bucket.available_tokens(now))
     }
 }

@@ -521,19 +521,6 @@ impl ModelRouter {
         Ok(decision)
     }
 
-    #[cfg(test)]
-    async fn select_for_dispatch_with_rate_limiter<C: rate_limit::Clock>(
-        &self,
-        request: &LLMRequest,
-        rate_limiter: &RateLimiter<C>,
-    ) -> anyhow::Result<RoutingDecision> {
-        let decision = self.select(request)?;
-        let backend_id = &decision.backend;
-        let key = format!("backend:{}", backend_id);
-        rate_limiter.check(key).await?;
-        Ok(decision)
-    }
-
     /// Record a successful LLM call to a backend.
     pub fn record_success(&self, backend: &str) {
         self.circuit_breakers.record_success(backend);

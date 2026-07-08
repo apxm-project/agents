@@ -1,4 +1,4 @@
-# The shared frontend graph model (WF-3)
+# The shared frontend graph model
 
 `ApxmGraph` (defined in [`apxm/ir.py`](../apxm/ir.py)) is **the shared
 frontend-internal graph model**. It is produced by
@@ -6,10 +6,12 @@ frontend-internal graph model**. It is produced by
 in-memory result of recording a Python-authored flow (`@compile()` /
 `g.<op>()` calls) before it is lowered to `.air` text.
 
-Python and TypeScript both emit AIR from this graph shape. TypeScript's
-`@apxm/frontend` package (`crates/compiler/frontend/typescript/src/graph.ts`)
-uses the same fields so each frontend can be verified against one shared
-contract without reading two implementations side by side.
+Python and TypeScript both build this graph shape and hand it to the single
+Rust printer (`apxm emit-air`) to render AIR — neither frontend emits AIR text
+itself. TypeScript's `@apxm/frontend` package
+(`crates/compiler/frontend/typescript/src/graph.ts`) uses the same fields so
+each frontend can be verified against one shared contract without reading two
+implementations side by side.
 
 ## What this is not
 
@@ -127,9 +129,9 @@ manifest.
 
 ## Cross-frontend AIR vectors
 
-The `.air` output frontends must independently produce grammar-valid text for
-lives in the coordinator's
-`workspace/contracts/vectors/air/` vector set (WF-2, hardened under WF-3).
+The `.air` grammar-conformance vectors both frontends' graphs are validated
+against live in the coordinator's
+`workspace/contracts/vectors/air/` vector set.
 See that directory's `manifest.json` for the fixture list and
 [`air-grammar.md`](../../../../../contracts/docs/air-grammar.md) for the
 grammar itself. `tools/check_air_provenance.py` in the coordinator repo is

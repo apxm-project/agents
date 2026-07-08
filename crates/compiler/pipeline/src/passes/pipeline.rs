@@ -21,22 +21,12 @@ const MAX_CONVERGENCE_ITERATIONS: usize = 10;
 // AIS authoring definitions.
 const NORMALIZE: &str = passes::NORMALIZE.name;
 const BUILD_PROMPT: &str = passes::BUILD_PROMPT.name;
-#[cfg(test)]
-const DSPY_OPTIMIZE: &str = passes::DSPY_OPTIMIZE.name;
 const ASSIGN_PRIORITY: &str = passes::ASSIGN_PRIORITY.name;
 const SCHEDULING: &str = passes::SCHEDULING.name;
 const SHARED_PREFIX_ANALYSIS: &str = passes::SHARED_PREFIX_ANALYSIS.name;
-#[cfg(test)]
-const FUSE_ASK_OPS: &str = passes::FUSE_ASK_OPS.name;
-#[cfg(test)]
-const CONDENSE_OPS: &str = passes::CONDENSE_OPS.name;
 const UNCONSUMED_VALUE_WARNING: &str = passes::UNCONSUMED_VALUE_WARNING.name;
 const TEMPLATE_SPECIALIZATION: &str = passes::TEMPLATE_SPECIALIZATION.name;
 const DEAD_CONTEXT_ELIMINATION: &str = passes::DEAD_CONTEXT_ELIMINATION.name;
-#[cfg(test)]
-const SCHEMA_NARROWING: &str = passes::SCHEMA_NARROWING.name;
-#[cfg(test)]
-const PROMPT_CANONICALIZATION: &str = passes::PROMPT_CANONICALIZATION.name;
 const CANONICALIZER: &str = passes::CANONICALIZER.name;
 const CSE: &str = passes::CSE.name;
 const SYMBOL_DCE: &str = passes::SYMBOL_DCE.name;
