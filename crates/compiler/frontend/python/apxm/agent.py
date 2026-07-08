@@ -138,7 +138,7 @@ class Agent:
             g.add_edge(prev_node, cap_node, dependency=DependencyType.CONTROL)
             prev_node = cap_node
 
-            # Register tool for artifact sidecar embedding
+            # Register tool for artifact manifest embedding.
             g.register_python_tool(tool)
 
         # -- 3. ASK --
@@ -238,7 +238,7 @@ class BoundAgent:
             g.add_edge(prev_node, cap_node, dependency=DependencyType.CONTROL)
             prev_node = cap_node
 
-            # Register tool for artifact sidecar embedding
+            # Register tool for artifact manifest embedding.
             g.register_python_tool(tool)
 
         self._last_node = prev_node

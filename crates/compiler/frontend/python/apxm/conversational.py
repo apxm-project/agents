@@ -2,7 +2,8 @@
 
 `ConversationalAgent(...).compile()` emits ONE self-contained multi-flow
 artifact (a module with several `func.func`): the entry loop flow `main`, the
-author turn flow, and one flow per sub-agent, plus the tools and hooks sidecars.
+author turn flow, and one flow per sub-agent. Tool manifests travel through the
+artifact manifest channel; hook bindings are `REGISTER_HOOK` operations.
 The host (`apxm chat` / the HTTP server) is a dumb pipe — it delivers the user
 message and renders streamed tokens; all cognition lives in the program
 (constitution #2).
@@ -17,14 +18,13 @@ artifact and are wired as those phases land.
 
 from __future__ import annotations
 
-import json
 from dataclasses import dataclass
 from typing import Any
 
 from . import constants as graph_keys
 from .agent import Agent
 from .constants import DependencyType, ToolGroup, normalize_tool_group
-from .hooks import HookFn, hook_descriptor
+from .hooks import HookFn
 from .ir import ValidationResult, emit_multi_flow_module, validate_against_apxm
 from .proxy import GraphRecorder
 from .tools import FunctionTool
@@ -35,9 +35,6 @@ TURN_PARAM = "user_message"
 
 # The internal agent name the turn flow is registered under (`<agent>.<flow>`).
 _CONVERSATION_AGENT = "conversation"
-
-HOOKS_AIR_COMMENT_PREFIX = "; __apxm_hooks__ "
-
 
 @dataclass(slots=True)
 class CompactionPolicy:
@@ -61,32 +58,22 @@ class CompactionPolicy:
 
 
 class MultiFlowArtifact:
-    """A compiled `ConversationalAgent`: several flows in one module + sidecars."""
+    """A compiled `ConversationalAgent`: several flows in one module."""
 
     def __init__(
         self,
         graphs: list[Any],
         *,
         python_tools: list[dict[str, Any]] | None = None,
-        hooks: list[dict[str, Any]] | None = None,
         metadata: dict[str, Any] | None = None,
     ) -> None:
         self.graphs = graphs
         self.python_tools = python_tools or []
-        self.hooks = hooks or []
         self.metadata = metadata or {}
 
     def to_air(self) -> str:
-        """Emit one `module { func.func @main … func.func @<sub>.main }` plus sidecars."""
-        air = emit_multi_flow_module(self.graphs)
-        prefix = ""
-        if self.python_tools:
-            manifest = json.dumps(self.python_tools, separators=(",", ":"))
-            prefix += f"{graph_keys.PYTHON_TOOLS_AIR_COMMENT_PREFIX}{manifest}\n"
-        if self.hooks:
-            manifest = json.dumps(self.hooks, separators=(",", ":"))
-            prefix += f"{HOOKS_AIR_COMMENT_PREFIX}{manifest}\n"
-        return prefix + air
+        """Emit one `module { func.func @main … func.func @<sub>.main }`."""
+        return emit_multi_flow_module(self.graphs)
 
     def validate(self) -> ValidationResult:
         """Validate every flow against the APXM contract; aggregate the result."""
@@ -166,8 +153,6 @@ class ConversationalAgent:
                     python_tools.append(desc)
                     seen_ids.add(desc.get(graph_keys.PYTHON_TOOL_MANIFEST_HANDLER_ID))
 
-        hooks_sidecar = [hook_descriptor(h) for h in self.hooks]
-
         # Hooks share the @tool invocation path: add a tool-bridge manifest entry
         # for each hook handler so the runtime `PythonHandlerBridge` can resolve and
         # dispatch it by handler_id (constitution #4 — one Python-handler path).
@@ -209,7 +194,6 @@ class ConversationalAgent:
         return MultiFlowArtifact(
             graphs,
             python_tools=python_tools,
-            hooks=hooks_sidecar,
             metadata=metadata,
         )
 
@@ -246,8 +230,8 @@ class ConversationalAgent:
             **recall_kwargs,
         )
 
-        # Register author tools so they are runtime-registered + travel in the
-        # tools sidecar; ask then advertises them by name.
+        # Register author tools so they are runtime-registered and travel in
+        # the tools manifest; ask then advertises them by name.
         registrations = [turn.register_tool(t) for t in self.tools]
 
         ask_attrs: dict[str, Any] = {}

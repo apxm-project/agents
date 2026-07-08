@@ -33,49 +33,8 @@ fn is_typescript_graph_input(input: &Path) -> bool {
     ApxmPathFormat::from_path(input).is_typescript_frontend()
 }
 
-/// Sentinel prefix emitted by the Python frontend in a `;` comment when
-/// `@tool`-decorated functions are registered via `Agent`.
 #[cfg(feature = "driver")]
-const PYTHON_TOOLS_PREFIX: &str = "; __apxm_python_tools__ ";
-#[cfg(feature = "driver")]
-const TYPESCRIPT_TOOLS_PREFIX: &str = "; __apxm_typescript_tools__ ";
-/// Any APXM sidecar comment line (e.g. `; __apxm_hooks__ ...`). These `;`-lines
-/// are metadata the MLIR parser cannot read and MUST be stripped before compile.
-/// Only the python-tools sidecar is captured for the bridge; the rest (hooks)
-/// travel inside the artifact as REGISTER_HOOK nodes + the tools manifest.
-#[cfg(feature = "driver")]
-const SIDECAR_LINE_PREFIX: &str = "; __apxm_";
-
-/// Extract the `; __apxm_python_tools__ <json>` comment from AIR text.
-///
-/// Returns `(air_without_sidecar, Option<json_bytes>)`.
-#[cfg(feature = "driver")]
-fn extract_python_tools_sidecar(air: &str) -> (String, Option<Vec<u8>>) {
-    let (filtered, python, typescript) = extract_handler_sidecars(air);
-    let _ = typescript;
-    (filtered, python)
-}
-
-#[cfg(feature = "driver")]
-fn extract_handler_sidecars(air: &str) -> (String, Option<Vec<u8>>, Option<Vec<u8>>) {
-    let mut python: Option<Vec<u8>> = None;
-    let mut typescript: Option<Vec<u8>> = None;
-    let mut filtered = String::with_capacity(air.len());
-    for line in air.lines() {
-        if let Some(json_str) = line.strip_prefix(PYTHON_TOOLS_PREFIX) {
-            python = Some(json_str.as_bytes().to_vec());
-        } else if let Some(json_str) = line.strip_prefix(TYPESCRIPT_TOOLS_PREFIX) {
-            typescript = Some(json_str.as_bytes().to_vec());
-        } else if line.starts_with(SIDECAR_LINE_PREFIX) {
-        } else {
-            if !filtered.is_empty() {
-                filtered.push('\n');
-            }
-            filtered.push_str(line);
-        }
-    }
-    (filtered, python, typescript)
-}
+const PYTHON_TOOLS_MANIFEST_ENV: &str = "APXM_PYTHON_TOOLS_OUT";
 
 /// Rewrite the `@apxm/frontend` bare import specifier to the built TypeScript
 /// frontend entrypoint so standalone `.ts` source files can run without a local
@@ -132,13 +91,19 @@ pub(super) fn emit_air_from_python(
     // printer (`apxm emit-air`), so compile is self-contained and
     // version-consistent.
     let apxm_exe = current_apxm_exe();
+    let manifest_tmp = tempfile::Builder::new()
+        .suffix(".json")
+        .tempfile()
+        .context("Failed to create temporary Python handler manifest file")?;
+    let manifest_path = manifest_tmp.path().to_path_buf();
     let mut output = None;
     for candidate in ["python3", "python"] {
         let mut command = std::process::Command::new(candidate);
         command
             .arg(input)
             .env(apxm_env::PYTHONPATH, &pythonpath)
-            .env(apxm_env::APXM_EMIT_AIR, apxm_env::flag_values::ENABLED);
+            .env(apxm_env::APXM_EMIT_AIR, apxm_env::flag_values::ENABLED)
+            .env(PYTHON_TOOLS_MANIFEST_ENV, &manifest_path);
         if let Some(exe) = apxm_exe.as_ref() {
             command.env(apxm_env::APXM_BIN, exe);
         }
@@ -184,28 +149,29 @@ pub(super) fn emit_air_from_python(
             input.display()
         ));
     }
-    if !(trimmed.starts_with(';')
-        || trimmed.starts_with('%')
+    if !(trimmed.starts_with('%')
         || trimmed.starts_with("module")
         || trimmed.starts_with("func.func"))
     {
         return Err(anyhow::anyhow!(
             "Python graph {} did not emit recognizable .air text on stdout.\n\
-             Expected MLIR text starting with 'module', 'func.func', ';', or '%'.",
+             Expected MLIR text starting with 'module', 'func.func', or '%'.",
             input.display()
         ));
     }
 
-    let (clean_air, sidecar) = extract_python_tools_sidecar(&air);
+    let manifest = std::fs::read(&manifest_path)
+        .ok()
+        .filter(|data| !data.is_empty());
 
     let mut tmp = tempfile::Builder::new()
         .suffix(".air")
         .tempfile()
         .context("Failed to create temporary .air file")?;
-    tmp.write_all(clean_air.as_bytes())
+    tmp.write_all(air.as_bytes())
         .context("Failed to write emitted .air to temporary file")?;
     tmp.flush().context("Failed to flush temporary .air file")?;
-    Ok((tmp, sidecar))
+    Ok((tmp, manifest))
 }
 
 /// Run TypeScript frontend source through Node and capture the AIR it emits.
@@ -276,14 +242,13 @@ pub(super) fn emit_air_from_typescript_text(input: &Path) -> Result<String> {
             input.display()
         ));
     }
-    if !(trimmed.starts_with(';')
-        || trimmed.starts_with('%')
+    if !(trimmed.starts_with('%')
         || trimmed.starts_with("module")
         || trimmed.starts_with("func.func"))
     {
         return Err(anyhow::anyhow!(
             "TypeScript frontend source {} did not emit recognizable .air text on stdout.\n\
-             Expected MLIR text starting with 'module', 'func.func', ';', or '%'.",
+             Expected MLIR text starting with 'module', 'func.func', or '%'.",
             input.display()
         ));
     }
@@ -295,23 +260,22 @@ fn emit_air_from_typescript(input: &Path) -> Result<(tempfile::NamedTempFile, Op
     use std::io::Write;
 
     let air = emit_air_from_typescript_text(input)?;
-    let (clean_air, _python, typescript) = extract_handler_sidecars(&air);
 
     let mut tmp = tempfile::Builder::new()
         .suffix(".air")
         .tempfile()
         .context("Failed to create temporary .air file")?;
-    tmp.write_all(clean_air.as_bytes())
+    tmp.write_all(air.as_bytes())
         .context("Failed to write emitted .air to temporary file")?;
     tmp.flush().context("Failed to flush temporary .air file")?;
-    Ok((tmp, typescript))
+    Ok((tmp, None))
 }
 
-/// Python tools sidecar data extracted from the AIR comment, if any.
+/// Python tools manifest data extracted from the frontend subprocess, if any.
 #[cfg(feature = "driver")]
-type PythonHandlersSidecar = Option<Vec<u8>>;
+type PythonHandlersManifest = Option<Vec<u8>>;
 #[cfg(feature = "driver")]
-type TypeScriptHandlersSidecar = Option<Vec<u8>>;
+type TypeScriptHandlersManifest = Option<Vec<u8>>;
 
 // ---------------------------------------------------------------------------
 // `apxm compile-service` — the cross-repo process contract Server (and any
@@ -334,9 +298,8 @@ type TypeScriptHandlersSidecar = Option<Vec<u8>>;
 ///   (containing `agent.toml`, generated `integrity.toml`, and `capabilities/`). No stdin
 ///   is read.
 /// - `--web-tools`: include the web capability group in the emitted ASK node.
-/// - **stdout**: on success, ONLY emitted AIR text, including any
-///   `; __apxm_typescript_tools__ ...` sidecar comment lines. No other text is
-///   ever written to stdout; all progress/log/diagnostic output goes to stderr.
+/// - **stdout**: on success, ONLY emitted AIR text. No other text is ever
+///   written to stdout; all progress/log/diagnostic output goes to stderr.
 /// - **Exit code**: `0` on success. Nonzero on any failure, with a
 ///   human-readable message on stderr.
 #[cfg(feature = "driver")]
@@ -518,14 +481,6 @@ fn emit_air_from_declarative_agent(agent_dir: &Path, web_tools: bool) -> Result<
     let loop_rearms = declarative_loop_rearms(&agent);
     let use_recv_loop = loop_mode == "recv" && loop_rearms;
 
-    let mut sidecar = String::new();
-    if !manifest.is_empty() {
-        sidecar.push_str(&format!(
-            "{TYPESCRIPT_TOOLS_PREFIX}{}\n",
-            serde_json::to_string(&manifest)?
-        ));
-    }
-
     let parameter = FrontendParameter {
         name: turn_param.clone(),
         type_name: "str".to_string(),
@@ -704,8 +659,7 @@ fn emit_air_from_declarative_agent(agent_dir: &Path, web_tools: bool) -> Result<
         .iter()
         .map(FrontendGraph::to_air_module)
         .collect::<std::result::Result<Vec<AirModule>, _>>()?;
-    let air = AirProgram::new(modules).to_air()?;
-    Ok(format!("{sidecar}{air}"))
+    Ok(AirProgram::new(modules).to_air()?)
 }
 
 #[cfg(feature = "driver")]
@@ -728,17 +682,17 @@ pub(super) fn prepare_graph_input(
 ) -> Result<(
     PathBuf,
     Option<tempfile::NamedTempFile>,
-    PythonHandlersSidecar,
-    TypeScriptHandlersSidecar,
+    PythonHandlersManifest,
+    TypeScriptHandlersManifest,
 )> {
     if is_python_graph_input(input) {
-        let (tmp, sidecar) = emit_air_from_python(input, config_path)?;
-        return Ok((tmp.path().to_path_buf(), Some(tmp), sidecar, None));
+        let (tmp, manifest) = emit_air_from_python(input, config_path)?;
+        return Ok((tmp.path().to_path_buf(), Some(tmp), manifest, None));
     }
 
     if is_typescript_graph_input(input) {
-        let (tmp, sidecar) = emit_air_from_typescript(input)?;
-        return Ok((tmp.path().to_path_buf(), Some(tmp), None, sidecar));
+        let (tmp, manifest) = emit_air_from_typescript(input)?;
+        return Ok((tmp.path().to_path_buf(), Some(tmp), None, manifest));
     }
 
     let input_format = ApxmPathFormat::from_path(input);
@@ -747,30 +701,6 @@ pub(super) fn prepare_graph_input(
             ".json is structured data for metrics, sessions, manifests, diagnostics, and API envelopes. \
              Graph source input must be .air, .py, or .ts frontend source that emits .air."
         ));
-    }
-
-    if input_format.is_air_source() {
-        let air = std::fs::read_to_string(input)
-            .with_context(|| format!("Failed to read {}", input.display()))?;
-        let (clean_air, python_sidecar, typescript_sidecar) = extract_handler_sidecars(&air);
-        if python_sidecar.is_some() || typescript_sidecar.is_some() {
-            use std::io::Write;
-
-            let mut tmp = tempfile::Builder::new()
-                .suffix(".air")
-                .tempfile()
-                .context("Failed to create temporary .air file")?;
-            tmp.write_all(clean_air.as_bytes())
-                .context("Failed to write stripped .air to temporary file")?;
-            tmp.flush()
-                .context("Failed to flush stripped .air temporary file")?;
-            return Ok((
-                tmp.path().to_path_buf(),
-                Some(tmp),
-                python_sidecar,
-                typescript_sidecar,
-            ));
-        }
     }
 
     if !input_format.is_air_source() {
@@ -870,7 +800,7 @@ pub fn compile_command(
     } else {
         input.clone()
     };
-    let (graph_input, _frontend_air, python_tools_sidecar, typescript_tools_sidecar) =
+    let (graph_input, _frontend_air, python_tools_manifest, typescript_tools_manifest) =
         if input_source.is_dir() {
             unreachable!(
                 "directory inputs are resolved to a canonical .air source before compilation"
@@ -951,9 +881,9 @@ pub fn compile_command(
         let compile_time = compile_start.elapsed();
 
         let artifact_start = std::time::Instant::now();
-        // Parse manifest from sidecar for orphan @tool detection (W723)
+        // Parse manifest from the frontend subprocess for orphan @tool detection (W723).
         let manifest: Option<Vec<apxm_compiler::passes::PythonCapabilityManifestEntry>> =
-            python_tools_sidecar.as_ref().and_then(|data| {
+            python_tools_manifest.as_ref().and_then(|data| {
                 serde_json::from_slice(data)
                     .map_err(|e| {
                         eprintln!("warning: failed to parse python_tools manifest: {e}");
@@ -965,18 +895,18 @@ pub fn compile_command(
             .generate_artifact_with_manifest(None, manifest.as_deref())
             .context("Failed to generate artifact")?;
 
-        // Inject python_tools sidecar section if present
-        if let Some(sidecar_data) = &python_tools_sidecar {
+        // Embed Python handler manifest section when the frontend supplied one.
+        if let Some(manifest_data) = &python_tools_manifest {
             artifact.add_section(apxm_artifact::ArtifactSection {
                 kind: apxm_runtime::python_tools::CAPABILITY_NAME.into(),
-                data: sidecar_data.clone(),
+                data: manifest_data.clone(),
             });
         }
 
-        if let Some(sidecar_data) = &typescript_tools_sidecar {
+        if let Some(manifest_data) = &typescript_tools_manifest {
             artifact.add_section(apxm_artifact::ArtifactSection {
                 kind: apxm_runtime::typescript_tools::CAPABILITY_NAME.into(),
-                data: sidecar_data.clone(),
+                data: manifest_data.clone(),
             });
         }
 
@@ -1151,23 +1081,23 @@ handler = "hooks.pre_turn"
     }
 
     fn assert_cli_air_round_trips(air: &str) {
-        let (clean_air, _python, _typescript) = extract_handler_sidecars(air);
-        assert!(!clean_air.contains("ais.done"));
-        assert!(clean_air.contains("ais.return"));
+        assert!(!air.contains("__apxm_"));
+        assert!(!air.contains("ais.done"));
+        assert!(air.contains("ais.return"));
 
         let context = Context::new().expect("compiler context");
-        let parsed = Module::parse(&context, &clean_air).expect("Module::parse accepts CLI AIR");
+        let parsed = Module::parse(&context, air).expect("Module::parse accepts CLI AIR");
         parsed.verify().expect("parsed module verifies");
 
         Pipeline::with_opt_level(&context, OptimizationLevel::O0)
-            .compile(&clean_air)
+            .compile(air)
             .expect("O0 compile accepts CLI AIR");
     }
 
     #[test]
-    fn mlir_air_text_accepts_leading_sidecar_comments() {
+    fn mlir_air_text_accepts_leading_mlir_comments() {
         let text = format!(
-            "{} frontend sidecar\n\n{} {{\n}}\n",
+            "{} frontend comment\n\n{} {{\n}}\n",
             mlir_syntax::LINE_COMMENT_PREFIX,
             mlir_syntax::MODULE_KEYWORD
         );
@@ -1188,33 +1118,12 @@ handler = "hooks.pre_turn"
     }
 
     #[test]
-    fn extracts_python_and_typescript_sidecars() {
-        let air = concat!(
-            "; __apxm_python_tools__ [{\"handler_id\":\"py\"}]\n",
-            "; __apxm_typescript_tools__ [{\"handler_id\":\"ts\"}]\n",
-            "module {\n}\n",
-        );
-
-        let (clean, python, typescript) = extract_handler_sidecars(air);
-
-        assert_eq!(clean, "module {\n}");
-        assert_eq!(
-            python.as_deref(),
-            Some(br#"[{"handler_id":"py"}]"#.as_slice())
-        );
-        assert_eq!(
-            typescript.as_deref(),
-            Some(br#"[{"handler_id":"ts"}]"#.as_slice())
-        );
-    }
-
-    #[test]
     fn declarative_host_loop_air_round_trips_through_mlir_parser() {
         let agent_dir = write_declarative_agent("host");
         let air = emit_air_from_agent(agent_dir.path(), true).expect("declarative AIR");
 
-        assert!(air.starts_with(TYPESCRIPT_TOOLS_PREFIX));
         assert!(air.contains("ais.register_hook \"pre_turn\""));
+        assert!(air.contains("python_hook_handler_id"));
         assert!(air.contains("ais.flow_call \"conversation\" \"turn\""));
         assert!(air.contains("args = {user_message = \"{user_message}\"}"));
         assert!(air.contains("capability_groups = [\"discovery\", \"web\"]"));

@@ -115,7 +115,7 @@ export function hook(options: HookOptions): (fn: HookFnCallable) => HookFn {
   };
 }
 
-/** Build the artifact hooks-sidecar descriptor for a hook. */
+/** Build a handler manifest descriptor for a hook. */
 export function hookDescriptor(h: HookFn, sourceFile?: string): Record<string, unknown> {
   const descriptor: Record<string, unknown> = {
     handler_id: h.handler_id,

@@ -11,7 +11,7 @@ import {
 } from "./handlers/index.js";
 import type { FunctionTool, HookFn } from "./handlers/index.js";
 
-/** Manifest entry matching the Python python-tools sidecar shape. */
+/** Manifest entry matching the Python tools manifest shape. */
 export interface HandlerManifestEntry {
   handler_id: string;
   module: string;
@@ -146,7 +146,7 @@ async function loadTsModule(
 
 /**
  * Dynamically import handler entry modules and emit a tools.json manifest array
- * matching the Python python-tools sidecar format.
+ * matching the Python tools manifest format.
  */
 export async function compileHandlers(
   entryPaths: string[],
