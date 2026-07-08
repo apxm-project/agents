@@ -60,10 +60,6 @@
       "description": "Use when changing APXM compiler frontends: Rust AirModule, TypeScript @apxm/frontend, Python apxm, frontend codegen, or Studio/source lowering into AIR."
     },
     {
-      "name": "goal-orchestrator",
-      "description": "Use when an agent should turn a complex APXM goal into a bounded worker workflow, execute it through APXM, wait on goal events/status, and synthesize verified artifacts. Covers `dekk agents goal`, `goal_start`, `goal_*`, workflow drill-down, and `prompt_as_workflow` selection."
-    },
-    {
       "name": "mcp-server",
       "description": "Use when working on APXM MCP surfaces: the Rust HTTP `/v1/mcp` endpoint, the Rust stdio `mcp-server` binary, or cross-agent MCP registration. Prefer server-owned HTTP MCP for workflow/orchestration control."
     },

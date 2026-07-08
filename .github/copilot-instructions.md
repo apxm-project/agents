@@ -42,9 +42,9 @@ Command groups (see `dekk agents --help` for the live list):
   `test-python-frontend`, `codegen`, `clean`, `scrub-rustc-cache`
 - **Compilation**: `compile`, `execute`, `run`, `decompile`
 - **Authoring**: `validate`, `analyze`, `explain`, `gui`, `tokenize`
-- **Goals & Workflows**: `goal`, `workflow`; MCP callers use
-  `goal_start`, `workflow_start`, `workflow_status`,
-  `workflow_events`, `workflow_cancel`, and `prompt_as_workflow`
+- **Workflows**: `workflow`; MCP callers use `workflow_start`,
+  `workflow_status`, `workflow_events`, `workflow_cancel`, and
+  `prompt_as_workflow`
 - **Configuration**: `doctor`, `backend`, `vllm`, `agent`, `tool`, `cache`,
   `process`, `mcp`, `server`, `commit-lint`
 - **Discovery**: `ops`, `template`
@@ -56,14 +56,9 @@ Command groups (see `dekk agents --help` for the live list):
 If a needed action isn't yet wrapped, **add a Dekk command** in `.dekk.toml`
 rather than shelling out — that is the project-wide pattern.
 
-For complex bounded work, prefer the native APXM control plane instead of
-manual subagent prompting. Use `dekk agents goal` for role-based fan-out/fan-in
-with worker admission and sleep/wake events. MCP callers call `goal_start`
-once, then observe or stop the run with `workflow_status`,
-`workflow_events`, and `workflow_cancel`. Checked-in `.apxmw` workflows use
-`dekk agents workflow` or `workflow_start`; natural-language workflow drafts use
-`prompt_as_workflow` and remain proposals until APXM validates and admits
-them.
+Checked-in `.apxmw` workflows use `dekk agents workflow` or `workflow_start`;
+natural-language workflow drafts use `prompt_as_workflow` and remain proposals
+until APXM validates and admits them.
 
 ## 3. Lifecycle workflow
 
