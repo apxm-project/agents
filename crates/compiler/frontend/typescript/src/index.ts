@@ -3,6 +3,7 @@ export type {
   AskOptions,
   CommunicateOptions,
   DelegateOptions,
+  GenericOpOptions,
   SpawnAgentOptions,
   InvokeCapabilityOptions,
 } from "./builder.js";
@@ -31,6 +32,9 @@ export type { OpName, OpSpec, OpField } from "./generated/ops.js";
 
 export type { DependencyType, ParamType } from "./types.js";
 export { normalizeDependencyType, VALID_PARAM_TYPES } from "./types.js";
+
+export { GENERATED_GRAPH_BUILDER_OP_METHODS } from "./generated/builder-ops.js";
+export type { GeneratedBuilderMethodName } from "./generated/builder-ops.js";
 
 export {
   TOOL_REGISTRY,

@@ -416,6 +416,15 @@ pub enum CodegenAction {
         #[arg(long)]
         check: bool,
     },
+    /// Generate @apxm/frontend TypeScript metadata into src/generated
+    TypescriptFrontend {
+        /// Output directory for generated TypeScript frontend files
+        #[arg(long)]
+        output_dir: Option<PathBuf>,
+        /// Check that the generated files are up to date without writing them
+        #[arg(long)]
+        check: bool,
+    },
     /// Generate TypeScript event kind constants into the Studio frontend
     EventKinds {
         /// Output file path for generated TypeScript event kinds

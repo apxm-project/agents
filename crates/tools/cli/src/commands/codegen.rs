@@ -72,6 +72,47 @@ pub fn codegen_command(action: CodegenAction, json_output: bool) -> Result<()> {
 
             Ok(())
         }
+        CodegenAction::TypescriptFrontend { output_dir, check } => {
+            let output_dir = output_dir.unwrap_or_else(default_typescript_frontend_codegen_dir);
+            let workflow_schema_path = default_workflow_draft_schema_path();
+            let rendered = crate::frontend::codegen_ts::render_typescript_frontend_files(
+                &workflow_schema_path,
+            )?;
+            let mut files: Vec<String> =
+                rendered.iter().map(|(name, _)| name.to_string()).collect();
+            files.sort();
+
+            if check {
+                check_generated_named_files(&output_dir, &rendered, "typescript-frontend")?;
+            } else {
+                crate::frontend::codegen_ts::write_typescript_frontend_generated(
+                    &output_dir,
+                    &workflow_schema_path,
+                )?;
+            }
+
+            if json_output {
+                let output = serde_json::json!({
+                    "target": "typescript-frontend",
+                    "output_dir": output_dir.display().to_string(),
+                    "files": files,
+                    "check": check,
+                });
+                println!("{}", serde_json::to_string_pretty(&output)?);
+            } else {
+                println!(
+                    "{} TypeScript frontend bindings:",
+                    if check { "Checked" } else { "Generated" }
+                );
+                println!("  target: typescript-frontend");
+                println!("  output: {}", output_dir.display());
+                for file in files {
+                    println!("  - {file}");
+                }
+            }
+
+            Ok(())
+        }
         CodegenAction::EventKinds { output, check } => {
             let output_path = output.unwrap_or_else(default_event_kinds_codegen_path);
             let rendered = crate::frontend::codegen_event_kinds::render_generated_event_kinds();
@@ -226,6 +267,29 @@ fn check_generated_json_dir(
     Ok(())
 }
 
+fn check_generated_named_files(
+    output_dir: &Path,
+    rendered: &[(&'static str, String)],
+    target: &str,
+) -> Result<()> {
+    for (filename, content) in rendered {
+        let output_path = output_dir.join(filename);
+        let current = fs::read_to_string(&output_path).map_err(|error| {
+            anyhow::anyhow!(
+                "{target} generated output is missing: rerun `apxm codegen {target}` for {} ({error})",
+                output_path.display()
+            )
+        })?;
+        if current != *content {
+            bail!(
+                "{target} generated output is stale: rerun `apxm codegen {target}` for {}",
+                output_path.display()
+            );
+        }
+    }
+    Ok(())
+}
+
 fn default_frontend_codegen_dir() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join("../../compiler/frontend/python/apxm/_generated")
 }
@@ -241,6 +305,15 @@ fn default_typescript_codegen_path() -> PathBuf {
     // Generated TS lives in-repo so APXM is self-contained. Consumers
     // (apxm-studio) vendor/import it.
     Path::new(env!("CARGO_MANIFEST_DIR")).join("generated/typescript/generated.ts")
+}
+
+fn default_typescript_frontend_codegen_dir() -> PathBuf {
+    Path::new(env!("CARGO_MANIFEST_DIR")).join("../../compiler/frontend/typescript/src/generated")
+}
+
+fn default_workflow_draft_schema_path() -> PathBuf {
+    Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../../../../contracts/schemas/workflow-draft.v1.json")
 }
 
 fn default_event_kinds_codegen_path() -> PathBuf {

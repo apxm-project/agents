@@ -1,5 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { GraphBuilder } from "../src/builder.js";
+import { GENERATED_GRAPH_BUILDER_OP_METHODS } from "../src/generated/builder-ops.js";
+import { ALL_OPERATIONS } from "../src/generated/ops.js";
 
 describe("GraphBuilder", () => {
   it("records spawn + delegate + communicate as a wired graph", () => {
@@ -74,6 +76,40 @@ describe("GraphBuilder", () => {
     const node = graph.nodes.find((n) => n.name === "fence")!;
     expect(node.op).toBe("FENCE");
     expect(node.attributes.checkpoint).toBe(true);
+  });
+
+  it("records generic catalog ops with attributes and input edges", () => {
+    const g = new GraphBuilder("generic_ops");
+    const source = g.op("CONST_STR", { name: "topic", attributes: { value: "topic" } });
+    const branch = g.op("BRANCH_ON_VALUE", {
+      name: "branch",
+      attributes: { value: "yes", true_label: "ok", false_label: "no" },
+      inputs: { topic: source },
+    });
+
+    const graph = g.toGraph();
+    const node = graph.nodes.find((n) => n.id === branch.nodeId)!;
+    expect(node.op).toBe("BRANCH_ON_VALUE");
+    expect(node.attributes).toEqual({
+      value: "yes",
+      true_label: "ok",
+      false_label: "no",
+      input_names: ["topic"],
+    });
+    expect(graph.edges).toContainEqual({
+      from: source.nodeId,
+      to: branch.nodeId,
+      dependency: "Data",
+    });
+  });
+
+  it("exposes a named builder surface for every catalog op", () => {
+    const prototype = GraphBuilder.prototype as unknown as Record<string, unknown>;
+    for (const spec of ALL_OPERATIONS) {
+      const method = GENERATED_GRAPH_BUILDER_OP_METHODS[spec.op];
+      expect(method, spec.op).toBeDefined();
+      expect(typeof prototype[method], `${spec.op}.${method}`).toBe("function");
+    }
   });
 
   it("serializes the compiler FrontendGraph DTO shape", () => {
