@@ -5,7 +5,6 @@ import json
 import subprocess
 from typing import Any
 
-from apxm._generated import constants as c
 from apxm._generated import operations
 from apxm.constants import (
     DEPENDENCY_CONTROL,
@@ -13,12 +12,9 @@ from apxm.constants import (
     DEPENDENCY_EFFECT,
     normalize_dependency_type,
 )
-from apxm.hooks import GATE_LIFECYCLE_EVENTS, HookMode, LIFECYCLE_EVENTS
-from apxm._generated.operations import ASK, COMMUNICATE, REASON, SPAWN_AGENT, THINK
 
 
 _DEPENDENCY_TYPES = {DEPENDENCY_DATA, DEPENDENCY_EFFECT, DEPENDENCY_CONTROL}
-_LLM_TURN_OPS = frozenset({ASK.op, THINK.op, REASON.op})
 
 
 class AirEmissionError(RuntimeError):
@@ -402,36 +398,6 @@ def emit_multi_flow_module(graphs: list["ApxmGraph"]) -> str:
     return AirEmitterCommand.from_environment().emit([graph.to_dict() for graph in graphs])
 
 
-# ============================================================================
-# APXM contract validation
-# ============================================================================
-
-# Required attributes per operation, derived from Rust AIS_OPERATIONS when
-# the native module is available. Falls back to generated operation specs.
-# Attribute names are canonicalized in the shared apxm-core contract. Ops whose
-# required inputs come solely from graph edges (MERGE, WAIT_ALL, RETURN) have
-# empty sets here — the compiler resolves them from edge topology.
-try:
-    from apxm._native import get_ais_operations as _get_ais_operations
-
-    _REQUIRED_ATTRS: dict[str, set[str]] = {
-        spec["op"]: set(spec["required_fields"])
-        for spec in _get_ais_operations()
-    }
-except ImportError:
-    # Fallback: use generated operation specs
-    _REQUIRED_ATTRS: dict[str, set[str]] = {
-        spec.op: {f.name for f in spec.fields if f.required}
-        for spec in operations.ALL_OPERATIONS
-    }
-
-# Valid parameter type_name values accepted by the APXM runtime.
-try:
-    from apxm._generated.constants import VALID_PARAM_TYPES as _VALID_PARAM_TYPES
-except ImportError:
-    _VALID_PARAM_TYPES: set[str] = {"str", "int", "float", "bool", "json"}
-
-
 @dataclass(slots=True)
 class ValidationResult:
     """Result of validating an ApxmGraph against the APXM contract."""
@@ -442,239 +408,9 @@ class ValidationResult:
 
 
 def validate_against_apxm(graph: ApxmGraph) -> ValidationResult:
-    """Validate an ``ApxmGraph`` against the APXM compiler contract.
-
-    Checks performed:
-
-    * All operation names are valid AIS ops.
-    * Required attributes present for each op type (warning, not error,
-      because the Python SDK often sets slightly different key names).
-    * All node IDs are unique and positive.
-    * Edges reference existing node IDs.
-    * Parameter ``type_name`` values are valid.
-    * Graph name is non-empty.
-    * No duplicate parameter names.
-    * Graph edges form a DAG (no cycles).
-    """
-    errors: list[str] = []
-    warnings: list[str] = []
-
-    # --- graph-level checks ------------------------------------------------
-    if not graph.name:
-        errors.append("graph name must not be empty")
-
-    if not graph.nodes:
-        errors.append("graph must contain at least one node")
-
-    # --- node checks -------------------------------------------------------
-    node_ids: set[int] = set()
-    for node in graph.nodes:
-        # unique positive IDs
-        if node.id <= 0:
-            errors.append(f"node '{node.name}' has non-positive id {node.id}")
-        if node.id in node_ids:
-            errors.append(f"duplicate node id {node.id}")
-        node_ids.add(node.id)
-
-        # empty name
-        if not node.name:
-            errors.append(f"node id={node.id} has empty name")
-
-        # valid op
-        if node.op not in _REQUIRED_ATTRS:
-            errors.append(
-                f"node '{node.name}' (id={node.id}) has unknown op '{node.op}'"
-            )
-        else:
-            # check required attributes (as warnings -- SDK may use aliases)
-            required = _REQUIRED_ATTRS[node.op]
-            present = set(node.attributes.keys())
-            missing = required - present
-            if missing:
-                warnings.append(
-                    f"node '{node.name}' ({node.op}): missing recommended "
-                    f"attributes {sorted(missing)}"
-                )
-
-    # --- edge checks -------------------------------------------------------
-    for edge in graph.edges:
-        if edge.from_id not in node_ids:
-            errors.append(
-                f"edge references non-existent from_id {edge.from_id}"
-            )
-        if edge.to_id not in node_ids:
-            errors.append(
-                f"edge references non-existent to_id {edge.to_id}"
-            )
-
-    errors.extend(_validate_spawn_communicate_dependencies(graph))
-    errors.extend(_validate_llm_operation_attributes(graph))
-    errors.extend(_validate_register_hook(graph))
-
-    # --- parameter checks --------------------------------------------------
-    param_names: set[str] = set()
-    for param in graph.parameters:
-        if not param.name:
-            errors.append("parameter with empty name")
-        if param.name in param_names:
-            errors.append(f"duplicate parameter name '{param.name}'")
-        param_names.add(param.name)
-        if param.type_name not in _VALID_PARAM_TYPES:
-            warnings.append(
-                f"parameter '{param.name}' has non-standard type_name "
-                f"'{param.type_name}'"
-            )
-
-    # --- DAG cycle check (Kahn's algorithm) --------------------------------
-    if graph.nodes and graph.edges:
-        from .utils import detect_cycle
-
-        edges = [
-            (edge.from_id, edge.to_id)
-            for edge in graph.edges
-            if edge.from_id in node_ids and edge.to_id in node_ids
-        ]
-        cycle_count = detect_cycle(node_ids, edges)
-        if cycle_count:
-            errors.append(
-                f"graph contains a cycle ({cycle_count} nodes involved)"
-            )
-
-    return ValidationResult(
-        valid=len(errors) == 0,
-        errors=errors,
-        warnings=warnings,
-    )
-
-
-def _validate_register_hook(graph: ApxmGraph) -> list[str]:
-    """AIR validation for REGISTER_HOOK nodes.
-
-    Flags: unknown ``hook_event``; ``gate`` mode on a non-pre event; missing
-    ``python_hook_handler_id``.
-    """
-    errors: list[str] = []
-    for node in graph.nodes:
-        if node.op != "REGISTER_HOOK":
-            continue
-        event = node.attributes.get(c.HOOK_EVENT)
-        if not isinstance(event, str) or event not in LIFECYCLE_EVENTS:
-            valid = ", ".join(sorted(LIFECYCLE_EVENTS))
-            errors.append(
-                f"node '{node.name}' (REGISTER_HOOK) has unknown hook_event "
-                f"{event!r}; expected one of {valid}"
-            )
-            continue
-        mode = node.attributes.get(c.HOOK_MODE, HookMode.OBSERVE.value)
-        if mode == HookMode.GATE.value and event not in GATE_LIFECYCLE_EVENTS:
-            errors.append(
-                f"node '{node.name}' (REGISTER_HOOK) uses gate mode on non-pre "
-                f"event {event!r}; gate is only valid on pre-execution events"
-            )
-        handler = node.attributes.get(c.PYTHON_HOOK_HANDLER_ID)
-        if not isinstance(handler, str) or not handler:
-            errors.append(
-                f"node '{node.name}' (REGISTER_HOOK) is missing "
-                f"python_hook_handler_id"
-            )
-    return errors
-
-
-def _validate_llm_operation_attributes(graph: ApxmGraph) -> list[str]:
-    errors: list[str] = []
-    for node in graph.nodes:
-        if c.LLM_OPERATION not in node.attributes:
-            continue
-        value = node.attributes[c.LLM_OPERATION]
-        if not isinstance(value, str):
-            errors.append(
-                f"node '{node.name}' ({node.op}) has non-string "
-                f"{c.LLM_OPERATION!r} attribute"
-            )
-            continue
-        if value not in _LLM_TURN_OPS:
-            valid = ", ".join(sorted(_LLM_TURN_OPS))
-            errors.append(
-                f"node '{node.name}' ({node.op}) has invalid "
-                f"{c.LLM_OPERATION!r} value {value!r}; expected one of {valid}"
-            )
-    return errors
-
-
-def _validate_spawn_communicate_dependencies(graph: ApxmGraph) -> list[str]:
-    spawned: dict[str, int] = {}
-    errors: list[str] = []
-
-    for node in graph.nodes:
-        if node.op != SPAWN_AGENT.op:
-            continue
-        agent_name = node.attributes.get(c.AGENT_NAME)
-        if isinstance(agent_name, str):
-            spawned[agent_name] = node.id
-
-    data_edges = [
-        (edge.from_id, edge.to_id)
-        for edge in graph.edges
-        if edge.dependency == DEPENDENCY_DATA
-    ]
-    control_edges = {
-        (edge.from_id, edge.to_id)
-        for edge in graph.edges
-        if edge.dependency == DEPENDENCY_CONTROL
-    }
-
-    for node in graph.nodes:
-        if node.op != COMMUNICATE.op:
-            continue
-        recipient = node.attributes.get(c.RECIPIENT)
-        if not isinstance(recipient, str) or recipient not in spawned:
-            continue
-        spawn_id = spawned[recipient]
-        message_input_count = _input_names_count(node.attributes.get(c.INPUT_NAMES))
-        data_sources = [
-            from_id for from_id, to_id in data_edges if to_id == node.id
-        ]
-        structural_sources = data_sources[message_input_count:]
-        if any(_has_data_path(spawn_id, source_id, data_edges) for source_id in structural_sources):
-            continue
-        if (spawn_id, node.id) in control_edges:
-            hint = "Control edges do not carry the spawn token into AIR operands"
-        else:
-            hint = "no Data dependency path from the matching SPAWN_AGENT was found"
-        errors.append(
-            f"node '{node.name}' ({node.op}) targets spawned agent '{recipient}' "
-            f"but does not depend on its SPAWN_AGENT token: {hint}"
-        )
-
-    return errors
-
-
-def _has_data_path(
-    source_id: int,
-    target_id: int,
-    data_edges: list[tuple[int, int]],
-) -> bool:
-    adjacency: dict[int, list[int]] = {}
-    for from_id, to_id in data_edges:
-        adjacency.setdefault(from_id, []).append(to_id)
-
-    visited: set[int] = set()
-    pending = [source_id]
-    while pending:
-        current = pending.pop()
-        if current in visited:
-            continue
-        visited.add(current)
-        for next_id in adjacency.get(current, []):
-            if next_id == target_id:
-                return True
-            pending.append(next_id)
-    return False
-
-
-def _input_names_count(value: Any) -> int:
-    if isinstance(value, list):
-        return len(value)
-    if isinstance(value, str):
-        return 1
-    return 0
+    """Validate an ``ApxmGraph`` through the compiler-owned AIR builder."""
+    try:
+        graph.to_air()
+    except Exception as exc:
+        return ValidationResult(valid=False, errors=[str(exc)], warnings=[])
+    return ValidationResult(valid=True, errors=[], warnings=[])
