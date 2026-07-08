@@ -65,7 +65,7 @@ class GraphRecorder:
         )
         # Track parameter names for auto-wiring resolution
         self._param_names: set[str] = set()
-        # Accumulate Python tool descriptors for artifact sidecar
+        # Accumulate Python tool descriptors for artifact manifest sections.
         self._python_tools: list[dict[str, Any]] = []
         self._python_tool_ids: set[str] = set()  # dedup by handler_id
         self._python_tool_registration_nodes: dict[str, NodeRef] = {}
@@ -467,9 +467,10 @@ class GraphRecorder:
         constitution #3) and is installed into the runtime hook registry.
 
         Pass either a ``@hook``-decorated ``HookFn`` (or its raw handler) as ``fn``
-        — its handler is registered into the artifact's python-tools sidecar so
-        the runtime bridge can resolve and dispatch it — or, for the advanced
-        case where the sidecar is supplied separately, just a ``handler_id``.
+        — its handler is registered into the artifact's Python tools manifest
+        so the runtime bridge can resolve and dispatch it — or, for the
+        advanced case where the manifest is supplied separately, just a
+        ``handler_id``.
         """
         if event is None:
             raise ValueError("register_hook() missing required keyword argument: 'event'")
@@ -480,7 +481,7 @@ class GraphRecorder:
             raw = getattr(fn, "fn", fn)
             if handler_id is None:
                 handler_id = getattr(fn, "handler_id", None)
-            self._register_hook_handler_sidecar(handler_id, raw, getattr(fn, "name", None))
+            self._register_hook_handler_manifest(handler_id, raw, getattr(fn, "name", None))
         if handler_id is None:
             raise ValueError(
                 "register_hook() needs 'handler_id' or a 'fn' that carries one"
@@ -496,10 +497,10 @@ class GraphRecorder:
         attrs = self._apply_policy(attrs, attributes)
         return self._add_node(name, graph_keys.OP_REGISTER_HOOK, attrs)
 
-    def _register_hook_handler_sidecar(
+    def _register_hook_handler_manifest(
         self, handler_id: str | None, raw_fn: Any, hook_name: str | None
     ) -> None:
-        """Add a hook handler to the python-tools sidecar so the bridge resolves
+        """Add a hook handler to the Python tools manifest so the bridge resolves
         it (hooks share the @tool dispatch path — constitution #4)."""
         if handler_id is None or handler_id in self._python_tool_ids:
             return
@@ -1564,9 +1565,10 @@ class GraphRecorder:
         current state, after validating that every recorded backend route
         (see ``apxm.backends.validate_graph_routes``) resolves.
 
-        ``to_air()`` (below) is exactly ``self.to_graph().to_air()`` plus the
-        python-tools sidecar comment; ``to_graph()`` is the seam other
-        frontend-internal tooling (tests, :meth:`ApxmGraph.merge`,
+        ``to_air()`` (below) is exactly ``self.to_graph().to_air()``; handler
+        manifests travel through the compile subprocess environment so AIR text
+        stays canonical. ``to_graph()`` is the seam other frontend-internal
+        tooling (tests, :meth:`ApxmGraph.merge`,
         :func:`apxm.ir.validate_against_apxm`) uses to inspect or transform
         the graph before that final MLIR emission step.
         """
@@ -1582,7 +1584,7 @@ class GraphRecorder:
         )
 
     def register_python_tool(self, tool: Any) -> None:
-        """Register a Python tool descriptor for artifact sidecar embedding.
+        """Register a Python tool descriptor for artifact manifest embedding.
 
         Called by Agent.ask() / BoundAgent.__init__() for each FunctionTool.
         Deduplicates by handler_id.
@@ -1606,16 +1608,19 @@ class GraphRecorder:
             descriptor[graph_keys.PYTHON_TOOL_MANIFEST_SOURCE_FILE] = source_file
         self._python_tools.append(descriptor)
 
+    def python_tools_manifest_json(self) -> str | None:
+        """Return the compact handler manifest JSON for artifact embedding."""
+        if not self._python_tools:
+            return None
+        return json.dumps(self._python_tools, separators=(",", ":"))
+
     def to_air(self) -> str:
         """Emit canonical .air text IR for this graph.
 
-        Includes a sidecar comment for python_tools if any tools were registered.
+        Handler manifests are emitted through the compile subprocess manifest
+        channel, not as AIR comments.
         """
-        air = self.to_graph().to_air()
-        if self._python_tools:
-            manifest = json.dumps(self._python_tools, separators=(",", ":"))
-            air = f"{graph_keys.PYTHON_TOOLS_AIR_COMMENT_PREFIX}{manifest}\n{air}"
-        return air
+        return self.to_graph().to_air()
 
     def _add_node(self, name: str, op: str, attributes: dict[str, Any]) -> NodeRef:
         if name in self._node_ids:

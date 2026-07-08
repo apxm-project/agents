@@ -1,16 +1,19 @@
 from __future__ import annotations
 
 import inspect
-import json
 import os
 from typing import TYPE_CHECKING, Any, Callable
 
 from .constants import (
     ENV_APXM_EMIT_AIR,
     ENV_FLAG_ENABLED,
-    PYTHON_TOOLS_AIR_COMMENT_PREFIX,
 )
-from .execution import CompiledFlow, ExecutionMode, ExecutionResult
+from .execution import (
+    CompiledFlow,
+    ExecutionMode,
+    ExecutionResult,
+    write_python_tools_manifest,
+)
 from .ir import Parameter
 from .proxy import GraphRecorder
 from .config import ExecutionOptions, NodePolicy
@@ -77,6 +80,7 @@ class _CompiledFunction:
 
     async def __call__(self, *args: Any, session_id: str | None = None, **kwargs: Any) -> Any:
         if os.environ.get(ENV_APXM_EMIT_AIR) == ENV_FLAG_ENABLED:
+            write_python_tools_manifest(self._python_tools)
             print(self._air_text)
             return ExecutionResult(content="")
         execution = kwargs.pop("execution", None)
@@ -96,6 +100,7 @@ class _CompiledFunction:
     ) -> Any:
         """Synchronous execution convenience method."""
         if os.environ.get(ENV_APXM_EMIT_AIR) == ENV_FLAG_ENABLED:
+            write_python_tools_manifest(self._python_tools)
             print(self._air_text)
             return ExecutionResult(content="")
         runtime_args = self._normalize_runtime_args(*args, **kwargs)
@@ -205,9 +210,6 @@ class _CompiledFunction:
         air_text = graph.to_air()
         python_tools = getattr(recorder, "_python_tools", None)
         self._python_tools = list(python_tools or [])
-        if python_tools:
-            manifest = json.dumps(python_tools, separators=(",", ":"))
-            air_text = f"{PYTHON_TOOLS_AIR_COMMENT_PREFIX}{manifest}\n{air_text}"
 
         return graph, air_text
 

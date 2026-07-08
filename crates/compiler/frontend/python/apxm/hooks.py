@@ -4,8 +4,7 @@ A hook reuses the SAME invocation path as `@tool`: it produces a stable
 `handler_id` and registers the callable in the shared tool registry, so the
 runtime `PythonHandlerBridge` dispatches tools and hooks through one mechanism
 (constitution #4 — one Python-handler mechanism). The frontend records each
-hook into the artifact's hooks sidecar; later a `REGISTER_HOOK` op lowers
-the binding so it travels inside the artifact (AIR-portable, constitution #3).
+hook as a `REGISTER_HOOK` op, so the binding travels inside canonical AIR.
 
 This module owns conversational lifecycle hooks. The command-based hooks in
 ``config.HookConfig`` are a separate surface and are unaffected here.
@@ -142,7 +141,7 @@ def hook(
 
 
 def hook_descriptor(h: HookFn) -> dict[str, Any]:
-    """Build the artifact hooks-sidecar descriptor for a hook."""
+    """Build a handler manifest descriptor for a hook."""
     import inspect
 
     module = getattr(h.fn, "__module__", "__unknown__") or "__unknown__"

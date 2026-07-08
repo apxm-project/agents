@@ -30,6 +30,7 @@ ENV_APXM_EMIT_AIR = "APXM_EMIT_AIR"
 ENV_APXM_CONFIG = "APXM_CONFIG"
 ENV_APXM_HOME = "APXM_HOME"
 ENV_APXM_BIN = "APXM_BIN"
+ENV_APXM_PYTHON_TOOLS_OUT = "APXM_PYTHON_TOOLS_OUT"
 ENV_APXM_MOCK_BACKEND = "APXM_MOCK_BACKEND"
 ENV_APXM_SERVER_URL = "APXM_SERVER_URL"
 ENV_FLAG_ENABLED = "1"
@@ -126,7 +127,6 @@ PYTHON_TOOL_MANIFEST_NAME = "name"
 PYTHON_TOOL_MANIFEST_DESCRIPTION = "description"
 PYTHON_TOOL_MANIFEST_SCHEMA = "schema"
 PYTHON_TOOL_MANIFEST_SOURCE_FILE = "source_file"
-PYTHON_TOOLS_AIR_COMMENT_PREFIX = "; __apxm_python_tools__ "
 
 # Reserved `input_names` entry carrying the system prompt as a dataflow value.
 # When an ASK operand is bound to this name, the runtime uses it as the system

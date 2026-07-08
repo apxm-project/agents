@@ -1048,7 +1048,6 @@ fn emit_node(
                 graph_attrs::HOOK_EVENT,
                 graph_attrs::HOOK_MATCH,
                 graph_attrs::HOOK_MODE,
-                graph_attrs::PYTHON_HOOK_HANDLER_ID,
             ],
             None,
         ),

@@ -139,8 +139,8 @@ fn gao_compile_service_declarative_emits_recv_loop_air() {
         "declarative gao AIR must lower to ais.autonomous recv anchor"
     );
     assert!(
-        air.contains("__apxm_typescript_tools__"),
-        "declarative gao AIR must carry typescript handler sidecar"
+        !air.contains("__apxm_"),
+        "declarative gao AIR must not carry handler manifests as comments"
     );
 }
 

@@ -15,6 +15,7 @@ from apxm.constants import (
     ENV_APXM_CONFIG,
     ENV_APXM_EMIT_AIR,
     ENV_APXM_MOCK_BACKEND,
+    ENV_APXM_PYTHON_TOOLS_OUT,
     ENV_APXM_SERVER_URL,
     ENV_FLAG_ENABLED,
 )
@@ -371,6 +372,7 @@ def emit_air_if_requested(flow: Any) -> bool:
 
     if os.environ.get(ENV_APXM_EMIT_AIR) != ENV_FLAG_ENABLED:
         return False
+    write_python_tools_manifest(getattr(flow, "_python_tools", None))
     air_text = getattr(flow, "_air_text", None)
     if air_text is None:
         graph = getattr(flow, "_graph", None)
@@ -381,6 +383,18 @@ def emit_air_if_requested(flow: Any) -> bool:
         raise TypeError("emit_air_if_requested expects a compiled APXM flow")
     print(air_text)
     return True
+
+
+def write_python_tools_manifest(python_tools: Any) -> None:
+    """Write handler manifest JSON to the compile subprocess manifest path."""
+
+    output_path = os.environ.get(ENV_APXM_PYTHON_TOOLS_OUT)
+    if not output_path or not python_tools:
+        return
+    Path(output_path).write_text(
+        json.dumps(list(python_tools), separators=(",", ":")),
+        encoding="utf-8",
+    )
 
 
 def _build_cli_base_command(apxm_bin: str) -> list[str]:
@@ -751,19 +765,6 @@ class CompiledFlow:
             air_text = self._air_text if self._air_text else self._graph.to_air()
         else:
             air_text = runtime_graph.to_air()
-            if self._air_text:
-                sidecar_lines = [
-                    line
-                    for line in self._air_text.splitlines()
-                    if line.startswith("; __apxm_python_tools__")
-                ]
-                if sidecar_lines:
-                    air_text = "\n".join(sidecar_lines + [air_text])
-        clean_lines = [
-            line for line in air_text.splitlines()
-            if not line.startswith("; __apxm_python_tools__")
-        ]
-        clean_air = "\n".join(clean_lines)
 
         # Write AIR text to a tempfile (.air) so the compiler can parse it
         # directly. Using AIR preserves the graph form the runtime executes,
@@ -771,7 +772,7 @@ class CompiledFlow:
         with tempfile.NamedTemporaryFile(
             mode="w", suffix=".air", delete=False
         ) as tmp:
-            tmp.write(clean_air)
+            tmp.write(air_text)
             tmp_path = tmp.name
 
         config_path: str | None = None
