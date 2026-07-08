@@ -2,7 +2,7 @@
 //! organization-package folder format (`apxm.org-package.v1` /
 //! `apxm.org-topology.v1`).
 //!
-//! This module is the org-level sibling of [`super::package`]: same
+//! This module is the org-level sibling of [`super::agent`]: same
 //! module organization, same manifest-projection-from-schema approach (hand
 //! ported into Rust structs rather than loading the JSON schema at runtime —
 //! this repo does not vendor or path-depend on the sibling `contracts`
@@ -10,7 +10,7 @@
 //! Where a check can reuse the package command logic (installed-package resolution,
 //! the joined capabilities/permissions grammar, `hierarchy.toml`'s
 //! parent/permitted_children shape, recursive directory copy) it does —
-//! see the `use super::package::{...}` imports below — rather than
+//! see the `use super::agent::{...}` imports below — rather than
 //! reimplementing it.
 //!
 //! An org package's `members.toml` entries carry a `hierarchy` snapshot
@@ -32,10 +32,10 @@ use std::path::{Path, PathBuf};
 use anyhow::{Context, Result, anyhow, bail};
 use serde::{Deserialize, Serialize};
 
-use super::implementations::{Status, print_section_header, print_status_line};
-use super::package::{
-    CapabilitiesToml, HierarchyToml, PermissionsToml, copy_dir_recursive, resolve_installed_package,
+use super::agent::{
+    CapabilitiesToml, HierarchyToml, PermissionsToml, copy_dir_recursive, resolve_installed_agent,
 };
+use super::implementations::{Status, print_section_header, print_status_line};
 
 // ---------------------------------------------------------------------
 // On-disk manifest shapes (org-package.v1 / org-topology.v1 projections)
@@ -67,8 +67,8 @@ pub struct MembersToml {
 pub struct MemberEntry {
     pub id: String,
     pub package: String,
-    /// SemVer requirement against the referenced agent package's own
-    /// `pack.toml` version (exact version, or a `^`/`~` range).
+    /// SemVer requirement against the referenced agent's own `agent.toml`
+    /// version (exact version, or a `^`/`~` range).
     pub version: String,
     #[serde(default = "default_instances")]
     pub instances: u32,
@@ -76,10 +76,10 @@ pub struct MemberEntry {
     pub enabled: bool,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub capability_mask: Option<CapabilityMaskToml>,
-    /// Snapshot of the referenced package's own `hierarchy.toml`
-    /// (`apxm.agent-package.v1#/properties/hierarchy`, 's
+    /// Snapshot of the referenced agent's own `hierarchy.toml`
+    /// (`apxm.agent.v1#/properties/hierarchy`, 's
     /// `AgentDefinition.hierarchy`). Reused verbatim from
-    /// [`super::package::HierarchyToml`] — same shape.
+    /// [`super::agent::HierarchyToml`] — same shape.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub hierarchy: Option<HierarchyToml>,
 }
@@ -221,15 +221,15 @@ fn org_new(
     )?;
 
     // agents/members.toml — empty by default; author adds [[member]] blocks
-    // that reference real, installed apxm.agent-package.v1 packages.
+    // that reference real, installed apxm.agent.v1 agents.
     write_new_file(
         &root.join("agents/members.toml"),
         "# One [[member]] per org member, by reference to an installed\n\
-         # agent-package (apxm.agent-package.v1). No agent code lives here.\n\
+         # agent (apxm.agent.v1). No agent code lives here.\n\
          #\n\
          # [[member]]\n\
          # id = \"root-agent\"\n\
-         # package = \"some.agent-package\"\n\
+         # package = \"some.agent\"\n\
          # version = \"0.1.0\"\n\
          #\n\
          # [member.capability_mask]\n\
@@ -393,12 +393,12 @@ fn version_satisfies(requirement: &str, actual: &str) -> bool {
 }
 
 /// Check 1: every member reference must resolve to an installed
-/// agent-package (`APXM_HOME/packages/<id>/`, 's install layout) whose
+/// agent (`APXM_HOME/agents/<id>/`, 's install layout) whose
 /// version satisfies the member's version requirement.
 fn check_member_resolution(members: &MembersToml, apxm_home: &Path) -> Vec<String> {
     let mut errors = Vec::new();
     for member in &members.member {
-        match resolve_installed_package(apxm_home, &member.package) {
+        match resolve_installed_agent(apxm_home, &member.package) {
             Ok(pack) => {
                 if !version_satisfies(&member.version, &pack.version) {
                     errors.push(format!(
@@ -816,7 +816,7 @@ fn org_install_to(path: &Path, apxm_home: &Path, force: bool, json_output: bool)
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::commands::package::{package_install_to, package_new};
+    use crate::commands::agent::{agent_install_to, agent_new};
     use tempfile::tempdir;
 
     fn scaffold(dir: &Path, id: &str) {
@@ -829,15 +829,14 @@ mod tests {
     fn install_agent_package(apxm_home: &Path, id: &str, version: &str) {
         let tmp = tempdir().unwrap();
         let root = tmp.path().join(id);
-        package_new(id, Some(root.clone()), None, "looped-agent", true)
-            .expect("agent package scaffold ok");
-        let pack_toml = fs::read_to_string(root.join("pack.toml")).unwrap();
+        agent_new(id, Some(root.clone()), None, "looped-agent", true).expect("agent scaffold ok");
+        let agent_toml = fs::read_to_string(root.join("agent.toml")).unwrap();
         fs::write(
-            root.join("pack.toml"),
-            pack_toml.replace("version = \"0.1.0\"", &format!("version = \"{version}\"")),
+            root.join("agent.toml"),
+            agent_toml.replace("version = \"0.1.0\"", &format!("version = \"{version}\"")),
         )
         .unwrap();
-        package_install_to(&root, apxm_home, false, true).expect("agent package install ok");
+        agent_install_to(&root, apxm_home, false, true).expect("agent install ok");
     }
 
     #[test]

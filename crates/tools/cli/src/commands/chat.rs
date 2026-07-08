@@ -28,15 +28,15 @@ pub struct ChatOptions {
     pub capability_grant_ids: Vec<String>,
     /// Skill libraries / ids this agent imports (scoped visible set).
     pub import: Vec<String>,
-    /// Pin each turn to a registered backend (package chat only).
+    /// Pin each turn to a registered backend (agent chat only).
     pub backend: Option<String>,
-    /// Pin each turn to a specific model id (package chat only).
+    /// Pin each turn to a specific model id (agent chat only).
     pub model: Option<String>,
     /// Tenant/owner scope for per-tool credential resolution.
     pub owner: Option<String>,
-    /// Agent package id for thin server-backed chat
-    /// (`POST /v1/agents/packages/{{id}}/sessions`).
-    pub package: Option<String>,
+    /// Agent id for thin server-backed chat
+    /// (`POST /v1/agents/{{id}}/sessions`).
+    pub agent: Option<String>,
 }
 
 fn mint_session_id() -> String {
@@ -162,10 +162,10 @@ async fn render_session_stream(resp: crate::client::reqwest::Response, client: C
     }
 }
 
-/// Thin package chat: start a server-owned session, subscribe to session SSE,
+/// Thin agent chat: start a server-owned session, subscribe to session SSE,
 /// deliver stdin turns via the conversations endpoint — no host transcript or
 /// compaction (constitution #2).
-async fn run_package_chat(opts: &ChatOptions, package_id: &str) -> Result<()> {
+async fn run_agent_chat(opts: &ChatOptions, agent_id: &str) -> Result<()> {
     let base = opts
         .server
         .clone()
@@ -174,9 +174,9 @@ async fn run_package_chat(opts: &ChatOptions, package_id: &str) -> Result<()> {
     let client = client_for_sse(&base);
 
     let started = client
-        .create_package_session(
-            package_id,
-            &crate::client::execute::CreatePackageSessionRequest {
+        .create_agent_session(
+            agent_id,
+            &crate::client::execute::CreateAgentSessionRequest {
                 system_prompt: None,
                 backend: opts.backend.clone(),
                 model: opts.model.clone(),
@@ -184,10 +184,10 @@ async fn run_package_chat(opts: &ChatOptions, package_id: &str) -> Result<()> {
             },
         )
         .await
-        .context("package session start failed")?;
+        .context("agent session start failed")?;
     let session_id = started.session_id;
     eprintln!(
-        "apxm chat — package {package_id} session {session_id} @ {}",
+        "apxm chat — agent {agent_id} session {session_id} @ {}",
         client.baseurl()
     );
     eprintln!("type a message, or /session /budget /exit; events via session SSE");
@@ -298,18 +298,18 @@ async fn render_session_events_from_url(client: Client, url: String) {
 
 /// Entry point dispatched from `main.rs`.
 pub async fn chat_command(opts: ChatOptions) -> Result<()> {
-    if let Some(package_id) = opts
-        .package
+    if let Some(agent_id) = opts
+        .agent
         .as_deref()
         .map(str::trim)
         .filter(|id| !id.is_empty())
     {
-        return run_package_chat(&opts, package_id).await;
+        return run_agent_chat(&opts, agent_id).await;
     }
 
     let air_path = opts.air.as_ref().ok_or_else(|| {
         anyhow!(
-            "apxm chat requires --package <id> for server-backed chat or \
+            "apxm chat requires --agent <id> for server-backed chat or \
              --air <path> for a custom in-graph artifact"
         )
     })?;

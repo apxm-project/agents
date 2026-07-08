@@ -441,6 +441,37 @@ mod tests {
     }
 
     #[test]
+    fn emits_flow_call_with_agent_and_flow_positionals() {
+        let graph = FrontendGraph {
+            name: "host_loop".to_string(),
+            nodes: vec![
+                node(
+                    1,
+                    "run_turn",
+                    AISOperationType::FlowCall,
+                    HashMap::from([
+                        string_attr(graph_attrs::AGENT_NAME, "conversation"),
+                        string_attr(graph_attrs::FLOW_NAME, "turn"),
+                    ]),
+                ),
+                node(2, "return_turn", AISOperationType::Return, HashMap::new()),
+            ],
+            edges: vec![FrontendEdge {
+                from: 1,
+                to: 2,
+                dependency: DependencyType::Data,
+            }],
+            parameters: vec![],
+            metadata: HashMap::new(),
+        };
+
+        let module = graph.to_air_module().expect("flow call graph converts");
+        let air = module.to_air().expect("canonical printer emits");
+        assert!(air.contains("ais.flow_call \"conversation\" \"turn\""));
+        assert!(air.contains("ais.return %n1"));
+    }
+
+    #[test]
     fn rejects_unknown_edge_endpoint() {
         let graph = FrontendGraph {
             name: "bad".to_string(),

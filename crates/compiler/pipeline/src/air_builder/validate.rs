@@ -405,11 +405,16 @@ fn validate_template_placeholders(module: &AirModule) -> Result<(), AirError> {
     for node in &module.nodes {
         let input_names = collect_input_names(node);
         let structural_data_count = structural_data_input_count(module, node);
+        let param_input_count = input_names
+            .iter()
+            .filter(|name| param_names.contains(**name))
+            .count();
         let in_count = data_in_count
             .get(&node.id)
             .copied()
             .unwrap_or(0)
-            .saturating_sub(structural_data_count);
+            .saturating_sub(structural_data_count)
+            + param_input_count;
 
         // Length sanity: input_names must match the incoming Data edges.
         if !input_names.is_empty() && input_names.len() != in_count {

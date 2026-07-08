@@ -152,9 +152,10 @@ async fn run_cli(cli: Cli) -> Result<()> {
             cli.config,
             embed_manifest,
         ),
-        Commands::CompileService { package, web_tools } => {
-            compile_service_command(package, web_tools, cli.config)
-        }
+        Commands::CompileService {
+            agent_dir,
+            web_tools,
+        } => compile_service_command(agent_dir, web_tools, cli.config),
         Commands::Decompile { artifact, output } => decompile_command(artifact, output),
         Commands::Execute {
             input,
@@ -207,9 +208,9 @@ async fn run_cli(cli: Cli) -> Result<()> {
         Commands::Doctor => doctor_command(cli.config, cli.json),
         Commands::Backend { action } => backend_command(action, cli.json).await,
         Commands::Tool { action } => tool_command(action, cli.json),
-        Commands::Agent { action } => agent_command(action, cli.json).await,
+        Commands::Acp { action } => acp_command(action, cli.json).await,
         Commands::Team { action } => team_command(action, cli.json),
-        Commands::Package { action } => package_command(action, cli.json),
+        Commands::Agent { action } => agent_command(action, cli.json),
         Commands::Org { action } => org_command(action, cli.json),
         Commands::Integration { action } => integration_command(action, cli.json),
         Commands::Ops { action } => ops_command(action, cli.json),
@@ -231,7 +232,7 @@ async fn run_cli(cli: Cli) -> Result<()> {
         Commands::Watch { thread_id, expand } => watch_command(thread_id, expand).await,
         Commands::Rollout { action } => rollout_action(action).await,
         Commands::Chat {
-            package,
+            agent,
             air,
             server,
             session_id,
@@ -242,7 +243,7 @@ async fn run_cli(cli: Cli) -> Result<()> {
             owner,
         } => {
             commands::chat::chat_command(commands::chat::ChatOptions {
-                package,
+                agent,
                 air,
                 server,
                 session_id,
@@ -323,9 +324,9 @@ async fn run_cli_no_driver(cli: Cli) -> Result<()> {
         Commands::Init { name } => init_command(&name),
         Commands::Doctor => doctor_command(cli.config, cli.json),
         Commands::Tool { action } => tool_command(action, cli.json),
-        Commands::Agent { action } => agent_command(action, cli.json).await,
+        Commands::Acp { action } => acp_command(action, cli.json).await,
         Commands::Team { action } => team_command(action, cli.json),
-        Commands::Package { action } => package_command(action, cli.json),
+        Commands::Agent { action } => agent_command(action, cli.json),
         Commands::Org { action } => org_command(action, cli.json),
         Commands::Integration { action } => integration_command(action, cli.json),
         Commands::Ops { action } => ops_command(action, cli.json),

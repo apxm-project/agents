@@ -30,9 +30,9 @@ pub struct ExecuteRequest {
     pub user_text: Option<String>,
 }
 
-/// `POST /v1/agents/packages/{id}/sessions` request body.
+/// `POST /v1/agents/{id}/sessions` request body.
 #[derive(Debug, Clone, Serialize, Default)]
-pub struct CreatePackageSessionRequest {
+pub struct CreateAgentSessionRequest {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub system_prompt: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -43,9 +43,9 @@ pub struct CreatePackageSessionRequest {
     pub session_id: Option<String>,
 }
 
-/// `POST /v1/agents/packages/{id}/sessions` response.
+/// `POST /v1/agents/{id}/sessions` response.
 #[derive(Debug, Clone, Deserialize)]
-pub struct CreatePackageSessionResponse {
+pub struct CreateAgentSessionResponse {
     pub session_id: String,
     pub events_url: String,
     pub stream_url: String,
@@ -110,16 +110,13 @@ impl Client {
             .with_context(|| format!("bad revoke JSON from {url}"))
     }
 
-    /// `POST /v1/agents/packages/{package_id}/sessions` — start a thin package chat session.
-    pub async fn create_package_session(
+    /// `POST /v1/agents/{agent_id}/sessions` — start a thin agent chat session.
+    pub async fn create_agent_session(
         &self,
-        package_id: &str,
-        req: &CreatePackageSessionRequest,
-    ) -> Result<CreatePackageSessionResponse> {
-        let url = format!(
-            "{}/v1/agents/packages/{package_id}/sessions",
-            self.baseurl()
-        );
+        agent_id: &str,
+        req: &CreateAgentSessionRequest,
+    ) -> Result<CreateAgentSessionResponse> {
+        let url = format!("{}/v1/agents/{agent_id}/sessions", self.baseurl());
         let resp = self
             .client()
             .post(&url)
@@ -130,13 +127,11 @@ impl Client {
         if !resp.status().is_success() {
             let status = resp.status();
             let text = resp.text().await.unwrap_or_default();
-            return Err(anyhow!(
-                "package session returned {status} for {url}: {text}"
-            ));
+            return Err(anyhow!("agent session returned {status} for {url}: {text}"));
         }
         resp.json()
             .await
-            .with_context(|| format!("bad package session JSON from {url}"))
+            .with_context(|| format!("bad agent session JSON from {url}"))
     }
 
     /// `POST /v1/execute/stream` — raw SSE response for the caller to render.
