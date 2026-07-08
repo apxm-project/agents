@@ -3,10 +3,10 @@
 Gao uses this shape when the operator should click **Apply workflow** in Chat.
 
 This is a Gao-authored draft of the canonical `apxm.workflow-draft.v1` contract
-(`workspace/contracts/schemas/workflow-draft.v1.json`, WF-1) — the same schema
+(`workspace/contracts/schemas/workflow-draft.v1.json`) — the same schema
 Studio's own canvas persistence validates against
 (`@/lib/workflow-draft-contract`) and that `auditWorkflowDraft` checks every
-Gao draft with (G-5). The envelope below wraps the draft with
+Gao draft with. The envelope below wraps the draft with
 `"format": "apxm_studio_workflow"` instead of a `schema_version` field; before
 validation and Apply, Studio projects it onto the real document shape
 (`schema_version: "apxm.workflow-draft.v1"`, position stripped, a synthesized
@@ -89,8 +89,8 @@ Wire `text` → `llm` (text inlines into the LLM prompt). Wire `tool` → `llm` 
 
 ## Reference AIR shapes (not canvas JSON)
 
-`examples/*.air` are not canvas JSON — they are the WF-2/WF-3 vector-set
-fixtures (`workspace/contracts/vectors/air/`, copied byte-for-byte) showing
+`examples/*.air` are not canvas JSON — they are vector fixtures
+(`workspace/contracts/vectors/air/`, copied byte-for-byte) showing
 the AIR a workflow ultimately lowers to once Studio compiles the canvas.
 Useful when explaining *why* a node/edge shape matters, not as literal
 `apxm_studio_workflow` blueprints:

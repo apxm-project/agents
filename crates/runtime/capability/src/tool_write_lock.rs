@@ -32,11 +32,3 @@ pub fn release_write_lock_if_idle(name: &str, lock: &Arc<RwLock<()>>) {
         Arc::ptr_eq(current, lock) && Arc::strong_count(current) == 2
     });
 }
-
-/// Whether a lock entry currently exists for `name`.
-///
-/// Tests assert idle pruning and no-leak behavior through this query.
-#[cfg(test)]
-pub(crate) fn contains_lock(name: &str) -> bool {
-    TOOL_WRITE_LOCKS.contains_key(name)
-}

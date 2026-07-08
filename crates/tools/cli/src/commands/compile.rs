@@ -112,8 +112,8 @@ pub(super) fn emit_air_from_python(
     let pythonpath = env::join_paths(pythonpath_entries)
         .context("Failed to build PYTHONPATH for APXM Python frontend")?;
     // Route the frontend's AIR emission back to this same binary's single Rust
-    // printer (`apxm emit-air`) instead of `dekk agents emit-air`, so compile is
-    // self-contained and version-consistent.
+    // printer (`apxm emit-air`), so compile is self-contained and
+    // version-consistent.
     let apxm_exe = env::current_exe().ok();
     let mut output = None;
     for candidate in ["python3", "python"] {
@@ -223,7 +223,7 @@ pub(super) fn emit_air_from_typescript_text(input: &Path) -> Result<String> {
     }
 
     // Route the frontend's AIR emission back to this same binary's single Rust
-    // printer (`apxm emit-air`) instead of `dekk agents emit-air`.
+    // printer (`apxm emit-air`).
     let apxm_exe = env::current_exe().ok();
     let mut node_command = std::process::Command::new("node");
     node_command.arg(tmp.path());

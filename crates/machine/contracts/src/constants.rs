@@ -25,8 +25,7 @@ pub mod env {
     pub const APXM_EMIT_AIR: &str = "APXM_EMIT_AIR";
     /// Path to the `apxm` binary a child frontend process invokes for AIR
     /// emission (`emit-air`). The compile pipeline sets this to its own
-    /// executable so the frontend routes to the same single Rust printer instead
-    /// of falling back to `dekk agents emit-air`.
+    /// executable so the frontend routes to the same single Rust printer.
     pub const APXM_BIN: &str = "APXM_BIN";
     /// Enables the in-process mock backend for tests and offline benchmarks.
     pub const APXM_MOCK_BACKEND: &str = "APXM_MOCK_BACKEND";

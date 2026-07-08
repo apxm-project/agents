@@ -152,8 +152,8 @@ pub enum AISOperationType {
 /// Canonical AIS artifact wire operation table.
 ///
 /// This table is the single source of truth for operation-kind indexes in the
-/// artifact format. Indices 26, 27, 30, 32, and 39 are retired (formerly
-/// GUARD, CLAIM, NEGOTIATE, and SPAWN_TEAM — deleted as unexercised in ;
+/// artifact format. Indices 26, 27, 30, 32, and 39 are retired (26/27/32/39
+/// formerly GUARD, CLAIM, NEGOTIATE, and SPAWN_TEAM, deleted as unexercised;
 /// 30 was always reserved) and must never be reassigned.
 pub const WIRE_INDEXED_OPERATIONS: &[(u32, AISOperationType)] = &[
     (0, AISOperationType::InvCap),
