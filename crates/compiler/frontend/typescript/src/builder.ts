@@ -13,6 +13,7 @@
  * is identical to what `GraphRecorder` produces once auto-wiring resolves.
  */
 import type { GraphEdge, GraphNode, Parameter } from "./graph.js";
+import { installGeneratedGraphBuilderOps } from "./generated/builder-ops.js";
 import { ApxmGraph, makeEdge } from "./graph.js";
 import type { OpName } from "./generated/ops.js";
 import type { DependencyType, ParamType } from "./types.js";
@@ -30,6 +31,12 @@ export class NodeRef {
 }
 
 type Attrs = Record<string, unknown>;
+
+export interface GenericOpOptions {
+  name?: string;
+  attributes?: Attrs;
+  inputs?: Record<string, NodeRef>;
+}
 
 interface TemplateOpOptions {
   name?: string;
@@ -162,6 +169,21 @@ export class GraphBuilder {
     this.nodes.push({ id, name, op, attributes: dropUndefined(attributes) });
     this.nodeIds.add(name);
     return new NodeRef(this, id, name);
+  }
+
+  /** Record any catalog operation with explicit attributes and dependencies. */
+  op(opType: OpName, options: GenericOpOptions = {}): NodeRef {
+    const inputNames = options.inputs ? Object.keys(options.inputs) : [];
+    const attrs: Attrs = {
+      ...options.attributes,
+      input_names:
+        inputNames.length > 0 && options.attributes?.input_names === undefined
+          ? inputNames
+          : options.attributes?.input_names,
+    };
+    const node = this.addNode(options.name ?? this.autoName(opType), opType, attrs);
+    this.wireInputs(node, options.inputs);
+    return node;
   }
 
   /** Wire an explicit dependency edge between two previously recorded nodes. */
@@ -366,9 +388,12 @@ export class GraphBuilder {
   }
 
   /** Insert a checkpoint barrier (fence with checkpoint semantics). */
-  checkpoint(name?: string, attributes: Attrs = {}): NodeRef {
+  checkpoint(nameOrOptions?: string | GenericOpOptions, attributes: Attrs = {}): NodeRef {
+    if (typeof nameOrOptions === "object") {
+      return this.op("CHECKPOINT", nameOrOptions);
+    }
     const attrs: Attrs = { checkpoint: true, ...attributes };
-    return this.addNode(name ?? this.autoName("FENCE"), "FENCE", attrs);
+    return this.addNode(nameOrOptions ?? this.autoName("FENCE"), "FENCE", attrs);
   }
 
   /** Synchronize on every dependency completing (WAIT_ALL). */
@@ -413,3 +438,5 @@ export class GraphBuilder {
     return this.toGraph().toAir();
   }
 }
+
+installGeneratedGraphBuilderOps(GraphBuilder);

@@ -29,8 +29,8 @@
     "LICENSE"
   ],
   "scripts": {
-    "codegen": "node scripts/codegen.mjs",
-    "codegen:check": "node scripts/codegen.mjs --check",
+    "codegen": "python ../../../../tools/scripts/apxm_cli.py codegen typescript-frontend",
+    "codegen:check": "python ../../../../tools/scripts/apxm_cli.py codegen typescript-frontend --check",
     "compile-handlers": "node scripts/compile-handlers.mjs",
     "clean": "node -e \"require('fs').rmSync('dist',{recursive:true,force:true})\"",
     "build": "npm run clean && tsc -p tsconfig.json",
