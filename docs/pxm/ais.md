@@ -12,28 +12,19 @@ The AIS is a typed intermediate representation -- the ISA contract for agentic A
 1. **Typed end-to-end**: every operand and result carries a type. Type mismatches are caught at compile time, not at runtime after an expensive LLM call.
 2. **Latency-aware**: LLM operations are stratified by latency budget (ASK ~1s, THINK ~3s, REASON ~10s), enabling the scheduler to make informed decisions about overlap and prioritization.
 3. **Effect-explicit**: side effects (memory writes, tool calls, messages) are first-class operations, not hidden behind opaque function calls.
-4. **Future-typed**: async operations return `Future<T>` handles that integrate with the dataflow token system.
+4. **Token-carried**: operations return `!ais.token` values that integrate with
+   the dataflow dependency system.
 5. **Topology-agnostic**: multi-agent operations carry concrete targets. They do
    not encode organization policy such as reporting lines, directory visibility,
    approval chains, or who may reach whom.
 
 ## Instruction Categories
 
-The AIS operations are organized across multiple categories. Run `apxm ops list` for the complete, current operation set.
-
-| Category | Representative Operations | Purpose |
-|----------|-----------|---------|
-| **Reasoning** | ASK, THINK, REASON, PLAN, REFLECT, VERIFY | Language model interactions at different latency tiers |
-| **Memory** | QMEM, UMEM | Three-tier memory access (STM/LTM/Episodic) |
-| **Tools** | INV_CAP | External tool invocation with typed parameter marshalling |
-| **ControlFlow** | BRANCH_ON_VALUE, SWITCH, FLOW_CALL | Conditional routing and sub-flow invocation |
-| **Synchronization** | MERGE, WAIT_ALL, FENCE | Synchronization barriers and token collection |
-| **Communication** | COMMUNICATE | Inter-agent messaging |
-| **Coordination** | DELEGATE | Multi-agent task distribution |
-| **ErrorHandling** | TRY_CATCH | Exception handling with recovery subgraphs |
-| **Identity** | NOP, IDENTITY | Pass-through operations for graph structuring |
-
-For per-operation details and examples, see the [apxm-ais README](../../crates/machine/ais/README.md).
+The AIS operation catalog is generated from Rust-owned definitions and published
+as `crates/machine/ais/generated/op-spec.v1.json`. Run `dekk agents ops list`
+for the complete current operation set instead of copying a static list into
+docs or frontend code. For per-operation details and examples, see the
+[apxm-ais README](../../crates/machine/ais/README.md).
 
 `COMMUNICATE`, `DELEGATE`, `HANDOFF`, and `SPAWN_AGENT` are executable
 coordination primitives. They are not an agent hierarchy model. Hosts such as
@@ -71,26 +62,29 @@ This stratification makes the cost structure of a workflow visible at compile ti
 | `Goal` | Structured goal with priority |
 | `PlanTree` | Goal decomposition tree |
 | `Token` | Dataflow synchronization token |
-| `Future<T>` | Handle to an async result |
 | `Verdict` | Typed verification result |
 | `Critique` | Structured self-assessment |
 | `ToolResult` | Result of tool invocation |
 | `Message` | Inter-agent message |
 | `Ack` | Message acknowledgement |
 
-### Future and Handle Types
+### Token Values and Synchronization
 
-Async operations return `Future<T>` handles that participate in the dataflow token system:
+Operations produce `!ais.token` values that participate in the dataflow system:
 
+```mlir
+module {
+  func.func @capability_join() -> !ais.token attributes {ais.entry} {
+    %lookup = ais.inv_cap "lookup_docs" ("{\"query\":\"release checklist\"}") : !ais.token
+    %summary = ais.ask "Summarize {lookup}." [%lookup : !ais.token] {input_names = ["lookup"]} : !ais.token
+    %joined = ais.wait_all %lookup, %summary : !ais.token, !ais.token -> !ais.token
+    ais.return %joined : !ais.token
+  }
+}
 ```
-%result = ais.ask(%prompt, %ctx) : Future<String>
-%tool_out = ais.inv("search", %params) : Future<ToolResult>
 
-// WAIT_ALL consumes futures, produces resolved values
-%values = ais.wait_all(%result, %tool_out) : (String, ToolResult)
-```
-
-Futures are first-class tokens: they flow along DAG edges, trigger downstream operations when resolved, and carry type information for compile-time verification.
+Tokens flow along DAG edges, trigger downstream operations when resolved, and
+carry type information for compile-time verification.
 
 ## State Transitions
 
@@ -108,10 +102,10 @@ Different instructions affect different components of the AAM triple:
 | PLAN | G (current goals), B (context) | G (decomposed sub-goals) |
 | REFLECT | Episodic trace | G (revised goals), B (insights) |
 | VERIFY | B (claim + evidence) | B (verdict) |
-| INV | C (capability lookup), B (params) | B (tool result) |
+| INV_CAP | C (capability lookup), B (params) | B (tool result) |
 | QMEM | B (STM/LTM/Episodic) | -- (read-only) |
 | UMEM | -- | B (memory write) |
-| COMM | -- | Outbound message |
+| COMMUNICATE | -- | Outbound message |
 
 This explicit mapping of reads and writes enables the compiler to perform side-effect analysis, determine operation independence, and verify that state transitions are well-formed.
 
@@ -120,11 +114,12 @@ This explicit mapping of reads and writes enables the compiler to perform side-e
 AIS is implemented as an MLIR dialect with custom operations, types, and verifiers. See [apxm-compiler](../../crates/compiler/pipeline/README.md) for the full pipeline.
 
 ```mlir
-%0 = "ais.ask"(%prompt, %ctx) {
-  latency_budget = 1000 : i64,
-  backend = "registered-route",
-  model = "served-model-id"
-} : (!ais.string, !ais.context) -> !ais.future<!ais.string>
+module {
+  func.func @ask_with_backend() -> !ais.token attributes {ais.entry} {
+    %answer = ais.ask "Summarize the incident." {backend = "registered-route", model = "served-model-id"} : !ais.token
+    ais.return %answer : !ais.token
+  }
+}
 ```
 
 Each operation carries:
