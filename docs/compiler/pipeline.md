@@ -133,7 +133,8 @@ The actual sequence each `(level, target)` produces is defined by
   level for production artifacts.
 - **O3** — aggressive but still contract-safe. Repeats template-specialization,
   dead-context-elimination, scheduling metadata, canonicalization, tool checks,
-  and symbol DCE up to the configured iteration cap. Use it for diagnostics
+  and symbol DCE with a bounded cleanup budget. It is not a dynamic fixed-point
+  loop; the pass list is materialized before execution. Use it for diagnostics
   or measured production workloads that benefit from repeated cleanup.
 
 Generic MLIR CSE is available through explicit pass lists, but it is not part of
@@ -169,6 +170,10 @@ for controlled experiments, but they are not part of O1/O2/O3 defaults:
   prompt layout rewrites need an explicit backend/graph-hint contract.
 - `schema-narrowing`: current implementation is not field-use schema narrowing.
 - `condense-ops`: memory batching needs typed memory-store semantics.
+
+Promotion into the default O-levels requires a typed compiler/runtime contract,
+tests that prove the rewrite preserves graph behavior, and a pass-list change in
+`build_pass_list()` rather than an ad hoc pass-manager registration.
 
 ## Where to Read More
 

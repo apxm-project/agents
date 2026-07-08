@@ -4,7 +4,7 @@
 //!   O0 - Required normalization and executable lowering only; no optimization
 //!   O1 - Basic safe cleanup plus priority metadata
 //!   O2 - Standard: O1 + scheduling metadata and shared-prefix analysis
-//!   O3 - Aggressive: O2-safe passes iterated to fixed-point convergence
+//!   O3 - Aggressive: O2-safe passes repeated with a bounded cleanup budget
 
 use super::PassManager;
 use super::bind_capability_handlers::BIND_CAPABILITY_HANDLERS_PASS_NAME;
@@ -13,8 +13,8 @@ use apxm_core::error::compiler::Result;
 use apxm_core::types::compiler::metadata as passes;
 use apxm_core::types::{OptimizationLevel, OptimizationTarget};
 
-/// Maximum iterations for O3 fixed-point convergence.
-const MAX_CONVERGENCE_ITERATIONS: usize = 10;
+/// Number of bounded O3 cleanup repetitions materialized in the pass list.
+const O3_CLEANUP_ITERATIONS: usize = 10;
 
 // Short aliases for pass names — downstream compiler consumers read these
 // through apxm_core::types::compiler::metadata, which re-exports the canonical
@@ -203,7 +203,7 @@ pub fn build_pass_list(
                 .map(|s| s.to_string()),
             );
 
-            let convergence_passes: Vec<String> = match target {
+            let repeated_cleanup_passes: Vec<String> = match target {
                 OptimizationTarget::Tokens => [
                     TEMPLATE_SPECIALIZATION,
                     DEAD_CONTEXT_ELIMINATION,
@@ -239,8 +239,8 @@ pub fn build_pass_list(
                 .collect(),
             };
 
-            for _ in 0..MAX_CONVERGENCE_ITERATIONS {
-                passes.extend(convergence_passes.clone());
+            for _ in 0..O3_CLEANUP_ITERATIONS {
+                passes.extend(repeated_cleanup_passes.clone());
                 passes.push(SYMBOL_DCE.to_string());
             }
             if !passes.iter().any(|pass| pass == SCHEDULING) {
@@ -304,4 +304,47 @@ pub fn resolve_pass_list(config: &apxm_core::types::PipelineConfig) -> Vec<Strin
         passes.retain(|p| !drop.contains(p.as_str()));
     }
     passes
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    const EXPLICIT_ONLY_PASSES: &[&str] = &[
+        "fuse-ask-ops",
+        "condense-ops",
+        "schema-narrowing",
+        "prompt-canonicalization",
+        CSE,
+    ];
+
+    #[test]
+    fn default_o_levels_exclude_experiment_only_passes() {
+        for level in [
+            OptimizationLevel::O0,
+            OptimizationLevel::O1,
+            OptimizationLevel::O2,
+            OptimizationLevel::O3,
+        ] {
+            let passes = build_pass_list(level, false, OptimizationTarget::Balanced);
+            for explicit_only in EXPLICIT_ONLY_PASSES {
+                assert!(
+                    !passes.iter().any(|pass| pass == explicit_only),
+                    "{level:?} unexpectedly includes {explicit_only}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn o3_uses_bounded_repeated_cleanup_not_dynamic_fixed_point() {
+        let passes = build_pass_list(OptimizationLevel::O3, false, OptimizationTarget::Balanced);
+        assert_eq!(
+            passes
+                .iter()
+                .filter(|pass| pass.as_str() == SYMBOL_DCE)
+                .count(),
+            O3_CLEANUP_ITERATIONS
+        );
+    }
 }
