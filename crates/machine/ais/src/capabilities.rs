@@ -58,3 +58,16 @@ pub const BUILTINS: &[&str] = &[
     SCHEDULE,
     MANAGE_TASK,
 ];
+
+/// Valid `binding` values for a `kind = "builtin"` capability in an agent
+/// folder: the runtime builtin capability *group* an entry projects onto. This
+/// is the single source of truth the CLI `agent lint` binding check uses so a
+/// mistyped builtin group is rejected at author time rather than deferred to
+/// load. Keep in sync with the server's builtin-group projection.
+pub const BUILTIN_GROUPS: &[&str] = &[
+    groups::SKILLS,
+    groups::AUTHORING,
+    groups::DISCOVERY,
+    groups::TASK,
+    groups::AGENT_MANAGEMENT,
+];

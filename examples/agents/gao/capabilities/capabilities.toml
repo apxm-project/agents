@@ -23,8 +23,7 @@ read_only = true
 [[capability]]
 id = "list_files"
 description = "List files under declared read roots."
-binding = "fs.list"
-kind = "runtime"
+kind = "typescript_handler"
 read_only = true
 
 [[capability]]
@@ -48,7 +47,7 @@ read_only = true
 [[capability]]
 id = "read_file"
 description = "Read a file under declared read roots."
-binding = "fs.read"
+binding = "read"
 kind = "runtime"
 read_only = true
 
@@ -75,6 +74,6 @@ read_only = true
 [[capability]]
 id = "write_file"
 description = "Write a file under declared write roots."
-binding = "fs.write"
+binding = "write"
 kind = "runtime"
 read_only = false

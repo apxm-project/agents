@@ -9,9 +9,9 @@
     "source_file": "capabilities/explain_permission/handler.ts"
   },
   {
-    "handler_id": "sha256:1d4c1c5b89751aa41566fd5d4bfdaea05e78ee55c440b44760939124dca970e4",
+    "handler_id": "sha256:32cab73ca341e4936e29d4539cd0c891e2339da1e42eb60cd7688eb6d27588cc",
     "module": "capabilities/handlers/hooks",
-    "qualname": "compactConversation",
+    "qualname": "compact_conversation",
     "name": "hook",
     "event": "post_turn",
     "match": "*",
@@ -19,9 +19,9 @@
     "source_file": "capabilities/handlers/hooks.ts"
   },
   {
-    "handler_id": "sha256:779068ce9fc6467bbaeee53b212c341948d294945ab9a688f263cfe6385bdc03",
+    "handler_id": "sha256:d77891cce846419e1d0404140088e40500b90ce7e3374384847c5f7fb203543a",
     "module": "capabilities/handlers/hooks",
-    "qualname": "gateComposeWorkflow",
+    "qualname": "gate_compose_workflow",
     "name": "hook",
     "event": "pre_cap",
     "match": "compose_workflow",
@@ -29,9 +29,9 @@
     "source_file": "capabilities/handlers/hooks.ts"
   },
   {
-    "handler_id": "sha256:a9cbca786979f6154722f881b02d096ffc52a336e63dd6a752edb70045b73086",
+    "handler_id": "sha256:d5295205b84296785cce5f1be0120f34d6b1f7f9bcb025063025e46ca69d90ae",
     "module": "capabilities/handlers/hooks",
-    "qualname": "injectApxmContext",
+    "qualname": "inject_apxm_context",
     "name": "hook",
     "event": "pre_ask",
     "match": "*",
@@ -39,9 +39,9 @@
     "source_file": "capabilities/handlers/hooks.ts"
   },
   {
-    "handler_id": "sha256:794f374be7b7c14fda5cfa9f3b68f80e9ec84363151a34944b81b725387ecc6a",
+    "handler_id": "sha256:06bb3640206c7d1c673f5c6d11f3fd05b6faaea62e380904978ab16a1847b184",
     "module": "capabilities/handlers/hooks",
-    "qualname": "injectContext",
+    "qualname": "inject_context",
     "name": "hook",
     "event": "pre_turn",
     "match": "*",
@@ -49,14 +49,23 @@
     "source_file": "capabilities/handlers/hooks.ts"
   },
   {
-    "handler_id": "sha256:8ac10333b82f0498b7f71652cf589343e9f5820ee90059a73c2b8fdb7cf3a564",
+    "handler_id": "sha256:0d9bd66acf4cd7f1d70ca12736d4fd9c36be6a08c52c00f271ea407376a440c6",
     "module": "capabilities/handlers/hooks",
-    "qualname": "redactToolResults",
+    "qualname": "redact_tool_results",
     "name": "hook",
     "event": "post_cap",
     "match": "*",
     "mode": "observe",
     "source_file": "capabilities/handlers/hooks.ts"
+  },
+  {
+    "handler_id": "sha256:6cc0a49709e272fc2134605b5967441fdd796aaa3960c5ddf5d14a33d978f30d",
+    "module": "capabilities/list_files/handler",
+    "qualname": "listFiles",
+    "name": "list_files",
+    "description": "List files under a path relative to declared read roots.",
+    "schema": {},
+    "source_file": "capabilities/list_files/handler.ts"
   },
   {
     "handler_id": "sha256:ad260e3bad22e48287998b4df384151dde5f18f462658496c9e080383b4da774",

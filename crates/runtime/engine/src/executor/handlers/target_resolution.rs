@@ -24,7 +24,7 @@
 //! scored against each registered agent's declared
 //! **discoverable** names (`AgentMetadata::discoverable` — "discoverable
 //! capability/tool names", the closest local analog to "subjects this agent
-//! answers to", platform.md rule 3: "agent packages declare what they
+//! answers to", platform.md rule 3: "agents declare what they
 //! answer"). `capability:` resolution is scored against each agent's
 //! declared **capabilities** (`AgentMetadata::capabilities`). Both reuse the
 //! shared  scoring engine (`agent_scoring`) for the

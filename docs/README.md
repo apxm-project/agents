@@ -79,9 +79,9 @@ tools   →  apxm-cli, apxm             (developer CLI incl. generated apxm-serv
 Each crate has a README under `crates/<tier>/<name>/README.md` describing what it
 owns and how it composes with its neighbors.
 
-## Agent packages
+## Agents
 
-- [Create your first agent package](agent-packages/first-agent.md) — minimal
+- [Create your first agent](agents/first-agent.md) — minimal
   folder contract (`agent.toml`, `prompts/`, `python/`, `capabilities/`) and
   validation workflow
 

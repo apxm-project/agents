@@ -1,5 +1,5 @@
 id = "read_file"
 description = "Read a file under declared read roots."
 kind = "runtime"
-binding = "fs.read"
+binding = "read"
 read_only = true

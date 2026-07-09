@@ -165,22 +165,23 @@ add = { run = "python tools/scripts/apxm_cli.py tool add", description = "Regist
 list = { run = "python tools/scripts/apxm_cli.py tool list", description = "List tools" }
 remove = { run = "python tools/scripts/apxm_cli.py tool remove", description = "Remove tool" }
 
-[commands.agent]
+[commands.acp]
 description = "Manage ACP agent profiles"
 group = "Configuration"
-list = { run = "python tools/scripts/apxm_cli.py agent list", description = "List registered agents" }
-add = { run = "python tools/scripts/apxm_cli.py agent add", description = "Register agent profile" }
-remove = { run = "python tools/scripts/apxm_cli.py agent remove", description = "Remove agent" }
-test = { run = "python tools/scripts/apxm_cli.py agent test", description = "Test agent" }
-templates = { run = "python tools/scripts/apxm_cli.py agent templates", description = "List built-in templates" }
+list = { run = "python tools/scripts/apxm_cli.py acp list", description = "List registered ACP profiles" }
+add = { run = "python tools/scripts/apxm_cli.py acp add", description = "Register ACP profile" }
+remove = { run = "python tools/scripts/apxm_cli.py acp remove", description = "Remove ACP profile" }
+test = { run = "python tools/scripts/apxm_cli.py acp test", description = "Test ACP profile" }
+templates = { run = "python tools/scripts/apxm_cli.py acp templates", description = "List built-in ACP templates" }
 
-[commands.package]
-description = "Scaffold, lint, build, and install agent packages ( folder format)"
+[commands.agent]
+description = "Scaffold, sync, lint, build, and install agents"
 group = "Authoring"
-new = { run = "python tools/scripts/apxm_cli.py package new", description = "Scaffold a new agent-package folder tree", skill = true }
-lint = { run = "python tools/scripts/apxm_cli.py package lint", description = "Validate a package + capability-set agreement", skill = true }
-build = { run = "python tools/scripts/apxm_cli.py package build", description = "Recompute the pack integrity hash chain (+ compile skills)", skill = true }
-install = { run = "python tools/scripts/apxm_cli.py package install", description = "Install a built package to APXM_HOME/packages/<id>" }
+new = { run = "python tools/scripts/apxm_cli.py agent new", description = "Scaffold a new agent folder tree", skill = true }
+sync = { run = "python tools/scripts/apxm_cli.py agent sync", description = "Regenerate aggregate agent manifests", skill = true }
+lint = { run = "python tools/scripts/apxm_cli.py agent lint", description = "Validate an agent + capability-set agreement", skill = true }
+build = { run = "python tools/scripts/apxm_cli.py agent build", description = "Recompute the agent integrity hash chain (+ compile skills)", skill = true }
+install = { run = "python tools/scripts/apxm_cli.py agent install", description = "Install a built agent to APXM_HOME/agents/<id>" }
 
 [commands.integration]
 description = "Scaffold, lint, and install integration packages (apxm.integration-package.v1)"

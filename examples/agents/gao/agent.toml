@@ -18,6 +18,7 @@ domain = "apxm"
 id = "gao"
 kind = "agent"
 license = "MIT"
+schema_version = "apxm.agent.v1"
 skills = [
     "agent-builder",
     "workflow-designer",
@@ -30,29 +31,29 @@ frontend = "typescript"
 
 [[hooks]]
 event = "pre_turn"
-handler = "capabilities.handlers.hooks.injectContext"
+handler = "capabilities.handlers.hooks.inject_context"
 mode = "observe"
 
 [[hooks]]
 event = "pre_ask"
-handler = "capabilities.handlers.hooks.injectApxmContext"
+handler = "capabilities.handlers.hooks.inject_apxm_context"
 mode = "observe"
 
 [[hooks]]
 event = "pre_cap"
-handler = "capabilities.handlers.hooks.gateComposeWorkflow"
+handler = "capabilities.handlers.hooks.gate_compose_workflow"
 match = "compose_workflow"
 mode = "gate"
 
 [[hooks]]
 event = "post_cap"
-handler = "capabilities.handlers.hooks.redactToolResults"
+handler = "capabilities.handlers.hooks.redact_tool_results"
 match = "*"
 mode = "observe"
 
 [[hooks]]
 event = "post_turn"
-handler = "capabilities.handlers.hooks.compactConversation"
+handler = "capabilities.handlers.hooks.compact_conversation"
 mode = "observe"
 
 [prompts]
