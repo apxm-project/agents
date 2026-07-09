@@ -1,5 +1,4 @@
 id = "list_files"
 description = "List files under declared read roots."
-kind = "runtime"
-binding = "fs.list"
+kind = "typescript_handler"
 read_only = true

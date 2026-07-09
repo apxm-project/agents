@@ -628,7 +628,7 @@ fn integration_install(path: &Path, force: bool, json_output: bool) -> Result<()
 /// so tests can point at tempdirs instead of mutating the process-global
 /// `APXM_HOME`/`APXM_WORKSPACE_ROOT` env vars (this crate denies
 /// `unsafe_code`, which `std::env::set_var` requires in Rust 2024) — same
-/// pattern as `package.rs::package_install_to` / `org.rs::org_install_to`.
+/// pattern as `agent.rs::agent_install_to` / `org.rs::org_install_to`.
 pub(crate) fn integration_install_to(
     path: &Path,
     apxm_home: &Path,

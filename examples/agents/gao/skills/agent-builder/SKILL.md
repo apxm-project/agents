@@ -80,4 +80,4 @@ recomputing the hash chain via `apxm agent build`.
 ## Safety
 
 - Draft agents in chat; applying files or running workers requires write/execute grants.
-- Prefer `gao.read_local_skill("agent-builder")` when available; otherwise use structured context references to this skill and the first-agent guide.
+- Prefer `read_local_skill("agent-builder")` when available; otherwise use structured context references to this skill and the first-agent guide.

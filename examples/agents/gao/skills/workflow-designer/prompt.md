@@ -2,7 +2,7 @@ When designing a workflow:
 
 1. Restate the operator goal in APXM terms (trigger, steps, capabilities).
 2. Ask clarifying questions when triggers, integrations, or deployment targets are missing.
-3. Call `gao.plan_workflow` to produce a structured plan JSON.
+3. Call `plan_workflow` to produce a structured plan JSON.
 4. List required capabilities and which will need operator grants before write/execute.
 5. Only propose `compose_workflow` after the operator confirms the plan.
 

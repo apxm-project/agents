@@ -8,7 +8,7 @@ import {
 
 import { prompt, renderStudioContextSupplement, SUMMARY_KEY } from "./context.js";
 
-export const injectContext = hook({
+export const inject_context = hook({
   on: LifecycleEvent.PRE_TURN,
   mode: HookMode.OBSERVE,
 })(async (ctx: HookContext) => {
@@ -16,7 +16,7 @@ export const injectContext = hook({
   return ctx.prependSystem(supplement);
 });
 
-export const injectApxmContext = hook({
+export const inject_apxm_context = hook({
   on: LifecycleEvent.PRE_ASK,
   mode: HookMode.OBSERVE,
 })((ctx: HookContext) => {
@@ -29,7 +29,7 @@ export const injectApxmContext = hook({
   return ctx.prependSystem(context);
 });
 
-export const gateComposeWorkflow = hook({
+export const gate_compose_workflow = hook({
   on: LifecycleEvent.PRE_CAP,
   match: "compose_workflow",
   mode: HookMode.GATE,
@@ -41,7 +41,7 @@ export const gateComposeWorkflow = hook({
   return _ctx.allow();
 });
 
-export const redactToolResults = hook({
+export const redact_tool_results = hook({
   on: LifecycleEvent.POST_CAP,
   match: "*",
   mode: HookMode.OBSERVE,
@@ -53,7 +53,7 @@ export const redactToolResults = hook({
   return ctx.replaceResult(text);
 });
 
-export const compactConversation = hook({
+export const compact_conversation = hook({
   on: LifecycleEvent.POST_TURN,
   mode: HookMode.OBSERVE,
 })((ctx: HookContext) => {

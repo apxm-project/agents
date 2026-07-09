@@ -7,7 +7,7 @@
 //! ported into Rust structs rather than loading the JSON schema at runtime —
 //! this repo does not vendor or path-depend on the sibling `contracts`
 //! repo), same lint reporting style, same install-to-`APXM_HOME` pattern.
-//! Where a check can reuse the package command logic (installed-package resolution,
+//! Where a check can reuse the agent command logic (installed-agent resolution,
 //! the joined capabilities/permissions grammar, `hierarchy.toml`'s
 //! parent/permitted_children shape, recursive directory copy) it does —
 //! see the `use super::agent::{...}` imports below — rather than
@@ -15,15 +15,15 @@
 //!
 //! An org package's `members.toml` entries carry a `hierarchy` snapshot
 //! (org-package.v1#/properties/members/items/properties/hierarchy) of the
-//! referenced agent package's own `hierarchy.toml`. That snapshot — not a
-//! second resolve-and-read of the installed package's `hierarchy.toml` — is
+//! referenced agent's own `hierarchy.toml`. That snapshot — not a
+//! second resolve-and-read of the installed agent's `hierarchy.toml` — is
 //! what `org lint`'s hierarchy-consistency check compares against
 //! `topology.toml`'s tree edges; this is the schema's own design ("carried
 //! here so org-package lint can check consistency ... without
-//! resolving the referenced package") and matches the
+//! resolving the referenced agent") and matches the
 //! `invalid-member-hierarchy-contradicts-topology-tree` vector, which
 //! exercises exactly this snapshot-vs-tree contradiction with no reference
-//! to an installed package at all.
+//! to an installed agent at all.
 
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::fs;
@@ -253,7 +253,7 @@ fn org_new(
     );
     write_new_file(&root.join("topology.toml"), &topology_toml)?;
 
-    // prompts/ and tests/ — optional, scaffolded for parity with `package new`.
+    // prompts/ and tests/ — optional, scaffolded for parity with `agent new`.
     write_new_file(
         &root.join("prompts/persona.md"),
         &format!("# {display_name}\n\nDescribe this org's collective persona/voice here.\n"),
@@ -352,7 +352,7 @@ fn load_org(root: &Path) -> Result<LoadedOrg> {
 // ---------------------------------------------------------------------
 
 /// Minimal SemVer core parse (`MAJOR.MINOR.PATCH`, prerelease/build metadata
-/// ignored) — uses `package.rs::semver_like`'s tolerance, adding the
+/// ignored) — uses `agent.rs::semver_like`'s tolerance, adding the
 /// numeric triple needed for requirement satisfaction.
 fn parse_semver_core(version: &str) -> Option<(u64, u64, u64)> {
     let core = version.split(['-', '+']).next().unwrap_or(version);
@@ -690,7 +690,7 @@ fn org_lint(path: &Path, json_output: bool) -> Result<()> {
 /// Lints an org package against an explicit `apxm_home` root. Split out
 /// from [`org_lint`] so tests can point at a tempdir instead of mutating
 /// the process-global `APXM_HOME` env var — same pattern as
-/// `package.rs::package_install_to`.
+/// `agent.rs::agent_install_to`.
 fn org_lint_at(path: &Path, apxm_home: &Path, json_output: bool) -> Result<()> {
     let org = load_org(path)?;
 
@@ -777,7 +777,7 @@ fn org_install(path: &Path, force: bool, json_output: bool) -> Result<()> {
 /// Installs an org package under an explicit `apxm_home` root. Split out
 /// from [`org_install`] so tests can point at a tempdir instead of
 /// mutating the process-global `APXM_HOME` env var (same reasoning as
-/// `package.rs::package_install_to`: this crate denies `unsafe_code`,
+/// `agent.rs::agent_install_to`: this crate denies `unsafe_code`,
 /// which `std::env::set_var` requires in Rust 2024).
 fn org_install_to(path: &Path, apxm_home: &Path, force: bool, json_output: bool) -> Result<()> {
     let org = load_org(path)?;
@@ -823,10 +823,10 @@ mod tests {
         org_new(id, Some(dir.to_path_buf()), None, true).expect("scaffold ok");
     }
 
-    /// Scaffold + install a minimal agent-package under `apxm_home`
+    /// Scaffold + install a minimal agent under `apxm_home`
     /// so org-level member-resolution tests have something real to resolve
     /// against, at the given version.
-    fn install_agent_package(apxm_home: &Path, id: &str, version: &str) {
+    fn install_agent_fixture(apxm_home: &Path, id: &str, version: &str) {
         let tmp = tempdir().unwrap();
         let root = tmp.path().join(id);
         agent_new(id, Some(root.clone()), None, "looped-agent", true).expect("agent scaffold ok");
@@ -885,8 +885,8 @@ mod tests {
     ///  vector `valid-two-level-tree-with-global-capability-mask-and-delegation`.
     fn build_valid_org(root: &Path, apxm_home: &Path) {
         scaffold(root, "valid-org");
-        install_agent_package(apxm_home, "root-pkg", "0.1.0");
-        install_agent_package(apxm_home, "child-pkg", "0.2.0");
+        install_agent_fixture(apxm_home, "root-pkg", "0.1.0");
+        install_agent_fixture(apxm_home, "child-pkg", "0.2.0");
 
         fs::write(
             root.join("capabilities/capabilities.toml"),
@@ -971,7 +971,7 @@ mod tests {
         let fake_home = tempdir().unwrap();
         build_valid_org(&root, fake_home.path());
 
-        // Require a version the installed package does not satisfy.
+        // Require a version the installed agent does not satisfy.
         let members_toml = fs::read_to_string(root.join("agents/members.toml")).unwrap();
         fs::write(
             root.join("agents/members.toml"),
@@ -1077,9 +1077,9 @@ mod tests {
         let root = tmp.path().join("bad-hierarchy-org");
         let fake_home = tempdir().unwrap();
         scaffold(&root, "bad-hierarchy-org");
-        install_agent_package(fake_home.path(), "root-pkg", "0.1.0");
-        install_agent_package(fake_home.path(), "child-pkg", "0.2.0");
-        install_agent_package(fake_home.path(), "other-pkg", "0.1.0");
+        install_agent_fixture(fake_home.path(), "root-pkg", "0.1.0");
+        install_agent_fixture(fake_home.path(), "child-pkg", "0.2.0");
+        install_agent_fixture(fake_home.path(), "other-pkg", "0.1.0");
 
         fs::write(
             root.join("agents/members.toml"),

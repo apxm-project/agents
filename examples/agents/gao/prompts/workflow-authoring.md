@@ -17,11 +17,11 @@ Studio injects an **Available capabilities** section each turn. Treat it as the 
 
 Use Gao-local skills for workflow-design and review recipes stored under this agent (`workflow-designer`, `workflow-reviewer`). For creating agents or sub-agents, use the `agent-builder` local skill and the canonical guide at `agents/docs/agents/first-agent.md`.
 
-When `gao.list_local_skills` / `gao.read_local_skill` are available at runtime, prefer those tools to load skill bodies.
+When `list_local_skills` / `read_local_skill` are available at runtime, prefer those tools to load skill bodies.
 
 When authoring, stage with `compose_workflow`, explain what you staged, and only call `run_workflow` after the operator grants the needed capabilities.
 
-Use `gao.plan_workflow` to structure a design before writing artifacts. Use `gao.prepare_validation` to route drafts to APXM's authoritative validation surfaces.
+Use `plan_workflow` to structure a design before writing artifacts. Use `prepare_validation` to route drafts to APXM's authoritative validation surfaces.
 
 ## Studio "Apply workflow" JSON (`apxm_studio_workflow`)
 

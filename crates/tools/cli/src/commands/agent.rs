@@ -35,6 +35,8 @@ use super::implementations::{Status, print_section_header, print_status_line};
 // On-disk manifest shapes (apxm.agent.v1 projections)
 // ---------------------------------------------------------------------
 
+const AGENT_SCHEMA_V1: &str = "apxm.agent.v1";
+
 /// Projection of generated-only `integrity.toml`.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct IntegrityToml {
@@ -55,6 +57,8 @@ pub struct ChainLinkToml {
 pub struct AgentToml {
     pub id: String,
     pub version: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub schema_version: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub license: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -361,6 +365,7 @@ fn agent_new_looped_agent(
         &format!(
             "id = \"{id}\"\n\
              version = \"0.1.0\"\n\
+             schema_version = \"{AGENT_SCHEMA_V1}\"\n\
              license = \"MIT\"\n\
              display_name = \"{display_name}\"\n\
              kind = \"agent\"\n\
@@ -403,27 +408,27 @@ fn agent_new_looped_agent(
 
     scaffold_capability_folder(
         root,
-        "list_files",
-        "List files under declared read roots.",
+        "read_file",
+        "Read a file under declared read roots.",
         "runtime",
-        "fs.list",
+        "read",
         true,
         "allow",
     )?;
     scaffold_capability_folder(
         root,
-        "read_file",
-        "Read a file under declared read roots.",
+        "write_file",
+        "Write a file under declared write roots.",
         "runtime",
-        "fs.read",
-        true,
-        "allow",
+        "write",
+        false,
+        "ask",
     )?;
 
     write_new_file(
         &root.join("capabilities/handlers/hooks.ts"),
         "// Sample hook handlers for a looped agent.\n\
-         export function injectContext(_ctx: unknown): null {\n  return null;\n}\n",
+         export function inject_context(_ctx: unknown): null {\n  return null;\n}\n",
     )?;
 
     write_new_file(
@@ -1103,6 +1108,15 @@ fn check_schema_shape(pkg: &LoadedAgent) -> Vec<String> {
             pkg.agent.version
         ));
     }
+    match pkg.agent.schema_version.as_deref() {
+        Some(AGENT_SCHEMA_V1) => {}
+        Some(other) => errors.push(format!(
+            "agent.toml: schema_version '{other}' must be '{AGENT_SCHEMA_V1}'"
+        )),
+        None => errors.push(format!(
+            "agent.toml: schema_version is required and must be '{AGENT_SCHEMA_V1}'"
+        )),
+    }
     match &pkg.agent.entry {
         None => {
             // No entry ⇒ pure-declarative agent: the loader builds it straight from
@@ -1342,6 +1356,50 @@ fn semver_like(version: &str) -> bool {
             .all(|p| !p.is_empty() && p.chars().all(|c| c.is_ascii_digit()))
 }
 
+/// Validate each capability's `binding` against the canonical registry so a
+/// dangling or mistyped binding is rejected at author time instead of silently
+/// passing lint and failing at load/runtime:
+///   - `kind = "runtime"`  -> binding must be a registered builtin capability
+///     (`apxm_ais::capabilities::BUILTINS`, e.g. `bash`/`read`/`write`).
+///   - `kind = "builtin"`  -> binding must be a valid builtin group
+///     (`apxm_ais::capabilities::BUILTIN_GROUPS`, e.g. `skills`/`authoring`).
+/// Handler kinds (`typescript_handler`/`python_handler`/`host`) carry no
+/// registry binding and are checked structurally elsewhere.
+fn check_capability_bindings(pkg: &LoadedAgent) -> Vec<String> {
+    use apxm_ais::capabilities::{BUILTINS, BUILTIN_GROUPS};
+    let mut errors = Vec::new();
+    for cap in &pkg.capabilities.capability {
+        let kind = capability_kind(cap);
+        let binding = cap.extra.get("binding").and_then(|v| v.as_str());
+        match kind {
+            Some("runtime") => match binding {
+                Some(b) if BUILTINS.contains(&b) => {}
+                Some(b) => errors.push(format!(
+                    "capability '{}' (kind=runtime) has unknown binding '{b}'; expected one of the registered builtins {BUILTINS:?}",
+                    cap.id
+                )),
+                None => errors.push(format!(
+                    "capability '{}' (kind=runtime) is missing a binding",
+                    cap.id
+                )),
+            },
+            Some("builtin") => match binding {
+                Some(b) if BUILTIN_GROUPS.contains(&b) => {}
+                Some(b) => errors.push(format!(
+                    "capability '{}' (kind=builtin) has unknown binding group '{b}'; expected one of {BUILTIN_GROUPS:?}",
+                    cap.id
+                )),
+                None => errors.push(format!(
+                    "capability '{}' (kind=builtin) is missing a binding group",
+                    cap.id
+                )),
+            },
+            _ => {}
+        }
+    }
+    errors
+}
+
 pub(crate) fn agent_lint(path: &Path, org: Option<PathBuf>, json_output: bool) -> Result<()> {
     let pkg = load_agent(path)?;
     let org_globals = match &org {
@@ -1353,6 +1411,7 @@ pub(crate) fn agent_lint(path: &Path, org: Option<PathBuf>, json_output: bool) -
     let mut errors = check_schema_shape(&pkg);
     errors.extend(check_capability_drift(&pkg, &org_globals));
     errors.extend(check_hook_contradictions(&pkg));
+    errors.extend(check_capability_bindings(&pkg));
     // a hand-edited compiled artifact is a lint error in every
     // dialect. This is the "lighter-weight check" documented on
     // `detect_hand_edited_artifact` — comparing recorded vs current hashes,
@@ -1918,8 +1977,8 @@ mod tests {
             "hierarchy.toml",
             "capabilities/capabilities.toml",
             "capabilities/permissions.toml",
-            "capabilities/list_files/capability.toml",
             "capabilities/read_file/capability.toml",
+            "capabilities/write_file/capability.toml",
             "capabilities/handlers/hooks.ts",
             "package.json",
             "tsconfig.json",
@@ -1936,6 +1995,7 @@ mod tests {
         let agent: AgentToml = read_toml(&root.join("agent.toml")).unwrap();
         assert_eq!(agent.id, "demo");
         assert_eq!(agent.version, "0.1.0");
+        assert_eq!(agent.schema_version.as_deref(), Some(AGENT_SCHEMA_V1));
         assert_eq!(
             agent
                 .compile
@@ -1948,7 +2008,7 @@ mod tests {
         assert_eq!(agent.id, "demo");
         assert!(agent.entry.is_none());
         assert_eq!(agent.kind.as_deref(), Some("agent"));
-        assert_eq!(agent.capabilities, vec!["list_files", "read_file"]);
+        assert_eq!(agent.capabilities, vec!["read_file", "write_file"]);
         assert_eq!(agent.skills, vec!["demo-skill".to_string()]);
         match agent
             .runtime
@@ -1970,6 +2030,30 @@ mod tests {
         // The freshly scaffolded tree must lint clean (no capability
         // declared => nothing to join, no drift).
         agent_lint(&root, None, true).expect("scaffolded agent should lint clean");
+    }
+
+    #[test]
+    fn lint_rejects_missing_schema_version() {
+        let tmp = tempdir().unwrap();
+        let root = tmp.path().join("demo");
+        scaffold(&root, "demo");
+        let agent_path = root.join("agent.toml");
+        let text = fs::read_to_string(&agent_path).unwrap();
+        fs::write(
+            &agent_path,
+            text.replace("schema_version = \"apxm.agent.v1\"\n", ""),
+        )
+        .unwrap();
+
+        let pkg = load_agent(&root).unwrap();
+        let errors = check_schema_shape(&pkg);
+        assert!(
+            errors
+                .iter()
+                .any(|error| error.contains("schema_version is required")),
+            "{errors:?}"
+        );
+        agent_lint(&root, None, true).expect_err("missing schema_version must fail");
     }
 
     #[test]

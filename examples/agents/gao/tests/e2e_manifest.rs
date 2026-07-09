@@ -95,7 +95,7 @@ fn gao_example_build_writes_tools_json_manifest() {
     );
     assert!(
         manifest.iter().any(|entry| {
-            entry.get("qualname").and_then(|v| v.as_str()) == Some("injectContext")
+            entry.get("qualname").and_then(|v| v.as_str()) == Some("inject_context")
         }),
         "tools.json must include gao hook handlers"
     );

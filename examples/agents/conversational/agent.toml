@@ -4,6 +4,7 @@ domain = "general"
 id = "conversational"
 kind = "agent"
 license = "MIT"
+schema_version = "apxm.agent.v1"
 skills = []
 version = "0.1.0"
 
