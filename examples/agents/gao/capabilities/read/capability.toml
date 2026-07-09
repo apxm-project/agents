@@ -1,5 +1,4 @@
-id = "read_file"
+id = "read"
 description = "Read a file under declared read roots."
-kind = "runtime"
-binding = "read"
+kind = "builtin"
 read_only = true

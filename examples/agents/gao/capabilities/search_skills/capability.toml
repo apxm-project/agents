@@ -1,5 +1,5 @@
 id = "search_skills"
 description = "Find relevant APXM skills by description."
 kind = "builtin"
-binding = "skills"
+builtin_group = "skills"
 read_only = true

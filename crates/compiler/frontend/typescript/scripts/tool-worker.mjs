@@ -8,8 +8,9 @@
  */
 
 import { createInterface } from "node:readline";
-import { readFileSync } from "node:fs";
-import { pathToFileURL } from "node:url";
+import { existsSync, readFileSync } from "node:fs";
+import * as nodeModule from "node:module";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import path from "node:path";
 
 const WIRE_VERSION = 1;
@@ -23,8 +24,46 @@ const registry = new Map();
 const hostPending = new Map();
 let hostCallCounter = 0;
 
+function installApxmFrontendResolver() {
+  if (typeof nodeModule.registerHooks !== "function") return;
+
+  const scriptDir = path.dirname(fileURLToPath(import.meta.url));
+  const frontendDist = path.resolve(scriptDir, "../dist/index.js");
+  if (!existsSync(frontendDist)) return;
+  const frontendUrl = pathToFileURL(frontendDist).href;
+
+  nodeModule.registerHooks({
+    resolve(specifier, context, nextResolve) {
+      if (specifier === "@apxm/frontend") {
+        return { url: frontendUrl, shortCircuit: true };
+      }
+      if (
+        specifier.startsWith(".") &&
+        specifier.endsWith(".js") &&
+        context.parentURL?.startsWith("file:")
+      ) {
+        const parentDir = path.dirname(fileURLToPath(context.parentURL));
+        const tsPath = path.resolve(
+          parentDir,
+          `${specifier.slice(0, -".js".length)}.ts`,
+        );
+        if (existsSync(tsPath)) {
+          return { url: pathToFileURL(tsPath).href, shortCircuit: true };
+        }
+      }
+      return nextResolve(specifier, context);
+    },
+  });
+}
+
+installApxmFrontendResolver();
+
 function emitLine(obj) {
   process.stdout.write(`${JSON.stringify(obj)}\n`);
+}
+
+function logWorker(level, message) {
+  process.stderr.write(`${JSON.stringify({ v: WIRE_VERSION, type: "log", level, message })}\n`);
 }
 
 async function loadManifest(manifestPath) {
@@ -33,17 +72,14 @@ async function loadManifest(manifestPath) {
     entries.map(async (entry) => {
       const sourceFile = entry.source_file;
       if (!sourceFile) {
-        emitLine({
-          v: WIRE_VERSION,
-          type: "log",
-          level: "error",
-          message: `manifest entry ${entry.handler_id} missing source_file`,
-        });
+        logWorker("error", `manifest entry ${entry.handler_id} missing source_file`);
         return;
       }
       const absPath = path.resolve(sourceFile);
       try {
-        const mod = await import(pathToFileURL(`${absPath}?t=${Date.now()}`).href);
+        const moduleUrl = pathToFileURL(absPath);
+        moduleUrl.searchParams.set("t", String(Date.now()));
+        const mod = await import(moduleUrl.href);
         const qualParts = String(entry.qualname || entry.name).split(".");
         let target = mod;
         for (const part of qualParts) {
@@ -52,6 +88,9 @@ async function loadManifest(manifestPath) {
           }
           target = target?.[part];
         }
+        if (target && typeof target === "object" && typeof target.fn === "function") {
+          target = target.fn;
+        }
         if (typeof target !== "function") {
           throw new Error(`handler ${entry.handler_id} not found in ${absPath}`);
         }
@@ -59,12 +98,10 @@ async function loadManifest(manifestPath) {
           registry.set(entry.handler_id, target);
         }
       } catch (err) {
-        emitLine({
-          v: WIRE_VERSION,
-          type: "log",
-          level: "error",
-          message: `failed to import ${sourceFile}: ${err instanceof Error ? err.message : err}`,
-        });
+        logWorker(
+          "error",
+          `failed to import ${sourceFile}: ${err instanceof Error ? err.message : err}`,
+        );
       }
     }),
   );
@@ -110,24 +147,48 @@ class HookCtx {
     return { decision: "edit_args", args };
   }
 
+  editArgs(args) {
+    return this.edit_args(args);
+  }
+
   replace_result(result) {
     return { decision: "replace_result", result };
+  }
+
+  replaceResult(result) {
+    return this.replace_result(result);
   }
 
   prepend_system(text) {
     return { decision: "prepend_system", text };
   }
 
+  prependSystem(text) {
+    return this.prepend_system(text);
+  }
+
   set_system(text) {
     return { decision: "set_system", text };
+  }
+
+  setSystem(text) {
+    return this.set_system(text);
   }
 
   read_agents_md() {
     return "";
   }
 
+  readAgentsMd() {
+    return this.read_agents_md();
+  }
+
   recall_window(_n = 4, _prefix = "conversation:") {
     return "";
+  }
+
+  recallWindow(n = 4, prefix = "conversation:") {
+    return this.recall_window(n, prefix);
   }
 
   umem(key, value) {
@@ -185,6 +246,10 @@ class HookCtx {
       if (typeof value === "string") return Number.parseInt(value, 10) || 0;
       return 0;
     });
+  }
+
+  countTokens(text) {
+    return this.count_tokens(text);
   }
 
   recall(_key) {

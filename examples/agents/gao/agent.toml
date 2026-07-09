@@ -6,11 +6,11 @@ capabilities = [
     "list_local_skills",
     "plan_workflow",
     "prepare_validation",
-    "read_file",
+    "read",
     "read_local_skill",
     "run_workflow",
     "search_skills",
-    "write_file",
+    "write",
 ]
 description = "A looped APXM agent for designing, reviewing, and controlling APXM workflows."
 display_name = "Gao"

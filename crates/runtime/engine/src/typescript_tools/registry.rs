@@ -17,6 +17,7 @@ pub struct ToolDescriptor {
     pub name: String,
     #[serde(default)]
     pub description: String,
+    #[serde(default)]
     pub schema: serde_json::Value,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub source_file: Option<String>,
@@ -25,15 +26,20 @@ pub struct ToolDescriptor {
 /// Registry of TypeScript-backed tools, keyed by capability name.
 pub struct TypeScriptHandlerRegistry {
     tools: HashMap<String, ToolDescriptor>,
+    handlers: HashMap<String, ToolDescriptor>,
 }
 
 impl TypeScriptHandlerRegistry {
     pub fn from_descriptors(descriptors: Vec<ToolDescriptor>) -> Self {
-        let tools = descriptors
-            .into_iter()
-            .map(|d| (d.name.clone(), d))
-            .collect();
-        Self { tools }
+        let mut tools = HashMap::new();
+        let mut handlers = HashMap::new();
+        for descriptor in descriptors {
+            if descriptor.name != "hook" {
+                tools.insert(descriptor.name.clone(), descriptor.clone());
+            }
+            handlers.insert(descriptor.handler_id.clone(), descriptor);
+        }
+        Self { tools, handlers }
     }
 
     pub fn from_file(path: &Path) -> Result<Self, RuntimeError> {
@@ -62,7 +68,7 @@ impl TypeScriptHandlerRegistry {
     }
 
     pub fn resolve_handler_id(&self, handler_id: &str) -> Option<&ToolDescriptor> {
-        self.tools.values().find(|d| d.handler_id == handler_id)
+        self.handlers.get(handler_id)
     }
 
     pub fn descriptors(&self) -> impl Iterator<Item = &ToolDescriptor> {
@@ -78,11 +84,22 @@ impl TypeScriptHandlerRegistry {
     }
 
     pub fn manifest_json(&self) -> Result<String, RuntimeError> {
-        let descriptors: Vec<&ToolDescriptor> = self.tools.values().collect();
+        let descriptors: Vec<&ToolDescriptor> = self.handlers.values().collect();
         serde_json::to_string(&descriptors).map_err(|e| RuntimeError::Serialization(e.to_string()))
     }
 
     fn resolve_relative_sources(&mut self, base_dir: &Path) {
+        for descriptor in self.handlers.values_mut() {
+            let Some(source_file) = descriptor.source_file.as_ref() else {
+                continue;
+            };
+            let source_path = Path::new(source_file);
+            if source_path.is_absolute() {
+                continue;
+            }
+            descriptor.source_file =
+                Some(base_dir.join(source_path).to_string_lossy().into_owned());
+        }
         for descriptor in self.tools.values_mut() {
             let Some(source_file) = descriptor.source_file.as_ref() else {
                 continue;
@@ -126,6 +143,23 @@ mod tests {
         )
         .unwrap();
         assert!(registry.resolve_handler_id("sha256:abc").is_some());
+    }
+
+    #[test]
+    fn registry_preserves_duplicate_hook_names_by_handler_id() {
+        let registry = TypeScriptHandlerRegistry::from_json(
+            r#"[
+            {"handler_id":"sha256:hook-a","module":"hooks","qualname":"a","name":"hook"},
+            {"handler_id":"sha256:hook-b","module":"hooks","qualname":"b","name":"hook"},
+            {"handler_id":"sha256:tool","module":"tools","qualname":"echo","name":"echo","schema":{}}
+            ]"#,
+        )
+        .unwrap();
+
+        assert!(registry.resolve("hook").is_none());
+        assert!(registry.resolve("echo").is_some());
+        assert!(registry.resolve_handler_id("sha256:hook-a").is_some());
+        assert!(registry.resolve_handler_id("sha256:hook-b").is_some());
     }
 
     #[test]
