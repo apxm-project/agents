@@ -31,7 +31,7 @@ capability = "prepare_validation"
 decision = "allow"
 
 [[permission]]
-capability = "read_file"
+capability = "read"
 decision = "allow"
 
 [[permission]]
@@ -48,6 +48,6 @@ capability = "search_skills"
 decision = "allow"
 
 [[permission]]
-capability = "write_file"
+capability = "write"
 decision = "ask"
 reason = "Writes files on the host."

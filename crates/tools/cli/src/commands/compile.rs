@@ -364,6 +364,24 @@ struct DeclarativeAgentToml {
 }
 
 #[cfg(feature = "driver")]
+#[derive(Debug, Deserialize, Default)]
+struct DeclarativeCapabilitiesToml {
+    #[serde(default, rename = "capability")]
+    capability: Vec<DeclarativeCapabilityToml>,
+}
+
+#[cfg(feature = "driver")]
+#[derive(Debug, Deserialize)]
+struct DeclarativeCapabilityToml {
+    id: String,
+    kind: String,
+    #[serde(default)]
+    read_only: bool,
+    #[serde(default)]
+    builtin_group: Option<String>,
+}
+
+#[cfg(feature = "driver")]
 fn declarative_turn_param(agent: &DeclarativeAgentToml) -> String {
     agent
         .runtime
@@ -443,6 +461,97 @@ fn resolve_declarative_handler_id(handler: &str, manifest: &[serde_json::Value])
 }
 
 #[cfg(feature = "driver")]
+fn declarative_tool_surface(
+    capabilities: &DeclarativeCapabilitiesToml,
+    web_tools: bool,
+) -> Result<(Vec<String>, Vec<String>)> {
+    let mut tools = Vec::new();
+    let mut groups = Vec::new();
+    if web_tools {
+        groups.push(apxm_ais::capabilities::groups::WEB.to_string());
+    }
+    for cap in &capabilities.capability {
+        match cap.kind.as_str() {
+            "typescript_handler" | "python_handler" => {
+                if cap.read_only {
+                    tools.push(cap.id.clone());
+                }
+            }
+            "builtin" => {
+                if cap.read_only {
+                    tools.push(cap.id.clone());
+                }
+                if let Some(group) = cap.builtin_group.as_ref()
+                    && !groups.contains(group)
+                {
+                    groups.push(group.clone());
+                }
+            }
+            "host" | "provider" | "http" | "static" | "mcp" => {}
+            other => {
+                anyhow::bail!(
+                    "capability '{}' has unsupported kind '{other}'; expected one of builtin, typescript_handler, python_handler, host, provider, http, static, mcp",
+                    cap.id
+                );
+            }
+        }
+    }
+    tools.sort();
+    tools.dedup();
+    groups.sort();
+    groups.dedup();
+    Ok((tools, groups))
+}
+
+#[cfg(feature = "driver")]
+fn append_typescript_tools_sidecar(
+    mut air: String,
+    manifest: &[serde_json::Value],
+) -> Result<String> {
+    if manifest.is_empty() {
+        return Ok(air);
+    }
+    let sidecar =
+        serde_json::to_string(manifest).context("Failed to serialize TypeScript tools sidecar")?;
+    if !air.ends_with('\n') {
+        air.push('\n');
+    }
+    air.push_str("; __apxm_typescript_tools__ ");
+    air.push_str(&sidecar);
+    Ok(air)
+}
+
+#[cfg(feature = "driver")]
+fn absolutize_typescript_tool_sources(
+    manifest: Vec<serde_json::Value>,
+    agent_dir: &Path,
+) -> Result<Vec<serde_json::Value>> {
+    let agent_dir = agent_dir
+        .canonicalize()
+        .with_context(|| format!("Failed to resolve {}", agent_dir.display()))?;
+    Ok(manifest
+        .into_iter()
+        .map(|mut entry| {
+            if let Some(source_file) = entry
+                .get("source_file")
+                .and_then(|value| value.as_str())
+                .map(str::to_string)
+                && !Path::new(&source_file).is_absolute()
+                && let Some(object) = entry.as_object_mut()
+            {
+                object.insert(
+                    "source_file".to_string(),
+                    serde_json::Value::String(
+                        agent_dir.join(source_file).to_string_lossy().into_owned(),
+                    ),
+                );
+            }
+            entry
+        })
+        .collect())
+}
+
+#[cfg(feature = "driver")]
 fn emit_air_from_declarative_agent(agent_dir: &Path, web_tools: bool) -> Result<String> {
     use apxm_compiler::{
         AirModule, AirProgram, FrontendEdge, FrontendGraph, FrontendNode, FrontendParameter,
@@ -467,6 +576,18 @@ fn emit_air_from_declarative_agent(agent_dir: &Path, web_tools: bool) -> Result<
     } else {
         Vec::new()
     };
+    let manifest = absolutize_typescript_tool_sources(manifest, agent_dir)?;
+    let capabilities_path = agent_dir.join("capabilities/capabilities.toml");
+    let capabilities: DeclarativeCapabilitiesToml = if capabilities_path.is_file() {
+        toml::from_str(
+            &std::fs::read_to_string(&capabilities_path)
+                .with_context(|| format!("Failed to read {}", capabilities_path.display()))?,
+        )
+        .with_context(|| format!("Failed to parse {}", capabilities_path.display()))?
+    } else {
+        DeclarativeCapabilitiesToml::default()
+    };
+    let (tool_names, capability_groups) = declarative_tool_surface(&capabilities, web_tools)?;
 
     let persona = agent
         .prompts
@@ -616,19 +737,18 @@ fn emit_air_from_declarative_agent(agent_dir: &Path, web_tools: bool) -> Result<
             Value::String(persona.trim().to_string()),
         );
     }
-    let mut groups = vec!["discovery"];
-    if web_tools {
-        groups.push("web");
+    if !tool_names.is_empty() {
+        ask_attrs.insert(
+            graph_attrs::TOOLS.to_string(),
+            Value::Array(tool_names.into_iter().map(Value::String).collect()),
+        );
     }
-    ask_attrs.insert(
-        graph_attrs::CAPABILITY_GROUPS.to_string(),
-        Value::Array(
-            groups
-                .into_iter()
-                .map(|group| Value::String(group.to_string()))
-                .collect(),
-        ),
-    );
+    if !capability_groups.is_empty() {
+        ask_attrs.insert(
+            graph_attrs::CAPABILITY_GROUPS.to_string(),
+            Value::Array(capability_groups.into_iter().map(Value::String).collect()),
+        );
+    }
 
     let turn_graph = FrontendGraph {
         name: "conversation.turn".to_string(),
@@ -659,7 +779,7 @@ fn emit_air_from_declarative_agent(agent_dir: &Path, web_tools: bool) -> Result<
         .iter()
         .map(FrontendGraph::to_air_module)
         .collect::<std::result::Result<Vec<AirModule>, _>>()?;
-    Ok(AirProgram::new(modules).to_air()?)
+    append_typescript_tools_sidecar(AirProgram::new(modules).to_air()?, &manifest)
 }
 
 #[cfg(feature = "driver")]
@@ -1081,17 +1201,31 @@ handler = "hooks.pre_turn"
     }
 
     fn assert_cli_air_round_trips(air: &str) {
-        assert!(!air.contains("__apxm_"));
-        assert!(!air.contains("ais.done"));
-        assert!(air.contains("ais.return"));
+        let parseable_air = air
+            .lines()
+            .filter(|line| !line.starts_with("; __apxm_"))
+            .collect::<Vec<_>>()
+            .join("\n");
+        assert!(!parseable_air.contains("__apxm_"));
+        assert!(!parseable_air.contains("ais.done"));
+        assert!(parseable_air.contains("ais.return"));
 
         let context = Context::new().expect("compiler context");
-        let parsed = Module::parse(&context, air).expect("Module::parse accepts CLI AIR");
+        let parsed =
+            Module::parse(&context, &parseable_air).expect("Module::parse accepts CLI AIR");
         parsed.verify().expect("parsed module verifies");
 
         Pipeline::with_opt_level(&context, OptimizationLevel::O0)
-            .compile(air)
+            .compile(&parseable_air)
             .expect("O0 compile accepts CLI AIR");
+    }
+
+    fn typescript_tools_sidecar(air: &str) -> Vec<serde_json::Value> {
+        let raw = air
+            .lines()
+            .find_map(|line| line.strip_prefix("; __apxm_typescript_tools__ "))
+            .expect("typescript sidecar");
+        serde_json::from_str(raw).expect("typescript sidecar json")
     }
 
     #[test]
@@ -1126,7 +1260,8 @@ handler = "hooks.pre_turn"
         assert!(air.contains("python_hook_handler_id"));
         assert!(air.contains("ais.flow_call \"conversation\" \"turn\""));
         assert!(air.contains("args = {user_message = \"{user_message}\"}"));
-        assert!(air.contains("capability_groups = [\"discovery\", \"web\"]"));
+        assert!(air.contains("capability_groups = [\"web\"]"));
+        assert!(air.contains("__apxm_typescript_tools__"));
         assert_cli_air_round_trips(&air);
     }
 
@@ -1138,8 +1273,116 @@ handler = "hooks.pre_turn"
         assert!(air.contains("ais.autonomous"));
         assert!(air.contains("mode = \"recv\""));
         assert!(air.contains("recv_once = \"false\""));
-        assert!(air.contains("capability_groups = [\"discovery\"]"));
+        assert!(!air.contains("capability_groups = ["));
+        assert!(air.contains("__apxm_typescript_tools__"));
         assert_cli_air_round_trips(&air);
+    }
+
+    #[test]
+    fn declarative_air_sidecar_resolves_typescript_sources_for_server_worker() {
+        let agent_dir = write_declarative_agent("recv");
+        let air = emit_air_from_agent(agent_dir.path(), false).expect("declarative AIR");
+        let sidecar = typescript_tools_sidecar(&air);
+        let source_file = sidecar[0]
+            .get("source_file")
+            .and_then(|value| value.as_str())
+            .expect("source_file");
+
+        assert!(Path::new(source_file).is_absolute(), "{source_file}");
+        assert_eq!(
+            source_file,
+            agent_dir.path().join("hooks.ts").to_string_lossy()
+        );
+    }
+
+    #[test]
+    fn declarative_air_sidecar_resolves_relative_agent_dir_sources_for_server_worker() {
+        let root = PathBuf::from("target/apxm-relative-agent-fixture");
+        let _ = fs::remove_dir_all(&root);
+        fs::create_dir_all(root.join("capabilities/handlers")).expect("fixture dirs");
+        fs::write(root.join("persona.md"), "You are concise.\n").expect("persona");
+        fs::write(
+            root.join("agent.toml"),
+            r#"
+id = "relative-demo"
+
+[runtime.loop]
+mode = "recv"
+rearm = true
+turn_param = "user_message"
+
+[prompts]
+persona = "persona.md"
+
+[[hooks]]
+event = "pre_turn"
+match = "*"
+mode = "observe"
+handler = "hooks.pre_turn"
+"#,
+        )
+        .expect("agent toml");
+        fs::write(
+            root.join("capabilities/handlers/tools.json"),
+            r#"[{"source_file":"hooks.ts","qualname":"pre_turn","handler_id":"sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}]"#,
+        )
+        .expect("tools manifest");
+
+        let air = emit_air_from_agent(&root, false).expect("declarative AIR");
+        let sidecar = typescript_tools_sidecar(&air);
+        let source_file = sidecar[0]
+            .get("source_file")
+            .and_then(|value| value.as_str())
+            .expect("source_file");
+
+        assert!(Path::new(source_file).is_absolute(), "{source_file}");
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn declarative_capability_entries_require_kind() {
+        let agent_dir = write_declarative_agent("recv");
+        fs::create_dir_all(agent_dir.path().join("capabilities")).expect("capabilities dir");
+        fs::write(
+            agent_dir.path().join("capabilities/capabilities.toml"),
+            r#"
+[[capability]]
+id = "fixture.read"
+read_only = true
+"#,
+        )
+        .expect("capabilities toml");
+
+        let err = emit_air_from_agent(agent_dir.path(), false).expect_err("kind is required");
+        let debug = format!("{err:?}");
+        assert!(
+            debug.contains("Failed to parse")
+                && debug.contains("capabilities.toml")
+                && debug.contains("kind"),
+            "expected missing kind error, got {err}"
+        );
+    }
+
+    #[test]
+    fn declarative_capability_entries_reject_unknown_kind() {
+        let agent_dir = write_declarative_agent("recv");
+        fs::create_dir_all(agent_dir.path().join("capabilities")).expect("capabilities dir");
+        fs::write(
+            agent_dir.path().join("capabilities/capabilities.toml"),
+            r#"
+[[capability]]
+id = "fixture.read"
+kind = "custom"
+read_only = true
+"#,
+        )
+        .expect("capabilities toml");
+
+        let err = emit_air_from_agent(agent_dir.path(), false).expect_err("kind is canonical");
+        assert!(
+            err.to_string().contains("unsupported kind 'custom'"),
+            "expected unsupported kind error, got {err}"
+        );
     }
 
     #[test]

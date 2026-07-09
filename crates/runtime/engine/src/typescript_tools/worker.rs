@@ -26,18 +26,7 @@ fn cap_err(message: impl Into<String>) -> RuntimeError {
     }
 }
 
-fn find_repo_root(start: &Path) -> Option<PathBuf> {
-    for candidate in start.ancestors() {
-        if candidate.join(REPO_MARKER).is_file() {
-            return Some(candidate.to_path_buf());
-        }
-    }
-    None
-}
-
-fn worker_script_path() -> Option<PathBuf> {
-    let cwd = std::env::current_dir().ok()?;
-    let repo_root = find_repo_root(&cwd)?;
+fn worker_script_from_repo_root(repo_root: PathBuf) -> Option<PathBuf> {
     let mut path = repo_root;
     for segment in TYPESCRIPT_FRONTEND_PATH {
         path.push(segment);
@@ -45,6 +34,28 @@ fn worker_script_path() -> Option<PathBuf> {
     path.push("scripts");
     path.push(WORKER_SCRIPT);
     path.is_file().then_some(path)
+}
+
+fn find_worker_script_from_ancestors(start: &Path) -> Option<PathBuf> {
+    for candidate in start.ancestors() {
+        if candidate.join(REPO_MARKER).is_file()
+            && let Some(path) = worker_script_from_repo_root(candidate.to_path_buf())
+        {
+            return Some(path);
+        }
+    }
+    None
+}
+
+fn worker_script_path() -> Option<PathBuf> {
+    if let Ok(cwd) = std::env::current_dir()
+        && let Some(path) = find_worker_script_from_ancestors(&cwd)
+    {
+        return Some(path);
+    }
+
+    let manifest_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
+    find_worker_script_from_ancestors(manifest_dir)
 }
 
 fn resolve_node_bin() -> &'static str {

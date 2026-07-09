@@ -1,5 +1,4 @@
-id = "write_file"
+id = "write"
 description = "Write a file under declared write roots."
-kind = "runtime"
-binding = "write"
+kind = "builtin"
 read_only = false
