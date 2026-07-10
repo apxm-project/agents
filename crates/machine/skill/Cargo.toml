@@ -13,6 +13,7 @@ authors.workspace = true
 workspace = true
 
 [dependencies]
+apxm-artifact.workspace = true
 blake3.workspace = true
 serde.workspace = true
 toml.workspace = true
