@@ -653,7 +653,14 @@ pub struct GraphEdgePayload {
     pub to_node_id: u64,
     /// Edge kind: `dispatch` (spawn → child), `tool_invocation`
     /// (agent → tool), `synthesis_feed` (child → parent collector).
-    pub kind: String,
+    ///
+    /// Named `edge_kind`, not `kind`, so it is structurally independent
+    /// from the envelope's own `"kind"` discriminator
+    /// (`ApxmEvent`'s `Serialize` impl unconditionally sets `"kind"` to
+    /// `"graph_edge"` on the serialized JSON object) — a field literally
+    /// named `kind` would be silently overwritten before it ever reached
+    /// the wire.
+    pub edge_kind: String,
 }
 impl_event_payload!(GraphEdgePayload, kind::GRAPH_EDGE);
 

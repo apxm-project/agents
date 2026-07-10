@@ -295,3 +295,102 @@ pub fn now_rfc3339() -> String {
         .map(|ts| ts.to_rfc3339())
         .unwrap_or_else(|| Utc::now().to_rfc3339())
 }
+
+#[cfg(test)]
+mod tests {
+    use std::sync::Arc;
+
+    use apxm_core::events::payload::GraphEdgePayload;
+    use apxm_core::events::{ApxmEvent, EventSource};
+
+    use super::*;
+    use crate::line::{RolloutPayload, SessionMetaPayload};
+    use crate::loader::load_rollout;
+
+    fn session_meta(thread_id: &str, started_at: DateTime<Utc>) -> SessionMetaPayload {
+        SessionMetaPayload {
+            thread_id: thread_id.to_string(),
+            parent_thread_id: None,
+            session_id: format!("session-{thread_id}"),
+            started_at: started_at.to_rfc3339(),
+            cwd: "/tmp".to_string(),
+            apxm_version: "0.1.0".to_string(),
+            agent_role: "test-agent".to_string(),
+            agent_code: None,
+            skill_id: "skill".to_string(),
+            skill_version: "1.0.0".to_string(),
+            artifact_hash: "artifact".to_string(),
+            source_hash: "source".to_string(),
+            air_hash: "air".to_string(),
+            compiler_version: None,
+            runtime_version: None,
+            args: vec![],
+            model_provider: None,
+            model_id: None,
+            backend_endpoint: None,
+            tool_use_id_in_parent: None,
+        }
+    }
+
+    /// Recovery: a `graph_edge` event written through the recorder and
+    /// reloaded from disk keeps its `edge_kind` — pre-fix, the envelope
+    /// serializer clobbered the (then-named) `kind` field before it ever
+    /// hit the wire, so `boxed_payload_from_json` hard-failed on replay and
+    /// every reader silently dropped the event via `.ok()`/`let-else`.
+    #[tokio::test]
+    async fn write_then_read_graph_edge_survives_rollout_round_trip() {
+        let tmp = tempfile::tempdir().unwrap();
+        let paths = Arc::new(RolloutPaths::new(tmp.path().to_path_buf()));
+        let thread_id = "thread-graph-edge";
+        let started_at = Utc::now();
+
+        let config = RolloutRecorderConfig {
+            paths: paths.clone(),
+            thread_id: thread_id.to_string(),
+            session_id: format!("session-{thread_id}"),
+            started_at,
+            is_sidechain: false,
+            spill_threshold_bytes: None,
+            override_path: None,
+        };
+        let recorder = RolloutRecorder::open(config, session_meta(thread_id, started_at))
+            .await
+            .expect("open recorder");
+
+        let event = ApxmEvent::root(
+            GraphEdgePayload {
+                from_node_id: 3,
+                to_node_id: 4,
+                edge_kind: "tool_invocation".to_string(),
+            },
+            EventSource::Runtime,
+            thread_id,
+        );
+        recorder
+            .write_event(event, PartialMeta::default())
+            .await
+            .expect("write graph_edge event");
+        recorder.close().await.expect("close recorder");
+
+        let (items, stats) = load_rollout(recorder.file_path()).await.expect("load rollout");
+        assert_eq!(stats.parse_errors, 0, "no rollout line should be unparseable");
+
+        let decoded = items
+            .iter()
+            .find_map(|line| match &line.payload {
+                RolloutPayload::Event(event_payload) => {
+                    serde_json::from_value::<ApxmEvent>(event_payload.event.clone()).ok()
+                }
+                _ => None,
+            })
+            .expect("graph_edge event decodes back from the rollout line");
+
+        let payload = decoded
+            .payload
+            .downcast_ref::<GraphEdgePayload>()
+            .expect("decoded payload is a GraphEdgePayload");
+        assert_eq!(payload.from_node_id, 3);
+        assert_eq!(payload.to_node_id, 4);
+        assert_eq!(payload.edge_kind, "tool_invocation");
+    }
+}
