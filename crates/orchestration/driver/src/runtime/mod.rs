@@ -231,12 +231,32 @@ impl RuntimeExecutor {
         emitter: Option<Arc<dyn ExecutionEventEmitter>>,
         session_dir: Option<String>,
     ) -> Result<RuntimeExecutionResult, DriverError> {
+        self.execute_artifact_with_session_id_and_emitter(artifact, args, None, emitter, session_dir)
+            .await
+    }
+
+    /// Execute an artifact with arguments, an optional event emitter, and an
+    /// optional stable session id. Passing the same `session_id` across
+    /// separate CLI invocations of the same artifact (`apxm run --session-id
+    /// <id> ...`) is what lets durable session-scoped state (the session
+    /// ledger's turn/tool counters, W2.5; a compacted conversation
+    /// summary's LTM copy, W2.7) resume instead of resetting — session-scoped
+    /// in-memory state (STM) is deliberately volatile and does not survive a
+    /// process restart even with the same id (docs/plans/tasks/W5.1.md).
+    pub async fn execute_artifact_with_session_id_and_emitter(
+        &self,
+        artifact: Artifact,
+        args: Vec<String>,
+        session_id: Option<String>,
+        emitter: Option<Arc<dyn ExecutionEventEmitter>>,
+        session_dir: Option<String>,
+    ) -> Result<RuntimeExecutionResult, DriverError> {
         reject_unsupported_call_skill(artifact.dags())?;
         self.runtime
             .execute_artifact_with_session_and_emitter(
                 artifact,
                 args,
-                None,
+                session_id,
                 self.compose_emitter(emitter),
                 session_dir,
             )

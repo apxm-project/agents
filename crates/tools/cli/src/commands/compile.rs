@@ -350,6 +350,75 @@ struct DeclarativeHookToml {
 struct DeclarativeRuntimeToml {
     #[serde(default, rename = "loop")]
     runtime_loop: Option<toml::Value>,
+    /// `[runtime] compaction_policy = '{"keep_recent":...}'` — the W2.7
+    /// declarative-package compaction dial
+    /// (`RUNTIME_EXTRA_COMPACTION_POLICY_KEY` in
+    /// `apxm_core::types::agent_definition`): a JSON string stamped into the
+    /// same open `extra` bag every other `[runtime]` knob uses. Absent
+    /// entirely is the opt-out dial — no attributes are stamped on the
+    /// marked conversational-turn ASK, so `ConversationMemoryMiddleware`
+    /// never starts measuring (docs/plans/tasks/W5.1.md).
+    #[serde(default)]
+    compaction_policy: Option<String>,
+}
+
+/// Parsed `[runtime] compaction_policy` JSON shape
+/// (`{"keep_recent","compact_at_tokens","strategy","summary_key"}`) — the
+/// same fields `conversational.py::CompactionPolicy` round-trips through the
+/// `extra` bag (`agent_definition.rs`'s
+/// `runtime_extra_round_trips_compaction_policy_knob` test).
+#[cfg(feature = "driver")]
+#[derive(Debug, Deserialize)]
+struct DeclarativeCompactionPolicy {
+    compact_at_tokens: i64,
+    #[serde(default)]
+    keep_recent: Option<i64>,
+    #[serde(default)]
+    summary_key: Option<String>,
+}
+
+/// Node attribute keys `ConversationMemoryMiddleware`
+/// (`crates/runtime/engine/src/executor/middlewares/conversation_memory.rs`)
+/// reads off the marked conversational-turn ASK. Duplicated string literals
+/// here match the existing cross-frontend precedent (the Python frontend's
+/// `conversational.py` independently duplicates the same four literals
+/// rather than importing them from the runtime crate) — every producer
+/// agrees on the wire string, not a shared Rust constant.
+#[cfg(feature = "driver")]
+mod compaction_attrs {
+    pub const AT_TOKENS: &str = "compaction_at_tokens";
+    pub const KEEP_RECENT: &str = "compaction_keep_recent";
+    pub const SUMMARY_KEY: &str = "compaction_summary_key";
+    pub const OVERRIDE_PRESENT: &str = "compaction_override_present";
+}
+
+/// Parse `[runtime] compaction_policy` (if present) into the node attributes
+/// `ConversationMemoryMiddleware` reads. Returns `None` for the opt-out
+/// dial (key absent) or a malformed value (fail-loud: `Err`), never a
+/// silent partial policy.
+#[cfg(feature = "driver")]
+fn declarative_compaction_policy(
+    agent: &DeclarativeAgentToml,
+) -> Result<Option<DeclarativeCompactionPolicy>> {
+    let Some(runtime) = agent.runtime.as_ref() else {
+        return Ok(None);
+    };
+    let Some(raw) = runtime.compaction_policy.as_ref() else {
+        return Ok(None);
+    };
+    let policy: DeclarativeCompactionPolicy = serde_json::from_str(raw).with_context(|| {
+        format!("Failed to parse [runtime] compaction_policy as JSON: {raw:?}")
+    })?;
+    Ok(Some(policy))
+}
+
+/// Fail-closed precedence (W2.7 threat model): an author-declared `post_turn`
+/// hook already owns compaction, so the runtime default must never
+/// double-compact. Declarative packages express hooks via `[[hooks]]`, so
+/// this is a scan for `event = "post_turn"`, not a Python-only signal.
+#[cfg(feature = "driver")]
+fn declarative_compaction_override_present(agent: &DeclarativeAgentToml) -> bool {
+    agent.hooks.iter().any(|hook| hook.event == "post_turn")
 }
 
 #[cfg(feature = "driver")]
@@ -749,6 +818,33 @@ fn emit_air_from_declarative_agent(agent_dir: &Path, web_tools: bool) -> Result<
             Value::Array(capability_groups.into_iter().map(Value::String).collect()),
         );
     }
+    // W2.7 declarative compaction dial: absent `compaction_policy` is the
+    // opt-out no-op (no attributes stamped at all); present-but-malformed is
+    // a hard compile error (fail loud), never a silently-ignored policy.
+    if let Some(policy) = declarative_compaction_policy(&agent)? {
+        ask_attrs.insert(
+            compaction_attrs::AT_TOKENS.to_string(),
+            Value::Number(apxm_core::types::values::Number::Integer(
+                policy.compact_at_tokens,
+            )),
+        );
+        if let Some(keep_recent) = policy.keep_recent {
+            ask_attrs.insert(
+                compaction_attrs::KEEP_RECENT.to_string(),
+                Value::Number(apxm_core::types::values::Number::Integer(keep_recent)),
+            );
+        }
+        if let Some(summary_key) = policy.summary_key {
+            ask_attrs.insert(
+                compaction_attrs::SUMMARY_KEY.to_string(),
+                Value::String(summary_key),
+            );
+        }
+        ask_attrs.insert(
+            compaction_attrs::OVERRIDE_PRESENT.to_string(),
+            Value::Bool(declarative_compaction_override_present(&agent)),
+        );
+    }
 
     let turn_graph = FrontendGraph {
         name: "conversation.turn".to_string(),
@@ -780,6 +876,65 @@ fn emit_air_from_declarative_agent(agent_dir: &Path, web_tools: bool) -> Result<
         .map(FrontendGraph::to_air_module)
         .collect::<std::result::Result<Vec<AirModule>, _>>()?;
     append_typescript_tools_sidecar(AirProgram::new(modules).to_air()?, &manifest)
+}
+
+/// `; __apxm_typescript_tools__ <json>` — the trailing sidecar comment line
+/// `append_typescript_tools_sidecar` appends to declarative-agent AIR.
+/// Consumed by Server directly; `apxm compile` (below) strips it before
+/// handing the AIR to the MLIR parser and re-attaches it as an embedded
+/// artifact section instead.
+#[cfg(feature = "driver")]
+const TYPESCRIPT_TOOLS_SIDECAR_PREFIX: &str = "; __apxm_typescript_tools__ ";
+
+/// Split a declarative agent's emitted AIR (as `compile-service` writes it:
+/// canonical AIR text plus a trailing typescript-tools sidecar comment) into
+/// sidecar-free AIR text (safe for the MLIR parser) and the raw sidecar JSON
+/// bytes, if present.
+#[cfg(feature = "driver")]
+fn split_typescript_tools_sidecar(air: &str) -> (String, Option<Vec<u8>>) {
+    let mut clean_lines = Vec::new();
+    let mut sidecar = None;
+    for line in air.lines() {
+        if let Some(json) = line.strip_prefix(TYPESCRIPT_TOOLS_SIDECAR_PREFIX) {
+            sidecar = Some(json.as_bytes().to_vec());
+        } else {
+            clean_lines.push(line);
+        }
+    }
+    (clean_lines.join("\n"), sidecar)
+}
+
+/// Prepare a declarative agent-package directory (`agent.toml`, no
+/// Python/TypeScript entry file) for `apxm compile`, the same way
+/// [`prepare_graph_input`] prepares a `.py`/`.ts` frontend entry: emit AIR
+/// via [`emit_air_from_agent`] (the exact `compile-service` code path),
+/// strip the trailing typescript-tools sidecar comment into a temp `.air`
+/// file, and thread the sidecar through as the `typescript_tools_manifest`
+/// so `compile_command` embeds it into the artifact exactly like a `.ts`
+/// frontend entry's tool manifest.
+#[cfg(feature = "driver")]
+fn prepare_graph_input_from_declarative_agent(
+    agent_dir: &Path,
+) -> Result<(
+    PathBuf,
+    Option<tempfile::NamedTempFile>,
+    PythonHandlersManifest,
+    TypeScriptHandlersManifest,
+)> {
+    use std::io::Write;
+
+    let air_with_sidecar = emit_air_from_agent(agent_dir, false)?;
+    let (clean_air, ts_manifest) = split_typescript_tools_sidecar(&air_with_sidecar);
+
+    let mut tmp = tempfile::Builder::new()
+        .suffix(".air")
+        .tempfile()
+        .context("Failed to create temporary .air file for declarative agent compile")?;
+    tmp.write_all(clean_air.as_bytes())
+        .context("Failed to write emitted declarative-agent AIR to temporary file")?;
+    tmp.flush().context("Failed to flush temporary .air file")?;
+
+    Ok((tmp.path().to_path_buf(), Some(tmp), None, ts_manifest))
 }
 
 #[cfg(feature = "driver")]
@@ -915,13 +1070,29 @@ pub fn compile_command(
     let compiler_config_path = config.clone();
     let opt_target = target;
     let _apxm_config = load_config(config.clone())?;
+    // A directory containing `agent.toml` (no Python/TypeScript entry file)
+    // is a declarative agent package — the same `compile-service` compiles
+    // to AIR-with-trailing-typescript-tools-sidecar. Route it through
+    // `prepare_graph_input_from_declarative_agent` instead of
+    // `resolve_directory_air_source` (which only ever looks for a
+    // pre-lowered `.air` file) so `apxm compile examples/agents/<id> -o
+    // out.apxmobj` + `apxm run out.apxmobj` works for a hooks-only package,
+    // the same way it already does for `.py`/`.ts` frontend entries
+    // (docs/plans/tasks/W5.1.md).
+    let is_declarative_agent_dir = input.is_dir() && input.join("agent.toml").is_file();
     let input_source = if input.is_dir() {
-        resolve_directory_air_source(&input)?
+        if is_declarative_agent_dir {
+            input.clone()
+        } else {
+            resolve_directory_air_source(&input)?
+        }
     } else {
         input.clone()
     };
     let (graph_input, _frontend_air, python_tools_manifest, typescript_tools_manifest) =
-        if input_source.is_dir() {
+        if is_declarative_agent_dir {
+            prepare_graph_input_from_declarative_agent(&input_source)?
+        } else if input_source.is_dir() {
             unreachable!(
                 "directory inputs are resolved to a canonical .air source before compilation"
             )
@@ -932,15 +1103,18 @@ pub fn compile_command(
     let compile_start = std::time::Instant::now();
     let compiler = Compiler::with_opt_level(opt).context("Failed to initialize compiler")?;
 
-    // Check if this is a new-format .air file (valid MLIR)
-    let is_new_air =
-        if !input_source.is_dir() && ApxmPathFormat::from_path(&graph_input).is_air_source() {
-            std::fs::read_to_string(&graph_input)
-                .map(|text| is_mlir_air_text(&text))
-                .unwrap_or(false)
-        } else {
-            false
-        };
+    // Check if this is a new-format .air file (valid MLIR). The declarative
+    // agent-package branch above always produces a clean (sidecar-stripped)
+    // temp `.air` file, so it takes this same fast path.
+    let is_new_air = if (is_declarative_agent_dir || !input_source.is_dir())
+        && ApxmPathFormat::from_path(&graph_input).is_air_source()
+    {
+        std::fs::read_to_string(&graph_input)
+            .map(|text| is_mlir_air_text(&text))
+            .unwrap_or(false)
+    } else {
+        false
+    };
 
     // For new .air format (valid MLIR), compile directly without AirModule.
     // The .air path skips graph lowering, but still honors PipelineConfig
@@ -1468,6 +1642,177 @@ required_capabilities = ["workflow_emission_v1"]
         std::thread::sleep(std::time::Duration::from_millis(5));
         let b2 = make();
         assert_eq!(b1, b2, "set_created_at must produce byte-identical output");
+    }
+
+    // -----------------------------------------------------------------
+    // W2.7 declarative compaction dial (docs/plans/tasks/W5.1.md, step 2:
+    // "replace the hand-rolled compact_conversation hook with the W2.7
+    // declarative CompactionPolicy").
+    // -----------------------------------------------------------------
+
+    fn write_declarative_agent_with_compaction(compaction_policy: Option<&str>) -> tempfile::TempDir {
+        let tmp = tempdir().expect("temp agent");
+        let root = tmp.path();
+        fs::create_dir_all(root.join("capabilities/handlers")).expect("handlers dir");
+        fs::write(root.join("persona.md"), "You are concise.\n").expect("persona");
+        let compaction_line = compaction_policy
+            .map(|json| format!("compaction_policy = {json:?}\n"))
+            .unwrap_or_default();
+        fs::write(
+            root.join("agent.toml"),
+            format!(
+                r#"
+id = "demo"
+
+[runtime]
+{compaction_line}
+
+[runtime.loop]
+mode = "host"
+rearm = true
+turn_param = "user_message"
+
+[prompts]
+persona = "persona.md"
+
+[[hooks]]
+event = "pre_turn"
+match = "*"
+mode = "observe"
+handler = "hooks.pre_turn"
+"#
+            ),
+        )
+        .expect("agent toml");
+        fs::write(
+            root.join("capabilities/handlers/tools.json"),
+            r#"[{"source_file":"hooks.ts","qualname":"pre_turn","handler_id":"sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}]"#,
+        )
+        .expect("tools manifest");
+        tmp
+    }
+
+    #[test]
+    fn declarative_compaction_policy_stamps_marked_ask_attrs() {
+        let policy = r#"{"keep_recent":2,"compact_at_tokens":300,"strategy":"summarize","summary_key":"conversation.summary"}"#;
+        let agent_dir = write_declarative_agent_with_compaction(Some(policy));
+        let air = emit_air_from_agent(agent_dir.path(), false).expect("declarative AIR");
+
+        assert!(air.contains("compaction_at_tokens = 300"), "{air}");
+        assert!(air.contains("compaction_keep_recent = 2"), "{air}");
+        assert!(
+            air.contains("compaction_summary_key = \"conversation.summary\""),
+            "{air}"
+        );
+        assert!(
+            air.contains("compaction_override_present = false"),
+            "no post_turn hook is declared, so override_present must be false: {air}"
+        );
+        assert_cli_air_round_trips(&air);
+    }
+
+    #[test]
+    fn declarative_compaction_policy_absent_is_the_opt_out_dial() {
+        let agent_dir = write_declarative_agent_with_compaction(None);
+        let air = emit_air_from_agent(agent_dir.path(), false).expect("declarative AIR");
+
+        assert!(!air.contains("compaction_at_tokens"), "{air}");
+        assert!(!air.contains("compaction_keep_recent"), "{air}");
+        assert!(!air.contains("compaction_override_present"), "{air}");
+    }
+
+    #[test]
+    fn declarative_compaction_policy_malformed_json_is_a_hard_compile_error() {
+        let agent_dir = write_declarative_agent_with_compaction(Some("not json"));
+        let err = emit_air_from_agent(agent_dir.path(), false)
+            .expect_err("malformed compaction_policy must fail loud, not silently no-op");
+        assert!(
+            format!("{err}").contains("compaction_policy"),
+            "error must name the offending field: {err}"
+        );
+    }
+
+    #[test]
+    fn declarative_compaction_override_present_true_when_author_declares_post_turn_hook() {
+        let tmp = tempdir().expect("temp agent");
+        let root = tmp.path();
+        fs::create_dir_all(root.join("capabilities/handlers")).expect("handlers dir");
+        fs::write(root.join("persona.md"), "You are concise.\n").expect("persona");
+        fs::write(
+            root.join("agent.toml"),
+            r#"
+id = "demo"
+
+[runtime]
+compaction_policy = "{\"compact_at_tokens\":300}"
+
+[runtime.loop]
+mode = "host"
+rearm = true
+turn_param = "user_message"
+
+[prompts]
+persona = "persona.md"
+
+[[hooks]]
+event = "post_turn"
+match = "*"
+mode = "observe"
+handler = "hooks.author_compaction"
+"#,
+        )
+        .expect("agent toml");
+        fs::write(
+            root.join("capabilities/handlers/tools.json"),
+            r#"[{"source_file":"hooks.ts","qualname":"author_compaction","handler_id":"sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}]"#,
+        )
+        .expect("tools manifest");
+
+        let air = emit_air_from_agent(root, false).expect("declarative AIR");
+        assert!(
+            air.contains("compaction_override_present = true"),
+            "an author-declared post_turn hook must set the fail-closed override signal: {air}"
+        );
+    }
+
+    // -----------------------------------------------------------------
+    // `apxm compile <agent_dir>` — declarative agent-package directory
+    // compile support (docs/plans/tasks/W5.1.md step 4: "shell out to
+    // `apxm run examples/agents/conversational/<artifact>.apxmobj`").
+    // -----------------------------------------------------------------
+
+    #[test]
+    fn split_typescript_tools_sidecar_extracts_trailing_comment() {
+        let air = "module {\n}\n; __apxm_typescript_tools__ [{\"a\":1}]";
+        let (clean, sidecar) = split_typescript_tools_sidecar(air);
+        assert!(!clean.contains("__apxm_typescript_tools__"));
+        assert!(clean.contains("module {"));
+        assert_eq!(sidecar.as_deref(), Some(&b"[{\"a\":1}]"[..]));
+    }
+
+    #[test]
+    fn split_typescript_tools_sidecar_is_none_when_absent() {
+        let air = "module {\n}\n";
+        let (clean, sidecar) = split_typescript_tools_sidecar(air);
+        assert_eq!(clean.trim_end(), "module {\n}".trim_end());
+        assert!(sidecar.is_none());
+    }
+
+    #[test]
+    fn prepare_graph_input_from_declarative_agent_yields_clean_air_and_manifest() {
+        let agent_dir = write_declarative_agent("host");
+        let (air_path, _tmp, python_manifest, ts_manifest) =
+            prepare_graph_input_from_declarative_agent(agent_dir.path())
+                .expect("prepare declarative agent graph input");
+
+        let air_text = fs::read_to_string(&air_path).expect("read temp air");
+        assert!(!air_text.contains("__apxm_typescript_tools__"));
+        assert!(python_manifest.is_none());
+        assert!(ts_manifest.is_some(), "declarative TS handlers must round-trip a manifest");
+
+        // The clean AIR must still parse and verify through the real MLIR
+        // pipeline — the exact bar `apxm compile` itself applies.
+        assert_cli_air_round_trips(&air_text);
     }
 }
 
