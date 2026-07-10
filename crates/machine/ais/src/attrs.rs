@@ -450,7 +450,6 @@ pub const ALL_ATTR_NAMES: &[&str] = &[
     "parameters",
     STRUCTURED,
     "token",
-    "count_token",
     "cases",
     "default",
     "ordering",

@@ -7,7 +7,6 @@ from typing import TYPE_CHECKING, Any, Mapping
 
 from . import constants as graph_keys
 from ._generated.operations import ASK, REASON, THINK, OpSpec
-from .constants import DependencyType
 from .proxy import GraphRecorder, NodeRef
 
 if TYPE_CHECKING:
@@ -337,76 +336,19 @@ def _create_team(self: GraphRecorder, name: str) -> Team:
     return Team(self, name)
 
 
-class Loop:
-    """Context-manager for a bounded in-graph loop region (LOOP_START/LOOP_END).
-
-    Wires the loop region automatically: ``__enter__`` emits LOOP_START with
-    the iteration bound, body nodes added via :meth:`step` chain in iteration
-    order, and ``__exit__`` emits LOOP_END with the counter Data edge from
-    LOOP_START plus a Control edge from the last body node.
-
-    Example::
-
-        with g.loop(count=3, label="refine") as lp:
-            draft = lp.step(g.ask("improve {draft}"))
-            check = lp.step(g.verify(...))
-
-    NOTE: the runtime scheduler is fire-once today, so the body executes a
-    single pass; the ``count`` is recorded for the loop handler/AAM beliefs and
-    the AIR shape is correct, but true back-edge iteration is not yet enforced.
-    Use the host turn-loop (``apxm chat``) or ``AUTONOMOUS`` for real iteration.
-    """
-
-    def __init__(
-        self,
-        recorder: GraphRecorder,
-        *,
-        count: int,
-        label: str | None = None,
-        name: str | None = None,
-    ) -> None:
-        self._g = recorder
-        self._start = recorder.loop_start(
-            name=name, count=count, label=label or (name or "loop")
-        )
-        self._last = self._start
-        self.start = self._start
-        self.end: NodeRef | None = None
-
-    def step(self, node: NodeRef) -> NodeRef:
-        """Chain a body node into the current iteration (Control edge)."""
-        self._g.add_edge(self._last, node, dependency=DependencyType.CONTROL)
-        self._last = node
-        return node
-
-    def __enter__(self) -> "Loop":
-        return self
-
-    def __exit__(self, *exc: Any) -> None:
-        end = self._g.loop_end()
-        # Counter token flows LOOP_START -> LOOP_END (input[0]); the body
-        # sequences into LOOP_END via a Control edge from the last body node.
-        self._g.add_edge(self._start, end, dependency=graph_keys.DEPENDENCY_DATA)
-        if self._last is not self._start:
-            self._g.add_edge(self._last, end, dependency=DependencyType.CONTROL)
-        self.end = end
-
-
-def _create_loop(
-    self: GraphRecorder,
-    count: int,
-    *,
-    label: str | None = None,
-    name: str | None = None,
-) -> Loop:
-    """Open a bounded in-graph loop region. See :class:`Loop`."""
-    return Loop(self, count=count, label=label, name=name)
+# NOTE (W2.6): there is no `Loop`/`g.loop()` sugar. The prior version wrapped
+# LOOP_START/LOOP_END, which compiled and verified but never re-executed at
+# runtime (the executor is a DAG engine with no back-edge or re-splice wired
+# to either handler) — a fire-once IR lie. Both ops were deleted from the
+# catalog rather than kept as compiled-but-ignored ops. For real in-graph
+# iteration use the host turn-loop (``apxm chat``, which drives the splice-
+# based session/turn re-arm mechanism) or ``AUTONOMOUS`` for a fused
+# plan/act/evaluate macro-op. See `docs/plans/tasks/W2.6.md`.
 
 
 # Monkey-patch GraphRecorder to add ergonomic methods
 GraphRecorder.spawn = _spawn_with_handle  # type: ignore[assignment]
 GraphRecorder.team = _create_team  # type: ignore[assignment]
-GraphRecorder.loop = _create_loop  # type: ignore[assignment]
 
 
-__all__ = ["AgentHandle", "Loop", "Team"]
+__all__ = ["AgentHandle", "Team"]

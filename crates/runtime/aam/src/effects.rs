@@ -84,8 +84,6 @@ pub fn operation_effects(op: &AISOperationType) -> OperationEffects {
         // Control Flow
         AISOperationType::Jump => OperationEffects::new(),
         AISOperationType::BranchOnValue => OperationEffects::new(),
-        AISOperationType::LoopStart => OperationEffects::new(),
-        AISOperationType::LoopEnd => OperationEffects::new(),
         AISOperationType::Return => OperationEffects::new(),
         AISOperationType::Switch => OperationEffects::new(),
         AISOperationType::FlowCall => OperationEffects::new().read(Beliefs).write(Beliefs),

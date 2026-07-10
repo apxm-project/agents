@@ -587,8 +587,6 @@ impl OperationDispatcher {
             // Control flow operations
             AISOperationType::BranchOnValue => branch::execute(ctx, node, inputs).await,
             AISOperationType::Jump => jump::execute(ctx, node, inputs).await,
-            AISOperationType::LoopStart => loop_start::execute(ctx, node, inputs).await,
-            AISOperationType::LoopEnd => loop_end::execute(ctx, node, inputs).await,
             AISOperationType::Return => return_op::execute(ctx, node, inputs).await,
             AISOperationType::Switch => switch::execute(ctx, node, inputs).await,
             AISOperationType::FlowCall => flow_call::execute(ctx, node, inputs).await,

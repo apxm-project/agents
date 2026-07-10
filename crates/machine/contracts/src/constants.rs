@@ -217,8 +217,6 @@ pub mod runtime {
         pub const RESUME_PREFIX: &str = "_resume:";
         pub const EXC_PREFIX: &str = "exc:";
         pub const CHECKPOINT_SNAPSHOT_PREFIX: &str = "_checkpoint_snapshot:";
-        pub const LOOP_START_PREFIX: &str = "_loop_start:";
-        pub const LOOP_END_PREFIX: &str = "_loop_end:";
         pub const EXECUTION_ID: &str = "_execution_id";
         pub const PLAN_PREFIX: &str = "plan:";
         pub const GOAL_PREFIX: &str = "goal:";

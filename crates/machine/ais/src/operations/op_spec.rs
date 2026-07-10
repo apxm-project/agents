@@ -128,8 +128,6 @@ fn rust_variant_name(op: AISOperationType) -> &'static str {
         AISOperationType::Print => "Print",
         AISOperationType::Jump => "Jump",
         AISOperationType::BranchOnValue => "BranchOnValue",
-        AISOperationType::LoopStart => "LoopStart",
-        AISOperationType::LoopEnd => "LoopEnd",
         AISOperationType::Return => "Return",
         AISOperationType::Switch => "Switch",
         AISOperationType::FlowCall => "FlowCall",

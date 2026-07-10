@@ -4,7 +4,7 @@ Canonical AIS operation definitions shared by compiler and runtime.
 
 ## Overview
 
-`apxm-ais` defines all 41 AIS operations, their metadata, 100+ attribute constants, validation rules, and MLIR pass descriptors. It is the single source of truth used to generate MLIR TableGen for the compiler and Rust metadata for the runtime dispatcher.
+`apxm-ais` defines all 39 AIS operations, their metadata, 100+ attribute constants, validation rules, and MLIR pass descriptors. It is the single source of truth used to generate MLIR TableGen for the compiler and Rust metadata for the runtime dispatcher.
 
 ## Module Structure
 
@@ -18,7 +18,7 @@ Canonical AIS operation definitions shared by compiler and runtime.
 | `types` | `Value` type used in operation parameters |
 | `validation` | Operation field validation (`validate_operation`, `missing_required_fields`) |
 
-## Operations (41 total)
+## Operations (39 total)
 
 | Category | Operations |
 |----------|------------|
@@ -26,7 +26,7 @@ Canonical AIS operation definitions shared by compiler and runtime.
 | Memory | QMEM, UMEM, UPDATE_GOAL |
 | Reasoning | ASK, THINK, REASON, PLAN, REFLECT, VERIFY |
 | Tools | INV_CAP, EXC, PRINT |
-| Control Flow | JUMP, BRANCH_ON_VALUE, LOOP_START, LOOP_END, RETURN, SWITCH, FLOW_CALL, WORKFLOW_SPAWN, CALL_SKILL, RESUME |
+| Control Flow | JUMP, BRANCH_ON_VALUE, RETURN, SWITCH, FLOW_CALL, WORKFLOW_SPAWN, CALL_SKILL, RESUME |
 | Synchronization | MERGE, FENCE, WAIT_ALL, CHECKPOINT |
 | Error Handling | TRY_CATCH, ERR |
 | Communication | COMMUNICATE, HANDOFF, PAUSE |
@@ -35,7 +35,12 @@ Canonical AIS operation definitions shared by compiler and runtime.
 | Internal | CONST_STR, YIELD |
 
 NEGOTIATE, SPAWN_TEAM, GUARD, and CLAIM were removed (RT-1): measured zero
-emissions across the example/test/studio-lowering corpus.
+emissions across the example/test/studio-lowering corpus. LOOP_START and
+LOOP_END were removed (W2.6): they compiled and verified but never
+re-executed at runtime. The one real in-graph iteration mechanism is graph
+splicing (`splice_dag`/`rearm_session_turn` in `apxm-runtime`'s scheduler);
+AUTONOMOUS is a documented macro-op with its own internal loop, not the
+general iteration mechanism. See `docs/plans/tasks/W2.6.md`.
 
 ## Key Exports
 
