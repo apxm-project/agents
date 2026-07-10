@@ -241,6 +241,26 @@ pub trait ExecutionEventEmitter: Send + Sync {
     // ── Memoization ───────────────────────────────────────────────
     fn emit_memoization_hit(&self, _node_id: u64) {}
 
+    // ── Conversation-window compaction (W2.7) ──────────────────────
+    /// The conversation context window was compacted: older turns folded
+    /// into a rolling summary. `original_tokens`/`new_tokens` are the
+    /// accumulated-window token estimate before/after — must satisfy
+    /// `original_tokens > new_tokens` (real reduction, not a no-op stamp).
+    /// Default no-op so out-of-tree emitters don't have to implement it;
+    /// the production bridge is `EmitterAdapter`.
+    fn emit_context_compacted(&self, _original_tokens: usize, _new_tokens: usize) {}
+
+    /// The conversation window is approaching `compact_at_tokens`
+    /// (`utilization_pct` ahead of the hard compaction trigger at 100%).
+    /// Default no-op; see [`Self::emit_context_compacted`].
+    fn emit_context_window_warning(
+        &self,
+        _current_tokens: usize,
+        _max_tokens: usize,
+        _utilization_pct: f64,
+    ) {
+    }
+
     // ── Layer 2 — agent-layer hooks ────────────────────────────────
     //
     // All default to no-ops so out-of-tree emitters and existing tests

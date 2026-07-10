@@ -244,8 +244,22 @@ impl MemorySystem {
         // pinning lets compacted older history (a program's rolling summary)
         // survive once it slides out of the last-`n` window. The program decides
         // which keys to pin (constitution #2), not this layer.
+        //
+        // **Crash/restart durability (W2.7):** STM is deliberately volatile
+        // (`ShortTermMemory` doc comment) — a process kill wipes it. A pin is
+        // the ONE thing in this window that must survive that boundary (e.g.
+        // a conversation-compaction rolling summary), so when a pinned key is
+        // missing from a volatile STM query, fall back to its LTM copy
+        // (compaction writes the same key to both — see
+        // `ConversationMemoryMiddleware::maybe_compact`). This is scoped to
+        // pins only: the ordinary recency window is expected to reset on
+        // restart, but a pin's whole point is to outlive it.
         for pin in pins {
-            if let Some(value) = self.read_scoped(space, scope_id, pin).await? {
+            let mut value = self.read_scoped(space, scope_id, pin).await?;
+            if value.is_none() && space == MemorySpace::Stm {
+                value = self.read_scoped(MemorySpace::Ltm, scope_id, pin).await?;
+            }
+            if let Some(value) = value {
                 out.push(apxm_backends::SearchResult {
                     key: pin.clone(),
                     value,

@@ -62,3 +62,70 @@ pub fn truncate_to_budget(text: &str, max_tokens: usize) -> (String, bool) {
         true,
     )
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Fixed, checked-in tool-result fixture (W2.7's "required evidence
+    /// artifact"): a synthetic oversized `http_get`-shaped payload —
+    /// deterministic content, no timestamps/random ids, so a byte-diff
+    /// across runs can only come from a non-deterministic trimmer.
+    const TOOL_RESULT_FIXTURE: &str = include_str!("./testdata/tool_result_fixture.txt");
+
+    /// **Deterministic tool-result trimming (required evidence artifact,
+    /// W2.7):** trimming the SAME fixed payload at the SAME token budget N
+    /// times in a row must produce byte-identical output every time — no
+    /// wall-clock/model-call/hash-order dependence. This is the
+    /// correctness argument for reusing `truncate_to_budget` (already
+    /// deterministic — a pure function over a real bpe tokenizer) instead of
+    /// re-deriving a chars/4 heuristic (`chat.rs`'s retired duplicate).
+    #[test]
+    fn truncate_to_budget_is_byte_identical_across_repeated_runs() {
+        let budget = 64;
+        let (first, first_truncated) = truncate_to_budget(TOOL_RESULT_FIXTURE, budget);
+        assert!(first_truncated, "fixture must exceed the trim budget");
+
+        for _ in 0..50 {
+            let (again, truncated_again) = truncate_to_budget(TOOL_RESULT_FIXTURE, budget);
+            assert_eq!(again, first, "trim output must be byte-identical every run");
+            assert_eq!(truncated_again, first_truncated);
+        }
+    }
+
+    /// The exact truncation marker and the head boundary are stable, not
+    /// just "some" deterministic output — pins the literal marker text and
+    /// proves the kept content is a genuine PREFIX of the original (head
+    /// kept, tail dropped), matching the doc comment's "deterministic
+    /// prefix-keep" claim.
+    #[test]
+    fn truncate_to_budget_marker_and_head_boundary_are_stable() {
+        let (trimmed, was_truncated) = truncate_to_budget(TOOL_RESULT_FIXTURE, 64);
+        assert!(was_truncated);
+
+        let (head, marker) = trimmed
+            .rsplit_once("\n... [truncated ")
+            .expect("exact truncation marker must be present");
+        assert!(marker.ends_with(" tokens]"));
+        assert!(
+            TOOL_RESULT_FIXTURE.starts_with(head),
+            "kept content must be a byte-for-byte prefix of the original"
+        );
+        assert!(!head.is_empty());
+
+        // Re-trimming at the same budget reproduces the exact same boundary.
+        let (trimmed_again, _) = truncate_to_budget(TOOL_RESULT_FIXTURE, 64);
+        assert_eq!(trimmed_again, trimmed);
+    }
+
+    /// A payload already within budget is returned byte-identical and
+    /// unmarked — trimming is a no-op below the threshold, not a
+    /// mandatory rewrite.
+    #[test]
+    fn truncate_to_budget_is_a_no_op_under_budget() {
+        let small = "short tool result";
+        let (out, truncated) = truncate_to_budget(small, 1_000);
+        assert_eq!(out, small);
+        assert!(!truncated);
+    }
+}

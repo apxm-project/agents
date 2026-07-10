@@ -503,6 +503,26 @@ impl ExecutionEventEmitter for EmitterAdapter {
         self.emit(MemoizationHitPayload { node_id });
     }
 
+    fn emit_context_compacted(&self, original_tokens: usize, new_tokens: usize) {
+        self.emit(ContextCompactedPayload {
+            original_tokens,
+            new_tokens,
+        });
+    }
+
+    fn emit_context_window_warning(
+        &self,
+        current_tokens: usize,
+        max_tokens: usize,
+        utilization_pct: f64,
+    ) {
+        self.emit(ContextWindowWarningPayload {
+            current_tokens,
+            max_tokens,
+            utilization_pct,
+        });
+    }
+
     fn emit_approval_request(
         &self,
         agent_code: &str,
@@ -876,5 +896,44 @@ mod tests {
         let events = capture.events.lock();
         let kinds: Vec<&'static str> = events.iter().map(|e| e.kind().name()).collect();
         assert_eq!(kinds, vec!["approval_request", "approval_resolved"]);
+    }
+
+    /// **W2.7 Gap-3 verification (do-not-fix-here):** `CONTEXT_COMPACTED`/
+    /// `CONTEXT_WINDOW_WARNING` are two of the event kinds
+    /// `docs/plans/tasks/W2.7.md` requires "must not silently no-op through
+    /// `EmitterAdapter`" — proves both reach the sink with the REAL payload
+    /// field names (`original_tokens`/`new_tokens`,
+    /// `current_tokens`/`max_tokens`/`utilization_pct`), not the earlier
+    /// draft's nonexistent `tokens_before`/`tokens_after`.
+    #[test]
+    fn context_compacted_and_window_warning_are_not_swallowed_by_emitter_adapter() {
+        let (adapter, capture) = adapter_with_capture();
+
+        adapter.emit_context_window_warning(240, 300, 80.0);
+        adapter.emit_context_compacted(320, 90);
+
+        let events = capture.events.lock();
+        assert_eq!(events.len(), 2);
+
+        assert_eq!(events[0].kind().name(), "context_window_warning");
+        let warning = events[0]
+            .payload
+            .downcast_ref::<ContextWindowWarningPayload>()
+            .expect("context_window_warning payload");
+        assert_eq!(warning.current_tokens, 240);
+        assert_eq!(warning.max_tokens, 300);
+        assert_eq!(warning.utilization_pct, 80.0);
+
+        assert_eq!(events[1].kind().name(), "context_compacted");
+        let compacted = events[1]
+            .payload
+            .downcast_ref::<ContextCompactedPayload>()
+            .expect("context_compacted payload");
+        assert_eq!(compacted.original_tokens, 320);
+        assert_eq!(compacted.new_tokens, 90);
+        assert!(
+            compacted.original_tokens > compacted.new_tokens,
+            "compaction must reduce the token count"
+        );
     }
 }

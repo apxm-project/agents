@@ -189,6 +189,44 @@ pub mod runtime {
         pub const REVIEWER_UPSTREAM_FRAME_BUDGET_TOKENS: usize = 2_000;
     }
 
+    /// Conversation-window compaction defaults (`docs/plans/tasks/W2.7.md`).
+    /// Sibling of [`context_stack`]'s prompt-budget family: that module
+    /// bounds ONE assembled prompt; this one bounds the ACCUMULATED
+    /// multi-turn conversation window a `ConversationalAgent` turn measures
+    /// against before folding older turns into a rolling summary. Mirrors
+    /// the Python frontend's `CompactionPolicy` dataclass defaults
+    /// (`crates/compiler/frontend/python/apxm/conversational.py`) — these
+    /// values are also the ones the retired `apxm-machine-ais` CLI
+    /// duplicate (`KEEP_RECENT_TURNS`/`COMPACT_AT_TOKENS`) used, so the
+    /// parity gate for that deletion is these constants matching those
+    /// (proven historically; see `crates/machine/ais/src/chat.rs` history).
+    pub mod conversation_compaction {
+        /// Turns kept verbatim once compaction folds older turns into the
+        /// rolling summary — matches `CompactionPolicy.keep_recent`.
+        pub const DEFAULT_KEEP_RECENT_TURNS: usize = 4;
+        /// Accumulated-window token budget above which compaction triggers —
+        /// matches `CompactionPolicy.compact_at_tokens`.
+        pub const DEFAULT_COMPACT_AT_TOKENS: usize = 20_000;
+        /// Utilization percentage (of `compact_at_tokens`) at or above which
+        /// `context_window_warning` fires, ahead of the hard compaction
+        /// trigger at 100%.
+        pub const DEFAULT_WARNING_UTILIZATION_PCT: f64 = 80.0;
+    }
+
+    /// Deterministic tool-result trimming (`docs/plans/tasks/W2.7.md`): the
+    /// budget an oversized `INV_CAP` result is trimmed against before it can
+    /// inflate the conversation's token accounting, via the SAME
+    /// `truncate_to_budget` primitive the subagent prompt-budget mechanism
+    /// already ships (`context_stack::frame`) — never a chars/4 re-derivation.
+    pub mod tool_result_trim {
+        /// Default max tokens a single tool result is trimmed to. Generous
+        /// relative to `conversation_compaction::DEFAULT_COMPACT_AT_TOKENS`
+        /// (one tool call should not, by itself, exhaust a whole
+        /// conversation's budget) while still bounding pathological
+        /// oversized results (e.g. a full raw web page body).
+        pub const DEFAULT_MAX_TOKENS: usize = 8_000;
+    }
+
     pub mod belief_keys {
         pub const STAGED_PREFIX: &str = "_stage:";
         pub const DELEGATE_PREFIX: &str = "_delegate:";

@@ -1,15 +1,17 @@
-//! Shared conversational-chat primitives — transcript rendering, the chat /
-//! summarize AIR, and the compaction budget shared by the `apxm chat` CLI and
-//! the apxm-studio backend so they stay identical. These values are the
-//! frontend contract.
+//! Shared conversational-chat primitives — transcript rendering shared by the
+//! `apxm chat` CLI and the apxm-studio backend so they stay identical.
+//!
+//! Compaction is NOT this crate's contract: `KEEP_RECENT_TURNS`/
+//! `COMPACT_AT_TOKENS`/`estimate_tokens`/`SUMMARIZE_AIR` used to live here as
+//! a chars/4-estimate duplicate with zero call sites (dead policy, never
+//! wired to the dumb-pipe chat host — see `commands/chat.rs`'s doc comment).
+//! They were deleted once the runtime default
+//! (`ConversationMemoryMiddleware`, `apxm-runtime` crate) reached parity —
+//! see `docs/plans/tasks/W2.7.md` and
+//! `apxm_core::constants::runtime::conversation_compaction` for the single
+//! source of truth now.
 
 use crate::capabilities::groups;
-
-/// Turns kept verbatim during compaction; older turns fold into the summary.
-pub const KEEP_RECENT_TURNS: usize = 4;
-/// Transcript token budget (chars/4 estimate) above which compaction triggers.
-/// ~0.6 of a 32k window — conservative.
-pub const COMPACT_AT_TOKENS: usize = 20_000;
 
 /// A chat role in the rendered transcript.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -37,12 +39,6 @@ impl Role {
             _ => Role::User,
         }
     }
-}
-
-/// Estimate the token count of a string (chars/4 heuristic). The same estimate
-/// is used for the compaction budget on every surface.
-pub fn estimate_tokens(s: &str) -> usize {
-    s.len() / 4
 }
 
 /// Render a message list into the flat transcript the conversational graph
@@ -259,16 +255,6 @@ fn quoted_after(body: &str, prefix: &str) -> Option<String> {
     let cap = after.split_once('\'')?.0;
     (!cap.is_empty()).then(|| cap.to_string())
 }
-
-/// Single-ASK summarize graph for folding older turns into a running summary.
-/// One source of truth for both surfaces.
-pub const SUMMARIZE_AIR: &str = r#"module {
-  func.func @apxm_summarize(%arg0: !ais.token {ais.param_name = "to_summarize", ais.param_type = "str"}) -> !ais.token attributes {ais.entry} {
-    %summary = ais.ask "Summarize the following conversation excerpt into a concise running summary that preserves decisions, facts, names, and open tasks. Be terse.\n\n{{{to_summarize}}}" : !ais.token
-    func.return %summary : !ais.token
-  }
-}
-"#;
 
 #[cfg(test)]
 mod tests {
