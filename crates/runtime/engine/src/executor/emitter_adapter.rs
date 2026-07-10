@@ -846,7 +846,7 @@ mod tests {
 
     /// Positive: every Layer-2 hook on `EmitterAdapter` now produces a real
     /// `ApxmEvent` of the matching kind instead of silently no-op'ing —
-    /// the wiring gap called out in W1.5 defect 1.
+    /// the wiring gap called out in the event taxonomy correction defect 1.
     #[test]
     fn emitter_adapter_delivers_all_layer2_kinds() {
         let (adapter, capture) = adapter_with_capture();
@@ -898,9 +898,9 @@ mod tests {
         assert_eq!(kinds, vec!["approval_request", "approval_resolved"]);
     }
 
-    /// **W2.7 Gap-3 verification (do-not-fix-here):** `CONTEXT_COMPACTED`/
+    /// **Compaction event-delivery verification:** `CONTEXT_COMPACTED`/
     /// `CONTEXT_WINDOW_WARNING` are two of the event kinds
-    /// `docs/plans/tasks/W2.7.md` requires "must not silently no-op through
+    /// the runtime compaction invariant requires "must not silently no-op through
     /// `EmitterAdapter`" — proves both reach the sink with the REAL payload
     /// field names (`original_tokens`/`new_tokens`,
     /// `current_tokens`/`max_tokens`/`utilization_pct`), not the earlier

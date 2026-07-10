@@ -350,14 +350,14 @@ struct DeclarativeHookToml {
 struct DeclarativeRuntimeToml {
     #[serde(default, rename = "loop")]
     runtime_loop: Option<toml::Value>,
-    /// `[runtime] compaction_policy = '{"keep_recent":...}'` — the W2.7
+    /// `[runtime] compaction_policy = '{"keep_recent":...}'` — the runtime
     /// declarative-package compaction dial
     /// (`RUNTIME_EXTRA_COMPACTION_POLICY_KEY` in
     /// `apxm_core::types::agent_definition`): a JSON string stamped into the
     /// same open `extra` bag every other `[runtime]` knob uses. Absent
     /// entirely is the opt-out dial — no attributes are stamped on the
     /// marked conversational-turn ASK, so `ConversationMemoryMiddleware`
-    /// never starts measuring (docs/plans/tasks/W5.1.md).
+    /// never starts measuring.
     #[serde(default)]
     compaction_policy: Option<String>,
 }
@@ -406,13 +406,12 @@ fn declarative_compaction_policy(
     let Some(raw) = runtime.compaction_policy.as_ref() else {
         return Ok(None);
     };
-    let policy: DeclarativeCompactionPolicy = serde_json::from_str(raw).with_context(|| {
-        format!("Failed to parse [runtime] compaction_policy as JSON: {raw:?}")
-    })?;
+    let policy: DeclarativeCompactionPolicy = serde_json::from_str(raw)
+        .with_context(|| format!("Failed to parse [runtime] compaction_policy as JSON: {raw:?}"))?;
     Ok(Some(policy))
 }
 
-/// Fail-closed precedence (W2.7 threat model): an author-declared `post_turn`
+/// Fail-closed precedence: an author-declared `post_turn`
 /// hook already owns compaction, so the runtime default must never
 /// double-compact. Declarative packages express hooks via `[[hooks]]`, so
 /// this is a scan for `event = "post_turn"`, not a Python-only signal.
@@ -818,7 +817,7 @@ fn emit_air_from_declarative_agent(agent_dir: &Path, web_tools: bool) -> Result<
             Value::Array(capability_groups.into_iter().map(Value::String).collect()),
         );
     }
-    // W2.7 declarative compaction dial: absent `compaction_policy` is the
+    // Declarative compaction dial: absent `compaction_policy` is the
     // opt-out no-op (no attributes stamped at all); present-but-malformed is
     // a hard compile error (fail loud), never a silently-ignored policy.
     if let Some(policy) = declarative_compaction_policy(&agent)? {
@@ -1078,7 +1077,7 @@ pub fn compile_command(
     // pre-lowered `.air` file) so `apxm compile examples/agents/<id> -o
     // out.apxmobj` + `apxm run out.apxmobj` works for a hooks-only package,
     // the same way it already does for `.py`/`.ts` frontend entries
-    // (docs/plans/tasks/W5.1.md).
+    // (the declarative-agent compile contract).
     let is_declarative_agent_dir = input.is_dir() && input.join("agent.toml").is_file();
     let input_source = if input.is_dir() {
         if is_declarative_agent_dir {
@@ -1175,7 +1174,7 @@ pub fn compile_command(
         let compile_time = compile_start.elapsed();
 
         let artifact_start = std::time::Instant::now();
-        // Parse manifest from the frontend subprocess for orphan @tool detection (W723).
+        // Parse the frontend subprocess manifest to detect orphan @tool entries.
         let manifest: Option<Vec<apxm_compiler::passes::PythonCapabilityManifestEntry>> =
             python_tools_manifest.as_ref().and_then(|data| {
                 serde_json::from_slice(data)
@@ -1645,12 +1644,13 @@ required_capabilities = ["workflow_emission_v1"]
     }
 
     // -----------------------------------------------------------------
-    // W2.7 declarative compaction dial (docs/plans/tasks/W5.1.md, step 2:
-    // "replace the hand-rolled compact_conversation hook with the W2.7
-    // declarative CompactionPolicy").
+    // Declarative compaction dial: replace hand-rolled compaction hooks with
+    // the runtime CompactionPolicy.
     // -----------------------------------------------------------------
 
-    fn write_declarative_agent_with_compaction(compaction_policy: Option<&str>) -> tempfile::TempDir {
+    fn write_declarative_agent_with_compaction(
+        compaction_policy: Option<&str>,
+    ) -> tempfile::TempDir {
         let tmp = tempdir().expect("temp agent");
         let root = tmp.path();
         fs::create_dir_all(root.join("capabilities/handlers")).expect("handlers dir");
@@ -1777,7 +1777,7 @@ handler = "hooks.author_compaction"
 
     // -----------------------------------------------------------------
     // `apxm compile <agent_dir>` — declarative agent-package directory
-    // compile support (docs/plans/tasks/W5.1.md step 4: "shell out to
+    // compile support (shell out to
     // `apxm run examples/agents/conversational/<artifact>.apxmobj`").
     // -----------------------------------------------------------------
 
@@ -1808,7 +1808,10 @@ handler = "hooks.author_compaction"
         let air_text = fs::read_to_string(&air_path).expect("read temp air");
         assert!(!air_text.contains("__apxm_typescript_tools__"));
         assert!(python_manifest.is_none());
-        assert!(ts_manifest.is_some(), "declarative TS handlers must round-trip a manifest");
+        assert!(
+            ts_manifest.is_some(),
+            "declarative TS handlers must round-trip a manifest"
+        );
 
         // The clean AIR must still parse and verify through the real MLIR
         // pipeline — the exact bar `apxm compile` itself applies.

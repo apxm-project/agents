@@ -29,8 +29,7 @@ pub const SCHEDULER_SNAPSHOT_VERSION: u32 = 1;
 /// work is gone with the worker that was doing it, so such a node is restored
 /// `Ready` for an idempotent re-execution rather than falsely reported as
 /// still `Running` with nothing driving it forward.
-const REPLAY_SUPPORTED_NOTE: &str =
-    "restore rehydrates tokens/ops/pending-inputs/promises/execution-stack/delegated-tokens against a recompiled DAG; nodes captured Running are restored Ready (re-executed, not resumed mid-handler) since no in-flight worker state survives a process restart";
+const REPLAY_SUPPORTED_NOTE: &str = "restore rehydrates tokens/ops/pending-inputs/promises/execution-stack/delegated-tokens against a recompiled DAG; nodes captured Running are restored Ready (re-executed, not resumed mid-handler) since no in-flight worker state survives a process restart";
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct SchedulerSnapshot {
@@ -526,7 +525,10 @@ mod tests {
         // Ops: node 1 stays Completed; node 2's retry/error history survives
         // even though its status is intentionally re-mapped Running -> Ready;
         // node 3 is still Pending (blocked on token 20).
-        assert_eq!(restored.op_states.get(&1).unwrap().status, OpStatus::Completed);
+        assert_eq!(
+            restored.op_states.get(&1).unwrap().status,
+            OpStatus::Completed
+        );
         let restored_op2 = restored.op_states.get(&2).unwrap();
         assert_eq!(
             restored_op2.status,
@@ -539,7 +541,10 @@ mod tests {
             Some("transient timeout"),
             "last error survives restore"
         );
-        assert_eq!(restored.op_states.get(&3).unwrap().status, OpStatus::Pending);
+        assert_eq!(
+            restored.op_states.get(&3).unwrap().status,
+            OpStatus::Pending
+        );
 
         // Promise: unresolved, target agent/flow preserved.
         let restored_promise = restored.pending_promises.get(&promise_token).unwrap();

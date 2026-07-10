@@ -1,11 +1,8 @@
 #!/usr/bin/env python3
-"""Guard against a second frontend AIR text emitter (docs/plans/tasks/W3.1.md).
+"""Guard against a second frontend AIR text emitter.
 
-The closed remediation tranche (`docs/plans/air-single-printer-remediation.md`,
-R1) once found `emit_air_from_declarative_package` hand-formatting AIR via
-`format!` plus a phantom `ais.done` op — a second, drifting printer living
-outside `air_builder::emit::emit_air`. This script is the regression guard
-for the frontend-package half of that failure class: it fails if any
+The canonical AIR contract requires frontend packages to delegate emission to
+the Rust printer through `apxm emit-air`. This script fails if any
 Python/TypeScript source under the frontend packages *constructs* AIR text
 (an MLIR `module { ... }` / `func.func @...` block, or a bare `ais.<op>`
 dialect string) via string literals/formatting instead of delegating to the

@@ -30,7 +30,7 @@ const COMPACTION_KEEP_RECENT_ATTR: &str = "compaction_keep_recent";
 const COMPACTION_SUMMARY_KEY_ATTR: &str = "compaction_summary_key";
 /// Fail-closed override-precedence signal stamped by the frontend when the
 /// program ALSO registers a `post_turn` hook — the runtime default must do
-/// nothing (docs/plans/tasks/W2.7.md threat model: "Fail-closed precedence").
+/// nothing (the runtime compaction invariant: "Fail-closed precedence").
 const COMPACTION_OVERRIDE_PRESENT_ATTR: &str = "compaction_override_present";
 /// Default rolling-summary key when the policy did not set one explicitly —
 /// matches `CompactionPolicy.summary_key`'s dataclass default.
@@ -123,7 +123,7 @@ impl OperationMiddleware for ConversationMemoryMiddleware {
                 )
                 .await;
 
-            // Conversation-window compaction (W2.7): the SAME turn-scoped
+            // Conversation-window compaction (the runtime compaction mechanism): the SAME turn-scoped
             // choke point measures the budget and, absent an author
             // override, folds older turns into the rolling summary. A
             // no-op when the policy is absent (opt-out dial).
@@ -234,7 +234,8 @@ impl ConversationMemoryMiddleware {
         }
 
         let mut folded_text = String::new();
-        if let Ok(Some(prior_summary)) = mem.read_scoped(MemorySpace::Stm, scope, &summary_key).await
+        if let Ok(Some(prior_summary)) =
+            mem.read_scoped(MemorySpace::Stm, scope, &summary_key).await
             && let Some(s) = prior_summary.as_str()
         {
             folded_text.push_str(s);
@@ -259,14 +260,14 @@ impl ConversationMemoryMiddleware {
              summary that preserves decisions, facts, names, and open tasks. Be \
              terse.\n\n{folded_text}"
         );
-        let request = apxm_backends::LLMRequest::new(prompt)
-            .with_operation_type(AISOperationType::Ask);
+        let request =
+            apxm_backends::LLMRequest::new(prompt).with_operation_type(AISOperationType::Ask);
         let summary_result = if let Some(router) = &ctx.model_router {
             router.generate(request).await
         } else {
             ctx.llm_registry.generate(request).await
         };
-        // Fail-open budget enforcement is a correctness bug (threat model):
+        // Fail-open budget enforcement is a correctness bug:
         // a summarization failure degrades to a warning, never panics or
         // fails the turn, and never silently no-ops without a trace.
         let summary = match summary_result {
@@ -362,7 +363,7 @@ mod tests {
 
 /// Conversation-window compaction — the four control dials
 /// (default/configure/override/opt-out), each independently tested, plus
-/// the negative/degraded-input cases (docs/plans/tasks/W2.7.md).
+/// the negative and degraded-input cases.
 #[cfg(test)]
 mod compaction_tests {
     use super::*;
@@ -402,13 +403,17 @@ mod compaction_tests {
             max_tokens: usize,
             utilization_pct: f64,
         ) {
-            self.window_warnings
-                .lock()
-                .unwrap()
-                .push((current_tokens, max_tokens, utilization_pct));
+            self.window_warnings.lock().unwrap().push((
+                current_tokens,
+                max_tokens,
+                utilization_pct,
+            ));
         }
         fn emit_context_compacted(&self, original_tokens: usize, new_tokens: usize) {
-            self.compacted.lock().unwrap().push((original_tokens, new_tokens));
+            self.compacted
+                .lock()
+                .unwrap()
+                .push((original_tokens, new_tokens));
         }
         fn emit_warning(&self, code: &str, message: &str) {
             self.warnings
@@ -430,10 +435,13 @@ mod compaction_tests {
         llm_registry
             .register("mock", MockLLMBackend::static_response("ROLLING SUMMARY"))
             .expect("register mock backend");
-        llm_registry.set_default("mock").expect("set default backend");
+        llm_registry
+            .set_default("mock")
+            .expect("set default backend");
 
-        ExecutionContext::new(memory, llm_registry, capability_system, aam)
-            .with_event_emitter(Some(emitter as Arc<dyn crate::executor::events::ExecutionEventEmitter>))
+        ExecutionContext::new(memory, llm_registry, capability_system, aam).with_event_emitter(
+            Some(emitter as Arc<dyn crate::executor::events::ExecutionEventEmitter>),
+        )
     }
 
     fn marked_ask_with_compaction(
@@ -526,7 +534,10 @@ mod compaction_tests {
         run_turns(&ctx, &node, scope, &[&answer, &answer, &answer, &answer]).await;
 
         let warnings = emitter.window_warnings.lock().unwrap().clone();
-        assert!(!warnings.is_empty(), "must warn before/at the crossing turn");
+        assert!(
+            !warnings.is_empty(),
+            "must warn before/at the crossing turn"
+        );
         for (current, max, pct) in &warnings {
             assert_eq!(*max, 300);
             assert!(*current > 0);
@@ -657,7 +668,7 @@ mod compaction_tests {
 
     /// **Negative — summarization failure degrades gracefully:** fail-open
     /// budget enforcement (silently skipping the check) is a correctness bug
-    /// per the threat model; a failed LLM call must degrade to
+    /// by the runtime invariant; a failed LLM call must degrade to
     /// `emit_warning` and skip folding, never panic, never emit a bogus
     /// `context_compacted`.
     #[tokio::test]
@@ -677,7 +688,9 @@ mod compaction_tests {
                 MockLLMBackend::new().always_fail("simulated backend outage"),
             )
             .expect("register failing mock backend");
-        llm_registry.set_default("mock").expect("set default backend");
+        llm_registry
+            .set_default("mock")
+            .expect("set default backend");
         let ctx = ExecutionContext::new(memory, llm_registry, capability_system, aam)
             .with_event_emitter(Some(
                 emitter.clone() as Arc<dyn crate::executor::events::ExecutionEventEmitter>
@@ -697,7 +710,9 @@ mod compaction_tests {
         );
         let warnings = emitter.warnings.lock().unwrap().clone();
         assert!(
-            warnings.iter().any(|(code, _)| code == "compaction_summarize_failed"),
+            warnings
+                .iter()
+                .any(|(code, _)| code == "compaction_summarize_failed"),
             "must degrade to a warning: {warnings:?}"
         );
         assert!(
@@ -715,7 +730,7 @@ mod compaction_tests {
     /// duplicate (`chat.rs`'s `KEEP_RECENT_TURNS=4`/`COMPACT_AT_TOKENS=20_000`,
     /// deleted in the same change once this parity held) — this test stays
     /// in the suite, retargeted at the runtime default, per
-    /// docs/plans/tasks/W2.7.md.
+    /// the runtime compaction invariant.
     #[test]
     fn runtime_default_matches_retired_cli_duplicate_constants() {
         use apxm_core::constants::runtime::conversation_compaction::{
@@ -752,7 +767,9 @@ mod compaction_tests {
         llm_registry
             .register("mock", MockLLMBackend::static_response("ROLLING SUMMARY"))
             .expect("register mock backend");
-        llm_registry.set_default("mock").expect("set default backend");
+        llm_registry
+            .set_default("mock")
+            .expect("set default backend");
         let memory_before = Arc::new(
             MemorySystem::new(MemoryConfig::with_ltm_path(ltm_path.clone()))
                 .await
@@ -765,7 +782,13 @@ mod compaction_tests {
         let node = marked_ask_with_compaction(300, 2, false);
         let answer = "The quarterly report shows revenue growth across every region and segment. "
             .repeat(20);
-        run_turns(&ctx_before, &node, scope, &[&answer, &answer, &answer, &answer]).await;
+        run_turns(
+            &ctx_before,
+            &node,
+            scope,
+            &[&answer, &answer, &answer, &answer],
+        )
+        .await;
         assert!(
             !emitter.compacted.lock().unwrap().is_empty(),
             "setup must actually compact before simulating the crash"

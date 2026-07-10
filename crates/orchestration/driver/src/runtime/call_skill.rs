@@ -4,7 +4,7 @@
 //! `workspace/agents/crates/orchestration/driver/src/skill_resolver.rs` for
 //! the *unrelated* node-workspace `driver::SkillResolver` — do not conflate
 //! the two). Giving the driver a full skill-library resolver is out of scope
-//! (W2.4); instead this module makes the existing fail-closed behavior
+//! (the shared capability setup); instead this module makes the existing fail-closed behavior
 //! deterministic, named, and as early as possible:
 //!
 //! 1. [`UnsupportedCallSkillResolver`] is installed on every driver/CLI
@@ -83,13 +83,19 @@ mod tests {
 
     #[test]
     fn admits_dags_without_call_skill() {
-        let dags = vec![dag_with(AISOperationType::Nop), dag_with(AISOperationType::Think)];
+        let dags = vec![
+            dag_with(AISOperationType::Nop),
+            dag_with(AISOperationType::Think),
+        ];
         assert!(reject_unsupported_call_skill(&dags).is_ok());
     }
 
     #[test]
     fn rejects_call_skill_before_any_dispatch() {
-        let dags = vec![dag_with(AISOperationType::Nop), dag_with(AISOperationType::CallSkill)];
+        let dags = vec![
+            dag_with(AISOperationType::Nop),
+            dag_with(AISOperationType::CallSkill),
+        ];
         let error = reject_unsupported_call_skill(&dags).unwrap_err();
         let message = error.to_string();
         assert!(

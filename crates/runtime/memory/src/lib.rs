@@ -245,7 +245,7 @@ impl MemorySystem {
         // survive once it slides out of the last-`n` window. The program decides
         // which keys to pin (constitution #2), not this layer.
         //
-        // **Crash/restart durability (W2.7):** STM is deliberately volatile
+        // **Crash/restart durability (the runtime compaction mechanism):** STM is deliberately volatile
         // (`ShortTermMemory` doc comment) — a process kill wipes it. A pin is
         // the ONE thing in this window that must survive that boundary (e.g.
         // a conversation-compaction rolling summary), so when a pinned key is

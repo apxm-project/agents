@@ -15,7 +15,7 @@
 //! case (skip + count, never propagated as an error — see its doc comment).
 //! Callers that need disk-durability stronger than "survives a process kill"
 //! must not assume this recorder provides it; see
-//! `docs/plans/tasks/W2.5.md` for the explicit sync/ack contract this
+//! the restart-state reconstruction invariant for the explicit sync/ack contract this
 //! implies at park/checkpoint boundaries.
 //!
 //! Spills any payload larger than [`crate::SPILL_THRESHOLD_BYTES`] to a
@@ -392,8 +392,13 @@ mod tests {
             .expect("write graph_edge event");
         recorder.close().await.expect("close recorder");
 
-        let (items, stats) = load_rollout(recorder.file_path()).await.expect("load rollout");
-        assert_eq!(stats.parse_errors, 0, "no rollout line should be unparseable");
+        let (items, stats) = load_rollout(recorder.file_path())
+            .await
+            .expect("load rollout");
+        assert_eq!(
+            stats.parse_errors, 0,
+            "no rollout line should be unparseable"
+        );
 
         let decoded = items
             .iter()

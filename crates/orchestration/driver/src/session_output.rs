@@ -1230,7 +1230,7 @@ mod write_input_air_tests {
     use apxm_core::types::AISOperationType;
 
     /// Regression guard for the closed `emit_air_simple` dual emitter
-    /// (docs/plans/air-single-printer.md, docs/plans/tasks/W3.1.md):
+    /// (the frontend graph parity invariant):
     /// `write_input_air` must delegate to the single canonical printer
     /// (`AirModule::to_air()`), not a private hand-formatted dialect. The
     /// old emitter's output (`"; graph: ..."` comments, `"%1 = ask(node_1)"`

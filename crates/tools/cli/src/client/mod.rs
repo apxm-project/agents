@@ -15,10 +15,14 @@ pub mod execute;
 /// Default apxm-server bind address (`apxm-server` `DEFAULT_PORT` = 18800).
 pub const DEFAULT_SERVER_BASE: &str = "http://127.0.0.1:18800";
 
-/// Build a generated [`Client`] suitable for long-lived SSE (no read timeout).
+/// Build a generated [`Client`] suitable for long-lived SSE.
+///
+/// Reqwest's default is no read timeout. Do not express that as
+/// `read_timeout(Duration::from_secs(0))`: zero is an immediate deadline, so
+/// it can abort an otherwise correctly framed HTTP response before the body is
+/// read.
 pub fn client_for_sse(base: &str) -> Client {
     let http = reqwest::ClientBuilder::new()
-        .read_timeout(std::time::Duration::from_secs(0))
         .build()
         .expect("reqwest client");
     Client::new_with_client(base.trim_end_matches('/'), http)

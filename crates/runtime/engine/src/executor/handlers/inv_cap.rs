@@ -254,7 +254,7 @@ pub async fn execute(ctx: &ExecutionContext, node: &Node, inputs: Vec<Value>) ->
     };
     // post_cap hooks (replace_result) for both paths.
     let result = crate::executor::hook_driver::run_post_cap_hooks(ctx, &capability_name, raw).await;
-    // Deterministic tool-result trimming (W2.7): an oversized result (e.g. a
+    // Deterministic tool-result trimming (the runtime compaction mechanism): an oversized result (e.g. a
     // full raw web page body) must not silently inflate the conversation's
     // token budget. Reuses the SAME `truncate_to_budget` primitive the
     // subagent prompt-budget mechanism ships — a pure, deterministic
@@ -342,9 +342,9 @@ fn render_named_in_value(
 fn trim_oversized_tool_result(value: Value) -> Value {
     match value {
         Value::String(text) => {
-            let max_tokens =
-                apxm_core::constants::runtime::tool_result_trim::DEFAULT_MAX_TOKENS;
-            let (trimmed, _was_trimmed) = crate::context_stack::truncate_to_budget(&text, max_tokens);
+            let max_tokens = apxm_core::constants::runtime::tool_result_trim::DEFAULT_MAX_TOKENS;
+            let (trimmed, _was_trimmed) =
+                crate::context_stack::truncate_to_budget(&text, max_tokens);
             Value::String(trimmed)
         }
         other => other,
@@ -511,7 +511,7 @@ mod tests {
         );
     }
 
-    /// **Approved protected-path write denial (required evidence, W1.9):** an
+    /// **Approved protected-path write denial:** an
     /// operator-set `blocked_paths` entry on `WriteCapability` is a floor a
     /// consent `Approved` decision cannot reach. `enforce_write_boundary`
     /// (the admission gate above) approves this call via the
@@ -586,10 +586,8 @@ mod tests {
         ctx.consent_broker = Arc::new(StubBroker {
             decision: ConsentDecision::Approved(vec![]),
         });
-        ctx.metadata.insert(
-            crate::metadata_keys::CAPABILITY_GRANTS.to_string(),
-            grants,
-        );
+        ctx.metadata
+            .insert(crate::metadata_keys::CAPABILITY_GRANTS.to_string(), grants);
 
         let mut node = Node::new(1, AISOperationType::InvCap);
         node.set_attribute(

@@ -648,7 +648,7 @@ fn spawn_workers(
         .collect()
 }
 
-/// W2.6 exactly-N-iterations conformance: real end-to-end proof that the ONE
+/// the runtime loop correction exactly-N-iterations conformance: real end-to-end proof that the ONE
 /// production iteration mechanism left after `LOOP_START`/`LOOP_END` were
 /// deleted — graph splicing (`SchedulerState::splice_dag`, driven here the
 /// same way `rearm_session_turn` drives it on every real wake) — dispatches a
@@ -656,7 +656,7 @@ fn spawn_workers(
 /// external driver splices it. Unlike the (deleted) `LOOP_START`/`LOOP_END`
 /// pair, nothing here is compiled-but-ignored: every spliced node runs
 /// through the same worker pool and dispatcher production traffic uses.
-/// See `docs/plans/tasks/W2.6.md`.
+/// See `the runtime loop invariant`.
 #[cfg(test)]
 mod loop_conformance_tests {
     use super::*;
@@ -744,7 +744,9 @@ mod loop_conformance_tests {
         // finishing outright. This phantom unit plays that same role without
         // needing a real parking handler (which would need a live session /
         // HTTP checkpoint server); `finish()` releases it via `mark_done()`.
-        state.remaining.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        state
+            .remaining
+            .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
 
         let state = Arc::new(state);
         let executor = Arc::new(ExecutorEngine::new(ctx.clone()));
@@ -816,14 +818,14 @@ mod loop_conformance_tests {
         }
     }
 
-    /// Positive (exactly-N-iterations conformance, the required evidence
-    /// artifact): `max_iterations = 3`, a body node incrementing an
+    /// Positive exactly-N-iterations conformance: `max_iterations = 3`, a
+    /// body node incrementing an
     /// observable counter (AAM belief); assert exactly 3 runs.
     #[tokio::test]
     async fn loop_body_executes_exactly_n_times() {
         let (ctx, aam) = test_context().await;
         let (state, handles) = spawn_seeded_execution(ctx).await;
-        let key = "w26_loop_conformance_exact_n";
+        let key = "loop_conformance_exact_n";
 
         for i in 1..=3i64 {
             splice_iteration_and_await(&state, &aam, key, i).await;
@@ -847,7 +849,7 @@ mod loop_conformance_tests {
     async fn loop_terminates_on_condition_before_max_iterations() {
         let (ctx, aam) = test_context().await;
         let (state, handles) = spawn_seeded_execution(ctx).await;
-        let key = "w26_loop_conformance_early_stop";
+        let key = "loop_conformance_early_stop";
         let max_allowed = 3i64;
 
         let mut executed = 0i64;
@@ -876,7 +878,7 @@ mod loop_conformance_tests {
     async fn zero_iteration_loop_executes_body_zero_times() {
         let (ctx, aam) = test_context().await;
         let (state, handles) = spawn_seeded_execution(ctx).await;
-        let key = "w26_loop_conformance_zero_iterations";
+        let key = "loop_conformance_zero_iterations";
 
         // Let the seed settle without ever offering a first iteration.
         timeout(Duration::from_secs(5), async {

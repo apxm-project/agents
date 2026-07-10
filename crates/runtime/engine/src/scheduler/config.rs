@@ -71,9 +71,9 @@ pub struct SchedulerConfig {
     /// (`ExecutorEngine::execute_dag_inner`): when the parallel dataflow
     /// scheduler errors, `false` (the default) propagates the error instead
     /// of silently re-running the DAG sequentially. `true` is an explicit,
-    /// logged opt-in that restores the old silent-fallback behavior (demote,
-    /// not delete — P08) for a deployment that depends on it. Off by default
-    /// in CI so a real scheduler bug fails loud instead of hiding behind a
+    /// logged opt-in that restores sequential execution for a deployment that
+    /// depends on it. Off by default in CI so a real scheduler bug fails loud
+    /// instead of hiding behind a
     /// bimodal-latency fallback nobody pages on.
     #[serde(default)]
     pub allow_sequential_fallback: bool,

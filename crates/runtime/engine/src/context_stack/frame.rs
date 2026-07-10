@@ -67,14 +67,14 @@ pub fn truncate_to_budget(text: &str, max_tokens: usize) -> (String, bool) {
 mod tests {
     use super::*;
 
-    /// Fixed, checked-in tool-result fixture (W2.7's "required evidence
-    /// artifact"): a synthetic oversized `http_get`-shaped payload —
+    /// Fixed, checked-in tool-result fixture: a synthetic oversized
+    /// `http_get`-shaped payload —
     /// deterministic content, no timestamps/random ids, so a byte-diff
     /// across runs can only come from a non-deterministic trimmer.
     const TOOL_RESULT_FIXTURE: &str = include_str!("./testdata/tool_result_fixture.txt");
 
-    /// **Deterministic tool-result trimming (required evidence artifact,
-    /// W2.7):** trimming the SAME fixed payload at the SAME token budget N
+    /// **Deterministic tool-result trimming:** trimming the SAME fixed payload
+    /// at the SAME token budget N
     /// times in a row must produce byte-identical output every time — no
     /// wall-clock/model-call/hash-order dependence. This is the
     /// correctness argument for reusing `truncate_to_budget` (already

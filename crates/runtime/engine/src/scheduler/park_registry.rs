@@ -228,7 +228,7 @@ impl apxm_capability_iface::CapabilityHost for ParkRegistryHost {
 /// - **pending**: a `register` happened (someone is parked here) — read at
 ///   boot via [`pending_wait_keys`] so scheduler/session restore knows which
 ///   logical waits need a freshly-registered waker after the DAG is
-///   rehydrated (see `docs/plans/tasks/W2.5.md`); the actual [`ParkWaker`]
+///   rehydrated (see `the restart-state reconstruction invariant`); the actual [`ParkWaker`]
 ///   can never be durable (it closes over a live `Arc<SchedulerState>`).
 /// - **resolved**: a `wake` arrived with nobody registered yet — durably, not
 ///   just in the in-memory `Resolved` stash, so a wake that lands in the
@@ -359,7 +359,7 @@ pub mod durable {
 
 /// Rebuild the in-process registry entries for `wait_keys` from the durable
 /// journal, simulating what boot does after a restart for the specific
-/// sessions/executions the caller is resuming (typically the set W1.8's
+/// sessions/executions the caller is resuming (typically the set of
 /// reconciled-execution boot pass hands back). Only those wait_keys' entries
 /// are touched — any in-memory entry for exactly those keys is replaced by
 /// what durably survived; every other wait_key (unrelated in-flight work in

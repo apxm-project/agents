@@ -105,7 +105,7 @@ impl RuntimeExecutor {
         runtime.init_profile_registry();
 
         // The driver/CLI has no SkillLibrary-backed skill catalog (out of
-        // scope for W2.4 — see `call_skill` module doc). Install the named
+        // scope for the shared capability setup — see `call_skill` module doc). Install the named
         // rejection resolver so a `CALL_SKILL` that somehow reaches dispatch
         // still fails fail-closed with a distinguishable tag instead of the
         // generic `NoOpSkillResolver` default. `reject_unsupported_call_skill`
@@ -231,18 +231,24 @@ impl RuntimeExecutor {
         emitter: Option<Arc<dyn ExecutionEventEmitter>>,
         session_dir: Option<String>,
     ) -> Result<RuntimeExecutionResult, DriverError> {
-        self.execute_artifact_with_session_id_and_emitter(artifact, args, None, emitter, session_dir)
-            .await
+        self.execute_artifact_with_session_id_and_emitter(
+            artifact,
+            args,
+            None,
+            emitter,
+            session_dir,
+        )
+        .await
     }
 
     /// Execute an artifact with arguments, an optional event emitter, and an
     /// optional stable session id. Passing the same `session_id` across
     /// separate CLI invocations of the same artifact (`apxm run --session-id
     /// <id> ...`) is what lets durable session-scoped state (the session
-    /// ledger's turn/tool counters, W2.5; a compacted conversation
-    /// summary's LTM copy, W2.7) resume instead of resetting — session-scoped
+    /// ledger's turn/tool counters and compacted conversation summary's LTM
+    /// copy) resume instead of resetting — session-scoped
     /// in-memory state (STM) is deliberately volatile and does not survive a
-    /// process restart even with the same id (docs/plans/tasks/W5.1.md).
+    /// process restart even with the same id.
     pub async fn execute_artifact_with_session_id_and_emitter(
         &self,
         artifact: Artifact,
@@ -436,7 +442,7 @@ mod operation_policy_tests {
     }
 }
 
-/// Required evidence (W2.4): a `CALL_SKILL` node under `--driver` fails with
+/// The `CALL_SKILL` admission invariant: a node under `--driver` fails with
 /// the named rejection at admission time, before any node dispatches -- not
 /// merely a generic mid-execution failure, and with zero partial-execution
 /// side effects from nodes that would otherwise have run first.
@@ -446,9 +452,9 @@ mod call_skill_admission_tests {
     use crate::config::ApXmConfig;
     use crate::linker::LinkerConfig;
     use apxm_core::constants::graph::attrs as graph_attrs;
+    use apxm_core::types::AISOperationType;
     use apxm_core::types::execution::{ExecutionDag, Node};
     use apxm_core::types::values::Value;
-    use apxm_core::types::AISOperationType;
     use apxm_runtime::executor::skill_resolver::CALL_SKILL_UNSUPPORTED_HERE_TAG;
 
     async fn test_executor() -> RuntimeExecutor {

@@ -241,7 +241,7 @@ pub trait ExecutionEventEmitter: Send + Sync {
     // ── Memoization ───────────────────────────────────────────────
     fn emit_memoization_hit(&self, _node_id: u64) {}
 
-    // ── Conversation-window compaction (W2.7) ──────────────────────
+    // ── Conversation-window compaction (the runtime compaction mechanism) ──────────────────────
     /// The conversation context window was compacted: older turns folded
     /// into a rolling summary. `original_tokens`/`new_tokens` are the
     /// accumulated-window token estimate before/after — must satisfy

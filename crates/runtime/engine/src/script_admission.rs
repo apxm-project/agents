@@ -6,7 +6,7 @@
 //! BOTH `APXM_TRUST_PYTHON_ARTIFACTS` (trust) and `APXM_SANDBOX_PYTHON`
 //! (isolation) — this mirrors the Server's `python_artifacts_trusted` gate so
 //! every embedding (Server, CLI/driver, Runtime) enforces the identical
-//! fail-closed default. See `docs/plans/tasks/W1.6.md` in the coordinator
+//! fail-closed default. See `the shared script-artifact admission policy` in the coordinator
 //! workspace for the full rationale.
 //!
 //! There is deliberately no separate `APXM_TRUST_TYPESCRIPT_ARTIFACTS`

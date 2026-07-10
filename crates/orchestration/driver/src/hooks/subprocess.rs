@@ -75,7 +75,7 @@ impl SubprocessHookEmitter {
 // `GraphStart`, `GraphEnd`, `NodeStart`, `NodeComplete`, `NodeError`) —
 // adding Layer-2 support means growing that enum plus the user-facing
 // hook-config schema/docs, which is a config-surface change out of
-// scope for W1.5's wire-format fix (`EmitterAdapter`/
+// scope for the event taxonomy correction's wire-format fix (`EmitterAdapter`/
 // `SessionEventEmitter`/`MultiEmitter` are the production ApxmEvent
 // delivery paths this WP wires up). Left as no-op via the trait default
 // on purpose, not by omission.

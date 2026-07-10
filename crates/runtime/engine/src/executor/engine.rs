@@ -147,8 +147,8 @@ impl ExecutorEngine {
     /// first; on error, either propagates it (default) or falls back to
     /// sequential execution, gated by
     /// `SchedulerConfig::allow_sequential_fallback` — see that field's doc
-    /// comment. The fallback is demoted, not deleted (P08): off by default so
-    /// a real scheduler bug fails loud instead of silently bimodalizing
+    /// comment. The fallback is off by default so a real scheduler bug fails
+    /// loud instead of silently bimodalizing
     /// latency, but still available as an explicit, logged, alertable opt-in
     /// for a deployment that depends on it.
     async fn execute_dag_inner(&self, dag: ExecutionDag) -> Result<ExecutionResult> {
