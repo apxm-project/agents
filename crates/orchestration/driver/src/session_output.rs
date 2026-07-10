@@ -1082,4 +1082,246 @@ impl ExecutionEventEmitter for SessionEventEmitter {
     fn emit_memoization_hit(&self, node_id: u64) {
         self.write_trace_event(apxm_core::events::payload::MemoizationHitPayload { node_id });
     }
+
+    // ── Layer 2 — agent-layer hooks ────────────────────────────────
+    //
+    // `SessionEventEmitter` backs the CLI `execute`/`workflow` path
+    // (see `crates/tools/cli/src/commands/{execute,workflow}.rs`); like
+    // `EmitterAdapter` it previously left every Layer-2 hook at the
+    // trait's no-op default, so `apxm execute`/`apxm workflow` never
+    // wrote turn/subagent/tool/agent-message frames to trace.ndjson even
+    // though the executor call sites already fire them.
+
+    fn emit_turn_started(
+        &self,
+        execution_id: &str,
+        turn_id: Option<&str>,
+        coordinator_label: Option<&str>,
+    ) {
+        self.write_trace_event(apxm_core::events::payload::TurnStartedPayload {
+            execution_id: execution_id.to_string(),
+            turn_id: turn_id.map(str::to_string),
+            coordinator_label: coordinator_label.map(str::to_string),
+        });
+    }
+
+    fn emit_turn_complete(&self, execution_id: &str, duration_ms: u64, had_answer: bool) {
+        self.write_trace_event(apxm_core::events::payload::TurnCompletePayload {
+            execution_id: execution_id.to_string(),
+            duration_ms,
+            had_answer,
+        });
+    }
+
+    fn emit_turn_aborted(
+        &self,
+        execution_id: &str,
+        duration_ms: u64,
+        reason: &str,
+        error_message_safe: Option<&str>,
+    ) {
+        self.write_trace_event(apxm_core::events::payload::TurnAbortedPayload {
+            execution_id: execution_id.to_string(),
+            duration_ms,
+            reason: reason.to_string(),
+            error_message_safe: error_message_safe.map(str::to_string),
+        });
+    }
+
+    fn emit_subagent_spawn_begin(
+        &self,
+        agent_code: &str,
+        agent_name: Option<&str>,
+        agent_type: Option<&str>,
+        module_key: Option<&str>,
+        autonomy_policy: Option<&str>,
+        parent_span_id: Option<&str>,
+    ) {
+        self.write_trace_event(apxm_core::events::payload::SubagentSpawnBeginPayload {
+            agent_code: agent_code.to_string(),
+            agent_name: agent_name.map(str::to_string),
+            agent_type: agent_type.map(str::to_string),
+            module_key: module_key.map(str::to_string),
+            autonomy_policy: autonomy_policy.map(str::to_string),
+            parent_span_id: parent_span_id.map(str::to_string),
+        });
+    }
+
+    fn emit_subagent_spawn_end(&self, agent_code: &str) {
+        self.write_trace_event(apxm_core::events::payload::SubagentSpawnEndPayload {
+            agent_code: agent_code.to_string(),
+        });
+    }
+
+    fn emit_subagent_llm_call_begin(
+        &self,
+        agent_code: &str,
+        model: &str,
+        backend: &str,
+        tool_manifest_count: usize,
+    ) {
+        self.write_trace_event(apxm_core::events::payload::SubagentLlmCallBeginPayload {
+            agent_code: agent_code.to_string(),
+            model: model.to_string(),
+            backend: backend.to_string(),
+            tool_manifest_count,
+        });
+    }
+
+    fn emit_subagent_llm_call_end(
+        &self,
+        agent_code: &str,
+        finish_reason: &str,
+        input_tokens: usize,
+        output_tokens: usize,
+        content_len: usize,
+    ) {
+        self.write_trace_event(apxm_core::events::payload::SubagentLlmCallEndPayload {
+            agent_code: agent_code.to_string(),
+            finish_reason: finish_reason.to_string(),
+            usage: apxm_core::events::payload::UsagePayload {
+                input_tokens,
+                output_tokens,
+            },
+            content_len,
+        });
+    }
+
+    fn emit_tool_call_begin(&self, agent_code: &str, tool_name: &str, argument_keys: &[String]) {
+        self.write_trace_event(apxm_core::events::payload::ToolCallBeginPayload {
+            agent_code: agent_code.to_string(),
+            tool_name: tool_name.to_string(),
+            argument_keys: argument_keys.to_vec(),
+        });
+    }
+
+    fn emit_tool_call_end(
+        &self,
+        agent_code: &str,
+        tool_name: &str,
+        result_keys: &[String],
+        status: &str,
+        latency_ms: u64,
+    ) {
+        self.write_trace_event(apxm_core::events::payload::ToolCallEndPayload {
+            agent_code: agent_code.to_string(),
+            tool_name: tool_name.to_string(),
+            result_keys: result_keys.to_vec(),
+            status: status.to_string(),
+            latency_ms,
+        });
+    }
+
+    fn emit_subagent_done(
+        &self,
+        agent_code: &str,
+        total_tool_calls: usize,
+        input_tokens_total: usize,
+        output_tokens_total: usize,
+        evidence_excerpt: Option<&str>,
+    ) {
+        self.write_trace_event(apxm_core::events::payload::SubagentDonePayload {
+            agent_code: agent_code.to_string(),
+            total_tool_calls,
+            usage_total: apxm_core::events::payload::UsagePayload {
+                input_tokens: input_tokens_total,
+                output_tokens: output_tokens_total,
+            },
+            evidence_excerpt: evidence_excerpt.map(str::to_string),
+        });
+    }
+
+    fn emit_subagent_failed(&self, agent_code: &str, error_class: &str, error_message_safe: &str) {
+        self.write_trace_event(apxm_core::events::payload::SubagentFailedPayload {
+            agent_code: agent_code.to_string(),
+            error_class: error_class.to_string(),
+            error_message_safe: error_message_safe.to_string(),
+        });
+    }
+
+    fn emit_agent_message(
+        &self,
+        text: &str,
+        item_id: Option<&str>,
+        response_id: Option<&str>,
+        input_tokens: Option<usize>,
+        output_tokens: Option<usize>,
+    ) {
+        let usage = match (input_tokens, output_tokens) {
+            (Some(input_tokens), Some(output_tokens)) => {
+                Some(apxm_core::events::payload::UsagePayload {
+                    input_tokens,
+                    output_tokens,
+                })
+            }
+            _ => None,
+        };
+        self.write_trace_event(apxm_core::events::payload::AgentMessagePayload {
+            text: text.to_string(),
+            item_id: item_id.map(str::to_string),
+            response_id: response_id.map(str::to_string),
+            usage,
+        });
+    }
+}
+
+#[cfg(test)]
+mod layer2_tests {
+    use super::*;
+
+    fn read_trace_kinds(session_dir: &Path) -> Vec<String> {
+        let trace_path = session_dir.join(constants::session::files::TRACE);
+        let contents = fs::read_to_string(trace_path).unwrap_or_default();
+        contents
+            .lines()
+            .filter_map(|line| serde_json::from_str::<serde_json::Value>(line).ok())
+            .filter_map(|value| {
+                value
+                    .pointer("/payload/kind")
+                    .and_then(|k| k.as_str())
+                    .map(str::to_string)
+            })
+            .collect()
+    }
+
+    /// Positive: every Layer-2 hook on `SessionEventEmitter` — the emitter
+    /// backing `apxm execute`/`apxm workflow` — now writes a real trace
+    /// frame instead of silently no-op'ing.
+    #[test]
+    fn session_event_emitter_delivers_all_layer2_kinds() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let emitter = SessionEventEmitter::new(dir.path(), "trace-1".to_string(), None, None)
+            .expect("emitter");
+
+        emitter.emit_turn_started("exec-1", Some("turn-1"), Some("Cleo"));
+        emitter.emit_turn_complete("exec-1", 100, true);
+        emitter.emit_subagent_spawn_begin(
+            "agent-1",
+            Some("Agent One"),
+            None,
+            None,
+            None,
+            Some("span-0"),
+        );
+        emitter.emit_subagent_spawn_end("agent-1");
+        emitter.emit_tool_call_begin("agent-1", "web_search", &["q".to_string()]);
+        emitter.emit_tool_call_end("agent-1", "web_search", &["r".to_string()], "ok", 12);
+        emitter.emit_agent_message("final answer", None, None, Some(1), Some(2));
+
+        let kinds = read_trace_kinds(dir.path());
+        for expected in [
+            "turn_started",
+            "turn_complete",
+            "subagent_spawn_begin",
+            "subagent_spawn_end",
+            "tool_call_begin",
+            "tool_call_end",
+            "agent_message",
+        ] {
+            assert!(
+                kinds.iter().any(|k| k == expected),
+                "expected {expected} to be delivered, got {kinds:?}"
+            );
+        }
+    }
 }

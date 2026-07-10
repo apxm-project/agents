@@ -65,6 +65,8 @@ export enum CoreEventKind {
   CHECKPOINT_SAVED = "checkpoint_saved",
   CHECKPOINT_RESTORED = "checkpoint_restored",
   SCHEDULER_DECISION = "scheduler_decision",
+  MODEL_ROUTE_DECISION = "model_route_decision",
+  AGENT_ROUTE_DECISION = "agent_route_decision",
   HEAD_OF_LINE_BLOCK = "head_of_line_block",
   GPU_UTILIZATION = "gpu_utilization",
   TOKEN_USAGE = "token_usage",
@@ -128,14 +130,16 @@ export const MEMORY_WRITE = kind(CoreEventKind.MEMORY_WRITE, EventCategoryKind.O
 export const CHECKPOINT_SAVED = kind(CoreEventKind.CHECKPOINT_SAVED, EventCategoryKind.LIFECYCLE);
 export const CHECKPOINT_RESTORED = kind(CoreEventKind.CHECKPOINT_RESTORED, EventCategoryKind.LIFECYCLE);
 export const SCHEDULER_DECISION = kind(CoreEventKind.SCHEDULER_DECISION, EventCategoryKind.OBSERVABILITY);
+export const MODEL_ROUTE_DECISION = kind(CoreEventKind.MODEL_ROUTE_DECISION, EventCategoryKind.OBSERVABILITY);
+export const AGENT_ROUTE_DECISION = kind(CoreEventKind.AGENT_ROUTE_DECISION, EventCategoryKind.OBSERVABILITY);
 export const HEAD_OF_LINE_BLOCK = kind(CoreEventKind.HEAD_OF_LINE_BLOCK, EventCategoryKind.OBSERVABILITY);
 export const GPU_UTILIZATION = kind(CoreEventKind.GPU_UTILIZATION, EventCategoryKind.OBSERVABILITY);
 export const TOKEN_USAGE = kind(CoreEventKind.TOKEN_USAGE, EventCategoryKind.OBSERVABILITY);
 export const MEMOIZATION_HIT = kind(CoreEventKind.MEMOIZATION_HIT, EventCategoryKind.OBSERVABILITY);
 export const ERROR = kind(CoreEventKind.ERROR, EventCategoryKind.ERROR, true);
-export const AGENT_SPAWNED = kind(CoreEventKind.AGENT_SPAWNED, EventCategoryKind.AGENT, true);
-export const COMMUNICATE_DISPATCHED = kind(CoreEventKind.COMMUNICATE_DISPATCHED, EventCategoryKind.AGENT, true);
-export const GRAPH_EDGE = kind(CoreEventKind.GRAPH_EDGE, EventCategoryKind.TOPOLOGY, true);
+export const AGENT_SPAWNED = kind(CoreEventKind.AGENT_SPAWNED, EventCategoryKind.AGENT);
+export const COMMUNICATE_DISPATCHED = kind(CoreEventKind.COMMUNICATE_DISPATCHED, EventCategoryKind.AGENT);
+export const GRAPH_EDGE = kind(CoreEventKind.GRAPH_EDGE, EventCategoryKind.TOPOLOGY);
 export const CONTEXT_COMPACTED = kind(CoreEventKind.CONTEXT_COMPACTED, EventCategoryKind.OBSERVABILITY);
 export const MODEL_REROUTED = kind(CoreEventKind.MODEL_REROUTED, EventCategoryKind.LIFECYCLE);
 export const CANCELLED = kind(CoreEventKind.CANCELLED, EventCategoryKind.ERROR, true);
@@ -191,6 +195,8 @@ export const CORE_EVENT_KINDS = [
   CHECKPOINT_SAVED,
   CHECKPOINT_RESTORED,
   SCHEDULER_DECISION,
+  MODEL_ROUTE_DECISION,
+  AGENT_ROUTE_DECISION,
   HEAD_OF_LINE_BLOCK,
   GPU_UTILIZATION,
   TOKEN_USAGE,
