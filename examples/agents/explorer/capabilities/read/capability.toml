@@ -1,0 +1,6 @@
+id = "read"
+description = "Read source files only from the session workspace."
+kind = "builtin"
+read_only = true
+scope = "session_workspace"
+root = "."

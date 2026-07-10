@@ -1,0 +1,5 @@
+capability = "write"
+decision = "ask"
+approval_posture = "confirm"
+approval_scope = "session"
+reason = "File mutation changes the session workspace."
