@@ -31,6 +31,16 @@ pub mod env {
     pub const APXM_MOCK_BACKEND: &str = "APXM_MOCK_BACKEND";
     /// Configures mock backend latency in milliseconds.
     pub const APXM_MOCK_LATENCY_MS: &str = "APXM_MOCK_LATENCY_MS";
+    /// Path to a JSON script of ordered `{"contains": ..., "response": ...}`
+    /// pattern rules (plus an optional top-level `"default"` string) that
+    /// `configure_llm_registry` loads into the mock backend via
+    /// `MockLLMBackend::when_prompt_contains`, so a multi-turn scripted
+    /// transcript (context injection -> tool use -> compaction) gets
+    /// distinct deterministic answers per turn instead of one static
+    /// response (`docs/plans/tasks/W5.1.md`). Only read when
+    /// `APXM_MOCK_BACKEND` is also set; malformed/missing files are a hard
+    /// error, never a silent fall-back to the single default response.
+    pub const APXM_MOCK_SCRIPT_PATH: &str = "APXM_MOCK_SCRIPT_PATH";
     /// Disables LLM response caching for this execution.
     pub const APXM_NO_CACHE: &str = "APXM_NO_CACHE";
     /// Public base URL the APXM server advertises (e.g. http://host:18800).

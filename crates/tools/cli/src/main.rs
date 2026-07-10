@@ -191,6 +191,7 @@ async fn run_cli(cli: Cli) -> Result<()> {
             emit_session,
             no_emit_session,
             emit_profile,
+            session_id,
         } => {
             run_command(
                 input,
@@ -202,6 +203,7 @@ async fn run_cli(cli: Cli) -> Result<()> {
                 emit_metrics_level,
                 resolve_emit_session(emit_session, no_emit_session),
                 emit_profile,
+                session_id,
             )
             .await
         }

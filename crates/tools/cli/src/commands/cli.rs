@@ -163,6 +163,15 @@ pub enum Commands {
         /// Emit execution profile JSON for profile-guided optimization
         #[arg(long)]
         emit_profile: Option<PathBuf>,
+        /// Reuse a stable session id across separate `apxm run` invocations of
+        /// the same artifact so session-scoped state that IS durable across a
+        /// process restart (the session ledger's turn/tool counters, W2.5; a
+        /// compacted conversation summary's LTM copy, W2.7) resumes instead of
+        /// resetting. Session-scoped in-memory state (STM) is deliberately
+        /// volatile and does NOT survive a restart even with the same id —
+        /// only the durable stores keyed by it do.
+        #[arg(long = "session-id", value_name = "ID")]
+        session_id: Option<String>,
     },
     /// Diagnose compiler/runtime dependencies
     Doctor,

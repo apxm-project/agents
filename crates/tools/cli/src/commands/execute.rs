@@ -480,6 +480,7 @@ pub async fn execute_command(
 }
 
 #[cfg(feature = "driver")]
+#[allow(clippy::too_many_arguments)]
 pub async fn run_command(
     input: PathBuf,
     args: Vec<String>,
@@ -490,6 +491,7 @@ pub async fn run_command(
     emit_metrics_level: apxm_core::types::MetricsLevel,
     emit_session: Option<Option<PathBuf>>,
     emit_profile: Option<PathBuf>,
+    session_id: Option<String>,
 ) -> Result<()> {
     use apxm_artifact::Artifact;
     use apxm_driver::runtime::RuntimeExecutor;
@@ -571,9 +573,10 @@ pub async fn run_command(
 
     // Execute artifact with args + emitter
     let result = match runtime
-        .execute_artifact_with_emitter(
+        .execute_artifact_with_session_id_and_emitter(
             artifact,
             args,
+            session_id,
             emitter_dyn,
             writer
                 .as_ref()

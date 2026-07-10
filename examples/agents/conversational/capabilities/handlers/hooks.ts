@@ -34,18 +34,12 @@ export const redact_tool_results = hook({
   return ctx.replaceResult(text);
 });
 
-export const compact_conversation = hook({
-  on: LifecycleEvent.POST_TURN,
-  mode: HookMode.OBSERVE,
-})((ctx: HookContext) => {
-  const window = ctx.recall_window(40);
-  if (ctx.count_tokens(window) < 12_000) {
-    return null;
-  }
-  const summary = ctx.ask(
-    `Update the running conversation summary. Keep durable user goals, decisions, constraints, and open questions.\n\n${window}`,
-    "You maintain compact conversational memory.",
-  );
-  ctx.umem(SUMMARY_KEY, summary);
-  return null;
-});
+// Bounded-context compaction is now the W2.7 runtime default
+// (`[runtime] compaction_policy` in agent.toml), not a hand-rolled
+// `post_turn` hook. The retired version called `ctx.count_tokens`/`ctx.ask`
+// itself on every turn (the same DIY pattern as
+// examples/python/conversational/controllable_agent.py's pre-W2.7 shape);
+// the runtime mechanism reuses the shipped bpe estimator and emits
+// `context_window_warning`/`context_compacted` events instead of folding
+// silently. See `examples/agents/conversational-opt-out` for the variant
+// with `compaction_policy` entirely absent (the opt-out dial).

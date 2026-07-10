@@ -1,15 +1,5 @@
 [
   {
-    "handler_id": "sha256:32cab73ca341e4936e29d4539cd0c891e2339da1e42eb60cd7688eb6d27588cc",
-    "module": "capabilities/handlers/hooks",
-    "qualname": "compact_conversation",
-    "name": "hook",
-    "event": "post_turn",
-    "match": "*",
-    "mode": "observe",
-    "source_file": "capabilities/handlers/hooks.ts"
-  },
-  {
     "handler_id": "sha256:06bb3640206c7d1c673f5c6d11f3fd05b6faaea62e380904978ab16a1847b184",
     "module": "capabilities/handlers/hooks",
     "qualname": "inject_context",
