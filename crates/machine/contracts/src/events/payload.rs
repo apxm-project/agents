@@ -601,7 +601,9 @@ impl_event_payload!(ToolEndPayload, kind::TOOL_END);
 //
 // Emitted alongside OPERATION_START/OPERATION_END so observers can
 // reconstruct an agent/tool dispatch tree without scraping op
-// attributes. All three are terminal events (no _delta partner).
+// attributes. None of the three is a terminal event (no _delta partner,
+// but they describe topology resolved mid-run, not the end of a
+// turn/session/execution — see `EventKind::is_terminal` on each).
 // ───────────────────────────────────────────────────────────────────
 
 /// A new agent was registered/spawned by a SPAWN_AGENT op.

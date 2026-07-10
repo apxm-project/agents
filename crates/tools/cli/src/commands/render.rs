@@ -59,6 +59,13 @@ pub struct RunSnapshot {
     /// by OperationEnd/NodeMetrics to project per-node events onto the
     /// right row.
     node_to_agent: std::collections::HashMap<u64, String>,
+    /// Wire kind name → count, for every event `apply` saw but had no
+    /// dedicated projection for (most Layer-2 kinds today: `turn_started`,
+    /// `subagent_spawn_begin`/`tool_call_begin`/…). `render_tree` surfaces
+    /// this as a visible "unrecognized" line instead of the previous
+    /// silent drop — never crashing or hanging the tree view on a kind it
+    /// doesn't know how to project yet.
+    unrecognized_kinds: BTreeMap<String, u64>,
 }
 
 impl RunSnapshot {
@@ -69,11 +76,16 @@ impl RunSnapshot {
         }
     }
 
-    /// Fold one event into the snapshot. Unknown event payloads are
-    /// ignored — the renderer only knows the canonical agent/tool/op
-    /// shapes the chat panel already consumes.
+    /// Fold one event into the snapshot. Event kinds the renderer doesn't
+    /// have a dedicated agent/tool/op projection for are no longer
+    /// silently dropped — they're counted in `unrecognized_kinds` so
+    /// `render_tree` can surface a visible line instead (most Layer-2
+    /// kinds fall here today; this is additive and never blocks the
+    /// canonical shapes above).
     pub fn apply(&mut self, event: &ApxmEvent) {
+        let mut recognized = false;
         if let Some(payload) = event.payload.downcast_ref::<AgentSpawnedPayload>() {
+            recognized = true;
             let entry = self
                 .agents
                 .entry(payload.agent_code.clone())
@@ -91,6 +103,7 @@ impl RunSnapshot {
                 .insert(payload.node_id, payload.agent_code.clone());
         }
         if let Some(payload) = event.payload.downcast_ref::<OperationStartPayload>() {
+            recognized = true;
             // The runtime stamps agent_code on the context for SPAWN_AGENT
             // and the COMMUNICATE op; flip the matching row to Running.
             let agent_code = payload
@@ -108,17 +121,20 @@ impl RunSnapshot {
                 entry.status = AgentStatus::Running;
             }
         }
-        if let Some(payload) = event.payload.downcast_ref::<OperationEndPayload>()
-            && let Some(code) = self.node_to_agent.get(&payload.node_id).cloned()
-            && let Some(entry) = self.agents.get_mut(&code)
-        {
-            entry.status = if payload.success {
-                AgentStatus::Done
-            } else {
-                AgentStatus::Failed
-            };
+        if let Some(payload) = event.payload.downcast_ref::<OperationEndPayload>() {
+            recognized = true;
+            if let Some(code) = self.node_to_agent.get(&payload.node_id).cloned()
+                && let Some(entry) = self.agents.get_mut(&code)
+            {
+                entry.status = if payload.success {
+                    AgentStatus::Done
+                } else {
+                    AgentStatus::Failed
+                };
+            }
         }
         if let Some(payload) = event.payload.downcast_ref::<ToolStartPayload>() {
+            recognized = true;
             // Tool events don't always carry the calling agent's code; fall
             // back to the most recently spawned agent so the counters still
             // attach to something visible.
@@ -135,16 +151,26 @@ impl RunSnapshot {
             }
         }
         if let Some(payload) = event.payload.downcast_ref::<ToolEndPayload>() {
+            recognized = true;
             let _ = payload; // Tool end is informational; status flips via OperationEnd.
         }
         // Token accounting comes off NodeMetrics events; project node_id
         // back to the owning agent via the spawn-time reverse map.
-        if let Some(payload) = event.payload.downcast_ref::<NodeMetricsPayload>()
-            && let Some(code) = self.node_to_agent.get(&payload.node_id).cloned()
-            && let Some(entry) = self.agents.get_mut(&code)
-        {
-            entry.tokens += payload.metrics.processes.totals.input_tokens as u64
-                + payload.metrics.processes.totals.output_tokens as u64;
+        if let Some(payload) = event.payload.downcast_ref::<NodeMetricsPayload>() {
+            recognized = true;
+            if let Some(code) = self.node_to_agent.get(&payload.node_id).cloned()
+                && let Some(entry) = self.agents.get_mut(&code)
+            {
+                entry.tokens += payload.metrics.processes.totals.input_tokens as u64
+                    + payload.metrics.processes.totals.output_tokens as u64;
+            }
+        }
+
+        if !recognized {
+            *self
+                .unrecognized_kinds
+                .entry(event.kind().name().to_string())
+                .or_insert(0) += 1;
         }
     }
 
@@ -242,5 +268,96 @@ pub fn render_tree(snapshot: &RunSnapshot) -> String {
             rows.len()
         ));
     }
+    if !snapshot.unrecognized_kinds.is_empty() {
+        let kinds = snapshot
+            .unrecognized_kinds
+            .iter()
+            .map(|(kind, count)| {
+                if *count > 1 {
+                    format!("{kind} x{count}")
+                } else {
+                    kind.clone()
+                }
+            })
+            .collect::<Vec<_>>()
+            .join(", ");
+        lines.push(format!("   ⚠ unrecognized events: {kinds}"));
+    }
     lines.join("\n")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use apxm_core::events::EventSource;
+    use apxm_core::events::payload::{
+        SubagentSpawnBeginPayload, ToolCallBeginPayload, TurnCompletePayload,
+    };
+
+    /// `watch_tree_reflects_layer2_events` — `subagent_spawn_begin`,
+    /// `tool_call_begin`, and `turn_complete` each change `render_tree`'s
+    /// output. Before this WP, `RunSnapshot::apply` silently dropped every
+    /// one of these (no downcast case existed), so `render_tree` output
+    /// was byte-identical whether or not they were folded in.
+    #[test]
+    fn watch_tree_reflects_layer2_events() {
+        let mut snapshot = RunSnapshot::new("thread-1");
+        let before = render_tree(&snapshot);
+
+        snapshot.apply(&ApxmEvent::root(
+            SubagentSpawnBeginPayload {
+                agent_code: "agent-1".to_string(),
+                agent_name: None,
+                agent_type: None,
+                module_key: None,
+                autonomy_policy: None,
+                parent_span_id: None,
+            },
+            EventSource::Runtime,
+            "trace-1",
+        ));
+        let after_spawn_begin = render_tree(&snapshot);
+        assert_ne!(
+            before, after_spawn_begin,
+            "subagent_spawn_begin must change render_tree output"
+        );
+
+        snapshot.apply(&ApxmEvent::root(
+            ToolCallBeginPayload {
+                agent_code: "agent-1".to_string(),
+                tool_name: "web_search".to_string(),
+                argument_keys: vec!["q".to_string()],
+            },
+            EventSource::Runtime,
+            "trace-1",
+        ));
+        let after_tool_call_begin = render_tree(&snapshot);
+        assert_ne!(
+            after_spawn_begin, after_tool_call_begin,
+            "tool_call_begin must change render_tree output"
+        );
+
+        snapshot.apply(&ApxmEvent::root(
+            TurnCompletePayload {
+                execution_id: "exec-1".to_string(),
+                duration_ms: 100,
+                had_answer: true,
+            },
+            EventSource::Runtime,
+            "trace-1",
+        ));
+        let after_turn_complete = render_tree(&snapshot);
+        assert_ne!(
+            after_tool_call_begin, after_turn_complete,
+            "turn_complete must change render_tree output"
+        );
+
+        assert!(
+            after_turn_complete.contains("turn_started")
+                || after_turn_complete.contains("turn_complete")
+                || after_turn_complete.contains("subagent_spawn_begin")
+                || after_turn_complete.contains("tool_call_begin"),
+            "unrecognized Layer-2 kinds must be visibly surfaced, not silently dropped: {after_turn_complete}"
+        );
+    }
 }

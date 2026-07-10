@@ -163,10 +163,15 @@ pub const ERROR: EventKind = EventKind::new("error", EventCategory::Error, true)
 // Multi-agent / topology event kinds ( — per-graph-node
 // enrichment). These are emitted in addition to OPERATION_START so
 // observers can reconstruct an agent/tool tree without rederiving it.
-pub const AGENT_SPAWNED: EventKind = EventKind::new("agent_spawned", EventCategory::Agent, true);
+// None of these three are terminal: they describe topology resolved
+// mid-run, not the end of a turn/session/execution. Marking them
+// terminal (as before) makes any consumer that trusts `is_terminal()`
+// close its feed on a mid-run topology event, hiding everything after —
+// strictly worse than under-classifying, since it looks like success.
+pub const AGENT_SPAWNED: EventKind = EventKind::new("agent_spawned", EventCategory::Agent, false);
 pub const COMMUNICATE_DISPATCHED: EventKind =
-    EventKind::new("communicate_dispatched", EventCategory::Agent, true);
-pub const GRAPH_EDGE: EventKind = EventKind::new("graph_edge", EventCategory::Topology, true);
+    EventKind::new("communicate_dispatched", EventCategory::Agent, false);
+pub const GRAPH_EDGE: EventKind = EventKind::new("graph_edge", EventCategory::Topology, false);
 
 // Session event kinds
 pub const CONTEXT_COMPACTED: EventKind =

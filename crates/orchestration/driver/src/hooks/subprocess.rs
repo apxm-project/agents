@@ -68,6 +68,17 @@ impl SubprocessHookEmitter {
     }
 }
 
+// `SubprocessHookEmitter` intentionally does not override the Layer-2
+// hooks (`emit_turn_started`/`emit_agent_message`/etc.). It is a
+// user-configured external-command dispatcher keyed off the fixed,
+// small `HookEvent` enum in `config.rs` (`ToolStart`, `ToolEnd`,
+// `GraphStart`, `GraphEnd`, `NodeStart`, `NodeComplete`, `NodeError`) —
+// adding Layer-2 support means growing that enum plus the user-facing
+// hook-config schema/docs, which is a config-surface change out of
+// scope for W1.5's wire-format fix (`EmitterAdapter`/
+// `SessionEventEmitter`/`MultiEmitter` are the production ApxmEvent
+// delivery paths this WP wires up). Left as no-op via the trait default
+// on purpose, not by omission.
 impl ExecutionEventEmitter for SubprocessHookEmitter {
     fn emit_llm_token(&self, _content: &str) {}
 
