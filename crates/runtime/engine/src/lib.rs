@@ -80,6 +80,12 @@ pub mod process;
 pub mod process_table;
 pub mod python_tools;
 mod runtime;
+/// Shared script-artifact admission policy (`python_tools` /
+/// `typescript_tools` trust+sandbox gate) — consulted identically by this
+/// crate's `Runtime`, the driver's attach step, and the server's raw execute
+/// admission so all three embeddings enforce one policy. See
+/// `docs/plans/tasks/W1.6.md` in the coordinator workspace.
+pub mod script_admission;
 pub mod typescript_tools;
 // `sandbox` moved to `apxm-capability-iface` — it had zero dependencies on
 // other `apxm-runtime` internals, so it was a clean relocation. Re-exported
@@ -141,6 +147,7 @@ pub use process_table::{
 pub use runtime::{
     ExecutionOutcome, LlmToolDispatchConfig, Runtime, RuntimeConfig, RuntimeExecutionResult,
 };
+pub use script_admission::{script_artifacts_trusted, script_sandbox_required};
 pub use scheduler::{DataflowScheduler, SchedulerConfig};
 pub use thread::{AgentThread, ThreadId, ThreadState};
 
