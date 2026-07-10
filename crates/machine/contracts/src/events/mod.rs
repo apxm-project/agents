@@ -9,6 +9,8 @@ pub mod event;
 pub mod kind;
 pub mod payload;
 pub mod registry;
+#[cfg(test)]
+mod schema_parity;
 pub mod sinks;
 #[cfg(test)]
 mod tests;
