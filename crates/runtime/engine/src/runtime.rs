@@ -471,12 +471,13 @@ impl Runtime {
         &self.sandbox_registry
     }
 
-    /// Select an OS-isolating sandbox backend for the python tool/hook worker,
-    /// gated on the `APXM_SANDBOX_PYTHON` opt-in so default behavior is
-    /// unchanged. Returns `None` when the opt-in is unset or no isolating
-    /// backend (e.g. bubblewrap) is available — the worker then runs directly.
+    /// Select an OS-isolating sandbox backend for the python/typescript
+    /// tool/hook worker, gated on the `APXM_SANDBOX_PYTHON` opt-in so default
+    /// behavior is unchanged. Returns `None` when the opt-in is unset or no
+    /// isolating backend (e.g. bubblewrap) is available — the worker then
+    /// runs directly.
     fn python_worker_sandbox(&self) -> Option<Arc<dyn crate::sandbox::SandboxBackend>> {
-        if !Self::python_sandbox_required() {
+        if !Self::script_sandbox_required() {
             return None;
         }
         self.sandbox_registry
@@ -484,12 +485,15 @@ impl Runtime {
             .ok()
     }
 
-    /// Whether the operator requires the python worker to be sandboxed
-    /// (`APXM_SANDBOX_PYTHON`). When true the worker spawn fails closed if no
-    /// OS-isolating backend is available, so the trust gate's isolation
-    /// guarantee cannot silently fail open.
-    fn python_sandbox_required() -> bool {
-        std::env::var_os("APXM_SANDBOX_PYTHON").is_some()
+    /// Whether the operator requires script workers (Python or TypeScript)
+    /// to be sandboxed (`APXM_SANDBOX_PYTHON`). When true the worker spawn
+    /// fails closed if no OS-isolating backend is available, so the trust
+    /// gate's isolation guarantee cannot silently fail open. Delegates to
+    /// the shared [`crate::script_admission`] policy so this crate, the
+    /// driver's attach step, and the server's admission all read one
+    /// definition.
+    fn script_sandbox_required() -> bool {
+        crate::script_admission::script_sandbox_required()
     }
 
     /// Attach a ModelRouter to the runtime.
@@ -674,12 +678,12 @@ impl Runtime {
         let python_bridge = python_handler_bridge_from_artifact(
             &artifact,
             self.python_worker_sandbox(),
-            Self::python_sandbox_required(),
+            Self::script_sandbox_required(),
         )?;
         let typescript_bridge = typescript_handler_bridge_from_artifact(
             &artifact,
             self.python_worker_sandbox(),
-            Self::python_sandbox_required(),
+            Self::script_sandbox_required(),
         )?;
         let entry_dag = find_entry_dag(&artifact)?;
 
@@ -1003,10 +1007,24 @@ impl Runtime {
         cancellation_token: Option<CancellationToken>,
         tool_credentials: Option<HashMap<String, String>>,
     ) -> Result<RuntimeExecutionResult, RuntimeError> {
-        if !Self::python_sandbox_required() && artifact_has_python_tools_section(&artifact) {
+        if !crate::script_admission::script_artifacts_trusted()
+            && artifact_has_python_tools_section(&artifact)
+        {
             return Err(RuntimeError::Capability {
                 capability: python_tools::CAPABILITY_NAME.to_string(),
-                message: "python tool artifacts require APXM_SANDBOX_PYTHON".to_string(),
+                message:
+                    "python tool artifacts require APXM_TRUST_PYTHON_ARTIFACTS and APXM_SANDBOX_PYTHON"
+                        .to_string(),
+            });
+        }
+        if !crate::script_admission::script_artifacts_trusted()
+            && artifact_has_typescript_tools_section(&artifact)
+        {
+            return Err(RuntimeError::Capability {
+                capability: typescript_tools::CAPABILITY_NAME.to_string(),
+                message:
+                    "typescript tool artifacts require APXM_TRUST_PYTHON_ARTIFACTS and APXM_SANDBOX_PYTHON"
+                        .to_string(),
             });
         }
 
@@ -1019,12 +1037,12 @@ impl Runtime {
         let python_bridge = python_handler_bridge_from_artifact(
             &artifact,
             self.python_worker_sandbox(),
-            Self::python_sandbox_required(),
+            Self::script_sandbox_required(),
         )?;
         let typescript_bridge = typescript_handler_bridge_from_artifact(
             &artifact,
             self.python_worker_sandbox(),
-            Self::python_sandbox_required(),
+            Self::script_sandbox_required(),
         )?;
         let entry_dag = find_entry_dag(&artifact)?;
         let arg_values = bind_args(&entry_dag, args)?;
@@ -1182,10 +1200,24 @@ impl Runtime {
         session_dir: Option<String>,
         extra_metadata: HashMap<String, String>,
     ) -> Result<ExecutionOutcome, RuntimeError> {
-        if !Self::python_sandbox_required() && artifact_has_python_tools_section(&artifact) {
+        if !crate::script_admission::script_artifacts_trusted()
+            && artifact_has_python_tools_section(&artifact)
+        {
             return Err(RuntimeError::Capability {
                 capability: python_tools::CAPABILITY_NAME.to_string(),
-                message: "python tool artifacts require APXM_SANDBOX_PYTHON".to_string(),
+                message:
+                    "python tool artifacts require APXM_TRUST_PYTHON_ARTIFACTS and APXM_SANDBOX_PYTHON"
+                        .to_string(),
+            });
+        }
+        if !crate::script_admission::script_artifacts_trusted()
+            && artifact_has_typescript_tools_section(&artifact)
+        {
+            return Err(RuntimeError::Capability {
+                capability: typescript_tools::CAPABILITY_NAME.to_string(),
+                message:
+                    "typescript tool artifacts require APXM_TRUST_PYTHON_ARTIFACTS and APXM_SANDBOX_PYTHON"
+                        .to_string(),
             });
         }
 
@@ -1198,12 +1230,12 @@ impl Runtime {
         let python_bridge = python_handler_bridge_from_artifact(
             &artifact,
             self.python_worker_sandbox(),
-            Self::python_sandbox_required(),
+            Self::script_sandbox_required(),
         )?;
         let typescript_bridge = typescript_handler_bridge_from_artifact(
             &artifact,
             self.python_worker_sandbox(),
-            Self::python_sandbox_required(),
+            Self::script_sandbox_required(),
         )?;
         let entry_dag = find_entry_dag(&artifact)?;
         let arg_values = bind_args(&entry_dag, args)?;
@@ -1535,6 +1567,17 @@ fn artifact_has_python_tools_section(artifact: &Artifact) -> bool {
         .any(|section| section.kind == PYTHON_TOOLS_SECTION_KIND)
 }
 
+/// Mirrors [`artifact_has_python_tools_section`] for the TypeScript sidecar
+/// so both languages get the identical fail-closed section-presence
+/// rejection in [`Runtime::execute_artifact_inner`] /
+/// [`Runtime::execute_artifact_inner_or_park`].
+fn artifact_has_typescript_tools_section(artifact: &Artifact) -> bool {
+    artifact
+        .sections()
+        .iter()
+        .any(|section| section.kind == TYPESCRIPT_TOOLS_SECTION_KIND)
+}
+
 /// Extract a `PythonHandlerBridge` from an artifact's `python_tools` section, if present.
 ///
 /// The section's `data` field is the UTF-8 JSON array produced by the Python
@@ -1832,25 +1875,133 @@ mod tests {
             .unwrap();
     }
 
-    #[tokio::test]
-    async fn python_tool_sections_require_sandbox_flag() {
-        let runtime = Runtime::new(RuntimeConfig::in_memory()).await.unwrap();
-        let mut artifact = artifact(vec![single_node_dag(
+    fn artifact_with_script_section(section_kind: &str) -> Artifact {
+        let mut art = artifact(vec![single_node_dag(
             "main",
             true,
             Node::new(1, AISOperationType::Nop),
         )]);
-        artifact.add_section(ArtifactSection {
-            kind: python_tools::CAPABILITY_NAME.to_string(),
+        art.add_section(ArtifactSection {
+            kind: section_kind.to_string(),
             data: b"[]".to_vec(),
         });
+        art
+    }
+
+    #[tokio::test]
+    async fn python_tool_sections_require_sandbox_flag() {
+        let _lock = crate::script_admission::test_support::ENV_LOCK
+            .lock()
+            .unwrap();
+        let _guard = crate::script_admission::test_support::EnvGuard;
+        crate::script_admission::test_support::set_vars(false, false);
+
+        let runtime = Runtime::new(RuntimeConfig::in_memory()).await.unwrap();
+        let artifact = artifact_with_script_section(python_tools::CAPABILITY_NAME);
 
         let err = runtime
             .execute_artifact_with_args(artifact, Vec::new())
             .await
-            .expect_err("python section must fail closed without sandbox opt-in");
+            .expect_err("python section must fail closed without trust+sandbox opt-in");
 
         assert!(err.to_string().contains("APXM_SANDBOX_PYTHON"));
+    }
+
+    /// Mirrors [`python_tool_sections_require_sandbox_flag`] for the
+    /// TypeScript sidecar — before W1.6 there was no equivalent rejection at
+    /// all, so an untrusted TypeScript section ran unsandboxed by default.
+    #[tokio::test]
+    async fn typescript_tool_sections_require_sandbox_flag() {
+        let _lock = crate::script_admission::test_support::ENV_LOCK
+            .lock()
+            .unwrap();
+        let _guard = crate::script_admission::test_support::EnvGuard;
+        crate::script_admission::test_support::set_vars(false, false);
+
+        let runtime = Runtime::new(RuntimeConfig::in_memory()).await.unwrap();
+        let artifact = artifact_with_script_section(typescript_tools::CAPABILITY_NAME);
+
+        let err = runtime
+            .execute_artifact_with_args(artifact, Vec::new())
+            .await
+            .expect_err("typescript section must fail closed without trust+sandbox opt-in");
+
+        assert!(err.to_string().contains("APXM_SANDBOX_PYTHON"));
+    }
+
+    /// Environment matrix (W1.6 required evidence, Runtime layer): a script
+    /// section (Python or TypeScript) is admitted only when BOTH
+    /// `APXM_TRUST_PYTHON_ARTIFACTS` and `APXM_SANDBOX_PYTHON` are set —
+    /// trust-only and sandbox-only must fail closed identically to no vars
+    /// at all. This is the guard that also protects the CLI's precompiled
+    /// `.apxmobj` path, which never passes through the driver's attach gate
+    /// or the Server's admission route.
+    #[tokio::test]
+    async fn env_matrix_script_sections_admitted_only_when_fully_trusted() {
+        let _lock = crate::script_admission::test_support::ENV_LOCK
+            .lock()
+            .unwrap();
+        let _guard = crate::script_admission::test_support::EnvGuard;
+
+        for (trust, sandbox, expect_admitted) in [
+            (false, false, false),
+            (true, false, false),
+            (false, true, false),
+            (true, true, true),
+        ] {
+            crate::script_admission::test_support::set_vars(trust, sandbox);
+            for section_kind in [
+                python_tools::CAPABILITY_NAME,
+                typescript_tools::CAPABILITY_NAME,
+            ] {
+                let runtime = Runtime::new(RuntimeConfig::in_memory()).await.unwrap();
+                let artifact = artifact_with_script_section(section_kind);
+                let result = runtime.execute_artifact_with_args(artifact, Vec::new()).await;
+                assert_eq!(
+                    result.is_ok(),
+                    expect_admitted,
+                    "trust={trust} sandbox={sandbox} section={section_kind}: \
+                     expected admitted={expect_admitted}, got {result:?}"
+                );
+            }
+        }
+    }
+
+    /// Recovery: a rejection under no vars is not sticky/cached — setting
+    /// both vars and re-running the identical artifact on the same runtime
+    /// instance succeeds, proving the gate is a pure function of env state.
+    #[tokio::test]
+    async fn script_admission_recovers_after_trust_and_sandbox_are_set() {
+        let _lock = crate::script_admission::test_support::ENV_LOCK
+            .lock()
+            .unwrap();
+        let _guard = crate::script_admission::test_support::EnvGuard;
+
+        let runtime = Runtime::new(RuntimeConfig::in_memory()).await.unwrap();
+
+        crate::script_admission::test_support::set_vars(false, false);
+        let rejected = runtime
+            .execute_artifact_with_args(
+                artifact_with_script_section(typescript_tools::CAPABILITY_NAME),
+                Vec::new(),
+            )
+            .await;
+        assert!(
+            rejected.is_err(),
+            "expected no-vars rejection before recovery"
+        );
+
+        crate::script_admission::test_support::set_vars(true, true);
+        let admitted = runtime
+            .execute_artifact_with_args(
+                artifact_with_script_section(typescript_tools::CAPABILITY_NAME),
+                Vec::new(),
+            )
+            .await;
+        assert!(
+            admitted.is_ok(),
+            "expected identical artifact to be admitted once both vars are set: {admitted:?}"
+        );
     }
 
     // --  narrow park observability: `execute_artifact_with_session_emitter_and_metadata_or_park` --
