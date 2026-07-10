@@ -1,0 +1,44 @@
+capabilities = [
+    "bash",
+    "edit",
+    "read",
+    "test",
+    "write",
+]
+description = "A confined coding agent with explicit approvals and a read-only explorer child."
+display_name = "Coder"
+domain = "software"
+id = "coder"
+kind = "agent"
+license = "MIT"
+schema_version = "apxm.agent.v1"
+skills = []
+version = "0.1.0"
+
+[compile]
+frontend = "typescript"
+
+[[hooks]]
+event = "session_start"
+handler = "capabilities.handlers.hooks.restore_session"
+mode = "observe"
+
+[prompts]
+persona = "prompts/persona.md"
+safety = "prompts/safety.md"
+
+[runtime]
+checkpoint_mode = "snapshot"
+memory_space = "stm"
+resume_hook = "session_start"
+session_prefix = "coder"
+tool_output_max_tokens = "8000"
+tool_output_trim = "deterministic-prefix"
+
+[runtime.loop]
+mode = "host"
+rearm = true
+turn_param = "user_message"
+
+[source]
+type = "local"
