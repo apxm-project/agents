@@ -485,4 +485,113 @@ mod tests {
                 .contains("params_json must be a JSON object")
         );
     }
+
+    /// **Approved protected-path write denial (required evidence, W1.9):** an
+    /// operator-set `blocked_paths` entry on `WriteCapability` is a floor a
+    /// consent `Approved` decision cannot reach. `enforce_write_boundary`
+    /// (the admission gate above) approves this call via the
+    /// `StubBroker`/`ConsentDecision::Approved` path — proving the eventual
+    /// denial below comes from `WriteCapability::validate_path_and_content`
+    /// running downstream, independent of and never overridden by the
+    /// approval outcome.
+    #[tokio::test]
+    async fn approved_write_to_protected_path_is_still_denied() {
+        use crate::aam::Aam;
+        use crate::capability::CapabilitySystem;
+        use crate::capability::builtins::{WriteCapability, WriteConfig};
+        use crate::memory::{MemoryConfig, MemorySystem};
+        use apxm_backends::LLMRegistry;
+        use apxm_core::types::consent::{ConsentBroker, ConsentDecision, PermissionPrompt};
+        use std::sync::Arc;
+        use std::time::Duration;
+
+        // Reuses the `StubBroker` fixture pattern from
+        // `apxm-capability`'s `interceptor.rs` tests: a `ConsentBroker` that
+        // always returns a fixed, caller-chosen decision.
+        struct StubBroker {
+            decision: ConsentDecision,
+        }
+
+        #[async_trait::async_trait]
+        impl ConsentBroker for StubBroker {
+            async fn request_consent(
+                &self,
+                _prompt: PermissionPrompt,
+                _timeout: Duration,
+            ) -> ConsentDecision {
+                self.decision.clone()
+            }
+        }
+
+        let base = tempfile::tempdir().expect("write base tempdir");
+        std::fs::create_dir_all(base.path().join("capabilities")).expect("mkdir capabilities");
+        let protected = base.path().join("capabilities").join("permissions.toml");
+
+        let memory = Arc::new(
+            MemorySystem::new(MemoryConfig::in_memory_ltm())
+                .await
+                .expect("memory"),
+        );
+        let aam = Aam::new();
+        let capability_system = Arc::new(CapabilitySystem::with_aam(aam.clone()));
+        capability_system
+            .register(Arc::new(WriteCapability::with_config(WriteConfig {
+                base_directory: Some(base.path().to_path_buf()),
+                blocked_paths: vec![protected.clone()],
+                ..Default::default()
+            })))
+            .expect("register write capability");
+
+        // Runtime-minted, active, mutating grant admitting a direct write to
+        // the `write` capability binding — the admission gate
+        // (`enforce_write_boundary`) requires this before it even asks the
+        // consent broker.
+        let grants = serde_json::json!([{
+            "grant_id": "grant_fixture",
+            "capability_binding": "write",
+            "operations": ["write"],
+            "expires_at": null,
+            "status": "active"
+        }])
+        .to_string();
+
+        let mut ctx =
+            ExecutionContext::new(memory, Arc::new(LLMRegistry::new()), capability_system, aam);
+        ctx.host_id = Some("test-host".to_string());
+        ctx.consent_broker = Arc::new(StubBroker {
+            decision: ConsentDecision::Approved(vec![]),
+        });
+        ctx.metadata.insert(
+            crate::metadata_keys::CAPABILITY_GRANTS.to_string(),
+            grants,
+        );
+
+        let mut node = Node::new(1, AISOperationType::InvCap);
+        node.set_attribute(
+            graph_attrs::CAPABILITY.to_string(),
+            Value::String("write".to_string()),
+        );
+        node.set_attribute(
+            graph_attrs::PARAMS_JSON.to_string(),
+            Value::String(
+                serde_json::json!({
+                    "file_path": "capabilities/permissions.toml",
+                    "content": "attacker-authored permissions"
+                })
+                .to_string(),
+            ),
+        );
+
+        let err = execute(&ctx, &node, vec![])
+            .await
+            .expect_err("write to a blocked_paths entry must be denied even when approved");
+        assert!(
+            err.to_string().contains("blocked by policy"),
+            "unexpected error: {err}"
+        );
+        assert!(
+            !protected.exists(),
+            "denied write must not have created the protected file"
+        );
+    }
 }
