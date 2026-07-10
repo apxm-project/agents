@@ -254,6 +254,12 @@ pub async fn execute(ctx: &ExecutionContext, node: &Node, inputs: Vec<Value>) ->
     };
     // post_cap hooks (replace_result) for both paths.
     let result = crate::executor::hook_driver::run_post_cap_hooks(ctx, &capability_name, raw).await;
+    // Deterministic tool-result trimming (W2.7): an oversized result (e.g. a
+    // full raw web page body) must not silently inflate the conversation's
+    // token budget. Reuses the SAME `truncate_to_budget` primitive the
+    // subagent prompt-budget mechanism ships — a pure, deterministic
+    // function over a real bpe tokenizer, never a chars/4 re-derivation.
+    let result = trim_oversized_tool_result(result);
     if let Some(emitter) = &ctx.event_emitter {
         emitter.emit_tool_end(&capability_name, &result);
     }
@@ -324,6 +330,25 @@ fn render_named_in_value(
         Value::Null | Value::Bool(_) | Value::Number(_) | Value::Token(_) => {}
     }
     Ok(())
+}
+
+/// Trim a string-valued tool result down to
+/// [`apxm_core::constants::runtime::tool_result_trim::DEFAULT_MAX_TOKENS`]
+/// via [`crate::context_stack::truncate_to_budget`] (deterministic
+/// prefix-keep + a stable `"... [truncated N tokens]"` marker). Structured
+/// (object/array) results pass through untouched — trimming JSON structure
+/// mid-value would corrupt it for any caller that parses the result rather
+/// than reads it as prose.
+fn trim_oversized_tool_result(value: Value) -> Value {
+    match value {
+        Value::String(text) => {
+            let max_tokens =
+                apxm_core::constants::runtime::tool_result_trim::DEFAULT_MAX_TOKENS;
+            let (trimmed, _was_trimmed) = crate::context_stack::truncate_to_budget(&text, max_tokens);
+            Value::String(trimmed)
+        }
+        other => other,
+    }
 }
 
 fn script_handler_for_capability(ctx: &ExecutionContext, capability_name: &str) -> bool {
