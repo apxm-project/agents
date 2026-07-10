@@ -1606,6 +1606,105 @@ mod tests {
         assert_eq!(state.remaining.load(Ordering::SeqCst), 1);
     }
 
+    /// Positive/recovery: park a node, simulate a process restart (the
+    /// durable park journal survives; the in-memory registry — and the
+    /// original `ParkWaker`'s `Arc<SchedulerState>` — do not), re-park the
+    /// SAME `wait_key` (the scheduler-restore path re-registering once it has
+    /// rebuilt the DAG up to its parked point), and assert a subsequent
+    /// `wake(wait_key, value)` still resolves that logical wait. Also proves
+    /// the companion durability gap: a wake that arrives with nobody parked
+    /// (stashed only in-memory pre-fix) survives a restart via the durable
+    /// journal and still delivers to the first post-restart `register`.
+    ///
+    /// Single test (not split across several `#[test]` fns) because the
+    /// durable journal is one process-global slot shared with every other
+    /// `park_registry` test in this module; `cargo test` runs functions
+    /// concurrently by default, and `rebuild_from_durable` is scoped to the
+    /// caller's own `wait_keys` precisely so it cannot disturb unrelated
+    /// concurrently-running tests' live registry entries.
+    #[test]
+    fn restart_reparks_pending_wait_key() {
+        use crate::scheduler::park_registry;
+
+        let tmp = tempfile::tempdir().unwrap();
+        let db_path = tmp.path().join("park_journal.sqlite");
+        park_registry::durable::init(&db_path).expect("open durable park journal");
+
+        // Scenario A: park on key_a, "restart", re-park key_a, then wake.
+        let key_a = "w25-restart-repark-a".to_string();
+        let state1 = Arc::new(new_state(two_node_dag()));
+        state1.parked.fetch_add(1, Ordering::SeqCst);
+        park_registry::register(
+            key_a.clone(),
+            park_registry::ParkWaker::new(Arc::clone(&state1), vec![10]),
+        );
+        assert!(
+            park_registry::pending_wait_keys().contains(&key_a),
+            "the open park is durably recorded before any restart"
+        );
+
+        // Simulate a process restart: durable connection dropped + reopened
+        // (file survives); the in-memory registry entry for key_a is cleared
+        // (a real restart's fresh registry never had it).
+        park_registry::durable::close_for_test();
+        park_registry::durable::init(&db_path)
+            .expect("reopen durable park journal after restart");
+        park_registry::rebuild_from_durable(std::slice::from_ref(&key_a));
+        assert!(
+            park_registry::pending_wait_keys().contains(&key_a),
+            "the pending park survives the restart in the durable journal"
+        );
+
+        // Scheduler restore rebuilds a fresh SchedulerState and re-parks the
+        // same logical wait under the identical wait_key.
+        let state2 = Arc::new(new_state(two_node_dag()));
+        state2.parked.fetch_add(1, Ordering::SeqCst);
+        park_registry::register(
+            key_a.clone(),
+            park_registry::ParkWaker::new(Arc::clone(&state2), vec![10]),
+        );
+        let woken = park_registry::wake(&key_a, Value::String("post-restart".into()));
+        assert_eq!(woken, 1, "the re-registered waker resolves the wake");
+        assert!(state2.tokens.get(&10).unwrap().ready);
+        assert_eq!(
+            state2.tokens.get(&10).unwrap().value.clone(),
+            Some(Value::String("post-restart".into()))
+        );
+        // The orphaned pre-restart state must NOT have been touched — exactly
+        // one live waker fires, not a stale double-delivery to dead state.
+        assert!(!state1.tokens.get(&10).unwrap().ready);
+
+        // Scenario B: a wake arrives with nobody parked (stashed durably),
+        // THEN a restart, THEN the first post-restart register() must still
+        // fire immediately from the durably-reloaded resolved stash — the
+        // actual gap this journal closes (an in-memory-only stash does not
+        // survive a real process restart).
+        let key_b = "w25-restart-repark-b".to_string();
+        park_registry::wake(&key_b, Value::String("arrived-before-restart".into()));
+
+        park_registry::durable::close_for_test();
+        park_registry::durable::init(&db_path)
+            .expect("reopen durable park journal after second restart");
+        park_registry::rebuild_from_durable(std::slice::from_ref(&key_b));
+
+        let state3 = Arc::new(new_state(two_node_dag()));
+        state3.parked.fetch_add(1, Ordering::SeqCst);
+        park_registry::register(
+            key_b.clone(),
+            park_registry::ParkWaker::new(Arc::clone(&state3), vec![10]),
+        );
+        assert!(
+            state3.tokens.get(&10).unwrap().ready,
+            "a wake durably stashed before restart is delivered on the first post-restart register"
+        );
+        assert_eq!(
+            state3.tokens.get(&10).unwrap().value.clone(),
+            Some(Value::String("arrived-before-restart".into()))
+        );
+
+        park_registry::durable::close_for_test();
+    }
+
     // ── W2.6 loop/park/wake/splice invariants ──────────────────────────────
     // The keystone (splice-based iteration) must keep passing: LOOP_START/
     // LOOP_END were deleted because they were compiled-but-ignored; splicing

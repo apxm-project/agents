@@ -153,14 +153,21 @@ pub(crate) fn register(wait_key: String, waker: ParkWaker) {
     match guard.remove(&wait_key) {
         Some(Entry::Resolved(value)) => {
             drop(guard);
+            // Delivered: no need to keep the durable resolved-marker around —
+            // a restart with nothing left to redeliver has nothing to lose.
+            durable::clear(&wait_key);
             waker.fire(value);
         }
         Some(Entry::Waiters(mut ws)) => {
             ws.push(waker);
-            guard.insert(wait_key, Entry::Waiters(ws));
+            guard.insert(wait_key.clone(), Entry::Waiters(ws));
+            drop(guard);
+            durable::record_pending(&wait_key);
         }
         None => {
-            guard.insert(wait_key, Entry::Waiters(vec![waker]));
+            guard.insert(wait_key.clone(), Entry::Waiters(vec![waker]));
+            drop(guard);
+            durable::record_pending(&wait_key);
         }
     }
 }
@@ -173,13 +180,20 @@ pub fn wake(wait_key: &str, value: Value) -> usize {
         let mut guard = registry().lock().expect("park registry poisoned");
         match guard.remove(wait_key) {
             Some(Entry::Waiters(ws)) => ws,
-            // No waiters (or a prior resolution): stash the value for a late register.
+            // No waiters (or a prior resolution): stash the value for a late
+            // register — durably too, so a value that arrives while nobody is
+            // parked (or while the process is mid-restart) is not lost: a
+            // real process restart wipes this in-memory map, but the durable
+            // journal survives and `rebuild_from_durable` reloads it.
             _ => {
-                guard.insert(wait_key.to_string(), Entry::Resolved(value));
+                guard.insert(wait_key.to_string(), Entry::Resolved(value.clone()));
+                drop(guard);
+                durable::record_resolved(wait_key, &value);
                 return 0;
             }
         }
     }; // lock dropped before firing
+    durable::clear(wait_key);
     let n = wakers.len();
     for w in wakers {
         w.fire(value.clone());
@@ -203,4 +217,186 @@ impl apxm_capability_iface::CapabilityHost for ParkRegistryHost {
     fn wake(&self, wait_key: &str, value: Value) -> usize {
         wake(wait_key, value)
     }
+}
+
+/// Durable park-checkpoint journal: there is otherwise no on-disk
+/// representation of "node X is parked on wait_key Y" at all, so a `kill -9`
+/// loses that bookkeeping even though the wait_key itself (a pure function of
+/// session/execution id, see [`session_recv_key`]) is a perfectly stable
+/// resumption handle. This journal records two things durably:
+///
+/// - **pending**: a `register` happened (someone is parked here) — read at
+///   boot via [`pending_wait_keys`] so scheduler/session restore knows which
+///   logical waits need a freshly-registered waker after the DAG is
+///   rehydrated (see `docs/plans/tasks/W2.5.md`); the actual [`ParkWaker`]
+///   can never be durable (it closes over a live `Arc<SchedulerState>`).
+/// - **resolved**: a `wake` arrived with nobody registered yet — durably, not
+///   just in the in-memory `Resolved` stash, so a wake that lands in the
+///   narrow window around a restart is not lost. [`rebuild_from_durable`]
+///   reloads these into the in-memory stash so the next `register` for that
+///   wait_key fires immediately, exactly as it would have pre-restart.
+pub mod durable {
+    use std::sync::{Mutex, OnceLock};
+
+    #[cfg(feature = "sqlite")]
+    use apxm_core::types::Value;
+    #[cfg(feature = "sqlite")]
+    use rusqlite::{Connection, params};
+
+    #[cfg(feature = "sqlite")]
+    fn slot() -> &'static Mutex<Option<Connection>> {
+        static SLOT: OnceLock<Mutex<Option<Connection>>> = OnceLock::new();
+        SLOT.get_or_init(|| Mutex::new(None))
+    }
+
+    /// Open (creating if needed) the durable park journal at `path`.
+    /// Idempotent — safe to call again after a simulated restart to reopen
+    /// the same on-disk file.
+    #[cfg(feature = "sqlite")]
+    pub fn init(path: &std::path::Path) -> Result<(), String> {
+        if let Some(parent) = path.parent() {
+            std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
+        }
+        let conn = Connection::open(path).map_err(|e| e.to_string())?;
+        conn.pragma_update(None, "journal_mode", "WAL").ok();
+        conn.execute_batch(
+            "CREATE TABLE IF NOT EXISTS park_journal (
+                wait_key TEXT PRIMARY KEY,
+                state TEXT NOT NULL,
+                value_json TEXT
+            );",
+        )
+        .map_err(|e| e.to_string())?;
+        *slot().lock().expect("park journal slot poisoned") = Some(conn);
+        Ok(())
+    }
+
+    #[cfg(not(feature = "sqlite"))]
+    pub fn init(_path: &std::path::Path) -> Result<(), String> {
+        Err("durable park-registry persistence requires the 'sqlite' feature".to_string())
+    }
+
+    /// Drop the durable connection (test-only: simulates the process dying —
+    /// the on-disk file survives, only the in-process handle is dropped).
+    #[cfg(feature = "sqlite")]
+    pub fn close_for_test() {
+        *slot().lock().expect("park journal slot poisoned") = None;
+    }
+
+    #[cfg(feature = "sqlite")]
+    pub(super) fn record_pending(wait_key: &str) {
+        let guard = slot().lock().expect("park journal slot poisoned");
+        let Some(conn) = guard.as_ref() else { return };
+        let _ = conn.execute(
+            "INSERT INTO park_journal (wait_key, state, value_json) VALUES (?1, 'pending', NULL)
+             ON CONFLICT(wait_key) DO UPDATE SET state = 'pending', value_json = NULL",
+            params![wait_key],
+        );
+    }
+    #[cfg(not(feature = "sqlite"))]
+    pub(super) fn record_pending(_wait_key: &str) {}
+
+    #[cfg(feature = "sqlite")]
+    pub(super) fn record_resolved(wait_key: &str, value: &Value) {
+        let guard = slot().lock().expect("park journal slot poisoned");
+        let Some(conn) = guard.as_ref() else { return };
+        let Ok(json) = serde_json::to_string(value) else {
+            return;
+        };
+        let _ = conn.execute(
+            "INSERT INTO park_journal (wait_key, state, value_json) VALUES (?1, 'resolved', ?2)
+             ON CONFLICT(wait_key) DO UPDATE SET state = 'resolved', value_json = excluded.value_json",
+            params![wait_key, json],
+        );
+    }
+    #[cfg(not(feature = "sqlite"))]
+    pub(super) fn record_resolved(_wait_key: &str, _value: &apxm_core::types::Value) {}
+
+    #[cfg(feature = "sqlite")]
+    pub(super) fn clear(wait_key: &str) {
+        let guard = slot().lock().expect("park journal slot poisoned");
+        let Some(conn) = guard.as_ref() else { return };
+        let _ = conn.execute(
+            "DELETE FROM park_journal WHERE wait_key = ?1",
+            params![wait_key],
+        );
+    }
+    #[cfg(not(feature = "sqlite"))]
+    pub(super) fn clear(_wait_key: &str) {}
+
+    /// `(wait_key, state, resolved_value)` rows currently in the journal.
+    /// `state` is `"pending"` or `"resolved"`; `resolved_value` is `Some` only
+    /// for `"resolved"` rows whose value parsed.
+    #[cfg(feature = "sqlite")]
+    pub(super) fn load_all() -> Vec<(String, String, Option<Value>)> {
+        let guard = slot().lock().expect("park journal slot poisoned");
+        let Some(conn) = guard.as_ref() else {
+            return Vec::new();
+        };
+        let Ok(mut stmt) = conn.prepare("SELECT wait_key, state, value_json FROM park_journal")
+        else {
+            return Vec::new();
+        };
+        let rows = stmt.query_map([], |row| {
+            let wait_key: String = row.get(0)?;
+            let state: String = row.get(1)?;
+            let value_json: Option<String> = row.get(2)?;
+            Ok((wait_key, state, value_json))
+        });
+        let Ok(rows) = rows else { return Vec::new() };
+        rows.flatten()
+            .map(|(wait_key, state, value_json)| {
+                let value = value_json.and_then(|json| serde_json::from_str(&json).ok());
+                (wait_key, state, value)
+            })
+            .collect()
+    }
+    #[cfg(not(feature = "sqlite"))]
+    pub(super) fn load_all() -> Vec<(String, String, Option<apxm_core::types::Value>)> {
+        Vec::new()
+    }
+}
+
+/// Rebuild the in-process registry entries for `wait_keys` from the durable
+/// journal, simulating what boot does after a restart for the specific
+/// sessions/executions the caller is resuming (typically the set W1.8's
+/// reconciled-execution boot pass hands back). Only those wait_keys' entries
+/// are touched — any in-memory entry for exactly those keys is replaced by
+/// what durably survived; every other wait_key (unrelated in-flight work in
+/// the same process — at a real boot there is none yet, since the registry
+/// starts empty) is left untouched. `"resolved"` rows become an in-memory
+/// [`Entry::Resolved`] stash (so the next `register` for that wait_key fires
+/// immediately, exactly as it would have pre-restart); `"pending"` rows have
+/// no waker to attach (that requires live scheduler state, which restart must
+/// rebuild first — see `SchedulerState::restore`) and are dropped from the
+/// in-memory map, but remain visible via [`pending_wait_keys`] so a caller
+/// knows which logical waits still need a fresh `register` after rehydration.
+pub fn rebuild_from_durable(wait_keys: &[String]) {
+    let rows: HashMap<String, (String, Option<Value>)> = durable::load_all()
+        .into_iter()
+        .map(|(wait_key, state, value)| (wait_key, (state, value)))
+        .collect();
+    let mut guard = registry().lock().expect("park registry poisoned");
+    for wait_key in wait_keys {
+        guard.remove(wait_key);
+        if let Some((state, value)) = rows.get(wait_key)
+            && state == "resolved"
+            && let Some(value) = value.clone()
+        {
+            guard.insert(wait_key.clone(), Entry::Resolved(value));
+        }
+        // "pending" rows are intentionally not restored as `Entry::Waiters`:
+        // there is no live `ParkWaker` to attach durably (see module docs).
+    }
+}
+
+/// Wait_keys the durable journal has recorded as still `"pending"` (parked,
+/// unresolved) as of the last [`durable::init`]/write — the sessions/executions
+/// that need a fresh waker registered once their scheduler state is rebuilt.
+pub fn pending_wait_keys() -> Vec<String> {
+    durable::load_all()
+        .into_iter()
+        .filter(|(_, state, _)| state == "pending")
+        .map(|(wait_key, _, _)| wait_key)
+        .collect()
 }
