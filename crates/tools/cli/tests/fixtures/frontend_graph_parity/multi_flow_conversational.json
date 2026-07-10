@@ -1,0 +1,28 @@
+[
+  {
+    "name": "main",
+    "nodes": [
+      {"id": 1, "name": "run_turn", "op": "FLOW_CALL", "attributes": {"agent_name": "conversation", "flow_name": "turn"}},
+      {"id": 2, "name": "return_turn", "op": "RETURN", "attributes": {}}
+    ],
+    "edges": [
+      {"from": 1, "to": 2, "dependency": "Data"}
+    ],
+    "parameters": [],
+    "metadata": {"is_entry": true}
+  },
+  {
+    "name": "conversation.turn",
+    "nodes": [
+      {"id": 1, "name": "ask", "op": "ASK", "attributes": {"template_str": "Reply to: {user_message}"}},
+      {"id": 2, "name": "out", "op": "RETURN", "attributes": {}}
+    ],
+    "edges": [
+      {"from": 1, "to": 2, "dependency": "Data"}
+    ],
+    "parameters": [
+      {"name": "user_message", "type_name": "str"}
+    ],
+    "metadata": {"is_entry": false}
+  }
+]

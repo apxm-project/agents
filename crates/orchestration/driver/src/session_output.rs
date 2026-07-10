@@ -100,52 +100,6 @@ fn derive_final_output(
     (None, joined)
 }
 
-/// Simple .air emitter for session output (avoids circular dependency on Compiler).
-fn emit_air_simple(module: &AirModule) -> String {
-    let mut out = String::new();
-    out.push_str("; Agent IR (.air) — canonical intermediate representation\n");
-    out.push_str(&format!("; graph: {}\n", module.name));
-    for (k, v) in &module.metadata {
-        out.push_str(&format!("; {}: {}\n", k, v));
-    }
-    out.push('\n');
-    if !module.parameters.is_empty() {
-        for p in &module.parameters {
-            out.push_str(&format!("; param %{}: {}\n", p.name, p.type_name));
-        }
-        out.push('\n');
-    }
-    for node in &module.nodes {
-        let op = node.op.to_string().to_lowercase();
-        let mut attrs = vec![];
-        for (k, v) in &node.attributes {
-            if !k.starts_with('_') {
-                attrs.push(format!("{} = {}", k, v));
-            }
-        }
-        let attr_str = if attrs.is_empty() {
-            String::new()
-        } else {
-            format!(" {}", attrs.join(", "))
-        };
-        out.push_str(&format!(
-            "  %{} = {}({}){}\n",
-            node.id, op, node.name, attr_str
-        ));
-    }
-    if !module.edges.is_empty() {
-        out.push('\n');
-        for edge in &module.edges {
-            let dep = format!("{:?}", edge.dependency).to_lowercase();
-            out.push_str(&format!(
-                "  edge %{} -> %{} [{}]\n",
-                edge.from, edge.to, dep
-            ));
-        }
-    }
-    out
-}
-
 impl SessionOutputWriter {
     /// Create a new writer, creating the session directory.
     pub fn new(base_dir: &Path, execution_id: &str) -> io::Result<Self> {
@@ -210,9 +164,13 @@ impl SessionOutputWriter {
     }
 
     /// Write the input AIR in .air format for reproducibility.
+    ///
+    /// Delegates to the single canonical printer (`AirModule::to_air()` ->
+    /// `air_builder::emit::emit_air`) so `input.air` is real, re-parseable
+    /// MLIR text — the same output `apxm emit-air` and `dekk agents compile`
+    /// produce, not a private dialect.
     pub fn write_input_air(&self, module: &AirModule) -> io::Result<()> {
-        // Emit .air format using a simple inline emitter (to avoid circular dependency on Compiler)
-        let air_text = emit_air_simple(module);
+        let air_text = module.to_air().map_err(io::Error::other)?;
         fs::write(
             self.session_dir
                 .join(constants::session::files::INPUT_GRAPH),
@@ -1262,6 +1220,58 @@ impl ExecutionEventEmitter for SessionEventEmitter {
             response_id: response_id.map(str::to_string),
             usage,
         });
+    }
+}
+
+#[cfg(test)]
+mod write_input_air_tests {
+    use super::*;
+    use apxm_compiler::AirModuleBuilder;
+    use apxm_core::types::AISOperationType;
+
+    /// Regression guard for the closed `emit_air_simple` dual emitter
+    /// (docs/plans/air-single-printer.md, docs/plans/tasks/W3.1.md):
+    /// `write_input_air` must delegate to the single canonical printer
+    /// (`AirModule::to_air()`), not a private hand-formatted dialect. The
+    /// old emitter's output (`"; graph: ..."` comments, `"%1 = ask(node_1)"`
+    /// call syntax, `"edge %1 -> %2 [data]"` lines) was not real MLIR and
+    /// could not round-trip through `replay_command`'s
+    /// `air_graph_from_source`, which compiles `input.air` with the real
+    /// compiler.
+    #[test]
+    fn write_input_air_delegates_to_canonical_printer() {
+        let mut builder = AirModuleBuilder::new("session_input_air");
+        builder.node_with_id(
+            1,
+            "ask".to_string(),
+            AISOperationType::Ask,
+            HashMap::from([("template_str".to_string(), Value::String("hi".to_string()))]),
+        );
+        let module = builder.build();
+
+        let dir = tempfile::tempdir().expect("tempdir");
+        let writer = SessionOutputWriter::new(dir.path(), "exec-1").expect("writer");
+        writer.write_input_air(&module).expect("write_input_air");
+
+        let written = fs::read_to_string(
+            writer
+                .session_dir()
+                .join(constants::session::files::INPUT_GRAPH),
+        )
+        .expect("read input.air");
+
+        // Byte-identical to the canonical printer's own output for the same
+        // module — proves delegation, not a re-implementation that happens
+        // to look similar.
+        let canonical = module.to_air().expect("canonical printer emits");
+        assert_eq!(written, canonical);
+
+        // Real MLIR text, not the deleted private dialect.
+        assert!(written.contains("module {"));
+        assert!(written.contains("func.func @session_input_air"));
+        assert!(written.contains("ais.ask"));
+        assert!(!written.contains("; graph:"));
+        assert!(!written.contains("edge %"));
     }
 }
 
