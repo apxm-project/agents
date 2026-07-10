@@ -88,10 +88,6 @@ static bool hasSideEffects(Operation *op) {
   if (isa<JumpOp, BranchOnValueOp, SwitchOp>(op))
     return true;
 
-  // Loop operations are control flow structures
-  if (isa<LoopStartOp, LoopEndOp>(op))
-    return true;
-
   // TryCatch is control flow
   if (isa<TryCatchOp>(op))
     return true;

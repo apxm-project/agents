@@ -17,8 +17,6 @@ pub mod inner_plan;
 pub mod inv_cap;
 pub mod jump;
 pub mod llm; // Unified handler for Ask/Think/Reason operations
-pub mod loop_end;
-pub mod loop_start;
 pub mod merge;
 pub mod nop;
 pub mod pause;

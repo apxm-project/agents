@@ -4,7 +4,7 @@
 //! Both the compiler and runtime depend on this crate to ensure consistent operation
 //! semantics across the entire system.
 //!
-//! ## Operations (41 total)
+//! ## Operations (39 total)
 //!
 //! The table below reflects each operation's actual `OperationCategory` (see
 //! `operations::category`), not an informal grouping — it is kept honest by
@@ -16,7 +16,7 @@
 //! | Memory | QMEM, UMEM, UPDATE_GOAL |
 //! | Reasoning | ASK, THINK, REASON, PLAN, REFLECT, VERIFY |
 //! | Tools | INV_CAP, EXC, PRINT |
-//! | Control Flow | JUMP, BRANCH_ON_VALUE, LOOP_START, LOOP_END, RETURN, SWITCH, FLOW_CALL, WORKFLOW_SPAWN, CALL_SKILL, RESUME |
+//! | Control Flow | JUMP, BRANCH_ON_VALUE, RETURN, SWITCH, FLOW_CALL, WORKFLOW_SPAWN, CALL_SKILL, RESUME |
 //! | Synchronization | MERGE, FENCE, WAIT_ALL, CHECKPOINT |
 //! | Error Handling | TRY_CATCH, ERR |
 //! | Communication | COMMUNICATE, HANDOFF, PAUSE |
@@ -25,9 +25,15 @@
 //! | Internal | CONST_STR, YIELD |
 //!
 //! NEGOTIATE, SPAWN_TEAM, GUARD, and CLAIM were deleted: measured
-//! zero emissions across the example/test/studio-lowering corpus. This is a
-//! `.apxmobj` wire-format break; see [`operations::WIRE_INDEXED_OPERATIONS`]
-//! for the retired indices.
+//! zero emissions across the example/test/studio-lowering corpus. LOOP_START
+//! and LOOP_END were deleted (W2.6): they compiled and verified but never
+//! re-executed at runtime — the executor is a DAG engine with no back-edge or
+//! re-splice wired to either handler. The one real in-graph iteration
+//! mechanism is graph splicing (`splice_dag`/`rearm_session_turn` in
+//! `apxm-runtime`'s scheduler); AUTONOMOUS is a documented macro-op with its
+//! own internal loop, not the general iteration mechanism. See
+//! `docs/plans/tasks/W2.6.md`. These are `.apxmobj` wire-format breaks; see
+//! [`operations::WIRE_INDEXED_OPERATIONS`] for the retired indices.
 
 pub mod aam;
 pub mod attrs;

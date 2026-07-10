@@ -286,37 +286,6 @@ export const BRANCH_ON_VALUE: OpSpec = {
   exampleJson: "{\"id\": 5, \"op\": \"BRANCH_ON_VALUE\", \"attributes\": {\"value\": \"yes\", \"true_label\": \"6\", \"false_label\": \"7\"}}",
 } as const;
 
-export const LOOP_START: OpSpec = {
-  op: "LOOP_START",
-  name: "LoopStart",
-  category: "control_flow" as OpCategory,
-  description: "Begin bounded loop",
-  longDescription: "Marks the beginning of a bounded loop. The count_token specifies how many iterations to execute. Must be paired with a LOOP_END node. The compiler verifies loop bounds at compile time to prevent infinite loops.",
-  latency: "none",
-  fields: [
-    { name: "count_token", description: "Token containing iteration count", required: true, refType: null },
-  ],
-  producesOutput: false,
-  needsSubmission: false,
-  minInputs: 0,
-  exampleJson: "{\"id\": 3, \"op\": \"LOOP_START\", \"attributes\": {\"count_token\": \"3\"}}",
-} as const;
-
-export const LOOP_END: OpSpec = {
-  op: "LOOP_END",
-  name: "LoopEnd",
-  category: "control_flow" as OpCategory,
-  description: "End bounded loop",
-  longDescription: "Marks the end of a bounded loop started by LOOP_START. The runtime decrements the loop counter and branches back to LOOP_START if iterations remain.",
-  latency: "none",
-  fields: [
-  ],
-  producesOutput: false,
-  needsSubmission: false,
-  minInputs: 0,
-  exampleJson: null,
-} as const;
-
 export const RETURN: OpSpec = {
   op: "RETURN",
   name: "Return",
@@ -696,8 +665,8 @@ export const AUTONOMOUS: OpSpec = {
   op: "AUTONOMOUS",
   name: "Autonomous",
   category: "coordination" as OpCategory,
-  description: "Run a goal-directed autonomous loop with the configured model",
-  longDescription: "Runs an iterative plan / act / evaluate loop against a goal prompt. The node keeps calling the configured model until the goal is achieved or `max_iterations` is reached. Optional backend, model, system prompt, provider, and temperature attributes follow the same routing contract as the other LLM operations.",
+  description: "Macro-op: a fused goal-directed plan/act/evaluate loop, not the general iteration mechanism",
+  longDescription: "AUTONOMOUS is a macro-op — a single node that fuses an internal plan / act / evaluate loop against a goal prompt, implemented as a Rust loop inside the handler (not graph-level iteration). The node keeps calling the configured model until the goal is achieved or `max_iterations` is reached. It is independent of, and not a substitute for, the general in-graph iteration mechanism, which is splice-based (a fresh sub-DAG grafted into the live execution per turn/iteration via `splice_dag`/`rearm_session_turn`; see `docs/plans/tasks/W2.6.md`). Optional backend, model, system prompt, provider, and temperature attributes follow the same routing contract as the other LLM operations.",
   latency: "high",
   fields: [
     { name: "prompt", description: "Goal or objective for the autonomous loop", required: true, refType: null },
@@ -781,8 +750,6 @@ export const ALL_OPERATIONS: readonly OpSpec[] = [
   PRINT,
   JUMP,
   BRANCH_ON_VALUE,
-  LOOP_START,
-  LOOP_END,
   RETURN,
   SWITCH,
   FLOW_CALL,
@@ -979,7 +946,6 @@ export const ATTR = {
   PARAMETERS: "parameters",
   STRUCTURED: "structured",
   TOKEN: "token",
-  COUNT_TOKEN: "count_token",
   CASES: "cases",
   DEFAULT: "default",
   ORDERING: "ordering",

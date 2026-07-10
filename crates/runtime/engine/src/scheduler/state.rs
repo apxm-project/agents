@@ -1606,6 +1606,476 @@ mod tests {
         assert_eq!(state.remaining.load(Ordering::SeqCst), 1);
     }
 
+    // ── W2.6 loop/park/wake/splice invariants ──────────────────────────────
+    // The keystone (splice-based iteration) must keep passing: LOOP_START/
+    // LOOP_END were deleted because they were compiled-but-ignored; splicing
+    // is the one real iteration mechanism left, so its invariants are load
+    // bearing. See `docs/plans/tasks/W2.6.md`.
+
+    /// Exact required name for the wake-before-register race (duplicate
+    /// coverage of `park_registry_wake_before_register_is_not_lost` under the
+    /// planning record's exact test name — both pin the same invariant).
+    #[test]
+    fn wake_before_register_is_lost_wakeup_safe() {
+        use crate::scheduler::park_registry;
+        let key = "w26-wake-before-register-unique";
+        // wake() arrives before any register() — the lost-wakeup race.
+        let woken = park_registry::wake(key, Value::String("early".into()));
+        assert_eq!(woken, 0, "no waiter is registered yet");
+
+        let state = Arc::new(new_state(two_node_dag()));
+        state.parked.fetch_add(1, Ordering::SeqCst);
+        // The subsequent register() must fire immediately against the stored
+        // `Resolved` sentinel instead of waiting forever for a wake that
+        // already happened.
+        park_registry::register(
+            key.to_string(),
+            park_registry::ParkWaker::new(Arc::clone(&state), vec![10]),
+        );
+        assert!(
+            state.tokens.get(&10).unwrap().ready,
+            "the pre-resolved wake must deliver on register, not be lost"
+        );
+        assert_eq!(
+            state.tokens.get(&10).unwrap().value.clone(),
+            Some(Value::String("early".into()))
+        );
+        assert_eq!(state.remaining.load(Ordering::SeqCst), 1);
+    }
+
+    /// Splice N nodes; assert `remaining` increases by exactly N and
+    /// `record_progress` fires (the deadlock watchdog's timer advances).
+    #[test]
+    fn splice_dag_preserves_remaining_count_invariant() {
+        use crate::scheduler::splicing::SpliceConfig;
+
+        let mut dag = ExecutionDag::new();
+        dag.add_node(make_node(1, vec![], vec![])).unwrap();
+        dag.entry_nodes = dag.find_entry_nodes();
+        dag.exit_nodes = dag.find_exit_nodes();
+        let state = new_state(dag);
+        assert_eq!(state.remaining.load(Ordering::SeqCst), 1);
+
+        let before_progress = state.last_progress_ms.load(Ordering::Relaxed);
+        std::thread::sleep(std::time::Duration::from_millis(2));
+
+        // A 3-node inner DAG spliced with no outer connections.
+        let mut inner = ExecutionDag::new();
+        inner.add_node(make_node(1, vec![], vec![100])).unwrap();
+        inner.add_node(make_node(2, vec![], vec![101])).unwrap();
+        inner.add_node(make_node(3, vec![], vec![102])).unwrap();
+        state
+            .splice_dag(SpliceConfig {
+                inner_dag: inner,
+                token_connections: HashMap::new(),
+                node_id_offset: None,
+                token_id_offset: None,
+            })
+            .unwrap();
+
+        assert_eq!(
+            state.remaining.load(Ordering::SeqCst),
+            4,
+            "remaining increases by exactly the 3 spliced nodes"
+        );
+        let after_progress = state.last_progress_ms.load(Ordering::Relaxed);
+        assert!(
+            after_progress >= before_progress,
+            "splice_dag must call record_progress so the deadlock watchdog \
+             does not fire spuriously while nodes are being spliced in"
+        );
+    }
+
+    /// Two sequential wakes on the same session-recv key: the first turn's
+    /// FLOW_CALL node never re-dispatches (is never re-enqueued) after the
+    /// second splice — "each user turn runs its OWN spliced sub-DAG; prior
+    /// turns are never re-executed" (`splicing.rs`'s doc comment on
+    /// `splice_turn_and_rearm`).
+    #[test]
+    fn splice_turn_and_rearm_never_reexecutes_prior_turn() {
+        use crate::scheduler::park_registry::{self, ParkWaker, RearmSpec};
+        use apxm_core::types::operations::AISOperationType;
+
+        let mut recv = make_node(1, vec![], vec![10]);
+        recv.op_type = AISOperationType::Autonomous;
+        for (k, v) in [
+            ("mode", "recv"),
+            ("recv_once", "false"),
+            ("turn_agent", "conversation"),
+            ("turn_flow", "turn"),
+            ("turn_param", "user_message"),
+        ] {
+            recv.attributes
+                .insert(k.to_string(), Value::String(v.to_string()));
+        }
+        let mut dag = ExecutionDag::new();
+        dag.add_node(recv.clone()).unwrap();
+        dag.entry_nodes = dag.find_entry_nodes();
+        dag.exit_nodes = dag.find_exit_nodes();
+        let state = Arc::new(new_state(dag));
+        let _ = drain_queue(&state);
+        state.parked.fetch_add(1, Ordering::SeqCst);
+
+        let session_id = "w26-two-turns-session";
+        let key = "session_recv:w26-two-turns-unique-1";
+        let spec = |sid: &str| RearmSpec {
+            recv_node: Arc::new(recv.clone()),
+            turn_agent: "conversation".to_string(),
+            turn_flow: "turn".to_string(),
+            turn_param: "user_message".to_string(),
+            session_id: sid.to_string(),
+            max_turns: 100,
+        };
+
+        // Turn 1.
+        park_registry::register(
+            key.to_string(),
+            ParkWaker::new_rearming(Arc::clone(&state), vec![10], spec(session_id)),
+        );
+        park_registry::wake(key, Value::String("turn one".into()));
+
+        let turn1_flow_calls: Vec<NodeId> = state
+            .nodes
+            .iter()
+            .filter(|e| e.value().op_type == AISOperationType::FlowCall)
+            .map(|e| *e.key())
+            .collect();
+        assert_eq!(turn1_flow_calls.len(), 1, "turn 1 spliced exactly one FLOW_CALL");
+        let turn1_flow_call = turn1_flow_calls[0];
+
+        // The fresh recv turn 1 spliced (Autonomous, id != 1) is what a real
+        // worker would eventually dispatch and re-park on this same session
+        // key; target turn 2's wake at its output token.
+        let fresh_recv = state
+            .nodes
+            .iter()
+            .find(|e| e.value().op_type == AISOperationType::Autonomous && *e.key() != 1)
+            .expect("turn 1 spliced a fresh recv")
+            .value()
+            .clone();
+        let fresh_recv_output = fresh_recv.output_tokens[0];
+
+        // Turn 2: a second wake on the SAME session key.
+        park_registry::register(
+            key.to_string(),
+            ParkWaker::new_rearming(Arc::clone(&state), vec![fresh_recv_output], spec(session_id)),
+        );
+        park_registry::wake(key, Value::String("turn two".into()));
+
+        let all_flow_calls: std::collections::HashSet<NodeId> = state
+            .nodes
+            .iter()
+            .filter(|e| e.value().op_type == AISOperationType::FlowCall)
+            .map(|e| *e.key())
+            .collect();
+        assert_eq!(
+            all_flow_calls.len(),
+            2,
+            "each turn splices its OWN flow-call node; there are exactly 2 after 2 turns"
+        );
+        assert!(
+            all_flow_calls.contains(&turn1_flow_call),
+            "turn 1's flow-call node is still present, untouched by turn 2's splice"
+        );
+    }
+
+    /// Drive the turn counter to `max_turns`: re-arming stops and the recv
+    /// completes (delivers the woken value) instead of splicing again.
+    #[test]
+    fn session_turn_cap_stops_rearming_at_max_turns() {
+        use crate::scheduler::park_registry::{self, ParkWaker, RearmSpec};
+        use apxm_core::types::operations::AISOperationType;
+
+        let mut recv = make_node(1, vec![], vec![10]);
+        recv.op_type = AISOperationType::Autonomous;
+        for (k, v) in [
+            ("mode", "recv"),
+            ("recv_once", "false"),
+            ("turn_agent", "conversation"),
+            ("turn_flow", "turn"),
+            ("turn_param", "user_message"),
+        ] {
+            recv.attributes
+                .insert(k.to_string(), Value::String(v.to_string()));
+        }
+        let mut dag = ExecutionDag::new();
+        dag.add_node(recv.clone()).unwrap();
+        dag.entry_nodes = dag.find_entry_nodes();
+        dag.exit_nodes = dag.find_exit_nodes();
+        let state = Arc::new(new_state(dag));
+        let _ = drain_queue(&state);
+        state.parked.fetch_add(1, Ordering::SeqCst);
+
+        let session_id = "w26-cap-session";
+        let key = "session_recv:w26-cap-unique-1";
+        const MAX_TURNS: u64 = 2;
+        let spec = || RearmSpec {
+            recv_node: Arc::new(recv.clone()),
+            turn_agent: "conversation".to_string(),
+            turn_flow: "turn".to_string(),
+            turn_param: "user_message".to_string(),
+            session_id: session_id.to_string(),
+            max_turns: MAX_TURNS,
+        };
+        let flow_call_count =
+            |state: &SchedulerState| -> usize {
+                state
+                    .nodes
+                    .iter()
+                    .filter(|e| e.value().op_type == AISOperationType::FlowCall)
+                    .count()
+            };
+
+        // Turn 1 (running count 1 < max_turns 2): re-arms.
+        park_registry::register(
+            key.to_string(),
+            ParkWaker::new_rearming(Arc::clone(&state), vec![10], spec()),
+        );
+        park_registry::wake(key, Value::String("turn one".into()));
+        assert_eq!(flow_call_count(&state), 1, "turn 1 re-arms (under the cap)");
+
+        // The fresh recv from turn 1 now parks itself, exactly as a real
+        // worker dispatching it would.
+        let fresh_recv_output = state
+            .nodes
+            .iter()
+            .find(|e| e.value().op_type == AISOperationType::Autonomous && *e.key() != 1)
+            .expect("turn 1 spliced a fresh recv")
+            .value()
+            .output_tokens[0];
+        state.parked.fetch_add(1, Ordering::SeqCst);
+
+        // Turn 2 (running count 2, NOT < max_turns 2): the cap is reached —
+        // the recv still completes (the woken value is delivered) but does
+        // NOT re-arm.
+        park_registry::register(
+            key.to_string(),
+            ParkWaker::new_rearming(Arc::clone(&state), vec![fresh_recv_output], spec()),
+        );
+        let woken2 = park_registry::wake(key, Value::String("turn two".into()));
+        assert_eq!(woken2, 1, "the recv still completes/delivers at the cap");
+        assert_eq!(
+            flow_call_count(&state),
+            1,
+            "at the turn cap, re-arming stops — no second FLOW_CALL is spliced"
+        );
+        assert!(
+            state.tokens.get(&fresh_recv_output).unwrap().ready,
+            "the capped turn's message is still delivered, just not re-armed"
+        );
+    }
+
+    /// Regression pin for the false "compiler verifies loop bounds" claim: a
+    /// condition that never resolves false must still stop at exactly
+    /// `max_turns` re-arms even under a driver that keeps waking indefinitely
+    /// — no hang, no unbounded splicing.
+    #[test]
+    fn loop_exceeding_max_iterations_is_bounded() {
+        use crate::scheduler::park_registry::{self, ParkWaker, RearmSpec};
+        use apxm_core::types::operations::AISOperationType;
+
+        let mut recv = make_node(1, vec![], vec![10]);
+        recv.op_type = AISOperationType::Autonomous;
+        for (k, v) in [
+            ("mode", "recv"),
+            ("recv_once", "false"),
+            ("turn_agent", "conversation"),
+            ("turn_flow", "turn"),
+            ("turn_param", "user_message"),
+        ] {
+            recv.attributes
+                .insert(k.to_string(), Value::String(v.to_string()));
+        }
+        let mut dag = ExecutionDag::new();
+        dag.add_node(recv.clone()).unwrap();
+        dag.entry_nodes = dag.find_entry_nodes();
+        dag.exit_nodes = dag.find_exit_nodes();
+        let state = Arc::new(new_state(dag));
+        let _ = drain_queue(&state);
+
+        const MAX_TURNS: u64 = 4;
+        const WAKE_ATTEMPTS: usize = 9; // far more than MAX_TURNS
+        let session_id = "w26-unbounded-driver-session";
+        let key = "session_recv:w26-unbounded-driver-unique-1";
+
+        let mut target_token = 10u64;
+        for _ in 0..WAKE_ATTEMPTS {
+            state.parked.fetch_add(1, Ordering::SeqCst);
+            park_registry::register(
+                key.to_string(),
+                ParkWaker::new_rearming(
+                    Arc::clone(&state),
+                    vec![target_token],
+                    RearmSpec {
+                        recv_node: Arc::new(recv.clone()),
+                        turn_agent: "conversation".to_string(),
+                        turn_flow: "turn".to_string(),
+                        turn_param: "user_message".to_string(),
+                        session_id: session_id.to_string(),
+                        max_turns: MAX_TURNS,
+                    },
+                ),
+            );
+            park_registry::wake(key, Value::String("keeps coming".into()));
+
+            if let Some(fresh) = state
+                .nodes
+                .iter()
+                .filter(|e| e.value().op_type == AISOperationType::Autonomous && *e.key() != 1)
+                .max_by_key(|e| *e.key())
+            {
+                target_token = fresh.value().output_tokens[0];
+            }
+        }
+
+        let flow_call_count = state
+            .nodes
+            .iter()
+            .filter(|e| e.value().op_type == AISOperationType::FlowCall)
+            .count();
+        assert_eq!(
+            flow_call_count,
+            (MAX_TURNS - 1) as usize,
+            "an ever-arriving wake (the condition never resolves false) is \
+             still bounded — re-arming stops at the turn cap, no hang, no \
+             unbounded splicing"
+        );
+    }
+
+    /// Splice then condense: `remaining` returns to pre-splice-plus-one,
+    /// external consumers preserved.
+    #[test]
+    fn condense_subdag_round_trips_with_splice_dag() {
+        use crate::scheduler::splicing::SpliceConfig;
+
+        // Node 1 (outside the soon-to-be-spliced subgraph) consumes token 10,
+        // which nothing in the initial 1-node DAG produces (a flow
+        // parameter) — it starts as the sole registered consumer.
+        let mut dag = ExecutionDag::new();
+        dag.add_node(make_node(1, vec![10], vec![20])).unwrap();
+        dag.entry_nodes = dag.find_entry_nodes();
+        dag.exit_nodes = dag.find_exit_nodes();
+        let state = Arc::new(new_state(dag));
+        assert_eq!(state.remaining.load(Ordering::SeqCst), 1, "pre-splice remaining");
+        assert_eq!(
+            state.tokens.get(&10).unwrap().consumers.clone(),
+            vec![1],
+            "node 1 is the sole consumer of token 10 before splicing"
+        );
+
+        // Splice a 2-node inner chain whose tail produces token 10 (node 1's
+        // input) — wired via `token_connections`, not by touching node 1.
+        let inner_a = make_node(1, vec![], vec![1]);
+        let inner_b = make_node(2, vec![1], vec![2]);
+        let mut inner_dag = ExecutionDag::new();
+        inner_dag.add_node(inner_a).unwrap();
+        inner_dag.add_node(inner_b).unwrap();
+        let mut connections = HashMap::new();
+        connections.insert(2u64, 10u64); // inner_b's local output -> outer token 10
+        state
+            .splice_dag(SpliceConfig {
+                inner_dag,
+                token_connections: connections,
+                node_id_offset: None,
+                token_id_offset: None,
+            })
+            .unwrap();
+        assert_eq!(
+            state.remaining.load(Ordering::SeqCst),
+            3,
+            "remaining increases by exactly the 2 spliced nodes"
+        );
+
+        let inner_b_id = state
+            .nodes
+            .iter()
+            .find(|e| e.value().output_tokens == vec![10])
+            .map(|e| *e.key())
+            .expect("inner_b remapped and present");
+        let inner_a_id = state
+            .nodes
+            .iter()
+            .find(|e| e.value().input_tokens.is_empty() && e.key() != &1)
+            .map(|e| *e.key())
+            .expect("inner_a remapped and present");
+
+        let replacement = Arc::new(make_node(999, vec![], vec![10]));
+        state
+            .condense_subdag(&[inner_a_id, inner_b_id], replacement.clone())
+            .unwrap();
+
+        assert_eq!(
+            state.remaining.load(Ordering::SeqCst),
+            2,
+            "condense returns remaining to pre-splice-plus-one (1 + the 1 replacement node)"
+        );
+        assert!(
+            state.nodes.contains_key(&999),
+            "the replacement node is present"
+        );
+        assert!(
+            !state.nodes.contains_key(&inner_a_id) && !state.nodes.contains_key(&inner_b_id),
+            "condensed nodes are removed"
+        );
+        assert_eq!(
+            state.tokens.get(&10).unwrap().consumers.clone(),
+            vec![1],
+            "node 1's external consumption of token 10 survives condensing, \
+             now served by the replacement"
+        );
+    }
+
+    /// Regression pin for the restart/recovery gap this package does NOT
+    /// close: `park_registry`'s backing store is a single process-global
+    /// `OnceLock` with no persistence (`park_registry.rs`'s own docs). There
+    /// is no cross-process store to actually kill/restart against, so this
+    /// constructs the closest in-process analogue — a fresh `SchedulerState`
+    /// (simulating a post-restart process) and a `wait_key` with no live
+    /// registration against it (a real restart wipes the whole in-memory
+    /// map). `wake()` must return 0 resumed wakers and neither panic nor
+    /// silently double-complete a node.
+    #[test]
+    fn park_registry_state_lost_on_process_restart_fails_closed_not_silently() {
+        use crate::scheduler::park_registry;
+
+        let state = Arc::new(new_state(two_node_dag()));
+        let before_remaining = state.remaining.load(Ordering::SeqCst);
+        let before_ready: Vec<bool> = state.tokens.iter().map(|e| e.value().ready).collect();
+
+        let wait_key = "session_recv:w26-post-restart-lost-registration-unique";
+        let woken = park_registry::wake(wait_key, Value::String("late arrival".into()));
+
+        assert_eq!(
+            woken, 0,
+            "a wake for a wait_key with no live registration (the restart \
+             gap) must resume zero wakers, not panic or guess"
+        );
+        // Fail-closed, not silently corrupting: the unrelated fresh scheduler
+        // state is completely untouched — no accidental cross-execution
+        // completion and no double-completion of any node.
+        assert_eq!(
+            state.remaining.load(Ordering::SeqCst),
+            before_remaining,
+            "an unresolved wake must not touch unrelated scheduler state"
+        );
+        assert_eq!(
+            state
+                .tokens
+                .iter()
+                .map(|e| e.value().ready)
+                .collect::<Vec<bool>>(),
+            before_ready,
+            "no token in the fresh state is spuriously marked ready"
+        );
+
+        // Confirm this doesn't leak into a second, unrelated wake either.
+        let unrelated_woken = park_registry::wake(
+            "session_recv:w26-post-restart-lost-registration-different-unique",
+            Value::String("unrelated".into()),
+        );
+        assert_eq!(unrelated_woken, 0);
+    }
+
     #[test]
     fn test_new_two_node_dag_nodes_stored() {
         let dag = two_node_dag();

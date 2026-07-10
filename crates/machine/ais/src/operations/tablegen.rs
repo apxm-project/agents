@@ -407,8 +407,6 @@ fn to_tablegen_name(op_type: AISOperationType) -> String {
         AISOperationType::Print => "Print",
         AISOperationType::Jump => "Jump",
         AISOperationType::BranchOnValue => "BranchOnValue",
-        AISOperationType::LoopStart => "LoopStart",
-        AISOperationType::LoopEnd => "LoopEnd",
         AISOperationType::Return => "Return",
         AISOperationType::Switch => "Switch",
         AISOperationType::FlowCall => "FlowCall",

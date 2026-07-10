@@ -647,3 +647,260 @@ fn spawn_workers(
         })
         .collect()
 }
+
+/// W2.6 exactly-N-iterations conformance: real end-to-end proof that the ONE
+/// production iteration mechanism left after `LOOP_START`/`LOOP_END` were
+/// deleted — graph splicing (`SchedulerState::splice_dag`, driven here the
+/// same way `rearm_session_turn` drives it on every real wake) — dispatches a
+/// loop body through the real dispatcher exactly the number of times the
+/// external driver splices it. Unlike the (deleted) `LOOP_START`/`LOOP_END`
+/// pair, nothing here is compiled-but-ignored: every spliced node runs
+/// through the same worker pool and dispatcher production traffic uses.
+/// See `docs/plans/tasks/W2.6.md`.
+#[cfg(test)]
+mod loop_conformance_tests {
+    use super::*;
+    use crate::aam::Aam;
+    use crate::capability::CapabilitySystem;
+    use crate::memory::{MemoryConfig, MemorySystem};
+    use crate::scheduler::splicing::SpliceConfig;
+    use apxm_backends::LLMRegistry;
+    use apxm_core::constants::graph::attrs as graph_attrs;
+    use apxm_core::types::execution::NodeMetadata;
+    use apxm_core::types::operations::AISOperationType;
+    use apxm_core::types::values::Number;
+    use apxm_core::types::{ExecutionDag, Node, Value};
+    use std::collections::HashMap;
+    use std::time::Duration;
+    use tokio::time::timeout;
+
+    fn test_scheduler_config() -> SchedulerConfig {
+        SchedulerConfig::new()
+            .with_max_concurrency(2)
+            .with_max_inflight(4)
+    }
+
+    async fn test_context() -> (ExecutionContext, Aam) {
+        let memory = Arc::new(
+            MemorySystem::new(MemoryConfig::in_memory_ltm())
+                .await
+                .expect("in-memory memory system"),
+        );
+        let aam = Aam::new();
+        let capability_system = Arc::new(CapabilitySystem::with_aam(aam.clone()));
+        let ctx = ExecutionContext::new(
+            memory,
+            Arc::new(LLMRegistry::new()),
+            capability_system,
+            aam.clone(),
+        );
+        (ctx, aam)
+    }
+
+    /// The minimal seed DAG: a single entry NOP. The "loop" itself never
+    /// appears in the compiled graph — exactly the point: there is no
+    /// `LOOP_START`/`LOOP_END` IR to lie about iteration. Every body
+    /// execution below arrives dynamically via `splice_dag`.
+    fn seed_dag() -> ExecutionDag {
+        let mut dag = ExecutionDag::new();
+        dag.add_node(Node {
+            id: 1,
+            op_type: AISOperationType::Nop,
+            attributes: HashMap::new(),
+            input_tokens: vec![],
+            output_tokens: vec![],
+            metadata: NodeMetadata::default(),
+        })
+        .unwrap();
+        dag.entry_nodes = dag.find_entry_nodes();
+        dag.exit_nodes = dag.find_exit_nodes();
+        dag
+    }
+
+    /// Spawn a real scheduler run against `seed_dag()` and hand back the live
+    /// `Arc<SchedulerState>` so the test driver can splice into it — playing
+    /// the same role the production worker park path plays when it calls
+    /// `rearm_session_turn` on every wake (`worker.rs`'s `ExecutionOutcome::
+    /// Parked` arm / `session_loop_rearm_spec`), just invoked directly instead
+    /// of through a parked RECV node. No graph-native back-edge is created;
+    /// the driver alone decides whether another iteration happens.
+    async fn spawn_seeded_execution(
+        ctx: ExecutionContext,
+    ) -> (Arc<SchedulerState>, Vec<tokio::task::JoinHandle<()>>) {
+        let metrics = Arc::new(MetricsCollector::new());
+        let (state, workers) = SchedulerState::new(
+            seed_dag(),
+            test_scheduler_config(),
+            metrics,
+            Instant::now(),
+            vec![],
+        )
+        .unwrap();
+        // Hold the DAG open for the test's duration: the 1-node seed DAG
+        // would otherwise complete almost instantly, drive `remaining` to 0,
+        // and let every worker observe that and terminate its loop — exactly
+        // the way a real production execution stays open only because the
+        // session-recv node PARKS (defers its completion) rather than
+        // finishing outright. This phantom unit plays that same role without
+        // needing a real parking handler (which would need a live session /
+        // HTTP checkpoint server); `finish()` releases it via `mark_done()`.
+        state.remaining.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+
+        let state = Arc::new(state);
+        let executor = Arc::new(ExecutorEngine::new(ctx.clone()));
+        let handles = spawn_workers(Arc::clone(&state), workers, executor, ctx);
+        (state, handles)
+    }
+
+    /// A UMEM body node with no input tokens, so its handler (`umem.rs`)
+    /// always uses the literal `VALUE` attribute rather than an input — the
+    /// driver controls the counter value deterministically per splice.
+    fn counter_body_node(key: &str, iteration: i64) -> Node {
+        let mut attrs = HashMap::new();
+        attrs.insert(graph_attrs::KEY.to_string(), Value::String(key.to_string()));
+        attrs.insert(
+            graph_attrs::VALUE.to_string(),
+            Value::Number(Number::Integer(iteration)),
+        );
+        Node {
+            id: 1, // local id; splice_dag remaps to a fresh live id
+            op_type: AISOperationType::UMem,
+            attributes: attrs,
+            input_tokens: vec![],
+            output_tokens: vec![],
+            metadata: NodeMetadata::default(),
+        }
+    }
+
+    /// Splice one loop-body iteration and wait (bounded) for the real worker
+    /// pool to have actually dispatched it, observed via the AAM belief the
+    /// body's UMEM handler writes for real. This is the "wake" half of a
+    /// splice-based iteration: the driver does not offer iteration N+1 until
+    /// iteration N has genuinely run.
+    async fn splice_iteration_and_await(
+        state: &Arc<SchedulerState>,
+        aam: &Aam,
+        key: &str,
+        iteration: i64,
+    ) {
+        let mut inner = ExecutionDag::new();
+        inner.add_node(counter_body_node(key, iteration)).unwrap();
+        state
+            .splice_dag(SpliceConfig {
+                inner_dag: inner,
+                token_connections: HashMap::new(),
+                node_id_offset: None,
+                token_id_offset: None,
+            })
+            .expect("splice_dag succeeds");
+
+        let expected = Value::Number(Number::Integer(iteration));
+        timeout(Duration::from_secs(5), async {
+            loop {
+                if aam.get_belief(key).as_ref() == Some(&expected) {
+                    return;
+                }
+                tokio::time::sleep(Duration::from_millis(2)).await;
+            }
+        })
+        .await
+        .expect("spliced loop-body iteration did not execute in time");
+    }
+
+    /// Let the still-running worker pool wind down and join it, bounded so a
+    /// bug can't hang the test suite.
+    async fn finish(state: &Arc<SchedulerState>, handles: Vec<tokio::task::JoinHandle<()>>) {
+        state.mark_done();
+        for h in handles {
+            let _ = timeout(Duration::from_secs(5), h).await;
+        }
+    }
+
+    /// Positive (exactly-N-iterations conformance, the required evidence
+    /// artifact): `max_iterations = 3`, a body node incrementing an
+    /// observable counter (AAM belief); assert exactly 3 runs.
+    #[tokio::test]
+    async fn loop_body_executes_exactly_n_times() {
+        let (ctx, aam) = test_context().await;
+        let (state, handles) = spawn_seeded_execution(ctx).await;
+        let key = "w26_loop_conformance_exact_n";
+
+        for i in 1..=3i64 {
+            splice_iteration_and_await(&state, &aam, key, i).await;
+        }
+
+        assert_eq!(aam.get_belief(key), Some(Value::Number(Number::Integer(3))));
+        let stats = state.build_stats();
+        assert_eq!(
+            stats.executed_nodes, 4,
+            "the 1-node seed plus exactly 3 spliced body executions, no more"
+        );
+
+        finish(&state, handles).await;
+    }
+
+    /// Condition false after 2 of 3 allowed iterations: assert exactly 2
+    /// executions. The "condition" is evaluated by the driver between
+    /// splices — precisely how a real re-arm loop decides whether to splice
+    /// again (`ParkWaker::fire`'s turn-cap check), not a graph back-edge.
+    #[tokio::test]
+    async fn loop_terminates_on_condition_before_max_iterations() {
+        let (ctx, aam) = test_context().await;
+        let (state, handles) = spawn_seeded_execution(ctx).await;
+        let key = "w26_loop_conformance_early_stop";
+        let max_allowed = 3i64;
+
+        let mut executed = 0i64;
+        for i in 1..=max_allowed {
+            splice_iteration_and_await(&state, &aam, key, i).await;
+            executed = i;
+            let condition_holds = i < 2; // false starting at iteration 2
+            if !condition_holds {
+                break;
+            }
+        }
+
+        assert_eq!(executed, 2, "the driver stopped after iteration 2, not 3");
+        assert_eq!(aam.get_belief(key), Some(Value::Number(Number::Integer(2))));
+        let stats = state.build_stats();
+        assert_eq!(
+            stats.executed_nodes, 3,
+            "the 1-node seed plus exactly 2 spliced body executions"
+        );
+
+        finish(&state, handles).await;
+    }
+
+    /// Bound/condition false immediately: the body never dispatches.
+    #[tokio::test]
+    async fn zero_iteration_loop_executes_body_zero_times() {
+        let (ctx, aam) = test_context().await;
+        let (state, handles) = spawn_seeded_execution(ctx).await;
+        let key = "w26_loop_conformance_zero_iterations";
+
+        // Let the seed settle without ever offering a first iteration.
+        timeout(Duration::from_secs(5), async {
+            loop {
+                if state.build_stats().executed_nodes >= 1 {
+                    return;
+                }
+                tokio::time::sleep(Duration::from_millis(2)).await;
+            }
+        })
+        .await
+        .expect("seed node did not execute in time");
+
+        assert_eq!(
+            aam.get_belief(key),
+            None,
+            "a loop-body belief must not exist when the condition never holds"
+        );
+        assert_eq!(
+            state.build_stats().executed_nodes,
+            1,
+            "only the 1-node seed ran; the body executed zero times"
+        );
+
+        finish(&state, handles).await;
+    }
+}

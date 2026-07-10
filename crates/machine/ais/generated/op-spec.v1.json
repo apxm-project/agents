@@ -1,7 +1,7 @@
 {
   "schema_version": "apxm.op-spec.v1",
   "generated_from": "crates/machine/ais/src/operations/definitions.rs",
-  "total_operations": 41,
+  "total_operations": 39,
   "pseudo_op_count": 2,
   "operations": [
     {
@@ -451,45 +451,6 @@
         }
       ],
       "example_json": "{\"id\": 5, \"op\": \"BRANCH_ON_VALUE\", \"attributes\": {\"value\": \"yes\", \"true_label\": \"6\", \"false_label\": \"7\"}}"
-    },
-    {
-      "op": "LOOP_START",
-      "rust_variant": "LoopStart",
-      "name": "LoopStart",
-      "category": "control_flow",
-      "description": "Begin bounded loop",
-      "long_description": "Marks the beginning of a bounded loop. The count_token specifies how many iterations to execute. Must be paired with a LOOP_END node. The compiler verifies loop bounds at compile time to prevent infinite loops.",
-      "latency": "none",
-      "wire_index": 16,
-      "is_pseudo_op": false,
-      "min_inputs": 0,
-      "produces_output": false,
-      "needs_submission": false,
-      "fields": [
-        {
-          "name": "count_token",
-          "required": true,
-          "description": "Token containing iteration count",
-          "ref_type": null
-        }
-      ],
-      "example_json": "{\"id\": 3, \"op\": \"LOOP_START\", \"attributes\": {\"count_token\": \"3\"}}"
-    },
-    {
-      "op": "LOOP_END",
-      "rust_variant": "LoopEnd",
-      "name": "LoopEnd",
-      "category": "control_flow",
-      "description": "End bounded loop",
-      "long_description": "Marks the end of a bounded loop started by LOOP_START. The runtime decrements the loop counter and branches back to LOOP_START if iterations remain.",
-      "latency": "none",
-      "wire_index": 17,
-      "is_pseudo_op": false,
-      "min_inputs": 0,
-      "produces_output": false,
-      "needs_submission": false,
-      "fields": [],
-      "example_json": null
     },
     {
       "op": "RETURN",
@@ -1208,8 +1169,8 @@
       "rust_variant": "Autonomous",
       "name": "Autonomous",
       "category": "coordination",
-      "description": "Run a goal-directed autonomous loop with the configured model",
-      "long_description": "Runs an iterative plan / act / evaluate loop against a goal prompt. The node keeps calling the configured model until the goal is achieved or `max_iterations` is reached. Optional backend, model, system prompt, provider, and temperature attributes follow the same routing contract as the other LLM operations.",
+      "description": "Macro-op: a fused goal-directed plan/act/evaluate loop, not the general iteration mechanism",
+      "long_description": "AUTONOMOUS is a macro-op — a single node that fuses an internal plan / act / evaluate loop against a goal prompt, implemented as a Rust loop inside the handler (not graph-level iteration). The node keeps calling the configured model until the goal is achieved or `max_iterations` is reached. It is independent of, and not a substitute for, the general in-graph iteration mechanism, which is splice-based (a fresh sub-DAG grafted into the live execution per turn/iteration via `splice_dag`/`rearm_session_turn`; see `docs/plans/tasks/W2.6.md`). Optional backend, model, system prompt, provider, and temperature attributes follow the same routing contract as the other LLM operations.",
       "latency": "high",
       "wire_index": 37,
       "is_pseudo_op": false,

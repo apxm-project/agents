@@ -73,11 +73,6 @@
       "bytes": 105
     },
     {
-      "op": "LOOP_START",
-      "example_json": "{\"id\": 3, \"op\": \"LOOP_START\", \"attributes\": {\"count_token\": \"3\"}}",
-      "bytes": 65
-    },
-    {
       "op": "RETURN",
       "example_json": "{\"id\": 6, \"op\": \"RETURN\", \"attributes\": {}}",
       "bytes": 43
