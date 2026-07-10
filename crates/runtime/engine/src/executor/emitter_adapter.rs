@@ -406,6 +406,13 @@ impl ExecutionEventEmitter for EmitterAdapter {
         });
     }
 
+    fn emit_warning(&self, code: &str, message: &str) {
+        self.emit(WarningPayload {
+            code: code.to_string(),
+            message: message.to_string(),
+        });
+    }
+
     fn emit_model_route_decision(
         &self,
         backend: &str,

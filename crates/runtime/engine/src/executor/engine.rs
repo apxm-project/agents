@@ -2,7 +2,7 @@
 
 use super::{ExecutionContext, ExecutionHookContext, Result, dispatcher::OperationDispatcher};
 use crate::graph_lifecycle::{graph_dispatch_ir_from_dag, graph_metadata_from_dispatch_ir};
-use crate::scheduler::{DataflowScheduler, SchedulerConfig};
+use crate::scheduler::DataflowScheduler;
 use apxm_core::types::{
     GraphStatusSnapshot,
     execution::{ExecutionDag, ExecutionStats, Node, NodeStatus, OpStatus},
@@ -143,17 +143,44 @@ impl ExecutorEngine {
         result
     }
 
-    /// Inner DAG execution logic (parallel with sequential fallback).
+    /// Inner DAG execution logic. Tries the parallel dataflow scheduler
+    /// first; on error, either propagates it (default) or falls back to
+    /// sequential execution, gated by
+    /// `SchedulerConfig::allow_sequential_fallback` — see that field's doc
+    /// comment. The fallback is demoted, not deleted (P08): off by default so
+    /// a real scheduler bug fails loud instead of silently bimodalizing
+    /// latency, but still available as an explicit, logged, alertable opt-in
+    /// for a deployment that depends on it.
     async fn execute_dag_inner(&self, dag: ExecutionDag) -> Result<ExecutionResult> {
         if dag.nodes.len() > 1 {
             match self.execute_dag_parallel(dag.clone()).await {
                 Ok(result) => return Ok(result),
                 Err(e) => {
+                    if !self.context.scheduler_config.allow_sequential_fallback {
+                        tracing::error!(
+                            execution_id = %self.context.execution_id,
+                            error = %e,
+                            "Dataflow scheduler failed; sequential fallback is disabled \
+                             (SchedulerConfig::allow_sequential_fallback = false) — propagating error"
+                        );
+                        return Err(e);
+                    }
                     tracing::warn!(
                         execution_id = %self.context.execution_id,
                         error = %e,
-                        "Dataflow scheduler failed, falling back to sequential execution"
+                        "Dataflow scheduler failed, falling back to sequential execution \
+                         (SchedulerConfig::allow_sequential_fallback = true)"
                     );
+                    if let Some(emitter) = &self.context.event_emitter {
+                        emitter.emit_warning(
+                            "scheduler_fallback_triggered",
+                            &format!(
+                                "dataflow scheduler failed for execution {}, falling back to \
+                                 sequential execution: {e}",
+                                self.context.execution_id
+                            ),
+                        );
+                    }
                 }
             }
         }
@@ -170,7 +197,7 @@ impl ExecutorEngine {
 
     /// Execute a DAG using the dataflow scheduler for automatic parallelism.
     async fn execute_dag_parallel(&self, dag: ExecutionDag) -> Result<ExecutionResult> {
-        let config = SchedulerConfig::default();
+        let config = self.context.scheduler_config.clone();
         let scheduler = DataflowScheduler::new(config);
 
         let executor = Arc::new(ExecutorEngine::new(self.context.clone()));
@@ -610,5 +637,114 @@ mod tests {
             Some(&Value::Null),
             "the input-less entry NOP produces Null on a full re-run"
         );
+    }
+
+    /// An `INV_CAP` node invoking a capability that is never registered with
+    /// the (nothing-registered) test `CapabilitySystem`, chained to a NOP.
+    /// Every attempt fails identically, so with `scheduler_config.max_retries
+    /// = 0` the parallel dataflow scheduler exhausts its retries on the very
+    /// first attempt and returns `RuntimeError::SchedulerRetryExhausted`
+    /// deterministically (`worker.rs`) — no timing race, no timeout. The
+    /// sequential executor, by contrast, just records the node's error
+    /// without aborting the whole DAG (see `execute_dag_sequential`'s
+    /// `Err(error)` arm below), so it still completes.
+    fn failing_inv_cap_dag() -> ExecutionDag {
+        let mut inv_cap = Node::new(1, AISOperationType::InvCap);
+        inv_cap.output_tokens = vec![10];
+        inv_cap.set_attribute(
+            apxm_core::constants::graph::attrs::CAPABILITY.to_string(),
+            Value::String("nonexistent_capability_for_scheduler_fallback_test".to_string()),
+        );
+        inv_cap.set_attribute(
+            apxm_core::constants::graph::attrs::PARAMS_JSON.to_string(),
+            Value::String("{}".to_string()),
+        );
+
+        let mut dag = ExecutionDag::new();
+        dag.add_node(inv_cap).unwrap();
+        dag.add_node(nop_node(2, vec![10], vec![20])).unwrap();
+        dag.add_edge(Edge::new(1, 2, 10, DependencyType::Data))
+            .unwrap();
+        dag.entry_nodes = dag.find_entry_nodes();
+        dag.exit_nodes = dag.find_exit_nodes();
+        dag
+    }
+
+    /// Captures every `emit_warning` call; every other method uses the trait's
+    /// default no-op.
+    #[derive(Default, Clone)]
+    struct WarningCapturingEmitter {
+        warnings: Arc<std::sync::Mutex<Vec<(String, String)>>>,
+    }
+
+    impl super::super::events::ExecutionEventEmitter for WarningCapturingEmitter {
+        fn emit_llm_token(&self, _content: &str) {}
+        fn emit_tool_start(&self, _name: &str, _args: &Map<String, Value>) {}
+        fn emit_tool_end(&self, _name: &str, _result: &Value) {}
+        fn emit_warning(&self, code: &str, message: &str) {
+            self.warnings
+                .lock()
+                .unwrap()
+                .push((code.to_string(), message.to_string()));
+        }
+    }
+
+    /// Regression — fallback flag off by default: `SchedulerConfig::default()`
+    /// has `allow_sequential_fallback = false`, and a forced parallel-scheduler
+    /// error propagates as an `Err` instead of silently running the DAG
+    /// sequentially.
+    #[tokio::test]
+    async fn scheduler_fallback_disabled_by_default_propagates_error() {
+        let mut ctx = test_context().await;
+        assert!(
+            !ctx.scheduler_config.allow_sequential_fallback,
+            "SchedulerConfig::default() must have the fallback disabled"
+        );
+        // No retries: the forced failure is deterministic on the first
+        // attempt, not dependent on retry-backoff timing.
+        ctx.scheduler_config.max_retries = 0;
+
+        let engine = ExecutorEngine::new(ctx);
+        let result = engine.execute_dag(failing_inv_cap_dag()).await;
+
+        assert!(
+            result.is_err(),
+            "a forced scheduler error must propagate when the fallback flag is off, \
+             not silently run sequential: {result:?}"
+        );
+    }
+
+    /// With the flag explicitly on, the same forced scheduler error falls
+    /// back to `execute_dag_sequential` unchanged — proven by the identical
+    /// unregistered-capability failure surfacing through the sequential
+    /// executor's own (pre-existing, unchanged) "a node error aborts the DAG"
+    /// behavior, rather than the parallel scheduler's
+    /// `SchedulerRetryExhausted` — and the alert-event fires exactly once for
+    /// the one trigger.
+    #[tokio::test]
+    async fn scheduler_fallback_flag_on_runs_sequential_and_alerts_once() {
+        let mut ctx = test_context().await;
+        ctx.scheduler_config.allow_sequential_fallback = true;
+        ctx.scheduler_config.max_retries = 0;
+        let emitter = WarningCapturingEmitter::default();
+        let warnings = Arc::clone(&emitter.warnings);
+        ctx.event_emitter = Some(Arc::new(emitter));
+
+        let engine = ExecutorEngine::new(ctx);
+        let result = engine.execute_dag(failing_inv_cap_dag()).await;
+
+        assert!(
+            result.is_err(),
+            "the unregistered capability must still fail via the (unchanged) \
+             sequential executor: {result:?}"
+        );
+
+        let captured = warnings.lock().unwrap().clone();
+        assert_eq!(
+            captured.len(),
+            1,
+            "the alert-event must fire exactly once per trigger: {captured:?}"
+        );
+        assert_eq!(captured[0].0, "scheduler_fallback_triggered");
     }
 }

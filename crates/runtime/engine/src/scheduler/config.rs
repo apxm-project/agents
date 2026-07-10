@@ -66,6 +66,17 @@ pub struct SchedulerConfig {
     /// Streams producer output to downstream consumers before completion (ASK->ASK only).
     #[serde(default)]
     pub pipeline: PipelineConfig,
+
+    /// Gates the undocumented-by-default sequential fallback
+    /// (`ExecutorEngine::execute_dag_inner`): when the parallel dataflow
+    /// scheduler errors, `false` (the default) propagates the error instead
+    /// of silently re-running the DAG sequentially. `true` is an explicit,
+    /// logged opt-in that restores the old silent-fallback behavior (demote,
+    /// not delete — P08) for a deployment that depends on it. Off by default
+    /// in CI so a real scheduler bug fails loud instead of hiding behind a
+    /// bimodal-latency fallback nobody pages on.
+    #[serde(default)]
+    pub allow_sequential_fallback: bool,
 }
 
 /// Configuration for token pipelining (research feature).
@@ -109,6 +120,7 @@ impl Default for SchedulerConfig {
             latency_tiers: LatencyTierConfig::default(),
             collect_all_outputs: false,
             pipeline: PipelineConfig::default(),
+            allow_sequential_fallback: false,
         }
     }
 }
@@ -162,6 +174,13 @@ impl SchedulerConfig {
 
     pub fn with_collect_all_outputs(mut self, collect_all_outputs: bool) -> Self {
         self.collect_all_outputs = collect_all_outputs;
+        self
+    }
+
+    /// Explicit, logged opt-in to the demoted sequential fallback. Off by
+    /// default (`SchedulerConfig::default()`); see the field doc comment.
+    pub fn with_allow_sequential_fallback(mut self, allow: bool) -> Self {
+        self.allow_sequential_fallback = allow;
         self
     }
 

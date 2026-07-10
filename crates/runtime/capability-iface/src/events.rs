@@ -186,6 +186,14 @@ pub trait ExecutionEventEmitter: Send + Sync {
     // ── Scheduler ───────────────────────────────────────────────────
     fn emit_scheduler_decision(&self, _node_id: u64, _delay: Duration, _reason: &str) {}
 
+    // ── Alerts / operational signals ───────────────────────────────
+    /// Emit an alertable operational warning — distinct from a bare
+    /// `tracing::warn!` nobody pages on. `code` is a machine-readable
+    /// identifier (e.g. `"scheduler_fallback_triggered"`); `message` is
+    /// human-readable detail. Default no-op so out-of-tree emitters don't
+    /// have to implement it.
+    fn emit_warning(&self, _code: &str, _message: &str) {}
+
     // ── Routing ────────────────────────────────────────────
     /// A `ModelRouter::select` decision: chosen backend/model, why, and
     /// every candidate passed over with its own reason. `rejected_candidates`
