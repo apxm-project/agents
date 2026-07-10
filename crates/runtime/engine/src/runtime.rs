@@ -346,6 +346,7 @@ impl Runtime {
             .sanitized_max_parallel_tool_calls();
         ctx.optimization_target = self.config.optimization_target;
         ctx.metrics_level = self.config.metrics_level;
+        ctx.scheduler_config = self.config.scheduler_config.clone();
         ctx.event_emitter = event_emitter;
         ctx.sandbox_registry = Arc::clone(&self.sandbox_registry);
         ctx.process_table = Arc::clone(&self.process_table);

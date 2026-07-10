@@ -78,6 +78,13 @@ pub struct ExecutionContext {
     /// observers (currently per-graph pin-peak polling); `Basic` records
     /// steady-state aggregates only.
     pub metrics_level: MetricsLevel,
+    /// Scheduler configuration for this execution tree, sourced from
+    /// `RuntimeConfig::scheduler_config` at context construction
+    /// (`Runtime::build_context_with_bridge`). `ExecutorEngine::execute_dag_inner`
+    /// reads `scheduler_config.allow_sequential_fallback` to decide whether a
+    /// parallel-scheduler error propagates (default) or falls back to
+    /// sequential execution (explicit opt-in).
+    pub scheduler_config: crate::scheduler::SchedulerConfig,
     pub consumed_tokens: Arc<std::sync::atomic::AtomicU64>,
     /// Per-tool call-count budget: max calls allowed per capability
     /// name for this execution tree. `None` = unbounded. Declared by the
@@ -240,6 +247,7 @@ impl ExecutionContext {
             token_budget: None,
             optimization_target: OptimizationTarget::Balanced,
             metrics_level: MetricsLevel::default(),
+            scheduler_config: crate::scheduler::SchedulerConfig::default(),
             consumed_tokens: Arc::new(std::sync::atomic::AtomicU64::new(0)),
             tool_call_budgets: None,
             tool_call_counts: Arc::new(std::sync::Mutex::new(std::collections::HashMap::new())),
@@ -608,6 +616,7 @@ impl ExecutionContext {
             token_budget: self.token_budget,
             optimization_target: self.optimization_target,
             metrics_level: self.metrics_level,
+            scheduler_config: self.scheduler_config.clone(),
             consumed_tokens: Arc::clone(&self.consumed_tokens),
             tool_call_budgets: self.tool_call_budgets.clone(),
             tool_call_counts: Arc::clone(&self.tool_call_counts),
