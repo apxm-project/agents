@@ -199,7 +199,7 @@ impl ExecutionEventEmitter for EmitterAdapter {
         self.emit(GraphEdgePayload {
             from_node_id,
             to_node_id,
-            kind: kind.to_string(),
+            edge_kind: kind.to_string(),
         });
     }
 
