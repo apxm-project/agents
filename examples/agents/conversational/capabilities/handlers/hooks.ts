@@ -34,11 +34,11 @@ export const redact_tool_results = hook({
   return ctx.replaceResult(text);
 });
 
-// Bounded-context compaction is now the W2.7 runtime default
+// Bounded-context compaction is now the runtime default
 // (`[runtime] compaction_policy` in agent.toml), not a hand-rolled
 // `post_turn` hook. The retired version called `ctx.count_tokens`/`ctx.ask`
 // itself on every turn (the same DIY pattern as
-// examples/python/conversational/controllable_agent.py's pre-W2.7 shape);
+// examples/python/conversational/controllable_agent.py's earlier hand-rolled shape);
 // the runtime mechanism reuses the shipped bpe estimator and emits
 // `context_window_warning`/`context_compacted` events instead of folding
 // silently. See `examples/agents/conversational-opt-out` for the variant

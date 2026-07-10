@@ -2204,7 +2204,7 @@ mod tests {
         fs::create_dir_all(root.join("capabilities/clean_example")).unwrap();
         fs::write(
             root.join("capabilities/clean_example/capability.toml"),
-            "id = \"clean_example\"\ndescription = \"demo\"\n",
+            "id = \"clean_example\"\ndescription = \"demo\"\nkind = \"static\"\n",
         )
         .unwrap();
         fs::write(

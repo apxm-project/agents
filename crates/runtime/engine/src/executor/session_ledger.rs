@@ -30,7 +30,7 @@ pub struct SessionLedger {
     /// for this session that could not be parsed with confidence. A poisoned
     /// ledger denies every further turn/tool charge rather than silently
     /// resuming from zero (constitution: a restart must never be a free
-    /// cap refill — see docs/plans/tasks/W2.5.md threat model).
+    /// cap refill — see the restart-state reconstruction invariant).
     poisoned: AtomicBool,
 }
 
@@ -109,11 +109,7 @@ impl SessionLedger {
         let Some(session_id) = self.session_id.get() else {
             return;
         };
-        let consumed = self
-            .tool_consumed
-            .lock()
-            .expect("ledger poisoned")
-            .clone();
+        let consumed = self.tool_consumed.lock().expect("ledger poisoned").clone();
         durable::persist(session_id, self.turns_used(), &consumed);
     }
 
@@ -303,7 +299,11 @@ pub mod durable {
     }
 
     #[cfg(feature = "sqlite")]
-    pub(super) fn persist(session_id: &str, turns_used: usize, tool_consumed: &HashMap<String, usize>) {
+    pub(super) fn persist(
+        session_id: &str,
+        turns_used: usize,
+        tool_consumed: &HashMap<String, usize>,
+    ) {
         let guard = slot().lock().expect("session ledger durable slot poisoned");
         let Some(conn) = guard.as_ref() else { return };
         let Ok(json) = serde_json::to_string(tool_consumed) else {
@@ -317,7 +317,12 @@ pub mod durable {
     }
 
     #[cfg(not(feature = "sqlite"))]
-    pub(super) fn persist(_session_id: &str, _turns_used: usize, _tool_consumed: &HashMap<String, usize>) {}
+    pub(super) fn persist(
+        _session_id: &str,
+        _turns_used: usize,
+        _tool_consumed: &HashMap<String, usize>,
+    ) {
+    }
 
     #[cfg(feature = "sqlite")]
     pub(super) fn load(session_id: &str) -> LoadOutcome {

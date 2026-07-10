@@ -198,7 +198,10 @@ mod tests {
             .await
             .expect("write second event");
         recorder.close().await.unwrap();
-        let full_len = tokio::fs::metadata(recorder.file_path()).await.unwrap().len();
+        let full_len = tokio::fs::metadata(recorder.file_path())
+            .await
+            .unwrap()
+            .len();
         assert!(
             full_len > complete_len + 10,
             "third line must add a meaningful number of bytes to truncate mid-line"
@@ -242,7 +245,10 @@ mod tests {
         let (absent_items, absent_stats) = load_rollout(recorder.file_path())
             .await
             .expect("load as-if-absent rollout");
-        assert_eq!(absent_stats.parse_errors, 0, "no partial line remains at all");
+        assert_eq!(
+            absent_stats.parse_errors, 0,
+            "no partial line remains at all"
+        );
         assert_eq!(absent_items.len(), 2);
 
         // `RolloutLine`/`RolloutPayload` don't derive `PartialEq` (they carry

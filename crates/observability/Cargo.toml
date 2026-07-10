@@ -20,6 +20,8 @@ opentelemetry.workspace = true
 opentelemetry-otlp.workspace = true
 opentelemetry_sdk.workspace = true
 http.workspace = true
+blake3.workspace = true
+serde_json.workspace = true
 # Shared typed permission-decision vocabulary: metric labels must go through
 # `PermissionDecisionKind::as_str()` and similar bounded enums, never ad-hoc
 # strings. `apxm-core` has no dependency back on this crate, so this is not a
@@ -33,6 +35,8 @@ reqwest = { workspace = true, optional = true }
 [dev-dependencies]
 opentelemetry_sdk = { workspace = true, features = ["testing"] }
 tokio = { workspace = true, features = ["rt-multi-thread", "macros"] }
+futures-util.workspace = true
+uuid.workspace = true
 
 [features]
 default = []

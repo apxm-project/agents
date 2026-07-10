@@ -577,7 +577,7 @@ mod tests {
     /// overrides, so this test would have failed with both children
     /// recording nothing at all — the "fixed `EmitterAdapter` alone
     /// looks complete while `MultiEmitter` stays silently broken" trap
-    /// called out in the W1.5 threat model.
+    /// required by the event-delivery contract.
     #[test]
     fn multi_emitter_forwards_layer2_calls_to_children() {
         let child_a = Arc::new(RecordingEmitter::default());

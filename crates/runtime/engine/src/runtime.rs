@@ -1909,7 +1909,7 @@ mod tests {
     }
 
     /// Mirrors [`python_tool_sections_require_sandbox_flag`] for the
-    /// TypeScript sidecar — before W1.6 there was no equivalent rejection at
+    /// TypeScript sidecar — before the script-artifact admission policy there was no equivalent rejection at
     /// all, so an untrusted TypeScript section ran unsandboxed by default.
     #[tokio::test]
     async fn typescript_tool_sections_require_sandbox_flag() {
@@ -1930,7 +1930,7 @@ mod tests {
         assert!(err.to_string().contains("APXM_SANDBOX_PYTHON"));
     }
 
-    /// Environment matrix (W1.6 required evidence, Runtime layer): a script
+    /// Environment matrix for script-artifact admission: a script
     /// section (Python or TypeScript) is admitted only when BOTH
     /// `APXM_TRUST_PYTHON_ARTIFACTS` and `APXM_SANDBOX_PYTHON` are set —
     /// trust-only and sandbox-only must fail closed identically to no vars
@@ -1957,7 +1957,9 @@ mod tests {
             ] {
                 let runtime = Runtime::new(RuntimeConfig::in_memory()).await.unwrap();
                 let artifact = artifact_with_script_section(section_kind);
-                let result = runtime.execute_artifact_with_args(artifact, Vec::new()).await;
+                let result = runtime
+                    .execute_artifact_with_args(artifact, Vec::new())
+                    .await;
                 assert_eq!(
                     result.is_ok(),
                     expect_admitted,

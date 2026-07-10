@@ -409,7 +409,7 @@ mod tests {
         artifact.sections().iter().any(|s| s.kind == kind)
     }
 
-    /// Environment matrix (W1.6 required evidence, driver attach step): the
+    /// Environment matrix for script-artifact admission: the
     /// driver's `append_to_artifact` must not attach EITHER sidecar unless
     /// the operator has asserted BOTH trust and sandbox — before this gate
     /// the driver attached both sidecars unconditionally regardless of any

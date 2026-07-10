@@ -84,7 +84,7 @@ mod runtime;
 /// `typescript_tools` trust+sandbox gate) — consulted identically by this
 /// crate's `Runtime`, the driver's attach step, and the server's raw execute
 /// admission so all three embeddings enforce one policy. See
-/// `docs/plans/tasks/W1.6.md` in the coordinator workspace.
+/// `the shared script-artifact admission policy` in the coordinator workspace.
 pub mod script_admission;
 pub mod typescript_tools;
 // `sandbox` moved to `apxm-capability-iface` — it had zero dependencies on
@@ -147,8 +147,8 @@ pub use process_table::{
 pub use runtime::{
     ExecutionOutcome, LlmToolDispatchConfig, Runtime, RuntimeConfig, RuntimeExecutionResult,
 };
-pub use script_admission::{script_artifacts_trusted, script_sandbox_required};
 pub use scheduler::{DataflowScheduler, SchedulerConfig};
+pub use script_admission::{script_artifacts_trusted, script_sandbox_required};
 pub use thread::{AgentThread, ThreadId, ThreadState};
 
 pub use sandbox::{

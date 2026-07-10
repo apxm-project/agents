@@ -184,7 +184,7 @@ struct MockScriptRule {
 /// list of pattern rules plus an optional `default` response for prompts
 /// that match none of them. This is deliberately a thin JSON reader over the
 /// existing `MockLLMBackend::when_prompt_contains`/`default` API — not a new
-/// mock implementation (docs/plans/tasks/W5.1.md's threat model: "reusing
+/// mock implementation (the deterministic conversational regression contract: "reusing
 /// `MockLLMBackend::when_prompt_contains`, not a new mock implementation").
 #[derive(serde::Deserialize)]
 struct MockScript {
@@ -197,7 +197,7 @@ struct MockScript {
 /// Load an `APXM_MOCK_SCRIPT_PATH` fixture and wire its ordered pattern
 /// rules (plus optional default) into `mock`. A missing or malformed script
 /// is a hard error (never a silent fall-back to the single canned default) —
-/// per the threat model, a flaky/ambiguous scripted transcript must fail
+/// per the regression contract, a flaky/ambiguous scripted transcript must fail
 /// loud, not degrade quietly into non-deterministic single-response
 /// behavior.
 fn load_mock_script(

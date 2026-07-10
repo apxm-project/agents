@@ -1631,7 +1631,7 @@ mod tests {
         park_registry::durable::init(&db_path).expect("open durable park journal");
 
         // Scenario A: park on key_a, "restart", re-park key_a, then wake.
-        let key_a = "w25-restart-repark-a".to_string();
+        let key_a = "restart-repark-a".to_string();
         let state1 = Arc::new(new_state(two_node_dag()));
         state1.parked.fetch_add(1, Ordering::SeqCst);
         park_registry::register(
@@ -1647,8 +1647,7 @@ mod tests {
         // (file survives); the in-memory registry entry for key_a is cleared
         // (a real restart's fresh registry never had it).
         park_registry::durable::close_for_test();
-        park_registry::durable::init(&db_path)
-            .expect("reopen durable park journal after restart");
+        park_registry::durable::init(&db_path).expect("reopen durable park journal after restart");
         park_registry::rebuild_from_durable(std::slice::from_ref(&key_a));
         assert!(
             park_registry::pending_wait_keys().contains(&key_a),
@@ -1679,7 +1678,7 @@ mod tests {
         // fire immediately from the durably-reloaded resolved stash — the
         // actual gap this journal closes (an in-memory-only stash does not
         // survive a real process restart).
-        let key_b = "w25-restart-repark-b".to_string();
+        let key_b = "restart-repark-b".to_string();
         park_registry::wake(&key_b, Value::String("arrived-before-restart".into()));
 
         park_registry::durable::close_for_test();
@@ -1705,19 +1704,19 @@ mod tests {
         park_registry::durable::close_for_test();
     }
 
-    // ── W2.6 loop/park/wake/splice invariants ──────────────────────────────
+    // ── loop/park/wake/splice invariants ─────────────────────────────────────
     // The keystone (splice-based iteration) must keep passing: LOOP_START/
     // LOOP_END were deleted because they were compiled-but-ignored; splicing
     // is the one real iteration mechanism left, so its invariants are load
-    // bearing. See `docs/plans/tasks/W2.6.md`.
+    // bearing because splicing is the supported iteration mechanism.
 
     /// Exact required name for the wake-before-register race (duplicate
     /// coverage of `park_registry_wake_before_register_is_not_lost` under the
-    /// planning record's exact test name — both pin the same invariant).
+    /// exact regression name — both pin the same invariant).
     #[test]
     fn wake_before_register_is_lost_wakeup_safe() {
         use crate::scheduler::park_registry;
-        let key = "w26-wake-before-register-unique";
+        let key = "wake-before-register-unique";
         // wake() arrives before any register() — the lost-wakeup race.
         let woken = park_registry::wake(key, Value::String("early".into()));
         assert_eq!(woken, 0, "no waiter is registered yet");
@@ -1815,8 +1814,8 @@ mod tests {
         let _ = drain_queue(&state);
         state.parked.fetch_add(1, Ordering::SeqCst);
 
-        let session_id = "w26-two-turns-session";
-        let key = "session_recv:w26-two-turns-unique-1";
+        let session_id = "two-turns-session";
+        let key = "session_recv:two-turns-unique-1";
         let spec = |sid: &str| RearmSpec {
             recv_node: Arc::new(recv.clone()),
             turn_agent: "conversation".to_string(),
@@ -1839,7 +1838,11 @@ mod tests {
             .filter(|e| e.value().op_type == AISOperationType::FlowCall)
             .map(|e| *e.key())
             .collect();
-        assert_eq!(turn1_flow_calls.len(), 1, "turn 1 spliced exactly one FLOW_CALL");
+        assert_eq!(
+            turn1_flow_calls.len(),
+            1,
+            "turn 1 spliced exactly one FLOW_CALL"
+        );
         let turn1_flow_call = turn1_flow_calls[0];
 
         // The fresh recv turn 1 spliced (Autonomous, id != 1) is what a real
@@ -1857,7 +1860,11 @@ mod tests {
         // Turn 2: a second wake on the SAME session key.
         park_registry::register(
             key.to_string(),
-            ParkWaker::new_rearming(Arc::clone(&state), vec![fresh_recv_output], spec(session_id)),
+            ParkWaker::new_rearming(
+                Arc::clone(&state),
+                vec![fresh_recv_output],
+                spec(session_id),
+            ),
         );
         park_registry::wake(key, Value::String("turn two".into()));
 
@@ -1905,8 +1912,8 @@ mod tests {
         let _ = drain_queue(&state);
         state.parked.fetch_add(1, Ordering::SeqCst);
 
-        let session_id = "w26-cap-session";
-        let key = "session_recv:w26-cap-unique-1";
+        let session_id = "cap-session";
+        let key = "session_recv:cap-unique-1";
         const MAX_TURNS: u64 = 2;
         let spec = || RearmSpec {
             recv_node: Arc::new(recv.clone()),
@@ -1916,14 +1923,13 @@ mod tests {
             session_id: session_id.to_string(),
             max_turns: MAX_TURNS,
         };
-        let flow_call_count =
-            |state: &SchedulerState| -> usize {
-                state
-                    .nodes
-                    .iter()
-                    .filter(|e| e.value().op_type == AISOperationType::FlowCall)
-                    .count()
-            };
+        let flow_call_count = |state: &SchedulerState| -> usize {
+            state
+                .nodes
+                .iter()
+                .filter(|e| e.value().op_type == AISOperationType::FlowCall)
+                .count()
+        };
 
         // Turn 1 (running count 1 < max_turns 2): re-arms.
         park_registry::register(
@@ -1994,8 +2000,8 @@ mod tests {
 
         const MAX_TURNS: u64 = 4;
         const WAKE_ATTEMPTS: usize = 9; // far more than MAX_TURNS
-        let session_id = "w26-unbounded-driver-session";
-        let key = "session_recv:w26-unbounded-driver-unique-1";
+        let session_id = "unbounded-driver-session";
+        let key = "session_recv:unbounded-driver-unique-1";
 
         let mut target_token = 10u64;
         for _ in 0..WAKE_ATTEMPTS {
@@ -2055,7 +2061,11 @@ mod tests {
         dag.entry_nodes = dag.find_entry_nodes();
         dag.exit_nodes = dag.find_exit_nodes();
         let state = Arc::new(new_state(dag));
-        assert_eq!(state.remaining.load(Ordering::SeqCst), 1, "pre-splice remaining");
+        assert_eq!(
+            state.remaining.load(Ordering::SeqCst),
+            1,
+            "pre-splice remaining"
+        );
         assert_eq!(
             state.tokens.get(&10).unwrap().consumers.clone(),
             vec![1],
@@ -2141,7 +2151,7 @@ mod tests {
         let before_remaining = state.remaining.load(Ordering::SeqCst);
         let before_ready: Vec<bool> = state.tokens.iter().map(|e| e.value().ready).collect();
 
-        let wait_key = "session_recv:w26-post-restart-lost-registration-unique";
+        let wait_key = "session_recv:post-restart-lost-registration-unique";
         let woken = park_registry::wake(wait_key, Value::String("late arrival".into()));
 
         assert_eq!(
@@ -2169,7 +2179,7 @@ mod tests {
 
         // Confirm this doesn't leak into a second, unrelated wake either.
         let unrelated_woken = park_registry::wake(
-            "session_recv:w26-post-restart-lost-registration-different-unique",
+            "session_recv:post-restart-lost-registration-different-unique",
             Value::String("unrelated".into()),
         );
         assert_eq!(unrelated_woken, 0);
@@ -2955,7 +2965,7 @@ mod tests {
     #[tokio::test]
     async fn test_llm_concurrency_independent_of_compute_concurrency() {
         // Exhaust the LLM semaphore; compute permits must remain available.
-        // This is the core invariant behind Step 5: LLM fan-out can saturate
+        // This is the core invariant: LLM fan-out can saturate
         // without throttling compute-bound work, and vice versa.
         let cfg = SchedulerConfig::new()
             .with_max_concurrency(2)
