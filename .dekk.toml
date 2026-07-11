@@ -89,6 +89,14 @@ explain = { run = "python tools/scripts/apxm_cli.py explain", description = "Hum
 goal = { run = "python tools/scripts/apxm_cli.py goal", description = "Start, follow, inspect, or cancel a bounded APXM goal run", group = "Goals & Workflows" }
 workflow = { run = "python tools/scripts/apxm_cli.py workflow", description = "Run, validate, analyze, and follow APXM workflow files", group = "Goals & Workflows" }
 
+[commands.frontend]
+description = "Prepare and verify the TypeScript frontend toolchain"
+group = "Build & Test"
+setup = { run = "npm ci --prefix crates/compiler/frontend/typescript", description = "Install the locked TypeScript frontend dependencies" }
+build = { run = "npm --prefix crates/compiler/frontend/typescript run build", description = "Build the TypeScript frontend and handler compiler" }
+typecheck = { run = "npm --prefix crates/compiler/frontend/typescript run typecheck", description = "Type-check the TypeScript frontend" }
+typecheck-package = { run = "crates/compiler/frontend/typescript/node_modules/.bin/tsc --noEmit -p", description = "Type-check an agent package with the frontend TypeScript compiler" }
+
 [commands.session]
 description = "Inspect APXM execution session outputs"
 group = "Observability"

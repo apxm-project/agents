@@ -39,9 +39,9 @@ URL-verification discipline, prompt-token convention) — the same split
 
 ## Node kinds
 
-Studio injects the **live node-kind catalog** each chat turn from the Studio registry. The allowed values come from the closed `DraftNodeKind` enum in `apxm.workflow-draft.v1` (`llm`, `acp_agent`, `synthesize`, `tool`, `memory_write`, `memory_read`, `merge`, `text`, `output`, and the trigger kinds — `cron_trigger`, `webhook_trigger`, `watch_trigger`, `channel_trigger`, `mcp_trigger`, `a2a_trigger`, `process_trigger`, `polling_trigger`). Use only `kind` values listed there — when Studio adds a node type, both the registry and the schema enum grow together.
+When the host supplies the canonical `nodeKinds` turn-context field, it contains the **live node-kind catalog** from the Studio registry. The allowed values come from the closed `DraftNodeKind` enum in `apxm.workflow-draft.v1` (`llm`, `acp_agent`, `synthesize`, `tool`, `memory_write`, `memory_read`, `merge`, `text`, `output`, and the trigger kinds — `cron_trigger`, `webhook_trigger`, `watch_trigger`, `channel_trigger`, `mcp_trigger`, `a2a_trigger`, `process_trigger`, `polling_trigger`). Use only `kind` values listed there.
 
-Do not rely on a static list in this file; check the injected **Studio node kinds** section, and treat the schema's enum as the source of truth if the two ever appear to disagree.
+Do not rely on a package-local snapshot. Check the injected **Studio node kinds** section, and treat the schema's enum as the source of truth if the two ever appear to disagree. If `nodeKinds` is absent, do not emit Apply workflow JSON; ask for host context or stay at the high-level planning stage.
 
 ## Tool / integration nodes
 

@@ -46,7 +46,7 @@ not a capability and fails lint (the "joined capability" rule).
 tamper-evident hash chain over recognized files. The chain excludes
 `integrity.toml` itself, starts with 64 zeroes as genesis, and its final
 link must equal the root `hash`. Reordering, inserting, dropping, or editing
-a recognized file breaks the seal. Run `apxm agent build`, never hand-patch
+a recognized file breaks the seal. Run `dekk agents agent build`, never hand-patch
 `integrity.toml`.
 
 ## Decision guide
@@ -66,13 +66,13 @@ a recognized file breaks the seal. Run `apxm agent build`, never hand-patch
 4. Add one capability folder per id. Builtins dispatch by id; TypeScript handlers use `handler.ts` and an explicit JSON argument schema.
 5. Add one permission entry for every capability. Missing policy is a lint failure.
 6. Add local skills under `skills/<id>/` when the behavior is a reusable operating recipe.
-7. Run `dekk agents agent sync`, `dekk agents agent lint`, and `dekk agents agent build` to regenerate manifests and the integrity chain.
+7. Run `dekk agents frontend setup` once per checkout, then `dekk agents frontend build`, `dekk agents frontend typecheck-package <agent>/tsconfig.json`, `dekk agents agent sync <agent>`, `dekk agents agent lint <agent>`, and `dekk agents agent build <agent>` to regenerate manifests and the integrity chain.
 
 A skill's prose/prompt files are ordinary agent files under the same
 integrity chain as everything else — editing a skill through Gao is editing
 its `SKILL.md`/`prompt.md` source, the same way editing any other agent file
 is. Landing those edits means re-emitting any compiled skill artifact and
-recomputing the hash chain via `apxm agent build`.
+recomputing the hash chain via `dekk agents agent build`.
 
 ## Sub-agents
 

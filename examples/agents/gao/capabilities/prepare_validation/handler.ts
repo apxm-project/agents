@@ -2,12 +2,32 @@
 import { tool } from "@apxm/frontend";
 
 type WorkflowArtifactKind = "air" | "workflow_draft";
+type ValidationOwner = "agents" | "studio" | "runtime";
+type ValidationOperation =
+  | "validate_air"
+  | "validate_workflow_draft"
+  | "lower_workflow_draft"
+  | "admit_capabilities"
+  | "enforce_write_boundary";
+
+interface ValidationStep {
+  owner: ValidationOwner;
+  operation: ValidationOperation;
+}
 
 interface PrepareValidationArgs {
   workflow_name: string;
   artifact_kind: WorkflowArtifactKind;
   artifact: string;
 }
+
+const VALIDATION_STEPS: readonly ValidationStep[] = [
+  { owner: "agents", operation: "validate_air" },
+  { owner: "studio", operation: "validate_workflow_draft" },
+  { owner: "studio", operation: "lower_workflow_draft" },
+  { owner: "runtime", operation: "admit_capabilities" },
+  { owner: "runtime", operation: "enforce_write_boundary" },
+];
 
 /** Prepare a bounded validation request without executing the artifact. */
 export const prepareValidation = tool({
@@ -30,12 +50,7 @@ export const prepareValidation = tool({
       workflow_name: args.workflow_name,
       artifact_kind: args.artifact_kind,
       artifact_preview: preview,
-      authoritative_validation: [
-        "typescript_conversational_agent_validate",
-        "studio_lower",
-        "server_compile_or_compose_workflow",
-        "runtime_write_boundary",
-      ],
+      validation_plan: VALIDATION_STEPS,
       next_action: "ask_user_before_write_or_execute",
     },
     null,

@@ -3,10 +3,6 @@
 // Exercised from `crates/tools/cli/src/commands/agent.rs` via
 // `cargo test --features driver -p apxm-cli agent:: gao`.
 //
-// Cross-repo server coverage lives in
-// `workspace/server/crates/server/src/tests.rs`:
-// `agent_compile_endpoint_compiles_real_gao_via_agents_cli`.
-
 use std::fs;
 use std::io::Write;
 use std::path::Path;
@@ -67,7 +63,7 @@ fn gao_example_sync_and_lint_pass() {
 }
 
 #[test]
-fn gao_declares_server_registered_discovery_and_http_builtins() {
+fn gao_declares_runtime_registered_discovery_and_http_builtins() {
     let root = require_gao_example();
     let agent: toml::Value = toml::from_str(
         &fs::read_to_string(root.join("agent.toml")).expect("read gao agent.toml"),
@@ -84,7 +80,7 @@ fn gao_declares_server_registered_discovery_and_http_builtins() {
     for capability in ["capability_discovery", "http_get"] {
         assert!(
             capabilities.contains(&capability),
-            "gao must declare server-registered builtin {capability}"
+            "gao must declare runtime-registered builtin {capability}"
         );
         let definition = fs::read_to_string(
             root.join("capabilities")
@@ -97,6 +93,29 @@ fn gao_declares_server_registered_discovery_and_http_builtins() {
             "{capability} must use canonical builtin dispatch"
         );
     }
+}
+
+#[test]
+fn gao_context_uses_typed_host_input_without_direct_networking() {
+    let root = require_gao_example();
+    let context = fs::read_to_string(root.join("capabilities/handlers/context.ts"))
+        .expect("read Gao context handler");
+
+    assert!(
+        !context.contains("fetch("),
+        "pre-turn hooks must not perform direct network I/O"
+    );
+    assert!(
+        !context.contains("APXM_CAPABILITY_INVENTORY_"),
+        "inventory transport must not be hidden in process environment variables"
+    );
+    assert!(context.contains("snapshot.capabilityInventory"));
+    assert!(context.contains("snapshot.nodeKinds"));
+    assert!(context.contains("do not emit workflow tool nodes"));
+    assert!(
+        !root.join("shared/node_kinds.json").exists(),
+        "Gao must not carry a hand-maintained Studio node-kind snapshot"
+    );
 }
 
 #[test]

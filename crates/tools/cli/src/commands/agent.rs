@@ -1871,6 +1871,24 @@ fn collect_typescript_handler_sources(root: &Path) -> Result<Vec<PathBuf>> {
     Ok(sources.into_iter().collect())
 }
 
+fn validate_typescript_handler_toolchain(ts_frontend: &Path) -> Result<()> {
+    let node_modules = ts_frontend.join("node_modules");
+    if !node_modules.join("esbuild").is_dir() {
+        bail!(
+            "TypeScript handler compiler dependencies are missing under {}; run `dekk agents frontend setup`",
+            node_modules.display()
+        );
+    }
+    let compiler = ts_frontend.join("dist/compile-handlers.js");
+    if !compiler.is_file() {
+        bail!(
+            "TypeScript handler compiler is not built at {}; run `dekk agents frontend build`",
+            compiler.display()
+        );
+    }
+    Ok(())
+}
+
 fn compile_agent_handlers(root: &Path) -> Result<()> {
     let pack: AgentToml = read_toml(&root.join("agent.toml"))?;
     let frontend = pack
@@ -1896,6 +1914,7 @@ fn compile_agent_handlers(root: &Path) -> Result<()> {
 
     let repo_root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../..");
     let ts_frontend = repo_root.join("crates/compiler/frontend/typescript");
+    validate_typescript_handler_toolchain(&ts_frontend)?;
     let out = root.join("capabilities/handlers/tools.json");
     fs::create_dir_all(out.parent().expect("tools.json has parent"))
         .with_context(|| format!("Failed to create {}", out.parent().unwrap().display()))?;
@@ -2815,6 +2834,35 @@ mod tests {
         let err = agent_lint(&root, Some(org_root), true)
             .expect_err("a capability absent from both the agent and org globals must fail lint");
         assert!(err.to_string().contains("lint error"));
+    }
+
+    #[test]
+    fn typescript_handler_toolchain_reports_dekk_prerequisites() {
+        let tmp = tempdir().unwrap();
+        let frontend = tmp.path().join("frontend");
+        fs::create_dir_all(&frontend).unwrap();
+
+        let missing_dependencies = validate_typescript_handler_toolchain(&frontend)
+            .expect_err("missing dependencies must fail");
+        assert!(
+            missing_dependencies
+                .to_string()
+                .contains("dekk agents frontend setup")
+        );
+
+        fs::create_dir_all(frontend.join("node_modules/esbuild")).unwrap();
+        let missing_build = validate_typescript_handler_toolchain(&frontend)
+            .expect_err("missing compiler build must fail");
+        assert!(
+            missing_build
+                .to_string()
+                .contains("dekk agents frontend build")
+        );
+
+        fs::create_dir_all(frontend.join("dist")).unwrap();
+        fs::write(frontend.join("dist/compile-handlers.js"), "export {};").unwrap();
+        validate_typescript_handler_toolchain(&frontend)
+            .expect("complete frontend toolchain must pass");
     }
 
     #[cfg(feature = "driver")]
