@@ -143,6 +143,10 @@ class HookCtx {
     return { decision: "allow" };
   }
 
+  defer() {
+    return { decision: "defer" };
+  }
+
   deny(reason = "") {
     return { decision: "deny", reason };
   }

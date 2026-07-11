@@ -55,7 +55,7 @@ use structured_output::{
     build_schema_retry_prompt, output_schema_from_node, parse_structured_output,
     process_structured_output, validate_against_output_schema,
 };
-use tool_dispatch::{execute_ask_with_tools, resolve_ask_tools};
+use tool_dispatch::{execute_ask_with_tools_attempt, resolve_ask_tools};
 // Re-exported so other handlers (e.g. AUTONOMOUS) can run the same dynamic
 // model->tool->model loop, letting an agent actually execute the tools it
 // decides to use rather than only reasoning about them.
@@ -95,9 +95,8 @@ impl From<&AISOperationType> for LlmMode {
     }
 }
 
-/// Emit one typed model-call observation and, for the final response of a
-/// turn, the atomic non-run-ending `llm_done` event. Plain calls, memo hits, and
-/// tool-loop iterations all use this helper so their telemetry stays identical.
+/// Emit one typed model-call observation. Every backend response produces one
+/// step event, including schema-rejected attempts and tool-loop iterations.
 #[allow(clippy::too_many_arguments)]
 pub(super) fn emit_model_step(
     ctx: &ExecutionContext,
@@ -107,7 +106,6 @@ pub(super) fn emit_model_step(
     latency_ms: f64,
     prefill_ms: f64,
     decode_ms: f64,
-    final_response: bool,
 ) {
     let Some(emitter) = &ctx.event_emitter else {
         return;
@@ -133,27 +131,40 @@ pub(super) fn emit_model_step(
         },
         tool_call_count: response.tool_calls.len(),
     });
-    if final_response {
-        emitter.emit_llm_done(LlmDonePayload {
-            content: response.content.clone(),
-            model: response.model.clone(),
-            finish_reason,
-            usage: UsagePayload {
-                input_tokens: response.usage.input_tokens,
-                output_tokens: response.usage.output_tokens,
-            },
-            tool_calls: response
-                .tool_calls
-                .iter()
-                .map(|tool_call| ToolCallPayload {
-                    id: tool_call.id.clone(),
-                    name: tool_call.name.clone(),
-                    arguments: tool_call.args.clone(),
-                })
-                .collect(),
-            response_id: None,
-        });
-    }
+}
+
+/// Emit the one accepted final model response for a turn. Callers must run
+/// schema validation before invoking this helper.
+pub(super) fn emit_llm_done(ctx: &ExecutionContext, response: &LLMResponse) {
+    let Some(emitter) = &ctx.event_emitter else {
+        return;
+    };
+    emitter.emit_llm_done(LlmDonePayload {
+        content: response.content.clone(),
+        model: response.model.clone(),
+        finish_reason: FinishReasonPayload {
+            reason: response.finish_reason.to_string(),
+        },
+        usage: UsagePayload {
+            input_tokens: response.usage.input_tokens,
+            output_tokens: response.usage.output_tokens,
+        },
+        tool_calls: response
+            .tool_calls
+            .iter()
+            .map(|tool_call| ToolCallPayload {
+                id: tool_call.id.clone(),
+                name: tool_call.name.clone(),
+                arguments: tool_call.args.clone(),
+            })
+            .collect(),
+        response_id: None,
+    });
+}
+
+pub(super) struct LlmAttemptOutput {
+    value: Value,
+    final_response: LLMResponse,
 }
 
 /// Reserved `input_names` entry that carries the system prompt as a dataflow
@@ -545,10 +556,10 @@ pub async fn execute(ctx: &ExecutionContext, node: &Node, inputs: Vec<Value>) ->
         }
 
         match execute_llm_once(ctx, node, &request, mode, enable_inner_plan, bind_outputs).await {
-            Ok(value) => {
+            Ok(attempt_output) => {
                 if mode == LlmMode::Ask
                     && let Some(schema) = output_schema.as_ref()
-                    && let Value::String(content) = &value
+                    && let Value::String(content) = &attempt_output.value
                     && let Err(validation_error) = validate_against_output_schema(content, schema)
                 {
                     let validation_error_text = validation_error.to_string();
@@ -572,7 +583,8 @@ pub async fn execute(ctx: &ExecutionContext, node: &Node, inputs: Vec<Value>) ->
                     }
                     return Err(validation_error);
                 }
-                return Ok(value);
+                emit_llm_done(ctx, &attempt_output.final_response);
+                return Ok(attempt_output.value);
             }
             Err(e) => {
                 last_error = Some(e);
@@ -601,12 +613,12 @@ async fn execute_llm_once(
     mode: LlmMode,
     enable_inner_plan: bool,
     bind_outputs: bool,
-) -> Result<Value> {
+) -> Result<LlmAttemptOutput> {
     let mode_name = mode.name();
 
     // For Ask mode with tools, use the tool loop
     if mode == LlmMode::Ask && request.has_tools() {
-        return execute_ask_with_tools(ctx, node, request).await;
+        return execute_ask_with_tools_attempt(ctx, node, request).await;
     }
 
     let resolved_backend = get_optional_string_attribute(node, graph_attrs::BACKEND)?;
@@ -661,9 +673,9 @@ async fn execute_llm_once(
             TokenUsage::new(cached.input_tokens, cached.output_tokens),
             FinishReason::Stop,
         );
-        emit_model_step(ctx, node.id, 1, &cached_response, 0.0, 0.0, 0.0, true);
-        return match mode {
-            LlmMode::Ask | LlmMode::Think => Ok(Value::String(cached.content)),
+        emit_model_step(ctx, node.id, 1, &cached_response, 0.0, 0.0, 0.0);
+        let value = match mode {
+            LlmMode::Ask | LlmMode::Think => Value::String(cached.content),
             LlmMode::Reason => {
                 if let Ok(structured) = parse_structured_output(&cached.content) {
                     process_structured_output(
@@ -673,12 +685,16 @@ async fn execute_llm_once(
                         enable_inner_plan,
                         bind_outputs,
                     )
-                    .await
+                    .await?
                 } else {
-                    Ok(Value::String(cached.content))
+                    Value::String(cached.content)
                 }
             }
         };
+        return Ok(LlmAttemptOutput {
+            value,
+            final_response: cached_response,
+        });
     }
 
     apxm_llm!(debug,
@@ -760,11 +776,9 @@ async fn execute_llm_once(
         }
     }
 
-    emit_model_step(
-        ctx, node.id, 1, &response, total_ms, prefill_ms, decode_ms, true,
-    );
+    emit_model_step(ctx, node.id, 1, &response, total_ms, prefill_ms, decode_ms);
 
-    let content = response.content;
+    let content = response.content.clone();
 
     // Store in memoization cache if deterministic
     if let Some(key) = memo_key {
@@ -798,7 +812,7 @@ async fn execute_llm_once(
     );
 
     // Process response based on mode
-    match mode {
+    let value = match mode {
         LlmMode::Ask | LlmMode::Think => {
             // Record LLM result in AAM
             let label = TransitionLabel::operation(node.id, node.op_type);
@@ -812,17 +826,21 @@ async fn execute_llm_once(
                 Value::String(content.chars().take(200).collect::<String>()),
                 label,
             );
-            Ok(Value::String(content))
+            Value::String(content)
         }
         LlmMode::Reason => {
             // Try to parse as structured output for Reason
             if let Ok(structured) = parse_structured_output(&content) {
                 process_structured_output(ctx, node, structured, enable_inner_plan, bind_outputs)
-                    .await
+                    .await?
             } else {
                 // Fall back to plain text response
-                Ok(Value::String(content))
+                Value::String(content)
             }
         }
-    }
+    };
+    Ok(LlmAttemptOutput {
+        value,
+        final_response: response,
+    })
 }

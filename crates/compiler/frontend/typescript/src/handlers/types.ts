@@ -1,6 +1,7 @@
 /** Hook decision payloads returned by control helpers on {@link HookContext}. */
 export type HookDecision =
   | { decision: "allow" }
+  | { decision: "defer" }
   | { decision: "deny"; reason: string }
   | { decision: "edit_args"; args: Record<string, unknown> }
   | { decision: "replace_result"; result: unknown }
@@ -25,6 +26,7 @@ export interface HookContext {
 
   log(...args: unknown[]): void;
   allow(): HookDecision;
+  defer(): HookDecision;
   deny(reason?: string): HookDecision;
   editArgs(args: Record<string, unknown>): HookDecision;
   replaceResult(result: unknown): HookDecision;

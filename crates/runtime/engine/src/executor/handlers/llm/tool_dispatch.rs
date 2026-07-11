@@ -1,8 +1,8 @@
 //! Function-calling tool registry lookup, parallel dispatch, and ASK tool loop.
 
 use super::{
-    ExecutionContext, attach_graph_hints, charge_tokens, copy_llm_request_routing,
-    resolve_global_token_budget,
+    ExecutionContext, LlmAttemptOutput, attach_graph_hints, charge_tokens,
+    copy_llm_request_routing, emit_llm_done, resolve_global_token_budget,
 };
 use apxm_backends::{LLMRequest, ToolChoice, ToolDefinition};
 use apxm_core::apxm_llm;
@@ -642,6 +642,16 @@ pub(crate) async fn execute_ask_with_tools(
     node: &Node,
     initial_request: &LLMRequest,
 ) -> Result<Value> {
+    let output = execute_ask_with_tools_attempt(ctx, node, initial_request).await?;
+    emit_llm_done(ctx, &output.final_response);
+    Ok(output.value)
+}
+
+pub(super) async fn execute_ask_with_tools_attempt(
+    ctx: &ExecutionContext,
+    node: &Node,
+    initial_request: &LLMRequest,
+) -> Result<LlmAttemptOutput> {
     let max_iterations = node
         .attributes
         .get(graph_attrs::MAX_TOOL_ITERATIONS)
@@ -724,7 +734,6 @@ pub(crate) async fn execute_ask_with_tools(
             iter_total_ms,
             iter_prefill,
             iter_decode,
-            response.tool_calls.is_empty(),
         );
 
         total_input_tokens += response.usage.input_tokens;
@@ -751,7 +760,10 @@ pub(crate) async fn execute_ask_with_tools(
             );
             ctx.timing_tracker
                 .record(node.id, total_prefill_ms, total_decode_ms);
-            return Ok(Value::String(response.content));
+            return Ok(LlmAttemptOutput {
+                value: Value::String(response.content.clone()),
+                final_response: response,
+            });
         }
 
         let tool_results = execute_tool_calls_parallel(ctx, node, &response.tool_calls).await;
