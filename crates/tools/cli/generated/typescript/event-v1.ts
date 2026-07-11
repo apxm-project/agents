@@ -248,7 +248,7 @@ export interface ExecutionStartedEventPayload {
 
 export interface ExecuteCompleteEventPayload {
   kind: "execute_complete";
-  result: { "execution_id": string; "session_id": string; "outcome": { "status": "success"; } | { "status": "domain_failure"; "error": Record<string, unknown>; } | { "status": "cancellation"; } | { "status": "join_failure"; "failure": { "task": "scheduler_worker" | "scheduler_finalizer" | "runtime_finalizer"; "message": string; "cancelled": boolean; "panicked": boolean; }; }; } | Record<string, unknown>;
+  result: { "execution_id": string; "session_id": string; "outcome": { "status": "success"; } | { "status": "domain_failure"; "error": Record<string, unknown>; } | { "status": "cancellation"; } | { "status": "join_failure"; "failure": { "task": "scheduler_worker" | "scheduler_finalizer" | "runtime_finalizer"; "message": string; "cancelled": boolean; "panicked": boolean; }; }; } | { "execution_id"?: string; "workflow_id"?: string; "run_root"?: string; "trace_id"?: string; "results": Record<string, unknown>; "content": string | null; "session_dir": string | null; "stats": { "executed_nodes": number; "failed_nodes": number; "duration_ms": number; }; "llm_usage": { "input_tokens": number; "output_tokens": number; "total_requests": number; }; "tool_call_counts": Record<string, number>; "parked_session_id"?: string; };
   [key: string]: unknown;
 }
 
