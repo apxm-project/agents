@@ -13,7 +13,8 @@ mod registry;
 mod types;
 
 pub use backend::{
-    DefaultBackend, SandboxBackend, ValidationResult, WrappedCommand, WrappedCommandGuard,
+    DefaultBackend, SandboxBackend, ValidationResult, WrappedChild, WrappedCommand,
+    WrappedCommandGuard,
 };
 pub use error::SandboxError;
 pub use manifest::{NodeSandboxReq, SecurityManifest};
