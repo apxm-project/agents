@@ -248,7 +248,7 @@ export interface ExecutionStartedEventPayload {
 
 export interface ExecuteCompleteEventPayload {
   kind: "execute_complete";
-  result: unknown;
+  result: { "execution_id": string; "session_id": string; "outcome": { "status": "success"; } | { "status": "domain_failure"; "error": Record<string, unknown>; } | { "status": "cancellation"; } | { "status": "join_failure"; "failure": { "task": "scheduler_worker" | "scheduler_finalizer" | "runtime_finalizer"; "message": string; "cancelled": boolean; "panicked": boolean; }; }; } | Record<string, unknown>;
   [key: string]: unknown;
 }
 
@@ -676,7 +676,7 @@ export const EVENT_KIND_REGISTRY: Readonly<Record<CoreEventKindName, EventKindDe
   "graph_edge": { name: "graph_edge", category: "topology", terminal: false, terminalSense: "atomic_no_delta" },
   "context_compacted": { name: "context_compacted", category: "observability", terminal: false, terminalSense: "n/a" },
   "model_rerouted": { name: "model_rerouted", category: "lifecycle", terminal: false, terminalSense: "n/a" },
-  "cancelled": { name: "cancelled", category: "error", terminal: true, terminalSense: "run_end" },
+  "cancelled": { name: "cancelled", category: "error", terminal: false, terminalSense: "n/a" },
   "loop_detected": { name: "loop_detected", category: "error", terminal: false, terminalSense: "n/a" },
   "context_window_warning": { name: "context_window_warning", category: "error", terminal: false, terminalSense: "n/a" },
   "session_start": { name: "session_start", category: "lifecycle", terminal: false, terminalSense: "n/a" },

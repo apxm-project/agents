@@ -556,7 +556,8 @@ fn all_core_event_kinds_round_trip() {
 /// `terminal` — a consumer that trusts `is_terminal()` to close a live feed
 /// would otherwise stop rendering mid-run on a topology event and hide
 /// everything after, which looks like success and is strictly worse than
-/// under-classifying. Real terminal kinds must stay terminal.
+/// under-classifying. `cancelled` is a typed signal followed by the one
+/// run-ending `execute_complete` event, so it must not close the feed early.
 #[test]
 fn terminal_kinds_exclude_topology_events() {
     assert!(!kind::AGENT_SPAWNED.is_terminal());
@@ -564,10 +565,10 @@ fn terminal_kinds_exclude_topology_events() {
     assert!(!kind::GRAPH_EDGE.is_terminal());
     assert!(!kind::LLM_DONE.is_terminal());
     assert!(!kind::LLM_STEP_COMPLETED.is_terminal());
+    assert!(!kind::CANCELLED.is_terminal());
 
     assert!(kind::TURN_COMPLETE.is_terminal());
     assert!(kind::SESSION_END.is_terminal());
     assert!(kind::TURN_ABORTED.is_terminal());
     assert!(kind::ERROR.is_terminal());
-    assert!(kind::CANCELLED.is_terminal());
 }

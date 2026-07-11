@@ -180,7 +180,9 @@ pub const CONTEXT_COMPACTED: EventKind =
     EventKind::new("context_compacted", EventCategory::Observability, false);
 pub const MODEL_REROUTED: EventKind =
     EventKind::new("model_rerouted", EventCategory::Lifecycle, false);
-pub const CANCELLED: EventKind = EventKind::new("cancelled", EventCategory::Error, true);
+/// Typed cancellation signal. The corresponding `execute_complete` event is
+/// the single run-ending event after host-owned finalization settles.
+pub const CANCELLED: EventKind = EventKind::new("cancelled", EventCategory::Error, false);
 pub const LOOP_DETECTED: EventKind = EventKind::new("loop_detected", EventCategory::Error, false);
 pub const CONTEXT_WINDOW_WARNING: EventKind =
     EventKind::new("context_window_warning", EventCategory::Error, false);

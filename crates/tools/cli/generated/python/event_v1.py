@@ -10,7 +10,7 @@ EVENT_KIND_REGISTRY: Final[dict[str, dict[str, object]]] = {'agent_message': {'c
  'agent_spawned': {'category': 'agent', 'terminal': False, 'terminal_sense': 'atomic_no_delta'},
  'approval_request': {'category': 'agent', 'terminal': False, 'terminal_sense': 'n/a'},
  'approval_resolved': {'category': 'agent', 'terminal': False, 'terminal_sense': 'n/a'},
- 'cancelled': {'category': 'error', 'terminal': True, 'terminal_sense': 'run_end'},
+ 'cancelled': {'category': 'error', 'terminal': False, 'terminal_sense': 'n/a'},
  'checkpoint_restored': {'category': 'lifecycle', 'terminal': False, 'terminal_sense': 'n/a'},
  'checkpoint_saved': {'category': 'lifecycle', 'terminal': False, 'terminal_sense': 'n/a'},
  'citation': {'category': 'observability', 'terminal': False, 'terminal_sense': 'n/a'},
@@ -305,9 +305,34 @@ class ExecutionStartedEventPayload(_ExecutionStartedEventPayloadOptional):
     kind: Literal['execution_started']
     execution_id: str
 
+class ExecuteCompleteEventPayloadResultVariant1OutcomeVariant1(TypedDict):
+    status: Literal['success']
+
+class ExecuteCompleteEventPayloadResultVariant1OutcomeVariant2(TypedDict):
+    status: Literal['domain_failure']
+    error: dict[str, Any]
+
+class ExecuteCompleteEventPayloadResultVariant1OutcomeVariant3(TypedDict):
+    status: Literal['cancellation']
+
+class ExecuteCompleteEventPayloadResultVariant1OutcomeVariant4Failure(TypedDict):
+    task: Literal['scheduler_worker', 'scheduler_finalizer', 'runtime_finalizer']
+    message: str
+    cancelled: bool
+    panicked: bool
+
+class ExecuteCompleteEventPayloadResultVariant1OutcomeVariant4(TypedDict):
+    status: Literal['join_failure']
+    failure: ExecuteCompleteEventPayloadResultVariant1OutcomeVariant4Failure
+
+class ExecuteCompleteEventPayloadResultVariant1(TypedDict):
+    execution_id: str
+    session_id: str
+    outcome: ExecuteCompleteEventPayloadResultVariant1OutcomeVariant1 | ExecuteCompleteEventPayloadResultVariant1OutcomeVariant2 | ExecuteCompleteEventPayloadResultVariant1OutcomeVariant3 | ExecuteCompleteEventPayloadResultVariant1OutcomeVariant4
+
 class ExecuteCompleteEventPayload(TypedDict):
     kind: Literal['execute_complete']
-    result: Any
+    result: ExecuteCompleteEventPayloadResultVariant1 | dict[str, Any]
 
 class MemoryReadEventPayload(TypedDict):
     kind: Literal['memory_read']
