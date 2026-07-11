@@ -7,8 +7,6 @@
 
 use serde::{Deserialize, Serialize};
 
-use crate::types::principal::HostPrincipal;
-
 // ── Tier ─────────────────────────────────────────────────────────────────────
 
 /// Where the agent process executes. Selected deterministically by
@@ -251,22 +249,10 @@ fn is_local_exec_op(kind: Option<OpKind>) -> bool {
     )
 }
 
-// ── HostExecutionManifest ─────────────────────────────────────────────────────
+#[path = "generated_host_execution_manifest.rs"]
+mod generated_host_execution_manifest;
 
-/// Normalized runtime manifest consumed by agents. Rendered from the full
-/// `HostAdapterCard` by the host-sdk manifest renderer.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct HostExecutionManifest {
-    pub execution_id: String,
-    pub host_id: String,
-    pub tier: HostTier,
-    pub capabilities: Vec<String>,
-    pub principal: HostPrincipal,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub created_at: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub expires_at: Option<String>,
-}
+pub use generated_host_execution_manifest::HostExecutionManifest;
 
 // ── HostDispatchGateway ───────────────────────────────────────────────────────
 
