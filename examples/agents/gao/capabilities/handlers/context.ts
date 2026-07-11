@@ -1,6 +1,6 @@
 // Builds Gao's bounded, redacted turn context from package and host data.
 import { readFileSync } from "node:fs";
-import { dirname, isAbsolute, join, relative, resolve } from "node:path";
+import { dirname, isAbsolute, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 import type { HookContext } from "@apxm/frontend";
@@ -14,9 +14,6 @@ const MAX_CONFIG_CHARS = 500;
 const SENSITIVE_KEY =
   /(?:api[_-]?key|token|secret|password|credential|auth)/i;
 
-const CAPABILITY_INVENTORY_URL_ENV = "APXM_CAPABILITY_INVENTORY_URL";
-const CAPABILITY_INVENTORY_TOKEN_ENV = "APXM_CAPABILITY_INVENTORY_TOKEN";
-
 interface CapabilityInventoryEntry {
   capability: string;
   reason?: string;
@@ -25,6 +22,12 @@ interface CapabilityInventoryEntry {
 interface CapabilityInventory {
   ready: CapabilityInventoryEntry[];
   needsConnect: CapabilityInventoryEntry[];
+}
+
+interface NodeKindEntry {
+  kind: string;
+  title: string;
+  category: string;
 }
 
 const PROMPT_PATHS: Record<string, string> = {
@@ -116,20 +119,34 @@ function redactSnapshot(snapshot: Record<string, unknown>): Record<string, unkno
   return out;
 }
 
-function loadNodeKindCatalog(): Array<Record<string, string>> {
-  try {
-    const raw = readFileSync(join(packageRoot(), "shared", "node_kinds.json"), "utf8");
-    const data = JSON.parse(raw) as { kinds?: Array<Record<string, string>> };
-    return Array.isArray(data.kinds) ? data.kinds : [];
-  } catch {
-    return [];
+function parseNodeKindEntry(value: unknown): NodeKindEntry | null {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    return null;
   }
+  const record = value as Record<string, unknown>;
+  if (typeof record.kind !== "string" || record.kind.trim() === "") {
+    return null;
+  }
+  return {
+    kind: record.kind,
+    title: typeof record.title === "string" ? record.title : record.kind,
+    category: typeof record.category === "string" ? record.category : "other",
+  };
 }
 
-function renderNodeKindCatalog(): string {
-  const kinds = loadNodeKindCatalog();
+function parseNodeKindCatalog(value: unknown): NodeKindEntry[] {
+  return Array.isArray(value)
+    ? value.map(parseNodeKindEntry).filter((entry): entry is NodeKindEntry => entry != null)
+    : [];
+}
+
+export function renderNodeKindCatalog(value: unknown): string {
+  const kinds = parseNodeKindCatalog(value);
   if (kinds.length === 0) {
-    return "(node-kind catalog unavailable)";
+    return (
+      "(host did not supply `nodeKinds`; do not emit Apply workflow JSON. " +
+      "High-level planning and clarification are still allowed.)"
+    );
   }
   const byCategory = new Map<string, string[]>();
   for (const entry of kinds) {
@@ -178,37 +195,14 @@ function parseCapabilityInventory(value: unknown): CapabilityInventory | null {
   };
 }
 
-async function fetchCapabilityInventory(): Promise<CapabilityInventory | null> {
-  const url = process.env[CAPABILITY_INVENTORY_URL_ENV]?.trim();
-  if (!url) {
-    return null;
-  }
-  const headers: Record<string, string> = {};
-  const token = process.env[CAPABILITY_INVENTORY_TOKEN_ENV]?.trim();
-  if (token) {
-    headers.Authorization = `Bearer ${token}`;
-  }
-  try {
-    const response = await fetch(url, {
-      headers,
-      signal: AbortSignal.timeout(5_000),
-    });
-    if (!response.ok) {
-      return null;
-    }
-    return parseCapabilityInventory(await response.json());
-  } catch {
-    return null;
-  }
-}
-
-function renderCapabilityInventorySection(
+export function renderCapabilityInventorySection(
   inventory: CapabilityInventory | null,
 ): string {
   if (!inventory) {
     return (
-      `(capability inventory unavailable in this environment — set ` +
-      `\`${CAPABILITY_INVENTORY_URL_ENV}\` to a typed inventory endpoint)`
+      "- Ready now: (none)\n" +
+      "- Status: host did not supply `capabilityInventory`; do not emit workflow tool nodes " +
+      "or claim provider availability. Non-tool planning and clarification are still allowed."
     );
   }
   const { ready, needsConnect } = inventory;
@@ -328,14 +322,14 @@ export async function renderStudioContextSupplement(
       ? (snapshotInput as Record<string, unknown>)
       : {},
   );
-  const inventory = await fetchCapabilityInventory();
+  const inventory = parseCapabilityInventory(snapshot.capabilityInventory);
 
   const coreSections: Array<[string, string]> = [
     ["Package prompts", renderPackagePrompts()],
     ["Page", renderPageSection(snapshot)],
     ["Workflow", renderWorkflowSection(snapshot)],
     ["Canvas", renderCanvasSection(snapshot)],
-    ["Studio node kinds", renderNodeKindCatalog()],
+    ["Studio node kinds", renderNodeKindCatalog(snapshot.nodeKinds)],
     ["Available capabilities", renderCapabilityInventorySection(inventory)],
   ];
 
