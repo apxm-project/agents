@@ -58,6 +58,7 @@ pub use apxm_aam as aam;
 pub mod agent_pool;
 pub mod agent_router;
 pub mod agent_scoring;
+mod background;
 /// Capability system — re-exported from the standalone `apxm-capability`
 /// crate so existing `apxm_runtime::capability::...` import paths keep
 /// working after the  sub-crate extraction.
@@ -112,6 +113,10 @@ pub use agent_router::{
     AGENT_ROUTE_CAPABILITIES, AGENT_ROUTE_SELECTOR_DETERMINISTIC, AgentRouteCandidate,
     AgentRouteDecision, AgentRouteRejection, AgentRouteRequest, AgentRouteScore, AgentRouteSource,
     AgentRouter, AgentRoutingError,
+};
+pub use background::{
+    BackgroundExecution, BackgroundExecutionOutcome, BackgroundExecutionTask,
+    BackgroundJoinFailure, PersistedBackgroundExecutionOutcome,
 };
 pub use capability::{
     CapabilitySystem,

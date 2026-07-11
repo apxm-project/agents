@@ -13,6 +13,7 @@ use crate::observability::{MetricsCollector, SchedulerMetrics};
 use crate::scheduler::config::SchedulerConfig;
 use crate::scheduler::state::SchedulerState;
 use crate::scheduler::worker;
+use crate::{BackgroundExecutionOutcome, BackgroundExecutionTask};
 use apxm_core::error::RuntimeError;
 
 type RuntimeResult<T> = Result<T, RuntimeError>;
@@ -46,7 +47,7 @@ pub enum SchedulerOutcome {
         /// (e.g. releasing backend graph lifecycle state) MUST chain onto this
         /// handle rather than doing that cleanup immediately — the execution
         /// is NOT done just because it parked.
-        background: JoinHandle<RuntimeResult<()>>,
+        background: JoinHandle<BackgroundExecutionOutcome>,
     },
 }
 
@@ -522,47 +523,69 @@ async fn finalize_parked_background(
     state: Arc<SchedulerState>,
     hooks: ExecutionHookContext,
     worker_handles: Vec<JoinHandle<()>>,
-) -> RuntimeResult<()> {
+) -> BackgroundExecutionOutcome {
+    let mut join_failure = None;
     for handle in worker_handles {
         if let Err(error) = handle.await {
-            state.set_first_error(RuntimeError::Scheduler {
-                message: format!("parked worker task failed: {error}"),
+            join_failure.get_or_insert_with(|| {
+                BackgroundExecutionOutcome::join_failure(
+                    BackgroundExecutionTask::SchedulerWorker,
+                    error,
+                )
             });
         }
     }
 
     let error = state.first_error.lock().take();
     let stats = state.build_stats();
+    let outcome = if let Some(join_failure) = join_failure {
+        join_failure
+    } else if let Some(error) = error {
+        BackgroundExecutionOutcome::from_runtime_error(error)
+    } else if stats.failed_nodes > 0 {
+        BackgroundExecutionOutcome::DomainFailure {
+            error: RuntimeError::Scheduler {
+                message: format!(
+                    "parked execution completed with {} failed node(s)",
+                    stats.failed_nodes
+                ),
+            },
+        }
+    } else {
+        BackgroundExecutionOutcome::Success
+    };
     hooks.emit_graph_finished(
         stats.executed_nodes,
         stats.failed_nodes,
         stats.duration_ms,
-        error.is_none() && stats.failed_nodes == 0,
+        outcome.is_success(),
     );
 
-    if let Some(error) = error {
-        apxm_sched!(
-            error,
-            error = %error,
-            "Background (previously-parked) execution finished with an error"
-        );
-        Err(error)
-    } else if stats.failed_nodes > 0 {
-        Err(RuntimeError::Scheduler {
-            message: format!(
-                "parked execution completed with {} failed node(s)",
-                stats.failed_nodes
-            ),
-        })
-    } else {
-        apxm_sched!(
+    match &outcome {
+        BackgroundExecutionOutcome::Success => apxm_sched!(
             info,
             executed = stats.executed_nodes,
             failed = stats.failed_nodes,
             "Background (previously-parked) execution completed"
-        );
-        Ok(())
+        ),
+        BackgroundExecutionOutcome::DomainFailure { error } => apxm_sched!(
+            error,
+            error = %error,
+            "Background (previously-parked) execution failed"
+        ),
+        BackgroundExecutionOutcome::Cancellation => apxm_sched!(
+            info,
+            "Background (previously-parked) execution was cancelled"
+        ),
+        BackgroundExecutionOutcome::JoinFailure { failure } => apxm_sched!(
+            error,
+            task = ?failure.task,
+            error = %failure.message,
+            "Background (previously-parked) execution task failed to join"
+        ),
     }
+
+    outcome
 }
 
 /// Spawn watchdog for deadlock detection.
@@ -841,7 +864,44 @@ mod loop_conformance_tests {
 
         assert!(matches!(
             result,
-            Err(RuntimeError::Scheduler { message }) if message == "terminal failure"
+            BackgroundExecutionOutcome::DomainFailure {
+                error: RuntimeError::Scheduler { message }
+            } if message == "terminal failure"
+        ));
+    }
+
+    #[tokio::test]
+    async fn parked_background_distinguishes_cancellation() {
+        let (ctx, _) = test_context().await;
+        let (state, handles) = spawn_seeded_execution(ctx).await;
+        state.set_first_error(RuntimeError::SchedulerCancelled);
+        state.mark_done();
+
+        let result =
+            finalize_parked_background(state, ExecutionHookContext::default(), handles).await;
+
+        assert!(matches!(result, BackgroundExecutionOutcome::Cancellation));
+    }
+
+    #[tokio::test]
+    async fn parked_background_distinguishes_worker_join_failure() {
+        let (ctx, _) = test_context().await;
+        let (state, mut handles) = spawn_seeded_execution(ctx).await;
+        state.mark_done();
+        handles.push(tokio::spawn(async { panic!("worker panic") }));
+
+        let result =
+            finalize_parked_background(state, ExecutionHookContext::default(), handles).await;
+
+        assert!(matches!(
+            result,
+            BackgroundExecutionOutcome::JoinFailure {
+                failure: crate::BackgroundJoinFailure {
+                    task: BackgroundExecutionTask::SchedulerWorker,
+                    panicked: true,
+                    ..
+                }
+            }
         ));
     }
 
