@@ -38,6 +38,7 @@ export enum CoreEventKind {
   THOUGHT = "thought",
   TOOL_CALL = "tool_call",
   LLM_DONE = "llm_done",
+  LLM_STEP_COMPLETED = "llm_step_completed",
   LLM_PROMPT = "llm_prompt",
   USAGE = "usage",
   RETRY = "retry",
@@ -103,6 +104,7 @@ export const TOKEN = kind(CoreEventKind.TOKEN, EventCategoryKind.STREAM);
 export const THOUGHT = kind(CoreEventKind.THOUGHT, EventCategoryKind.STREAM);
 export const TOOL_CALL = kind(CoreEventKind.TOOL_CALL, EventCategoryKind.LIFECYCLE);
 export const LLM_DONE = kind(CoreEventKind.LLM_DONE, EventCategoryKind.LIFECYCLE, true);
+export const LLM_STEP_COMPLETED = kind(CoreEventKind.LLM_STEP_COMPLETED, EventCategoryKind.OBSERVABILITY);
 export const LLM_PROMPT = kind(CoreEventKind.LLM_PROMPT, EventCategoryKind.OBSERVABILITY);
 export const USAGE = kind(CoreEventKind.USAGE, EventCategoryKind.OBSERVABILITY);
 export const RETRY = kind(CoreEventKind.RETRY, EventCategoryKind.ERROR);
@@ -168,6 +170,7 @@ export const CORE_EVENT_KINDS = [
   THOUGHT,
   TOOL_CALL,
   LLM_DONE,
+  LLM_STEP_COMPLETED,
   LLM_PROMPT,
   USAGE,
   RETRY,

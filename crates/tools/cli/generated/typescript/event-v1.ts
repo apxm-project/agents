@@ -33,6 +33,17 @@ export interface TokenEventPayload extends EventPayload {
   text: string;
 }
 
+export interface LlmStepCompletedEventPayload extends EventPayload {
+  kind: "llm_step_completed";
+  node_id: number;
+  step_number: number;
+  model: string;
+  finish_reason: Record<string, unknown>;
+  usage: Record<string, unknown>;
+  performance: Record<string, unknown>;
+  tool_call_count: number;
+}
+
 export interface ThoughtEventPayload extends EventPayload {
   kind: "thought";
   text: string;
@@ -473,6 +484,7 @@ export interface ApprovalResolvedEventPayload extends EventPayload {
 
 export type KnownEventPayload =
   | TokenEventPayload
+  | LlmStepCompletedEventPayload
   | ThoughtEventPayload
   | ToolCallEventPayload
   | LlmDoneEventPayload
@@ -556,6 +568,7 @@ export const EVENT_KIND_REGISTRY: Readonly<Record<CoreEventKindName, EventKindDe
   "thought": { name: "thought", category: "stream", terminal: false, terminalSense: "n/a" },
   "tool_call": { name: "tool_call", category: "lifecycle", terminal: false, terminalSense: "n/a" },
   "llm_done": { name: "llm_done", category: "lifecycle", terminal: true, terminalSense: "run_end" },
+  "llm_step_completed": { name: "llm_step_completed", category: "observability", terminal: false, terminalSense: "n/a" },
   "llm_prompt": { name: "llm_prompt", category: "observability", terminal: false, terminalSense: "n/a" },
   "usage": { name: "usage", category: "observability", terminal: false, terminalSense: "n/a" },
   "retry": { name: "retry", category: "error", terminal: false, terminalSense: "n/a" },

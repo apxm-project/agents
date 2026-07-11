@@ -7,6 +7,7 @@
 use std::collections::HashMap;
 use std::time::Duration;
 
+use apxm_core::events::payload::{LlmDonePayload, LlmStepCompletedPayload, TurnBoundaryPayload};
 use apxm_core::types::NodeMetrics;
 use apxm_core::types::TimingBreakdown;
 use apxm_core::types::operations::AISOperationType;
@@ -44,6 +45,11 @@ pub trait ExecutionEventEmitter: Send + Sync {
     /// event, kept separate from answer `token`s so clients can render it apart
     /// (the CLI dims it; the studio shows a collapsible thinking block).
     fn emit_llm_thought(&self, _content: &str) {}
+    /// One model-call step completed. This is non-terminal for the surrounding
+    /// turn because a tool loop may issue another model call.
+    fn emit_llm_step_completed(&self, _payload: LlmStepCompletedPayload) {}
+    /// The final model response for the current turn completed.
+    fn emit_llm_done(&self, _payload: LlmDonePayload) {}
     fn emit_tool_start(&self, name: &str, args: &HashMap<String, Value>);
     fn emit_tool_end(&self, name: &str, result: &Value);
 
@@ -260,6 +266,10 @@ pub trait ExecutionEventEmitter: Send + Sync {
         _utilization_pct: f64,
     ) {
     }
+
+    /// A numbered request or response boundary was reached for the
+    /// user-facing conversational turn.
+    fn emit_turn_boundary(&self, _payload: TurnBoundaryPayload) {}
 
     // ── Layer 2 — agent-layer hooks ────────────────────────────────
     //

@@ -6,6 +6,7 @@
 
 use crate::executor::{ExecutionContext, Next, OperationMiddleware, Result};
 use crate::memory::MemorySpace;
+use apxm_core::events::payload::{TurnBoundaryPayload, TurnDirection};
 use apxm_core::types::{
     execution::Node,
     operations::AISOperationType,
@@ -83,6 +84,28 @@ impl OperationMiddleware for ConversationMemoryMiddleware {
         inputs: Vec<Value>,
         next: Next<'_>,
     ) -> Result<Value> {
+        let scope = ctx.memory_scope().to_string();
+        let mem = ctx.memory();
+        let next_stored_turn = mem
+            .read_scoped(MemorySpace::Stm, &scope, TURN_COUNT_KEY)
+            .await
+            .ok()
+            .flatten()
+            .and_then(|value| value.as_i64())
+            .unwrap_or(0)
+            + 1;
+        let turn_number = ctx
+            .session_ledger()
+            .map(|ledger| ledger.turns_used())
+            .filter(|turn| *turn > 0)
+            .unwrap_or(next_stored_turn.max(1) as usize);
+        if let Some(emitter) = &ctx.event_emitter {
+            emitter.emit_turn_boundary(TurnBoundaryPayload {
+                turn_number,
+                direction: TurnDirection::Request,
+            });
+        }
+
         // pre_turn hooks fire before the turn's ask (gate-capable → fail-closed).
         // `None` context: this turn did not bind an additional structured
         // payload for pre-turn hooks.
@@ -95,30 +118,20 @@ impl OperationMiddleware for ConversationMemoryMiddleware {
             // post_ask + post_turn hooks fire with the reply (observe;).
             crate::executor::hook_driver::run_post_ask_hooks(ctx, answer).await;
             crate::executor::hook_driver::run_post_turn_hooks(ctx, answer).await;
-            let scope = ctx.memory_scope().to_string();
-            let mem = ctx.memory();
-            let next_turn = mem
-                .read_scoped(MemorySpace::Stm, &scope, TURN_COUNT_KEY)
-                .await
-                .ok()
-                .flatten()
-                .and_then(|v| v.as_i64())
-                .unwrap_or(0)
-                + 1;
             // Best-effort: a memory write failure must not fail the turn.
             let _ = mem
                 .write_scoped(
                     MemorySpace::Stm,
                     &scope,
                     TURN_COUNT_KEY.to_string(),
-                    Value::Number(Number::Integer(next_turn)),
+                    Value::Number(Number::Integer(next_stored_turn)),
                 )
                 .await;
             let _ = mem
                 .write_scoped(
                     MemorySpace::Stm,
                     &scope,
-                    format!("{TURN_PREFIX}{next_turn}"),
+                    format!("{TURN_PREFIX}{next_stored_turn}"),
                     Value::String(answer.clone()),
                 )
                 .await;
@@ -127,7 +140,13 @@ impl OperationMiddleware for ConversationMemoryMiddleware {
             // choke point measures the budget and, absent an author
             // override, folds older turns into the rolling summary. A
             // no-op when the policy is absent (opt-out dial).
-            Self::maybe_compact(ctx, node, &scope, answer, next_turn).await;
+            Self::maybe_compact(ctx, node, &scope, answer, next_stored_turn).await;
+            if let Some(emitter) = &ctx.event_emitter {
+                emitter.emit_turn_boundary(TurnBoundaryPayload {
+                    turn_number,
+                    direction: TurnDirection::Response,
+                });
+            }
         }
         result
     }
@@ -338,6 +357,17 @@ impl ConversationMemoryMiddleware {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::aam::Aam;
+    use crate::capability::CapabilitySystem;
+    use crate::executor::events::ExecutionEventEmitter;
+    use crate::executor::middleware::{BoxFuture, Next};
+    use crate::executor::session_ledger::SessionLedger;
+    use crate::executor::{ExecutionContext, OperationMiddleware};
+    use crate::memory::{MemoryConfig, MemorySystem};
+    use apxm_backends::LLMRegistry;
+    use apxm_core::error::RuntimeError;
+    use std::collections::HashMap;
+    use std::sync::{Arc, Mutex};
 
     fn ask(marked: bool) -> Node {
         let mut node = Node::new(1, AISOperationType::Ask);
@@ -358,6 +388,125 @@ mod tests {
         // Non-ask ops never apply.
         let inv = Node::new(2, AISOperationType::InvCap);
         assert!(!mw.applies_to(&inv));
+    }
+
+    #[derive(Clone, Default)]
+    struct BoundaryCapturingEmitter {
+        boundaries: Arc<Mutex<Vec<TurnBoundaryPayload>>>,
+    }
+
+    impl ExecutionEventEmitter for BoundaryCapturingEmitter {
+        fn emit_llm_token(&self, _content: &str) {}
+        fn emit_tool_start(&self, _name: &str, _args: &HashMap<String, Value>) {}
+        fn emit_tool_end(&self, _name: &str, _result: &Value) {}
+
+        fn emit_turn_boundary(&self, payload: TurnBoundaryPayload) {
+            self.boundaries.lock().unwrap().push(payload);
+        }
+    }
+
+    async fn test_context(
+        emitter: Arc<BoundaryCapturingEmitter>,
+        ledger: Arc<SessionLedger>,
+    ) -> ExecutionContext {
+        let memory = Arc::new(
+            MemorySystem::new(MemoryConfig::in_memory_ltm())
+                .await
+                .expect("memory"),
+        );
+        let aam = Aam::new();
+        let capability_system = Arc::new(CapabilitySystem::with_aam(aam.clone()));
+        ExecutionContext::new(memory, Arc::new(LLMRegistry::new()), capability_system, aam)
+            .with_session_id("boundary-session".to_string())
+            .with_session_ledger(ledger)
+            .with_event_emitter(Some(emitter as Arc<dyn ExecutionEventEmitter>))
+    }
+
+    fn success_terminal<'a>(
+        _ctx: &'a ExecutionContext,
+        _node: &'a Node,
+        _inputs: Vec<Value>,
+    ) -> BoxFuture<'a, Result<Value>> {
+        Box::pin(async { Ok(Value::String("answer".to_string())) })
+    }
+
+    fn failure_terminal<'a>(
+        _ctx: &'a ExecutionContext,
+        node: &'a Node,
+        _inputs: Vec<Value>,
+    ) -> BoxFuture<'a, Result<Value>> {
+        Box::pin(async move {
+            Err(RuntimeError::Operation {
+                op_type: node.op_type,
+                message: "turn failed".to_string(),
+            })
+        })
+    }
+
+    #[tokio::test]
+    async fn emits_numbered_request_and_response_boundaries_per_successful_turn() {
+        let emitter = Arc::new(BoundaryCapturingEmitter::default());
+        let ledger = Arc::new(SessionLedger::new(None, HashMap::new()));
+        let ctx = test_context(emitter.clone(), ledger.clone()).await;
+        let middleware = ConversationMemoryMiddleware::new();
+        let node = ask(true);
+
+        for expected_turn in 1..=2 {
+            assert_eq!(ledger.charge_turn().expect("charge turn"), expected_turn);
+            let result = middleware
+                .around(
+                    &ctx,
+                    &node,
+                    Vec::new(),
+                    Next {
+                        chain: &[],
+                        idx: 0,
+                        terminal: success_terminal,
+                    },
+                )
+                .await
+                .expect("turn succeeds");
+            assert_eq!(result, Value::String("answer".to_string()));
+        }
+
+        let boundaries = emitter.boundaries.lock().unwrap().clone();
+        assert_eq!(boundaries.len(), 4);
+        assert_eq!(boundaries[0].turn_number, 1);
+        assert_eq!(boundaries[0].direction, TurnDirection::Request);
+        assert_eq!(boundaries[1].turn_number, 1);
+        assert_eq!(boundaries[1].direction, TurnDirection::Response);
+        assert_eq!(boundaries[2].turn_number, 2);
+        assert_eq!(boundaries[2].direction, TurnDirection::Request);
+        assert_eq!(boundaries[3].turn_number, 2);
+        assert_eq!(boundaries[3].direction, TurnDirection::Response);
+    }
+
+    #[tokio::test]
+    async fn failed_turn_emits_request_boundary_without_false_response() {
+        let emitter = Arc::new(BoundaryCapturingEmitter::default());
+        let ledger = Arc::new(SessionLedger::new(None, HashMap::new()));
+        assert_eq!(ledger.charge_turn().expect("charge turn"), 1);
+        let ctx = test_context(emitter.clone(), ledger).await;
+        let middleware = ConversationMemoryMiddleware::new();
+
+        let result = middleware
+            .around(
+                &ctx,
+                &ask(true),
+                Vec::new(),
+                Next {
+                    chain: &[],
+                    idx: 0,
+                    terminal: failure_terminal,
+                },
+            )
+            .await;
+        assert!(result.is_err());
+
+        let boundaries = emitter.boundaries.lock().unwrap().clone();
+        assert_eq!(boundaries.len(), 1);
+        assert_eq!(boundaries[0].turn_number, 1);
+        assert_eq!(boundaries[0].direction, TurnDirection::Request);
     }
 }
 

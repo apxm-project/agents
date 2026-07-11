@@ -716,6 +716,17 @@ pub(crate) async fn execute_ask_with_tools(
             }
         }
 
+        super::emit_model_step(
+            ctx,
+            node.id,
+            iteration + 1,
+            &response,
+            iter_total_ms,
+            iter_prefill,
+            iter_decode,
+            response.tool_calls.is_empty(),
+        );
+
         total_input_tokens += response.usage.input_tokens;
         total_output_tokens += response.usage.output_tokens;
 

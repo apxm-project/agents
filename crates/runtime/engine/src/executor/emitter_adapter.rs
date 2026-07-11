@@ -113,6 +113,14 @@ impl ExecutionEventEmitter for EmitterAdapter {
         });
     }
 
+    fn emit_llm_step_completed(&self, payload: LlmStepCompletedPayload) {
+        self.emit(payload);
+    }
+
+    fn emit_llm_done(&self, payload: LlmDonePayload) {
+        self.emit(payload);
+    }
+
     fn emit_tool_start(&self, name: &str, args: &HashMap<String, Value>) {
         let json_args: HashMap<String, serde_json::Value> = args
             .iter()
@@ -523,6 +531,10 @@ impl ExecutionEventEmitter for EmitterAdapter {
         });
     }
 
+    fn emit_turn_boundary(&self, payload: TurnBoundaryPayload) {
+        self.emit(payload);
+    }
+
     fn emit_approval_request(
         &self,
         agent_code: &str,
@@ -853,6 +865,43 @@ mod tests {
 
         adapter.emit_turn_started("exec-1", Some("turn-1"), Some("Cleo"));
         adapter.emit_turn_complete("exec-1", 100, true);
+        adapter.emit_turn_boundary(TurnBoundaryPayload {
+            turn_number: 1,
+            direction: TurnDirection::Request,
+        });
+        adapter.emit_llm_step_completed(LlmStepCompletedPayload {
+            node_id: 1,
+            step_number: 1,
+            model: "model".to_string(),
+            finish_reason: FinishReasonPayload {
+                reason: "stop".to_string(),
+            },
+            usage: LlmStepUsagePayload {
+                input_tokens: 1,
+                output_tokens: 2,
+                cached_input_tokens: 0,
+                reasoning_output_tokens: 0,
+            },
+            performance: LlmStepPerformancePayload {
+                latency_ms: 10.0,
+                prefill_ms: 4.0,
+                decode_ms: 6.0,
+            },
+            tool_call_count: 0,
+        });
+        adapter.emit_llm_done(LlmDonePayload {
+            content: "final answer".to_string(),
+            model: "model".to_string(),
+            finish_reason: FinishReasonPayload {
+                reason: "stop".to_string(),
+            },
+            usage: UsagePayload {
+                input_tokens: 1,
+                output_tokens: 2,
+            },
+            tool_calls: Vec::new(),
+            response_id: None,
+        });
         adapter.emit_subagent_spawn_begin(
             "agent-1",
             Some("Agent One"),
@@ -871,6 +920,9 @@ mod tests {
         for expected in [
             "turn_started",
             "turn_complete",
+            "turn_boundary",
+            "llm_step_completed",
+            "llm_done",
             "subagent_spawn_begin",
             "subagent_spawn_end",
             "tool_call_begin",
