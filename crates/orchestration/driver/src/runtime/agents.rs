@@ -46,10 +46,8 @@ pub async fn configure_agent_registry(
 /// but no backend can confine a long-running child, this fails closed rather
 /// than spawning the agent unconfined.
 ///
-/// Selection is by isolation level + availability (`registry.select`), not by a
-/// per-request `validate()` — the long-running spawn has no one-shot
-/// `ExecRequest`. A backend whose confinement is request-shape dependent would
-/// need its own check here; the bubblewrap backend confines uniformly.
+/// Selection validates the concrete long-running process requirements: OS-level
+/// isolation, network access, and a writable working directory.
 fn select_agent_sandbox(
     sandbox_registry: &SandboxRegistry,
     profile: &AcpAgentProfile,
@@ -58,9 +56,15 @@ fn select_agent_sandbox(
     if !profile.sandbox {
         return Ok(None);
     }
+    let request = apxm_runtime::sandbox::ExecRequest {
+        min_isolation: IsolationLevel::OsLevel,
+        needs_network: true,
+        write_paths: vec![std::path::PathBuf::from(".")],
+        ..Default::default()
+    };
     sandbox_registry
-        .select(IsolationLevel::OsLevel)
-        .map(Some)
+        .select_for_request(&request)
+        .map(|selection| Some(selection.backend))
         .map_err(|e| RuntimeError::Operation {
             op_type: apxm_core::types::operations::AISOperationType::SpawnAgent,
             message: format!(

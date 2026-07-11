@@ -46,7 +46,7 @@ pub enum SchedulerOutcome {
         /// (e.g. releasing backend graph lifecycle state) MUST chain onto this
         /// handle rather than doing that cleanup immediately — the execution
         /// is NOT done just because it parked.
-        background: JoinHandle<()>,
+        background: JoinHandle<RuntimeResult<()>>,
     },
 }
 
@@ -516,19 +516,19 @@ impl DataflowScheduler {
 /// Finish out a parked execution's bookkeeping in the background once its
 /// caller has already returned [`SchedulerOutcome::Parked`].
 ///
-/// No one is awaiting a result at this point, so this only joins the worker
-/// handles (letting the DAG run to its eventual real completion / host
-/// cancellation) and emits the same finishing hooks / logs that
-/// [`DataflowScheduler::execute_or_park`] would have emitted had it stayed
-/// blocked — it does not resurrect the discarded result for anyone to
-/// consume.
+/// Joins the worker handles, emits finishing hooks, and returns the terminal
+/// domain outcome to the owner of the parked execution.
 async fn finalize_parked_background(
     state: Arc<SchedulerState>,
     hooks: ExecutionHookContext,
     worker_handles: Vec<JoinHandle<()>>,
-) {
+) -> RuntimeResult<()> {
     for handle in worker_handles {
-        let _ = handle.await;
+        if let Err(error) = handle.await {
+            state.set_first_error(RuntimeError::Scheduler {
+                message: format!("parked worker task failed: {error}"),
+            });
+        }
     }
 
     let error = state.first_error.lock().take();
@@ -546,6 +546,14 @@ async fn finalize_parked_background(
             error = %error,
             "Background (previously-parked) execution finished with an error"
         );
+        Err(error)
+    } else if stats.failed_nodes > 0 {
+        Err(RuntimeError::Scheduler {
+            message: format!(
+                "parked execution completed with {} failed node(s)",
+                stats.failed_nodes
+            ),
+        })
     } else {
         apxm_sched!(
             info,
@@ -553,6 +561,7 @@ async fn finalize_parked_background(
             failed = stats.failed_nodes,
             "Background (previously-parked) execution completed"
         );
+        Ok(())
     }
 }
 
@@ -816,6 +825,24 @@ mod loop_conformance_tests {
         for h in handles {
             let _ = timeout(Duration::from_secs(5), h).await;
         }
+    }
+
+    #[tokio::test]
+    async fn parked_background_returns_the_terminal_domain_error() {
+        let (ctx, _) = test_context().await;
+        let (state, handles) = spawn_seeded_execution(ctx).await;
+        state.set_first_error(RuntimeError::Scheduler {
+            message: "terminal failure".to_string(),
+        });
+        state.mark_done();
+
+        let result =
+            finalize_parked_background(state, ExecutionHookContext::default(), handles).await;
+
+        assert!(matches!(
+            result,
+            Err(RuntimeError::Scheduler { message }) if message == "terminal failure"
+        ));
     }
 
     /// Positive exactly-N-iterations conformance: `max_iterations = 3`, a

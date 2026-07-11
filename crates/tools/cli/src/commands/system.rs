@@ -81,17 +81,17 @@ pub fn doctor_command(config: Option<PathBuf>, json_output: bool) -> Result<()> 
             Err(_) => (0, vec![]),
         };
 
-    // --- Sandbox (bubblewrap) ---
-    // bwrap confines EXC, the bash/user-tool capabilities, and sandboxed ACP
-    // agents. Without it OsLevel requests fail closed. A successful --version
-    // also confirms it can run (on Ubuntu the AppArmor userns profile must be
-    // installed, otherwise bwrap is present but unusable).
-    let bwrap_available = std::process::Command::new("bwrap")
-        .arg("--version")
-        .stdout(std::process::Stdio::null())
-        .stderr(std::process::Stdio::null())
-        .status()
-        .is_ok_and(|s| s.success());
+    // --- Sandbox ---
+    // The runtime registry includes only backends that pass their functional
+    // isolation probes. Installed-but-unusable executables are excluded.
+    #[cfg(feature = "driver")]
+    let sandbox_backends = apxm_driver::runtime::sandbox::configure_sandbox_registry()
+        .list()
+        .into_iter()
+        .filter(|backend| backend.isolation_level >= apxm_runtime::sandbox::IsolationLevel::OsLevel)
+        .collect::<Vec<_>>();
+    #[cfg(not(feature = "driver"))]
+    let sandbox_backends = Vec::<apxm_runtime::sandbox::SandboxCapabilities>::new();
 
     // --- Environment Variables ---
     let env_apxm_backend = env::var(apxm_env::APXM_BACKEND).ok();
@@ -139,7 +139,7 @@ pub fn doctor_command(config: Option<PathBuf>, json_output: bool) -> Result<()> 
                 "names": backend_names,
             },
             "sandbox": {
-                "bwrap_available": bwrap_available,
+                "available_backends": &sandbox_backends,
             },
             "environment": {
                 apxm_env::APXM_BACKEND: env_apxm_backend,
@@ -214,15 +214,41 @@ pub fn doctor_command(config: Option<PathBuf>, json_output: bool) -> Result<()> 
 
     // 3. Sandbox
     print_section_header("Sandbox");
-    if bwrap_available {
-        print_status_line("bubblewrap", Status::Ok, "available (bwrap)");
-    } else {
-        print_status_line("bubblewrap", Status::Warning, "not available");
-        print_hint(
-            "Install bubblewrap (`apt-get install bubblewrap`) to confine tool execution. \
-             On Ubuntu also add an AppArmor userns profile for bwrap (see README \
-             \u{2192} System dependencies). Without it, OsLevel sandbox requests fail closed.",
+    if sandbox_backends.is_empty() {
+        print_status_line(
+            "OS isolation",
+            Status::Warning,
+            "no functional backend available",
         );
+        print_hint(
+            "Configure a functional OS-isolation backend. On Linux, APXM probes bubblewrap user namespaces and systemd user-service network restrictions before registering either backend.",
+        );
+    } else {
+        for backend in &sandbox_backends {
+            let mut guarantees = Vec::new();
+            if backend.supports_filesystem_restriction {
+                guarantees.push("filesystem");
+            }
+            if backend.supports_network_restriction {
+                guarantees.push("network");
+            }
+            if backend.supports_syscall_filtering {
+                guarantees.push("syscall");
+            }
+            if backend.supports_resource_limits {
+                guarantees.push("resource");
+            }
+            let enforced = if guarantees.is_empty() {
+                "no declared restrictions".to_string()
+            } else {
+                format!("{} restrictions", guarantees.join(", "))
+            };
+            print_status_line(
+                &backend.name,
+                Status::Ok,
+                &format!("{}; {enforced}", backend.isolation_level),
+            );
+        }
     }
 
     // 4. Environment Variables
