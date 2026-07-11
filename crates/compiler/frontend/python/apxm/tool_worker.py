@@ -34,6 +34,7 @@ from __future__ import annotations
 import asyncio
 import importlib
 import importlib.util
+import inspect
 import itertools
 import json
 import queue
@@ -430,6 +431,11 @@ def _invoke_hook(fn: Any, event: str, payload: dict[str, Any], req_id: str = "")
         ret = fn(ctx, payload.get("reply"))
     else:  # pre_turn and any future ctx-only event
         ret = fn(ctx)
+    if inspect.isawaitable(ret):
+        # Hooks still run off the main worker event loop so sync hooks may use
+        # the blocking ctx host-call helpers. Async hooks get a private loop in
+        # that same worker thread instead of being silently dropped.
+        ret = asyncio.run(ret)
     # Normalize to a decision dict and attach any accumulated memory writes so
     # side-effect helpers (ctx.umem) take effect even when the hook returns None.
     decision = ret if isinstance(ret, dict) else {}

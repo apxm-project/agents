@@ -3,6 +3,10 @@ export type {
   HookContext,
   HookDecision,
   HookFnCallable,
+  JsonObject,
+  JsonPrimitive,
+  JsonSchema,
+  JsonValue,
   ToolFn,
 } from "./types.js";
 
