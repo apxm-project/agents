@@ -103,7 +103,7 @@ export enum CoreEventKind {
 export const TOKEN = kind(CoreEventKind.TOKEN, EventCategoryKind.STREAM);
 export const THOUGHT = kind(CoreEventKind.THOUGHT, EventCategoryKind.STREAM);
 export const TOOL_CALL = kind(CoreEventKind.TOOL_CALL, EventCategoryKind.LIFECYCLE);
-export const LLM_DONE = kind(CoreEventKind.LLM_DONE, EventCategoryKind.LIFECYCLE, true);
+export const LLM_DONE = kind(CoreEventKind.LLM_DONE, EventCategoryKind.LIFECYCLE);
 export const LLM_STEP_COMPLETED = kind(CoreEventKind.LLM_STEP_COMPLETED, EventCategoryKind.OBSERVABILITY);
 export const LLM_PROMPT = kind(CoreEventKind.LLM_PROMPT, EventCategoryKind.OBSERVABILITY);
 export const USAGE = kind(CoreEventKind.USAGE, EventCategoryKind.OBSERVABILITY);

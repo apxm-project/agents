@@ -1,87 +1,11 @@
-//! Terminal-classification drift gate for `apxm.event.v1`
-//! (workspace/contracts/schemas/event.v1.json).
+//! Generated terminal-classification drift gate for `apxm.event.v1`.
 //!
-//! `workspace/contracts` owns the public schema; this crate owns the Rust
-//! model it describes. The two are kept in sync by discipline, not by a
-//! generator: this table is a literal copy of the schema's
-//! `$defs.EventKindRegistryTable.const` (64 entries at the time this test
-//! was written). If `CORE_EVENT_KINDS` changes — a kind added, removed, or
-//! given a different `category`/`terminal` — this test fails until both
-//! this table and `schemas/event.v1.json` are updated together. That
-//! failure *is* the drift gate; there is deliberately no filesystem read of
-//! the sibling `contracts` repo here, since a consumer building only this
-//! crate must not need that repo checked out.
+//! `workspace/contracts` owns the public registry. Its code generator writes
+//! `generated_event_kind_registry.rs`, so this crate can verify schema parity
+//! without reading a sibling checkout or maintaining a second literal table.
 
-use super::kind::{CORE_EVENT_KINDS, EventCategory};
-
-/// `(wire name, category, terminal)` for every `CORE_EVENT_KINDS` entry,
-/// mirroring `schemas/event.v1.json`'s `EventKindRegistryTable` exactly.
-const SCHEMA_EVENT_KIND_TABLE: &[(&str, &str, bool)] = &[
-    ("agent_message", "agent", false),
-    ("agent_route_decision", "observability", false),
-    ("agent_spawned", "agent", false),
-    ("approval_request", "agent", false),
-    ("approval_resolved", "agent", false),
-    ("cancelled", "error", true),
-    ("checkpoint_restored", "lifecycle", false),
-    ("checkpoint_saved", "lifecycle", false),
-    ("citation", "observability", false),
-    ("communicate_dispatched", "agent", false),
-    ("context_compacted", "observability", false),
-    ("context_window_warning", "error", false),
-    ("error", "error", true),
-    ("execute_complete", "lifecycle", true),
-    ("execution_started", "lifecycle", false),
-    ("gpu_utilization", "observability", false),
-    ("graph_edge", "topology", false),
-    ("head_of_line_block", "observability", false),
-    ("llm_done", "lifecycle", true),
-    ("llm_step_completed", "observability", false),
-    ("llm_prompt", "observability", false),
-    ("loop_detected", "error", false),
-    ("memoization_hit", "observability", false),
-    ("memory_read", "observability", false),
-    ("memory_write", "observability", false),
-    ("model_rerouted", "lifecycle", false),
-    ("model_route_decision", "observability", false),
-    ("node_metrics", "observability", false),
-    ("node_output", "observability", false),
-    ("operation_end", "lifecycle", false),
-    ("operation_start", "lifecycle", false),
-    ("plan_created", "lifecycle", false),
-    ("plan_step_completed", "lifecycle", false),
-    ("plan_step_started", "lifecycle", false),
-    ("plan_workflow_emitted", "lifecycle", false),
-    ("provider_event", "observability", false),
-    ("retry", "error", false),
-    ("scheduler_decision", "observability", false),
-    ("session_end", "lifecycle", true),
-    ("session_start", "lifecycle", false),
-    ("subagent_done", "agent", true),
-    ("subagent_failed", "agent", true),
-    ("subagent_llm_call_begin", "agent", false),
-    ("subagent_llm_call_end", "agent", false),
-    ("subagent_spawn_begin", "agent", false),
-    ("subagent_spawn_end", "agent", false),
-    ("thought", "stream", false),
-    ("token", "stream", false),
-    ("token_usage", "observability", false),
-    ("tool_call", "lifecycle", false),
-    ("tool_call_begin", "agent", false),
-    ("tool_call_end", "agent", false),
-    ("tool_end", "lifecycle", false),
-    ("tool_start", "lifecycle", false),
-    ("turn_aborted", "lifecycle", true),
-    ("turn_boundary", "lifecycle", false),
-    ("turn_complete", "lifecycle", true),
-    ("turn_started", "lifecycle", false),
-    ("usage", "observability", false),
-    ("warning", "error", false),
-    ("workflow_finished", "lifecycle", false),
-    ("workflow_started", "lifecycle", false),
-    ("workflow_step_completed", "lifecycle", false),
-    ("workflow_step_started", "lifecycle", false),
-];
+use super::generated_event_kind_registry::{SCHEMA_EVENT_KIND_REGISTRY, SchemaTerminalSense};
+use super::kind::{CORE_EVENT_KINDS, EventCategory, core_event_kind};
 
 fn category_str(category: EventCategory) -> &'static str {
     match category {
@@ -95,81 +19,80 @@ fn category_str(category: EventCategory) -> &'static str {
     }
 }
 
-/// Positive/drift gate: every `CORE_EVENT_KINDS` entry has exactly one
-/// matching row in `SCHEMA_EVENT_KIND_TABLE` with the same category and
-/// terminal value — the same terminal-classification invariant used by the
-/// schema-parity test.
 #[test]
-fn core_event_kinds_match_schema_registry_table() {
-    use std::collections::BTreeMap;
+fn core_event_kinds_match_generated_schema_registry() {
+    use std::collections::{BTreeMap, BTreeSet};
 
-    let schema_table: BTreeMap<&str, (&str, bool)> = SCHEMA_EVENT_KIND_TABLE
+    let schema_table: BTreeMap<_, _> = SCHEMA_EVENT_KIND_REGISTRY
         .iter()
-        .map(|(name, category, terminal)| (*name, (*category, *terminal)))
+        .map(|entry| (entry.name, entry))
         .collect();
-
     assert_eq!(
         schema_table.len(),
-        SCHEMA_EVENT_KIND_TABLE.len(),
-        "SCHEMA_EVENT_KIND_TABLE must not contain duplicate names"
+        SCHEMA_EVENT_KIND_REGISTRY.len(),
+        "generated schema event registry must not contain duplicate names"
     );
 
-    let mut rust_names = std::collections::BTreeSet::new();
+    let mut rust_names = BTreeSet::new();
     for kind in CORE_EVENT_KINDS {
         rust_names.insert(kind.name());
-        let Some((expected_category, expected_terminal)) = schema_table.get(kind.name()) else {
+        let entry = schema_table.get(kind.name()).unwrap_or_else(|| {
             panic!(
-                "CORE_EVENT_KINDS has {:?} but schemas/event.v1.json's \
-                 EventKindRegistryTable does not — update the schema \
-                 (and this table) alongside kind.rs",
+                "CORE_EVENT_KINDS has {:?} but the generated apxm.event.v1 registry does not",
                 kind.name()
-            );
-        };
+            )
+        });
         assert_eq!(
             category_str(kind.category()),
-            *expected_category,
-            "kind {:?}: category drifted from schemas/event.v1.json",
+            entry.category.as_str(),
+            "kind {:?}: category drifted from apxm.event.v1",
             kind.name()
         );
         assert_eq!(
             kind.is_terminal(),
-            *expected_terminal,
-            "kind {:?}: terminal drifted from schemas/event.v1.json",
+            entry.terminal,
+            "kind {:?}: terminal flag drifted from apxm.event.v1",
             kind.name()
         );
     }
 
-    let schema_names: std::collections::BTreeSet<&str> = schema_table.keys().copied().collect();
+    let schema_names: BTreeSet<_> = schema_table.keys().copied().collect();
     assert_eq!(
         rust_names, schema_names,
-        "schemas/event.v1.json's EventKindRegistryTable must cover exactly \
-         CORE_EVENT_KINDS, no more, no less"
+        "apxm.event.v1 must cover exactly CORE_EVENT_KINDS"
     );
 }
 
-/// Ambiguous-terminal sense pin (threat-model coverage): the three kinds
-/// documented in schemas/event.v1.json as `terminal_sense: atomic_no_delta`
-/// (no `_delta` streaming partner, but does NOT end a run/session/turn)
-/// must stay `terminal: false`, and a genuine run-ending kind stays
-/// `terminal: true` — regression pin for the exact misclassification the
-/// ambiguous terminal classifications.
 #[test]
-fn ambiguous_terminal_kinds_stay_non_terminal() {
-    use super::kind;
-
-    for name in ["agent_spawned", "communicate_dispatched", "graph_edge"] {
-        let kind = super::kind::core_event_kind(name)
-            .unwrap_or_else(|| panic!("{name} must be a CORE_EVENT_KINDS entry"));
-        assert!(
-            !kind.is_terminal(),
-            "{name} carries terminal_sense=atomic_no_delta in schemas/event.v1.json \
-             (no _delta streaming partner) and must stay terminal=false — it does not \
-             end a run/session/turn"
-        );
+fn generated_terminal_senses_preserve_live_feed_semantics() {
+    for entry in SCHEMA_EVENT_KIND_REGISTRY {
+        let kind = core_event_kind(entry.name)
+            .unwrap_or_else(|| panic!("generated event kind {} must exist", entry.name));
+        match entry.terminal_sense {
+            SchemaTerminalSense::RunEnd => assert!(
+                entry.terminal && kind.is_terminal(),
+                "{} is run_end and must close a run-scoped feed",
+                entry.name
+            ),
+            SchemaTerminalSense::AtomicNoDelta | SchemaTerminalSense::NA => assert!(
+                !entry.terminal && !kind.is_terminal(),
+                "{} does not end a run and must keep a live feed open",
+                entry.name
+            ),
+        }
     }
 
-    assert!(
-        kind::TURN_COMPLETE.is_terminal(),
-        "turn_complete is terminal_sense=run_end"
-    );
+    let llm_done = SCHEMA_EVENT_KIND_REGISTRY
+        .iter()
+        .find(|entry| entry.name == "llm_done")
+        .expect("generated registry must contain llm_done");
+    assert_eq!(llm_done.terminal_sense, SchemaTerminalSense::AtomicNoDelta);
+
+    for name in ["execute_complete", "session_end", "error"] {
+        let entry = SCHEMA_EVENT_KIND_REGISTRY
+            .iter()
+            .find(|entry| entry.name == name)
+            .unwrap_or_else(|| panic!("generated registry must contain {name}"));
+        assert_eq!(entry.terminal_sense, SchemaTerminalSense::RunEnd);
+    }
 }

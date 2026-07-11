@@ -562,6 +562,7 @@ fn terminal_kinds_exclude_topology_events() {
     assert!(!kind::AGENT_SPAWNED.is_terminal());
     assert!(!kind::COMMUNICATE_DISPATCHED.is_terminal());
     assert!(!kind::GRAPH_EDGE.is_terminal());
+    assert!(!kind::LLM_DONE.is_terminal());
     assert!(!kind::LLM_STEP_COMPLETED.is_terminal());
 
     assert!(kind::TURN_COMPLETE.is_terminal());

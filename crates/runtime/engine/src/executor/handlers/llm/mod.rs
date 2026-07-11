@@ -96,7 +96,7 @@ impl From<&AISOperationType> for LlmMode {
 }
 
 /// Emit one typed model-call observation and, for the final response of a
-/// turn, the existing terminal `llm_done` event. Plain calls, memo hits, and
+/// turn, the atomic non-run-ending `llm_done` event. Plain calls, memo hits, and
 /// tool-loop iterations all use this helper so their telemetry stays identical.
 #[allow(clippy::too_many_arguments)]
 pub(super) fn emit_model_step(

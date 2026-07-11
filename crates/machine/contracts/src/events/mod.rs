@@ -6,6 +6,8 @@
 pub mod builder;
 pub mod emitter;
 pub mod event;
+#[cfg(test)]
+mod generated_event_kind_registry;
 pub mod kind;
 pub mod payload;
 pub mod registry;

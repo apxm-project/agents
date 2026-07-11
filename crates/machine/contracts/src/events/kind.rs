@@ -92,7 +92,7 @@ impl std::fmt::Display for EventKind {
 pub const TOKEN: EventKind = EventKind::new("token", EventCategory::Stream, false);
 pub const THOUGHT: EventKind = EventKind::new("thought", EventCategory::Stream, false);
 pub const TOOL_CALL: EventKind = EventKind::new("tool_call", EventCategory::Lifecycle, false);
-pub const LLM_DONE: EventKind = EventKind::new("llm_done", EventCategory::Lifecycle, true);
+pub const LLM_DONE: EventKind = EventKind::new("llm_done", EventCategory::Lifecycle, false);
 pub const LLM_STEP_COMPLETED: EventKind =
     EventKind::new("llm_step_completed", EventCategory::Observability, false);
 pub const LLM_PROMPT: EventKind = EventKind::new("llm_prompt", EventCategory::Observability, false);
