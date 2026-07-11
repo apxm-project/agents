@@ -1,13 +1,6 @@
 // checkpoint_pipeline.air — two ASK turns with a mid-flow CHECKPOINT barrier
 // between them (ASK + FENCE(checkpoint) + ASK).
 //
-// Fills a gap in the  vector set: none of the original three fixtures
-// contain a bare `ais.ask` node (the single most common op), and
-// `approval_gate` only shows the RESUME side of a pause/resume round trip —
-// this fixture shows the in-flow CHECKPOINT barrier itself, produced by
-// `GraphRecorder.checkpoint()`. Generated from Python's
-// `GraphRecorder.to_graph().to_air()` reference emitter.
-//
 //   apxm validate checkpoint_pipeline.air
 module {
   func.func @checkpoint_pipeline() -> !ais.token attributes {ais.entry} {

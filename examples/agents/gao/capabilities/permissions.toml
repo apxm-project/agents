@@ -6,12 +6,20 @@ decision = "ask"
 reason = "Executes shell commands on the host."
 
 [[permission]]
+capability = "capability_discovery"
+decision = "allow"
+
+[[permission]]
 capability = "compose_workflow"
 decision = "ask"
 reason = "Creates or stages workflow artifacts."
 
 [[permission]]
 capability = "explain_permission"
+decision = "allow"
+
+[[permission]]
+capability = "http_get"
 decision = "allow"
 
 [[permission]]
