@@ -696,7 +696,7 @@ fn emit_air_from_declarative_agent(agent_dir: &Path, web_tools: bool) -> Result<
                     Value::String(hook.mode.clone()),
                 ),
                 (
-                    graph_attrs::PYTHON_HOOK_HANDLER_ID.to_string(),
+                    graph_attrs::HOOK_HANDLER_ID.to_string(),
                     Value::String(handler_id),
                 ),
             ]),
@@ -1430,7 +1430,8 @@ handler = "hooks.pre_turn"
         let air = emit_air_from_agent(agent_dir.path(), true).expect("declarative AIR");
 
         assert!(air.contains("ais.register_hook \"pre_turn\""));
-        assert!(air.contains("python_hook_handler_id"));
+        assert!(air.contains("hook_handler_id"));
+        assert!(!air.contains("python_hook_handler_id"));
         assert!(air.contains("ais.flow_call \"conversation\" \"turn\""));
         assert!(air.contains("args = {user_message = \"{user_message}\"}"));
         assert!(air.contains("capability_groups = [\"web\"]"));

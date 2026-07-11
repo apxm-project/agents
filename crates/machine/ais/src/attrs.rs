@@ -96,7 +96,7 @@ pub const HOOK_MATCH: &str = "hook_match";
 pub const HOOK_MODE: &str = "hook_mode";
 /// Stable content-addressed id (sha256:<hex64>) for the Python hook handler,
 /// dispatched via the SAME tool bridge as `@tool` (one handler mechanism).
-pub const PYTHON_HOOK_HANDLER_ID: &str = "python_hook_handler_id";
+pub const HOOK_HANDLER_ID: &str = "hook_handler_id";
 
 // -- Communication --
 pub const MESSAGE: &str = "message";
@@ -347,7 +347,7 @@ pub const ALL_ATTR_NAMES: &[&str] = &[
     HOOK_EVENT,
     HOOK_MATCH,
     HOOK_MODE,
-    PYTHON_HOOK_HANDLER_ID,
+    HOOK_HANDLER_ID,
     MESSAGE,
     RECIPIENT,
     TARGET,

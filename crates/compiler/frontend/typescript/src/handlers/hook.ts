@@ -49,9 +49,9 @@ export interface HookOptions {
   mode?: HookMode | string;
 }
 
-export interface HookFn {
+export interface HookFn<TFn extends HookFnCallable = HookFnCallable> {
   readonly kind: "hook";
-  fn: HookFnCallable;
+  fn: TFn;
   event: string;
   match: string;
   mode: string;
@@ -70,7 +70,11 @@ export function isHookFn(value: unknown): value is HookFn {
   );
 }
 
-export function hook(options: HookOptions): (fn: HookFnCallable) => HookFn {
+export interface HookBuilder {
+  <TFn extends HookFnCallable>(fn: TFn): HookFn<TFn>;
+}
+
+export function hook(options: HookOptions): HookBuilder {
   const eventValue = normalizeLifecycleEvent(options.on);
   const modeValue = normalizeHookMode(options.mode ?? HookMode.OBSERVE);
   const match = options.match ?? "*";
@@ -94,7 +98,7 @@ export function hook(options: HookOptions): (fn: HookFnCallable) => HookFn {
     );
   }
 
-  return (fn: HookFnCallable) => {
+  return <TFn extends HookFnCallable>(fn: TFn): HookFn<TFn> => {
     const module = getHandlerModule();
     const qualname = fn.name || "hook";
     const handler_id = makeHandlerId(module, qualname);
