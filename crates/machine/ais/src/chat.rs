@@ -12,6 +12,7 @@
 //! source of truth now.
 
 use crate::capabilities::groups;
+use serde::{Deserialize, Deserializer, Serialize};
 
 /// A chat role in the rendered transcript.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -112,6 +113,50 @@ pub struct ChatAirOptions<'a> {
     /// the agent can create and run workflows. These are write-class but
     /// capability_grant_ids-gated and staging-confined (workflow-scoped admission).
     pub authoring: bool,
+}
+
+fn deserialize_required_nullable_string<'de, D>(deserializer: D) -> Result<Option<String>, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    Option::<String>::deserialize(deserializer)
+}
+
+/// Owned, serializable process contract for `apxm compile-service`.
+///
+/// Nullable routing fields must still be present in JSON so Server and the
+/// compiler cannot silently drift to different defaults. Unknown fields fail
+/// closed.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct CompileServiceOptions {
+    #[serde(deserialize_with = "deserialize_required_nullable_string")]
+    pub system_prompt: Option<String>,
+    #[serde(deserialize_with = "deserialize_required_nullable_string")]
+    pub backend: Option<String>,
+    #[serde(deserialize_with = "deserialize_required_nullable_string")]
+    pub model: Option<String>,
+    #[serde(deserialize_with = "deserialize_required_nullable_string")]
+    pub effort: Option<String>,
+    pub tools: bool,
+    pub skills: bool,
+    pub capability_discovery: bool,
+    pub authoring: bool,
+}
+
+impl From<&ChatAirOptions<'_>> for CompileServiceOptions {
+    fn from(options: &ChatAirOptions<'_>) -> Self {
+        Self {
+            system_prompt: options.system_prompt.map(ToOwned::to_owned),
+            backend: options.backend.map(ToOwned::to_owned),
+            model: options.model.map(ToOwned::to_owned),
+            effort: options.effort.map(ToOwned::to_owned),
+            tools: options.tools,
+            skills: options.skills,
+            capability_discovery: options.capability_discovery,
+            authoring: options.authoring,
+        }
+    }
 }
 
 /// Per-turn routing options for a conversational ACP agent graph.

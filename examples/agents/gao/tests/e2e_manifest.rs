@@ -8,6 +8,7 @@ use std::io::Write;
 use std::path::Path;
 use std::process::{Command, Stdio};
 
+use apxm_ais::chat::CompileServiceOptions;
 use crate::commands::compile::emit_air_from_agent;
 use tempfile::TempDir;
 
@@ -342,7 +343,7 @@ fn gao_compile_service_declarative_emits_recv_loop_air() {
     let root = tmp.path().join("gao");
     agent_build(&root, true).expect("gao agent build must succeed before compile-service");
 
-    let air = emit_air_from_agent(&root, false)
+    let air = emit_air_from_agent(&root, &CompileServiceOptions::default())
         .expect("declarative compile-service AIR for gao");
 
     assert!(air.contains("mode = \"recv\""), "expected in-graph recv loop");
