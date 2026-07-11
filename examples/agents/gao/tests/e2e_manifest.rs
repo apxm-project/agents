@@ -8,7 +8,9 @@
 // `agent_compile_endpoint_compiles_real_gao_via_agents_cli`.
 
 use std::fs;
+use std::io::Write;
 use std::path::Path;
+use std::process::{Command, Stdio};
 
 use crate::commands::compile::emit_air_from_agent;
 use tempfile::TempDir;
@@ -46,12 +48,85 @@ fn copy_gao_example() -> TempDir {
     tmp
 }
 
+fn read_tools_manifest(root: &Path) -> Vec<serde_json::Value> {
+    let path = root.join("capabilities/handlers/tools.json");
+    serde_json::from_str(&fs::read_to_string(&path).expect("read tools.json"))
+        .expect("parse tools.json")
+}
+
+fn repo_root() -> std::path::PathBuf {
+    Path::new(env!("CARGO_MANIFEST_DIR")).join("../../..")
+}
+
 #[test]
 fn gao_example_sync_and_lint_pass() {
     let tmp = copy_gao_example();
     let root = tmp.path().join("gao");
     agent_sync(&root, true).expect("gao agent sync");
     agent_lint(&root, None, true).expect("gao agent lint");
+}
+
+#[test]
+fn gao_declares_server_registered_discovery_and_http_builtins() {
+    let root = require_gao_example();
+    let agent: toml::Value = toml::from_str(
+        &fs::read_to_string(root.join("agent.toml")).expect("read gao agent.toml"),
+    )
+    .expect("parse gao agent.toml");
+    let capabilities = agent
+        .get("capabilities")
+        .and_then(toml::Value::as_array)
+        .expect("gao capabilities array")
+        .iter()
+        .filter_map(toml::Value::as_str)
+        .collect::<Vec<_>>();
+
+    for capability in ["capability_discovery", "http_get"] {
+        assert!(
+            capabilities.contains(&capability),
+            "gao must declare server-registered builtin {capability}"
+        );
+        let definition = fs::read_to_string(
+            root.join("capabilities")
+                .join(capability)
+                .join("capability.toml"),
+        )
+        .expect("read builtin capability definition");
+        assert!(
+            definition.contains("kind = \"builtin\""),
+            "{capability} must use canonical builtin dispatch"
+        );
+    }
+}
+
+#[test]
+fn gao_package_is_typescript_only() {
+    let root = require_gao_example();
+    let mut pending = vec![root.clone()];
+    while let Some(dir) = pending.pop() {
+        for entry in fs::read_dir(&dir).expect("read gao package directory") {
+            let entry = entry.expect("read gao package entry");
+            let path = entry.path();
+            if path.is_dir() {
+                pending.push(path);
+                continue;
+            }
+            assert_ne!(
+                path.extension().and_then(|value| value.to_str()),
+                Some("py"),
+                "gao must not contain Python source: {}",
+                path.display()
+            );
+            if matches!(path.extension().and_then(|value| value.to_str()), Some("toml" | "json")) {
+                let text = fs::read_to_string(&path).expect("read Gao manifest");
+                assert!(
+                    !text.contains("python_handler"),
+                    "gao must not declare python_handler entries: {}",
+                    path.display()
+                );
+            }
+        }
+    }
 }
 
 #[test]
@@ -87,8 +162,7 @@ fn gao_example_build_writes_tools_json_manifest() {
         tools_json.is_file(),
         "typescript agent build must emit capabilities/handlers/tools.json"
     );
-    let manifest: Vec<serde_json::Value> =
-        serde_json::from_str(&fs::read_to_string(&tools_json).unwrap()).unwrap();
+    let manifest = read_tools_manifest(&root);
     assert!(
         !manifest.is_empty(),
         "tools.json must list compiled typescript handlers"
@@ -107,7 +181,124 @@ fn gao_example_build_writes_tools_json_manifest() {
                 "tools.json {key} must be package-relative, got {value:?}"
             );
         }
+        if entry.get("name").and_then(|value| value.as_str()) != Some("hook") {
+            let schema = entry
+                .get("schema")
+                .and_then(serde_json::Value::as_object)
+                .expect("every Gao tool must publish an object argument schema");
+            assert_eq!(
+                schema.get("type").and_then(serde_json::Value::as_str),
+                Some("object"),
+                "Gao tool schema must describe an argument object: {entry}"
+            );
+            assert_eq!(
+                schema
+                    .get("additionalProperties")
+                    .and_then(serde_json::Value::as_bool),
+                Some(false),
+                "Gao tool schemas must reject undeclared arguments: {entry}"
+            );
+        }
     }
+
+    let plan = manifest
+        .iter()
+        .find(|entry| entry.get("name").and_then(serde_json::Value::as_str) == Some("plan_workflow"))
+        .expect("tools.json must include plan_workflow");
+    assert_eq!(
+        plan.pointer("/schema/required/0")
+            .and_then(serde_json::Value::as_str),
+        Some("request"),
+        "plan_workflow must require the typed request argument"
+    );
+}
+
+#[test]
+fn gao_plan_workflow_executes_with_object_arguments() {
+    if !node_available() || !npm_available() {
+        eprintln!("skipping gao_plan_workflow_executes_with_object_arguments: node/npm not on PATH");
+        return;
+    }
+    let tmp = copy_gao_example();
+    let root = tmp.path().join("gao");
+    agent_build(&root, true).expect("gao agent build");
+
+    let mut plan = read_tools_manifest(&root)
+        .into_iter()
+        .find(|entry| entry.get("name").and_then(serde_json::Value::as_str) == Some("plan_workflow"))
+        .expect("plan_workflow manifest entry");
+    let source = plan
+        .get("source_file")
+        .and_then(serde_json::Value::as_str)
+        .expect("plan_workflow source_file");
+    let source = source.to_string();
+    plan.as_object_mut()
+        .expect("plan_workflow manifest object")
+        .insert(
+            "source_file".to_string(),
+            serde_json::Value::String(root.join(&source).to_string_lossy().into_owned()),
+        );
+    let handler_id = plan
+        .get("handler_id")
+        .and_then(serde_json::Value::as_str)
+        .expect("plan_workflow handler_id")
+        .to_string();
+    let manifest_path = tmp.path().join("plan-tools.json");
+    fs::write(
+        &manifest_path,
+        serde_json::to_vec(&vec![plan]).expect("serialize plan manifest"),
+    )
+    .expect("write plan manifest");
+
+    let worker = repo_root().join("crates/compiler/frontend/typescript/scripts/tool-worker.mjs");
+    let mut child = Command::new("node")
+        .arg(worker)
+        .arg(&manifest_path)
+        .current_dir(repo_root())
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .expect("spawn TypeScript tool worker");
+    let request = "Preserve this request exactly: {typed: true}";
+    let frame = serde_json::json!({
+        "v": 1,
+        "type": "call",
+        "req_id": "gao-plan-test",
+        "tool_id": handler_id,
+        "args": { "request": request },
+        "deadline_ms": 5_000,
+    });
+    writeln!(
+        child.stdin.as_mut().expect("tool worker stdin"),
+        "{}",
+        serde_json::to_string(&frame).expect("serialize tool call")
+    )
+    .expect("write tool call");
+    drop(child.stdin.take());
+    let output = child.wait_with_output().expect("wait for tool worker");
+    assert!(
+        output.status.success(),
+        "tool worker failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let response = String::from_utf8(output.stdout).expect("tool worker UTF-8 output");
+    let result = response
+        .lines()
+        .filter_map(|line| serde_json::from_str::<serde_json::Value>(line).ok())
+        .find(|value| value.get("req_id").and_then(serde_json::Value::as_str) == Some("gao-plan-test"))
+        .unwrap_or_else(|| panic!("missing plan_workflow result; stderr: {}", String::from_utf8_lossy(&output.stderr)));
+    assert_eq!(result.get("ok").and_then(serde_json::Value::as_bool), Some(true));
+    let plan_text = result
+        .get("value")
+        .and_then(serde_json::Value::as_str)
+        .expect("plan_workflow returns JSON text");
+    let plan_value: serde_json::Value = serde_json::from_str(plan_text).expect("parse plan JSON");
+    assert_eq!(
+        plan_value.get("request").and_then(serde_json::Value::as_str),
+        Some(request),
+        "plan_workflow must consume the request object field without stringifying the object"
+    );
 }
 
 #[test]

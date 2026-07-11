@@ -1,11 +1,6 @@
 // multi_agent_delegate.air — spawn a sub-agent, delegate a task to it, then
 // communicate to collect the result (SPAWN_AGENT + DELEGATE + COMMUNICATE).
 //
-// Fills a gap in the  vector set: none of the original three fixtures
-// (approval_gate, converse_agent, runtime_agent_routing) exercise the
-// multi-agent delegate/communicate pair together. Generated from Python's
-// `GraphRecorder.to_graph().to_air()` reference emitter.
-//
 //   apxm validate multi_agent_delegate.air
 module {
   func.func @multi_agent_delegate() -> !ais.token attributes {ais.entry} {

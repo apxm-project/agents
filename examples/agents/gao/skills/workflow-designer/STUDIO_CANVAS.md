@@ -59,7 +59,7 @@ Studio lowers tool nodes to AIR `inv_cap` using **`capability`** and **`args`**:
 }
 ```
 
-Built-in read capabilities that work without grants: `http_get`, `echo`, `python_tools`.
+Use only read capabilities listed under **Ready now**. Gao declares `http_get` for public HTTP research.
 
 Capabilities that appear under **Needs connection** require connecting their provider in Integrations first. Do not propose disconnected provider capabilities in workflow drafts — use a **Ready now** capability such as `http_get` + LLM instead.
 

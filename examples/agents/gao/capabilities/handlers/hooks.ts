@@ -1,3 +1,4 @@
+// Defines Gao's typed lifecycle hooks for context, policy, and memory.
 import {
   hook,
   HookMode,

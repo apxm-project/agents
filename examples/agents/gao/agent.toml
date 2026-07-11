@@ -1,7 +1,9 @@
 capabilities = [
     "bash",
+    "capability_discovery",
     "compose_workflow",
     "explain_permission",
+    "http_get",
     "list_files",
     "list_local_skills",
     "plan_workflow",

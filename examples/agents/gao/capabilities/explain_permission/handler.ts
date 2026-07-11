@@ -1,14 +1,32 @@
+// Explains the approval posture of one capability request.
 import { tool } from "@apxm/frontend";
 
+type PermissionClass = "read" | "write" | "execute" | "deploy";
+
+interface ExplainPermissionArgs {
+  capability_id: string;
+  permission: PermissionClass;
+}
+
+/** Explain why a requested capability does or does not require approval. */
 export const explainPermission = tool({
   name: "explain_permission",
   description: "Explain the operator approval Gao needs before using an APXM capability.",
-})((capabilityId: unknown, permission: unknown) => {
-  const perm = String(permission ?? "");
+  schema: {
+    type: "object",
+    properties: {
+      capability_id: { type: "string" },
+      permission: { type: "string", enum: ["read", "write", "execute", "deploy"] },
+    },
+    required: ["capability_id", "permission"],
+    additionalProperties: false,
+  },
+})((args: ExplainPermissionArgs) => {
+  const perm = args.permission;
   const writeLike = perm === "write" || perm === "execute" || perm === "deploy";
   return JSON.stringify(
     {
-      capability: String(capabilityId ?? ""),
+      capability: args.capability_id,
       permission: perm,
       requires_approval: writeLike,
       reason: writeLike

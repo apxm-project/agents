@@ -1,5 +1,6 @@
+// Builds Gao's bounded, redacted turn context from package and host data.
 import { readFileSync } from "node:fs";
-import { dirname, join, resolve } from "node:path";
+import { dirname, isAbsolute, join, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 import type { HookContext } from "@apxm/frontend";
@@ -13,9 +14,18 @@ const MAX_CONFIG_CHARS = 500;
 const SENSITIVE_KEY =
   /(?:api[_-]?key|token|secret|password|credential|auth)/i;
 
-const STUDIO_URL_ENV = "APXM_STUDIO_URL";
-const STUDIO_SERVICE_TOKEN_ENV = "APXM_STUDIO_SERVICE_TOKEN";
-const INVENTORY_PATH = "/api/gao/capability-inventory";
+const CAPABILITY_INVENTORY_URL_ENV = "APXM_CAPABILITY_INVENTORY_URL";
+const CAPABILITY_INVENTORY_TOKEN_ENV = "APXM_CAPABILITY_INVENTORY_TOKEN";
+
+interface CapabilityInventoryEntry {
+  capability: string;
+  reason?: string;
+}
+
+interface CapabilityInventory {
+  ready: CapabilityInventoryEntry[];
+  needsConnect: CapabilityInventoryEntry[];
+}
 
 const PROMPT_PATHS: Record<string, string> = {
   persona: "prompts/persona.md",
@@ -40,14 +50,16 @@ export function packageRoot(): string {
     return cachedRoot;
   }
   const here = dirname(fileURLToPath(import.meta.url));
-  cachedRoot = resolve(here, "..", "..");
-  return cachedRoot;
+  const root = resolve(here, "..", "..");
+  cachedRoot = root;
+  return root;
 }
 
 function readText(relativePath: string): string {
   const root = packageRoot();
   const path = resolve(root, relativePath);
-  if (!path.startsWith(root)) {
+  const rel = relative(root, path);
+  if (rel.startsWith("..") || isAbsolute(rel)) {
     throw new Error(`path escapes Gao package: ${relativePath}`);
   }
   return readFileSync(path, "utf8").trim();
@@ -135,45 +147,71 @@ function renderNodeKindCatalog(): string {
   return lines.join("\n");
 }
 
-async function fetchCapabilityInventory(): Promise<Record<string, unknown> | null> {
-  const baseUrl = process.env[STUDIO_URL_ENV]?.trim();
-  if (!baseUrl) {
+function parseInventoryEntry(value: unknown): CapabilityInventoryEntry | null {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    return null;
+  }
+  const record = value as Record<string, unknown>;
+  if (typeof record.capability !== "string" || record.capability.trim() === "") {
+    return null;
+  }
+  return {
+    capability: record.capability,
+    ...(typeof record.reason === "string" ? { reason: record.reason } : {}),
+  };
+}
+
+function parseInventoryEntries(value: unknown): CapabilityInventoryEntry[] {
+  return Array.isArray(value)
+    ? value.map(parseInventoryEntry).filter((entry): entry is CapabilityInventoryEntry => entry != null)
+    : [];
+}
+
+function parseCapabilityInventory(value: unknown): CapabilityInventory | null {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    return null;
+  }
+  const record = value as Record<string, unknown>;
+  return {
+    ready: parseInventoryEntries(record.ready),
+    needsConnect: parseInventoryEntries(record.needsConnect),
+  };
+}
+
+async function fetchCapabilityInventory(): Promise<CapabilityInventory | null> {
+  const url = process.env[CAPABILITY_INVENTORY_URL_ENV]?.trim();
+  if (!url) {
     return null;
   }
   const headers: Record<string, string> = {};
-  const token = process.env[STUDIO_SERVICE_TOKEN_ENV]?.trim();
+  const token = process.env[CAPABILITY_INVENTORY_TOKEN_ENV]?.trim();
   if (token) {
     headers.Authorization = `Bearer ${token}`;
   }
   try {
-    const response = await fetch(`${baseUrl.replace(/\/$/, "")}${INVENTORY_PATH}`, {
+    const response = await fetch(url, {
       headers,
       signal: AbortSignal.timeout(5_000),
     });
     if (!response.ok) {
       return null;
     }
-    const data = (await response.json()) as unknown;
-    return data && typeof data === "object" && !Array.isArray(data)
-      ? (data as Record<string, unknown>)
-      : null;
+    return parseCapabilityInventory(await response.json());
   } catch {
     return null;
   }
 }
 
 function renderCapabilityInventorySection(
-  inventory: Record<string, unknown> | null,
+  inventory: CapabilityInventory | null,
 ): string {
   if (!inventory) {
     return (
-      `(capability inventory unavailable in this environment — set \`${STUDIO_URL_ENV}\` ` +
-      "to reach the Studio BFF)"
+      `(capability inventory unavailable in this environment — set ` +
+      `\`${CAPABILITY_INVENTORY_URL_ENV}\` to a typed inventory endpoint)`
     );
   }
-  const ready = (inventory.ready as Array<Record<string, unknown>> | undefined) ?? [];
-  const needsConnect =
-    (inventory.needsConnect as Array<Record<string, unknown>> | undefined) ?? [];
+  const { ready, needsConnect } = inventory;
   const readyLine =
     ready.map((entry) => String(entry.capability ?? "")).filter(Boolean).join(", ") || "(none)";
   const lines = [`- Ready now: ${readyLine}`];

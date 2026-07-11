@@ -6,7 +6,28 @@
     "name": "explain_permission",
     "qualname": "explainPermission",
     "read_only": true,
-    "schema": {},
+    "schema": {
+      "additionalProperties": false,
+      "properties": {
+        "capability_id": {
+          "type": "string"
+        },
+        "permission": {
+          "enum": [
+            "read",
+            "write",
+            "execute",
+            "deploy"
+          ],
+          "type": "string"
+        }
+      },
+      "required": [
+        "capability_id",
+        "permission"
+      ],
+      "type": "object"
+    },
     "source_file": "capabilities/explain_permission/handler.ts"
   },
   {
@@ -66,7 +87,15 @@
     "name": "list_files",
     "qualname": "listFiles",
     "read_only": true,
-    "schema": {},
+    "schema": {
+      "additionalProperties": false,
+      "properties": {
+        "subpath": {
+          "type": "string"
+        }
+      },
+      "type": "object"
+    },
     "source_file": "capabilities/list_files/handler.ts"
   },
   {
@@ -76,7 +105,11 @@
     "name": "list_local_skills",
     "qualname": "listLocalSkills",
     "read_only": true,
-    "schema": {},
+    "schema": {
+      "additionalProperties": false,
+      "properties": {},
+      "type": "object"
+    },
     "source_file": "capabilities/list_local_skills/handler.ts"
   },
   {
@@ -86,7 +119,19 @@
     "name": "plan_workflow",
     "qualname": "planWorkflow",
     "read_only": true,
-    "schema": {},
+    "schema": {
+      "additionalProperties": false,
+      "properties": {
+        "request": {
+          "minLength": 1,
+          "type": "string"
+        }
+      },
+      "required": [
+        "request"
+      ],
+      "type": "object"
+    },
     "source_file": "capabilities/plan_workflow/handler.ts"
   },
   {
@@ -96,7 +141,32 @@
     "name": "prepare_validation",
     "qualname": "prepareValidation",
     "read_only": true,
-    "schema": {},
+    "schema": {
+      "additionalProperties": false,
+      "properties": {
+        "artifact": {
+          "minLength": 1,
+          "type": "string"
+        },
+        "artifact_kind": {
+          "enum": [
+            "air",
+            "workflow_draft"
+          ],
+          "type": "string"
+        },
+        "workflow_name": {
+          "minLength": 1,
+          "type": "string"
+        }
+      },
+      "required": [
+        "workflow_name",
+        "artifact_kind",
+        "artifact"
+      ],
+      "type": "object"
+    },
     "source_file": "capabilities/prepare_validation/handler.ts"
   },
   {
@@ -106,7 +176,19 @@
     "name": "read_local_skill",
     "qualname": "readLocalSkill",
     "read_only": true,
-    "schema": {},
+    "schema": {
+      "additionalProperties": false,
+      "properties": {
+        "skill_id": {
+          "pattern": "^[a-z0-9][a-z0-9-]*$",
+          "type": "string"
+        }
+      },
+      "required": [
+        "skill_id"
+      ],
+      "type": "object"
+    },
     "source_file": "capabilities/read_local_skill/handler.ts"
   }
 ]

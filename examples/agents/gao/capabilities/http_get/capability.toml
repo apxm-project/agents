@@ -1,0 +1,4 @@
+id = "http_get"
+description = "Fetch public HTTP content for read-only research and endpoint validation."
+kind = "builtin"
+read_only = true

@@ -34,4 +34,4 @@ When the operator should load a canvas from Chat, emit a fenced JSON block with 
 
 **LLM prompt tokens** reference upstream outputs via `{{node_id}}` placeholders or single-brace label slugs derived from node labels. Text blocks inline into LLM prompts only.
 
-Canonical reference: `agents/gao/skills/workflow-designer/STUDIO_CANVAS.md`.
+Canonical reference: `skills/workflow-designer/STUDIO_CANVAS.md`.
