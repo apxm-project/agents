@@ -149,6 +149,16 @@ fn gao_package_is_typescript_only() {
 }
 
 #[test]
+fn gao_has_no_legacy_python_profile() {
+    let legacy_profile = repo_root().join("examples/python/gao");
+    assert!(
+        !legacy_profile.exists(),
+        "Gao has one canonical TypeScript package; remove legacy profile {}",
+        legacy_profile.display()
+    );
+}
+
+#[test]
 fn gao_example_build_seals_integrity() {
     if !node_available() || !npm_available() {
         eprintln!("skipping gao_example_build_seals_integrity: node/npm not on PATH");
