@@ -330,9 +330,34 @@ class ExecuteCompleteEventPayloadResultVariant1(TypedDict):
     session_id: str
     outcome: ExecuteCompleteEventPayloadResultVariant1OutcomeVariant1 | ExecuteCompleteEventPayloadResultVariant1OutcomeVariant2 | ExecuteCompleteEventPayloadResultVariant1OutcomeVariant3 | ExecuteCompleteEventPayloadResultVariant1OutcomeVariant4
 
+class ExecuteCompleteEventPayloadResultVariant2Stats(TypedDict):
+    executed_nodes: int
+    failed_nodes: int
+    duration_ms: int
+
+class ExecuteCompleteEventPayloadResultVariant2LlmUsage(TypedDict):
+    input_tokens: int
+    output_tokens: int
+    total_requests: int
+
+class _ExecuteCompleteEventPayloadResultVariant2Optional(TypedDict, total=False):
+    execution_id: str
+    workflow_id: str
+    run_root: str
+    trace_id: str
+    parked_session_id: str
+
+class ExecuteCompleteEventPayloadResultVariant2(_ExecuteCompleteEventPayloadResultVariant2Optional):
+    results: dict[str, Any]
+    content: str | None
+    session_dir: str | None
+    stats: ExecuteCompleteEventPayloadResultVariant2Stats
+    llm_usage: ExecuteCompleteEventPayloadResultVariant2LlmUsage
+    tool_call_counts: dict[str, int]
+
 class ExecuteCompleteEventPayload(TypedDict):
     kind: Literal['execute_complete']
-    result: ExecuteCompleteEventPayloadResultVariant1 | dict[str, Any]
+    result: ExecuteCompleteEventPayloadResultVariant1 | ExecuteCompleteEventPayloadResultVariant2
 
 class MemoryReadEventPayload(TypedDict):
     kind: Literal['memory_read']
