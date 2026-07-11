@@ -13,6 +13,7 @@
 
 use crate::capabilities::groups;
 use serde::{Deserialize, Deserializer, Serialize};
+use thiserror::Error;
 
 /// A chat role in the rendered transcript.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -85,6 +86,45 @@ pub fn sanitize_route_id(id: &str) -> String {
         .collect()
 }
 
+/// Validation errors for the typed compile-service process contract.
+#[derive(Debug, Clone, PartialEq, Eq, Error)]
+pub enum CompileServiceOptionsError {
+    /// A backend or model id is empty or contains a character outside the
+    /// routing-id grammar.
+    #[error(
+        "invalid {field} {value:?}: expected a non-empty routing id containing only ASCII letters, digits, '.', '_', '-', ':', or '/'"
+    )]
+    InvalidRouteId {
+        /// Contract field being validated.
+        field: &'static str,
+        /// Rejected value, preserved exactly as supplied by the caller.
+        value: String,
+    },
+    /// Extended-thinking effort is outside the closed contract vocabulary.
+    #[error("invalid effort {0:?}: expected one of 'off', 'low', 'medium', or 'high'")]
+    InvalidEffort(String),
+}
+
+fn validate_route_id(
+    field: &'static str,
+    value: Option<&str>,
+) -> Result<(), CompileServiceOptionsError> {
+    let Some(value) = value else {
+        return Ok(());
+    };
+    if value.is_empty()
+        || !value
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || matches!(c, '.' | '_' | '-' | ':' | '/'))
+    {
+        return Err(CompileServiceOptionsError::InvalidRouteId {
+            field,
+            value: value.to_string(),
+        });
+    }
+    Ok(())
+}
+
 /// Per-turn routing/tool options for the built-in conversational graph.
 #[derive(Debug, Default, Clone, Copy)]
 pub struct ChatAirOptions<'a> {
@@ -142,6 +182,23 @@ pub struct CompileServiceOptions {
     pub skills: bool,
     pub capability_discovery: bool,
     pub authoring: bool,
+}
+
+impl CompileServiceOptions {
+    /// Validate routing and effort values without normalizing or rewriting
+    /// caller input.
+    pub fn validate(&self) -> Result<(), CompileServiceOptionsError> {
+        validate_route_id("backend", self.backend.as_deref())?;
+        validate_route_id("model", self.model.as_deref())?;
+        if let Some(effort) = self.effort.as_deref()
+            && !matches!(effort, "off" | "low" | "medium" | "high")
+        {
+            return Err(CompileServiceOptionsError::InvalidEffort(
+                effort.to_string(),
+            ));
+        }
+        Ok(())
+    }
 }
 
 impl From<&ChatAirOptions<'_>> for CompileServiceOptions {
@@ -336,5 +393,39 @@ mod tests {
             ..ChatAirOptions::default()
         });
         assert!(air.contains(r#"capability_groups = ["discovery", "skills"]"#));
+    }
+
+    #[test]
+    fn compile_service_options_validate_exact_route_ids_and_effort() {
+        let valid = CompileServiceOptions {
+            backend: Some("gateway:v1/primary".to_string()),
+            model: Some("openai/gpt-4.1-mini".to_string()),
+            effort: Some("high".to_string()),
+            ..CompileServiceOptions::default()
+        };
+        valid.validate().expect("valid options");
+
+        let invalid_backend = CompileServiceOptions {
+            backend: Some("gateway primary".to_string()),
+            ..CompileServiceOptions::default()
+        };
+        assert_eq!(
+            invalid_backend.validate(),
+            Err(CompileServiceOptionsError::InvalidRouteId {
+                field: "backend",
+                value: "gateway primary".to_string(),
+            })
+        );
+
+        let invalid_effort = CompileServiceOptions {
+            effort: Some("HIGH".to_string()),
+            ..CompileServiceOptions::default()
+        };
+        assert_eq!(
+            invalid_effort.validate(),
+            Err(CompileServiceOptionsError::InvalidEffort(
+                "HIGH".to_string()
+            ))
+        );
     }
 }

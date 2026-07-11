@@ -296,6 +296,9 @@ fn parse_compile_service_options_json(json: &str) -> Result<CompileServiceOption
     deserializer
         .end()
         .context("compile-service --options-stdin expects exactly one JSON object on stdin")?;
+    options
+        .validate()
+        .context("compile-service options validation failed")?;
     Ok(options)
 }
 
@@ -325,33 +328,31 @@ fn read_compile_service_options_from_stdin() -> Result<CompileServiceOptions> {
 fn insert_optional_route_attr(
     attrs: &mut std::collections::HashMap<String, apxm_core::types::Value>,
     key: &str,
-    raw: Option<&str>,
+    value: Option<&str>,
 ) {
-    let Some(raw) = raw else {
+    let Some(value) = value else {
         return;
     };
-    let sanitized = apxm_ais::chat::sanitize_route_id(raw);
-    if sanitized.is_empty() {
-        return;
-    }
-    attrs.insert(key.to_string(), apxm_core::types::Value::String(sanitized));
+    attrs.insert(
+        key.to_string(),
+        apxm_core::types::Value::String(value.to_string()),
+    );
 }
 
 #[cfg(feature = "driver")]
 fn insert_effort_attr(
     attrs: &mut std::collections::HashMap<String, apxm_core::types::Value>,
-    raw: Option<&str>,
+    effort: Option<&str>,
 ) {
-    let Some(raw) = raw else {
+    let Some(effort) = effort else {
         return;
     };
-    let sanitized = apxm_ais::chat::sanitize_route_id(raw);
-    if sanitized.is_empty() || sanitized == "off" {
+    if effort == "off" {
         return;
     }
     attrs.insert(
         apxm_ais::attrs::EFFORT.to_string(),
-        apxm_core::types::Value::String(sanitized),
+        apxm_core::types::Value::String(effort.to_string()),
     );
 }
 
@@ -366,24 +367,15 @@ fn insert_effort_attr(
 ///
 /// - **Input**: a single positional argument, the agent directory
 ///   (containing `agent.toml`, generated `integrity.toml`, and `capabilities/`).
-///   With `--options-stdin`, stdin must contain exactly one JSON object matching
-///   the typed compile-service options contract. Without it, the same typed
-///   default options object is used internally.
+///   `--options-stdin` is required, and stdin must contain exactly one JSON
+///   object matching the typed compile-service options contract.
 /// - **stdout**: on success, ONLY emitted AIR text. No other text is ever
 ///   written to stdout; all progress/log/diagnostic output goes to stderr.
 /// - **Exit code**: `0` on success. Nonzero on any failure, with a
 ///   human-readable message on stderr.
 #[cfg(feature = "driver")]
-pub fn compile_service_command(
-    agent_dir: PathBuf,
-    options_stdin: bool,
-    _config: Option<PathBuf>,
-) -> Result<()> {
-    let options = if options_stdin {
-        read_compile_service_options_from_stdin()?
-    } else {
-        CompileServiceOptions::default()
-    };
+pub fn compile_service_command(agent_dir: PathBuf, _config: Option<PathBuf>) -> Result<()> {
+    let options = read_compile_service_options_from_stdin()?;
     let air = emit_air_from_agent(&agent_dir, &options)?;
 
     // Only the AIR text goes to stdout, written byte-for-byte as the frontend
@@ -410,6 +402,11 @@ pub(crate) fn emit_air_from_agent(
             agent_dir.display()
         ));
     }
+
+    options
+        .validate()
+        .context("compile-service options validation failed")?;
+    super::agent::verify_agent_integrity(agent_dir)?;
 
     emit_air_from_declarative_agent(agent_dir, options)
 }
@@ -524,8 +521,6 @@ struct DeclarativeCapabilityToml {
     kind: String,
     #[serde(default)]
     read_only: bool,
-    #[serde(default)]
-    builtin_group: Option<String>,
 }
 
 #[cfg(feature = "driver")]
@@ -636,11 +631,6 @@ fn declarative_tool_surface(
             "builtin" => {
                 if cap.read_only {
                     tools.push(cap.id.clone());
-                }
-                if let Some(group) = cap.builtin_group.as_ref()
-                    && !groups.contains(group)
-                {
-                    groups.push(group.clone());
                 }
             }
             "host" | "provider" | "http" | "static" | "mcp" => {}
@@ -770,9 +760,10 @@ fn emit_air_from_declarative_agent(
 
     let mut nodes = Vec::new();
     for (idx, hook) in agent.hooks.iter().enumerate() {
+        let hook_node_id = idx as u64 + 1;
         let handler_id = resolve_declarative_handler_id(&hook.handler, &manifest)?;
         nodes.push(FrontendNode {
-            id: idx as u64 + 1,
+            id: hook_node_id,
             name: format!("register_hook_{idx}"),
             op: AISOperationType::RegisterHook,
             attributes: HashMap::from([
@@ -798,11 +789,18 @@ fn emit_air_from_declarative_agent(
 
     let run_node_id = nodes.len() as u64 + 1;
     let return_node_id = run_node_id + 1;
-    let edges = Vec::from([FrontendEdge {
+    let mut edges = (1..run_node_id)
+        .map(|hook_node_id| FrontendEdge {
+            from: hook_node_id,
+            to: run_node_id,
+            dependency: DependencyType::Effect,
+        })
+        .collect::<Vec<_>>();
+    edges.push(FrontendEdge {
         from: run_node_id,
         to: return_node_id,
         dependency: DependencyType::Data,
-    }]);
+    });
 
     if use_recv_loop {
         let mut attrs = HashMap::from([
@@ -1439,11 +1437,16 @@ mod tests {
     use std::fs;
     use tempfile::tempdir;
 
+    fn seal_agent(root: &Path) {
+        super::super::agent::seal_agent_integrity_for_test(root).expect("seal test agent");
+    }
+
     fn write_declarative_agent(mode: &str) -> tempfile::TempDir {
         let tmp = tempdir().expect("temp agent");
         let root = tmp.path();
         fs::create_dir_all(root.join("capabilities/handlers")).expect("handlers dir");
-        fs::write(root.join("persona.md"), "You are concise.\n").expect("persona");
+        fs::create_dir_all(root.join("prompts")).expect("prompts dir");
+        fs::write(root.join("prompts/persona.md"), "You are concise.\n").expect("persona");
         fs::write(
             root.join("agent.toml"),
             format!(
@@ -1456,7 +1459,7 @@ rearm = true
 turn_param = "user_message"
 
 [prompts]
-persona = "persona.md"
+persona = "prompts/persona.md"
 
 [[hooks]]
 event = "pre_turn"
@@ -1472,6 +1475,7 @@ handler = "hooks.pre_turn"
             r#"[{"source_file":"hooks.ts","qualname":"pre_turn","handler_id":"sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}]"#,
         )
         .expect("tools manifest");
+        seal_agent(root);
         tmp
     }
 
@@ -1567,6 +1571,46 @@ handler = "hooks.pre_turn"
             format!("{err:#}").contains("missing field `system_prompt`"),
             "expected required nullable field error, got {err:#}"
         );
+
+        for (field, value) in [
+            ("backend", "corp gateway"),
+            ("model", "model@preview"),
+            ("effort", "HIGH"),
+        ] {
+            let json = format!(
+                r#"{{
+                    "system_prompt": null,
+                    "backend": {},
+                    "model": {},
+                    "effort": {},
+                    "tools": false,
+                    "skills": false,
+                    "capability_discovery": false,
+                    "authoring": false
+                }}"#,
+                if field == "backend" {
+                    serde_json::to_string(value).unwrap()
+                } else {
+                    "null".to_string()
+                },
+                if field == "model" {
+                    serde_json::to_string(value).unwrap()
+                } else {
+                    "null".to_string()
+                },
+                if field == "effort" {
+                    serde_json::to_string(value).unwrap()
+                } else {
+                    "null".to_string()
+                },
+            );
+            let err = parse_compile_service_options_json(&json)
+                .expect_err("invalid option values must fail instead of being sanitized");
+            assert!(
+                format!("{err:#}").contains(&format!("invalid {field}")),
+                "expected exact {field} validation error, got {err:#}"
+            );
+        }
     }
 
     #[test]
@@ -1631,6 +1675,49 @@ handler = "hooks.pre_turn"
     }
 
     #[test]
+    fn declarative_hooks_are_dependencies_of_the_conversation_loop() {
+        let agent_dir = write_declarative_agent("recv");
+        let agent_path = agent_dir.path().join("agent.toml");
+        let agent_text = fs::read_to_string(&agent_path).expect("agent toml");
+        fs::write(
+            &agent_path,
+            format!(
+                "{agent_text}\n[[hooks]]\nevent = \"post_turn\"\nmatch = \"*\"\nmode = \"observe\"\nhandler = \"hooks.post_turn\"\n"
+            ),
+        )
+        .expect("second hook");
+        fs::write(
+            agent_dir.path().join("capabilities/handlers/tools.json"),
+            r#"[
+                {"source_file":"hooks.ts","qualname":"pre_turn","handler_id":"sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"},
+                {"source_file":"hooks.ts","qualname":"post_turn","handler_id":"sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"}
+            ]"#,
+        )
+        .expect("tools manifest");
+        seal_agent(agent_dir.path());
+
+        let air = emit_air_from_agent(agent_dir.path(), &CompileServiceOptions::default())
+            .expect("declarative AIR");
+        let pre_turn = air
+            .find("ais.register_hook \"pre_turn\"")
+            .expect("pre hook");
+        let post_turn = air
+            .find("ais.register_hook \"post_turn\"")
+            .expect("post hook");
+        let loop_offset = air.find("ais.autonomous").expect("conversation loop");
+        assert!(pre_turn < post_turn && post_turn < loop_offset, "{air}");
+        let loop_line = air
+            .lines()
+            .find(|line| line.contains("ais.autonomous"))
+            .expect("autonomous line");
+        assert!(
+            loop_line.contains("%n1") && loop_line.contains("%n2"),
+            "{loop_line}"
+        );
+        assert_cli_air_round_trips(&air);
+    }
+
+    #[test]
     fn declarative_air_applies_compile_service_llm_options() {
         let agent_dir = write_declarative_agent("recv");
         let air = emit_air_from_agent(
@@ -1678,6 +1765,67 @@ handler = "hooks.pre_turn"
     }
 
     #[test]
+    fn compile_service_exposure_options_do_not_inherit_package_groups() {
+        let agent_dir = write_declarative_agent("host");
+        fs::write(
+            agent_dir.path().join("capabilities/capabilities.toml"),
+            r#"
+[[capability]]
+id = "compose_workflow"
+kind = "builtin"
+read_only = false
+builtin_group = "authoring"
+"#,
+        )
+        .expect("capabilities toml");
+        seal_agent(agent_dir.path());
+
+        let air = emit_air_from_agent(
+            agent_dir.path(),
+            &CompileServiceOptions {
+                tools: true,
+                ..CompileServiceOptions::default()
+            },
+        )
+        .expect("declarative AIR");
+
+        assert!(air.contains(r#"capability_groups = ["web"]"#), "{air}");
+        assert!(!air.contains("authoring"), "{air}");
+    }
+
+    #[test]
+    fn declarative_compile_requires_current_integrity() {
+        let missing = write_declarative_agent("recv");
+        fs::remove_file(missing.path().join("integrity.toml")).expect("remove integrity");
+        let err = emit_air_from_agent(missing.path(), &CompileServiceOptions::default())
+            .expect_err("missing integrity must fail");
+        assert!(
+            err.to_string().contains("missing integrity.toml"),
+            "{err:#}"
+        );
+
+        let tampered = write_declarative_agent("recv");
+        fs::write(tampered.path().join("prompts/persona.md"), "tampered\n")
+            .expect("tamper persona");
+        let err = emit_air_from_agent(tampered.path(), &CompileServiceOptions::default())
+            .expect_err("stale integrity must fail");
+        assert!(
+            err.to_string().contains("failed integrity verification"),
+            "{err:#}"
+        );
+
+        let unrecognized = write_declarative_agent("recv");
+        fs::write(unrecognized.path().join("legacy-prompt.md"), "bypass\n")
+            .expect("write unrecognized file");
+        let err = emit_air_from_agent(unrecognized.path(), &CompileServiceOptions::default())
+            .expect_err("files outside the integrity schema must fail");
+        assert!(
+            err.to_string().contains("outside the integrity schema"),
+            "{err:#}"
+        );
+    }
+
+    #[test]
     fn declarative_air_sidecar_resolves_typescript_sources_for_server_worker() {
         let agent_dir = write_declarative_agent("recv");
         let air = emit_air_from_agent(agent_dir.path(), &CompileServiceOptions::default())
@@ -1700,7 +1848,8 @@ handler = "hooks.pre_turn"
         let root = PathBuf::from("target/apxm-relative-agent-fixture");
         let _ = fs::remove_dir_all(&root);
         fs::create_dir_all(root.join("capabilities/handlers")).expect("fixture dirs");
-        fs::write(root.join("persona.md"), "You are concise.\n").expect("persona");
+        fs::create_dir_all(root.join("prompts")).expect("prompts dir");
+        fs::write(root.join("prompts/persona.md"), "You are concise.\n").expect("persona");
         fs::write(
             root.join("agent.toml"),
             r#"
@@ -1712,7 +1861,7 @@ rearm = true
 turn_param = "user_message"
 
 [prompts]
-persona = "persona.md"
+persona = "prompts/persona.md"
 
 [[hooks]]
 event = "pre_turn"
@@ -1727,6 +1876,7 @@ handler = "hooks.pre_turn"
             r#"[{"source_file":"hooks.ts","qualname":"pre_turn","handler_id":"sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}]"#,
         )
         .expect("tools manifest");
+        seal_agent(&root);
 
         let air =
             emit_air_from_agent(&root, &CompileServiceOptions::default()).expect("declarative AIR");
@@ -1753,6 +1903,7 @@ read_only = true
 "#,
         )
         .expect("capabilities toml");
+        seal_agent(agent_dir.path());
 
         let err = emit_air_from_agent(agent_dir.path(), &CompileServiceOptions::default())
             .expect_err("kind is required");
@@ -1779,6 +1930,7 @@ read_only = true
 "#,
         )
         .expect("capabilities toml");
+        seal_agent(agent_dir.path());
 
         let err = emit_air_from_agent(agent_dir.path(), &CompileServiceOptions::default())
             .expect_err("kind is canonical");
@@ -1884,7 +2036,8 @@ required_capabilities = ["workflow_emission_v1"]
         let tmp = tempdir().expect("temp agent");
         let root = tmp.path();
         fs::create_dir_all(root.join("capabilities/handlers")).expect("handlers dir");
-        fs::write(root.join("persona.md"), "You are concise.\n").expect("persona");
+        fs::create_dir_all(root.join("prompts")).expect("prompts dir");
+        fs::write(root.join("prompts/persona.md"), "You are concise.\n").expect("persona");
         let compaction_line = compaction_policy
             .map(|json| format!("compaction_policy = {json:?}\n"))
             .unwrap_or_default();
@@ -1903,7 +2056,7 @@ rearm = true
 turn_param = "user_message"
 
 [prompts]
-persona = "persona.md"
+persona = "prompts/persona.md"
 
 [[hooks]]
 event = "pre_turn"
@@ -1919,6 +2072,7 @@ handler = "hooks.pre_turn"
             r#"[{"source_file":"hooks.ts","qualname":"pre_turn","handler_id":"sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}]"#,
         )
         .expect("tools manifest");
+        seal_agent(root);
         tmp
     }
 
@@ -1969,7 +2123,8 @@ handler = "hooks.pre_turn"
         let tmp = tempdir().expect("temp agent");
         let root = tmp.path();
         fs::create_dir_all(root.join("capabilities/handlers")).expect("handlers dir");
-        fs::write(root.join("persona.md"), "You are concise.\n").expect("persona");
+        fs::create_dir_all(root.join("prompts")).expect("prompts dir");
+        fs::write(root.join("prompts/persona.md"), "You are concise.\n").expect("persona");
         fs::write(
             root.join("agent.toml"),
             r#"
@@ -1984,7 +2139,7 @@ rearm = true
 turn_param = "user_message"
 
 [prompts]
-persona = "persona.md"
+persona = "prompts/persona.md"
 
 [[hooks]]
 event = "post_turn"
@@ -1999,6 +2154,7 @@ handler = "hooks.author_compaction"
             r#"[{"source_file":"hooks.ts","qualname":"author_compaction","handler_id":"sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}]"#,
         )
         .expect("tools manifest");
+        seal_agent(root);
 
         let air =
             emit_air_from_agent(root, &CompileServiceOptions::default()).expect("declarative AIR");

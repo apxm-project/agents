@@ -89,9 +89,8 @@ pub enum Commands {
     CompileService {
         /// Agent directory (contains agent.toml, integrity.toml, and capabilities/)
         agent_dir: PathBuf,
-        /// Read one typed JSON options object from stdin instead of relying on
-        /// command-line fields.
-        #[arg(long)]
+        /// Read the required typed JSON options object from stdin.
+        #[arg(long, required = true)]
         options_stdin: bool,
     },
     /// Decompile an artifact back to AIR
@@ -749,7 +748,7 @@ pub enum AgentAction {
         /// Display name for the agent (default: derived from the id).
         #[arg(long)]
         display_name: Option<String>,
-        /// Scaffold template (`looped-agent` or `gao`).
+        /// Scaffold template (`looped-agent`, an examples/agents name, or a directory path).
         #[arg(long, default_value = "looped-agent")]
         template: String,
     },
@@ -915,5 +914,14 @@ mod tests {
             }
             _ => panic!("expected compile-service command"),
         }
+    }
+
+    #[test]
+    fn compile_service_rejects_bare_invocation() {
+        let err = match Cli::try_parse_from(["apxm", "compile-service", "/tmp/agent"]) {
+            Ok(_) => panic!("compile-service requires --options-stdin"),
+            Err(err) => err,
+        };
+        assert_eq!(err.kind(), clap::error::ErrorKind::MissingRequiredArgument);
     }
 }
