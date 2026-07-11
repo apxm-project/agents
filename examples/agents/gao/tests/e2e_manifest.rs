@@ -55,6 +55,81 @@ fn repo_root() -> std::path::PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join("../../..")
 }
 
+fn worker_manifest_entry(root: &Path, selector: &str) -> serde_json::Value {
+    let mut entry = read_tools_manifest(root)
+        .into_iter()
+        .find(|entry| {
+            entry.get("name").and_then(serde_json::Value::as_str) == Some(selector)
+                || entry.get("qualname").and_then(serde_json::Value::as_str) == Some(selector)
+        })
+        .unwrap_or_else(|| panic!("missing Gao worker entry {selector}"));
+    let source = entry
+        .get("source_file")
+        .and_then(serde_json::Value::as_str)
+        .expect("worker entry source_file")
+        .to_string();
+    entry
+        .as_object_mut()
+        .expect("worker manifest object")
+        .insert(
+            "source_file".to_string(),
+            serde_json::Value::String(root.join(&source).to_string_lossy().into_owned()),
+        );
+    entry
+}
+
+fn run_typescript_worker(
+    tmp: &TempDir,
+    entries: Vec<serde_json::Value>,
+    frames: &[serde_json::Value],
+) -> Vec<serde_json::Value> {
+    let manifest_path = tmp.path().join("focused-tools.json");
+    fs::write(
+        &manifest_path,
+        serde_json::to_vec(&entries).expect("serialize focused worker manifest"),
+    )
+    .expect("write focused worker manifest");
+
+    let worker = repo_root().join("crates/compiler/frontend/typescript/scripts/tool-worker.mjs");
+    let mut child = Command::new("node")
+        .arg(worker)
+        .arg(&manifest_path)
+        .current_dir(repo_root())
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .expect("spawn TypeScript tool worker");
+    for frame in frames {
+        writeln!(
+            child.stdin.as_mut().expect("tool worker stdin"),
+            "{}",
+            serde_json::to_string(frame).expect("serialize tool worker call")
+        )
+        .expect("write tool worker call");
+    }
+    drop(child.stdin.take());
+    let output = child.wait_with_output().expect("wait for tool worker");
+    assert!(
+        output.status.success(),
+        "tool worker failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    String::from_utf8(output.stdout)
+        .expect("tool worker UTF-8 output")
+        .lines()
+        .filter_map(|line| serde_json::from_str::<serde_json::Value>(line).ok())
+        .filter(|value| value.get("type").and_then(serde_json::Value::as_str) == Some("result"))
+        .collect()
+}
+
+fn worker_result<'a>(results: &'a [serde_json::Value], req_id: &str) -> &'a serde_json::Value {
+    results
+        .iter()
+        .find(|value| value.get("req_id").and_then(serde_json::Value::as_str) == Some(req_id))
+        .unwrap_or_else(|| panic!("missing TypeScript worker result for {req_id}"))
+}
+
 #[test]
 fn gao_example_sync_and_lint_pass() {
     let tmp = copy_gao_example();
@@ -244,90 +319,260 @@ fn gao_example_build_writes_tools_json_manifest() {
 }
 
 #[test]
-fn gao_plan_workflow_executes_with_object_arguments() {
+fn gao_semantic_tools_derive_typed_outputs_from_inputs() {
     if !node_available() || !npm_available() {
-        eprintln!("skipping gao_plan_workflow_executes_with_object_arguments: node/npm not on PATH");
+        eprintln!(
+            "skipping gao_semantic_tools_derive_typed_outputs_from_inputs: node/npm not on PATH"
+        );
         return;
     }
     let tmp = copy_gao_example();
     let root = tmp.path().join("gao");
     agent_build(&root, true).expect("gao agent build");
-
-    let mut plan = read_tools_manifest(&root)
-        .into_iter()
-        .find(|entry| entry.get("name").and_then(serde_json::Value::as_str) == Some("plan_workflow"))
-        .expect("plan_workflow manifest entry");
-    let source = plan
-        .get("source_file")
-        .and_then(serde_json::Value::as_str)
-        .expect("plan_workflow source_file");
-    let source = source.to_string();
-    plan.as_object_mut()
-        .expect("plan_workflow manifest object")
-        .insert(
-            "source_file".to_string(),
-            serde_json::Value::String(root.join(&source).to_string_lossy().into_owned()),
-        );
-    let handler_id = plan
+    let plan = worker_manifest_entry(&root, "plan_workflow");
+    let validation = worker_manifest_entry(&root, "prepare_validation");
+    let permission = worker_manifest_entry(&root, "explain_permission");
+    let plan_id = plan
         .get("handler_id")
         .and_then(serde_json::Value::as_str)
-        .expect("plan_workflow handler_id")
-        .to_string();
-    let manifest_path = tmp.path().join("plan-tools.json");
-    fs::write(
-        &manifest_path,
-        serde_json::to_vec(&vec![plan]).expect("serialize plan manifest"),
-    )
-    .expect("write plan manifest");
+        .unwrap();
+    let validation_id = validation
+        .get("handler_id")
+        .and_then(serde_json::Value::as_str)
+        .unwrap();
+    let permission_id = permission
+        .get("handler_id")
+        .and_then(serde_json::Value::as_str)
+        .unwrap();
+    let request =
+        "When a request arrives. Fetch it with fetch_record, then publish it with publish_report.";
+    let catalog = serde_json::json!([
+        {"id": "fetch_record", "description": "Fetch a record", "read_only": true},
+        {"id": "publish_report", "description": "Publish a report", "read_only": false}
+    ]);
+    let policy = serde_json::json!({
+        "entries": [
+            {"capability_id": "fetch_record", "decision": "allow"},
+            {"capability_id": "publish_report", "decision": "ask", "reason": "Publishing changes external state."}
+        ]
+    });
+    let frames = vec![
+        serde_json::json!({
+            "v": 1, "type": "call", "req_id": "gao-plan-test", "tool_id": plan_id,
+            "args": {"request": request, "catalog": catalog, "policy": policy}, "deadline_ms": 5_000
+        }),
+        serde_json::json!({
+            "v": 1, "type": "call", "req_id": "gao-validation-test", "tool_id": validation_id,
+            "args": {
+                "workflow_name": "publish-request",
+                "artifact_kind": "air",
+                "artifact": "module { fetch_record publish_report }",
+                "catalog": catalog,
+                "policy": policy
+            },
+            "deadline_ms": 5_000
+        }),
+        serde_json::json!({
+            "v": 1, "type": "call", "req_id": "gao-permission-test", "tool_id": permission_id,
+            "args": {"capability_id": "publish_report", "catalog": catalog, "policy": policy},
+            "deadline_ms": 5_000
+        }),
+    ];
+    let results = run_typescript_worker(&tmp, vec![plan, validation, permission], &frames);
+    let plan_value = worker_result(&results, "gao-plan-test")
+        .get("value")
+        .expect("typed plan value");
+    assert_eq!(
+        plan_value
+            .get("request")
+            .and_then(serde_json::Value::as_str),
+        Some(request),
+        "plan_workflow must retain the typed request field"
+    );
+    assert_eq!(
+        plan_value
+            .pointer("/workflow/triggers/0")
+            .and_then(serde_json::Value::as_str),
+        Some("When a request arrives")
+    );
+    assert!(plan_value
+        .pointer("/workflow/capabilities")
+        .and_then(serde_json::Value::as_array)
+        .is_some_and(|entries| entries.iter().any(|entry| entry
+            .get("id")
+            .and_then(serde_json::Value::as_str)
+            == Some("publish_report")
+            && entry
+                .get("requires_approval")
+                .and_then(serde_json::Value::as_bool)
+                == Some(true))));
 
-    let worker = repo_root().join("crates/compiler/frontend/typescript/scripts/tool-worker.mjs");
-    let mut child = Command::new("node")
-        .arg(worker)
-        .arg(&manifest_path)
-        .current_dir(repo_root())
-        .stdin(Stdio::piped())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .spawn()
-        .expect("spawn TypeScript tool worker");
-    let request = "Preserve this request exactly: {typed: true}";
+    let validation_value = worker_result(&results, "gao-validation-test")
+        .get("value")
+        .unwrap();
+    assert!(validation_value
+        .pointer("/validation_plan")
+        .and_then(serde_json::Value::as_array)
+        .is_some_and(|steps| steps.iter().any(|step| step
+            .get("operation")
+            .and_then(serde_json::Value::as_str)
+            == Some("enforce_write_boundary"))));
+    assert_eq!(
+        validation_value
+            .get("next_action")
+            .and_then(serde_json::Value::as_str),
+        Some("submit_for_validation")
+    );
+
+    let permission_value = worker_result(&results, "gao-permission-test")
+        .get("value")
+        .unwrap();
+    assert_eq!(
+        permission_value
+            .get("decision")
+            .and_then(serde_json::Value::as_str),
+        Some("ask")
+    );
+    assert_eq!(
+        permission_value
+            .get("requires_approval")
+            .and_then(serde_json::Value::as_bool),
+        Some(true)
+    );
+    assert_eq!(
+        permission_value
+            .get("reason")
+            .and_then(serde_json::Value::as_str),
+        Some("Publishing changes external state.")
+    );
+}
+
+#[test]
+fn gao_compose_gate_defers_valid_input_and_denies_missing_input_in_real_worker() {
+    if !node_available() || !npm_available() {
+        eprintln!("skipping gao_compose_gate_defers_valid_input_and_denies_missing_input_in_real_worker: node/npm not on PATH");
+        return;
+    }
+    let tmp = copy_gao_example();
+    let root = tmp.path().join("gao");
+    agent_build(&root, true).expect("gao agent build");
+    let gate = worker_manifest_entry(&root, "gate_compose_workflow");
+    let handler_id = gate
+        .get("handler_id")
+        .and_then(serde_json::Value::as_str)
+        .unwrap();
+    let hook_call = |req_id: &str, args: serde_json::Value| {
+        serde_json::json!({
+            "v": 1,
+            "type": "call",
+            "req_id": req_id,
+            "tool_id": handler_id,
+            "args": {"__apxm_hook__": {"event": "pre_cap", "call": {"name": "compose_workflow", "args": args}}},
+            "deadline_ms": 5_000
+        })
+    };
+    let frames = vec![
+        hook_call(
+            "valid",
+            serde_json::json!({"name": "approved-flow", "air": "module { func.func @main() }"}),
+        ),
+        hook_call(
+            "missing-name",
+            serde_json::json!({"air": "module { func.func @main() }"}),
+        ),
+        hook_call(
+            "missing-air",
+            serde_json::json!({"name": "incomplete-flow"}),
+        ),
+    ];
+    let results = run_typescript_worker(&tmp, vec![gate], &frames);
+    let valid = worker_result(&results, "valid").get("value").unwrap();
+    assert_eq!(
+        valid.get("decision").and_then(serde_json::Value::as_str),
+        Some("defer")
+    );
+    assert_eq!(
+        worker_result(&results, "missing-name")
+            .pointer("/value/decision")
+            .and_then(serde_json::Value::as_str),
+        Some("deny")
+    );
+    assert_eq!(
+        worker_result(&results, "missing-air")
+            .pointer("/value/decision")
+            .and_then(serde_json::Value::as_str),
+        Some("deny")
+    );
+}
+
+#[test]
+fn gao_post_cap_hook_recursively_scrubs_nested_results_without_losing_types() {
+    if !node_available() || !npm_available() {
+        eprintln!("skipping gao_post_cap_hook_recursively_scrubs_nested_results_without_losing_types: node/npm not on PATH");
+        return;
+    }
+    let tmp = copy_gao_example();
+    let root = tmp.path().join("gao");
+    agent_build(&root, true).expect("gao agent build");
+    let redactor = worker_manifest_entry(&root, "redact_tool_results");
+    let handler_id = redactor
+        .get("handler_id")
+        .and_then(serde_json::Value::as_str)
+        .unwrap();
     let frame = serde_json::json!({
         "v": 1,
         "type": "call",
-        "req_id": "gao-plan-test",
+        "req_id": "nested-redaction",
         "tool_id": handler_id,
-        "args": { "request": request },
-        "deadline_ms": 5_000,
+        "args": {"__apxm_hook__": {
+            "event": "post_cap",
+            "call": {"name": "nested_result"},
+            "result": {
+                "count": 3,
+                "ok": true,
+                "nested": {
+                    "token": "top-secret",
+                    "items": ["Authorization: Bearer abc.def", {"note": "api_key=visible-secret", "value": 7}]
+                }
+            }
+        }},
+        "deadline_ms": 5_000
     });
-    writeln!(
-        child.stdin.as_mut().expect("tool worker stdin"),
-        "{}",
-        serde_json::to_string(&frame).expect("serialize tool call")
-    )
-    .expect("write tool call");
-    drop(child.stdin.take());
-    let output = child.wait_with_output().expect("wait for tool worker");
-    assert!(
-        output.status.success(),
-        "tool worker failed: {}",
-        String::from_utf8_lossy(&output.stderr)
-    );
-    let response = String::from_utf8(output.stdout).expect("tool worker UTF-8 output");
-    let result = response
-        .lines()
-        .filter_map(|line| serde_json::from_str::<serde_json::Value>(line).ok())
-        .find(|value| value.get("req_id").and_then(serde_json::Value::as_str) == Some("gao-plan-test"))
-        .unwrap_or_else(|| panic!("missing plan_workflow result; stderr: {}", String::from_utf8_lossy(&output.stderr)));
-    assert_eq!(result.get("ok").and_then(serde_json::Value::as_bool), Some(true));
-    let plan_text = result
-        .get("value")
-        .and_then(serde_json::Value::as_str)
-        .expect("plan_workflow returns JSON text");
-    let plan_value: serde_json::Value = serde_json::from_str(plan_text).expect("parse plan JSON");
+    let results = run_typescript_worker(&tmp, vec![redactor], &[frame]);
+    let scrubbed = worker_result(&results, "nested-redaction")
+        .pointer("/value/result")
+        .unwrap();
     assert_eq!(
-        plan_value.get("request").and_then(serde_json::Value::as_str),
-        Some(request),
-        "plan_workflow must consume the request object field without stringifying the object"
+        scrubbed.get("count").and_then(serde_json::Value::as_i64),
+        Some(3)
+    );
+    assert_eq!(
+        scrubbed.get("ok").and_then(serde_json::Value::as_bool),
+        Some(true)
+    );
+    assert_eq!(
+        scrubbed
+            .pointer("/nested/token")
+            .and_then(serde_json::Value::as_str),
+        Some("<redacted>")
+    );
+    assert_eq!(
+        scrubbed
+            .pointer("/nested/items/0")
+            .and_then(serde_json::Value::as_str),
+        Some("Authorization: <redacted>")
+    );
+    assert_eq!(
+        scrubbed
+            .pointer("/nested/items/1/note")
+            .and_then(serde_json::Value::as_str),
+        Some("api_key=<redacted>")
+    );
+    assert_eq!(
+        scrubbed
+            .pointer("/nested/items/1/value")
+            .and_then(serde_json::Value::as_i64),
+        Some(7)
     );
 }
 

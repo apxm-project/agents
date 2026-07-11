@@ -6,25 +6,90 @@
     "name": "explain_permission",
     "qualname": "explainPermission",
     "read_only": true,
+    "requires_approval": false,
     "schema": {
       "additionalProperties": false,
       "properties": {
         "capability_id": {
           "type": "string"
         },
-        "permission": {
-          "enum": [
-            "read",
-            "write",
-            "execute",
-            "deploy"
-          ],
-          "type": "string"
+        "catalog": {
+          "items": {
+            "additionalProperties": false,
+            "properties": {
+              "description": {
+                "type": "string"
+              },
+              "id": {
+                "minLength": 1,
+                "type": "string"
+              },
+              "permission": {
+                "enum": [
+                  "allow",
+                  "ask",
+                  "deny"
+                ],
+                "type": "string"
+              },
+              "read_only": {
+                "type": "boolean"
+              }
+            },
+            "required": [
+              "id"
+            ],
+            "type": "object"
+          },
+          "type": "array"
+        },
+        "policy": {
+          "additionalProperties": false,
+          "properties": {
+            "default_decision": {
+              "enum": [
+                "allow",
+                "ask",
+                "deny"
+              ],
+              "type": "string"
+            },
+            "entries": {
+              "items": {
+                "additionalProperties": false,
+                "properties": {
+                  "capability_id": {
+                    "minLength": 1,
+                    "type": "string"
+                  },
+                  "decision": {
+                    "enum": [
+                      "allow",
+                      "ask",
+                      "deny"
+                    ],
+                    "type": "string"
+                  },
+                  "reason": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "capability_id",
+                  "decision"
+                ],
+                "type": "object"
+              },
+              "type": "array"
+            }
+          },
+          "type": "object"
         }
       },
       "required": [
         "capability_id",
-        "permission"
+        "policy",
+        "catalog"
       ],
       "type": "object"
     },
@@ -87,6 +152,7 @@
     "name": "list_files",
     "qualname": "listFiles",
     "read_only": true,
+    "requires_approval": false,
     "schema": {
       "additionalProperties": false,
       "properties": {
@@ -105,6 +171,7 @@
     "name": "list_local_skills",
     "qualname": "listLocalSkills",
     "read_only": true,
+    "requires_approval": false,
     "schema": {
       "additionalProperties": false,
       "properties": {},
@@ -119,16 +186,91 @@
     "name": "plan_workflow",
     "qualname": "planWorkflow",
     "read_only": true,
+    "requires_approval": false,
     "schema": {
       "additionalProperties": false,
       "properties": {
+        "catalog": {
+          "items": {
+            "additionalProperties": false,
+            "properties": {
+              "description": {
+                "type": "string"
+              },
+              "id": {
+                "minLength": 1,
+                "type": "string"
+              },
+              "permission": {
+                "enum": [
+                  "allow",
+                  "ask",
+                  "deny"
+                ],
+                "type": "string"
+              },
+              "read_only": {
+                "type": "boolean"
+              }
+            },
+            "required": [
+              "id"
+            ],
+            "type": "object"
+          },
+          "type": "array"
+        },
+        "policy": {
+          "additionalProperties": false,
+          "properties": {
+            "default_decision": {
+              "enum": [
+                "allow",
+                "ask",
+                "deny"
+              ],
+              "type": "string"
+            },
+            "entries": {
+              "items": {
+                "additionalProperties": false,
+                "properties": {
+                  "capability_id": {
+                    "minLength": 1,
+                    "type": "string"
+                  },
+                  "decision": {
+                    "enum": [
+                      "allow",
+                      "ask",
+                      "deny"
+                    ],
+                    "type": "string"
+                  },
+                  "reason": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "capability_id",
+                  "decision"
+                ],
+                "type": "object"
+              },
+              "type": "array"
+            }
+          },
+          "type": "object"
+        },
         "request": {
           "minLength": 1,
           "type": "string"
         }
       },
       "required": [
-        "request"
+        "request",
+        "policy",
+        "catalog"
       ],
       "type": "object"
     },
@@ -141,6 +283,7 @@
     "name": "prepare_validation",
     "qualname": "prepareValidation",
     "read_only": true,
+    "requires_approval": false,
     "schema": {
       "additionalProperties": false,
       "properties": {
@@ -155,6 +298,85 @@
           ],
           "type": "string"
         },
+        "capability_ids": {
+          "items": {
+            "minLength": 1,
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "catalog": {
+          "items": {
+            "additionalProperties": false,
+            "properties": {
+              "description": {
+                "type": "string"
+              },
+              "id": {
+                "minLength": 1,
+                "type": "string"
+              },
+              "permission": {
+                "enum": [
+                  "allow",
+                  "ask",
+                  "deny"
+                ],
+                "type": "string"
+              },
+              "read_only": {
+                "type": "boolean"
+              }
+            },
+            "required": [
+              "id"
+            ],
+            "type": "object"
+          },
+          "type": "array"
+        },
+        "policy": {
+          "additionalProperties": false,
+          "properties": {
+            "default_decision": {
+              "enum": [
+                "allow",
+                "ask",
+                "deny"
+              ],
+              "type": "string"
+            },
+            "entries": {
+              "items": {
+                "additionalProperties": false,
+                "properties": {
+                  "capability_id": {
+                    "minLength": 1,
+                    "type": "string"
+                  },
+                  "decision": {
+                    "enum": [
+                      "allow",
+                      "ask",
+                      "deny"
+                    ],
+                    "type": "string"
+                  },
+                  "reason": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "capability_id",
+                  "decision"
+                ],
+                "type": "object"
+              },
+              "type": "array"
+            }
+          },
+          "type": "object"
+        },
         "workflow_name": {
           "minLength": 1,
           "type": "string"
@@ -163,7 +385,9 @@
       "required": [
         "workflow_name",
         "artifact_kind",
-        "artifact"
+        "artifact",
+        "policy",
+        "catalog"
       ],
       "type": "object"
     },
@@ -176,6 +400,7 @@
     "name": "read_local_skill",
     "qualname": "readLocalSkill",
     "read_only": true,
+    "requires_approval": false,
     "schema": {
       "additionalProperties": false,
       "properties": {

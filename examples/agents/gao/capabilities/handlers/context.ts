@@ -12,7 +12,10 @@ const CHARS_PER_TOKEN_ESTIMATE = 4;
 const MAX_CONFIG_CHARS = 500;
 
 const SENSITIVE_KEY =
-  /(?:api[_-]?key|token|secret|password|credential|auth)/i;
+  /(?:api[_-]?key|token|secret|password|credential|authorization|auth)/i;
+const ASSIGNMENT_SECRET =
+  /(\b(?:api[_-]?key|access[_-]?token|refresh[_-]?token|token|secret|password|credential|authorization|auth)\b\s*[:=]\s*)(?:"[^"\r\n]*"|'[^'\r\n]*'|[^\s,;}\]\r\n]+)/gi;
+const BEARER_SECRET = /\bbearer\s+[^\s,;}\]]+/gi;
 
 interface CapabilityInventoryEntry {
   capability: string;
@@ -76,47 +79,39 @@ export function prompt(name: string): string {
   return readText(relative);
 }
 
-function redactValue(key: string, value: unknown): unknown {
-  if (SENSITIVE_KEY.test(key)) {
+function scrubText(value: string): string {
+  return value
+    .replace(BEARER_SECRET, "<redacted>")
+    .replace(ASSIGNMENT_SECRET, "$1<redacted>");
+}
+
+export function scrubSecrets(
+  value: unknown,
+  options: { maxStringChars?: number } = {},
+  key = "",
+): unknown {
+  if (key && SENSITIVE_KEY.test(key)) {
     return "<redacted>";
   }
-  if (typeof value === "string" && value.length > MAX_CONFIG_CHARS) {
-    return `${value.slice(0, MAX_CONFIG_CHARS)}…`;
-  }
-  if (value && typeof value === "object" && !Array.isArray(value)) {
-    return redactConfig(value as Record<string, unknown>);
+  if (typeof value === "string") {
+    const scrubbed = scrubText(value);
+    const maxStringChars = options.maxStringChars;
+    return maxStringChars != null && scrubbed.length > maxStringChars
+      ? `${scrubbed.slice(0, maxStringChars)}…`
+      : scrubbed;
   }
   if (Array.isArray(value)) {
-    return value.map((item, index) => redactValue(String(index), item));
+    return value.map((item) => scrubSecrets(item, options));
+  }
+  if (value && typeof value === "object") {
+    return Object.fromEntries(
+      Object.entries(value as Record<string, unknown>).map(([entryKey, entryValue]) => [
+        entryKey,
+        scrubSecrets(entryValue, options, entryKey),
+      ]),
+    );
   }
   return value;
-}
-
-function redactConfig(config: Record<string, unknown>): Record<string, unknown> {
-  return Object.fromEntries(
-    Object.entries(config ?? {}).map(([key, value]) => [key, redactValue(key, value)]),
-  );
-}
-
-function redactSnapshot(snapshot: Record<string, unknown>): Record<string, unknown> {
-  const out = JSON.parse(JSON.stringify(snapshot ?? {})) as Record<string, unknown>;
-  const canvas = out.canvas;
-  if (canvas && typeof canvas === "object" && !Array.isArray(canvas)) {
-    const nodes = (canvas as Record<string, unknown>).nodes;
-    if (Array.isArray(nodes)) {
-      for (const node of nodes) {
-        if (node && typeof node === "object" && !Array.isArray(node)) {
-          const config = (node as Record<string, unknown>).config;
-          if (config && typeof config === "object" && !Array.isArray(config)) {
-            (node as Record<string, unknown>).config = redactConfig(
-              config as Record<string, unknown>,
-            );
-          }
-        }
-      }
-    }
-  }
-  return out;
 }
 
 function parseNodeKindEntry(value: unknown): NodeKindEntry | null {
@@ -317,11 +312,12 @@ export async function renderStudioContextSupplement(
   ctx: HookContext,
   snapshotInput: unknown,
 ): Promise<string> {
-  const snapshot = redactSnapshot(
+  const snapshot = scrubSecrets(
     snapshotInput && typeof snapshotInput === "object" && !Array.isArray(snapshotInput)
-      ? (snapshotInput as Record<string, unknown>)
+      ? snapshotInput
       : {},
-  );
+    { maxStringChars: MAX_CONFIG_CHARS },
+  ) as Record<string, unknown>;
   const inventory = parseCapabilityInventory(snapshot.capabilityInventory);
 
   const coreSections: Array<[string, string]> = [

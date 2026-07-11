@@ -1,11 +1,16 @@
 // Explains the approval posture of one capability request.
 import { tool } from "@apxm/frontend";
 
-type PermissionClass = "read" | "write" | "execute" | "deploy";
+import {
+  type CapabilityCatalogEntry,
+  type PermissionPolicyInput,
+  resolveCapability,
+} from "../handlers/semantics.js";
 
 interface ExplainPermissionArgs {
   capability_id: string;
-  permission: PermissionClass;
+  policy: PermissionPolicyInput;
+  catalog: CapabilityCatalogEntry[];
 }
 
 /** Explain why a requested capability does or does not require approval. */
@@ -16,24 +21,64 @@ export const explainPermission = tool({
     type: "object",
     properties: {
       capability_id: { type: "string" },
-      permission: { type: "string", enum: ["read", "write", "execute", "deploy"] },
+      policy: {
+        type: "object",
+        properties: {
+          default_decision: { type: "string", enum: ["allow", "ask", "deny"] },
+          entries: {
+            type: "array",
+            items: {
+              type: "object",
+              properties: {
+                capability_id: { type: "string", minLength: 1 },
+                decision: { type: "string", enum: ["allow", "ask", "deny"] },
+                reason: { type: "string" },
+              },
+              required: ["capability_id", "decision"],
+              additionalProperties: false,
+            },
+          },
+        },
+        additionalProperties: false,
+      },
+      catalog: {
+        type: "array",
+        items: {
+          type: "object",
+          properties: {
+            id: { type: "string", minLength: 1 },
+            description: { type: "string" },
+            read_only: { type: "boolean" },
+            permission: { type: "string", enum: ["allow", "ask", "deny"] },
+          },
+          required: ["id"],
+          additionalProperties: false,
+        },
+      },
     },
-    required: ["capability_id", "permission"],
+    required: ["capability_id", "policy", "catalog"],
     additionalProperties: false,
   },
 })((args: ExplainPermissionArgs) => {
-  const perm = args.permission;
-  const writeLike = perm === "write" || perm === "execute" || perm === "deploy";
-  return JSON.stringify(
-    {
-      capability: args.capability_id,
-      permission: perm,
-      requires_approval: writeLike,
-      reason: writeLike
-        ? "This capability can change state or run code, so APXM must ask the operator for an explicit runtime grant."
-        : "This is read-only metadata or inspection.",
-    },
-    null,
-    2,
+  const capability = resolveCapability(args.capability_id.trim(), args.catalog, args.policy);
+  const reason = capability.reason ?? (
+    !capability.known
+      ? "The host capability catalog does not contain this capability."
+      : capability.decision === "ask"
+        ? "The supplied permission policy requires an explicit operator grant."
+        : capability.decision === "deny"
+          ? "The supplied permission policy denies this capability."
+          : capability.decision === "allow"
+            ? "The supplied permission policy allows this capability without an additional grant."
+            : "The supplied permission policy does not define a decision for this capability."
   );
+  return {
+    capability: capability.id,
+    known: capability.known,
+    read_only: capability.read_only ?? null,
+    decision: capability.decision,
+    requires_approval:
+      capability.decision === "unknown" ? null : capability.decision === "ask",
+    reason,
+  };
 });
