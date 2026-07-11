@@ -9,10 +9,12 @@
 
 include!(concat!(env!("OUT_DIR"), "/apxm_client_codegen.rs"));
 
+#[cfg(feature = "driver")]
 pub mod events;
 pub mod execute;
 
 /// Default apxm-server bind address (`apxm-server` `DEFAULT_PORT` = 18800).
+#[cfg(feature = "driver")]
 pub const DEFAULT_SERVER_BASE: &str = "http://127.0.0.1:18800";
 
 /// Build a generated [`Client`] suitable for long-lived SSE.
@@ -21,6 +23,7 @@ pub const DEFAULT_SERVER_BASE: &str = "http://127.0.0.1:18800";
 /// `read_timeout(Duration::from_secs(0))`: zero is an immediate deadline, so
 /// it can abort an otherwise correctly framed HTTP response before the body is
 /// read.
+#[cfg(feature = "driver")]
 pub fn client_for_sse(base: &str) -> Client {
     let http = reqwest::ClientBuilder::new()
         .build()
