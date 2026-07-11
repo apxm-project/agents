@@ -93,7 +93,7 @@ impl SandboxBackend for RecordingBackend {
         });
         // Rewrite unchanged so the underlying spawn still succeeds; the
         // point of this test is observing that wrap_command was consulted.
-        Ok(WrappedCommand::direct(program, args.to_vec()))
+        WrappedCommand::direct(program, args.to_vec(), env.to_vec())
     }
 }
 

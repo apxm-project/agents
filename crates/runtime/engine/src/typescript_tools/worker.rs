@@ -16,7 +16,6 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
-use tokio::process::{Child, Command};
 use tokio::sync::mpsc;
 
 fn cap_err(message: impl Into<String>) -> RuntimeError {
@@ -81,8 +80,7 @@ pub struct TypeScriptHandlerWorker {
     stdin_tx: tokio::sync::Mutex<tokio::process::ChildStdin>,
     pending: Arc<RwLock<HashMap<String, mpsc::UnboundedSender<WorkerResponse>>>>,
     _demuxer: tokio::task::JoinHandle<()>,
-    _child: Arc<tokio::sync::Mutex<Child>>,
-    _sandbox_command: crate::sandbox::WrappedCommand,
+    _child: Arc<tokio::sync::Mutex<crate::sandbox::WrappedChild>>,
     _workdir: tempfile::TempDir,
     next_id: std::sync::atomic::AtomicU64,
 }
@@ -139,25 +137,20 @@ impl TypeScriptHandlerWorker {
                     "typescript worker sandbox required but no OS-isolating backend is available",
                 ));
             }
-            None => crate::sandbox::WrappedCommand::direct(node, base_args),
+            None => crate::sandbox::WrappedCommand::direct(node, base_args, worker_env.clone())
+                .map_err(|error| {
+                    cap_err(format!("Invalid TypeScript worker environment: {error}"))
+                })?,
         };
 
-        let mut cmd = Command::new(&sandbox_command.program);
-        cmd.args(&sandbox_command.args)
-            .stdin(std::process::Stdio::piped())
-            .stdout(std::process::Stdio::piped())
-            .stderr(std::process::Stdio::piped())
-            .kill_on_drop(true)
-            .env_clear();
-        let launcher_env = sandbox_command
-            .launcher_environment()
-            .unwrap_or(&worker_env);
-        for (key, value) in launcher_env {
-            cmd.env(key, value);
-        }
-
-        let mut child = cmd
-            .spawn()
+        let mut child = sandbox_command
+            .spawn(|command| {
+                command
+                    .stdin(std::process::Stdio::piped())
+                    .stdout(std::process::Stdio::piped())
+                    .stderr(std::process::Stdio::piped())
+                    .kill_on_drop(true);
+            })
             .map_err(|e| cap_err(format!("Failed to spawn TypeScript tool worker: {}", e)))?;
 
         let stdin = child
@@ -229,7 +222,6 @@ impl TypeScriptHandlerWorker {
             pending,
             _demuxer: demuxer,
             _child: child,
-            _sandbox_command: sandbox_command,
             _workdir: workdir,
             next_id: std::sync::atomic::AtomicU64::new(1),
         })
