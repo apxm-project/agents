@@ -911,7 +911,7 @@ def AIS_RegisterHookOp : AIS_Op<"register_hook"> {
     StrAttr:$hook_event,
     OptionalAttr<StrAttr>:$hook_match,
     OptionalAttr<StrAttr>:$hook_mode,
-    OptionalAttr<StrAttr>:$python_hook_handler_id
+    OptionalAttr<StrAttr>:$hook_handler_id
   );
   let results = (outs AIS_TokenType:$result);
   let assemblyFormat = [{

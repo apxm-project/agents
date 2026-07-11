@@ -492,7 +492,7 @@ class GraphRecorder:
             graph_keys.HOOK_EVENT: event_value,
             graph_keys.HOOK_MATCH: match,
             graph_keys.HOOK_MODE: mode_value,
-            graph_keys.PYTHON_HOOK_HANDLER_ID: handler_id,
+            graph_keys.HOOK_HANDLER_ID: handler_id,
         }
         attrs = self._apply_policy(attrs, attributes)
         return self._add_node(name, graph_keys.OP_REGISTER_HOOK, attrs)

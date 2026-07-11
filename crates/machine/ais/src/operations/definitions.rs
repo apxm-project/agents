@@ -1769,14 +1769,14 @@ pub static AIS_OPERATIONS: &[OperationSpec] = &[
         name: "RegisterHook",
         category: OperationCategory::Coordination,
         description: "Register an author lifecycle hook into the artifact hook registry",
-        long_description: "Registers one author lifecycle hook (a Python handler bound to a \
-            lifecycle event) into the per-artifact hook registry. The binding travels inside the \
-            artifact (AIR-portable) and the handler is dispatched via the same Python tool bridge \
-            as @tool. The runtime applies pre/post_cap hooks at the tool dispatch sites, \
+        long_description: "Registers one typed author lifecycle hook into the per-artifact hook \
+            registry. The binding travels inside the AIR artifact and dispatches through the \
+            artifact's language-specific handler bridge. The runtime applies pre/post_cap hooks at \
+            the tool dispatch sites, \
             pre/post_ask as Ask middleware, and session_start as an awaited pre-step.",
         latency: OperationLatency::Low,
         example_json: Some(
-            r#"{\"id\": 4, \"op\": \"REGISTER_HOOK\", \"attributes\": {\"hook_event\": \"pre_cap\", \"hook_match\": \"lookup\", \"hook_mode\": \"gate\", \"python_hook_handler_id\": \"sha256:...\"}}"#,
+            r#"{\"id\": 4, \"op\": \"REGISTER_HOOK\", \"attributes\": {\"hook_event\": \"pre_cap\", \"hook_match\": \"lookup\", \"hook_mode\": \"gate\", \"hook_handler_id\": \"sha256:...\"}}"#,
         ),
         fields: &[
             OperationField::required(attrs::HOOK_EVENT, "Lifecycle event the hook binds to"),
@@ -1786,8 +1786,8 @@ pub static AIS_OPERATIONS: &[OperationSpec] = &[
             ),
             OperationField::optional(attrs::HOOK_MODE, "Hook mode: observe or gate"),
             OperationField::required(
-                attrs::PYTHON_HOOK_HANDLER_ID,
-                "Stable content-addressed id (sha256:<hex64>) for the Python hook handler",
+                attrs::HOOK_HANDLER_ID,
+                "Stable content-addressed id (sha256:<hex64>) for the artifact hook handler",
             ),
         ],
         needs_submission: true,
@@ -1798,11 +1798,7 @@ pub static AIS_OPERATIONS: &[OperationSpec] = &[
             context_style: ContextStyle::None,
             result_type: MlirResultType::Token,
             positional_attrs: &[],
-            keywords: &[
-                attrs::HOOK_MATCH,
-                attrs::HOOK_MODE,
-                attrs::PYTHON_HOOK_HANDLER_ID,
-            ],
+            keywords: &[attrs::HOOK_MATCH, attrs::HOOK_MODE, attrs::HOOK_HANDLER_ID],
             syntactic_keywords: &[],
         },
     },

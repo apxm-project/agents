@@ -1129,7 +1129,7 @@
       "name": "RegisterHook",
       "category": "coordination",
       "description": "Register an author lifecycle hook into the artifact hook registry",
-      "long_description": "Registers one author lifecycle hook (a Python handler bound to a lifecycle event) into the per-artifact hook registry. The binding travels inside the artifact (AIR-portable) and the handler is dispatched via the same Python tool bridge as @tool. The runtime applies pre/post_cap hooks at the tool dispatch sites, pre/post_ask as Ask middleware, and session_start as an awaited pre-step.",
+      "long_description": "Registers one typed author lifecycle hook into the per-artifact hook registry. The binding travels inside the AIR artifact and dispatches through the artifact's language-specific handler bridge. The runtime applies pre/post_cap hooks at the tool dispatch sites, pre/post_ask as Ask middleware, and session_start as an awaited pre-step.",
       "latency": "low",
       "wire_index": 43,
       "is_pseudo_op": false,
@@ -1156,13 +1156,13 @@
           "ref_type": null
         },
         {
-          "name": "python_hook_handler_id",
+          "name": "hook_handler_id",
           "required": true,
-          "description": "Stable content-addressed id (sha256:<hex64>) for the Python hook handler",
+          "description": "Stable content-addressed id (sha256:<hex64>) for the artifact hook handler",
           "ref_type": null
         }
       ],
-      "example_json": "{\\\"id\\\": 4, \\\"op\\\": \\\"REGISTER_HOOK\\\", \\\"attributes\\\": {\\\"hook_event\\\": \\\"pre_cap\\\", \\\"hook_match\\\": \\\"lookup\\\", \\\"hook_mode\\\": \\\"gate\\\", \\\"python_hook_handler_id\\\": \\\"sha256:...\\\"}}"
+      "example_json": "{\\\"id\\\": 4, \\\"op\\\": \\\"REGISTER_HOOK\\\", \\\"attributes\\\": {\\\"hook_event\\\": \\\"pre_cap\\\", \\\"hook_match\\\": \\\"lookup\\\", \\\"hook_mode\\\": \\\"gate\\\", \\\"hook_handler_id\\\": \\\"sha256:...\\\"}}"
     },
     {
       "op": "AUTONOMOUS",

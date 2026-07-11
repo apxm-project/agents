@@ -128,7 +128,7 @@ class HookCall {
 
 class HookCtx {
   constructor(payload, parentReqId = "") {
-    this.remaining_budget = payload.remaining_budget;
+    this.remainingBudget = payload.remaining_budget;
     this.context = payload.context;
     this._reqId = parentReqId;
     this._system = payload.system || "";
