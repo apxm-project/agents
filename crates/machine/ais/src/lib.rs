@@ -26,13 +26,13 @@
 //!
 //! NEGOTIATE, SPAWN_TEAM, GUARD, and CLAIM were deleted: measured
 //! zero emissions across the example/test/studio-lowering corpus. LOOP_START
-//! and LOOP_END were deleted (W2.6): they compiled and verified but never
+//! and LOOP_END were deleted because they compiled and verified but never
 //! re-executed at runtime — the executor is a DAG engine with no back-edge or
 //! re-splice wired to either handler. The one real in-graph iteration
 //! mechanism is graph splicing (`splice_dag`/`rearm_session_turn` in
 //! `apxm-runtime`'s scheduler); AUTONOMOUS is a documented macro-op with its
 //! own internal loop, not the general iteration mechanism. See
-//! `docs/plans/tasks/W2.6.md`. These are `.apxmobj` wire-format breaks; see
+//! graph splicing is the executable iteration mechanism. These are `.apxmobj` wire-format breaks; see
 //! [`operations::WIRE_INDEXED_OPERATIONS`] for the retired indices.
 
 pub mod aam;

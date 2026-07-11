@@ -27,7 +27,7 @@ pairs with `check_commit_message.py`.
 4. **Control flow lives in the graph, not the agent.** Use
    `BRANCH_ON_VALUE` / fan-in nodes; do not delegate "iterate until
    tests pass" to an agent's internal loop. There is no `g.loop()` sugar
-   (LOOP_START/LOOP_END were removed — W2.6 — for compiling but never
+   (LOOP_START/LOOP_END were removed because they compiled but never
    re-executing at runtime); real in-graph iteration is the splice-based
    session/turn re-arm mechanism (drive it via the host turn-loop, e.g.
    `apxm chat`) or `AUTONOMOUS`'s fused plan/act/evaluate macro-op. Design

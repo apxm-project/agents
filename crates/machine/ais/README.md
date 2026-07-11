@@ -36,11 +36,11 @@ Canonical AIS operation definitions shared by compiler and runtime.
 
 NEGOTIATE, SPAWN_TEAM, GUARD, and CLAIM were removed (RT-1): measured zero
 emissions across the example/test/studio-lowering corpus. LOOP_START and
-LOOP_END were removed (W2.6): they compiled and verified but never
+LOOP_END were removed because they compiled and verified but never
 re-executed at runtime. The one real in-graph iteration mechanism is graph
 splicing (`splice_dag`/`rearm_session_turn` in `apxm-runtime`'s scheduler);
 AUTONOMOUS is a documented macro-op with its own internal loop, not the
-general iteration mechanism. See `docs/plans/tasks/W2.6.md`.
+general iteration mechanism; graph splicing provides the executable iteration path.
 
 ## Key Exports
 

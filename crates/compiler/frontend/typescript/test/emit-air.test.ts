@@ -8,7 +8,7 @@ import { ApxmGraph, emitMultiFlowModule, type ApxmGraphData, type GraphEdge, typ
 // Shared fixtures under the `agents`-owned Rust CLI crate: the same vectors
 // the Rust `frontend_air` unit tests and Python's `test_air_parity.py`
 // diff against, so all three language surfaces prove parity against one set
-// of graphs (docs/plans/tasks/W3.1.md).
+// of graphs.
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const FIXTURES_DIR = join(__dirname, "../../../../tools/cli/tests/fixtures/frontend_graph_parity");
 
@@ -91,7 +91,7 @@ describe.skipIf(!process.env.APXM_BIN)("AIR emission (integration)", () => {
     // Cross-plane: TS's `emitMultiFlowModule` must match the same
     // `AirProgram::to_air()` golden output the Rust `frontend_air` tests
     // and Python's `emit_multi_flow_module` also match (multi-flow fixture
-    // cross-plane vector, docs/plans/tasks/W3.1.md).
+    // cross-plane fixture).
     const wireGraphs = readFixture("multi_flow_conversational.json") as unknown as WireGraph[];
     const graphs = wireGraphs.map(graphFromFixture);
     const air = emitMultiFlowModule(graphs);

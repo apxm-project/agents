@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """`dekk agents check-frontend-parity` — frontend-graph DTO parity/drift gate.
 
-Runs every check `docs/plans/tasks/W3.1.md` names so DTO/printer drift
+Runs every check `the frontend graph parity invariant` names so DTO/printer drift
 between Rust, Python, and TypeScript fails CI, not just local runs:
 
 1. Rust `frontend_graph`/`frontend_air` unit tests (DTO conversion + CLI

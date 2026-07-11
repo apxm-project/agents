@@ -1,4 +1,4 @@
-"""Frontend-graph DTO parity/drift tests (docs/plans/tasks/W3.1.md).
+"""Frontend-graph DTO parity tests.
 
 Python does not format AIR text itself: `ApxmGraph.to_air()` /
 `emit_multi_flow_module()` subprocess to `<apxm> emit-air`, which
@@ -93,7 +93,7 @@ def test_multi_flow_conversational_matches_golden_air():
     """Cross-plane: Python's `emit_multi_flow_module` (`ir.py:396-398`) must
     match the same `AirProgram::to_air()` golden output the Rust
     `frontend_air` tests and TypeScript's `emitMultiFlowModule` also match
-    (multi-flow fixture cross-plane vector, docs/plans/tasks/W3.1.md)."""
+    (the shared multi-flow fixture)."""
     graphs = [ApxmGraph.from_dict(g) for g in _load_fixture("multi_flow_conversational.json")]
     air = emit_multi_flow_module(graphs)
     golden = _load_golden("multi_flow_conversational.golden.air")

@@ -336,14 +336,14 @@ def _create_team(self: GraphRecorder, name: str) -> Team:
     return Team(self, name)
 
 
-# NOTE (W2.6): there is no `Loop`/`g.loop()` sugar. The prior version wrapped
+# There is no `Loop`/`g.loop()` sugar. The prior version wrapped
 # LOOP_START/LOOP_END, which compiled and verified but never re-executed at
 # runtime (the executor is a DAG engine with no back-edge or re-splice wired
 # to either handler) — a fire-once IR lie. Both ops were deleted from the
 # catalog rather than kept as compiled-but-ignored ops. For real in-graph
 # iteration use the host turn-loop (``apxm chat``, which drives the splice-
 # based session/turn re-arm mechanism) or ``AUTONOMOUS`` for a fused
-# plan/act/evaluate macro-op. See `docs/plans/tasks/W2.6.md`.
+# plan/act/evaluate macro-op. In-graph iteration uses graph splicing.
 
 
 # Monkey-patch GraphRecorder to add ergonomic methods

@@ -1,6 +1,6 @@
 """`ConversationalAgent`/`CompactionPolicy` serialization tests.
 
-Fixes the write-only-metadata bug from `docs/plans/tasks/W2.7.md`:
+Covers the write-only-metadata bug:
 `CompactionPolicy` values used to be stuffed into
 `MultiFlowArtifact.metadata`, which `to_air()` never reads — so
 `compact_at_tokens`/`strategy` never reached the AIR text. These tests prove

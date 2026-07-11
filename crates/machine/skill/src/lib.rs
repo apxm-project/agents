@@ -442,7 +442,10 @@ mod tests {
     }
 
     fn artifact_with_embedded_manifest(embedded_toml: &str) -> Artifact {
-        let mut artifact = Artifact::new(ArtifactMetadata::new(Some("test".to_string()), "test"), Vec::new());
+        let mut artifact = Artifact::new(
+            ArtifactMetadata::new(Some("test".to_string()), "test"),
+            Vec::new(),
+        );
         artifact.add_section(ArtifactSection {
             kind: section_kinds::SKILL_MANIFEST_V1.to_string(),
             data: embedded_toml.as_bytes().to_vec(),

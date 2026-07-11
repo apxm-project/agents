@@ -53,7 +53,7 @@ COMPACTION_SUMMARY_KEY_ATTR = "compaction_summary_key"
 # `examples/python/conversational/controllable_agent.py`). The runtime must
 # treat this as "override present, runtime does nothing" — never
 # double-compact (constitution: program cognition wins; see
-# docs/plans/tasks/W2.7.md threat model, "Fail-closed precedence").
+# the runtime ignores this override instead of compacting twice).
 COMPACTION_OVERRIDE_PRESENT_ATTR = "compaction_override_present"
 
 @dataclass(slots=True)
@@ -215,7 +215,7 @@ class ConversationalAgent:
 
     def _build_turn_flow(self) -> GraphRecorder:
         """The author turn body: recall → ask(tools) → remember → done."""
-        # Fix for the write-only-metadata bug (docs/plans/tasks/W2.7.md): stamp
+        # Stamp the policy into this graph's metadata so the emitted AIR carries
         # the compaction policy into THIS graph's own `metadata`, the only
         # metadata path `to_air()`/`emit_multi_flow_module` actually reads
         # (`ir.py` — `ApxmGraph.to_dict()`). The old code stuffed it into

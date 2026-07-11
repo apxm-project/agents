@@ -928,7 +928,7 @@ def AIS_AutonomousOp : AIS_Op<"autonomous"> {
     iteration). It is independent of, and not a substitute for, the general
     in-graph iteration mechanism, which is splice-based (a fresh sub-DAG
     grafted into the live execution per turn/iteration; see
-    `docs/plans/tasks/W2.6.md`).
+    graph splicing and session rearming).
   }];
   let arguments = (ins
     StrAttr:$prompt,
