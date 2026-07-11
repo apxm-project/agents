@@ -65,7 +65,7 @@ pub enum ExecutionOutcome {
         /// loop parks and un-parks repeatedly across turns) MUST chain onto
         /// this handle rather than finalizing immediately on `Parked` — the
         /// execution is NOT done just because it parked once.
-        background: tokio::task::JoinHandle<()>,
+        background: tokio::task::JoinHandle<crate::RuntimeResult<()>>,
     },
 }
 
@@ -477,9 +477,26 @@ impl Runtime {
         if !Self::script_sandbox_required() {
             return None;
         }
+        let request = crate::sandbox::ExecRequest {
+            min_isolation: crate::sandbox::IsolationLevel::OsLevel,
+            needs_network: false,
+            ..Default::default()
+        };
         self.sandbox_registry
-            .select(crate::sandbox::IsolationLevel::OsLevel)
+            .select_for_request(&request)
             .ok()
+            .map(|selection| {
+                if let crate::sandbox::ValidationResult::Degraded { warnings } =
+                    &selection.validation
+                {
+                    tracing::warn!(
+                        backend = %selection.backend.capabilities().name,
+                        warnings = ?warnings,
+                        "Script worker sandbox selected with bounded degraded guarantees"
+                    );
+                }
+                selection.backend
+            })
     }
 
     /// Whether the operator requires script workers (Python or TypeScript)
@@ -1317,11 +1334,17 @@ impl Runtime {
                 // cross-execution admission slot) can chain onto the SAME
                 // real-completion event instead of guessing when it's safe.
                 let background = tokio::spawn(async move {
-                    let _ = scheduler_background.await;
+                    let completion = match scheduler_background.await {
+                        Ok(completion) => completion,
+                        Err(error) => Err(RuntimeError::Scheduler {
+                            message: format!("parked scheduler task failed: {error}"),
+                        }),
+                    };
                     release_graph_lifecycles(&lifecycles).await;
                     if let Some(emitter) = &graph_emitter {
-                        emitter.emit_graph_end(&execution_id, node_count, true);
+                        emitter.emit_graph_end(&execution_id, node_count, completion.is_ok());
                     }
+                    completion
                 });
                 Ok(ExecutionOutcome::Parked {
                     session_id,
