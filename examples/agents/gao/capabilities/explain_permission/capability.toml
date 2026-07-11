@@ -1,4 +1,6 @@
 id = "explain_permission"
 description = "Explain why an APXM capability requires approval before Gao asks to use it."
-kind = "typescript_handler"
+kind = "python_handler"
+handler_module = "capabilities.handlers.workflow_validation"
+handler_function = "explain_permission"
 read_only = true

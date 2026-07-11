@@ -1,0 +1,24 @@
+schema_version = "apxm.agent.v1"
+id = "gao"
+version = "0.1.0"
+license = "MIT"
+display_name = "Gao"
+description = "An APXM architecture profile with local paper retrieval and Studio workflow drafts."
+kind = "agent"
+domain = "apxm"
+capabilities = ["search_papers", "search_web", "plan_workflow"]
+skills = []
+
+[source]
+type = "local"
+
+[compile]
+frontend = "python"
+
+[runtime]
+loop = "host"
+memory_space = "stm"
+session_prefix = "gao"
+
+[prompts]
+persona = "README.md"

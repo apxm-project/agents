@@ -1,0 +1,6 @@
+id = "search_web"
+description = "Provider-mediated web search using the operator's configured connection."
+kind = "provider"
+read_only = true
+groups = ["web", "search"]
+requires_auth = true
