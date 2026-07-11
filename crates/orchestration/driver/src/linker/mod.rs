@@ -106,19 +106,8 @@ impl<'a> FrontendHandlerSidecars<'a> {
             .transpose()
     }
 
-    /// Re-attach the captured Python/TypeScript tool sidecars to the
-    /// compiled artifact as `python_tools`/`typescript_tools` sections, ONLY
-    /// when the operator has explicitly trusted script artifacts
-    /// (`apxm_runtime::script_admission::script_artifacts_trusted`) — the
-    /// same trust+sandbox gate the Server enforces
-    /// (`python_artifacts_trusted`) and the Runtime enforces at dispatch
-    /// (`execute_artifact_inner`). Before this gate the driver attached both
-    /// sidecars unconditionally regardless of any env var; now the CLI's
-    /// source-compile path (`apxm execute`) fails closed identically to the
-    /// Server's raw execute route. No-op (both sidecars dropped) when
-    /// untrusted — the compiled artifact then carries no script section and
-    /// the Runtime's own admission guard also rejects, so a caller cannot
-    /// bypass this by skipping the driver.
+    /// Attach captured Python and TypeScript sidecars only after the shared
+    /// script trust and sandbox policy admits them.
     fn append_to_artifact(self, artifact: &mut Artifact) {
         if !apxm_runtime::script_admission::script_artifacts_trusted() {
             return;
@@ -369,6 +358,7 @@ fn add_artifact_sidecars<'a>(
 mod tests {
     use super::*;
     use apxm_artifact::ArtifactMetadata;
+    use apxm_core::constants::env::{APXM_SANDBOX_SCRIPTS, APXM_TRUST_SCRIPT_ARTIFACTS};
     use std::sync::Mutex;
 
     // Env vars are process-global; serialize tests that touch them.
@@ -378,14 +368,14 @@ mod tests {
         #[allow(unsafe_code)]
         unsafe {
             if trust {
-                std::env::set_var("APXM_TRUST_PYTHON_ARTIFACTS", "1");
+                std::env::set_var(APXM_TRUST_SCRIPT_ARTIFACTS, "1");
             } else {
-                std::env::remove_var("APXM_TRUST_PYTHON_ARTIFACTS");
+                std::env::remove_var(APXM_TRUST_SCRIPT_ARTIFACTS);
             }
             if sandbox {
-                std::env::set_var("APXM_SANDBOX_PYTHON", "1");
+                std::env::set_var(APXM_SANDBOX_SCRIPTS, "1");
             } else {
-                std::env::remove_var("APXM_SANDBOX_PYTHON");
+                std::env::remove_var(APXM_SANDBOX_SCRIPTS);
             }
         }
     }

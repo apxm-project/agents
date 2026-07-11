@@ -179,7 +179,7 @@ impl PythonHandlerWorker {
             // trust gate's guarantee must hold (security: no fail-open).
             None if sandbox_required => {
                 return Err(cap_err(
-                    "python worker sandbox required (APXM_SANDBOX_PYTHON) but no \
+                    "python worker sandbox required (APXM_SANDBOX_SCRIPTS) but no \
                      OS-isolating backend (e.g. bubblewrap) is available; refusing \
                      to run author python unsandboxed",
                 ));

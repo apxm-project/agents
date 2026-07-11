@@ -472,12 +472,8 @@ impl Runtime {
         &self.sandbox_registry
     }
 
-    /// Select an OS-isolating sandbox backend for the python/typescript
-    /// tool/hook worker, gated on the `APXM_SANDBOX_PYTHON` opt-in so default
-    /// behavior is unchanged. Returns `None` when the opt-in is unset or no
-    /// isolating backend (e.g. bubblewrap) is available — the worker then
-    /// runs directly.
-    fn python_worker_sandbox(&self) -> Option<Arc<dyn crate::sandbox::SandboxBackend>> {
+    /// Select an OS-isolating sandbox backend for artifact script workers.
+    fn script_worker_sandbox(&self) -> Option<Arc<dyn crate::sandbox::SandboxBackend>> {
         if !Self::script_sandbox_required() {
             return None;
         }
@@ -487,7 +483,7 @@ impl Runtime {
     }
 
     /// Whether the operator requires script workers (Python or TypeScript)
-    /// to be sandboxed (`APXM_SANDBOX_PYTHON`). When true the worker spawn
+    /// to be sandboxed (`APXM_SANDBOX_SCRIPTS`). When true the worker spawn
     /// fails closed if no OS-isolating backend is available, so the trust
     /// gate's isolation guarantee cannot silently fail open. Delegates to
     /// the shared [`crate::script_admission`] policy so this crate, the
@@ -678,12 +674,12 @@ impl Runtime {
     ) -> Result<RuntimeExecutionResult, RuntimeError> {
         let python_bridge = python_handler_bridge_from_artifact(
             &artifact,
-            self.python_worker_sandbox(),
+            self.script_worker_sandbox(),
             Self::script_sandbox_required(),
         )?;
         let typescript_bridge = typescript_handler_bridge_from_artifact(
             &artifact,
-            self.python_worker_sandbox(),
+            self.script_worker_sandbox(),
             Self::script_sandbox_required(),
         )?;
         let entry_dag = find_entry_dag(&artifact)?;
@@ -1014,7 +1010,7 @@ impl Runtime {
             return Err(RuntimeError::Capability {
                 capability: python_tools::CAPABILITY_NAME.to_string(),
                 message:
-                    "python tool artifacts require APXM_TRUST_PYTHON_ARTIFACTS and APXM_SANDBOX_PYTHON"
+                    "python tool artifacts require APXM_TRUST_SCRIPT_ARTIFACTS and APXM_SANDBOX_SCRIPTS"
                         .to_string(),
             });
         }
@@ -1024,7 +1020,7 @@ impl Runtime {
             return Err(RuntimeError::Capability {
                 capability: typescript_tools::CAPABILITY_NAME.to_string(),
                 message:
-                    "typescript tool artifacts require APXM_TRUST_PYTHON_ARTIFACTS and APXM_SANDBOX_PYTHON"
+                    "typescript tool artifacts require APXM_TRUST_SCRIPT_ARTIFACTS and APXM_SANDBOX_SCRIPTS"
                         .to_string(),
             });
         }
@@ -1037,12 +1033,12 @@ impl Runtime {
 
         let python_bridge = python_handler_bridge_from_artifact(
             &artifact,
-            self.python_worker_sandbox(),
+            self.script_worker_sandbox(),
             Self::script_sandbox_required(),
         )?;
         let typescript_bridge = typescript_handler_bridge_from_artifact(
             &artifact,
-            self.python_worker_sandbox(),
+            self.script_worker_sandbox(),
             Self::script_sandbox_required(),
         )?;
         let entry_dag = find_entry_dag(&artifact)?;
@@ -1207,7 +1203,7 @@ impl Runtime {
             return Err(RuntimeError::Capability {
                 capability: python_tools::CAPABILITY_NAME.to_string(),
                 message:
-                    "python tool artifacts require APXM_TRUST_PYTHON_ARTIFACTS and APXM_SANDBOX_PYTHON"
+                    "python tool artifacts require APXM_TRUST_SCRIPT_ARTIFACTS and APXM_SANDBOX_SCRIPTS"
                         .to_string(),
             });
         }
@@ -1217,7 +1213,7 @@ impl Runtime {
             return Err(RuntimeError::Capability {
                 capability: typescript_tools::CAPABILITY_NAME.to_string(),
                 message:
-                    "typescript tool artifacts require APXM_TRUST_PYTHON_ARTIFACTS and APXM_SANDBOX_PYTHON"
+                    "typescript tool artifacts require APXM_TRUST_SCRIPT_ARTIFACTS and APXM_SANDBOX_SCRIPTS"
                         .to_string(),
             });
         }
@@ -1230,12 +1226,12 @@ impl Runtime {
 
         let python_bridge = python_handler_bridge_from_artifact(
             &artifact,
-            self.python_worker_sandbox(),
+            self.script_worker_sandbox(),
             Self::script_sandbox_required(),
         )?;
         let typescript_bridge = typescript_handler_bridge_from_artifact(
             &artifact,
-            self.python_worker_sandbox(),
+            self.script_worker_sandbox(),
             Self::script_sandbox_required(),
         )?;
         let entry_dag = find_entry_dag(&artifact)?;
@@ -1905,7 +1901,7 @@ mod tests {
             .await
             .expect_err("python section must fail closed without trust+sandbox opt-in");
 
-        assert!(err.to_string().contains("APXM_SANDBOX_PYTHON"));
+        assert!(err.to_string().contains("APXM_SANDBOX_SCRIPTS"));
     }
 
     /// Mirrors [`python_tool_sections_require_sandbox_flag`] for the
@@ -1927,12 +1923,12 @@ mod tests {
             .await
             .expect_err("typescript section must fail closed without trust+sandbox opt-in");
 
-        assert!(err.to_string().contains("APXM_SANDBOX_PYTHON"));
+        assert!(err.to_string().contains("APXM_SANDBOX_SCRIPTS"));
     }
 
     /// Environment matrix for script-artifact admission: a script
     /// section (Python or TypeScript) is admitted only when BOTH
-    /// `APXM_TRUST_PYTHON_ARTIFACTS` and `APXM_SANDBOX_PYTHON` are set —
+    /// `APXM_TRUST_SCRIPT_ARTIFACTS` and `APXM_SANDBOX_SCRIPTS` are set —
     /// trust-only and sandbox-only must fail closed identically to no vars
     /// at all. This is the guard that also protects the CLI's precompiled
     /// `.apxmobj` path, which never passes through the driver's attach gate
