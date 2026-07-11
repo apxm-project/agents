@@ -9,10 +9,12 @@ capabilities = [
     "read",
     "read_local_skill",
     "run_workflow",
+    "search_papers",
     "search_skills",
+    "search_web",
     "write",
 ]
-description = "A looped APXM agent for designing, reviewing, and controlling APXM workflows."
+description = "A Python APXM architecture agent for cited research and Studio workflow drafts."
 display_name = "Gao"
 domain = "apxm"
 id = "gao"
@@ -27,7 +29,8 @@ skills = [
 version = "0.1.0"
 
 [compile]
-frontend = "typescript"
+entry = "python/gao_agent.py"
+frontend = "python"
 
 [[hooks]]
 event = "pre_turn"
@@ -68,8 +71,8 @@ memory_space = "stm"
 session_prefix = "gao"
 
 [runtime.loop]
-mode = "recv"
-rearm = true
+mode = "host"
+rearm = false
 turn_param = "user_message"
 
 [source]
