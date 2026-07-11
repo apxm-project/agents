@@ -1,0 +1,8 @@
+{
+  "name": "gao",
+  "private": true,
+  "type": "module",
+  "dependencies": {
+    "@apxm/frontend": "file:../../../crates/compiler/frontend/typescript"
+  }
+}

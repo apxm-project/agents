@@ -44,15 +44,7 @@ decision = "ask"
 reason = "Runs a staged workflow."
 
 [[permission]]
-capability = "search_papers"
-decision = "allow"
-
-[[permission]]
 capability = "search_skills"
-decision = "allow"
-
-[[permission]]
-capability = "search_web"
 decision = "allow"
 
 [[permission]]

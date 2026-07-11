@@ -16,41 +16,41 @@ read_only = false
 [[capability]]
 id = "explain_permission"
 description = "Explain why an APXM capability requires approval before Gao asks to use it."
-handler_function = "explain_permission"
-handler_module = "capabilities.handlers.workflow_validation"
-kind = "python_handler"
+handler_function = "explainPermission"
+handler_module = "capabilities/explain_permission/handler"
+kind = "typescript_handler"
 read_only = true
 
 [[capability]]
 id = "list_files"
 description = "List files under declared read roots."
-handler_function = "list_files"
-handler_module = "capabilities.handlers.local_files"
-kind = "python_handler"
+handler_function = "listFiles"
+handler_module = "capabilities/list_files/handler"
+kind = "typescript_handler"
 read_only = true
 
 [[capability]]
 id = "list_local_skills"
 description = "List Gao-owned local skills."
-handler_function = "list_local_skills"
-handler_module = "capabilities.handlers.local_skills"
-kind = "python_handler"
+handler_function = "listLocalSkills"
+handler_module = "capabilities/list_local_skills/handler"
+kind = "typescript_handler"
 read_only = true
 
 [[capability]]
 id = "plan_workflow"
 description = "Convert a user request into a structured workflow design plan without writing artifacts."
-handler_function = "plan_workflow"
-handler_module = "capabilities.handlers.apxm_authoring"
-kind = "python_handler"
+handler_function = "planWorkflow"
+handler_module = "capabilities/plan_workflow/handler"
+kind = "typescript_handler"
 read_only = true
 
 [[capability]]
 id = "prepare_validation"
 description = "Prepare a structured APXM validation request for a workflow draft."
-handler_function = "prepare_validation"
-handler_module = "capabilities.handlers.workflow_validation"
-kind = "python_handler"
+handler_function = "prepareValidation"
+handler_module = "capabilities/prepare_validation/handler"
+kind = "typescript_handler"
 read_only = true
 
 [[capability]]
@@ -62,9 +62,9 @@ read_only = true
 [[capability]]
 id = "read_local_skill"
 description = "Read a Gao-owned skill document."
-handler_function = "read_local_skill"
-handler_module = "capabilities.handlers.local_skills"
-kind = "python_handler"
+handler_function = "readLocalSkill"
+handler_module = "capabilities/read_local_skill/handler"
+kind = "typescript_handler"
 read_only = true
 
 [[capability]]
@@ -75,27 +75,11 @@ kind = "builtin"
 read_only = false
 
 [[capability]]
-id = "search_papers"
-description = "Search the local APXM paper corpus through the configured provider policy."
-handler_function = "search_papers"
-handler_module = "capabilities.handlers.paper_search"
-kind = "python_handler"
-read_only = true
-
-[[capability]]
 id = "search_skills"
 description = "Find relevant APXM skills by description."
 builtin_group = "skills"
 kind = "builtin"
 read_only = true
-
-[[capability]]
-id = "search_web"
-description = "Provider-mediated web search using the operator's configured connection."
-groups = ["web", "search"]
-kind = "provider"
-read_only = true
-requires_auth = true
 
 [[capability]]
 id = "write"
