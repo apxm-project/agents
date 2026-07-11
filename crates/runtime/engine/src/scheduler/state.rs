@@ -488,6 +488,8 @@ impl SchedulerState {
         self.llm_concurrency.cancel();
         self.blocking_concurrency.cancel();
         self.cancellation_token.cancel();
+        crate::scheduler::park_registry::remove_for_state(self);
+        self.clear_parked();
         self.notify_done.notify_waiters();
         self.work_notify.notify_waiters();
         self.watchdog_notify.notify_one();
@@ -501,6 +503,33 @@ impl SchedulerState {
     /// Check if execution has been cancelled.
     pub fn is_cancelled(&self) -> bool {
         self.concurrency.is_cancelled() || self.cancellation_token.is_cancelled()
+    }
+
+    pub(crate) fn is_terminal(&self) -> bool {
+        self.remaining.load(Ordering::SeqCst) == 0 || self.is_cancelled()
+    }
+
+    /// Decrement the unfinished-node count once and perform terminal cleanup on
+    /// the transition to zero.
+    pub(crate) fn finish_one(&self) {
+        let prev = self
+            .remaining
+            .fetch_update(Ordering::SeqCst, Ordering::SeqCst, |remaining| {
+                remaining.checked_sub(1)
+            })
+            .unwrap_or(0);
+        tracing::debug!(
+            prev_remaining = prev,
+            new_remaining = prev.saturating_sub(1),
+            "finish_one called"
+        );
+        if prev == 1 {
+            crate::scheduler::park_registry::remove_for_state(self);
+            self.clear_parked();
+            tracing::info!("Remaining hit 0, notifying done");
+            self.notify_done.notify_waiters();
+            self.work_notify.notify_waiters();
+        }
     }
 
     /// Retrieve the effect metadata for a node, if available.
@@ -628,7 +657,13 @@ impl SchedulerState {
     /// `finish_one`). This is the cross-frame twin of [`Self::resolve_promise`] +
     /// `finish_one`; together a park→wake performs exactly one completion, so the
     /// `remaining` count is invariant vs a normal node finishing.
-    pub fn wake_parked_node(&self, outputs: &[TokenId], value: Value) {
+    pub fn wake_parked_node(
+        &self,
+        node_id: NodeId,
+        outputs: &[TokenId],
+        value: Value,
+        attempts: u32,
+    ) {
         if self.is_cancelled() {
             self.set_first_error(RuntimeError::SchedulerCancelled);
             self.mark_done();
@@ -636,6 +671,22 @@ impl SchedulerState {
             self.record_progress();
             return;
         }
+
+        let completed = if let Some(mut op_state) = self.op_states.get_mut(&node_id) {
+            if matches!(op_state.status, OpStatus::Completed | OpStatus::Failed) {
+                false
+            } else {
+                op_state.status = OpStatus::Completed;
+                op_state.finished_at = Some(Instant::now());
+                true
+            }
+        } else {
+            false
+        };
+        if !completed {
+            return;
+        }
+
         for &token_id in outputs {
             match self.tokens.get_mut(&token_id) {
                 Some(token) if token.ready => continue, // already produced; idempotent
@@ -663,14 +714,16 @@ impl SchedulerState {
                 }
             }
         }
-        // The parked node completes now — the one compensating decrement.
-        let prev = self.remaining.fetch_sub(1, Ordering::SeqCst);
-        if prev == 1 {
-            self.notify_done.notify_waiters();
-            self.work_notify.notify_waiters();
+
+        self.executed.fetch_add(1, Ordering::Relaxed);
+        if let Some(node) = self.nodes.get(&node_id) {
+            self.emit_node_finished(node_id, &node, attempts);
         }
+
         // Clear the parked count (and reacquire admission on the 1->0 edge).
         self.exit_parked();
+        // The parked node completes now — the one compensating decrement.
+        self.finish_one();
         self.record_progress();
     }
 
@@ -710,8 +763,22 @@ impl SchedulerState {
 
     /// Record that a parked node has resumed. On the 1->0 transition (no nodes
     /// remain parked) best-effort reacquire the admission slot.
-    fn exit_parked(&self) {
-        if self.parked.fetch_sub(1, Ordering::SeqCst) == 1
+    pub(crate) fn exit_parked(&self) {
+        let previous = self
+            .parked
+            .fetch_update(Ordering::SeqCst, Ordering::SeqCst, |parked| {
+                parked.checked_sub(1)
+            })
+            .unwrap_or(0);
+        if previous == 1
+            && let Some(id) = &self.admission_id
+        {
+            crate::scheduler::admission_registry::on_unpark(id);
+        }
+    }
+
+    fn clear_parked(&self) {
+        if self.parked.swap(0, Ordering::SeqCst) > 0
             && let Some(id) = &self.admission_id
         {
             crate::scheduler::admission_registry::on_unpark(id);
@@ -1033,12 +1100,26 @@ fn materialize_graph_state(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::executor::ExecutionHook;
     use apxm_core::types::execution::FlowParameter;
     use apxm_core::types::execution::NodeMetadata;
     use apxm_core::types::operations::AISOperationType;
     use apxm_core::types::{DagMetadata, DependencyType, Edge, ExecutionDag, Node, Value};
     use std::sync::atomic::Ordering;
     use std::time::Duration;
+
+    static PARK_DURABLE_TEST_LOCK: Mutex<()> = Mutex::new(());
+
+    #[derive(Default)]
+    struct FinishedHook {
+        events: Mutex<Vec<NodeFinishedEvent>>,
+    }
+
+    impl ExecutionHook for FinishedHook {
+        fn on_node_finished(&self, event: &NodeFinishedEvent) {
+            self.events.lock().push(event.clone());
+        }
+    }
 
     /// Helper: build a SchedulerConfig suitable for tests.
     fn test_config() -> SchedulerConfig {
@@ -1279,7 +1360,7 @@ mod tests {
         assert_eq!(state.parked_count(), 1);
 
         // Wake delivers node 1's output token (10) — the ONE compensating completion.
-        state.wake_parked_node(&[10], Value::String("resumed".into()));
+        state.wake_parked_node(1, &[10], Value::String("resumed".into()), 1);
 
         assert_eq!(
             state.remaining.load(Ordering::SeqCst),
@@ -1290,6 +1371,160 @@ mod tests {
         let t = state.tokens.get(&10).expect("token 10 exists");
         assert!(t.ready, "woken node's output token is ready");
         assert_eq!(t.value.clone(), Some(Value::String("resumed".into())));
+    }
+
+    #[test]
+    fn parked_wake_records_terminal_node_once_and_suppresses_late_wake() {
+        use crate::scheduler::park_registry::{self, ParkWaker};
+
+        let mut dag = ExecutionDag::new();
+        dag.add_node(make_node(1, vec![], vec![10])).unwrap();
+        dag.entry_nodes = dag.find_entry_nodes();
+        dag.exit_nodes = dag.find_exit_nodes();
+
+        let hook = Arc::new(FinishedHook::default());
+        let hooks = ExecutionHookContext::new(
+            "parked-execution",
+            "parked-graph",
+            vec![hook.clone() as Arc<dyn ExecutionHook>],
+        );
+        let metrics = Arc::new(MetricsCollector::new());
+        let state = Arc::new(
+            SchedulerState::new_with_hooks(
+                dag,
+                test_config(),
+                metrics,
+                Instant::now(),
+                vec![],
+                hooks,
+            )
+            .unwrap()
+            .0,
+        );
+        let _ = drain_queue(&state);
+        if let Some(mut op_state) = state.op_states.get_mut(&1) {
+            op_state.status = OpStatus::Running;
+            op_state.started_at = Some(Instant::now());
+        }
+        state.enter_parked();
+
+        let key = "parked-terminal-accounting-unique";
+        park_registry::register(
+            key.to_string(),
+            ParkWaker::for_node(Arc::clone(&state), 1, vec![10], 1),
+        );
+
+        assert_eq!(park_registry::wake(key, Value::String("done".into())), 1);
+        assert_eq!(state.remaining.load(Ordering::SeqCst), 0);
+        assert_eq!(state.executed.load(Ordering::Relaxed), 1);
+        assert_eq!(state.parked_count(), 0);
+        let op_state = state.op_states.get(&1).unwrap();
+        assert_eq!(op_state.status, OpStatus::Completed);
+        assert!(op_state.finished_at.is_some());
+        drop(op_state);
+
+        let events = hook.events.lock();
+        assert_eq!(events.len(), 1);
+        assert_eq!(events[0].node_id, 1);
+        assert_eq!(events[0].status, OpStatus::Completed);
+        assert_eq!(events[0].attempts, 1);
+        drop(events);
+
+        assert_eq!(
+            park_registry::wake(key, Value::String("late".into())),
+            0,
+            "a terminal wait key stays closed"
+        );
+        assert_eq!(state.executed.load(Ordering::Relaxed), 1);
+        assert_eq!(hook.events.lock().len(), 1);
+
+        let replacement = Arc::new(new_state({
+            let mut dag = ExecutionDag::new();
+            dag.add_node(make_node(1, vec![], vec![10])).unwrap();
+            dag.entry_nodes = dag.find_entry_nodes();
+            dag.exit_nodes = dag.find_exit_nodes();
+            dag
+        }));
+        replacement.enter_parked();
+        park_registry::register(
+            key.to_string(),
+            ParkWaker::for_node(Arc::clone(&replacement), 1, vec![10], 1),
+        );
+        assert!(
+            !replacement.tokens.get(&10).unwrap().ready,
+            "the late wake must not become a resolved value for a future waiter"
+        );
+        replacement.mark_done();
+    }
+
+    #[test]
+    fn mark_done_removes_live_and_durable_park_waiters() {
+        use crate::scheduler::park_registry::{self, ParkWaker};
+
+        let _durable_guard = PARK_DURABLE_TEST_LOCK.lock();
+        let tmp = tempfile::tempdir().unwrap();
+        let db_path = tmp.path().join("cancelled_park_journal.sqlite");
+        park_registry::durable::init(&db_path).expect("open durable park journal");
+
+        let state = Arc::new(new_state(two_node_dag()));
+        let keys = [
+            "cancelled-park-cleanup-a".to_string(),
+            "cancelled-park-cleanup-b".to_string(),
+        ];
+        state.enter_parked();
+        state.enter_parked();
+        park_registry::register(
+            keys[0].clone(),
+            ParkWaker::for_node(Arc::clone(&state), 1, vec![10], 1),
+        );
+        park_registry::register(
+            keys[1].clone(),
+            ParkWaker::for_node(Arc::clone(&state), 2, vec![20], 1),
+        );
+        let pending = park_registry::pending_wait_keys();
+        assert!(pending.contains(&keys[0]));
+        assert!(pending.contains(&keys[1]));
+
+        state.mark_done();
+
+        assert_eq!(state.parked_count(), 0);
+        let pending = park_registry::pending_wait_keys();
+        assert!(!pending.contains(&keys[0]));
+        assert!(!pending.contains(&keys[1]));
+        for key in &keys {
+            assert_eq!(park_registry::wake(key, Value::Null), 0);
+        }
+
+        park_registry::durable::close_for_test();
+        park_registry::durable::init(&db_path)
+            .expect("reopen durable park journal after cancellation");
+        park_registry::rebuild_from_durable(&keys);
+        let replacement = Arc::new(new_state(two_node_dag()));
+        replacement.enter_parked();
+        park_registry::register(
+            keys[0].clone(),
+            ParkWaker::for_node(Arc::clone(&replacement), 1, vec![10], 1),
+        );
+        assert!(
+            !replacement.tokens.get(&10).unwrap().ready,
+            "no pending or resolved registration survives cancellation durably"
+        );
+        replacement.mark_done();
+
+        // Cancellation may win after enter_parked but before register. The
+        // rejected registration must not recreate either live or durable state.
+        let race_key = "cancelled-before-register-cleanup";
+        let raced = Arc::new(new_state(two_node_dag()));
+        raced.enter_parked();
+        raced.mark_done();
+        park_registry::register(
+            race_key.to_string(),
+            ParkWaker::for_node(Arc::clone(&raced), 1, vec![10], 1),
+        );
+        assert_eq!(park_registry::wake(race_key, Value::Null), 0);
+        assert!(!park_registry::pending_wait_keys().contains(&race_key.to_string()));
+
+        park_registry::durable::close_for_test();
     }
 
     /// A parked recv, on wake, splices a fresh turn sub-DAG
@@ -1339,7 +1574,7 @@ mod tests {
         );
 
         // Deliver the user message: wake the parked recv anchor.
-        state.wake_parked_node(&[10], Value::String("hello turn".into()));
+        state.wake_parked_node(1, &[10], Value::String("hello turn".into()), 1);
 
         // Invariants: the anchor's ONE compensating completion fires (3->2), the
         // parked counter clears, and the message token is delivered.
@@ -1410,7 +1645,7 @@ mod tests {
 
         // The carried summary token (11) is ready, so the turn body waits only on
         // the message; wake delivers it and the turn becomes schedulable.
-        state.wake_parked_node(&[10], Value::String("turn 2 message".into()));
+        state.wake_parked_node(1, &[10], Value::String("turn 2 message".into()), 1);
 
         let queued = drain_queue(&state);
         assert!(
@@ -1626,6 +1861,7 @@ mod tests {
     fn restart_reparks_pending_wait_key() {
         use crate::scheduler::park_registry;
 
+        let _durable_guard = PARK_DURABLE_TEST_LOCK.lock();
         let tmp = tempfile::tempdir().unwrap();
         let db_path = tmp.path().join("park_journal.sqlite");
         park_registry::durable::init(&db_path).expect("open durable park journal");
