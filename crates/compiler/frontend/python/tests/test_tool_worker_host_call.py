@@ -6,6 +6,8 @@ Driven in-process by faking the runtime side (capture the host_call, feed back a
 host_result keyed by method).
 """
 
+import asyncio
+
 from apxm import tool_worker as tw
 
 
@@ -110,4 +112,18 @@ def test_post_ask_hook_receives_reply():
     out = tw._invoke_hook(hook, "post_ask", {"reply": "answer"}, req_id="r1")
 
     assert out == {}
+    assert seen == {"reply": "answer"}
+
+
+def test_async_post_ask_hook_is_awaited():
+    seen = {}
+
+    async def hook(ctx, reply):
+        await asyncio.sleep(0)
+        seen["reply"] = reply
+        return ctx.deny("async hook decision")
+
+    out = tw._invoke_hook(hook, "post_ask", {"reply": "answer"}, req_id="r1")
+
+    assert out == {"decision": "deny", "reason": "async hook decision"}
     assert seen == {"reply": "answer"}

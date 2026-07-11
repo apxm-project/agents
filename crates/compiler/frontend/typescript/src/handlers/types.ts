@@ -1,6 +1,13 @@
 /** Hook decision payloads returned by control helpers on {@link HookContext}. */
 export type HookDecision = Record<string, unknown>;
 
+export type JsonPrimitive = string | number | boolean | null;
+export type JsonValue = JsonPrimitive | JsonObject | JsonValue[];
+export interface JsonObject {
+  [key: string]: JsonValue;
+}
+export type JsonSchema = JsonObject;
+
 /** Runtime context passed to lifecycle hooks. */
 export interface HookContext {
   readonly remaining_budget: number | null | undefined;
