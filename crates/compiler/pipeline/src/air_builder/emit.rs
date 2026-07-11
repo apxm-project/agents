@@ -1007,11 +1007,7 @@ fn emit_node(
             &inputs,
             &[graph_attrs::HOOK_EVENT],
             "hook",
-            &[
-                graph_attrs::HOOK_EVENT,
-                graph_attrs::HOOK_MATCH,
-                graph_attrs::HOOK_MODE,
-            ],
+            &[graph_attrs::HOOK_EVENT],
             None,
         ),
         AISOperationType::Autonomous => emit_simple_op(
