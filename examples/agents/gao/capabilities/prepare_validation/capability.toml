@@ -1,6 +1,4 @@
 id = "prepare_validation"
 description = "Prepare a structured APXM validation request for a workflow draft."
-kind = "python_handler"
-handler_module = "capabilities.handlers.workflow_validation"
-handler_function = "prepare_validation"
+kind = "typescript_handler"
 read_only = true

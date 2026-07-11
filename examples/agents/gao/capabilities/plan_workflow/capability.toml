@@ -1,6 +1,4 @@
 id = "plan_workflow"
 description = "Convert a user request into a structured workflow design plan without writing artifacts."
-kind = "python_handler"
-handler_module = "capabilities.handlers.apxm_authoring"
-handler_function = "plan_workflow"
+kind = "typescript_handler"
 read_only = true

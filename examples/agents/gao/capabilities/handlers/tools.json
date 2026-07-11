@@ -1,0 +1,112 @@
+[
+  {
+    "description": "Explain the operator approval Gao needs before using an APXM capability.",
+    "handler_id": "sha256:5334724835a9d4dfd3387b67f27a70af8f0cb9fe5c893a8daffc248f0d81817b",
+    "module": "capabilities/explain_permission/handler",
+    "name": "explain_permission",
+    "qualname": "explainPermission",
+    "read_only": true,
+    "schema": {},
+    "source_file": "capabilities/explain_permission/handler.ts"
+  },
+  {
+    "event": "post_turn",
+    "handler_id": "sha256:32cab73ca341e4936e29d4539cd0c891e2339da1e42eb60cd7688eb6d27588cc",
+    "match": "*",
+    "mode": "observe",
+    "module": "capabilities/handlers/hooks",
+    "name": "hook",
+    "qualname": "compact_conversation",
+    "source_file": "capabilities/handlers/hooks.ts"
+  },
+  {
+    "event": "pre_cap",
+    "handler_id": "sha256:d77891cce846419e1d0404140088e40500b90ce7e3374384847c5f7fb203543a",
+    "match": "compose_workflow",
+    "mode": "gate",
+    "module": "capabilities/handlers/hooks",
+    "name": "hook",
+    "qualname": "gate_compose_workflow",
+    "source_file": "capabilities/handlers/hooks.ts"
+  },
+  {
+    "event": "pre_ask",
+    "handler_id": "sha256:d5295205b84296785cce5f1be0120f34d6b1f7f9bcb025063025e46ca69d90ae",
+    "match": "*",
+    "mode": "observe",
+    "module": "capabilities/handlers/hooks",
+    "name": "hook",
+    "qualname": "inject_apxm_context",
+    "source_file": "capabilities/handlers/hooks.ts"
+  },
+  {
+    "event": "pre_turn",
+    "handler_id": "sha256:06bb3640206c7d1c673f5c6d11f3fd05b6faaea62e380904978ab16a1847b184",
+    "match": "*",
+    "mode": "observe",
+    "module": "capabilities/handlers/hooks",
+    "name": "hook",
+    "qualname": "inject_context",
+    "source_file": "capabilities/handlers/hooks.ts"
+  },
+  {
+    "event": "post_cap",
+    "handler_id": "sha256:0d9bd66acf4cd7f1d70ca12736d4fd9c36be6a08c52c00f271ea407376a440c6",
+    "match": "*",
+    "mode": "observe",
+    "module": "capabilities/handlers/hooks",
+    "name": "hook",
+    "qualname": "redact_tool_results",
+    "source_file": "capabilities/handlers/hooks.ts"
+  },
+  {
+    "description": "List files under a path relative to declared read roots.",
+    "handler_id": "sha256:6cc0a49709e272fc2134605b5967441fdd796aaa3960c5ddf5d14a33d978f30d",
+    "module": "capabilities/list_files/handler",
+    "name": "list_files",
+    "qualname": "listFiles",
+    "read_only": true,
+    "schema": {},
+    "source_file": "capabilities/list_files/handler.ts"
+  },
+  {
+    "description": "List Gao-owned local skills.",
+    "handler_id": "sha256:ad260e3bad22e48287998b4df384151dde5f18f462658496c9e080383b4da774",
+    "module": "capabilities/list_local_skills/handler",
+    "name": "list_local_skills",
+    "qualname": "listLocalSkills",
+    "read_only": true,
+    "schema": {},
+    "source_file": "capabilities/list_local_skills/handler.ts"
+  },
+  {
+    "description": "Turn a natural-language request into a structured APXM workflow design plan.",
+    "handler_id": "sha256:82da83328aebb541cb78febe90c47e06a4518deb9e4e3cc64eb9c72db6837204",
+    "module": "capabilities/plan_workflow/handler",
+    "name": "plan_workflow",
+    "qualname": "planWorkflow",
+    "read_only": true,
+    "schema": {},
+    "source_file": "capabilities/plan_workflow/handler.ts"
+  },
+  {
+    "description": "Prepare a structured APXM validation request for a workflow artifact.",
+    "handler_id": "sha256:cf6703f02f1d242dac5e0880df49b6bb5c2081f5b141a0681de2cffc4673943b",
+    "module": "capabilities/prepare_validation/handler",
+    "name": "prepare_validation",
+    "qualname": "prepareValidation",
+    "read_only": true,
+    "schema": {},
+    "source_file": "capabilities/prepare_validation/handler.ts"
+  },
+  {
+    "description": "Read a Gao-owned skill document by skill id.",
+    "handler_id": "sha256:e805ffe5e824ab048fc25bbcde1c2b8b6e3da43c932fb071f571f59559468730",
+    "module": "capabilities/read_local_skill/handler",
+    "name": "read_local_skill",
+    "qualname": "readLocalSkill",
+    "read_only": true,
+    "schema": {},
+    "source_file": "capabilities/read_local_skill/handler.ts"
+  }
+]

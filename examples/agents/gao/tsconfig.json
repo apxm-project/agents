@@ -1,0 +1,13 @@
+{
+  "compilerOptions": {
+    "target": "ES2022",
+    "module": "ESNext",
+    "moduleResolution": "bundler",
+    "strict": true,
+    "skipLibCheck": true,
+    "paths": {
+      "@apxm/frontend": ["../../../crates/compiler/frontend/typescript/dist/index.d.ts"]
+    }
+  },
+  "include": ["capabilities/**/*.ts"]
+}

@@ -1,6 +1,4 @@
 id = "list_files"
 description = "List files under declared read roots."
-kind = "python_handler"
-handler_module = "capabilities.handlers.local_files"
-handler_function = "list_files"
+kind = "typescript_handler"
 read_only = true
