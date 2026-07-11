@@ -89,9 +89,10 @@ pub enum Commands {
     CompileService {
         /// Agent directory (contains agent.toml, integrity.toml, and capabilities/)
         agent_dir: PathBuf,
-        /// Enable optional web-tools registration in the emitted ASK node.
+        /// Read one typed JSON options object from stdin instead of relying on
+        /// command-line fields.
         #[arg(long)]
-        web_tools: bool,
+        options_stdin: bool,
     },
     /// Decompile an artifact back to AIR
     Decompile {
@@ -892,4 +893,27 @@ pub struct ToolEntry {
 pub struct ToolsFile {
     #[serde(default)]
     pub tools: Vec<ToolEntry>,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use clap::Parser;
+
+    #[test]
+    fn compile_service_accepts_options_stdin_flag() {
+        let cli = Cli::try_parse_from(["apxm", "compile-service", "--options-stdin", "/tmp/agent"])
+            .expect("compile-service parses");
+
+        match cli.command {
+            Commands::CompileService {
+                agent_dir,
+                options_stdin,
+            } => {
+                assert_eq!(agent_dir, PathBuf::from("/tmp/agent"));
+                assert!(options_stdin);
+            }
+            _ => panic!("expected compile-service command"),
+        }
+    }
 }

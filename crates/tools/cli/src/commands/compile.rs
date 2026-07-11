@@ -21,6 +21,9 @@ use apxm_driver::compiler::Compiler;
 use serde::Deserialize;
 
 #[cfg(feature = "driver")]
+use apxm_ais::chat::CompileServiceOptions;
+
+#[cfg(feature = "driver")]
 use super::implementations::{load_config, parse_opt_level};
 
 #[cfg(feature = "driver")]
@@ -285,6 +288,73 @@ type TypeScriptHandlersManifest = Option<Vec<u8>>;
 // service boundary.
 // ---------------------------------------------------------------------------
 
+#[cfg(feature = "driver")]
+fn parse_compile_service_options_json(json: &str) -> Result<CompileServiceOptions> {
+    let mut deserializer = serde_json::Deserializer::from_str(json);
+    let options = CompileServiceOptions::deserialize(&mut deserializer)
+        .context("compile-service --options-stdin expects one typed JSON object on stdin")?;
+    deserializer
+        .end()
+        .context("compile-service --options-stdin expects exactly one JSON object on stdin")?;
+    Ok(options)
+}
+
+#[cfg(feature = "driver")]
+fn effective_system_prompt<'a>(
+    options: &'a CompileServiceOptions,
+    persona: &'a str,
+) -> Option<&'a str> {
+    options.system_prompt.as_deref().or_else(|| {
+        let trimmed = persona.trim();
+        (!trimmed.is_empty()).then_some(trimmed)
+    })
+}
+
+#[cfg(feature = "driver")]
+fn read_compile_service_options_from_stdin() -> Result<CompileServiceOptions> {
+    use std::io::Read;
+
+    let mut stdin = String::new();
+    std::io::stdin()
+        .read_to_string(&mut stdin)
+        .context("Failed to read compile-service options JSON from stdin")?;
+    parse_compile_service_options_json(&stdin)
+}
+
+#[cfg(feature = "driver")]
+fn insert_optional_route_attr(
+    attrs: &mut std::collections::HashMap<String, apxm_core::types::Value>,
+    key: &str,
+    raw: Option<&str>,
+) {
+    let Some(raw) = raw else {
+        return;
+    };
+    let sanitized = apxm_ais::chat::sanitize_route_id(raw);
+    if sanitized.is_empty() {
+        return;
+    }
+    attrs.insert(key.to_string(), apxm_core::types::Value::String(sanitized));
+}
+
+#[cfg(feature = "driver")]
+fn insert_effort_attr(
+    attrs: &mut std::collections::HashMap<String, apxm_core::types::Value>,
+    raw: Option<&str>,
+) {
+    let Some(raw) = raw else {
+        return;
+    };
+    let sanitized = apxm_ais::chat::sanitize_route_id(raw);
+    if sanitized.is_empty() || sanitized == "off" {
+        return;
+    }
+    attrs.insert(
+        apxm_ais::attrs::EFFORT.to_string(),
+        apxm_core::types::Value::String(sanitized),
+    );
+}
+
 /// Compile a bundled conversational agent into canonical AIR text.
 ///
 /// # Cross-repo I/O contract
@@ -295,9 +365,10 @@ type TypeScriptHandlersManifest = Option<Vec<u8>>;
 /// Python frontend:
 ///
 /// - **Input**: a single positional argument, the agent directory
-///   (containing `agent.toml`, generated `integrity.toml`, and `capabilities/`). No stdin
-///   is read.
-/// - `--web-tools`: include the web capability group in the emitted ASK node.
+///   (containing `agent.toml`, generated `integrity.toml`, and `capabilities/`).
+///   With `--options-stdin`, stdin must contain exactly one JSON object matching
+///   the typed compile-service options contract. Without it, the same typed
+///   default options object is used internally.
 /// - **stdout**: on success, ONLY emitted AIR text. No other text is ever
 ///   written to stdout; all progress/log/diagnostic output goes to stderr.
 /// - **Exit code**: `0` on success. Nonzero on any failure, with a
@@ -305,10 +376,15 @@ type TypeScriptHandlersManifest = Option<Vec<u8>>;
 #[cfg(feature = "driver")]
 pub fn compile_service_command(
     agent_dir: PathBuf,
-    web_tools: bool,
+    options_stdin: bool,
     _config: Option<PathBuf>,
 ) -> Result<()> {
-    let air = emit_air_from_agent(&agent_dir, web_tools)?;
+    let options = if options_stdin {
+        read_compile_service_options_from_stdin()?
+    } else {
+        CompileServiceOptions::default()
+    };
+    let air = emit_air_from_agent(&agent_dir, &options)?;
 
     // Only the AIR text goes to stdout, written byte-for-byte as the frontend
     // produced it (no added trailing newline) — this is the process contract
@@ -324,7 +400,10 @@ pub fn compile_service_command(
 /// writing wrapper above so it can be exercised directly by tests (including
 /// the Studio-equivalence fixture test) without spawning a subprocess.
 #[cfg(feature = "driver")]
-pub(crate) fn emit_air_from_agent(agent_dir: &Path, web_tools: bool) -> Result<String> {
+pub(crate) fn emit_air_from_agent(
+    agent_dir: &Path,
+    options: &CompileServiceOptions,
+) -> Result<String> {
     if !agent_dir.is_dir() {
         return Err(anyhow::anyhow!(
             "'{}' is not a directory",
@@ -332,7 +411,7 @@ pub(crate) fn emit_air_from_agent(agent_dir: &Path, web_tools: bool) -> Result<S
         ));
     }
 
-    emit_air_from_declarative_agent(agent_dir, web_tools)
+    emit_air_from_declarative_agent(agent_dir, options)
 }
 
 #[cfg(feature = "driver")]
@@ -531,12 +610,21 @@ fn resolve_declarative_handler_id(handler: &str, manifest: &[serde_json::Value])
 #[cfg(feature = "driver")]
 fn declarative_tool_surface(
     capabilities: &DeclarativeCapabilitiesToml,
-    web_tools: bool,
+    options: &CompileServiceOptions,
 ) -> Result<(Vec<String>, Vec<String>)> {
     let mut tools = Vec::new();
     let mut groups = Vec::new();
-    if web_tools {
+    if options.tools {
         groups.push(apxm_ais::capabilities::groups::WEB.to_string());
+    }
+    if options.skills {
+        groups.push(apxm_ais::capabilities::groups::SKILLS.to_string());
+    }
+    if options.capability_discovery {
+        groups.push(apxm_ais::capabilities::groups::DISCOVERY.to_string());
+    }
+    if options.authoring {
+        groups.push(apxm_ais::capabilities::groups::AUTHORING.to_string());
     }
     for cap in &capabilities.capability {
         match cap.kind.as_str() {
@@ -620,7 +708,10 @@ fn absolutize_typescript_tool_sources(
 }
 
 #[cfg(feature = "driver")]
-fn emit_air_from_declarative_agent(agent_dir: &Path, web_tools: bool) -> Result<String> {
+fn emit_air_from_declarative_agent(
+    agent_dir: &Path,
+    options: &CompileServiceOptions,
+) -> Result<String> {
     use apxm_compiler::{
         AirModule, AirProgram, FrontendEdge, FrontendGraph, FrontendNode, FrontendParameter,
     };
@@ -655,7 +746,7 @@ fn emit_air_from_declarative_agent(agent_dir: &Path, web_tools: bool) -> Result<
     } else {
         DeclarativeCapabilitiesToml::default()
     };
-    let (tool_names, capability_groups) = declarative_tool_surface(&capabilities, web_tools)?;
+    let (tool_names, capability_groups) = declarative_tool_surface(&capabilities, options)?;
 
     let persona = agent
         .prompts
@@ -664,6 +755,8 @@ fn emit_air_from_declarative_agent(agent_dir: &Path, web_tools: bool) -> Result<
         .filter(|path| path.is_file())
         .and_then(|path| std::fs::read_to_string(path).ok())
         .unwrap_or_default();
+    let persona = persona.trim().to_string();
+    let effective_system_prompt = effective_system_prompt(options, &persona);
 
     let turn_param = declarative_turn_param(&agent);
     let loop_mode = declarative_loop_mode(&agent);
@@ -715,7 +808,7 @@ fn emit_air_from_declarative_agent(agent_dir: &Path, web_tools: bool) -> Result<
         let mut attrs = HashMap::from([
             (
                 graph_attrs::PROMPT.to_string(),
-                Value::String(persona.trim().to_string()),
+                Value::String(effective_system_prompt.unwrap_or_default().to_string()),
             ),
             (
                 graph_attrs::MODE.to_string(),
@@ -733,12 +826,14 @@ fn emit_air_from_declarative_agent(agent_dir: &Path, web_tools: bool) -> Result<
                 Value::Array(vec![Value::String(turn_param.clone())]),
             ),
         ]);
-        if !persona.trim().is_empty() {
+        if let Some(system_prompt) = effective_system_prompt {
             attrs.insert(
                 graph_attrs::SYSTEM_PROMPT.to_string(),
-                Value::String(persona.trim().to_string()),
+                Value::String(system_prompt.to_string()),
             );
         }
+        insert_optional_route_attr(&mut attrs, graph_attrs::BACKEND, options.backend.as_deref());
+        insert_optional_route_attr(&mut attrs, graph_attrs::MODEL, options.model.as_deref());
         nodes.push(FrontendNode {
             id: run_node_id,
             name: "turn_loop".to_string(),
@@ -799,12 +894,19 @@ fn emit_air_from_declarative_agent(agent_dir: &Path, web_tools: bool) -> Result<
             Value::String("true".to_string()),
         ),
     ]);
-    if !persona.trim().is_empty() {
+    if let Some(system_prompt) = effective_system_prompt {
         ask_attrs.insert(
             graph_attrs::SYSTEM_PROMPT.to_string(),
-            Value::String(persona.trim().to_string()),
+            Value::String(system_prompt.to_string()),
         );
     }
+    insert_optional_route_attr(
+        &mut ask_attrs,
+        graph_attrs::BACKEND,
+        options.backend.as_deref(),
+    );
+    insert_optional_route_attr(&mut ask_attrs, graph_attrs::MODEL, options.model.as_deref());
+    insert_effort_attr(&mut ask_attrs, options.effort.as_deref());
     if !tool_names.is_empty() {
         ask_attrs.insert(
             graph_attrs::TOOLS.to_string(),
@@ -922,7 +1024,7 @@ fn prepare_graph_input_from_declarative_agent(
 )> {
     use std::io::Write;
 
-    let air_with_sidecar = emit_air_from_agent(agent_dir, false)?;
+    let air_with_sidecar = emit_air_from_agent(agent_dir, &CompileServiceOptions::default())?;
     let (clean_air, ts_manifest) = split_typescript_tools_sidecar(&air_with_sidecar);
 
     let mut tmp = tempfile::Builder::new()
@@ -1402,6 +1504,72 @@ handler = "hooks.pre_turn"
     }
 
     #[test]
+    fn compile_service_options_json_requires_exactly_one_typed_object() {
+        let options = parse_compile_service_options_json(
+            r#"{
+                "system_prompt": "Stay concise.",
+                "backend": "corp-gateway",
+                "model": "gpt-4.1-mini",
+                "effort": "high",
+                "tools": true,
+                "skills": false,
+                "capability_discovery": true,
+                "authoring": false
+            }"#,
+        )
+        .expect("typed options json parses");
+
+        assert_eq!(
+            options,
+            CompileServiceOptions {
+                system_prompt: Some("Stay concise.".to_string()),
+                backend: Some("corp-gateway".to_string()),
+                model: Some("gpt-4.1-mini".to_string()),
+                effort: Some("high".to_string()),
+                tools: true,
+                skills: false,
+                capability_discovery: true,
+                authoring: false,
+            }
+        );
+
+        let err = parse_compile_service_options_json(
+            r#"{
+                "system_prompt": null,
+                "backend": null,
+                "model": null,
+                "effort": null,
+                "tools": false,
+                "skills": false,
+                "capability_discovery": false,
+                "authoring": false
+            } {}"#,
+        )
+        .expect_err("multiple JSON values must fail");
+        assert!(
+            err.to_string().contains("exactly one JSON object"),
+            "expected strict single-object error, got {err}"
+        );
+
+        let err = parse_compile_service_options_json(
+            r#"{
+                "backend": null,
+                "model": null,
+                "effort": null,
+                "tools": false,
+                "skills": false,
+                "capability_discovery": false,
+                "authoring": false
+            }"#,
+        )
+        .expect_err("nullable fields must still be present");
+        assert!(
+            format!("{err:#}").contains("missing field `system_prompt`"),
+            "expected required nullable field error, got {err:#}"
+        );
+    }
+
+    #[test]
     fn mlir_air_text_accepts_leading_mlir_comments() {
         let text = format!(
             "{} frontend comment\n\n{} {{\n}}\n",
@@ -1427,7 +1595,14 @@ handler = "hooks.pre_turn"
     #[test]
     fn declarative_host_loop_air_round_trips_through_mlir_parser() {
         let agent_dir = write_declarative_agent("host");
-        let air = emit_air_from_agent(agent_dir.path(), true).expect("declarative AIR");
+        let air = emit_air_from_agent(
+            agent_dir.path(),
+            &CompileServiceOptions {
+                tools: true,
+                ..CompileServiceOptions::default()
+            },
+        )
+        .expect("declarative AIR");
 
         assert!(air.contains("ais.register_hook \"pre_turn\""));
         assert!(air.contains("hook_handler_id"));
@@ -1444,7 +1619,8 @@ handler = "hooks.pre_turn"
     #[test]
     fn declarative_recv_loop_air_round_trips_through_mlir_parser() {
         let agent_dir = write_declarative_agent("recv");
-        let air = emit_air_from_agent(agent_dir.path(), false).expect("declarative AIR");
+        let air = emit_air_from_agent(agent_dir.path(), &CompileServiceOptions::default())
+            .expect("declarative AIR");
 
         assert!(air.contains("ais.autonomous"));
         assert!(air.contains("mode = \"recv\""));
@@ -1455,9 +1631,57 @@ handler = "hooks.pre_turn"
     }
 
     #[test]
+    fn declarative_air_applies_compile_service_llm_options() {
+        let agent_dir = write_declarative_agent("recv");
+        let air = emit_air_from_agent(
+            agent_dir.path(),
+            &CompileServiceOptions {
+                system_prompt: Some("Use terse answers.".to_string()),
+                backend: Some("corp-gateway".to_string()),
+                model: Some("gpt-4.1-mini".to_string()),
+                effort: Some("high".to_string()),
+                ..CompileServiceOptions::default()
+            },
+        )
+        .expect("declarative AIR");
+
+        assert!(
+            air.contains(r#"system_prompt = "Use terse answers.""#),
+            "{air}"
+        );
+        assert!(air.contains(r#"backend = "corp-gateway""#), "{air}");
+        assert!(air.contains(r#"model = "gpt-4.1-mini""#), "{air}");
+        assert!(air.contains(r#"effort = "high""#), "{air}");
+        assert_cli_air_round_trips(&air);
+    }
+
+    #[test]
+    fn declarative_air_applies_compile_service_tool_group_controls() {
+        let agent_dir = write_declarative_agent("host");
+        let air = emit_air_from_agent(
+            agent_dir.path(),
+            &CompileServiceOptions {
+                tools: true,
+                skills: true,
+                capability_discovery: true,
+                authoring: true,
+                ..CompileServiceOptions::default()
+            },
+        )
+        .expect("declarative AIR");
+
+        assert!(
+            air.contains(r#"capability_groups = ["authoring", "discovery", "skills", "web"]"#),
+            "{air}"
+        );
+        assert_cli_air_round_trips(&air);
+    }
+
+    #[test]
     fn declarative_air_sidecar_resolves_typescript_sources_for_server_worker() {
         let agent_dir = write_declarative_agent("recv");
-        let air = emit_air_from_agent(agent_dir.path(), false).expect("declarative AIR");
+        let air = emit_air_from_agent(agent_dir.path(), &CompileServiceOptions::default())
+            .expect("declarative AIR");
         let sidecar = typescript_tools_sidecar(&air);
         let source_file = sidecar[0]
             .get("source_file")
@@ -1504,7 +1728,8 @@ handler = "hooks.pre_turn"
         )
         .expect("tools manifest");
 
-        let air = emit_air_from_agent(&root, false).expect("declarative AIR");
+        let air =
+            emit_air_from_agent(&root, &CompileServiceOptions::default()).expect("declarative AIR");
         let sidecar = typescript_tools_sidecar(&air);
         let source_file = sidecar[0]
             .get("source_file")
@@ -1529,7 +1754,8 @@ read_only = true
         )
         .expect("capabilities toml");
 
-        let err = emit_air_from_agent(agent_dir.path(), false).expect_err("kind is required");
+        let err = emit_air_from_agent(agent_dir.path(), &CompileServiceOptions::default())
+            .expect_err("kind is required");
         let debug = format!("{err:?}");
         assert!(
             debug.contains("Failed to parse")
@@ -1554,7 +1780,8 @@ read_only = true
         )
         .expect("capabilities toml");
 
-        let err = emit_air_from_agent(agent_dir.path(), false).expect_err("kind is canonical");
+        let err = emit_air_from_agent(agent_dir.path(), &CompileServiceOptions::default())
+            .expect_err("kind is canonical");
         assert!(
             err.to_string().contains("unsupported kind 'custom'"),
             "expected unsupported kind error, got {err}"
@@ -1699,7 +1926,8 @@ handler = "hooks.pre_turn"
     fn declarative_compaction_policy_stamps_marked_ask_attrs() {
         let policy = r#"{"keep_recent":2,"compact_at_tokens":300,"strategy":"summarize","summary_key":"conversation.summary"}"#;
         let agent_dir = write_declarative_agent_with_compaction(Some(policy));
-        let air = emit_air_from_agent(agent_dir.path(), false).expect("declarative AIR");
+        let air = emit_air_from_agent(agent_dir.path(), &CompileServiceOptions::default())
+            .expect("declarative AIR");
 
         assert!(air.contains("compaction_at_tokens = 300"), "{air}");
         assert!(air.contains("compaction_keep_recent = 2"), "{air}");
@@ -1717,7 +1945,8 @@ handler = "hooks.pre_turn"
     #[test]
     fn declarative_compaction_policy_absent_is_the_opt_out_dial() {
         let agent_dir = write_declarative_agent_with_compaction(None);
-        let air = emit_air_from_agent(agent_dir.path(), false).expect("declarative AIR");
+        let air = emit_air_from_agent(agent_dir.path(), &CompileServiceOptions::default())
+            .expect("declarative AIR");
 
         assert!(!air.contains("compaction_at_tokens"), "{air}");
         assert!(!air.contains("compaction_keep_recent"), "{air}");
@@ -1727,7 +1956,7 @@ handler = "hooks.pre_turn"
     #[test]
     fn declarative_compaction_policy_malformed_json_is_a_hard_compile_error() {
         let agent_dir = write_declarative_agent_with_compaction(Some("not json"));
-        let err = emit_air_from_agent(agent_dir.path(), false)
+        let err = emit_air_from_agent(agent_dir.path(), &CompileServiceOptions::default())
             .expect_err("malformed compaction_policy must fail loud, not silently no-op");
         assert!(
             format!("{err}").contains("compaction_policy"),
@@ -1771,7 +2000,8 @@ handler = "hooks.author_compaction"
         )
         .expect("tools manifest");
 
-        let air = emit_air_from_agent(root, false).expect("declarative AIR");
+        let air =
+            emit_air_from_agent(root, &CompileServiceOptions::default()).expect("declarative AIR");
         assert!(
             air.contains("compaction_override_present = true"),
             "an author-declared post_turn hook must set the fail-closed override signal: {air}"

@@ -154,8 +154,8 @@ async fn run_cli(cli: Cli) -> Result<()> {
         ),
         Commands::CompileService {
             agent_dir,
-            web_tools,
-        } => compile_service_command(agent_dir, web_tools, cli.config),
+            options_stdin,
+        } => compile_service_command(agent_dir, options_stdin, cli.config),
         Commands::Decompile { artifact, output } => decompile_command(artifact, output),
         Commands::Execute {
             input,
