@@ -1,4 +1,6 @@
 id = "list_local_skills"
 description = "List Gao-owned local skills."
-kind = "typescript_handler"
+kind = "python_handler"
+handler_module = "capabilities.handlers.local_skills"
+handler_function = "list_local_skills"
 read_only = true
