@@ -44,9 +44,9 @@ use tokio::sync::OnceCell;
 pub struct PythonHandlerBridge {
     registry: PythonHandlerRegistry,
     worker: OnceCell<Arc<PythonHandlerWorker>>,
-    /// Optional OS sandbox backend. When set + available, the python tool/hook
-    /// worker is launched confined (bubblewrap): RO root, ephemeral /tmp, no
-    /// network. None = run the worker directly (trusted/local).
+    /// Optional OS sandbox backend. When set and available, the Python
+    /// tool/hook worker is launched with the backend's validated no-network
+    /// guarantees. None runs the worker directly for trusted local use.
     sandbox: Option<Arc<dyn crate::sandbox::SandboxBackend>>,
     /// When true, sandboxing is REQUIRED: if no OS-isolating backend is available
     /// the worker spawn fails closed instead of running unsandboxed (set on the

@@ -12,7 +12,9 @@ pub mod process;
 mod registry;
 mod types;
 
-pub use backend::{DefaultBackend, SandboxBackend, ValidationResult};
+pub use backend::{
+    DefaultBackend, SandboxBackend, ValidationResult, WrappedCommand, WrappedCommandGuard,
+};
 pub use error::SandboxError;
 pub use manifest::{NodeSandboxReq, SecurityManifest};
 pub use registry::{SandboxRegistry, SandboxSelection};

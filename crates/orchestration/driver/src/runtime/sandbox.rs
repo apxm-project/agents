@@ -1,9 +1,10 @@
 //! Sandbox registry configuration for the runtime.
 //!
 //! The sandbox interface lives in `apxm_runtime::sandbox`. The driver registers
-//! host-side implementations. On Linux we prefer a bubblewrap-backed backend
-//! that enforces read-only-by-default filesystem access and optional network
-//! isolation. The process backend remains as a portable degraded fallback.
+//! host-side implementations. Linux registers only backends that pass a real
+//! isolation probe: bubblewrap when user namespaces work, plus a no-network
+//! systemd user-service backend for script workers. The process backend remains
+//! a portable policy-only option and never satisfies OS-isolation requirements.
 
 #[cfg(target_os = "linux")]
 #[path = "sandbox_linux.rs"]
@@ -21,7 +22,7 @@ use apxm_runtime::sandbox::{policy::SandboxPolicy, process::ProcessSandbox};
 use async_trait::async_trait;
 
 #[cfg(target_os = "linux")]
-pub use sandbox_linux::BubblewrapSandboxBackend;
+pub use sandbox_linux::{BubblewrapSandboxBackend, SystemdSandboxBackend};
 
 const WARN_PROCESS_NO_OS_ISOLATION: &str =
     "process fallback provides policy-only isolation and cannot enforce OS-level sandboxing";
@@ -157,6 +158,10 @@ pub fn configure_sandbox_registry() -> Arc<SandboxRegistry> {
 
     #[cfg(target_os = "linux")]
     {
+        let systemd_backend = Arc::new(SystemdSandboxBackend::with_default_policy());
+        if systemd_backend.is_available() {
+            registry.register(systemd_backend);
+        }
         let bubblewrap_backend = Arc::new(BubblewrapSandboxBackend::with_default_policy());
         if bubblewrap_backend.is_available() {
             registry.register(bubblewrap_backend);

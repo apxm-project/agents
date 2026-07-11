@@ -90,6 +90,25 @@ fn pythonpath_with_source_frontend() -> Option<std::ffi::OsString> {
     std::env::join_paths(entries).ok()
 }
 
+fn worker_environment(extra_env: &[(&str, &str)]) -> Vec<(String, String)> {
+    let mut overrides = vec![(
+        PYTHONUNBUFFERED.to_string(),
+        apxm_core::constants::env::flag_values::ENABLED.to_string(),
+    )];
+    if let Some(pythonpath) = pythonpath_with_source_frontend() {
+        overrides.push((
+            apxm_core::constants::env::PYTHONPATH.to_string(),
+            pythonpath.to_string_lossy().into_owned(),
+        ));
+    }
+    for (key, value) in extra_env {
+        overrides.push(((*key).to_string(), (*value).to_string()));
+    }
+    crate::sandbox::constants::env::child_environment(
+        overrides.iter().map(|(key, value)| (key, value)),
+    )
+}
+
 /// Handle to the Python tool worker subprocess.
 ///
 /// Manages a single child process that serves tool invocations over NDJSON.
@@ -106,9 +125,10 @@ pub struct PythonHandlerWorker {
     _demuxer: tokio::task::JoinHandle<()>,
     /// Child process handle (held for Drop cleanup).
     _child: Arc<tokio::sync::Mutex<Child>>,
-    /// Manifest working dir — kept alive for the worker's lifetime so the
-    /// manifest path stays valid (and, under sandbox, stays bound as the
-    /// worker's writable cwd) even if the worker rereads it.
+    /// Rewritten command and backend-owned lifecycle state.
+    _sandbox_command: crate::sandbox::WrappedCommand,
+    /// Manifest working dir kept alive for the worker's lifetime so the path
+    /// remains valid even if the worker rereads it.
     _workdir: tempfile::TempDir,
     /// Monotonic request counter for generating unique req_ids.
     next_id: std::sync::atomic::AtomicU64,
@@ -129,20 +149,18 @@ impl PythonHandlerWorker {
     /// Used to inject things like `PYTHONPATH` (for non-installed user modules),
     /// `PYTHONUNBUFFERED=1`, or thread-pool caps (`OPENBLAS_NUM_THREADS=1`).
     ///
-    /// When `sandbox` is `Some` and the backend is available + isolates, the
-    /// worker is launched inside that OS sandbox (e.g. bubblewrap): read-only
-    /// root, ephemeral `/tmp`, network unshared, with the manifest working dir
-    /// bound writable as the worker's cwd. Author @tool/@hook handlers then run
-    /// confined. `None` (or an unavailable backend) runs the worker directly.
+    /// When `sandbox` is available, the worker is launched through its typed
+    /// command wrapper with network access disabled. Backend-specific filesystem
+    /// guarantees are reported separately and are not assumed here. `None` runs
+    /// the worker directly.
     pub async fn spawn_with_env(
         manifest_json: &str,
         extra_env: &[(&str, &str)],
         sandbox: Option<&Arc<dyn crate::sandbox::SandboxBackend>>,
         sandbox_required: bool,
     ) -> Result<Self, RuntimeError> {
-        // Write the manifest into a temp DIRECTORY (not a bare file): under a
-        // sandbox the dir is bound writable as the worker's cwd so the manifest
-        // is reachable through the otherwise read-only/ tmpfs filesystem view.
+        // Write the manifest into a temp directory so the worker can use that
+        // directory as its cwd and reread the manifest throughout its lifetime.
         let workdir = tempfile::Builder::new()
             .prefix(MANIFEST_TEMPFILE_PREFIX)
             .tempdir()
@@ -154,15 +172,16 @@ impl PythonHandlerWorker {
             .to_str()
             .ok_or_else(|| cap_err("manifest path is not valid UTF-8"))?;
 
-        // Base argv: `python -m apxm.tool_worker <manifest>`. Optionally wrapped
-        // by the sandbox backend (bwrap) which forwards stdio transparently.
+        // Base argv: `python -m apxm.tool_worker <manifest>`. An optional
+        // backend wrapper must preserve the stdio worker protocol.
         let py = resolve_python_bin().to_string();
         let base_args: Vec<String> = vec![
             PYTHON_MODULE_FLAG.to_string(),
             WORKER_MODULE.to_string(),
             manifest_path_str.to_string(),
         ];
-        let (program, args) = match sandbox.filter(|b| b.is_available()) {
+        let worker_env = worker_environment(extra_env);
+        let sandbox_command = match sandbox.filter(|b| b.is_available()) {
             Some(backend) => {
                 tracing::info!(
                     target: TRACE_TARGET,
@@ -171,7 +190,9 @@ impl PythonHandlerWorker {
                 );
                 // No network for handlers (they must use capabilities for I/O);
                 // workdir bound writable as cwd.
-                backend.wrap_command(&py, &base_args, workdir.path(), false)
+                backend
+                    .wrap_command(&py, &base_args, workdir.path(), false, &worker_env)
+                    .map_err(|error| cap_err(format!("Failed to wrap Python worker: {error}")))?
             }
             // Fail CLOSED: when sandboxing was required (the trusted server-python
             // path sets it) but no OS-isolating backend is available, refuse to
@@ -180,54 +201,25 @@ impl PythonHandlerWorker {
             None if sandbox_required => {
                 return Err(cap_err(
                     "python worker sandbox required (APXM_SANDBOX_SCRIPTS) but no \
-                     OS-isolating backend (e.g. bubblewrap) is available; refusing \
+                     OS-isolating backend is available; refusing \
                      to run author python unsandboxed",
                 ));
             }
-            None => (py, base_args),
+            None => crate::sandbox::WrappedCommand::direct(py, base_args),
         };
 
-        let mut cmd = Command::new(&program);
-        cmd.args(&args)
+        let mut cmd = Command::new(&sandbox_command.program);
+        cmd.args(&sandbox_command.args)
             .stdin(std::process::Stdio::piped())
             .stdout(std::process::Stdio::piped())
             .stderr(std::process::Stdio::piped())
-            .kill_on_drop(true);
-        // Security (constitution-aligned hardening): scrub secret-looking env
-        // vars so an author @tool/@hook handler cannot read the host's
-        // credentials (KEK, LLM gateway keys, auth bearer, AWS/DB creds). We use
-        // a denylist rather than env_clear so the worker keeps the vars python
-        // genuinely needs to run (PATH, venv/loader vars) across environments;
-        // handlers that need credentials must go through the capability/
-        // credential system, not raw env inheritance.
-        const SECRET_MARKERS: &[&str] = &[
-            "KEY",
-            "TOKEN",
-            "SECRET",
-            "PASSWORD",
-            "PASSWD",
-            "CREDENTIAL",
-            "BEARER",
-            "KEK",
-            "PRIVATE",
-        ];
-        for (key, _) in std::env::vars() {
-            let upper = key.to_ascii_uppercase();
-            if SECRET_MARKERS.iter().any(|m| upper.contains(m)) {
-                cmd.env_remove(&key);
-            }
-        }
-        cmd.env(
-            PYTHONUNBUFFERED,
-            apxm_core::constants::env::flag_values::ENABLED,
-        );
-        if let Some(pythonpath) = pythonpath_with_source_frontend() {
-            cmd.env(apxm_core::constants::env::PYTHONPATH, pythonpath);
-        }
-        // Explicit caller-supplied env is trusted (set by the runtime, not the
-        // handler) and is applied after the allowlist.
-        for (k, v) in extra_env {
-            cmd.env(k, v);
+            .kill_on_drop(true)
+            .env_clear();
+        let launcher_env = sandbox_command
+            .launcher_environment()
+            .unwrap_or(&worker_env);
+        for (key, value) in launcher_env {
+            cmd.env(key, value);
         }
         let mut child = cmd
             .spawn()
@@ -308,6 +300,7 @@ impl PythonHandlerWorker {
             pending,
             _demuxer: demuxer,
             _child: child,
+            _sandbox_command: sandbox_command,
             _workdir: workdir,
             next_id: std::sync::atomic::AtomicU64::new(1),
         })

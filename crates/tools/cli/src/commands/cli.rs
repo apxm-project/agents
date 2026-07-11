@@ -714,8 +714,8 @@ pub enum AcpAction {
         #[arg(long)]
         close_grace_ms: Option<u64>,
         /// Confine the agent (and any terminals it opens) under the host sandbox
-        /// backend. Requires a capable backend (bubblewrap); spawning fails
-        /// closed if none is available.
+        /// backend. Requires a functional network-capable OS sandbox; spawning
+        /// fails closed if none is available.
         #[arg(long)]
         sandbox: bool,
         /// Skip spawn test (register without verifying the agent is reachable)
