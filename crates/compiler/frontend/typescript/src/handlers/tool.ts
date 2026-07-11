@@ -4,12 +4,14 @@ import type { ToolFn } from "./types.js";
 export interface ToolOptions {
   name?: string;
   description?: string;
+  schema?: Record<string, unknown>;
 }
 
 export interface FunctionTool {
   readonly kind: "tool";
   name: string;
   description: string;
+  schema: Record<string, unknown>;
   handler_id: string;
   module: string;
   qualname: string;
@@ -34,6 +36,7 @@ function wrapTool(fn: ToolFn, options: ToolOptions = {}): FunctionTool {
     kind: "tool",
     name: options.name ?? qualname,
     description: options.description ?? "",
+    schema: options.schema ?? {},
     handler_id,
     module,
     qualname,
