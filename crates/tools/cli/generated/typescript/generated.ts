@@ -647,18 +647,18 @@ export const REGISTER_HOOK: OpSpec = {
   name: "RegisterHook",
   category: "coordination" as OpCategory,
   description: "Register an author lifecycle hook into the artifact hook registry",
-  longDescription: "Registers one author lifecycle hook (a Python handler bound to a lifecycle event) into the per-artifact hook registry. The binding travels inside the artifact (AIR-portable) and the handler is dispatched via the same Python tool bridge as @tool. The runtime applies pre/post_cap hooks at the tool dispatch sites, pre/post_ask as Ask middleware, and session_start as an awaited pre-step.",
+  longDescription: "Registers one typed author lifecycle hook into the per-artifact hook registry. The binding travels inside the AIR artifact and dispatches through the artifact's language-specific handler bridge. The runtime applies pre/post_cap hooks at the tool dispatch sites, pre/post_ask as Ask middleware, and session_start as an awaited pre-step.",
   latency: "low",
   fields: [
     { name: "hook_event", description: "Lifecycle event the hook binds to", required: true, refType: null },
     { name: "hook_match", description: "Glob over tool/op name the hook applies to (default *)", required: false, refType: null },
     { name: "hook_mode", description: "Hook mode: observe or gate", required: false, refType: null },
-    { name: "python_hook_handler_id", description: "Stable content-addressed id (sha256:<hex64>) for the Python hook handler", required: true, refType: null },
+    { name: "hook_handler_id", description: "Stable content-addressed id (sha256:<hex64>) for the artifact hook handler", required: true, refType: null },
   ],
   producesOutput: true,
   needsSubmission: true,
   minInputs: 0,
-  exampleJson: "{\\\"id\\\": 4, \\\"op\\\": \\\"REGISTER_HOOK\\\", \\\"attributes\\\": {\\\"hook_event\\\": \\\"pre_cap\\\", \\\"hook_match\\\": \\\"lookup\\\", \\\"hook_mode\\\": \\\"gate\\\", \\\"python_hook_handler_id\\\": \\\"sha256:...\\\"}}",
+  exampleJson: "{\\\"id\\\": 4, \\\"op\\\": \\\"REGISTER_HOOK\\\", \\\"attributes\\\": {\\\"hook_event\\\": \\\"pre_cap\\\", \\\"hook_match\\\": \\\"lookup\\\", \\\"hook_mode\\\": \\\"gate\\\", \\\"hook_handler_id\\\": \\\"sha256:...\\\"}}",
 } as const;
 
 export const AUTONOMOUS: OpSpec = {
@@ -844,7 +844,7 @@ export const ATTR = {
   HOOK_EVENT: "hook_event",
   HOOK_MATCH: "hook_match",
   HOOK_MODE: "hook_mode",
-  PYTHON_HOOK_HANDLER_ID: "python_hook_handler_id",
+  HOOK_HANDLER_ID: "hook_handler_id",
   MESSAGE: "message",
   RECIPIENT: "recipient",
   TARGET: "target",

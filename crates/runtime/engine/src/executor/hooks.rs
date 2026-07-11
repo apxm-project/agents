@@ -265,7 +265,7 @@ impl HookMode {
     }
 }
 
-/// One author hook binding: a Python handler bound to a lifecycle event.
+/// One typed artifact handler bound to a lifecycle event.
 #[derive(Debug, Clone)]
 pub struct HookBinding {
     /// Python handler id, dispatched via the shared `PythonHandlerBridge`.
