@@ -5,9 +5,21 @@ import {
   LifecycleEvent,
   type HookCall,
   type HookContext,
+  type HookDecision,
 } from "@apxm/frontend";
 
-import { prompt, renderStudioContextSupplement, SUMMARY_KEY } from "./context.js";
+import {
+  prompt,
+  renderStudioContextSupplement,
+  scrubSecrets,
+  SUMMARY_KEY,
+} from "./context.js";
+
+declare module "@apxm/frontend" {
+  interface HookContext {
+    defer(): HookDecision;
+  }
+}
 
 export const inject_context = hook({
   on: LifecycleEvent.PRE_TURN,
@@ -36,12 +48,16 @@ export const gate_compose_workflow = hook({
   on: LifecycleEvent.PRE_CAP,
   match: "compose_workflow",
   mode: HookMode.GATE,
-})((_ctx: HookContext, call: HookCall) => {
+})((ctx: HookContext, call: HookCall) => {
   const name = String(call.args.name ?? "").trim();
   if (!name) {
-    return _ctx.deny("workflow name is required");
+    return ctx.deny("compose_workflow requires a non-empty workflow name");
   }
-  return _ctx.allow();
+  const air = String(call.args.air ?? "").trim();
+  if (!air) {
+    return ctx.deny("compose_workflow requires non-empty AIR source");
+  }
+  return ctx.defer();
 });
 
 export const redact_tool_results = hook({
@@ -49,11 +65,7 @@ export const redact_tool_results = hook({
   match: "*",
   mode: HookMode.OBSERVE,
 })((ctx: HookContext, _call: HookCall, result: unknown) => {
-  let text = String(result ?? "");
-  for (const marker of ["api_key=", "token=", "secret="]) {
-    text = text.replaceAll(marker, `${marker}<redacted>`);
-  }
-  return ctx.replaceResult(text);
+  return ctx.replaceResult(scrubSecrets(result));
 });
 
 export const compact_conversation = hook({
