@@ -41,7 +41,8 @@ use apxm_core::{
 use serde::{Deserialize, Serialize};
 use std::{collections::HashMap, path::Path, sync::Arc};
 
-/// Outcome of [`Runtime::execute_artifact_with_session_emitter_and_metadata_or_park`]
+/// Outcome of
+/// [`Runtime::execute_artifact_with_session_emitter_metadata_and_cancellation_or_park`]
 /// ( narrow park observability): either the artifact ran to completion, or
 /// a node parked on the conversation-loop's session-recv key before that —
 /// whichever happened first.
@@ -919,8 +920,10 @@ impl Runtime {
     ///
     /// Intended caller: a host (e.g. `POST /v1/skills/{id}/execute`) that wants
     /// to know "this execution just started waiting for the next turn's
-    /// message" without blocking for the lifetime of the conversation session.
-    pub async fn execute_artifact_with_session_emitter_and_metadata_or_park(
+    /// message" without blocking for the lifetime of the conversation session,
+    /// while also retaining explicit ownership of cancellation.
+    #[allow(clippy::too_many_arguments)]
+    pub async fn execute_artifact_with_session_emitter_metadata_and_cancellation_or_park(
         &self,
         artifact: Artifact,
         args: Vec<String>,
@@ -928,6 +931,7 @@ impl Runtime {
         event_emitter: Option<Arc<dyn ExecutionEventEmitter>>,
         session_dir: Option<String>,
         extra_metadata: HashMap<String, String>,
+        cancellation_token: CancellationToken,
     ) -> Result<ExecutionOutcome, RuntimeError> {
         self.execute_artifact_inner_or_park(
             artifact,
@@ -936,6 +940,7 @@ impl Runtime {
             event_emitter,
             session_dir,
             extra_metadata,
+            cancellation_token,
         )
         .await
     }
@@ -1256,6 +1261,7 @@ impl Runtime {
         event_emitter: Option<Arc<dyn ExecutionEventEmitter>>,
         session_dir: Option<String>,
         extra_metadata: HashMap<String, String>,
+        cancellation_token: CancellationToken,
     ) -> Result<ExecutionOutcome, RuntimeError> {
         if !crate::script_admission::script_artifacts_trusted()
             && artifact_has_python_tools_section(&artifact)
@@ -1278,7 +1284,7 @@ impl Runtime {
             });
         }
 
-        let _lane_permit = if let Some(ref sid) = session_id {
+        let lane_permit = if let Some(ref sid) = session_id {
             Some(self.session_lane_guard.acquire(sid).await)
         } else {
             None
@@ -1316,7 +1322,8 @@ impl Runtime {
                 typescript_bridge,
             )
             .with_flow_registry(artifact_flow_registry)
-            .with_graph_id(graph_id_from_dag(&entry_dag));
+            .with_graph_id(graph_id_from_dag(&entry_dag))
+            .with_cancellation_token(cancellation_token);
         for (key, value) in extra_metadata {
             context.metadata.insert(key, value);
         }
@@ -1377,6 +1384,8 @@ impl Runtime {
                 // cross-execution admission slot) can chain onto the SAME
                 // real-completion event instead of guessing when it's safe.
                 let background = BackgroundExecution::new(tokio::spawn(async move {
+                    // Keep same-session admission serialized until this finalizer returns.
+                    let _lane_permit = lane_permit;
                     let graph_end =
                         GraphEndCompletionGuard::new(graph_emitter, execution_id, node_count);
                     let completion = match scheduler_background.await {
@@ -2132,7 +2141,8 @@ mod tests {
         );
     }
 
-    // --  narrow park observability: `execute_artifact_with_session_emitter_and_metadata_or_park` --
+    // --  narrow park observability:
+    // `execute_artifact_with_session_emitter_metadata_and_cancellation_or_park` --
 
     /// Regression-equivalent to the old (blocking) behavior: a normal
     /// completing artifact returns `Completed` via the new park-observable
@@ -2147,13 +2157,14 @@ mod tests {
         )]);
 
         let outcome = runtime
-            .execute_artifact_with_session_emitter_and_metadata_or_park(
+            .execute_artifact_with_session_emitter_metadata_and_cancellation_or_park(
                 art,
                 Vec::new(),
                 None,
                 None,
                 None,
                 HashMap::new(),
+                CancellationToken::new(),
             )
             .await
             .expect("execution should succeed");
@@ -2185,13 +2196,14 @@ mod tests {
 
         let outcome = tokio::time::timeout(
             std::time::Duration::from_secs(10),
-            runtime.execute_artifact_with_session_emitter_and_metadata_or_park(
+            runtime.execute_artifact_with_session_emitter_metadata_and_cancellation_or_park(
                 art,
                 Vec::new(),
                 Some(session_id.clone()),
                 None,
                 None,
                 HashMap::new(),
+                CancellationToken::new(),
             ),
         )
         .await
@@ -2218,13 +2230,14 @@ mod tests {
         let session_id = format!("background-failure-{}", uuid::Uuid::new_v4());
 
         let outcome = runtime
-            .execute_artifact_with_session_emitter_and_metadata_or_park(
+            .execute_artifact_with_session_emitter_metadata_and_cancellation_or_park(
                 rearming_conversation_artifact(None),
                 Vec::new(),
                 Some(session_id.clone()),
                 Some(emitter.clone()),
                 None,
                 HashMap::new(),
+                CancellationToken::new(),
             )
             .await
             .expect("execution should reach its session park");
@@ -2258,13 +2271,14 @@ mod tests {
         let session_id = format!("background-success-{}", uuid::Uuid::new_v4());
 
         let outcome = runtime
-            .execute_artifact_with_session_emitter_and_metadata_or_park(
+            .execute_artifact_with_session_emitter_metadata_and_cancellation_or_park(
                 rearming_conversation_artifact(Some(Node::new(1, AISOperationType::Nop))),
                 Vec::new(),
                 Some(session_id.clone()),
                 Some(emitter.clone()),
                 None,
                 HashMap::new(),
+                CancellationToken::new(),
             )
             .await
             .expect("execution should reach its session park");
@@ -2284,6 +2298,176 @@ mod tests {
             PersistedBackgroundExecutionOutcome::Success
         ));
         assert_eq!(emitter.successes(), vec![true]);
+    }
+
+    #[tokio::test]
+    async fn parked_background_cancellation_after_initial_park_is_typed() {
+        let runtime = Runtime::new(RuntimeConfig::in_memory()).await.unwrap();
+        let emitter = Arc::new(GraphEndCapturingEmitter::default());
+        let session_id = format!("background-cancel-{}", uuid::Uuid::new_v4());
+        let cancellation_token = CancellationToken::new();
+
+        let outcome = runtime
+            .execute_artifact_with_session_emitter_metadata_and_cancellation_or_park(
+                rearming_conversation_artifact(None),
+                Vec::new(),
+                Some(session_id),
+                Some(emitter.clone()),
+                None,
+                HashMap::new(),
+                cancellation_token.clone(),
+            )
+            .await
+            .expect("execution should reach its session park");
+
+        let background = match outcome {
+            ExecutionOutcome::Parked { background, .. } => background,
+            ExecutionOutcome::Completed(_) => panic!("expected the session execution to park"),
+        };
+
+        cancellation_token.cancel();
+
+        let terminal = tokio::time::timeout(std::time::Duration::from_secs(10), background.wait())
+            .await
+            .expect("background execution should terminate after cancellation");
+        assert!(matches!(terminal, BackgroundExecutionOutcome::Cancellation));
+        assert!(matches!(
+            terminal.persisted(),
+            PersistedBackgroundExecutionOutcome::Cancellation
+        ));
+        assert_eq!(emitter.successes(), vec![false]);
+    }
+
+    #[tokio::test]
+    async fn parked_execution_holds_same_session_lane_until_background_settles() {
+        let runtime = Runtime::new(RuntimeConfig::in_memory()).await.unwrap();
+        let session_id = format!("same-lane-{}", uuid::Uuid::new_v4());
+        let first_cancellation = CancellationToken::new();
+
+        let first = runtime
+            .execute_artifact_with_session_emitter_metadata_and_cancellation_or_park(
+                rearming_conversation_artifact(None),
+                Vec::new(),
+                Some(session_id.clone()),
+                None,
+                None,
+                HashMap::new(),
+                first_cancellation.clone(),
+            )
+            .await
+            .expect("first execution should reach its session park");
+        let first_background = match first {
+            ExecutionOutcome::Parked { background, .. } => background,
+            ExecutionOutcome::Completed(_) => panic!("expected first execution to park"),
+        };
+
+        let second_cancellation = CancellationToken::new();
+        let second = runtime
+            .execute_artifact_with_session_emitter_metadata_and_cancellation_or_park(
+                rearming_conversation_artifact(None),
+                Vec::new(),
+                Some(session_id),
+                None,
+                None,
+                HashMap::new(),
+                second_cancellation.clone(),
+            );
+        tokio::pin!(second);
+
+        assert!(
+            tokio::time::timeout(std::time::Duration::from_millis(200), &mut second)
+                .await
+                .is_err(),
+            "a second execution for the parked session must wait for the lane"
+        );
+
+        first_cancellation.cancel();
+        let first_terminal =
+            tokio::time::timeout(std::time::Duration::from_secs(10), first_background.wait())
+                .await
+                .expect("first background execution should settle after cancellation");
+        assert!(matches!(
+            first_terminal,
+            BackgroundExecutionOutcome::Cancellation
+        ));
+
+        let second = tokio::time::timeout(std::time::Duration::from_secs(10), &mut second)
+            .await
+            .expect("second execution should acquire the lane after terminal completion")
+            .expect("second execution should reach its session park");
+        let second_background = match second {
+            ExecutionOutcome::Parked { background, .. } => background,
+            ExecutionOutcome::Completed(_) => panic!("expected second execution to park"),
+        };
+
+        second_cancellation.cancel();
+        let second_terminal =
+            tokio::time::timeout(std::time::Duration::from_secs(10), second_background.wait())
+                .await
+                .expect("second background execution should settle after cancellation");
+        assert!(matches!(
+            second_terminal,
+            BackgroundExecutionOutcome::Cancellation
+        ));
+    }
+
+    #[tokio::test]
+    async fn parked_executions_for_different_sessions_remain_concurrent() {
+        let runtime = Runtime::new(RuntimeConfig::in_memory()).await.unwrap();
+        let first_session = format!("parallel-lane-a-{}", uuid::Uuid::new_v4());
+        let second_session = format!("parallel-lane-b-{}", uuid::Uuid::new_v4());
+        let first_cancellation = CancellationToken::new();
+        let second_cancellation = CancellationToken::new();
+
+        let first = runtime
+            .execute_artifact_with_session_emitter_metadata_and_cancellation_or_park(
+                rearming_conversation_artifact(None),
+                Vec::new(),
+                Some(first_session),
+                None,
+                None,
+                HashMap::new(),
+                first_cancellation.clone(),
+            )
+            .await
+            .expect("first execution should reach its session park");
+        let first_background = match first {
+            ExecutionOutcome::Parked { background, .. } => background,
+            ExecutionOutcome::Completed(_) => panic!("expected first execution to park"),
+        };
+
+        let second = tokio::time::timeout(
+            std::time::Duration::from_secs(10),
+            runtime.execute_artifact_with_session_emitter_metadata_and_cancellation_or_park(
+                rearming_conversation_artifact(None),
+                Vec::new(),
+                Some(second_session),
+                None,
+                None,
+                HashMap::new(),
+                second_cancellation.clone(),
+            ),
+        )
+        .await
+        .expect("a different session should not wait for the first session lane")
+        .expect("second execution should reach its session park");
+        let second_background = match second {
+            ExecutionOutcome::Parked { background, .. } => background,
+            ExecutionOutcome::Completed(_) => panic!("expected second execution to park"),
+        };
+
+        first_cancellation.cancel();
+        second_cancellation.cancel();
+        let (first_terminal, second_terminal) =
+            tokio::join!(first_background.wait(), second_background.wait(),);
+        assert!(matches!(
+            first_terminal,
+            BackgroundExecutionOutcome::Cancellation
+        ));
+        assert!(matches!(
+            second_terminal,
+            BackgroundExecutionOutcome::Cancellation
+        ));
     }
 
     /// An execution that parks for a DIFFERENT reason (RESUME on a checkpoint
@@ -2315,13 +2499,14 @@ mod tests {
         let (outcome, _) = tokio::join!(
             tokio::time::timeout(
                 std::time::Duration::from_secs(10),
-                runtime.execute_artifact_with_session_emitter_and_metadata_or_park(
+                runtime.execute_artifact_with_session_emitter_metadata_and_cancellation_or_park(
                     art,
                     Vec::new(),
                     Some("unrelated-session".to_string()),
                     None,
                     None,
                     HashMap::new(),
+                    CancellationToken::new(),
                 ),
             ),
             wake_after,
