@@ -5,7 +5,8 @@ use std::time::{Duration, Instant};
 
 use apxm_core::types::{ExecutionDag, ExecutionStats, Value};
 use apxm_core::{apxm_dag, apxm_sched};
-use tokio::task::JoinHandle;
+use futures::stream::{FuturesUnordered, StreamExt};
+use tokio::task::{JoinError, JoinHandle};
 
 use crate::executor::ExecutorEngine;
 use crate::executor::{ExecutionContext, ExecutionHookContext};
@@ -13,7 +14,7 @@ use crate::observability::{MetricsCollector, SchedulerMetrics};
 use crate::scheduler::config::SchedulerConfig;
 use crate::scheduler::state::SchedulerState;
 use crate::scheduler::worker;
-use crate::{BackgroundExecutionOutcome, BackgroundExecutionTask};
+use crate::{BackgroundExecutionOutcome, BackgroundExecutionTask, BackgroundJoinFailure};
 use apxm_core::error::RuntimeError;
 
 type RuntimeResult<T> = Result<T, RuntimeError>;
@@ -195,30 +196,37 @@ impl DataflowScheduler {
         spawn_watchdog(Arc::clone(&state));
 
         // Spawn worker threads
-        let worker_handles = spawn_workers(state.clone(), workers, executor, ctx);
+        let mut worker_tasks = spawn_workers(state.clone(), workers, executor, ctx);
 
         apxm_sched!(
             debug,
-            workers_spawned = worker_handles.len(),
+            workers_spawned = worker_tasks.len(),
             "All workers spawned, waiting for completion"
         );
 
         // Wait for completion, failure, or host-owned cancellation (skip if already complete).
+        let mut worker_join_failure = None;
         if state.remaining.load(std::sync::atomic::Ordering::SeqCst) != 0 && !state.is_cancelled() {
             let cancellation_token = state.cancellation_token.clone();
-            tokio::select! {
-                _ = done => {}
-                _ = cancellation_token.cancelled() => {
-                    state.set_first_error(RuntimeError::SchedulerCancelled);
-                    state.mark_done();
+            loop {
+                tokio::select! {
+                    _ = &mut done => break,
+                    _ = cancellation_token.cancelled() => {
+                        state.set_first_error(RuntimeError::SchedulerCancelled);
+                        state.mark_done();
+                        break;
+                    }
+                    result = worker_tasks.next(), if !worker_tasks.is_empty() => {
+                        if let Some(Err(error)) = result {
+                            worker_join_failure = Some(record_worker_join_failure(&state, error));
+                            break;
+                        }
+                    }
                 }
             }
         }
 
-        // Clean shutdown: wait for all workers to finish
-        for handle in worker_handles {
-            let _ = handle.await;
-        }
+        join_remaining_workers(&state, &mut worker_tasks, &mut worker_join_failure).await;
 
         apxm_sched!(debug, "All workers terminated");
 
@@ -352,55 +360,61 @@ impl DataflowScheduler {
         let mut session_parked_rx = state.subscribe_session_parked();
 
         spawn_watchdog(Arc::clone(&state));
-        let worker_handles = spawn_workers(state.clone(), workers, executor, ctx);
+        let mut worker_tasks = spawn_workers(state.clone(), workers, executor, ctx);
 
         apxm_sched!(
             debug,
-            workers_spawned = worker_handles.len(),
+            workers_spawned = worker_tasks.len(),
             "All workers spawned, racing completion vs session-recv park"
         );
 
         let already_done =
             state.remaining.load(std::sync::atomic::Ordering::SeqCst) == 0 || state.is_cancelled();
 
+        let mut worker_join_failure = None;
+        let mut observe_session_park = true;
         if !already_done {
             let cancellation_token = state.cancellation_token.clone();
-            tokio::select! {
-                _ = &mut done => {}
-                _ = cancellation_token.cancelled() => {
-                    state.set_first_error(RuntimeError::SchedulerCancelled);
-                    state.mark_done();
-                }
-                changed = session_parked_rx.changed() => {
-                    if changed.is_ok()
-                        && let Some(session_id) = session_parked_rx.borrow_and_update().clone()
-                    {
-                        apxm_sched!(
-                            info,
-                            %session_id,
-                            "Execution parked on session-recv; returning Parked without waiting for full completion"
-                        );
-                        let background = tokio::spawn(finalize_parked_background(
-                            Arc::clone(&state),
-                            hooks,
-                            worker_handles,
-                        ));
-                        return Ok(SchedulerOutcome::Parked {
-                            session_id,
-                            background,
-                        });
+            loop {
+                tokio::select! {
+                    _ = &mut done => break,
+                    _ = cancellation_token.cancelled() => {
+                        state.set_first_error(RuntimeError::SchedulerCancelled);
+                        state.mark_done();
+                        break;
                     }
-                    // Sender closed or a spurious/None wakeup (should not
-                    // happen — the sender only ever sends `Some`): fall back
-                    // to waiting for the real completion signal.
-                    done.await;
+                    result = worker_tasks.next(), if !worker_tasks.is_empty() => {
+                        if let Some(Err(error)) = result {
+                            worker_join_failure = Some(record_worker_join_failure(&state, error));
+                            break;
+                        }
+                    }
+                    changed = session_parked_rx.changed(), if observe_session_park => {
+                        if changed.is_ok()
+                            && let Some(session_id) = session_parked_rx.borrow_and_update().clone()
+                        {
+                            apxm_sched!(
+                                info,
+                                %session_id,
+                                "Execution parked on session-recv; returning Parked without waiting for full completion"
+                            );
+                            let background = tokio::spawn(finalize_parked_background(
+                                Arc::clone(&state),
+                                hooks,
+                                worker_tasks,
+                            ));
+                            return Ok(SchedulerOutcome::Parked {
+                                session_id,
+                                background,
+                            });
+                        }
+                        observe_session_park = false;
+                    }
                 }
             }
         }
 
-        for handle in worker_handles {
-            let _ = handle.await;
-        }
+        join_remaining_workers(&state, &mut worker_tasks, &mut worker_join_failure).await;
 
         apxm_sched!(debug, "All workers terminated");
 
@@ -522,24 +536,44 @@ impl DataflowScheduler {
 async fn finalize_parked_background(
     state: Arc<SchedulerState>,
     hooks: ExecutionHookContext,
-    worker_handles: Vec<JoinHandle<()>>,
+    mut worker_tasks: FuturesUnordered<JoinHandle<()>>,
 ) -> BackgroundExecutionOutcome {
     let mut join_failure = None;
-    for handle in worker_handles {
-        if let Err(error) = handle.await {
-            join_failure.get_or_insert_with(|| {
-                BackgroundExecutionOutcome::join_failure(
-                    BackgroundExecutionTask::SchedulerWorker,
-                    error,
-                )
-            });
+    let mut done = std::pin::pin!(state.notify_done.notified());
+    done.as_mut().enable();
+
+    let remaining = state.remaining.load(std::sync::atomic::Ordering::SeqCst);
+    if remaining != 0 && state.is_cancelled() {
+        state.set_first_error(RuntimeError::SchedulerCancelled);
+        state.mark_done();
+    } else if remaining != 0 {
+        let cancellation_token = state.cancellation_token.clone();
+        loop {
+            tokio::select! {
+                _ = &mut done => break,
+                _ = cancellation_token.cancelled() => {
+                    if state.remaining.load(std::sync::atomic::Ordering::SeqCst) != 0 {
+                        state.set_first_error(RuntimeError::SchedulerCancelled);
+                        state.mark_done();
+                    }
+                    break;
+                }
+                result = worker_tasks.next(), if !worker_tasks.is_empty() => {
+                    if let Some(Err(error)) = result {
+                        join_failure = Some(record_worker_join_failure(&state, error));
+                        break;
+                    }
+                }
+            }
         }
     }
 
+    join_remaining_workers(&state, &mut worker_tasks, &mut join_failure).await;
+
     let error = state.first_error.lock().take();
     let stats = state.build_stats();
-    let outcome = if let Some(join_failure) = join_failure {
-        join_failure
+    let outcome = if let Some(failure) = join_failure {
+        BackgroundExecutionOutcome::JoinFailure { failure }
     } else if let Some(error) = error {
         BackgroundExecutionOutcome::from_runtime_error(error)
     } else if stats.failed_nodes > 0 {
@@ -586,6 +620,34 @@ async fn finalize_parked_background(
     }
 
     outcome
+}
+
+/// Record a worker task join failure as both scheduler state and structured
+/// background diagnostics.
+fn record_worker_join_failure(state: &SchedulerState, error: JoinError) -> BackgroundJoinFailure {
+    let failure =
+        BackgroundJoinFailure::from_join_error(BackgroundExecutionTask::SchedulerWorker, error);
+    state.set_first_error(RuntimeError::Scheduler {
+        message: format!("scheduler worker task failed to join: {}", failure.message),
+    });
+    state.mark_done();
+    failure
+}
+
+/// Join every still-running worker after scheduler completion or failure.
+async fn join_remaining_workers(
+    state: &SchedulerState,
+    worker_tasks: &mut FuturesUnordered<JoinHandle<()>>,
+    join_failure: &mut Option<BackgroundJoinFailure>,
+) {
+    while let Some(result) = worker_tasks.next().await {
+        if let Err(error) = result {
+            let failure = record_worker_join_failure(state, error);
+            if join_failure.is_none() {
+                *join_failure = Some(failure);
+            }
+        }
+    }
 }
 
 /// Spawn watchdog for deadlock detection.
@@ -660,24 +722,22 @@ fn spawn_workers(
     workers: Vec<crossbeam_deque::Worker<apxm_core::types::NodeId>>,
     executor: Arc<ExecutorEngine>,
     base_ctx: ExecutionContext,
-) -> Vec<JoinHandle<()>> {
-    workers
-        .into_iter()
-        .enumerate()
-        .map(|(worker_id, local_worker)| {
-            let state = Arc::clone(&state);
-            let executor = Arc::clone(&executor);
-            let base_ctx = base_ctx.clone();
+) -> FuturesUnordered<JoinHandle<()>> {
+    let worker_tasks = FuturesUnordered::new();
+    for (worker_id, local_worker) in workers.into_iter().enumerate() {
+        let state = Arc::clone(&state);
+        let executor = Arc::clone(&executor);
+        let base_ctx = base_ctx.clone();
 
-            apxm_sched!(debug, worker = worker_id, "Spawning worker");
+        apxm_sched!(debug, worker = worker_id, "Spawning worker");
 
-            tokio::spawn(async move {
-                apxm_sched!(debug, worker = worker_id, "Worker started");
-                worker::worker_loop(worker_id, local_worker, state, executor, base_ctx).await;
-                apxm_sched!(debug, worker = worker_id, "Worker stopped");
-            })
-        })
-        .collect()
+        worker_tasks.push(tokio::spawn(async move {
+            apxm_sched!(debug, worker = worker_id, "Worker started");
+            worker::worker_loop(worker_id, local_worker, state, executor, base_ctx).await;
+            apxm_sched!(debug, worker = worker_id, "Worker stopped");
+        }));
+    }
+    worker_tasks
 }
 
 /// the runtime loop correction exactly-N-iterations conformance: real end-to-end proof that the ONE
@@ -694,6 +754,7 @@ mod loop_conformance_tests {
     use super::*;
     use crate::aam::Aam;
     use crate::capability::CapabilitySystem;
+    use crate::executor::{ExecutionHook, NodeStartedEvent};
     use crate::memory::{MemoryConfig, MemorySystem};
     use crate::scheduler::splicing::SpliceConfig;
     use apxm_backends::LLMRegistry;
@@ -702,7 +763,7 @@ mod loop_conformance_tests {
     use apxm_core::types::operations::AISOperationType;
     use apxm_core::types::values::Number;
     use apxm_core::types::{ExecutionDag, Node, Value};
-    use std::collections::HashMap;
+    use std::collections::{HashMap, HashSet};
     use std::time::Duration;
     use tokio::time::timeout;
 
@@ -758,7 +819,7 @@ mod loop_conformance_tests {
     /// the driver alone decides whether another iteration happens.
     async fn spawn_seeded_execution(
         ctx: ExecutionContext,
-    ) -> (Arc<SchedulerState>, Vec<tokio::task::JoinHandle<()>>) {
+    ) -> (Arc<SchedulerState>, FuturesUnordered<JoinHandle<()>>) {
         let metrics = Arc::new(MetricsCollector::new());
         let (state, workers) = SchedulerState::new(
             seed_dag(),
@@ -843,11 +904,139 @@ mod loop_conformance_tests {
 
     /// Let the still-running worker pool wind down and join it, bounded so a
     /// bug can't hang the test suite.
-    async fn finish(state: &Arc<SchedulerState>, handles: Vec<tokio::task::JoinHandle<()>>) {
+    async fn finish(
+        state: &Arc<SchedulerState>,
+        mut worker_tasks: FuturesUnordered<JoinHandle<()>>,
+    ) {
         state.mark_done();
-        for h in handles {
-            let _ = timeout(Duration::from_secs(5), h).await;
+        timeout(Duration::from_secs(5), async {
+            while worker_tasks.next().await.is_some() {}
+        })
+        .await
+        .expect("worker tasks terminate");
+    }
+
+    struct PanickingNodeStartedHook;
+
+    impl ExecutionHook for PanickingNodeStartedHook {
+        fn name(&self) -> &str {
+            "panicking-node-started"
         }
+
+        fn on_node_started(&self, _event: &NodeStartedEvent) {
+            panic!("deterministic on_node_started panic");
+        }
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn panicking_node_started_hook_returns_typed_scheduler_failure() {
+        let (ctx, _) = test_context().await;
+        let scheduler = DataflowScheduler::new(test_scheduler_config());
+        let executor = Arc::new(ExecutorEngine::new(ctx.clone()));
+        let hooks = ExecutionHookContext::new(
+            "panicking-hook-execution",
+            "panicking-hook-graph",
+            vec![Arc::new(PanickingNodeStartedHook)],
+        );
+
+        let result = timeout(
+            Duration::from_secs(2),
+            scheduler.execute_with_hooks(seed_dag(), executor, ctx, vec![], hooks),
+        )
+        .await
+        .expect("scheduler must observe the worker panic instead of hanging")
+        .expect_err("panicking execution hook must fail the scheduler");
+
+        assert!(matches!(
+            result,
+            RuntimeError::Scheduler { message }
+                if message.contains("scheduler worker task failed to join")
+        ));
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn concurrent_splices_reserve_unique_ids_and_execute_once() {
+        let (ctx, aam) = test_context().await;
+        let (state, handles) = spawn_seeded_execution(ctx).await;
+        let barrier = Arc::new(std::sync::Barrier::new(2));
+
+        let spawn_splice = |key: &'static str, value: i64| {
+            let state = Arc::clone(&state);
+            let barrier = Arc::clone(&barrier);
+            std::thread::spawn(move || {
+                crate::scheduler::splicing::with_splice_reservation_barrier(barrier, || {
+                    let mut node = counter_body_node(key, value);
+                    node.output_tokens = vec![10];
+                    let mut inner = ExecutionDag::new();
+                    inner.add_node(node).unwrap();
+                    state
+                        .splice_dag(SpliceConfig {
+                            inner_dag: inner,
+                            token_connections: HashMap::new(),
+                            node_id_offset: None,
+                            token_id_offset: None,
+                        })
+                        .expect("concurrent splice succeeds")
+                })
+            })
+        };
+
+        let first = spawn_splice("concurrent_splice_first", 1);
+        let second = spawn_splice("concurrent_splice_second", 2);
+        let first_remap = first.join().expect("first splice thread joins");
+        let second_remap = second.join().expect("second splice thread joins");
+        let first_token = first_remap[&10];
+        let second_token = second_remap[&10];
+
+        assert_ne!(
+            first_token, second_token,
+            "concurrent splices must retain distinct remapped tokens"
+        );
+        assert!(state.tokens.contains_key(&first_token));
+        assert!(state.tokens.contains_key(&second_token));
+
+        timeout(Duration::from_secs(5), async {
+            loop {
+                let first_ran = aam.get_belief("concurrent_splice_first")
+                    == Some(Value::Number(Number::Integer(1)));
+                let second_ran = aam.get_belief("concurrent_splice_second")
+                    == Some(Value::Number(Number::Integer(2)));
+                if first_ran && second_ran {
+                    return;
+                }
+                tokio::time::sleep(Duration::from_millis(2)).await;
+            }
+        })
+        .await
+        .expect("both concurrently spliced nodes execute");
+
+        let spliced_node_ids: HashSet<_> = state
+            .nodes
+            .iter()
+            .filter_map(|entry| {
+                entry
+                    .value()
+                    .attributes
+                    .get(graph_attrs::KEY)
+                    .and_then(Value::as_string)
+                    .filter(|key| key.starts_with("concurrent_splice_"))
+                    .map(|_| *entry.key())
+            })
+            .collect();
+        assert_eq!(
+            spliced_node_ids.len(),
+            2,
+            "both concurrent splice bodies must remain in scheduler state"
+        );
+
+        tokio::time::sleep(Duration::from_millis(20)).await;
+        assert_eq!(
+            state.build_stats().executed_nodes,
+            3,
+            "the seed and each distinct spliced node execute exactly once"
+        );
+
+        finish(&state, handles).await;
     }
 
     #[tokio::test]
@@ -886,12 +1075,15 @@ mod loop_conformance_tests {
     #[tokio::test]
     async fn parked_background_distinguishes_worker_join_failure() {
         let (ctx, _) = test_context().await;
-        let (state, mut handles) = spawn_seeded_execution(ctx).await;
-        state.mark_done();
-        handles.push(tokio::spawn(async { panic!("worker panic") }));
+        let (state, worker_tasks) = spawn_seeded_execution(ctx).await;
+        worker_tasks.push(tokio::spawn(async { panic!("worker panic") }));
 
-        let result =
-            finalize_parked_background(state, ExecutionHookContext::default(), handles).await;
+        let result = timeout(
+            Duration::from_secs(2),
+            finalize_parked_background(state, ExecutionHookContext::default(), worker_tasks),
+        )
+        .await
+        .expect("background finalizer must observe the worker panic");
 
         assert!(matches!(
             result,
