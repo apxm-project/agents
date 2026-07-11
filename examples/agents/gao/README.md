@@ -62,7 +62,9 @@ Gao execution is observable through `apxm.event.v1`:
   finish reason, detailed token usage, timing, and tool-call count. It is
   non-terminal.
 - `llm_done` emits the final model response for a turn with content, model,
-  finish reason, usage, and any model-requested tool calls.
+  finish reason, usage, and any model-requested tool calls. It is atomic but
+  non-terminal for the re-armed session, so observers continue through the
+  response boundary and later turns.
 - Tool activity is visible as the model's `tool_call`, runtime
   `tool_start`/`tool_end`, and agent-scoped `tool_call_begin`/`tool_call_end`
   events. Agent-scoped events expose argument/result keys, status, and latency
