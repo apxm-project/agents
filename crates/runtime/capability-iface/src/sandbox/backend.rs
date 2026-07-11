@@ -22,6 +22,49 @@ pub enum ValidationResult {
     Unsupported { reason: String },
 }
 
+/// Opaque backend-owned state that remains alive for a wrapped child process.
+/// Dropping the guard must release any external process or service resources.
+pub trait WrappedCommandGuard: Send + Sync {}
+
+impl<T: Send + Sync> WrappedCommandGuard for T {}
+
+/// A command rewritten for backend-managed isolation.
+pub struct WrappedCommand {
+    pub program: String,
+    pub args: Vec<String>,
+    launcher_env: Option<Vec<(String, String)>>,
+    _guard: Option<Box<dyn WrappedCommandGuard>>,
+}
+
+impl WrappedCommand {
+    pub fn direct(program: impl Into<String>, args: Vec<String>) -> Self {
+        Self {
+            program: program.into(),
+            args,
+            launcher_env: None,
+            _guard: None,
+        }
+    }
+
+    pub fn guarded_with_launcher_environment(
+        program: impl Into<String>,
+        args: Vec<String>,
+        launcher_env: Vec<(String, String)>,
+        guard: impl WrappedCommandGuard + 'static,
+    ) -> Self {
+        Self {
+            program: program.into(),
+            args,
+            launcher_env: Some(launcher_env),
+            _guard: Some(Box::new(guard)),
+        }
+    }
+
+    pub fn launcher_environment(&self) -> Option<&[(String, String)]> {
+        self.launcher_env.as_deref()
+    }
+}
+
 /// The core sandbox abstraction.
 ///
 /// Host applications (Codex, Gemini CLI, Docker orchestrators, Wasm runtimes,
@@ -110,18 +153,21 @@ pub trait SandboxBackend: Send + Sync {
     /// Isolation wrappers (e.g. `bwrap`) forward stdin/stdout/stderr to the
     /// inner child transparently, so the caller's pipe handling is unaffected.
     ///
-    /// `cwd` is bound writable, `needs_network` keeps the network namespace
-    /// when true. The default implementation applies no isolation and returns
-    /// the command unchanged — appropriate for backends (process-policy,
-    /// remote) that cannot confine a caller-owned spawn.
+    /// `cwd` is the requested working directory, `needs_network` declares the
+    /// network requirement, and `env` is the complete sanitized environment for
+    /// the inner process. Each backend validates what it can enforce. The default
+    /// implementation applies no isolation and returns the command unchanged;
+    /// isolating backends must return an error rather than silently weakening an
+    /// unsupported request.
     fn wrap_command(
         &self,
         program: &str,
         args: &[String],
         _cwd: &Path,
         _needs_network: bool,
-    ) -> (String, Vec<String>) {
-        (program.to_string(), args.to_vec())
+        _env: &[(String, String)],
+    ) -> Result<WrappedCommand, SandboxError> {
+        Ok(WrappedCommand::direct(program, args.to_vec()))
     }
 }
 

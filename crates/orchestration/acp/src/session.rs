@@ -39,6 +39,7 @@ pub struct AcpSession {
     profile_name: String,
     transport: Option<StdioTransport>,
     child: Child,
+    _sandbox_command: apxm_runtime::sandbox::WrappedCommand,
     close_grace_ms: u64,
     turn_count: u32,
     closed: bool,
@@ -66,17 +67,33 @@ impl AcpSession {
 
         // Confine the long-running agent when the driver supplied a capable
         // backend. Coding agents reach the model gateway, so network stays on.
-        let (program, args) = match &sandbox {
-            Some(backend) => backend.wrap_command(program, args, cwd, true),
-            None => (program.clone(), args.to_vec()),
+        let sandbox_command = match &sandbox {
+            Some(backend) => {
+                let env = apxm_runtime::sandbox::constants::env::child_environment(
+                    profile.env.iter().map(|(key, value)| (key, value)),
+                );
+                backend
+                    .wrap_command(program, args, cwd, true, &env)
+                    .map_err(|error| AcpError::Spawn {
+                        agent: profile_name.to_string(),
+                        reason: error.to_string(),
+                    })?
+            }
+            None => apxm_runtime::sandbox::WrappedCommand::direct(program, args.to_vec()),
         };
 
-        let mut cmd = Command::new(&program);
-        cmd.args(&args)
+        let mut cmd = Command::new(&sandbox_command.program);
+        cmd.args(&sandbox_command.args)
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
             .current_dir(cwd);
+        if let Some(launcher_env) = sandbox_command.launcher_environment() {
+            cmd.env_clear();
+            for (key, value) in launcher_env {
+                cmd.env(key, value);
+            }
+        }
         for (k, v) in &profile.env {
             cmd.env(k, v);
         }
@@ -176,6 +193,7 @@ impl AcpSession {
             profile_name: profile_name.to_string(),
             transport: Some(transport),
             child,
+            _sandbox_command: sandbox_command,
             close_grace_ms: profile.close_grace_ms,
             turn_count: 0,
             closed: false,

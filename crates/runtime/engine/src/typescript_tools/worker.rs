@@ -73,11 +73,16 @@ fn resolve_node_bin() -> &'static str {
     NODE_BIN
 }
 
+fn worker_environment(extra_env: &[(&str, &str)]) -> Vec<(String, String)> {
+    crate::sandbox::constants::env::child_environment(extra_env.iter().copied())
+}
+
 pub struct TypeScriptHandlerWorker {
     stdin_tx: tokio::sync::Mutex<tokio::process::ChildStdin>,
     pending: Arc<RwLock<HashMap<String, mpsc::UnboundedSender<WorkerResponse>>>>,
     _demuxer: tokio::task::JoinHandle<()>,
     _child: Arc<tokio::sync::Mutex<Child>>,
+    _sandbox_command: crate::sandbox::WrappedCommand,
     _workdir: tempfile::TempDir,
     next_id: std::sync::atomic::AtomicU64,
 }
@@ -115,49 +120,40 @@ impl TypeScriptHandlerWorker {
             worker_script.to_string_lossy().into_owned(),
             manifest_path_str.to_string(),
         ];
-        let (program, args) = match sandbox.filter(|b| b.is_available()) {
+        let worker_env = worker_environment(extra_env);
+        let sandbox_command = match sandbox.filter(|b| b.is_available()) {
             Some(backend) => {
                 tracing::info!(
                     target: TRACE_TARGET,
                     backend = %backend.capabilities().name,
                     "Sandboxing typescript tool worker"
                 );
-                backend.wrap_command(&node, &base_args, workdir.path(), false)
+                backend
+                    .wrap_command(&node, &base_args, workdir.path(), false, &worker_env)
+                    .map_err(|error| {
+                        cap_err(format!("Failed to wrap TypeScript worker: {error}"))
+                    })?
             }
             None if sandbox_required => {
                 return Err(cap_err(
                     "typescript worker sandbox required but no OS-isolating backend is available",
                 ));
             }
-            None => (node, base_args),
+            None => crate::sandbox::WrappedCommand::direct(node, base_args),
         };
 
-        let mut cmd = Command::new(&program);
-        cmd.args(&args)
+        let mut cmd = Command::new(&sandbox_command.program);
+        cmd.args(&sandbox_command.args)
             .stdin(std::process::Stdio::piped())
             .stdout(std::process::Stdio::piped())
             .stderr(std::process::Stdio::piped())
-            .kill_on_drop(true);
-
-        const SECRET_MARKERS: &[&str] = &[
-            "KEY",
-            "TOKEN",
-            "SECRET",
-            "PASSWORD",
-            "PASSWD",
-            "CREDENTIAL",
-            "BEARER",
-            "KEK",
-            "PRIVATE",
-        ];
-        for (key, _) in std::env::vars() {
-            let upper = key.to_ascii_uppercase();
-            if SECRET_MARKERS.iter().any(|m| upper.contains(m)) {
-                cmd.env_remove(&key);
-            }
-        }
-        for (k, v) in extra_env {
-            cmd.env(k, v);
+            .kill_on_drop(true)
+            .env_clear();
+        let launcher_env = sandbox_command
+            .launcher_environment()
+            .unwrap_or(&worker_env);
+        for (key, value) in launcher_env {
+            cmd.env(key, value);
         }
 
         let mut child = cmd
@@ -233,6 +229,7 @@ impl TypeScriptHandlerWorker {
             pending,
             _demuxer: demuxer,
             _child: child,
+            _sandbox_command: sandbox_command,
             _workdir: workdir,
             next_id: std::sync::atomic::AtomicU64::new(1),
         })
