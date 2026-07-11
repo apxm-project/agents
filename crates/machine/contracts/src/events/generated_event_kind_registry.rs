@@ -87,8 +87,8 @@ pub const SCHEMA_EVENT_KIND_REGISTRY: &[SchemaEventKindEntry] = &[
     SchemaEventKindEntry {
         name: "cancelled",
         category: SchemaEventCategory::Error,
-        terminal: true,
-        terminal_sense: SchemaTerminalSense::RunEnd,
+        terminal: false,
+        terminal_sense: SchemaTerminalSense::NA,
     },
     SchemaEventKindEntry {
         name: "checkpoint_restored",
