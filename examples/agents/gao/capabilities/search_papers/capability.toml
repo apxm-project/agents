@@ -1,0 +1,6 @@
+id = "search_papers"
+description = "Search the local APXM paper corpus through the configured provider policy."
+kind = "python_handler"
+read_only = true
+handler_module = "capabilities.handlers.paper_search"
+handler_function = "search_papers"
