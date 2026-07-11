@@ -10,6 +10,7 @@ use crate::typescript_tools::{TypeScriptHandlerBridge, TypeScriptHandlerRegistry
 use crate::{
     aam::Aam,
     agent_pool::AgentPool,
+    background::{BackgroundExecution, BackgroundExecutionOutcome, BackgroundExecutionTask},
     capability::{CapabilitySystem, flow_registry::FlowRegistry},
     context_stack::ContextStack,
     dispatch::v1::{
@@ -65,8 +66,50 @@ pub enum ExecutionOutcome {
         /// loop parks and un-parks repeatedly across turns) MUST chain onto
         /// this handle rather than finalizing immediately on `Parked` — the
         /// execution is NOT done just because it parked once.
-        background: tokio::task::JoinHandle<crate::RuntimeResult<()>>,
+        background: BackgroundExecution,
     },
+}
+
+/// Emits a failed graph end if runtime-owned background cleanup unwinds.
+struct GraphEndCompletionGuard {
+    emitter: Option<Arc<dyn ExecutionEventEmitter>>,
+    execution_id: String,
+    node_count: usize,
+    emitted: bool,
+}
+
+impl GraphEndCompletionGuard {
+    /// Arm graph completion before any background join or cleanup can fail.
+    fn new(
+        emitter: Option<Arc<dyn ExecutionEventEmitter>>,
+        execution_id: String,
+        node_count: usize,
+    ) -> Self {
+        Self {
+            emitter,
+            execution_id,
+            node_count,
+            emitted: false,
+        }
+    }
+
+    /// Emit the terminal graph result exactly once.
+    fn emit(mut self, success: bool) {
+        self.emitted = true;
+        if let Some(emitter) = &self.emitter {
+            emitter.emit_graph_end(&self.execution_id, self.node_count, success);
+        }
+    }
+}
+
+impl Drop for GraphEndCompletionGuard {
+    fn drop(&mut self) {
+        if !self.emitted
+            && let Some(emitter) = &self.emitter
+        {
+            emitter.emit_graph_end(&self.execution_id, self.node_count, false);
+        }
+    }
 }
 
 impl std::fmt::Debug for ExecutionOutcome {
@@ -1333,19 +1376,20 @@ impl Runtime {
                 // "not really done yet" bookkeeping (e.g. the server's
                 // cross-execution admission slot) can chain onto the SAME
                 // real-completion event instead of guessing when it's safe.
-                let background = tokio::spawn(async move {
+                let background = BackgroundExecution::new(tokio::spawn(async move {
+                    let graph_end =
+                        GraphEndCompletionGuard::new(graph_emitter, execution_id, node_count);
                     let completion = match scheduler_background.await {
                         Ok(completion) => completion,
-                        Err(error) => Err(RuntimeError::Scheduler {
-                            message: format!("parked scheduler task failed: {error}"),
-                        }),
+                        Err(error) => BackgroundExecutionOutcome::join_failure(
+                            BackgroundExecutionTask::SchedulerFinalizer,
+                            error,
+                        ),
                     };
                     release_graph_lifecycles(&lifecycles).await;
-                    if let Some(emitter) = &graph_emitter {
-                        emitter.emit_graph_end(&execution_id, node_count, completion.is_ok());
-                    }
+                    graph_end.emit(completion.is_success());
                     completion
-                });
+                }));
                 Ok(ExecutionOutcome::Parked {
                     session_id,
                     background,
@@ -1804,6 +1848,7 @@ fn parse_flow_name(name: &str) -> (String, String) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::PersistedBackgroundExecutionOutcome;
     use apxm_artifact::{ArtifactMetadata, ArtifactSection};
     use apxm_core::constants::graph::attrs as graph_attrs;
     use apxm_core::types::execution::FlowParameter;
@@ -1832,6 +1877,67 @@ mod tests {
                 parameters: Vec::new(),
             },
         }
+    }
+
+    #[derive(Default)]
+    struct GraphEndCapturingEmitter {
+        successes: std::sync::Mutex<Vec<bool>>,
+    }
+
+    impl GraphEndCapturingEmitter {
+        fn successes(&self) -> Vec<bool> {
+            self.successes.lock().expect("graph end lock").clone()
+        }
+    }
+
+    impl ExecutionEventEmitter for GraphEndCapturingEmitter {
+        fn emit_llm_token(&self, _content: &str) {}
+
+        fn emit_tool_start(&self, _name: &str, _args: &HashMap<String, Value>) {}
+
+        fn emit_tool_end(&self, _name: &str, _result: &Value) {}
+
+        fn emit_graph_end(&self, _execution_id: &str, _node_count: usize, success: bool) {
+            self.successes.lock().expect("graph end lock").push(success);
+        }
+    }
+
+    fn rearming_conversation_artifact(turn_node: Option<Node>) -> Artifact {
+        let mut recv = Node::new(1, AISOperationType::Autonomous);
+        for (name, value) in [
+            ("mode", "recv"),
+            ("recv_once", "false"),
+            ("turn_agent", "conversation"),
+            ("turn_flow", "turn"),
+            ("turn_param", "user_message"),
+        ] {
+            recv.set_attribute(name.to_string(), Value::String(value.to_string()));
+        }
+        recv.set_attribute(graph_attrs::MAX_ITERATIONS.to_string(), Value::from(2_i64));
+
+        let entry = single_node_dag("conversation.main", true, recv);
+        let mut dags = vec![entry];
+        if let Some(mut turn_node) = turn_node {
+            turn_node.add_input_token(1);
+            turn_node.add_output_token(2);
+            let mut turn = single_node_dag("conversation.turn", false, turn_node);
+            turn.metadata.parameters = vec![FlowParameter {
+                name: "user_message".to_string(),
+                type_name: "str".to_string(),
+            }];
+            dags.push(turn);
+        }
+        artifact(dags)
+    }
+
+    fn wake_rearming_session(session_id: &str) {
+        let key = crate::scheduler::park_registry::session_recv_key(session_id);
+        assert_eq!(
+            crate::scheduler::park_registry::wake(&key, Value::String("first".to_string())),
+            1,
+            "the initial recv must be parked before the runtime returns"
+        );
+        let _ = crate::scheduler::park_registry::wake(&key, Value::String("finish".to_string()));
     }
 
     #[test]
@@ -2103,6 +2209,81 @@ mod tests {
                 panic!("expected Parked — a session-recv park never completes on its own");
             }
         }
+    }
+
+    #[tokio::test]
+    async fn parked_rearmed_background_failure_is_typed_and_emits_failed_graph_end() {
+        let runtime = Runtime::new(RuntimeConfig::in_memory()).await.unwrap();
+        let emitter = Arc::new(GraphEndCapturingEmitter::default());
+        let session_id = format!("background-failure-{}", uuid::Uuid::new_v4());
+
+        let outcome = runtime
+            .execute_artifact_with_session_emitter_and_metadata_or_park(
+                rearming_conversation_artifact(None),
+                Vec::new(),
+                Some(session_id.clone()),
+                Some(emitter.clone()),
+                None,
+                HashMap::new(),
+            )
+            .await
+            .expect("execution should reach its session park");
+
+        let background = match outcome {
+            ExecutionOutcome::Parked { background, .. } => background,
+            ExecutionOutcome::Completed(_) => panic!("expected the session execution to park"),
+        };
+        wake_rearming_session(&session_id);
+
+        let terminal = tokio::time::timeout(std::time::Duration::from_secs(10), background.wait())
+            .await
+            .expect("background execution should terminate");
+        assert!(matches!(
+            &terminal,
+            BackgroundExecutionOutcome::DomainFailure {
+                error: RuntimeError::SchedulerRetryExhausted { .. }
+            }
+        ));
+        assert!(matches!(
+            terminal.persisted(),
+            PersistedBackgroundExecutionOutcome::DomainFailure { .. }
+        ));
+        assert_eq!(emitter.successes(), vec![false]);
+    }
+
+    #[tokio::test]
+    async fn parked_rearmed_background_success_is_typed_and_emits_successful_graph_end() {
+        let runtime = Runtime::new(RuntimeConfig::in_memory()).await.unwrap();
+        let emitter = Arc::new(GraphEndCapturingEmitter::default());
+        let session_id = format!("background-success-{}", uuid::Uuid::new_v4());
+
+        let outcome = runtime
+            .execute_artifact_with_session_emitter_and_metadata_or_park(
+                rearming_conversation_artifact(Some(Node::new(1, AISOperationType::Nop))),
+                Vec::new(),
+                Some(session_id.clone()),
+                Some(emitter.clone()),
+                None,
+                HashMap::new(),
+            )
+            .await
+            .expect("execution should reach its session park");
+
+        let background = match outcome {
+            ExecutionOutcome::Parked { background, .. } => background,
+            ExecutionOutcome::Completed(_) => panic!("expected the session execution to park"),
+        };
+        wake_rearming_session(&session_id);
+
+        let terminal = tokio::time::timeout(std::time::Duration::from_secs(10), background.wait())
+            .await
+            .expect("background execution should terminate");
+        assert!(matches!(&terminal, BackgroundExecutionOutcome::Success));
+        assert!(matches!(
+            terminal.persisted(),
+            PersistedBackgroundExecutionOutcome::Success
+        ));
+        assert_eq!(emitter.successes(), vec![true]);
     }
 
     /// An execution that parks for a DIFFERENT reason (RESUME on a checkpoint
