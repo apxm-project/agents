@@ -209,6 +209,7 @@ async fn host_llm_ask(
 /// Decision returned by a `pre_cap` hook.
 pub enum PreCapDecision {
     Allow,
+    Defer,
     Deny(String),
     EditArgs(HashMap<String, Value>),
 }
@@ -330,6 +331,7 @@ pub async fn run_pre_cap_hooks(
                         });
                     }
                 }
+                PreCapDecision::Defer => {}
                 PreCapDecision::Deny(reason) => {
                     return Err(RuntimeError::Capability {
                         capability: tool_name.to_string(),
@@ -399,9 +401,11 @@ fn apply_pre_turn_decision(supplement: Option<String>, decision: &JsonValue) -> 
 
 fn parse_pre_cap_decision(decision: JsonValue) -> PreCapDecision {
     let Some(obj) = decision.as_object() else {
-        return PreCapDecision::Allow;
+        return PreCapDecision::Defer;
     };
     match obj.get("decision").and_then(|v| v.as_str()) {
+        Some("allow") => PreCapDecision::Allow,
+        Some("defer") => PreCapDecision::Defer,
         Some("deny") => PreCapDecision::Deny(
             obj.get("reason")
                 .and_then(|v| v.as_str())
@@ -414,9 +418,9 @@ fn parse_pre_cap_decision(decision: JsonValue) -> PreCapDecision {
                     .map(|(k, v)| (k.clone(), json_to_value(v.clone())))
                     .collect(),
             ),
-            _ => PreCapDecision::Allow,
+            _ => PreCapDecision::Defer,
         },
-        _ => PreCapDecision::Allow,
+        _ => PreCapDecision::Defer,
     }
 }
 
