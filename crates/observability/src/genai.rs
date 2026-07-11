@@ -10,9 +10,10 @@ use std::time::SystemTime;
 use apxm_core::events::kind::EventKind;
 use apxm_core::events::payload::{
     AgentMessagePayload, ExecuteCompletePayload, LlmDonePayload, LlmPromptPayload,
-    NodeOutputPayload, RedactedContent, SubagentLlmCallEndPayload, SubagentSpawnBeginPayload,
-    ThoughtPayload, TokenPayload, ToolCallBeginPayload, ToolCallEndPayload, ToolCallPayload,
-    ToolEndPayload, ToolStartPayload, TurnAbortedPayload, TurnCompletePayload, TurnStartedPayload,
+    LlmStepCompletedPayload, NodeOutputPayload, RedactedContent, SubagentLlmCallEndPayload,
+    SubagentSpawnBeginPayload, ThoughtPayload, TokenPayload, ToolCallBeginPayload,
+    ToolCallEndPayload, ToolCallPayload, ToolEndPayload, ToolStartPayload, TurnAbortedPayload,
+    TurnBoundaryPayload, TurnCompletePayload, TurnDirection, TurnStartedPayload,
 };
 use apxm_core::events::{ApxmEvent, EventEmitter, EventSource};
 use blake3::Hasher;
@@ -174,14 +175,15 @@ pub fn operation_name(kind: EventKind) -> &'static str {
         | "thought"
         | "tool_call"
         | "usage"
+        | "llm_step_completed"
         | "subagent_llm_call_begin"
         | "subagent_llm_call_end" => GENAI_OPERATION_CHAT,
         "tool_start" | "tool_end" | "tool_call_begin" | "tool_call_end" => {
             GENAI_OPERATION_EXECUTE_TOOL
         }
         "subagent_spawn_begin" | "subagent_spawn_end" => GENAI_OPERATION_CREATE_AGENT,
-        "turn_started" | "turn_complete" | "turn_aborted" | "subagent_done" | "subagent_failed"
-        | "agent_message" | "approval_request" | "approval_resolved" => {
+        "turn_started" | "turn_complete" | "turn_aborted" | "turn_boundary" | "subagent_done"
+        | "subagent_failed" | "agent_message" | "approval_request" | "approval_resolved" => {
             GENAI_OPERATION_INVOKE_AGENT
         }
         "operation_start"
@@ -324,6 +326,54 @@ fn add_payload_attributes(
         }
     }
 
+    if let Some(payload) = event.payload.downcast_ref::<LlmStepCompletedPayload>() {
+        attributes.push(KeyValue::new("gen_ai.request.model", payload.model.clone()));
+        attributes.push(KeyValue::new(
+            "gen_ai.response.finish_reason",
+            payload.finish_reason.reason.clone(),
+        ));
+        attributes.push(KeyValue::new(
+            "gen_ai.usage.input_tokens",
+            i64::try_from(payload.usage.input_tokens).unwrap_or(i64::MAX),
+        ));
+        attributes.push(KeyValue::new(
+            "gen_ai.usage.output_tokens",
+            i64::try_from(payload.usage.output_tokens).unwrap_or(i64::MAX),
+        ));
+        attributes.push(KeyValue::new(
+            "apxm.usage.cached_input_tokens",
+            i64::try_from(payload.usage.cached_input_tokens).unwrap_or(i64::MAX),
+        ));
+        attributes.push(KeyValue::new(
+            "apxm.usage.reasoning_output_tokens",
+            i64::try_from(payload.usage.reasoning_output_tokens).unwrap_or(i64::MAX),
+        ));
+        attributes.push(KeyValue::new(
+            "apxm.llm.step.number",
+            i64::try_from(payload.step_number).unwrap_or(i64::MAX),
+        ));
+        attributes.push(KeyValue::new(
+            "apxm.node.id",
+            i64::try_from(payload.node_id).unwrap_or(i64::MAX),
+        ));
+        attributes.push(KeyValue::new(
+            "apxm.llm.performance.latency_ms",
+            payload.performance.latency_ms,
+        ));
+        attributes.push(KeyValue::new(
+            "apxm.llm.performance.prefill_ms",
+            payload.performance.prefill_ms,
+        ));
+        attributes.push(KeyValue::new(
+            "apxm.llm.performance.decode_ms",
+            payload.performance.decode_ms,
+        ));
+        attributes.push(KeyValue::new(
+            "apxm.llm.tool_call_count",
+            i64::try_from(payload.tool_call_count).unwrap_or(i64::MAX),
+        ));
+    }
+
     if let Some(payload) = event.payload.downcast_ref::<ToolCallPayload>() {
         add_tool_call_attributes(attributes, payload, config);
     }
@@ -393,6 +443,20 @@ fn add_payload_attributes(
         attributes.push(KeyValue::new(
             "gen_ai.agent.duration_ms",
             i64::try_from(payload.duration_ms).unwrap_or(i64::MAX),
+        ));
+    }
+
+    if let Some(payload) = event.payload.downcast_ref::<TurnBoundaryPayload>() {
+        attributes.push(KeyValue::new(
+            "gen_ai.agent.turn.number",
+            i64::try_from(payload.turn_number).unwrap_or(i64::MAX),
+        ));
+        attributes.push(KeyValue::new(
+            "gen_ai.agent.turn.direction",
+            match payload.direction {
+                TurnDirection::Request => "request",
+                TurnDirection::Response => "response",
+            },
         ));
     }
 
@@ -780,6 +844,64 @@ mod tests {
                 GENAI_OPERATION_INVOKE_AGENT,
                 GENAI_OPERATION_CREATE_AGENT,
             ]
+        );
+    }
+
+    #[test]
+    fn llm_step_and_turn_boundary_export_typed_observability_attributes() {
+        let (exporter, spans, _) = test_exporter(GenAiExporterConfig::enabled());
+        exporter.emit(event(LlmStepCompletedPayload {
+            node_id: 7,
+            step_number: 2,
+            model: "amd/model".to_string(),
+            finish_reason: FinishReasonPayload {
+                reason: "tool_use".to_string(),
+            },
+            usage: apxm_core::events::payload::LlmStepUsagePayload {
+                input_tokens: 120,
+                output_tokens: 24,
+                cached_input_tokens: 32,
+                reasoning_output_tokens: 8,
+            },
+            performance: apxm_core::events::payload::LlmStepPerformancePayload {
+                latency_ms: 245.5,
+                prefill_ms: 80.25,
+                decode_ms: 165.25,
+            },
+            tool_call_count: 2,
+        }));
+        exporter.emit(event(TurnBoundaryPayload {
+            turn_number: 3,
+            direction: TurnDirection::Response,
+        }));
+
+        let spans = spans.get_finished_spans().expect("span export failed");
+        assert_eq!(spans.len(), 2);
+        assert_eq!(
+            attribute_value(&spans[0], "gen_ai.operation.name").map(Value::as_str),
+            Some(std::borrow::Cow::Borrowed(GENAI_OPERATION_CHAT))
+        );
+        assert_eq!(
+            attribute_value(&spans[0], "apxm.llm.step.number"),
+            Some(&Value::I64(2))
+        );
+        assert_eq!(
+            attribute_value(&spans[0], "apxm.llm.performance.latency_ms"),
+            Some(&Value::F64(245.5))
+        );
+        assert_eq!(
+            attribute_value(&spans[0], "apxm.usage.cached_input_tokens"),
+            Some(&Value::I64(32))
+        );
+        assert_eq!(
+            attribute_value(&spans[1], "gen_ai.agent.turn.number"),
+            Some(&Value::I64(3))
+        );
+        assert_eq!(
+            attribute_value(&spans[1], "gen_ai.agent.turn.direction")
+                .map(Value::as_str)
+                .map(|value| value.into_owned()),
+            Some("response".to_string())
         );
     }
 

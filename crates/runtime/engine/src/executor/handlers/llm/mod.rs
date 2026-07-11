@@ -35,8 +35,12 @@ use apxm_core::constants::{
     runtime::belief_keys,
 };
 use apxm_core::error::RuntimeError;
+use apxm_core::events::payload::{
+    FinishReasonPayload, LlmDonePayload, LlmStepCompletedPayload, LlmStepPerformancePayload,
+    LlmStepUsagePayload, ToolCallPayload, UsagePayload,
+};
 use apxm_core::types::operations::AISOperationType;
-use apxm_core::types::{ApxmGraphHints, PriorityClass};
+use apxm_core::types::{ApxmGraphHints, FinishReason, LLMResponse, PriorityClass, TokenUsage};
 use serde_json::Value as JsonValue;
 
 pub(super) mod pipeline;
@@ -88,6 +92,67 @@ impl From<&AISOperationType> for LlmMode {
             AISOperationType::Reason => LlmMode::Reason,
             _ => LlmMode::Ask,
         }
+    }
+}
+
+/// Emit one typed model-call observation and, for the final response of a
+/// turn, the existing terminal `llm_done` event. Plain calls, memo hits, and
+/// tool-loop iterations all use this helper so their telemetry stays identical.
+#[allow(clippy::too_many_arguments)]
+pub(super) fn emit_model_step(
+    ctx: &ExecutionContext,
+    node_id: u64,
+    step_number: usize,
+    response: &LLMResponse,
+    latency_ms: f64,
+    prefill_ms: f64,
+    decode_ms: f64,
+    final_response: bool,
+) {
+    let Some(emitter) = &ctx.event_emitter else {
+        return;
+    };
+    let finish_reason = FinishReasonPayload {
+        reason: response.finish_reason.to_string(),
+    };
+    emitter.emit_llm_step_completed(LlmStepCompletedPayload {
+        node_id,
+        step_number,
+        model: response.model.clone(),
+        finish_reason: finish_reason.clone(),
+        usage: LlmStepUsagePayload {
+            input_tokens: response.usage.input_tokens,
+            output_tokens: response.usage.output_tokens,
+            cached_input_tokens: response.usage.cached_input_tokens,
+            reasoning_output_tokens: response.usage.reasoning_output_tokens,
+        },
+        performance: LlmStepPerformancePayload {
+            latency_ms,
+            prefill_ms,
+            decode_ms,
+        },
+        tool_call_count: response.tool_calls.len(),
+    });
+    if final_response {
+        emitter.emit_llm_done(LlmDonePayload {
+            content: response.content.clone(),
+            model: response.model.clone(),
+            finish_reason,
+            usage: UsagePayload {
+                input_tokens: response.usage.input_tokens,
+                output_tokens: response.usage.output_tokens,
+            },
+            tool_calls: response
+                .tool_calls
+                .iter()
+                .map(|tool_call| ToolCallPayload {
+                    id: tool_call.id.clone(),
+                    name: tool_call.name.clone(),
+                    arguments: tool_call.args.clone(),
+                })
+                .collect(),
+            response_id: None,
+        });
     }
 }
 
@@ -590,6 +655,13 @@ async fn execute_llm_once(
             resolve_global_token_budget(ctx),
             cached.input_tokens + cached.output_tokens,
         )?;
+        let cached_response = LLMResponse::new(
+            cached.content.clone(),
+            cached.model.clone(),
+            TokenUsage::new(cached.input_tokens, cached.output_tokens),
+            FinishReason::Stop,
+        );
+        emit_model_step(ctx, node.id, 1, &cached_response, 0.0, 0.0, 0.0, true);
         return match mode {
             LlmMode::Ask | LlmMode::Think => Ok(Value::String(cached.content)),
             LlmMode::Reason => {
@@ -687,6 +759,10 @@ async fn execute_llm_once(
             );
         }
     }
+
+    emit_model_step(
+        ctx, node.id, 1, &response, total_ms, prefill_ms, decode_ms, true,
+    );
 
     let content = response.content;
 

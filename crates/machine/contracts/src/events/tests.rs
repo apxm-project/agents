@@ -163,6 +163,26 @@ fn representative_core_payloads() -> Vec<Box<dyn EventPayload>> {
             }],
             response_id: Some("resp-1".to_string()),
         }),
+        Box::new(LlmStepCompletedPayload {
+            node_id: 1,
+            step_number: 2,
+            model: "gpt-test".to_string(),
+            finish_reason: FinishReasonPayload {
+                reason: "tool_use".to_string(),
+            },
+            usage: LlmStepUsagePayload {
+                input_tokens: 11,
+                output_tokens: 7,
+                cached_input_tokens: 3,
+                reasoning_output_tokens: 2,
+            },
+            performance: LlmStepPerformancePayload {
+                latency_ms: 12.5,
+                prefill_ms: 4.0,
+                decode_ms: 8.5,
+            },
+            tool_call_count: 1,
+        }),
         Box::new(LlmPromptPayload {
             node_id: 1,
             node_name: Some("ask-node".to_string()),
@@ -542,6 +562,7 @@ fn terminal_kinds_exclude_topology_events() {
     assert!(!kind::AGENT_SPAWNED.is_terminal());
     assert!(!kind::COMMUNICATE_DISPATCHED.is_terminal());
     assert!(!kind::GRAPH_EDGE.is_terminal());
+    assert!(!kind::LLM_STEP_COMPLETED.is_terminal());
 
     assert!(kind::TURN_COMPLETE.is_terminal());
     assert!(kind::SESSION_END.is_terminal());
