@@ -5,15 +5,18 @@
 //! optional, event attributes are bounded to known fields, and raw content is
 //! redacted before it can become span data unless an operator opts in.
 
+use std::collections::VecDeque;
+use std::sync::{Arc, Mutex, MutexGuard};
 use std::time::SystemTime;
 
 use apxm_core::events::kind::EventKind;
 use apxm_core::events::payload::{
     AgentMessagePayload, ExecuteCompletePayload, LlmDonePayload, LlmPromptPayload,
-    LlmStepCompletedPayload, NodeOutputPayload, RedactedContent, SubagentLlmCallEndPayload,
-    SubagentSpawnBeginPayload, ThoughtPayload, TokenPayload, ToolCallBeginPayload,
-    ToolCallEndPayload, ToolCallPayload, ToolEndPayload, ToolStartPayload, TurnAbortedPayload,
-    TurnBoundaryPayload, TurnCompletePayload, TurnDirection, TurnStartedPayload,
+    LlmStepCompletedPayload, NodeOutputPayload, RedactedContent, SubagentLlmCallBeginPayload,
+    SubagentLlmCallEndPayload, SubagentSpawnBeginPayload, ThoughtPayload, TokenPayload,
+    ToolCallBeginPayload, ToolCallEndPayload, ToolCallPayload, ToolEndPayload, ToolStartPayload,
+    TurnAbortedPayload, TurnBoundaryPayload, TurnCompletePayload, TurnDirection,
+    TurnStartedPayload,
 };
 use apxm_core::events::{ApxmEvent, EventEmitter, EventSource};
 use blake3::Hasher;
@@ -35,6 +38,7 @@ pub const GENAI_SEMCONV_SCHEMA_URL: &str = "https://opentelemetry.io/schemas/gen
 
 const GENAI_INSTRUMENTATION_SCOPE: &str = "apxm.genai.event-exporter";
 const GENAI_REDACTED_CONTENT_TYPE: &str = "redacted";
+const MAX_PENDING_CORRELATIONS: usize = 1_024;
 
 /// OTel GenAI operation names used by the event-to-span mapping.
 pub const GENAI_OPERATION_CHAT: &str = "chat";
@@ -94,7 +98,7 @@ pub fn genai_resource(service_name: impl Into<String>) -> Resource {
     )
 }
 
-/// An optional [`EventEmitter`] that turns each `ApxmEvent` into one OTel span.
+/// An optional [`EventEmitter`] that correlates APXM lifecycle events into OTel spans.
 ///
 /// The adapter owns only a named tracer from the caller-provided provider. It
 /// does not install a global provider, alter the event, or return export errors
@@ -102,8 +106,14 @@ pub fn genai_resource(service_name: impl Into<String>) -> Resource {
 /// event sink and remove it without changing runtime semantics.
 #[derive(Clone, Debug)]
 pub struct GenAiEventExporter {
+    inner: Arc<GenAiEventExporterInner>,
+}
+
+#[derive(Debug)]
+struct GenAiEventExporterInner {
     tracer: Tracer,
     config: GenAiExporterConfig,
+    correlations: Mutex<CorrelationState>,
 }
 
 impl GenAiEventExporter {
@@ -114,56 +124,511 @@ impl GenAiEventExporter {
     /// instrumentation scope is also pinned so downstream consumers retain the
     /// schema identity even when they surface scope metadata separately.
     pub fn new(provider: &TracerProvider, config: GenAiExporterConfig) -> Self {
+        Self::new_with_max_pending(provider, config, MAX_PENDING_CORRELATIONS)
+    }
+
+    fn new_with_max_pending(
+        provider: &TracerProvider,
+        config: GenAiExporterConfig,
+        max_pending: usize,
+    ) -> Self {
         let scope = InstrumentationScope::builder(GENAI_INSTRUMENTATION_SCOPE)
             .with_version(env!("CARGO_PKG_VERSION"))
             .with_schema_url(GENAI_SEMCONV_SCHEMA_URL)
             .build();
 
         Self {
-            tracer: provider.tracer_with_scope(scope),
-            config,
+            inner: Arc::new(GenAiEventExporterInner {
+                tracer: provider.tracer_with_scope(scope),
+                config,
+                correlations: Mutex::new(CorrelationState::new(max_pending)),
+            }),
         }
     }
 
     /// Return the immutable adapter configuration.
-    pub const fn config(&self) -> GenAiExporterConfig {
-        self.config
+    pub fn config(&self) -> GenAiExporterConfig {
+        self.inner.config
     }
 
     /// Whether this adapter will emit spans.
-    pub const fn is_enabled(&self) -> bool {
-        self.config.enabled
+    pub fn is_enabled(&self) -> bool {
+        self.inner.config.enabled
+    }
+
+    /// Export all currently unmatched lifecycle events as instantaneous spans.
+    ///
+    /// Call this before shutting down the tracer provider so incomplete work is
+    /// retained without assigning it a synthetic duration. Dropping the last
+    /// exporter handle performs the same drain as a final safeguard.
+    pub fn flush_pending(&self) {
+        if !self.inner.config.enabled {
+            return;
+        }
+
+        let pending = lock_correlations(&self.inner.correlations).drain();
+        for pending in pending {
+            export_emission(
+                &self.inner.tracer,
+                self.inner.config,
+                SpanEmission::Unmatched {
+                    pending,
+                    outcome: CorrelationOutcome::ExporterShutdown,
+                },
+            );
+        }
+    }
+
+    #[cfg(test)]
+    fn pending_correlation_count(&self) -> usize {
+        lock_correlations(&self.inner.correlations).pending.len()
     }
 }
 
 impl EventEmitter for GenAiEventExporter {
     fn emit(&self, event: ApxmEvent) {
-        if !self.config.enabled {
+        if !self.inner.config.enabled {
             return;
         }
 
-        let operation = operation_name(event.kind());
-        let mut attributes = Vec::with_capacity(16);
-        add_common_attributes(&mut attributes, &event, operation);
-        add_payload_attributes(&mut attributes, &event, self.config);
-
-        let trace_id = derive_trace_id(&event.meta.trace_id);
-        let span_id = derive_span_id(&event.meta.span_id);
-        let parent_context = parent_context(&event, trace_id);
-        let timestamp: SystemTime = event.meta.timestamp.into();
-
-        let mut span = self
-            .tracer
-            .span_builder(format!("apxm.{}", event.kind().name()))
-            .with_trace_id(trace_id)
-            .with_span_id(span_id)
-            .with_kind(span_kind(operation))
-            .with_start_time(timestamp)
-            .with_end_time(timestamp)
-            .with_attributes(attributes)
-            .start_with_context(&self.tracer, &parent_context);
-        span.end();
+        let emissions = lock_correlations(&self.inner.correlations).accept(event);
+        for emission in emissions {
+            export_emission(&self.inner.tracer, self.inner.config, emission);
+        }
     }
+}
+
+impl Drop for GenAiEventExporter {
+    fn drop(&mut self) {
+        if Arc::strong_count(&self.inner) != 1 || !self.inner.config.enabled {
+            return;
+        }
+
+        self.flush_pending();
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum CorrelationRole {
+    Begin,
+    End,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum CorrelationFamily {
+    Turn,
+    Operation,
+    ModelStep,
+    Inference,
+    AgentTool,
+    Tool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum CorrelationIdentity {
+    Execution(String),
+    Operation {
+        node_id: u64,
+        op_type: String,
+    },
+    Agent(String),
+    AgentTool {
+        agent_code: String,
+        tool_name: String,
+    },
+    Tool(String),
+    ParentScoped,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct CorrelationKey {
+    family: CorrelationFamily,
+    trace_id: String,
+    parent_span_id: Option<String>,
+    identity: CorrelationIdentity,
+}
+
+#[derive(Debug, Clone)]
+struct CorrelationDescriptor {
+    key: CorrelationKey,
+    role: CorrelationRole,
+    span_name: &'static str,
+    operation: &'static str,
+    span_kind: SpanKind,
+}
+
+#[derive(Debug)]
+struct PendingCorrelation {
+    event: ApxmEvent,
+    descriptor: CorrelationDescriptor,
+}
+
+#[derive(Debug, Clone, Copy)]
+enum CorrelationOutcome {
+    CapacityEvicted,
+    ExporterShutdown,
+    InvalidTimestampOrder,
+}
+
+impl CorrelationOutcome {
+    const fn as_str(self) -> &'static str {
+        match self {
+            Self::CapacityEvicted => "capacity_evicted",
+            Self::ExporterShutdown => "exporter_shutdown",
+            Self::InvalidTimestampOrder => "invalid_timestamp_order",
+        }
+    }
+}
+
+#[derive(Debug)]
+enum SpanEmission {
+    Paired {
+        begin: PendingCorrelation,
+        end: PendingCorrelation,
+    },
+    Unmatched {
+        pending: PendingCorrelation,
+        outcome: CorrelationOutcome,
+    },
+    Instant(ApxmEvent),
+}
+
+#[derive(Debug)]
+struct CorrelationState {
+    pending: VecDeque<PendingCorrelation>,
+    max_pending: usize,
+}
+
+impl CorrelationState {
+    fn new(max_pending: usize) -> Self {
+        Self {
+            pending: VecDeque::new(),
+            max_pending,
+        }
+    }
+
+    fn accept(&mut self, event: ApxmEvent) -> Vec<SpanEmission> {
+        let Some(descriptor) = correlation_descriptor(&event) else {
+            return vec![SpanEmission::Instant(event)];
+        };
+
+        let counterpart = self.pending.iter().position(|pending| {
+            pending.descriptor.key == descriptor.key && pending.descriptor.role != descriptor.role
+        });
+
+        if let Some(index) = counterpart {
+            let previous = self
+                .pending
+                .remove(index)
+                .expect("correlation index came from the pending queue");
+            let current = PendingCorrelation { event, descriptor };
+            let (begin, end) = match current.descriptor.role {
+                CorrelationRole::Begin => (current, previous),
+                CorrelationRole::End => (previous, current),
+            };
+
+            if end.event.meta.timestamp >= begin.event.meta.timestamp {
+                return vec![SpanEmission::Paired { begin, end }];
+            }
+
+            return vec![
+                SpanEmission::Unmatched {
+                    pending: begin,
+                    outcome: CorrelationOutcome::InvalidTimestampOrder,
+                },
+                SpanEmission::Unmatched {
+                    pending: end,
+                    outcome: CorrelationOutcome::InvalidTimestampOrder,
+                },
+            ];
+        }
+
+        self.pending
+            .push_back(PendingCorrelation { event, descriptor });
+        let mut emissions = Vec::new();
+        while self.pending.len() > self.max_pending {
+            if let Some(pending) = self.pending.pop_front() {
+                emissions.push(SpanEmission::Unmatched {
+                    pending,
+                    outcome: CorrelationOutcome::CapacityEvicted,
+                });
+            }
+        }
+        emissions
+    }
+
+    fn drain(&mut self) -> Vec<PendingCorrelation> {
+        self.pending.drain(..).collect()
+    }
+}
+
+fn lock_correlations(state: &Mutex<CorrelationState>) -> MutexGuard<'_, CorrelationState> {
+    state
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+}
+
+fn correlation_descriptor(event: &ApxmEvent) -> Option<CorrelationDescriptor> {
+    let (family, role, identity, span_name, operation, span_kind) =
+        if let Some(payload) = event.payload.downcast_ref::<TurnStartedPayload>() {
+            (
+                CorrelationFamily::Turn,
+                CorrelationRole::Begin,
+                CorrelationIdentity::Execution(payload.execution_id.clone()),
+                "apxm.agent.turn",
+                GENAI_OPERATION_INVOKE_AGENT,
+                SpanKind::Internal,
+            )
+        } else if let Some(payload) = event.payload.downcast_ref::<TurnCompletePayload>() {
+            (
+                CorrelationFamily::Turn,
+                CorrelationRole::End,
+                CorrelationIdentity::Execution(payload.execution_id.clone()),
+                "apxm.agent.turn",
+                GENAI_OPERATION_INVOKE_AGENT,
+                SpanKind::Internal,
+            )
+        } else if let Some(payload) = event.payload.downcast_ref::<TurnAbortedPayload>() {
+            (
+                CorrelationFamily::Turn,
+                CorrelationRole::End,
+                CorrelationIdentity::Execution(payload.execution_id.clone()),
+                "apxm.agent.turn",
+                GENAI_OPERATION_INVOKE_AGENT,
+                SpanKind::Internal,
+            )
+        } else if matches!(event.kind().name(), "operation_start" | "operation_end") {
+            let (node_id, op_type) = operation_identity(event)?;
+            (
+                CorrelationFamily::Operation,
+                if event.kind().name() == "operation_start" {
+                    CorrelationRole::Begin
+                } else {
+                    CorrelationRole::End
+                },
+                CorrelationIdentity::Operation { node_id, op_type },
+                "apxm.operation",
+                GENAI_OPERATION_INVOKE_WORKFLOW,
+                SpanKind::Internal,
+            )
+        } else if let Some(payload) = event.payload.downcast_ref::<SubagentLlmCallBeginPayload>() {
+            (
+                CorrelationFamily::ModelStep,
+                CorrelationRole::Begin,
+                CorrelationIdentity::Agent(payload.agent_code.clone()),
+                "apxm.model.step",
+                GENAI_OPERATION_CHAT,
+                SpanKind::Internal,
+            )
+        } else if let Some(payload) = event.payload.downcast_ref::<SubagentLlmCallEndPayload>() {
+            (
+                CorrelationFamily::ModelStep,
+                CorrelationRole::End,
+                CorrelationIdentity::Agent(payload.agent_code.clone()),
+                "apxm.model.step",
+                GENAI_OPERATION_CHAT,
+                SpanKind::Internal,
+            )
+        } else if event.payload.downcast_ref::<LlmPromptPayload>().is_some() {
+            (
+                CorrelationFamily::Inference,
+                CorrelationRole::Begin,
+                CorrelationIdentity::ParentScoped,
+                "apxm.model.inference",
+                GENAI_OPERATION_CHAT,
+                SpanKind::Client,
+            )
+        } else if event.payload.downcast_ref::<LlmDonePayload>().is_some() {
+            (
+                CorrelationFamily::Inference,
+                CorrelationRole::End,
+                CorrelationIdentity::ParentScoped,
+                "apxm.model.inference",
+                GENAI_OPERATION_CHAT,
+                SpanKind::Client,
+            )
+        } else if let Some(payload) = event.payload.downcast_ref::<ToolCallBeginPayload>() {
+            (
+                CorrelationFamily::AgentTool,
+                CorrelationRole::Begin,
+                CorrelationIdentity::AgentTool {
+                    agent_code: payload.agent_code.clone(),
+                    tool_name: payload.tool_name.clone(),
+                },
+                "apxm.tool.operation",
+                GENAI_OPERATION_EXECUTE_TOOL,
+                SpanKind::Internal,
+            )
+        } else if let Some(payload) = event.payload.downcast_ref::<ToolCallEndPayload>() {
+            (
+                CorrelationFamily::AgentTool,
+                CorrelationRole::End,
+                CorrelationIdentity::AgentTool {
+                    agent_code: payload.agent_code.clone(),
+                    tool_name: payload.tool_name.clone(),
+                },
+                "apxm.tool.operation",
+                GENAI_OPERATION_EXECUTE_TOOL,
+                SpanKind::Internal,
+            )
+        } else if let Some(payload) = event.payload.downcast_ref::<ToolStartPayload>() {
+            (
+                CorrelationFamily::Tool,
+                CorrelationRole::Begin,
+                CorrelationIdentity::Tool(payload.name.clone()),
+                "apxm.tool.execution",
+                GENAI_OPERATION_EXECUTE_TOOL,
+                SpanKind::Internal,
+            )
+        } else if let Some(payload) = event.payload.downcast_ref::<ToolEndPayload>() {
+            (
+                CorrelationFamily::Tool,
+                CorrelationRole::End,
+                CorrelationIdentity::Tool(payload.name.clone()),
+                "apxm.tool.execution",
+                GENAI_OPERATION_EXECUTE_TOOL,
+                SpanKind::Internal,
+            )
+        } else {
+            return None;
+        };
+
+    Some(CorrelationDescriptor {
+        key: CorrelationKey {
+            family,
+            trace_id: event.meta.trace_id.clone(),
+            parent_span_id: event.meta.parent_span_id.clone(),
+            identity,
+        },
+        role,
+        span_name,
+        operation,
+        span_kind,
+    })
+}
+
+fn operation_identity(event: &ApxmEvent) -> Option<(u64, String)> {
+    let payload = event.payload.to_json();
+    let payload = payload.as_object()?;
+    let node_id = payload.get("node_id")?.as_u64()?;
+    let op_type = payload.get("op_type")?.as_str()?.to_owned();
+    Some((node_id, op_type))
+}
+
+fn export_emission(tracer: &Tracer, config: GenAiExporterConfig, emission: SpanEmission) {
+    match emission {
+        SpanEmission::Paired { begin, end } => export_paired_span(tracer, config, begin, end),
+        SpanEmission::Unmatched { pending, outcome } => {
+            export_instant_span(
+                tracer,
+                config,
+                pending.event,
+                Some((pending.descriptor, outcome)),
+            );
+        }
+        SpanEmission::Instant(event) => export_instant_span(tracer, config, event, None),
+    }
+}
+
+fn export_paired_span(
+    tracer: &Tracer,
+    config: GenAiExporterConfig,
+    begin: PendingCorrelation,
+    end: PendingCorrelation,
+) {
+    let mut attributes = Vec::with_capacity(32);
+    add_common_attributes(&mut attributes, &begin.event, begin.descriptor.operation);
+    add_payload_attributes(&mut attributes, &begin.event, config);
+    add_payload_attributes(&mut attributes, &end.event, config);
+    add_paired_event_attributes(&mut attributes, &begin.event, &end.event);
+
+    let trace_id = derive_trace_id(&begin.event.meta.trace_id);
+    let parent_context = parent_context(&begin.event, trace_id);
+    let start_time: SystemTime = begin.event.meta.timestamp.into();
+    let end_time: SystemTime = end.event.meta.timestamp.into();
+    let mut span = tracer
+        .span_builder(begin.descriptor.span_name)
+        .with_trace_id(trace_id)
+        .with_span_id(derive_span_id(&begin.event.meta.span_id))
+        .with_kind(begin.descriptor.span_kind)
+        .with_start_time(start_time)
+        .with_attributes(attributes)
+        .start_with_context(tracer, &parent_context);
+    span.end_with_timestamp(end_time);
+}
+
+fn export_instant_span(
+    tracer: &Tracer,
+    config: GenAiExporterConfig,
+    event: ApxmEvent,
+    unmatched: Option<(CorrelationDescriptor, CorrelationOutcome)>,
+) {
+    let (span_name, operation, span_kind) = match &unmatched {
+        Some((descriptor, _)) => (
+            format!("{}.unmatched", descriptor.span_name),
+            descriptor.operation,
+            descriptor.span_kind.clone(),
+        ),
+        None => {
+            let operation = operation_name(event.kind());
+            (
+                format!("apxm.{}", event.kind().name()),
+                operation,
+                span_kind(operation),
+            )
+        }
+    };
+    let mut attributes = Vec::with_capacity(20);
+    add_common_attributes(&mut attributes, &event, operation);
+    add_payload_attributes(&mut attributes, &event, config);
+    if let Some((descriptor, outcome)) = unmatched {
+        attributes.push(KeyValue::new("apxm.span.lifecycle", "unmatched"));
+        attributes.push(KeyValue::new("apxm.correlation.outcome", outcome.as_str()));
+        attributes.push(KeyValue::new(
+            "apxm.correlation.role",
+            match descriptor.role {
+                CorrelationRole::Begin => "begin",
+                CorrelationRole::End => "end",
+            },
+        ));
+    } else {
+        attributes.push(KeyValue::new("apxm.span.lifecycle", "instant"));
+    }
+
+    let trace_id = derive_trace_id(&event.meta.trace_id);
+    let parent_context = parent_context(&event, trace_id);
+    let timestamp: SystemTime = event.meta.timestamp.into();
+    let mut span = tracer
+        .span_builder(span_name)
+        .with_trace_id(trace_id)
+        .with_span_id(derive_span_id(&event.meta.span_id))
+        .with_kind(span_kind)
+        .with_start_time(timestamp)
+        .with_attributes(attributes)
+        .start_with_context(tracer, &parent_context);
+    span.end_with_timestamp(timestamp);
+}
+
+fn add_paired_event_attributes(attributes: &mut Vec<KeyValue>, begin: &ApxmEvent, end: &ApxmEvent) {
+    attributes.push(KeyValue::new("apxm.span.lifecycle", "paired"));
+    attributes.push(KeyValue::new("apxm.event.start.kind", begin.kind().name()));
+    attributes.push(KeyValue::new(
+        "apxm.event.start.seq",
+        i64::try_from(begin.meta.seq).unwrap_or(i64::MAX),
+    ));
+    attributes.push(KeyValue::new(
+        "apxm.event.start.span_id",
+        begin.meta.span_id.clone(),
+    ));
+    attributes.push(KeyValue::new("apxm.event.end.kind", end.kind().name()));
+    attributes.push(KeyValue::new(
+        "apxm.event.end.seq",
+        i64::try_from(end.meta.seq).unwrap_or(i64::MAX),
+    ));
+    attributes.push(KeyValue::new(
+        "apxm.event.end.span_id",
+        end.meta.span_id.clone(),
+    ));
 }
 
 /// Map an APXM event kind to its pinned GenAI operation vocabulary.
@@ -266,6 +731,13 @@ fn add_common_attributes(
         "apxm.event.span_id",
         event.meta.span_id.clone(),
     ));
+    attributes.push(KeyValue::new("apxm.event.id", event.meta.span_id.clone()));
+    if let Some(parent_span_id) = &event.meta.parent_span_id {
+        attributes.push(KeyValue::new(
+            "apxm.event.parent_span_id",
+            parent_span_id.clone(),
+        ));
+    }
     attributes.push(KeyValue::new(
         "apxm.event.source",
         source_name(&event.meta.source),
@@ -462,6 +934,14 @@ fn add_payload_attributes(
 
     if let Some(payload) = event.payload.downcast_ref::<TurnAbortedPayload>() {
         attributes.push(KeyValue::new(
+            "gen_ai.agent.execution.id",
+            payload.execution_id.clone(),
+        ));
+        attributes.push(KeyValue::new(
+            "gen_ai.agent.duration_ms",
+            i64::try_from(payload.duration_ms).unwrap_or(i64::MAX),
+        ));
+        attributes.push(KeyValue::new(
             "gen_ai.agent.abort_reason",
             payload.reason.clone(),
         ));
@@ -502,6 +982,22 @@ fn add_payload_attributes(
         ));
     }
 
+    if let Some(payload) = event.payload.downcast_ref::<SubagentLlmCallBeginPayload>() {
+        attributes.push(KeyValue::new(
+            "gen_ai.agent.name",
+            payload.agent_code.clone(),
+        ));
+        attributes.push(KeyValue::new("gen_ai.request.model", payload.model.clone()));
+        attributes.push(KeyValue::new(
+            "gen_ai.provider.name",
+            payload.backend.clone(),
+        ));
+        attributes.push(KeyValue::new(
+            "gen_ai.tool.count",
+            i64::try_from(payload.tool_manifest_count).unwrap_or(i64::MAX),
+        ));
+    }
+
     if let Some(payload) = event.payload.downcast_ref::<ToolCallBeginPayload>() {
         attributes.push(KeyValue::new(
             "gen_ai.agent.name",
@@ -524,6 +1020,10 @@ fn add_payload_attributes(
         attributes.push(KeyValue::new(
             "gen_ai.tool.latency_ms",
             i64::try_from(payload.latency_ms).unwrap_or(i64::MAX),
+        ));
+        attributes.push(KeyValue::new(
+            "gen_ai.tool.result_keys",
+            payload.result_keys.join(","),
         ));
     }
 
@@ -730,6 +1230,17 @@ mod tests {
         InMemorySpanExporter,
         Arc<Mutex<Option<Resource>>>,
     ) {
+        test_exporter_with_limit(config, MAX_PENDING_CORRELATIONS)
+    }
+
+    fn test_exporter_with_limit(
+        config: GenAiExporterConfig,
+        max_pending: usize,
+    ) -> (
+        GenAiEventExporter,
+        InMemorySpanExporter,
+        Arc<Mutex<Option<Resource>>>,
+    ) {
         let spans = InMemorySpanExporter::default();
         let resource_capture = Arc::new(Mutex::new(None));
         let provider = TracerProvider::builder()
@@ -739,12 +1250,23 @@ mod tests {
             })
             .with_resource(genai_resource("apxm-test"))
             .build();
-        let exporter = GenAiEventExporter::new(&provider, config);
+        let exporter = GenAiEventExporter::new_with_max_pending(&provider, config, max_pending);
         (exporter, spans, resource_capture)
     }
 
     fn event(payload: impl EventPayload) -> ApxmEvent {
         ApxmEvent::root(payload, EventSource::Runtime, "trace-1").with_seq(7)
+    }
+
+    fn correlated_event(
+        payload: impl EventPayload,
+        span_id: &str,
+        parent_span_id: &str,
+        seq: u64,
+    ) -> ApxmEvent {
+        ApxmEvent::child_of(payload, EventSource::Runtime, "trace-1", parent_span_id)
+            .with_span_id(span_id)
+            .with_seq(seq)
     }
 
     fn string_values(spans: &[SpanData]) -> Vec<String> {
@@ -827,9 +1349,10 @@ mod tests {
             autonomy_policy: None,
             parent_span_id: None,
         }));
+        exporter.flush_pending();
 
         let spans = spans.get_finished_spans().expect("span export failed");
-        let operations: Vec<_> = spans
+        let operations: HashSet<_> = spans
             .iter()
             .filter_map(|span| attribute_value(span, "gen_ai.operation.name"))
             .map(Value::as_str)
@@ -837,13 +1360,13 @@ mod tests {
             .collect();
         assert_eq!(
             operations,
-            vec![
-                GENAI_OPERATION_INVOKE_WORKFLOW,
-                GENAI_OPERATION_CHAT,
-                GENAI_OPERATION_EXECUTE_TOOL,
-                GENAI_OPERATION_INVOKE_AGENT,
-                GENAI_OPERATION_CREATE_AGENT,
-            ]
+            HashSet::from([
+                GENAI_OPERATION_INVOKE_WORKFLOW.to_string(),
+                GENAI_OPERATION_CHAT.to_string(),
+                GENAI_OPERATION_EXECUTE_TOOL.to_string(),
+                GENAI_OPERATION_INVOKE_AGENT.to_string(),
+                GENAI_OPERATION_CREATE_AGENT.to_string(),
+            ])
         );
     }
 
@@ -906,6 +1429,251 @@ mod tests {
     }
 
     #[test]
+    fn turn_events_form_one_duration_bearing_span_with_stable_ids() {
+        let (exporter, spans, _) = test_exporter(GenAiExporterConfig::enabled());
+        let begin = correlated_event(
+            TurnStartedPayload {
+                execution_id: "exec-1".to_string(),
+                turn_id: Some("turn-1".to_string()),
+                coordinator_label: Some("Coordinator".to_string()),
+            },
+            "turn-begin",
+            "run-parent",
+            10,
+        );
+        exporter.emit(begin.clone());
+        assert!(
+            spans
+                .get_finished_spans()
+                .expect("span export failed")
+                .is_empty()
+        );
+
+        std::thread::sleep(std::time::Duration::from_millis(2));
+        let end = correlated_event(
+            TurnCompletePayload {
+                execution_id: "exec-1".to_string(),
+                duration_ms: 2,
+                had_answer: true,
+            },
+            "turn-end",
+            "run-parent",
+            11,
+        );
+        exporter.emit(end.clone());
+
+        let spans = spans.get_finished_spans().expect("span export failed");
+        assert_eq!(spans.len(), 1);
+        let span = &spans[0];
+        assert_eq!(span.name.as_ref(), "apxm.agent.turn");
+        assert!(span.end_time > span.start_time);
+        assert_eq!(
+            span.span_context.span_id(),
+            derive_span_id(&begin.meta.span_id)
+        );
+        assert_eq!(span.parent_span_id, derive_span_id("run-parent"));
+        assert_eq!(
+            attribute_value(span, "apxm.span.lifecycle").map(Value::as_str),
+            Some(std::borrow::Cow::Borrowed("paired"))
+        );
+        assert_eq!(
+            attribute_value(span, "apxm.event.start.span_id").map(Value::as_str),
+            Some(std::borrow::Cow::Borrowed("turn-begin"))
+        );
+        assert_eq!(
+            attribute_value(span, "apxm.event.end.span_id").map(Value::as_str),
+            Some(std::borrow::Cow::Borrowed("turn-end"))
+        );
+    }
+
+    #[test]
+    fn model_and_tool_pairs_correlate_when_terminals_arrive_first() {
+        let (exporter, spans, _) = test_exporter(GenAiExporterConfig::enabled());
+        let model_begin = correlated_event(
+            SubagentLlmCallBeginPayload {
+                agent_code: "researcher".to_string(),
+                model: "model-1".to_string(),
+                backend: "gateway".to_string(),
+                tool_manifest_count: 2,
+            },
+            "model-begin",
+            "model-parent",
+            20,
+        );
+        std::thread::sleep(std::time::Duration::from_millis(2));
+        let model_end = correlated_event(
+            SubagentLlmCallEndPayload {
+                agent_code: "researcher".to_string(),
+                finish_reason: "stop".to_string(),
+                usage: UsagePayload {
+                    input_tokens: 12,
+                    output_tokens: 4,
+                },
+                content_len: 32,
+            },
+            "model-end",
+            "model-parent",
+            21,
+        );
+        exporter.emit(model_end);
+        exporter.emit(model_begin);
+
+        let inference_begin = correlated_event(
+            LlmPromptPayload {
+                node_id: 7,
+                node_name: Some("answer".to_string()),
+                prompt: RedactedContent::from_text("private prompt"),
+            },
+            "inference-begin",
+            "inference-parent",
+            25,
+        );
+        exporter.emit(inference_begin);
+        std::thread::sleep(std::time::Duration::from_millis(2));
+        exporter.emit(correlated_event(
+            LlmDonePayload {
+                content: "private response".to_string(),
+                model: "model-1".to_string(),
+                finish_reason: FinishReasonPayload {
+                    reason: "stop".to_string(),
+                },
+                usage: UsagePayload {
+                    input_tokens: 12,
+                    output_tokens: 4,
+                },
+                tool_calls: Vec::new(),
+                response_id: Some("response-1".to_string()),
+            },
+            "inference-end",
+            "inference-parent",
+            26,
+        ));
+
+        let tool_begin = correlated_event(
+            ToolCallBeginPayload {
+                agent_code: "researcher".to_string(),
+                tool_name: "lookup".to_string(),
+                argument_keys: vec!["query".to_string()],
+            },
+            "tool-begin",
+            "tool-parent",
+            30,
+        );
+        std::thread::sleep(std::time::Duration::from_millis(2));
+        let tool_end = correlated_event(
+            ToolCallEndPayload {
+                agent_code: "researcher".to_string(),
+                tool_name: "lookup".to_string(),
+                result_keys: vec!["items".to_string()],
+                status: "ok".to_string(),
+                latency_ms: 2,
+            },
+            "tool-end",
+            "tool-parent",
+            31,
+        );
+        exporter.emit(tool_end);
+        exporter.emit(tool_begin);
+
+        let operation_begin = correlated_event(
+            UnknownEventPayload::from_json(
+                "operation_start",
+                serde_json::json!({"node_id": 7, "op_type": "ASK"}),
+            ),
+            "operation-begin",
+            "operation-parent",
+            40,
+        );
+        exporter.emit(operation_begin);
+        std::thread::sleep(std::time::Duration::from_millis(2));
+        exporter.emit(correlated_event(
+            UnknownEventPayload::from_json(
+                "operation_end",
+                serde_json::json!({
+                    "node_id": 7,
+                    "op_type": "ASK",
+                    "success": true,
+                    "duration_ms": 2
+                }),
+            ),
+            "operation-end",
+            "operation-parent",
+            41,
+        ));
+
+        let spans = spans.get_finished_spans().expect("span export failed");
+        assert_eq!(spans.len(), 4);
+        let model = spans
+            .iter()
+            .find(|span| span.name.as_ref() == "apxm.model.step")
+            .expect("model step span missing");
+        let inference = spans
+            .iter()
+            .find(|span| span.name.as_ref() == "apxm.model.inference")
+            .expect("model inference span missing");
+        let tool = spans
+            .iter()
+            .find(|span| span.name.as_ref() == "apxm.tool.operation")
+            .expect("tool operation span missing");
+        let operation = spans
+            .iter()
+            .find(|span| span.name.as_ref() == "apxm.operation")
+            .expect("operation span missing");
+        assert!(model.end_time > model.start_time);
+        assert!(inference.end_time > inference.start_time);
+        assert!(tool.end_time > tool.start_time);
+        assert!(operation.end_time > operation.start_time);
+        assert_eq!(model.parent_span_id, derive_span_id("model-parent"));
+        assert_eq!(inference.parent_span_id, derive_span_id("inference-parent"));
+        assert_eq!(tool.parent_span_id, derive_span_id("tool-parent"));
+        assert_eq!(operation.parent_span_id, derive_span_id("operation-parent"));
+        assert_eq!(
+            attribute_value(tool, "gen_ai.tool.status").map(Value::as_str),
+            Some(std::borrow::Cow::Borrowed("ok"))
+        );
+        assert_eq!(
+            attribute_value(operation, "apxm.operation.success"),
+            Some(&Value::Bool(true))
+        );
+    }
+
+    #[test]
+    fn unmatched_events_are_flushed_as_instantaneous_spans_and_state_is_bounded() {
+        let (exporter, spans, _) = test_exporter_with_limit(GenAiExporterConfig::enabled(), 2);
+        for index in 0..3 {
+            exporter.emit(correlated_event(
+                TurnStartedPayload {
+                    execution_id: format!("exec-{index}"),
+                    turn_id: None,
+                    coordinator_label: None,
+                },
+                &format!("begin-{index}"),
+                "run-parent",
+                index,
+            ));
+        }
+
+        assert_eq!(exporter.pending_correlation_count(), 2);
+        let exported = spans.get_finished_spans().expect("span export failed");
+        assert_eq!(exported.len(), 1);
+        assert_eq!(exported[0].start_time, exported[0].end_time);
+        assert_eq!(
+            attribute_value(&exported[0], "apxm.correlation.outcome").map(Value::as_str),
+            Some(std::borrow::Cow::Borrowed("capacity_evicted"))
+        );
+
+        exporter.flush_pending();
+        let exported = spans.get_finished_spans().expect("span export failed");
+        assert_eq!(exported.len(), 3);
+        assert_eq!(exporter.pending_correlation_count(), 0);
+        assert!(exported.iter().all(|span| span.start_time == span.end_time));
+        assert!(exported.iter().all(|span| {
+            attribute_value(span, "apxm.span.lifecycle").map(Value::as_str)
+                == Some(std::borrow::Cow::Borrowed("unmatched"))
+        }));
+    }
+
+    #[test]
     fn content_capture_is_off_by_default_and_hashes_raw_fields() {
         let (exporter, spans, _) = test_exporter(GenAiExporterConfig::enabled());
         let pii = "alice@example.test SSN 000-12-3456";
@@ -928,6 +1696,7 @@ mod tests {
             }],
             response_id: None,
         }));
+        exporter.flush_pending();
 
         let spans = spans.get_finished_spans().expect("span export failed");
         let values = string_values(&spans);
@@ -964,6 +1733,7 @@ mod tests {
             }],
             response_id: None,
         }));
+        exporter.flush_pending();
 
         let spans = spans.get_finished_spans().expect("span export failed");
         let values = string_values(&spans);
