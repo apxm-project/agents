@@ -7,7 +7,7 @@
 //! wired to the dumb-pipe chat host — see `commands/chat.rs`'s doc comment).
 //! They were deleted once the runtime default
 //! (`ConversationMemoryMiddleware`, `apxm-runtime` crate) reached parity —
-//! see `docs/plans/tasks/W2.7.md` and
+//! see the runtime compaction policy and
 //! `apxm_core::constants::runtime::conversation_compaction` for the single
 //! source of truth now.
 

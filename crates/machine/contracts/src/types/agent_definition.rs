@@ -61,7 +61,7 @@ pub struct AgentDefinition {
 /// conversation-compaction policy for a pure-declarative package (no Python
 /// entry file, so no `CompactionPolicy(...)` object to read). The value is
 /// the same JSON shape the Python frontend stamps into `ApxmGraph.metadata`
-/// (`docs/plans/tasks/W2.7.md`): `{"keep_recent", "compact_at_tokens",
+/// (the runtime compaction policy): `{"keep_recent", "compact_at_tokens",
 /// "strategy", "summary_key"}`. `extra` is already an open, stringly-typed
 /// bag ([`AgentRuntime::extra`]) — this constant just names the
 /// well-known key so every producer/consumer (this crate's loader, the
@@ -389,7 +389,7 @@ mod tests {
         assert_eq!(def, back);
     }
 
-    /// **Cross-plane parity surface (W2.7):** a pure-declarative package's
+    /// **Cross-plane parity surface:** a pure-declarative package's
     /// `[runtime]` extra bag round-trips a `compaction_policy` knob
     /// unchanged through serde — the same `extra: BTreeMap<String, String>`
     /// open shape every other runtime knob already uses, so no schema break
@@ -397,8 +397,7 @@ mod tests {
     #[test]
     fn runtime_extra_round_trips_compaction_policy_knob() {
         let mut def = sample();
-        let policy_json =
-            r#"{"keep_recent":2,"compact_at_tokens":300,"strategy":"summarize","summary_key":"conversation:summary"}"#;
+        let policy_json = r#"{"keep_recent":2,"compact_at_tokens":300,"strategy":"summarize","summary_key":"conversation:summary"}"#;
         def.runtime = Some(AgentRuntime {
             r#loop: Some("in_graph".to_string()),
             memory_space: Some("stm".to_string()),

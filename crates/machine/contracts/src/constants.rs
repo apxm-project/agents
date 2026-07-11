@@ -37,7 +37,7 @@ pub mod env {
     /// `MockLLMBackend::when_prompt_contains`, so a multi-turn scripted
     /// transcript (context injection -> tool use -> compaction) gets
     /// distinct deterministic answers per turn instead of one static
-    /// response (`docs/plans/tasks/W5.1.md`). Only read when
+    /// response. Only read when
     /// `APXM_MOCK_BACKEND` is also set; malformed/missing files are a hard
     /// error, never a silent fall-back to the single default response.
     pub const APXM_MOCK_SCRIPT_PATH: &str = "APXM_MOCK_SCRIPT_PATH";
@@ -199,7 +199,7 @@ pub mod runtime {
         pub const REVIEWER_UPSTREAM_FRAME_BUDGET_TOKENS: usize = 2_000;
     }
 
-    /// Conversation-window compaction defaults (`docs/plans/tasks/W2.7.md`).
+    /// Conversation-window compaction defaults.
     /// Sibling of [`context_stack`]'s prompt-budget family: that module
     /// bounds ONE assembled prompt; this one bounds the ACCUMULATED
     /// multi-turn conversation window a `ConversationalAgent` turn measures
@@ -223,7 +223,7 @@ pub mod runtime {
         pub const DEFAULT_WARNING_UTILIZATION_PCT: f64 = 80.0;
     }
 
-    /// Deterministic tool-result trimming (`docs/plans/tasks/W2.7.md`): the
+    /// Deterministic tool-result trimming: the
     /// budget an oversized `INV_CAP` result is trimmed against before it can
     /// inflate the conversation's token accounting, via the SAME
     /// `truncate_to_budget` primitive the subagent prompt-budget mechanism

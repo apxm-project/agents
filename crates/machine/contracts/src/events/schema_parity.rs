@@ -2,8 +2,7 @@
 //! (workspace/contracts/schemas/event.v1.json).
 //!
 //! `workspace/contracts` owns the public schema; this crate owns the Rust
-//! model it describes (see docs/plans/tasks/W2.1.md, "Contract owner &
-//! affected consumers"). The two are kept in sync by discipline, not by a
+//! model it describes. The two are kept in sync by discipline, not by a
 //! generator: this table is a literal copy of the schema's
 //! `$defs.EventKindRegistryTable.const` (63 entries at the time this test
 //! was written). If `CORE_EVENT_KINDS` changes — a kind added, removed, or
@@ -97,8 +96,8 @@ fn category_str(category: EventCategory) -> &'static str {
 
 /// Positive/drift gate: every `CORE_EVENT_KINDS` entry has exactly one
 /// matching row in `SCHEMA_EVENT_KIND_TABLE` with the same category and
-/// terminal value — the exact assertion the W2.1 record's
-/// "Terminal-classification drift gate" test names.
+/// terminal value — the same terminal-classification invariant used by the
+/// schema-parity test.
 #[test]
 fn core_event_kinds_match_schema_registry_table() {
     use std::collections::BTreeMap;
@@ -152,7 +151,7 @@ fn core_event_kinds_match_schema_registry_table() {
 /// (no `_delta` streaming partner, but does NOT end a run/session/turn)
 /// must stay `terminal: false`, and a genuine run-ending kind stays
 /// `terminal: true` — regression pin for the exact misclassification the
-/// record's threat model calls out.
+/// ambiguous terminal classifications.
 #[test]
 fn ambiguous_terminal_kinds_stay_non_terminal() {
     use super::kind;
@@ -168,5 +167,8 @@ fn ambiguous_terminal_kinds_stay_non_terminal() {
         );
     }
 
-    assert!(kind::TURN_COMPLETE.is_terminal(), "turn_complete is terminal_sense=run_end");
+    assert!(
+        kind::TURN_COMPLETE.is_terminal(),
+        "turn_complete is terminal_sense=run_end"
+    );
 }

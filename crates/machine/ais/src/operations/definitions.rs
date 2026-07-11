@@ -27,13 +27,13 @@ use std::fmt;
 /// - 36 public operations
 /// - 2 internal operations (ConstStr, Yield)
 ///
-/// `LOOP_START`/`LOOP_END` were removed (W2.6): they compiled and verified
+/// `LOOP_START`/`LOOP_END` were removed because they compiled and verified
 /// but never re-executed at runtime (the executor is a DAG engine with no
 /// back-edge or re-splice wired to either handler). The one real iteration
 /// mechanism is graph splicing (`scheduler::splicing::splice_turn_and_rearm`),
 /// which the in-graph session/turn loop already uses; `AUTONOMOUS` is a
 /// documented macro-op with its own internal plan/act/evaluate loop, not the
-/// general iteration mechanism. See `docs/plans/tasks/W2.6.md`. Indices 16
+/// general iteration mechanism. Indices 16
 /// and 17 are retired, not reassigned (see `WIRE_INDEXED_OPERATIONS`).
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "SCREAMING_SNAKE_CASE")]
@@ -158,8 +158,8 @@ pub enum AISOperationType {
 ///
 /// This table is the single source of truth for operation-kind indexes in the
 /// artifact format. Indices 16, 17, 26, 27, 30, 32, and 39 are retired
-/// (16/17 formerly LOOP_START/LOOP_END, deleted at W2.6 for compiling but
-/// never re-executing at runtime — see `docs/plans/tasks/W2.6.md`; 26/27/32/39
+/// (16/17 formerly LOOP_START/LOOP_END, deleted because they compiled but never
+/// re-executed at runtime; 26/27/32/39
 /// formerly GUARD, CLAIM, NEGOTIATE, and SPAWN_TEAM, deleted as unexercised;
 /// 30 was always reserved) and must never be reassigned.
 pub const WIRE_INDEXED_OPERATIONS: &[(u32, AISOperationType)] = &[
@@ -1819,7 +1819,7 @@ pub static AIS_OPERATIONS: &[OperationSpec] = &[
             until the goal is achieved or `max_iterations` is reached. It is independent of, and \
             not a substitute for, the general in-graph iteration mechanism, which is splice-based \
             (a fresh sub-DAG grafted into the live execution per turn/iteration via \
-            `splice_dag`/`rearm_session_turn`; see `docs/plans/tasks/W2.6.md`). Optional backend, \
+            `splice_dag`/`rearm_session_turn`). Optional backend, \
             model, system prompt, provider, and temperature attributes follow the same routing \
             contract as the other LLM operations.",
         latency: OperationLatency::High,
@@ -2063,7 +2063,7 @@ mod tests {
             AIS_OPERATIONS.len(),
             39,
             "Expected 39 total operations (1 metadata + 36 public + 2 internal) \
-             after W2.6 deleted LOOP_START/LOOP_END"
+             after LOOP_START/LOOP_END were deleted"
         );
         assert_eq!(
             AISOperationType::all_operations().len(),
@@ -2114,7 +2114,7 @@ mod tests {
             Some(AISOperationType::Resume)
         );
         // 16, 17, 26, 27, 30, 32, and 39 are retired/reserved (unassigned).
-        // 16/17 (LOOP_START/LOOP_END) were retired by W2.6: they compiled and
+        // 16/17 (LOOP_START/LOOP_END) were retired because they compiled and
         // verified but never re-executed at runtime.
         for retired in [16, 17, 26, 27, 30, 32, 39] {
             assert_eq!(

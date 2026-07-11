@@ -666,7 +666,7 @@ export const AUTONOMOUS: OpSpec = {
   name: "Autonomous",
   category: "coordination" as OpCategory,
   description: "Macro-op: a fused goal-directed plan/act/evaluate loop, not the general iteration mechanism",
-  longDescription: "AUTONOMOUS is a macro-op — a single node that fuses an internal plan / act / evaluate loop against a goal prompt, implemented as a Rust loop inside the handler (not graph-level iteration). The node keeps calling the configured model until the goal is achieved or `max_iterations` is reached. It is independent of, and not a substitute for, the general in-graph iteration mechanism, which is splice-based (a fresh sub-DAG grafted into the live execution per turn/iteration via `splice_dag`/`rearm_session_turn`; see `docs/plans/tasks/W2.6.md`). Optional backend, model, system prompt, provider, and temperature attributes follow the same routing contract as the other LLM operations.",
+  longDescription: "AUTONOMOUS is a macro-op — a single node that fuses an internal plan / act / evaluate loop against a goal prompt, implemented as a Rust loop inside the handler (not graph-level iteration). The node keeps calling the configured model until the goal is achieved or `max_iterations` is reached. It is independent of, and not a substitute for, the general in-graph iteration mechanism, which is splice-based (a fresh sub-DAG grafted into the live execution per turn/iteration via `splice_dag`/`rearm_session_turn`). Optional backend, model, system prompt, provider, and temperature attributes follow the same routing contract as the other LLM operations.",
   latency: "high",
   fields: [
     { name: "prompt", description: "Goal or objective for the autonomous loop", required: true, refType: null },
