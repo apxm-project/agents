@@ -20,7 +20,6 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
-use tokio::process::{Child, Command};
 use tokio::sync::mpsc;
 
 /// Build a `RuntimeError::Capability` tagged with this module's capability
@@ -124,9 +123,7 @@ pub struct PythonHandlerWorker {
     /// Handle to the background demuxer task.
     _demuxer: tokio::task::JoinHandle<()>,
     /// Child process handle (held for Drop cleanup).
-    _child: Arc<tokio::sync::Mutex<Child>>,
-    /// Rewritten command and backend-owned lifecycle state.
-    _sandbox_command: crate::sandbox::WrappedCommand,
+    _child: Arc<tokio::sync::Mutex<crate::sandbox::WrappedChild>>,
     /// Manifest working dir kept alive for the worker's lifetime so the path
     /// remains valid even if the worker rereads it.
     _workdir: tempfile::TempDir,
@@ -205,24 +202,18 @@ impl PythonHandlerWorker {
                      to run author python unsandboxed",
                 ));
             }
-            None => crate::sandbox::WrappedCommand::direct(py, base_args),
+            None => crate::sandbox::WrappedCommand::direct(py, base_args, worker_env.clone())
+                .map_err(|error| cap_err(format!("Invalid Python worker environment: {error}")))?,
         };
 
-        let mut cmd = Command::new(&sandbox_command.program);
-        cmd.args(&sandbox_command.args)
-            .stdin(std::process::Stdio::piped())
-            .stdout(std::process::Stdio::piped())
-            .stderr(std::process::Stdio::piped())
-            .kill_on_drop(true)
-            .env_clear();
-        let launcher_env = sandbox_command
-            .launcher_environment()
-            .unwrap_or(&worker_env);
-        for (key, value) in launcher_env {
-            cmd.env(key, value);
-        }
-        let mut child = cmd
-            .spawn()
+        let mut child = sandbox_command
+            .spawn(|command| {
+                command
+                    .stdin(std::process::Stdio::piped())
+                    .stdout(std::process::Stdio::piped())
+                    .stderr(std::process::Stdio::piped())
+                    .kill_on_drop(true);
+            })
             .map_err(|e| cap_err(format!("Failed to spawn Python tool worker: {}", e)))?;
 
         let stdin = child
@@ -300,7 +291,6 @@ impl PythonHandlerWorker {
             pending,
             _demuxer: demuxer,
             _child: child,
-            _sandbox_command: sandbox_command,
             _workdir: workdir,
             next_id: std::sync::atomic::AtomicU64::new(1),
         })

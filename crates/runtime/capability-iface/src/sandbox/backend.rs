@@ -7,7 +7,9 @@
 use super::error::SandboxError;
 use super::types::{ExecRequest, ExecResult, SandboxCapabilities, SandboxContext};
 use async_trait::async_trait;
+use std::ops::{Deref, DerefMut};
 use std::path::Path;
+use tokio::process::{Child, Command};
 
 const DEFAULT_SESSION_ID_PREFIX: &str = "sandbox";
 
@@ -30,38 +32,100 @@ impl<T: Send + Sync> WrappedCommandGuard for T {}
 
 /// A command rewritten for backend-managed isolation.
 pub struct WrappedCommand {
-    pub program: String,
-    pub args: Vec<String>,
-    launcher_env: Option<Vec<(String, String)>>,
+    program: String,
+    args: Vec<String>,
+    environment: Vec<(String, String)>,
+    guard: Option<Box<dyn WrappedCommandGuard>>,
+}
+
+/// A spawned child that owns the isolation backend's lifecycle guard.
+///
+/// The child cannot be extracted from this handle, so backend resources remain
+/// owned until the process handle itself is dropped.
+pub struct WrappedChild {
+    child: Child,
     _guard: Option<Box<dyn WrappedCommandGuard>>,
 }
 
 impl WrappedCommand {
-    pub fn direct(program: impl Into<String>, args: Vec<String>) -> Self {
-        Self {
-            program: program.into(),
-            args,
-            launcher_env: None,
-            _guard: None,
-        }
-    }
-
-    pub fn guarded_with_launcher_environment(
+    /// Prepare a direct command with a complete replacement environment.
+    pub fn direct(
         program: impl Into<String>,
         args: Vec<String>,
-        launcher_env: Vec<(String, String)>,
-        guard: impl WrappedCommandGuard + 'static,
-    ) -> Self {
-        Self {
-            program: program.into(),
-            args,
-            launcher_env: Some(launcher_env),
-            _guard: Some(Box::new(guard)),
-        }
+        environment: Vec<(String, String)>,
+    ) -> Result<Self, SandboxError> {
+        Self::new(program, args, environment, None)
     }
 
-    pub fn launcher_environment(&self) -> Option<&[(String, String)]> {
-        self.launcher_env.as_deref()
+    /// Prepare a backend-managed command with an owned lifecycle guard.
+    pub fn guarded(
+        program: impl Into<String>,
+        args: Vec<String>,
+        environment: Vec<(String, String)>,
+        guard: impl WrappedCommandGuard + 'static,
+    ) -> Result<Self, SandboxError> {
+        Self::new(program, args, environment, Some(Box::new(guard)))
+    }
+
+    fn new(
+        program: impl Into<String>,
+        args: Vec<String>,
+        environment: Vec<(String, String)>,
+        guard: Option<Box<dyn WrappedCommandGuard>>,
+    ) -> Result<Self, SandboxError> {
+        super::constants::env::validate_child_environment(&environment)
+            .map_err(|error| SandboxError::ValidationFailed(error.to_string()))?;
+        Ok(Self {
+            program: program.into(),
+            args,
+            environment,
+            guard,
+        })
+    }
+
+    /// Spawn the command and transfer backend resource ownership to the child.
+    pub fn spawn(self, configure: impl FnOnce(&mut Command)) -> std::io::Result<WrappedChild> {
+        let Self {
+            program,
+            args,
+            environment,
+            guard,
+        } = self;
+        let mut command = Command::new(program);
+        command.args(args).env_clear();
+        for (key, value) in environment {
+            command.env(key, value);
+        }
+        configure(&mut command);
+        let child = command.spawn()?;
+        Ok(WrappedChild {
+            child,
+            _guard: guard,
+        })
+    }
+}
+
+impl WrappedChild {
+    /// Wait for process completion while retaining the backend guard.
+    pub async fn wait_with_output(self) -> std::io::Result<std::process::Output> {
+        let Self { child, _guard } = self;
+        let output = child.wait_with_output().await;
+        drop(_guard);
+        output
+    }
+}
+
+impl Deref for WrappedChild {
+    type Target = Child;
+
+    fn deref(&self) -> &Self::Target {
+        &self.child
+    }
+}
+
+impl DerefMut for WrappedChild {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.child
     }
 }
 
@@ -147,27 +211,62 @@ pub trait SandboxBackend: Send + Sync {
     /// to completion and returns captured output. Long-running children that
     /// stay attached to live stdio for their whole lifetime — ACP coding agents
     /// speaking JSON-RPC over stdin/stdout, interactive terminals — cannot use
-    /// it. For those, the caller spawns the process itself and must first ask
-    /// the backend to rewrite `(program, args)` into a confined equivalent.
+    /// it. For those, the caller asks the backend to rewrite `(program, args)`
+    /// into a confined equivalent and then consumes [`WrappedCommand::spawn`].
     ///
     /// Isolation wrappers (e.g. `bwrap`) forward stdin/stdout/stderr to the
     /// inner child transparently, so the caller's pipe handling is unaffected.
     ///
     /// `cwd` is the requested working directory, `needs_network` declares the
     /// network requirement, and `env` is the complete sanitized environment for
-    /// the inner process. Each backend validates what it can enforce. The default
-    /// implementation applies no isolation and returns the command unchanged;
-    /// isolating backends must return an error rather than silently weakening an
-    /// unsupported request.
+    /// the inner process. Each backend validates what it can enforce. The
+    /// complete environment is applied with inherited variables cleared. The
+    /// default implementation applies no isolation; isolating backends must
+    /// return an error rather than silently weakening an unsupported request.
     fn wrap_command(
         &self,
         program: &str,
         args: &[String],
         _cwd: &Path,
         _needs_network: bool,
-        _env: &[(String, String)],
+        env: &[(String, String)],
     ) -> Result<WrappedCommand, SandboxError> {
-        Ok(WrappedCommand::direct(program, args.to_vec()))
+        WrappedCommand::direct(program, args.to_vec(), env.to_vec())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::sync::Arc;
+    use std::sync::atomic::{AtomicBool, Ordering};
+
+    struct DropFlag(Arc<AtomicBool>);
+
+    impl Drop for DropFlag {
+        fn drop(&mut self) {
+            self.0.store(true, Ordering::SeqCst);
+        }
+    }
+
+    #[tokio::test]
+    async fn spawned_child_retains_guard_until_handle_drop() {
+        let dropped = Arc::new(AtomicBool::new(false));
+        let command = WrappedCommand::guarded(
+            super::super::constants::executables::TRUE,
+            Vec::new(),
+            super::super::constants::env::child_environment(std::iter::empty::<(&str, &str)>()),
+            DropFlag(Arc::clone(&dropped)),
+        )
+        .expect("prepare guarded command");
+
+        let mut child = command.spawn(|_| {}).expect("spawn guarded command");
+        assert!(!dropped.load(Ordering::SeqCst));
+        child.wait().await.expect("wait for guarded command");
+        assert!(!dropped.load(Ordering::SeqCst));
+
+        drop(child);
+        assert!(dropped.load(Ordering::SeqCst));
     }
 }
 

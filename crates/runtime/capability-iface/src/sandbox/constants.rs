@@ -43,14 +43,7 @@ pub mod env {
 
     pub const CHILD_PASSTHROUGH: &[&str] =
         &[PATH, HOME, LANG, LC_ALL, TERM, LD_LIBRARY_PATH, VIRTUAL_ENV];
-    pub const SYSTEMD_LAUNCHER_PASSTHROUGH: &[&str] = &[
-        PATH,
-        HOME,
-        LANG,
-        LC_ALL,
-        DBUS_SESSION_BUS_ADDRESS,
-        XDG_RUNTIME_DIR,
-    ];
+    pub const SYSTEMD_LAUNCHER_PASSTHROUGH: &[&str] = &[DBUS_SESSION_BUS_ADDRESS, XDG_RUNTIME_DIR];
 
     pub const AWS_SECRET_ACCESS_KEY: &str = "AWS_SECRET_ACCESS_KEY";
     pub const AWS_ACCESS_KEY_ID: &str = "AWS_ACCESS_KEY_ID";
@@ -229,6 +222,9 @@ pub mod systemd_run {
         "SystemCallFilter=~@mount @reboot @swap @privileged";
     pub const PROPERTY_SYSTEM_CALL_FILTER_NO_NETWORK: &str =
         "SystemCallFilter=~@mount @reboot @swap @privileged @network-io";
+    pub const PROBE_RESTRICTED_OK: &str = "APXM_SYSTEMD_RESTRICTED_OK";
+    pub const PROBE_NETWORK_OK: &str = "APXM_SYSTEMD_NETWORK_OK";
+    pub const PROBE_NETWORK_DENIED: &str = "Operation not permitted";
     pub const ERR_NOT_AVAILABLE: &str =
         "systemd user-service sandbox is not available on this host";
     pub const ERR_ONLY_LINUX: &str = "systemd sandbox backend is only supported on Linux";

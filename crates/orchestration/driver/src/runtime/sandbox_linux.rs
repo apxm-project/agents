@@ -98,7 +98,7 @@ impl SandboxBackend for BubblewrapSandboxBackend {
     fn capabilities(&self) -> SandboxCapabilities {
         SandboxCapabilities {
             isolation_level: IsolationLevel::Container,
-            supports_filesystem_restriction: true,
+            supports_filesystem_restriction: false,
             supports_network_restriction: true,
             supports_syscall_filtering: false,
             supports_resource_limits: false,
@@ -123,11 +123,8 @@ impl SandboxBackend for BubblewrapSandboxBackend {
             };
         }
 
-        // `read_paths` is documented as an informational grant ("paths the
-        // command needs to read"). bubblewrap binds the host root read-only,
-        // which over-satisfies any read grant, and enforces writes via explicit
-        // bind mounts of the working dir and `write_paths`. Nothing a standard
-        // request asks for is left unenforced, so this is not degraded.
+        // Read grants are informational, while writes are confined to explicit
+        // mounts. The backend does not advertise a readable-path allowlist.
         ValidationResult::Ok
     }
 
@@ -256,9 +253,9 @@ impl SandboxBackend for BubblewrapSandboxBackend {
         env: &[(String, String)],
     ) -> Result<WrappedCommand, SandboxError> {
         validate_child_environment(env)?;
-        validate_bwrap_writable_mount(cwd)?;
-        let bwrap_args = build_bwrap_wrap_args(program, args, cwd, needs_network, env);
-        Ok(WrappedCommand::direct(executables::BUBBLEWRAP, bwrap_args))
+        let cwd_mount = writable_cwd_mount(cwd)?;
+        let bwrap_args = build_bwrap_wrap_args(program, args, &cwd_mount, needs_network, env);
+        WrappedCommand::direct(executables::BUBBLEWRAP, bwrap_args, env.to_vec())
     }
 }
 
@@ -423,12 +420,12 @@ impl SandboxBackend for SystemdSandboxBackend {
         validate_child_environment(env)?;
         let unit = systemd_unit_name();
         let args = build_systemd_run_args(program, args, cwd, false, env, Some(&unit));
-        Ok(WrappedCommand::guarded_with_launcher_environment(
+        WrappedCommand::guarded(
             executables::SYSTEMD_RUN,
             args,
             systemd_launcher_environment(),
             SystemdUnitGuard::new(unit),
-        ))
+        )
     }
 }
 
@@ -444,28 +441,28 @@ impl SandboxBackend for SystemdSandboxBackend {
 fn build_bwrap_wrap_args(
     program: &str,
     args: &[String],
-    cwd: &Path,
+    cwd: &WritableMount,
     needs_network: bool,
     env: &[(String, String)],
 ) -> Vec<String> {
-    let cwd = path_string(cwd);
+    let host_cwd = path_string(&cwd.host);
+    let sandbox_cwd = path_string(&cwd.sandbox);
     let mut wrapped = bwrap_isolation_preamble(needs_network);
     wrapped.push(bubblewrap::FLAG_BIND.to_string());
-    wrapped.push(cwd.clone());
-    wrapped.push(cwd.clone());
+    wrapped.push(host_cwd);
+    wrapped.push(sandbox_cwd.clone());
     wrapped.push(bubblewrap::FLAG_CHDIR.to_string());
-    wrapped.push(cwd);
+    wrapped.push(sandbox_cwd);
     wrapped.push(bubblewrap::FLAG_SEPARATOR.to_string());
     append_child_command(&mut wrapped, program, args, env);
 
     wrapped
 }
 
-/// Shared bubblewrap isolation flags for both the one-shot execute path and the
-/// long-running `wrap_command` path: read-only root (over-satisfies read
-/// grants), ephemeral `/tmp`, device and proc mounts, user+pid namespaces, and
-/// network isolation unless the child needs the network. Single source of truth
-/// so the two builders cannot drift apart.
+/// Shared bubblewrap isolation flags for one-shot and long-running commands.
+///
+/// The host root remains readable but not writable, `/tmp` and `/run/user` are
+/// replaced, and network isolation is enabled for no-network requests.
 fn bwrap_isolation_preamble(needs_network: bool) -> Vec<String> {
     let mut args = vec![
         bubblewrap::FLAG_NEW_SESSION.to_string(),
@@ -595,13 +592,26 @@ fn probe_bubblewrap(executable: &str) -> bool {
 }
 
 fn probe_systemd_run(executable: &str) -> bool {
-    let env = sandbox_env::child_environment(std::iter::empty::<(&str, &str)>());
+    let env =
+        sandbox_env::child_environment([(sandbox_env::LANG, "C"), (sandbox_env::LC_ALL, "C")]);
     if sandbox_env::validate_child_environment(&env).is_err() {
         return false;
     }
-    let restricted_sanity =
-        build_systemd_run_args(executables::TRUE, &[], Path::new("/"), false, &env, None);
-    if !run_systemd_probe(executable, &restricted_sanity).is_some_and(|status| status.success()) {
+    let sanity_args = vec![
+        shell_args::COMMAND.to_string(),
+        format!("printf {}", systemd_run::PROBE_RESTRICTED_OK),
+    ];
+    let restricted_sanity = build_systemd_run_args(
+        executables::BASH,
+        &sanity_args,
+        Path::new("/"),
+        false,
+        &env,
+        None,
+    );
+    if !run_systemd_probe(executable, &restricted_sanity)
+        .is_some_and(|output| probe_output_matches(&output, systemd_run::PROBE_RESTRICTED_OK))
+    {
         return false;
     }
     let Ok(listener) = TcpListener::bind((Ipv4Addr::LOCALHOST, 0)) else {
@@ -610,7 +620,11 @@ fn probe_systemd_run(executable: &str) -> bool {
     let Ok(address) = listener.local_addr() else {
         return false;
     };
-    let socket_probe = format!("exec 3<>/dev/tcp/127.0.0.1/{}", address.port());
+    let socket_probe = format!(
+        "exec 3<>/dev/tcp/127.0.0.1/{} && printf {}",
+        address.port(),
+        systemd_run::PROBE_NETWORK_OK
+    );
     let network_args = vec![shell_args::COMMAND.to_string(), socket_probe];
     let unrestricted_probe = build_systemd_run_args(
         executables::BASH,
@@ -620,7 +634,9 @@ fn probe_systemd_run(executable: &str) -> bool {
         &env,
         None,
     );
-    if !run_systemd_probe(executable, &unrestricted_probe).is_some_and(|status| status.success()) {
+    if !run_systemd_probe(executable, &unrestricted_probe)
+        .is_some_and(|output| probe_output_matches(&output, systemd_run::PROBE_NETWORK_OK))
+    {
         return false;
     }
     let restricted_probe = build_systemd_run_args(
@@ -631,18 +647,25 @@ fn probe_systemd_run(executable: &str) -> bool {
         &env,
         None,
     );
-    run_systemd_probe(executable, &restricted_probe).is_some_and(|status| !status.success())
+    run_systemd_probe(executable, &restricted_probe).is_some_and(|output| {
+        !output.status.success()
+            && String::from_utf8_lossy(&output.stderr).contains(systemd_run::PROBE_NETWORK_DENIED)
+    })
 }
 
-fn run_systemd_probe(executable: &str, args: &[String]) -> Option<std::process::ExitStatus> {
+fn probe_output_matches(output: &std::process::Output, marker: &str) -> bool {
+    output.status.success() && String::from_utf8_lossy(&output.stdout) == marker
+}
+
+fn run_systemd_probe(executable: &str, args: &[String]) -> Option<std::process::Output> {
     let mut command = StdCommand::new(executable);
     command
         .args(args)
-        .stdout(StdStdio::null())
-        .stderr(StdStdio::null())
+        .stdout(StdStdio::piped())
+        .stderr(StdStdio::piped())
         .env_clear();
     apply_systemd_launcher_environment_std(&mut command);
-    command.status().ok()
+    command.output().ok()
 }
 
 fn apply_systemd_launcher_environment_std(command: &mut StdCommand) {
@@ -723,6 +746,15 @@ fn collect_writable_mounts(
     Ok(mounts)
 }
 
+fn writable_cwd_mount(cwd: &Path) -> Result<WritableMount, SandboxError> {
+    let cwd = projected_canonical_path(cwd)?;
+    validate_bwrap_writable_mount(&cwd)?;
+    Ok(WritableMount {
+        host: cwd.clone(),
+        sandbox: cwd,
+    })
+}
+
 fn normalize_writable_mount(
     raw_path: &Path,
     working_directory: &WorkingDirectory,
@@ -778,21 +810,26 @@ fn normalize_writable_mount(
 
 fn validate_bwrap_writable_mount(path: &Path) -> Result<(), SandboxError> {
     let absolute = projected_canonical_path(path)?;
-    let root = Path::new(bubblewrap::FILESYSTEM_ROOT);
-    let tmp = Path::new(bubblewrap::FILESYSTEM_TMP);
-    let run = Path::new(bubblewrap::FILESYSTEM_RUN);
-    let run_user = Path::new(bubblewrap::FILESYSTEM_RUN_USER);
-    let dev = Path::new(bubblewrap::FILESYSTEM_DEV);
-    let proc = Path::new(bubblewrap::FILESYSTEM_PROC);
-    let sys = Path::new(bubblewrap::FILESYSTEM_SYS);
-
-    let protected = absolute == root
-        || absolute == tmp
-        || absolute == run
-        || absolute.starts_with(run_user)
-        || absolute.starts_with(dev)
-        || absolute.starts_with(proc)
-        || absolute.starts_with(sys);
+    let isolation_roots = [
+        Path::new(bubblewrap::FILESYSTEM_ROOT),
+        Path::new(bubblewrap::FILESYSTEM_TMP),
+        Path::new(bubblewrap::FILESYSTEM_RUN_USER),
+        Path::new(bubblewrap::FILESYSTEM_DEV),
+        Path::new(bubblewrap::FILESYSTEM_PROC),
+        Path::new(bubblewrap::FILESYSTEM_SYS),
+    ];
+    let protected_subtrees = [
+        Path::new(bubblewrap::FILESYSTEM_RUN_USER),
+        Path::new(bubblewrap::FILESYSTEM_DEV),
+        Path::new(bubblewrap::FILESYSTEM_PROC),
+        Path::new(bubblewrap::FILESYSTEM_SYS),
+    ];
+    let protected = isolation_roots
+        .iter()
+        .any(|root| root.starts_with(&absolute))
+        || protected_subtrees
+            .iter()
+            .any(|root| absolute.starts_with(root));
     if protected {
         return Err(SandboxError::ValidationFailed(format!(
             "bubblewrap writable mount overlaps protected path: {}",
@@ -975,13 +1012,8 @@ mod tests {
             ("PATH".to_string(), "/usr/bin".to_string()),
             ("APXM_TEST".to_string(), "present".to_string()),
         ];
-        let wrapped = build_bwrap_wrap_args(
-            "node",
-            &["worker.js".to_string()],
-            Path::new("/tmp/work"),
-            false,
-            &env,
-        );
+        let cwd = writable_cwd_mount(Path::new("/tmp/work")).expect("validated cwd mount");
+        let wrapped = build_bwrap_wrap_args("node", &["worker.js".to_string()], &cwd, false, &env);
 
         assert!(
             wrapped
@@ -1046,6 +1078,31 @@ mod tests {
     }
 
     #[test]
+    fn bubblewrap_does_not_claim_readable_path_restriction() {
+        let capabilities = BubblewrapSandboxBackend::with_default_policy().capabilities();
+
+        assert_eq!(capabilities.isolation_level, IsolationLevel::Container);
+        assert!(!capabilities.supports_filesystem_restriction);
+        assert!(capabilities.supports_network_restriction);
+    }
+
+    #[test]
+    fn systemd_launcher_environment_is_limited_to_user_manager_connection_state() {
+        assert_eq!(
+            sandbox_env::SYSTEMD_LAUNCHER_PASSTHROUGH,
+            &[
+                sandbox_env::DBUS_SESSION_BUS_ADDRESS,
+                sandbox_env::XDG_RUNTIME_DIR,
+            ]
+        );
+        assert!(
+            sandbox_env::CHILD_PASSTHROUGH
+                .iter()
+                .all(|key| !sandbox_env::SYSTEMD_LAUNCHER_PASSTHROUGH.contains(key))
+        );
+    }
+
+    #[test]
     fn bubblewrap_probe_requires_the_isolation_command_to_succeed() {
         let dir = tempfile::tempdir().expect("probe tempdir");
         let succeeds = write_executable(dir.path(), "succeeds", "#!/bin/sh\nexit 0\n");
@@ -1061,14 +1118,23 @@ mod tests {
         let always_succeeds =
             write_executable(dir.path(), "always-succeeds", "#!/bin/sh\nexit 0\n");
         let always_fails = write_executable(dir.path(), "always-fails", "#!/bin/sh\nexit 1\n");
-        let counter = dir.path().join("probe-count");
         let enforces = write_executable(
             dir.path(),
             "enforces",
             &format!(
-                "#!/bin/sh\ncount=$(cat '{}' 2>/dev/null || echo 0)\ncount=$((count + 1))\nprintf '%s' \"$count\" > '{}'\n[ \"$count\" -lt 3 ]\n",
-                counter.display(),
-                counter.display()
+                "#!/bin/sh\ncase \"$*\" in\n  *{restricted}*) printf {restricted}; exit 0 ;;\n  *'@network-io'*) printf '%s\\n' 'bash: connect: {denied}' >&2; exit 1 ;;\n  *) printf {network}; exit 0 ;;\nesac\n",
+                restricted = systemd_run::PROBE_RESTRICTED_OK,
+                denied = systemd_run::PROBE_NETWORK_DENIED,
+                network = systemd_run::PROBE_NETWORK_OK,
+            ),
+        );
+        let wrong_denial = write_executable(
+            dir.path(),
+            "wrong-denial",
+            &format!(
+                "#!/bin/sh\ncase \"$*\" in\n  *{restricted}*) printf {restricted}; exit 0 ;;\n  *'@network-io'*) printf '%s\\n' 'bash: connect: Connection refused' >&2; exit 1 ;;\n  *) printf {network}; exit 0 ;;\nesac\n",
+                restricted = systemd_run::PROBE_RESTRICTED_OK,
+                network = systemd_run::PROBE_NETWORK_OK,
             ),
         );
 
@@ -1078,47 +1144,50 @@ mod tests {
         assert!(!probe_systemd_run(
             always_fails.to_str().expect("utf-8 path")
         ));
+        assert!(!probe_systemd_run(
+            wrong_denial.to_str().expect("utf-8 path")
+        ));
         assert!(probe_systemd_run(enforces.to_str().expect("utf-8 path")));
     }
 
-    #[test]
-    fn functional_systemd_wrapper_preserves_its_launcher_environment() {
+    #[tokio::test]
+    async fn functional_systemd_wrapper_separates_launcher_and_child_environments() {
         if !systemd_run_available() {
             return;
         }
         let backend = SystemdSandboxBackend::with_default_policy();
         let env = sandbox_env::child_environment([(sandbox_env::PATH, "/usr/bin:/bin")]);
         let wrapped = backend
-            .wrap_command(
-                executables::BASH,
-                &[
-                    shell_args::COMMAND.to_string(),
-                    "printf SYSTEMD_OK".to_string(),
-                ],
-                Path::new("/tmp"),
-                false,
-                &env,
-            )
+            .wrap_command(executables::ENV, &[], Path::new("/tmp"), false, &env)
             .expect("wrap no-network command");
-        let mut command = StdCommand::new(&wrapped.program);
-        command
-            .args(&wrapped.args)
-            .stdout(StdStdio::piped())
-            .stderr(StdStdio::piped())
-            .env_clear();
-        for (key, value) in wrapped
-            .launcher_environment()
-            .expect("systemd launcher environment")
-        {
-            command.env(key, value);
-        }
-        let output = command.output().expect("launch wrapped command");
+        let child = wrapped
+            .spawn(|command| {
+                command.stdout(StdStdio::piped()).stderr(StdStdio::piped());
+            })
+            .expect("launch wrapped command");
+        let output = child
+            .wait_with_output()
+            .await
+            .expect("wait for wrapped command");
         assert!(
             output.status.success(),
             "stderr={}",
             String::from_utf8_lossy(&output.stderr)
         );
-        assert_eq!(String::from_utf8_lossy(&output.stdout), "SYSTEMD_OK");
+        let child_environment = String::from_utf8_lossy(&output.stdout);
+        let dbus_prefix = format!("{}=", sandbox_env::DBUS_SESSION_BUS_ADDRESS);
+        let runtime_dir_prefix = format!("{}=", sandbox_env::XDG_RUNTIME_DIR);
+        assert!(
+            child_environment
+                .lines()
+                .any(|entry| entry == "PATH=/usr/bin:/bin")
+        );
+        assert!(
+            child_environment.lines().all(|entry| {
+                !entry.starts_with(&dbus_prefix) && !entry.starts_with(&runtime_dir_prefix)
+            }),
+            "launcher environment leaked into child: {child_environment}"
+        );
     }
 
     #[test]
@@ -1161,8 +1230,10 @@ mod tests {
             "/",
             "/tmp",
             "/run",
+            "/run/user",
             "/run/user/1000",
             "/tmp/apxm/../../run/user/1000",
+            "/run/user/../user/1000",
             "/proc/self",
             "/dev",
         ] {
@@ -1242,10 +1313,10 @@ mod tests {
             None,
         );
 
-        let status = run_systemd_probe(executables::SYSTEMD_RUN, &args)
+        let output = run_systemd_probe(executables::SYSTEMD_RUN, &args)
             .expect("functional systemd launcher");
         assert!(
-            !status.success(),
+            !output.status.success(),
             "nested systemd-run escaped network filtering"
         );
     }
