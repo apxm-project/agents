@@ -4,7 +4,7 @@
 //! `workspace/contracts` owns the public schema; this crate owns the Rust
 //! model it describes. The two are kept in sync by discipline, not by a
 //! generator: this table is a literal copy of the schema's
-//! `$defs.EventKindRegistryTable.const` (63 entries at the time this test
+//! `$defs.EventKindRegistryTable.const` (64 entries at the time this test
 //! was written). If `CORE_EVENT_KINDS` changes — a kind added, removed, or
 //! given a different `category`/`terminal` — this test fails until both
 //! this table and `schemas/event.v1.json` are updated together. That
@@ -36,6 +36,7 @@ const SCHEMA_EVENT_KIND_TABLE: &[(&str, &str, bool)] = &[
     ("graph_edge", "topology", false),
     ("head_of_line_block", "observability", false),
     ("llm_done", "lifecycle", true),
+    ("llm_step_completed", "observability", false),
     ("llm_prompt", "observability", false),
     ("loop_detected", "error", false),
     ("memoization_hit", "observability", false),

@@ -136,6 +136,8 @@ fn boxed_core_payload_from_json(
         boxed!(ToolCallPayload)
     } else if kind_name == kind::LLM_DONE.name() {
         boxed!(LlmDonePayload)
+    } else if kind_name == kind::LLM_STEP_COMPLETED.name() {
+        boxed!(LlmStepCompletedPayload)
     } else if kind_name == kind::LLM_PROMPT.name() {
         boxed!(LlmPromptPayload)
     } else if kind_name == kind::USAGE.name() {
@@ -429,6 +431,50 @@ pub struct LlmDonePayload {
 }
 impl_event_payload!(LlmDonePayload, kind::LLM_DONE);
 
+/// Detailed token accounting for one model-call step.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct LlmStepUsagePayload {
+    /// Prompt/input tokens consumed by this model call.
+    pub input_tokens: usize,
+    /// Completion/output tokens consumed by this model call.
+    pub output_tokens: usize,
+    /// Input tokens served from a provider-side cache, when reported.
+    pub cached_input_tokens: usize,
+    /// Output tokens consumed by a provider reasoning channel, when reported.
+    pub reasoning_output_tokens: usize,
+}
+
+/// Wall-clock timing evidence for one model-call step.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct LlmStepPerformancePayload {
+    /// Full model-call latency observed by the runtime.
+    pub latency_ms: f64,
+    /// Provider-reported or runtime-estimated prompt-prefill duration.
+    pub prefill_ms: f64,
+    /// Provider-reported decoding duration.
+    pub decode_ms: f64,
+}
+
+/// One model-call step completed inside a larger agent turn.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct LlmStepCompletedPayload {
+    /// Graph node that issued the model call.
+    pub node_id: u64,
+    /// One-based call number within this node's current tool loop.
+    pub step_number: usize,
+    /// Model that produced this response.
+    pub model: String,
+    /// Why this model call stopped generating.
+    pub finish_reason: FinishReasonPayload,
+    /// Detailed token accounting for this call.
+    pub usage: LlmStepUsagePayload,
+    /// Per-call latency and provider timing evidence.
+    pub performance: LlmStepPerformancePayload,
+    /// Number of tool calls requested by this response.
+    pub tool_call_count: usize,
+}
+impl_event_payload!(LlmStepCompletedPayload, kind::LLM_STEP_COMPLETED);
+
 /// A redacted prompt sent to an LLM backend.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct LlmPromptPayload {
@@ -443,7 +489,7 @@ pub struct LlmPromptPayload {
 impl_event_payload!(LlmPromptPayload, kind::LLM_PROMPT);
 
 /// Why the model stopped generating.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct FinishReasonPayload {
     /// The reason string (e.g. `"stop"`, `"tool_use"`, `"length"`).
     pub reason: String,
@@ -1070,7 +1116,7 @@ pub struct SessionEndPayload {
 impl_event_payload!(SessionEndPayload, kind::SESSION_END);
 
 /// Direction of a conversation turn.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum TurnDirection {
     /// User request.
