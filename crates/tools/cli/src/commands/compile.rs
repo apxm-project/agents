@@ -1431,6 +1431,8 @@ handler = "hooks.pre_turn"
 
         assert!(air.contains("ais.register_hook \"pre_turn\""));
         assert!(air.contains("hook_handler_id"));
+        assert!(air.contains("hook_match = \"*\""));
+        assert!(air.contains("hook_mode = \"observe\""));
         assert!(!air.contains("python_hook_handler_id"));
         assert!(air.contains("ais.flow_call \"conversation\" \"turn\""));
         assert!(air.contains("args = {user_message = \"{user_message}\"}"));
