@@ -10,24 +10,17 @@ export interface HookContext {
   log(...args: unknown[]): void;
   allow(): HookDecision;
   deny(reason?: string): HookDecision;
-  edit_args(args: Record<string, unknown>): HookDecision;
   editArgs(args: Record<string, unknown>): HookDecision;
-  replace_result(result: unknown): HookDecision;
   replaceResult(result: unknown): HookDecision;
-  prepend_system(text: string): HookDecision;
   prependSystem(text: string): HookDecision;
-  set_system(text: string): HookDecision;
   setSystem(text: string): HookDecision;
-  read_agents_md(): string;
   readAgentsMd(): string;
-  recall(key: string): unknown;
-  recall_window(n?: number, prefix?: string): string;
-  recallWindow(n?: number, prefix?: string): string;
+  recall(key: string): Promise<unknown>;
+  recallWindow(n?: number, prefix?: string): Promise<string>;
   umem(key: string, value: unknown): void;
-  ask(prompt: string, system?: string | null): string;
-  call(name: string, args?: Record<string, unknown>): unknown;
-  count_tokens(text: string): number;
-  countTokens(text: string): number;
+  ask(prompt: string, system?: string | null): Promise<string>;
+  call(name: string, args?: Record<string, unknown>): Promise<unknown>;
+  countTokens(text: string): Promise<number>;
 }
 
 /** Guarded tool/capability call passed to pre/post_cap hooks. */
