@@ -19,6 +19,10 @@ pub mod env {
     pub const APXM_WORKSPACE_ROOT: &str = "APXM_WORKSPACE_ROOT";
     /// Path to the APXM project/run configuration file.
     pub const APXM_CONFIG: &str = "APXM_CONFIG";
+    /// Explicitly trusts author-supplied Python and TypeScript artifact handlers.
+    pub const APXM_TRUST_SCRIPT_ARTIFACTS: &str = "APXM_TRUST_SCRIPT_ARTIFACTS";
+    /// Requires Python and TypeScript artifact handlers to run in an OS sandbox.
+    pub const APXM_SANDBOX_SCRIPTS: &str = "APXM_SANDBOX_SCRIPTS";
     /// Disables dispatch IR hints sent to vLLM-compatible backends.
     pub const APXM_DISABLE_HINTS: &str = "APXM_DISABLE_HINTS";
     /// Makes Python graph files emit AIR to stdout for the Rust compiler driver.
