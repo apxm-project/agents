@@ -1,17 +1,17 @@
 import { getHandlerModule, makeHandlerId, TOOL_REGISTRY } from "./registry.js";
-import type { ToolFn } from "./types.js";
+import type { JsonSchema, ToolFn } from "./types.js";
 
 export interface ToolOptions {
   name?: string;
   description?: string;
-  schema?: Record<string, unknown>;
+  schema?: JsonSchema;
 }
 
 export interface FunctionTool {
   readonly kind: "tool";
   name: string;
   description: string;
-  schema: Record<string, unknown>;
+  schema: JsonSchema;
   handler_id: string;
   module: string;
   qualname: string;

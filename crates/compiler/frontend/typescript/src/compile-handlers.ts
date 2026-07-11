@@ -9,7 +9,7 @@ import {
   isHookFn,
   makeHandlerId,
 } from "./handlers/index.js";
-import type { FunctionTool, HookFn } from "./handlers/index.js";
+import type { FunctionTool, HookFn, JsonSchema } from "./handlers/index.js";
 
 /** Manifest entry matching the Python tools manifest shape. */
 export interface HandlerManifestEntry {
@@ -19,7 +19,7 @@ export interface HandlerManifestEntry {
   name: string;
   source_file?: string;
   description?: string;
-  schema?: Record<string, unknown>;
+  schema?: JsonSchema;
   event?: string;
   match?: string;
   mode?: string;

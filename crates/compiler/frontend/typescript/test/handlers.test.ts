@@ -5,6 +5,7 @@ import {
   GATE_LIFECYCLE_EVENTS,
   HookMode,
   LifecycleEvent,
+  type JsonSchema,
   hook,
   makeHandlerId,
   tool,
@@ -25,7 +26,7 @@ describe("makeHandlerId", () => {
 
 describe("tool metadata", () => {
   it("preserves the authored argument schema", () => {
-    const schema = {
+    const schema: JsonSchema = {
       type: "object",
       properties: { request: { type: "string" } },
       required: ["request"],
