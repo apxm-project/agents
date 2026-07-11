@@ -106,6 +106,11 @@ EVENT_KIND_REGISTRY: Final[dict[str, dict[str, object]]] = {
     "terminal": false,
     "terminal_sense": "n/a"
   },
+  "llm_step_completed": {
+    "category": "observability",
+    "terminal": false,
+    "terminal_sense": "n/a"
+  },
   "loop_detected": {
     "category": "error",
     "terminal": false,
@@ -344,6 +349,7 @@ CORE_EVENT_KINDS: Final[tuple[str, ...]] = (
     'thought',
     'tool_call',
     'llm_done',
+    'llm_step_completed',
     'llm_prompt',
     'usage',
     'retry',
