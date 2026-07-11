@@ -85,7 +85,7 @@ function toolManifest(
     qualname,
     name: tool.name,
     description: tool.description,
-    schema: {},
+    schema: tool.schema,
     source_file: sourceFile,
   };
 }

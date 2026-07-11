@@ -7,6 +7,7 @@ import {
   LifecycleEvent,
   hook,
   makeHandlerId,
+  tool,
 } from "../src/handlers/index.js";
 
 describe("makeHandlerId", () => {
@@ -19,6 +20,19 @@ describe("makeHandlerId", () => {
     expect(id).toBe(expected);
     expect(makeHandlerId("examples.handlers", "search_docs")).toBe(id);
     expect(id).toMatch(/^sha256:[a-f0-9]{64}$/);
+  });
+});
+
+describe("tool metadata", () => {
+  it("preserves the authored argument schema", () => {
+    const schema = {
+      type: "object",
+      properties: { request: { type: "string" } },
+      required: ["request"],
+      additionalProperties: false,
+    };
+    const wrapped = tool({ name: "plan_workflow", schema })(() => null);
+    expect(wrapped.schema).toEqual(schema);
   });
 });
 
