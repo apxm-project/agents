@@ -12,7 +12,7 @@
 //! - `hook_event`               (required): lifecycle event
 //! - `hook_match`               (optional): glob over tool/op name (default `*`)
 //! - `hook_mode`                (optional): `observe` | `gate`
-//! - `python_hook_handler_id`   (required): sha256 handler id
+//! - `hook_handler_id`   (required): sha256 handler id
 
 use super::{ExecutionContext, Node, Result, Value, get_string_attribute};
 use crate::aam::TransitionLabel;
@@ -23,7 +23,7 @@ use std::collections::HashMap;
 
 pub async fn execute(ctx: &ExecutionContext, node: &Node, _inputs: Vec<Value>) -> Result<Value> {
     let event_str = get_string_attribute(node, graph_attrs::HOOK_EVENT)?;
-    let handler_id = get_string_attribute(node, graph_attrs::PYTHON_HOOK_HANDLER_ID)?;
+    let handler_id = get_string_attribute(node, graph_attrs::HOOK_HANDLER_ID)?;
     let match_glob = node
         .attributes
         .get(graph_attrs::HOOK_MATCH)
