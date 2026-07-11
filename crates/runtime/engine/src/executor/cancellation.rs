@@ -71,14 +71,26 @@ impl CancellationToken {
 
     /// Wait until this token or any ancestor is cancelled.
     pub async fn cancelled(&self) {
+        self.cancelled_with_before_wait(|| {}).await;
+    }
+
+    async fn cancelled_with_before_wait<F>(&self, mut before_wait: F)
+    where
+        F: FnMut(),
+    {
         loop {
-            if self.is_cancelled() {
-                return;
-            }
             let notified = self.inner.notify.notified();
+            tokio::pin!(notified);
+            // `notified()` is not registered until polled or enabled. Register
+            // before checking the recursive state so cancellation cannot land
+            // between the final check and the first poll of the waiter.
+            notified.as_mut().enable();
+
             if self.is_cancelled() {
                 return;
             }
+
+            before_wait();
             notified.await;
         }
     }
@@ -135,4 +147,46 @@ fn is_cancelled_recursive(inner: &Arc<Inner>) -> bool {
         return is_cancelled_recursive(&parent);
     }
     false
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use tokio::time::timeout;
+
+    const RACE_TIMEOUT: Duration = Duration::from_millis(100);
+
+    #[tokio::test]
+    async fn cancelled_does_not_lose_direct_cancellation_before_await() {
+        let parent = CancellationToken::new();
+        let child = parent.child();
+
+        timeout(
+            RACE_TIMEOUT,
+            child.cancelled_with_before_wait(|| child.cancel()),
+        )
+        .await
+        .expect("registered child waiter must observe cancellation before await");
+
+        assert!(child.is_cancelled());
+        assert!(!parent.is_cancelled());
+    }
+
+    #[tokio::test]
+    async fn cancelled_does_not_lose_parent_cancellation_before_await() {
+        let parent = CancellationToken::new();
+        let child = parent.child();
+        let grandchild = child.child();
+
+        timeout(
+            RACE_TIMEOUT,
+            grandchild.cancelled_with_before_wait(|| parent.cancel()),
+        )
+        .await
+        .expect("registered descendant waiter must observe parent cancellation before await");
+
+        assert!(parent.is_cancelled());
+        assert!(child.is_cancelled());
+        assert!(grandchild.is_cancelled());
+    }
 }
