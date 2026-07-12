@@ -354,7 +354,26 @@ async fn execute_tool_call(
                 return ToolResult::error(&tool_call.id, e.to_string());
             }
         };
-    match ctx.invoke_capability(&tool_call.name, args).await {
+    if let Err(error) = super::super::inv_cap::enforce_write_boundary(
+        ctx,
+        &tool_call.name,
+        &args,
+        false,
+        &tool_call.id,
+    )
+    .await
+    {
+        if let Some(emitter) = &ctx.event_emitter {
+            emitter.emit_tool_end(&tool_call.name, &Value::String(error.to_string()));
+        }
+        return ToolResult::error(&tool_call.id, error.to_string());
+    }
+    let timeout =
+        std::time::Duration::from_millis(apxm_core::constants::defaults::DEFAULT_TIMEOUT_MS);
+    match ctx
+        .invoke_capability_with_timeout_for_call(&tool_call.name, args, timeout, &tool_call.id)
+        .await
+    {
         Ok(result) => {
             let result =
                 crate::executor::hook_driver::run_post_cap_hooks(ctx, &tool_call.name, result)
@@ -404,6 +423,64 @@ enum ToolAccess {
     Write,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct ScriptToolPolicy {
+    pub read_only: bool,
+    pub requires_approval: bool,
+}
+
+fn checked_script_tool_policy(
+    name: &str,
+    read_only: Option<bool>,
+    requires_approval: Option<bool>,
+) -> std::result::Result<ScriptToolPolicy, RuntimeError> {
+    let (Some(read_only), Some(requires_approval)) = (read_only, requires_approval) else {
+        return Err(RuntimeError::Capability {
+            capability: name.to_string(),
+            message: format!(
+                "script capability '{name}' is missing joined read_only/requires_approval policy \
+                 metadata; rebuild the agent package"
+            ),
+        });
+    };
+    Ok(ScriptToolPolicy {
+        read_only,
+        requires_approval,
+    })
+}
+
+pub(crate) fn script_tool_policy(
+    ctx: &ExecutionContext,
+    name: &str,
+) -> std::result::Result<ScriptToolPolicy, RuntimeError> {
+    if let Some(descriptor) = ctx
+        .python_handler_bridge
+        .as_ref()
+        .and_then(|bridge| bridge.registry().resolve(name))
+    {
+        return checked_script_tool_policy(
+            name,
+            descriptor.read_only,
+            descriptor.requires_approval,
+        );
+    }
+    if let Some(descriptor) = ctx
+        .typescript_handler_bridge
+        .as_ref()
+        .and_then(|bridge| bridge.registry().resolve(name))
+    {
+        return checked_script_tool_policy(
+            name,
+            descriptor.read_only,
+            descriptor.requires_approval,
+        );
+    }
+    Err(RuntimeError::Capability {
+        capability: name.to_string(),
+        message: format!("script capability '{name}' is not registered in an artifact worker"),
+    })
+}
+
 fn resolve_tool_access(ctx: &ExecutionContext, name: &str) -> Option<ToolAccess> {
     if let Some(metadata) = ctx.capability_system.get_metadata(name) {
         return Some(if metadata.read_only {
@@ -418,7 +495,10 @@ fn resolve_tool_access(ctx: &ExecutionContext, name: &str) -> Option<ToolAccess>
         .as_ref()
         .is_some_and(|bridge| bridge.has_tool(name))
     {
-        return Some(ToolAccess::Write);
+        return Some(match script_tool_policy(ctx, name) {
+            Ok(policy) if policy.read_only => ToolAccess::ReadOnly,
+            _ => ToolAccess::Write,
+        });
     }
 
     if ctx
@@ -426,7 +506,10 @@ fn resolve_tool_access(ctx: &ExecutionContext, name: &str) -> Option<ToolAccess>
         .as_ref()
         .is_some_and(|bridge| bridge.has_tool(name))
     {
-        return Some(ToolAccess::Write);
+        return Some(match script_tool_policy(ctx, name) {
+            Ok(policy) if policy.read_only => ToolAccess::ReadOnly,
+            _ => ToolAccess::Write,
+        });
     }
 
     None
@@ -451,7 +534,47 @@ async fn dispatch_script_tool_call(
                 return ToolResult::error(&tool_call.id, e.to_string());
             }
         };
-    let json_args = serde_json::to_value(&edited_args).unwrap_or_else(|_| tool_call.args.clone());
+    let policy = match script_tool_policy(ctx, &tool_call.name) {
+        Ok(policy) => policy,
+        Err(error) => {
+            if let Some(emitter) = &ctx.event_emitter {
+                emitter.emit_tool_end(&tool_call.name, &Value::String(error.to_string()));
+            }
+            return ToolResult::error(&tool_call.id, error.to_string());
+        }
+    };
+    if let Err(error) = super::super::inv_cap::enforce_write_boundary(
+        ctx,
+        &tool_call.name,
+        &edited_args,
+        !policy.read_only,
+        &tool_call.id,
+    )
+    .await
+    {
+        if let Some(emitter) = &ctx.event_emitter {
+            emitter.emit_tool_end(&tool_call.name, &Value::String(error.to_string()));
+        }
+        return ToolResult::error(&tool_call.id, error.to_string());
+    }
+    let admitted_args = match ctx
+        .admit_capability_call(
+            &tool_call.name,
+            edited_args,
+            policy.requires_approval,
+            &tool_call.id,
+        )
+        .await
+    {
+        Ok(args) => args,
+        Err(error) => {
+            if let Some(emitter) = &ctx.event_emitter {
+                emitter.emit_tool_end(&tool_call.name, &Value::String(error.to_string()));
+            }
+            return ToolResult::error(&tool_call.id, error.to_string());
+        }
+    };
+    let json_args = serde_json::to_value(&admitted_args).unwrap_or_else(|_| tool_call.args.clone());
     let bridge_call = async {
         if let Some(bridge) = ctx.python_handler_bridge.as_ref() {
             if bridge.has_tool(&tool_call.name) {
@@ -847,6 +970,119 @@ pub(super) async fn execute_ask_with_tools_attempt(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::aam::Aam;
+    use crate::capability::CapabilitySystem;
+    use crate::capability::executor::CapabilityExecutor;
+    use crate::capability::interceptor::{CapabilityInterceptor, InterceptDecision};
+    use crate::capability::metadata::RuntimeCapability;
+    use crate::memory::{MemoryConfig, MemorySystem};
+    use apxm_backends::LLMRegistry;
+    use apxm_core::types::consent::{
+        ApprovalEvidence, ConsentBroker, ConsentDecision, InteractiveApproval, PermissionPrompt,
+    };
+    use std::sync::Arc;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
+    struct RecordingCapability {
+        metadata: RuntimeCapability,
+        calls: Arc<AtomicUsize>,
+    }
+
+    #[async_trait::async_trait]
+    impl CapabilityExecutor for RecordingCapability {
+        async fn execute(
+            &self,
+            _args: HashMap<String, Value>,
+        ) -> std::result::Result<Value, apxm_core::error::RuntimeError> {
+            self.calls.fetch_add(1, Ordering::Relaxed);
+            Ok(Value::String("executed".to_string()))
+        }
+
+        fn metadata(&self) -> &RuntimeCapability {
+            &self.metadata
+        }
+    }
+
+    struct StubBroker {
+        decision: ConsentDecision,
+        calls: Arc<AtomicUsize>,
+    }
+
+    #[async_trait::async_trait]
+    impl ConsentBroker for StubBroker {
+        async fn request_consent(
+            &self,
+            _prompt: PermissionPrompt,
+            _timeout: std::time::Duration,
+        ) -> ConsentDecision {
+            self.calls.fetch_add(1, Ordering::Relaxed);
+            self.decision.clone()
+        }
+    }
+
+    struct CountingInterceptor {
+        calls: Arc<AtomicUsize>,
+    }
+
+    #[async_trait::async_trait]
+    impl CapabilityInterceptor for CountingInterceptor {
+        fn name(&self) -> &str {
+            "counting-test"
+        }
+
+        async fn pre_invoke(
+            &self,
+            _name: &str,
+            _args: &HashMap<String, Value>,
+        ) -> InterceptDecision {
+            self.calls.fetch_add(1, Ordering::Relaxed);
+            InterceptDecision::Allow
+        }
+    }
+
+    async fn model_tool_context(
+        name: &str,
+        read_only: bool,
+        requires_approval: bool,
+    ) -> (ExecutionContext, Arc<CapabilitySystem>, Arc<AtomicUsize>) {
+        let memory = Arc::new(
+            MemorySystem::new(MemoryConfig::in_memory_ltm())
+                .await
+                .expect("memory"),
+        );
+        let aam = Aam::new();
+        let capability_system = Arc::new(CapabilitySystem::with_aam(aam.clone()));
+        let calls = Arc::new(AtomicUsize::new(0));
+        let mut metadata = RuntimeCapability::new(
+            name,
+            "record model tool admission",
+            serde_json::json!({"type": "object"}),
+        );
+        if read_only {
+            metadata = metadata.with_read_only();
+        }
+        if requires_approval {
+            metadata = metadata.with_requires_approval();
+        }
+        capability_system
+            .register(Arc::new(RecordingCapability {
+                metadata,
+                calls: Arc::clone(&calls),
+            }))
+            .expect("recording capability");
+        let facade: Arc<dyn apxm_capability_iface::CapabilityFacade> = capability_system.clone();
+        let ctx = ExecutionContext::new(memory, Arc::new(LLMRegistry::new()), facade, aam);
+        (ctx, capability_system, calls)
+    }
+
+    fn approved() -> ConsentDecision {
+        ConsentDecision::Approved {
+            evidence: ApprovalEvidence::Interactive(InteractiveApproval {
+                decided_at: "2026-07-11T00:00:00Z".into(),
+                responder_subject: Some("operator".into()),
+            }),
+        }
+    }
 
     fn visible_metadata(value: &str) -> HashMap<String, String> {
         HashMap::from([(
@@ -901,5 +1137,107 @@ mod tests {
         inject_visible_skill_imports("http_get", &mut args, &visible_metadata("support"));
 
         assert!(!args.contains_key("imports"));
+    }
+
+    #[tokio::test]
+    async fn model_tool_call_requires_consent_and_runs_interceptors() {
+        let (mut ctx, capability_system, capability_calls) =
+            model_tool_context("approval-tool", true, true).await;
+        let interceptor_calls = Arc::new(AtomicUsize::new(0));
+        capability_system.register_interceptor(Arc::new(CountingInterceptor {
+            calls: Arc::clone(&interceptor_calls),
+        }));
+        let node = Node::new(1, AISOperationType::Ask);
+        let tool_call = ToolCall::new("call-1", "approval-tool", serde_json::json!({}));
+
+        let without_broker = execute_tool_call(&ctx, &node, &tool_call).await;
+
+        assert!(!without_broker.success);
+        assert!(
+            without_broker
+                .content
+                .contains(apxm_core::types::consent::APPROVAL_BROKER_UNAVAILABLE_REASON)
+        );
+        assert_eq!(capability_calls.load(Ordering::Relaxed), 0);
+        assert_eq!(interceptor_calls.load(Ordering::Relaxed), 0);
+
+        let broker_calls = Arc::new(AtomicUsize::new(0));
+        ctx.consent_broker = Arc::new(StubBroker {
+            decision: approved(),
+            calls: Arc::clone(&broker_calls),
+        });
+
+        let approved_result = execute_tool_call(&ctx, &node, &tool_call).await;
+
+        assert!(approved_result.success, "{}", approved_result.content);
+        assert_eq!(approved_result.content, "executed");
+        assert_eq!(broker_calls.load(Ordering::Relaxed), 1);
+        assert_eq!(interceptor_calls.load(Ordering::Relaxed), 1);
+        assert_eq!(capability_calls.load(Ordering::Relaxed), 1);
+    }
+
+    #[tokio::test]
+    async fn open_read_only_model_tool_skips_consent_but_runs_interceptors() {
+        let (mut ctx, capability_system, capability_calls) =
+            model_tool_context("read-only-tool", true, false).await;
+        let broker_calls = Arc::new(AtomicUsize::new(0));
+        ctx.consent_broker = Arc::new(StubBroker {
+            decision: ConsentDecision::Denied {
+                reason: "broker must not be called".into(),
+            },
+            calls: Arc::clone(&broker_calls),
+        });
+        let interceptor_calls = Arc::new(AtomicUsize::new(0));
+        capability_system.register_interceptor(Arc::new(CountingInterceptor {
+            calls: Arc::clone(&interceptor_calls),
+        }));
+        let node = Node::new(1, AISOperationType::Ask);
+        let tool_call = ToolCall::new("call-1", "read-only-tool", serde_json::json!({}));
+
+        let result = execute_tool_call(&ctx, &node, &tool_call).await;
+
+        assert!(result.success, "{}", result.content);
+        assert_eq!(result.content, "executed");
+        assert_eq!(broker_calls.load(Ordering::Relaxed), 0);
+        assert_eq!(interceptor_calls.load(Ordering::Relaxed), 1);
+        assert_eq!(capability_calls.load(Ordering::Relaxed), 1);
+    }
+
+    #[tokio::test]
+    async fn model_write_tool_without_grant_is_denied_before_execution() {
+        let (ctx, _capability_system, capability_calls) =
+            model_tool_context("write-tool", false, false).await;
+        let node = Node::new(1, AISOperationType::Ask);
+        let tool_call = ToolCall::new("call-1", "write-tool", serde_json::json!({}));
+
+        let result = execute_tool_call(&ctx, &node, &tool_call).await;
+
+        assert!(!result.success);
+        assert!(result.content.contains("missing a capability grant"));
+        assert_eq!(capability_calls.load(Ordering::Relaxed), 0);
+    }
+
+    #[test]
+    fn script_tool_policy_requires_joined_metadata() {
+        let error = checked_script_tool_policy("script-tool", None, Some(false))
+            .expect_err("missing read_only metadata must fail closed");
+
+        assert!(matches!(
+            error,
+            RuntimeError::Capability { ref capability, ref message }
+                if capability == "script-tool" && message.contains("missing joined")
+        ));
+    }
+
+    #[test]
+    fn script_tool_policy_preserves_open_read_only_metadata() {
+        assert_eq!(
+            checked_script_tool_policy("script-tool", Some(true), Some(false))
+                .expect("complete policy metadata"),
+            ScriptToolPolicy {
+                read_only: true,
+                requires_approval: false,
+            }
+        );
     }
 }

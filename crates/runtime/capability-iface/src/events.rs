@@ -8,6 +8,7 @@ use std::collections::HashMap;
 use std::time::Duration;
 
 use apxm_core::events::payload::{LlmDonePayload, LlmStepCompletedPayload, TurnBoundaryPayload};
+use apxm_core::types::consent::ApprovalResolution;
 use apxm_core::types::NodeMetrics;
 use apxm_core::types::TimingBreakdown;
 use apxm_core::types::operations::AISOperationType;
@@ -394,5 +395,5 @@ pub trait ExecutionEventEmitter: Send + Sync {
     }
 
     /// A previously-requested approval was resolved.
-    fn emit_approval_resolved(&self, _approval_id: &str, _decision: &str) {}
+    fn emit_approval_resolved(&self, _approval_id: &str, _decision: ApprovalResolution) {}
 }

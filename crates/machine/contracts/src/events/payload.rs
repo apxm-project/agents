@@ -9,6 +9,7 @@ use super::kind::{self, EventKind};
 use super::registry::{
     EventPayloadRegistry, decode_registered_payload, event_kind_for_payload, payload_without_kind,
 };
+use crate::types::consent::ApprovalResolution;
 use crate::types::execution::NodeMetrics;
 use crate::types::operations::AISOperationType;
 
@@ -1337,7 +1338,7 @@ impl_event_payload!(ApprovalRequestPayload, kind::APPROVAL_REQUEST);
 pub struct ApprovalResolvedPayload {
     /// Stable approval id this resolution refers to.
     pub approval_id: String,
-    /// Resolution outcome (`"approved"` | `"denied"` | `"expired"`).
-    pub decision: String,
+    /// Closed resolution outcome.
+    pub decision: ApprovalResolution,
 }
 impl_event_payload!(ApprovalResolvedPayload, kind::APPROVAL_RESOLVED);

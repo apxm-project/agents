@@ -31,6 +31,7 @@ export interface UnknownEventPayload {
 export interface TokenEventPayload {
   kind: "token";
   text: string;
+  generation?: { "call_id": string; "attempt": number; "step_number": number; };
   [key: string]: unknown;
 }
 
@@ -50,6 +51,7 @@ export interface ThoughtEventPayload {
   kind: "thought";
   text: string;
   summary: string | null;
+  generation?: { "call_id": string; "attempt": number; "step_number": number; };
   [key: string]: unknown;
 }
 
@@ -57,6 +59,7 @@ export interface ToolCallEventPayload {
   kind: "tool_call";
   id: string;
   name: string;
+  tool_call_correlation?: { "generation": { "call_id": string; "attempt": number; "step_number": number; }; "tool_call_id": string; };
   arguments: unknown;
   [key: string]: unknown;
 }
@@ -67,8 +70,9 @@ export interface LlmDoneEventPayload {
   model: string;
   finish_reason: { "reason": string; [key: string]: unknown; };
   usage: { "input_tokens": number; "output_tokens": number; [key: string]: unknown; };
-  tool_calls: { "id": string; "name": string; "arguments": unknown; [key: string]: unknown; }[];
+  tool_calls: { "id": string; "name": string; "tool_call_correlation"?: { "generation": { "call_id": string; "attempt": number; "step_number": number; }; "tool_call_id": string; }; "arguments": unknown; [key: string]: unknown; }[];
   response_id: string | null;
+  generation?: { "call_id": string; "attempt": number; "step_number": number; };
   [key: string]: unknown;
 }
 
@@ -77,6 +81,7 @@ export interface LlmPromptEventPayload {
   node_id: number;
   node_name?: string;
   prompt: { "redacted": boolean; "policy": string; "hash": string; "size_bytes": number; "char_count"?: number | null; "content_type": string; "summary": string; [key: string]: unknown; };
+  generation?: { "call_id": string; "attempt": number; "step_number": number; };
   [key: string]: unknown;
 }
 
@@ -84,6 +89,7 @@ export interface UsageEventPayload {
   kind: "usage";
   input_tokens: number;
   output_tokens: number;
+  generation?: { "call_id": string; "attempt": number; "step_number": number; };
   [key: string]: unknown;
 }
 
@@ -153,12 +159,14 @@ export interface ToolStartEventPayload {
   kind: "tool_start";
   name: string;
   args: Record<string, unknown>;
+  tool_call_correlation?: { "generation": { "call_id": string; "attempt": number; "step_number": number; }; "tool_call_id": string; };
   [key: string]: unknown;
 }
 
 export interface ToolEndEventPayload {
   kind: "tool_end";
   name: string;
+  tool_call_correlation?: { "generation": { "call_id": string; "attempt": number; "step_number": number; }; "tool_call_id": string; };
   result: unknown;
   [key: string]: unknown;
 }
@@ -478,6 +486,7 @@ export interface SubagentLlmCallBeginEventPayload {
   model: string;
   backend: string;
   tool_manifest_count: number;
+  generation?: { "call_id": string; "attempt": number; "step_number": number; };
   [key: string]: unknown;
 }
 
@@ -487,6 +496,7 @@ export interface SubagentLlmCallEndEventPayload {
   finish_reason: string;
   usage: { "input_tokens": number; "output_tokens": number; [key: string]: unknown; };
   content_len: number;
+  generation?: { "call_id": string; "attempt": number; "step_number": number; };
   [key: string]: unknown;
 }
 
@@ -495,6 +505,7 @@ export interface ToolCallBeginEventPayload {
   agent_code: string;
   tool_name: string;
   argument_keys: string[];
+  tool_call_correlation?: { "generation": { "call_id": string; "attempt": number; "step_number": number; }; "tool_call_id": string; };
   [key: string]: unknown;
 }
 
@@ -505,6 +516,7 @@ export interface ToolCallEndEventPayload {
   result_keys: string[];
   status: "ok" | "error" | "approval_pending";
   latency_ms: number;
+  tool_call_correlation?: { "generation": { "call_id": string; "attempt": number; "step_number": number; }; "tool_call_id": string; };
   [key: string]: unknown;
 }
 
@@ -540,6 +552,7 @@ export interface ApprovalRequestEventPayload {
   tool_name: string;
   approval_id: string;
   risk_level: "low" | "medium" | "high";
+  tool_call_correlation?: { "generation": { "call_id": string; "attempt": number; "step_number": number; }; "tool_call_id": string; };
   [key: string]: unknown;
 }
 
@@ -547,6 +560,7 @@ export interface ApprovalResolvedEventPayload {
   kind: "approval_resolved";
   approval_id: string;
   decision: "approved" | "denied" | "expired";
+  tool_call_correlation?: { "generation": { "call_id": string; "attempt": number; "step_number": number; }; "tool_call_id": string; };
   [key: string]: unknown;
 }
 

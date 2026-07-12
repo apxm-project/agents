@@ -46,6 +46,7 @@ use serde_json::Value as JsonValue;
 pub(super) mod pipeline;
 pub(super) mod structured_output;
 pub(super) mod tool_dispatch;
+pub(crate) use tool_dispatch::script_tool_policy;
 
 use pipeline::{
     charge_tokens, default_memoizable_for_backend, effort_token_budget,
