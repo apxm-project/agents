@@ -492,7 +492,7 @@ class GraphRecorder:
             graph_keys.HOOK_EVENT: event_value,
             graph_keys.HOOK_MATCH: match,
             graph_keys.HOOK_MODE: mode_value,
-            graph_keys.PYTHON_HOOK_HANDLER_ID: handler_id,
+            graph_keys.HOOK_HANDLER_ID: handler_id,
         }
         attrs = self._apply_policy(attrs, attributes)
         return self._add_node(name, graph_keys.OP_REGISTER_HOOK, attrs)
@@ -860,39 +860,6 @@ class GraphRecorder:
         attrs: dict[str, Any] = {graph_keys.LABEL: label}
         attrs = self._apply_policy(attrs, attributes)
         return self._add_node(name, graph_keys.OP_JUMP, attrs)
-
-    def loop_start(
-        self,
-        name: str | None = None,
-        *,
-        count: int | None = None,
-        label: str | None = None,
-        **attributes: Any,
-    ) -> NodeRef:
-        """Begin a bounded loop (LOOP_START).
-
-        The iteration bound is written as ``max_iterations`` because that is
-        the attribute the runtime handler (loop_start.rs) actually reads;
-        ``count_token`` is also stamped so the AIS OpSpec/validator agree.
-        """
-        if name is None:
-            name = self._auto_name(graph_keys.OP_LOOP_START)
-        if count is None:
-            raise ValueError("loop_start() missing required keyword argument: 'count'")
-        attrs: dict[str, Any] = {
-            graph_keys.MAX_ITERATIONS: count,
-            graph_keys.COUNT_TOKEN: str(count),
-        }
-        if label is not None:
-            attrs[graph_keys.LABEL] = label
-        attrs = self._apply_policy(attrs, attributes)
-        return self._add_node(name, graph_keys.OP_LOOP_START, attrs)
-
-    def loop_end(self, name: str | None = None, **attributes: Any) -> NodeRef:
-        """End a bounded loop (LOOP_END)."""
-        if name is None:
-            name = self._auto_name(graph_keys.OP_LOOP_END)
-        return self._add_node(name, graph_keys.OP_LOOP_END, self._apply_policy({}, attributes))
 
     def done(
         self,

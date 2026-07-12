@@ -1,9 +1,9 @@
 import { createHash } from "node:crypto";
 
-import type { ToolFn } from "./types.js";
+import type { HandlerFn } from "./types.js";
 
 /** Module-level registry — the tool worker resolves handlers by id. */
-export const TOOL_REGISTRY = new Map<string, ToolFn>();
+export const TOOL_REGISTRY = new Map<string, HandlerFn>();
 
 /** Stable handler id from `module:qualname`. */
 export function makeHandlerId(module: string, qualname: string): string {

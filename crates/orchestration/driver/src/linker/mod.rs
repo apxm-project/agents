@@ -106,7 +106,12 @@ impl<'a> FrontendHandlerSidecars<'a> {
             .transpose()
     }
 
+    /// Attach captured Python and TypeScript sidecars only after the shared
+    /// script trust and sandbox policy admits them.
     fn append_to_artifact(self, artifact: &mut Artifact) {
+        if !apxm_runtime::script_admission::script_artifacts_trusted() {
+            return;
+        }
         let sidecars = [
             HandlerSidecar::new(
                 apxm_runtime::python_tools::CAPABILITY_NAME,
@@ -346,5 +351,116 @@ fn add_artifact_sidecars<'a>(
 ) {
     for sidecar in sidecars {
         sidecar.append_to(artifact);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use apxm_artifact::ArtifactMetadata;
+    use apxm_core::constants::env::{APXM_SANDBOX_SCRIPTS, APXM_TRUST_SCRIPT_ARTIFACTS};
+    use std::sync::Mutex;
+
+    // Env vars are process-global; serialize tests that touch them.
+    static ENV_LOCK: Mutex<()> = Mutex::new(());
+
+    fn set_vars(trust: bool, sandbox: bool) {
+        #[allow(unsafe_code)]
+        unsafe {
+            if trust {
+                std::env::set_var(APXM_TRUST_SCRIPT_ARTIFACTS, "1");
+            } else {
+                std::env::remove_var(APXM_TRUST_SCRIPT_ARTIFACTS);
+            }
+            if sandbox {
+                std::env::set_var(APXM_SANDBOX_SCRIPTS, "1");
+            } else {
+                std::env::remove_var(APXM_SANDBOX_SCRIPTS);
+            }
+        }
+    }
+
+    struct EnvGuard;
+
+    impl Drop for EnvGuard {
+        fn drop(&mut self) {
+            set_vars(false, false);
+        }
+    }
+
+    fn empty_artifact() -> Artifact {
+        Artifact::new(
+            ArtifactMetadata::new(Some("test".to_string()), "test"),
+            Vec::new(),
+        )
+    }
+
+    fn has_section(artifact: &Artifact, kind: &str) -> bool {
+        artifact.sections().iter().any(|s| s.kind == kind)
+    }
+
+    /// Environment matrix for script-artifact admission: the
+    /// driver's `append_to_artifact` must not attach EITHER sidecar unless
+    /// the operator has asserted BOTH trust and sandbox — before this gate
+    /// the driver attached both sidecars unconditionally regardless of any
+    /// env var, so the CLI admitted and ran both languages with no policy at
+    /// all. Trust-only and sandbox-only must fail closed identically to no
+    /// vars.
+    #[test]
+    fn append_to_artifact_env_matrix_admits_only_when_fully_trusted() {
+        let _lock = ENV_LOCK.lock().unwrap();
+        let _guard = EnvGuard;
+
+        for (trust, sandbox, expect_attached) in [
+            (false, false, false),
+            (true, false, false),
+            (false, true, false),
+            (true, true, true),
+        ] {
+            set_vars(trust, sandbox);
+            let sidecars =
+                FrontendHandlerSidecars::new(Some(b"[]".as_slice()), Some(b"[]".as_slice()));
+            let mut artifact = empty_artifact();
+            sidecars.append_to_artifact(&mut artifact);
+
+            assert_eq!(
+                has_section(&artifact, apxm_runtime::python_tools::CAPABILITY_NAME),
+                expect_attached,
+                "trust={trust} sandbox={sandbox}: python_tools section attach mismatch"
+            );
+            assert_eq!(
+                has_section(&artifact, apxm_runtime::typescript_tools::CAPABILITY_NAME),
+                expect_attached,
+                "trust={trust} sandbox={sandbox}: typescript_tools section attach mismatch"
+            );
+        }
+    }
+
+    /// Recovery: attaching under no vars is not sticky — the identical
+    /// sidecar pair attaches once both vars are set, proving the driver's
+    /// gate is a pure function of env state.
+    #[test]
+    fn append_to_artifact_recovers_after_trust_and_sandbox_are_set() {
+        let _lock = ENV_LOCK.lock().unwrap();
+        let _guard = EnvGuard;
+
+        set_vars(false, false);
+        let sidecars = FrontendHandlerSidecars::new(Some(b"[]".as_slice()), Some(b"[]".as_slice()));
+
+        let mut untrusted_artifact = empty_artifact();
+        sidecars.append_to_artifact(&mut untrusted_artifact);
+        assert!(
+            untrusted_artifact.sections().is_empty(),
+            "no sidecar should attach without trust+sandbox"
+        );
+
+        set_vars(true, true);
+        let mut trusted_artifact = empty_artifact();
+        sidecars.append_to_artifact(&mut trusted_artifact);
+        assert_eq!(
+            trusted_artifact.sections().len(),
+            2,
+            "both sidecars should attach for the identical pair once trusted+sandboxed"
+        );
     }
 }

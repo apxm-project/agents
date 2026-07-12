@@ -236,4 +236,44 @@ mod tests {
             "wire body must match ConversationMessageRequest {{ message }} on the server"
         );
     }
+
+    /// Session creation uses the same client as the long-lived event stream.
+    /// A fully framed HTTP/1.1 response remains readable even when the server
+    /// sends headers before the body; the streaming client must not install an
+    /// immediate zero-duration read deadline on this request.
+    #[tokio::test]
+    async fn create_agent_session_reads_delayed_framed_http_response() {
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+
+        let server = tokio::spawn(async move {
+            let (mut sock, _) = listener.accept().await.unwrap();
+            let mut buf = vec![0_u8; 4096];
+            let _ = sock.read(&mut buf).await.unwrap();
+            let body = r#"{"session_id":"sess-framed","events_url":"/events","stream_url":"/stream","execution_id":"exec-framed"}"#;
+            let headers = format!(
+                "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+                body.len()
+            );
+            sock.write_all(headers.as_bytes()).await.unwrap();
+            tokio::time::sleep(std::time::Duration::from_millis(25)).await;
+            sock.write_all(body.as_bytes()).await.unwrap();
+        });
+
+        let client = crate::client::client_for_sse(&format!("http://{addr}"));
+        let response = client
+            .create_agent_session(
+                "reference-agent",
+                &CreateAgentSessionRequest {
+                    session_id: Some("sess-framed".to_string()),
+                    ..Default::default()
+                },
+            )
+            .await
+            .expect("framed session response must be readable");
+
+        assert_eq!(response.session_id, "sess-framed");
+        assert_eq!(response.stream_url, "/stream");
+        server.await.unwrap();
+    }
 }

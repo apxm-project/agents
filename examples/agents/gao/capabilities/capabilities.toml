@@ -7,6 +7,12 @@ kind = "builtin"
 read_only = false
 
 [[capability]]
+id = "capability_discovery"
+description = "Discover typed authoring-time capability templates without granting authority."
+kind = "builtin"
+read_only = true
+
+[[capability]]
 id = "compose_workflow"
 description = "Validate AIR and stage a workflow under the runtime staging directory."
 builtin_group = "authoring"
@@ -19,6 +25,12 @@ description = "Explain why an APXM capability requires approval before Gao asks 
 handler_function = "explainPermission"
 handler_module = "capabilities/explain_permission/handler"
 kind = "typescript_handler"
+read_only = true
+
+[[capability]]
+id = "http_get"
+description = "Fetch public HTTP content for read-only research and endpoint validation."
+kind = "builtin"
 read_only = true
 
 [[capability]]

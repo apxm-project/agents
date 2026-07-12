@@ -5,8 +5,12 @@ import {
   GATE_LIFECYCLE_EVENTS,
   HookMode,
   LifecycleEvent,
+  type HookCall,
+  type HookContext,
+  type JsonSchema,
   hook,
   makeHandlerId,
+  tool,
 } from "../src/handlers/index.js";
 
 describe("makeHandlerId", () => {
@@ -22,7 +26,32 @@ describe("makeHandlerId", () => {
   });
 });
 
+describe("tool metadata", () => {
+  it("preserves the authored argument schema", () => {
+    interface PlanArgs {
+      request: string;
+    }
+    const schema: JsonSchema = {
+      type: "object",
+      properties: { request: { type: "string" } },
+      required: ["request"],
+      additionalProperties: false,
+    };
+    const wrapped = tool({ name: "plan_workflow", schema })((args: PlanArgs) => args.request);
+    expect(wrapped.schema).toEqual(schema);
+    expect(wrapped.fn({ request: "typed" })).toBe("typed");
+  });
+});
+
 describe("hook validation", () => {
+  it("accepts typed lifecycle hook arguments", () => {
+    const wrapped = hook({ on: LifecycleEvent.PRE_CAP, mode: HookMode.GATE })(
+      (ctx: HookContext, call: HookCall) =>
+        call.name === "write" ? ctx.deny("write requires approval") : ctx.allow(),
+    );
+    expect(wrapped.event).toBe("pre_cap");
+  });
+
   it("accepts observe mode on post_turn", () => {
     const wrapped = hook({ on: LifecycleEvent.POST_TURN, mode: HookMode.OBSERVE })(() => ({
       decision: "allow",

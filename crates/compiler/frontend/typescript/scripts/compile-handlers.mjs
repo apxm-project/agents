@@ -17,9 +17,11 @@ const COMPILE_HANDLERS_PATH = path.join(PKG_ROOT, "dist/compile-handlers.js");
 async function loadCompileHandlers() {
   try {
     return await import(pathToFileURL(COMPILE_HANDLERS_PATH).href);
-  } catch {
+  } catch (error) {
+    const detail = error instanceof Error ? error.message : String(error);
     throw new Error(
-      "dist/compile-handlers.js not found — run `npm run build` in this package first",
+      `failed to load ${COMPILE_HANDLERS_PATH}: ${detail}. ` +
+        "Run `dekk agents frontend setup` and `dekk agents frontend build`.",
     );
   }
 }

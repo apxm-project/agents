@@ -2,6 +2,6 @@ Write-class capabilities (`compose_workflow`, `run_workflow`, and other mutating
 
 Ask clarifying questions before creating or running workflows when requirements, triggers, integrations, or deployment targets are unclear.
 
-Do not validate AIR by substring matching. Route drafts to APXM validation (`main.validate()`, Studio lower, server compile/admission, or authoring `compose_workflow`).
+Do not validate AIR by substring matching. Route drafts through the compiler, Studio lowering, typed capability admission, or `compose_workflow`.
 
 Redact secrets in tool output. Never echo tokens, API keys, or connection secrets into the transcript.

@@ -78,6 +78,13 @@ pub struct ExecutionContext {
     /// observers (currently per-graph pin-peak polling); `Basic` records
     /// steady-state aggregates only.
     pub metrics_level: MetricsLevel,
+    /// Scheduler configuration for this execution tree, sourced from
+    /// `RuntimeConfig::scheduler_config` at context construction
+    /// (`Runtime::build_context_with_bridge`). `ExecutorEngine::execute_dag_inner`
+    /// reads `scheduler_config.allow_sequential_fallback` to decide whether a
+    /// parallel-scheduler error propagates (default) or falls back to
+    /// sequential execution (explicit opt-in).
+    pub scheduler_config: crate::scheduler::SchedulerConfig,
     pub consumed_tokens: Arc<std::sync::atomic::AtomicU64>,
     /// Per-tool call-count budget: max calls allowed per capability
     /// name for this execution tree. `None` = unbounded. Declared by the
@@ -240,6 +247,7 @@ impl ExecutionContext {
             token_budget: None,
             optimization_target: OptimizationTarget::Balanced,
             metrics_level: MetricsLevel::default(),
+            scheduler_config: crate::scheduler::SchedulerConfig::default(),
             consumed_tokens: Arc::new(std::sync::atomic::AtomicU64::new(0)),
             tool_call_budgets: None,
             tool_call_counts: Arc::new(std::sync::Mutex::new(std::collections::HashMap::new())),
@@ -272,7 +280,9 @@ impl ExecutionContext {
             agent_scope_stack: Arc::new(AgentScopeStack::new()),
             host_id: None,
             host_dispatch: std::sync::Arc::new(crate::host_dispatch::NoOpHostDispatchGateway),
-            consent_broker: std::sync::Arc::new(apxm_core::types::consent::NoOpConsentBroker),
+            consent_broker: std::sync::Arc::new(
+                apxm_core::types::consent::UnavailableConsentBroker,
+            ),
             pending_turn_prompt_supplement: Arc::new(parking_lot::RwLock::new(None)),
         }
     }
@@ -398,29 +408,47 @@ impl ExecutionContext {
         }
     }
 
-    /// Invoke a capability through the per-tool call budget, using the
-    /// capability system's default timeout. Both tool-call paths — the graph
-    /// `INV_CAP` handler and the in-`ASK`-node model loop — route through here so
-    /// the budget is the single trusted enforcement seam; the `ASK`-node calls are
-    /// invisible to node-level middleware, which is why this is a ctx helper rather
-    /// than an `OperationMiddleware`.
+    /// Invoke a capability through the per-tool budget and canonical policy and
+    /// consent admission, using the runtime's default tool timeout.
     pub async fn invoke_capability(
         &self,
         name: &str,
-        mut args: std::collections::HashMap<String, apxm_core::types::values::Value>,
+        args: std::collections::HashMap<String, apxm_core::types::values::Value>,
     ) -> Result<apxm_core::types::values::Value, apxm_core::error::RuntimeError> {
-        self.charge_tool_call(name)?;
-        self.inject_tool_credential(name, &mut args);
-        self.capability_system.invoke(name, args).await
+        let call_id = uuid::Uuid::new_v4().to_string();
+        self.invoke_capability_for_call(name, args, &call_id).await
     }
 
-    /// Like [`Self::invoke_capability`] but with an explicit timeout.
-    pub async fn invoke_capability_with_timeout(
+    pub async fn invoke_capability_for_call(
+        &self,
+        name: &str,
+        args: std::collections::HashMap<String, apxm_core::types::values::Value>,
+        call_id: &str,
+    ) -> Result<apxm_core::types::values::Value, apxm_core::error::RuntimeError> {
+        self.invoke_capability_with_timeout_for_call(
+            name,
+            args,
+            std::time::Duration::from_millis(apxm_core::constants::defaults::DEFAULT_TIMEOUT_MS),
+            call_id,
+            None,
+        )
+        .await
+    }
+
+    /// Admit an artifact-scoped capability before its worker executes it.
+    /// Returns interceptor-edited arguments after budget, credential, policy,
+    /// and consent checks have completed.
+    pub async fn admit_capability_call(
         &self,
         name: &str,
         mut args: std::collections::HashMap<String, apxm_core::types::values::Value>,
-        timeout: std::time::Duration,
-    ) -> Result<apxm_core::types::values::Value, apxm_core::error::RuntimeError> {
+        requires_approval: bool,
+        call_id: &str,
+        tool_call_correlation: Option<&apxm_core::events::payload::ToolCallCorrelation>,
+    ) -> Result<
+        std::collections::HashMap<String, apxm_core::types::values::Value>,
+        apxm_core::error::RuntimeError,
+    > {
         self.charge_tool_call(name)?;
         self.inject_tool_credential(name, &mut args);
         let agent_code_owned = self
@@ -428,12 +456,9 @@ impl ExecutionContext {
             .peek()
             .map(|s| s.agent_code.clone())
             .or_else(|| self.current_agent.as_ref().map(|a| a.name.clone()));
-        // `ApprovalContext` (apxm-capability-iface) — deliberately has no
-        // `&CapabilityRegistry` field, unlike capability's internal
-        // `PreInvokeContext`: the concrete `CapabilityFacade` impl resolves
-        // the named capability's `requires_approval` metadata from its own
-        // registry, so this caller doesn't need a registry reference at all.
         let approval_ctx = ApprovalContext {
+            call_id,
+            tool_call_correlation,
             consent_broker: self.consent_broker.as_ref(),
             event_emitter: self
                 .event_emitter
@@ -446,7 +471,53 @@ impl ExecutionContext {
                 crate::capability::interceptor::PreInvokeContext::permission_timeout_from_env(),
         };
         self.capability_system
-            .invoke_with_timeout_ctx(name, args, timeout, Some(approval_ctx))
+            .admit_with_ctx(name, args, requires_approval, approval_ctx)
+            .await
+    }
+
+    /// Like [`Self::invoke_capability`] but with an explicit timeout.
+    pub async fn invoke_capability_with_timeout(
+        &self,
+        name: &str,
+        args: std::collections::HashMap<String, apxm_core::types::values::Value>,
+        timeout: std::time::Duration,
+    ) -> Result<apxm_core::types::values::Value, apxm_core::error::RuntimeError> {
+        let call_id = uuid::Uuid::new_v4().to_string();
+        self.invoke_capability_with_timeout_for_call(name, args, timeout, &call_id, None)
+            .await
+    }
+
+    pub async fn invoke_capability_with_timeout_for_call(
+        &self,
+        name: &str,
+        mut args: std::collections::HashMap<String, apxm_core::types::values::Value>,
+        timeout: std::time::Duration,
+        call_id: &str,
+        tool_call_correlation: Option<&apxm_core::events::payload::ToolCallCorrelation>,
+    ) -> Result<apxm_core::types::values::Value, apxm_core::error::RuntimeError> {
+        self.charge_tool_call(name)?;
+        self.inject_tool_credential(name, &mut args);
+        let agent_code_owned = self
+            .agent_scope_stack
+            .peek()
+            .map(|s| s.agent_code.clone())
+            .or_else(|| self.current_agent.as_ref().map(|a| a.name.clone()));
+        let approval_ctx = ApprovalContext {
+            call_id,
+            tool_call_correlation,
+            consent_broker: self.consent_broker.as_ref(),
+            event_emitter: self
+                .event_emitter
+                .as_ref()
+                .map(|e| e.as_ref() as &dyn crate::ExecutionEventEmitter),
+            host_id: self.host_id.as_deref(),
+            agent_code: agent_code_owned.as_deref(),
+            grant_id: None,
+            permission_timeout:
+                crate::capability::interceptor::PreInvokeContext::permission_timeout_from_env(),
+        };
+        self.capability_system
+            .invoke_with_timeout_ctx(name, args, timeout, approval_ctx)
             .await
     }
 
@@ -608,6 +679,7 @@ impl ExecutionContext {
             token_budget: self.token_budget,
             optimization_target: self.optimization_target,
             metrics_level: self.metrics_level,
+            scheduler_config: self.scheduler_config.clone(),
             consumed_tokens: Arc::clone(&self.consumed_tokens),
             tool_call_budgets: self.tool_call_budgets.clone(),
             tool_call_counts: Arc::clone(&self.tool_call_counts),
@@ -754,11 +826,14 @@ mod tests {
     use super::*;
     use crate::aam::Aam;
     use crate::capability::CapabilitySystem;
-    use crate::capability::executor::EchoCapability;
+    use crate::capability::executor::{CapabilityExecutor, EchoCapability};
+    use crate::capability::metadata::RuntimeCapability;
     use crate::memory::{MemoryConfig, MemorySystem};
     use apxm_backends::LLMRegistry;
+    use apxm_core::types::consent::{ConsentBroker, ConsentDecision, PermissionPrompt};
     use std::collections::HashMap;
     use std::sync::Arc;
+    use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 
     async fn test_ctx_with_ledger(ledger: SessionLedger) -> ExecutionContext {
         let memory = Arc::new(
@@ -806,28 +881,38 @@ mod tests {
     /// `CapabilitySystem` — proves `ExecutionContext.capability_system:
     /// Arc<dyn CapabilityFacade>` is a real trait-object seam, not just a
     /// type alias for the one concrete type.
-    struct StubFacade;
+    #[derive(Default)]
+    struct StubFacade {
+        invoked: AtomicBool,
+        timeout_ms: AtomicU64,
+    }
 
     #[async_trait::async_trait]
     impl apxm_capability_iface::CapabilityFacade for StubFacade {
-        async fn invoke(
+        async fn admit_with_ctx(
             &self,
-            name: &str,
-            _args: HashMap<String, apxm_core::types::values::Value>,
-        ) -> Result<apxm_core::types::values::Value, apxm_core::error::RuntimeError> {
-            Ok(apxm_core::types::values::Value::String(format!(
-                "stub:{name}"
-            )))
+            _name: &str,
+            args: HashMap<String, apxm_core::types::values::Value>,
+            _requires_approval: bool,
+            _approval: ApprovalContext<'_>,
+        ) -> Result<HashMap<String, apxm_core::types::values::Value>, apxm_core::error::RuntimeError>
+        {
+            Ok(args)
         }
 
         async fn invoke_with_timeout_ctx(
             &self,
             name: &str,
-            args: HashMap<String, apxm_core::types::values::Value>,
-            _timeout: std::time::Duration,
-            _approval: Option<ApprovalContext<'_>>,
+            _args: HashMap<String, apxm_core::types::values::Value>,
+            timeout: std::time::Duration,
+            _approval: ApprovalContext<'_>,
         ) -> Result<apxm_core::types::values::Value, apxm_core::error::RuntimeError> {
-            self.invoke(name, args).await
+            self.invoked.store(true, Ordering::Relaxed);
+            self.timeout_ms
+                .store(timeout.as_millis() as u64, Ordering::Relaxed);
+            Ok(apxm_core::types::values::Value::String(format!(
+                "stub:{name}"
+            )))
         }
 
         fn has_capability(&self, _name: &str) -> bool {
@@ -873,10 +958,11 @@ mod tests {
                 .expect("memory"),
         );
         let aam = Aam::new();
+        let facade = Arc::new(StubFacade::default());
         let ctx = ExecutionContext::new(
             memory,
             Arc::new(LLMRegistry::new()),
-            Arc::new(StubFacade),
+            Arc::clone(&facade) as Arc<dyn apxm_capability_iface::CapabilityFacade>,
             aam,
         );
         let result = ctx
@@ -887,5 +973,120 @@ mod tests {
             result,
             apxm_core::types::values::Value::String("stub:anything".to_string())
         );
+        assert!(facade.invoked.load(Ordering::Relaxed));
+        assert_eq!(
+            facade.timeout_ms.load(Ordering::Relaxed),
+            apxm_core::constants::defaults::DEFAULT_TIMEOUT_MS
+        );
+    }
+
+    struct SlowCapability {
+        metadata: RuntimeCapability,
+    }
+
+    #[async_trait::async_trait]
+    impl CapabilityExecutor for SlowCapability {
+        async fn execute(
+            &self,
+            _args: HashMap<String, apxm_core::types::values::Value>,
+        ) -> Result<apxm_core::types::values::Value, apxm_core::error::RuntimeError> {
+            tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+            Ok(apxm_core::types::values::Value::Null)
+        }
+
+        fn metadata(&self) -> &RuntimeCapability {
+            &self.metadata
+        }
+    }
+
+    #[tokio::test]
+    async fn explicit_capability_timeout_stays_typed() {
+        let memory = Arc::new(
+            MemorySystem::new(MemoryConfig::in_memory_ltm())
+                .await
+                .expect("memory"),
+        );
+        let aam = Aam::new();
+        let capability_system = Arc::new(CapabilitySystem::with_aam(aam.clone()));
+        capability_system
+            .register(Arc::new(SlowCapability {
+                metadata: RuntimeCapability::new(
+                    "slow",
+                    "slow test capability",
+                    serde_json::json!({"type": "object"}),
+                )
+                .with_read_only(),
+            }))
+            .expect("slow capability");
+        let ctx =
+            ExecutionContext::new(memory, Arc::new(LLMRegistry::new()), capability_system, aam);
+        let timeout = std::time::Duration::from_millis(1);
+
+        let error = ctx
+            .invoke_capability_with_timeout("slow", HashMap::new(), timeout)
+            .await
+            .expect_err("slow capability must time out");
+
+        assert!(matches!(
+            error,
+            apxm_core::error::RuntimeError::Timeout {
+                op_id: 0,
+                timeout: observed,
+            } if observed == timeout
+        ));
+    }
+
+    struct FixedBroker {
+        decision: ConsentDecision,
+    }
+
+    #[async_trait::async_trait]
+    impl ConsentBroker for FixedBroker {
+        async fn request_consent(
+            &self,
+            _prompt: PermissionPrompt,
+            _timeout: std::time::Duration,
+        ) -> ConsentDecision {
+            self.decision.clone()
+        }
+    }
+
+    #[tokio::test]
+    async fn approval_denial_stays_a_typed_capability_error() {
+        let memory = Arc::new(
+            MemorySystem::new(MemoryConfig::in_memory_ltm())
+                .await
+                .expect("memory"),
+        );
+        let aam = Aam::new();
+        let capability_system = Arc::new(CapabilitySystem::with_aam(aam.clone()));
+        capability_system
+            .register(Arc::new(SlowCapability {
+                metadata: RuntimeCapability::new(
+                    "approval-denied",
+                    "approval denial test capability",
+                    serde_json::json!({"type": "object"}),
+                )
+                .with_requires_approval(),
+            }))
+            .expect("approval-denied capability");
+        let mut ctx =
+            ExecutionContext::new(memory, Arc::new(LLMRegistry::new()), capability_system, aam);
+        ctx.consent_broker = Arc::new(FixedBroker {
+            decision: ConsentDecision::Denied {
+                reason: "operator denied this call".to_string(),
+            },
+        });
+
+        let error = ctx
+            .invoke_capability("approval-denied", HashMap::new())
+            .await
+            .expect_err("denied call must not execute");
+
+        assert!(matches!(
+            error,
+            apxm_core::error::RuntimeError::Capability { ref capability, ref message }
+                if capability == "approval-denied" && message == "operator denied this call"
+        ));
     }
 }

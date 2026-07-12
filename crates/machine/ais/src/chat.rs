@@ -1,15 +1,19 @@
-//! Shared conversational-chat primitives — transcript rendering, the chat /
-//! summarize AIR, and the compaction budget shared by the `apxm chat` CLI and
-//! the apxm-studio backend so they stay identical. These values are the
-//! frontend contract.
+//! Shared conversational-chat primitives — transcript rendering shared by the
+//! `apxm chat` CLI and the apxm-studio backend so they stay identical.
+//!
+//! Compaction is NOT this crate's contract: `KEEP_RECENT_TURNS`/
+//! `COMPACT_AT_TOKENS`/`estimate_tokens`/`SUMMARIZE_AIR` used to live here as
+//! a chars/4-estimate duplicate with zero call sites (dead policy, never
+//! wired to the dumb-pipe chat host — see `commands/chat.rs`'s doc comment).
+//! They were deleted once the runtime default
+//! (`ConversationMemoryMiddleware`, `apxm-runtime` crate) reached parity —
+//! see the runtime compaction policy and
+//! `apxm_core::constants::runtime::conversation_compaction` for the single
+//! source of truth now.
 
 use crate::capabilities::groups;
-
-/// Turns kept verbatim during compaction; older turns fold into the summary.
-pub const KEEP_RECENT_TURNS: usize = 4;
-/// Transcript token budget (chars/4 estimate) above which compaction triggers.
-/// ~0.6 of a 32k window — conservative.
-pub const COMPACT_AT_TOKENS: usize = 20_000;
+use serde::{Deserialize, Deserializer, Serialize};
+use thiserror::Error;
 
 /// A chat role in the rendered transcript.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -37,12 +41,6 @@ impl Role {
             _ => Role::User,
         }
     }
-}
-
-/// Estimate the token count of a string (chars/4 heuristic). The same estimate
-/// is used for the compaction budget on every surface.
-pub fn estimate_tokens(s: &str) -> usize {
-    s.len() / 4
 }
 
 /// Render a message list into the flat transcript the conversational graph
@@ -88,6 +86,45 @@ pub fn sanitize_route_id(id: &str) -> String {
         .collect()
 }
 
+/// Validation errors for the typed compile-service process contract.
+#[derive(Debug, Clone, PartialEq, Eq, Error)]
+pub enum CompileServiceOptionsError {
+    /// A backend or model id is empty or contains a character outside the
+    /// routing-id grammar.
+    #[error(
+        "invalid {field} {value:?}: expected a non-empty routing id containing only ASCII letters, digits, '.', '_', '-', ':', or '/'"
+    )]
+    InvalidRouteId {
+        /// Contract field being validated.
+        field: &'static str,
+        /// Rejected value, preserved exactly as supplied by the caller.
+        value: String,
+    },
+    /// Extended-thinking effort is outside the closed contract vocabulary.
+    #[error("invalid effort {0:?}: expected one of 'off', 'low', 'medium', or 'high'")]
+    InvalidEffort(String),
+}
+
+fn validate_route_id(
+    field: &'static str,
+    value: Option<&str>,
+) -> Result<(), CompileServiceOptionsError> {
+    let Some(value) = value else {
+        return Ok(());
+    };
+    if value.is_empty()
+        || !value
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || matches!(c, '.' | '_' | '-' | ':' | '/'))
+    {
+        return Err(CompileServiceOptionsError::InvalidRouteId {
+            field,
+            value: value.to_string(),
+        });
+    }
+    Ok(())
+}
+
 /// Per-turn routing/tool options for the built-in conversational graph.
 #[derive(Debug, Default, Clone, Copy)]
 pub struct ChatAirOptions<'a> {
@@ -116,6 +153,67 @@ pub struct ChatAirOptions<'a> {
     /// the agent can create and run workflows. These are write-class but
     /// capability_grant_ids-gated and staging-confined (workflow-scoped admission).
     pub authoring: bool,
+}
+
+fn deserialize_required_nullable_string<'de, D>(deserializer: D) -> Result<Option<String>, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    Option::<String>::deserialize(deserializer)
+}
+
+/// Owned, serializable process contract for `apxm compile-service`.
+///
+/// Nullable routing fields must still be present in JSON so Server and the
+/// compiler cannot silently drift to different defaults. Unknown fields fail
+/// closed.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct CompileServiceOptions {
+    #[serde(deserialize_with = "deserialize_required_nullable_string")]
+    pub system_prompt: Option<String>,
+    #[serde(deserialize_with = "deserialize_required_nullable_string")]
+    pub backend: Option<String>,
+    #[serde(deserialize_with = "deserialize_required_nullable_string")]
+    pub model: Option<String>,
+    #[serde(deserialize_with = "deserialize_required_nullable_string")]
+    pub effort: Option<String>,
+    pub tools: bool,
+    pub skills: bool,
+    pub capability_discovery: bool,
+    pub authoring: bool,
+}
+
+impl CompileServiceOptions {
+    /// Validate routing and effort values without normalizing or rewriting
+    /// caller input.
+    pub fn validate(&self) -> Result<(), CompileServiceOptionsError> {
+        validate_route_id("backend", self.backend.as_deref())?;
+        validate_route_id("model", self.model.as_deref())?;
+        if let Some(effort) = self.effort.as_deref()
+            && !matches!(effort, "off" | "low" | "medium" | "high")
+        {
+            return Err(CompileServiceOptionsError::InvalidEffort(
+                effort.to_string(),
+            ));
+        }
+        Ok(())
+    }
+}
+
+impl From<&ChatAirOptions<'_>> for CompileServiceOptions {
+    fn from(options: &ChatAirOptions<'_>) -> Self {
+        Self {
+            system_prompt: options.system_prompt.map(ToOwned::to_owned),
+            backend: options.backend.map(ToOwned::to_owned),
+            model: options.model.map(ToOwned::to_owned),
+            effort: options.effort.map(ToOwned::to_owned),
+            tools: options.tools,
+            skills: options.skills,
+            capability_discovery: options.capability_discovery,
+            authoring: options.authoring,
+        }
+    }
 }
 
 /// Per-turn routing options for a conversational ACP agent graph.
@@ -260,16 +358,6 @@ fn quoted_after(body: &str, prefix: &str) -> Option<String> {
     (!cap.is_empty()).then(|| cap.to_string())
 }
 
-/// Single-ASK summarize graph for folding older turns into a running summary.
-/// One source of truth for both surfaces.
-pub const SUMMARIZE_AIR: &str = r#"module {
-  func.func @apxm_summarize(%arg0: !ais.token {ais.param_name = "to_summarize", ais.param_type = "str"}) -> !ais.token attributes {ais.entry} {
-    %summary = ais.ask "Summarize the following conversation excerpt into a concise running summary that preserves decisions, facts, names, and open tasks. Be terse.\n\n{{{to_summarize}}}" : !ais.token
-    func.return %summary : !ais.token
-  }
-}
-"#;
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -305,5 +393,39 @@ mod tests {
             ..ChatAirOptions::default()
         });
         assert!(air.contains(r#"capability_groups = ["discovery", "skills"]"#));
+    }
+
+    #[test]
+    fn compile_service_options_validate_exact_route_ids_and_effort() {
+        let valid = CompileServiceOptions {
+            backend: Some("gateway:v1/primary".to_string()),
+            model: Some("openai/gpt-4.1-mini".to_string()),
+            effort: Some("high".to_string()),
+            ..CompileServiceOptions::default()
+        };
+        valid.validate().expect("valid options");
+
+        let invalid_backend = CompileServiceOptions {
+            backend: Some("gateway primary".to_string()),
+            ..CompileServiceOptions::default()
+        };
+        assert_eq!(
+            invalid_backend.validate(),
+            Err(CompileServiceOptionsError::InvalidRouteId {
+                field: "backend",
+                value: "gateway primary".to_string(),
+            })
+        );
+
+        let invalid_effort = CompileServiceOptions {
+            effort: Some("HIGH".to_string()),
+            ..CompileServiceOptions::default()
+        };
+        assert_eq!(
+            invalid_effort.validate(),
+            Err(CompileServiceOptionsError::InvalidEffort(
+                "HIGH".to_string()
+            ))
+        );
     }
 }

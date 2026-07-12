@@ -5,7 +5,8 @@ use std::time::{Duration, Instant};
 
 use apxm_core::types::{ExecutionDag, ExecutionStats, Value};
 use apxm_core::{apxm_dag, apxm_sched};
-use tokio::task::JoinHandle;
+use futures::stream::{FuturesUnordered, StreamExt};
+use tokio::task::{JoinError, JoinHandle};
 
 use crate::executor::ExecutorEngine;
 use crate::executor::{ExecutionContext, ExecutionHookContext};
@@ -13,6 +14,7 @@ use crate::observability::{MetricsCollector, SchedulerMetrics};
 use crate::scheduler::config::SchedulerConfig;
 use crate::scheduler::state::SchedulerState;
 use crate::scheduler::worker;
+use crate::{BackgroundExecutionOutcome, BackgroundExecutionTask, BackgroundJoinFailure};
 use apxm_core::error::RuntimeError;
 
 type RuntimeResult<T> = Result<T, RuntimeError>;
@@ -46,7 +48,7 @@ pub enum SchedulerOutcome {
         /// (e.g. releasing backend graph lifecycle state) MUST chain onto this
         /// handle rather than doing that cleanup immediately — the execution
         /// is NOT done just because it parked.
-        background: JoinHandle<()>,
+        background: JoinHandle<BackgroundExecutionOutcome>,
     },
 }
 
@@ -194,30 +196,37 @@ impl DataflowScheduler {
         spawn_watchdog(Arc::clone(&state));
 
         // Spawn worker threads
-        let worker_handles = spawn_workers(state.clone(), workers, executor, ctx);
+        let mut worker_tasks = spawn_workers(state.clone(), workers, executor, ctx);
 
         apxm_sched!(
             debug,
-            workers_spawned = worker_handles.len(),
+            workers_spawned = worker_tasks.len(),
             "All workers spawned, waiting for completion"
         );
 
         // Wait for completion, failure, or host-owned cancellation (skip if already complete).
+        let mut worker_join_failure = None;
         if state.remaining.load(std::sync::atomic::Ordering::SeqCst) != 0 && !state.is_cancelled() {
             let cancellation_token = state.cancellation_token.clone();
-            tokio::select! {
-                _ = done => {}
-                _ = cancellation_token.cancelled() => {
-                    state.set_first_error(RuntimeError::SchedulerCancelled);
-                    state.mark_done();
+            loop {
+                tokio::select! {
+                    _ = &mut done => break,
+                    _ = cancellation_token.cancelled() => {
+                        state.set_first_error(RuntimeError::SchedulerCancelled);
+                        state.mark_done();
+                        break;
+                    }
+                    result = worker_tasks.next(), if !worker_tasks.is_empty() => {
+                        if let Some(Err(error)) = result {
+                            worker_join_failure = Some(record_worker_join_failure(&state, error));
+                            break;
+                        }
+                    }
                 }
             }
         }
 
-        // Clean shutdown: wait for all workers to finish
-        for handle in worker_handles {
-            let _ = handle.await;
-        }
+        join_remaining_workers(&state, &mut worker_tasks, &mut worker_join_failure).await;
 
         apxm_sched!(debug, "All workers terminated");
 
@@ -351,55 +360,61 @@ impl DataflowScheduler {
         let mut session_parked_rx = state.subscribe_session_parked();
 
         spawn_watchdog(Arc::clone(&state));
-        let worker_handles = spawn_workers(state.clone(), workers, executor, ctx);
+        let mut worker_tasks = spawn_workers(state.clone(), workers, executor, ctx);
 
         apxm_sched!(
             debug,
-            workers_spawned = worker_handles.len(),
+            workers_spawned = worker_tasks.len(),
             "All workers spawned, racing completion vs session-recv park"
         );
 
         let already_done =
             state.remaining.load(std::sync::atomic::Ordering::SeqCst) == 0 || state.is_cancelled();
 
+        let mut worker_join_failure = None;
+        let mut observe_session_park = true;
         if !already_done {
             let cancellation_token = state.cancellation_token.clone();
-            tokio::select! {
-                _ = &mut done => {}
-                _ = cancellation_token.cancelled() => {
-                    state.set_first_error(RuntimeError::SchedulerCancelled);
-                    state.mark_done();
-                }
-                changed = session_parked_rx.changed() => {
-                    if changed.is_ok()
-                        && let Some(session_id) = session_parked_rx.borrow_and_update().clone()
-                    {
-                        apxm_sched!(
-                            info,
-                            %session_id,
-                            "Execution parked on session-recv; returning Parked without waiting for full completion"
-                        );
-                        let background = tokio::spawn(finalize_parked_background(
-                            Arc::clone(&state),
-                            hooks,
-                            worker_handles,
-                        ));
-                        return Ok(SchedulerOutcome::Parked {
-                            session_id,
-                            background,
-                        });
+            loop {
+                tokio::select! {
+                    _ = &mut done => break,
+                    _ = cancellation_token.cancelled() => {
+                        state.set_first_error(RuntimeError::SchedulerCancelled);
+                        state.mark_done();
+                        break;
                     }
-                    // Sender closed or a spurious/None wakeup (should not
-                    // happen — the sender only ever sends `Some`): fall back
-                    // to waiting for the real completion signal.
-                    done.await;
+                    result = worker_tasks.next(), if !worker_tasks.is_empty() => {
+                        if let Some(Err(error)) = result {
+                            worker_join_failure = Some(record_worker_join_failure(&state, error));
+                            break;
+                        }
+                    }
+                    changed = session_parked_rx.changed(), if observe_session_park => {
+                        if changed.is_ok()
+                            && let Some(session_id) = session_parked_rx.borrow_and_update().clone()
+                        {
+                            apxm_sched!(
+                                info,
+                                %session_id,
+                                "Execution parked on session-recv; returning Parked without waiting for full completion"
+                            );
+                            let background = tokio::spawn(finalize_parked_background(
+                                Arc::clone(&state),
+                                hooks,
+                                worker_tasks,
+                            ));
+                            return Ok(SchedulerOutcome::Parked {
+                                session_id,
+                                background,
+                            });
+                        }
+                        observe_session_park = false;
+                    }
                 }
             }
         }
 
-        for handle in worker_handles {
-            let _ = handle.await;
-        }
+        join_remaining_workers(&state, &mut worker_tasks, &mut worker_join_failure).await;
 
         apxm_sched!(debug, "All workers terminated");
 
@@ -516,43 +531,122 @@ impl DataflowScheduler {
 /// Finish out a parked execution's bookkeeping in the background once its
 /// caller has already returned [`SchedulerOutcome::Parked`].
 ///
-/// No one is awaiting a result at this point, so this only joins the worker
-/// handles (letting the DAG run to its eventual real completion / host
-/// cancellation) and emits the same finishing hooks / logs that
-/// [`DataflowScheduler::execute_or_park`] would have emitted had it stayed
-/// blocked — it does not resurrect the discarded result for anyone to
-/// consume.
+/// Joins the worker handles, emits finishing hooks, and returns the terminal
+/// domain outcome to the owner of the parked execution.
 async fn finalize_parked_background(
     state: Arc<SchedulerState>,
     hooks: ExecutionHookContext,
-    worker_handles: Vec<JoinHandle<()>>,
-) {
-    for handle in worker_handles {
-        let _ = handle.await;
+    mut worker_tasks: FuturesUnordered<JoinHandle<()>>,
+) -> BackgroundExecutionOutcome {
+    let mut join_failure = None;
+    let mut done = std::pin::pin!(state.notify_done.notified());
+    done.as_mut().enable();
+
+    let remaining = state.remaining.load(std::sync::atomic::Ordering::SeqCst);
+    if remaining != 0 && state.is_cancelled() {
+        state.set_first_error(RuntimeError::SchedulerCancelled);
+        state.mark_done();
+    } else if remaining != 0 {
+        let cancellation_token = state.cancellation_token.clone();
+        loop {
+            tokio::select! {
+                _ = &mut done => break,
+                _ = cancellation_token.cancelled() => {
+                    if state.remaining.load(std::sync::atomic::Ordering::SeqCst) != 0 {
+                        state.set_first_error(RuntimeError::SchedulerCancelled);
+                        state.mark_done();
+                    }
+                    break;
+                }
+                result = worker_tasks.next(), if !worker_tasks.is_empty() => {
+                    if let Some(Err(error)) = result {
+                        join_failure = Some(record_worker_join_failure(&state, error));
+                        break;
+                    }
+                }
+            }
+        }
     }
+
+    join_remaining_workers(&state, &mut worker_tasks, &mut join_failure).await;
 
     let error = state.first_error.lock().take();
     let stats = state.build_stats();
+    let outcome = if let Some(failure) = join_failure {
+        BackgroundExecutionOutcome::JoinFailure { failure }
+    } else if let Some(error) = error {
+        BackgroundExecutionOutcome::from_runtime_error(error)
+    } else if stats.failed_nodes > 0 {
+        BackgroundExecutionOutcome::DomainFailure {
+            error: RuntimeError::Scheduler {
+                message: format!(
+                    "parked execution completed with {} failed node(s)",
+                    stats.failed_nodes
+                ),
+            },
+        }
+    } else {
+        BackgroundExecutionOutcome::Success
+    };
     hooks.emit_graph_finished(
         stats.executed_nodes,
         stats.failed_nodes,
         stats.duration_ms,
-        error.is_none() && stats.failed_nodes == 0,
+        outcome.is_success(),
     );
 
-    if let Some(error) = error {
-        apxm_sched!(
-            error,
-            error = %error,
-            "Background (previously-parked) execution finished with an error"
-        );
-    } else {
-        apxm_sched!(
+    match &outcome {
+        BackgroundExecutionOutcome::Success => apxm_sched!(
             info,
             executed = stats.executed_nodes,
             failed = stats.failed_nodes,
             "Background (previously-parked) execution completed"
-        );
+        ),
+        BackgroundExecutionOutcome::DomainFailure { error } => apxm_sched!(
+            error,
+            error = %error,
+            "Background (previously-parked) execution failed"
+        ),
+        BackgroundExecutionOutcome::Cancellation => apxm_sched!(
+            info,
+            "Background (previously-parked) execution was cancelled"
+        ),
+        BackgroundExecutionOutcome::JoinFailure { failure } => apxm_sched!(
+            error,
+            task = ?failure.task,
+            error = %failure.message,
+            "Background (previously-parked) execution task failed to join"
+        ),
+    }
+
+    outcome
+}
+
+/// Record a worker task join failure as both scheduler state and structured
+/// background diagnostics.
+fn record_worker_join_failure(state: &SchedulerState, error: JoinError) -> BackgroundJoinFailure {
+    let failure =
+        BackgroundJoinFailure::from_join_error(BackgroundExecutionTask::SchedulerWorker, error);
+    state.set_first_error(RuntimeError::Scheduler {
+        message: format!("scheduler worker task failed to join: {}", failure.message),
+    });
+    state.mark_done();
+    failure
+}
+
+/// Join every still-running worker after scheduler completion or failure.
+async fn join_remaining_workers(
+    state: &SchedulerState,
+    worker_tasks: &mut FuturesUnordered<JoinHandle<()>>,
+    join_failure: &mut Option<BackgroundJoinFailure>,
+) {
+    while let Some(result) = worker_tasks.next().await {
+        if let Err(error) = result {
+            let failure = record_worker_join_failure(state, error);
+            if join_failure.is_none() {
+                *join_failure = Some(failure);
+            }
+        }
     }
 }
 
@@ -628,22 +722,466 @@ fn spawn_workers(
     workers: Vec<crossbeam_deque::Worker<apxm_core::types::NodeId>>,
     executor: Arc<ExecutorEngine>,
     base_ctx: ExecutionContext,
-) -> Vec<JoinHandle<()>> {
-    workers
-        .into_iter()
-        .enumerate()
-        .map(|(worker_id, local_worker)| {
-            let state = Arc::clone(&state);
-            let executor = Arc::clone(&executor);
-            let base_ctx = base_ctx.clone();
+) -> FuturesUnordered<JoinHandle<()>> {
+    let worker_tasks = FuturesUnordered::new();
+    for (worker_id, local_worker) in workers.into_iter().enumerate() {
+        let state = Arc::clone(&state);
+        let executor = Arc::clone(&executor);
+        let base_ctx = base_ctx.clone();
 
-            apxm_sched!(debug, worker = worker_id, "Spawning worker");
+        apxm_sched!(debug, worker = worker_id, "Spawning worker");
 
-            tokio::spawn(async move {
-                apxm_sched!(debug, worker = worker_id, "Worker started");
-                worker::worker_loop(worker_id, local_worker, state, executor, base_ctx).await;
-                apxm_sched!(debug, worker = worker_id, "Worker stopped");
-            })
+        worker_tasks.push(tokio::spawn(async move {
+            apxm_sched!(debug, worker = worker_id, "Worker started");
+            worker::worker_loop(worker_id, local_worker, state, executor, base_ctx).await;
+            apxm_sched!(debug, worker = worker_id, "Worker stopped");
+        }));
+    }
+    worker_tasks
+}
+
+/// the runtime loop correction exactly-N-iterations conformance: real end-to-end proof that the ONE
+/// production iteration mechanism left after `LOOP_START`/`LOOP_END` were
+/// deleted — graph splicing (`SchedulerState::splice_dag`, driven here the
+/// same way `rearm_session_turn` drives it on every real wake) — dispatches a
+/// loop body through the real dispatcher exactly the number of times the
+/// external driver splices it. Unlike the (deleted) `LOOP_START`/`LOOP_END`
+/// pair, nothing here is compiled-but-ignored: every spliced node runs
+/// through the same worker pool and dispatcher production traffic uses.
+/// See `the runtime loop invariant`.
+#[cfg(test)]
+mod loop_conformance_tests {
+    use super::*;
+    use crate::aam::Aam;
+    use crate::capability::CapabilitySystem;
+    use crate::executor::{ExecutionHook, NodeStartedEvent};
+    use crate::memory::{MemoryConfig, MemorySystem};
+    use crate::scheduler::splicing::SpliceConfig;
+    use apxm_backends::LLMRegistry;
+    use apxm_core::constants::graph::attrs as graph_attrs;
+    use apxm_core::types::execution::NodeMetadata;
+    use apxm_core::types::operations::AISOperationType;
+    use apxm_core::types::values::Number;
+    use apxm_core::types::{ExecutionDag, Node, Value};
+    use std::collections::{HashMap, HashSet};
+    use std::time::Duration;
+    use tokio::time::timeout;
+
+    fn test_scheduler_config() -> SchedulerConfig {
+        SchedulerConfig::new()
+            .with_max_concurrency(2)
+            .with_max_inflight(4)
+    }
+
+    async fn test_context() -> (ExecutionContext, Aam) {
+        let memory = Arc::new(
+            MemorySystem::new(MemoryConfig::in_memory_ltm())
+                .await
+                .expect("in-memory memory system"),
+        );
+        let aam = Aam::new();
+        let capability_system = Arc::new(CapabilitySystem::with_aam(aam.clone()));
+        let ctx = ExecutionContext::new(
+            memory,
+            Arc::new(LLMRegistry::new()),
+            capability_system,
+            aam.clone(),
+        );
+        (ctx, aam)
+    }
+
+    /// The minimal seed DAG: a single entry NOP. The "loop" itself never
+    /// appears in the compiled graph — exactly the point: there is no
+    /// `LOOP_START`/`LOOP_END` IR to lie about iteration. Every body
+    /// execution below arrives dynamically via `splice_dag`.
+    fn seed_dag() -> ExecutionDag {
+        let mut dag = ExecutionDag::new();
+        dag.add_node(Node {
+            id: 1,
+            op_type: AISOperationType::Nop,
+            attributes: HashMap::new(),
+            input_tokens: vec![],
+            output_tokens: vec![],
+            metadata: NodeMetadata::default(),
         })
-        .collect()
+        .unwrap();
+        dag.entry_nodes = dag.find_entry_nodes();
+        dag.exit_nodes = dag.find_exit_nodes();
+        dag
+    }
+
+    /// Spawn a real scheduler run against `seed_dag()` and hand back the live
+    /// `Arc<SchedulerState>` so the test driver can splice into it — playing
+    /// the same role the production worker park path plays when it calls
+    /// `rearm_session_turn` on every wake (`worker.rs`'s `ExecutionOutcome::
+    /// Parked` arm / `session_loop_rearm_spec`), just invoked directly instead
+    /// of through a parked RECV node. No graph-native back-edge is created;
+    /// the driver alone decides whether another iteration happens.
+    async fn spawn_seeded_execution(
+        ctx: ExecutionContext,
+    ) -> (Arc<SchedulerState>, FuturesUnordered<JoinHandle<()>>) {
+        let metrics = Arc::new(MetricsCollector::new());
+        let (state, workers) = SchedulerState::new(
+            seed_dag(),
+            test_scheduler_config(),
+            metrics,
+            Instant::now(),
+            vec![],
+        )
+        .unwrap();
+        // Hold the DAG open for the test's duration: the 1-node seed DAG
+        // would otherwise complete almost instantly, drive `remaining` to 0,
+        // and let every worker observe that and terminate its loop — exactly
+        // the way a real production execution stays open only because the
+        // session-recv node PARKS (defers its completion) rather than
+        // finishing outright. This phantom unit plays that same role without
+        // needing a real parking handler (which would need a live session /
+        // HTTP checkpoint server); `finish()` releases it via `mark_done()`.
+        state
+            .remaining
+            .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+
+        let state = Arc::new(state);
+        let executor = Arc::new(ExecutorEngine::new(ctx.clone()));
+        let handles = spawn_workers(Arc::clone(&state), workers, executor, ctx);
+        (state, handles)
+    }
+
+    /// A UMEM body node with no input tokens, so its handler (`umem.rs`)
+    /// always uses the literal `VALUE` attribute rather than an input — the
+    /// driver controls the counter value deterministically per splice.
+    fn counter_body_node(key: &str, iteration: i64) -> Node {
+        let mut attrs = HashMap::new();
+        attrs.insert(graph_attrs::KEY.to_string(), Value::String(key.to_string()));
+        attrs.insert(
+            graph_attrs::VALUE.to_string(),
+            Value::Number(Number::Integer(iteration)),
+        );
+        Node {
+            id: 1, // local id; splice_dag remaps to a fresh live id
+            op_type: AISOperationType::UMem,
+            attributes: attrs,
+            input_tokens: vec![],
+            output_tokens: vec![],
+            metadata: NodeMetadata::default(),
+        }
+    }
+
+    /// Splice one loop-body iteration and wait (bounded) for the real worker
+    /// pool to have actually dispatched it, observed via the AAM belief the
+    /// body's UMEM handler writes for real. This is the "wake" half of a
+    /// splice-based iteration: the driver does not offer iteration N+1 until
+    /// iteration N has genuinely run.
+    async fn splice_iteration_and_await(
+        state: &Arc<SchedulerState>,
+        aam: &Aam,
+        key: &str,
+        iteration: i64,
+    ) {
+        let mut inner = ExecutionDag::new();
+        inner.add_node(counter_body_node(key, iteration)).unwrap();
+        state
+            .splice_dag(SpliceConfig {
+                inner_dag: inner,
+                token_connections: HashMap::new(),
+                node_id_offset: None,
+                token_id_offset: None,
+            })
+            .expect("splice_dag succeeds");
+
+        let expected = Value::Number(Number::Integer(iteration));
+        timeout(Duration::from_secs(5), async {
+            loop {
+                if aam.get_belief(key).as_ref() == Some(&expected) {
+                    return;
+                }
+                tokio::time::sleep(Duration::from_millis(2)).await;
+            }
+        })
+        .await
+        .expect("spliced loop-body iteration did not execute in time");
+    }
+
+    /// Let the still-running worker pool wind down and join it, bounded so a
+    /// bug can't hang the test suite.
+    async fn finish(
+        state: &Arc<SchedulerState>,
+        mut worker_tasks: FuturesUnordered<JoinHandle<()>>,
+    ) {
+        state.mark_done();
+        timeout(Duration::from_secs(5), async {
+            while worker_tasks.next().await.is_some() {}
+        })
+        .await
+        .expect("worker tasks terminate");
+    }
+
+    struct PanickingNodeStartedHook;
+
+    impl ExecutionHook for PanickingNodeStartedHook {
+        fn name(&self) -> &str {
+            "panicking-node-started"
+        }
+
+        fn on_node_started(&self, _event: &NodeStartedEvent) {
+            panic!("deterministic on_node_started panic");
+        }
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn panicking_node_started_hook_returns_typed_scheduler_failure() {
+        let (ctx, _) = test_context().await;
+        let scheduler = DataflowScheduler::new(test_scheduler_config());
+        let executor = Arc::new(ExecutorEngine::new(ctx.clone()));
+        let hooks = ExecutionHookContext::new(
+            "panicking-hook-execution",
+            "panicking-hook-graph",
+            vec![Arc::new(PanickingNodeStartedHook)],
+        );
+
+        let result = timeout(
+            Duration::from_secs(2),
+            scheduler.execute_with_hooks(seed_dag(), executor, ctx, vec![], hooks),
+        )
+        .await
+        .expect("scheduler must observe the worker panic instead of hanging")
+        .expect_err("panicking execution hook must fail the scheduler");
+
+        assert!(matches!(
+            result,
+            RuntimeError::Scheduler { message }
+                if message.contains("scheduler worker task failed to join")
+        ));
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn concurrent_splices_reserve_unique_ids_and_execute_once() {
+        let (ctx, aam) = test_context().await;
+        let (state, handles) = spawn_seeded_execution(ctx).await;
+        let barrier = Arc::new(std::sync::Barrier::new(2));
+
+        let spawn_splice = |key: &'static str, value: i64| {
+            let state = Arc::clone(&state);
+            let barrier = Arc::clone(&barrier);
+            std::thread::spawn(move || {
+                crate::scheduler::splicing::with_splice_reservation_barrier(barrier, || {
+                    let mut node = counter_body_node(key, value);
+                    node.output_tokens = vec![10];
+                    let mut inner = ExecutionDag::new();
+                    inner.add_node(node).unwrap();
+                    state
+                        .splice_dag(SpliceConfig {
+                            inner_dag: inner,
+                            token_connections: HashMap::new(),
+                            node_id_offset: None,
+                            token_id_offset: None,
+                        })
+                        .expect("concurrent splice succeeds")
+                })
+            })
+        };
+
+        let first = spawn_splice("concurrent_splice_first", 1);
+        let second = spawn_splice("concurrent_splice_second", 2);
+        let first_remap = first.join().expect("first splice thread joins");
+        let second_remap = second.join().expect("second splice thread joins");
+        let first_token = first_remap[&10];
+        let second_token = second_remap[&10];
+
+        assert_ne!(
+            first_token, second_token,
+            "concurrent splices must retain distinct remapped tokens"
+        );
+        assert!(state.tokens.contains_key(&first_token));
+        assert!(state.tokens.contains_key(&second_token));
+
+        timeout(Duration::from_secs(5), async {
+            loop {
+                let first_ran = aam.get_belief("concurrent_splice_first")
+                    == Some(Value::Number(Number::Integer(1)));
+                let second_ran = aam.get_belief("concurrent_splice_second")
+                    == Some(Value::Number(Number::Integer(2)));
+                if first_ran && second_ran {
+                    return;
+                }
+                tokio::time::sleep(Duration::from_millis(2)).await;
+            }
+        })
+        .await
+        .expect("both concurrently spliced nodes execute");
+
+        let spliced_node_ids: HashSet<_> = state
+            .nodes
+            .iter()
+            .filter_map(|entry| {
+                entry
+                    .value()
+                    .attributes
+                    .get(graph_attrs::KEY)
+                    .and_then(Value::as_string)
+                    .filter(|key| key.starts_with("concurrent_splice_"))
+                    .map(|_| *entry.key())
+            })
+            .collect();
+        assert_eq!(
+            spliced_node_ids.len(),
+            2,
+            "both concurrent splice bodies must remain in scheduler state"
+        );
+
+        tokio::time::sleep(Duration::from_millis(20)).await;
+        assert_eq!(
+            state.build_stats().executed_nodes,
+            3,
+            "the seed and each distinct spliced node execute exactly once"
+        );
+
+        finish(&state, handles).await;
+    }
+
+    #[tokio::test]
+    async fn parked_background_returns_the_terminal_domain_error() {
+        let (ctx, _) = test_context().await;
+        let (state, handles) = spawn_seeded_execution(ctx).await;
+        state.set_first_error(RuntimeError::Scheduler {
+            message: "terminal failure".to_string(),
+        });
+        state.mark_done();
+
+        let result =
+            finalize_parked_background(state, ExecutionHookContext::default(), handles).await;
+
+        assert!(matches!(
+            result,
+            BackgroundExecutionOutcome::DomainFailure {
+                error: RuntimeError::Scheduler { message }
+            } if message == "terminal failure"
+        ));
+    }
+
+    #[tokio::test]
+    async fn parked_background_distinguishes_cancellation() {
+        let (ctx, _) = test_context().await;
+        let (state, handles) = spawn_seeded_execution(ctx).await;
+        state.set_first_error(RuntimeError::SchedulerCancelled);
+        state.mark_done();
+
+        let result =
+            finalize_parked_background(state, ExecutionHookContext::default(), handles).await;
+
+        assert!(matches!(result, BackgroundExecutionOutcome::Cancellation));
+    }
+
+    #[tokio::test]
+    async fn parked_background_distinguishes_worker_join_failure() {
+        let (ctx, _) = test_context().await;
+        let (state, worker_tasks) = spawn_seeded_execution(ctx).await;
+        worker_tasks.push(tokio::spawn(async { panic!("worker panic") }));
+
+        let result = timeout(
+            Duration::from_secs(2),
+            finalize_parked_background(state, ExecutionHookContext::default(), worker_tasks),
+        )
+        .await
+        .expect("background finalizer must observe the worker panic");
+
+        assert!(matches!(
+            result,
+            BackgroundExecutionOutcome::JoinFailure {
+                failure: crate::BackgroundJoinFailure {
+                    task: BackgroundExecutionTask::SchedulerWorker,
+                    panicked: true,
+                    ..
+                }
+            }
+        ));
+    }
+
+    /// Positive exactly-N-iterations conformance: `max_iterations = 3`, a
+    /// body node incrementing an
+    /// observable counter (AAM belief); assert exactly 3 runs.
+    #[tokio::test]
+    async fn loop_body_executes_exactly_n_times() {
+        let (ctx, aam) = test_context().await;
+        let (state, handles) = spawn_seeded_execution(ctx).await;
+        let key = "loop_conformance_exact_n";
+
+        for i in 1..=3i64 {
+            splice_iteration_and_await(&state, &aam, key, i).await;
+        }
+
+        assert_eq!(aam.get_belief(key), Some(Value::Number(Number::Integer(3))));
+        let stats = state.build_stats();
+        assert_eq!(
+            stats.executed_nodes, 4,
+            "the 1-node seed plus exactly 3 spliced body executions, no more"
+        );
+
+        finish(&state, handles).await;
+    }
+
+    /// Condition false after 2 of 3 allowed iterations: assert exactly 2
+    /// executions. The "condition" is evaluated by the driver between
+    /// splices — precisely how a real re-arm loop decides whether to splice
+    /// again (`ParkWaker::fire`'s turn-cap check), not a graph back-edge.
+    #[tokio::test]
+    async fn loop_terminates_on_condition_before_max_iterations() {
+        let (ctx, aam) = test_context().await;
+        let (state, handles) = spawn_seeded_execution(ctx).await;
+        let key = "loop_conformance_early_stop";
+        let max_allowed = 3i64;
+
+        let mut executed = 0i64;
+        for i in 1..=max_allowed {
+            splice_iteration_and_await(&state, &aam, key, i).await;
+            executed = i;
+            let condition_holds = i < 2; // false starting at iteration 2
+            if !condition_holds {
+                break;
+            }
+        }
+
+        assert_eq!(executed, 2, "the driver stopped after iteration 2, not 3");
+        assert_eq!(aam.get_belief(key), Some(Value::Number(Number::Integer(2))));
+        let stats = state.build_stats();
+        assert_eq!(
+            stats.executed_nodes, 3,
+            "the 1-node seed plus exactly 2 spliced body executions"
+        );
+
+        finish(&state, handles).await;
+    }
+
+    /// Bound/condition false immediately: the body never dispatches.
+    #[tokio::test]
+    async fn zero_iteration_loop_executes_body_zero_times() {
+        let (ctx, aam) = test_context().await;
+        let (state, handles) = spawn_seeded_execution(ctx).await;
+        let key = "loop_conformance_zero_iterations";
+
+        // Let the seed settle without ever offering a first iteration.
+        timeout(Duration::from_secs(5), async {
+            loop {
+                if state.build_stats().executed_nodes >= 1 {
+                    return;
+                }
+                tokio::time::sleep(Duration::from_millis(2)).await;
+            }
+        })
+        .await
+        .expect("seed node did not execute in time");
+
+        assert_eq!(
+            aam.get_belief(key),
+            None,
+            "a loop-body belief must not exist when the condition never holds"
+        );
+        assert_eq!(
+            state.build_stats().executed_nodes,
+            1,
+            "only the 1-node seed ran; the body executed zero times"
+        );
+
+        finish(&state, handles).await;
+    }
 }

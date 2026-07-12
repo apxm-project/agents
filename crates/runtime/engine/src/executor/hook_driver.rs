@@ -5,7 +5,7 @@
 //! Hooks are dispatched over the SAME python tool bridge as `@tool`
 //! (constitution #4). A hook handler receives a JSON payload describing the
 //! event and returns a decision object the runtime applies:
-//! - `pre_cap` → allow | deny(reason) | edit_args(args)
+//! - `pre_cap` → allow | defer | deny(reason) | edit_args(args)
 //! - `post_cap` → replace_result(x) | (none)
 //! - `pre_ask` → prepend_system(text) | set_system(text) | (none)
 //!
@@ -17,6 +17,7 @@ use std::collections::HashMap;
 use std::time::Duration;
 
 use apxm_core::error::RuntimeError;
+use apxm_core::events::payload::ToolCallCorrelation;
 use apxm_core::types::values::{Number, Value};
 use serde_json::{Value as JsonValue, json};
 
@@ -116,7 +117,7 @@ async fn host_tool_call(
                 .collect()
         })
         .unwrap_or_default();
-    match ctx.capability_system.invoke(name, args).await {
+    match ctx.invoke_capability(name, args).await {
         Ok(value) => Ok(value_to_json(value)),
         Err(e) => Err(format!("tool '{name}' failed: {e}")),
     }
@@ -209,6 +210,7 @@ async fn host_llm_ask(
 /// Decision returned by a `pre_cap` hook.
 pub enum PreCapDecision {
     Allow,
+    Defer,
     Deny(String),
     EditArgs(HashMap<String, Value>),
 }
@@ -266,12 +268,25 @@ fn remaining_budget(ctx: &ExecutionContext) -> JsonValue {
     }
 }
 
+fn canonical_requires_approval(ctx: &ExecutionContext, tool_name: &str) -> Option<bool> {
+    ctx.capability_system
+        .get_metadata(tool_name)
+        .map(|meta| meta.requires_approval)
+        .or_else(|| {
+            crate::executor::handlers::llm::script_tool_policy(ctx, tool_name)
+                .ok()
+                .map(|policy| policy.requires_approval)
+        })
+}
+
 /// Run all matching `pre_cap` hooks for `tool_name`, threading edited args.
-/// Returns the (possibly edited) args, or `Err` if a hook denied the call.
+/// A successful return always continues into canonical capability admission;
+/// neither `allow` nor `defer` authorizes the invocation by itself.
 pub async fn run_pre_cap_hooks(
     ctx: &ExecutionContext,
     tool_name: &str,
     args: HashMap<String, Value>,
+    correlation: Option<&ToolCallCorrelation>,
 ) -> Result<HashMap<String, Value>, RuntimeError> {
     let Some(registry) = ctx.hook_registry() else {
         return Ok(args);
@@ -284,17 +299,9 @@ pub async fn run_pre_cap_hooks(
         return Ok(args);
     }
 
-    // CM #5 layering (Priority 3): a `gate` hook may only NARROW what
-    // the joined capability's own policy already allows — it can never
-    // widen. `requires_approval` on the capability's metadata is the
-    // baseline; a gate hook cannot launder an approval-gated capability into
-    // an auto-allow. This is fail-closed: a widening attempt is rejected,
-    // not silently downgraded to observe.
-    let requires_approval = ctx
-        .capability_system
-        .get_metadata(tool_name)
-        .map(|meta| meta.requires_approval)
-        .unwrap_or(false);
+    // A gate hook may only narrow a capability whose canonical policy is
+    // already open. Missing metadata is not evidence that allow is safe.
+    let requires_approval = canonical_requires_approval(ctx, tool_name);
 
     let mut current = args;
     for binding in bindings {
@@ -304,7 +311,11 @@ pub async fn run_pre_cap_hooks(
         HOOK_PAYLOAD_KEY: {
         "event": "pre_cap",
         "remaining_budget": remaining_budget(ctx),
-        "call": { "name": tool_name, "args": args_json },
+        "call": {
+            "name": tool_name,
+            "args": args_json,
+            "tool_call_correlation": correlation,
+        },
         }
         });
         match call_hook_with_host_bridge(
@@ -317,14 +328,16 @@ pub async fn run_pre_cap_hooks(
         .await
         {
             Ok(decision) => match parse_pre_cap_decision(decision) {
-                PreCapDecision::Allow => {
-                    if gate_decision_would_widen(binding.mode, requires_approval, true) {
+                decision @ (PreCapDecision::Allow | PreCapDecision::Defer) => {
+                    if pre_cap_continuation(binding.mode, requires_approval, &decision)
+                        == PreCapContinuation::RejectWidening
+                    {
                         return Err(RuntimeError::Capability {
                             capability: tool_name.to_string(),
                             message: format!(
-                                "gate hook '{}' attempted to widen permissions (auto-allow) on \
- a capability whose policy requires approval; rejected — a hook \
- may only narrow the capability's own policy, never widen it",
+                                "gate hook '{}' attempted to authorize a capability whose policy \
+ is not already open; rejected — a hook may only narrow canonical \
+ capability policy, never replace or widen it",
                                 binding.handler_id
                             ),
                         });
@@ -353,22 +366,29 @@ pub async fn run_pre_cap_hooks(
     Ok(current)
 }
 
-/// CM #5 layering (Priority 3): would applying this `pre_cap` decision
-/// let a `gate` hook grant more than the capability's own baseline policy
-/// already allows? Only an `observe`-mode hook or a capability whose
-/// baseline does not require approval may pass an unconditional `allow`
-/// through untouched; a `gate` hook sitting in front of an approval-gated
-/// capability can narrow (deny / leave the approval requirement standing)
-/// but never launder it into an auto-allow. `is_allow` is passed rather
-/// than `&PreCapDecision` so this stays a plain, easily-tested predicate
-/// (only `Allow` is ever a widening risk — `Deny` and `EditArgs` cannot
-/// widen the *permission* decision).
-fn gate_decision_would_widen(
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum PreCapContinuation {
+    CanonicalAdmission,
+    RejectWidening,
+}
+
+/// Resolve a nonterminal hook decision without granting authority. `defer`
+/// always continues into canonical admission. `allow` does the same only when
+/// metadata proves the capability policy is already open.
+fn pre_cap_continuation(
     mode: HookMode,
-    capability_requires_approval: bool,
-    is_allow: bool,
-) -> bool {
-    mode == HookMode::Gate && capability_requires_approval && is_allow
+    capability_requires_approval: Option<bool>,
+    decision: &PreCapDecision,
+) -> PreCapContinuation {
+    match decision {
+        PreCapDecision::Allow
+            if mode == HookMode::Gate && capability_requires_approval != Some(false) =>
+        {
+            PreCapContinuation::RejectWidening
+        }
+        PreCapDecision::Allow | PreCapDecision::Defer => PreCapContinuation::CanonicalAdmission,
+        _ => unreachable!("only nonterminal pre_cap decisions have a continuation"),
+    }
 }
 
 /// Fold one `pre_turn` hook's decision into the running supplement.
@@ -399,9 +419,11 @@ fn apply_pre_turn_decision(supplement: Option<String>, decision: &JsonValue) -> 
 
 fn parse_pre_cap_decision(decision: JsonValue) -> PreCapDecision {
     let Some(obj) = decision.as_object() else {
-        return PreCapDecision::Allow;
+        return PreCapDecision::Defer;
     };
     match obj.get("decision").and_then(|v| v.as_str()) {
+        Some("allow") => PreCapDecision::Allow,
+        Some("defer") => PreCapDecision::Defer,
         Some("deny") => PreCapDecision::Deny(
             obj.get("reason")
                 .and_then(|v| v.as_str())
@@ -414,14 +436,19 @@ fn parse_pre_cap_decision(decision: JsonValue) -> PreCapDecision {
                     .map(|(k, v)| (k.clone(), json_to_value(v.clone())))
                     .collect(),
             ),
-            _ => PreCapDecision::Allow,
+            _ => PreCapDecision::Defer,
         },
-        _ => PreCapDecision::Allow,
+        _ => PreCapDecision::Defer,
     }
 }
 
 /// Run all matching `post_cap` hooks; returns the (possibly replaced) result.
-pub async fn run_post_cap_hooks(ctx: &ExecutionContext, tool_name: &str, result: Value) -> Value {
+pub async fn run_post_cap_hooks(
+    ctx: &ExecutionContext,
+    tool_name: &str,
+    result: Value,
+    correlation: Option<&ToolCallCorrelation>,
+) -> Value {
     let Some(registry) = ctx.hook_registry() else {
         return result;
     };
@@ -439,7 +466,10 @@ pub async fn run_post_cap_hooks(ctx: &ExecutionContext, tool_name: &str, result:
         let payload = json!({
         HOOK_PAYLOAD_KEY: {
         "event": "post_cap",
-        "call": { "name": tool_name },
+        "call": {
+            "name": tool_name,
+            "tool_call_correlation": correlation,
+        },
         "result": result_json,
         }
         });
@@ -749,34 +779,104 @@ mod script_bridge_tests {
 #[cfg(test)]
 mod gate_narrowing_tests {
     use super::*;
+    use crate::aam::Aam;
+    use crate::capability::CapabilitySystem;
+    use crate::memory::{MemoryConfig, MemorySystem};
+    use crate::python_tools::{PythonHandlerBridge, PythonHandlerRegistry};
+    use apxm_backends::LLMRegistry;
+    use std::sync::Arc;
+
+    async fn context_with_python_policy(policy: &str) -> ExecutionContext {
+        let memory = Arc::new(
+            MemorySystem::new(MemoryConfig::in_memory_ltm())
+                .await
+                .expect("memory"),
+        );
+        let aam = Aam::new();
+        let capability_system = Arc::new(CapabilitySystem::with_aam(aam.clone()));
+        let registry = PythonHandlerRegistry::from_json(policy).expect("python tool manifest");
+        ExecutionContext::new(memory, Arc::new(LLMRegistry::new()), capability_system, aam)
+            .with_python_handler_bridge(Arc::new(PythonHandlerBridge::new(registry)))
+    }
 
     /// vector: a `gate` hook attempting to widen (auto-allow) a
     /// capability whose baseline policy requires approval is rejected.
     #[test]
     fn gate_hook_allow_on_approval_gated_capability_is_a_widen_attempt() {
-        assert!(gate_decision_would_widen(HookMode::Gate, true, true));
+        assert_eq!(
+            pre_cap_continuation(HookMode::Gate, Some(true), &PreCapDecision::Allow),
+            PreCapContinuation::RejectWidening
+        );
     }
 
     #[test]
-    fn gate_hook_allow_on_already_open_capability_is_not_a_widen_attempt() {
-        // No approval requirement to begin with — nothing to widen past.
-        assert!(!gate_decision_would_widen(HookMode::Gate, false, true));
+    fn gate_hook_allow_on_already_open_capability_continues_admission() {
+        assert_eq!(
+            pre_cap_continuation(HookMode::Gate, Some(false), &PreCapDecision::Allow),
+            PreCapContinuation::CanonicalAdmission
+        );
     }
 
     #[test]
-    fn observe_hook_never_gates_so_never_widens() {
-        // Observe-mode hooks cannot control the outcome at all (constitution
-        // #5's mode split), so they are never a widening risk regardless of
-        // the capability's baseline.
-        assert!(!gate_decision_would_widen(HookMode::Observe, true, true));
+    fn gate_hook_allow_without_known_policy_is_rejected() {
+        assert_eq!(
+            pre_cap_continuation(HookMode::Gate, None, &PreCapDecision::Allow),
+            PreCapContinuation::RejectWidening
+        );
     }
 
     #[test]
-    fn non_allow_decisions_never_widen() {
-        // Deny/edit-args can only narrow or leave the call's shape alone —
-        // only an unconditional Allow can widen past a baseline approval
-        // requirement.
-        assert!(!gate_decision_would_widen(HookMode::Gate, true, false));
+    fn observe_hook_allow_continues_admission() {
+        assert_eq!(
+            pre_cap_continuation(HookMode::Observe, Some(true), &PreCapDecision::Allow),
+            PreCapContinuation::CanonicalAdmission
+        );
+    }
+
+    #[test]
+    fn defer_always_continues_canonical_admission() {
+        assert_eq!(
+            pre_cap_continuation(HookMode::Gate, Some(true), &PreCapDecision::Defer),
+            PreCapContinuation::CanonicalAdmission
+        );
+        assert_eq!(
+            pre_cap_continuation(HookMode::Gate, None, &PreCapDecision::Defer),
+            PreCapContinuation::CanonicalAdmission
+        );
+    }
+
+    #[test]
+    fn defer_is_parsed_as_canonical_admission_continuation() {
+        let decision = parse_pre_cap_decision(json!({"decision": "defer"}));
+        assert!(matches!(decision, PreCapDecision::Defer));
+        assert_eq!(
+            pre_cap_continuation(HookMode::Gate, Some(true), &decision),
+            PreCapContinuation::CanonicalAdmission
+        );
+    }
+
+    #[tokio::test]
+    async fn script_policy_participates_in_gate_narrowing() {
+        let ctx = context_with_python_policy(
+            r#"[{"handler_id":"sha256:abc","module":"mod","qualname":"open","name":"script-open","schema":{},"read_only":true,"requires_approval":false},{"handler_id":"sha256:def","module":"mod","qualname":"ask","name":"script-ask","schema":{},"read_only":true,"requires_approval":true}]"#,
+        )
+        .await;
+
+        assert_eq!(
+            canonical_requires_approval(&ctx, "script-open"),
+            Some(false)
+        );
+        assert_eq!(canonical_requires_approval(&ctx, "script-ask"), Some(true));
+    }
+
+    #[tokio::test]
+    async fn incomplete_script_policy_is_not_treated_as_open() {
+        let ctx = context_with_python_policy(
+            r#"[{"handler_id":"sha256:abc","module":"mod","qualname":"open","name":"script-open","schema":{},"requires_approval":false}]"#,
+        )
+        .await;
+
+        assert_eq!(canonical_requires_approval(&ctx, "script-open"), None);
     }
 }
 

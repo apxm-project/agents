@@ -1,4 +1,8 @@
-capabilities = []
+capabilities = [
+    "read",
+    "search_web",
+    "write",
+]
 display_name = "Conversational"
 domain = "general"
 id = "conversational"
@@ -27,21 +31,17 @@ handler = "capabilities.handlers.hooks.redact_tool_results"
 match = "*"
 mode = "observe"
 
-[[hooks]]
-event = "post_turn"
-handler = "capabilities.handlers.hooks.compact_conversation"
-mode = "observe"
-
 [prompts]
 context = "prompts/context.md"
 persona = "prompts/persona.md"
 
 [runtime]
+compaction_policy = '{"keep_recent":2,"compact_at_tokens":300,"strategy":"summarize","summary_key":"conversation.summary"}'
 memory_space = "stm"
 session_prefix = "conversational"
 
 [runtime.loop]
-mode = "recv"
+mode = "host"
 rearm = true
 turn_param = "user_message"
 

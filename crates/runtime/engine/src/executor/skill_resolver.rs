@@ -101,3 +101,12 @@ impl SkillResolver for NoOpSkillResolver {
         })
     }
 }
+
+/// Tag distinguishing the driver/CLI's deterministic, named `CALL_SKILL`
+/// rejection (`workspace/agents/crates/orchestration/driver/src/runtime/mod.rs`)
+/// from this module's generic `call_skill_no_resolver` failure. Any embedding
+/// that intentionally does not support `CALL_SKILL` (as opposed to one that
+/// simply forgot to wire a resolver) should set an
+/// [`SkillResolver`] that fails with this tag so operators and tests can
+/// tell "unsupported here" apart from "misconfigured".
+pub const CALL_SKILL_UNSUPPORTED_HERE_TAG: &str = "call_skill_unsupported_here";

@@ -1,0 +1,4 @@
+id = "read"
+description = "Read a file under declared read roots."
+kind = "builtin"
+read_only = true

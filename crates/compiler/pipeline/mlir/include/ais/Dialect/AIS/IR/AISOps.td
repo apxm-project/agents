@@ -523,49 +523,6 @@ def AIS_BranchOnValueOp : AIS_Op<"branch_on_value"> {
   let hasVerifier = 1;
 }
 
-def AIS_LoopStartOp : AIS_Op<"loop_start"> {
-  let summary = "Begin bounded loop";
-  let description = [{
-    Begins a bounded loop region. `max_iterations` (optional, default 100 at
-    runtime) bounds the iteration count; `label` is an optional diagnostic name.
-    The result is a loop-state token consumed by the matching `loop_end`.
-
-    Example:
-    ```mlir
-    %state = ais.loop_start {max_iterations = 3 : i64, label = "refine"} : !ais.token
-    ```
-  }];
-  let arguments = (ins
-    OptionalAttr<I64Attr>:$max_iterations,
-    OptionalAttr<StrAttr>:$label
-  );
-  let results = (outs AIS_TokenType:$state);
-  let assemblyFormat = [{
-    attr-dict `:` type($state)
-  }];
-  let hasVerifier = 1;
-}
-
-def AIS_LoopEndOp : AIS_Op<"loop_end"> {
-  let summary = "End bounded loop";
-  let description = [{
-    Marks the end of a bounded loop. The loop-state token(s) from the matching
-    `loop_start` are optional inputs (the loop body sequences via control edges).
-
-    Example:
-    ```mlir
-    %r = ais.loop_end : !ais.token
-    %r = ais.loop_end [%state : !ais.token] : !ais.token
-    ```
-  }];
-  let arguments = (ins Variadic<AIS_TokenType>:$state);
-  let results = (outs AIS_TokenType:$result);
-  let assemblyFormat = [{
-    (`[` $state^ `:` type($state) `]`)? attr-dict `:` type($result)
-  }];
-  let hasVerifier = 1;
-}
-
 def AIS_TryCatchOp : AIS_Op<"try_catch"> {
   let summary = "Try / catch region markers";
   let arguments = (ins
@@ -954,7 +911,7 @@ def AIS_RegisterHookOp : AIS_Op<"register_hook"> {
     StrAttr:$hook_event,
     OptionalAttr<StrAttr>:$hook_match,
     OptionalAttr<StrAttr>:$hook_mode,
-    OptionalAttr<StrAttr>:$python_hook_handler_id
+    OptionalAttr<StrAttr>:$hook_handler_id
   );
   let results = (outs AIS_TokenType:$result);
   let assemblyFormat = [{
@@ -963,7 +920,16 @@ def AIS_RegisterHookOp : AIS_Op<"register_hook"> {
 }
 
 def AIS_AutonomousOp : AIS_Op<"autonomous"> {
-  let summary = "Run a goal-directed autonomous loop";
+  let summary = "Macro-op: a fused goal-directed plan/act/evaluate loop, not the "
+                 "general iteration mechanism";
+  let description = [{
+    AUTONOMOUS is a macro-op: one node that fuses an internal plan / act /
+    evaluate loop inside its handler (a host-side Rust loop, not graph-level
+    iteration). It is independent of, and not a substitute for, the general
+    in-graph iteration mechanism, which is splice-based (a fresh sub-DAG
+    grafted into the live execution per turn/iteration; see
+    graph splicing and session rearming).
+  }];
   let arguments = (ins
     StrAttr:$prompt,
     OptionalAttr<I64Attr>:$max_iterations,

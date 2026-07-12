@@ -7,17 +7,16 @@
 //! module itself.
 //!
 //! [`ApprovalContext`] carries capability pre-invoke fields minus its
-//! `registry: &CapabilityRegistry` field: the only thing that field was
-//! used for (checking one capability's `requires_approval` metadata) is
-//! something the concrete `invoke_with_timeout_ctx` implementation can — and,
-//! after this seam, does — resolve itself from its own registry, so the
-//! caller (executor) no longer needs a `CapabilityRegistry` reference at all.
+//! `registry: &CapabilityRegistry` field: the concrete
+//! `invoke_with_timeout_ctx` implementation resolves the named capability's
+//! policy from its own registry, so the caller cannot omit canonical admission.
 
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::Duration;
 
 use apxm_core::error::RuntimeError;
+use apxm_core::events::payload::ToolCallCorrelation;
 use apxm_core::types::consent::ConsentBroker;
 use apxm_core::types::values::Value;
 use async_trait::async_trait;
@@ -53,6 +52,8 @@ pub enum CapabilitySandboxPreflight {
 /// registry to decide whether the named capability actually requires
 /// approval.
 pub struct ApprovalContext<'a> {
+    pub call_id: &'a str,
+    pub tool_call_correlation: Option<&'a ToolCallCorrelation>,
     pub consent_broker: &'a dyn ConsentBroker,
     pub event_emitter: Option<&'a dyn ExecutionEventEmitter>,
     pub host_id: Option<&'a str>,
@@ -69,18 +70,25 @@ pub struct ApprovalContext<'a> {
 /// on this crate for the contract instead of on each other's concrete types.
 #[async_trait]
 pub trait CapabilityFacade: Send + Sync {
-    /// Invoke a capability by name with validation, no approval gate.
-    async fn invoke(&self, name: &str, args: HashMap<String, Value>)
-    -> Result<Value, RuntimeError>;
+    /// Apply capability policy, consent, approval-store, and interceptor
+    /// admission without executing a process-wide registered capability.
+    /// Artifact-scoped script tools use this before dispatching to their worker.
+    async fn admit_with_ctx(
+        &self,
+        name: &str,
+        args: HashMap<String, Value>,
+        requires_approval: bool,
+        approval: ApprovalContext<'_>,
+    ) -> Result<HashMap<String, Value>, RuntimeError>;
 
-    /// Invoke a capability with an explicit timeout and optional
-    /// approval-gate context.
+    /// Invoke a capability with an explicit timeout and mandatory policy and
+    /// consent admission context.
     async fn invoke_with_timeout_ctx(
         &self,
         name: &str,
         args: HashMap<String, Value>,
         timeout: Duration,
-        approval: Option<ApprovalContext<'_>>,
+        approval: ApprovalContext<'_>,
     ) -> Result<Value, RuntimeError>;
 
     /// Whether a capability with this name is registered.

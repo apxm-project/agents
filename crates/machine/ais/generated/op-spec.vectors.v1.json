@@ -73,11 +73,6 @@
       "bytes": 105
     },
     {
-      "op": "LOOP_START",
-      "example_json": "{\"id\": 3, \"op\": \"LOOP_START\", \"attributes\": {\"count_token\": \"3\"}}",
-      "bytes": 65
-    },
-    {
       "op": "RETURN",
       "example_json": "{\"id\": 6, \"op\": \"RETURN\", \"attributes\": {}}",
       "bytes": 43
@@ -174,8 +169,8 @@
     },
     {
       "op": "REGISTER_HOOK",
-      "example_json": "{\\\"id\\\": 4, \\\"op\\\": \\\"REGISTER_HOOK\\\", \\\"attributes\\\": {\\\"hook_event\\\": \\\"pre_cap\\\", \\\"hook_match\\\": \\\"lookup\\\", \\\"hook_mode\\\": \\\"gate\\\", \\\"python_hook_handler_id\\\": \\\"sha256:...\\\"}}",
-      "bytes": 182
+      "example_json": "{\\\"id\\\": 4, \\\"op\\\": \\\"REGISTER_HOOK\\\", \\\"attributes\\\": {\\\"hook_event\\\": \\\"pre_cap\\\", \\\"hook_match\\\": \\\"lookup\\\", \\\"hook_mode\\\": \\\"gate\\\", \\\"hook_handler_id\\\": \\\"sha256:...\\\"}}",
+      "bytes": 175
     },
     {
       "op": "AUTONOMOUS",

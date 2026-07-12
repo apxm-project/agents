@@ -1,0 +1,15 @@
+{
+  "name": "parametrized_flow",
+  "nodes": [
+    {"id": 1, "name": "ask", "op": "ASK", "attributes": {"template_str": "Research {topic} in the style of {style}", "token_budget": 256}},
+    {"id": 2, "name": "out", "op": "RETURN", "attributes": {}}
+  ],
+  "edges": [
+    {"from": 1, "to": 2, "dependency": "Data"}
+  ],
+  "parameters": [
+    {"name": "topic", "type_name": "str"},
+    {"name": "style", "type_name": "str"}
+  ],
+  "metadata": {"is_entry": true}
+}

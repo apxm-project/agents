@@ -72,6 +72,10 @@ pub async fn worker_loop(
         let steal_start = std::time::Instant::now();
         let work_ready = state.work_notify.notified();
         tokio::pin!(work_ready);
+        // Register the idle waiter before the steal attempt so a concurrent
+        // `mark_done()` / ready-node wake cannot be lost between future
+        // creation and its first poll.
+        work_ready.as_mut().enable();
         let stolen = state.work_stealing.steal_next(&local_queue, worker_id);
         let Some(node_id) = stolen else {
             tracing::trace!(worker = worker_id, "No work found, waiting");
@@ -199,7 +203,7 @@ pub async fn worker_loop(
                     break;
                 }
             }
-            ExecutionOutcome::Parked { wait_key } => {
+            ExecutionOutcome::Parked { wait_key, attempts } => {
                 // Yield the lane: register a waker, do NOT finish_one (the node
                 // hasn't completed), and drop the permit so a parked wait holds
                 // neither a worker nor a concurrency slot. `enter_parked` also
@@ -225,14 +229,18 @@ pub async fn worker_loop(
                 // message, then splice a fresh turn flow-call + a fresh recv (the
                 // native loop keystone). Other parks use the plain waker.
                 let waker = match session_loop_rearm_spec(&node, &child_ctx) {
-                    Some(spec) => crate::scheduler::park_registry::ParkWaker::new_rearming(
+                    Some(spec) => crate::scheduler::park_registry::ParkWaker::for_rearming_node(
                         Arc::clone(&state),
+                        node_id,
                         outputs.clone(),
+                        attempts,
                         spec,
                     ),
-                    None => crate::scheduler::park_registry::ParkWaker::new(
+                    None => crate::scheduler::park_registry::ParkWaker::for_node(
                         Arc::clone(&state),
+                        node_id,
                         outputs.clone(),
+                        attempts,
                     ),
                 };
                 crate::scheduler::park_registry::register(wait_key, waker);
@@ -480,7 +488,7 @@ enum ExecutionOutcome {
     /// The handler PARKED on an external event: the worker yields its lane +
     /// permit (no `finish_one`) and registers a waker under `wait_key`; the node
     /// is re-injected when [`crate::scheduler::park_registry::wake`] fires.
-    Parked { wait_key: String },
+    Parked { wait_key: String, attempts: u32 },
 }
 
 /// Execute an operation with retry logic.
@@ -544,7 +552,10 @@ async fn execute_with_retries(
             // Not a failure: the handler parked on an external event. Surface it
             // immediately (no retry) so the worker can yield its lane.
             Err(RuntimeError::OperationParked { wait_key }) => {
-                return ExecutionOutcome::Parked { wait_key };
+                return ExecutionOutcome::Parked {
+                    wait_key,
+                    attempts: attempt + 1,
+                };
             }
             Err(error) => {
                 #[cfg(feature = "metrics")]
@@ -816,20 +827,7 @@ async fn publish_outputs(state: &SchedulerState, node_id: u64, outputs: &[TokenI
 /// and reliably detect the transition to zero.
 #[inline]
 fn finish_one(state: &SchedulerState) {
-    let prev = state.remaining.fetch_sub(1, Ordering::SeqCst);
-    tracing::debug!(
-        prev_remaining = prev,
-        new_remaining = prev.saturating_sub(1),
-        "finish_one called"
-    );
-    if prev == 1 {
-        tracing::info!("Remaining hit 0, notifying done");
-        state.notify_done.notify_waiters();
-        // Wake every parked worker so it re-checks the termination condition and
-        // exits. Without this the idle workers stay parked on `work_notify` and
-        // the scheduler's worker-join loop hangs forever.
-        state.work_notify.notify_waiters();
-    }
+    state.finish_one();
 }
 
 /// Record an episodic memory event.

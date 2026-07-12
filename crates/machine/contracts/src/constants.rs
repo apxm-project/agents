@@ -19,6 +19,10 @@ pub mod env {
     pub const APXM_WORKSPACE_ROOT: &str = "APXM_WORKSPACE_ROOT";
     /// Path to the APXM project/run configuration file.
     pub const APXM_CONFIG: &str = "APXM_CONFIG";
+    /// Explicitly trusts author-supplied Python and TypeScript artifact handlers.
+    pub const APXM_TRUST_SCRIPT_ARTIFACTS: &str = "APXM_TRUST_SCRIPT_ARTIFACTS";
+    /// Requires Python and TypeScript artifact handlers to run in an OS sandbox.
+    pub const APXM_SANDBOX_SCRIPTS: &str = "APXM_SANDBOX_SCRIPTS";
     /// Disables dispatch IR hints sent to vLLM-compatible backends.
     pub const APXM_DISABLE_HINTS: &str = "APXM_DISABLE_HINTS";
     /// Makes Python graph files emit AIR to stdout for the Rust compiler driver.
@@ -31,6 +35,16 @@ pub mod env {
     pub const APXM_MOCK_BACKEND: &str = "APXM_MOCK_BACKEND";
     /// Configures mock backend latency in milliseconds.
     pub const APXM_MOCK_LATENCY_MS: &str = "APXM_MOCK_LATENCY_MS";
+    /// Path to a JSON script of ordered `{"contains": ..., "response": ...}`
+    /// pattern rules (plus an optional top-level `"default"` string) that
+    /// `configure_llm_registry` loads into the mock backend via
+    /// `MockLLMBackend::when_prompt_contains`, so a multi-turn scripted
+    /// transcript (context injection -> tool use -> compaction) gets
+    /// distinct deterministic answers per turn instead of one static
+    /// response. Only read when
+    /// `APXM_MOCK_BACKEND` is also set; malformed/missing files are a hard
+    /// error, never a silent fall-back to the single default response.
+    pub const APXM_MOCK_SCRIPT_PATH: &str = "APXM_MOCK_SCRIPT_PATH";
     /// Disables LLM response caching for this execution.
     pub const APXM_NO_CACHE: &str = "APXM_NO_CACHE";
     /// Public base URL the APXM server advertises (e.g. http://host:18800).
@@ -189,6 +203,44 @@ pub mod runtime {
         pub const REVIEWER_UPSTREAM_FRAME_BUDGET_TOKENS: usize = 2_000;
     }
 
+    /// Conversation-window compaction defaults.
+    /// Sibling of [`context_stack`]'s prompt-budget family: that module
+    /// bounds ONE assembled prompt; this one bounds the ACCUMULATED
+    /// multi-turn conversation window a `ConversationalAgent` turn measures
+    /// against before folding older turns into a rolling summary. Mirrors
+    /// the Python frontend's `CompactionPolicy` dataclass defaults
+    /// (`crates/compiler/frontend/python/apxm/conversational.py`) — these
+    /// values are also the ones the retired `apxm-machine-ais` CLI
+    /// duplicate (`KEEP_RECENT_TURNS`/`COMPACT_AT_TOKENS`) used, so the
+    /// parity gate for that deletion is these constants matching those
+    /// (proven historically; see `crates/machine/ais/src/chat.rs` history).
+    pub mod conversation_compaction {
+        /// Turns kept verbatim once compaction folds older turns into the
+        /// rolling summary — matches `CompactionPolicy.keep_recent`.
+        pub const DEFAULT_KEEP_RECENT_TURNS: usize = 4;
+        /// Accumulated-window token budget above which compaction triggers —
+        /// matches `CompactionPolicy.compact_at_tokens`.
+        pub const DEFAULT_COMPACT_AT_TOKENS: usize = 20_000;
+        /// Utilization percentage (of `compact_at_tokens`) at or above which
+        /// `context_window_warning` fires, ahead of the hard compaction
+        /// trigger at 100%.
+        pub const DEFAULT_WARNING_UTILIZATION_PCT: f64 = 80.0;
+    }
+
+    /// Deterministic tool-result trimming: the
+    /// budget an oversized `INV_CAP` result is trimmed against before it can
+    /// inflate the conversation's token accounting, via the SAME
+    /// `truncate_to_budget` primitive the subagent prompt-budget mechanism
+    /// already ships (`context_stack::frame`) — never a chars/4 re-derivation.
+    pub mod tool_result_trim {
+        /// Default max tokens a single tool result is trimmed to. Generous
+        /// relative to `conversation_compaction::DEFAULT_COMPACT_AT_TOKENS`
+        /// (one tool call should not, by itself, exhaust a whole
+        /// conversation's budget) while still bounding pathological
+        /// oversized results (e.g. a full raw web page body).
+        pub const DEFAULT_MAX_TOKENS: usize = 8_000;
+    }
+
     pub mod belief_keys {
         pub const STAGED_PREFIX: &str = "_stage:";
         pub const DELEGATE_PREFIX: &str = "_delegate:";
@@ -217,8 +269,6 @@ pub mod runtime {
         pub const RESUME_PREFIX: &str = "_resume:";
         pub const EXC_PREFIX: &str = "exc:";
         pub const CHECKPOINT_SNAPSHOT_PREFIX: &str = "_checkpoint_snapshot:";
-        pub const LOOP_START_PREFIX: &str = "_loop_start:";
-        pub const LOOP_END_PREFIX: &str = "_loop_end:";
         pub const EXECUTION_ID: &str = "_execution_id";
         pub const PLAN_PREFIX: &str = "plan:";
         pub const GOAL_PREFIX: &str = "goal:";

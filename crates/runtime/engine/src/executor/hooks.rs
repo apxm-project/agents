@@ -183,6 +183,44 @@ pub struct GraphFinishedEvent {
     pub success: bool,
 }
 
+#[cfg(test)]
+mod execution_hook_tests {
+    use super::*;
+    use std::panic::{AssertUnwindSafe, catch_unwind};
+
+    struct PanickingNodeStartedHook;
+
+    impl ExecutionHook for PanickingNodeStartedHook {
+        fn on_node_started(&self, _event: &NodeStartedEvent) {
+            panic!("deterministic on_node_started panic");
+        }
+    }
+
+    #[test]
+    fn node_started_hook_panic_reaches_the_worker_boundary() {
+        let hooks = ExecutionHookContext::new(
+            "panicking-hook-execution",
+            "panicking-hook-graph",
+            vec![Arc::new(PanickingNodeStartedHook)],
+        );
+        let event = NodeStartedEvent {
+            execution_id: "panicking-hook-execution".to_string(),
+            graph_id: "panicking-hook-graph".to_string(),
+            node_id: 1,
+            op_type: AISOperationType::Nop,
+            priority: "normal".to_string(),
+            worker_id: Some(0),
+            ready_at_ms: Some(0),
+            started_at_ms: 1,
+            queue_wait_ms: Some(1),
+        };
+
+        let result = catch_unwind(AssertUnwindSafe(|| hooks.emit_node_started(event)));
+
+        assert!(result.is_err());
+    }
+}
+
 // ===========================================================================
 // Program-authored lifecycle hooks (the `@hook` mechanism).
 //
@@ -265,7 +303,7 @@ impl HookMode {
     }
 }
 
-/// One author hook binding: a Python handler bound to a lifecycle event.
+/// One typed artifact handler bound to a lifecycle event.
 #[derive(Debug, Clone)]
 pub struct HookBinding {
     /// Python handler id, dispatched via the shared `PythonHandlerBridge`.

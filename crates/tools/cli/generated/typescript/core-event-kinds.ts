@@ -38,6 +38,7 @@ export enum CoreEventKind {
   THOUGHT = "thought",
   TOOL_CALL = "tool_call",
   LLM_DONE = "llm_done",
+  LLM_STEP_COMPLETED = "llm_step_completed",
   LLM_PROMPT = "llm_prompt",
   USAGE = "usage",
   RETRY = "retry",
@@ -65,6 +66,8 @@ export enum CoreEventKind {
   CHECKPOINT_SAVED = "checkpoint_saved",
   CHECKPOINT_RESTORED = "checkpoint_restored",
   SCHEDULER_DECISION = "scheduler_decision",
+  MODEL_ROUTE_DECISION = "model_route_decision",
+  AGENT_ROUTE_DECISION = "agent_route_decision",
   HEAD_OF_LINE_BLOCK = "head_of_line_block",
   GPU_UTILIZATION = "gpu_utilization",
   TOKEN_USAGE = "token_usage",
@@ -100,7 +103,8 @@ export enum CoreEventKind {
 export const TOKEN = kind(CoreEventKind.TOKEN, EventCategoryKind.STREAM);
 export const THOUGHT = kind(CoreEventKind.THOUGHT, EventCategoryKind.STREAM);
 export const TOOL_CALL = kind(CoreEventKind.TOOL_CALL, EventCategoryKind.LIFECYCLE);
-export const LLM_DONE = kind(CoreEventKind.LLM_DONE, EventCategoryKind.LIFECYCLE, true);
+export const LLM_DONE = kind(CoreEventKind.LLM_DONE, EventCategoryKind.LIFECYCLE);
+export const LLM_STEP_COMPLETED = kind(CoreEventKind.LLM_STEP_COMPLETED, EventCategoryKind.OBSERVABILITY);
 export const LLM_PROMPT = kind(CoreEventKind.LLM_PROMPT, EventCategoryKind.OBSERVABILITY);
 export const USAGE = kind(CoreEventKind.USAGE, EventCategoryKind.OBSERVABILITY);
 export const RETRY = kind(CoreEventKind.RETRY, EventCategoryKind.ERROR);
@@ -128,17 +132,19 @@ export const MEMORY_WRITE = kind(CoreEventKind.MEMORY_WRITE, EventCategoryKind.O
 export const CHECKPOINT_SAVED = kind(CoreEventKind.CHECKPOINT_SAVED, EventCategoryKind.LIFECYCLE);
 export const CHECKPOINT_RESTORED = kind(CoreEventKind.CHECKPOINT_RESTORED, EventCategoryKind.LIFECYCLE);
 export const SCHEDULER_DECISION = kind(CoreEventKind.SCHEDULER_DECISION, EventCategoryKind.OBSERVABILITY);
+export const MODEL_ROUTE_DECISION = kind(CoreEventKind.MODEL_ROUTE_DECISION, EventCategoryKind.OBSERVABILITY);
+export const AGENT_ROUTE_DECISION = kind(CoreEventKind.AGENT_ROUTE_DECISION, EventCategoryKind.OBSERVABILITY);
 export const HEAD_OF_LINE_BLOCK = kind(CoreEventKind.HEAD_OF_LINE_BLOCK, EventCategoryKind.OBSERVABILITY);
 export const GPU_UTILIZATION = kind(CoreEventKind.GPU_UTILIZATION, EventCategoryKind.OBSERVABILITY);
 export const TOKEN_USAGE = kind(CoreEventKind.TOKEN_USAGE, EventCategoryKind.OBSERVABILITY);
 export const MEMOIZATION_HIT = kind(CoreEventKind.MEMOIZATION_HIT, EventCategoryKind.OBSERVABILITY);
 export const ERROR = kind(CoreEventKind.ERROR, EventCategoryKind.ERROR, true);
-export const AGENT_SPAWNED = kind(CoreEventKind.AGENT_SPAWNED, EventCategoryKind.AGENT, true);
-export const COMMUNICATE_DISPATCHED = kind(CoreEventKind.COMMUNICATE_DISPATCHED, EventCategoryKind.AGENT, true);
-export const GRAPH_EDGE = kind(CoreEventKind.GRAPH_EDGE, EventCategoryKind.TOPOLOGY, true);
+export const AGENT_SPAWNED = kind(CoreEventKind.AGENT_SPAWNED, EventCategoryKind.AGENT);
+export const COMMUNICATE_DISPATCHED = kind(CoreEventKind.COMMUNICATE_DISPATCHED, EventCategoryKind.AGENT);
+export const GRAPH_EDGE = kind(CoreEventKind.GRAPH_EDGE, EventCategoryKind.TOPOLOGY);
 export const CONTEXT_COMPACTED = kind(CoreEventKind.CONTEXT_COMPACTED, EventCategoryKind.OBSERVABILITY);
 export const MODEL_REROUTED = kind(CoreEventKind.MODEL_REROUTED, EventCategoryKind.LIFECYCLE);
-export const CANCELLED = kind(CoreEventKind.CANCELLED, EventCategoryKind.ERROR, true);
+export const CANCELLED = kind(CoreEventKind.CANCELLED, EventCategoryKind.ERROR);
 export const LOOP_DETECTED = kind(CoreEventKind.LOOP_DETECTED, EventCategoryKind.ERROR);
 export const CONTEXT_WINDOW_WARNING = kind(CoreEventKind.CONTEXT_WINDOW_WARNING, EventCategoryKind.ERROR);
 export const SESSION_START = kind(CoreEventKind.SESSION_START, EventCategoryKind.LIFECYCLE);
@@ -164,6 +170,7 @@ export const CORE_EVENT_KINDS = [
   THOUGHT,
   TOOL_CALL,
   LLM_DONE,
+  LLM_STEP_COMPLETED,
   LLM_PROMPT,
   USAGE,
   RETRY,
@@ -191,6 +198,8 @@ export const CORE_EVENT_KINDS = [
   CHECKPOINT_SAVED,
   CHECKPOINT_RESTORED,
   SCHEDULER_DECISION,
+  MODEL_ROUTE_DECISION,
+  AGENT_ROUTE_DECISION,
   HEAD_OF_LINE_BLOCK,
   GPU_UTILIZATION,
   TOKEN_USAGE,

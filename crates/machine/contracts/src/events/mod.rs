@@ -6,10 +6,16 @@
 pub mod builder;
 pub mod emitter;
 pub mod event;
+#[cfg(test)]
+mod generated_event_kind_registry;
 pub mod kind;
 pub mod payload;
 pub mod registry;
+#[cfg(test)]
+mod schema_parity;
 pub mod sinks;
+#[cfg(test)]
+mod tests;
 
 pub use emitter::EventEmitter;
 pub use event::{ApxmEvent, EventMeta, EventSource, SkillEventProvenance};

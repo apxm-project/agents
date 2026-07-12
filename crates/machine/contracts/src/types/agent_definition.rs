@@ -57,6 +57,18 @@ pub struct AgentDefinition {
     pub hooks: Vec<AgentHook>,
 }
 
+/// `[runtime]` `extra` key an `agent.toml` author uses to declare the
+/// conversation-compaction policy for a pure-declarative package (no Python
+/// entry file, so no `CompactionPolicy(...)` object to read). The value is
+/// the same JSON shape the Python frontend stamps into `ApxmGraph.metadata`
+/// (the runtime compaction policy): `{"keep_recent", "compact_at_tokens",
+/// "strategy", "summary_key"}`. `extra` is already an open, stringly-typed
+/// bag ([`AgentRuntime::extra`]) — this constant just names the
+/// well-known key so every producer/consumer (this crate's loader, the
+/// server's typed-sidecar loader) agrees on it instead of each side
+/// inventing its own literal.
+pub const RUNTIME_EXTRA_COMPACTION_POLICY_KEY: &str = "compaction_policy";
+
 /// `[runtime]` — every `ConversationalAgent` knob declarable in the
 /// manifest. Kept an open shape (`extra`) so knobs added later don't
 /// need a schema break. Extra
@@ -375,5 +387,38 @@ mod tests {
         let json = serde_json::to_string(&def).expect("serialize");
         let back: AgentDefinition = serde_json::from_str(&json).expect("deserialize");
         assert_eq!(def, back);
+    }
+
+    /// **Cross-plane parity surface:** a pure-declarative package's
+    /// `[runtime]` extra bag round-trips a `compaction_policy` knob
+    /// unchanged through serde — the same `extra: BTreeMap<String, String>`
+    /// open shape every other runtime knob already uses, so no schema break
+    /// was needed to add compaction parity to the declarative surface.
+    #[test]
+    fn runtime_extra_round_trips_compaction_policy_knob() {
+        let mut def = sample();
+        let policy_json = r#"{"keep_recent":2,"compact_at_tokens":300,"strategy":"summarize","summary_key":"conversation:summary"}"#;
+        def.runtime = Some(AgentRuntime {
+            r#loop: Some("in_graph".to_string()),
+            memory_space: Some("stm".to_string()),
+            session_prefix: None,
+            extra: BTreeMap::from([(
+                RUNTIME_EXTRA_COMPACTION_POLICY_KEY.to_string(),
+                policy_json.to_string(),
+            )]),
+        });
+
+        let json = serde_json::to_string(&def).expect("serialize");
+        let back: AgentDefinition = serde_json::from_str(&json).expect("deserialize");
+        assert_eq!(def, back);
+        assert_eq!(
+            back.runtime
+                .as_ref()
+                .unwrap()
+                .extra
+                .get(RUNTIME_EXTRA_COMPACTION_POLICY_KEY)
+                .map(String::as_str),
+            Some(policy_json),
+        );
     }
 }

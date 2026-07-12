@@ -154,8 +154,8 @@ async fn run_cli(cli: Cli) -> Result<()> {
         ),
         Commands::CompileService {
             agent_dir,
-            web_tools,
-        } => compile_service_command(agent_dir, web_tools, cli.config),
+            options_stdin: _,
+        } => compile_service_command(agent_dir, cli.config),
         Commands::Decompile { artifact, output } => decompile_command(artifact, output),
         Commands::Execute {
             input,
@@ -191,6 +191,7 @@ async fn run_cli(cli: Cli) -> Result<()> {
             emit_session,
             no_emit_session,
             emit_profile,
+            session_id,
         } => {
             run_command(
                 input,
@@ -202,6 +203,7 @@ async fn run_cli(cli: Cli) -> Result<()> {
                 emit_metrics_level,
                 resolve_emit_session(emit_session, no_emit_session),
                 emit_profile,
+                session_id,
             )
             .await
         }

@@ -2,6 +2,9 @@ use std::time::Duration;
 
 use serde::{Deserialize, Serialize};
 
+/// Stable denial reason returned when no approval surface is configured.
+pub const APPROVAL_BROKER_UNAVAILABLE_REASON: &str = "approval_broker_unavailable";
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum PromptMode {
     #[serde(rename = "confirm")]
@@ -79,17 +82,78 @@ pub struct SignedApproval {
     pub signed_at: String,
 }
 
+/// Closed public resolution vocabulary for approval lifecycle events.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ApprovalResolution {
+    Approved,
+    Denied,
+    Expired,
+}
+
+impl ApprovalResolution {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Approved => "approved",
+            Self::Denied => "denied",
+            Self::Expired => "expired",
+        }
+    }
+}
+
+/// Non-empty set of approvals whose signatures were verified by the broker.
+#[derive(Debug, Clone, PartialEq)]
+pub struct SignedApprovalSet {
+    approvals: Vec<SignedApproval>,
+}
+
+impl SignedApprovalSet {
+    pub fn new(first: SignedApproval, additional: Vec<SignedApproval>) -> Self {
+        let mut approvals = Vec::with_capacity(1 + additional.len());
+        approvals.push(first);
+        approvals.extend(additional);
+        Self { approvals }
+    }
+
+    pub fn as_slice(&self) -> &[SignedApproval] {
+        &self.approvals
+    }
+}
+
+/// Evidence recorded for an approval made through an authenticated interactive
+/// surface that does not produce a cryptographic signature.
+#[derive(Debug, Clone, PartialEq)]
+pub struct InteractiveApproval {
+    pub decided_at: String,
+    pub responder_subject: Option<String>,
+}
+
+/// Trusted evidence attached to an approved consent decision.
+#[derive(Debug, Clone, PartialEq)]
+pub enum ApprovalEvidence {
+    Signed(SignedApprovalSet),
+    Interactive(InteractiveApproval),
+}
+
 /// Result of a consent check.
 #[derive(Debug, Clone, PartialEq)]
 pub enum ConsentDecision {
-    /// Approved with a signed approval record.
-    Approved(Vec<SignedApproval>),
+    /// Approved with evidence from the surface that made the decision.
+    Approved { evidence: ApprovalEvidence },
     /// Denied (host or user explicitly rejected).
     Denied { reason: String },
     /// Approval not received within the timeout window. Fail-closed → deny.
-    TimedOut,
-    /// No approval surface is configured. Caller decides whether to allow.
-    NoBroker,
+    Expired,
+}
+
+impl ConsentDecision {
+    pub const fn resolution(&self) -> ApprovalResolution {
+        match self {
+            Self::Approved { .. } => ApprovalResolution::Approved,
+            Self::Denied { .. } => ApprovalResolution::Denied,
+            Self::Expired => ApprovalResolution::Expired,
+        }
+    }
 }
 
 /// Async interface for per-call approval routing.
@@ -99,20 +163,19 @@ pub trait ConsentBroker: Send + Sync + 'static {
     -> ConsentDecision;
 }
 
-/// Approval router that immediately returns NoBroker for every request.
-///
-/// Callers that treat NoBroker as allow must be explicit about that decision
-/// in their enforcement logic.
-pub struct NoOpConsentBroker;
+/// Approval router used when no approval surface is configured.
+pub struct UnavailableConsentBroker;
 
 #[async_trait::async_trait]
-impl ConsentBroker for NoOpConsentBroker {
+impl ConsentBroker for UnavailableConsentBroker {
     async fn request_consent(
         &self,
         _prompt: PermissionPrompt,
         _timeout: Duration,
     ) -> ConsentDecision {
-        ConsentDecision::NoBroker
+        ConsentDecision::Denied {
+            reason: APPROVAL_BROKER_UNAVAILABLE_REASON.to_string(),
+        }
     }
 }
 
@@ -121,8 +184,8 @@ mod tests {
     use super::*;
 
     #[test]
-    fn no_op_broker_returns_no_broker() {
-        let broker = NoOpConsentBroker;
+    fn unavailable_broker_returns_typed_denial() {
+        let broker = UnavailableConsentBroker;
         let prompt = PermissionPrompt {
             prompt_id: "p1".into(),
             call_id: "c1".into(),
@@ -145,6 +208,11 @@ mod tests {
         };
         let rt = tokio::runtime::Runtime::new().unwrap();
         let decision = rt.block_on(broker.request_consent(prompt, Duration::from_secs(5)));
-        assert_eq!(decision, ConsentDecision::NoBroker);
+        assert_eq!(
+            decision,
+            ConsentDecision::Denied {
+                reason: APPROVAL_BROKER_UNAVAILABLE_REASON.to_string()
+            }
+        );
     }
 }

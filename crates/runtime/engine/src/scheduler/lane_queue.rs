@@ -47,3 +47,38 @@ pub struct SessionLanePermit {
     #[allow(dead_code)]
     session_id: String,
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::time::Duration;
+
+    #[tokio::test]
+    async fn same_session_waits_for_the_active_permit() {
+        let lanes = SessionLaneGuard::new();
+        let first = lanes.acquire("session-a").await;
+        let second = lanes.acquire("session-a");
+        tokio::pin!(second);
+
+        assert!(
+            tokio::time::timeout(Duration::from_millis(50), &mut second)
+                .await
+                .is_err()
+        );
+
+        drop(first);
+        tokio::time::timeout(Duration::from_secs(1), &mut second)
+            .await
+            .expect("the next same-session permit should become available");
+    }
+
+    #[tokio::test]
+    async fn different_sessions_acquire_independent_permits() {
+        let lanes = SessionLaneGuard::new();
+        let _first = lanes.acquire("session-a").await;
+
+        tokio::time::timeout(Duration::from_secs(1), lanes.acquire("session-b"))
+            .await
+            .expect("different sessions should not share a lane");
+    }
+}

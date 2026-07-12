@@ -24,6 +24,12 @@ pub struct ToolDescriptor {
     pub description: String,
     /// JSON Schema for the tool's parameters.
     pub schema: serde_json::Value,
+    /// Whether the joined capability policy declares this tool read-only.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub read_only: Option<bool>,
+    /// Whether the joined capability policy requires per-call approval.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub requires_approval: Option<bool>,
     /// Source file for tools defined in executable scripts.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub source_file: Option<String>,
@@ -98,5 +104,22 @@ impl PythonHandlerRegistry {
     /// Whether the registry is empty.
     pub fn is_empty(&self) -> bool {
         self.tools.is_empty()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn registry_parses_joined_capability_policy() {
+        let registry = PythonHandlerRegistry::from_json(
+            r#"[{"handler_id":"sha256:abc","module":"mod","qualname":"fn","name":"echo","schema":{},"read_only":true,"requires_approval":false}]"#,
+        )
+        .unwrap();
+
+        let descriptor = registry.resolve("echo").unwrap();
+        assert_eq!(descriptor.read_only, Some(true));
+        assert_eq!(descriptor.requires_approval, Some(false));
     }
 }

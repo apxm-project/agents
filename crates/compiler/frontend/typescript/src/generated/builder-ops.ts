@@ -8,7 +8,7 @@ import type { GenericOpOptions, NodeRef } from "../builder.js";
 import type { OpName } from "./ops.js";
 
 /** Generated method names that expose the AIS catalog on GraphBuilder. */
-export type GeneratedBuilderMethodName = "agent" | "qmem" | "umem" | "ask" | "think" | "reason" | "plan" | "reflect" | "verify" | "invCap" | "exc" | "print" | "jump" | "branchOnValue" | "loopStart" | "loopEnd" | "returnNode" | "switchNode" | "flowCall" | "workflowSpawn" | "callSkill" | "merge" | "fence" | "waitAll" | "tryCatch" | "err" | "communicate" | "handoff" | "updateGoal" | "pause" | "resume" | "delegate" | "nop" | "identity" | "spawnAgent" | "registerCapability" | "registerHook" | "autonomous" | "checkpoint" | "constStr" | "yieldNode";
+export type GeneratedBuilderMethodName = "agent" | "qmem" | "umem" | "ask" | "think" | "reason" | "plan" | "reflect" | "verify" | "invCap" | "exc" | "print" | "jump" | "branchOnValue" | "returnNode" | "switchNode" | "flowCall" | "workflowSpawn" | "callSkill" | "merge" | "fence" | "waitAll" | "tryCatch" | "err" | "communicate" | "handoff" | "updateGoal" | "pause" | "resume" | "delegate" | "nop" | "identity" | "spawnAgent" | "registerCapability" | "registerHook" | "autonomous" | "checkpoint" | "constStr" | "yieldNode";
 
 /** Catalog operation to generated GraphBuilder method name. */
 export const GENERATED_GRAPH_BUILDER_OP_METHODS: Readonly<Record<OpName, GeneratedBuilderMethodName>> = {
@@ -26,8 +26,6 @@ export const GENERATED_GRAPH_BUILDER_OP_METHODS: Readonly<Record<OpName, Generat
   "PRINT": "print",
   "JUMP": "jump",
   "BRANCH_ON_VALUE": "branchOnValue",
-  "LOOP_START": "loopStart",
-  "LOOP_END": "loopEnd",
   "RETURN": "returnNode",
   "SWITCH": "switchNode",
   "FLOW_CALL": "flowCall",
@@ -69,8 +67,6 @@ declare module "../builder.js" {
     print(options?: GenericOpOptions): NodeRef;
     jump(options?: GenericOpOptions): NodeRef;
     branchOnValue(options?: GenericOpOptions): NodeRef;
-    loopStart(options?: GenericOpOptions): NodeRef;
-    loopEnd(options?: GenericOpOptions): NodeRef;
     returnNode(options?: GenericOpOptions): NodeRef;
     switchNode(options?: GenericOpOptions): NodeRef;
     flowCall(options?: GenericOpOptions): NodeRef;

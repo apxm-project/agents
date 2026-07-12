@@ -38,7 +38,7 @@ pub use aam::{
 };
 pub use agent_definition::{
     AGENT_DEFINITION_SCHEMA_V1, AgentDefinition, AgentDefinitionError, AgentEntry, AgentHierarchy,
-    AgentHook, AgentRuntime, AgentTrigger,
+    AgentHook, AgentRuntime, AgentTrigger, RUNTIME_EXTRA_COMPACTION_POLICY_KEY,
 };
 pub use capability::{
     AuthMethod, CAPABILITY_DEFINITION_SCHEMA_V1, CAPABILITY_GRANT_SCHEMA_V1,

@@ -16,6 +16,8 @@ mod llm;
 use llm::configure_llm_registry;
 mod capabilities;
 use capabilities::configure_capability_registry;
+mod call_skill;
+use call_skill::{UnsupportedCallSkillResolver, reject_unsupported_call_skill};
 pub mod sandbox;
 use sandbox::configure_sandbox_registry;
 mod inner_plan;
@@ -102,6 +104,15 @@ impl RuntimeExecutor {
         // resolve to a candidate model before `ModelRouter::select` runs.
         runtime.init_profile_registry();
 
+        // The driver/CLI has no SkillLibrary-backed skill catalog (out of
+        // scope for the shared capability setup — see `call_skill` module doc). Install the named
+        // rejection resolver so a `CALL_SKILL` that somehow reaches dispatch
+        // still fails fail-closed with a distinguishable tag instead of the
+        // generic `NoOpSkillResolver` default. `reject_unsupported_call_skill`
+        // (called from every execute* entry point below) is the primary,
+        // pre-dispatch admission gate; this is the defense-in-depth fallback.
+        runtime.set_skill_resolver(std::sync::Arc::new(UnsupportedCallSkillResolver));
+
         let sandbox_registry = configure_sandbox_registry();
         runtime.set_sandbox_registry(std::sync::Arc::clone(&sandbox_registry));
 
@@ -164,6 +175,7 @@ impl RuntimeExecutor {
     }
 
     pub async fn execute(&self, dag: ExecutionDag) -> Result<RuntimeExecutionResult, DriverError> {
+        reject_unsupported_call_skill(std::slice::from_ref(&dag))?;
         self.runtime
             .execute_with_event_emitter(dag, self.compose_emitter(None))
             .await
@@ -177,6 +189,7 @@ impl RuntimeExecutor {
         &self,
         artifact: Artifact,
     ) -> Result<RuntimeExecutionResult, DriverError> {
+        reject_unsupported_call_skill(artifact.dags())?;
         self.runtime
             .execute_artifact_with_session_and_emitter(
                 artifact,
@@ -197,6 +210,7 @@ impl RuntimeExecutor {
         artifact: Artifact,
         args: Vec<String>,
     ) -> Result<RuntimeExecutionResult, DriverError> {
+        reject_unsupported_call_skill(artifact.dags())?;
         self.runtime
             .execute_artifact_with_session_and_emitter(
                 artifact,
@@ -217,11 +231,38 @@ impl RuntimeExecutor {
         emitter: Option<Arc<dyn ExecutionEventEmitter>>,
         session_dir: Option<String>,
     ) -> Result<RuntimeExecutionResult, DriverError> {
+        self.execute_artifact_with_session_id_and_emitter(
+            artifact,
+            args,
+            None,
+            emitter,
+            session_dir,
+        )
+        .await
+    }
+
+    /// Execute an artifact with arguments, an optional event emitter, and an
+    /// optional stable session id. Passing the same `session_id` across
+    /// separate CLI invocations of the same artifact (`apxm run --session-id
+    /// <id> ...`) is what lets durable session-scoped state (the session
+    /// ledger's turn/tool counters and compacted conversation summary's LTM
+    /// copy) resume instead of resetting — session-scoped
+    /// in-memory state (STM) is deliberately volatile and does not survive a
+    /// process restart even with the same id.
+    pub async fn execute_artifact_with_session_id_and_emitter(
+        &self,
+        artifact: Artifact,
+        args: Vec<String>,
+        session_id: Option<String>,
+        emitter: Option<Arc<dyn ExecutionEventEmitter>>,
+        session_dir: Option<String>,
+    ) -> Result<RuntimeExecutionResult, DriverError> {
+        reject_unsupported_call_skill(artifact.dags())?;
         self.runtime
             .execute_artifact_with_session_and_emitter(
                 artifact,
                 args,
-                None,
+                session_id,
                 self.compose_emitter(emitter),
                 session_dir,
             )
@@ -398,5 +439,106 @@ mod operation_policy_tests {
     fn empty_operation_routes_yield_empty_policies() {
         let config = ApXmConfig::default();
         assert!(operation_policies_from_config(&config).is_empty());
+    }
+}
+
+/// The `CALL_SKILL` admission invariant: a node under `--driver` fails with
+/// the named rejection at admission time, before any node dispatches -- not
+/// merely a generic mid-execution failure, and with zero partial-execution
+/// side effects from nodes that would otherwise have run first.
+#[cfg(test)]
+mod call_skill_admission_tests {
+    use super::RuntimeExecutor;
+    use crate::config::ApXmConfig;
+    use crate::linker::LinkerConfig;
+    use apxm_core::constants::graph::attrs as graph_attrs;
+    use apxm_core::types::AISOperationType;
+    use apxm_core::types::execution::{ExecutionDag, Node};
+    use apxm_core::types::values::Value;
+    use apxm_runtime::executor::skill_resolver::CALL_SKILL_UNSUPPORTED_HERE_TAG;
+
+    async fn test_executor() -> RuntimeExecutor {
+        // `RuntimeExecutor::new` requires at least one LLM backend to be
+        // configured; the mock backend keeps this test hermetic (no network,
+        // no real provider credentials) since these tests never dispatch a
+        // node that talks to an LLM.
+        #[allow(unsafe_code)]
+        unsafe {
+            std::env::set_var(apxm_core::constants::env::APXM_MOCK_BACKEND, "1");
+        }
+        let config = LinkerConfig::from_apxm_config(ApXmConfig::default());
+        RuntimeExecutor::new(&config)
+            .await
+            .expect("RuntimeExecutor::new should succeed with default config")
+    }
+
+    #[tokio::test]
+    async fn call_skill_node_rejected_before_any_node_dispatches() {
+        let executor = test_executor().await;
+
+        let marker = std::env::temp_dir().join(format!(
+            "apxm-driver-call-skill-admission-{}-{:?}",
+            std::process::id(),
+            std::thread::current().id()
+        ));
+        let _ = std::fs::remove_file(&marker);
+
+        // Node 1 would perform a real side effect (write `marker` to disk)
+        // if it ever dispatched. Node 2 is the unsupported CALL_SKILL. Both
+        // are handed to `execute()` in one DAG; if admission worked lazily
+        // (only rejecting once dispatch reaches the CALL_SKILL node) node 1
+        // could still have run first.
+        let mut write_node = Node::new(1, AISOperationType::InvCap);
+        write_node.attributes.insert(
+            graph_attrs::CAPABILITY.to_string(),
+            Value::String("write".to_string()),
+        );
+        write_node.attributes.insert(
+            graph_attrs::PARAMS_JSON.to_string(),
+            Value::String(format!(
+                "{{\"path\":\"{}\",\"content\":\"side-effect\"}}",
+                marker.display()
+            )),
+        );
+        let call_skill_node = Node::new(2, AISOperationType::CallSkill);
+
+        let mut dag = ExecutionDag::new();
+        dag.nodes = vec![write_node, call_skill_node];
+
+        let result = executor.execute(dag).await;
+
+        let error = result.expect_err("CALL_SKILL under --driver must be rejected");
+        let message = error.to_string();
+        assert!(
+            message.contains(CALL_SKILL_UNSUPPORTED_HERE_TAG),
+            "expected the named rejection tag, got: {message}"
+        );
+        assert!(
+            !marker.exists(),
+            "node 1's write side effect must not have run: admission must reject before any \
+             node dispatches"
+        );
+    }
+
+    #[tokio::test]
+    async fn dag_without_call_skill_is_not_rejected_by_admission_gate() {
+        let executor = test_executor().await;
+        let nop_dag = {
+            let mut dag = ExecutionDag::new();
+            dag.nodes = vec![Node::new(1, AISOperationType::Nop)];
+            dag
+        };
+
+        // The admission gate itself must not reject this DAG. (The overall
+        // execute() call may still fail for unrelated runtime-setup reasons
+        // in a minimal test config; the point is that failure, if any, is
+        // not this WP's CALL_SKILL rejection.)
+        let result = executor.execute(nop_dag).await;
+        if let Err(error) = result {
+            assert!(
+                !error.to_string().contains(CALL_SKILL_UNSUPPORTED_HERE_TAG),
+                "a DAG with no CALL_SKILL node must not trip the CALL_SKILL admission gate"
+            );
+        }
     }
 }

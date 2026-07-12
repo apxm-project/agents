@@ -63,7 +63,7 @@ impl ProcessSandbox {
 
         // Set up restricted environment: clear everything, then whitelist safe vars
         cmd.env_clear();
-        for key in sandbox_env::SAFE_PASSTHROUGH {
+        for key in sandbox_env::CHILD_PASSTHROUGH {
             if let Ok(val) = std::env::var(key) {
                 cmd.env(key, val);
             }

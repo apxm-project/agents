@@ -3,12 +3,6 @@
 // declared `required_capabilities`, preferring `preferred_profiles` when
 // available (SPAWN_AGENT).
 //
-//  regeneration: the original  fixture quoted attribute keys
-// (`"agent_route"` instead of `agent_route`) and used `ais.return` instead
-// of `func.return` — syntax neither frontend's current op-spec-driven
-// emitter produces. Regenerated from Python's
-// `GraphRecorder.to_graph().to_air()` reference emitter.
-//
 //   apxm validate runtime_agent_routing.air
 module {
   func.func @runtime_agent_routing() -> !ais.token attributes {ais.entry} {

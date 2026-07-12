@@ -66,6 +66,17 @@ impl TypeScriptHandlerBridge {
         args: serde_json::Value,
         deadline: Duration,
     ) -> Result<serde_json::Value, RuntimeError> {
+        self.call_with_call_id(capability_name, args, deadline, None)
+            .await
+    }
+
+    pub async fn call_with_call_id(
+        &self,
+        capability_name: &str,
+        args: serde_json::Value,
+        deadline: Duration,
+        call_id: Option<&str>,
+    ) -> Result<serde_json::Value, RuntimeError> {
         let descriptor =
             self.registry
                 .resolve(capability_name)
@@ -79,7 +90,9 @@ impl TypeScriptHandlerBridge {
 
         let handler_id = descriptor.handler_id.clone();
         let worker = self.worker().await?;
-        worker.call(&handler_id, args, deadline).await
+        worker
+            .call_with_call_id(&handler_id, args, deadline, call_id)
+            .await
     }
 
     pub async fn call_hook(

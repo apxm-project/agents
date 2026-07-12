@@ -1,6 +1,5 @@
 use std::process::Stdio;
 
-use tokio::process::{Child, Command};
 use tokio::time::Duration;
 
 use apxm_core::apxm_acp;
@@ -38,7 +37,7 @@ pub struct AcpSession {
     agent_session_id: Option<String>,
     profile_name: String,
     transport: Option<StdioTransport>,
-    child: Child,
+    child: apxm_runtime::sandbox::WrappedChild,
     close_grace_ms: u64,
     turn_count: u32,
     closed: bool,
@@ -66,25 +65,37 @@ impl AcpSession {
 
         // Confine the long-running agent when the driver supplied a capable
         // backend. Coding agents reach the model gateway, so network stays on.
-        let (program, args) = match &sandbox {
-            Some(backend) => backend.wrap_command(program, args, cwd, true),
-            None => (program.clone(), args.to_vec()),
+        let child_env = apxm_runtime::sandbox::constants::env::child_environment(
+            profile.env.iter().map(|(key, value)| (key, value)),
+        );
+        let sandbox_command = match &sandbox {
+            Some(backend) => backend
+                .wrap_command(program, args, cwd, true, &child_env)
+                .map_err(|error| AcpError::Spawn {
+                    agent: profile_name.to_string(),
+                    reason: error.to_string(),
+                })?,
+            None => {
+                apxm_runtime::sandbox::WrappedCommand::direct(program, args.to_vec(), child_env)
+                    .map_err(|error| AcpError::Spawn {
+                        agent: profile_name.to_string(),
+                        reason: error.to_string(),
+                    })?
+            }
         };
 
-        let mut cmd = Command::new(&program);
-        cmd.args(&args)
-            .stdin(Stdio::piped())
-            .stdout(Stdio::piped())
-            .stderr(Stdio::piped())
-            .current_dir(cwd);
-        for (k, v) in &profile.env {
-            cmd.env(k, v);
-        }
-
-        let mut child = cmd.spawn().map_err(|e| AcpError::Spawn {
-            agent: profile_name.to_string(),
-            reason: e.to_string(),
-        })?;
+        let mut child = sandbox_command
+            .spawn(|command| {
+                command
+                    .stdin(Stdio::piped())
+                    .stdout(Stdio::piped())
+                    .stderr(Stdio::piped())
+                    .current_dir(cwd);
+            })
+            .map_err(|e| AcpError::Spawn {
+                agent: profile_name.to_string(),
+                reason: e.to_string(),
+            })?;
 
         let stdin = child.stdin.take().ok_or_else(|| AcpError::Spawn {
             agent: profile_name.to_string(),

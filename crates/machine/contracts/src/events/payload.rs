@@ -9,6 +9,7 @@ use super::kind::{self, EventKind};
 use super::registry::{
     EventPayloadRegistry, decode_registered_payload, event_kind_for_payload, payload_without_kind,
 };
+use crate::types::consent::ApprovalResolution;
 use crate::types::execution::NodeMetrics;
 use crate::types::operations::AISOperationType;
 
@@ -136,6 +137,8 @@ fn boxed_core_payload_from_json(
         boxed!(ToolCallPayload)
     } else if kind_name == kind::LLM_DONE.name() {
         boxed!(LlmDonePayload)
+    } else if kind_name == kind::LLM_STEP_COMPLETED.name() {
+        boxed!(LlmStepCompletedPayload)
     } else if kind_name == kind::LLM_PROMPT.name() {
         boxed!(LlmPromptPayload)
     } else if kind_name == kind::USAGE.name() {
@@ -381,11 +384,91 @@ fn json_shape_summary(value: &serde_json::Value) -> String {
     }
 }
 
+/// Complete identity for one physical model request inside a logical LLM operation.
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub struct GenerationIdentity {
+    /// Identifier shared by every retry and tool-loop step in the operation.
+    pub call_id: String,
+    /// One-based outer retry number.
+    pub attempt: usize,
+    /// One-based physical model-request number across the whole operation.
+    pub step_number: usize,
+}
+
+impl GenerationIdentity {
+    pub fn new(call_id: impl Into<String>, attempt: usize, step_number: usize) -> Self {
+        Self {
+            call_id: call_id.into(),
+            attempt,
+            step_number,
+        }
+    }
+}
+
+/// Identity shared by every event and dispatch derived from one model tool call.
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub struct ToolCallCorrelation {
+    /// Physical generation that produced the tool call.
+    pub generation: GenerationIdentity,
+    /// Provider-assigned model tool-call identifier.
+    pub tool_call_id: String,
+}
+
+impl ToolCallCorrelation {
+    pub fn new(generation: GenerationIdentity, tool_call_id: impl Into<String>) -> Self {
+        Self {
+            generation,
+            tool_call_id: tool_call_id.into(),
+        }
+    }
+}
+
+/// Closed status vocabulary for tool-call completion events.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ToolCallStatus {
+    Ok,
+    Error,
+    ApprovalPending,
+}
+
+impl ToolCallStatus {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Ok => "ok",
+            Self::Error => "error",
+            Self::ApprovalPending => "approval_pending",
+        }
+    }
+}
+
+/// Closed risk vocabulary exposed by approval request events.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ApprovalRiskLevel {
+    Low,
+    Medium,
+    High,
+}
+
+impl ApprovalRiskLevel {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Low => "low",
+            Self::Medium => "medium",
+            Self::High => "high",
+        }
+    }
+}
+
 /// A single streaming token.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TokenPayload {
     /// The token text fragment.
     pub text: String,
+    /// Physical generation that emitted this token.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub generation: Option<GenerationIdentity>,
 }
 impl_event_payload!(TokenPayload, kind::TOKEN);
 
@@ -396,6 +479,9 @@ pub struct ThoughtPayload {
     pub text: String,
     /// Optional short summary of the thought.
     pub summary: Option<String>,
+    /// Physical generation that emitted this thought.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub generation: Option<GenerationIdentity>,
 }
 impl_event_payload!(ThoughtPayload, kind::THOUGHT);
 
@@ -408,6 +494,9 @@ pub struct ToolCallPayload {
     pub name: String,
     /// Tool arguments as a JSON value.
     pub arguments: serde_json::Value,
+    /// Physical generation and provider tool-call ID.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tool_call_correlation: Option<ToolCallCorrelation>,
 }
 impl_event_payload!(ToolCallPayload, kind::TOOL_CALL);
 
@@ -426,8 +515,58 @@ pub struct LlmDonePayload {
     pub tool_calls: Vec<ToolCallPayload>,
     /// Provider-specific response ID.
     pub response_id: Option<String>,
+    /// Physical generation that produced the accepted response.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub generation: Option<GenerationIdentity>,
 }
 impl_event_payload!(LlmDonePayload, kind::LLM_DONE);
+
+/// Detailed token accounting for one model-call step.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct LlmStepUsagePayload {
+    /// Prompt/input tokens consumed by this model call.
+    pub input_tokens: usize,
+    /// Completion/output tokens consumed by this model call.
+    pub output_tokens: usize,
+    /// Input tokens served from a provider-side cache, when reported.
+    pub cached_input_tokens: usize,
+    /// Output tokens consumed by a provider reasoning channel, when reported.
+    pub reasoning_output_tokens: usize,
+}
+
+/// Wall-clock timing evidence for one model-call step.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct LlmStepPerformancePayload {
+    /// Full model-call latency observed by the runtime.
+    pub latency_ms: f64,
+    /// Provider-reported or runtime-estimated prompt-prefill duration.
+    pub prefill_ms: f64,
+    /// Provider-reported decoding duration.
+    pub decode_ms: f64,
+}
+
+/// One model-call step completed inside a larger agent turn.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct LlmStepCompletedPayload {
+    /// Graph node that issued the model call.
+    pub node_id: u64,
+    /// One-based call number within this node's current tool loop.
+    pub step_number: usize,
+    /// Model that produced this response.
+    pub model: String,
+    /// Why this model call stopped generating.
+    pub finish_reason: FinishReasonPayload,
+    /// Detailed token accounting for this call.
+    pub usage: LlmStepUsagePayload,
+    /// Per-call latency and provider timing evidence.
+    pub performance: LlmStepPerformancePayload,
+    /// Number of tool calls requested by this response.
+    pub tool_call_count: usize,
+    /// Physical generation completed by this event.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub generation: Option<GenerationIdentity>,
+}
+impl_event_payload!(LlmStepCompletedPayload, kind::LLM_STEP_COMPLETED);
 
 /// A redacted prompt sent to an LLM backend.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -439,11 +578,14 @@ pub struct LlmPromptPayload {
     pub node_name: Option<String>,
     /// Redacted prompt metadata.
     pub prompt: RedactedContent,
+    /// Physical generation receiving this prompt.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub generation: Option<GenerationIdentity>,
 }
 impl_event_payload!(LlmPromptPayload, kind::LLM_PROMPT);
 
 /// Why the model stopped generating.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct FinishReasonPayload {
     /// The reason string (e.g. `"stop"`, `"tool_use"`, `"length"`).
     pub reason: String,
@@ -456,6 +598,9 @@ pub struct UsagePayload {
     pub input_tokens: usize,
     /// Number of tokens in the completion / output.
     pub output_tokens: usize,
+    /// Physical generation accounted by a standalone usage event.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub generation: Option<GenerationIdentity>,
 }
 impl_event_payload!(UsagePayload, kind::USAGE);
 
@@ -583,6 +728,9 @@ pub struct ToolStartPayload {
     pub name: String,
     /// Tool arguments as key-value pairs.
     pub args: HashMap<String, serde_json::Value>,
+    /// Model tool call that initiated this invocation.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tool_call_correlation: Option<ToolCallCorrelation>,
 }
 impl_event_payload!(ToolStartPayload, kind::TOOL_START);
 
@@ -593,6 +741,9 @@ pub struct ToolEndPayload {
     pub name: String,
     /// The tool result as a JSON value.
     pub result: serde_json::Value,
+    /// Model tool call that initiated this invocation.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tool_call_correlation: Option<ToolCallCorrelation>,
 }
 impl_event_payload!(ToolEndPayload, kind::TOOL_END);
 
@@ -601,7 +752,9 @@ impl_event_payload!(ToolEndPayload, kind::TOOL_END);
 //
 // Emitted alongside OPERATION_START/OPERATION_END so observers can
 // reconstruct an agent/tool dispatch tree without scraping op
-// attributes. All three are terminal events (no _delta partner).
+// attributes. None of the three is a terminal event (no _delta partner,
+// but they describe topology resolved mid-run, not the end of a
+// turn/session/execution — see `EventKind::is_terminal` on each).
 // ───────────────────────────────────────────────────────────────────
 
 /// A new agent was registered/spawned by a SPAWN_AGENT op.
@@ -653,7 +806,14 @@ pub struct GraphEdgePayload {
     pub to_node_id: u64,
     /// Edge kind: `dispatch` (spawn → child), `tool_invocation`
     /// (agent → tool), `synthesis_feed` (child → parent collector).
-    pub kind: String,
+    ///
+    /// Named `edge_kind`, not `kind`, so it is structurally independent
+    /// from the envelope's own `"kind"` discriminator
+    /// (`ApxmEvent`'s `Serialize` impl unconditionally sets `"kind"` to
+    /// `"graph_edge"` on the serialized JSON object) — a field literally
+    /// named `kind` would be silently overwritten before it ever reached
+    /// the wire.
+    pub edge_kind: String,
 }
 impl_event_payload!(GraphEdgePayload, kind::GRAPH_EDGE);
 
@@ -963,6 +1123,9 @@ pub struct TokenUsagePayload {
     pub input_tokens: usize,
     /// Output tokens generated.
     pub output_tokens: usize,
+    /// Physical model generation accounted by this usage event, when applicable.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub generation: Option<GenerationIdentity>,
 }
 impl_event_payload!(TokenUsagePayload, kind::TOKEN_USAGE);
 
@@ -1061,7 +1224,7 @@ pub struct SessionEndPayload {
 impl_event_payload!(SessionEndPayload, kind::SESSION_END);
 
 /// Direction of a conversation turn.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum TurnDirection {
     /// User request.
@@ -1174,6 +1337,9 @@ pub struct SubagentLlmCallBeginPayload {
     pub backend: String,
     /// Count of tools exposed to the model for this call.
     pub tool_manifest_count: usize,
+    /// Physical generation being dispatched.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub generation: Option<GenerationIdentity>,
 }
 impl_event_payload!(SubagentLlmCallBeginPayload, kind::SUBAGENT_LLM_CALL_BEGIN);
 
@@ -1188,6 +1354,9 @@ pub struct SubagentLlmCallEndPayload {
     pub usage: UsagePayload,
     /// Length of the returned content, in characters (safe to surface).
     pub content_len: usize,
+    /// Physical generation returned by this event.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub generation: Option<GenerationIdentity>,
 }
 impl_event_payload!(SubagentLlmCallEndPayload, kind::SUBAGENT_LLM_CALL_END);
 
@@ -1200,6 +1369,9 @@ pub struct ToolCallBeginPayload {
     pub tool_name: String,
     /// Argument keys (no values — payload stays redaction-safe).
     pub argument_keys: Vec<String>,
+    /// Model tool call that initiated this invocation.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tool_call_correlation: Option<ToolCallCorrelation>,
 }
 impl_event_payload!(ToolCallBeginPayload, kind::TOOL_CALL_BEGIN);
 
@@ -1212,10 +1384,13 @@ pub struct ToolCallEndPayload {
     pub tool_name: String,
     /// Result keys (no values — safe-to-surface only).
     pub result_keys: Vec<String>,
-    /// Coarse status (`"ok"` | `"error"` | `"approval_pending"`).
-    pub status: String,
+    /// Coarse completion status.
+    pub status: ToolCallStatus,
     /// Wall-clock duration of the tool call, in milliseconds.
     pub latency_ms: u64,
+    /// Model tool call that initiated this invocation.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tool_call_correlation: Option<ToolCallCorrelation>,
 }
 impl_event_payload!(ToolCallEndPayload, kind::TOOL_CALL_END);
 
@@ -1272,8 +1447,11 @@ pub struct ApprovalRequestPayload {
     pub tool_name: String,
     /// Stable approval id (host-issued where available).
     pub approval_id: String,
-    /// Coarse risk classification (`"low"` | `"medium"` | `"high"`).
-    pub risk_level: String,
+    /// Coarse risk classification.
+    pub risk_level: ApprovalRiskLevel,
+    /// Model tool call guarded by this approval.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tool_call_correlation: Option<ToolCallCorrelation>,
 }
 impl_event_payload!(ApprovalRequestPayload, kind::APPROVAL_REQUEST);
 
@@ -1282,7 +1460,10 @@ impl_event_payload!(ApprovalRequestPayload, kind::APPROVAL_REQUEST);
 pub struct ApprovalResolvedPayload {
     /// Stable approval id this resolution refers to.
     pub approval_id: String,
-    /// Resolution outcome (`"approved"` | `"denied"` | `"expired"`).
-    pub decision: String,
+    /// Closed resolution outcome.
+    pub decision: ApprovalResolution,
+    /// Model tool call guarded by this approval.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tool_call_correlation: Option<ToolCallCorrelation>,
 }
 impl_event_payload!(ApprovalResolvedPayload, kind::APPROVAL_RESOLVED);

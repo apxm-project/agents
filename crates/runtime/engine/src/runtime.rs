@@ -10,6 +10,7 @@ use crate::typescript_tools::{TypeScriptHandlerBridge, TypeScriptHandlerRegistry
 use crate::{
     aam::Aam,
     agent_pool::AgentPool,
+    background::{BackgroundExecution, BackgroundExecutionOutcome, BackgroundExecutionTask},
     capability::{CapabilitySystem, flow_registry::FlowRegistry},
     context_stack::ContextStack,
     dispatch::v1::{
@@ -40,7 +41,8 @@ use apxm_core::{
 use serde::{Deserialize, Serialize};
 use std::{collections::HashMap, path::Path, sync::Arc};
 
-/// Outcome of [`Runtime::execute_artifact_with_session_emitter_and_metadata_or_park`]
+/// Outcome of
+/// [`Runtime::execute_artifact_with_session_emitter_metadata_and_cancellation_or_park`]
 /// ( narrow park observability): either the artifact ran to completion, or
 /// a node parked on the conversation-loop's session-recv key before that —
 /// whichever happened first.
@@ -65,8 +67,50 @@ pub enum ExecutionOutcome {
         /// loop parks and un-parks repeatedly across turns) MUST chain onto
         /// this handle rather than finalizing immediately on `Parked` — the
         /// execution is NOT done just because it parked once.
-        background: tokio::task::JoinHandle<()>,
+        background: BackgroundExecution,
     },
+}
+
+/// Emits a failed graph end if runtime-owned background cleanup unwinds.
+struct GraphEndCompletionGuard {
+    emitter: Option<Arc<dyn ExecutionEventEmitter>>,
+    execution_id: String,
+    node_count: usize,
+    emitted: bool,
+}
+
+impl GraphEndCompletionGuard {
+    /// Arm graph completion before any background join or cleanup can fail.
+    fn new(
+        emitter: Option<Arc<dyn ExecutionEventEmitter>>,
+        execution_id: String,
+        node_count: usize,
+    ) -> Self {
+        Self {
+            emitter,
+            execution_id,
+            node_count,
+            emitted: false,
+        }
+    }
+
+    /// Emit the terminal graph result exactly once.
+    fn emit(mut self, success: bool) {
+        self.emitted = true;
+        if let Some(emitter) = &self.emitter {
+            emitter.emit_graph_end(&self.execution_id, self.node_count, success);
+        }
+    }
+}
+
+impl Drop for GraphEndCompletionGuard {
+    fn drop(&mut self) {
+        if !self.emitted
+            && let Some(emitter) = &self.emitter
+        {
+            emitter.emit_graph_end(&self.execution_id, self.node_count, false);
+        }
+    }
 }
 
 impl std::fmt::Debug for ExecutionOutcome {
@@ -346,6 +390,7 @@ impl Runtime {
             .sanitized_max_parallel_tool_calls();
         ctx.optimization_target = self.config.optimization_target;
         ctx.metrics_level = self.config.metrics_level;
+        ctx.scheduler_config = self.config.scheduler_config.clone();
         ctx.event_emitter = event_emitter;
         ctx.sandbox_registry = Arc::clone(&self.sandbox_registry);
         ctx.process_table = Arc::clone(&self.process_table);
@@ -471,25 +516,42 @@ impl Runtime {
         &self.sandbox_registry
     }
 
-    /// Select an OS-isolating sandbox backend for the python tool/hook worker,
-    /// gated on the `APXM_SANDBOX_PYTHON` opt-in so default behavior is
-    /// unchanged. Returns `None` when the opt-in is unset or no isolating
-    /// backend (e.g. bubblewrap) is available — the worker then runs directly.
-    fn python_worker_sandbox(&self) -> Option<Arc<dyn crate::sandbox::SandboxBackend>> {
-        if !Self::python_sandbox_required() {
+    /// Select an OS-isolating sandbox backend for artifact script workers.
+    fn script_worker_sandbox(&self) -> Option<Arc<dyn crate::sandbox::SandboxBackend>> {
+        if !Self::script_sandbox_required() {
             return None;
         }
+        let request = crate::sandbox::ExecRequest {
+            min_isolation: crate::sandbox::IsolationLevel::OsLevel,
+            needs_network: false,
+            ..Default::default()
+        };
         self.sandbox_registry
-            .select(crate::sandbox::IsolationLevel::OsLevel)
+            .select_for_request(&request)
             .ok()
+            .map(|selection| {
+                if let crate::sandbox::ValidationResult::Degraded { warnings } =
+                    &selection.validation
+                {
+                    tracing::warn!(
+                        backend = %selection.backend.capabilities().name,
+                        warnings = ?warnings,
+                        "Script worker sandbox selected with bounded degraded guarantees"
+                    );
+                }
+                selection.backend
+            })
     }
 
-    /// Whether the operator requires the python worker to be sandboxed
-    /// (`APXM_SANDBOX_PYTHON`). When true the worker spawn fails closed if no
-    /// OS-isolating backend is available, so the trust gate's isolation
-    /// guarantee cannot silently fail open.
-    fn python_sandbox_required() -> bool {
-        std::env::var_os("APXM_SANDBOX_PYTHON").is_some()
+    /// Whether the operator requires script workers (Python or TypeScript)
+    /// to be sandboxed (`APXM_SANDBOX_SCRIPTS`). When true the worker spawn
+    /// fails closed if no OS-isolating backend is available, so the trust
+    /// gate's isolation guarantee cannot silently fail open. Delegates to
+    /// the shared [`crate::script_admission`] policy so this crate, the
+    /// driver's attach step, and the server's admission all read one
+    /// definition.
+    fn script_sandbox_required() -> bool {
+        crate::script_admission::script_sandbox_required()
     }
 
     /// Attach a ModelRouter to the runtime.
@@ -673,13 +735,13 @@ impl Runtime {
     ) -> Result<RuntimeExecutionResult, RuntimeError> {
         let python_bridge = python_handler_bridge_from_artifact(
             &artifact,
-            self.python_worker_sandbox(),
-            Self::python_sandbox_required(),
+            self.script_worker_sandbox(),
+            Self::script_sandbox_required(),
         )?;
         let typescript_bridge = typescript_handler_bridge_from_artifact(
             &artifact,
-            self.python_worker_sandbox(),
-            Self::python_sandbox_required(),
+            self.script_worker_sandbox(),
+            Self::script_sandbox_required(),
         )?;
         let entry_dag = find_entry_dag(&artifact)?;
 
@@ -858,8 +920,10 @@ impl Runtime {
     ///
     /// Intended caller: a host (e.g. `POST /v1/skills/{id}/execute`) that wants
     /// to know "this execution just started waiting for the next turn's
-    /// message" without blocking for the lifetime of the conversation session.
-    pub async fn execute_artifact_with_session_emitter_and_metadata_or_park(
+    /// message" without blocking for the lifetime of the conversation session,
+    /// while also retaining explicit ownership of cancellation.
+    #[allow(clippy::too_many_arguments)]
+    pub async fn execute_artifact_with_session_emitter_metadata_and_cancellation_or_park(
         &self,
         artifact: Artifact,
         args: Vec<String>,
@@ -867,6 +931,7 @@ impl Runtime {
         event_emitter: Option<Arc<dyn ExecutionEventEmitter>>,
         session_dir: Option<String>,
         extra_metadata: HashMap<String, String>,
+        cancellation_token: CancellationToken,
     ) -> Result<ExecutionOutcome, RuntimeError> {
         self.execute_artifact_inner_or_park(
             artifact,
@@ -875,6 +940,7 @@ impl Runtime {
             event_emitter,
             session_dir,
             extra_metadata,
+            cancellation_token,
         )
         .await
     }
@@ -1003,10 +1069,24 @@ impl Runtime {
         cancellation_token: Option<CancellationToken>,
         tool_credentials: Option<HashMap<String, String>>,
     ) -> Result<RuntimeExecutionResult, RuntimeError> {
-        if !Self::python_sandbox_required() && artifact_has_python_tools_section(&artifact) {
+        if !crate::script_admission::script_artifacts_trusted()
+            && artifact_has_python_tools_section(&artifact)
+        {
             return Err(RuntimeError::Capability {
                 capability: python_tools::CAPABILITY_NAME.to_string(),
-                message: "python tool artifacts require APXM_SANDBOX_PYTHON".to_string(),
+                message:
+                    "python tool artifacts require APXM_TRUST_SCRIPT_ARTIFACTS and APXM_SANDBOX_SCRIPTS"
+                        .to_string(),
+            });
+        }
+        if !crate::script_admission::script_artifacts_trusted()
+            && artifact_has_typescript_tools_section(&artifact)
+        {
+            return Err(RuntimeError::Capability {
+                capability: typescript_tools::CAPABILITY_NAME.to_string(),
+                message:
+                    "typescript tool artifacts require APXM_TRUST_SCRIPT_ARTIFACTS and APXM_SANDBOX_SCRIPTS"
+                        .to_string(),
             });
         }
 
@@ -1018,13 +1098,13 @@ impl Runtime {
 
         let python_bridge = python_handler_bridge_from_artifact(
             &artifact,
-            self.python_worker_sandbox(),
-            Self::python_sandbox_required(),
+            self.script_worker_sandbox(),
+            Self::script_sandbox_required(),
         )?;
         let typescript_bridge = typescript_handler_bridge_from_artifact(
             &artifact,
-            self.python_worker_sandbox(),
-            Self::python_sandbox_required(),
+            self.script_worker_sandbox(),
+            Self::script_sandbox_required(),
         )?;
         let entry_dag = find_entry_dag(&artifact)?;
         let arg_values = bind_args(&entry_dag, args)?;
@@ -1181,15 +1261,30 @@ impl Runtime {
         event_emitter: Option<Arc<dyn ExecutionEventEmitter>>,
         session_dir: Option<String>,
         extra_metadata: HashMap<String, String>,
+        cancellation_token: CancellationToken,
     ) -> Result<ExecutionOutcome, RuntimeError> {
-        if !Self::python_sandbox_required() && artifact_has_python_tools_section(&artifact) {
+        if !crate::script_admission::script_artifacts_trusted()
+            && artifact_has_python_tools_section(&artifact)
+        {
             return Err(RuntimeError::Capability {
                 capability: python_tools::CAPABILITY_NAME.to_string(),
-                message: "python tool artifacts require APXM_SANDBOX_PYTHON".to_string(),
+                message:
+                    "python tool artifacts require APXM_TRUST_SCRIPT_ARTIFACTS and APXM_SANDBOX_SCRIPTS"
+                        .to_string(),
+            });
+        }
+        if !crate::script_admission::script_artifacts_trusted()
+            && artifact_has_typescript_tools_section(&artifact)
+        {
+            return Err(RuntimeError::Capability {
+                capability: typescript_tools::CAPABILITY_NAME.to_string(),
+                message:
+                    "typescript tool artifacts require APXM_TRUST_SCRIPT_ARTIFACTS and APXM_SANDBOX_SCRIPTS"
+                        .to_string(),
             });
         }
 
-        let _lane_permit = if let Some(ref sid) = session_id {
+        let lane_permit = if let Some(ref sid) = session_id {
             Some(self.session_lane_guard.acquire(sid).await)
         } else {
             None
@@ -1197,13 +1292,13 @@ impl Runtime {
 
         let python_bridge = python_handler_bridge_from_artifact(
             &artifact,
-            self.python_worker_sandbox(),
-            Self::python_sandbox_required(),
+            self.script_worker_sandbox(),
+            Self::script_sandbox_required(),
         )?;
         let typescript_bridge = typescript_handler_bridge_from_artifact(
             &artifact,
-            self.python_worker_sandbox(),
-            Self::python_sandbox_required(),
+            self.script_worker_sandbox(),
+            Self::script_sandbox_required(),
         )?;
         let entry_dag = find_entry_dag(&artifact)?;
         let arg_values = bind_args(&entry_dag, args)?;
@@ -1227,7 +1322,8 @@ impl Runtime {
                 typescript_bridge,
             )
             .with_flow_registry(artifact_flow_registry)
-            .with_graph_id(graph_id_from_dag(&entry_dag));
+            .with_graph_id(graph_id_from_dag(&entry_dag))
+            .with_cancellation_token(cancellation_token);
         for (key, value) in extra_metadata {
             context.metadata.insert(key, value);
         }
@@ -1287,13 +1383,22 @@ impl Runtime {
                 // "not really done yet" bookkeeping (e.g. the server's
                 // cross-execution admission slot) can chain onto the SAME
                 // real-completion event instead of guessing when it's safe.
-                let background = tokio::spawn(async move {
-                    let _ = scheduler_background.await;
+                let background = BackgroundExecution::new(tokio::spawn(async move {
+                    // Keep same-session admission serialized until this finalizer returns.
+                    let _lane_permit = lane_permit;
+                    let graph_end =
+                        GraphEndCompletionGuard::new(graph_emitter, execution_id, node_count);
+                    let completion = match scheduler_background.await {
+                        Ok(completion) => completion,
+                        Err(error) => BackgroundExecutionOutcome::join_failure(
+                            BackgroundExecutionTask::SchedulerFinalizer,
+                            error,
+                        ),
+                    };
                     release_graph_lifecycles(&lifecycles).await;
-                    if let Some(emitter) = &graph_emitter {
-                        emitter.emit_graph_end(&execution_id, node_count, true);
-                    }
-                });
+                    graph_end.emit(completion.is_success());
+                    completion
+                }));
                 Ok(ExecutionOutcome::Parked {
                     session_id,
                     background,
@@ -1535,6 +1640,17 @@ fn artifact_has_python_tools_section(artifact: &Artifact) -> bool {
         .any(|section| section.kind == PYTHON_TOOLS_SECTION_KIND)
 }
 
+/// Mirrors [`artifact_has_python_tools_section`] for the TypeScript sidecar
+/// so both languages get the identical fail-closed section-presence
+/// rejection in [`Runtime::execute_artifact_inner`] /
+/// [`Runtime::execute_artifact_inner_or_park`].
+fn artifact_has_typescript_tools_section(artifact: &Artifact) -> bool {
+    artifact
+        .sections()
+        .iter()
+        .any(|section| section.kind == TYPESCRIPT_TOOLS_SECTION_KIND)
+}
+
 /// Extract a `PythonHandlerBridge` from an artifact's `python_tools` section, if present.
 ///
 /// The section's `data` field is the UTF-8 JSON array produced by the Python
@@ -1741,6 +1857,7 @@ fn parse_flow_name(name: &str) -> (String, String) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::PersistedBackgroundExecutionOutcome;
     use apxm_artifact::{ArtifactMetadata, ArtifactSection};
     use apxm_core::constants::graph::attrs as graph_attrs;
     use apxm_core::types::execution::FlowParameter;
@@ -1769,6 +1886,67 @@ mod tests {
                 parameters: Vec::new(),
             },
         }
+    }
+
+    #[derive(Default)]
+    struct GraphEndCapturingEmitter {
+        successes: std::sync::Mutex<Vec<bool>>,
+    }
+
+    impl GraphEndCapturingEmitter {
+        fn successes(&self) -> Vec<bool> {
+            self.successes.lock().expect("graph end lock").clone()
+        }
+    }
+
+    impl ExecutionEventEmitter for GraphEndCapturingEmitter {
+        fn emit_llm_token(&self, _content: &str) {}
+
+        fn emit_tool_start(&self, _name: &str, _args: &HashMap<String, Value>) {}
+
+        fn emit_tool_end(&self, _name: &str, _result: &Value) {}
+
+        fn emit_graph_end(&self, _execution_id: &str, _node_count: usize, success: bool) {
+            self.successes.lock().expect("graph end lock").push(success);
+        }
+    }
+
+    fn rearming_conversation_artifact(turn_node: Option<Node>) -> Artifact {
+        let mut recv = Node::new(1, AISOperationType::Autonomous);
+        for (name, value) in [
+            ("mode", "recv"),
+            ("recv_once", "false"),
+            ("turn_agent", "conversation"),
+            ("turn_flow", "turn"),
+            ("turn_param", "user_message"),
+        ] {
+            recv.set_attribute(name.to_string(), Value::String(value.to_string()));
+        }
+        recv.set_attribute(graph_attrs::MAX_ITERATIONS.to_string(), Value::from(2_i64));
+
+        let entry = single_node_dag("conversation.main", true, recv);
+        let mut dags = vec![entry];
+        if let Some(mut turn_node) = turn_node {
+            turn_node.add_input_token(1);
+            turn_node.add_output_token(2);
+            let mut turn = single_node_dag("conversation.turn", false, turn_node);
+            turn.metadata.parameters = vec![FlowParameter {
+                name: "user_message".to_string(),
+                type_name: "str".to_string(),
+            }];
+            dags.push(turn);
+        }
+        artifact(dags)
+    }
+
+    fn wake_rearming_session(session_id: &str) {
+        let key = crate::scheduler::park_registry::session_recv_key(session_id);
+        assert_eq!(
+            crate::scheduler::park_registry::wake(&key, Value::String("first".to_string())),
+            1,
+            "the initial recv must be parked before the runtime returns"
+        );
+        let _ = crate::scheduler::park_registry::wake(&key, Value::String("finish".to_string()));
     }
 
     #[test]
@@ -1832,28 +2010,139 @@ mod tests {
             .unwrap();
     }
 
-    #[tokio::test]
-    async fn python_tool_sections_require_sandbox_flag() {
-        let runtime = Runtime::new(RuntimeConfig::in_memory()).await.unwrap();
-        let mut artifact = artifact(vec![single_node_dag(
+    fn artifact_with_script_section(section_kind: &str) -> Artifact {
+        let mut art = artifact(vec![single_node_dag(
             "main",
             true,
             Node::new(1, AISOperationType::Nop),
         )]);
-        artifact.add_section(ArtifactSection {
-            kind: python_tools::CAPABILITY_NAME.to_string(),
+        art.add_section(ArtifactSection {
+            kind: section_kind.to_string(),
             data: b"[]".to_vec(),
         });
+        art
+    }
+
+    #[tokio::test]
+    async fn python_tool_sections_require_sandbox_flag() {
+        let _lock = crate::script_admission::test_support::ENV_LOCK
+            .lock()
+            .unwrap();
+        let _guard = crate::script_admission::test_support::EnvGuard;
+        crate::script_admission::test_support::set_vars(false, false);
+
+        let runtime = Runtime::new(RuntimeConfig::in_memory()).await.unwrap();
+        let artifact = artifact_with_script_section(python_tools::CAPABILITY_NAME);
 
         let err = runtime
             .execute_artifact_with_args(artifact, Vec::new())
             .await
-            .expect_err("python section must fail closed without sandbox opt-in");
+            .expect_err("python section must fail closed without trust+sandbox opt-in");
 
-        assert!(err.to_string().contains("APXM_SANDBOX_PYTHON"));
+        assert!(err.to_string().contains("APXM_SANDBOX_SCRIPTS"));
     }
 
-    // --  narrow park observability: `execute_artifact_with_session_emitter_and_metadata_or_park` --
+    /// Mirrors [`python_tool_sections_require_sandbox_flag`] for the
+    /// TypeScript sidecar — before the script-artifact admission policy there was no equivalent rejection at
+    /// all, so an untrusted TypeScript section ran unsandboxed by default.
+    #[tokio::test]
+    async fn typescript_tool_sections_require_sandbox_flag() {
+        let _lock = crate::script_admission::test_support::ENV_LOCK
+            .lock()
+            .unwrap();
+        let _guard = crate::script_admission::test_support::EnvGuard;
+        crate::script_admission::test_support::set_vars(false, false);
+
+        let runtime = Runtime::new(RuntimeConfig::in_memory()).await.unwrap();
+        let artifact = artifact_with_script_section(typescript_tools::CAPABILITY_NAME);
+
+        let err = runtime
+            .execute_artifact_with_args(artifact, Vec::new())
+            .await
+            .expect_err("typescript section must fail closed without trust+sandbox opt-in");
+
+        assert!(err.to_string().contains("APXM_SANDBOX_SCRIPTS"));
+    }
+
+    /// Environment matrix for script-artifact admission: a script
+    /// section (Python or TypeScript) is admitted only when BOTH
+    /// `APXM_TRUST_SCRIPT_ARTIFACTS` and `APXM_SANDBOX_SCRIPTS` are set —
+    /// trust-only and sandbox-only must fail closed identically to no vars
+    /// at all. This is the guard that also protects the CLI's precompiled
+    /// `.apxmobj` path, which never passes through the driver's attach gate
+    /// or the Server's admission route.
+    #[tokio::test]
+    async fn env_matrix_script_sections_admitted_only_when_fully_trusted() {
+        let _lock = crate::script_admission::test_support::ENV_LOCK
+            .lock()
+            .unwrap();
+        let _guard = crate::script_admission::test_support::EnvGuard;
+
+        for (trust, sandbox, expect_admitted) in [
+            (false, false, false),
+            (true, false, false),
+            (false, true, false),
+            (true, true, true),
+        ] {
+            crate::script_admission::test_support::set_vars(trust, sandbox);
+            for section_kind in [
+                python_tools::CAPABILITY_NAME,
+                typescript_tools::CAPABILITY_NAME,
+            ] {
+                let runtime = Runtime::new(RuntimeConfig::in_memory()).await.unwrap();
+                let artifact = artifact_with_script_section(section_kind);
+                let result = runtime
+                    .execute_artifact_with_args(artifact, Vec::new())
+                    .await;
+                assert_eq!(
+                    result.is_ok(),
+                    expect_admitted,
+                    "trust={trust} sandbox={sandbox} section={section_kind}: \
+                     expected admitted={expect_admitted}, got {result:?}"
+                );
+            }
+        }
+    }
+
+    /// Recovery: a rejection under no vars is not sticky/cached — setting
+    /// both vars and re-running the identical artifact on the same runtime
+    /// instance succeeds, proving the gate is a pure function of env state.
+    #[tokio::test]
+    async fn script_admission_recovers_after_trust_and_sandbox_are_set() {
+        let _lock = crate::script_admission::test_support::ENV_LOCK
+            .lock()
+            .unwrap();
+        let _guard = crate::script_admission::test_support::EnvGuard;
+
+        let runtime = Runtime::new(RuntimeConfig::in_memory()).await.unwrap();
+
+        crate::script_admission::test_support::set_vars(false, false);
+        let rejected = runtime
+            .execute_artifact_with_args(
+                artifact_with_script_section(typescript_tools::CAPABILITY_NAME),
+                Vec::new(),
+            )
+            .await;
+        assert!(
+            rejected.is_err(),
+            "expected no-vars rejection before recovery"
+        );
+
+        crate::script_admission::test_support::set_vars(true, true);
+        let admitted = runtime
+            .execute_artifact_with_args(
+                artifact_with_script_section(typescript_tools::CAPABILITY_NAME),
+                Vec::new(),
+            )
+            .await;
+        assert!(
+            admitted.is_ok(),
+            "expected identical artifact to be admitted once both vars are set: {admitted:?}"
+        );
+    }
+
+    // --  narrow park observability:
+    // `execute_artifact_with_session_emitter_metadata_and_cancellation_or_park` --
 
     /// Regression-equivalent to the old (blocking) behavior: a normal
     /// completing artifact returns `Completed` via the new park-observable
@@ -1868,13 +2157,14 @@ mod tests {
         )]);
 
         let outcome = runtime
-            .execute_artifact_with_session_emitter_and_metadata_or_park(
+            .execute_artifact_with_session_emitter_metadata_and_cancellation_or_park(
                 art,
                 Vec::new(),
                 None,
                 None,
                 None,
                 HashMap::new(),
+                CancellationToken::new(),
             )
             .await
             .expect("execution should succeed");
@@ -1906,13 +2196,14 @@ mod tests {
 
         let outcome = tokio::time::timeout(
             std::time::Duration::from_secs(10),
-            runtime.execute_artifact_with_session_emitter_and_metadata_or_park(
+            runtime.execute_artifact_with_session_emitter_metadata_and_cancellation_or_park(
                 art,
                 Vec::new(),
                 Some(session_id.clone()),
                 None,
                 None,
                 HashMap::new(),
+                CancellationToken::new(),
             ),
         )
         .await
@@ -1930,6 +2221,253 @@ mod tests {
                 panic!("expected Parked — a session-recv park never completes on its own");
             }
         }
+    }
+
+    #[tokio::test]
+    async fn parked_rearmed_background_failure_is_typed_and_emits_failed_graph_end() {
+        let runtime = Runtime::new(RuntimeConfig::in_memory()).await.unwrap();
+        let emitter = Arc::new(GraphEndCapturingEmitter::default());
+        let session_id = format!("background-failure-{}", uuid::Uuid::new_v4());
+
+        let outcome = runtime
+            .execute_artifact_with_session_emitter_metadata_and_cancellation_or_park(
+                rearming_conversation_artifact(None),
+                Vec::new(),
+                Some(session_id.clone()),
+                Some(emitter.clone()),
+                None,
+                HashMap::new(),
+                CancellationToken::new(),
+            )
+            .await
+            .expect("execution should reach its session park");
+
+        let background = match outcome {
+            ExecutionOutcome::Parked { background, .. } => background,
+            ExecutionOutcome::Completed(_) => panic!("expected the session execution to park"),
+        };
+        wake_rearming_session(&session_id);
+
+        let terminal = tokio::time::timeout(std::time::Duration::from_secs(10), background.wait())
+            .await
+            .expect("background execution should terminate");
+        assert!(matches!(
+            &terminal,
+            BackgroundExecutionOutcome::DomainFailure {
+                error: RuntimeError::SchedulerRetryExhausted { .. }
+            }
+        ));
+        assert!(matches!(
+            terminal.persisted(),
+            PersistedBackgroundExecutionOutcome::DomainFailure { .. }
+        ));
+        assert_eq!(emitter.successes(), vec![false]);
+    }
+
+    #[tokio::test]
+    async fn parked_rearmed_background_success_is_typed_and_emits_successful_graph_end() {
+        let runtime = Runtime::new(RuntimeConfig::in_memory()).await.unwrap();
+        let emitter = Arc::new(GraphEndCapturingEmitter::default());
+        let session_id = format!("background-success-{}", uuid::Uuid::new_v4());
+
+        let outcome = runtime
+            .execute_artifact_with_session_emitter_metadata_and_cancellation_or_park(
+                rearming_conversation_artifact(Some(Node::new(1, AISOperationType::Nop))),
+                Vec::new(),
+                Some(session_id.clone()),
+                Some(emitter.clone()),
+                None,
+                HashMap::new(),
+                CancellationToken::new(),
+            )
+            .await
+            .expect("execution should reach its session park");
+
+        let background = match outcome {
+            ExecutionOutcome::Parked { background, .. } => background,
+            ExecutionOutcome::Completed(_) => panic!("expected the session execution to park"),
+        };
+        wake_rearming_session(&session_id);
+
+        let terminal = tokio::time::timeout(std::time::Duration::from_secs(10), background.wait())
+            .await
+            .expect("background execution should terminate");
+        assert!(matches!(&terminal, BackgroundExecutionOutcome::Success));
+        assert!(matches!(
+            terminal.persisted(),
+            PersistedBackgroundExecutionOutcome::Success
+        ));
+        assert_eq!(emitter.successes(), vec![true]);
+    }
+
+    #[tokio::test]
+    async fn parked_background_cancellation_after_initial_park_is_typed() {
+        let runtime = Runtime::new(RuntimeConfig::in_memory()).await.unwrap();
+        let emitter = Arc::new(GraphEndCapturingEmitter::default());
+        let session_id = format!("background-cancel-{}", uuid::Uuid::new_v4());
+        let cancellation_token = CancellationToken::new();
+
+        let outcome = runtime
+            .execute_artifact_with_session_emitter_metadata_and_cancellation_or_park(
+                rearming_conversation_artifact(None),
+                Vec::new(),
+                Some(session_id),
+                Some(emitter.clone()),
+                None,
+                HashMap::new(),
+                cancellation_token.clone(),
+            )
+            .await
+            .expect("execution should reach its session park");
+
+        let background = match outcome {
+            ExecutionOutcome::Parked { background, .. } => background,
+            ExecutionOutcome::Completed(_) => panic!("expected the session execution to park"),
+        };
+
+        cancellation_token.cancel();
+
+        let terminal = tokio::time::timeout(std::time::Duration::from_secs(10), background.wait())
+            .await
+            .expect("background execution should terminate after cancellation");
+        assert!(matches!(terminal, BackgroundExecutionOutcome::Cancellation));
+        assert!(matches!(
+            terminal.persisted(),
+            PersistedBackgroundExecutionOutcome::Cancellation
+        ));
+        assert_eq!(emitter.successes(), vec![false]);
+    }
+
+    #[tokio::test]
+    async fn parked_execution_holds_same_session_lane_until_background_settles() {
+        let runtime = Runtime::new(RuntimeConfig::in_memory()).await.unwrap();
+        let session_id = format!("same-lane-{}", uuid::Uuid::new_v4());
+        let first_cancellation = CancellationToken::new();
+
+        let first = runtime
+            .execute_artifact_with_session_emitter_metadata_and_cancellation_or_park(
+                rearming_conversation_artifact(None),
+                Vec::new(),
+                Some(session_id.clone()),
+                None,
+                None,
+                HashMap::new(),
+                first_cancellation.clone(),
+            )
+            .await
+            .expect("first execution should reach its session park");
+        let first_background = match first {
+            ExecutionOutcome::Parked { background, .. } => background,
+            ExecutionOutcome::Completed(_) => panic!("expected first execution to park"),
+        };
+
+        let second_cancellation = CancellationToken::new();
+        let second = runtime
+            .execute_artifact_with_session_emitter_metadata_and_cancellation_or_park(
+                rearming_conversation_artifact(None),
+                Vec::new(),
+                Some(session_id),
+                None,
+                None,
+                HashMap::new(),
+                second_cancellation.clone(),
+            );
+        tokio::pin!(second);
+
+        assert!(
+            tokio::time::timeout(std::time::Duration::from_millis(200), &mut second)
+                .await
+                .is_err(),
+            "a second execution for the parked session must wait for the lane"
+        );
+
+        first_cancellation.cancel();
+        let first_terminal =
+            tokio::time::timeout(std::time::Duration::from_secs(10), first_background.wait())
+                .await
+                .expect("first background execution should settle after cancellation");
+        assert!(matches!(
+            first_terminal,
+            BackgroundExecutionOutcome::Cancellation
+        ));
+
+        let second = tokio::time::timeout(std::time::Duration::from_secs(10), &mut second)
+            .await
+            .expect("second execution should acquire the lane after terminal completion")
+            .expect("second execution should reach its session park");
+        let second_background = match second {
+            ExecutionOutcome::Parked { background, .. } => background,
+            ExecutionOutcome::Completed(_) => panic!("expected second execution to park"),
+        };
+
+        second_cancellation.cancel();
+        let second_terminal =
+            tokio::time::timeout(std::time::Duration::from_secs(10), second_background.wait())
+                .await
+                .expect("second background execution should settle after cancellation");
+        assert!(matches!(
+            second_terminal,
+            BackgroundExecutionOutcome::Cancellation
+        ));
+    }
+
+    #[tokio::test]
+    async fn parked_executions_for_different_sessions_remain_concurrent() {
+        let runtime = Runtime::new(RuntimeConfig::in_memory()).await.unwrap();
+        let first_session = format!("parallel-lane-a-{}", uuid::Uuid::new_v4());
+        let second_session = format!("parallel-lane-b-{}", uuid::Uuid::new_v4());
+        let first_cancellation = CancellationToken::new();
+        let second_cancellation = CancellationToken::new();
+
+        let first = runtime
+            .execute_artifact_with_session_emitter_metadata_and_cancellation_or_park(
+                rearming_conversation_artifact(None),
+                Vec::new(),
+                Some(first_session),
+                None,
+                None,
+                HashMap::new(),
+                first_cancellation.clone(),
+            )
+            .await
+            .expect("first execution should reach its session park");
+        let first_background = match first {
+            ExecutionOutcome::Parked { background, .. } => background,
+            ExecutionOutcome::Completed(_) => panic!("expected first execution to park"),
+        };
+
+        let second = tokio::time::timeout(
+            std::time::Duration::from_secs(10),
+            runtime.execute_artifact_with_session_emitter_metadata_and_cancellation_or_park(
+                rearming_conversation_artifact(None),
+                Vec::new(),
+                Some(second_session),
+                None,
+                None,
+                HashMap::new(),
+                second_cancellation.clone(),
+            ),
+        )
+        .await
+        .expect("a different session should not wait for the first session lane")
+        .expect("second execution should reach its session park");
+        let second_background = match second {
+            ExecutionOutcome::Parked { background, .. } => background,
+            ExecutionOutcome::Completed(_) => panic!("expected second execution to park"),
+        };
+
+        first_cancellation.cancel();
+        second_cancellation.cancel();
+        let (first_terminal, second_terminal) =
+            tokio::join!(first_background.wait(), second_background.wait(),);
+        assert!(matches!(
+            first_terminal,
+            BackgroundExecutionOutcome::Cancellation
+        ));
+        assert!(matches!(
+            second_terminal,
+            BackgroundExecutionOutcome::Cancellation
+        ));
     }
 
     /// An execution that parks for a DIFFERENT reason (RESUME on a checkpoint
@@ -1961,13 +2499,14 @@ mod tests {
         let (outcome, _) = tokio::join!(
             tokio::time::timeout(
                 std::time::Duration::from_secs(10),
-                runtime.execute_artifact_with_session_emitter_and_metadata_or_park(
+                runtime.execute_artifact_with_session_emitter_metadata_and_cancellation_or_park(
                     art,
                     Vec::new(),
                     Some("unrelated-session".to_string()),
                     None,
                     None,
                     HashMap::new(),
+                    CancellationToken::new(),
                 ),
             ),
             wake_after,

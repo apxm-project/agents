@@ -137,6 +137,53 @@ async fn run_dumb_pipe(
     Ok(())
 }
 
+/// What to do with one decoded SSE frame in the chat REPL.
+///
+/// `token`/`error` render their own way; every other kind gets a minimal
+/// visible notice instead of being silently dropped — the CLI previously
+/// parsed and discarded everything besides `token`/`error`
+/// (`chat_renderer_surfaces_unknown_kind_instead_of_dropping`).
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum ChatFrameRender {
+    /// Append raw token text to the answer stream (no newline).
+    Token(String),
+    /// A server-reported error.
+    Error(String),
+    /// A minimal notice for a Layer-2 (or any other) kind the chat REPL
+    /// doesn't have bespoke rendering for yet.
+    Notice(String),
+}
+
+/// Decide how to render one already-JSON-decoded SSE `/payload` frame.
+/// Returns `None` only when the frame has no `payload.kind` at all (not a
+/// real event envelope) — every recognized kind, known or not, renders
+/// *something* visible, per the "fail loud, not silent" posture.
+fn render_chat_frame(value: &JsonValue) -> Option<ChatFrameRender> {
+    let kind = value.pointer("/payload/kind").and_then(|k| k.as_str())?;
+    match kind {
+        "token" => value
+            .pointer("/payload/text")
+            .and_then(|t| t.as_str())
+            .map(|t| ChatFrameRender::Token(t.to_string())),
+        "error" => value
+            .pointer("/payload/message")
+            .and_then(|m| m.as_str())
+            .map(|m| ChatFrameRender::Error(m.to_string())),
+        other => Some(ChatFrameRender::Notice(format!("[{other}]"))),
+    }
+}
+
+fn apply_chat_frame_render(render: ChatFrameRender) {
+    match render {
+        ChatFrameRender::Token(tok) => {
+            print!("{tok}");
+            let _ = std::io::stdout().flush();
+        }
+        ChatFrameRender::Error(message) => eprintln!("\n[error] {message}"),
+        ChatFrameRender::Notice(notice) => eprintln!("\n{notice}"),
+    }
+}
+
 async fn render_session_stream(resp: crate::client::reqwest::Response, client: Client) {
     let mut stream = resp.bytes_stream();
     let mut parser = SseParser::default();
@@ -147,16 +194,8 @@ async fn render_session_stream(resp: crate::client::reqwest::Response, client: C
                 continue;
             };
             let _ = maybe_answer_permission(&client, &v).await;
-            let kind = v.pointer("/payload/kind").and_then(|k| k.as_str());
-            if kind == Some("token")
-                && let Some(tok) = v.pointer("/payload/text").and_then(|t| t.as_str())
-            {
-                print!("{tok}");
-                let _ = std::io::stdout().flush();
-            } else if kind == Some("error")
-                && let Some(m) = v.pointer("/payload/message").and_then(|m| m.as_str())
-            {
-                eprintln!("\n[error] {m}");
+            if let Some(render) = render_chat_frame(&v) {
+                apply_chat_frame_render(render);
             }
         }
     }
@@ -281,16 +320,8 @@ async fn render_session_events_from_url(client: Client, url: String) {
                 continue;
             };
             let _ = maybe_answer_permission(&client, &v).await;
-            let kind = v.pointer("/payload/kind").and_then(|k| k.as_str());
-            if kind == Some("token")
-                && let Some(tok) = v.pointer("/payload/text").and_then(|t| t.as_str())
-            {
-                print!("{tok}");
-                let _ = std::io::stdout().flush();
-            } else if kind == Some("error")
-                && let Some(m) = v.pointer("/payload/message").and_then(|m| m.as_str())
-            {
-                eprintln!("\n[error] {m}");
+            if let Some(render) = render_chat_frame(&v) {
+                apply_chat_frame_render(render);
             }
         }
     }
@@ -379,5 +410,48 @@ mod tests {
             %run_turn = ais.flow_call "conversation" "turn" {} (%arg0 : !ais.token) : !ais.token
         "#;
         assert!(!air_has_in_program_loop(air));
+    }
+
+    /// Positive: `token` still renders as raw text, matching the pre-fix
+    /// behavior exactly (regression pin).
+    #[test]
+    fn chat_renderer_still_prints_token_text() {
+        let frame = serde_json::json!({"payload": {"kind": "token", "text": "hi"}});
+        assert_eq!(
+            render_chat_frame(&frame),
+            Some(ChatFrameRender::Token("hi".to_string()))
+        );
+    }
+
+    /// Positive: `error` still renders its message (regression pin).
+    #[test]
+    fn chat_renderer_still_prints_error_message() {
+        let frame = serde_json::json!({"payload": {"kind": "error", "message": "boom"}});
+        assert_eq!(
+            render_chat_frame(&frame),
+            Some(ChatFrameRender::Error("boom".to_string()))
+        );
+    }
+
+    /// `chat_renderer_surfaces_unknown_kind_instead_of_dropping` — a
+    /// `turn_started` frame (today: nothing) now produces visible output
+    /// instead of being parsed and silently discarded.
+    #[test]
+    fn chat_renderer_surfaces_unknown_kind_instead_of_dropping() {
+        let frame = serde_json::json!({
+            "payload": {
+                "kind": "turn_started",
+                "execution_id": "exec-1",
+            }
+        });
+        let render = render_chat_frame(&frame);
+        assert!(
+            render.is_some(),
+            "a turn_started frame must render something, not nothing"
+        );
+        assert_eq!(
+            render,
+            Some(ChatFrameRender::Notice("[turn_started]".to_string()))
+        );
     }
 }

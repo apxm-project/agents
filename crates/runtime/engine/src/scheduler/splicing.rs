@@ -15,14 +15,122 @@ use apxm_core::{
     types::{Node, NodeId, TokenId, Value, execution::ExecutionDag},
 };
 use async_trait::async_trait;
+use dashmap::DashMap;
+use parking_lot::Mutex;
 use std::collections::{HashMap, HashSet};
-use std::sync::Arc;
+use std::sync::{Arc, OnceLock, Weak};
 
 use super::internal_state::{OpState, TokenState};
 use super::queue::Priority;
 use super::state::SchedulerState;
 use crate::aam::effects::operation_effects;
 use crate::executor::dag_splicer::{DagSplicer, SpliceResult};
+
+type NodeMap = DashMap<NodeId, Arc<Node>>;
+type TokenMap = DashMap<TokenId, TokenState>;
+
+#[derive(Default)]
+struct ReservedSpliceIds {
+    nodes: HashSet<NodeId>,
+    tokens: HashSet<TokenId>,
+}
+
+struct SpliceIdReservations {
+    nodes: Weak<NodeMap>,
+    tokens: Weak<TokenMap>,
+    reserved: Mutex<ReservedSpliceIds>,
+}
+
+impl SpliceIdReservations {
+    fn matches(&self, nodes: &Arc<NodeMap>, tokens: &Arc<TokenMap>) -> bool {
+        self.nodes
+            .upgrade()
+            .is_some_and(|current| Arc::ptr_eq(&current, nodes))
+            && self
+                .tokens
+                .upgrade()
+                .is_some_and(|current| Arc::ptr_eq(&current, tokens))
+    }
+}
+
+struct SpliceIdReservation {
+    owner: Arc<SpliceIdReservations>,
+    node_ids: Vec<NodeId>,
+    token_ids: Vec<TokenId>,
+}
+
+impl Drop for SpliceIdReservation {
+    fn drop(&mut self) {
+        let mut reserved = self.owner.reserved.lock();
+        for node_id in &self.node_ids {
+            reserved.nodes.remove(node_id);
+        }
+        for token_id in &self.token_ids {
+            reserved.tokens.remove(token_id);
+        }
+    }
+}
+
+fn splice_id_registry() -> &'static Mutex<HashMap<usize, Weak<SpliceIdReservations>>> {
+    static REGISTRY: OnceLock<Mutex<HashMap<usize, Weak<SpliceIdReservations>>>> = OnceLock::new();
+    REGISTRY.get_or_init(|| Mutex::new(HashMap::new()))
+}
+
+fn checked_next_id<I>(ids: I, kind: &str) -> Result<u64, RuntimeError>
+where
+    I: Iterator<Item = u64>,
+{
+    ids.max()
+        .unwrap_or(0)
+        .checked_add(1)
+        .ok_or_else(|| RuntimeError::Scheduler {
+            message: format!("Cannot reserve {kind} IDs after u64::MAX"),
+        })
+}
+
+fn remapped_ids<I>(ids: I, offset: u64, kind: &str) -> Result<Vec<u64>, RuntimeError>
+where
+    I: Iterator<Item = u64>,
+{
+    ids.map(|id| {
+        id.checked_add(offset)
+            .ok_or_else(|| RuntimeError::Scheduler {
+                message: format!("{kind} ID {id} overflows with splice offset {offset}"),
+            })
+    })
+    .collect()
+}
+
+#[cfg(test)]
+thread_local! {
+    static SPLICE_RESERVATION_BARRIER: std::cell::RefCell<Option<Arc<std::sync::Barrier>>> =
+        const { std::cell::RefCell::new(None) };
+}
+
+#[cfg(test)]
+pub(crate) fn with_splice_reservation_barrier<T>(
+    barrier: Arc<std::sync::Barrier>,
+    splice: impl FnOnce() -> T,
+) -> T {
+    SPLICE_RESERVATION_BARRIER.with(|slot| {
+        let previous = slot.replace(Some(barrier));
+        let result = splice();
+        slot.replace(previous);
+        result
+    })
+}
+
+#[cfg(test)]
+fn wait_at_splice_reservation_barrier() {
+    SPLICE_RESERVATION_BARRIER.with(|slot| {
+        if let Some(barrier) = slot.borrow().as_ref() {
+            barrier.wait();
+        }
+    });
+}
+
+#[cfg(not(test))]
+fn wait_at_splice_reservation_barrier() {}
 
 /// Configuration for splicing an inner DAG into a running execution
 pub struct SpliceConfig {
@@ -48,6 +156,110 @@ pub struct SpliceConfig {
 }
 
 impl SchedulerState {
+    fn splice_id_reservations(&self) -> Arc<SpliceIdReservations> {
+        let key = Arc::as_ptr(&self.nodes) as usize;
+        let mut registry = splice_id_registry().lock();
+        registry.retain(|_, entry| entry.strong_count() > 0);
+
+        if let Some(existing) = registry.get(&key).and_then(Weak::upgrade)
+            && existing.matches(&self.nodes, &self.tokens)
+        {
+            return existing;
+        }
+
+        let reservations = Arc::new(SpliceIdReservations {
+            nodes: Arc::downgrade(&self.nodes),
+            tokens: Arc::downgrade(&self.tokens),
+            reserved: Mutex::new(ReservedSpliceIds::default()),
+        });
+        registry.insert(key, Arc::downgrade(&reservations));
+        reservations
+    }
+
+    fn reserve_splice_ids(
+        &self,
+        config: &SpliceConfig,
+        observed_node_next: NodeId,
+        observed_token_next: TokenId,
+    ) -> Result<(NodeId, TokenId, SpliceIdReservation), RuntimeError> {
+        let reservations = self.splice_id_reservations();
+        let mut reserved = reservations.reserved.lock();
+
+        let node_next = checked_next_id(
+            self.nodes
+                .iter()
+                .map(|entry| *entry.key())
+                .chain(reserved.nodes.iter().copied()),
+            "node",
+        )?
+        .max(observed_node_next);
+        let token_next = checked_next_id(
+            self.tokens
+                .iter()
+                .map(|entry| *entry.key())
+                .chain(reserved.tokens.iter().copied()),
+            "token",
+        )?
+        .max(observed_token_next);
+
+        let node_offset = config.node_id_offset.unwrap_or(node_next);
+        let token_offset = config.token_id_offset.unwrap_or(token_next);
+
+        let node_ids = remapped_ids(
+            config.inner_dag.nodes.iter().map(|node| node.id),
+            node_offset,
+            "Node",
+        )?;
+        let connected_tokens: HashSet<TokenId> = config.token_connections.keys().copied().collect();
+        let inner_tokens: HashSet<TokenId> = config
+            .inner_dag
+            .nodes
+            .iter()
+            .flat_map(|node| node.input_tokens.iter().chain(&node.output_tokens).copied())
+            .filter(|token_id| !connected_tokens.contains(token_id))
+            .collect();
+        let token_ids = remapped_ids(inner_tokens.into_iter(), token_offset, "Token")?;
+
+        let unique_nodes: HashSet<NodeId> = node_ids.iter().copied().collect();
+        if unique_nodes.len() != node_ids.len() {
+            return Err(RuntimeError::Scheduler {
+                message: "Inner DAG contains duplicate node IDs".to_string(),
+            });
+        }
+
+        if let Some(node_id) = node_ids
+            .iter()
+            .find(|node_id| self.nodes.contains_key(node_id) || reserved.nodes.contains(node_id))
+        {
+            return Err(RuntimeError::Scheduler {
+                message: format!("Spliced node ID conflicts with live scheduler state: {node_id}"),
+            });
+        }
+        if let Some(token_id) = token_ids.iter().find(|token_id| {
+            self.tokens.contains_key(token_id) || reserved.tokens.contains(token_id)
+        }) {
+            return Err(RuntimeError::Scheduler {
+                message: format!(
+                    "Spliced token ID conflicts with live scheduler state: {token_id}"
+                ),
+            });
+        }
+
+        reserved.nodes.extend(node_ids.iter().copied());
+        reserved.tokens.extend(token_ids.iter().copied());
+        drop(reserved);
+
+        Ok((
+            node_offset,
+            token_offset,
+            SpliceIdReservation {
+                owner: reservations,
+                node_ids,
+                token_ids,
+            },
+        ))
+    }
+
     /// Splice an inner DAG into the live execution
     ///
     /// This is the core operation for inner/outer plan unification.
@@ -80,24 +292,16 @@ impl SchedulerState {
             "Splicing inner DAG into live execution"
         );
 
-        // Calculate offsets to avoid ID conflicts
-        let node_offset = config.node_id_offset.unwrap_or_else(|| {
-            self.nodes
-                .iter()
-                .map(|entry| *entry.key())
-                .max()
-                .unwrap_or(0)
-                + 1
-        });
-
-        let token_offset = config.token_id_offset.unwrap_or_else(|| {
-            self.tokens
-                .iter()
-                .map(|entry| *entry.key())
-                .max()
-                .unwrap_or(0)
-                + 1
-        });
+        // Observe the current high-water marks without blocking scheduler work.
+        // The reservation below rechecks them while atomically claiming both ID
+        // sets, so concurrent splices that observe the same maxima cannot overlap.
+        let observed_node_next =
+            checked_next_id(self.nodes.iter().map(|entry| *entry.key()), "node")?;
+        let observed_token_next =
+            checked_next_id(self.tokens.iter().map(|entry| *entry.key()), "token")?;
+        wait_at_splice_reservation_barrier();
+        let (node_offset, token_offset, _id_reservation) =
+            self.reserve_splice_ids(&config, observed_node_next, observed_token_next)?;
 
         log_debug!(
             "scheduler::splice",

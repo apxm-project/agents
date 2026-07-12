@@ -1,0 +1,4 @@
+id = "capability_discovery"
+description = "Discover typed authoring-time capability templates without granting authority."
+kind = "builtin"
+read_only = true

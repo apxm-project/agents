@@ -559,34 +559,6 @@ LogicalResult BranchOnValueOp::verify() {
 }
 
 //===----------------------------------------------------------------------===//
-// LoopStartOp - Begin Bounded Loop
-//===----------------------------------------------------------------------===//
-
-LogicalResult LoopStartOp::verify() {
-  // The iteration bound is the optional `max_iterations` attribute (no count
-  // operand); the runtime defaults it to 100.
-
-  // Check state result
-  if (failed(verifyType<TokenType>(*this, getState(), "state result must be !ais.token type")))
-    return failure();
-
-  return success();
-}
-
-//===----------------------------------------------------------------------===//
-// LoopEndOp - End Bounded Loop
-//===----------------------------------------------------------------------===//
-
-LogicalResult LoopEndOp::verify() {
-  // State inputs are an optional variadic of tokens (constrained by the op
-  // definition); only the result needs an explicit token check here.
-  if (failed(verifyType<TokenType>(*this, getResult(), "result must be !ais.token type")))
-    return failure();
-
-  return success();
-}
-
-//===----------------------------------------------------------------------===//
 // TryCatchOp - Try/Catch Region Markers
 //===----------------------------------------------------------------------===//
 

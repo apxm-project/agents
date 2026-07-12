@@ -100,52 +100,6 @@ fn derive_final_output(
     (None, joined)
 }
 
-/// Simple .air emitter for session output (avoids circular dependency on Compiler).
-fn emit_air_simple(module: &AirModule) -> String {
-    let mut out = String::new();
-    out.push_str("; Agent IR (.air) — canonical intermediate representation\n");
-    out.push_str(&format!("; graph: {}\n", module.name));
-    for (k, v) in &module.metadata {
-        out.push_str(&format!("; {}: {}\n", k, v));
-    }
-    out.push('\n');
-    if !module.parameters.is_empty() {
-        for p in &module.parameters {
-            out.push_str(&format!("; param %{}: {}\n", p.name, p.type_name));
-        }
-        out.push('\n');
-    }
-    for node in &module.nodes {
-        let op = node.op.to_string().to_lowercase();
-        let mut attrs = vec![];
-        for (k, v) in &node.attributes {
-            if !k.starts_with('_') {
-                attrs.push(format!("{} = {}", k, v));
-            }
-        }
-        let attr_str = if attrs.is_empty() {
-            String::new()
-        } else {
-            format!(" {}", attrs.join(", "))
-        };
-        out.push_str(&format!(
-            "  %{} = {}({}){}\n",
-            node.id, op, node.name, attr_str
-        ));
-    }
-    if !module.edges.is_empty() {
-        out.push('\n');
-        for edge in &module.edges {
-            let dep = format!("{:?}", edge.dependency).to_lowercase();
-            out.push_str(&format!(
-                "  edge %{} -> %{} [{}]\n",
-                edge.from, edge.to, dep
-            ));
-        }
-    }
-    out
-}
-
 impl SessionOutputWriter {
     /// Create a new writer, creating the session directory.
     pub fn new(base_dir: &Path, execution_id: &str) -> io::Result<Self> {
@@ -210,9 +164,13 @@ impl SessionOutputWriter {
     }
 
     /// Write the input AIR in .air format for reproducibility.
+    ///
+    /// Delegates to the single canonical printer (`AirModule::to_air()` ->
+    /// `air_builder::emit::emit_air`) so `input.air` is real, re-parseable
+    /// MLIR text — the same output `apxm emit-air` and `dekk agents compile`
+    /// produce, not a private dialect.
     pub fn write_input_air(&self, module: &AirModule) -> io::Result<()> {
-        // Emit .air format using a simple inline emitter (to avoid circular dependency on Compiler)
-        let air_text = emit_air_simple(module);
+        let air_text = module.to_air().map_err(io::Error::other)?;
         fs::write(
             self.session_dir
                 .join(constants::session::files::INPUT_GRAPH),
@@ -848,18 +806,52 @@ impl ExecutionEventEmitter for SessionEventEmitter {
     fn emit_llm_token(&self, content: &str) {
         self.write_trace_event(apxm_core::events::payload::TokenPayload {
             text: content.to_string(),
+            generation: None,
         });
     }
 
     fn emit_llm_token_for_node(&self, node_id: u64, content: &str) {
         let payload = apxm_core::events::payload::TokenPayload {
             text: content.to_string(),
+            generation: None,
         };
         self.write_trace_event(payload.clone());
         self.write_node_trace_event(node_id, payload);
         if let Ok(mut tokens) = self.node_llm_tokens.lock() {
             tokens.entry(node_id).or_default().push(content.to_string());
         }
+    }
+
+    fn emit_llm_token_for_generation(
+        &self,
+        node_id: u64,
+        content: &str,
+        generation: Option<&apxm_core::events::payload::GenerationIdentity>,
+    ) {
+        let payload = apxm_core::events::payload::TokenPayload {
+            text: content.to_string(),
+            generation: generation.cloned(),
+        };
+        self.write_trace_event(payload.clone());
+        self.write_node_trace_event(node_id, payload);
+        if let Ok(mut tokens) = self.node_llm_tokens.lock() {
+            tokens.entry(node_id).or_default().push(content.to_string());
+        }
+    }
+
+    fn emit_llm_step_completed(
+        &self,
+        payload: apxm_core::events::payload::LlmStepCompletedPayload,
+    ) {
+        self.write_trace_event(payload);
+    }
+
+    fn emit_llm_done(&self, payload: apxm_core::events::payload::LlmDonePayload) {
+        self.write_trace_event(payload);
+    }
+
+    fn emit_tool_call(&self, payload: apxm_core::events::payload::ToolCallPayload) {
+        self.write_trace_event(payload);
     }
 
     fn emit_llm_prompt(&self, node_id: u64, prompt: &str) {
@@ -872,6 +864,22 @@ impl ExecutionEventEmitter for SessionEventEmitter {
         }
     }
 
+    fn emit_llm_prompt_with_generation(
+        &self,
+        node_id: u64,
+        node_name: Option<&str>,
+        prompt: &str,
+        generation: Option<&apxm_core::events::payload::GenerationIdentity>,
+    ) {
+        self.emit_llm_prompt(node_id, prompt);
+        self.write_trace_event(apxm_core::events::payload::LlmPromptPayload {
+            node_id,
+            node_name: node_name.map(str::to_string),
+            prompt: apxm_core::events::payload::RedactedContent::from_text(prompt),
+            generation: generation.cloned(),
+        });
+    }
+
     fn emit_tool_start(&self, name: &str, args: &HashMap<String, apxm_core::types::values::Value>) {
         let args_json = args
             .iter()
@@ -880,6 +888,23 @@ impl ExecutionEventEmitter for SessionEventEmitter {
         self.write_trace_event(apxm_core::events::payload::ToolStartPayload {
             name: name.to_string(),
             args: args_json,
+            tool_call_correlation: None,
+        });
+    }
+
+    fn emit_tool_start_with_correlation(
+        &self,
+        name: &str,
+        args: &HashMap<String, apxm_core::types::values::Value>,
+        correlation: Option<&apxm_core::events::payload::ToolCallCorrelation>,
+    ) {
+        self.write_trace_event(apxm_core::events::payload::ToolStartPayload {
+            name: name.to_string(),
+            args: args
+                .iter()
+                .map(|(key, value)| (key.clone(), serde_json::to_value(value).unwrap_or_default()))
+                .collect(),
+            tool_call_correlation: correlation.cloned(),
         });
     }
 
@@ -887,6 +912,20 @@ impl ExecutionEventEmitter for SessionEventEmitter {
         self.write_trace_event(apxm_core::events::payload::ToolEndPayload {
             name: name.to_string(),
             result: serde_json::to_value(result).unwrap_or_default(),
+            tool_call_correlation: None,
+        });
+    }
+
+    fn emit_tool_end_with_correlation(
+        &self,
+        name: &str,
+        result: &apxm_core::types::values::Value,
+        correlation: Option<&apxm_core::events::payload::ToolCallCorrelation>,
+    ) {
+        self.write_trace_event(apxm_core::events::payload::ToolEndPayload {
+            name: name.to_string(),
+            result: serde_json::to_value(result).unwrap_or_default(),
+            tool_call_correlation: correlation.cloned(),
         });
     }
 
@@ -1072,14 +1111,433 @@ impl ExecutionEventEmitter for SessionEventEmitter {
     }
 
     fn emit_token_usage(&self, node_id: u64, input_tokens: usize, output_tokens: usize) {
+        self.emit_token_usage_with_generation(node_id, input_tokens, output_tokens, None);
+    }
+
+    fn emit_token_usage_with_generation(
+        &self,
+        node_id: u64,
+        input_tokens: usize,
+        output_tokens: usize,
+        generation: Option<&apxm_core::events::payload::GenerationIdentity>,
+    ) {
         self.write_trace_event(apxm_core::events::payload::TokenUsagePayload {
             node_id,
             input_tokens,
             output_tokens,
+            generation: generation.cloned(),
         });
     }
 
     fn emit_memoization_hit(&self, node_id: u64) {
         self.write_trace_event(apxm_core::events::payload::MemoizationHitPayload { node_id });
+    }
+
+    // ── Layer 2 — agent-layer hooks ────────────────────────────────
+    //
+    // `SessionEventEmitter` backs the CLI `execute`/`workflow` path
+    // (see `crates/tools/cli/src/commands/{execute,workflow}.rs`); like
+    // `EmitterAdapter` it previously left every Layer-2 hook at the
+    // trait's no-op default, so `apxm execute`/`apxm workflow` never
+    // wrote turn/subagent/tool/agent-message frames to trace.ndjson even
+    // though the executor call sites already fire them.
+
+    fn emit_turn_started(
+        &self,
+        execution_id: &str,
+        turn_id: Option<&str>,
+        coordinator_label: Option<&str>,
+    ) {
+        self.write_trace_event(apxm_core::events::payload::TurnStartedPayload {
+            execution_id: execution_id.to_string(),
+            turn_id: turn_id.map(str::to_string),
+            coordinator_label: coordinator_label.map(str::to_string),
+        });
+    }
+
+    fn emit_turn_complete(&self, execution_id: &str, duration_ms: u64, had_answer: bool) {
+        self.write_trace_event(apxm_core::events::payload::TurnCompletePayload {
+            execution_id: execution_id.to_string(),
+            duration_ms,
+            had_answer,
+        });
+    }
+
+    fn emit_turn_aborted(
+        &self,
+        execution_id: &str,
+        duration_ms: u64,
+        reason: &str,
+        error_message_safe: Option<&str>,
+    ) {
+        self.write_trace_event(apxm_core::events::payload::TurnAbortedPayload {
+            execution_id: execution_id.to_string(),
+            duration_ms,
+            reason: reason.to_string(),
+            error_message_safe: error_message_safe.map(str::to_string),
+        });
+    }
+
+    fn emit_subagent_spawn_begin(
+        &self,
+        agent_code: &str,
+        agent_name: Option<&str>,
+        agent_type: Option<&str>,
+        module_key: Option<&str>,
+        autonomy_policy: Option<&str>,
+        parent_span_id: Option<&str>,
+    ) {
+        self.write_trace_event(apxm_core::events::payload::SubagentSpawnBeginPayload {
+            agent_code: agent_code.to_string(),
+            agent_name: agent_name.map(str::to_string),
+            agent_type: agent_type.map(str::to_string),
+            module_key: module_key.map(str::to_string),
+            autonomy_policy: autonomy_policy.map(str::to_string),
+            parent_span_id: parent_span_id.map(str::to_string),
+        });
+    }
+
+    fn emit_subagent_spawn_end(&self, agent_code: &str) {
+        self.write_trace_event(apxm_core::events::payload::SubagentSpawnEndPayload {
+            agent_code: agent_code.to_string(),
+        });
+    }
+
+    fn emit_subagent_llm_call_begin(
+        &self,
+        agent_code: &str,
+        model: &str,
+        backend: &str,
+        tool_manifest_count: usize,
+    ) {
+        self.write_trace_event(apxm_core::events::payload::SubagentLlmCallBeginPayload {
+            agent_code: agent_code.to_string(),
+            model: model.to_string(),
+            backend: backend.to_string(),
+            tool_manifest_count,
+            generation: None,
+        });
+    }
+
+    fn emit_subagent_llm_call_begin_with_generation(
+        &self,
+        agent_code: &str,
+        model: &str,
+        backend: &str,
+        tool_manifest_count: usize,
+        generation: Option<&apxm_core::events::payload::GenerationIdentity>,
+    ) {
+        self.write_trace_event(apxm_core::events::payload::SubagentLlmCallBeginPayload {
+            agent_code: agent_code.to_string(),
+            model: model.to_string(),
+            backend: backend.to_string(),
+            tool_manifest_count,
+            generation: generation.cloned(),
+        });
+    }
+
+    fn emit_subagent_llm_call_end(
+        &self,
+        agent_code: &str,
+        finish_reason: &str,
+        input_tokens: usize,
+        output_tokens: usize,
+        content_len: usize,
+    ) {
+        self.write_trace_event(apxm_core::events::payload::SubagentLlmCallEndPayload {
+            agent_code: agent_code.to_string(),
+            finish_reason: finish_reason.to_string(),
+            usage: apxm_core::events::payload::UsagePayload {
+                input_tokens,
+                output_tokens,
+                generation: None,
+            },
+            content_len,
+            generation: None,
+        });
+    }
+
+    fn emit_subagent_llm_call_end_with_generation(
+        &self,
+        agent_code: &str,
+        finish_reason: &str,
+        input_tokens: usize,
+        output_tokens: usize,
+        content_len: usize,
+        generation: Option<&apxm_core::events::payload::GenerationIdentity>,
+    ) {
+        self.write_trace_event(apxm_core::events::payload::SubagentLlmCallEndPayload {
+            agent_code: agent_code.to_string(),
+            finish_reason: finish_reason.to_string(),
+            usage: apxm_core::events::payload::UsagePayload {
+                input_tokens,
+                output_tokens,
+                generation: None,
+            },
+            content_len,
+            generation: generation.cloned(),
+        });
+    }
+
+    fn emit_tool_call_begin(&self, agent_code: &str, tool_name: &str, argument_keys: &[String]) {
+        self.write_trace_event(apxm_core::events::payload::ToolCallBeginPayload {
+            agent_code: agent_code.to_string(),
+            tool_name: tool_name.to_string(),
+            argument_keys: argument_keys.to_vec(),
+            tool_call_correlation: None,
+        });
+    }
+
+    fn emit_tool_call_begin_with_correlation(
+        &self,
+        agent_code: &str,
+        tool_name: &str,
+        argument_keys: &[String],
+        correlation: Option<&apxm_core::events::payload::ToolCallCorrelation>,
+    ) {
+        self.write_trace_event(apxm_core::events::payload::ToolCallBeginPayload {
+            agent_code: agent_code.to_string(),
+            tool_name: tool_name.to_string(),
+            argument_keys: argument_keys.to_vec(),
+            tool_call_correlation: correlation.cloned(),
+        });
+    }
+
+    fn emit_tool_call_end(
+        &self,
+        agent_code: &str,
+        tool_name: &str,
+        result_keys: &[String],
+        status: apxm_core::events::payload::ToolCallStatus,
+        latency_ms: u64,
+    ) {
+        self.write_trace_event(apxm_core::events::payload::ToolCallEndPayload {
+            agent_code: agent_code.to_string(),
+            tool_name: tool_name.to_string(),
+            result_keys: result_keys.to_vec(),
+            status,
+            latency_ms,
+            tool_call_correlation: None,
+        });
+    }
+
+    fn emit_tool_call_end_with_correlation(
+        &self,
+        agent_code: &str,
+        tool_name: &str,
+        result_keys: &[String],
+        status: apxm_core::events::payload::ToolCallStatus,
+        latency_ms: u64,
+        correlation: Option<&apxm_core::events::payload::ToolCallCorrelation>,
+    ) {
+        self.write_trace_event(apxm_core::events::payload::ToolCallEndPayload {
+            agent_code: agent_code.to_string(),
+            tool_name: tool_name.to_string(),
+            result_keys: result_keys.to_vec(),
+            status,
+            latency_ms,
+            tool_call_correlation: correlation.cloned(),
+        });
+    }
+
+    fn emit_subagent_done(
+        &self,
+        agent_code: &str,
+        total_tool_calls: usize,
+        input_tokens_total: usize,
+        output_tokens_total: usize,
+        evidence_excerpt: Option<&str>,
+    ) {
+        self.write_trace_event(apxm_core::events::payload::SubagentDonePayload {
+            agent_code: agent_code.to_string(),
+            total_tool_calls,
+            usage_total: apxm_core::events::payload::UsagePayload {
+                input_tokens: input_tokens_total,
+                output_tokens: output_tokens_total,
+                generation: None,
+            },
+            evidence_excerpt: evidence_excerpt.map(str::to_string),
+        });
+    }
+
+    fn emit_subagent_failed(&self, agent_code: &str, error_class: &str, error_message_safe: &str) {
+        self.write_trace_event(apxm_core::events::payload::SubagentFailedPayload {
+            agent_code: agent_code.to_string(),
+            error_class: error_class.to_string(),
+            error_message_safe: error_message_safe.to_string(),
+        });
+    }
+
+    fn emit_agent_message(
+        &self,
+        text: &str,
+        item_id: Option<&str>,
+        response_id: Option<&str>,
+        input_tokens: Option<usize>,
+        output_tokens: Option<usize>,
+    ) {
+        let usage = match (input_tokens, output_tokens) {
+            (Some(input_tokens), Some(output_tokens)) => {
+                Some(apxm_core::events::payload::UsagePayload {
+                    input_tokens,
+                    output_tokens,
+                    generation: None,
+                })
+            }
+            _ => None,
+        };
+        self.write_trace_event(apxm_core::events::payload::AgentMessagePayload {
+            text: text.to_string(),
+            item_id: item_id.map(str::to_string),
+            response_id: response_id.map(str::to_string),
+            usage,
+        });
+    }
+}
+
+#[cfg(test)]
+mod write_input_air_tests {
+    use super::*;
+    use apxm_compiler::AirModuleBuilder;
+    use apxm_core::types::AISOperationType;
+
+    /// Regression guard for the closed `emit_air_simple` dual emitter
+    /// (the frontend graph parity invariant):
+    /// `write_input_air` must delegate to the single canonical printer
+    /// (`AirModule::to_air()`), not a private hand-formatted dialect. The
+    /// old emitter's output (`"; graph: ..."` comments, `"%1 = ask(node_1)"`
+    /// call syntax, `"edge %1 -> %2 [data]"` lines) was not real MLIR and
+    /// could not round-trip through `replay_command`'s
+    /// `air_graph_from_source`, which compiles `input.air` with the real
+    /// compiler.
+    #[test]
+    fn write_input_air_delegates_to_canonical_printer() {
+        let mut builder = AirModuleBuilder::new("session_input_air");
+        builder.node_with_id(
+            1,
+            "ask".to_string(),
+            AISOperationType::Ask,
+            HashMap::from([("template_str".to_string(), Value::String("hi".to_string()))]),
+        );
+        let module = builder.build();
+
+        let dir = tempfile::tempdir().expect("tempdir");
+        let writer = SessionOutputWriter::new(dir.path(), "exec-1").expect("writer");
+        writer.write_input_air(&module).expect("write_input_air");
+
+        let written = fs::read_to_string(
+            writer
+                .session_dir()
+                .join(constants::session::files::INPUT_GRAPH),
+        )
+        .expect("read input.air");
+
+        // Byte-identical to the canonical printer's own output for the same
+        // module — proves delegation, not a re-implementation that happens
+        // to look similar.
+        let canonical = module.to_air().expect("canonical printer emits");
+        assert_eq!(written, canonical);
+
+        // Real MLIR text, not the deleted private dialect.
+        assert!(written.contains("module {"));
+        assert!(written.contains("func.func @session_input_air"));
+        assert!(written.contains("ais.ask"));
+        assert!(!written.contains("; graph:"));
+        assert!(!written.contains("edge %"));
+    }
+}
+
+#[cfg(test)]
+mod layer2_tests {
+    use super::*;
+
+    fn read_trace_kinds(session_dir: &Path) -> Vec<String> {
+        let trace_path = session_dir.join(constants::session::files::TRACE);
+        let contents = fs::read_to_string(trace_path).unwrap_or_default();
+        contents
+            .lines()
+            .filter_map(|line| serde_json::from_str::<serde_json::Value>(line).ok())
+            .filter_map(|value| {
+                value
+                    .pointer("/payload/kind")
+                    .and_then(|k| k.as_str())
+                    .map(str::to_string)
+            })
+            .collect()
+    }
+
+    /// Positive: every Layer-2 hook on `SessionEventEmitter` — the emitter
+    /// backing `apxm execute`/`apxm workflow` — now writes a real trace
+    /// frame instead of silently no-op'ing.
+    #[test]
+    fn session_event_emitter_delivers_all_layer2_kinds() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let emitter = SessionEventEmitter::new(dir.path(), "trace-1".to_string(), None, None)
+            .expect("emitter");
+
+        emitter.emit_turn_started("exec-1", Some("turn-1"), Some("Cleo"));
+        emitter.emit_turn_complete("exec-1", 100, true);
+        emitter.emit_subagent_spawn_begin(
+            "agent-1",
+            Some("Agent One"),
+            None,
+            None,
+            None,
+            Some("span-0"),
+        );
+        emitter.emit_subagent_spawn_end("agent-1");
+        emitter.emit_tool_call_begin("agent-1", "web_search", &["q".to_string()]);
+        emitter.emit_tool_call_end(
+            "agent-1",
+            "web_search",
+            &["r".to_string()],
+            apxm_core::events::payload::ToolCallStatus::Ok,
+            12,
+        );
+        emitter.emit_agent_message("final answer", None, None, Some(1), Some(2));
+
+        let kinds = read_trace_kinds(dir.path());
+        for expected in [
+            "turn_started",
+            "turn_complete",
+            "subagent_spawn_begin",
+            "subagent_spawn_end",
+            "tool_call_begin",
+            "tool_call_end",
+            "agent_message",
+        ] {
+            assert!(
+                kinds.iter().any(|k| k == expected),
+                "expected {expected} to be delivered, got {kinds:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn session_event_emitter_persists_token_usage_generation() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let emitter = SessionEventEmitter::new(dir.path(), "trace-1".to_string(), None, None)
+            .expect("emitter");
+        let generation = apxm_core::events::payload::GenerationIdentity::new("call-usage", 1, 2);
+
+        emitter.emit_token_usage_with_generation(7, 11, 13, Some(&generation));
+
+        let trace_path = dir.path().join(constants::session::files::TRACE);
+        let contents = fs::read_to_string(trace_path).expect("read trace");
+        let value: serde_json::Value =
+            serde_json::from_str(contents.lines().next().expect("trace frame"))
+                .expect("decode trace frame");
+        assert_eq!(
+            value.pointer("/payload/node_id"),
+            Some(&serde_json::json!(7))
+        );
+        assert_eq!(
+            value.pointer("/payload/generation"),
+            Some(&serde_json::json!({
+                "call_id": "call-usage",
+                "attempt": 1,
+                "step_number": 2,
+            }))
+        );
     }
 }
