@@ -1,8 +1,6 @@
 id = "test"
-description = "Create a deterministic workspace-confined test command without running it."
+description = "Prepare a test command for review without running it."
 kind = "typescript_handler"
 handler_function = "prepareTest"
 handler_module = "capabilities/test/handler"
 read_only = true
-scope = "session_workspace"
-root = "."

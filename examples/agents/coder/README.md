@@ -1,9 +1,8 @@
 # Coder
 
-Coder explores a session workspace with `read`, proposes changes through the
-read-only `edit` handler, and prepares a deterministic test command through
-the read-only `test` handler. The host must approve `write` and `bash` before
-the proposal is applied or the test command runs.
+Coder inspects source with `read`, prepares structured before/after proposals
+with `edit`, and prepares test commands for review with `test`. All three
+capabilities are read-only: Coder does not apply changes or execute commands.
 
-Coder may spawn `explorer`. The child receives only `read` and reports
-findings to its parent.
+The package hierarchy permits `explorer` as a child. Explorer receives only
+`read`; host orchestration decides whether to invoke it.

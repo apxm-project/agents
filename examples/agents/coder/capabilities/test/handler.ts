@@ -1,17 +1,25 @@
 import { tool } from "@apxm/frontend";
 
-type TestArgs = {
-  command?: unknown;
-};
+interface TestArgs {
+  command: string;
+}
 
+/** Prepare a test command without executing it. */
 export const prepareTest = tool({
   name: "test",
-  description: "Return a deterministic test command without executing it.",
-})((raw: unknown) => {
-  const args = (raw ?? {}) as TestArgs;
-  const command = String(args.command ?? "python -m unittest discover -s tests").trim();
-  if (!command || command.includes("\n") || command.includes(";")) {
-    throw new Error("test command must be a single workspace-confined command");
+  description: "Prepare a single-line test command for review without executing it.",
+  schema: {
+    type: "object",
+    properties: {
+      command: { type: "string", minLength: 1, pattern: "^[^\\r\\n]+$" },
+    },
+    required: ["command"],
+    additionalProperties: false,
+  },
+})((args: TestArgs) => {
+  const command = args.command.trim();
+  if (!command || command.includes("\n") || command.includes("\r")) {
+    throw new Error("test requires a single-line command");
   }
-  return JSON.stringify({ command, mutates: false });
+  return { command, executes: false, mutates: false };
 });

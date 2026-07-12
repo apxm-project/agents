@@ -1,4 +1,2 @@
 capability = "read"
 decision = "allow"
-approval_posture = "auto"
-approval_scope = "session"

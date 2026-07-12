@@ -1,8 +1,6 @@
 id = "edit"
-description = "Create a workspace-confined patch proposal without applying it."
+description = "Create a structured before/after proposal without applying it."
 kind = "typescript_handler"
 handler_function = "proposeEdit"
 handler_module = "capabilities/edit/handler"
 read_only = true
-scope = "session_workspace"
-root = "."

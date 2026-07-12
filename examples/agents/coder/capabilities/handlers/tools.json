@@ -1,32 +1,59 @@
 [
   {
-    "description": "Return a deterministic patch proposal without changing a file.",
+    "description": "Return a structured before/after proposal without changing a file.",
     "handler_id": "sha256:3871f29a02b3bab50c212c64d2f2413f49d6234ad77611cf6e776689a20eb5f0",
     "module": "capabilities/edit/handler",
     "name": "edit",
     "qualname": "proposeEdit",
     "read_only": true,
-    "schema": {},
+    "requires_approval": false,
+    "schema": {
+      "additionalProperties": false,
+      "properties": {
+        "after": {
+          "minLength": 1,
+          "type": "string"
+        },
+        "before": {
+          "minLength": 1,
+          "type": "string"
+        },
+        "file_path": {
+          "minLength": 1,
+          "type": "string"
+        }
+      },
+      "required": [
+        "file_path",
+        "before",
+        "after"
+      ],
+      "type": "object"
+    },
     "source_file": "capabilities/edit/handler.ts"
   },
   {
-    "event": "session_start",
-    "handler_id": "sha256:3b27b2c22c620483766542f4cedd990afb3af16edfdb40260bc2711dabdfea48",
-    "match": "*",
-    "mode": "observe",
-    "module": "capabilities/handlers/hooks",
-    "name": "hook",
-    "qualname": "restore_session",
-    "source_file": "capabilities/handlers/hooks.ts"
-  },
-  {
-    "description": "Return a deterministic test command without executing it.",
+    "description": "Prepare a single-line test command for review without executing it.",
     "handler_id": "sha256:de14358083c4106c50fef5504728c4c5f8bee1faca94878194ba6ec886411531",
     "module": "capabilities/test/handler",
     "name": "test",
     "qualname": "prepareTest",
     "read_only": true,
-    "schema": {},
+    "requires_approval": false,
+    "schema": {
+      "additionalProperties": false,
+      "properties": {
+        "command": {
+          "minLength": 1,
+          "pattern": "^[^\\r\\n]+$",
+          "type": "string"
+        }
+      },
+      "required": [
+        "command"
+      ],
+      "type": "object"
+    },
     "source_file": "capabilities/test/handler.ts"
   }
 ]
