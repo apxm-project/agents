@@ -2206,6 +2206,34 @@ handler = "hooks.author_compaction"
         // pipeline — the exact bar `apxm compile` itself applies.
         assert_cli_air_round_trips(&air_text);
     }
+
+    fn assert_example_agent_artifact_round_trips(name: &str) {
+        let agent_dir = crate::commands::agent::example_agent_dir(name);
+        let (air_path, _tmp, _, _) = prepare_graph_input_from_declarative_agent(&agent_dir)
+            .unwrap_or_else(|error| panic!("failed to prepare {name}: {error:#}"));
+        let compiler = Compiler::with_opt_level(OptimizationLevel::O0)
+            .unwrap_or_else(|error| panic!("failed to initialize compiler for {name}: {error}"));
+        let module = compiler
+            .compile(&air_path)
+            .unwrap_or_else(|error| panic!("failed to compile {name}: {error}"));
+        let artifact = module
+            .generate_artifact_with_manifest(None, None)
+            .unwrap_or_else(|error| panic!("failed to generate {name} artifact: {error}"));
+        let dag = artifact
+            .entry_dag()
+            .unwrap_or_else(|| panic!("{name} artifact has no entry DAG"));
+        let air = graph_from_execution_dag(dag)
+            .to_air()
+            .unwrap_or_else(|error| panic!("failed to decompile {name}: {error}"));
+
+        assert_cli_air_round_trips(&air);
+    }
+
+    #[test]
+    fn coder_and_explorer_artifacts_round_trip() {
+        assert_example_agent_artifact_round_trips("coder");
+        assert_example_agent_artifact_round_trips("explorer");
+    }
 }
 
 /// Convert an ExecutionDag back to an AirModule for decompile and session output.
