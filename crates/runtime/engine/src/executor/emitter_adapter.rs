@@ -588,10 +588,21 @@ impl ExecutionEventEmitter for EmitterAdapter {
     }
 
     fn emit_token_usage(&self, node_id: u64, input_tokens: usize, output_tokens: usize) {
+        self.emit_token_usage_with_generation(node_id, input_tokens, output_tokens, None);
+    }
+
+    fn emit_token_usage_with_generation(
+        &self,
+        node_id: u64,
+        input_tokens: usize,
+        output_tokens: usize,
+        generation: Option<&GenerationIdentity>,
+    ) {
         self.emit(TokenUsagePayload {
             node_id,
             input_tokens,
             output_tokens,
+            generation: generation.cloned(),
         });
     }
 
@@ -1164,6 +1175,25 @@ mod tests {
         let events = capture.events.lock();
         let kinds: Vec<&'static str> = events.iter().map(|e| e.kind().name()).collect();
         assert_eq!(kinds, vec!["approval_request", "approval_resolved"]);
+    }
+
+    #[test]
+    fn token_usage_preserves_generation_identity() {
+        let (adapter, capture) = adapter_with_capture();
+        let generation = GenerationIdentity::new("call-usage", 2, 4);
+
+        adapter.emit_token_usage_with_generation(7, 11, 13, Some(&generation));
+
+        let events = capture.events.lock();
+        assert_eq!(events.len(), 1);
+        let payload = events[0]
+            .payload
+            .downcast_ref::<TokenUsagePayload>()
+            .expect("token_usage payload");
+        assert_eq!(payload.node_id, 7);
+        assert_eq!(payload.input_tokens, 11);
+        assert_eq!(payload.output_tokens, 13);
+        assert_eq!(payload.generation.as_ref(), Some(&generation));
     }
 
     /// **Compaction event-delivery verification:** `CONTEXT_COMPACTED`/

@@ -1111,10 +1111,21 @@ impl ExecutionEventEmitter for SessionEventEmitter {
     }
 
     fn emit_token_usage(&self, node_id: u64, input_tokens: usize, output_tokens: usize) {
+        self.emit_token_usage_with_generation(node_id, input_tokens, output_tokens, None);
+    }
+
+    fn emit_token_usage_with_generation(
+        &self,
+        node_id: u64,
+        input_tokens: usize,
+        output_tokens: usize,
+        generation: Option<&apxm_core::events::payload::GenerationIdentity>,
+    ) {
         self.write_trace_event(apxm_core::events::payload::TokenUsagePayload {
             node_id,
             input_tokens,
             output_tokens,
+            generation: generation.cloned(),
         });
     }
 
@@ -1500,5 +1511,33 @@ mod layer2_tests {
                 "expected {expected} to be delivered, got {kinds:?}"
             );
         }
+    }
+
+    #[test]
+    fn session_event_emitter_persists_token_usage_generation() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let emitter = SessionEventEmitter::new(dir.path(), "trace-1".to_string(), None, None)
+            .expect("emitter");
+        let generation = apxm_core::events::payload::GenerationIdentity::new("call-usage", 1, 2);
+
+        emitter.emit_token_usage_with_generation(7, 11, 13, Some(&generation));
+
+        let trace_path = dir.path().join(constants::session::files::TRACE);
+        let contents = fs::read_to_string(trace_path).expect("read trace");
+        let value: serde_json::Value =
+            serde_json::from_str(contents.lines().next().expect("trace frame"))
+                .expect("decode trace frame");
+        assert_eq!(
+            value.pointer("/payload/node_id"),
+            Some(&serde_json::json!(7))
+        );
+        assert_eq!(
+            value.pointer("/payload/generation"),
+            Some(&serde_json::json!({
+                "call_id": "call-usage",
+                "attempt": 1,
+                "step_number": 2,
+            }))
+        );
     }
 }

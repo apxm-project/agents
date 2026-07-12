@@ -937,10 +937,11 @@ pub(super) async fn execute_ask_with_tools_attempt(
                 agent_name,
             );
             if let Some(emitter) = &ctx.event_emitter {
-                emitter.emit_token_usage(
+                emitter.emit_token_usage_with_generation(
                     node.id,
                     response.usage.input_tokens,
                     response.usage.output_tokens,
+                    Some(&generation),
                 );
             }
         }
