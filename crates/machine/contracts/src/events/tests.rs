@@ -372,6 +372,7 @@ fn representative_core_payloads() -> Vec<Box<dyn EventPayload>> {
             node_id: 1,
             input_tokens: 10,
             output_tokens: 20,
+            generation: Some(GenerationIdentity::new("call-usage", 2, 3)),
         }),
         Box::new(MemoizationHitPayload { node_id: 1 }),
         Box::new(ErrorPayload {
@@ -527,6 +528,27 @@ fn representative_core_payloads() -> Vec<Box<dyn EventPayload>> {
             tool_call_correlation: None,
         }),
     ]
+}
+
+#[test]
+fn token_usage_without_generation_remains_backward_compatible() {
+    let value = serde_json::json!({
+        "meta": sample_meta_json(),
+        "payload": {
+            "kind": "token_usage",
+            "node_id": 7,
+            "input_tokens": 11,
+            "output_tokens": 13,
+        },
+    });
+
+    let event: ApxmEvent = serde_json::from_value(value).expect("decode legacy token_usage");
+    let payload = event
+        .payload
+        .downcast_ref::<TokenUsagePayload>()
+        .expect("token_usage payload");
+    assert_eq!(payload.node_id, 7);
+    assert_eq!(payload.generation, None);
 }
 
 /// Positive: every `CORE_EVENT_KINDS` entry has exactly one representative

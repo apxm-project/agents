@@ -516,7 +516,15 @@ class GpuUtilizationEventPayload(TypedDict):
     utilization_pct: int | float
     memory_pct: int | float
 
-class TokenUsageEventPayload(TypedDict):
+class TokenUsageEventPayloadGeneration(TypedDict):
+    call_id: str
+    attempt: int
+    step_number: int
+
+class _TokenUsageEventPayloadOptional(TypedDict, total=False):
+    generation: TokenUsageEventPayloadGeneration
+
+class TokenUsageEventPayload(_TokenUsageEventPayloadOptional):
     kind: Literal['token_usage']
     node_id: int
     input_tokens: int

@@ -832,10 +832,11 @@ async fn execute_llm_once(
             agent_name,
         );
         if let Some(emitter) = &ctx.event_emitter {
-            emitter.emit_token_usage(
+            emitter.emit_token_usage_with_generation(
                 node.id,
                 response.usage.input_tokens,
                 response.usage.output_tokens,
+                Some(&generation),
             );
         }
     }

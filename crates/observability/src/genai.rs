@@ -14,9 +14,9 @@ use apxm_core::events::payload::{
     AgentMessagePayload, ExecuteCompletePayload, GenerationIdentity, LlmDonePayload,
     LlmPromptPayload, LlmStepCompletedPayload, NodeOutputPayload, RedactedContent,
     SubagentLlmCallBeginPayload, SubagentLlmCallEndPayload, SubagentSpawnBeginPayload,
-    ThoughtPayload, TokenPayload, ToolCallBeginPayload, ToolCallEndPayload, ToolCallPayload,
-    ToolEndPayload, ToolStartPayload, TurnAbortedPayload, TurnBoundaryPayload, TurnCompletePayload,
-    TurnDirection, TurnStartedPayload,
+    ThoughtPayload, TokenPayload, TokenUsagePayload, ToolCallBeginPayload, ToolCallEndPayload,
+    ToolCallPayload, ToolEndPayload, ToolStartPayload, TurnAbortedPayload, TurnBoundaryPayload,
+    TurnCompletePayload, TurnDirection, TurnStartedPayload,
 };
 use apxm_core::events::{ApxmEvent, EventEmitter, EventSource};
 use blake3::Hasher;
@@ -887,6 +887,24 @@ fn add_payload_attributes(
         ));
     }
 
+    if let Some(payload) = event.payload.downcast_ref::<TokenUsagePayload>() {
+        if let Some(generation) = &payload.generation {
+            add_generation_identity_attributes(attributes, generation);
+        }
+        attributes.push(KeyValue::new(
+            "apxm.node.id",
+            i64::try_from(payload.node_id).unwrap_or(i64::MAX),
+        ));
+        attributes.push(KeyValue::new(
+            "gen_ai.usage.input_tokens",
+            i64::try_from(payload.input_tokens).unwrap_or(i64::MAX),
+        ));
+        attributes.push(KeyValue::new(
+            "gen_ai.usage.output_tokens",
+            i64::try_from(payload.output_tokens).unwrap_or(i64::MAX),
+        ));
+    }
+
     if let Some(payload) = event.payload.downcast_ref::<ToolCallPayload>() {
         add_tool_call_attributes(attributes, payload, config);
         if let Some(correlation) = &payload.tool_call_correlation {
@@ -1495,6 +1513,42 @@ mod tests {
                 .map(Value::as_str)
                 .map(|value| value.into_owned()),
             Some("response".to_string())
+        );
+    }
+
+    #[test]
+    fn token_usage_exports_generation_identity_and_counts() {
+        let (exporter, spans, _) = test_exporter(GenAiExporterConfig::enabled());
+        exporter.emit(event(TokenUsagePayload {
+            node_id: 7,
+            input_tokens: 11,
+            output_tokens: 13,
+            generation: Some(GenerationIdentity::new("call-usage", 2, 4)),
+        }));
+
+        let spans = spans.get_finished_spans().expect("span export failed");
+        assert_eq!(spans.len(), 1);
+        let span = &spans[0];
+        assert_eq!(
+            attribute_value(span, "apxm.generation.call_id").map(Value::as_str),
+            Some(std::borrow::Cow::Borrowed("call-usage"))
+        );
+        assert_eq!(
+            attribute_value(span, "apxm.generation.attempt"),
+            Some(&Value::I64(2))
+        );
+        assert_eq!(
+            attribute_value(span, "apxm.generation.step_number"),
+            Some(&Value::I64(4))
+        );
+        assert_eq!(attribute_value(span, "apxm.node.id"), Some(&Value::I64(7)));
+        assert_eq!(
+            attribute_value(span, "gen_ai.usage.input_tokens"),
+            Some(&Value::I64(11))
+        );
+        assert_eq!(
+            attribute_value(span, "gen_ai.usage.output_tokens"),
+            Some(&Value::I64(13))
         );
     }
 

@@ -355,6 +355,23 @@ impl ExecutionEventEmitter for MultiEmitter {
         });
     }
 
+    fn emit_token_usage_with_generation(
+        &self,
+        node_id: u64,
+        input_tokens: usize,
+        output_tokens: usize,
+        generation: Option<&GenerationIdentity>,
+    ) {
+        self.for_each("emit_token_usage_with_generation", |child| {
+            child.emit_token_usage_with_generation(
+                node_id,
+                input_tokens,
+                output_tokens,
+                generation,
+            );
+        });
+    }
+
     fn emit_memoization_hit(&self, node_id: u64) {
         self.for_each("emit_memoization_hit", |child| {
             child.emit_memoization_hit(node_id);
@@ -656,6 +673,7 @@ mod tests {
     #[derive(Default)]
     struct RecordingEmitter {
         calls: PlMutex<Vec<&'static str>>,
+        token_generations: PlMutex<Vec<Option<GenerationIdentity>>>,
         span_id: PlMutex<Option<String>>,
         seq: AtomicUsize,
     }
@@ -668,6 +686,10 @@ mod tests {
 
         fn calls(&self) -> Vec<&'static str> {
             self.calls.lock().clone()
+        }
+
+        fn token_generations(&self) -> Vec<Option<GenerationIdentity>> {
+            self.token_generations.lock().clone()
         }
     }
 
@@ -746,6 +768,16 @@ mod tests {
             self.record("agent_message");
         }
 
+        fn emit_token_usage_with_generation(
+            &self,
+            _node_id: u64,
+            _input_tokens: usize,
+            _output_tokens: usize,
+            generation: Option<&GenerationIdentity>,
+        ) {
+            self.token_generations.lock().push(generation.cloned());
+        }
+
         fn emit_approval_request(
             &self,
             _agent_code: &str,
@@ -814,5 +846,21 @@ mod tests {
             expected,
             "child B must see every Layer-2 call"
         );
+    }
+
+    #[test]
+    fn multi_emitter_forwards_token_usage_generation_to_every_child() {
+        let child_a = Arc::new(RecordingEmitter::default());
+        let child_b = Arc::new(RecordingEmitter::default());
+        let multi = MultiEmitter::new(vec![
+            child_a.clone() as Arc<dyn ExecutionEventEmitter>,
+            child_b.clone() as Arc<dyn ExecutionEventEmitter>,
+        ]);
+        let generation = GenerationIdentity::new("call-usage", 1, 2);
+
+        multi.emit_token_usage_with_generation(7, 11, 13, Some(&generation));
+
+        assert_eq!(child_a.token_generations(), vec![Some(generation.clone())]);
+        assert_eq!(child_b.token_generations(), vec![Some(generation)]);
     }
 }

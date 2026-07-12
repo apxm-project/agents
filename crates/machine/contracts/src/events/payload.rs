@@ -1123,6 +1123,9 @@ pub struct TokenUsagePayload {
     pub input_tokens: usize,
     /// Output tokens generated.
     pub output_tokens: usize,
+    /// Physical model generation accounted by this usage event, when applicable.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub generation: Option<GenerationIdentity>,
 }
 impl_event_payload!(TokenUsagePayload, kind::TOKEN_USAGE);
 

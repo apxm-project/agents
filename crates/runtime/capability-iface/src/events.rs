@@ -291,6 +291,20 @@ pub trait ExecutionEventEmitter: Send + Sync {
     // ── Token accounting ──────────────────────────────────────────
     fn emit_token_usage(&self, _node_id: u64, _input_tokens: usize, _output_tokens: usize) {}
 
+    /// Emit token usage associated with one physical model generation.
+    ///
+    /// The default preserves compatibility with emitters that only aggregate
+    /// per-node usage and do not expose generation-level observability.
+    fn emit_token_usage_with_generation(
+        &self,
+        node_id: u64,
+        input_tokens: usize,
+        output_tokens: usize,
+        _generation: Option<&GenerationIdentity>,
+    ) {
+        self.emit_token_usage(node_id, input_tokens, output_tokens);
+    }
+
     // ── Memoization ───────────────────────────────────────────────
     fn emit_memoization_hit(&self, _node_id: u64) {}
 

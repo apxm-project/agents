@@ -337,6 +337,7 @@ export interface TokenUsageEventPayload {
   node_id: number;
   input_tokens: number;
   output_tokens: number;
+  generation?: { "call_id": string; "attempt": number; "step_number": number; };
   [key: string]: unknown;
 }
 
