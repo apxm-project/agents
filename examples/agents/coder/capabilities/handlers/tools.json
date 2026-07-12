@@ -1,0 +1,59 @@
+[
+  {
+    "description": "Return a structured before/after proposal without changing a file.",
+    "handler_id": "sha256:3871f29a02b3bab50c212c64d2f2413f49d6234ad77611cf6e776689a20eb5f0",
+    "module": "capabilities/edit/handler",
+    "name": "edit",
+    "qualname": "proposeEdit",
+    "read_only": true,
+    "requires_approval": false,
+    "schema": {
+      "additionalProperties": false,
+      "properties": {
+        "after": {
+          "minLength": 1,
+          "type": "string"
+        },
+        "before": {
+          "minLength": 1,
+          "type": "string"
+        },
+        "file_path": {
+          "minLength": 1,
+          "type": "string"
+        }
+      },
+      "required": [
+        "file_path",
+        "before",
+        "after"
+      ],
+      "type": "object"
+    },
+    "source_file": "capabilities/edit/handler.ts"
+  },
+  {
+    "description": "Prepare a single-line test command for review without executing it.",
+    "handler_id": "sha256:de14358083c4106c50fef5504728c4c5f8bee1faca94878194ba6ec886411531",
+    "module": "capabilities/test/handler",
+    "name": "test",
+    "qualname": "prepareTest",
+    "read_only": true,
+    "requires_approval": false,
+    "schema": {
+      "additionalProperties": false,
+      "properties": {
+        "command": {
+          "minLength": 1,
+          "pattern": "^[^\\r\\n]+$",
+          "type": "string"
+        }
+      },
+      "required": [
+        "command"
+      ],
+      "type": "object"
+    },
+    "source_file": "capabilities/test/handler.ts"
+  }
+]

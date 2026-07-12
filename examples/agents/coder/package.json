@@ -1,0 +1,8 @@
+{
+  "name": "coder",
+  "private": true,
+  "type": "module",
+  "dependencies": {
+    "@apxm/frontend": "file:../../../crates/compiler/frontend/typescript"
+  }
+}
