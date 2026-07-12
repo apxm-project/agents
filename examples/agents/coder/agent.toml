@@ -1,11 +1,9 @@
 capabilities = [
-    "bash",
     "edit",
     "read",
     "test",
-    "write",
 ]
-description = "A confined coding agent with explicit approvals and a read-only explorer child."
+description = "A read-only coding assistant that inspects source and prepares edit and test proposals."
 display_name = "Coder"
 domain = "software"
 id = "coder"
@@ -18,22 +16,13 @@ version = "0.1.0"
 [compile]
 frontend = "typescript"
 
-[[hooks]]
-event = "session_start"
-handler = "capabilities.handlers.hooks.restore_session"
-mode = "observe"
-
 [prompts]
 persona = "prompts/persona.md"
 safety = "prompts/safety.md"
 
 [runtime]
-checkpoint_mode = "snapshot"
 memory_space = "stm"
-resume_hook = "session_start"
 session_prefix = "coder"
-tool_output_max_tokens = "8000"
-tool_output_trim = "deterministic-prefix"
 
 [runtime.loop]
 mode = "host"

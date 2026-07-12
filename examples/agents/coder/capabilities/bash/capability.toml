@@ -1,8 +1,0 @@
-id = "bash"
-description = "Run an approved test or inspection command in the session workspace."
-kind = "builtin"
-read_only = false
-requires_approval = true
-scope = "session_workspace"
-working_directory = "."
-max_output_bytes = 12000

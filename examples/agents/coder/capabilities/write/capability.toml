@@ -1,7 +1,0 @@
-id = "write"
-description = "Write approved file contents only inside the session workspace."
-kind = "builtin"
-read_only = false
-requires_approval = true
-scope = "session_workspace"
-root = "."

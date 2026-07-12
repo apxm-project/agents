@@ -1,6 +1,4 @@
 id = "read"
-description = "Read source files only from the session workspace."
+description = "Read source files exposed by the runtime read capability."
 kind = "builtin"
 read_only = true
-scope = "session_workspace"
-root = "."

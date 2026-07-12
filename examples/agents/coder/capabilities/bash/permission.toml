@@ -1,5 +1,0 @@
-capability = "bash"
-decision = "ask"
-approval_posture = "confirm"
-approval_scope = "session"
-reason = "Shell execution can change or disclose workspace state."
