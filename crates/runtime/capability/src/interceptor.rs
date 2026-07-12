@@ -1,5 +1,6 @@
 //! Capability interception hooks.
 
+use apxm_core::events::payload::{ApprovalRiskLevel, ToolCallCorrelation};
 use apxm_core::types::consent::{
     ConsentBroker, ConsentDecision, PermissionPrompt, PromptMode, RiskLevel,
 };
@@ -23,6 +24,7 @@ pub const DEFAULT_PERMISSION_TIMEOUT_SECS: u64 = 120;
 pub struct PreInvokeContext<'a> {
     pub registry: &'a CapabilityRegistry,
     pub call_id: &'a str,
+    pub tool_call_correlation: Option<&'a ToolCallCorrelation>,
     pub consent_broker: &'a dyn ConsentBroker,
     pub event_emitter: Option<&'a dyn ExecutionEventEmitter>,
     pub host_id: Option<&'a str>,
@@ -98,7 +100,13 @@ pub(crate) async fn pre_invoke_policy_ctx(
 
     let agent_code = ctx.agent_code.unwrap_or("runtime");
     if let Some(emitter) = ctx.event_emitter {
-        emitter.emit_approval_request(agent_code, name, &prompt_id, "high");
+        emitter.emit_approval_request_with_correlation(
+            agent_code,
+            name,
+            &prompt_id,
+            ApprovalRiskLevel::High,
+            ctx.tool_call_correlation,
+        );
     }
 
     let prompt = PermissionPrompt {
@@ -129,7 +137,11 @@ pub(crate) async fn pre_invoke_policy_ctx(
 
     let resolution = decision.resolution();
     if let Some(emitter) = ctx.event_emitter {
-        emitter.emit_approval_resolved(&prompt_id, resolution);
+        emitter.emit_approval_resolved_with_correlation(
+            &prompt_id,
+            resolution,
+            ctx.tool_call_correlation,
+        );
     }
 
     match decision {
@@ -264,8 +276,7 @@ mod tests {
     use super::*;
     use crate::executor::{CapabilityExecutor, EchoCapability};
     use apxm_core::types::consent::{
-        ApprovalEvidence, ApprovalResolution, ConsentBroker, ConsentDecision,
-        InteractiveApproval,
+        ApprovalEvidence, ApprovalResolution, ConsentBroker, ConsentDecision, InteractiveApproval,
     };
     use std::sync::Arc;
 
@@ -293,7 +304,7 @@ mod tests {
             agent_code: &str,
             tool_name: &str,
             approval_id: &str,
-            _risk_level: &str,
+            _risk_level: apxm_core::events::payload::ApprovalRiskLevel,
         ) {
             self.requests.lock().push((
                 agent_code.to_string(),
@@ -362,6 +373,7 @@ mod tests {
         let ctx = PreInvokeContext {
             registry: &registry,
             call_id: "call-1",
+            tool_call_correlation: None,
             consent_broker: &broker,
             event_emitter: Some(&emitter),
             host_id: Some("host-1"),
@@ -374,7 +386,10 @@ mod tests {
         let decision = pre_invoke_ctx(&ctx, "gated-echo", &args).await;
         assert!(matches!(decision, InterceptDecision::Allow));
         assert_eq!(emitter.requests.lock().len(), 1);
-        assert_eq!(emitter.resolutions.lock()[0].1, ApprovalResolution::Approved);
+        assert_eq!(
+            emitter.resolutions.lock()[0].1,
+            ApprovalResolution::Approved
+        );
     }
 
     #[tokio::test]
@@ -388,6 +403,7 @@ mod tests {
         let ctx = PreInvokeContext {
             registry: &registry,
             call_id: "call-2",
+            tool_call_correlation: None,
             consent_broker: &broker,
             event_emitter: Some(&emitter),
             host_id: None,
@@ -409,6 +425,7 @@ mod tests {
         let ctx = PreInvokeContext {
             registry: &registry,
             call_id: "call-3",
+            tool_call_correlation: None,
             consent_broker: &broker,
             event_emitter: Some(&emitter),
             host_id: None,
@@ -440,6 +457,7 @@ mod tests {
         let ctx = PreInvokeContext {
             registry: &registry,
             call_id: "call-4",
+            tool_call_correlation: None,
             consent_broker: &broker,
             event_emitter: Some(&emitter),
             host_id: None,
@@ -469,6 +487,7 @@ mod tests {
         let ctx = PreInvokeContext {
             registry: &registry,
             call_id: "call-5",
+            tool_call_correlation: None,
             consent_broker: &broker,
             event_emitter: None,
             host_id: None,

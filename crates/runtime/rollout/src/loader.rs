@@ -168,6 +168,7 @@ mod tests {
                 ApxmEvent::root(
                     TokenPayload {
                         text: "first".to_string(),
+                        generation: None,
                     },
                     EventSource::Runtime,
                     thread_id,
@@ -189,6 +190,7 @@ mod tests {
                 ApxmEvent::root(
                     TokenPayload {
                         text: "second".to_string(),
+                        generation: None,
                     },
                     EventSource::Runtime,
                     thread_id,

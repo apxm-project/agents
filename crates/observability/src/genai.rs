@@ -11,12 +11,12 @@ use std::time::SystemTime;
 
 use apxm_core::events::kind::EventKind;
 use apxm_core::events::payload::{
-    AgentMessagePayload, ExecuteCompletePayload, LlmDonePayload, LlmPromptPayload,
-    LlmStepCompletedPayload, NodeOutputPayload, RedactedContent, SubagentLlmCallBeginPayload,
-    SubagentLlmCallEndPayload, SubagentSpawnBeginPayload, ThoughtPayload, TokenPayload,
-    ToolCallBeginPayload, ToolCallEndPayload, ToolCallPayload, ToolEndPayload, ToolStartPayload,
-    TurnAbortedPayload, TurnBoundaryPayload, TurnCompletePayload, TurnDirection,
-    TurnStartedPayload,
+    AgentMessagePayload, ExecuteCompletePayload, GenerationIdentity, LlmDonePayload,
+    LlmPromptPayload, LlmStepCompletedPayload, NodeOutputPayload, RedactedContent,
+    SubagentLlmCallBeginPayload, SubagentLlmCallEndPayload, SubagentSpawnBeginPayload,
+    ThoughtPayload, TokenPayload, ToolCallBeginPayload, ToolCallEndPayload, ToolCallPayload,
+    ToolEndPayload, ToolStartPayload, TurnAbortedPayload, TurnBoundaryPayload, TurnCompletePayload,
+    TurnDirection, TurnStartedPayload,
 };
 use apxm_core::events::{ApxmEvent, EventEmitter, EventSource};
 use blake3::Hasher;
@@ -227,17 +227,9 @@ enum CorrelationFamily {
 #[derive(Debug, Clone, PartialEq, Eq)]
 enum CorrelationIdentity {
     Execution(String),
-    Operation {
-        node_id: u64,
-        op_type: String,
-    },
-    Agent(String),
-    AgentTool {
-        agent_code: String,
-        tool_name: String,
-    },
-    Tool(String),
-    ParentScoped,
+    Operation { node_id: u64, op_type: String },
+    Generation(GenerationIdentity),
+    ToolCall(String),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -415,7 +407,7 @@ fn correlation_descriptor(event: &ApxmEvent) -> Option<CorrelationDescriptor> {
             (
                 CorrelationFamily::ModelStep,
                 CorrelationRole::Begin,
-                CorrelationIdentity::Agent(payload.agent_code.clone()),
+                CorrelationIdentity::Generation(payload.generation.clone()?),
                 "apxm.model.step",
                 GENAI_OPERATION_CHAT,
                 SpanKind::Internal,
@@ -424,25 +416,25 @@ fn correlation_descriptor(event: &ApxmEvent) -> Option<CorrelationDescriptor> {
             (
                 CorrelationFamily::ModelStep,
                 CorrelationRole::End,
-                CorrelationIdentity::Agent(payload.agent_code.clone()),
+                CorrelationIdentity::Generation(payload.generation.clone()?),
                 "apxm.model.step",
                 GENAI_OPERATION_CHAT,
                 SpanKind::Internal,
             )
-        } else if event.payload.downcast_ref::<LlmPromptPayload>().is_some() {
+        } else if let Some(payload) = event.payload.downcast_ref::<LlmPromptPayload>() {
             (
                 CorrelationFamily::Inference,
                 CorrelationRole::Begin,
-                CorrelationIdentity::ParentScoped,
+                CorrelationIdentity::Generation(payload.generation.clone()?),
                 "apxm.model.inference",
                 GENAI_OPERATION_CHAT,
                 SpanKind::Client,
             )
-        } else if event.payload.downcast_ref::<LlmDonePayload>().is_some() {
+        } else if let Some(payload) = event.payload.downcast_ref::<LlmStepCompletedPayload>() {
             (
                 CorrelationFamily::Inference,
                 CorrelationRole::End,
-                CorrelationIdentity::ParentScoped,
+                CorrelationIdentity::Generation(payload.generation.clone()?),
                 "apxm.model.inference",
                 GENAI_OPERATION_CHAT,
                 SpanKind::Client,
@@ -451,10 +443,9 @@ fn correlation_descriptor(event: &ApxmEvent) -> Option<CorrelationDescriptor> {
             (
                 CorrelationFamily::AgentTool,
                 CorrelationRole::Begin,
-                CorrelationIdentity::AgentTool {
-                    agent_code: payload.agent_code.clone(),
-                    tool_name: payload.tool_name.clone(),
-                },
+                CorrelationIdentity::ToolCall(
+                    payload.tool_call_correlation.as_ref()?.tool_call_id.clone(),
+                ),
                 "apxm.tool.operation",
                 GENAI_OPERATION_EXECUTE_TOOL,
                 SpanKind::Internal,
@@ -463,10 +454,9 @@ fn correlation_descriptor(event: &ApxmEvent) -> Option<CorrelationDescriptor> {
             (
                 CorrelationFamily::AgentTool,
                 CorrelationRole::End,
-                CorrelationIdentity::AgentTool {
-                    agent_code: payload.agent_code.clone(),
-                    tool_name: payload.tool_name.clone(),
-                },
+                CorrelationIdentity::ToolCall(
+                    payload.tool_call_correlation.as_ref()?.tool_call_id.clone(),
+                ),
                 "apxm.tool.operation",
                 GENAI_OPERATION_EXECUTE_TOOL,
                 SpanKind::Internal,
@@ -475,7 +465,9 @@ fn correlation_descriptor(event: &ApxmEvent) -> Option<CorrelationDescriptor> {
             (
                 CorrelationFamily::Tool,
                 CorrelationRole::Begin,
-                CorrelationIdentity::Tool(payload.name.clone()),
+                CorrelationIdentity::ToolCall(
+                    payload.tool_call_correlation.as_ref()?.tool_call_id.clone(),
+                ),
                 "apxm.tool.execution",
                 GENAI_OPERATION_EXECUTE_TOOL,
                 SpanKind::Internal,
@@ -484,7 +476,9 @@ fn correlation_descriptor(event: &ApxmEvent) -> Option<CorrelationDescriptor> {
             (
                 CorrelationFamily::Tool,
                 CorrelationRole::End,
-                CorrelationIdentity::Tool(payload.name.clone()),
+                CorrelationIdentity::ToolCall(
+                    payload.tool_call_correlation.as_ref()?.tool_call_id.clone(),
+                ),
                 "apxm.tool.execution",
                 GENAI_OPERATION_EXECUTE_TOOL,
                 SpanKind::Internal,
@@ -493,11 +487,23 @@ fn correlation_descriptor(event: &ApxmEvent) -> Option<CorrelationDescriptor> {
             return None;
         };
 
+    let parent_span_id = if matches!(
+        family,
+        CorrelationFamily::ModelStep
+            | CorrelationFamily::Inference
+            | CorrelationFamily::AgentTool
+            | CorrelationFamily::Tool
+    ) {
+        None
+    } else {
+        event.meta.parent_span_id.clone()
+    };
+
     Some(CorrelationDescriptor {
         key: CorrelationKey {
             family,
             trace_id: event.meta.trace_id.clone(),
-            parent_span_id: event.meta.parent_span_id.clone(),
+            parent_span_id,
             identity,
         },
         role,
@@ -764,12 +770,44 @@ fn source_name(source: &EventSource) -> String {
     }
 }
 
+fn add_generation_identity_attributes(
+    attributes: &mut Vec<KeyValue>,
+    generation: &GenerationIdentity,
+) {
+    attributes.push(KeyValue::new(
+        "apxm.generation.call_id",
+        generation.call_id.clone(),
+    ));
+    attributes.push(KeyValue::new(
+        "apxm.generation.attempt",
+        i64::try_from(generation.attempt).unwrap_or(i64::MAX),
+    ));
+    attributes.push(KeyValue::new(
+        "apxm.generation.step_number",
+        i64::try_from(generation.step_number).unwrap_or(i64::MAX),
+    ));
+}
+
+fn add_tool_correlation_attributes(
+    attributes: &mut Vec<KeyValue>,
+    correlation: &apxm_core::events::payload::ToolCallCorrelation,
+) {
+    attributes.push(KeyValue::new(
+        "gen_ai.tool.call.id",
+        correlation.tool_call_id.clone(),
+    ));
+    add_generation_identity_attributes(attributes, &correlation.generation);
+}
+
 fn add_payload_attributes(
     attributes: &mut Vec<KeyValue>,
     event: &ApxmEvent,
     config: GenAiExporterConfig,
 ) {
     if let Some(payload) = event.payload.downcast_ref::<LlmDonePayload>() {
+        if let Some(generation) = &payload.generation {
+            add_generation_identity_attributes(attributes, generation);
+        }
         attributes.push(KeyValue::new("gen_ai.request.model", payload.model.clone()));
         attributes.push(KeyValue::new(
             "gen_ai.response.finish_reason",
@@ -799,6 +837,9 @@ fn add_payload_attributes(
     }
 
     if let Some(payload) = event.payload.downcast_ref::<LlmStepCompletedPayload>() {
+        if let Some(generation) = &payload.generation {
+            add_generation_identity_attributes(attributes, generation);
+        }
         attributes.push(KeyValue::new("gen_ai.request.model", payload.model.clone()));
         attributes.push(KeyValue::new(
             "gen_ai.response.finish_reason",
@@ -848,9 +889,15 @@ fn add_payload_attributes(
 
     if let Some(payload) = event.payload.downcast_ref::<ToolCallPayload>() {
         add_tool_call_attributes(attributes, payload, config);
+        if let Some(correlation) = &payload.tool_call_correlation {
+            add_tool_correlation_attributes(attributes, correlation);
+        }
     }
 
     if let Some(payload) = event.payload.downcast_ref::<LlmPromptPayload>() {
+        if let Some(generation) = &payload.generation {
+            add_generation_identity_attributes(attributes, generation);
+        }
         add_existing_redacted_content(
             attributes,
             "gen_ai.prompt",
@@ -878,6 +925,9 @@ fn add_payload_attributes(
     add_operation_attributes(attributes, event);
 
     if let Some(payload) = event.payload.downcast_ref::<ToolStartPayload>() {
+        if let Some(correlation) = &payload.tool_call_correlation {
+            add_tool_correlation_attributes(attributes, correlation);
+        }
         attributes.push(KeyValue::new("gen_ai.tool.name", payload.name.clone()));
         attributes.push(KeyValue::new(
             "gen_ai.tool.argument_count",
@@ -886,6 +936,9 @@ fn add_payload_attributes(
     }
 
     if let Some(payload) = event.payload.downcast_ref::<ToolEndPayload>() {
+        if let Some(correlation) = &payload.tool_call_correlation {
+            add_tool_correlation_attributes(attributes, correlation);
+        }
         attributes.push(KeyValue::new("gen_ai.tool.name", payload.name.clone()));
         add_json_attribute(
             attributes,
@@ -964,6 +1017,9 @@ fn add_payload_attributes(
     }
 
     if let Some(payload) = event.payload.downcast_ref::<SubagentLlmCallEndPayload>() {
+        if let Some(generation) = &payload.generation {
+            add_generation_identity_attributes(attributes, generation);
+        }
         attributes.push(KeyValue::new(
             "gen_ai.agent.name",
             payload.agent_code.clone(),
@@ -983,6 +1039,9 @@ fn add_payload_attributes(
     }
 
     if let Some(payload) = event.payload.downcast_ref::<SubagentLlmCallBeginPayload>() {
+        if let Some(generation) = &payload.generation {
+            add_generation_identity_attributes(attributes, generation);
+        }
         attributes.push(KeyValue::new(
             "gen_ai.agent.name",
             payload.agent_code.clone(),
@@ -999,6 +1058,9 @@ fn add_payload_attributes(
     }
 
     if let Some(payload) = event.payload.downcast_ref::<ToolCallBeginPayload>() {
+        if let Some(correlation) = &payload.tool_call_correlation {
+            add_tool_correlation_attributes(attributes, correlation);
+        }
         attributes.push(KeyValue::new(
             "gen_ai.agent.name",
             payload.agent_code.clone(),
@@ -1011,12 +1073,15 @@ fn add_payload_attributes(
     }
 
     if let Some(payload) = event.payload.downcast_ref::<ToolCallEndPayload>() {
+        if let Some(correlation) = &payload.tool_call_correlation {
+            add_tool_correlation_attributes(attributes, correlation);
+        }
         attributes.push(KeyValue::new(
             "gen_ai.agent.name",
             payload.agent_code.clone(),
         ));
         attributes.push(KeyValue::new("gen_ai.tool.name", payload.tool_name.clone()));
-        attributes.push(KeyValue::new("gen_ai.tool.status", payload.status.clone()));
+        attributes.push(KeyValue::new("gen_ai.tool.status", payload.status.as_str()));
         attributes.push(KeyValue::new(
             "gen_ai.tool.latency_ms",
             i64::try_from(payload.latency_ms).unwrap_or(i64::MAX),
@@ -1194,7 +1259,8 @@ mod tests {
 
     use apxm_core::events::kind::CORE_EVENT_KINDS;
     use apxm_core::events::payload::{
-        EventPayload, FinishReasonPayload, UnknownEventPayload, UsagePayload,
+        EventPayload, FinishReasonPayload, LlmStepPerformancePayload, LlmStepUsagePayload,
+        ToolCallCorrelation, ToolCallStatus, UnknownEventPayload, UsagePayload,
     };
     use apxm_core::events::{ApxmEvent, EventSource};
     use futures_util::future::BoxFuture;
@@ -1328,13 +1394,16 @@ mod tests {
             usage: UsagePayload {
                 input_tokens: 1,
                 output_tokens: 2,
+                generation: None,
             },
             tool_calls: Vec::new(),
             response_id: None,
+            generation: None,
         }));
         exporter.emit(event(ToolStartPayload {
             name: "lookup".to_string(),
             args: std::collections::HashMap::new(),
+            tool_call_correlation: None,
         }));
         exporter.emit(event(TurnStartedPayload {
             execution_id: "exec-1".to_string(),
@@ -1392,6 +1461,7 @@ mod tests {
                 decode_ms: 165.25,
             },
             tool_call_count: 2,
+            generation: None,
         }));
         exporter.emit(event(TurnBoundaryPayload {
             turn_number: 3,
@@ -1489,12 +1559,15 @@ mod tests {
     #[test]
     fn model_and_tool_pairs_correlate_when_terminals_arrive_first() {
         let (exporter, spans, _) = test_exporter(GenAiExporterConfig::enabled());
+        let generation = GenerationIdentity::new("generation-1", 1, 1);
+        let tool_correlation = ToolCallCorrelation::new(generation.clone(), "tool-call-1");
         let model_begin = correlated_event(
             SubagentLlmCallBeginPayload {
                 agent_code: "researcher".to_string(),
                 model: "model-1".to_string(),
                 backend: "gateway".to_string(),
                 tool_manifest_count: 2,
+                generation: Some(generation.clone()),
             },
             "model-begin",
             "model-parent",
@@ -1508,8 +1581,10 @@ mod tests {
                 usage: UsagePayload {
                     input_tokens: 12,
                     output_tokens: 4,
+                    generation: None,
                 },
                 content_len: 32,
+                generation: Some(generation.clone()),
             },
             "model-end",
             "model-parent",
@@ -1523,6 +1598,7 @@ mod tests {
                 node_id: 7,
                 node_name: Some("answer".to_string()),
                 prompt: RedactedContent::from_text("private prompt"),
+                generation: Some(generation.clone()),
             },
             "inference-begin",
             "inference-parent",
@@ -1531,18 +1607,26 @@ mod tests {
         exporter.emit(inference_begin);
         std::thread::sleep(std::time::Duration::from_millis(2));
         exporter.emit(correlated_event(
-            LlmDonePayload {
-                content: "private response".to_string(),
+            LlmStepCompletedPayload {
+                node_id: 7,
+                step_number: 1,
                 model: "model-1".to_string(),
                 finish_reason: FinishReasonPayload {
                     reason: "stop".to_string(),
                 },
-                usage: UsagePayload {
+                usage: LlmStepUsagePayload {
                     input_tokens: 12,
                     output_tokens: 4,
+                    cached_input_tokens: 0,
+                    reasoning_output_tokens: 0,
                 },
-                tool_calls: Vec::new(),
-                response_id: Some("response-1".to_string()),
+                performance: LlmStepPerformancePayload {
+                    latency_ms: 2.0,
+                    prefill_ms: 0.0,
+                    decode_ms: 0.0,
+                },
+                tool_call_count: 0,
+                generation: Some(generation.clone()),
             },
             "inference-end",
             "inference-parent",
@@ -1554,6 +1638,7 @@ mod tests {
                 agent_code: "researcher".to_string(),
                 tool_name: "lookup".to_string(),
                 argument_keys: vec!["query".to_string()],
+                tool_call_correlation: Some(tool_correlation.clone()),
             },
             "tool-begin",
             "tool-parent",
@@ -1565,8 +1650,9 @@ mod tests {
                 agent_code: "researcher".to_string(),
                 tool_name: "lookup".to_string(),
                 result_keys: vec!["items".to_string()],
-                status: "ok".to_string(),
+                status: ToolCallStatus::Ok,
                 latency_ms: 2,
+                tool_call_correlation: Some(tool_correlation),
             },
             "tool-end",
             "tool-parent",
@@ -1688,13 +1774,16 @@ mod tests {
             usage: UsagePayload {
                 input_tokens: 1,
                 output_tokens: 2,
+                generation: None,
             },
             tool_calls: vec![ToolCallPayload {
                 id: "call-1".to_string(),
                 name: "vault".to_string(),
                 arguments: arguments.clone(),
+                tool_call_correlation: None,
             }],
             response_id: None,
+            generation: None,
         }));
         exporter.flush_pending();
 
@@ -1725,13 +1814,16 @@ mod tests {
             usage: UsagePayload {
                 input_tokens: 1,
                 output_tokens: 2,
+                generation: None,
             },
             tool_calls: vec![ToolCallPayload {
                 id: "call-1".to_string(),
                 name: "vault".to_string(),
                 arguments: arguments.clone(),
+                tool_call_correlation: None,
             }],
             response_id: None,
+            generation: None,
         }));
         exporter.flush_pending();
 

@@ -103,6 +103,19 @@ impl ExecutionEventEmitter for EmitterAdapter {
     fn emit_llm_token(&self, content: &str) {
         self.emit(TokenPayload {
             text: content.to_string(),
+            generation: None,
+        });
+    }
+
+    fn emit_llm_token_for_generation(
+        &self,
+        _node_id: u64,
+        content: &str,
+        generation: Option<&GenerationIdentity>,
+    ) {
+        self.emit(TokenPayload {
+            text: content.to_string(),
+            generation: generation.cloned(),
         });
     }
 
@@ -110,6 +123,20 @@ impl ExecutionEventEmitter for EmitterAdapter {
         self.emit(ThoughtPayload {
             text: content.to_string(),
             summary: None,
+            generation: None,
+        });
+    }
+
+    fn emit_llm_thought_for_generation(
+        &self,
+        _node_id: u64,
+        content: &str,
+        generation: Option<&GenerationIdentity>,
+    ) {
+        self.emit(ThoughtPayload {
+            text: content.to_string(),
+            summary: None,
+            generation: generation.cloned(),
         });
     }
 
@@ -118,6 +145,10 @@ impl ExecutionEventEmitter for EmitterAdapter {
     }
 
     fn emit_llm_done(&self, payload: LlmDonePayload) {
+        self.emit(payload);
+    }
+
+    fn emit_tool_call(&self, payload: ToolCallPayload) {
         self.emit(payload);
     }
 
@@ -135,6 +166,31 @@ impl ExecutionEventEmitter for EmitterAdapter {
         self.emit(ToolStartPayload {
             name: name.to_string(),
             args: json_args,
+            tool_call_correlation: None,
+        });
+    }
+
+    fn emit_tool_start_with_correlation(
+        &self,
+        name: &str,
+        args: &HashMap<String, Value>,
+        correlation: Option<&ToolCallCorrelation>,
+    ) {
+        let json_args = args
+            .iter()
+            .map(|(key, value)| {
+                (
+                    key.clone(),
+                    value
+                        .to_json()
+                        .unwrap_or_else(|_| serde_json::Value::String(value.to_string())),
+                )
+            })
+            .collect();
+        self.emit(ToolStartPayload {
+            name: name.to_string(),
+            args: json_args,
+            tool_call_correlation: correlation.cloned(),
         });
     }
 
@@ -145,6 +201,22 @@ impl ExecutionEventEmitter for EmitterAdapter {
         self.emit(ToolEndPayload {
             name: name.to_string(),
             result: result_json,
+            tool_call_correlation: None,
+        });
+    }
+
+    fn emit_tool_end_with_correlation(
+        &self,
+        name: &str,
+        result: &Value,
+        correlation: Option<&ToolCallCorrelation>,
+    ) {
+        self.emit(ToolEndPayload {
+            name: name.to_string(),
+            result: result
+                .to_json()
+                .unwrap_or_else(|_| serde_json::Value::String(result.to_string())),
+            tool_call_correlation: correlation.cloned(),
         });
     }
 
@@ -269,6 +341,22 @@ impl ExecutionEventEmitter for EmitterAdapter {
             node_id,
             node_name: node_name.map(str::to_string),
             prompt: RedactedContent::from_text(prompt),
+            generation: None,
+        });
+    }
+
+    fn emit_llm_prompt_with_generation(
+        &self,
+        node_id: u64,
+        node_name: Option<&str>,
+        prompt: &str,
+        generation: Option<&GenerationIdentity>,
+    ) {
+        self.emit(LlmPromptPayload {
+            node_id,
+            node_name: node_name.map(str::to_string),
+            prompt: RedactedContent::from_text(prompt),
+            generation: generation.cloned(),
         });
     }
 
@@ -540,13 +628,31 @@ impl ExecutionEventEmitter for EmitterAdapter {
         agent_code: &str,
         tool_name: &str,
         approval_id: &str,
-        risk_level: &str,
+        risk_level: ApprovalRiskLevel,
     ) {
         self.emit(ApprovalRequestPayload {
             agent_code: agent_code.to_string(),
             tool_name: tool_name.to_string(),
             approval_id: approval_id.to_string(),
-            risk_level: risk_level.to_string(),
+            risk_level,
+            tool_call_correlation: None,
+        });
+    }
+
+    fn emit_approval_request_with_correlation(
+        &self,
+        agent_code: &str,
+        tool_name: &str,
+        approval_id: &str,
+        risk_level: ApprovalRiskLevel,
+        correlation: Option<&ToolCallCorrelation>,
+    ) {
+        self.emit(ApprovalRequestPayload {
+            agent_code: agent_code.to_string(),
+            tool_name: tool_name.to_string(),
+            approval_id: approval_id.to_string(),
+            risk_level,
+            tool_call_correlation: correlation.cloned(),
         });
     }
 
@@ -558,6 +664,20 @@ impl ExecutionEventEmitter for EmitterAdapter {
         self.emit(ApprovalResolvedPayload {
             approval_id: approval_id.to_string(),
             decision,
+            tool_call_correlation: None,
+        });
+    }
+
+    fn emit_approval_resolved_with_correlation(
+        &self,
+        approval_id: &str,
+        decision: apxm_core::types::consent::ApprovalResolution,
+        correlation: Option<&ToolCallCorrelation>,
+    ) {
+        self.emit(ApprovalResolvedPayload {
+            approval_id: approval_id.to_string(),
+            decision,
+            tool_call_correlation: correlation.cloned(),
         });
     }
 
@@ -642,6 +762,24 @@ impl ExecutionEventEmitter for EmitterAdapter {
             model: model.to_string(),
             backend: backend.to_string(),
             tool_manifest_count,
+            generation: None,
+        });
+    }
+
+    fn emit_subagent_llm_call_begin_with_generation(
+        &self,
+        agent_code: &str,
+        model: &str,
+        backend: &str,
+        tool_manifest_count: usize,
+        generation: Option<&GenerationIdentity>,
+    ) {
+        self.emit(SubagentLlmCallBeginPayload {
+            agent_code: agent_code.to_string(),
+            model: model.to_string(),
+            backend: backend.to_string(),
+            tool_manifest_count,
+            generation: generation.cloned(),
         });
     }
 
@@ -659,8 +797,32 @@ impl ExecutionEventEmitter for EmitterAdapter {
             usage: UsagePayload {
                 input_tokens,
                 output_tokens,
+                generation: None,
             },
             content_len,
+            generation: None,
+        });
+    }
+
+    fn emit_subagent_llm_call_end_with_generation(
+        &self,
+        agent_code: &str,
+        finish_reason: &str,
+        input_tokens: usize,
+        output_tokens: usize,
+        content_len: usize,
+        generation: Option<&GenerationIdentity>,
+    ) {
+        self.emit(SubagentLlmCallEndPayload {
+            agent_code: agent_code.to_string(),
+            finish_reason: finish_reason.to_string(),
+            usage: UsagePayload {
+                input_tokens,
+                output_tokens,
+                generation: None,
+            },
+            content_len,
+            generation: generation.cloned(),
         });
     }
 
@@ -669,6 +831,22 @@ impl ExecutionEventEmitter for EmitterAdapter {
             agent_code: agent_code.to_string(),
             tool_name: tool_name.to_string(),
             argument_keys: argument_keys.to_vec(),
+            tool_call_correlation: None,
+        });
+    }
+
+    fn emit_tool_call_begin_with_correlation(
+        &self,
+        agent_code: &str,
+        tool_name: &str,
+        argument_keys: &[String],
+        correlation: Option<&ToolCallCorrelation>,
+    ) {
+        self.emit(ToolCallBeginPayload {
+            agent_code: agent_code.to_string(),
+            tool_name: tool_name.to_string(),
+            argument_keys: argument_keys.to_vec(),
+            tool_call_correlation: correlation.cloned(),
         });
     }
 
@@ -677,15 +855,35 @@ impl ExecutionEventEmitter for EmitterAdapter {
         agent_code: &str,
         tool_name: &str,
         result_keys: &[String],
-        status: &str,
+        status: ToolCallStatus,
         latency_ms: u64,
     ) {
         self.emit(ToolCallEndPayload {
             agent_code: agent_code.to_string(),
             tool_name: tool_name.to_string(),
             result_keys: result_keys.to_vec(),
-            status: status.to_string(),
+            status,
             latency_ms,
+            tool_call_correlation: None,
+        });
+    }
+
+    fn emit_tool_call_end_with_correlation(
+        &self,
+        agent_code: &str,
+        tool_name: &str,
+        result_keys: &[String],
+        status: ToolCallStatus,
+        latency_ms: u64,
+        correlation: Option<&ToolCallCorrelation>,
+    ) {
+        self.emit(ToolCallEndPayload {
+            agent_code: agent_code.to_string(),
+            tool_name: tool_name.to_string(),
+            result_keys: result_keys.to_vec(),
+            status,
+            latency_ms,
+            tool_call_correlation: correlation.cloned(),
         });
     }
 
@@ -703,6 +901,7 @@ impl ExecutionEventEmitter for EmitterAdapter {
             usage_total: UsagePayload {
                 input_tokens: input_tokens_total,
                 output_tokens: output_tokens_total,
+                generation: None,
             },
             evidence_excerpt: evidence_excerpt.map(str::to_string),
         });
@@ -728,6 +927,7 @@ impl ExecutionEventEmitter for EmitterAdapter {
             (Some(input_tokens), Some(output_tokens)) => Some(UsagePayload {
                 input_tokens,
                 output_tokens,
+                generation: None,
             }),
             _ => None,
         };
@@ -892,6 +1092,7 @@ mod tests {
                 decode_ms: 6.0,
             },
             tool_call_count: 0,
+            generation: None,
         });
         adapter.emit_llm_done(LlmDonePayload {
             content: "final answer".to_string(),
@@ -902,9 +1103,11 @@ mod tests {
             usage: UsagePayload {
                 input_tokens: 1,
                 output_tokens: 2,
+                generation: None,
             },
             tool_calls: Vec::new(),
             response_id: None,
+            generation: None,
         });
         adapter.emit_subagent_spawn_begin(
             "agent-1",
@@ -916,7 +1119,13 @@ mod tests {
         );
         adapter.emit_subagent_spawn_end("agent-1");
         adapter.emit_tool_call_begin("agent-1", "web_search", &["q".to_string()]);
-        adapter.emit_tool_call_end("agent-1", "web_search", &["r".to_string()], "ok", 12);
+        adapter.emit_tool_call_end(
+            "agent-1",
+            "web_search",
+            &["r".to_string()],
+            ToolCallStatus::Ok,
+            12,
+        );
         adapter.emit_agent_message("final answer", None, None, Some(1), Some(2));
 
         let events = capture.events.lock();
@@ -946,7 +1155,7 @@ mod tests {
     fn approval_events_still_delivered_after_layer2_wiring() {
         let (adapter, capture) = adapter_with_capture();
 
-        adapter.emit_approval_request("agent-1", "shell", "appr-1", "high");
+        adapter.emit_approval_request("agent-1", "shell", "appr-1", ApprovalRiskLevel::High);
         adapter.emit_approval_resolved(
             "appr-1",
             apxm_core::types::consent::ApprovalResolution::Approved,

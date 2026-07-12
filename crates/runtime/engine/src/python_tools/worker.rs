@@ -307,12 +307,29 @@ impl PythonHandlerWorker {
         args: serde_json::Value,
         deadline: Duration,
     ) -> Result<serde_json::Value, RuntimeError> {
-        self.dispatch(handler_id, args, deadline, |method, _params| async move {
-            Err(format!(
-                "host call '{}' is not available on the tool path",
-                method
-            ))
-        })
+        self.call_with_call_id(handler_id, args, deadline, None)
+            .await
+    }
+
+    pub async fn call_with_call_id(
+        &self,
+        handler_id: &str,
+        args: serde_json::Value,
+        deadline: Duration,
+        call_id: Option<&str>,
+    ) -> Result<serde_json::Value, RuntimeError> {
+        self.dispatch(
+            handler_id,
+            args,
+            deadline,
+            call_id,
+            |method, _params| async move {
+                Err(format!(
+                    "host call '{}' is not available on the tool path",
+                    method
+                ))
+            },
+        )
         .await
     }
 
@@ -331,7 +348,7 @@ impl PythonHandlerWorker {
         F: Fn(String, serde_json::Value) -> Fut,
         Fut: Future<Output = Result<serde_json::Value, String>>,
     {
-        self.dispatch(handler_id, args, deadline, host).await
+        self.dispatch(handler_id, args, deadline, None, host).await
     }
 
     /// Core request loop: send a `call`, then consume frames until the final
@@ -342,6 +359,7 @@ impl PythonHandlerWorker {
         handler_id: &str,
         args: serde_json::Value,
         deadline: Duration,
+        call_id: Option<&str>,
         host: F,
     ) -> Result<serde_json::Value, RuntimeError>
     where
@@ -360,6 +378,7 @@ impl PythonHandlerWorker {
         let request = WorkerRequest::Call(CallRequest {
             v: PROTOCOL_VERSION,
             req_id: req_id.clone(),
+            call_id: call_id.map(str::to_string),
             tool_id: handler_id.to_string(),
             args,
             deadline_ms: deadline.as_millis() as u64,

@@ -17,6 +17,7 @@ use std::collections::HashMap;
 use std::time::Duration;
 
 use apxm_core::error::RuntimeError;
+use apxm_core::events::payload::ToolCallCorrelation;
 use apxm_core::types::values::{Number, Value};
 use serde_json::{Value as JsonValue, json};
 
@@ -285,6 +286,7 @@ pub async fn run_pre_cap_hooks(
     ctx: &ExecutionContext,
     tool_name: &str,
     args: HashMap<String, Value>,
+    correlation: Option<&ToolCallCorrelation>,
 ) -> Result<HashMap<String, Value>, RuntimeError> {
     let Some(registry) = ctx.hook_registry() else {
         return Ok(args);
@@ -309,7 +311,11 @@ pub async fn run_pre_cap_hooks(
         HOOK_PAYLOAD_KEY: {
         "event": "pre_cap",
         "remaining_budget": remaining_budget(ctx),
-        "call": { "name": tool_name, "args": args_json },
+        "call": {
+            "name": tool_name,
+            "args": args_json,
+            "tool_call_correlation": correlation,
+        },
         }
         });
         match call_hook_with_host_bridge(
@@ -437,7 +443,12 @@ fn parse_pre_cap_decision(decision: JsonValue) -> PreCapDecision {
 }
 
 /// Run all matching `post_cap` hooks; returns the (possibly replaced) result.
-pub async fn run_post_cap_hooks(ctx: &ExecutionContext, tool_name: &str, result: Value) -> Value {
+pub async fn run_post_cap_hooks(
+    ctx: &ExecutionContext,
+    tool_name: &str,
+    result: Value,
+    correlation: Option<&ToolCallCorrelation>,
+) -> Value {
     let Some(registry) = ctx.hook_registry() else {
         return result;
     };
@@ -455,7 +466,10 @@ pub async fn run_post_cap_hooks(ctx: &ExecutionContext, tool_name: &str, result:
         let payload = json!({
         HOOK_PAYLOAD_KEY: {
         "event": "post_cap",
-        "call": { "name": tool_name },
+        "call": {
+            "name": tool_name,
+            "tool_call_correlation": correlation,
+        },
         "result": result_json,
         }
         });
@@ -781,13 +795,8 @@ mod gate_narrowing_tests {
         let aam = Aam::new();
         let capability_system = Arc::new(CapabilitySystem::with_aam(aam.clone()));
         let registry = PythonHandlerRegistry::from_json(policy).expect("python tool manifest");
-        ExecutionContext::new(
-            memory,
-            Arc::new(LLMRegistry::new()),
-            capability_system,
-            aam,
-        )
-        .with_python_handler_bridge(Arc::new(PythonHandlerBridge::new(registry)))
+        ExecutionContext::new(memory, Arc::new(LLMRegistry::new()), capability_system, aam)
+            .with_python_handler_bridge(Arc::new(PythonHandlerBridge::new(registry)))
     }
 
     /// vector: a `gate` hook attempting to widen (auto-allow) a
@@ -853,7 +862,10 @@ mod gate_narrowing_tests {
         )
         .await;
 
-        assert_eq!(canonical_requires_approval(&ctx, "script-open"), Some(false));
+        assert_eq!(
+            canonical_requires_approval(&ctx, "script-open"),
+            Some(false)
+        );
         assert_eq!(canonical_requires_approval(&ctx, "script-ask"), Some(true));
     }
 

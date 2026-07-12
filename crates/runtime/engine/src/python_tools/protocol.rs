@@ -48,6 +48,9 @@ pub struct CallRequest {
     pub v: u32,
     /// Unique request identifier for demuxing.
     pub req_id: String,
+    /// Runtime call identifier preserved from the originating invocation.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub call_id: Option<String>,
     /// Handler identifier (`sha256:...`).
     pub tool_id: String,
     /// Tool arguments as a JSON object.

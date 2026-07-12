@@ -3,6 +3,10 @@ use std::panic::{AssertUnwindSafe, catch_unwind};
 use std::sync::Arc;
 use std::time::Duration;
 
+use apxm_core::events::payload::{
+    ApprovalRiskLevel, GenerationIdentity, LlmDonePayload, LlmStepCompletedPayload,
+    ToolCallCorrelation, ToolCallPayload, ToolCallStatus,
+};
 use apxm_core::types::TimingBreakdown;
 use apxm_core::types::operations::AISOperationType;
 use apxm_core::types::values::Value;
@@ -74,12 +78,74 @@ impl ExecutionEventEmitter for MultiEmitter {
         self.for_each("emit_llm_token", |child| child.emit_llm_token(content));
     }
 
+    fn emit_llm_token_for_generation(
+        &self,
+        node_id: u64,
+        content: &str,
+        generation: Option<&GenerationIdentity>,
+    ) {
+        self.for_each("emit_llm_token_for_generation", |child| {
+            child.emit_llm_token_for_generation(node_id, content, generation);
+        });
+    }
+
+    fn emit_llm_thought_for_generation(
+        &self,
+        node_id: u64,
+        content: &str,
+        generation: Option<&GenerationIdentity>,
+    ) {
+        self.for_each("emit_llm_thought_for_generation", |child| {
+            child.emit_llm_thought_for_generation(node_id, content, generation);
+        });
+    }
+
+    fn emit_llm_step_completed(&self, payload: LlmStepCompletedPayload) {
+        self.for_each("emit_llm_step_completed", |child| {
+            child.emit_llm_step_completed(payload.clone());
+        });
+    }
+
+    fn emit_llm_done(&self, payload: LlmDonePayload) {
+        self.for_each("emit_llm_done", |child| {
+            child.emit_llm_done(payload.clone());
+        });
+    }
+
+    fn emit_tool_call(&self, payload: ToolCallPayload) {
+        self.for_each("emit_tool_call", |child| {
+            child.emit_tool_call(payload.clone())
+        });
+    }
+
     fn emit_tool_start(&self, name: &str, args: &HashMap<String, Value>) {
         self.for_each("emit_tool_start", |child| child.emit_tool_start(name, args));
     }
 
     fn emit_tool_end(&self, name: &str, result: &Value) {
         self.for_each("emit_tool_end", |child| child.emit_tool_end(name, result));
+    }
+
+    fn emit_tool_start_with_correlation(
+        &self,
+        name: &str,
+        args: &HashMap<String, Value>,
+        correlation: Option<&ToolCallCorrelation>,
+    ) {
+        self.for_each("emit_tool_start_with_correlation", |child| {
+            child.emit_tool_start_with_correlation(name, args, correlation);
+        });
+    }
+
+    fn emit_tool_end_with_correlation(
+        &self,
+        name: &str,
+        result: &Value,
+        correlation: Option<&ToolCallCorrelation>,
+    ) {
+        self.for_each("emit_tool_end_with_correlation", |child| {
+            child.emit_tool_end_with_correlation(name, result, correlation);
+        });
     }
 
     fn emit_graph_start(&self, execution_id: &str, node_count: usize) {
@@ -123,6 +189,18 @@ impl ExecutionEventEmitter for MultiEmitter {
     fn emit_llm_prompt(&self, node_id: u64, prompt: &str) {
         self.for_each("emit_llm_prompt", |child| {
             child.emit_llm_prompt(node_id, prompt);
+        });
+    }
+
+    fn emit_llm_prompt_with_generation(
+        &self,
+        node_id: u64,
+        node_name: Option<&str>,
+        prompt: &str,
+        generation: Option<&GenerationIdentity>,
+    ) {
+        self.for_each("emit_llm_prompt_with_generation", |child| {
+            child.emit_llm_prompt_with_generation(node_id, node_name, prompt, generation);
         });
     }
 
@@ -359,6 +437,25 @@ impl ExecutionEventEmitter for MultiEmitter {
         });
     }
 
+    fn emit_subagent_llm_call_begin_with_generation(
+        &self,
+        agent_code: &str,
+        model: &str,
+        backend: &str,
+        tool_manifest_count: usize,
+        generation: Option<&GenerationIdentity>,
+    ) {
+        self.for_each("emit_subagent_llm_call_begin_with_generation", |child| {
+            child.emit_subagent_llm_call_begin_with_generation(
+                agent_code,
+                model,
+                backend,
+                tool_manifest_count,
+                generation,
+            );
+        });
+    }
+
     fn emit_subagent_llm_call_end(
         &self,
         agent_code: &str,
@@ -378,9 +475,47 @@ impl ExecutionEventEmitter for MultiEmitter {
         });
     }
 
+    fn emit_subagent_llm_call_end_with_generation(
+        &self,
+        agent_code: &str,
+        finish_reason: &str,
+        input_tokens: usize,
+        output_tokens: usize,
+        content_len: usize,
+        generation: Option<&GenerationIdentity>,
+    ) {
+        self.for_each("emit_subagent_llm_call_end_with_generation", |child| {
+            child.emit_subagent_llm_call_end_with_generation(
+                agent_code,
+                finish_reason,
+                input_tokens,
+                output_tokens,
+                content_len,
+                generation,
+            );
+        });
+    }
+
     fn emit_tool_call_begin(&self, agent_code: &str, tool_name: &str, argument_keys: &[String]) {
         self.for_each("emit_tool_call_begin", |child| {
             child.emit_tool_call_begin(agent_code, tool_name, argument_keys);
+        });
+    }
+
+    fn emit_tool_call_begin_with_correlation(
+        &self,
+        agent_code: &str,
+        tool_name: &str,
+        argument_keys: &[String],
+        correlation: Option<&ToolCallCorrelation>,
+    ) {
+        self.for_each("emit_tool_call_begin_with_correlation", |child| {
+            child.emit_tool_call_begin_with_correlation(
+                agent_code,
+                tool_name,
+                argument_keys,
+                correlation,
+            );
         });
     }
 
@@ -389,11 +524,32 @@ impl ExecutionEventEmitter for MultiEmitter {
         agent_code: &str,
         tool_name: &str,
         result_keys: &[String],
-        status: &str,
+        status: ToolCallStatus,
         latency_ms: u64,
     ) {
         self.for_each("emit_tool_call_end", |child| {
             child.emit_tool_call_end(agent_code, tool_name, result_keys, status, latency_ms);
+        });
+    }
+
+    fn emit_tool_call_end_with_correlation(
+        &self,
+        agent_code: &str,
+        tool_name: &str,
+        result_keys: &[String],
+        status: ToolCallStatus,
+        latency_ms: u64,
+        correlation: Option<&ToolCallCorrelation>,
+    ) {
+        self.for_each("emit_tool_call_end_with_correlation", |child| {
+            child.emit_tool_call_end_with_correlation(
+                agent_code,
+                tool_name,
+                result_keys,
+                status,
+                latency_ms,
+                correlation,
+            );
         });
     }
 
@@ -440,10 +596,29 @@ impl ExecutionEventEmitter for MultiEmitter {
         agent_code: &str,
         tool_name: &str,
         approval_id: &str,
-        risk_level: &str,
+        risk_level: ApprovalRiskLevel,
     ) {
         self.for_each("emit_approval_request", |child| {
             child.emit_approval_request(agent_code, tool_name, approval_id, risk_level);
+        });
+    }
+
+    fn emit_approval_request_with_correlation(
+        &self,
+        agent_code: &str,
+        tool_name: &str,
+        approval_id: &str,
+        risk_level: ApprovalRiskLevel,
+        correlation: Option<&ToolCallCorrelation>,
+    ) {
+        self.for_each("emit_approval_request_with_correlation", |child| {
+            child.emit_approval_request_with_correlation(
+                agent_code,
+                tool_name,
+                approval_id,
+                risk_level,
+                correlation,
+            );
         });
     }
 
@@ -454,6 +629,17 @@ impl ExecutionEventEmitter for MultiEmitter {
     ) {
         self.for_each("emit_approval_resolved", |child| {
             child.emit_approval_resolved(approval_id, decision);
+        });
+    }
+
+    fn emit_approval_resolved_with_correlation(
+        &self,
+        approval_id: &str,
+        decision: apxm_core::types::consent::ApprovalResolution,
+        correlation: Option<&ToolCallCorrelation>,
+    ) {
+        self.for_each("emit_approval_resolved_with_correlation", |child| {
+            child.emit_approval_resolved_with_correlation(approval_id, decision, correlation);
         });
     }
 }
@@ -543,7 +729,7 @@ mod tests {
             _agent_code: &str,
             _tool_name: &str,
             _result_keys: &[String],
-            _status: &str,
+            _status: apxm_core::events::payload::ToolCallStatus,
             _latency_ms: u64,
         ) {
             self.record("tool_call_end");
@@ -565,7 +751,7 @@ mod tests {
             _agent_code: &str,
             _tool_name: &str,
             _approval_id: &str,
-            _risk_level: &str,
+            _risk_level: apxm_core::events::payload::ApprovalRiskLevel,
         ) {
             self.record("approval_request");
         }
@@ -600,7 +786,13 @@ mod tests {
         multi.emit_subagent_spawn_begin("agent-1", Some("Agent One"), None, None, None, None);
         multi.emit_subagent_spawn_end("agent-1");
         multi.emit_tool_call_begin("agent-1", "web_search", &["q".to_string()]);
-        multi.emit_tool_call_end("agent-1", "web_search", &["r".to_string()], "ok", 12);
+        multi.emit_tool_call_end(
+            "agent-1",
+            "web_search",
+            &["r".to_string()],
+            apxm_core::events::payload::ToolCallStatus::Ok,
+            12,
+        );
         multi.emit_agent_message("final answer", None, None, Some(1), Some(2));
 
         let expected = vec![

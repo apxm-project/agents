@@ -136,15 +136,18 @@ fn representative_core_payloads() -> Vec<Box<dyn EventPayload>> {
     vec![
         Box::new(TokenPayload {
             text: "hello".to_string(),
+            generation: None,
         }),
         Box::new(ThoughtPayload {
             text: "thinking it through".to_string(),
             summary: Some("short summary".to_string()),
+            generation: None,
         }),
         Box::new(ToolCallPayload {
             id: "call-1".to_string(),
             name: "web_search".to_string(),
             arguments: serde_json::json!({"q": "apxm"}),
+            tool_call_correlation: None,
         }),
         Box::new(LlmDonePayload {
             content: "final answer".to_string(),
@@ -155,13 +158,16 @@ fn representative_core_payloads() -> Vec<Box<dyn EventPayload>> {
             usage: UsagePayload {
                 input_tokens: 10,
                 output_tokens: 20,
+                generation: None,
             },
             tool_calls: vec![ToolCallPayload {
                 id: "call-2".to_string(),
                 name: "read_file".to_string(),
                 arguments: serde_json::json!({}),
+                tool_call_correlation: None,
             }],
             response_id: Some("resp-1".to_string()),
+            generation: None,
         }),
         Box::new(LlmStepCompletedPayload {
             node_id: 1,
@@ -182,15 +188,18 @@ fn representative_core_payloads() -> Vec<Box<dyn EventPayload>> {
                 decode_ms: 8.5,
             },
             tool_call_count: 1,
+            generation: None,
         }),
         Box::new(LlmPromptPayload {
             node_id: 1,
             node_name: Some("ask-node".to_string()),
             prompt: RedactedContent::from_text("a secret prompt"),
+            generation: None,
         }),
         Box::new(UsagePayload {
             input_tokens: 1,
             output_tokens: 2,
+            generation: None,
         }),
         Box::new(RetryPayload {
             attempt: 2,
@@ -239,10 +248,12 @@ fn representative_core_payloads() -> Vec<Box<dyn EventPayload>> {
         Box::new(ToolStartPayload {
             name: "web_search".to_string(),
             args: HashMap::from([("q".to_string(), serde_json::json!("apxm"))]),
+            tool_call_correlation: None,
         }),
         Box::new(ToolEndPayload {
             name: "web_search".to_string(),
             result: serde_json::json!({"ok": true}),
+            tool_call_correlation: None,
         }),
         Box::new(PlanCreatedPayload {
             plan_id: "plan-1".to_string(),
@@ -451,6 +462,7 @@ fn representative_core_payloads() -> Vec<Box<dyn EventPayload>> {
             model: "gpt-test".to_string(),
             backend: "openai".to_string(),
             tool_manifest_count: 2,
+            generation: None,
         }),
         Box::new(SubagentLlmCallEndPayload {
             agent_code: "agent-1".to_string(),
@@ -458,20 +470,24 @@ fn representative_core_payloads() -> Vec<Box<dyn EventPayload>> {
             usage: UsagePayload {
                 input_tokens: 5,
                 output_tokens: 10,
+                generation: None,
             },
             content_len: 42,
+            generation: None,
         }),
         Box::new(ToolCallBeginPayload {
             agent_code: "agent-1".to_string(),
             tool_name: "web_search".to_string(),
             argument_keys: vec!["q".to_string()],
+            tool_call_correlation: None,
         }),
         Box::new(ToolCallEndPayload {
             agent_code: "agent-1".to_string(),
             tool_name: "web_search".to_string(),
             result_keys: vec!["r".to_string()],
-            status: "ok".to_string(),
+            status: ToolCallStatus::Ok,
             latency_ms: 12,
+            tool_call_correlation: None,
         }),
         Box::new(SubagentDonePayload {
             agent_code: "agent-1".to_string(),
@@ -479,6 +495,7 @@ fn representative_core_payloads() -> Vec<Box<dyn EventPayload>> {
             usage_total: UsagePayload {
                 input_tokens: 100,
                 output_tokens: 200,
+                generation: None,
             },
             evidence_excerpt: Some("evidence".to_string()),
         }),
@@ -494,17 +511,20 @@ fn representative_core_payloads() -> Vec<Box<dyn EventPayload>> {
             usage: Some(UsagePayload {
                 input_tokens: 1,
                 output_tokens: 2,
+                generation: None,
             }),
         }),
         Box::new(ApprovalRequestPayload {
             agent_code: "agent-1".to_string(),
             tool_name: "shell".to_string(),
             approval_id: "appr-1".to_string(),
-            risk_level: "high".to_string(),
+            risk_level: ApprovalRiskLevel::High,
+            tool_call_correlation: None,
         }),
         Box::new(ApprovalResolvedPayload {
             approval_id: "appr-1".to_string(),
             decision: crate::types::consent::ApprovalResolution::Approved,
+            tool_call_correlation: None,
         }),
     ]
 }

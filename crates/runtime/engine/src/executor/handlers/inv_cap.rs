@@ -195,7 +195,9 @@ pub async fn execute(ctx: &ExecutionContext, node: &Node, inputs: Vec<Value>) ->
     // fail the node: the turn continues gracefully with a denial message (m4,
     // matching the LLM tool-loop's graceful `ToolResult::error`).
     let args =
-        match crate::executor::hook_driver::run_pre_cap_hooks(ctx, &capability_name, args).await {
+        match crate::executor::hook_driver::run_pre_cap_hooks(ctx, &capability_name, args, None)
+            .await
+        {
             Ok(edited) => edited,
             Err(e) => {
                 return Ok(Value::String(format!(
@@ -210,10 +212,7 @@ pub async fn execute(ctx: &ExecutionContext, node: &Node, inputs: Vec<Value>) ->
     let script_handler =
         python_handler_id.is_some() || script_handler_for_capability(ctx, &capability_name);
     let script_policy = if script_handler {
-        Some(super::llm::script_tool_policy(
-            ctx,
-            &capability_name,
-        )?)
+        Some(super::llm::script_tool_policy(ctx, &capability_name)?)
     } else {
         None
     };
@@ -234,6 +233,7 @@ pub async fn execute(ctx: &ExecutionContext, node: &Node, inputs: Vec<Value>) ->
                 args,
                 policy.requires_approval,
                 &call_id,
+                None,
             )
             .await?;
         tokio::select! {
@@ -262,6 +262,7 @@ pub async fn execute(ctx: &ExecutionContext, node: &Node, inputs: Vec<Value>) ->
              args,
              timeout,
              &call_id,
+             None,
          ) => {
          result.map_err(|e| {
          tracing::error!(
@@ -281,7 +282,8 @@ pub async fn execute(ctx: &ExecutionContext, node: &Node, inputs: Vec<Value>) ->
         outcome
     };
     // post_cap hooks (replace_result) for both paths.
-    let result = crate::executor::hook_driver::run_post_cap_hooks(ctx, &capability_name, raw).await;
+    let result =
+        crate::executor::hook_driver::run_post_cap_hooks(ctx, &capability_name, raw, None).await;
     // Deterministic tool-result trimming (the runtime compaction mechanism): an oversized result (e.g. a
     // full raw web page body) must not silently inflate the conversation's
     // token budget. Reuses the SAME `truncate_to_budget` primitive the
@@ -569,15 +571,10 @@ mod tests {
             .to_string(),
         );
 
-        let error = enforce_write_boundary(
-            &ctx,
-            "script-write",
-            &HashMap::new(),
-            true,
-            "call-denied",
-        )
-            .await
-            .expect_err("missing broker must deny approval-gated write");
+        let error =
+            enforce_write_boundary(&ctx, "script-write", &HashMap::new(), true, "call-denied")
+                .await
+                .expect_err("missing broker must deny approval-gated write");
 
         assert!(matches!(
             error,
@@ -604,8 +601,7 @@ mod tests {
         use crate::memory::{MemoryConfig, MemorySystem};
         use apxm_backends::LLMRegistry;
         use apxm_core::types::consent::{
-            ApprovalEvidence, ConsentBroker, ConsentDecision, InteractiveApproval,
-            PermissionPrompt,
+            ApprovalEvidence, ConsentBroker, ConsentDecision, InteractiveApproval, PermissionPrompt,
         };
         use std::sync::Arc;
         use std::time::Duration;
