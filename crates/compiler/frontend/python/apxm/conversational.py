@@ -36,6 +36,26 @@ TURN_PARAM = "user_message"
 # The internal agent name the turn flow is registered under (`<agent>.<flow>`).
 _CONVERSATION_AGENT = "conversation"
 
+# Node-attribute keys the turn flow's marked conversational ASK carries the
+# `CompactionPolicy` under. This is the execution-time channel the Rust
+# runtime (`ConversationMemoryMiddleware`) reads to enact the four control
+# dials (default/configure/override/opt-out); a sibling copy also travels in
+# the turn graph's own `metadata` (see `_build_turn_flow`) so it is
+# AIR-reachable / inspectable, not just execution-only. Absent entirely
+# (`compaction=None`) is the opt-out dial: the runtime does zero extra
+# measurement and emits zero compaction events.
+COMPACTION_KEEP_RECENT_ATTR = "compaction_keep_recent"
+COMPACTION_AT_TOKENS_ATTR = "compaction_at_tokens"
+COMPACTION_STRATEGY_ATTR = "compaction_strategy"
+COMPACTION_SUMMARY_KEY_ATTR = "compaction_summary_key"
+# Fail-closed override-precedence signal: true when the program also
+# registers a `post_turn` hook (the documented author-override mechanism,
+# `examples/python/conversational/controllable_agent.py`). The runtime must
+# treat this as "override present, runtime does nothing" — never
+# double-compact (constitution: program cognition wins; see
+# the runtime ignores this override instead of compacting twice).
+COMPACTION_OVERRIDE_PRESENT_ATTR = "compaction_override_present"
+
 @dataclass(slots=True)
 class CompactionPolicy:
     """Author-owned compaction settings — plain values the USER's program reads.
@@ -184,12 +204,6 @@ class ConversationalAgent:
             "capability_groups": self.capability_groups,
             "turn_param": TURN_PARAM,
         }
-        if self.compaction is not None:
-            metadata["compaction"] = {
-                "keep_recent": self.compaction.keep_recent,
-                "compact_at_tokens": self.compaction.compact_at_tokens,
-                "strategy": self.compaction.strategy,
-            }
 
         return MultiFlowArtifact(
             graphs,
@@ -201,9 +215,25 @@ class ConversationalAgent:
 
     def _build_turn_flow(self) -> GraphRecorder:
         """The author turn body: recall → ask(tools) → remember → done."""
+        # Stamp the policy into this graph's metadata so the emitted AIR carries
+        # the compaction policy into THIS graph's own `metadata`, the only
+        # metadata path `to_air()`/`emit_multi_flow_module` actually reads
+        # (`ir.py` — `ApxmGraph.to_dict()`). The old code stuffed it into
+        # `MultiFlowArtifact.metadata`, which `to_air()` never consults, so
+        # `compact_at_tokens`/`strategy` never reached the AIR text.
+        graph_metadata: dict[str, Any] = {graph_keys.IS_ENTRY: False}
+        has_post_turn_hook = any(h.event == "post_turn" for h in self.hooks)
+        if self.compaction is not None:
+            graph_metadata["compaction"] = {
+                "keep_recent": self.compaction.keep_recent,
+                "compact_at_tokens": self.compaction.compact_at_tokens,
+                "strategy": self.compaction.strategy,
+                "summary_key": self.compaction.summary_key,
+                "override_present": has_post_turn_hook,
+            }
         turn = GraphRecorder(
             f"{_CONVERSATION_AGENT}.turn",
-            metadata={graph_keys.IS_ENTRY: False},
+            metadata=graph_metadata,
         )
         turn.param(TURN_PARAM, "str")
 
@@ -241,6 +271,18 @@ class ConversationalAgent:
         # (which share this session's memory scope) do not inflate the turn
         # count, pollute the recall window, or re-fire turn hooks.
         ask_attrs["conversational_turn"] = "true"
+        # Execution-time compaction channel: the SAME marked ask the runtime's
+        # `ConversationMemoryMiddleware` already scopes turn accounting to
+        # (`conversational.py:` marker doc above) also carries the compaction
+        # policy, so the middleware can measure/warn/compact without a second
+        # lookup mechanism. Absent when `compaction is None` (opt-out dial —
+        # zero extra measurement, zero events).
+        if self.compaction is not None:
+            ask_attrs[COMPACTION_AT_TOKENS_ATTR] = self.compaction.compact_at_tokens
+            ask_attrs[COMPACTION_KEEP_RECENT_ATTR] = self.compaction.keep_recent
+            ask_attrs[COMPACTION_STRATEGY_ATTR] = self.compaction.strategy
+            ask_attrs[COMPACTION_SUMMARY_KEY_ATTR] = self.compaction.summary_key
+            ask_attrs[COMPACTION_OVERRIDE_PRESENT_ATTR] = has_post_turn_hook
         tool_names = [t.name for t in self.tools]
         if tool_names:
             ask_attrs[graph_keys.TOOLS] = tool_names
@@ -363,4 +405,14 @@ class ConversationalAgent:
         return rec
 
 
-__all__ = ["CompactionPolicy", "ConversationalAgent", "MultiFlowArtifact", "TURN_PARAM"]
+__all__ = [
+    "CompactionPolicy",
+    "ConversationalAgent",
+    "MultiFlowArtifact",
+    "TURN_PARAM",
+    "COMPACTION_KEEP_RECENT_ATTR",
+    "COMPACTION_AT_TOKENS_ATTR",
+    "COMPACTION_STRATEGY_ATTR",
+    "COMPACTION_SUMMARY_KEY_ATTR",
+    "COMPACTION_OVERRIDE_PRESENT_ATTR",
+]

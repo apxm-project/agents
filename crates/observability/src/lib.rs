@@ -15,9 +15,16 @@
 //! own process config — see [`Config`] for the minimal shape this crate
 //! needs from it).
 
+mod genai;
 mod metrics;
 mod traceparent;
 
+pub use genai::{
+    GENAI_OPERATION_CHAT, GENAI_OPERATION_CREATE_AGENT, GENAI_OPERATION_EVENT,
+    GENAI_OPERATION_EXECUTE_TOOL, GENAI_OPERATION_INVOKE_AGENT, GENAI_OPERATION_INVOKE_WORKFLOW,
+    GENAI_SEMCONV_SCHEMA_URL, GenAiEventExporter, GenAiExporterConfig, derive_span_id,
+    derive_trace_id, genai_resource, operation_name,
+};
 pub use metrics::AppMetrics;
 pub use traceparent::{extract_traceparent, inject_current_traceparent, traceparent_from_headers};
 
@@ -49,11 +56,21 @@ pub struct Config {
 #[derive(Clone)]
 pub struct OtelExporter {
     endpoint: std::sync::Arc<String>,
+    provider: opentelemetry_sdk::trace::TracerProvider,
 }
 
 impl OtelExporter {
     pub fn endpoint(&self) -> &str {
         self.endpoint.as_str()
+    }
+
+    /// Return the provider used by the request-span pipeline.
+    ///
+    /// Additive event exporters should use this provider instead of replacing
+    /// the process provider, so request and event spans continue to share one
+    /// processor/resource configuration.
+    pub fn tracer_provider(&self) -> opentelemetry_sdk::trace::TracerProvider {
+        self.provider.clone()
     }
 }
 
@@ -123,6 +140,7 @@ pub fn init(config: &Config) -> Result<Option<OtelExporter>, InitError> {
 
     let provider = opentelemetry_sdk::trace::TracerProvider::builder()
         .with_batch_exporter(exporter, opentelemetry_sdk::runtime::Tokio)
+        .with_resource(genai_resource(config.service_name))
         .build();
 
     let tracer = provider.tracer(config.service_name);
@@ -144,6 +162,7 @@ pub fn init(config: &Config) -> Result<Option<OtelExporter>, InitError> {
 
     Ok(Some(OtelExporter {
         endpoint: std::sync::Arc::new(endpoint.to_string()),
+        provider,
     }))
 }
 

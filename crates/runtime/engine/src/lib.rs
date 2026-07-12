@@ -58,6 +58,7 @@ pub use apxm_aam as aam;
 pub mod agent_pool;
 pub mod agent_router;
 pub mod agent_scoring;
+mod background;
 /// Capability system — re-exported from the standalone `apxm-capability`
 /// crate so existing `apxm_runtime::capability::...` import paths keep
 /// working after the  sub-crate extraction.
@@ -80,6 +81,12 @@ pub mod process;
 pub mod process_table;
 pub mod python_tools;
 mod runtime;
+/// Shared script-artifact admission policy (`python_tools` /
+/// `typescript_tools` trust+sandbox gate) — consulted identically by this
+/// crate's `Runtime`, the driver's attach step, and the server's raw execute
+/// admission so all three embeddings enforce one policy. See
+/// `the shared script-artifact admission policy` in the coordinator workspace.
+pub mod script_admission;
 pub mod typescript_tools;
 // `sandbox` moved to `apxm-capability-iface` — it had zero dependencies on
 // other `apxm-runtime` internals, so it was a clean relocation. Re-exported
@@ -106,6 +113,10 @@ pub use agent_router::{
     AGENT_ROUTE_CAPABILITIES, AGENT_ROUTE_SELECTOR_DETERMINISTIC, AgentRouteCandidate,
     AgentRouteDecision, AgentRouteRejection, AgentRouteRequest, AgentRouteScore, AgentRouteSource,
     AgentRouter, AgentRoutingError,
+};
+pub use background::{
+    BackgroundExecution, BackgroundExecutionOutcome, BackgroundExecutionTask,
+    BackgroundJoinFailure, PersistedBackgroundExecutionOutcome,
 };
 pub use capability::{
     CapabilitySystem,
@@ -142,6 +153,7 @@ pub use runtime::{
     ExecutionOutcome, LlmToolDispatchConfig, Runtime, RuntimeConfig, RuntimeExecutionResult,
 };
 pub use scheduler::{DataflowScheduler, SchedulerConfig};
+pub use script_admission::{script_artifacts_trusted, script_sandbox_required};
 pub use thread::{AgentThread, ThreadId, ThreadState};
 
 pub use sandbox::{

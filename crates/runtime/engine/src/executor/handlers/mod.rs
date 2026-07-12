@@ -17,8 +17,6 @@ pub mod inner_plan;
 pub mod inv_cap;
 pub mod jump;
 pub mod llm; // Unified handler for Ask/Think/Reason operations
-pub mod loop_end;
-pub mod loop_start;
 pub mod merge;
 pub mod nop;
 pub mod pause;
@@ -51,6 +49,7 @@ use apxm_backends::{LLMRequest, LLMResponse, StreamingBackendError};
 use apxm_core::{
     constants::graph::attrs as graph_attrs,
     error::RuntimeError,
+    events::payload::GenerationIdentity,
     types::{execution::Node, values::Value},
 };
 
@@ -299,8 +298,25 @@ pub async fn execute_llm_request_for_node(
     phase: &str,
     request: &LLMRequest,
 ) -> Result<LLMResponse> {
-    execute_llm_request_with_node_name(ctx, node.id, node.metadata.name.as_deref(), phase, request)
-        .await
+    execute_llm_request_for_node_with_generation(ctx, node, phase, request, None).await
+}
+
+pub async fn execute_llm_request_for_node_with_generation(
+    ctx: &ExecutionContext,
+    node: &Node,
+    phase: &str,
+    request: &LLMRequest,
+    generation: Option<&GenerationIdentity>,
+) -> Result<LLMResponse> {
+    execute_llm_request_with_node_name(
+        ctx,
+        node.id,
+        node.metadata.name.as_deref(),
+        phase,
+        request,
+        generation,
+    )
+    .await
 }
 
 async fn execute_llm_request_with_node_name(
@@ -309,6 +325,7 @@ async fn execute_llm_request_with_node_name(
     node_name: Option<&str>,
     phase: &str,
     request: &LLMRequest,
+    generation: Option<&GenerationIdentity>,
 ) -> Result<LLMResponse> {
     if ctx.cancellation_token.is_cancelled() {
         return Err(RuntimeError::SchedulerCancelled);
@@ -320,19 +337,36 @@ async fn execute_llm_request_with_node_name(
     let resolved = resolve_model_profile(ctx, request.clone());
     let request = &resolved;
 
+    let active_agent = ctx
+        .agent_scope_stack
+        .peek()
+        .map(|scope| scope.agent_code.clone())
+        .or_else(|| ctx.current_agent.as_ref().map(|agent| agent.name.clone()));
+
+    if let (Some(emitter), Some(agent_code)) = (&ctx.event_emitter, active_agent.as_deref()) {
+        emitter.emit_subagent_llm_call_begin_with_generation(
+            agent_code,
+            request.model.as_deref().unwrap_or("auto"),
+            request.backend.as_deref().unwrap_or("auto"),
+            request.tools.as_ref().map_or(0, Vec::len),
+            generation,
+        );
+    }
+
     // Use streaming path when an event emitter is available so we can
     // emit token-by-token events. The default generate_stream() impl
     // wraps generate() into a single Done chunk for non-streaming backends.
     if let Some(emitter) = &ctx.event_emitter {
-        emitter.emit_llm_prompt_with_name(node_id, node_name, &request.prompt);
-        return execute_llm_request_streaming(ctx, node_id, phase, request).await;
+        emitter.emit_llm_prompt_with_generation(node_id, node_name, &request.prompt, generation);
     }
 
     #[cfg(feature = "metrics")]
     let start = std::time::Instant::now();
 
     // Route through ModelRouter when available (circuit breakers + policy routing).
-    let response = if let Some(router) = &ctx.model_router {
+    let response = if ctx.event_emitter.is_some() {
+        execute_llm_request_streaming(ctx, node_id, phase, request, generation).await?
+    } else if let Some(router) = &ctx.model_router {
         tokio::select! {
             result = router.generate(request.clone()) => {
                 result.map_err(|e| llm_error(ctx, phase, request, e))?
@@ -351,6 +385,17 @@ async fn execute_llm_request_with_node_name(
             }
         }
     };
+
+    if let (Some(emitter), Some(agent_code)) = (&ctx.event_emitter, active_agent.as_deref()) {
+        emitter.emit_subagent_llm_call_end_with_generation(
+            agent_code,
+            &response.finish_reason.to_string(),
+            response.usage.input_tokens,
+            response.usage.output_tokens,
+            response.content.chars().count(),
+            generation,
+        );
+    }
 
     #[cfg(feature = "metrics")]
     {
@@ -407,6 +452,7 @@ async fn execute_llm_request_streaming(
     node_id: u64,
     phase: &str,
     request: &LLMRequest,
+    generation: Option<&GenerationIdentity>,
 ) -> Result<LLMResponse> {
     use apxm_backends::StreamChunk;
     use tokio_stream::StreamExt;
@@ -479,7 +525,7 @@ async fn execute_llm_request_streaming(
                     streamed_tool_calls.push(finalize_pending_tool_call(tc));
                 }
                 if let Some(emitter) = &ctx.event_emitter {
-                    emitter.emit_llm_token_for_node(node_id, &token);
+                    emitter.emit_llm_token_for_generation(node_id, &token, generation);
                     emitted_text = true;
                 }
             }
@@ -516,7 +562,7 @@ async fn execute_llm_request_streaming(
                 // answer text (`emitted_text`): the answer comes from `token`
                 // chunks and the final response content.
                 if let Some(emitter) = &ctx.event_emitter {
-                    emitter.emit_llm_thought_for_node(node_id, &thought);
+                    emitter.emit_llm_thought_for_generation(node_id, &thought, generation);
                 }
             }
             StreamChunk::Usage(_usage) => {
@@ -564,7 +610,7 @@ async fn execute_llm_request_streaming(
 
     if !emitted_text && !response.content.is_empty() {
         if let Some(emitter) = &ctx.event_emitter {
-            emitter.emit_llm_token_for_node(node_id, &response.content);
+            emitter.emit_llm_token_for_generation(node_id, &response.content, generation);
         }
     }
 

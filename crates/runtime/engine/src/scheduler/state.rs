@@ -488,6 +488,8 @@ impl SchedulerState {
         self.llm_concurrency.cancel();
         self.blocking_concurrency.cancel();
         self.cancellation_token.cancel();
+        crate::scheduler::park_registry::remove_for_state(self);
+        self.clear_parked();
         self.notify_done.notify_waiters();
         self.work_notify.notify_waiters();
         self.watchdog_notify.notify_one();
@@ -501,6 +503,33 @@ impl SchedulerState {
     /// Check if execution has been cancelled.
     pub fn is_cancelled(&self) -> bool {
         self.concurrency.is_cancelled() || self.cancellation_token.is_cancelled()
+    }
+
+    pub(crate) fn is_terminal(&self) -> bool {
+        self.remaining.load(Ordering::SeqCst) == 0 || self.is_cancelled()
+    }
+
+    /// Decrement the unfinished-node count once and perform terminal cleanup on
+    /// the transition to zero.
+    pub(crate) fn finish_one(&self) {
+        let prev = self
+            .remaining
+            .fetch_update(Ordering::SeqCst, Ordering::SeqCst, |remaining| {
+                remaining.checked_sub(1)
+            })
+            .unwrap_or(0);
+        tracing::debug!(
+            prev_remaining = prev,
+            new_remaining = prev.saturating_sub(1),
+            "finish_one called"
+        );
+        if prev == 1 {
+            crate::scheduler::park_registry::remove_for_state(self);
+            self.clear_parked();
+            tracing::info!("Remaining hit 0, notifying done");
+            self.notify_done.notify_waiters();
+            self.work_notify.notify_waiters();
+        }
     }
 
     /// Retrieve the effect metadata for a node, if available.
@@ -628,7 +657,13 @@ impl SchedulerState {
     /// `finish_one`). This is the cross-frame twin of [`Self::resolve_promise`] +
     /// `finish_one`; together a park→wake performs exactly one completion, so the
     /// `remaining` count is invariant vs a normal node finishing.
-    pub fn wake_parked_node(&self, outputs: &[TokenId], value: Value) {
+    pub fn wake_parked_node(
+        &self,
+        node_id: NodeId,
+        outputs: &[TokenId],
+        value: Value,
+        attempts: u32,
+    ) {
         if self.is_cancelled() {
             self.set_first_error(RuntimeError::SchedulerCancelled);
             self.mark_done();
@@ -636,6 +671,22 @@ impl SchedulerState {
             self.record_progress();
             return;
         }
+
+        let completed = if let Some(mut op_state) = self.op_states.get_mut(&node_id) {
+            if matches!(op_state.status, OpStatus::Completed | OpStatus::Failed) {
+                false
+            } else {
+                op_state.status = OpStatus::Completed;
+                op_state.finished_at = Some(Instant::now());
+                true
+            }
+        } else {
+            false
+        };
+        if !completed {
+            return;
+        }
+
         for &token_id in outputs {
             match self.tokens.get_mut(&token_id) {
                 Some(token) if token.ready => continue, // already produced; idempotent
@@ -663,14 +714,16 @@ impl SchedulerState {
                 }
             }
         }
-        // The parked node completes now — the one compensating decrement.
-        let prev = self.remaining.fetch_sub(1, Ordering::SeqCst);
-        if prev == 1 {
-            self.notify_done.notify_waiters();
-            self.work_notify.notify_waiters();
+
+        self.executed.fetch_add(1, Ordering::Relaxed);
+        if let Some(node) = self.nodes.get(&node_id) {
+            self.emit_node_finished(node_id, &node, attempts);
         }
+
         // Clear the parked count (and reacquire admission on the 1->0 edge).
         self.exit_parked();
+        // The parked node completes now — the one compensating decrement.
+        self.finish_one();
         self.record_progress();
     }
 
@@ -710,8 +763,22 @@ impl SchedulerState {
 
     /// Record that a parked node has resumed. On the 1->0 transition (no nodes
     /// remain parked) best-effort reacquire the admission slot.
-    fn exit_parked(&self) {
-        if self.parked.fetch_sub(1, Ordering::SeqCst) == 1
+    pub(crate) fn exit_parked(&self) {
+        let previous = self
+            .parked
+            .fetch_update(Ordering::SeqCst, Ordering::SeqCst, |parked| {
+                parked.checked_sub(1)
+            })
+            .unwrap_or(0);
+        if previous == 1
+            && let Some(id) = &self.admission_id
+        {
+            crate::scheduler::admission_registry::on_unpark(id);
+        }
+    }
+
+    fn clear_parked(&self) {
+        if self.parked.swap(0, Ordering::SeqCst) > 0
             && let Some(id) = &self.admission_id
         {
             crate::scheduler::admission_registry::on_unpark(id);
@@ -1033,12 +1100,26 @@ fn materialize_graph_state(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::executor::ExecutionHook;
     use apxm_core::types::execution::FlowParameter;
     use apxm_core::types::execution::NodeMetadata;
     use apxm_core::types::operations::AISOperationType;
     use apxm_core::types::{DagMetadata, DependencyType, Edge, ExecutionDag, Node, Value};
     use std::sync::atomic::Ordering;
     use std::time::Duration;
+
+    static PARK_DURABLE_TEST_LOCK: Mutex<()> = Mutex::new(());
+
+    #[derive(Default)]
+    struct FinishedHook {
+        events: Mutex<Vec<NodeFinishedEvent>>,
+    }
+
+    impl ExecutionHook for FinishedHook {
+        fn on_node_finished(&self, event: &NodeFinishedEvent) {
+            self.events.lock().push(event.clone());
+        }
+    }
 
     /// Helper: build a SchedulerConfig suitable for tests.
     fn test_config() -> SchedulerConfig {
@@ -1279,7 +1360,7 @@ mod tests {
         assert_eq!(state.parked_count(), 1);
 
         // Wake delivers node 1's output token (10) — the ONE compensating completion.
-        state.wake_parked_node(&[10], Value::String("resumed".into()));
+        state.wake_parked_node(1, &[10], Value::String("resumed".into()), 1);
 
         assert_eq!(
             state.remaining.load(Ordering::SeqCst),
@@ -1290,6 +1371,160 @@ mod tests {
         let t = state.tokens.get(&10).expect("token 10 exists");
         assert!(t.ready, "woken node's output token is ready");
         assert_eq!(t.value.clone(), Some(Value::String("resumed".into())));
+    }
+
+    #[test]
+    fn parked_wake_records_terminal_node_once_and_suppresses_late_wake() {
+        use crate::scheduler::park_registry::{self, ParkWaker};
+
+        let mut dag = ExecutionDag::new();
+        dag.add_node(make_node(1, vec![], vec![10])).unwrap();
+        dag.entry_nodes = dag.find_entry_nodes();
+        dag.exit_nodes = dag.find_exit_nodes();
+
+        let hook = Arc::new(FinishedHook::default());
+        let hooks = ExecutionHookContext::new(
+            "parked-execution",
+            "parked-graph",
+            vec![hook.clone() as Arc<dyn ExecutionHook>],
+        );
+        let metrics = Arc::new(MetricsCollector::new());
+        let state = Arc::new(
+            SchedulerState::new_with_hooks(
+                dag,
+                test_config(),
+                metrics,
+                Instant::now(),
+                vec![],
+                hooks,
+            )
+            .unwrap()
+            .0,
+        );
+        let _ = drain_queue(&state);
+        if let Some(mut op_state) = state.op_states.get_mut(&1) {
+            op_state.status = OpStatus::Running;
+            op_state.started_at = Some(Instant::now());
+        }
+        state.enter_parked();
+
+        let key = "parked-terminal-accounting-unique";
+        park_registry::register(
+            key.to_string(),
+            ParkWaker::for_node(Arc::clone(&state), 1, vec![10], 1),
+        );
+
+        assert_eq!(park_registry::wake(key, Value::String("done".into())), 1);
+        assert_eq!(state.remaining.load(Ordering::SeqCst), 0);
+        assert_eq!(state.executed.load(Ordering::Relaxed), 1);
+        assert_eq!(state.parked_count(), 0);
+        let op_state = state.op_states.get(&1).unwrap();
+        assert_eq!(op_state.status, OpStatus::Completed);
+        assert!(op_state.finished_at.is_some());
+        drop(op_state);
+
+        let events = hook.events.lock();
+        assert_eq!(events.len(), 1);
+        assert_eq!(events[0].node_id, 1);
+        assert_eq!(events[0].status, OpStatus::Completed);
+        assert_eq!(events[0].attempts, 1);
+        drop(events);
+
+        assert_eq!(
+            park_registry::wake(key, Value::String("late".into())),
+            0,
+            "a terminal wait key stays closed"
+        );
+        assert_eq!(state.executed.load(Ordering::Relaxed), 1);
+        assert_eq!(hook.events.lock().len(), 1);
+
+        let replacement = Arc::new(new_state({
+            let mut dag = ExecutionDag::new();
+            dag.add_node(make_node(1, vec![], vec![10])).unwrap();
+            dag.entry_nodes = dag.find_entry_nodes();
+            dag.exit_nodes = dag.find_exit_nodes();
+            dag
+        }));
+        replacement.enter_parked();
+        park_registry::register(
+            key.to_string(),
+            ParkWaker::for_node(Arc::clone(&replacement), 1, vec![10], 1),
+        );
+        assert!(
+            !replacement.tokens.get(&10).unwrap().ready,
+            "the late wake must not become a resolved value for a future waiter"
+        );
+        replacement.mark_done();
+    }
+
+    #[test]
+    fn mark_done_removes_live_and_durable_park_waiters() {
+        use crate::scheduler::park_registry::{self, ParkWaker};
+
+        let _durable_guard = PARK_DURABLE_TEST_LOCK.lock();
+        let tmp = tempfile::tempdir().unwrap();
+        let db_path = tmp.path().join("cancelled_park_journal.sqlite");
+        park_registry::durable::init(&db_path).expect("open durable park journal");
+
+        let state = Arc::new(new_state(two_node_dag()));
+        let keys = [
+            "cancelled-park-cleanup-a".to_string(),
+            "cancelled-park-cleanup-b".to_string(),
+        ];
+        state.enter_parked();
+        state.enter_parked();
+        park_registry::register(
+            keys[0].clone(),
+            ParkWaker::for_node(Arc::clone(&state), 1, vec![10], 1),
+        );
+        park_registry::register(
+            keys[1].clone(),
+            ParkWaker::for_node(Arc::clone(&state), 2, vec![20], 1),
+        );
+        let pending = park_registry::pending_wait_keys();
+        assert!(pending.contains(&keys[0]));
+        assert!(pending.contains(&keys[1]));
+
+        state.mark_done();
+
+        assert_eq!(state.parked_count(), 0);
+        let pending = park_registry::pending_wait_keys();
+        assert!(!pending.contains(&keys[0]));
+        assert!(!pending.contains(&keys[1]));
+        for key in &keys {
+            assert_eq!(park_registry::wake(key, Value::Null), 0);
+        }
+
+        park_registry::durable::close_for_test();
+        park_registry::durable::init(&db_path)
+            .expect("reopen durable park journal after cancellation");
+        park_registry::rebuild_from_durable(&keys);
+        let replacement = Arc::new(new_state(two_node_dag()));
+        replacement.enter_parked();
+        park_registry::register(
+            keys[0].clone(),
+            ParkWaker::for_node(Arc::clone(&replacement), 1, vec![10], 1),
+        );
+        assert!(
+            !replacement.tokens.get(&10).unwrap().ready,
+            "no pending or resolved registration survives cancellation durably"
+        );
+        replacement.mark_done();
+
+        // Cancellation may win after enter_parked but before register. The
+        // rejected registration must not recreate either live or durable state.
+        let race_key = "cancelled-before-register-cleanup";
+        let raced = Arc::new(new_state(two_node_dag()));
+        raced.enter_parked();
+        raced.mark_done();
+        park_registry::register(
+            race_key.to_string(),
+            ParkWaker::for_node(Arc::clone(&raced), 1, vec![10], 1),
+        );
+        assert_eq!(park_registry::wake(race_key, Value::Null), 0);
+        assert!(!park_registry::pending_wait_keys().contains(&race_key.to_string()));
+
+        park_registry::durable::close_for_test();
     }
 
     /// A parked recv, on wake, splices a fresh turn sub-DAG
@@ -1339,7 +1574,7 @@ mod tests {
         );
 
         // Deliver the user message: wake the parked recv anchor.
-        state.wake_parked_node(&[10], Value::String("hello turn".into()));
+        state.wake_parked_node(1, &[10], Value::String("hello turn".into()), 1);
 
         // Invariants: the anchor's ONE compensating completion fires (3->2), the
         // parked counter clears, and the message token is delivered.
@@ -1410,7 +1645,7 @@ mod tests {
 
         // The carried summary token (11) is ready, so the turn body waits only on
         // the message; wake delivers it and the turn becomes schedulable.
-        state.wake_parked_node(&[10], Value::String("turn 2 message".into()));
+        state.wake_parked_node(1, &[10], Value::String("turn 2 message".into()), 1);
 
         let queued = drain_queue(&state);
         assert!(
@@ -1604,6 +1839,586 @@ mod tests {
             "pre-resolved wake delivered on register (no lost wakeup)"
         );
         assert_eq!(state.remaining.load(Ordering::SeqCst), 1);
+    }
+
+    /// Positive/recovery: park a node, simulate a process restart (the
+    /// durable park journal survives; the in-memory registry — and the
+    /// original `ParkWaker`'s `Arc<SchedulerState>` — do not), re-park the
+    /// SAME `wait_key` (the scheduler-restore path re-registering once it has
+    /// rebuilt the DAG up to its parked point), and assert a subsequent
+    /// `wake(wait_key, value)` still resolves that logical wait. Also proves
+    /// the companion durability gap: a wake that arrives with nobody parked
+    /// (stashed only in-memory pre-fix) survives a restart via the durable
+    /// journal and still delivers to the first post-restart `register`.
+    ///
+    /// Single test (not split across several `#[test]` fns) because the
+    /// durable journal is one process-global slot shared with every other
+    /// `park_registry` test in this module; `cargo test` runs functions
+    /// concurrently by default, and `rebuild_from_durable` is scoped to the
+    /// caller's own `wait_keys` precisely so it cannot disturb unrelated
+    /// concurrently-running tests' live registry entries.
+    #[test]
+    fn restart_reparks_pending_wait_key() {
+        use crate::scheduler::park_registry;
+
+        let _durable_guard = PARK_DURABLE_TEST_LOCK.lock();
+        let tmp = tempfile::tempdir().unwrap();
+        let db_path = tmp.path().join("park_journal.sqlite");
+        park_registry::durable::init(&db_path).expect("open durable park journal");
+
+        // Scenario A: park on key_a, "restart", re-park key_a, then wake.
+        let key_a = "restart-repark-a".to_string();
+        let state1 = Arc::new(new_state(two_node_dag()));
+        state1.parked.fetch_add(1, Ordering::SeqCst);
+        park_registry::register(
+            key_a.clone(),
+            park_registry::ParkWaker::new(Arc::clone(&state1), vec![10]),
+        );
+        assert!(
+            park_registry::pending_wait_keys().contains(&key_a),
+            "the open park is durably recorded before any restart"
+        );
+
+        // Simulate a process restart: durable connection dropped + reopened
+        // (file survives); the in-memory registry entry for key_a is cleared
+        // (a real restart's fresh registry never had it).
+        park_registry::durable::close_for_test();
+        park_registry::durable::init(&db_path).expect("reopen durable park journal after restart");
+        park_registry::rebuild_from_durable(std::slice::from_ref(&key_a));
+        assert!(
+            park_registry::pending_wait_keys().contains(&key_a),
+            "the pending park survives the restart in the durable journal"
+        );
+
+        // Scheduler restore rebuilds a fresh SchedulerState and re-parks the
+        // same logical wait under the identical wait_key.
+        let state2 = Arc::new(new_state(two_node_dag()));
+        state2.parked.fetch_add(1, Ordering::SeqCst);
+        park_registry::register(
+            key_a.clone(),
+            park_registry::ParkWaker::new(Arc::clone(&state2), vec![10]),
+        );
+        let woken = park_registry::wake(&key_a, Value::String("post-restart".into()));
+        assert_eq!(woken, 1, "the re-registered waker resolves the wake");
+        assert!(state2.tokens.get(&10).unwrap().ready);
+        assert_eq!(
+            state2.tokens.get(&10).unwrap().value.clone(),
+            Some(Value::String("post-restart".into()))
+        );
+        // The orphaned pre-restart state must NOT have been touched — exactly
+        // one live waker fires, not a stale double-delivery to dead state.
+        assert!(!state1.tokens.get(&10).unwrap().ready);
+
+        // Scenario B: a wake arrives with nobody parked (stashed durably),
+        // THEN a restart, THEN the first post-restart register() must still
+        // fire immediately from the durably-reloaded resolved stash — the
+        // actual gap this journal closes (an in-memory-only stash does not
+        // survive a real process restart).
+        let key_b = "restart-repark-b".to_string();
+        park_registry::wake(&key_b, Value::String("arrived-before-restart".into()));
+
+        park_registry::durable::close_for_test();
+        park_registry::durable::init(&db_path)
+            .expect("reopen durable park journal after second restart");
+        park_registry::rebuild_from_durable(std::slice::from_ref(&key_b));
+
+        let state3 = Arc::new(new_state(two_node_dag()));
+        state3.parked.fetch_add(1, Ordering::SeqCst);
+        park_registry::register(
+            key_b.clone(),
+            park_registry::ParkWaker::new(Arc::clone(&state3), vec![10]),
+        );
+        assert!(
+            state3.tokens.get(&10).unwrap().ready,
+            "a wake durably stashed before restart is delivered on the first post-restart register"
+        );
+        assert_eq!(
+            state3.tokens.get(&10).unwrap().value.clone(),
+            Some(Value::String("arrived-before-restart".into()))
+        );
+
+        park_registry::durable::close_for_test();
+    }
+
+    // ── loop/park/wake/splice invariants ─────────────────────────────────────
+    // The keystone (splice-based iteration) must keep passing: LOOP_START/
+    // LOOP_END were deleted because they were compiled-but-ignored; splicing
+    // is the one real iteration mechanism left, so its invariants are load
+    // bearing because splicing is the supported iteration mechanism.
+
+    /// Exact required name for the wake-before-register race (duplicate
+    /// coverage of `park_registry_wake_before_register_is_not_lost` under the
+    /// exact regression name — both pin the same invariant).
+    #[test]
+    fn wake_before_register_is_lost_wakeup_safe() {
+        use crate::scheduler::park_registry;
+        let key = "wake-before-register-unique";
+        // wake() arrives before any register() — the lost-wakeup race.
+        let woken = park_registry::wake(key, Value::String("early".into()));
+        assert_eq!(woken, 0, "no waiter is registered yet");
+
+        let state = Arc::new(new_state(two_node_dag()));
+        state.parked.fetch_add(1, Ordering::SeqCst);
+        // The subsequent register() must fire immediately against the stored
+        // `Resolved` sentinel instead of waiting forever for a wake that
+        // already happened.
+        park_registry::register(
+            key.to_string(),
+            park_registry::ParkWaker::new(Arc::clone(&state), vec![10]),
+        );
+        assert!(
+            state.tokens.get(&10).unwrap().ready,
+            "the pre-resolved wake must deliver on register, not be lost"
+        );
+        assert_eq!(
+            state.tokens.get(&10).unwrap().value.clone(),
+            Some(Value::String("early".into()))
+        );
+        assert_eq!(state.remaining.load(Ordering::SeqCst), 1);
+    }
+
+    /// Splice N nodes; assert `remaining` increases by exactly N and
+    /// `record_progress` fires (the deadlock watchdog's timer advances).
+    #[test]
+    fn splice_dag_preserves_remaining_count_invariant() {
+        use crate::scheduler::splicing::SpliceConfig;
+
+        let mut dag = ExecutionDag::new();
+        dag.add_node(make_node(1, vec![], vec![])).unwrap();
+        dag.entry_nodes = dag.find_entry_nodes();
+        dag.exit_nodes = dag.find_exit_nodes();
+        let state = new_state(dag);
+        assert_eq!(state.remaining.load(Ordering::SeqCst), 1);
+
+        let before_progress = state.last_progress_ms.load(Ordering::Relaxed);
+        std::thread::sleep(std::time::Duration::from_millis(2));
+
+        // A 3-node inner DAG spliced with no outer connections.
+        let mut inner = ExecutionDag::new();
+        inner.add_node(make_node(1, vec![], vec![100])).unwrap();
+        inner.add_node(make_node(2, vec![], vec![101])).unwrap();
+        inner.add_node(make_node(3, vec![], vec![102])).unwrap();
+        state
+            .splice_dag(SpliceConfig {
+                inner_dag: inner,
+                token_connections: HashMap::new(),
+                node_id_offset: None,
+                token_id_offset: None,
+            })
+            .unwrap();
+
+        assert_eq!(
+            state.remaining.load(Ordering::SeqCst),
+            4,
+            "remaining increases by exactly the 3 spliced nodes"
+        );
+        let after_progress = state.last_progress_ms.load(Ordering::Relaxed);
+        assert!(
+            after_progress >= before_progress,
+            "splice_dag must call record_progress so the deadlock watchdog \
+             does not fire spuriously while nodes are being spliced in"
+        );
+    }
+
+    /// Two sequential wakes on the same session-recv key: the first turn's
+    /// FLOW_CALL node never re-dispatches (is never re-enqueued) after the
+    /// second splice — "each user turn runs its OWN spliced sub-DAG; prior
+    /// turns are never re-executed" (`splicing.rs`'s doc comment on
+    /// `splice_turn_and_rearm`).
+    #[test]
+    fn splice_turn_and_rearm_never_reexecutes_prior_turn() {
+        use crate::scheduler::park_registry::{self, ParkWaker, RearmSpec};
+        use apxm_core::types::operations::AISOperationType;
+
+        let mut recv = make_node(1, vec![], vec![10]);
+        recv.op_type = AISOperationType::Autonomous;
+        for (k, v) in [
+            ("mode", "recv"),
+            ("recv_once", "false"),
+            ("turn_agent", "conversation"),
+            ("turn_flow", "turn"),
+            ("turn_param", "user_message"),
+        ] {
+            recv.attributes
+                .insert(k.to_string(), Value::String(v.to_string()));
+        }
+        let mut dag = ExecutionDag::new();
+        dag.add_node(recv.clone()).unwrap();
+        dag.entry_nodes = dag.find_entry_nodes();
+        dag.exit_nodes = dag.find_exit_nodes();
+        let state = Arc::new(new_state(dag));
+        let _ = drain_queue(&state);
+        state.parked.fetch_add(1, Ordering::SeqCst);
+
+        let session_id = "two-turns-session";
+        let key = "session_recv:two-turns-unique-1";
+        let spec = |sid: &str| RearmSpec {
+            recv_node: Arc::new(recv.clone()),
+            turn_agent: "conversation".to_string(),
+            turn_flow: "turn".to_string(),
+            turn_param: "user_message".to_string(),
+            session_id: sid.to_string(),
+            max_turns: 100,
+        };
+
+        // Turn 1.
+        park_registry::register(
+            key.to_string(),
+            ParkWaker::new_rearming(Arc::clone(&state), vec![10], spec(session_id)),
+        );
+        park_registry::wake(key, Value::String("turn one".into()));
+
+        let turn1_flow_calls: Vec<NodeId> = state
+            .nodes
+            .iter()
+            .filter(|e| e.value().op_type == AISOperationType::FlowCall)
+            .map(|e| *e.key())
+            .collect();
+        assert_eq!(
+            turn1_flow_calls.len(),
+            1,
+            "turn 1 spliced exactly one FLOW_CALL"
+        );
+        let turn1_flow_call = turn1_flow_calls[0];
+
+        // The fresh recv turn 1 spliced (Autonomous, id != 1) is what a real
+        // worker would eventually dispatch and re-park on this same session
+        // key; target turn 2's wake at its output token.
+        let fresh_recv = state
+            .nodes
+            .iter()
+            .find(|e| e.value().op_type == AISOperationType::Autonomous && *e.key() != 1)
+            .expect("turn 1 spliced a fresh recv")
+            .value()
+            .clone();
+        let fresh_recv_output = fresh_recv.output_tokens[0];
+
+        // Turn 2: a second wake on the SAME session key.
+        park_registry::register(
+            key.to_string(),
+            ParkWaker::new_rearming(
+                Arc::clone(&state),
+                vec![fresh_recv_output],
+                spec(session_id),
+            ),
+        );
+        park_registry::wake(key, Value::String("turn two".into()));
+
+        let all_flow_calls: std::collections::HashSet<NodeId> = state
+            .nodes
+            .iter()
+            .filter(|e| e.value().op_type == AISOperationType::FlowCall)
+            .map(|e| *e.key())
+            .collect();
+        assert_eq!(
+            all_flow_calls.len(),
+            2,
+            "each turn splices its OWN flow-call node; there are exactly 2 after 2 turns"
+        );
+        assert!(
+            all_flow_calls.contains(&turn1_flow_call),
+            "turn 1's flow-call node is still present, untouched by turn 2's splice"
+        );
+    }
+
+    /// Drive the turn counter to `max_turns`: re-arming stops and the recv
+    /// completes (delivers the woken value) instead of splicing again.
+    #[test]
+    fn session_turn_cap_stops_rearming_at_max_turns() {
+        use crate::scheduler::park_registry::{self, ParkWaker, RearmSpec};
+        use apxm_core::types::operations::AISOperationType;
+
+        let mut recv = make_node(1, vec![], vec![10]);
+        recv.op_type = AISOperationType::Autonomous;
+        for (k, v) in [
+            ("mode", "recv"),
+            ("recv_once", "false"),
+            ("turn_agent", "conversation"),
+            ("turn_flow", "turn"),
+            ("turn_param", "user_message"),
+        ] {
+            recv.attributes
+                .insert(k.to_string(), Value::String(v.to_string()));
+        }
+        let mut dag = ExecutionDag::new();
+        dag.add_node(recv.clone()).unwrap();
+        dag.entry_nodes = dag.find_entry_nodes();
+        dag.exit_nodes = dag.find_exit_nodes();
+        let state = Arc::new(new_state(dag));
+        let _ = drain_queue(&state);
+        state.parked.fetch_add(1, Ordering::SeqCst);
+
+        let session_id = "cap-session";
+        let key = "session_recv:cap-unique-1";
+        const MAX_TURNS: u64 = 2;
+        let spec = || RearmSpec {
+            recv_node: Arc::new(recv.clone()),
+            turn_agent: "conversation".to_string(),
+            turn_flow: "turn".to_string(),
+            turn_param: "user_message".to_string(),
+            session_id: session_id.to_string(),
+            max_turns: MAX_TURNS,
+        };
+        let flow_call_count = |state: &SchedulerState| -> usize {
+            state
+                .nodes
+                .iter()
+                .filter(|e| e.value().op_type == AISOperationType::FlowCall)
+                .count()
+        };
+
+        // Turn 1 (running count 1 < max_turns 2): re-arms.
+        park_registry::register(
+            key.to_string(),
+            ParkWaker::new_rearming(Arc::clone(&state), vec![10], spec()),
+        );
+        park_registry::wake(key, Value::String("turn one".into()));
+        assert_eq!(flow_call_count(&state), 1, "turn 1 re-arms (under the cap)");
+
+        // The fresh recv from turn 1 now parks itself, exactly as a real
+        // worker dispatching it would.
+        let fresh_recv_output = state
+            .nodes
+            .iter()
+            .find(|e| e.value().op_type == AISOperationType::Autonomous && *e.key() != 1)
+            .expect("turn 1 spliced a fresh recv")
+            .value()
+            .output_tokens[0];
+        state.parked.fetch_add(1, Ordering::SeqCst);
+
+        // Turn 2 (running count 2, NOT < max_turns 2): the cap is reached —
+        // the recv still completes (the woken value is delivered) but does
+        // NOT re-arm.
+        park_registry::register(
+            key.to_string(),
+            ParkWaker::new_rearming(Arc::clone(&state), vec![fresh_recv_output], spec()),
+        );
+        let woken2 = park_registry::wake(key, Value::String("turn two".into()));
+        assert_eq!(woken2, 1, "the recv still completes/delivers at the cap");
+        assert_eq!(
+            flow_call_count(&state),
+            1,
+            "at the turn cap, re-arming stops — no second FLOW_CALL is spliced"
+        );
+        assert!(
+            state.tokens.get(&fresh_recv_output).unwrap().ready,
+            "the capped turn's message is still delivered, just not re-armed"
+        );
+    }
+
+    /// Regression pin for the false "compiler verifies loop bounds" claim: a
+    /// condition that never resolves false must still stop at exactly
+    /// `max_turns` re-arms even under a driver that keeps waking indefinitely
+    /// — no hang, no unbounded splicing.
+    #[test]
+    fn loop_exceeding_max_iterations_is_bounded() {
+        use crate::scheduler::park_registry::{self, ParkWaker, RearmSpec};
+        use apxm_core::types::operations::AISOperationType;
+
+        let mut recv = make_node(1, vec![], vec![10]);
+        recv.op_type = AISOperationType::Autonomous;
+        for (k, v) in [
+            ("mode", "recv"),
+            ("recv_once", "false"),
+            ("turn_agent", "conversation"),
+            ("turn_flow", "turn"),
+            ("turn_param", "user_message"),
+        ] {
+            recv.attributes
+                .insert(k.to_string(), Value::String(v.to_string()));
+        }
+        let mut dag = ExecutionDag::new();
+        dag.add_node(recv.clone()).unwrap();
+        dag.entry_nodes = dag.find_entry_nodes();
+        dag.exit_nodes = dag.find_exit_nodes();
+        let state = Arc::new(new_state(dag));
+        let _ = drain_queue(&state);
+
+        const MAX_TURNS: u64 = 4;
+        const WAKE_ATTEMPTS: usize = 9; // far more than MAX_TURNS
+        let session_id = "unbounded-driver-session";
+        let key = "session_recv:unbounded-driver-unique-1";
+
+        let mut target_token = 10u64;
+        for _ in 0..WAKE_ATTEMPTS {
+            state.parked.fetch_add(1, Ordering::SeqCst);
+            park_registry::register(
+                key.to_string(),
+                ParkWaker::new_rearming(
+                    Arc::clone(&state),
+                    vec![target_token],
+                    RearmSpec {
+                        recv_node: Arc::new(recv.clone()),
+                        turn_agent: "conversation".to_string(),
+                        turn_flow: "turn".to_string(),
+                        turn_param: "user_message".to_string(),
+                        session_id: session_id.to_string(),
+                        max_turns: MAX_TURNS,
+                    },
+                ),
+            );
+            park_registry::wake(key, Value::String("keeps coming".into()));
+
+            if let Some(fresh) = state
+                .nodes
+                .iter()
+                .filter(|e| e.value().op_type == AISOperationType::Autonomous && *e.key() != 1)
+                .max_by_key(|e| *e.key())
+            {
+                target_token = fresh.value().output_tokens[0];
+            }
+        }
+
+        let flow_call_count = state
+            .nodes
+            .iter()
+            .filter(|e| e.value().op_type == AISOperationType::FlowCall)
+            .count();
+        assert_eq!(
+            flow_call_count,
+            (MAX_TURNS - 1) as usize,
+            "an ever-arriving wake (the condition never resolves false) is \
+             still bounded — re-arming stops at the turn cap, no hang, no \
+             unbounded splicing"
+        );
+    }
+
+    /// Splice then condense: `remaining` returns to pre-splice-plus-one,
+    /// external consumers preserved.
+    #[test]
+    fn condense_subdag_round_trips_with_splice_dag() {
+        use crate::scheduler::splicing::SpliceConfig;
+
+        // Node 1 (outside the soon-to-be-spliced subgraph) consumes token 10,
+        // which nothing in the initial 1-node DAG produces (a flow
+        // parameter) — it starts as the sole registered consumer.
+        let mut dag = ExecutionDag::new();
+        dag.add_node(make_node(1, vec![10], vec![20])).unwrap();
+        dag.entry_nodes = dag.find_entry_nodes();
+        dag.exit_nodes = dag.find_exit_nodes();
+        let state = Arc::new(new_state(dag));
+        assert_eq!(
+            state.remaining.load(Ordering::SeqCst),
+            1,
+            "pre-splice remaining"
+        );
+        assert_eq!(
+            state.tokens.get(&10).unwrap().consumers.clone(),
+            vec![1],
+            "node 1 is the sole consumer of token 10 before splicing"
+        );
+
+        // Splice a 2-node inner chain whose tail produces token 10 (node 1's
+        // input) — wired via `token_connections`, not by touching node 1.
+        let inner_a = make_node(1, vec![], vec![1]);
+        let inner_b = make_node(2, vec![1], vec![2]);
+        let mut inner_dag = ExecutionDag::new();
+        inner_dag.add_node(inner_a).unwrap();
+        inner_dag.add_node(inner_b).unwrap();
+        let mut connections = HashMap::new();
+        connections.insert(2u64, 10u64); // inner_b's local output -> outer token 10
+        state
+            .splice_dag(SpliceConfig {
+                inner_dag,
+                token_connections: connections,
+                node_id_offset: None,
+                token_id_offset: None,
+            })
+            .unwrap();
+        assert_eq!(
+            state.remaining.load(Ordering::SeqCst),
+            3,
+            "remaining increases by exactly the 2 spliced nodes"
+        );
+
+        let inner_b_id = state
+            .nodes
+            .iter()
+            .find(|e| e.value().output_tokens == vec![10])
+            .map(|e| *e.key())
+            .expect("inner_b remapped and present");
+        let inner_a_id = state
+            .nodes
+            .iter()
+            .find(|e| e.value().input_tokens.is_empty() && e.key() != &1)
+            .map(|e| *e.key())
+            .expect("inner_a remapped and present");
+
+        let replacement = Arc::new(make_node(999, vec![], vec![10]));
+        state
+            .condense_subdag(&[inner_a_id, inner_b_id], replacement.clone())
+            .unwrap();
+
+        assert_eq!(
+            state.remaining.load(Ordering::SeqCst),
+            2,
+            "condense returns remaining to pre-splice-plus-one (1 + the 1 replacement node)"
+        );
+        assert!(
+            state.nodes.contains_key(&999),
+            "the replacement node is present"
+        );
+        assert!(
+            !state.nodes.contains_key(&inner_a_id) && !state.nodes.contains_key(&inner_b_id),
+            "condensed nodes are removed"
+        );
+        assert_eq!(
+            state.tokens.get(&10).unwrap().consumers.clone(),
+            vec![1],
+            "node 1's external consumption of token 10 survives condensing, \
+             now served by the replacement"
+        );
+    }
+
+    /// Regression pin for the restart/recovery gap this package does NOT
+    /// close: `park_registry`'s backing store is a single process-global
+    /// `OnceLock` with no persistence (`park_registry.rs`'s own docs). There
+    /// is no cross-process store to actually kill/restart against, so this
+    /// constructs the closest in-process analogue — a fresh `SchedulerState`
+    /// (simulating a post-restart process) and a `wait_key` with no live
+    /// registration against it (a real restart wipes the whole in-memory
+    /// map). `wake()` must return 0 resumed wakers and neither panic nor
+    /// silently double-complete a node.
+    #[test]
+    fn park_registry_state_lost_on_process_restart_fails_closed_not_silently() {
+        use crate::scheduler::park_registry;
+
+        let state = Arc::new(new_state(two_node_dag()));
+        let before_remaining = state.remaining.load(Ordering::SeqCst);
+        let before_ready: Vec<bool> = state.tokens.iter().map(|e| e.value().ready).collect();
+
+        let wait_key = "session_recv:post-restart-lost-registration-unique";
+        let woken = park_registry::wake(wait_key, Value::String("late arrival".into()));
+
+        assert_eq!(
+            woken, 0,
+            "a wake for a wait_key with no live registration (the restart \
+             gap) must resume zero wakers, not panic or guess"
+        );
+        // Fail-closed, not silently corrupting: the unrelated fresh scheduler
+        // state is completely untouched — no accidental cross-execution
+        // completion and no double-completion of any node.
+        assert_eq!(
+            state.remaining.load(Ordering::SeqCst),
+            before_remaining,
+            "an unresolved wake must not touch unrelated scheduler state"
+        );
+        assert_eq!(
+            state
+                .tokens
+                .iter()
+                .map(|e| e.value().ready)
+                .collect::<Vec<bool>>(),
+            before_ready,
+            "no token in the fresh state is spuriously marked ready"
+        );
+
+        // Confirm this doesn't leak into a second, unrelated wake either.
+        let unrelated_woken = park_registry::wake(
+            "session_recv:post-restart-lost-registration-different-unique",
+            Value::String("unrelated".into()),
+        );
+        assert_eq!(unrelated_woken, 0);
     }
 
     #[test]
@@ -2386,7 +3201,7 @@ mod tests {
     #[tokio::test]
     async fn test_llm_concurrency_independent_of_compute_concurrency() {
         // Exhaust the LLM semaphore; compute permits must remain available.
-        // This is the core invariant behind Step 5: LLM fan-out can saturate
+        // This is the core invariant: LLM fan-out can saturate
         // without throttling compute-bound work, and vice versa.
         let cfg = SchedulerConfig::new()
             .with_max_concurrency(2)

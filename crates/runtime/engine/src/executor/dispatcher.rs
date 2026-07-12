@@ -2,10 +2,6 @@
 
 use super::{
     Result,
-    agent_scope::{
-        LAYER2_BACKEND_DEFAULT, LAYER2_FINISH_REASON_STOP, LAYER2_TOOL_STATUS_ERROR,
-        LAYER2_TOOL_STATUS_OK,
-    },
     context::ExecutionContext,
     handlers::*,
     middleware::{BoxFuture, Next},
@@ -13,6 +9,7 @@ use super::{
 use apxm_core::apxm_op;
 use apxm_core::constants::graph::attrs as graph_attrs;
 use apxm_core::error::RuntimeError;
+use apxm_core::events::payload::ToolCallStatus;
 use apxm_core::types::{
     OperationMetric, execution::Node, operations::AISOperationType, values::Value,
 };
@@ -225,48 +222,12 @@ impl OperationDispatcher {
         }
         let op_start = std::time::Instant::now();
 
-        // Layer 2 — emit a paired begin event when this op runs inside an
-        // agent scope. ASK/THINK/REASON paired with `subagent_llm_call_*`;
-        // INV_CAP paired with `tool_call_*`. The matching end fires after
-        // the handler returns (see below) so it sees both the duration and
-        // the result shape. Captures the active scope's `agent_code` at
-        // begin so the end remains coherent even if a nested SPAWN_AGENT
-        // mutates the stack mid-handler.
+        // Direct INV_CAP remains a generic runtime call. Model-derived tool
+        // calls emit their correlated lifecycle from the LLM tool dispatcher.
         let layer2_begin = if let Some(emitter) = &ctx.event_emitter {
             ctx.agent_scope_stack
                 .peek()
                 .and_then(|scope| match node.op_type {
-                    AISOperationType::Ask | AISOperationType::Think | AISOperationType::Reason => {
-                        let model = node
-                            .attributes
-                            .get(graph_attrs::MODEL)
-                            .and_then(|v| v.as_string())
-                            .cloned()
-                            .unwrap_or_default();
-                        let backend = node
-                            .attributes
-                            .get(graph_attrs::BACKEND)
-                            .and_then(|v| v.as_string())
-                            .cloned()
-                            .unwrap_or_else(|| LAYER2_BACKEND_DEFAULT.to_string());
-                        let tool_manifest_count = node
-                            .attributes
-                            .get(graph_attrs::TOOLS)
-                            .and_then(|v| v.as_array())
-                            .map(|a| a.len())
-                            .unwrap_or(0);
-                        emitter.emit_subagent_llm_call_begin(
-                            &scope.agent_code,
-                            &model,
-                            &backend,
-                            tool_manifest_count,
-                        );
-                        Some(Layer2BeginContext {
-                            agent_code: scope.agent_code.clone(),
-                            tool_name: None,
-                            started_at: op_start,
-                        })
-                    }
                     AISOperationType::InvCap => {
                         let tool_name = node
                             .attributes
@@ -327,33 +288,15 @@ impl OperationDispatcher {
             let tokens = ctx.token_accountant.get_node(node.id);
             let timing = ctx.timing_tracker.get_node(node.id);
 
-            // Layer 2 terminal for ASK/INV_CAP when the begin captured an
-            // active scope at the same node.
+            // Direct INV_CAP terminal for the generic runtime call above.
             if let Some(begin) = layer2_begin.as_ref() {
                 let latency_ms = begin.started_at.elapsed().as_millis() as u64;
                 match node.op_type {
-                    AISOperationType::Ask | AISOperationType::Think | AISOperationType::Reason => {
-                        let (input_tokens, output_tokens) = tokens
-                            .as_ref()
-                            .map(|t| (t.input_tokens, t.output_tokens))
-                            .unwrap_or((0, 0));
-                        let content_len = match &result {
-                            Ok(Value::String(s)) => s.len(),
-                            _ => 0,
-                        };
-                        emitter.emit_subagent_llm_call_end(
-                            &begin.agent_code,
-                            LAYER2_FINISH_REASON_STOP,
-                            input_tokens,
-                            output_tokens,
-                            content_len,
-                        );
-                    }
                     AISOperationType::InvCap => {
                         let tool_name = begin.tool_name.as_deref().unwrap_or("");
                         let (status, result_keys) = match &result {
-                            Ok(value) => (LAYER2_TOOL_STATUS_OK, result_keys_for_layer2(value)),
-                            Err(_) => (LAYER2_TOOL_STATUS_ERROR, Vec::new()),
+                            Ok(value) => (ToolCallStatus::Ok, result_keys_for_layer2(value)),
+                            Err(_) => (ToolCallStatus::Error, Vec::new()),
                         };
                         emitter.emit_tool_call_end(
                             &begin.agent_code,
@@ -587,8 +530,6 @@ impl OperationDispatcher {
             // Control flow operations
             AISOperationType::BranchOnValue => branch::execute(ctx, node, inputs).await,
             AISOperationType::Jump => jump::execute(ctx, node, inputs).await,
-            AISOperationType::LoopStart => loop_start::execute(ctx, node, inputs).await,
-            AISOperationType::LoopEnd => loop_end::execute(ctx, node, inputs).await,
             AISOperationType::Return => return_op::execute(ctx, node, inputs).await,
             AISOperationType::Switch => switch::execute(ctx, node, inputs).await,
             AISOperationType::FlowCall => flow_call::execute(ctx, node, inputs).await,

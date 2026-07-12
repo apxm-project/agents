@@ -1,5 +1,6 @@
 //! Capability interception hooks.
 
+use apxm_core::events::payload::{ApprovalRiskLevel, ToolCallCorrelation};
 use apxm_core::types::consent::{
     ConsentBroker, ConsentDecision, PermissionPrompt, PromptMode, RiskLevel,
 };
@@ -22,6 +23,8 @@ pub const DEFAULT_PERMISSION_TIMEOUT_SECS: u64 = 120;
 /// Execution-scoped context for approval-gated capability invocation.
 pub struct PreInvokeContext<'a> {
     pub registry: &'a CapabilityRegistry,
+    pub call_id: &'a str,
+    pub tool_call_correlation: Option<&'a ToolCallCorrelation>,
     pub consent_broker: &'a dyn ConsentBroker,
     pub event_emitter: Option<&'a dyn ExecutionEventEmitter>,
     pub host_id: Option<&'a str>,
@@ -70,12 +73,25 @@ pub async fn pre_invoke_ctx(
     let Some(cap) = ctx.registry.get(name) else {
         return InterceptDecision::Allow;
     };
-    if !cap.metadata().requires_approval {
+    pre_invoke_policy_ctx(ctx, name, args, cap.metadata().requires_approval).await
+}
+
+/// Approval gate for an invocation whose policy is supplied by the caller.
+///
+/// Script-backed capabilities are artifact-scoped rather than process-wide, so
+/// their policy metadata is admitted here without registering an executor in
+/// the global capability registry.
+pub(crate) async fn pre_invoke_policy_ctx(
+    ctx: &PreInvokeContext<'_>,
+    name: &str,
+    args: &HashMap<String, Value>,
+    requires_approval: bool,
+) -> InterceptDecision {
+    if !requires_approval {
         return InterceptDecision::Allow;
     }
 
     let prompt_id = uuid::Uuid::new_v4().to_string();
-    let call_id = uuid::Uuid::new_v4().to_string();
     let args_digest = args_digest_for(args);
     let args_preview = serde_json::to_value(args).unwrap_or_else(|_| serde_json::json!({}));
     let expires_at = (chrono::Utc::now()
@@ -84,12 +100,18 @@ pub async fn pre_invoke_ctx(
 
     let agent_code = ctx.agent_code.unwrap_or("runtime");
     if let Some(emitter) = ctx.event_emitter {
-        emitter.emit_approval_request(agent_code, name, &prompt_id, "high");
+        emitter.emit_approval_request_with_correlation(
+            agent_code,
+            name,
+            &prompt_id,
+            ApprovalRiskLevel::High,
+            ctx.tool_call_correlation,
+        );
     }
 
     let prompt = PermissionPrompt {
         prompt_id: prompt_id.clone(),
-        call_id,
+        call_id: ctx.call_id.to_string(),
         grant_id: ctx.grant_id.unwrap_or("runtime-grant").to_string(),
         capability_id: name.to_string(),
         capability_binding: name.to_string(),
@@ -113,20 +135,19 @@ pub async fn pre_invoke_ctx(
         .request_consent(prompt, ctx.permission_timeout)
         .await;
 
-    let resolution = match &decision {
-        ConsentDecision::Approved(_) => "approved",
-        ConsentDecision::Denied { .. } => "denied",
-        ConsentDecision::TimedOut => "expired",
-        ConsentDecision::NoBroker => "no_broker",
-    };
+    let resolution = decision.resolution();
     if let Some(emitter) = ctx.event_emitter {
-        emitter.emit_approval_resolved(&prompt_id, resolution);
+        emitter.emit_approval_resolved_with_correlation(
+            &prompt_id,
+            resolution,
+            ctx.tool_call_correlation,
+        );
     }
 
     match decision {
-        ConsentDecision::Approved(_) | ConsentDecision::NoBroker => InterceptDecision::Allow,
+        ConsentDecision::Approved { .. } => InterceptDecision::Allow,
         ConsentDecision::Denied { reason } => InterceptDecision::Deny { reason },
-        ConsentDecision::TimedOut => InterceptDecision::Deny {
+        ConsentDecision::Expired => InterceptDecision::Deny {
             reason: format!(
                 "approval for capability '{name}' timed out after {}s",
                 ctx.permission_timeout.as_secs()
@@ -254,12 +275,14 @@ impl CapabilityInterceptor for PermissionInterceptor {
 mod tests {
     use super::*;
     use crate::executor::{CapabilityExecutor, EchoCapability};
-    use apxm_core::types::consent::{ConsentBroker, ConsentDecision, SignedApproval};
+    use apxm_core::types::consent::{
+        ApprovalEvidence, ApprovalResolution, ConsentBroker, ConsentDecision, InteractiveApproval,
+    };
     use std::sync::Arc;
 
     struct RecordingEmitter {
         requests: parking_lot::Mutex<Vec<(String, String, String)>>,
-        resolutions: parking_lot::Mutex<Vec<(String, String)>>,
+        resolutions: parking_lot::Mutex<Vec<(String, ApprovalResolution)>>,
     }
 
     impl RecordingEmitter {
@@ -281,7 +304,7 @@ mod tests {
             agent_code: &str,
             tool_name: &str,
             approval_id: &str,
-            _risk_level: &str,
+            _risk_level: apxm_core::events::payload::ApprovalRiskLevel,
         ) {
             self.requests.lock().push((
                 agent_code.to_string(),
@@ -290,10 +313,10 @@ mod tests {
             ));
         }
 
-        fn emit_approval_resolved(&self, approval_id: &str, decision: &str) {
+        fn emit_approval_resolved(&self, approval_id: &str, decision: ApprovalResolution) {
             self.resolutions
                 .lock()
-                .push((approval_id.to_string(), decision.to_string()));
+                .push((approval_id.to_string(), decision));
         }
     }
 
@@ -339,16 +362,18 @@ mod tests {
         let registry = CapabilityRegistry::new();
         registry.register(gated_echo()).unwrap();
         let broker = StubBroker {
-            decision: ConsentDecision::Approved(vec![SignedApproval {
-                signer_subject: "user".into(),
-                signer_display: None,
-                signature: "sig".into(),
-                signed_at: "2026-01-01T00:00:00Z".into(),
-            }]),
+            decision: ConsentDecision::Approved {
+                evidence: ApprovalEvidence::Interactive(InteractiveApproval {
+                    decided_at: "2026-01-01T00:00:00Z".into(),
+                    responder_subject: Some("user".into()),
+                }),
+            },
         };
         let emitter = RecordingEmitter::new();
         let ctx = PreInvokeContext {
             registry: &registry,
+            call_id: "call-1",
+            tool_call_correlation: None,
             consent_broker: &broker,
             event_emitter: Some(&emitter),
             host_id: Some("host-1"),
@@ -361,7 +386,10 @@ mod tests {
         let decision = pre_invoke_ctx(&ctx, "gated-echo", &args).await;
         assert!(matches!(decision, InterceptDecision::Allow));
         assert_eq!(emitter.requests.lock().len(), 1);
-        assert_eq!(emitter.resolutions.lock()[0].1, "approved");
+        assert_eq!(
+            emitter.resolutions.lock()[0].1,
+            ApprovalResolution::Approved
+        );
     }
 
     #[tokio::test]
@@ -369,12 +397,15 @@ mod tests {
         let registry = CapabilityRegistry::new();
         registry.register(gated_echo()).unwrap();
         let broker = StubBroker {
-            decision: ConsentDecision::TimedOut,
+            decision: ConsentDecision::Expired,
         };
+        let emitter = RecordingEmitter::new();
         let ctx = PreInvokeContext {
             registry: &registry,
+            call_id: "call-2",
+            tool_call_correlation: None,
             consent_broker: &broker,
-            event_emitter: None,
+            event_emitter: Some(&emitter),
             host_id: None,
             agent_code: None,
             grant_id: None,
@@ -382,6 +413,66 @@ mod tests {
         };
         let decision = pre_invoke_ctx(&ctx, "gated-echo", &HashMap::new()).await;
         assert!(matches!(decision, InterceptDecision::Deny { .. }));
+        assert_eq!(emitter.resolutions.lock()[0].1, ApprovalResolution::Expired);
+    }
+
+    #[tokio::test]
+    async fn pre_invoke_ctx_denies_with_unavailable_broker_and_emits_public_denied_state() {
+        let registry = CapabilityRegistry::new();
+        registry.register(gated_echo()).unwrap();
+        let broker = apxm_core::types::consent::UnavailableConsentBroker;
+        let emitter = RecordingEmitter::new();
+        let ctx = PreInvokeContext {
+            registry: &registry,
+            call_id: "call-3",
+            tool_call_correlation: None,
+            consent_broker: &broker,
+            event_emitter: Some(&emitter),
+            host_id: None,
+            agent_code: None,
+            grant_id: None,
+            permission_timeout: Duration::from_secs(1),
+        };
+
+        let decision = pre_invoke_ctx(&ctx, "gated-echo", &HashMap::new()).await;
+
+        assert!(matches!(
+            decision,
+            InterceptDecision::Deny { ref reason }
+                if reason == apxm_core::types::consent::APPROVAL_BROKER_UNAVAILABLE_REASON
+        ));
+        assert_eq!(emitter.resolutions.lock()[0].1, ApprovalResolution::Denied);
+    }
+
+    #[tokio::test]
+    async fn pre_invoke_ctx_emits_denied_for_explicit_rejection() {
+        let registry = CapabilityRegistry::new();
+        registry.register(gated_echo()).unwrap();
+        let broker = StubBroker {
+            decision: ConsentDecision::Denied {
+                reason: "operator rejected".into(),
+            },
+        };
+        let emitter = RecordingEmitter::new();
+        let ctx = PreInvokeContext {
+            registry: &registry,
+            call_id: "call-4",
+            tool_call_correlation: None,
+            consent_broker: &broker,
+            event_emitter: Some(&emitter),
+            host_id: None,
+            agent_code: None,
+            grant_id: None,
+            permission_timeout: Duration::from_secs(1),
+        };
+
+        let decision = pre_invoke_ctx(&ctx, "gated-echo", &HashMap::new()).await;
+
+        assert!(matches!(
+            decision,
+            InterceptDecision::Deny { ref reason } if reason == "operator rejected"
+        ));
+        assert_eq!(emitter.resolutions.lock()[0].1, ApprovalResolution::Denied);
     }
 
     #[tokio::test]
@@ -395,6 +486,8 @@ mod tests {
         };
         let ctx = PreInvokeContext {
             registry: &registry,
+            call_id: "call-5",
+            tool_call_correlation: None,
             consent_broker: &broker,
             event_emitter: None,
             host_id: None,

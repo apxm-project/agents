@@ -209,6 +209,7 @@ pub trait AgentPrompter: Send + Sync {
 pub struct ProcessTable {
     processes: DashMap<ProcessId, AgentProcess>,
     name_index: DashMap<String, ProcessId>,
+    registry_state: parking_lot::Mutex<RegistryState>,
     threads: DashMap<ThreadId, AgentThread>,
     max_processes: usize,
     max_spawn_depth: usize,
@@ -218,12 +219,19 @@ pub struct ProcessTable {
     agent_prompter: tokio::sync::RwLock<Option<Arc<dyn AgentPrompter>>>,
 }
 
+#[derive(Default)]
+struct RegistryState {
+    reserved_names: HashMap<String, u64>,
+    generation: u64,
+}
+
 impl ProcessTable {
     /// Create a new empty process table with default limits.
     pub fn new() -> Self {
         Self {
             processes: DashMap::new(),
             name_index: DashMap::new(),
+            registry_state: parking_lot::Mutex::new(RegistryState::default()),
             threads: DashMap::new(),
             max_processes: DEFAULT_MAX_PROCESSES,
             max_spawn_depth: DEFAULT_MAX_SPAWN_DEPTH,
@@ -287,7 +295,7 @@ impl ProcessTable {
             spawned_at: std::time::Instant::now(),
         };
 
-        Ok(reservation.commit(process))
+        reservation.commit(process)
     }
 
     /// Register an external agent process (spawned via AgentSpawner).
@@ -313,7 +321,7 @@ impl ProcessTable {
             spawned_at: std::time::Instant::now(),
         };
 
-        Ok(reservation.commit(process))
+        reservation.commit(process)
     }
 
     /// Look up a process by agent name.
@@ -321,12 +329,14 @@ impl ProcessTable {
         &self,
         name: &str,
     ) -> Option<dashmap::mapref::one::Ref<'_, ProcessId, AgentProcess>> {
+        let _registry = self.registry_state.lock();
         let id = self.name_index.get(name)?;
         self.processes.get(id.value())
     }
 
     /// Look up a process by ID.
     pub fn get(&self, id: &str) -> Option<dashmap::mapref::one::Ref<'_, ProcessId, AgentProcess>> {
+        let _registry = self.registry_state.lock();
         self.processes.get(id)
     }
 
@@ -337,6 +347,7 @@ impl ProcessTable {
         node_id: u64,
         op_type: AISOperationType,
     ) -> Result<ThreadId, RuntimeError> {
+        let _registry = self.registry_state.lock();
         if !self.processes.contains_key(&process_id) {
             return Err(RuntimeError::State(format!(
                 "Cannot register thread: process '{}' not found",
@@ -377,9 +388,12 @@ impl ProcessTable {
     /// The process entry is fully deleted so that Arc references to the
     /// session handle are dropped, allowing AcpSession's Drop impl to fire.
     pub fn close(&self, name: &str) -> bool {
+        let _registry = self.registry_state.lock();
         if let Some((_, id)) = self.name_index.remove(name) {
-            self.processes.remove(&id);
-            true
+            let removed = self.processes.remove(&id).is_some();
+            debug_assert!(removed, "name index referenced a missing process");
+            self.debug_assert_registry_consistent();
+            removed
         } else {
             false
         }
@@ -387,19 +401,26 @@ impl ProcessTable {
 
     /// Close all processes.
     pub fn close_all(&self) {
-        let names: Vec<String> = self.name_index.iter().map(|e| e.key().clone()).collect();
-        for name in names {
-            self.close(&name);
-        }
+        let mut registry = self.registry_state.lock();
+        registry.generation = registry
+            .generation
+            .checked_add(1)
+            .expect("process table reservation generation overflowed");
+        registry.reserved_names.clear();
+        self.name_index.clear();
+        self.processes.clear();
+        self.debug_assert_registry_consistent();
     }
 
     /// List active process names (lightweight — only reads the name index).
     pub fn list_process_names(&self) -> Vec<String> {
+        let _registry = self.registry_state.lock();
         self.name_index.iter().map(|e| e.key().clone()).collect()
     }
 
     /// List all processes (for observability).
     pub fn list_processes(&self) -> Vec<(ProcessId, String, bool)> {
+        let _registry = self.registry_state.lock();
         self.processes
             .iter()
             .map(|entry| {
@@ -412,6 +433,7 @@ impl ProcessTable {
 
     /// Count active external processes by ACP profile name.
     pub fn external_profile_counts(&self) -> HashMap<String, usize> {
+        let _registry = self.registry_state.lock();
         let mut counts = HashMap::new();
         for entry in self.processes.iter() {
             let process = entry.value();
@@ -439,22 +461,27 @@ impl ProcessTable {
 
     /// Number of active (non-terminated) processes.
     pub fn active_count(&self) -> usize {
+        let _registry = self.registry_state.lock();
         self.name_index.len()
     }
 
-    fn check_capacity(&self) -> Result<(), RuntimeError> {
-        if self.name_index.len() >= self.max_processes {
+    fn check_capacity(&self, registry: &RegistryState) -> Result<(), RuntimeError> {
+        let reserved_or_active = self.processes.len() + registry.reserved_names.len();
+        if reserved_or_active >= self.max_processes {
             return Err(RuntimeError::State(format!(
                 "Process table full: {} active processes (max {})",
-                self.name_index.len(),
-                self.max_processes
+                reserved_or_active, self.max_processes
             )));
         }
         Ok(())
     }
 
-    fn check_name_available(&self, name: &str) -> Result<(), RuntimeError> {
-        if self.name_index.contains_key(name) {
+    fn check_name_available(
+        &self,
+        registry: &RegistryState,
+        name: &str,
+    ) -> Result<(), RuntimeError> {
+        if self.name_index.contains_key(name) || registry.reserved_names.contains_key(name) {
             return Err(RuntimeError::State(format!(
                 "Agent process '{}' already exists",
                 name
@@ -491,58 +518,353 @@ impl ProcessTable {
 
     /// Reserve a spawn slot with RAII rollback semantics.
     ///
-    /// Checks capacity, spawn depth, and name availability atomically.
-    /// The returned `SpawnReservation` holds a placeholder in the name index.
-    /// If dropped without calling `commit()`, the placeholder is deleted.
+    /// Capacity, spawn depth, and name availability are checked while holding
+    /// the registry lock. Reservations count against capacity but remain
+    /// separate from the live process maps until committed.
     pub fn reserve_spawn_slot(
         &self,
         name: String,
         parent_id: &Option<ProcessId>,
     ) -> Result<SpawnReservation<'_>, RuntimeError> {
-        self.check_capacity()?;
+        let mut registry = self.registry_state.lock();
+        self.check_capacity(&registry)?;
         self.check_spawn_depth(parent_id)?;
-        self.check_name_available(&name)?;
-        // Insert placeholder to reserve the name
-        self.name_index.insert(name.clone(), String::new());
+        self.check_name_available(&registry, &name)?;
+        let generation = registry.generation;
+        registry.reserved_names.insert(name.clone(), generation);
         Ok(SpawnReservation {
             table: self,
             name,
+            generation,
             committed: false,
         })
+    }
+
+    fn debug_assert_registry_consistent(&self) {
+        #[cfg(debug_assertions)]
+        {
+            debug_assert_eq!(self.processes.len(), self.name_index.len());
+            for entry in self.name_index.iter() {
+                let process = self
+                    .processes
+                    .get(entry.value())
+                    .expect("name index referenced a missing process");
+                debug_assert_eq!(process.name, *entry.key());
+            }
+            for entry in self.processes.iter() {
+                let indexed_id = self
+                    .name_index
+                    .get(&entry.name)
+                    .expect("process was missing from the name index");
+                debug_assert_eq!(*indexed_id, *entry.key());
+            }
+        }
     }
 }
 
 /// RAII guard for a spawn slot. Rolls back on Drop unless committed.
-///
-/// Inspired by Codex's `SpawnReservation` pattern — atomically reserve a slot
-/// before doing work, auto-rollback on Drop if spawn fails partway.
 pub struct SpawnReservation<'a> {
     table: &'a ProcessTable,
     name: String,
+    generation: u64,
     committed: bool,
 }
 
 impl<'a> Drop for SpawnReservation<'a> {
     fn drop(&mut self) {
         if !self.committed {
-            self.table.name_index.remove(&self.name);
+            let mut registry = self.table.registry_state.lock();
+            if registry.reserved_names.get(&self.name) == Some(&self.generation) {
+                registry.reserved_names.remove(&self.name);
+            }
         }
     }
 }
 
 impl<'a> SpawnReservation<'a> {
-    /// Commit the reservation — insert the process and finalize.
-    pub fn commit(mut self, process: AgentProcess) -> ProcessId {
+    /// Commit the reservation by publishing both live-process indexes.
+    pub fn commit(mut self, process: AgentProcess) -> Result<ProcessId, RuntimeError> {
         let id = process.id.clone();
-        self.table.name_index.insert(self.name.clone(), id.clone());
+        let mut registry = self.table.registry_state.lock();
+
+        if registry.generation != self.generation
+            || registry.reserved_names.get(&self.name) != Some(&self.generation)
+        {
+            return Err(RuntimeError::State(format!(
+                "Spawn reservation for agent process '{}' was invalidated",
+                self.name
+            )));
+        }
+        if process.name != self.name {
+            return Err(RuntimeError::State(format!(
+                "Spawn reservation name '{}' does not match process name '{}'",
+                self.name, process.name
+            )));
+        }
+        if self.table.processes.contains_key(&id) {
+            return Err(RuntimeError::State(format!(
+                "Agent process id '{}' already exists",
+                id
+            )));
+        }
+        if self.table.name_index.contains_key(&self.name) {
+            return Err(RuntimeError::State(format!(
+                "Agent process '{}' already exists",
+                self.name
+            )));
+        }
+
         self.table.processes.insert(id.clone(), process);
+        self.table.name_index.insert(self.name.clone(), id.clone());
+        registry.reserved_names.remove(&self.name);
         self.committed = true;
-        id
+        self.table.debug_assert_registry_consistent();
+        Ok(id)
     }
 }
 
 impl Default for ProcessTable {
     fn default() -> Self {
         Self::new()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::sync::Barrier;
+    use std::sync::atomic::{AtomicBool, Ordering};
+    use std::sync::mpsc;
+    use std::thread;
+
+    struct DropProbe(Arc<AtomicBool>);
+
+    impl Drop for DropProbe {
+        fn drop(&mut self) {
+            self.0.store(true, Ordering::SeqCst);
+        }
+    }
+
+    fn external_session() -> Arc<tokio::sync::Mutex<dyn std::any::Any + Send + Sync>> {
+        Arc::new(tokio::sync::Mutex::new(()))
+    }
+
+    fn local_process(name: &str) -> AgentProcess {
+        AgentProcess {
+            id: uuid::Uuid::now_v7().to_string(),
+            name: name.to_string(),
+            parent_id: None,
+            kind: ProcessKind::Local,
+            state: ProcessState::Running,
+            spawned_at: std::time::Instant::now(),
+        }
+    }
+
+    fn assert_state_error_contains(result: Result<ProcessId, RuntimeError>, expected: &str) {
+        match result {
+            Err(RuntimeError::State(message)) => assert!(
+                message.contains(expected),
+                "expected state error containing '{expected}', got '{message}'"
+            ),
+            Err(error) => panic!("expected state error, got {error}"),
+            Ok(id) => panic!("expected failure, created process {id}"),
+        }
+    }
+
+    #[test]
+    fn concurrent_same_name_spawn_observes_reservation_and_rollback() {
+        let table = Arc::new(ProcessTable::with_max_processes(2));
+        let (reserved_tx, reserved_rx) = mpsc::channel();
+        let (release_tx, release_rx) = mpsc::channel();
+
+        thread::scope(|scope| {
+            let reserving_table = Arc::clone(&table);
+            scope.spawn(move || {
+                let reservation = reserving_table
+                    .reserve_spawn_slot("shared".to_string(), &None)
+                    .expect("first reservation should succeed");
+                reserved_tx.send(()).expect("signal reservation");
+                release_rx.recv().expect("wait for competing spawn");
+                drop(reservation);
+            });
+
+            reserved_rx.recv().expect("wait for reservation");
+            assert_state_error_contains(
+                table.spawn_local("shared".to_string(), None),
+                "already exists",
+            );
+            assert_eq!(table.active_count(), 0);
+            assert!(table.name_index.is_empty());
+            assert!(table.processes.is_empty());
+            release_tx.send(()).expect("release reservation");
+        });
+
+        let id = table
+            .spawn_local("shared".to_string(), None)
+            .expect("dropped reservation should release the name");
+        assert_eq!(table.get_by_name("shared").unwrap().id, id);
+        table.debug_assert_registry_consistent();
+    }
+
+    #[test]
+    fn concurrent_same_name_spawns_have_one_winner() {
+        const WORKERS: usize = 16;
+        let table = Arc::new(ProcessTable::with_max_processes(WORKERS));
+        let start = Arc::new(Barrier::new(WORKERS));
+
+        let results = thread::scope(|scope| {
+            let mut handles = Vec::with_capacity(WORKERS);
+            for _ in 0..WORKERS {
+                let table = Arc::clone(&table);
+                let start = Arc::clone(&start);
+                handles.push(scope.spawn(move || {
+                    start.wait();
+                    table.spawn_local("shared".to_string(), None)
+                }));
+            }
+            handles
+                .into_iter()
+                .map(|handle| handle.join().expect("spawn worker panicked"))
+                .collect::<Vec<_>>()
+        });
+
+        assert_eq!(results.iter().filter(|result| result.is_ok()).count(), 1);
+        assert_eq!(table.active_count(), 1);
+        assert_eq!(table.name_index.len(), 1);
+        assert_eq!(table.processes.len(), 1);
+        table.debug_assert_registry_consistent();
+    }
+
+    #[test]
+    fn concurrent_capacity_check_counts_in_flight_reservation() {
+        let table = Arc::new(ProcessTable::with_max_processes(1));
+        let (reserved_tx, reserved_rx) = mpsc::channel();
+        let (release_tx, release_rx) = mpsc::channel();
+
+        thread::scope(|scope| {
+            let reserving_table = Arc::clone(&table);
+            scope.spawn(move || {
+                let reservation = reserving_table
+                    .reserve_spawn_slot("reserved".to_string(), &None)
+                    .expect("capacity reservation should succeed");
+                reserved_tx.send(()).expect("signal reservation");
+                release_rx.recv().expect("wait for competing registration");
+                drop(reservation);
+            });
+
+            reserved_rx.recv().expect("wait for reservation");
+            let rejected_session_dropped = Arc::new(AtomicBool::new(false));
+            let rejected_session: Arc<tokio::sync::Mutex<dyn std::any::Any + Send + Sync>> =
+                Arc::new(tokio::sync::Mutex::new(DropProbe(Arc::clone(
+                    &rejected_session_dropped,
+                ))));
+            assert_state_error_contains(
+                table.register_external(
+                    "external".to_string(),
+                    None,
+                    rejected_session,
+                    "test-profile".to_string(),
+                ),
+                "Process table full",
+            );
+            assert!(rejected_session_dropped.load(Ordering::SeqCst));
+            assert_eq!(table.active_count(), 0);
+            release_tx.send(()).expect("release reservation");
+        });
+
+        table
+            .register_external(
+                "external".to_string(),
+                None,
+                external_session(),
+                "test-profile".to_string(),
+            )
+            .expect("released capacity should be reusable");
+        assert_eq!(table.active_count(), 1);
+        table.debug_assert_registry_consistent();
+    }
+
+    #[test]
+    fn concurrent_spawns_do_not_exceed_capacity() {
+        const CAPACITY: usize = 4;
+        const WORKERS: usize = 16;
+        let table = Arc::new(ProcessTable::with_max_processes(CAPACITY));
+        let start = Arc::new(Barrier::new(WORKERS));
+
+        let results = thread::scope(|scope| {
+            let mut handles = Vec::with_capacity(WORKERS);
+            for worker in 0..WORKERS {
+                let table = Arc::clone(&table);
+                let start = Arc::clone(&start);
+                handles.push(scope.spawn(move || {
+                    start.wait();
+                    let name = format!("agent-{worker}");
+                    if worker % 2 == 0 {
+                        table.spawn_local(name, None)
+                    } else {
+                        table.register_external(
+                            name,
+                            None,
+                            external_session(),
+                            "test-profile".to_string(),
+                        )
+                    }
+                }));
+            }
+            handles
+                .into_iter()
+                .map(|handle| handle.join().expect("spawn worker panicked"))
+                .collect::<Vec<_>>()
+        });
+
+        assert_eq!(
+            results.iter().filter(|result| result.is_ok()).count(),
+            CAPACITY
+        );
+        assert_eq!(table.active_count(), CAPACITY);
+        assert_eq!(table.name_index.len(), CAPACITY);
+        assert_eq!(table.processes.len(), CAPACITY);
+        table.debug_assert_registry_consistent();
+    }
+
+    #[test]
+    fn close_all_clears_indexes_drops_sessions_and_invalidates_reservations() {
+        let table = ProcessTable::with_max_processes(4);
+        let local_id = table
+            .spawn_local("local".to_string(), None)
+            .expect("local spawn");
+        let session_dropped = Arc::new(AtomicBool::new(false));
+        let session: Arc<tokio::sync::Mutex<dyn std::any::Any + Send + Sync>> = Arc::new(
+            tokio::sync::Mutex::new(DropProbe(Arc::clone(&session_dropped))),
+        );
+        let external_id = table
+            .register_external(
+                "external".to_string(),
+                None,
+                session,
+                "test-profile".to_string(),
+            )
+            .expect("external registration");
+        let pending = table
+            .reserve_spawn_slot("pending".to_string(), &None)
+            .expect("pending reservation");
+
+        table.close_all();
+
+        assert_eq!(table.active_count(), 0);
+        assert!(table.list_process_names().is_empty());
+        assert!(table.list_processes().is_empty());
+        assert!(table.get(&local_id).is_none());
+        assert!(table.get(&external_id).is_none());
+        assert!(table.name_index.is_empty());
+        assert!(table.processes.is_empty());
+        assert!(table.registry_state.lock().reserved_names.is_empty());
+        assert!(session_dropped.load(Ordering::SeqCst));
+
+        assert_state_error_contains(pending.commit(local_process("pending")), "was invalidated");
+        assert_eq!(table.active_count(), 0);
+        assert!(table.name_index.is_empty());
+        assert!(table.processes.is_empty());
+        table.debug_assert_registry_consistent();
     }
 }

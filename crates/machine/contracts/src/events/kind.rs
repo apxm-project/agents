@@ -92,7 +92,9 @@ impl std::fmt::Display for EventKind {
 pub const TOKEN: EventKind = EventKind::new("token", EventCategory::Stream, false);
 pub const THOUGHT: EventKind = EventKind::new("thought", EventCategory::Stream, false);
 pub const TOOL_CALL: EventKind = EventKind::new("tool_call", EventCategory::Lifecycle, false);
-pub const LLM_DONE: EventKind = EventKind::new("llm_done", EventCategory::Lifecycle, true);
+pub const LLM_DONE: EventKind = EventKind::new("llm_done", EventCategory::Lifecycle, false);
+pub const LLM_STEP_COMPLETED: EventKind =
+    EventKind::new("llm_step_completed", EventCategory::Observability, false);
 pub const LLM_PROMPT: EventKind = EventKind::new("llm_prompt", EventCategory::Observability, false);
 pub const USAGE: EventKind = EventKind::new("usage", EventCategory::Observability, false);
 pub const RETRY: EventKind = EventKind::new("retry", EventCategory::Error, false);
@@ -163,17 +165,24 @@ pub const ERROR: EventKind = EventKind::new("error", EventCategory::Error, true)
 // Multi-agent / topology event kinds ( — per-graph-node
 // enrichment). These are emitted in addition to OPERATION_START so
 // observers can reconstruct an agent/tool tree without rederiving it.
-pub const AGENT_SPAWNED: EventKind = EventKind::new("agent_spawned", EventCategory::Agent, true);
+// None of these three are terminal: they describe topology resolved
+// mid-run, not the end of a turn/session/execution. Marking them
+// terminal (as before) makes any consumer that trusts `is_terminal()`
+// close its feed on a mid-run topology event, hiding everything after —
+// strictly worse than under-classifying, since it looks like success.
+pub const AGENT_SPAWNED: EventKind = EventKind::new("agent_spawned", EventCategory::Agent, false);
 pub const COMMUNICATE_DISPATCHED: EventKind =
-    EventKind::new("communicate_dispatched", EventCategory::Agent, true);
-pub const GRAPH_EDGE: EventKind = EventKind::new("graph_edge", EventCategory::Topology, true);
+    EventKind::new("communicate_dispatched", EventCategory::Agent, false);
+pub const GRAPH_EDGE: EventKind = EventKind::new("graph_edge", EventCategory::Topology, false);
 
 // Session event kinds
 pub const CONTEXT_COMPACTED: EventKind =
     EventKind::new("context_compacted", EventCategory::Observability, false);
 pub const MODEL_REROUTED: EventKind =
     EventKind::new("model_rerouted", EventCategory::Lifecycle, false);
-pub const CANCELLED: EventKind = EventKind::new("cancelled", EventCategory::Error, true);
+/// Typed cancellation signal. The corresponding `execute_complete` event is
+/// the single run-ending event after host-owned finalization settles.
+pub const CANCELLED: EventKind = EventKind::new("cancelled", EventCategory::Error, false);
 pub const LOOP_DETECTED: EventKind = EventKind::new("loop_detected", EventCategory::Error, false);
 pub const CONTEXT_WINDOW_WARNING: EventKind =
     EventKind::new("context_window_warning", EventCategory::Error, false);
@@ -223,6 +232,7 @@ pub const CORE_EVENT_KINDS: &[EventKind] = &[
     THOUGHT,
     TOOL_CALL,
     LLM_DONE,
+    LLM_STEP_COMPLETED,
     LLM_PROMPT,
     USAGE,
     RETRY,

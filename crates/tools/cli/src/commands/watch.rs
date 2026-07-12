@@ -230,3 +230,46 @@ pub(crate) fn decode_event_frame(frame: &SseFrame) -> Option<ApxmEvent> {
     // already inside the envelope.
     serde_json::from_str::<ApxmEvent>(&frame.data).ok()
 }
+
+#[cfg(test)]
+mod tests {
+    use apxm_core::events::payload::GraphEdgePayload;
+    use apxm_core::events::{ApxmEvent, EventSource};
+
+    use super::*;
+
+    /// A `graph_edge` event serialized post-fix (with `edge_kind`, not the
+    /// clobbered `kind`) survives the SSE frame -> `decode_event_frame`
+    /// path with its edge classification intact. Pre-fix, the envelope's
+    /// overwritten `"kind":"graph_edge"` left no `edge_kind` on the wire,
+    /// `boxed_payload_from_json` hard-failed, and `.ok()` silently turned
+    /// that into `None` — the event vanished from the SSE tree view with no
+    /// surfaced error.
+    #[test]
+    fn decode_event_frame_preserves_graph_edge_kind() {
+        let event = ApxmEvent::root(
+            GraphEdgePayload {
+                from_node_id: 5,
+                to_node_id: 6,
+                edge_kind: "dispatch".to_string(),
+            },
+            EventSource::Runtime,
+            "trace-watch",
+        );
+        let data = serde_json::to_string(&event).expect("serialize ApxmEvent");
+        let frame = SseFrame {
+            event: Some("graph_edge".to_string()),
+            data,
+            id: None,
+        };
+
+        let decoded = decode_event_frame(&frame).expect("frame decodes to an event");
+        let payload = decoded
+            .payload
+            .downcast_ref::<GraphEdgePayload>()
+            .expect("decoded payload is a GraphEdgePayload");
+        assert_eq!(payload.from_node_id, 5);
+        assert_eq!(payload.to_node_id, 6);
+        assert_eq!(payload.edge_kind, "dispatch");
+    }
+}

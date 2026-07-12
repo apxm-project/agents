@@ -4,7 +4,6 @@ use std::process::ExitStatus;
 use std::process::Stdio;
 use std::sync::Arc;
 use tokio::io::AsyncReadExt;
-use tokio::process::Command;
 
 use apxm_runtime::sandbox::SandboxBackend;
 
@@ -20,7 +19,7 @@ pub struct TerminalManager {
 }
 
 struct Terminal {
-    child: Option<tokio::process::Child>,
+    child: Option<apxm_runtime::sandbox::WrappedChild>,
     output_buffer: Vec<u8>,
     exit_status: Option<ExitStatus>,
     truncated: bool,
@@ -55,34 +54,48 @@ impl TerminalManager {
         // Confine the spawned terminal when a backend is configured. Bind the
         // requested cwd (falling back to the process cwd) so the command can't
         // reach outside it for writes or escape network isolation policy.
-        let (program, prog_args) = match &self.sandbox {
+        let child_env = apxm_runtime::sandbox::constants::env::child_environment(
+            env.iter().map(|(key, value)| (key, value)),
+        );
+        let sandbox_command = match &self.sandbox {
             Some(backend) => {
-                let wrap_cwd = cwd.map_or_else(
-                    || std::env::current_dir().unwrap_or_default(),
-                    PathBuf::from,
-                );
-                backend.wrap_command(command, args, &wrap_cwd, true)
+                let wrap_cwd = match cwd {
+                    Some(path) => PathBuf::from(path),
+                    None => std::env::current_dir().map_err(|error| AcpError::Spawn {
+                        agent: command.to_string(),
+                        reason: format!("failed to resolve terminal working directory: {error}"),
+                    })?,
+                };
+                backend
+                    .wrap_command(command, args, &wrap_cwd, true, &child_env)
+                    .map_err(|error| AcpError::Spawn {
+                        agent: command.to_string(),
+                        reason: error.to_string(),
+                    })?
             }
-            None => (command.to_string(), args.to_vec()),
+            None => {
+                apxm_runtime::sandbox::WrappedCommand::direct(command, args.to_vec(), child_env)
+                    .map_err(|error| AcpError::Spawn {
+                        agent: command.to_string(),
+                        reason: error.to_string(),
+                    })?
+            }
         };
 
-        let mut cmd = Command::new(&program);
-        cmd.args(&prog_args)
-            .stdin(Stdio::null())
-            .stdout(Stdio::piped())
-            .stderr(Stdio::piped());
-
-        if let Some(dir) = cwd {
-            cmd.current_dir(dir);
-        }
-        for (k, v) in env {
-            cmd.env(k, v);
-        }
-
-        let child = cmd.spawn().map_err(|e| AcpError::Spawn {
-            agent: command.to_string(),
-            reason: e.to_string(),
-        })?;
+        let child = sandbox_command
+            .spawn(|process| {
+                process
+                    .stdin(Stdio::null())
+                    .stdout(Stdio::piped())
+                    .stderr(Stdio::piped());
+                if let Some(dir) = cwd {
+                    process.current_dir(dir);
+                }
+            })
+            .map_err(|e| AcpError::Spawn {
+                agent: command.to_string(),
+                reason: e.to_string(),
+            })?;
 
         self.terminals.insert(
             terminal_id.clone(),

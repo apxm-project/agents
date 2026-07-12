@@ -532,43 +532,6 @@ fn emit_node(
                 ty: MlirValueType::Token,
             }))
         }
-        AISOperationType::LoopStart => {
-            // Canonical attr-dict form: `ais.loop_start {max_iterations = N :
-            // i64, label = "..."} : !ais.token`. The iteration bound is the
-            // optional `max_iterations` attribute (no count operand); the runtime
-            // defaults it to 100. All node attributes ride the attr-dict.
-            let result = format!("%n{}", node.id);
-            let attrs = extra_attr_dict_for_node(node, &[]);
-            state.emit(format!(
-                "    {result} = ais.loop_start{} : !ais.token",
-                attrs
-            ));
-            Ok(Some(MlirValueRef {
-                ssa: result,
-                ty: MlirValueType::Token,
-            }))
-        }
-        AISOperationType::LoopEnd => {
-            // Canonical form: `ais.loop_end [%state : !ais.token]? {attrs} :
-            // !ais.token`. The loop-state input is optional (the body sequences
-            // via control edges); the result token marks the loop's end.
-            let result = format!("%n{}", node.id);
-            let attrs = extra_attr_dict_for_node(node, &[]);
-            let ctx = if let Some(input) = inputs.first() {
-                let source = ensure_token(state, input.clone())?;
-                format!(" [{} : !ais.token]", source.ssa)
-            } else {
-                String::new()
-            };
-            state.emit(format!(
-                "    {result} = ais.loop_end{}{} : !ais.token",
-                ctx, attrs
-            ));
-            Ok(Some(MlirValueRef {
-                ssa: result,
-                ty: MlirValueType::Token,
-            }))
-        }
         AISOperationType::TryCatch => {
             let try_label = get_string_attr(&node.attributes, &[graph_attrs::TRY_LABEL])
                 .unwrap_or_else(|| "try_block".to_string());
@@ -1044,11 +1007,7 @@ fn emit_node(
             &inputs,
             &[graph_attrs::HOOK_EVENT],
             "hook",
-            &[
-                graph_attrs::HOOK_EVENT,
-                graph_attrs::HOOK_MATCH,
-                graph_attrs::HOOK_MODE,
-            ],
+            &[graph_attrs::HOOK_EVENT],
             None,
         ),
         AISOperationType::Autonomous => emit_simple_op(

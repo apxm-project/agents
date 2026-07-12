@@ -20,6 +20,10 @@ pub struct ToolDescriptor {
     #[serde(default)]
     pub schema: serde_json::Value,
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub read_only: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub requires_approval: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub source_file: Option<String>,
 }
 
@@ -129,11 +133,14 @@ mod tests {
     #[test]
     fn registry_resolves_by_capability_name() {
         let registry = TypeScriptHandlerRegistry::from_json(
-            r#"[{"handler_id":"sha256:abc","module":"mod","qualname":"fn","name":"echo","schema":{}}]"#,
+            r#"[{"handler_id":"sha256:abc","module":"mod","qualname":"fn","name":"echo","schema":{},"read_only":true,"requires_approval":false}]"#,
         )
         .unwrap();
         assert!(registry.contains("echo"));
-        assert_eq!(registry.resolve("echo").unwrap().handler_id, "sha256:abc");
+        let descriptor = registry.resolve("echo").unwrap();
+        assert_eq!(descriptor.handler_id, "sha256:abc");
+        assert_eq!(descriptor.read_only, Some(true));
+        assert_eq!(descriptor.requires_approval, Some(false));
     }
 
     #[test]

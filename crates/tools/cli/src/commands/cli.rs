@@ -89,9 +89,9 @@ pub enum Commands {
     CompileService {
         /// Agent directory (contains agent.toml, integrity.toml, and capabilities/)
         agent_dir: PathBuf,
-        /// Enable optional web-tools registration in the emitted ASK node.
-        #[arg(long)]
-        web_tools: bool,
+        /// Read the required typed JSON options object from stdin.
+        #[arg(long, required = true)]
+        options_stdin: bool,
     },
     /// Decompile an artifact back to AIR
     Decompile {
@@ -163,6 +163,15 @@ pub enum Commands {
         /// Emit execution profile JSON for profile-guided optimization
         #[arg(long)]
         emit_profile: Option<PathBuf>,
+        /// Reuse a stable session id across separate `apxm run` invocations of
+        /// the same artifact so session-scoped state that IS durable across a
+        /// process restart (the session ledger's turn/tool counters, restart-state reconstruction; a
+        /// compacted conversation summary's LTM copy, the runtime compaction mechanism) resumes instead of
+        /// resetting. Session-scoped in-memory state (STM) is deliberately
+        /// volatile and does NOT survive a restart even with the same id —
+        /// only the durable stores keyed by it do.
+        #[arg(long = "session-id", value_name = "ID")]
+        session_id: Option<String>,
     },
     /// Diagnose compiler/runtime dependencies
     Doctor,
@@ -705,8 +714,8 @@ pub enum AcpAction {
         #[arg(long)]
         close_grace_ms: Option<u64>,
         /// Confine the agent (and any terminals it opens) under the host sandbox
-        /// backend. Requires a capable backend (bubblewrap); spawning fails
-        /// closed if none is available.
+        /// backend. Requires a functional network-capable OS sandbox; spawning
+        /// fails closed if none is available.
         #[arg(long)]
         sandbox: bool,
         /// Skip spawn test (register without verifying the agent is reachable)
@@ -739,7 +748,7 @@ pub enum AgentAction {
         /// Display name for the agent (default: derived from the id).
         #[arg(long)]
         display_name: Option<String>,
-        /// Scaffold template (`looped-agent` or `gao`).
+        /// Scaffold template (`looped-agent`, an examples/agents name, or a directory path).
         #[arg(long, default_value = "looped-agent")]
         template: String,
     },
@@ -883,4 +892,36 @@ pub struct ToolEntry {
 pub struct ToolsFile {
     #[serde(default)]
     pub tools: Vec<ToolEntry>,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use clap::Parser;
+
+    #[test]
+    fn compile_service_accepts_options_stdin_flag() {
+        let cli = Cli::try_parse_from(["apxm", "compile-service", "--options-stdin", "/tmp/agent"])
+            .expect("compile-service parses");
+
+        match cli.command {
+            Commands::CompileService {
+                agent_dir,
+                options_stdin,
+            } => {
+                assert_eq!(agent_dir, PathBuf::from("/tmp/agent"));
+                assert!(options_stdin);
+            }
+            _ => panic!("expected compile-service command"),
+        }
+    }
+
+    #[test]
+    fn compile_service_rejects_bare_invocation() {
+        let err = match Cli::try_parse_from(["apxm", "compile-service", "/tmp/agent"]) {
+            Ok(_) => panic!("compile-service requires --options-stdin"),
+            Err(err) => err,
+        };
+        assert_eq!(err.kind(), clap::error::ErrorKind::MissingRequiredArgument);
+    }
 }

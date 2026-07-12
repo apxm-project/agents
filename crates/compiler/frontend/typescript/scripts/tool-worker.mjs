@@ -16,6 +16,10 @@ import path from "node:path";
 const WIRE_VERSION = 1;
 const HOOK_PAYLOAD_KEY = "__apxm_hook__";
 const HOST_CALL_TIMEOUT_MS = 120_000;
+const HOST_METHOD_LLM_ASK = "llm.ask";
+const HOST_METHOD_TOOL_CALL = "tool.call";
+const HOST_METHOD_MEM_READ = "mem.read";
+const HOST_METHOD_MEM_RECENT = "mem.recent";
 
 /** @type {Map<string, Function>} */
 const registry = new Map();
@@ -124,7 +128,7 @@ class HookCall {
 
 class HookCtx {
   constructor(payload, parentReqId = "") {
-    this.remaining_budget = payload.remaining_budget;
+    this.remainingBudget = payload.remaining_budget;
     this.context = payload.context;
     this._reqId = parentReqId;
     this._system = payload.system || "";
@@ -139,56 +143,40 @@ class HookCtx {
     return { decision: "allow" };
   }
 
+  defer() {
+    return { decision: "defer" };
+  }
+
   deny(reason = "") {
     return { decision: "deny", reason };
   }
 
-  edit_args(args) {
+  editArgs(args) {
     return { decision: "edit_args", args };
   }
 
-  editArgs(args) {
-    return this.edit_args(args);
-  }
-
-  replace_result(result) {
+  replaceResult(result) {
     return { decision: "replace_result", result };
   }
 
-  replaceResult(result) {
-    return this.replace_result(result);
-  }
-
-  prepend_system(text) {
+  prependSystem(text) {
     return { decision: "prepend_system", text };
   }
 
-  prependSystem(text) {
-    return this.prepend_system(text);
-  }
-
-  set_system(text) {
+  setSystem(text) {
     return { decision: "set_system", text };
   }
 
-  setSystem(text) {
-    return this.set_system(text);
-  }
-
-  read_agents_md() {
-    return "";
-  }
-
   readAgentsMd() {
-    return this.read_agents_md();
-  }
-
-  recall_window(_n = 4, _prefix = "conversation:") {
+    for (const candidate of ["AGENTS.md", "CLAUDE.md"]) {
+      if (existsSync(candidate)) return readFileSync(candidate, "utf8");
+    }
     return "";
   }
 
-  recallWindow(n = 4, prefix = "conversation:") {
-    return this.recall_window(n, prefix);
+  async recallWindow(n = 4, prefix = "conversation:") {
+    const items = await this._hostCall(HOST_METHOD_MEM_RECENT, { prefix, n });
+    return Array.isArray(items) ? items.map(String).join("\n") : "";
   }
 
   umem(key, value) {
@@ -232,15 +220,16 @@ class HookCtx {
   ask(prompt, system = null) {
     const params = { prompt };
     if (system != null) params.system = system;
-    const value = this._hostCall("llm.ask", params);
-    return value.then((v) => (typeof v === "string" ? v : String(v)));
+    return this._hostCall(HOST_METHOD_LLM_ASK, params).then((value) =>
+      typeof value === "string" ? value : String(value),
+    );
   }
 
   call(name, args = {}) {
-    return this._hostCall("tool.call", { name, args });
+    return this._hostCall(HOST_METHOD_TOOL_CALL, { name, args });
   }
 
-  count_tokens(text) {
+  countTokens(text) {
     return this.call("count_tokens", { text }).then((value) => {
       if (typeof value === "number") return value;
       if (typeof value === "string") return Number.parseInt(value, 10) || 0;
@@ -248,28 +237,24 @@ class HookCtx {
     });
   }
 
-  countTokens(text) {
-    return this.count_tokens(text);
-  }
-
-  recall(_key) {
-    return null;
+  recall(key) {
+    return this._hostCall(HOST_METHOD_MEM_READ, { key });
   }
 }
 
-function invokeHook(fn, event, payload, reqId) {
+async function invokeHook(fn, event, payload, reqId) {
   const ctx = new HookCtx(payload, reqId);
   let ret;
   if (event === "pre_cap") {
     const call = payload.call || {};
-    ret = fn(ctx, new HookCall(call.name || "", call.args || {}));
+    ret = await fn(ctx, new HookCall(call.name || "", call.args || {}));
   } else if (event === "post_cap") {
     const call = payload.call || {};
-    ret = fn(ctx, new HookCall(call.name || "", {}), payload.result);
+    ret = await fn(ctx, new HookCall(call.name || "", {}), payload.result);
   } else if (event === "post_ask" || event === "post_turn") {
-    ret = fn(ctx, payload.reply);
+    ret = await fn(ctx, payload.reply);
   } else {
-    ret = fn(ctx);
+    ret = await fn(ctx);
   }
   const decision = ret && typeof ret === "object" ? ret : {};
   if (ctx._writes.length > 0 && decision.writes === undefined) {
@@ -295,7 +280,7 @@ async function handleHookCall(reqId, fn, payload) {
   }
   try {
     const event = payload.event || "";
-    const value = await Promise.resolve(invokeHook(fn, event, payload, reqId));
+    const value = await invokeHook(fn, event, payload, reqId);
     emitLine({
       v: WIRE_VERSION,
       type: "result",

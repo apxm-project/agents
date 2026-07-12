@@ -1,0 +1,4 @@
+id = "write"
+description = "Write a file under declared write roots."
+kind = "builtin"
+read_only = false

@@ -1,7 +1,7 @@
 //! AIS Operation Definitions - source of truth
 //!
-//! This module contains the complete specification for all 41 AIS operations
-//! (38 public + 1 metadata + 2 internal). Both the compiler and runtime use
+//! This module contains the complete specification for all 39 AIS operations
+//! (36 public + 1 metadata + 2 internal). Both the compiler and runtime use
 //! these definitions to ensure consistent semantics.
 //!
 //! The artifact wire format and the C++ `OperationKind` enum are *generated*
@@ -22,10 +22,19 @@ use std::fmt;
 
 /// Represents all AIS operation types.
 ///
-/// This enum is the canonical list of operations (41 total):
+/// This enum is the canonical list of operations (39 total):
 /// - 1 metadata operation (AgentOp)
-/// - 38 public operations
+/// - 36 public operations
 /// - 2 internal operations (ConstStr, Yield)
+///
+/// `LOOP_START`/`LOOP_END` were removed because they compiled and verified
+/// but never re-executed at runtime (the executor is a DAG engine with no
+/// back-edge or re-splice wired to either handler). The one real iteration
+/// mechanism is graph splicing (`scheduler::splicing::splice_turn_and_rearm`),
+/// which the in-graph session/turn loop already uses; `AUTONOMOUS` is a
+/// documented macro-op with its own internal plan/act/evaluate loop, not the
+/// general iteration mechanism. Indices 16
+/// and 17 are retired, not reassigned (see `WIRE_INDEXED_OPERATIONS`).
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "SCREAMING_SNAKE_CASE")]
 pub enum AISOperationType {
@@ -70,10 +79,6 @@ pub enum AISOperationType {
     Jump,
     /// Branch based on value comparison.
     BranchOnValue,
-    /// Loop start marker.
-    LoopStart,
-    /// Loop end marker.
-    LoopEnd,
     /// Return from subgraph with result.
     Return,
     /// Multi-way branch based on string value (switch/case).
@@ -152,7 +157,9 @@ pub enum AISOperationType {
 /// Canonical AIS artifact wire operation table.
 ///
 /// This table is the single source of truth for operation-kind indexes in the
-/// artifact format. Indices 26, 27, 30, 32, and 39 are retired (26/27/32/39
+/// artifact format. Indices 16, 17, 26, 27, 30, 32, and 39 are retired
+/// (16/17 formerly LOOP_START/LOOP_END, deleted because they compiled but never
+/// re-executed at runtime; 26/27/32/39
 /// formerly GUARD, CLAIM, NEGOTIATE, and SPAWN_TEAM, deleted as unexercised;
 /// 30 was always reserved) and must never be reassigned.
 pub const WIRE_INDEXED_OPERATIONS: &[(u32, AISOperationType)] = &[
@@ -172,8 +179,6 @@ pub const WIRE_INDEXED_OPERATIONS: &[(u32, AISOperationType)] = &[
     (13, AISOperationType::Return),
     (14, AISOperationType::Jump),
     (15, AISOperationType::BranchOnValue),
-    (16, AISOperationType::LoopStart),
-    (17, AISOperationType::LoopEnd),
     (18, AISOperationType::TryCatch),
     (19, AISOperationType::ConstStr),
     (20, AISOperationType::Switch),
@@ -220,8 +225,6 @@ impl fmt::Display for AISOperationType {
             // Control Flow
             AISOperationType::Jump => write!(f, "JUMP"),
             AISOperationType::BranchOnValue => write!(f, "BRANCH_ON_VALUE"),
-            AISOperationType::LoopStart => write!(f, "LOOP_START"),
-            AISOperationType::LoopEnd => write!(f, "LOOP_END"),
             AISOperationType::Return => write!(f, "RETURN"),
             AISOperationType::Switch => write!(f, "SWITCH"),
             AISOperationType::FlowCall => write!(f, "FLOW_CALL"),
@@ -282,8 +285,6 @@ impl std::str::FromStr for AISOperationType {
             "print" => Ok(AISOperationType::Print),
             "jump" => Ok(AISOperationType::Jump),
             "branch_on_value" => Ok(AISOperationType::BranchOnValue),
-            "loop_start" => Ok(AISOperationType::LoopStart),
-            "loop_end" => Ok(AISOperationType::LoopEnd),
             "return" => Ok(AISOperationType::Return),
             "switch" => Ok(AISOperationType::Switch),
             "flow_call" => Ok(AISOperationType::FlowCall),
@@ -332,8 +333,6 @@ impl AISOperationType {
             AISOperationType::Print => "print",
             AISOperationType::Jump => "jump",
             AISOperationType::BranchOnValue => "branch_on_value",
-            AISOperationType::LoopStart => "loop_start",
-            AISOperationType::LoopEnd => "loop_end",
             AISOperationType::Return => "return",
             AISOperationType::Switch => "switch",
             AISOperationType::FlowCall => "flow_call",
@@ -389,7 +388,7 @@ impl AISOperationType {
         WIRE_INDEXED_OPERATIONS
     }
 
-    /// Get all operation types (41 total).
+    /// Get all operation types (39 total).
     pub fn all_operations() -> &'static [AISOperationType] {
         &[
             AISOperationType::Agent,
@@ -406,8 +405,6 @@ impl AISOperationType {
             AISOperationType::Print,
             AISOperationType::Jump,
             AISOperationType::BranchOnValue,
-            AISOperationType::LoopStart,
-            AISOperationType::LoopEnd,
             AISOperationType::Return,
             AISOperationType::Switch,
             AISOperationType::FlowCall,
@@ -690,18 +687,6 @@ const EMISSION_TOKEN_BRACKETED: MlirEmissionSpec = MlirEmissionSpec {
     result_type: MlirResultType::Token,
     positional_attrs: &[],
     keywords: &[],
-    syntactic_keywords: &[],
-};
-
-/// Emission spec for LOOP_START: token result, no operands, with the loop
-/// bound (`max_iterations`) and `label` carried in the trailing attr-dict so
-/// the iteration bound round-trips through text-AIR.
-const EMISSION_LOOP_START: MlirEmissionSpec = MlirEmissionSpec {
-    primary_attr: None,
-    context_style: ContextStyle::None,
-    result_type: MlirResultType::Token,
-    positional_attrs: &[],
-    keywords: &["max_iterations", "label"],
     syntactic_keywords: &[],
 };
 
@@ -1148,40 +1133,6 @@ pub static AIS_OPERATIONS: &[OperationSpec] = &[
         ],
         needs_submission: false,
         min_inputs: 1,
-        produces_output: false,
-        emission: EMISSION_TOKEN_BRACKETED,
-    },
-    OperationSpec {
-        op_type: AISOperationType::LoopStart,
-        name: "LoopStart",
-        category: OperationCategory::ControlFlow,
-        description: "Begin bounded loop",
-        long_description: "Marks the beginning of a bounded loop. The count_token specifies \
-            how many iterations to execute. Must be paired with a LOOP_END node. The compiler \
-            verifies loop bounds at compile time to prevent infinite loops.",
-        latency: OperationLatency::None,
-        example_json: Some(r#"{"id": 3, "op": "LOOP_START", "attributes": {"count_token": "3"}}"#),
-        fields: &[OperationField::required(
-            "count_token", // structural, not a graph attr
-            "Token containing iteration count",
-        )],
-        needs_submission: false,
-        min_inputs: 0,
-        produces_output: false,
-        emission: EMISSION_LOOP_START,
-    },
-    OperationSpec {
-        op_type: AISOperationType::LoopEnd,
-        name: "LoopEnd",
-        category: OperationCategory::ControlFlow,
-        description: "End bounded loop",
-        long_description: "Marks the end of a bounded loop started by LOOP_START. The runtime \
-            decrements the loop counter and branches back to LOOP_START if iterations remain.",
-        latency: OperationLatency::None,
-        example_json: None,
-        fields: &[],
-        needs_submission: false,
-        min_inputs: 0,
         produces_output: false,
         emission: EMISSION_TOKEN_BRACKETED,
     },
@@ -1818,14 +1769,14 @@ pub static AIS_OPERATIONS: &[OperationSpec] = &[
         name: "RegisterHook",
         category: OperationCategory::Coordination,
         description: "Register an author lifecycle hook into the artifact hook registry",
-        long_description: "Registers one author lifecycle hook (a Python handler bound to a \
-            lifecycle event) into the per-artifact hook registry. The binding travels inside the \
-            artifact (AIR-portable) and the handler is dispatched via the same Python tool bridge \
-            as @tool. The runtime applies pre/post_cap hooks at the tool dispatch sites, \
+        long_description: "Registers one typed author lifecycle hook into the per-artifact hook \
+            registry. The binding travels inside the AIR artifact and dispatches through the \
+            artifact's language-specific handler bridge. The runtime applies pre/post_cap hooks at \
+            the tool dispatch sites, \
             pre/post_ask as Ask middleware, and session_start as an awaited pre-step.",
         latency: OperationLatency::Low,
         example_json: Some(
-            r#"{\"id\": 4, \"op\": \"REGISTER_HOOK\", \"attributes\": {\"hook_event\": \"pre_cap\", \"hook_match\": \"lookup\", \"hook_mode\": \"gate\", \"python_hook_handler_id\": \"sha256:...\"}}"#,
+            r#"{\"id\": 4, \"op\": \"REGISTER_HOOK\", \"attributes\": {\"hook_event\": \"pre_cap\", \"hook_match\": \"lookup\", \"hook_mode\": \"gate\", \"hook_handler_id\": \"sha256:...\"}}"#,
         ),
         fields: &[
             OperationField::required(attrs::HOOK_EVENT, "Lifecycle event the hook binds to"),
@@ -1835,8 +1786,8 @@ pub static AIS_OPERATIONS: &[OperationSpec] = &[
             ),
             OperationField::optional(attrs::HOOK_MODE, "Hook mode: observe or gate"),
             OperationField::required(
-                attrs::PYTHON_HOOK_HANDLER_ID,
-                "Stable content-addressed id (sha256:<hex64>) for the Python hook handler",
+                attrs::HOOK_HANDLER_ID,
+                "Stable content-addressed id (sha256:<hex64>) for the artifact hook handler",
             ),
         ],
         needs_submission: true,
@@ -1847,11 +1798,7 @@ pub static AIS_OPERATIONS: &[OperationSpec] = &[
             context_style: ContextStyle::None,
             result_type: MlirResultType::Token,
             positional_attrs: &[],
-            keywords: &[
-                attrs::HOOK_MATCH,
-                attrs::HOOK_MODE,
-                attrs::PYTHON_HOOK_HANDLER_ID,
-            ],
+            keywords: &[attrs::HOOK_MATCH, attrs::HOOK_MODE, attrs::HOOK_HANDLER_ID],
             syntactic_keywords: &[],
         },
     },
@@ -1860,12 +1807,17 @@ pub static AIS_OPERATIONS: &[OperationSpec] = &[
         op_type: AISOperationType::Autonomous,
         name: "Autonomous",
         category: OperationCategory::Coordination,
-        description: "Run a goal-directed autonomous loop with the configured model",
-        long_description: "Runs an iterative plan / act / evaluate loop against a goal prompt. \
-            The node keeps calling the configured model until the goal is achieved or \
-            `max_iterations` is reached. Optional backend, model, system prompt, provider, \
-            and temperature attributes follow the same routing contract as the other LLM \
-            operations.",
+        description: "Macro-op: a fused goal-directed plan/act/evaluate loop, not the general \
+            iteration mechanism",
+        long_description: "AUTONOMOUS is a macro-op — a single node that fuses an internal \
+            plan / act / evaluate loop against a goal prompt, implemented as a Rust loop inside \
+            the handler (not graph-level iteration). The node keeps calling the configured model \
+            until the goal is achieved or `max_iterations` is reached. It is independent of, and \
+            not a substitute for, the general in-graph iteration mechanism, which is splice-based \
+            (a fresh sub-DAG grafted into the live execution per turn/iteration via \
+            `splice_dag`/`rearm_session_turn`). Optional backend, \
+            model, system prompt, provider, and temperature attributes follow the same routing \
+            contract as the other LLM operations.",
         latency: OperationLatency::High,
         example_json: Some(
             r#"{"id": 3, "op": "AUTONOMOUS", "attributes": {"prompt": "Find the root cause and propose a fix", "max_iterations": 6}}"#,
@@ -2105,13 +2057,14 @@ mod tests {
     fn test_operation_counts() {
         assert_eq!(
             AIS_OPERATIONS.len(),
-            41,
-            "Expected 41 total operations (1 metadata + 38 public + 2 internal)"
+            39,
+            "Expected 39 total operations (1 metadata + 36 public + 2 internal) \
+             after LOOP_START/LOOP_END were deleted"
         );
         assert_eq!(
             AISOperationType::all_operations().len(),
-            41,
-            "Expected 41 total operation types"
+            39,
+            "Expected 39 total operation types"
         );
     }
 
@@ -2156,8 +2109,10 @@ mod tests {
             AISOperationType::from_wire_index(29),
             Some(AISOperationType::Resume)
         );
-        // 26, 27, 30, 32, and 39 are retired/reserved (unassigned)
-        for retired in [26, 27, 30, 32, 39] {
+        // 16, 17, 26, 27, 30, 32, and 39 are retired/reserved (unassigned).
+        // 16/17 (LOOP_START/LOOP_END) were retired because they compiled and
+        // verified but never re-executed at runtime.
+        for retired in [16, 17, 26, 27, 30, 32, 39] {
             assert_eq!(
                 AISOperationType::from_wire_index(retired),
                 None,

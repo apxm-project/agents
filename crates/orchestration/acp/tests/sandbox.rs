@@ -11,7 +11,7 @@ use apxm_acp::AcpSession;
 use apxm_acp::terminal::TerminalManager;
 use apxm_runtime::sandbox::{
     ExecRequest, ExecResult, IsolationLevel, SandboxBackend, SandboxCapabilities, SandboxContext,
-    SandboxError, ValidationResult,
+    SandboxError, ValidationResult, WrappedCommand,
 };
 use async_trait::async_trait;
 
@@ -21,6 +21,7 @@ struct WrapCall {
     args: Vec<String>,
     cwd: PathBuf,
     needs_network: bool,
+    env: Vec<(String, String)>,
 }
 
 /// Records every `wrap_command` invocation and rewrites the program into an
@@ -81,16 +82,18 @@ impl SandboxBackend for RecordingBackend {
         args: &[String],
         cwd: &std::path::Path,
         needs_network: bool,
-    ) -> (String, Vec<String>) {
+        env: &[(String, String)],
+    ) -> Result<WrappedCommand, SandboxError> {
         self.calls.lock().unwrap().push(WrapCall {
             program: program.to_string(),
             args: args.to_vec(),
             cwd: cwd.to_path_buf(),
             needs_network,
+            env: env.to_vec(),
         });
         // Rewrite unchanged so the underlying spawn still succeeds; the
         // point of this test is observing that wrap_command was consulted.
-        (program.to_string(), args.to_vec())
+        WrappedCommand::direct(program, args.to_vec(), env.to_vec())
     }
 }
 
@@ -100,6 +103,9 @@ async fn spawn_consults_the_sandbox_backend_when_one_is_supplied() {
     let script = support::write_fixture(dir.path(), "agent.py", support::COOPERATIVE_AGENT);
     let mut profile = support::fixture_profile(&script);
     profile.sandbox = true;
+    profile
+        .env
+        .insert("APXM_TEST_PROFILE_ENV".to_string(), "present".to_string());
     let aam = support::default_aam_context();
 
     let backend = Arc::new(RecordingBackend::default());
@@ -125,6 +131,11 @@ async fn spawn_consults_the_sandbox_backend_when_one_is_supplied() {
     assert!(
         calls[0].needs_network,
         "coding agents need network for the model gateway; confinement must not cut it off"
+    );
+    assert!(
+        calls[0]
+            .env
+            .contains(&("APXM_TEST_PROFILE_ENV".to_string(), "present".to_string()))
     );
 
     session.close().await;
@@ -155,7 +166,12 @@ async fn terminal_manager_consults_the_sandbox_backend_for_agent_opened_terminal
     let manager = TerminalManager::with_sandbox(Some(backend.clone() as Arc<dyn SandboxBackend>));
 
     let terminal_id = manager
-        .create("echo", &["confined".to_string()], None, &[])
+        .create(
+            "echo",
+            &["confined".to_string()],
+            None,
+            &[("APXM_TEST_TERMINAL_ENV".to_string(), "present".to_string())],
+        )
         .await
         .expect("terminal create should succeed");
     assert!(!terminal_id.is_empty());
@@ -173,6 +189,11 @@ async fn terminal_manager_consults_the_sandbox_backend_for_agent_opened_terminal
     assert_eq!(calls[0].program, "echo");
     assert_eq!(calls[0].args, vec!["confined".to_string()]);
     assert!(calls[0].needs_network);
+    assert!(
+        calls[0]
+            .env
+            .contains(&("APXM_TEST_TERMINAL_ENV".to_string(), "present".to_string()))
+    );
 }
 
 #[tokio::test]

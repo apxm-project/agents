@@ -103,6 +103,19 @@ impl ExecutionEventEmitter for EmitterAdapter {
     fn emit_llm_token(&self, content: &str) {
         self.emit(TokenPayload {
             text: content.to_string(),
+            generation: None,
+        });
+    }
+
+    fn emit_llm_token_for_generation(
+        &self,
+        _node_id: u64,
+        content: &str,
+        generation: Option<&GenerationIdentity>,
+    ) {
+        self.emit(TokenPayload {
+            text: content.to_string(),
+            generation: generation.cloned(),
         });
     }
 
@@ -110,7 +123,33 @@ impl ExecutionEventEmitter for EmitterAdapter {
         self.emit(ThoughtPayload {
             text: content.to_string(),
             summary: None,
+            generation: None,
         });
+    }
+
+    fn emit_llm_thought_for_generation(
+        &self,
+        _node_id: u64,
+        content: &str,
+        generation: Option<&GenerationIdentity>,
+    ) {
+        self.emit(ThoughtPayload {
+            text: content.to_string(),
+            summary: None,
+            generation: generation.cloned(),
+        });
+    }
+
+    fn emit_llm_step_completed(&self, payload: LlmStepCompletedPayload) {
+        self.emit(payload);
+    }
+
+    fn emit_llm_done(&self, payload: LlmDonePayload) {
+        self.emit(payload);
+    }
+
+    fn emit_tool_call(&self, payload: ToolCallPayload) {
+        self.emit(payload);
     }
 
     fn emit_tool_start(&self, name: &str, args: &HashMap<String, Value>) {
@@ -127,6 +166,31 @@ impl ExecutionEventEmitter for EmitterAdapter {
         self.emit(ToolStartPayload {
             name: name.to_string(),
             args: json_args,
+            tool_call_correlation: None,
+        });
+    }
+
+    fn emit_tool_start_with_correlation(
+        &self,
+        name: &str,
+        args: &HashMap<String, Value>,
+        correlation: Option<&ToolCallCorrelation>,
+    ) {
+        let json_args = args
+            .iter()
+            .map(|(key, value)| {
+                (
+                    key.clone(),
+                    value
+                        .to_json()
+                        .unwrap_or_else(|_| serde_json::Value::String(value.to_string())),
+                )
+            })
+            .collect();
+        self.emit(ToolStartPayload {
+            name: name.to_string(),
+            args: json_args,
+            tool_call_correlation: correlation.cloned(),
         });
     }
 
@@ -137,6 +201,22 @@ impl ExecutionEventEmitter for EmitterAdapter {
         self.emit(ToolEndPayload {
             name: name.to_string(),
             result: result_json,
+            tool_call_correlation: None,
+        });
+    }
+
+    fn emit_tool_end_with_correlation(
+        &self,
+        name: &str,
+        result: &Value,
+        correlation: Option<&ToolCallCorrelation>,
+    ) {
+        self.emit(ToolEndPayload {
+            name: name.to_string(),
+            result: result
+                .to_json()
+                .unwrap_or_else(|_| serde_json::Value::String(result.to_string())),
+            tool_call_correlation: correlation.cloned(),
         });
     }
 
@@ -199,7 +279,7 @@ impl ExecutionEventEmitter for EmitterAdapter {
         self.emit(GraphEdgePayload {
             from_node_id,
             to_node_id,
-            kind: kind.to_string(),
+            edge_kind: kind.to_string(),
         });
     }
 
@@ -261,6 +341,22 @@ impl ExecutionEventEmitter for EmitterAdapter {
             node_id,
             node_name: node_name.map(str::to_string),
             prompt: RedactedContent::from_text(prompt),
+            generation: None,
+        });
+    }
+
+    fn emit_llm_prompt_with_generation(
+        &self,
+        node_id: u64,
+        node_name: Option<&str>,
+        prompt: &str,
+        generation: Option<&GenerationIdentity>,
+    ) {
+        self.emit(LlmPromptPayload {
+            node_id,
+            node_name: node_name.map(str::to_string),
+            prompt: RedactedContent::from_text(prompt),
+            generation: generation.cloned(),
         });
     }
 
@@ -406,6 +502,13 @@ impl ExecutionEventEmitter for EmitterAdapter {
         });
     }
 
+    fn emit_warning(&self, code: &str, message: &str) {
+        self.emit(WarningPayload {
+            code: code.to_string(),
+            message: message.to_string(),
+        });
+    }
+
     fn emit_model_route_decision(
         &self,
         backend: &str,
@@ -485,10 +588,21 @@ impl ExecutionEventEmitter for EmitterAdapter {
     }
 
     fn emit_token_usage(&self, node_id: u64, input_tokens: usize, output_tokens: usize) {
+        self.emit_token_usage_with_generation(node_id, input_tokens, output_tokens, None);
+    }
+
+    fn emit_token_usage_with_generation(
+        &self,
+        node_id: u64,
+        input_tokens: usize,
+        output_tokens: usize,
+        generation: Option<&GenerationIdentity>,
+    ) {
         self.emit(TokenUsagePayload {
             node_id,
             input_tokens,
             output_tokens,
+            generation: generation.cloned(),
         });
     }
 
@@ -496,25 +610,343 @@ impl ExecutionEventEmitter for EmitterAdapter {
         self.emit(MemoizationHitPayload { node_id });
     }
 
+    fn emit_context_compacted(&self, original_tokens: usize, new_tokens: usize) {
+        self.emit(ContextCompactedPayload {
+            original_tokens,
+            new_tokens,
+        });
+    }
+
+    fn emit_context_window_warning(
+        &self,
+        current_tokens: usize,
+        max_tokens: usize,
+        utilization_pct: f64,
+    ) {
+        self.emit(ContextWindowWarningPayload {
+            current_tokens,
+            max_tokens,
+            utilization_pct,
+        });
+    }
+
+    fn emit_turn_boundary(&self, payload: TurnBoundaryPayload) {
+        self.emit(payload);
+    }
+
     fn emit_approval_request(
         &self,
         agent_code: &str,
         tool_name: &str,
         approval_id: &str,
-        risk_level: &str,
+        risk_level: ApprovalRiskLevel,
     ) {
         self.emit(ApprovalRequestPayload {
             agent_code: agent_code.to_string(),
             tool_name: tool_name.to_string(),
             approval_id: approval_id.to_string(),
-            risk_level: risk_level.to_string(),
+            risk_level,
+            tool_call_correlation: None,
         });
     }
 
-    fn emit_approval_resolved(&self, approval_id: &str, decision: &str) {
+    fn emit_approval_request_with_correlation(
+        &self,
+        agent_code: &str,
+        tool_name: &str,
+        approval_id: &str,
+        risk_level: ApprovalRiskLevel,
+        correlation: Option<&ToolCallCorrelation>,
+    ) {
+        self.emit(ApprovalRequestPayload {
+            agent_code: agent_code.to_string(),
+            tool_name: tool_name.to_string(),
+            approval_id: approval_id.to_string(),
+            risk_level,
+            tool_call_correlation: correlation.cloned(),
+        });
+    }
+
+    fn emit_approval_resolved(
+        &self,
+        approval_id: &str,
+        decision: apxm_core::types::consent::ApprovalResolution,
+    ) {
         self.emit(ApprovalResolvedPayload {
             approval_id: approval_id.to_string(),
-            decision: decision.to_string(),
+            decision,
+            tool_call_correlation: None,
+        });
+    }
+
+    fn emit_approval_resolved_with_correlation(
+        &self,
+        approval_id: &str,
+        decision: apxm_core::types::consent::ApprovalResolution,
+        correlation: Option<&ToolCallCorrelation>,
+    ) {
+        self.emit(ApprovalResolvedPayload {
+            approval_id: approval_id.to_string(),
+            decision,
+            tool_call_correlation: correlation.cloned(),
+        });
+    }
+
+    // ── Layer 2 — agent-layer hooks ────────────────────────────────
+    //
+    // Every call site in `executor/engine.rs`, `executor/dispatcher.rs`,
+    // and `executor/handlers/spawn_agent.rs` already fires these; this
+    // adapter is the production bridge to `ApxmEvent`/SSE, so leaving
+    // them at the trait's no-op default silently drops every Layer-2
+    // event before it reaches any consumer.
+
+    fn emit_turn_started(
+        &self,
+        execution_id: &str,
+        turn_id: Option<&str>,
+        coordinator_label: Option<&str>,
+    ) {
+        self.emit(TurnStartedPayload {
+            execution_id: execution_id.to_string(),
+            turn_id: turn_id.map(str::to_string),
+            coordinator_label: coordinator_label.map(str::to_string),
+        });
+    }
+
+    fn emit_turn_complete(&self, execution_id: &str, duration_ms: u64, had_answer: bool) {
+        self.emit(TurnCompletePayload {
+            execution_id: execution_id.to_string(),
+            duration_ms,
+            had_answer,
+        });
+    }
+
+    fn emit_turn_aborted(
+        &self,
+        execution_id: &str,
+        duration_ms: u64,
+        reason: &str,
+        error_message_safe: Option<&str>,
+    ) {
+        self.emit(TurnAbortedPayload {
+            execution_id: execution_id.to_string(),
+            duration_ms,
+            reason: reason.to_string(),
+            error_message_safe: error_message_safe.map(str::to_string),
+        });
+    }
+
+    fn emit_subagent_spawn_begin(
+        &self,
+        agent_code: &str,
+        agent_name: Option<&str>,
+        agent_type: Option<&str>,
+        module_key: Option<&str>,
+        autonomy_policy: Option<&str>,
+        parent_span_id: Option<&str>,
+    ) {
+        self.emit(SubagentSpawnBeginPayload {
+            agent_code: agent_code.to_string(),
+            agent_name: agent_name.map(str::to_string),
+            agent_type: agent_type.map(str::to_string),
+            module_key: module_key.map(str::to_string),
+            autonomy_policy: autonomy_policy.map(str::to_string),
+            parent_span_id: parent_span_id.map(str::to_string),
+        });
+    }
+
+    fn emit_subagent_spawn_end(&self, agent_code: &str) {
+        self.emit(SubagentSpawnEndPayload {
+            agent_code: agent_code.to_string(),
+        });
+    }
+
+    fn emit_subagent_llm_call_begin(
+        &self,
+        agent_code: &str,
+        model: &str,
+        backend: &str,
+        tool_manifest_count: usize,
+    ) {
+        self.emit(SubagentLlmCallBeginPayload {
+            agent_code: agent_code.to_string(),
+            model: model.to_string(),
+            backend: backend.to_string(),
+            tool_manifest_count,
+            generation: None,
+        });
+    }
+
+    fn emit_subagent_llm_call_begin_with_generation(
+        &self,
+        agent_code: &str,
+        model: &str,
+        backend: &str,
+        tool_manifest_count: usize,
+        generation: Option<&GenerationIdentity>,
+    ) {
+        self.emit(SubagentLlmCallBeginPayload {
+            agent_code: agent_code.to_string(),
+            model: model.to_string(),
+            backend: backend.to_string(),
+            tool_manifest_count,
+            generation: generation.cloned(),
+        });
+    }
+
+    fn emit_subagent_llm_call_end(
+        &self,
+        agent_code: &str,
+        finish_reason: &str,
+        input_tokens: usize,
+        output_tokens: usize,
+        content_len: usize,
+    ) {
+        self.emit(SubagentLlmCallEndPayload {
+            agent_code: agent_code.to_string(),
+            finish_reason: finish_reason.to_string(),
+            usage: UsagePayload {
+                input_tokens,
+                output_tokens,
+                generation: None,
+            },
+            content_len,
+            generation: None,
+        });
+    }
+
+    fn emit_subagent_llm_call_end_with_generation(
+        &self,
+        agent_code: &str,
+        finish_reason: &str,
+        input_tokens: usize,
+        output_tokens: usize,
+        content_len: usize,
+        generation: Option<&GenerationIdentity>,
+    ) {
+        self.emit(SubagentLlmCallEndPayload {
+            agent_code: agent_code.to_string(),
+            finish_reason: finish_reason.to_string(),
+            usage: UsagePayload {
+                input_tokens,
+                output_tokens,
+                generation: None,
+            },
+            content_len,
+            generation: generation.cloned(),
+        });
+    }
+
+    fn emit_tool_call_begin(&self, agent_code: &str, tool_name: &str, argument_keys: &[String]) {
+        self.emit(ToolCallBeginPayload {
+            agent_code: agent_code.to_string(),
+            tool_name: tool_name.to_string(),
+            argument_keys: argument_keys.to_vec(),
+            tool_call_correlation: None,
+        });
+    }
+
+    fn emit_tool_call_begin_with_correlation(
+        &self,
+        agent_code: &str,
+        tool_name: &str,
+        argument_keys: &[String],
+        correlation: Option<&ToolCallCorrelation>,
+    ) {
+        self.emit(ToolCallBeginPayload {
+            agent_code: agent_code.to_string(),
+            tool_name: tool_name.to_string(),
+            argument_keys: argument_keys.to_vec(),
+            tool_call_correlation: correlation.cloned(),
+        });
+    }
+
+    fn emit_tool_call_end(
+        &self,
+        agent_code: &str,
+        tool_name: &str,
+        result_keys: &[String],
+        status: ToolCallStatus,
+        latency_ms: u64,
+    ) {
+        self.emit(ToolCallEndPayload {
+            agent_code: agent_code.to_string(),
+            tool_name: tool_name.to_string(),
+            result_keys: result_keys.to_vec(),
+            status,
+            latency_ms,
+            tool_call_correlation: None,
+        });
+    }
+
+    fn emit_tool_call_end_with_correlation(
+        &self,
+        agent_code: &str,
+        tool_name: &str,
+        result_keys: &[String],
+        status: ToolCallStatus,
+        latency_ms: u64,
+        correlation: Option<&ToolCallCorrelation>,
+    ) {
+        self.emit(ToolCallEndPayload {
+            agent_code: agent_code.to_string(),
+            tool_name: tool_name.to_string(),
+            result_keys: result_keys.to_vec(),
+            status,
+            latency_ms,
+            tool_call_correlation: correlation.cloned(),
+        });
+    }
+
+    fn emit_subagent_done(
+        &self,
+        agent_code: &str,
+        total_tool_calls: usize,
+        input_tokens_total: usize,
+        output_tokens_total: usize,
+        evidence_excerpt: Option<&str>,
+    ) {
+        self.emit(SubagentDonePayload {
+            agent_code: agent_code.to_string(),
+            total_tool_calls,
+            usage_total: UsagePayload {
+                input_tokens: input_tokens_total,
+                output_tokens: output_tokens_total,
+                generation: None,
+            },
+            evidence_excerpt: evidence_excerpt.map(str::to_string),
+        });
+    }
+
+    fn emit_subagent_failed(&self, agent_code: &str, error_class: &str, error_message_safe: &str) {
+        self.emit(SubagentFailedPayload {
+            agent_code: agent_code.to_string(),
+            error_class: error_class.to_string(),
+            error_message_safe: error_message_safe.to_string(),
+        });
+    }
+
+    fn emit_agent_message(
+        &self,
+        text: &str,
+        item_id: Option<&str>,
+        response_id: Option<&str>,
+        input_tokens: Option<usize>,
+        output_tokens: Option<usize>,
+    ) {
+        let usage = match (input_tokens, output_tokens) {
+            (Some(input_tokens), Some(output_tokens)) => Some(UsagePayload {
+                input_tokens,
+                output_tokens,
+                generation: None,
+            }),
+            _ => None,
+        };
+        self.emit(AgentMessagePayload {
+            text: text.to_string(),
+            item_id: item_id.map(str::to_string),
+            response_id: response_id.map(str::to_string),
+            usage,
         });
     }
 }
@@ -636,6 +1068,170 @@ mod tests {
         assert_eq!(
             payload.rejected_candidates[0].reason,
             "missing required capabilities [execute]"
+        );
+    }
+
+    /// Positive: every Layer-2 hook on `EmitterAdapter` now produces a real
+    /// `ApxmEvent` of the matching kind instead of silently no-op'ing —
+    /// the wiring gap called out in the event taxonomy correction defect 1.
+    #[test]
+    fn emitter_adapter_delivers_all_layer2_kinds() {
+        let (adapter, capture) = adapter_with_capture();
+
+        adapter.emit_turn_started("exec-1", Some("turn-1"), Some("Cleo"));
+        adapter.emit_turn_complete("exec-1", 100, true);
+        adapter.emit_turn_boundary(TurnBoundaryPayload {
+            turn_number: 1,
+            direction: TurnDirection::Request,
+        });
+        adapter.emit_llm_step_completed(LlmStepCompletedPayload {
+            node_id: 1,
+            step_number: 1,
+            model: "model".to_string(),
+            finish_reason: FinishReasonPayload {
+                reason: "stop".to_string(),
+            },
+            usage: LlmStepUsagePayload {
+                input_tokens: 1,
+                output_tokens: 2,
+                cached_input_tokens: 0,
+                reasoning_output_tokens: 0,
+            },
+            performance: LlmStepPerformancePayload {
+                latency_ms: 10.0,
+                prefill_ms: 4.0,
+                decode_ms: 6.0,
+            },
+            tool_call_count: 0,
+            generation: None,
+        });
+        adapter.emit_llm_done(LlmDonePayload {
+            content: "final answer".to_string(),
+            model: "model".to_string(),
+            finish_reason: FinishReasonPayload {
+                reason: "stop".to_string(),
+            },
+            usage: UsagePayload {
+                input_tokens: 1,
+                output_tokens: 2,
+                generation: None,
+            },
+            tool_calls: Vec::new(),
+            response_id: None,
+            generation: None,
+        });
+        adapter.emit_subagent_spawn_begin(
+            "agent-1",
+            Some("Agent One"),
+            None,
+            None,
+            None,
+            Some("span-0"),
+        );
+        adapter.emit_subagent_spawn_end("agent-1");
+        adapter.emit_tool_call_begin("agent-1", "web_search", &["q".to_string()]);
+        adapter.emit_tool_call_end(
+            "agent-1",
+            "web_search",
+            &["r".to_string()],
+            ToolCallStatus::Ok,
+            12,
+        );
+        adapter.emit_agent_message("final answer", None, None, Some(1), Some(2));
+
+        let events = capture.events.lock();
+        let kinds: Vec<&'static str> = events.iter().map(|e| e.kind().name()).collect();
+        for expected in [
+            "turn_started",
+            "turn_complete",
+            "turn_boundary",
+            "llm_step_completed",
+            "llm_done",
+            "subagent_spawn_begin",
+            "subagent_spawn_end",
+            "tool_call_begin",
+            "tool_call_end",
+            "agent_message",
+        ] {
+            assert!(
+                kinds.contains(&expected),
+                "expected {expected} to be delivered, got {kinds:?}"
+            );
+        }
+    }
+
+    /// Recovery/no-regression: the approval hooks that already worked
+    /// before Layer-2 wiring still deliver after adding the new overrides.
+    #[test]
+    fn approval_events_still_delivered_after_layer2_wiring() {
+        let (adapter, capture) = adapter_with_capture();
+
+        adapter.emit_approval_request("agent-1", "shell", "appr-1", ApprovalRiskLevel::High);
+        adapter.emit_approval_resolved(
+            "appr-1",
+            apxm_core::types::consent::ApprovalResolution::Approved,
+        );
+
+        let events = capture.events.lock();
+        let kinds: Vec<&'static str> = events.iter().map(|e| e.kind().name()).collect();
+        assert_eq!(kinds, vec!["approval_request", "approval_resolved"]);
+    }
+
+    #[test]
+    fn token_usage_preserves_generation_identity() {
+        let (adapter, capture) = adapter_with_capture();
+        let generation = GenerationIdentity::new("call-usage", 2, 4);
+
+        adapter.emit_token_usage_with_generation(7, 11, 13, Some(&generation));
+
+        let events = capture.events.lock();
+        assert_eq!(events.len(), 1);
+        let payload = events[0]
+            .payload
+            .downcast_ref::<TokenUsagePayload>()
+            .expect("token_usage payload");
+        assert_eq!(payload.node_id, 7);
+        assert_eq!(payload.input_tokens, 11);
+        assert_eq!(payload.output_tokens, 13);
+        assert_eq!(payload.generation.as_ref(), Some(&generation));
+    }
+
+    /// **Compaction event-delivery verification:** `CONTEXT_COMPACTED`/
+    /// `CONTEXT_WINDOW_WARNING` are two of the event kinds
+    /// the runtime compaction invariant requires "must not silently no-op through
+    /// `EmitterAdapter`" — proves both reach the sink with the REAL payload
+    /// field names (`original_tokens`/`new_tokens`,
+    /// `current_tokens`/`max_tokens`/`utilization_pct`), not the earlier
+    /// draft's nonexistent `tokens_before`/`tokens_after`.
+    #[test]
+    fn context_compacted_and_window_warning_are_not_swallowed_by_emitter_adapter() {
+        let (adapter, capture) = adapter_with_capture();
+
+        adapter.emit_context_window_warning(240, 300, 80.0);
+        adapter.emit_context_compacted(320, 90);
+
+        let events = capture.events.lock();
+        assert_eq!(events.len(), 2);
+
+        assert_eq!(events[0].kind().name(), "context_window_warning");
+        let warning = events[0]
+            .payload
+            .downcast_ref::<ContextWindowWarningPayload>()
+            .expect("context_window_warning payload");
+        assert_eq!(warning.current_tokens, 240);
+        assert_eq!(warning.max_tokens, 300);
+        assert_eq!(warning.utilization_pct, 80.0);
+
+        assert_eq!(events[1].kind().name(), "context_compacted");
+        let compacted = events[1]
+            .payload
+            .downcast_ref::<ContextCompactedPayload>()
+            .expect("context_compacted payload");
+        assert_eq!(compacted.original_tokens, 320);
+        assert_eq!(compacted.new_tokens, 90);
+        assert!(
+            compacted.original_tokens > compacted.new_tokens,
+            "compaction must reduce the token count"
         );
     }
 }

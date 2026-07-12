@@ -286,37 +286,6 @@ export const BRANCH_ON_VALUE: OpSpec = {
   exampleJson: "{\"id\": 5, \"op\": \"BRANCH_ON_VALUE\", \"attributes\": {\"value\": \"yes\", \"true_label\": \"6\", \"false_label\": \"7\"}}",
 } as const;
 
-export const LOOP_START: OpSpec = {
-  op: "LOOP_START",
-  name: "LoopStart",
-  category: "control_flow" as OpCategory,
-  description: "Begin bounded loop",
-  longDescription: "Marks the beginning of a bounded loop. The count_token specifies how many iterations to execute. Must be paired with a LOOP_END node. The compiler verifies loop bounds at compile time to prevent infinite loops.",
-  latency: "none",
-  fields: [
-    { name: "count_token", description: "Token containing iteration count", required: true, refType: null },
-  ],
-  producesOutput: false,
-  needsSubmission: false,
-  minInputs: 0,
-  exampleJson: "{\"id\": 3, \"op\": \"LOOP_START\", \"attributes\": {\"count_token\": \"3\"}}",
-} as const;
-
-export const LOOP_END: OpSpec = {
-  op: "LOOP_END",
-  name: "LoopEnd",
-  category: "control_flow" as OpCategory,
-  description: "End bounded loop",
-  longDescription: "Marks the end of a bounded loop started by LOOP_START. The runtime decrements the loop counter and branches back to LOOP_START if iterations remain.",
-  latency: "none",
-  fields: [
-  ],
-  producesOutput: false,
-  needsSubmission: false,
-  minInputs: 0,
-  exampleJson: null,
-} as const;
-
 export const RETURN: OpSpec = {
   op: "RETURN",
   name: "Return",
@@ -678,26 +647,26 @@ export const REGISTER_HOOK: OpSpec = {
   name: "RegisterHook",
   category: "coordination" as OpCategory,
   description: "Register an author lifecycle hook into the artifact hook registry",
-  longDescription: "Registers one author lifecycle hook (a Python handler bound to a lifecycle event) into the per-artifact hook registry. The binding travels inside the artifact (AIR-portable) and the handler is dispatched via the same Python tool bridge as @tool. The runtime applies pre/post_cap hooks at the tool dispatch sites, pre/post_ask as Ask middleware, and session_start as an awaited pre-step.",
+  longDescription: "Registers one typed author lifecycle hook into the per-artifact hook registry. The binding travels inside the AIR artifact and dispatches through the artifact's language-specific handler bridge. The runtime applies pre/post_cap hooks at the tool dispatch sites, pre/post_ask as Ask middleware, and session_start as an awaited pre-step.",
   latency: "low",
   fields: [
     { name: "hook_event", description: "Lifecycle event the hook binds to", required: true, refType: null },
     { name: "hook_match", description: "Glob over tool/op name the hook applies to (default *)", required: false, refType: null },
     { name: "hook_mode", description: "Hook mode: observe or gate", required: false, refType: null },
-    { name: "python_hook_handler_id", description: "Stable content-addressed id (sha256:<hex64>) for the Python hook handler", required: true, refType: null },
+    { name: "hook_handler_id", description: "Stable content-addressed id (sha256:<hex64>) for the artifact hook handler", required: true, refType: null },
   ],
   producesOutput: true,
   needsSubmission: true,
   minInputs: 0,
-  exampleJson: "{\\\"id\\\": 4, \\\"op\\\": \\\"REGISTER_HOOK\\\", \\\"attributes\\\": {\\\"hook_event\\\": \\\"pre_cap\\\", \\\"hook_match\\\": \\\"lookup\\\", \\\"hook_mode\\\": \\\"gate\\\", \\\"python_hook_handler_id\\\": \\\"sha256:...\\\"}}",
+  exampleJson: "{\\\"id\\\": 4, \\\"op\\\": \\\"REGISTER_HOOK\\\", \\\"attributes\\\": {\\\"hook_event\\\": \\\"pre_cap\\\", \\\"hook_match\\\": \\\"lookup\\\", \\\"hook_mode\\\": \\\"gate\\\", \\\"hook_handler_id\\\": \\\"sha256:...\\\"}}",
 } as const;
 
 export const AUTONOMOUS: OpSpec = {
   op: "AUTONOMOUS",
   name: "Autonomous",
   category: "coordination" as OpCategory,
-  description: "Run a goal-directed autonomous loop with the configured model",
-  longDescription: "Runs an iterative plan / act / evaluate loop against a goal prompt. The node keeps calling the configured model until the goal is achieved or `max_iterations` is reached. Optional backend, model, system prompt, provider, and temperature attributes follow the same routing contract as the other LLM operations.",
+  description: "Macro-op: a fused goal-directed plan/act/evaluate loop, not the general iteration mechanism",
+  longDescription: "AUTONOMOUS is a macro-op — a single node that fuses an internal plan / act / evaluate loop against a goal prompt, implemented as a Rust loop inside the handler (not graph-level iteration). The node keeps calling the configured model until the goal is achieved or `max_iterations` is reached. It is independent of, and not a substitute for, the general in-graph iteration mechanism, which is splice-based (a fresh sub-DAG grafted into the live execution per turn/iteration via `splice_dag`/`rearm_session_turn`). Optional backend, model, system prompt, provider, and temperature attributes follow the same routing contract as the other LLM operations.",
   latency: "high",
   fields: [
     { name: "prompt", description: "Goal or objective for the autonomous loop", required: true, refType: null },
@@ -781,8 +750,6 @@ export const ALL_OPERATIONS: readonly OpSpec[] = [
   PRINT,
   JUMP,
   BRANCH_ON_VALUE,
-  LOOP_START,
-  LOOP_END,
   RETURN,
   SWITCH,
   FLOW_CALL,
@@ -877,7 +844,7 @@ export const ATTR = {
   HOOK_EVENT: "hook_event",
   HOOK_MATCH: "hook_match",
   HOOK_MODE: "hook_mode",
-  PYTHON_HOOK_HANDLER_ID: "python_hook_handler_id",
+  HOOK_HANDLER_ID: "hook_handler_id",
   MESSAGE: "message",
   RECIPIENT: "recipient",
   TARGET: "target",
@@ -979,7 +946,6 @@ export const ATTR = {
   PARAMETERS: "parameters",
   STRUCTURED: "structured",
   TOKEN: "token",
-  COUNT_TOKEN: "count_token",
   CASES: "cases",
   DEFAULT: "default",
   ORDERING: "ordering",

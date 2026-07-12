@@ -1,5 +1,6 @@
+// Builds Gao's bounded, redacted turn context from package and host data.
 import { readFileSync } from "node:fs";
-import { dirname, join, resolve } from "node:path";
+import { dirname, isAbsolute, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 import type { HookContext } from "@apxm/frontend";
@@ -11,11 +12,26 @@ const CHARS_PER_TOKEN_ESTIMATE = 4;
 const MAX_CONFIG_CHARS = 500;
 
 const SENSITIVE_KEY =
-  /(?:api[_-]?key|token|secret|password|credential|auth)/i;
+  /(?:api[_-]?key|token|secret|password|credential|authorization|auth)/i;
+const ASSIGNMENT_SECRET =
+  /(\b(?:api[_-]?key|access[_-]?token|refresh[_-]?token|token|secret|password|credential|authorization|auth)\b\s*[:=]\s*)(?:"[^"\r\n]*"|'[^'\r\n]*'|[^\s,;}\]\r\n]+)/gi;
+const BEARER_SECRET = /\bbearer\s+[^\s,;}\]]+/gi;
 
-const STUDIO_URL_ENV = "APXM_STUDIO_URL";
-const STUDIO_SERVICE_TOKEN_ENV = "APXM_STUDIO_SERVICE_TOKEN";
-const INVENTORY_PATH = "/api/gao/capability-inventory";
+interface CapabilityInventoryEntry {
+  capability: string;
+  reason?: string;
+}
+
+interface CapabilityInventory {
+  ready: CapabilityInventoryEntry[];
+  needsConnect: CapabilityInventoryEntry[];
+}
+
+interface NodeKindEntry {
+  kind: string;
+  title: string;
+  category: string;
+}
 
 const PROMPT_PATHS: Record<string, string> = {
   persona: "prompts/persona.md",
@@ -40,14 +56,16 @@ export function packageRoot(): string {
     return cachedRoot;
   }
   const here = dirname(fileURLToPath(import.meta.url));
-  cachedRoot = resolve(here, "..", "..");
-  return cachedRoot;
+  const root = resolve(here, "..", "..");
+  cachedRoot = root;
+  return root;
 }
 
 function readText(relativePath: string): string {
   const root = packageRoot();
   const path = resolve(root, relativePath);
-  if (!path.startsWith(root)) {
+  const rel = relative(root, path);
+  if (rel.startsWith("..") || isAbsolute(rel)) {
     throw new Error(`path escapes Gao package: ${relativePath}`);
   }
   return readFileSync(path, "utf8").trim();
@@ -61,63 +79,69 @@ export function prompt(name: string): string {
   return readText(relative);
 }
 
-function redactValue(key: string, value: unknown): unknown {
-  if (SENSITIVE_KEY.test(key)) {
+function scrubText(value: string): string {
+  return value
+    .replace(BEARER_SECRET, "<redacted>")
+    .replace(ASSIGNMENT_SECRET, "$1<redacted>");
+}
+
+export function scrubSecrets(
+  value: unknown,
+  options: { maxStringChars?: number } = {},
+  key = "",
+): unknown {
+  if (key && SENSITIVE_KEY.test(key)) {
     return "<redacted>";
   }
-  if (typeof value === "string" && value.length > MAX_CONFIG_CHARS) {
-    return `${value.slice(0, MAX_CONFIG_CHARS)}…`;
-  }
-  if (value && typeof value === "object" && !Array.isArray(value)) {
-    return redactConfig(value as Record<string, unknown>);
+  if (typeof value === "string") {
+    const scrubbed = scrubText(value);
+    const maxStringChars = options.maxStringChars;
+    return maxStringChars != null && scrubbed.length > maxStringChars
+      ? `${scrubbed.slice(0, maxStringChars)}…`
+      : scrubbed;
   }
   if (Array.isArray(value)) {
-    return value.map((item, index) => redactValue(String(index), item));
+    return value.map((item) => scrubSecrets(item, options));
+  }
+  if (value && typeof value === "object") {
+    return Object.fromEntries(
+      Object.entries(value as Record<string, unknown>).map(([entryKey, entryValue]) => [
+        entryKey,
+        scrubSecrets(entryValue, options, entryKey),
+      ]),
+    );
   }
   return value;
 }
 
-function redactConfig(config: Record<string, unknown>): Record<string, unknown> {
-  return Object.fromEntries(
-    Object.entries(config ?? {}).map(([key, value]) => [key, redactValue(key, value)]),
-  );
-}
-
-function redactSnapshot(snapshot: Record<string, unknown>): Record<string, unknown> {
-  const out = JSON.parse(JSON.stringify(snapshot ?? {})) as Record<string, unknown>;
-  const canvas = out.canvas;
-  if (canvas && typeof canvas === "object" && !Array.isArray(canvas)) {
-    const nodes = (canvas as Record<string, unknown>).nodes;
-    if (Array.isArray(nodes)) {
-      for (const node of nodes) {
-        if (node && typeof node === "object" && !Array.isArray(node)) {
-          const config = (node as Record<string, unknown>).config;
-          if (config && typeof config === "object" && !Array.isArray(config)) {
-            (node as Record<string, unknown>).config = redactConfig(
-              config as Record<string, unknown>,
-            );
-          }
-        }
-      }
-    }
+function parseNodeKindEntry(value: unknown): NodeKindEntry | null {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    return null;
   }
-  return out;
-}
-
-function loadNodeKindCatalog(): Array<Record<string, string>> {
-  try {
-    const raw = readFileSync(join(packageRoot(), "shared", "node_kinds.json"), "utf8");
-    const data = JSON.parse(raw) as { kinds?: Array<Record<string, string>> };
-    return Array.isArray(data.kinds) ? data.kinds : [];
-  } catch {
-    return [];
+  const record = value as Record<string, unknown>;
+  if (typeof record.kind !== "string" || record.kind.trim() === "") {
+    return null;
   }
+  return {
+    kind: record.kind,
+    title: typeof record.title === "string" ? record.title : record.kind,
+    category: typeof record.category === "string" ? record.category : "other",
+  };
 }
 
-function renderNodeKindCatalog(): string {
-  const kinds = loadNodeKindCatalog();
+function parseNodeKindCatalog(value: unknown): NodeKindEntry[] {
+  return Array.isArray(value)
+    ? value.map(parseNodeKindEntry).filter((entry): entry is NodeKindEntry => entry != null)
+    : [];
+}
+
+export function renderNodeKindCatalog(value: unknown): string {
+  const kinds = parseNodeKindCatalog(value);
   if (kinds.length === 0) {
-    return "(node-kind catalog unavailable)";
+    return (
+      "(host did not supply `nodeKinds`; do not emit Apply workflow JSON. " +
+      "High-level planning and clarification are still allowed.)"
+    );
   }
   const byCategory = new Map<string, string[]>();
   for (const entry of kinds) {
@@ -135,45 +159,48 @@ function renderNodeKindCatalog(): string {
   return lines.join("\n");
 }
 
-async function fetchCapabilityInventory(): Promise<Record<string, unknown> | null> {
-  const baseUrl = process.env[STUDIO_URL_ENV]?.trim();
-  if (!baseUrl) {
+function parseInventoryEntry(value: unknown): CapabilityInventoryEntry | null {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
     return null;
   }
-  const headers: Record<string, string> = {};
-  const token = process.env[STUDIO_SERVICE_TOKEN_ENV]?.trim();
-  if (token) {
-    headers.Authorization = `Bearer ${token}`;
-  }
-  try {
-    const response = await fetch(`${baseUrl.replace(/\/$/, "")}${INVENTORY_PATH}`, {
-      headers,
-      signal: AbortSignal.timeout(5_000),
-    });
-    if (!response.ok) {
-      return null;
-    }
-    const data = (await response.json()) as unknown;
-    return data && typeof data === "object" && !Array.isArray(data)
-      ? (data as Record<string, unknown>)
-      : null;
-  } catch {
+  const record = value as Record<string, unknown>;
+  if (typeof record.capability !== "string" || record.capability.trim() === "") {
     return null;
   }
+  return {
+    capability: record.capability,
+    ...(typeof record.reason === "string" ? { reason: record.reason } : {}),
+  };
 }
 
-function renderCapabilityInventorySection(
-  inventory: Record<string, unknown> | null,
+function parseInventoryEntries(value: unknown): CapabilityInventoryEntry[] {
+  return Array.isArray(value)
+    ? value.map(parseInventoryEntry).filter((entry): entry is CapabilityInventoryEntry => entry != null)
+    : [];
+}
+
+function parseCapabilityInventory(value: unknown): CapabilityInventory | null {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    return null;
+  }
+  const record = value as Record<string, unknown>;
+  return {
+    ready: parseInventoryEntries(record.ready),
+    needsConnect: parseInventoryEntries(record.needsConnect),
+  };
+}
+
+export function renderCapabilityInventorySection(
+  inventory: CapabilityInventory | null,
 ): string {
   if (!inventory) {
     return (
-      `(capability inventory unavailable in this environment — set \`${STUDIO_URL_ENV}\` ` +
-      "to reach the Studio BFF)"
+      "- Ready now: (none)\n" +
+      "- Status: host did not supply `capabilityInventory`; do not emit workflow tool nodes " +
+      "or claim provider availability. Non-tool planning and clarification are still allowed."
     );
   }
-  const ready = (inventory.ready as Array<Record<string, unknown>> | undefined) ?? [];
-  const needsConnect =
-    (inventory.needsConnect as Array<Record<string, unknown>> | undefined) ?? [];
+  const { ready, needsConnect } = inventory;
   const readyLine =
     ready.map((entry) => String(entry.capability ?? "")).filter(Boolean).join(", ") || "(none)";
   const lines = [`- Ready now: ${readyLine}`];
@@ -264,9 +291,9 @@ function renderOpenDocsSection(snapshot: Record<string, unknown>): string | null
   return `- Open tabs: ${labels.join(", ")}`;
 }
 
-function tokenCount(text: string, ctx: HookContext): number {
+async function tokenCount(text: string, ctx: HookContext): Promise<number> {
   try {
-    return Math.max(1, ctx.count_tokens(text));
+    return Math.max(1, await ctx.countTokens(text));
   } catch {
     return Math.max(1, Math.floor(text.length / CHARS_PER_TOKEN_ESTIMATE));
   }
@@ -285,19 +312,20 @@ export async function renderStudioContextSupplement(
   ctx: HookContext,
   snapshotInput: unknown,
 ): Promise<string> {
-  const snapshot = redactSnapshot(
+  const snapshot = scrubSecrets(
     snapshotInput && typeof snapshotInput === "object" && !Array.isArray(snapshotInput)
-      ? (snapshotInput as Record<string, unknown>)
+      ? snapshotInput
       : {},
-  );
-  const inventory = await fetchCapabilityInventory();
+    { maxStringChars: MAX_CONFIG_CHARS },
+  ) as Record<string, unknown>;
+  const inventory = parseCapabilityInventory(snapshot.capabilityInventory);
 
   const coreSections: Array<[string, string]> = [
     ["Package prompts", renderPackagePrompts()],
     ["Page", renderPageSection(snapshot)],
     ["Workflow", renderWorkflowSection(snapshot)],
     ["Canvas", renderCanvasSection(snapshot)],
-    ["Studio node kinds", renderNodeKindCatalog()],
+    ["Studio node kinds", renderNodeKindCatalog(snapshot.nodeKinds)],
     ["Available capabilities", renderCapabilityInventorySection(inventory)],
   ];
 
@@ -308,12 +336,12 @@ export async function renderStudioContextSupplement(
 
   let text = renderSections([...coreSections, ...optionalSections]);
 
-  while (tokenCount(text, ctx) > MAX_SUPPLEMENT_TOKENS && optionalSections.length > 0) {
+  while ((await tokenCount(text, ctx)) > MAX_SUPPLEMENT_TOKENS && optionalSections.length > 0) {
     optionalSections = optionalSections.slice(1);
     text = renderSections([...coreSections, ...optionalSections]);
   }
 
-  if (tokenCount(text, ctx) > MAX_SUPPLEMENT_TOKENS) {
+  if ((await tokenCount(text, ctx)) > MAX_SUPPLEMENT_TOKENS) {
     const budgetChars = MAX_SUPPLEMENT_TOKENS * CHARS_PER_TOKEN_ESTIMATE;
     if (text.length > budgetChars) {
       text =

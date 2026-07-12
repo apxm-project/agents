@@ -21,6 +21,9 @@ use apxm_driver::compiler::Compiler;
 use serde::Deserialize;
 
 #[cfg(feature = "driver")]
+use apxm_ais::chat::CompileServiceOptions;
+
+#[cfg(feature = "driver")]
 use super::implementations::{load_config, parse_opt_level};
 
 #[cfg(feature = "driver")]
@@ -285,6 +288,74 @@ type TypeScriptHandlersManifest = Option<Vec<u8>>;
 // service boundary.
 // ---------------------------------------------------------------------------
 
+#[cfg(feature = "driver")]
+fn parse_compile_service_options_json(json: &str) -> Result<CompileServiceOptions> {
+    let mut deserializer = serde_json::Deserializer::from_str(json);
+    let options = CompileServiceOptions::deserialize(&mut deserializer)
+        .context("compile-service --options-stdin expects one typed JSON object on stdin")?;
+    deserializer
+        .end()
+        .context("compile-service --options-stdin expects exactly one JSON object on stdin")?;
+    options
+        .validate()
+        .context("compile-service options validation failed")?;
+    Ok(options)
+}
+
+#[cfg(feature = "driver")]
+fn effective_system_prompt<'a>(
+    options: &'a CompileServiceOptions,
+    persona: &'a str,
+) -> Option<&'a str> {
+    options.system_prompt.as_deref().or_else(|| {
+        let trimmed = persona.trim();
+        (!trimmed.is_empty()).then_some(trimmed)
+    })
+}
+
+#[cfg(feature = "driver")]
+fn read_compile_service_options_from_stdin() -> Result<CompileServiceOptions> {
+    use std::io::Read;
+
+    let mut stdin = String::new();
+    std::io::stdin()
+        .read_to_string(&mut stdin)
+        .context("Failed to read compile-service options JSON from stdin")?;
+    parse_compile_service_options_json(&stdin)
+}
+
+#[cfg(feature = "driver")]
+fn insert_optional_route_attr(
+    attrs: &mut std::collections::HashMap<String, apxm_core::types::Value>,
+    key: &str,
+    value: Option<&str>,
+) {
+    let Some(value) = value else {
+        return;
+    };
+    attrs.insert(
+        key.to_string(),
+        apxm_core::types::Value::String(value.to_string()),
+    );
+}
+
+#[cfg(feature = "driver")]
+fn insert_effort_attr(
+    attrs: &mut std::collections::HashMap<String, apxm_core::types::Value>,
+    effort: Option<&str>,
+) {
+    let Some(effort) = effort else {
+        return;
+    };
+    if effort == "off" {
+        return;
+    }
+    attrs.insert(
+        apxm_ais::attrs::EFFORT.to_string(),
+        apxm_core::types::Value::String(effort.to_string()),
+    );
+}
+
 /// Compile a bundled conversational agent into canonical AIR text.
 ///
 /// # Cross-repo I/O contract
@@ -295,20 +366,17 @@ type TypeScriptHandlersManifest = Option<Vec<u8>>;
 /// Python frontend:
 ///
 /// - **Input**: a single positional argument, the agent directory
-///   (containing `agent.toml`, generated `integrity.toml`, and `capabilities/`). No stdin
-///   is read.
-/// - `--web-tools`: include the web capability group in the emitted ASK node.
+///   (containing `agent.toml`, generated `integrity.toml`, and `capabilities/`).
+///   `--options-stdin` is required, and stdin must contain exactly one JSON
+///   object matching the typed compile-service options contract.
 /// - **stdout**: on success, ONLY emitted AIR text. No other text is ever
 ///   written to stdout; all progress/log/diagnostic output goes to stderr.
 /// - **Exit code**: `0` on success. Nonzero on any failure, with a
 ///   human-readable message on stderr.
 #[cfg(feature = "driver")]
-pub fn compile_service_command(
-    agent_dir: PathBuf,
-    web_tools: bool,
-    _config: Option<PathBuf>,
-) -> Result<()> {
-    let air = emit_air_from_agent(&agent_dir, web_tools)?;
+pub fn compile_service_command(agent_dir: PathBuf, _config: Option<PathBuf>) -> Result<()> {
+    let options = read_compile_service_options_from_stdin()?;
+    let air = emit_air_from_agent(&agent_dir, &options)?;
 
     // Only the AIR text goes to stdout, written byte-for-byte as the frontend
     // produced it (no added trailing newline) — this is the process contract
@@ -324,7 +392,10 @@ pub fn compile_service_command(
 /// writing wrapper above so it can be exercised directly by tests (including
 /// the Studio-equivalence fixture test) without spawning a subprocess.
 #[cfg(feature = "driver")]
-pub(crate) fn emit_air_from_agent(agent_dir: &Path, web_tools: bool) -> Result<String> {
+pub(crate) fn emit_air_from_agent(
+    agent_dir: &Path,
+    options: &CompileServiceOptions,
+) -> Result<String> {
     if !agent_dir.is_dir() {
         return Err(anyhow::anyhow!(
             "'{}' is not a directory",
@@ -332,7 +403,12 @@ pub(crate) fn emit_air_from_agent(agent_dir: &Path, web_tools: bool) -> Result<S
         ));
     }
 
-    emit_air_from_declarative_agent(agent_dir, web_tools)
+    options
+        .validate()
+        .context("compile-service options validation failed")?;
+    super::agent::verify_agent_integrity(agent_dir)?;
+
+    emit_air_from_declarative_agent(agent_dir, options)
 }
 
 #[cfg(feature = "driver")]
@@ -350,6 +426,74 @@ struct DeclarativeHookToml {
 struct DeclarativeRuntimeToml {
     #[serde(default, rename = "loop")]
     runtime_loop: Option<toml::Value>,
+    /// `[runtime] compaction_policy = '{"keep_recent":...}'` — the runtime
+    /// declarative-package compaction dial
+    /// (`RUNTIME_EXTRA_COMPACTION_POLICY_KEY` in
+    /// `apxm_core::types::agent_definition`): a JSON string stamped into the
+    /// same open `extra` bag every other `[runtime]` knob uses. Absent
+    /// entirely is the opt-out dial — no attributes are stamped on the
+    /// marked conversational-turn ASK, so `ConversationMemoryMiddleware`
+    /// never starts measuring.
+    #[serde(default)]
+    compaction_policy: Option<String>,
+}
+
+/// Parsed `[runtime] compaction_policy` JSON shape
+/// (`{"keep_recent","compact_at_tokens","strategy","summary_key"}`) — the
+/// same fields `conversational.py::CompactionPolicy` round-trips through the
+/// `extra` bag (`agent_definition.rs`'s
+/// `runtime_extra_round_trips_compaction_policy_knob` test).
+#[cfg(feature = "driver")]
+#[derive(Debug, Deserialize)]
+struct DeclarativeCompactionPolicy {
+    compact_at_tokens: i64,
+    #[serde(default)]
+    keep_recent: Option<i64>,
+    #[serde(default)]
+    summary_key: Option<String>,
+}
+
+/// Node attribute keys `ConversationMemoryMiddleware`
+/// (`crates/runtime/engine/src/executor/middlewares/conversation_memory.rs`)
+/// reads off the marked conversational-turn ASK. Duplicated string literals
+/// here match the existing cross-frontend precedent (the Python frontend's
+/// `conversational.py` independently duplicates the same four literals
+/// rather than importing them from the runtime crate) — every producer
+/// agrees on the wire string, not a shared Rust constant.
+#[cfg(feature = "driver")]
+mod compaction_attrs {
+    pub const AT_TOKENS: &str = "compaction_at_tokens";
+    pub const KEEP_RECENT: &str = "compaction_keep_recent";
+    pub const SUMMARY_KEY: &str = "compaction_summary_key";
+    pub const OVERRIDE_PRESENT: &str = "compaction_override_present";
+}
+
+/// Parse `[runtime] compaction_policy` (if present) into the node attributes
+/// `ConversationMemoryMiddleware` reads. Returns `None` for the opt-out
+/// dial (key absent) or a malformed value (fail-loud: `Err`), never a
+/// silent partial policy.
+#[cfg(feature = "driver")]
+fn declarative_compaction_policy(
+    agent: &DeclarativeAgentToml,
+) -> Result<Option<DeclarativeCompactionPolicy>> {
+    let Some(runtime) = agent.runtime.as_ref() else {
+        return Ok(None);
+    };
+    let Some(raw) = runtime.compaction_policy.as_ref() else {
+        return Ok(None);
+    };
+    let policy: DeclarativeCompactionPolicy = serde_json::from_str(raw)
+        .with_context(|| format!("Failed to parse [runtime] compaction_policy as JSON: {raw:?}"))?;
+    Ok(Some(policy))
+}
+
+/// Fail-closed precedence: an author-declared `post_turn`
+/// hook already owns compaction, so the runtime default must never
+/// double-compact. Declarative packages express hooks via `[[hooks]]`, so
+/// this is a scan for `event = "post_turn"`, not a Python-only signal.
+#[cfg(feature = "driver")]
+fn declarative_compaction_override_present(agent: &DeclarativeAgentToml) -> bool {
+    agent.hooks.iter().any(|hook| hook.event == "post_turn")
 }
 
 #[cfg(feature = "driver")]
@@ -377,8 +521,6 @@ struct DeclarativeCapabilityToml {
     kind: String,
     #[serde(default)]
     read_only: bool,
-    #[serde(default)]
-    builtin_group: Option<String>,
 }
 
 #[cfg(feature = "driver")]
@@ -463,12 +605,21 @@ fn resolve_declarative_handler_id(handler: &str, manifest: &[serde_json::Value])
 #[cfg(feature = "driver")]
 fn declarative_tool_surface(
     capabilities: &DeclarativeCapabilitiesToml,
-    web_tools: bool,
+    options: &CompileServiceOptions,
 ) -> Result<(Vec<String>, Vec<String>)> {
     let mut tools = Vec::new();
     let mut groups = Vec::new();
-    if web_tools {
+    if options.tools {
         groups.push(apxm_ais::capabilities::groups::WEB.to_string());
+    }
+    if options.skills {
+        groups.push(apxm_ais::capabilities::groups::SKILLS.to_string());
+    }
+    if options.capability_discovery {
+        groups.push(apxm_ais::capabilities::groups::DISCOVERY.to_string());
+    }
+    if options.authoring {
+        groups.push(apxm_ais::capabilities::groups::AUTHORING.to_string());
     }
     for cap in &capabilities.capability {
         match cap.kind.as_str() {
@@ -480,11 +631,6 @@ fn declarative_tool_surface(
             "builtin" => {
                 if cap.read_only {
                     tools.push(cap.id.clone());
-                }
-                if let Some(group) = cap.builtin_group.as_ref()
-                    && !groups.contains(group)
-                {
-                    groups.push(group.clone());
                 }
             }
             "host" | "provider" | "http" | "static" | "mcp" => {}
@@ -552,7 +698,10 @@ fn absolutize_typescript_tool_sources(
 }
 
 #[cfg(feature = "driver")]
-fn emit_air_from_declarative_agent(agent_dir: &Path, web_tools: bool) -> Result<String> {
+fn emit_air_from_declarative_agent(
+    agent_dir: &Path,
+    options: &CompileServiceOptions,
+) -> Result<String> {
     use apxm_compiler::{
         AirModule, AirProgram, FrontendEdge, FrontendGraph, FrontendNode, FrontendParameter,
     };
@@ -587,7 +736,7 @@ fn emit_air_from_declarative_agent(agent_dir: &Path, web_tools: bool) -> Result<
     } else {
         DeclarativeCapabilitiesToml::default()
     };
-    let (tool_names, capability_groups) = declarative_tool_surface(&capabilities, web_tools)?;
+    let (tool_names, capability_groups) = declarative_tool_surface(&capabilities, options)?;
 
     let persona = agent
         .prompts
@@ -596,6 +745,8 @@ fn emit_air_from_declarative_agent(agent_dir: &Path, web_tools: bool) -> Result<
         .filter(|path| path.is_file())
         .and_then(|path| std::fs::read_to_string(path).ok())
         .unwrap_or_default();
+    let persona = persona.trim().to_string();
+    let effective_system_prompt = effective_system_prompt(options, &persona);
 
     let turn_param = declarative_turn_param(&agent);
     let loop_mode = declarative_loop_mode(&agent);
@@ -609,9 +760,10 @@ fn emit_air_from_declarative_agent(agent_dir: &Path, web_tools: bool) -> Result<
 
     let mut nodes = Vec::new();
     for (idx, hook) in agent.hooks.iter().enumerate() {
+        let hook_node_id = idx as u64 + 1;
         let handler_id = resolve_declarative_handler_id(&hook.handler, &manifest)?;
         nodes.push(FrontendNode {
-            id: idx as u64 + 1,
+            id: hook_node_id,
             name: format!("register_hook_{idx}"),
             op: AISOperationType::RegisterHook,
             attributes: HashMap::from([
@@ -628,7 +780,7 @@ fn emit_air_from_declarative_agent(agent_dir: &Path, web_tools: bool) -> Result<
                     Value::String(hook.mode.clone()),
                 ),
                 (
-                    graph_attrs::PYTHON_HOOK_HANDLER_ID.to_string(),
+                    graph_attrs::HOOK_HANDLER_ID.to_string(),
                     Value::String(handler_id),
                 ),
             ]),
@@ -637,17 +789,24 @@ fn emit_air_from_declarative_agent(agent_dir: &Path, web_tools: bool) -> Result<
 
     let run_node_id = nodes.len() as u64 + 1;
     let return_node_id = run_node_id + 1;
-    let edges = Vec::from([FrontendEdge {
+    let mut edges = (1..run_node_id)
+        .map(|hook_node_id| FrontendEdge {
+            from: hook_node_id,
+            to: run_node_id,
+            dependency: DependencyType::Effect,
+        })
+        .collect::<Vec<_>>();
+    edges.push(FrontendEdge {
         from: run_node_id,
         to: return_node_id,
         dependency: DependencyType::Data,
-    }]);
+    });
 
     if use_recv_loop {
         let mut attrs = HashMap::from([
             (
                 graph_attrs::PROMPT.to_string(),
-                Value::String(persona.trim().to_string()),
+                Value::String(effective_system_prompt.unwrap_or_default().to_string()),
             ),
             (
                 graph_attrs::MODE.to_string(),
@@ -665,12 +824,14 @@ fn emit_air_from_declarative_agent(agent_dir: &Path, web_tools: bool) -> Result<
                 Value::Array(vec![Value::String(turn_param.clone())]),
             ),
         ]);
-        if !persona.trim().is_empty() {
+        if let Some(system_prompt) = effective_system_prompt {
             attrs.insert(
                 graph_attrs::SYSTEM_PROMPT.to_string(),
-                Value::String(persona.trim().to_string()),
+                Value::String(system_prompt.to_string()),
             );
         }
+        insert_optional_route_attr(&mut attrs, graph_attrs::BACKEND, options.backend.as_deref());
+        insert_optional_route_attr(&mut attrs, graph_attrs::MODEL, options.model.as_deref());
         nodes.push(FrontendNode {
             id: run_node_id,
             name: "turn_loop".to_string(),
@@ -731,12 +892,19 @@ fn emit_air_from_declarative_agent(agent_dir: &Path, web_tools: bool) -> Result<
             Value::String("true".to_string()),
         ),
     ]);
-    if !persona.trim().is_empty() {
+    if let Some(system_prompt) = effective_system_prompt {
         ask_attrs.insert(
             graph_attrs::SYSTEM_PROMPT.to_string(),
-            Value::String(persona.trim().to_string()),
+            Value::String(system_prompt.to_string()),
         );
     }
+    insert_optional_route_attr(
+        &mut ask_attrs,
+        graph_attrs::BACKEND,
+        options.backend.as_deref(),
+    );
+    insert_optional_route_attr(&mut ask_attrs, graph_attrs::MODEL, options.model.as_deref());
+    insert_effort_attr(&mut ask_attrs, options.effort.as_deref());
     if !tool_names.is_empty() {
         ask_attrs.insert(
             graph_attrs::TOOLS.to_string(),
@@ -747,6 +915,33 @@ fn emit_air_from_declarative_agent(agent_dir: &Path, web_tools: bool) -> Result<
         ask_attrs.insert(
             graph_attrs::CAPABILITY_GROUPS.to_string(),
             Value::Array(capability_groups.into_iter().map(Value::String).collect()),
+        );
+    }
+    // Declarative compaction dial: absent `compaction_policy` is the
+    // opt-out no-op (no attributes stamped at all); present-but-malformed is
+    // a hard compile error (fail loud), never a silently-ignored policy.
+    if let Some(policy) = declarative_compaction_policy(&agent)? {
+        ask_attrs.insert(
+            compaction_attrs::AT_TOKENS.to_string(),
+            Value::Number(apxm_core::types::values::Number::Integer(
+                policy.compact_at_tokens,
+            )),
+        );
+        if let Some(keep_recent) = policy.keep_recent {
+            ask_attrs.insert(
+                compaction_attrs::KEEP_RECENT.to_string(),
+                Value::Number(apxm_core::types::values::Number::Integer(keep_recent)),
+            );
+        }
+        if let Some(summary_key) = policy.summary_key {
+            ask_attrs.insert(
+                compaction_attrs::SUMMARY_KEY.to_string(),
+                Value::String(summary_key),
+            );
+        }
+        ask_attrs.insert(
+            compaction_attrs::OVERRIDE_PRESENT.to_string(),
+            Value::Bool(declarative_compaction_override_present(&agent)),
         );
     }
 
@@ -780,6 +975,65 @@ fn emit_air_from_declarative_agent(agent_dir: &Path, web_tools: bool) -> Result<
         .map(FrontendGraph::to_air_module)
         .collect::<std::result::Result<Vec<AirModule>, _>>()?;
     append_typescript_tools_sidecar(AirProgram::new(modules).to_air()?, &manifest)
+}
+
+/// `; __apxm_typescript_tools__ <json>` — the trailing sidecar comment line
+/// `append_typescript_tools_sidecar` appends to declarative-agent AIR.
+/// Consumed by Server directly; `apxm compile` (below) strips it before
+/// handing the AIR to the MLIR parser and re-attaches it as an embedded
+/// artifact section instead.
+#[cfg(feature = "driver")]
+const TYPESCRIPT_TOOLS_SIDECAR_PREFIX: &str = "; __apxm_typescript_tools__ ";
+
+/// Split a declarative agent's emitted AIR (as `compile-service` writes it:
+/// canonical AIR text plus a trailing typescript-tools sidecar comment) into
+/// sidecar-free AIR text (safe for the MLIR parser) and the raw sidecar JSON
+/// bytes, if present.
+#[cfg(feature = "driver")]
+fn split_typescript_tools_sidecar(air: &str) -> (String, Option<Vec<u8>>) {
+    let mut clean_lines = Vec::new();
+    let mut sidecar = None;
+    for line in air.lines() {
+        if let Some(json) = line.strip_prefix(TYPESCRIPT_TOOLS_SIDECAR_PREFIX) {
+            sidecar = Some(json.as_bytes().to_vec());
+        } else {
+            clean_lines.push(line);
+        }
+    }
+    (clean_lines.join("\n"), sidecar)
+}
+
+/// Prepare a declarative agent-package directory (`agent.toml`, no
+/// Python/TypeScript entry file) for `apxm compile`, the same way
+/// [`prepare_graph_input`] prepares a `.py`/`.ts` frontend entry: emit AIR
+/// via [`emit_air_from_agent`] (the exact `compile-service` code path),
+/// strip the trailing typescript-tools sidecar comment into a temp `.air`
+/// file, and thread the sidecar through as the `typescript_tools_manifest`
+/// so `compile_command` embeds it into the artifact exactly like a `.ts`
+/// frontend entry's tool manifest.
+#[cfg(feature = "driver")]
+fn prepare_graph_input_from_declarative_agent(
+    agent_dir: &Path,
+) -> Result<(
+    PathBuf,
+    Option<tempfile::NamedTempFile>,
+    PythonHandlersManifest,
+    TypeScriptHandlersManifest,
+)> {
+    use std::io::Write;
+
+    let air_with_sidecar = emit_air_from_agent(agent_dir, &CompileServiceOptions::default())?;
+    let (clean_air, ts_manifest) = split_typescript_tools_sidecar(&air_with_sidecar);
+
+    let mut tmp = tempfile::Builder::new()
+        .suffix(".air")
+        .tempfile()
+        .context("Failed to create temporary .air file for declarative agent compile")?;
+    tmp.write_all(clean_air.as_bytes())
+        .context("Failed to write emitted declarative-agent AIR to temporary file")?;
+    tmp.flush().context("Failed to flush temporary .air file")?;
+
+    Ok((tmp.path().to_path_buf(), Some(tmp), None, ts_manifest))
 }
 
 #[cfg(feature = "driver")]
@@ -915,13 +1169,29 @@ pub fn compile_command(
     let compiler_config_path = config.clone();
     let opt_target = target;
     let _apxm_config = load_config(config.clone())?;
+    // A directory containing `agent.toml` (no Python/TypeScript entry file)
+    // is a declarative agent package — the same `compile-service` compiles
+    // to AIR-with-trailing-typescript-tools-sidecar. Route it through
+    // `prepare_graph_input_from_declarative_agent` instead of
+    // `resolve_directory_air_source` (which only ever looks for a
+    // pre-lowered `.air` file) so `apxm compile examples/agents/<id> -o
+    // out.apxmobj` + `apxm run out.apxmobj` works for a hooks-only package,
+    // the same way it already does for `.py`/`.ts` frontend entries
+    // (the declarative-agent compile contract).
+    let is_declarative_agent_dir = input.is_dir() && input.join("agent.toml").is_file();
     let input_source = if input.is_dir() {
-        resolve_directory_air_source(&input)?
+        if is_declarative_agent_dir {
+            input.clone()
+        } else {
+            resolve_directory_air_source(&input)?
+        }
     } else {
         input.clone()
     };
     let (graph_input, _frontend_air, python_tools_manifest, typescript_tools_manifest) =
-        if input_source.is_dir() {
+        if is_declarative_agent_dir {
+            prepare_graph_input_from_declarative_agent(&input_source)?
+        } else if input_source.is_dir() {
             unreachable!(
                 "directory inputs are resolved to a canonical .air source before compilation"
             )
@@ -932,15 +1202,18 @@ pub fn compile_command(
     let compile_start = std::time::Instant::now();
     let compiler = Compiler::with_opt_level(opt).context("Failed to initialize compiler")?;
 
-    // Check if this is a new-format .air file (valid MLIR)
-    let is_new_air =
-        if !input_source.is_dir() && ApxmPathFormat::from_path(&graph_input).is_air_source() {
-            std::fs::read_to_string(&graph_input)
-                .map(|text| is_mlir_air_text(&text))
-                .unwrap_or(false)
-        } else {
-            false
-        };
+    // Check if this is a new-format .air file (valid MLIR). The declarative
+    // agent-package branch above always produces a clean (sidecar-stripped)
+    // temp `.air` file, so it takes this same fast path.
+    let is_new_air = if (is_declarative_agent_dir || !input_source.is_dir())
+        && ApxmPathFormat::from_path(&graph_input).is_air_source()
+    {
+        std::fs::read_to_string(&graph_input)
+            .map(|text| is_mlir_air_text(&text))
+            .unwrap_or(false)
+    } else {
+        false
+    };
 
     // For new .air format (valid MLIR), compile directly without AirModule.
     // The .air path skips graph lowering, but still honors PipelineConfig
@@ -1001,7 +1274,7 @@ pub fn compile_command(
         let compile_time = compile_start.elapsed();
 
         let artifact_start = std::time::Instant::now();
-        // Parse manifest from the frontend subprocess for orphan @tool detection (W723).
+        // Parse the frontend subprocess manifest to detect orphan @tool entries.
         let manifest: Option<Vec<apxm_compiler::passes::PythonCapabilityManifestEntry>> =
             python_tools_manifest.as_ref().and_then(|data| {
                 serde_json::from_slice(data)
@@ -1164,11 +1437,16 @@ mod tests {
     use std::fs;
     use tempfile::tempdir;
 
+    fn seal_agent(root: &Path) {
+        super::super::agent::seal_agent_integrity_for_test(root).expect("seal test agent");
+    }
+
     fn write_declarative_agent(mode: &str) -> tempfile::TempDir {
         let tmp = tempdir().expect("temp agent");
         let root = tmp.path();
         fs::create_dir_all(root.join("capabilities/handlers")).expect("handlers dir");
-        fs::write(root.join("persona.md"), "You are concise.\n").expect("persona");
+        fs::create_dir_all(root.join("prompts")).expect("prompts dir");
+        fs::write(root.join("prompts/persona.md"), "You are concise.\n").expect("persona");
         fs::write(
             root.join("agent.toml"),
             format!(
@@ -1181,7 +1459,7 @@ rearm = true
 turn_param = "user_message"
 
 [prompts]
-persona = "persona.md"
+persona = "prompts/persona.md"
 
 [[hooks]]
 event = "pre_turn"
@@ -1197,6 +1475,7 @@ handler = "hooks.pre_turn"
             r#"[{"source_file":"hooks.ts","qualname":"pre_turn","handler_id":"sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}]"#,
         )
         .expect("tools manifest");
+        seal_agent(root);
         tmp
     }
 
@@ -1229,6 +1508,112 @@ handler = "hooks.pre_turn"
     }
 
     #[test]
+    fn compile_service_options_json_requires_exactly_one_typed_object() {
+        let options = parse_compile_service_options_json(
+            r#"{
+                "system_prompt": "Stay concise.",
+                "backend": "corp-gateway",
+                "model": "gpt-4.1-mini",
+                "effort": "high",
+                "tools": true,
+                "skills": false,
+                "capability_discovery": true,
+                "authoring": false
+            }"#,
+        )
+        .expect("typed options json parses");
+
+        assert_eq!(
+            options,
+            CompileServiceOptions {
+                system_prompt: Some("Stay concise.".to_string()),
+                backend: Some("corp-gateway".to_string()),
+                model: Some("gpt-4.1-mini".to_string()),
+                effort: Some("high".to_string()),
+                tools: true,
+                skills: false,
+                capability_discovery: true,
+                authoring: false,
+            }
+        );
+
+        let err = parse_compile_service_options_json(
+            r#"{
+                "system_prompt": null,
+                "backend": null,
+                "model": null,
+                "effort": null,
+                "tools": false,
+                "skills": false,
+                "capability_discovery": false,
+                "authoring": false
+            } {}"#,
+        )
+        .expect_err("multiple JSON values must fail");
+        assert!(
+            err.to_string().contains("exactly one JSON object"),
+            "expected strict single-object error, got {err}"
+        );
+
+        let err = parse_compile_service_options_json(
+            r#"{
+                "backend": null,
+                "model": null,
+                "effort": null,
+                "tools": false,
+                "skills": false,
+                "capability_discovery": false,
+                "authoring": false
+            }"#,
+        )
+        .expect_err("nullable fields must still be present");
+        assert!(
+            format!("{err:#}").contains("missing field `system_prompt`"),
+            "expected required nullable field error, got {err:#}"
+        );
+
+        for (field, value) in [
+            ("backend", "corp gateway"),
+            ("model", "model@preview"),
+            ("effort", "HIGH"),
+        ] {
+            let json = format!(
+                r#"{{
+                    "system_prompt": null,
+                    "backend": {},
+                    "model": {},
+                    "effort": {},
+                    "tools": false,
+                    "skills": false,
+                    "capability_discovery": false,
+                    "authoring": false
+                }}"#,
+                if field == "backend" {
+                    serde_json::to_string(value).unwrap()
+                } else {
+                    "null".to_string()
+                },
+                if field == "model" {
+                    serde_json::to_string(value).unwrap()
+                } else {
+                    "null".to_string()
+                },
+                if field == "effort" {
+                    serde_json::to_string(value).unwrap()
+                } else {
+                    "null".to_string()
+                },
+            );
+            let err = parse_compile_service_options_json(&json)
+                .expect_err("invalid option values must fail instead of being sanitized");
+            assert!(
+                format!("{err:#}").contains(&format!("invalid {field}")),
+                "expected exact {field} validation error, got {err:#}"
+            );
+        }
+    }
+
+    #[test]
     fn mlir_air_text_accepts_leading_mlir_comments() {
         let text = format!(
             "{} frontend comment\n\n{} {{\n}}\n",
@@ -1254,10 +1639,20 @@ handler = "hooks.pre_turn"
     #[test]
     fn declarative_host_loop_air_round_trips_through_mlir_parser() {
         let agent_dir = write_declarative_agent("host");
-        let air = emit_air_from_agent(agent_dir.path(), true).expect("declarative AIR");
+        let air = emit_air_from_agent(
+            agent_dir.path(),
+            &CompileServiceOptions {
+                tools: true,
+                ..CompileServiceOptions::default()
+            },
+        )
+        .expect("declarative AIR");
 
         assert!(air.contains("ais.register_hook \"pre_turn\""));
-        assert!(air.contains("python_hook_handler_id"));
+        assert!(air.contains("hook_handler_id"));
+        assert!(air.contains("hook_match = \"*\""));
+        assert!(air.contains("hook_mode = \"observe\""));
+        assert!(!air.contains("python_hook_handler_id"));
         assert!(air.contains("ais.flow_call \"conversation\" \"turn\""));
         assert!(air.contains("args = {user_message = \"{user_message}\"}"));
         assert!(air.contains("capability_groups = [\"web\"]"));
@@ -1268,7 +1663,8 @@ handler = "hooks.pre_turn"
     #[test]
     fn declarative_recv_loop_air_round_trips_through_mlir_parser() {
         let agent_dir = write_declarative_agent("recv");
-        let air = emit_air_from_agent(agent_dir.path(), false).expect("declarative AIR");
+        let air = emit_air_from_agent(agent_dir.path(), &CompileServiceOptions::default())
+            .expect("declarative AIR");
 
         assert!(air.contains("ais.autonomous"));
         assert!(air.contains("mode = \"recv\""));
@@ -1279,9 +1675,161 @@ handler = "hooks.pre_turn"
     }
 
     #[test]
+    fn declarative_hooks_are_dependencies_of_the_conversation_loop() {
+        let agent_dir = write_declarative_agent("recv");
+        let agent_path = agent_dir.path().join("agent.toml");
+        let agent_text = fs::read_to_string(&agent_path).expect("agent toml");
+        fs::write(
+            &agent_path,
+            format!(
+                "{agent_text}\n[[hooks]]\nevent = \"post_turn\"\nmatch = \"*\"\nmode = \"observe\"\nhandler = \"hooks.post_turn\"\n"
+            ),
+        )
+        .expect("second hook");
+        fs::write(
+            agent_dir.path().join("capabilities/handlers/tools.json"),
+            r#"[
+                {"source_file":"hooks.ts","qualname":"pre_turn","handler_id":"sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"},
+                {"source_file":"hooks.ts","qualname":"post_turn","handler_id":"sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"}
+            ]"#,
+        )
+        .expect("tools manifest");
+        seal_agent(agent_dir.path());
+
+        let air = emit_air_from_agent(agent_dir.path(), &CompileServiceOptions::default())
+            .expect("declarative AIR");
+        let pre_turn = air
+            .find("ais.register_hook \"pre_turn\"")
+            .expect("pre hook");
+        let post_turn = air
+            .find("ais.register_hook \"post_turn\"")
+            .expect("post hook");
+        let loop_offset = air.find("ais.autonomous").expect("conversation loop");
+        assert!(pre_turn < post_turn && post_turn < loop_offset, "{air}");
+        let loop_line = air
+            .lines()
+            .find(|line| line.contains("ais.autonomous"))
+            .expect("autonomous line");
+        assert!(
+            loop_line.contains("%n1") && loop_line.contains("%n2"),
+            "{loop_line}"
+        );
+        assert_cli_air_round_trips(&air);
+    }
+
+    #[test]
+    fn declarative_air_applies_compile_service_llm_options() {
+        let agent_dir = write_declarative_agent("recv");
+        let air = emit_air_from_agent(
+            agent_dir.path(),
+            &CompileServiceOptions {
+                system_prompt: Some("Use terse answers.".to_string()),
+                backend: Some("corp-gateway".to_string()),
+                model: Some("gpt-4.1-mini".to_string()),
+                effort: Some("high".to_string()),
+                ..CompileServiceOptions::default()
+            },
+        )
+        .expect("declarative AIR");
+
+        assert!(
+            air.contains(r#"system_prompt = "Use terse answers.""#),
+            "{air}"
+        );
+        assert!(air.contains(r#"backend = "corp-gateway""#), "{air}");
+        assert!(air.contains(r#"model = "gpt-4.1-mini""#), "{air}");
+        assert!(air.contains(r#"effort = "high""#), "{air}");
+        assert_cli_air_round_trips(&air);
+    }
+
+    #[test]
+    fn declarative_air_applies_compile_service_tool_group_controls() {
+        let agent_dir = write_declarative_agent("host");
+        let air = emit_air_from_agent(
+            agent_dir.path(),
+            &CompileServiceOptions {
+                tools: true,
+                skills: true,
+                capability_discovery: true,
+                authoring: true,
+                ..CompileServiceOptions::default()
+            },
+        )
+        .expect("declarative AIR");
+
+        assert!(
+            air.contains(r#"capability_groups = ["authoring", "discovery", "skills", "web"]"#),
+            "{air}"
+        );
+        assert_cli_air_round_trips(&air);
+    }
+
+    #[test]
+    fn compile_service_exposure_options_do_not_inherit_package_groups() {
+        let agent_dir = write_declarative_agent("host");
+        fs::write(
+            agent_dir.path().join("capabilities/capabilities.toml"),
+            r#"
+[[capability]]
+id = "compose_workflow"
+kind = "builtin"
+read_only = false
+builtin_group = "authoring"
+"#,
+        )
+        .expect("capabilities toml");
+        seal_agent(agent_dir.path());
+
+        let air = emit_air_from_agent(
+            agent_dir.path(),
+            &CompileServiceOptions {
+                tools: true,
+                ..CompileServiceOptions::default()
+            },
+        )
+        .expect("declarative AIR");
+
+        assert!(air.contains(r#"capability_groups = ["web"]"#), "{air}");
+        assert!(!air.contains("authoring"), "{air}");
+    }
+
+    #[test]
+    fn declarative_compile_requires_current_integrity() {
+        let missing = write_declarative_agent("recv");
+        fs::remove_file(missing.path().join("integrity.toml")).expect("remove integrity");
+        let err = emit_air_from_agent(missing.path(), &CompileServiceOptions::default())
+            .expect_err("missing integrity must fail");
+        assert!(
+            err.to_string().contains("missing integrity.toml"),
+            "{err:#}"
+        );
+
+        let tampered = write_declarative_agent("recv");
+        fs::write(tampered.path().join("prompts/persona.md"), "tampered\n")
+            .expect("tamper persona");
+        let err = emit_air_from_agent(tampered.path(), &CompileServiceOptions::default())
+            .expect_err("stale integrity must fail");
+        assert!(
+            err.to_string().contains("failed integrity verification"),
+            "{err:#}"
+        );
+
+        let unrecognized = write_declarative_agent("recv");
+        fs::write(unrecognized.path().join("legacy-prompt.md"), "bypass\n")
+            .expect("write unrecognized file");
+        let err = emit_air_from_agent(unrecognized.path(), &CompileServiceOptions::default())
+            .expect_err("files outside the integrity schema must fail");
+        assert!(
+            err.to_string().contains("outside the integrity schema"),
+            "{err:#}"
+        );
+    }
+
+    #[test]
     fn declarative_air_sidecar_resolves_typescript_sources_for_server_worker() {
         let agent_dir = write_declarative_agent("recv");
-        let air = emit_air_from_agent(agent_dir.path(), false).expect("declarative AIR");
+        let air = emit_air_from_agent(agent_dir.path(), &CompileServiceOptions::default())
+            .expect("declarative AIR");
         let sidecar = typescript_tools_sidecar(&air);
         let source_file = sidecar[0]
             .get("source_file")
@@ -1300,7 +1848,8 @@ handler = "hooks.pre_turn"
         let root = PathBuf::from("target/apxm-relative-agent-fixture");
         let _ = fs::remove_dir_all(&root);
         fs::create_dir_all(root.join("capabilities/handlers")).expect("fixture dirs");
-        fs::write(root.join("persona.md"), "You are concise.\n").expect("persona");
+        fs::create_dir_all(root.join("prompts")).expect("prompts dir");
+        fs::write(root.join("prompts/persona.md"), "You are concise.\n").expect("persona");
         fs::write(
             root.join("agent.toml"),
             r#"
@@ -1312,7 +1861,7 @@ rearm = true
 turn_param = "user_message"
 
 [prompts]
-persona = "persona.md"
+persona = "prompts/persona.md"
 
 [[hooks]]
 event = "pre_turn"
@@ -1327,8 +1876,10 @@ handler = "hooks.pre_turn"
             r#"[{"source_file":"hooks.ts","qualname":"pre_turn","handler_id":"sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}]"#,
         )
         .expect("tools manifest");
+        seal_agent(&root);
 
-        let air = emit_air_from_agent(&root, false).expect("declarative AIR");
+        let air =
+            emit_air_from_agent(&root, &CompileServiceOptions::default()).expect("declarative AIR");
         let sidecar = typescript_tools_sidecar(&air);
         let source_file = sidecar[0]
             .get("source_file")
@@ -1352,8 +1903,10 @@ read_only = true
 "#,
         )
         .expect("capabilities toml");
+        seal_agent(agent_dir.path());
 
-        let err = emit_air_from_agent(agent_dir.path(), false).expect_err("kind is required");
+        let err = emit_air_from_agent(agent_dir.path(), &CompileServiceOptions::default())
+            .expect_err("kind is required");
         let debug = format!("{err:?}");
         assert!(
             debug.contains("Failed to parse")
@@ -1377,8 +1930,10 @@ read_only = true
 "#,
         )
         .expect("capabilities toml");
+        seal_agent(agent_dir.path());
 
-        let err = emit_air_from_agent(agent_dir.path(), false).expect_err("kind is canonical");
+        let err = emit_air_from_agent(agent_dir.path(), &CompileServiceOptions::default())
+            .expect_err("kind is canonical");
         assert!(
             err.to_string().contains("unsupported kind 'custom'"),
             "expected unsupported kind error, got {err}"
@@ -1468,6 +2023,188 @@ required_capabilities = ["workflow_emission_v1"]
         std::thread::sleep(std::time::Duration::from_millis(5));
         let b2 = make();
         assert_eq!(b1, b2, "set_created_at must produce byte-identical output");
+    }
+
+    // -----------------------------------------------------------------
+    // Declarative compaction dial: replace hand-rolled compaction hooks with
+    // the runtime CompactionPolicy.
+    // -----------------------------------------------------------------
+
+    fn write_declarative_agent_with_compaction(
+        compaction_policy: Option<&str>,
+    ) -> tempfile::TempDir {
+        let tmp = tempdir().expect("temp agent");
+        let root = tmp.path();
+        fs::create_dir_all(root.join("capabilities/handlers")).expect("handlers dir");
+        fs::create_dir_all(root.join("prompts")).expect("prompts dir");
+        fs::write(root.join("prompts/persona.md"), "You are concise.\n").expect("persona");
+        let compaction_line = compaction_policy
+            .map(|json| format!("compaction_policy = {json:?}\n"))
+            .unwrap_or_default();
+        fs::write(
+            root.join("agent.toml"),
+            format!(
+                r#"
+id = "demo"
+
+[runtime]
+{compaction_line}
+
+[runtime.loop]
+mode = "host"
+rearm = true
+turn_param = "user_message"
+
+[prompts]
+persona = "prompts/persona.md"
+
+[[hooks]]
+event = "pre_turn"
+match = "*"
+mode = "observe"
+handler = "hooks.pre_turn"
+"#
+            ),
+        )
+        .expect("agent toml");
+        fs::write(
+            root.join("capabilities/handlers/tools.json"),
+            r#"[{"source_file":"hooks.ts","qualname":"pre_turn","handler_id":"sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}]"#,
+        )
+        .expect("tools manifest");
+        seal_agent(root);
+        tmp
+    }
+
+    #[test]
+    fn declarative_compaction_policy_stamps_marked_ask_attrs() {
+        let policy = r#"{"keep_recent":2,"compact_at_tokens":300,"strategy":"summarize","summary_key":"conversation.summary"}"#;
+        let agent_dir = write_declarative_agent_with_compaction(Some(policy));
+        let air = emit_air_from_agent(agent_dir.path(), &CompileServiceOptions::default())
+            .expect("declarative AIR");
+
+        assert!(air.contains("compaction_at_tokens = 300"), "{air}");
+        assert!(air.contains("compaction_keep_recent = 2"), "{air}");
+        assert!(
+            air.contains("compaction_summary_key = \"conversation.summary\""),
+            "{air}"
+        );
+        assert!(
+            air.contains("compaction_override_present = false"),
+            "no post_turn hook is declared, so override_present must be false: {air}"
+        );
+        assert_cli_air_round_trips(&air);
+    }
+
+    #[test]
+    fn declarative_compaction_policy_absent_is_the_opt_out_dial() {
+        let agent_dir = write_declarative_agent_with_compaction(None);
+        let air = emit_air_from_agent(agent_dir.path(), &CompileServiceOptions::default())
+            .expect("declarative AIR");
+
+        assert!(!air.contains("compaction_at_tokens"), "{air}");
+        assert!(!air.contains("compaction_keep_recent"), "{air}");
+        assert!(!air.contains("compaction_override_present"), "{air}");
+    }
+
+    #[test]
+    fn declarative_compaction_policy_malformed_json_is_a_hard_compile_error() {
+        let agent_dir = write_declarative_agent_with_compaction(Some("not json"));
+        let err = emit_air_from_agent(agent_dir.path(), &CompileServiceOptions::default())
+            .expect_err("malformed compaction_policy must fail loud, not silently no-op");
+        assert!(
+            format!("{err}").contains("compaction_policy"),
+            "error must name the offending field: {err}"
+        );
+    }
+
+    #[test]
+    fn declarative_compaction_override_present_true_when_author_declares_post_turn_hook() {
+        let tmp = tempdir().expect("temp agent");
+        let root = tmp.path();
+        fs::create_dir_all(root.join("capabilities/handlers")).expect("handlers dir");
+        fs::create_dir_all(root.join("prompts")).expect("prompts dir");
+        fs::write(root.join("prompts/persona.md"), "You are concise.\n").expect("persona");
+        fs::write(
+            root.join("agent.toml"),
+            r#"
+id = "demo"
+
+[runtime]
+compaction_policy = "{\"compact_at_tokens\":300}"
+
+[runtime.loop]
+mode = "host"
+rearm = true
+turn_param = "user_message"
+
+[prompts]
+persona = "prompts/persona.md"
+
+[[hooks]]
+event = "post_turn"
+match = "*"
+mode = "observe"
+handler = "hooks.author_compaction"
+"#,
+        )
+        .expect("agent toml");
+        fs::write(
+            root.join("capabilities/handlers/tools.json"),
+            r#"[{"source_file":"hooks.ts","qualname":"author_compaction","handler_id":"sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}]"#,
+        )
+        .expect("tools manifest");
+        seal_agent(root);
+
+        let air =
+            emit_air_from_agent(root, &CompileServiceOptions::default()).expect("declarative AIR");
+        assert!(
+            air.contains("compaction_override_present = true"),
+            "an author-declared post_turn hook must set the fail-closed override signal: {air}"
+        );
+    }
+
+    // -----------------------------------------------------------------
+    // `apxm compile <agent_dir>` — declarative agent-package directory
+    // compile support (shell out to
+    // `apxm run examples/agents/conversational/<artifact>.apxmobj`").
+    // -----------------------------------------------------------------
+
+    #[test]
+    fn split_typescript_tools_sidecar_extracts_trailing_comment() {
+        let air = "module {\n}\n; __apxm_typescript_tools__ [{\"a\":1}]";
+        let (clean, sidecar) = split_typescript_tools_sidecar(air);
+        assert!(!clean.contains("__apxm_typescript_tools__"));
+        assert!(clean.contains("module {"));
+        assert_eq!(sidecar.as_deref(), Some(&b"[{\"a\":1}]"[..]));
+    }
+
+    #[test]
+    fn split_typescript_tools_sidecar_is_none_when_absent() {
+        let air = "module {\n}\n";
+        let (clean, sidecar) = split_typescript_tools_sidecar(air);
+        assert_eq!(clean.trim_end(), "module {\n}".trim_end());
+        assert!(sidecar.is_none());
+    }
+
+    #[test]
+    fn prepare_graph_input_from_declarative_agent_yields_clean_air_and_manifest() {
+        let agent_dir = write_declarative_agent("host");
+        let (air_path, _tmp, python_manifest, ts_manifest) =
+            prepare_graph_input_from_declarative_agent(agent_dir.path())
+                .expect("prepare declarative agent graph input");
+
+        let air_text = fs::read_to_string(&air_path).expect("read temp air");
+        assert!(!air_text.contains("__apxm_typescript_tools__"));
+        assert!(python_manifest.is_none());
+        assert!(
+            ts_manifest.is_some(),
+            "declarative TS handlers must round-trip a manifest"
+        );
+
+        // The clean AIR must still parse and verify through the real MLIR
+        // pipeline — the exact bar `apxm compile` itself applies.
+        assert_cli_air_round_trips(&air_text);
     }
 }
 

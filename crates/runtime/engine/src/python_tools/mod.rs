@@ -44,9 +44,9 @@ use tokio::sync::OnceCell;
 pub struct PythonHandlerBridge {
     registry: PythonHandlerRegistry,
     worker: OnceCell<Arc<PythonHandlerWorker>>,
-    /// Optional OS sandbox backend. When set + available, the python tool/hook
-    /// worker is launched confined (bubblewrap): RO root, ephemeral /tmp, no
-    /// network. None = run the worker directly (trusted/local).
+    /// Optional OS sandbox backend. When set and available, the Python
+    /// tool/hook worker is launched with the backend's validated no-network
+    /// guarantees. None runs the worker directly for trusted local use.
     sandbox: Option<Arc<dyn crate::sandbox::SandboxBackend>>,
     /// When true, sandboxing is REQUIRED: if no OS-isolating backend is available
     /// the worker spawn fails closed instead of running unsandboxed (set on the
@@ -98,6 +98,17 @@ impl PythonHandlerBridge {
         args: serde_json::Value,
         deadline: Duration,
     ) -> Result<serde_json::Value, RuntimeError> {
+        self.call_with_call_id(capability_name, args, deadline, None)
+            .await
+    }
+
+    pub async fn call_with_call_id(
+        &self,
+        capability_name: &str,
+        args: serde_json::Value,
+        deadline: Duration,
+        call_id: Option<&str>,
+    ) -> Result<serde_json::Value, RuntimeError> {
         let descriptor =
             self.registry
                 .resolve(capability_name)
@@ -126,7 +137,9 @@ impl PythonHandlerBridge {
             })
             .await?;
 
-        worker.call(&handler_id, args, deadline).await
+        worker
+            .call_with_call_id(&handler_id, args, deadline, call_id)
+            .await
     }
 
     /// Invoke a Python lifecycle hook handler directly by its `handler_id`.

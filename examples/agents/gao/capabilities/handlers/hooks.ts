@@ -1,12 +1,25 @@
+// Defines Gao's typed lifecycle hooks for context, policy, and memory.
 import {
   hook,
   HookMode,
   LifecycleEvent,
   type HookCall,
   type HookContext,
+  type HookDecision,
 } from "@apxm/frontend";
 
-import { prompt, renderStudioContextSupplement, SUMMARY_KEY } from "./context.js";
+import {
+  prompt,
+  renderStudioContextSupplement,
+  scrubSecrets,
+  SUMMARY_KEY,
+} from "./context.js";
+
+declare module "@apxm/frontend" {
+  interface HookContext {
+    defer(): HookDecision;
+  }
+}
 
 export const inject_context = hook({
   on: LifecycleEvent.PRE_TURN,
@@ -19,12 +32,14 @@ export const inject_context = hook({
 export const inject_apxm_context = hook({
   on: LifecycleEvent.PRE_ASK,
   mode: HookMode.OBSERVE,
-})((ctx: HookContext) => {
+})(async (ctx: HookContext) => {
+  const recent = await ctx.recallWindow(4);
+  const summary = await ctx.recall(SUMMARY_KEY);
   const context = [
     prompt("terminology"),
     prompt("workflow_authoring"),
-    `Recent context:\n${ctx.recall_window(4)}`,
-    `Running summary:\n${String(ctx.recall(SUMMARY_KEY) ?? "")}`,
+    `Recent context:\n${recent}`,
+    `Running summary:\n${String(summary ?? "")}`,
   ].join("\n\n");
   return ctx.prependSystem(context);
 });
@@ -33,12 +48,16 @@ export const gate_compose_workflow = hook({
   on: LifecycleEvent.PRE_CAP,
   match: "compose_workflow",
   mode: HookMode.GATE,
-})((_ctx: HookContext, call: HookCall) => {
+})((ctx: HookContext, call: HookCall) => {
   const name = String(call.args.name ?? "").trim();
   if (!name) {
-    return _ctx.deny("workflow name is required");
+    return ctx.deny("compose_workflow requires a non-empty workflow name");
   }
-  return _ctx.allow();
+  const air = String(call.args.air ?? "").trim();
+  if (!air) {
+    return ctx.deny("compose_workflow requires non-empty AIR source");
+  }
+  return ctx.defer();
 });
 
 export const redact_tool_results = hook({
@@ -46,22 +65,18 @@ export const redact_tool_results = hook({
   match: "*",
   mode: HookMode.OBSERVE,
 })((ctx: HookContext, _call: HookCall, result: unknown) => {
-  let text = String(result ?? "");
-  for (const marker of ["api_key=", "token=", "secret="]) {
-    text = text.replaceAll(marker, `${marker}<redacted>`);
-  }
-  return ctx.replaceResult(text);
+  return ctx.replaceResult(scrubSecrets(result));
 });
 
 export const compact_conversation = hook({
   on: LifecycleEvent.POST_TURN,
   mode: HookMode.OBSERVE,
-})((ctx: HookContext) => {
-  const window = ctx.recall_window(40);
-  if (ctx.count_tokens(window) < 20_000) {
+})(async (ctx: HookContext) => {
+  const window = await ctx.recallWindow(40);
+  if ((await ctx.countTokens(window)) < 20_000) {
     return null;
   }
-  const summary = ctx.ask(
+  const summary = await ctx.ask(
     "Update Gao's running summary. Preserve user goals, workflow decisions, APXM terms, tool grants, and open questions.\n\n" +
       window,
     "You maintain a compact APXM workflow-design session summary.",
