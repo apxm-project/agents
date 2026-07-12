@@ -447,7 +447,11 @@ impl ExecutionEventEmitter for MultiEmitter {
         });
     }
 
-    fn emit_approval_resolved(&self, approval_id: &str, decision: &str) {
+    fn emit_approval_resolved(
+        &self,
+        approval_id: &str,
+        decision: apxm_core::types::consent::ApprovalResolution,
+    ) {
         self.for_each("emit_approval_resolved", |child| {
             child.emit_approval_resolved(approval_id, decision);
         });
@@ -566,7 +570,11 @@ mod tests {
             self.record("approval_request");
         }
 
-        fn emit_approval_resolved(&self, _approval_id: &str, _decision: &str) {
+        fn emit_approval_resolved(
+            &self,
+            _approval_id: &str,
+            _decision: apxm_core::types::consent::ApprovalResolution,
+        ) {
             self.record("approval_resolved");
         }
     }

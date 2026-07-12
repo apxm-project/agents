@@ -45,7 +45,9 @@ use apxm_capability_iface::sandbox::{SandboxRegistry, ValidationResult};
 use apxm_capability_iface::{ApprovalContext, CapabilityFacade};
 use apxm_core::{error::RuntimeError, types::values::Value};
 use executor::{CapabilityExecutor, exec_result_to_value};
-use interceptor::{CapabilityInterceptor, InterceptDecision, PreInvokeContext, pre_invoke_ctx};
+use interceptor::{
+    CapabilityInterceptor, InterceptDecision, PreInvokeContext, pre_invoke_policy_ctx,
+};
 use metadata::RuntimeCapability;
 use parking_lot::RwLock;
 use registry::CapabilityRegistry;
@@ -199,7 +201,10 @@ impl CapabilitySystem {
         Ok(())
     }
 
-    /// Invoke a capability by name with validation
+    /// Invoke a capability by name with validation.
+    ///
+    /// Approval-gated capabilities fail closed here because this direct API has
+    /// no consent context. Executor calls use [`CapabilityFacade`] instead.
     ///
     /// # Arguments
     ///
@@ -226,7 +231,10 @@ impl CapabilitySystem {
             .await
     }
 
-    /// Invoke capability with custom timeout
+    /// Invoke capability with custom timeout.
+    ///
+    /// Approval-gated capabilities fail closed here because this direct API has
+    /// no consent context. Executor calls use [`CapabilityFacade`] instead.
     ///
     /// # Arguments
     ///
@@ -241,6 +249,66 @@ impl CapabilitySystem {
     ) -> CapabilityResult<Value> {
         self.invoke_with_timeout_ctx_raw(name, args, timeout, None)
             .await
+    }
+
+    async fn admit_invocation_ctx_raw(
+        &self,
+        name: &str,
+        args: HashMap<String, Value>,
+        requires_approval: bool,
+        pre_ctx: Option<&PreInvokeContext<'_>>,
+    ) -> CapabilityResult<HashMap<String, Value>> {
+        if requires_approval && pre_ctx.is_none() {
+            return Err(RuntimeError::Capability {
+                capability: name.to_string(),
+                message: format!(
+                    "capability '{name}' requires approval but no consent context was provided"
+                ),
+            });
+        }
+
+        let mut args = args;
+        if let Some(cached) = self.approval_store.check(name) {
+            match cached {
+                InterceptDecision::Allow => {}
+                InterceptDecision::Deny { reason } => {
+                    return Err(RuntimeError::Capability {
+                        capability: name.to_string(),
+                        message: reason,
+                    });
+                }
+                InterceptDecision::EditArgs { args: edited } => args = edited,
+            }
+        }
+
+        if let Some(ctx) = pre_ctx {
+            match pre_invoke_policy_ctx(ctx, name, &args, requires_approval).await {
+                InterceptDecision::Allow => {}
+                InterceptDecision::Deny { reason } => {
+                    return Err(RuntimeError::Capability {
+                        capability: name.to_string(),
+                        message: reason,
+                    });
+                }
+                InterceptDecision::EditArgs { args: edited } => args = edited,
+            }
+        }
+
+        let interceptors = self.interceptors.read().clone();
+        for interceptor in &interceptors {
+            match interceptor.pre_invoke(name, &args).await {
+                InterceptDecision::Allow => {}
+                InterceptDecision::Deny { reason } => {
+                    return Err(RuntimeError::Capability {
+                        capability: name.to_string(),
+                        message: reason,
+                    });
+                }
+                InterceptDecision::EditArgs { args: edited } => args = edited,
+            }
+        }
+
+        Ok(args)
     }
 
     /// Invoke capability with custom timeout and optional approval-gate context.
@@ -270,55 +338,10 @@ impl CapabilitySystem {
                 ),
             })?;
 
-        // Check approval store for a cached decision first.
-        let mut args = args;
-        if let Some(cached) = self.approval_store.check(name) {
-            match cached {
-                InterceptDecision::Allow => { /* proceed */ }
-                InterceptDecision::Deny { reason } => {
-                    return Err(RuntimeError::Capability {
-                        capability: name.to_string(),
-                        message: reason,
-                    });
-                }
-                InterceptDecision::EditArgs { args: edited } => {
-                    args = edited;
-                }
-            }
-        }
-
-        // Approval gate for calls marked `requires_approval`.
-        if let Some(ctx) = pre_ctx {
-            match pre_invoke_ctx(ctx, name, &args).await {
-                InterceptDecision::Allow => {}
-                InterceptDecision::Deny { reason } => {
-                    return Err(RuntimeError::Capability {
-                        capability: name.to_string(),
-                        message: reason,
-                    });
-                }
-                InterceptDecision::EditArgs { args: edited } => {
-                    args = edited;
-                }
-            }
-        }
-
-        // Apply pre-invoke interceptors.
+        let args = self
+            .admit_invocation_ctx_raw(name, args, capability.metadata().requires_approval, pre_ctx)
+            .await?;
         let interceptors = self.interceptors.read().clone();
-        for interceptor in &interceptors {
-            match interceptor.pre_invoke(name, &args).await {
-                InterceptDecision::Allow => {}
-                InterceptDecision::Deny { reason } => {
-                    return Err(RuntimeError::Capability {
-                        capability: name.to_string(),
-                        message: reason,
-                    });
-                }
-                InterceptDecision::EditArgs { args: edited } => {
-                    args = edited;
-                }
-            }
-        }
 
         // Validate arguments against schema
         self.validate_args(name, &args).await?;
@@ -561,8 +584,25 @@ impl Default for CapabilitySystem {
 /// `apxm-capability-iface`'s crate docs).
 #[async_trait::async_trait]
 impl CapabilityFacade for CapabilitySystem {
-    async fn invoke(&self, name: &str, args: HashMap<String, Value>) -> CapabilityResult<Value> {
-        CapabilitySystem::invoke(self, name, args).await
+    async fn admit_with_ctx(
+        &self,
+        name: &str,
+        args: HashMap<String, Value>,
+        requires_approval: bool,
+        approval: ApprovalContext<'_>,
+    ) -> CapabilityResult<HashMap<String, Value>> {
+        let pre_ctx = PreInvokeContext {
+            registry: &self.registry,
+            call_id: approval.call_id,
+            consent_broker: approval.consent_broker,
+            event_emitter: approval.event_emitter,
+            host_id: approval.host_id,
+            agent_code: approval.agent_code,
+            grant_id: approval.grant_id,
+            permission_timeout: approval.permission_timeout,
+        };
+        self.admit_invocation_ctx_raw(name, args, requires_approval, Some(&pre_ctx))
+            .await
     }
 
     async fn invoke_with_timeout_ctx(
@@ -570,27 +610,20 @@ impl CapabilityFacade for CapabilitySystem {
         name: &str,
         args: HashMap<String, Value>,
         timeout: Duration,
-        approval: Option<ApprovalContext<'_>>,
+        approval: ApprovalContext<'_>,
     ) -> CapabilityResult<Value> {
-        match approval {
-            None => {
-                self.invoke_with_timeout_ctx_raw(name, args, timeout, None)
-                    .await
-            }
-            Some(approval) => {
-                let pre_ctx = PreInvokeContext {
-                    registry: &self.registry,
-                    consent_broker: approval.consent_broker,
-                    event_emitter: approval.event_emitter,
-                    host_id: approval.host_id,
-                    agent_code: approval.agent_code,
-                    grant_id: approval.grant_id,
-                    permission_timeout: approval.permission_timeout,
-                };
-                self.invoke_with_timeout_ctx_raw(name, args, timeout, Some(&pre_ctx))
-                    .await
-            }
-        }
+        let pre_ctx = PreInvokeContext {
+            registry: &self.registry,
+            call_id: approval.call_id,
+            consent_broker: approval.consent_broker,
+            event_emitter: approval.event_emitter,
+            host_id: approval.host_id,
+            agent_code: approval.agent_code,
+            grant_id: approval.grant_id,
+            permission_timeout: approval.permission_timeout,
+        };
+        self.invoke_with_timeout_ctx_raw(name, args, timeout, Some(&pre_ctx))
+            .await
     }
 
     fn has_capability(&self, name: &str) -> bool {
@@ -623,5 +656,182 @@ impl CapabilityFacade for CapabilitySystem {
         args: &HashMap<String, Value>,
     ) -> CapabilityResult<CapabilitySandboxPreflight> {
         CapabilitySystem::sandbox_preflight(self, name, args)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::executor::{CapabilityExecutor, EchoCapability};
+    use apxm_core::types::consent::{
+        APPROVAL_BROKER_UNAVAILABLE_REASON, ConsentBroker, ConsentDecision, PermissionPrompt,
+        UnavailableConsentBroker,
+    };
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
+    struct ApprovalGatedCapability {
+        metadata: RuntimeCapability,
+    }
+
+    #[async_trait::async_trait]
+    impl CapabilityExecutor for ApprovalGatedCapability {
+        async fn execute(&self, _args: HashMap<String, Value>) -> CapabilityResult<Value> {
+            Ok(Value::Null)
+        }
+
+        fn metadata(&self) -> &RuntimeCapability {
+            &self.metadata
+        }
+    }
+
+    #[tokio::test]
+    async fn direct_gated_invoke_without_consent_context_fails_closed() {
+        let system = CapabilitySystem::new();
+        system
+            .register(Arc::new(ApprovalGatedCapability {
+                metadata: RuntimeCapability::new(
+                    "approval-gated",
+                    "requires consent",
+                    serde_json::json!({"type": "object"}),
+                )
+                .with_requires_approval(),
+            }))
+            .expect("approval-gated capability");
+
+        let error = system
+            .invoke("approval-gated", HashMap::new())
+            .await
+            .expect_err("direct invocation must not bypass approval");
+
+        assert!(matches!(
+            error,
+            RuntimeError::Capability { ref capability, ref message }
+                if capability == "approval-gated"
+                    && message.contains("no consent context was provided")
+        ));
+    }
+
+    #[tokio::test]
+    async fn direct_open_read_only_invoke_remains_allowed() {
+        let system = CapabilitySystem::new();
+        system
+            .register(Arc::new(EchoCapability::new()))
+            .expect("echo capability");
+        let args = HashMap::from([("message".to_string(), Value::String("hi".into()))]);
+
+        let result = system
+            .invoke("echo", args)
+            .await
+            .expect("open read-only call");
+
+        assert_eq!(result, Value::String("Echo: hi".to_string()));
+    }
+
+    struct CountingBroker {
+        decision: ConsentDecision,
+        calls: Arc<AtomicUsize>,
+    }
+
+    #[async_trait::async_trait]
+    impl ConsentBroker for CountingBroker {
+        async fn request_consent(
+            &self,
+            _prompt: PermissionPrompt,
+            _timeout: Duration,
+        ) -> ConsentDecision {
+            self.calls.fetch_add(1, Ordering::Relaxed);
+            self.decision.clone()
+        }
+    }
+
+    struct CountingInterceptor {
+        calls: Arc<AtomicUsize>,
+    }
+
+    #[async_trait::async_trait]
+    impl CapabilityInterceptor for CountingInterceptor {
+        fn name(&self) -> &str {
+            "external-admission-test"
+        }
+
+        async fn pre_invoke(
+            &self,
+            _name: &str,
+            _args: &HashMap<String, Value>,
+        ) -> InterceptDecision {
+            self.calls.fetch_add(1, Ordering::Relaxed);
+            InterceptDecision::Allow
+        }
+    }
+
+    #[tokio::test]
+    async fn external_open_admission_skips_consent_and_runs_interceptors() {
+        let system = CapabilitySystem::new();
+        let broker_calls = Arc::new(AtomicUsize::new(0));
+        let interceptor_calls = Arc::new(AtomicUsize::new(0));
+        system.register_interceptor(Arc::new(CountingInterceptor {
+            calls: Arc::clone(&interceptor_calls),
+        }));
+        let broker = CountingBroker {
+            decision: ConsentDecision::Denied {
+                reason: "must not be called".to_string(),
+            },
+            calls: Arc::clone(&broker_calls),
+        };
+        let approval = ApprovalContext {
+            call_id: "call-open",
+            consent_broker: &broker,
+            event_emitter: None,
+            host_id: None,
+            agent_code: None,
+            grant_id: None,
+            permission_timeout: Duration::from_secs(1),
+        };
+
+        let admitted = CapabilityFacade::admit_with_ctx(
+            &system,
+            "script-read",
+            HashMap::new(),
+            false,
+            approval,
+        )
+        .await
+        .expect("open script admission");
+
+        assert!(admitted.is_empty());
+        assert_eq!(broker_calls.load(Ordering::Relaxed), 0);
+        assert_eq!(interceptor_calls.load(Ordering::Relaxed), 1);
+    }
+
+    #[tokio::test]
+    async fn external_gated_admission_denies_with_unavailable_broker() {
+        let system = CapabilitySystem::new();
+        let broker = UnavailableConsentBroker;
+        let approval = ApprovalContext {
+            call_id: "call-gated",
+            consent_broker: &broker,
+            event_emitter: None,
+            host_id: None,
+            agent_code: None,
+            grant_id: None,
+            permission_timeout: Duration::from_secs(1),
+        };
+
+        let error = CapabilityFacade::admit_with_ctx(
+            &system,
+            "script-write",
+            HashMap::new(),
+            true,
+            approval,
+        )
+        .await
+        .expect_err("gated script admission must fail without a broker");
+
+        assert!(matches!(
+            error,
+            RuntimeError::Capability { ref capability, ref message }
+                if capability == "script-write"
+                    && message == APPROVAL_BROKER_UNAVAILABLE_REASON
+        ));
     }
 }

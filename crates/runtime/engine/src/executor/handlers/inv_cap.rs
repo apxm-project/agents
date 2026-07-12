@@ -19,11 +19,12 @@ use apxm_core::types::AISOperationType;
 /// Invoke-site capability admission — enforced for EVERY tool call regardless of how
 /// the execution was launched. A direct (write) capability runs only when this
 /// execution's effective capability grants admit its tool binding.
-async fn enforce_write_boundary(
+pub(in crate::executor::handlers) async fn enforce_write_boundary(
     ctx: &ExecutionContext,
     name: &str,
     args: &HashMap<String, Value>,
     unregistered_requires_delegation: bool,
+    call_id: &str,
 ) -> Result<()> {
     let caps = &ctx.capability_system;
     if caps.has_capability(name) {
@@ -47,7 +48,7 @@ async fn enforce_write_boundary(
             let expires_at = (chrono::Utc::now() + chrono::Duration::seconds(30)).to_rfc3339();
             let prompt = PermissionPrompt {
                 prompt_id: uuid::Uuid::new_v4().to_string(),
-                call_id: uuid::Uuid::new_v4().to_string(),
+                call_id: call_id.to_string(),
                 grant_id: "runtime-grant".to_string(),
                 capability_id: name.to_string(),
                 capability_binding: name.to_string(),
@@ -70,12 +71,12 @@ async fn enforce_write_boundary(
                 .request_consent(prompt, std::time::Duration::from_secs(30))
                 .await
             {
-                ConsentDecision::Approved(_) | ConsentDecision::NoBroker => Ok(()),
+                ConsentDecision::Approved { .. } => Ok(()),
                 ConsentDecision::Denied { reason } => Err(RuntimeError::Capability {
                     capability: name.to_string(),
                     message: reason,
                 }),
-                ConsentDecision::TimedOut => Err(RuntimeError::Capability {
+                ConsentDecision::Expired => Err(RuntimeError::Capability {
                     capability: name.to_string(),
                     message: "consent timed out".to_string(),
                 }),
@@ -126,6 +127,7 @@ async fn enforce_write_boundary(
 /// ```
 pub async fn execute(ctx: &ExecutionContext, node: &Node, inputs: Vec<Value>) -> Result<Value> {
     let capability_name = get_string_attribute(node, graph_attrs::CAPABILITY)?;
+    let call_id = uuid::Uuid::new_v4().to_string();
     let timeout_ms = get_optional_u64_attribute(node, graph_attrs::TIMEOUT_MS)?
         .unwrap_or(apxm_core::constants::defaults::DEFAULT_TIMEOUT_MS);
 
@@ -205,16 +207,37 @@ pub async fn execute(ctx: &ExecutionContext, node: &Node, inputs: Vec<Value>) ->
         emitter.emit_tool_start(&capability_name, &args);
     }
 
-    // Invoke-site capability admission for EVERY tool call.
-    // call, including artifact-local Python tools that do not exist in the
-    // process-wide capability registry.
-    enforce_write_boundary(ctx, &capability_name, &args, python_handler_id.is_some()).await?;
+    let script_handler =
+        python_handler_id.is_some() || script_handler_for_capability(ctx, &capability_name);
+    let script_policy = if script_handler {
+        Some(super::llm::script_tool_policy(
+            ctx,
+            &capability_name,
+        )?)
+    } else {
+        None
+    };
 
-    // Script-handler branch: stamped by bind-capability-handlers or resolved by bridge.
-    let raw = if python_handler_id.is_some() || script_handler_for_capability(ctx, &capability_name)
-    {
+    enforce_write_boundary(
+        ctx,
+        &capability_name,
+        &args,
+        script_policy.is_some_and(|policy| !policy.read_only),
+        &call_id,
+    )
+    .await?;
+
+    let raw = if let Some(policy) = script_policy {
+        let admitted_args = ctx
+            .admit_capability_call(
+                &capability_name,
+                args,
+                policy.requires_approval,
+                &call_id,
+            )
+            .await?;
         tokio::select! {
-        result = execute_script_handler(ctx, &capability_name, &args, timeout) => result?,
+        result = execute_script_handler(ctx, &capability_name, &admitted_args, timeout) => result?,
         _ = ctx.cancellation_token.cancelled() => return Err(RuntimeError::SchedulerCancelled),
         }
     } else {
@@ -234,7 +257,12 @@ pub async fn execute(ctx: &ExecutionContext, node: &Node, inputs: Vec<Value>) ->
             None
         };
         let outcome = tokio::select! {
-         result = ctx.invoke_capability_with_timeout(&capability_name, args, timeout) => {
+         result = ctx.invoke_capability_with_timeout_for_call(
+             &capability_name,
+             args,
+             timeout,
+             &call_id,
+         ) => {
          result.map_err(|e| {
          tracing::error!(
          capability = %capability_name,
@@ -511,6 +539,55 @@ mod tests {
         );
     }
 
+    #[tokio::test]
+    async fn write_boundary_denies_when_consent_broker_is_unavailable() {
+        use crate::aam::Aam;
+        use crate::capability::CapabilitySystem;
+        use crate::memory::{MemoryConfig, MemorySystem};
+        use apxm_backends::LLMRegistry;
+        use std::sync::Arc;
+
+        let memory = Arc::new(
+            MemorySystem::new(MemoryConfig::in_memory_ltm())
+                .await
+                .expect("memory"),
+        );
+        let aam = Aam::new();
+        let capability_system = Arc::new(CapabilitySystem::with_aam(aam.clone()));
+        let mut ctx =
+            ExecutionContext::new(memory, Arc::new(LLMRegistry::new()), capability_system, aam);
+        ctx.host_id = Some("test-host".to_string());
+        ctx.metadata.insert(
+            crate::metadata_keys::CAPABILITY_GRANTS.to_string(),
+            serde_json::json!([{
+                "grant_id": "grant_fixture",
+                "capability_binding": "script-write",
+                "operations": ["write"],
+                "expires_at": null,
+                "status": "active"
+            }])
+            .to_string(),
+        );
+
+        let error = enforce_write_boundary(
+            &ctx,
+            "script-write",
+            &HashMap::new(),
+            true,
+            "call-denied",
+        )
+            .await
+            .expect_err("missing broker must deny approval-gated write");
+
+        assert!(matches!(
+            error,
+            RuntimeError::Capability { ref capability, ref message }
+                if capability == "script-write"
+                    && message
+                        == apxm_core::types::consent::APPROVAL_BROKER_UNAVAILABLE_REASON
+        ));
+    }
+
     /// **Approved protected-path write denial:** an
     /// operator-set `blocked_paths` entry on `WriteCapability` is a floor a
     /// consent `Approved` decision cannot reach. `enforce_write_boundary`
@@ -526,7 +603,10 @@ mod tests {
         use crate::capability::builtins::{WriteCapability, WriteConfig};
         use crate::memory::{MemoryConfig, MemorySystem};
         use apxm_backends::LLMRegistry;
-        use apxm_core::types::consent::{ConsentBroker, ConsentDecision, PermissionPrompt};
+        use apxm_core::types::consent::{
+            ApprovalEvidence, ConsentBroker, ConsentDecision, InteractiveApproval,
+            PermissionPrompt,
+        };
         use std::sync::Arc;
         use std::time::Duration;
 
@@ -584,7 +664,12 @@ mod tests {
             ExecutionContext::new(memory, Arc::new(LLMRegistry::new()), capability_system, aam);
         ctx.host_id = Some("test-host".to_string());
         ctx.consent_broker = Arc::new(StubBroker {
-            decision: ConsentDecision::Approved(vec![]),
+            decision: ConsentDecision::Approved {
+                evidence: ApprovalEvidence::Interactive(InteractiveApproval {
+                    decided_at: "2026-07-11T00:00:00Z".to_string(),
+                    responder_subject: Some("operator".to_string()),
+                }),
+            },
         });
         ctx.metadata
             .insert(crate::metadata_keys::CAPABILITY_GRANTS.to_string(), grants);

@@ -72,7 +72,15 @@ EVENT_KIND_REGISTRY: Final[dict[str, dict[str, object]]] = {'agent_message': {'c
  'workflow_step_completed': {'category': 'lifecycle', 'terminal': False, 'terminal_sense': 'n/a'},
  'workflow_step_started': {'category': 'lifecycle', 'terminal': False, 'terminal_sense': 'n/a'}}
 
-class TokenEventPayload(TypedDict):
+class TokenEventPayloadGeneration(TypedDict):
+    call_id: str
+    attempt: int
+    step_number: int
+
+class _TokenEventPayloadOptional(TypedDict, total=False):
+    generation: TokenEventPayloadGeneration
+
+class TokenEventPayload(_TokenEventPayloadOptional):
     kind: Literal['token']
     text: str
 
@@ -100,12 +108,32 @@ class LlmStepCompletedEventPayload(TypedDict):
     performance: LlmStepCompletedEventPayloadPerformance
     tool_call_count: int
 
-class ThoughtEventPayload(TypedDict):
+class ThoughtEventPayloadGeneration(TypedDict):
+    call_id: str
+    attempt: int
+    step_number: int
+
+class _ThoughtEventPayloadOptional(TypedDict, total=False):
+    generation: ThoughtEventPayloadGeneration
+
+class ThoughtEventPayload(_ThoughtEventPayloadOptional):
     kind: Literal['thought']
     text: str
     summary: str | None
 
-class ToolCallEventPayload(TypedDict):
+class ToolCallEventPayloadToolCallCorrelationGeneration(TypedDict):
+    call_id: str
+    attempt: int
+    step_number: int
+
+class ToolCallEventPayloadToolCallCorrelation(TypedDict):
+    generation: ToolCallEventPayloadToolCallCorrelationGeneration
+    tool_call_id: str
+
+class _ToolCallEventPayloadOptional(TypedDict, total=False):
+    tool_call_correlation: ToolCallEventPayloadToolCallCorrelation
+
+class ToolCallEventPayload(_ToolCallEventPayloadOptional):
     kind: Literal['tool_call']
     id: str
     name: str
@@ -118,12 +146,32 @@ class LlmDoneEventPayloadUsage(TypedDict):
     input_tokens: int
     output_tokens: int
 
-class LlmDoneEventPayloadToolCallsItem(TypedDict):
+class LlmDoneEventPayloadToolCallsItemToolCallCorrelationGeneration(TypedDict):
+    call_id: str
+    attempt: int
+    step_number: int
+
+class LlmDoneEventPayloadToolCallsItemToolCallCorrelation(TypedDict):
+    generation: LlmDoneEventPayloadToolCallsItemToolCallCorrelationGeneration
+    tool_call_id: str
+
+class _LlmDoneEventPayloadToolCallsItemOptional(TypedDict, total=False):
+    tool_call_correlation: LlmDoneEventPayloadToolCallsItemToolCallCorrelation
+
+class LlmDoneEventPayloadToolCallsItem(_LlmDoneEventPayloadToolCallsItemOptional):
     id: str
     name: str
     arguments: Any
 
-class LlmDoneEventPayload(TypedDict):
+class LlmDoneEventPayloadGeneration(TypedDict):
+    call_id: str
+    attempt: int
+    step_number: int
+
+class _LlmDoneEventPayloadOptional(TypedDict, total=False):
+    generation: LlmDoneEventPayloadGeneration
+
+class LlmDoneEventPayload(_LlmDoneEventPayloadOptional):
     kind: Literal['llm_done']
     content: str
     model: str
@@ -143,15 +191,29 @@ class LlmPromptEventPayloadPrompt(_LlmPromptEventPayloadPromptOptional):
     content_type: str
     summary: str
 
+class LlmPromptEventPayloadGeneration(TypedDict):
+    call_id: str
+    attempt: int
+    step_number: int
+
 class _LlmPromptEventPayloadOptional(TypedDict, total=False):
     node_name: str
+    generation: LlmPromptEventPayloadGeneration
 
 class LlmPromptEventPayload(_LlmPromptEventPayloadOptional):
     kind: Literal['llm_prompt']
     node_id: int
     prompt: LlmPromptEventPayloadPrompt
 
-class UsageEventPayload(TypedDict):
+class UsageEventPayloadGeneration(TypedDict):
+    call_id: str
+    attempt: int
+    step_number: int
+
+class _UsageEventPayloadOptional(TypedDict, total=False):
+    generation: UsageEventPayloadGeneration
+
+class UsageEventPayload(_UsageEventPayloadOptional):
     kind: Literal['usage']
     input_tokens: int
     output_tokens: int
@@ -226,12 +288,36 @@ class NodeMetricsEventPayload(_NodeMetricsEventPayloadOptional):
     node_id: int
     metrics: NodeMetricsEventPayloadMetrics
 
-class ToolStartEventPayload(TypedDict):
+class ToolStartEventPayloadToolCallCorrelationGeneration(TypedDict):
+    call_id: str
+    attempt: int
+    step_number: int
+
+class ToolStartEventPayloadToolCallCorrelation(TypedDict):
+    generation: ToolStartEventPayloadToolCallCorrelationGeneration
+    tool_call_id: str
+
+class _ToolStartEventPayloadOptional(TypedDict, total=False):
+    tool_call_correlation: ToolStartEventPayloadToolCallCorrelation
+
+class ToolStartEventPayload(_ToolStartEventPayloadOptional):
     kind: Literal['tool_start']
     name: str
     args: dict[str, Any]
 
-class ToolEndEventPayload(TypedDict):
+class ToolEndEventPayloadToolCallCorrelationGeneration(TypedDict):
+    call_id: str
+    attempt: int
+    step_number: int
+
+class ToolEndEventPayloadToolCallCorrelation(TypedDict):
+    generation: ToolEndEventPayloadToolCallCorrelationGeneration
+    tool_call_id: str
+
+class _ToolEndEventPayloadOptional(TypedDict, total=False):
+    tool_call_correlation: ToolEndEventPayloadToolCallCorrelation
+
+class ToolEndEventPayload(_ToolEndEventPayloadOptional):
     kind: Literal['tool_end']
     name: str
     result: Any
@@ -550,7 +636,15 @@ class SubagentSpawnEndEventPayload(TypedDict):
     kind: Literal['subagent_spawn_end']
     agent_code: str
 
-class SubagentLlmCallBeginEventPayload(TypedDict):
+class SubagentLlmCallBeginEventPayloadGeneration(TypedDict):
+    call_id: str
+    attempt: int
+    step_number: int
+
+class _SubagentLlmCallBeginEventPayloadOptional(TypedDict, total=False):
+    generation: SubagentLlmCallBeginEventPayloadGeneration
+
+class SubagentLlmCallBeginEventPayload(_SubagentLlmCallBeginEventPayloadOptional):
     kind: Literal['subagent_llm_call_begin']
     agent_code: str
     model: str
@@ -561,20 +655,52 @@ class SubagentLlmCallEndEventPayloadUsage(TypedDict):
     input_tokens: int
     output_tokens: int
 
-class SubagentLlmCallEndEventPayload(TypedDict):
+class SubagentLlmCallEndEventPayloadGeneration(TypedDict):
+    call_id: str
+    attempt: int
+    step_number: int
+
+class _SubagentLlmCallEndEventPayloadOptional(TypedDict, total=False):
+    generation: SubagentLlmCallEndEventPayloadGeneration
+
+class SubagentLlmCallEndEventPayload(_SubagentLlmCallEndEventPayloadOptional):
     kind: Literal['subagent_llm_call_end']
     agent_code: str
     finish_reason: str
     usage: SubagentLlmCallEndEventPayloadUsage
     content_len: int
 
-class ToolCallBeginEventPayload(TypedDict):
+class ToolCallBeginEventPayloadToolCallCorrelationGeneration(TypedDict):
+    call_id: str
+    attempt: int
+    step_number: int
+
+class ToolCallBeginEventPayloadToolCallCorrelation(TypedDict):
+    generation: ToolCallBeginEventPayloadToolCallCorrelationGeneration
+    tool_call_id: str
+
+class _ToolCallBeginEventPayloadOptional(TypedDict, total=False):
+    tool_call_correlation: ToolCallBeginEventPayloadToolCallCorrelation
+
+class ToolCallBeginEventPayload(_ToolCallBeginEventPayloadOptional):
     kind: Literal['tool_call_begin']
     agent_code: str
     tool_name: str
     argument_keys: list[str]
 
-class ToolCallEndEventPayload(TypedDict):
+class ToolCallEndEventPayloadToolCallCorrelationGeneration(TypedDict):
+    call_id: str
+    attempt: int
+    step_number: int
+
+class ToolCallEndEventPayloadToolCallCorrelation(TypedDict):
+    generation: ToolCallEndEventPayloadToolCallCorrelationGeneration
+    tool_call_id: str
+
+class _ToolCallEndEventPayloadOptional(TypedDict, total=False):
+    tool_call_correlation: ToolCallEndEventPayloadToolCallCorrelation
+
+class ToolCallEndEventPayload(_ToolCallEndEventPayloadOptional):
     kind: Literal['tool_call_end']
     agent_code: str
     tool_name: str
@@ -614,14 +740,38 @@ class AgentMessageEventPayload(_AgentMessageEventPayloadOptional):
     kind: Literal['agent_message']
     text: str
 
-class ApprovalRequestEventPayload(TypedDict):
+class ApprovalRequestEventPayloadToolCallCorrelationGeneration(TypedDict):
+    call_id: str
+    attempt: int
+    step_number: int
+
+class ApprovalRequestEventPayloadToolCallCorrelation(TypedDict):
+    generation: ApprovalRequestEventPayloadToolCallCorrelationGeneration
+    tool_call_id: str
+
+class _ApprovalRequestEventPayloadOptional(TypedDict, total=False):
+    tool_call_correlation: ApprovalRequestEventPayloadToolCallCorrelation
+
+class ApprovalRequestEventPayload(_ApprovalRequestEventPayloadOptional):
     kind: Literal['approval_request']
     agent_code: str
     tool_name: str
     approval_id: str
     risk_level: Literal['low', 'medium', 'high']
 
-class ApprovalResolvedEventPayload(TypedDict):
+class ApprovalResolvedEventPayloadToolCallCorrelationGeneration(TypedDict):
+    call_id: str
+    attempt: int
+    step_number: int
+
+class ApprovalResolvedEventPayloadToolCallCorrelation(TypedDict):
+    generation: ApprovalResolvedEventPayloadToolCallCorrelationGeneration
+    tool_call_id: str
+
+class _ApprovalResolvedEventPayloadOptional(TypedDict, total=False):
+    tool_call_correlation: ApprovalResolvedEventPayloadToolCallCorrelation
+
+class ApprovalResolvedEventPayload(_ApprovalResolvedEventPayloadOptional):
     kind: Literal['approval_resolved']
     approval_id: str
     decision: Literal['approved', 'denied', 'expired']

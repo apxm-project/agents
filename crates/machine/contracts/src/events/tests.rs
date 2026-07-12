@@ -504,7 +504,7 @@ fn representative_core_payloads() -> Vec<Box<dyn EventPayload>> {
         }),
         Box::new(ApprovalResolvedPayload {
             approval_id: "appr-1".to_string(),
-            decision: "approved".to_string(),
+            decision: crate::types::consent::ApprovalResolution::Approved,
         }),
     ]
 }

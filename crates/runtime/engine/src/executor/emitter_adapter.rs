@@ -550,10 +550,14 @@ impl ExecutionEventEmitter for EmitterAdapter {
         });
     }
 
-    fn emit_approval_resolved(&self, approval_id: &str, decision: &str) {
+    fn emit_approval_resolved(
+        &self,
+        approval_id: &str,
+        decision: apxm_core::types::consent::ApprovalResolution,
+    ) {
         self.emit(ApprovalResolvedPayload {
             approval_id: approval_id.to_string(),
-            decision: decision.to_string(),
+            decision,
         });
     }
 
@@ -943,7 +947,10 @@ mod tests {
         let (adapter, capture) = adapter_with_capture();
 
         adapter.emit_approval_request("agent-1", "shell", "appr-1", "high");
-        adapter.emit_approval_resolved("appr-1", "approved");
+        adapter.emit_approval_resolved(
+            "appr-1",
+            apxm_core::types::consent::ApprovalResolution::Approved,
+        );
 
         let events = capture.events.lock();
         let kinds: Vec<&'static str> = events.iter().map(|e| e.kind().name()).collect();
