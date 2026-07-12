@@ -806,18 +806,52 @@ impl ExecutionEventEmitter for SessionEventEmitter {
     fn emit_llm_token(&self, content: &str) {
         self.write_trace_event(apxm_core::events::payload::TokenPayload {
             text: content.to_string(),
+            generation: None,
         });
     }
 
     fn emit_llm_token_for_node(&self, node_id: u64, content: &str) {
         let payload = apxm_core::events::payload::TokenPayload {
             text: content.to_string(),
+            generation: None,
         };
         self.write_trace_event(payload.clone());
         self.write_node_trace_event(node_id, payload);
         if let Ok(mut tokens) = self.node_llm_tokens.lock() {
             tokens.entry(node_id).or_default().push(content.to_string());
         }
+    }
+
+    fn emit_llm_token_for_generation(
+        &self,
+        node_id: u64,
+        content: &str,
+        generation: Option<&apxm_core::events::payload::GenerationIdentity>,
+    ) {
+        let payload = apxm_core::events::payload::TokenPayload {
+            text: content.to_string(),
+            generation: generation.cloned(),
+        };
+        self.write_trace_event(payload.clone());
+        self.write_node_trace_event(node_id, payload);
+        if let Ok(mut tokens) = self.node_llm_tokens.lock() {
+            tokens.entry(node_id).or_default().push(content.to_string());
+        }
+    }
+
+    fn emit_llm_step_completed(
+        &self,
+        payload: apxm_core::events::payload::LlmStepCompletedPayload,
+    ) {
+        self.write_trace_event(payload);
+    }
+
+    fn emit_llm_done(&self, payload: apxm_core::events::payload::LlmDonePayload) {
+        self.write_trace_event(payload);
+    }
+
+    fn emit_tool_call(&self, payload: apxm_core::events::payload::ToolCallPayload) {
+        self.write_trace_event(payload);
     }
 
     fn emit_llm_prompt(&self, node_id: u64, prompt: &str) {
@@ -830,6 +864,22 @@ impl ExecutionEventEmitter for SessionEventEmitter {
         }
     }
 
+    fn emit_llm_prompt_with_generation(
+        &self,
+        node_id: u64,
+        node_name: Option<&str>,
+        prompt: &str,
+        generation: Option<&apxm_core::events::payload::GenerationIdentity>,
+    ) {
+        self.emit_llm_prompt(node_id, prompt);
+        self.write_trace_event(apxm_core::events::payload::LlmPromptPayload {
+            node_id,
+            node_name: node_name.map(str::to_string),
+            prompt: apxm_core::events::payload::RedactedContent::from_text(prompt),
+            generation: generation.cloned(),
+        });
+    }
+
     fn emit_tool_start(&self, name: &str, args: &HashMap<String, apxm_core::types::values::Value>) {
         let args_json = args
             .iter()
@@ -838,6 +888,23 @@ impl ExecutionEventEmitter for SessionEventEmitter {
         self.write_trace_event(apxm_core::events::payload::ToolStartPayload {
             name: name.to_string(),
             args: args_json,
+            tool_call_correlation: None,
+        });
+    }
+
+    fn emit_tool_start_with_correlation(
+        &self,
+        name: &str,
+        args: &HashMap<String, apxm_core::types::values::Value>,
+        correlation: Option<&apxm_core::events::payload::ToolCallCorrelation>,
+    ) {
+        self.write_trace_event(apxm_core::events::payload::ToolStartPayload {
+            name: name.to_string(),
+            args: args
+                .iter()
+                .map(|(key, value)| (key.clone(), serde_json::to_value(value).unwrap_or_default()))
+                .collect(),
+            tool_call_correlation: correlation.cloned(),
         });
     }
 
@@ -845,6 +912,20 @@ impl ExecutionEventEmitter for SessionEventEmitter {
         self.write_trace_event(apxm_core::events::payload::ToolEndPayload {
             name: name.to_string(),
             result: serde_json::to_value(result).unwrap_or_default(),
+            tool_call_correlation: None,
+        });
+    }
+
+    fn emit_tool_end_with_correlation(
+        &self,
+        name: &str,
+        result: &apxm_core::types::values::Value,
+        correlation: Option<&apxm_core::events::payload::ToolCallCorrelation>,
+    ) {
+        self.write_trace_event(apxm_core::events::payload::ToolEndPayload {
+            name: name.to_string(),
+            result: serde_json::to_value(result).unwrap_or_default(),
+            tool_call_correlation: correlation.cloned(),
         });
     }
 
@@ -1123,6 +1204,24 @@ impl ExecutionEventEmitter for SessionEventEmitter {
             model: model.to_string(),
             backend: backend.to_string(),
             tool_manifest_count,
+            generation: None,
+        });
+    }
+
+    fn emit_subagent_llm_call_begin_with_generation(
+        &self,
+        agent_code: &str,
+        model: &str,
+        backend: &str,
+        tool_manifest_count: usize,
+        generation: Option<&apxm_core::events::payload::GenerationIdentity>,
+    ) {
+        self.write_trace_event(apxm_core::events::payload::SubagentLlmCallBeginPayload {
+            agent_code: agent_code.to_string(),
+            model: model.to_string(),
+            backend: backend.to_string(),
+            tool_manifest_count,
+            generation: generation.cloned(),
         });
     }
 
@@ -1140,8 +1239,32 @@ impl ExecutionEventEmitter for SessionEventEmitter {
             usage: apxm_core::events::payload::UsagePayload {
                 input_tokens,
                 output_tokens,
+                generation: None,
             },
             content_len,
+            generation: None,
+        });
+    }
+
+    fn emit_subagent_llm_call_end_with_generation(
+        &self,
+        agent_code: &str,
+        finish_reason: &str,
+        input_tokens: usize,
+        output_tokens: usize,
+        content_len: usize,
+        generation: Option<&apxm_core::events::payload::GenerationIdentity>,
+    ) {
+        self.write_trace_event(apxm_core::events::payload::SubagentLlmCallEndPayload {
+            agent_code: agent_code.to_string(),
+            finish_reason: finish_reason.to_string(),
+            usage: apxm_core::events::payload::UsagePayload {
+                input_tokens,
+                output_tokens,
+                generation: None,
+            },
+            content_len,
+            generation: generation.cloned(),
         });
     }
 
@@ -1150,6 +1273,22 @@ impl ExecutionEventEmitter for SessionEventEmitter {
             agent_code: agent_code.to_string(),
             tool_name: tool_name.to_string(),
             argument_keys: argument_keys.to_vec(),
+            tool_call_correlation: None,
+        });
+    }
+
+    fn emit_tool_call_begin_with_correlation(
+        &self,
+        agent_code: &str,
+        tool_name: &str,
+        argument_keys: &[String],
+        correlation: Option<&apxm_core::events::payload::ToolCallCorrelation>,
+    ) {
+        self.write_trace_event(apxm_core::events::payload::ToolCallBeginPayload {
+            agent_code: agent_code.to_string(),
+            tool_name: tool_name.to_string(),
+            argument_keys: argument_keys.to_vec(),
+            tool_call_correlation: correlation.cloned(),
         });
     }
 
@@ -1158,15 +1297,35 @@ impl ExecutionEventEmitter for SessionEventEmitter {
         agent_code: &str,
         tool_name: &str,
         result_keys: &[String],
-        status: &str,
+        status: apxm_core::events::payload::ToolCallStatus,
         latency_ms: u64,
     ) {
         self.write_trace_event(apxm_core::events::payload::ToolCallEndPayload {
             agent_code: agent_code.to_string(),
             tool_name: tool_name.to_string(),
             result_keys: result_keys.to_vec(),
-            status: status.to_string(),
+            status,
             latency_ms,
+            tool_call_correlation: None,
+        });
+    }
+
+    fn emit_tool_call_end_with_correlation(
+        &self,
+        agent_code: &str,
+        tool_name: &str,
+        result_keys: &[String],
+        status: apxm_core::events::payload::ToolCallStatus,
+        latency_ms: u64,
+        correlation: Option<&apxm_core::events::payload::ToolCallCorrelation>,
+    ) {
+        self.write_trace_event(apxm_core::events::payload::ToolCallEndPayload {
+            agent_code: agent_code.to_string(),
+            tool_name: tool_name.to_string(),
+            result_keys: result_keys.to_vec(),
+            status,
+            latency_ms,
+            tool_call_correlation: correlation.cloned(),
         });
     }
 
@@ -1184,6 +1343,7 @@ impl ExecutionEventEmitter for SessionEventEmitter {
             usage_total: apxm_core::events::payload::UsagePayload {
                 input_tokens: input_tokens_total,
                 output_tokens: output_tokens_total,
+                generation: None,
             },
             evidence_excerpt: evidence_excerpt.map(str::to_string),
         });
@@ -1210,6 +1370,7 @@ impl ExecutionEventEmitter for SessionEventEmitter {
                 Some(apxm_core::events::payload::UsagePayload {
                     input_tokens,
                     output_tokens,
+                    generation: None,
                 })
             }
             _ => None,
@@ -1315,7 +1476,13 @@ mod layer2_tests {
         );
         emitter.emit_subagent_spawn_end("agent-1");
         emitter.emit_tool_call_begin("agent-1", "web_search", &["q".to_string()]);
-        emitter.emit_tool_call_end("agent-1", "web_search", &["r".to_string()], "ok", 12);
+        emitter.emit_tool_call_end(
+            "agent-1",
+            "web_search",
+            &["r".to_string()],
+            apxm_core::events::payload::ToolCallStatus::Ok,
+            12,
+        );
         emitter.emit_agent_message("final answer", None, None, Some(1), Some(2));
 
         let kinds = read_trace_kinds(dir.path());

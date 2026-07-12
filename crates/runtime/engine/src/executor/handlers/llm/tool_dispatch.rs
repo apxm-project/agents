@@ -10,13 +10,16 @@ use apxm_core::constants::capabilities;
 use apxm_core::constants::graph::attrs as graph_attrs;
 use apxm_core::constants::runtime::belief_keys;
 use apxm_core::error::RuntimeError;
+use apxm_core::events::payload::{
+    GenerationIdentity, ToolCallCorrelation, ToolCallPayload, ToolCallStatus,
+};
 use apxm_core::types::execution::Node;
 use apxm_core::types::operations::AISOperationType;
 use apxm_core::types::values::Value;
 use apxm_core::types::{ToolCall, ToolResult};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
-use super::super::{Result, apply_llm_request_routing_from_node, execute_llm_request_for_node};
+use super::super::{Result, apply_llm_request_routing_from_node};
 
 /// Agent-callable tool that spawns a focused specialist sub-agent. The
 /// converse/autonomous coordinator opts in via the `enable_delegate` node
@@ -297,10 +300,31 @@ async fn execute_delegate(
     }
 }
 
+fn tool_call_args(ctx: &ExecutionContext, tool_call: &ToolCall) -> HashMap<String, Value> {
+    let mut args = match &tool_call.args {
+        serde_json::Value::Object(obj) => obj
+            .iter()
+            .map(|(key, value)| (key.clone(), json_to_value(value)))
+            .collect(),
+        _ => HashMap::new(),
+    };
+    inject_visible_skill_imports(&tool_call.name, &mut args, &ctx.metadata);
+    args
+}
+
+fn active_agent_code(ctx: &ExecutionContext) -> String {
+    ctx.agent_scope_stack
+        .peek()
+        .map(|scope| scope.agent_code.clone())
+        .or_else(|| ctx.current_agent.as_ref().map(|agent| agent.name.clone()))
+        .unwrap_or_else(|| "runtime".to_string())
+}
+
 async fn execute_tool_call(
     ctx: &ExecutionContext,
     node: &Node,
     tool_call: &ToolCall,
+    correlation: &ToolCallCorrelation,
 ) -> ToolResult {
     apxm_llm!(debug,
      execution_id = %ctx.execution_id,
@@ -309,51 +333,89 @@ async fn execute_tool_call(
      "Executing tool call"
     );
 
-    let mut args: HashMap<String, Value> = match &tool_call.args {
-        serde_json::Value::Object(obj) => obj
-            .iter()
-            .map(|(k, v)| (k.clone(), json_to_value(v)))
-            .collect(),
-        _ => HashMap::new(),
-    };
-    inject_visible_skill_imports(&tool_call.name, &mut args, &ctx.metadata);
+    let args = tool_call_args(ctx, tool_call);
+    let argument_keys = args.keys().cloned().collect::<Vec<_>>();
+    let agent_code = active_agent_code(ctx);
+    let started_at = std::time::Instant::now();
 
     if let Some(emitter) = &ctx.event_emitter {
-        emitter.emit_tool_start(&tool_call.name, &args);
+        emitter.emit_tool_call_begin_with_correlation(
+            &agent_code,
+            &tool_call.name,
+            &argument_keys,
+            Some(correlation),
+        );
+        emitter.emit_tool_start_with_correlation(&tool_call.name, &args, Some(correlation));
     }
 
+    let result = execute_tool_call_inner(ctx, node, tool_call, args, correlation).await;
+    if let Some(emitter) = &ctx.event_emitter {
+        emitter.emit_tool_end_with_correlation(
+            &tool_call.name,
+            &Value::String(result.content.clone()),
+            Some(correlation),
+        );
+        emitter.emit_tool_call_end_with_correlation(
+            &agent_code,
+            &tool_call.name,
+            &[],
+            if result.success {
+                ToolCallStatus::Ok
+            } else {
+                ToolCallStatus::Error
+            },
+            started_at.elapsed().as_millis() as u64,
+            Some(correlation),
+        );
+    }
+    result
+}
+
+async fn execute_tool_call_inner(
+    ctx: &ExecutionContext,
+    node: &Node,
+    tool_call: &ToolCall,
+    args: HashMap<String, Value>,
+    correlation: &ToolCallCorrelation,
+) -> ToolResult {
     // Native sub-agent fan-out: `delegate` is not a capability — it re-enters
     // the ASK tool loop as a focused specialist over the requested tool groups.
     if tool_call.name == DELEGATE_TOOL {
-        let result = execute_delegate(ctx, node, tool_call, &args).await;
-        if let Some(emitter) = &ctx.event_emitter {
-            emitter.emit_tool_end(&tool_call.name, &Value::String(result.content.clone()));
-        }
-        return result;
+        return execute_delegate(ctx, node, tool_call, &args).await;
     }
 
     if let Some(bridge) = ctx.python_handler_bridge.as_ref() {
         if bridge.has_tool(&tool_call.name) {
-            return dispatch_script_tool_call(ctx, node, tool_call, args, "Python").await;
+            return dispatch_script_tool_call(ctx, node, tool_call, args, correlation, "Python")
+                .await;
         }
     }
     if let Some(bridge) = ctx.typescript_handler_bridge.as_ref() {
         if bridge.has_tool(&tool_call.name) {
-            return dispatch_script_tool_call(ctx, node, tool_call, args, "TypeScript").await;
+            return dispatch_script_tool_call(
+                ctx,
+                node,
+                tool_call,
+                args,
+                correlation,
+                "TypeScript",
+            )
+            .await;
         }
     }
 
     // Native/builtin tool path also runs pre/post_cap hooks. A pre_cap deny continues the turn gracefully (m4).
-    let args =
-        match crate::executor::hook_driver::run_pre_cap_hooks(ctx, &tool_call.name, args).await {
-            Ok(edited) => edited,
-            Err(e) => {
-                if let Some(emitter) = &ctx.event_emitter {
-                    emitter.emit_tool_end(&tool_call.name, &Value::String(e.to_string()));
-                }
-                return ToolResult::error(&tool_call.id, e.to_string());
-            }
-        };
+    let args = match crate::executor::hook_driver::run_pre_cap_hooks(
+        ctx,
+        &tool_call.name,
+        args,
+        Some(correlation),
+    )
+    .await
+    {
+        Ok(edited) => edited,
+        Err(e) => return ToolResult::error(&tool_call.id, e.to_string()),
+    };
     if let Err(error) = super::super::inv_cap::enforce_write_boundary(
         ctx,
         &tool_call.name,
@@ -363,28 +425,32 @@ async fn execute_tool_call(
     )
     .await
     {
-        if let Some(emitter) = &ctx.event_emitter {
-            emitter.emit_tool_end(&tool_call.name, &Value::String(error.to_string()));
-        }
         return ToolResult::error(&tool_call.id, error.to_string());
     }
     let timeout =
         std::time::Duration::from_millis(apxm_core::constants::defaults::DEFAULT_TIMEOUT_MS);
     match ctx
-        .invoke_capability_with_timeout_for_call(&tool_call.name, args, timeout, &tool_call.id)
+        .invoke_capability_with_timeout_for_call(
+            &tool_call.name,
+            args,
+            timeout,
+            &tool_call.id,
+            Some(correlation),
+        )
         .await
     {
         Ok(result) => {
-            let result =
-                crate::executor::hook_driver::run_post_cap_hooks(ctx, &tool_call.name, result)
-                    .await;
+            let result = crate::executor::hook_driver::run_post_cap_hooks(
+                ctx,
+                &tool_call.name,
+                result,
+                Some(correlation),
+            )
+            .await;
             let content = match result {
                 Value::String(s) => s,
                 other => other.to_string(),
             };
-            if let Some(emitter) = &ctx.event_emitter {
-                emitter.emit_tool_end(&tool_call.name, &Value::String(content.clone()));
-            }
             apxm_llm!(info,
              execution_id = %ctx.execution_id,
              tool_name = %tool_call.name,
@@ -393,9 +459,6 @@ async fn execute_tool_call(
             ToolResult::success(&tool_call.id, content)
         }
         Err(e) => {
-            if let Some(emitter) = &ctx.event_emitter {
-                emitter.emit_tool_end(&tool_call.name, &Value::String(e.to_string()));
-            }
             apxm_llm!(warn,
              execution_id = %ctx.execution_id,
              tool_name = %tool_call.name,
@@ -520,28 +583,25 @@ async fn dispatch_script_tool_call(
     _node: &Node,
     tool_call: &ToolCall,
     args: HashMap<String, Value>,
+    correlation: &ToolCallCorrelation,
     label: &str,
 ) -> ToolResult {
     let timeout =
         std::time::Duration::from_millis(apxm_core::constants::defaults::DEFAULT_TIMEOUT_MS);
-    let edited_args =
-        match crate::executor::hook_driver::run_pre_cap_hooks(ctx, &tool_call.name, args).await {
-            Ok(a) => a,
-            Err(e) => {
-                if let Some(emitter) = &ctx.event_emitter {
-                    emitter.emit_tool_end(&tool_call.name, &Value::String(e.to_string()));
-                }
-                return ToolResult::error(&tool_call.id, e.to_string());
-            }
-        };
+    let edited_args = match crate::executor::hook_driver::run_pre_cap_hooks(
+        ctx,
+        &tool_call.name,
+        args,
+        Some(correlation),
+    )
+    .await
+    {
+        Ok(a) => a,
+        Err(e) => return ToolResult::error(&tool_call.id, e.to_string()),
+    };
     let policy = match script_tool_policy(ctx, &tool_call.name) {
         Ok(policy) => policy,
-        Err(error) => {
-            if let Some(emitter) = &ctx.event_emitter {
-                emitter.emit_tool_end(&tool_call.name, &Value::String(error.to_string()));
-            }
-            return ToolResult::error(&tool_call.id, error.to_string());
-        }
+        Err(error) => return ToolResult::error(&tool_call.id, error.to_string()),
     };
     if let Err(error) = super::super::inv_cap::enforce_write_boundary(
         ctx,
@@ -552,9 +612,6 @@ async fn dispatch_script_tool_call(
     )
     .await
     {
-        if let Some(emitter) = &ctx.event_emitter {
-            emitter.emit_tool_end(&tool_call.name, &Value::String(error.to_string()));
-        }
         return ToolResult::error(&tool_call.id, error.to_string());
     }
     let admitted_args = match ctx
@@ -563,23 +620,24 @@ async fn dispatch_script_tool_call(
             edited_args,
             policy.requires_approval,
             &tool_call.id,
+            Some(correlation),
         )
         .await
     {
         Ok(args) => args,
-        Err(error) => {
-            if let Some(emitter) = &ctx.event_emitter {
-                emitter.emit_tool_end(&tool_call.name, &Value::String(error.to_string()));
-            }
-            return ToolResult::error(&tool_call.id, error.to_string());
-        }
+        Err(error) => return ToolResult::error(&tool_call.id, error.to_string()),
     };
     let json_args = serde_json::to_value(&admitted_args).unwrap_or_else(|_| tool_call.args.clone());
     let bridge_call = async {
         if let Some(bridge) = ctx.python_handler_bridge.as_ref() {
             if bridge.has_tool(&tool_call.name) {
                 return bridge
-                    .call(&tool_call.name, json_args.clone(), timeout)
+                    .call_with_call_id(
+                        &tool_call.name,
+                        json_args.clone(),
+                        timeout,
+                        Some(&tool_call.id),
+                    )
                     .await;
             }
         }
@@ -589,21 +647,25 @@ async fn dispatch_script_tool_call(
                 message: format!("no {label} handler bridge configured"),
             }
         })?;
-        bridge.call(&tool_call.name, json_args, timeout).await
+        bridge
+            .call_with_call_id(&tool_call.name, json_args, timeout, Some(&tool_call.id))
+            .await
     };
 
     match bridge_call.await {
         Ok(json_result) => {
             let raw = Value::try_from(json_result).unwrap_or(Value::Null);
-            let transformed =
-                crate::executor::hook_driver::run_post_cap_hooks(ctx, &tool_call.name, raw).await;
+            let transformed = crate::executor::hook_driver::run_post_cap_hooks(
+                ctx,
+                &tool_call.name,
+                raw,
+                Some(correlation),
+            )
+            .await;
             let content = match transformed {
                 Value::String(s) => s,
                 other => other.to_string(),
             };
-            if let Some(emitter) = &ctx.event_emitter {
-                emitter.emit_tool_end(&tool_call.name, &Value::String(content.clone()));
-            }
             apxm_llm!(info,
              execution_id = %ctx.execution_id,
              tool_name = %tool_call.name,
@@ -613,9 +675,6 @@ async fn dispatch_script_tool_call(
             ToolResult::success(&tool_call.id, content)
         }
         Err(e) => {
-            if let Some(emitter) = &ctx.event_emitter {
-                emitter.emit_tool_end(&tool_call.name, &Value::String(e.to_string()));
-            }
             apxm_llm!(warn,
              execution_id = %ctx.execution_id,
              tool_name = %tool_call.name,
@@ -639,9 +698,11 @@ async fn execute_tool_calls_parallel(
     ctx: &ExecutionContext,
     node: &Node,
     tool_calls: &[ToolCall],
+    generation: &GenerationIdentity,
 ) -> Vec<ToolResult> {
     if tool_calls.len() == 1 {
-        return vec![execute_tool_call(ctx, node, &tool_calls[0]).await];
+        let correlation = ToolCallCorrelation::new(generation.clone(), tool_calls[0].id.clone());
+        return vec![execute_tool_call(ctx, node, &tool_calls[0], &correlation).await];
     }
 
     let max_parallel = max_parallel_tool_calls(ctx, tool_calls.len());
@@ -656,7 +717,7 @@ async fn execute_tool_calls_parallel(
 
     let mut results = Vec::with_capacity(tool_calls.len());
     for batch in tool_calls.chunks(max_parallel) {
-        results.extend(execute_tool_call_batch(ctx, node, batch).await);
+        results.extend(execute_tool_call_batch(ctx, node, batch, generation).await);
     }
     results
 }
@@ -665,19 +726,23 @@ async fn execute_tool_call_batch(
     ctx: &ExecutionContext,
     node: &Node,
     tool_calls: &[ToolCall],
+    generation: &GenerationIdentity,
 ) -> Vec<ToolResult> {
     let futures: Vec<_> = tool_calls
         .iter()
         .map(|tc| {
             let access = resolve_tool_access(ctx, &tc.name);
+            let correlation = ToolCallCorrelation::new(generation.clone(), tc.id.clone());
             async move {
                 match access {
-                    Some(ToolAccess::ReadOnly) | None => execute_tool_call(ctx, node, tc).await,
+                    Some(ToolAccess::ReadOnly) | None => {
+                        execute_tool_call(ctx, node, tc, &correlation).await
+                    }
                     Some(ToolAccess::Write) => {
                         let lock = write_lock_for_tool(&tc.name);
                         let result = {
                             let _guard = lock.write().await;
-                            execute_tool_call(ctx, node, tc).await
+                            execute_tool_call(ctx, node, tc, &correlation).await
                         };
                         release_write_lock_if_idle(&tc.name, &lock);
                         result
@@ -752,6 +817,25 @@ pub(super) fn format_tool_results_message(results: &[ToolResult]) -> String {
         .join("\n\n")
 }
 
+fn validate_model_tool_call_ids(tool_calls: &[ToolCall]) -> Result<()> {
+    let mut seen = HashSet::with_capacity(tool_calls.len());
+    for tool_call in tool_calls {
+        if tool_call.id.trim().is_empty() {
+            return Err(RuntimeError::LLM {
+                message: "model returned an empty tool-call id".to_string(),
+                backend: None,
+            });
+        }
+        if !seen.insert(tool_call.id.as_str()) {
+            return Err(RuntimeError::LLM {
+                message: format!("model returned duplicate tool-call id '{}'", tool_call.id),
+                backend: None,
+            });
+        }
+    }
+    Ok(())
+}
+
 /// Execute Ask operation with tool loop
 ///
 /// This implements the tool use cycle:
@@ -765,8 +849,10 @@ pub(crate) async fn execute_ask_with_tools(
     node: &Node,
     initial_request: &LLMRequest,
 ) -> Result<Value> {
-    let output = execute_ask_with_tools_attempt(ctx, node, initial_request).await?;
-    emit_llm_done(ctx, &output.final_response);
+    let mut generations = super::LlmGenerationSequence::new();
+    let output =
+        execute_ask_with_tools_attempt(ctx, node, initial_request, 1, &mut generations).await?;
+    emit_llm_done(ctx, &output.final_response, &output.final_generation);
     Ok(output.value)
 }
 
@@ -774,6 +860,8 @@ pub(super) async fn execute_ask_with_tools_attempt(
     ctx: &ExecutionContext,
     node: &Node,
     initial_request: &LLMRequest,
+    attempt: usize,
+    generations: &mut super::LlmGenerationSequence,
 ) -> Result<LlmAttemptOutput> {
     let max_iterations = node
         .attributes
@@ -804,8 +892,16 @@ pub(super) async fn execute_ask_with_tools_attempt(
          "Sending ASK request with tools"
         );
 
+        let generation = generations.next(attempt);
         let llm_start = std::time::Instant::now();
-        let response = execute_llm_request_for_node(ctx, node, "ASK", &current_request).await?;
+        let response = super::super::execute_llm_request_for_node_with_generation(
+            ctx,
+            node,
+            "ASK",
+            &current_request,
+            Some(&generation),
+        )
+        .await?;
         let iter_total_ms = llm_start.elapsed().as_secs_f64() * 1000.0;
         let (iter_prefill, iter_decode) = response
             .timing
@@ -852,7 +948,7 @@ pub(super) async fn execute_ask_with_tools_attempt(
         super::emit_model_step(
             ctx,
             node.id,
-            iteration + 1,
+            &generation,
             &response,
             iter_total_ms,
             iter_prefill,
@@ -886,10 +982,26 @@ pub(super) async fn execute_ask_with_tools_attempt(
             return Ok(LlmAttemptOutput {
                 value: Value::String(response.content.clone()),
                 final_response: response,
+                final_generation: generation,
             });
         }
 
-        let tool_results = execute_tool_calls_parallel(ctx, node, &response.tool_calls).await;
+        validate_model_tool_call_ids(&response.tool_calls)?;
+        if let Some(emitter) = &ctx.event_emitter {
+            for tool_call in &response.tool_calls {
+                emitter.emit_tool_call(ToolCallPayload {
+                    id: tool_call.id.clone(),
+                    name: tool_call.name.clone(),
+                    arguments: tool_call.args.clone(),
+                    tool_call_correlation: Some(ToolCallCorrelation::new(
+                        generation.clone(),
+                        tool_call.id.clone(),
+                    )),
+                });
+            }
+        }
+        let tool_results =
+            execute_tool_calls_parallel(ctx, node, &response.tool_calls, &generation).await;
 
         if !tool_results.is_empty() {
             let results_value = Value::Array(
@@ -1084,6 +1196,13 @@ mod tests {
         }
     }
 
+    fn correlation_for(tool_call: &ToolCall) -> ToolCallCorrelation {
+        ToolCallCorrelation::new(
+            GenerationIdentity::new("generation-test", 1, 1),
+            tool_call.id.clone(),
+        )
+    }
+
     fn visible_metadata(value: &str) -> HashMap<String, String> {
         HashMap::from([(
             crate::metadata_keys::VISIBLE_SKILLS.to_string(),
@@ -1150,7 +1269,8 @@ mod tests {
         let node = Node::new(1, AISOperationType::Ask);
         let tool_call = ToolCall::new("call-1", "approval-tool", serde_json::json!({}));
 
-        let without_broker = execute_tool_call(&ctx, &node, &tool_call).await;
+        let correlation = correlation_for(&tool_call);
+        let without_broker = execute_tool_call(&ctx, &node, &tool_call, &correlation).await;
 
         assert!(!without_broker.success);
         assert!(
@@ -1167,7 +1287,7 @@ mod tests {
             calls: Arc::clone(&broker_calls),
         });
 
-        let approved_result = execute_tool_call(&ctx, &node, &tool_call).await;
+        let approved_result = execute_tool_call(&ctx, &node, &tool_call, &correlation).await;
 
         assert!(approved_result.success, "{}", approved_result.content);
         assert_eq!(approved_result.content, "executed");
@@ -1194,7 +1314,8 @@ mod tests {
         let node = Node::new(1, AISOperationType::Ask);
         let tool_call = ToolCall::new("call-1", "read-only-tool", serde_json::json!({}));
 
-        let result = execute_tool_call(&ctx, &node, &tool_call).await;
+        let correlation = correlation_for(&tool_call);
+        let result = execute_tool_call(&ctx, &node, &tool_call, &correlation).await;
 
         assert!(result.success, "{}", result.content);
         assert_eq!(result.content, "executed");
@@ -1210,7 +1331,8 @@ mod tests {
         let node = Node::new(1, AISOperationType::Ask);
         let tool_call = ToolCall::new("call-1", "write-tool", serde_json::json!({}));
 
-        let result = execute_tool_call(&ctx, &node, &tool_call).await;
+        let correlation = correlation_for(&tool_call);
+        let result = execute_tool_call(&ctx, &node, &tool_call, &correlation).await;
 
         assert!(!result.success);
         assert!(result.content.contains("missing a capability grant"));

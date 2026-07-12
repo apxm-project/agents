@@ -384,11 +384,91 @@ fn json_shape_summary(value: &serde_json::Value) -> String {
     }
 }
 
+/// Complete identity for one physical model request inside a logical LLM operation.
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub struct GenerationIdentity {
+    /// Identifier shared by every retry and tool-loop step in the operation.
+    pub call_id: String,
+    /// One-based outer retry number.
+    pub attempt: usize,
+    /// One-based physical model-request number across the whole operation.
+    pub step_number: usize,
+}
+
+impl GenerationIdentity {
+    pub fn new(call_id: impl Into<String>, attempt: usize, step_number: usize) -> Self {
+        Self {
+            call_id: call_id.into(),
+            attempt,
+            step_number,
+        }
+    }
+}
+
+/// Identity shared by every event and dispatch derived from one model tool call.
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub struct ToolCallCorrelation {
+    /// Physical generation that produced the tool call.
+    pub generation: GenerationIdentity,
+    /// Provider-assigned model tool-call identifier.
+    pub tool_call_id: String,
+}
+
+impl ToolCallCorrelation {
+    pub fn new(generation: GenerationIdentity, tool_call_id: impl Into<String>) -> Self {
+        Self {
+            generation,
+            tool_call_id: tool_call_id.into(),
+        }
+    }
+}
+
+/// Closed status vocabulary for tool-call completion events.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ToolCallStatus {
+    Ok,
+    Error,
+    ApprovalPending,
+}
+
+impl ToolCallStatus {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Ok => "ok",
+            Self::Error => "error",
+            Self::ApprovalPending => "approval_pending",
+        }
+    }
+}
+
+/// Closed risk vocabulary exposed by approval request events.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ApprovalRiskLevel {
+    Low,
+    Medium,
+    High,
+}
+
+impl ApprovalRiskLevel {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Low => "low",
+            Self::Medium => "medium",
+            Self::High => "high",
+        }
+    }
+}
+
 /// A single streaming token.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TokenPayload {
     /// The token text fragment.
     pub text: String,
+    /// Physical generation that emitted this token.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub generation: Option<GenerationIdentity>,
 }
 impl_event_payload!(TokenPayload, kind::TOKEN);
 
@@ -399,6 +479,9 @@ pub struct ThoughtPayload {
     pub text: String,
     /// Optional short summary of the thought.
     pub summary: Option<String>,
+    /// Physical generation that emitted this thought.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub generation: Option<GenerationIdentity>,
 }
 impl_event_payload!(ThoughtPayload, kind::THOUGHT);
 
@@ -411,6 +494,9 @@ pub struct ToolCallPayload {
     pub name: String,
     /// Tool arguments as a JSON value.
     pub arguments: serde_json::Value,
+    /// Physical generation and provider tool-call ID.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tool_call_correlation: Option<ToolCallCorrelation>,
 }
 impl_event_payload!(ToolCallPayload, kind::TOOL_CALL);
 
@@ -429,6 +515,9 @@ pub struct LlmDonePayload {
     pub tool_calls: Vec<ToolCallPayload>,
     /// Provider-specific response ID.
     pub response_id: Option<String>,
+    /// Physical generation that produced the accepted response.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub generation: Option<GenerationIdentity>,
 }
 impl_event_payload!(LlmDonePayload, kind::LLM_DONE);
 
@@ -473,6 +562,9 @@ pub struct LlmStepCompletedPayload {
     pub performance: LlmStepPerformancePayload,
     /// Number of tool calls requested by this response.
     pub tool_call_count: usize,
+    /// Physical generation completed by this event.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub generation: Option<GenerationIdentity>,
 }
 impl_event_payload!(LlmStepCompletedPayload, kind::LLM_STEP_COMPLETED);
 
@@ -486,6 +578,9 @@ pub struct LlmPromptPayload {
     pub node_name: Option<String>,
     /// Redacted prompt metadata.
     pub prompt: RedactedContent,
+    /// Physical generation receiving this prompt.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub generation: Option<GenerationIdentity>,
 }
 impl_event_payload!(LlmPromptPayload, kind::LLM_PROMPT);
 
@@ -503,6 +598,9 @@ pub struct UsagePayload {
     pub input_tokens: usize,
     /// Number of tokens in the completion / output.
     pub output_tokens: usize,
+    /// Physical generation accounted by a standalone usage event.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub generation: Option<GenerationIdentity>,
 }
 impl_event_payload!(UsagePayload, kind::USAGE);
 
@@ -630,6 +728,9 @@ pub struct ToolStartPayload {
     pub name: String,
     /// Tool arguments as key-value pairs.
     pub args: HashMap<String, serde_json::Value>,
+    /// Model tool call that initiated this invocation.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tool_call_correlation: Option<ToolCallCorrelation>,
 }
 impl_event_payload!(ToolStartPayload, kind::TOOL_START);
 
@@ -640,6 +741,9 @@ pub struct ToolEndPayload {
     pub name: String,
     /// The tool result as a JSON value.
     pub result: serde_json::Value,
+    /// Model tool call that initiated this invocation.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tool_call_correlation: Option<ToolCallCorrelation>,
 }
 impl_event_payload!(ToolEndPayload, kind::TOOL_END);
 
@@ -1230,6 +1334,9 @@ pub struct SubagentLlmCallBeginPayload {
     pub backend: String,
     /// Count of tools exposed to the model for this call.
     pub tool_manifest_count: usize,
+    /// Physical generation being dispatched.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub generation: Option<GenerationIdentity>,
 }
 impl_event_payload!(SubagentLlmCallBeginPayload, kind::SUBAGENT_LLM_CALL_BEGIN);
 
@@ -1244,6 +1351,9 @@ pub struct SubagentLlmCallEndPayload {
     pub usage: UsagePayload,
     /// Length of the returned content, in characters (safe to surface).
     pub content_len: usize,
+    /// Physical generation returned by this event.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub generation: Option<GenerationIdentity>,
 }
 impl_event_payload!(SubagentLlmCallEndPayload, kind::SUBAGENT_LLM_CALL_END);
 
@@ -1256,6 +1366,9 @@ pub struct ToolCallBeginPayload {
     pub tool_name: String,
     /// Argument keys (no values — payload stays redaction-safe).
     pub argument_keys: Vec<String>,
+    /// Model tool call that initiated this invocation.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tool_call_correlation: Option<ToolCallCorrelation>,
 }
 impl_event_payload!(ToolCallBeginPayload, kind::TOOL_CALL_BEGIN);
 
@@ -1268,10 +1381,13 @@ pub struct ToolCallEndPayload {
     pub tool_name: String,
     /// Result keys (no values — safe-to-surface only).
     pub result_keys: Vec<String>,
-    /// Coarse status (`"ok"` | `"error"` | `"approval_pending"`).
-    pub status: String,
+    /// Coarse completion status.
+    pub status: ToolCallStatus,
     /// Wall-clock duration of the tool call, in milliseconds.
     pub latency_ms: u64,
+    /// Model tool call that initiated this invocation.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tool_call_correlation: Option<ToolCallCorrelation>,
 }
 impl_event_payload!(ToolCallEndPayload, kind::TOOL_CALL_END);
 
@@ -1328,8 +1444,11 @@ pub struct ApprovalRequestPayload {
     pub tool_name: String,
     /// Stable approval id (host-issued where available).
     pub approval_id: String,
-    /// Coarse risk classification (`"low"` | `"medium"` | `"high"`).
-    pub risk_level: String,
+    /// Coarse risk classification.
+    pub risk_level: ApprovalRiskLevel,
+    /// Model tool call guarded by this approval.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tool_call_correlation: Option<ToolCallCorrelation>,
 }
 impl_event_payload!(ApprovalRequestPayload, kind::APPROVAL_REQUEST);
 
@@ -1340,5 +1459,8 @@ pub struct ApprovalResolvedPayload {
     pub approval_id: String,
     /// Closed resolution outcome.
     pub decision: ApprovalResolution,
+    /// Model tool call guarded by this approval.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tool_call_correlation: Option<ToolCallCorrelation>,
 }
 impl_event_payload!(ApprovalResolvedPayload, kind::APPROVAL_RESOLVED);

@@ -430,6 +430,7 @@ impl ExecutionContext {
             args,
             std::time::Duration::from_millis(apxm_core::constants::defaults::DEFAULT_TIMEOUT_MS),
             call_id,
+            None,
         )
         .await
     }
@@ -443,6 +444,7 @@ impl ExecutionContext {
         mut args: std::collections::HashMap<String, apxm_core::types::values::Value>,
         requires_approval: bool,
         call_id: &str,
+        tool_call_correlation: Option<&apxm_core::events::payload::ToolCallCorrelation>,
     ) -> Result<
         std::collections::HashMap<String, apxm_core::types::values::Value>,
         apxm_core::error::RuntimeError,
@@ -456,6 +458,7 @@ impl ExecutionContext {
             .or_else(|| self.current_agent.as_ref().map(|a| a.name.clone()));
         let approval_ctx = ApprovalContext {
             call_id,
+            tool_call_correlation,
             consent_broker: self.consent_broker.as_ref(),
             event_emitter: self
                 .event_emitter
@@ -480,7 +483,7 @@ impl ExecutionContext {
         timeout: std::time::Duration,
     ) -> Result<apxm_core::types::values::Value, apxm_core::error::RuntimeError> {
         let call_id = uuid::Uuid::new_v4().to_string();
-        self.invoke_capability_with_timeout_for_call(name, args, timeout, &call_id)
+        self.invoke_capability_with_timeout_for_call(name, args, timeout, &call_id, None)
             .await
     }
 
@@ -490,6 +493,7 @@ impl ExecutionContext {
         mut args: std::collections::HashMap<String, apxm_core::types::values::Value>,
         timeout: std::time::Duration,
         call_id: &str,
+        tool_call_correlation: Option<&apxm_core::events::payload::ToolCallCorrelation>,
     ) -> Result<apxm_core::types::values::Value, apxm_core::error::RuntimeError> {
         self.charge_tool_call(name)?;
         self.inject_tool_credential(name, &mut args);
@@ -500,6 +504,7 @@ impl ExecutionContext {
             .or_else(|| self.current_agent.as_ref().map(|a| a.name.clone()));
         let approval_ctx = ApprovalContext {
             call_id,
+            tool_call_correlation,
             consent_broker: self.consent_broker.as_ref(),
             event_emitter: self
                 .event_emitter

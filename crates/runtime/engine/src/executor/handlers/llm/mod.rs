@@ -19,8 +19,8 @@
 
 use super::{
     ExecutionContext, Node, Result, Value, apply_llm_request_routing_from_node,
-    copy_llm_request_routing, execute_llm_request_for_node, get_optional_string_attribute,
-    get_optional_u64_attribute, get_string_attribute,
+    copy_llm_request_routing, get_optional_string_attribute, get_optional_u64_attribute,
+    get_string_attribute,
     template::{input_names_from_node, render_named},
     warmup::{dispatch_warmup, should_dispatch_warmup},
 };
@@ -36,8 +36,9 @@ use apxm_core::constants::{
 };
 use apxm_core::error::RuntimeError;
 use apxm_core::events::payload::{
-    FinishReasonPayload, LlmDonePayload, LlmStepCompletedPayload, LlmStepPerformancePayload,
-    LlmStepUsagePayload, ToolCallPayload, UsagePayload,
+    FinishReasonPayload, GenerationIdentity, LlmDonePayload, LlmStepCompletedPayload,
+    LlmStepPerformancePayload, LlmStepUsagePayload, ToolCallCorrelation, ToolCallPayload,
+    UsagePayload,
 };
 use apxm_core::types::operations::AISOperationType;
 use apxm_core::types::{ApxmGraphHints, FinishReason, LLMResponse, PriorityClass, TokenUsage};
@@ -102,7 +103,7 @@ impl From<&AISOperationType> for LlmMode {
 pub(super) fn emit_model_step(
     ctx: &ExecutionContext,
     node_id: u64,
-    step_number: usize,
+    generation: &GenerationIdentity,
     response: &LLMResponse,
     latency_ms: f64,
     prefill_ms: f64,
@@ -116,7 +117,7 @@ pub(super) fn emit_model_step(
     };
     emitter.emit_llm_step_completed(LlmStepCompletedPayload {
         node_id,
-        step_number,
+        step_number: generation.step_number,
         model: response.model.clone(),
         finish_reason: finish_reason.clone(),
         usage: LlmStepUsagePayload {
@@ -131,12 +132,17 @@ pub(super) fn emit_model_step(
             decode_ms,
         },
         tool_call_count: response.tool_calls.len(),
+        generation: Some(generation.clone()),
     });
 }
 
 /// Emit the one accepted final model response for a turn. Callers must run
 /// schema validation before invoking this helper.
-pub(super) fn emit_llm_done(ctx: &ExecutionContext, response: &LLMResponse) {
+pub(super) fn emit_llm_done(
+    ctx: &ExecutionContext,
+    response: &LLMResponse,
+    generation: &GenerationIdentity,
+) {
     let Some(emitter) = &ctx.event_emitter else {
         return;
     };
@@ -149,6 +155,7 @@ pub(super) fn emit_llm_done(ctx: &ExecutionContext, response: &LLMResponse) {
         usage: UsagePayload {
             input_tokens: response.usage.input_tokens,
             output_tokens: response.usage.output_tokens,
+            generation: None,
         },
         tool_calls: response
             .tool_calls
@@ -157,15 +164,42 @@ pub(super) fn emit_llm_done(ctx: &ExecutionContext, response: &LLMResponse) {
                 id: tool_call.id.clone(),
                 name: tool_call.name.clone(),
                 arguments: tool_call.args.clone(),
+                tool_call_correlation: Some(ToolCallCorrelation::new(
+                    generation.clone(),
+                    tool_call.id.clone(),
+                )),
             })
             .collect(),
         response_id: None,
+        generation: Some(generation.clone()),
     });
 }
 
 pub(super) struct LlmAttemptOutput {
     value: Value,
     final_response: LLMResponse,
+    final_generation: GenerationIdentity,
+}
+
+pub(super) struct LlmGenerationSequence {
+    call_id: String,
+    next_step_number: usize,
+}
+
+impl LlmGenerationSequence {
+    fn new() -> Self {
+        Self {
+            call_id: uuid::Uuid::now_v7().to_string(),
+            next_step_number: 1,
+        }
+    }
+
+    fn next(&mut self, attempt: usize) -> GenerationIdentity {
+        let generation =
+            GenerationIdentity::new(self.call_id.clone(), attempt, self.next_step_number);
+        self.next_step_number = self.next_step_number.saturating_add(1);
+        generation
+    }
 }
 
 /// Reserved `input_names` entry that carries the system prompt as a dataflow
@@ -537,26 +571,39 @@ pub async fn execute(ctx: &ExecutionContext, node: &Node, inputs: Vec<Value>) ->
     // Execute with retries
     let mut last_error = None;
     let mut schema_retries_used = 0u32;
-    for attempt in 0..=max_retries {
+    let mut generations = LlmGenerationSequence::new();
+    for attempt_index in 0..=max_retries {
+        let attempt = attempt_index as usize + 1;
         // Check cancellation before each LLM attempt
         if ctx.cancellation_token.is_cancelled() {
             return Err(RuntimeError::SchedulerCancelled);
         }
 
-        if attempt > 0 {
+        if attempt_index > 0 {
             apxm_llm!(warn,
              execution_id = %ctx.execution_id,
              mode = mode_name,
-             attempt = attempt,
+             attempt,
              "Retrying LLM operation"
             );
 
             // Exponential backoff
-            let backoff_ms = 100 * 2_u64.pow(attempt - 1);
+            let backoff_ms = 100 * 2_u64.pow(attempt_index - 1);
             tokio::time::sleep(tokio::time::Duration::from_millis(backoff_ms)).await;
         }
 
-        match execute_llm_once(ctx, node, &request, mode, enable_inner_plan, bind_outputs).await {
+        match execute_llm_once(
+            ctx,
+            node,
+            &request,
+            mode,
+            enable_inner_plan,
+            bind_outputs,
+            attempt,
+            &mut generations,
+        )
+        .await
+        {
             Ok(attempt_output) => {
                 if mode == LlmMode::Ask
                     && let Some(schema) = output_schema.as_ref()
@@ -584,7 +631,11 @@ pub async fn execute(ctx: &ExecutionContext, node: &Node, inputs: Vec<Value>) ->
                     }
                     return Err(validation_error);
                 }
-                emit_llm_done(ctx, &attempt_output.final_response);
+                emit_llm_done(
+                    ctx,
+                    &attempt_output.final_response,
+                    &attempt_output.final_generation,
+                );
                 return Ok(attempt_output.value);
             }
             Err(e) => {
@@ -614,13 +665,17 @@ async fn execute_llm_once(
     mode: LlmMode,
     enable_inner_plan: bool,
     bind_outputs: bool,
+    attempt: usize,
+    generations: &mut LlmGenerationSequence,
 ) -> Result<LlmAttemptOutput> {
     let mode_name = mode.name();
 
     // For Ask mode with tools, use the tool loop
     if mode == LlmMode::Ask && request.has_tools() {
-        return execute_ask_with_tools_attempt(ctx, node, request).await;
+        return execute_ask_with_tools_attempt(ctx, node, request, attempt, generations).await;
     }
+
+    let generation = generations.next(attempt);
 
     let resolved_backend = get_optional_string_attribute(node, graph_attrs::BACKEND)?;
     let memoizable = node
@@ -674,7 +729,7 @@ async fn execute_llm_once(
             TokenUsage::new(cached.input_tokens, cached.output_tokens),
             FinishReason::Stop,
         );
-        emit_model_step(ctx, node.id, 1, &cached_response, 0.0, 0.0, 0.0);
+        emit_model_step(ctx, node.id, &generation, &cached_response, 0.0, 0.0, 0.0);
         let value = match mode {
             LlmMode::Ask | LlmMode::Think => Value::String(cached.content),
             LlmMode::Reason => {
@@ -695,6 +750,7 @@ async fn execute_llm_once(
         return Ok(LlmAttemptOutput {
             value,
             final_response: cached_response,
+            final_generation: generation,
         });
     }
 
@@ -714,7 +770,14 @@ async fn execute_llm_once(
     // is unavailable, since the metadata-bearing response still
     // surfaces token + timing evidence.
     let pre_call_backend = ctx.llm_registry.resolve_backend_name(&request).ok();
-    let response = execute_llm_request_for_node(ctx, node, mode_name, request).await?;
+    let response = super::execute_llm_request_for_node_with_generation(
+        ctx,
+        node,
+        mode_name,
+        request,
+        Some(&generation),
+    )
+    .await?;
     let total_ms = llm_start.elapsed().as_secs_f64() * 1000.0;
 
     // Fold per-request `x-apxm-fields-honored`
@@ -777,7 +840,15 @@ async fn execute_llm_once(
         }
     }
 
-    emit_model_step(ctx, node.id, 1, &response, total_ms, prefill_ms, decode_ms);
+    emit_model_step(
+        ctx,
+        node.id,
+        &generation,
+        &response,
+        total_ms,
+        prefill_ms,
+        decode_ms,
+    );
 
     let content = response.content.clone();
 
@@ -843,5 +914,6 @@ async fn execute_llm_once(
     Ok(LlmAttemptOutput {
         value,
         final_response: response,
+        final_generation: generation,
     })
 }

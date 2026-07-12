@@ -594,6 +594,7 @@ impl CapabilityFacade for CapabilitySystem {
         let pre_ctx = PreInvokeContext {
             registry: &self.registry,
             call_id: approval.call_id,
+            tool_call_correlation: approval.tool_call_correlation,
             consent_broker: approval.consent_broker,
             event_emitter: approval.event_emitter,
             host_id: approval.host_id,
@@ -615,6 +616,7 @@ impl CapabilityFacade for CapabilitySystem {
         let pre_ctx = PreInvokeContext {
             registry: &self.registry,
             call_id: approval.call_id,
+            tool_call_correlation: approval.tool_call_correlation,
             consent_broker: approval.consent_broker,
             event_emitter: approval.event_emitter,
             host_id: approval.host_id,
@@ -780,6 +782,7 @@ mod tests {
         };
         let approval = ApprovalContext {
             call_id: "call-open",
+            tool_call_correlation: None,
             consent_broker: &broker,
             event_emitter: None,
             host_id: None,
@@ -809,6 +812,7 @@ mod tests {
         let broker = UnavailableConsentBroker;
         let approval = ApprovalContext {
             call_id: "call-gated",
+            tool_call_correlation: None,
             consent_broker: &broker,
             event_emitter: None,
             host_id: None,

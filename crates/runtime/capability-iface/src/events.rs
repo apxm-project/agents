@@ -7,10 +7,13 @@
 use std::collections::HashMap;
 use std::time::Duration;
 
-use apxm_core::events::payload::{LlmDonePayload, LlmStepCompletedPayload, TurnBoundaryPayload};
-use apxm_core::types::consent::ApprovalResolution;
+use apxm_core::events::payload::{
+    ApprovalRiskLevel, GenerationIdentity, LlmDonePayload, LlmStepCompletedPayload,
+    ToolCallCorrelation, ToolCallPayload, ToolCallStatus, TurnBoundaryPayload,
+};
 use apxm_core::types::NodeMetrics;
 use apxm_core::types::TimingBreakdown;
+use apxm_core::types::consent::ApprovalResolution;
 use apxm_core::types::operations::AISOperationType;
 use apxm_core::types::values::Value;
 
@@ -51,8 +54,26 @@ pub trait ExecutionEventEmitter: Send + Sync {
     fn emit_llm_step_completed(&self, _payload: LlmStepCompletedPayload) {}
     /// The final model response for the current turn completed.
     fn emit_llm_done(&self, _payload: LlmDonePayload) {}
+    /// One model-requested tool call was accepted for dispatch.
+    fn emit_tool_call(&self, _payload: ToolCallPayload) {}
     fn emit_tool_start(&self, name: &str, args: &HashMap<String, Value>);
     fn emit_tool_end(&self, name: &str, result: &Value);
+    fn emit_tool_start_with_correlation(
+        &self,
+        name: &str,
+        args: &HashMap<String, Value>,
+        _correlation: Option<&ToolCallCorrelation>,
+    ) {
+        self.emit_tool_start(name, args);
+    }
+    fn emit_tool_end_with_correlation(
+        &self,
+        name: &str,
+        result: &Value,
+        _correlation: Option<&ToolCallCorrelation>,
+    ) {
+        self.emit_tool_end(name, result);
+    }
 
     // ── Graph lifecycle ─────────────────────────────────────────────
     fn emit_graph_start(&self, _execution_id: &str, _node_count: usize) {}
@@ -128,11 +149,36 @@ pub trait ExecutionEventEmitter: Send + Sync {
     fn emit_llm_prompt_with_name(&self, node_id: u64, _node_name: Option<&str>, prompt: &str) {
         self.emit_llm_prompt(node_id, prompt);
     }
+    fn emit_llm_prompt_with_generation(
+        &self,
+        node_id: u64,
+        node_name: Option<&str>,
+        prompt: &str,
+        _generation: Option<&GenerationIdentity>,
+    ) {
+        self.emit_llm_prompt_with_name(node_id, node_name, prompt);
+    }
     fn emit_llm_token_for_node(&self, _node_id: u64, content: &str) {
         self.emit_llm_token(content);
     }
+    fn emit_llm_token_for_generation(
+        &self,
+        node_id: u64,
+        content: &str,
+        _generation: Option<&GenerationIdentity>,
+    ) {
+        self.emit_llm_token_for_node(node_id, content);
+    }
     fn emit_llm_thought_for_node(&self, _node_id: u64, content: &str) {
         self.emit_llm_thought(content);
+    }
+    fn emit_llm_thought_for_generation(
+        &self,
+        node_id: u64,
+        content: &str,
+        _generation: Option<&GenerationIdentity>,
+    ) {
+        self.emit_llm_thought_for_node(node_id, content);
     }
 
     // ── Planning ────────────────────────────────────────────────────
@@ -326,6 +372,16 @@ pub trait ExecutionEventEmitter: Send + Sync {
         _tool_manifest_count: usize,
     ) {
     }
+    fn emit_subagent_llm_call_begin_with_generation(
+        &self,
+        agent_code: &str,
+        model: &str,
+        backend: &str,
+        tool_manifest_count: usize,
+        _generation: Option<&GenerationIdentity>,
+    ) {
+        self.emit_subagent_llm_call_begin(agent_code, model, backend, tool_manifest_count);
+    }
 
     /// An ASK node inside an agent scope returned a response.
     fn emit_subagent_llm_call_end(
@@ -337,9 +393,35 @@ pub trait ExecutionEventEmitter: Send + Sync {
         _content_len: usize,
     ) {
     }
+    fn emit_subagent_llm_call_end_with_generation(
+        &self,
+        agent_code: &str,
+        finish_reason: &str,
+        input_tokens: usize,
+        output_tokens: usize,
+        content_len: usize,
+        _generation: Option<&GenerationIdentity>,
+    ) {
+        self.emit_subagent_llm_call_end(
+            agent_code,
+            finish_reason,
+            input_tokens,
+            output_tokens,
+            content_len,
+        );
+    }
 
     /// An INV_CAP node inside an agent scope began a tool call.
     fn emit_tool_call_begin(&self, _agent_code: &str, _tool_name: &str, _argument_keys: &[String]) {
+    }
+    fn emit_tool_call_begin_with_correlation(
+        &self,
+        agent_code: &str,
+        tool_name: &str,
+        argument_keys: &[String],
+        _correlation: Option<&ToolCallCorrelation>,
+    ) {
+        self.emit_tool_call_begin(agent_code, tool_name, argument_keys);
     }
 
     /// An INV_CAP node inside an agent scope returned a result.
@@ -348,9 +430,20 @@ pub trait ExecutionEventEmitter: Send + Sync {
         _agent_code: &str,
         _tool_name: &str,
         _result_keys: &[String],
-        _status: &str,
+        _status: ToolCallStatus,
         _latency_ms: u64,
     ) {
+    }
+    fn emit_tool_call_end_with_correlation(
+        &self,
+        agent_code: &str,
+        tool_name: &str,
+        result_keys: &[String],
+        status: ToolCallStatus,
+        latency_ms: u64,
+        _correlation: Option<&ToolCallCorrelation>,
+    ) {
+        self.emit_tool_call_end(agent_code, tool_name, result_keys, status, latency_ms);
     }
 
     /// A sub-agent scope exited cleanly.
@@ -390,10 +483,28 @@ pub trait ExecutionEventEmitter: Send + Sync {
         _agent_code: &str,
         _tool_name: &str,
         _approval_id: &str,
-        _risk_level: &str,
+        _risk_level: ApprovalRiskLevel,
     ) {
+    }
+    fn emit_approval_request_with_correlation(
+        &self,
+        agent_code: &str,
+        tool_name: &str,
+        approval_id: &str,
+        risk_level: ApprovalRiskLevel,
+        _correlation: Option<&ToolCallCorrelation>,
+    ) {
+        self.emit_approval_request(agent_code, tool_name, approval_id, risk_level);
     }
 
     /// A previously-requested approval was resolved.
     fn emit_approval_resolved(&self, _approval_id: &str, _decision: ApprovalResolution) {}
+    fn emit_approval_resolved_with_correlation(
+        &self,
+        approval_id: &str,
+        decision: ApprovalResolution,
+        _correlation: Option<&ToolCallCorrelation>,
+    ) {
+        self.emit_approval_resolved(approval_id, decision);
+    }
 }

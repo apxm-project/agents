@@ -16,6 +16,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use apxm_core::error::RuntimeError;
+use apxm_core::events::payload::ToolCallCorrelation;
 use apxm_core::types::consent::ConsentBroker;
 use apxm_core::types::values::Value;
 use async_trait::async_trait;
@@ -52,6 +53,7 @@ pub enum CapabilitySandboxPreflight {
 /// approval.
 pub struct ApprovalContext<'a> {
     pub call_id: &'a str,
+    pub tool_call_correlation: Option<&'a ToolCallCorrelation>,
     pub consent_broker: &'a dyn ConsentBroker,
     pub event_emitter: Option<&'a dyn ExecutionEventEmitter>,
     pub host_id: Option<&'a str>,

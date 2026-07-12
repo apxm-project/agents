@@ -327,6 +327,7 @@ mod tests {
                 agent_code: "agent-1".to_string(),
                 tool_name: "web_search".to_string(),
                 argument_keys: vec!["q".to_string()],
+                tool_call_correlation: None,
             },
             EventSource::Runtime,
             "trace-1",
