@@ -205,6 +205,12 @@ pub const SCHEMA_EVENT_KIND_REGISTRY: &[SchemaEventKindEntry] = &[
         terminal_sense: SchemaTerminalSense::NA,
     },
     SchemaEventKindEntry {
+        name: "model_context_metrics",
+        category: SchemaEventCategory::Observability,
+        terminal: false,
+        terminal_sense: SchemaTerminalSense::NA,
+    },
+    SchemaEventKindEntry {
         name: "model_rerouted",
         category: SchemaEventCategory::Lifecycle,
         terminal: false,

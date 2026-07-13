@@ -32,6 +32,7 @@ EVENT_KIND_REGISTRY: Final[dict[str, dict[str, object]]] = {'agent_message': {'c
  'memoization_hit': {'category': 'observability', 'terminal': False, 'terminal_sense': 'n/a'},
  'memory_read': {'category': 'observability', 'terminal': False, 'terminal_sense': 'n/a'},
  'memory_write': {'category': 'observability', 'terminal': False, 'terminal_sense': 'n/a'},
+ 'model_context_metrics': {'category': 'observability', 'terminal': False, 'terminal_sense': 'n/a'},
  'model_rerouted': {'category': 'lifecycle', 'terminal': False, 'terminal_sense': 'n/a'},
  'model_route_decision': {'category': 'observability', 'terminal': False, 'terminal_sense': 'n/a'},
  'node_metrics': {'category': 'observability', 'terminal': False, 'terminal_sense': 'n/a'},
@@ -571,6 +572,21 @@ class ContextCompactedEventPayload(TypedDict):
     original_tokens: int
     new_tokens: int
 
+class _ModelContextMetricsEventPayloadOptional(TypedDict, total=False):
+    node_id: int
+    token_budget: int
+    original_tokens: int
+    admitted_tokens: int
+    kept_segments: int
+    truncated_segments: int
+    omitted_token_budget_segments: int
+    omitted_empty_segments: int
+
+class ModelContextMetricsEventPayload(_ModelContextMetricsEventPayloadOptional):
+    kind: Literal['model_context_metrics']
+    call_kind: Literal['node', 'tool_continuation', 'warmup', 'compaction', 'hook']
+    plan_status: Literal['assembled', 'inherited', 'unplanned']
+
 class ModelReroutedEventPayload(TypedDict):
     kind: Literal['model_rerouted']
     original_model: str
@@ -831,6 +847,7 @@ KnownEventPayload: TypeAlias = (
     CommunicateDispatchedEventPayload |
     GraphEdgeEventPayload |
     ContextCompactedEventPayload |
+    ModelContextMetricsEventPayload |
     ModelReroutedEventPayload |
     CancelledEventPayload |
     LoopDetectedEventPayload |
@@ -915,6 +932,7 @@ CORE_EVENT_KINDS: Final[tuple[str, ...]] = (
     'communicate_dispatched',
     'graph_edge',
     'context_compacted',
+    'model_context_metrics',
     'model_rerouted',
     'cancelled',
     'loop_detected',

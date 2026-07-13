@@ -390,6 +390,21 @@ export interface ContextCompactedEventPayload {
   [key: string]: unknown;
 }
 
+export interface ModelContextMetricsEventPayload {
+  kind: "model_context_metrics";
+  node_id?: number;
+  call_kind: "node" | "tool_continuation" | "warmup" | "compaction" | "hook";
+  plan_status: "assembled" | "inherited" | "unplanned";
+  token_budget?: number;
+  original_tokens?: number;
+  admitted_tokens?: number;
+  kept_segments?: number;
+  truncated_segments?: number;
+  omitted_token_budget_segments?: number;
+  omitted_empty_segments?: number;
+  [key: string]: unknown;
+}
+
 export interface ModelReroutedEventPayload {
   kind: "model_rerouted";
   original_model: string;
@@ -609,6 +624,7 @@ export type KnownEventPayload =
   | CommunicateDispatchedEventPayload
   | GraphEdgeEventPayload
   | ContextCompactedEventPayload
+  | ModelContextMetricsEventPayload
   | ModelReroutedEventPayload
   | CancelledEventPayload
   | LoopDetectedEventPayload
@@ -690,6 +706,7 @@ export const EVENT_KIND_REGISTRY: Readonly<Record<CoreEventKindName, EventKindDe
   "communicate_dispatched": { name: "communicate_dispatched", category: "agent", terminal: false, terminalSense: "atomic_no_delta" },
   "graph_edge": { name: "graph_edge", category: "topology", terminal: false, terminalSense: "atomic_no_delta" },
   "context_compacted": { name: "context_compacted", category: "observability", terminal: false, terminalSense: "n/a" },
+  "model_context_metrics": { name: "model_context_metrics", category: "observability", terminal: false, terminalSense: "n/a" },
   "model_rerouted": { name: "model_rerouted", category: "lifecycle", terminal: false, terminalSense: "n/a" },
   "cancelled": { name: "cancelled", category: "error", terminal: false, terminalSense: "n/a" },
   "loop_detected": { name: "loop_detected", category: "error", terminal: false, terminalSense: "n/a" },
