@@ -4,15 +4,18 @@
 //! conversation transcript accrues automatically. Keyed by `memory_scope()`
 //! (the session id), so turns are readable by the next turn's `qmem` recall.
 
+use crate::executor::handlers::template::input_names_from_node;
 use crate::executor::{ExecutionContext, Next, OperationMiddleware, Result};
 use crate::memory::MemorySpace;
 use apxm_core::events::payload::{TurnBoundaryPayload, TurnDirection};
 use apxm_core::types::{
+    conversation::TurnInput,
     execution::Node,
     operations::AISOperationType,
     values::{Number, Value},
 };
 use async_trait::async_trait;
+use serde_json::{Map as JsonMap, Value as JsonValue};
 
 /// Session-memory key holding the running turn count.
 const TURN_COUNT_KEY: &str = "conversation:turn_count";
@@ -45,6 +48,9 @@ const DEFAULT_SUMMARY_KEY: &str = "conversation:summary";
 /// (constitution #2: program owns cognition); absent the marker, the ask is
 /// not a conversational turn.
 const TURN_MARKER_KEY: &str = "conversational_turn";
+/// The conversational frontends bind the host turn input under this parameter
+/// name on the marked top-level turn ask.
+const TURN_INPUT_PARAM_NAME: &str = "user_message";
 
 /// Records each ASK answer into session memory so conversation history accrues
 /// without the program threading a transcript.
@@ -84,6 +90,7 @@ impl OperationMiddleware for ConversationMemoryMiddleware {
         inputs: Vec<Value>,
         next: Next<'_>,
     ) -> Result<Value> {
+        let (inputs, turn_context) = Self::normalize_turn_input(node, inputs)?;
         let scope = ctx.memory_scope().to_string();
         let mem = ctx.memory();
         let next_stored_turn = mem
@@ -107,9 +114,8 @@ impl OperationMiddleware for ConversationMemoryMiddleware {
         }
 
         // pre_turn hooks fire before the turn's ask (gate-capable → fail-closed).
-        // `None` context: this turn did not bind an additional structured
-        // payload for pre-turn hooks.
-        let supplement = crate::executor::hook_driver::run_pre_turn_hooks(ctx, None).await?;
+        let supplement =
+            crate::executor::hook_driver::run_pre_turn_hooks(ctx, turn_context).await?;
         if let Some(text) = supplement {
             *ctx.pending_turn_prompt_supplement.write() = Some(text);
         }
@@ -153,6 +159,49 @@ impl OperationMiddleware for ConversationMemoryMiddleware {
 }
 
 impl ConversationMemoryMiddleware {
+    fn normalize_turn_input(
+        node: &Node,
+        mut inputs: Vec<Value>,
+    ) -> Result<(Vec<Value>, Option<JsonMap<String, JsonValue>>)> {
+        let Some(index) = Self::turn_input_index(node, &inputs) else {
+            return Ok((inputs, None));
+        };
+        let Some(raw_turn_input) = inputs.get(index).cloned() else {
+            return Ok((inputs, None));
+        };
+        let turn_input = TurnInput::try_from(raw_turn_input).map_err(|error| {
+            apxm_core::error::RuntimeError::Operation {
+                op_type: node.op_type,
+                message: format!("invalid conversational turn input: {error}"),
+            }
+        })?;
+        inputs[index] = Value::String(turn_input.message);
+        Ok((inputs, turn_input.context))
+    }
+
+    fn turn_input_index(node: &Node, inputs: &[Value]) -> Option<usize> {
+        let input_names = input_names_from_node(node);
+        if let Some(index) = input_names
+            .iter()
+            .position(|name| name == TURN_INPUT_PARAM_NAME)
+        {
+            return (index < inputs.len()).then_some(index);
+        }
+        if inputs.len() == 1 || input_names.len() == 1 {
+            return (!inputs.is_empty()).then_some(0);
+        }
+
+        let mut matches = inputs.iter().enumerate().filter_map(|(index, value)| {
+            Self::looks_like_turn_input_envelope(value).then_some(index)
+        });
+        let first = matches.next()?;
+        matches.next().is_none().then_some(first)
+    }
+
+    fn looks_like_turn_input_envelope(value: &Value) -> bool {
+        matches!(value, Value::Object(fields) if fields.contains_key("message"))
+    }
+
     /// Conversation-window compaction — the four control dials
     /// (default/configure/override/opt-out), all driven off the SAME
     /// node attributes the frontend stamps on the marked conversational-turn
@@ -360,21 +409,66 @@ mod tests {
     use crate::aam::Aam;
     use crate::capability::CapabilitySystem;
     use crate::executor::events::ExecutionEventEmitter;
+    use crate::executor::hooks::{HookBinding, HookEvent, HookMode, HookRegistry};
     use crate::executor::middleware::{BoxFuture, Next};
     use crate::executor::session_ledger::SessionLedger;
     use crate::executor::{ExecutionContext, OperationMiddleware};
     use crate::memory::{MemoryConfig, MemorySystem};
+    use crate::typescript_tools::{TypeScriptHandlerBridge, TypeScriptHandlerRegistry};
     use apxm_backends::LLMRegistry;
+    use apxm_core::constants::graph::attrs as graph_attrs;
     use apxm_core::error::RuntimeError;
+    use apxm_core::types::conversation::TurnInput;
+    use serde_json::json;
     use std::collections::HashMap;
-    use std::sync::{Arc, Mutex};
+    use std::sync::{Arc, Mutex, OnceLock};
 
     fn ask(marked: bool) -> Node {
+        ask_with_input_names(marked, &[])
+    }
+
+    fn ask_with_input_names(marked: bool, input_names: &[&str]) -> Node {
         let mut node = Node::new(1, AISOperationType::Ask);
         if marked {
             node.set_attribute(TURN_MARKER_KEY.to_string(), Value::String("true".into()));
         }
+        if !input_names.is_empty() {
+            node.set_attribute(
+                graph_attrs::INPUT_NAMES.to_string(),
+                Value::Array(
+                    input_names
+                        .iter()
+                        .map(|name| Value::String((*name).to_string()))
+                        .collect(),
+                ),
+            );
+        }
         node
+    }
+
+    static TERMINAL_CAPTURE_LOCK: Mutex<()> = Mutex::new(());
+
+    #[derive(Debug, Clone, PartialEq)]
+    struct TerminalCapture {
+        inputs: Vec<Value>,
+        supplement: Option<String>,
+    }
+
+    fn terminal_capture_slot() -> &'static Mutex<Option<TerminalCapture>> {
+        static SLOT: OnceLock<Mutex<Option<TerminalCapture>>> = OnceLock::new();
+        SLOT.get_or_init(|| Mutex::new(None))
+    }
+
+    fn clear_terminal_capture() {
+        *terminal_capture_slot().lock().unwrap() = None;
+    }
+
+    fn take_terminal_capture() -> TerminalCapture {
+        terminal_capture_slot()
+            .lock()
+            .unwrap()
+            .take()
+            .expect("terminal capture should be populated")
     }
 
     #[test]
@@ -443,6 +537,63 @@ mod tests {
         })
     }
 
+    fn capturing_terminal<'a>(
+        ctx: &'a ExecutionContext,
+        _node: &'a Node,
+        inputs: Vec<Value>,
+    ) -> BoxFuture<'a, Result<Value>> {
+        Box::pin(async move {
+            *terminal_capture_slot().lock().unwrap() = Some(TerminalCapture {
+                inputs: inputs.clone(),
+                supplement: ctx.pending_turn_prompt_supplement.read().clone(),
+            });
+            Ok(Value::String("answer".to_string()))
+        })
+    }
+
+    fn node_available() -> bool {
+        std::process::Command::new("node")
+            .arg("--version")
+            .output()
+            .is_ok()
+    }
+
+    async fn context_with_typescript_pre_turn_hook(
+        hook_source: &str,
+    ) -> (tempfile::TempDir, ExecutionContext) {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let hook_path = temp.path().join("pre_turn_hook.mjs");
+        std::fs::write(&hook_path, hook_source).expect("write hook source");
+        let registry = TypeScriptHandlerRegistry::from_json(
+            &json!([{
+                "handler_id": "sha256:pre-turn-hook",
+                "module": "hook_mod",
+                "qualname": "capture",
+                "name": "hook",
+                "schema": {},
+                "source_file": hook_path.to_string_lossy().into_owned(),
+            }])
+            .to_string(),
+        )
+        .expect("typescript hook manifest");
+
+        let hook_registry = Arc::new(HookRegistry::new());
+        hook_registry.register(HookBinding {
+            handler_id: "sha256:pre-turn-hook".to_string(),
+            event: HookEvent::PreTurn,
+            match_glob: "*".to_string(),
+            mode: HookMode::Observe,
+        });
+
+        let emitter = Arc::new(BoundaryCapturingEmitter::default());
+        let ledger = Arc::new(SessionLedger::new(None, HashMap::new()));
+        let ctx = test_context(emitter, ledger)
+            .await
+            .with_typescript_handler_bridge(Arc::new(TypeScriptHandlerBridge::new(registry)))
+            .with_hook_registry(hook_registry);
+        (temp, ctx)
+    }
+
     #[tokio::test]
     async fn emits_numbered_request_and_response_boundaries_per_successful_turn() {
         let emitter = Arc::new(BoundaryCapturingEmitter::default());
@@ -507,6 +658,97 @@ mod tests {
         assert_eq!(boundaries.len(), 1);
         assert_eq!(boundaries[0].turn_number, 1);
         assert_eq!(boundaries[0].direction, TurnDirection::Request);
+    }
+
+    #[tokio::test]
+    async fn legacy_string_turn_input_is_unchanged_for_existing_ask_path() {
+        let _guard = TERMINAL_CAPTURE_LOCK.lock().unwrap();
+        clear_terminal_capture();
+
+        let emitter = Arc::new(BoundaryCapturingEmitter::default());
+        let ledger = Arc::new(SessionLedger::new(None, HashMap::new()));
+        let ctx = test_context(emitter, ledger).await;
+        let middleware = ConversationMemoryMiddleware::new();
+        let node = ask_with_input_names(true, &[TURN_INPUT_PARAM_NAME, "history"]);
+        let original_inputs = vec![
+            Value::String("hello".to_string()),
+            Value::String("recalled context".to_string()),
+        ];
+
+        let result = middleware
+            .around(
+                &ctx,
+                &node,
+                original_inputs.clone(),
+                Next {
+                    chain: &[],
+                    idx: 0,
+                    terminal: capturing_terminal,
+                },
+            )
+            .await
+            .expect("turn succeeds");
+
+        assert_eq!(result, Value::String("answer".to_string()));
+        let capture = take_terminal_capture();
+        assert_eq!(capture.inputs, original_inputs);
+        assert_eq!(capture.supplement, None);
+    }
+
+    #[tokio::test]
+    async fn structured_turn_input_context_reaches_pre_turn_hook_and_message_is_normalized() {
+        if !node_available() {
+            return;
+        }
+
+        let _guard = TERMINAL_CAPTURE_LOCK.lock().unwrap();
+        clear_terminal_capture();
+
+        let (_temp, ctx) = context_with_typescript_pre_turn_hook(
+            r#"
+export function capture(ctx) {
+  return ctx.prependSystem(String(ctx.context?.topic ?? "missing"));
+}
+"#,
+        )
+        .await;
+        let middleware = ConversationMemoryMiddleware::new();
+        let node = ask_with_input_names(true, &[TURN_INPUT_PARAM_NAME, "history"]);
+        let turn_input = TurnInput {
+            message: "hello".to_string(),
+            context: Some(JsonMap::from_iter([(
+                "topic".to_string(),
+                json!("priority-sync"),
+            )])),
+        };
+
+        let result = middleware
+            .around(
+                &ctx,
+                &node,
+                vec![
+                    Value::from(turn_input),
+                    Value::String("recalled context".to_string()),
+                ],
+                Next {
+                    chain: &[],
+                    idx: 0,
+                    terminal: capturing_terminal,
+                },
+            )
+            .await
+            .expect("turn succeeds");
+
+        assert_eq!(result, Value::String("answer".to_string()));
+        let capture = take_terminal_capture();
+        assert_eq!(
+            capture.inputs,
+            vec![
+                Value::String("hello".to_string()),
+                Value::String("recalled context".to_string()),
+            ]
+        );
+        assert_eq!(capture.supplement.as_deref(), Some("priority-sync"));
     }
 }
 

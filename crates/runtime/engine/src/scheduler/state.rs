@@ -1524,6 +1524,38 @@ mod tests {
         assert_eq!(park_registry::wake(race_key, Value::Null), 0);
         assert!(!park_registry::pending_wait_keys().contains(&race_key.to_string()));
 
+        let resolved_key = "cancelled-pre-resolved-cleanup".to_string();
+        park_registry::wake(&resolved_key, Value::String("stale-1".into()));
+        park_registry::wake(&resolved_key, Value::String("stale-2".into()));
+        let cancelled = Arc::new(new_state(two_node_dag()));
+        cancelled.enter_parked();
+        cancelled.mark_done();
+        park_registry::register(
+            resolved_key.clone(),
+            ParkWaker::for_node(Arc::clone(&cancelled), 1, vec![10], 1),
+        );
+        assert_eq!(
+            park_registry::wake(&resolved_key, Value::Null),
+            0,
+            "a cancelled registration must close and clear any queued resolved values"
+        );
+
+        park_registry::durable::close_for_test();
+        park_registry::durable::init(&db_path)
+            .expect("reopen durable park journal after resolved cleanup");
+        park_registry::rebuild_from_durable(std::slice::from_ref(&resolved_key));
+        let replacement_resolved = Arc::new(new_state(two_node_dag()));
+        replacement_resolved.enter_parked();
+        park_registry::register(
+            resolved_key.clone(),
+            ParkWaker::for_node(Arc::clone(&replacement_resolved), 1, vec![10], 1),
+        );
+        assert!(
+            !replacement_resolved.tokens.get(&10).unwrap().ready,
+            "queued resolved values must not survive cancellation durably"
+        );
+        replacement_resolved.mark_done();
+
         park_registry::durable::close_for_test();
     }
 
@@ -1841,6 +1873,88 @@ mod tests {
         assert_eq!(state.remaining.load(Ordering::SeqCst), 1);
     }
 
+    #[test]
+    fn park_registry_multiple_wake_before_register_values_are_fifo() {
+        use crate::scheduler::park_registry;
+
+        let key = "cp-pre-resolved-fifo-unique-3";
+        for expected in ["first", "second", "third"] {
+            assert_eq!(
+                park_registry::wake(key, Value::String(expected.into())),
+                0,
+                "wake-before-register should queue without an active waiter"
+            );
+        }
+
+        for expected in ["first", "second", "third"] {
+            let state = Arc::new(new_state(two_node_dag()));
+            state.parked.fetch_add(1, Ordering::SeqCst);
+            park_registry::register(
+                key.to_string(),
+                park_registry::ParkWaker::new(Arc::clone(&state), vec![10]),
+            );
+            assert_eq!(
+                state.tokens.get(&10).unwrap().value.clone(),
+                Some(Value::String(expected.into())),
+                "subsequent registers must consume queued values in FIFO order"
+            );
+            assert_eq!(state.remaining.load(Ordering::SeqCst), 1);
+        }
+    }
+
+    #[test]
+    fn park_registry_interleaved_register_and_wake_preserves_fifo_order() {
+        use crate::scheduler::park_registry;
+
+        let key = "cp-pre-resolved-fifo-unique-4";
+        assert_eq!(park_registry::wake(key, Value::String("first".into())), 0);
+
+        let state1 = Arc::new(new_state(two_node_dag()));
+        state1.parked.fetch_add(1, Ordering::SeqCst);
+        park_registry::register(
+            key.to_string(),
+            park_registry::ParkWaker::new(Arc::clone(&state1), vec![10]),
+        );
+        assert_eq!(
+            state1.tokens.get(&10).unwrap().value.clone(),
+            Some(Value::String("first".into()))
+        );
+
+        let state2 = Arc::new(new_state(two_node_dag()));
+        state2.parked.fetch_add(1, Ordering::SeqCst);
+        park_registry::register(
+            key.to_string(),
+            park_registry::ParkWaker::new(Arc::clone(&state2), vec![10]),
+        );
+        assert!(
+            !state2.tokens.get(&10).unwrap().ready,
+            "once the queued value is consumed, the next register must wait live"
+        );
+
+        assert_eq!(
+            park_registry::wake(key, Value::String("second".into())),
+            1,
+            "a live waiter still receives the next wake immediately"
+        );
+        assert_eq!(
+            state2.tokens.get(&10).unwrap().value.clone(),
+            Some(Value::String("second".into()))
+        );
+
+        assert_eq!(park_registry::wake(key, Value::String("third".into())), 0);
+        let state3 = Arc::new(new_state(two_node_dag()));
+        state3.parked.fetch_add(1, Ordering::SeqCst);
+        park_registry::register(
+            key.to_string(),
+            park_registry::ParkWaker::new(Arc::clone(&state3), vec![10]),
+        );
+        assert_eq!(
+            state3.tokens.get(&10).unwrap().value.clone(),
+            Some(Value::String("third".into())),
+            "a later register must still receive the queued wake in order"
+        );
+    }
+
     /// Positive/recovery: park a node, simulate a process restart (the
     /// durable park journal survives; the in-memory registry — and the
     /// original `ParkWaker`'s `Arc<SchedulerState>` — do not), re-park the
@@ -1909,13 +2023,14 @@ mod tests {
         // one live waker fires, not a stale double-delivery to dead state.
         assert!(!state1.tokens.get(&10).unwrap().ready);
 
-        // Scenario B: a wake arrives with nobody parked (stashed durably),
-        // THEN a restart, THEN the first post-restart register() must still
-        // fire immediately from the durably-reloaded resolved stash — the
-        // actual gap this journal closes (an in-memory-only stash does not
-        // survive a real process restart).
+        // Scenario B: multiple wakes arrive with nobody parked (stashed
+        // durably), THEN a restart, THEN post-restart register() calls must
+        // still fire immediately from the durably-reloaded resolved queue in
+        // FIFO order — the actual gap this journal closes (an in-memory-only
+        // stash does not survive a real process restart).
         let key_b = "restart-repark-b".to_string();
-        park_registry::wake(&key_b, Value::String("arrived-before-restart".into()));
+        park_registry::wake(&key_b, Value::String("arrived-before-restart-1".into()));
+        park_registry::wake(&key_b, Value::String("arrived-before-restart-2".into()));
 
         park_registry::durable::close_for_test();
         park_registry::durable::init(&db_path)
@@ -1934,7 +2049,22 @@ mod tests {
         );
         assert_eq!(
             state3.tokens.get(&10).unwrap().value.clone(),
-            Some(Value::String("arrived-before-restart".into()))
+            Some(Value::String("arrived-before-restart-1".into()))
+        );
+
+        let state4 = Arc::new(new_state(two_node_dag()));
+        state4.parked.fetch_add(1, Ordering::SeqCst);
+        park_registry::register(
+            key_b.clone(),
+            park_registry::ParkWaker::new(Arc::clone(&state4), vec![10]),
+        );
+        assert!(
+            state4.tokens.get(&10).unwrap().ready,
+            "remaining queued values survive the restart and deliver on later registers"
+        );
+        assert_eq!(
+            state4.tokens.get(&10).unwrap().value.clone(),
+            Some(Value::String("arrived-before-restart-2".into()))
         );
 
         park_registry::durable::close_for_test();
