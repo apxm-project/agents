@@ -14,7 +14,7 @@
 use std::collections::HashMap;
 use std::sync::Arc;
 
-use apxm_capability_iface::CapabilityHost;
+use apxm_capability_iface::{CapabilityHost, CapabilityHostError};
 use apxm_core::constants::capabilities::groups;
 use apxm_core::types::values::{Number, Value};
 use async_trait::async_trait;
@@ -296,19 +296,23 @@ fn advance_recurring(row: &ScheduleRow, now: i64) -> Option<i64> {
 /// Fire every schedule that is due as of now. Delivers each row's payload
 /// through the [`CapabilityHost`]'s wake-notification bridge and the optional
 /// `on_fire` hook, then retires one-shots and re-arms recurring rows. Returns
-/// the number of schedules fired.
+/// the number of schedules fired, or the first typed host wake failure.
 ///
 /// Takes `host: &dyn CapabilityHost` rather than calling
 /// `crate::scheduler::park_registry::wake` directly — this is capability's
 /// one touchpoint on the scheduler, narrowed to the trait `apxm-runtime`'s
 /// scheduler implements (see [`crate::scheduler::park_registry::ParkRegistryHost`]).
-pub fn fire_due(store: &ToolsStore, host: &dyn CapabilityHost, on_fire: Option<&OnFire>) -> usize {
+pub fn fire_due(
+    store: &ToolsStore,
+    host: &dyn CapabilityHost,
+    on_fire: Option<&OnFire>,
+) -> Result<usize, CapabilityHostError> {
     let now = now_ms();
     let due = store.due_schedules(now).unwrap_or_default();
     let mut fired = 0;
     for row in due {
         let value = parse_payload(&row.payload);
-        let _woken = host.wake(&row.id, value);
+        host.wake(&row.id, value)?;
         if let Some(cb) = on_fire {
             cb(FiredSchedule {
                 id: row.id.clone(),
@@ -327,7 +331,7 @@ pub fn fire_due(store: &ToolsStore, host: &dyn CapabilityHost, on_fire: Option<&
             fired += 1;
         }
     }
-    fired
+    Ok(fired)
 }
 
 fn parse_payload(payload: &str) -> Value {
@@ -357,11 +361,17 @@ pub fn spawn_firer(
                 Some(ts) => {
                     let now = now_ms();
                     if ts <= now {
-                        fire_due(&store, host.as_ref(), on_fire.as_ref());
+                        if let Err(error) = fire_due(&store, host.as_ref(), on_fire.as_ref()) {
+                            tracing::error!(%error, "scheduled wake was not durably accepted");
+                        }
                     } else {
                         let wait = std::time::Duration::from_millis((ts - now) as u64);
                         tokio::select! {
-                            () = tokio::time::sleep(wait) => { fire_due(&store, host.as_ref(), on_fire.as_ref()); }
+                            () = tokio::time::sleep(wait) => {
+                                if let Err(error) = fire_due(&store, host.as_ref(), on_fire.as_ref()) {
+                                    tracing::error!(%error, "scheduled wake was not durably accepted");
+                                }
+                            }
                             () = arm.notified() => { /* re-evaluate with the new schedule */ }
                         }
                     }
@@ -499,9 +509,20 @@ mod fire_due_tests {
     }
 
     impl CapabilityHost for RecordingHost {
-        fn wake(&self, wait_key: &str, value: Value) -> usize {
+        fn wake(&self, wait_key: &str, value: Value) -> Result<usize, CapabilityHostError> {
             self.woken.lock().push((wait_key.to_string(), value));
-            1
+            Ok(1)
+        }
+    }
+
+    struct FailingHost;
+
+    impl CapabilityHost for FailingHost {
+        fn wake(&self, wait_key: &str, _value: Value) -> Result<usize, CapabilityHostError> {
+            Err(CapabilityHostError::Wake {
+                wait_key: wait_key.to_string(),
+                message: "injected wake failure".to_string(),
+            })
         }
     }
 
@@ -529,7 +550,7 @@ mod fire_due_tests {
             .expect("arm schedule");
         let host = RecordingHost::default();
 
-        let fired = fire_due(&store, &host, None);
+        let fired = fire_due(&store, &host, None).expect("wake accepted");
 
         assert_eq!(fired, 1);
         let woken = host.woken.lock();
@@ -545,9 +566,23 @@ mod fire_due_tests {
             .expect("arm schedule");
         let host = RecordingHost::default();
 
-        let fired = fire_due(&store, &host, None);
+        let fired = fire_due(&store, &host, None).expect("wake accepted");
 
         assert_eq!(fired, 0);
         assert!(host.woken.lock().is_empty());
+    }
+
+    #[test]
+    fn fire_due_preserves_armed_schedule_when_wake_fails() {
+        let store = ToolsStore::in_memory().expect("in-memory store");
+        store
+            .upsert_schedule(&armed_row("sched-fail", now_ms() - 1_000))
+            .expect("arm schedule");
+
+        assert!(matches!(
+            fire_due(&store, &FailingHost, None),
+            Err(CapabilityHostError::Wake { .. })
+        ));
+        assert_eq!(store.due_schedules(now_ms()).unwrap().len(), 1);
     }
 }

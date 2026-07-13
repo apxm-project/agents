@@ -243,7 +243,14 @@ pub async fn worker_loop(
                         attempts,
                     ),
                 };
-                crate::scheduler::park_registry::register(wait_key, waker);
+                if let Err(error) = crate::scheduler::park_registry::register(wait_key, waker) {
+                    state.set_first_error(RuntimeError::Scheduler {
+                        message: error.to_string(),
+                    });
+                    state.mark_done();
+                    drop(permit);
+                    break;
+                }
                 // Keep the watchdog from flagging this idle-by-design moment.
                 state.record_progress();
                 apxm_op!(
