@@ -15,9 +15,6 @@ version = "0.1.0"
 [chat]
 capability_discovery = true
 
-[compile]
-frontend = "typescript"
-
 [prompts]
 persona = "prompts/persona.md"
 
