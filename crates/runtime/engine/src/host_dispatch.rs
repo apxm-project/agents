@@ -10,8 +10,9 @@
 //! Named HostDispatchGateway because host I/O crosses a single agents-facing gateway.
 
 pub use apxm_core::types::host::{
-    AgentChannelHandle, HostDispatchError, HostDispatchGateway, HostPromptApproval,
-    HostProxyRequest, HostProxyResult, HostToolCall, HostToolError, HostToolResult, SpawnOffer,
+    AgentChannelHandle, HostDispatchError, HostDispatchGateway, HostEffectCommit,
+    HostEffectOutcome, HostEffectPrepare, HostPromptApproval, HostProxyRequest, HostProxyResult,
+    HostToolCall, HostToolError, HostToolResult, SpawnOffer,
 };
 
 /// A no-op gateway used in tests or when no host dispatch is configured.

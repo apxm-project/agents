@@ -4,7 +4,7 @@
  *
  * Domain-specific transforms:
  *   - normalize                – canonicalize graph structure
- *   - build-prompt             – materialize LLM template/input_names contracts
+ *   - build-prompt             – materialize LLM templates after explicit role validation
  *   - template-specialization  – fold known constants into templates
  *   - dead-context-elimination – remove context operands unused by templates
  *   - scheduling               – annotate with tier/cost/parallel-safe flags
@@ -48,23 +48,26 @@ def NormalizeAgentGraph : Pass<"normalize", "mlir::ModuleOp"> {
 def BuildPrompt : Pass<"build-prompt", "mlir::ModuleOp"> {
   let summary = "Build LLM operation prompt templates";
   let description = [{
-    Processes LLM operations and generates placeholder templates:
-    1. Empty template_str -> synthesized "{<name>}" templates referencing
-       each context operand by its `input_names` entry.
-    2. Missing or malformed `input_names` -> synthesized `ctx0`, `ctx1`, ...
+    Processes LLM operations after validating their prompt-channel contract:
+    1. Every context operand has an explicit valid `input_roles` entry that
+       stays positional with the context array.
+    2. Empty template_str -> synthesized "{<name>}" templates referencing
+       only `user` inputs by their `input_names` entry.
+    3. Missing or malformed `input_names` -> synthesized `ctx0`, `ctx1`, ...
        entries that match the context operand arity.
-    3. Optionally embed instruction prompts from config.
+    4. Optionally embed instruction prompts from config.
 
     Works with InstructionConfig system - does NOT replace runtime mapping,
-    just ensures LLM ops with context have a complete template/input_names
-    contract.
+    just materializes templates and names after explicit roles establish the
+    prompt channels. It never infers roles from legacy input names.
 
     This pass enables proper prompt construction for operations like:
       ask(user_input) -> ask("{user_input}", [user_input])
-      with the matching `input_names = ["user_input"]` attribute.
+      with matching `input_names = ["user_input"]` and
+      `input_roles = ["user"]` attributes.
 
-    Without this pass, empty template_str or missing input_names causes the
-    runtime to produce empty prompts or reject context-bearing LLM nodes.
+    Missing or malformed roles remain unchanged so compiler and artifact
+    boundaries reject an ambiguous context-bearing LLM node.
   }];
   let constructor = "mlir::ais::createBuildPromptPass()";
   let options = [
@@ -209,13 +212,15 @@ def TemplateSpecialization : Pass<"template-specialization", "mlir::ModuleOp"> {
     Example transformation:
       %const = ais.const_str "user_input_here"
       %r = ais.ask "Analyze {input}" [%const : !ais.token]
-           {input_names = ["input"]}
+           {input_names = ["input"], input_roles = ["user"]}
 
     Becomes:
       %r = ais.ask "Analyze user_input_here" []
 
     This eliminates runtime template interpolation and reduces context overhead.
-    Only applies when ALL template placeholders can be resolved to constants.
+    Only applies when ALL template placeholders resolve to `user` inputs with
+    constant values. System, dependency-only, tool-context, and control inputs
+    retain their protected channels even when their values are constants.
   }];
   let constructor = "mlir::ais::createTemplateSpecializationPass()";
 }
@@ -228,15 +233,15 @@ def DeadContextElimination : Pass<"dead-context-elimination", "mlir::ModuleOp"> 
 
     Example transformation:
       %r = ais.ask "Use {a} and {c}" [%a, %b, %c : !ais.token]
-           {input_names = ["a", "b", "c"]}
+           {input_names = ["a", "b", "c"], input_roles = ["user", "user", "system"]}
 
     Becomes:
       %r = ais.ask "Use {a} and {c}" [%a, %c : !ais.token]
-           {input_names = ["a", "c"]}
+           {input_names = ["a", "c"], input_roles = ["user", "system"]}
 
-    The operand list and input_names attribute are kept aligned. This pass
-    reduces token costs by eliminating unused context that would otherwise be
-    sent to the LLM.
+    The operand list, input_names, and explicit input_roles attributes remain
+    aligned. Only unreferenced `user` inputs are removed; protected inputs
+    remain present even when no template placeholder names them.
 
     Placeholder-free templates preserve their context operands because those
     operands still carry graph data dependencies and may be consumed by runtime
@@ -300,14 +305,15 @@ def SchemaNarrowing : Pass<"schema-narrowing", "mlir::ModuleOp"> {
 }
 
 def DspyOptimize : Pass<"dspy-optimize", "mlir::ModuleOp"> {
-  let summary = "Config-gated compiler prompt optimization";
+  let summary = "Fail-closed offline DSPy prompt optimization";
   let description = [{
     Invokes python3 -m apxm_dspy as a subprocess to run DSPy's prompt
     optimizers (MIPROv2, BootstrapFewShot, COPRO) on template strings.
 
-    The Rust pipeline injects this pass into O1/O2/O3 only when compiler-owned
-    prompt tuning configuration and training data are available. Without that
-    typed request, default O-levels stay deterministic and side-effect free.
+    Production compiler entry points reject this pass. The offline evaluation
+    owner supplies a complete typed request with training data and backend
+    evidence. Missing request fields, unavailable execution, and incomplete
+    optimizer responses fail the pass before any template changes publish.
   }];
   let constructor = "mlir::ais::createDspyOptimizePass()";
 }

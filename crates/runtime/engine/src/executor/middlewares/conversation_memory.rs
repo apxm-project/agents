@@ -6,15 +6,13 @@
 
 use crate::executor::{ExecutionContext, Next, OperationMiddleware, Result};
 use crate::memory::MemorySpace;
-use apxm_core::events::payload::{TurnBoundaryPayload, TurnDirection};
+use apxm_capability_iface::events::{ModelContextCallKind, ModelContextMetrics};
 use apxm_core::types::{
-    conversation::TurnInput,
     execution::Node,
     operations::AISOperationType,
     values::{Number, Value},
 };
 use async_trait::async_trait;
-use serde_json::{Map as JsonMap, Value as JsonValue};
 
 /// Session-memory key holding the running turn count.
 const TURN_COUNT_KEY: &str = "conversation:turn_count";
@@ -47,6 +45,7 @@ const DEFAULT_SUMMARY_KEY: &str = "conversation:summary";
 /// (constitution #2: program owns cognition); absent the marker, the ask is
 /// not a conversational turn.
 const TURN_MARKER_KEY: &str = "conversational_turn";
+
 /// Records each ASK answer into session memory so conversation history accrues
 /// without the program threading a transcript.
 #[derive(Debug, Clone, Default)]
@@ -85,32 +84,10 @@ impl OperationMiddleware for ConversationMemoryMiddleware {
         inputs: Vec<Value>,
         next: Next<'_>,
     ) -> Result<Value> {
-        let (inputs, turn_context) = Self::normalize_turn_input(node, inputs)?;
-        let scope = ctx.memory_scope().to_string();
-        let mem = ctx.memory();
-        let next_stored_turn = mem
-            .read_scoped(MemorySpace::Stm, &scope, TURN_COUNT_KEY)
-            .await
-            .ok()
-            .flatten()
-            .and_then(|value| value.as_i64())
-            .unwrap_or(0)
-            + 1;
-        let turn_number = ctx
-            .session_ledger()
-            .map(|ledger| ledger.turns_used())
-            .filter(|turn| *turn > 0)
-            .unwrap_or(next_stored_turn.max(1) as usize);
-        if let Some(emitter) = &ctx.event_emitter {
-            emitter.emit_turn_boundary(TurnBoundaryPayload {
-                turn_number,
-                direction: TurnDirection::Request,
-            });
-        }
-
         // pre_turn hooks fire before the turn's ask (gate-capable → fail-closed).
-        let supplement =
-            crate::executor::hook_driver::run_pre_turn_hooks(ctx, turn_context).await?;
+        // `None` context: this turn did not bind an additional structured
+        // payload for pre-turn hooks.
+        let supplement = crate::executor::hook_driver::run_pre_turn_hooks(ctx, None).await?;
         if let Some(text) = supplement {
             *ctx.pending_turn_prompt_supplement.write() = Some(text);
         }
@@ -119,20 +96,30 @@ impl OperationMiddleware for ConversationMemoryMiddleware {
             // post_ask + post_turn hooks fire with the reply (observe;).
             crate::executor::hook_driver::run_post_ask_hooks(ctx, answer).await;
             crate::executor::hook_driver::run_post_turn_hooks(ctx, answer).await;
+            let scope = ctx.memory_scope().to_string();
+            let mem = ctx.memory();
+            let next_turn = mem
+                .read_scoped(MemorySpace::Stm, &scope, TURN_COUNT_KEY)
+                .await
+                .ok()
+                .flatten()
+                .and_then(|v| v.as_i64())
+                .unwrap_or(0)
+                + 1;
             // Best-effort: a memory write failure must not fail the turn.
             let _ = mem
                 .write_scoped(
                     MemorySpace::Stm,
                     &scope,
                     TURN_COUNT_KEY.to_string(),
-                    Value::Number(Number::Integer(next_stored_turn)),
+                    Value::Number(Number::Integer(next_turn)),
                 )
                 .await;
             let _ = mem
                 .write_scoped(
                     MemorySpace::Stm,
                     &scope,
-                    format!("{TURN_PREFIX}{next_stored_turn}"),
+                    format!("{TURN_PREFIX}{next_turn}"),
                     Value::String(answer.clone()),
                 )
                 .await;
@@ -141,70 +128,18 @@ impl OperationMiddleware for ConversationMemoryMiddleware {
             // choke point measures the budget and, absent an author
             // override, folds older turns into the rolling summary. A
             // no-op when the policy is absent (opt-out dial).
-            Self::maybe_compact(ctx, node, &scope, answer, next_stored_turn).await;
-            if let Some(emitter) = &ctx.event_emitter {
-                emitter.emit_turn_boundary(TurnBoundaryPayload {
-                    turn_number,
-                    direction: TurnDirection::Response,
-                });
-            }
+            Self::maybe_compact(ctx, node, &scope, answer, next_turn).await;
         }
         result
     }
 }
 
 impl ConversationMemoryMiddleware {
-    fn normalize_turn_input(
-        node: &Node,
-        mut inputs: Vec<Value>,
-    ) -> Result<(Vec<Value>, Option<JsonMap<String, JsonValue>>)> {
-        let Some(index) = Self::turn_input_index(node, &inputs)? else {
-            return Ok((inputs, None));
-        };
-        let Some(raw_turn_input) = inputs.get(index).cloned() else {
-            return Ok((inputs, None));
-        };
-        let turn_input = TurnInput::try_from(raw_turn_input).map_err(|error| {
-            apxm_core::error::RuntimeError::Operation {
-                op_type: node.op_type,
-                message: format!("invalid conversational turn input: {error}"),
-            }
-        })?;
-        inputs[index] = Value::String(turn_input.message);
-        Ok((inputs, turn_input.context))
-    }
-
-    fn turn_input_index(node: &Node, inputs: &[Value]) -> Result<Option<usize>> {
-        if inputs.is_empty() {
-            return Ok(None);
-        }
-
-        let matches = inputs
-            .iter()
-            .enumerate()
-            .filter_map(|(index, value)| TurnInput::try_from(value).ok().map(|_| index))
-            .collect::<Vec<_>>();
-
-        match matches.as_slice() {
-            [index] => Ok(Some(*index)),
-            [] => Err(apxm_core::error::RuntimeError::Operation {
-                op_type: node.op_type,
-                message: "marked conversational ASK requires exactly one typed turn input"
-                    .to_string(),
-            }),
-            _ => Err(apxm_core::error::RuntimeError::Operation {
-                op_type: node.op_type,
-                message: "marked conversational ASK received multiple typed turn inputs"
-                    .to_string(),
-            }),
-        }
-    }
-
     /// Conversation-window compaction — the four control dials
     /// (default/configure/override/opt-out), all driven off the SAME
     /// node attributes the frontend stamps on the marked conversational-turn
     /// ASK (`conversational.py::_build_turn_flow`). Reuses
-    /// `context_stack::estimate_tokens`/`truncate_to_budget` (the shipped
+    /// `context_stack::estimate_tokens_with`/`truncate_to_budget_with` (the shipped
     /// subagent prompt-budget primitive) rather than re-deriving a chars/4
     /// heuristic, and the SAME direct-LLM-call primitive
     /// `hook_driver::host_llm_ask` uses (the session's own backend/router).
@@ -231,6 +166,56 @@ impl ConversationMemoryMiddleware {
             return;
         }
         let compact_at_tokens = compact_at_tokens_raw as usize;
+
+        let planning = match ctx.context_stack.as_deref() {
+            Some(stack) => match stack.planning_policy() {
+                Ok(policy) => policy.clone(),
+                Err(error) => {
+                    if let Some(emitter) = &ctx.event_emitter {
+                        emitter.emit_warning(
+                            "compaction_planning_unavailable",
+                            &format!("conversation compaction did not run: {error}"),
+                        );
+                    }
+                    return;
+                }
+            },
+            None => {
+                if let Some(emitter) = &ctx.event_emitter {
+                    emitter.emit_warning(
+                        "compaction_planning_unavailable",
+                        "conversation compaction did not run: context planning policy is not configured",
+                    );
+                }
+                return;
+            }
+        };
+        let output_tokens = match node
+            .attributes
+            .get(apxm_core::constants::graph::attrs::TOKEN_BUDGET)
+            .and_then(|value| value.as_u64())
+            .map(usize::try_from)
+        {
+            Some(Ok(tokens)) => tokens,
+            Some(Err(_)) => {
+                if let Some(emitter) = &ctx.event_emitter {
+                    emitter.emit_warning(
+                        "compaction_output_budget_unavailable",
+                        "conversation compaction did not run: output token budget exceeds the platform maximum",
+                    );
+                }
+                return;
+            }
+            None => {
+                if let Some(emitter) = &ctx.event_emitter {
+                    emitter.emit_warning(
+                        "compaction_output_budget_unavailable",
+                        "conversation compaction did not run: no resolved output token budget",
+                    );
+                }
+                return;
+            }
+        };
 
         // Fail-closed precedence: an author `post_turn` hook already owns
         // compaction — the runtime default must never double-compact.
@@ -260,7 +245,7 @@ impl ConversationMemoryMiddleware {
             .unwrap_or_else(|| DEFAULT_SUMMARY_KEY.to_string());
 
         let mem = ctx.memory();
-        let added = crate::context_stack::estimate_tokens(answer);
+        let added = crate::context_stack::estimate_tokens_with(planning.tokenizer, answer);
         let prior_tokens = mem
             .read_scoped(MemorySpace::Stm, scope, TOKEN_ESTIMATE_KEY)
             .await
@@ -326,18 +311,61 @@ impl ConversationMemoryMiddleware {
              summary that preserves decisions, facts, names, and open tasks. Be \
              terse.\n\n{folded_text}"
         );
+        let request = apxm_backends::LLMRequest::new(prompt)
+            .with_operation_type(AISOperationType::Ask)
+            .with_max_tokens(output_tokens);
         let request =
-            apxm_backends::LLMRequest::new(prompt).with_operation_type(AISOperationType::Ask);
+            match crate::executor::handlers::apply_llm_request_routing_from_node(request, node) {
+                Ok(request) => request,
+                Err(error) => {
+                    if let Some(emitter) = &ctx.event_emitter {
+                        emitter.emit_warning(
+                            "compaction_route_unavailable",
+                            &format!("conversation compaction did not dispatch: {error}"),
+                        );
+                    }
+                    return;
+                }
+            };
+        let admission = match crate::executor::handlers::llm::admit_model_egress(ctx, &request) {
+            Ok(admission) => admission,
+            Err(error) => {
+                if let Some(emitter) = &ctx.event_emitter {
+                    emitter.emit_warning(
+                        "compaction_budget_reservation_denied",
+                        &format!("conversation compaction did not dispatch: {error}"),
+                    );
+                }
+                return;
+            }
+        };
+        if let Some(emitter) = &ctx.event_emitter {
+            emitter.emit_model_context_metrics(&ModelContextMetrics::unplanned(
+                Some(node.id),
+                ModelContextCallKind::Compaction,
+            ));
+        }
         let summary_result = if let Some(router) = &ctx.model_router {
-            router.generate(request).await
+            router.generate(admission.request).await
         } else {
-            ctx.llm_registry.generate(request).await
+            ctx.llm_registry.generate(admission.request).await
         };
         // Fail-open budget enforcement is a correctness bug:
         // a summarization failure degrades to a warning, never panics or
         // fails the turn, and never silently no-ops without a trace.
         let summary = match summary_result {
-            Ok(response) => response.content,
+            Ok(response) => {
+                if let Err(error) = admission.reservation.reconcile(response.usage.total_tokens) {
+                    if let Some(emitter) = &ctx.event_emitter {
+                        emitter.emit_warning(
+                            "compaction_budget_reconciliation_failed",
+                            &format!("conversation compaction response was not admitted: {error}"),
+                        );
+                    }
+                    return;
+                }
+                response.content
+            }
             Err(e) => {
                 if let Some(emitter) = &ctx.event_emitter {
                     emitter.emit_warning(
@@ -349,7 +377,8 @@ impl ConversationMemoryMiddleware {
             }
         };
 
-        let new_summary_tokens = crate::context_stack::estimate_tokens(&summary);
+        let new_summary_tokens =
+            crate::context_stack::estimate_tokens_with(planning.tokenizer, &summary);
         let mut kept_tokens = 0usize;
         for i in (fold_through + 1)..=turn_no {
             if let Ok(Some(v)) = mem
@@ -357,7 +386,7 @@ impl ConversationMemoryMiddleware {
                 .await
                 && let Some(s) = v.as_str()
             {
-                kept_tokens += crate::context_stack::estimate_tokens(s);
+                kept_tokens += crate::context_stack::estimate_tokens_with(planning.tokenizer, s);
             }
         }
         let new_tokens = new_summary_tokens + kept_tokens;
@@ -404,72 +433,13 @@ impl ConversationMemoryMiddleware {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::aam::Aam;
-    use crate::capability::CapabilitySystem;
-    use crate::executor::events::ExecutionEventEmitter;
-    use crate::executor::hooks::{HookBinding, HookEvent, HookMode, HookRegistry};
-    use crate::executor::middleware::{BoxFuture, Next};
-    use crate::executor::session_ledger::SessionLedger;
-    use crate::executor::{ExecutionContext, OperationMiddleware};
-    use crate::memory::{MemoryConfig, MemorySystem};
-    use crate::typescript_tools::{TypeScriptHandlerBridge, TypeScriptHandlerRegistry};
-    use apxm_backends::LLMRegistry;
-    use apxm_core::constants::graph::attrs as graph_attrs;
-    use apxm_core::error::RuntimeError;
-    use apxm_core::types::conversation::TurnInput;
-    use apxm_core::types::{
-        HandlerDescriptor, HandlerKind, HandlerLanguage, HandlerManifest, HandlerSource,
-    };
-    use serde_json::json;
-    use std::collections::HashMap;
-    use std::sync::{Arc, Mutex, OnceLock};
 
     fn ask(marked: bool) -> Node {
-        ask_with_input_names(marked, &[])
-    }
-
-    fn ask_with_input_names(marked: bool, input_names: &[&str]) -> Node {
         let mut node = Node::new(1, AISOperationType::Ask);
         if marked {
             node.set_attribute(TURN_MARKER_KEY.to_string(), Value::String("true".into()));
         }
-        if !input_names.is_empty() {
-            node.set_attribute(
-                graph_attrs::INPUT_NAMES.to_string(),
-                Value::Array(
-                    input_names
-                        .iter()
-                        .map(|name| Value::String((*name).to_string()))
-                        .collect(),
-                ),
-            );
-        }
         node
-    }
-
-    static TERMINAL_CAPTURE_LOCK: Mutex<()> = Mutex::new(());
-
-    #[derive(Debug, Clone, PartialEq)]
-    struct TerminalCapture {
-        inputs: Vec<Value>,
-        supplement: Option<String>,
-    }
-
-    fn terminal_capture_slot() -> &'static Mutex<Option<TerminalCapture>> {
-        static SLOT: OnceLock<Mutex<Option<TerminalCapture>>> = OnceLock::new();
-        SLOT.get_or_init(|| Mutex::new(None))
-    }
-
-    fn clear_terminal_capture() {
-        *terminal_capture_slot().lock().unwrap() = None;
-    }
-
-    fn take_terminal_capture() -> TerminalCapture {
-        terminal_capture_slot()
-            .lock()
-            .unwrap()
-            .take()
-            .expect("terminal capture should be populated")
     }
 
     #[test]
@@ -484,276 +454,6 @@ mod tests {
         let inv = Node::new(2, AISOperationType::InvCap);
         assert!(!mw.applies_to(&inv));
     }
-
-    #[derive(Clone, Default)]
-    struct BoundaryCapturingEmitter {
-        boundaries: Arc<Mutex<Vec<TurnBoundaryPayload>>>,
-    }
-
-    impl ExecutionEventEmitter for BoundaryCapturingEmitter {
-        fn emit_llm_token(&self, _content: &str) {}
-        fn emit_tool_start(&self, _name: &str, _args: &HashMap<String, Value>) {}
-        fn emit_tool_end(&self, _name: &str, _result: &Value) {}
-
-        fn emit_turn_boundary(&self, payload: TurnBoundaryPayload) {
-            self.boundaries.lock().unwrap().push(payload);
-        }
-    }
-
-    async fn test_context(
-        emitter: Arc<BoundaryCapturingEmitter>,
-        ledger: Arc<SessionLedger>,
-    ) -> ExecutionContext {
-        let memory = Arc::new(
-            MemorySystem::new(MemoryConfig::in_memory_ltm())
-                .await
-                .expect("memory"),
-        );
-        let aam = Aam::new();
-        let capability_system = Arc::new(CapabilitySystem::with_aam(aam.clone()));
-        ExecutionContext::new(memory, Arc::new(LLMRegistry::new()), capability_system, aam)
-            .with_session_id("boundary-session".to_string())
-            .with_session_ledger(ledger)
-            .with_event_emitter(Some(emitter as Arc<dyn ExecutionEventEmitter>))
-    }
-
-    fn success_terminal<'a>(
-        _ctx: &'a ExecutionContext,
-        _node: &'a Node,
-        _inputs: Vec<Value>,
-    ) -> BoxFuture<'a, Result<Value>> {
-        Box::pin(async { Ok(Value::String("answer".to_string())) })
-    }
-
-    fn failure_terminal<'a>(
-        _ctx: &'a ExecutionContext,
-        node: &'a Node,
-        _inputs: Vec<Value>,
-    ) -> BoxFuture<'a, Result<Value>> {
-        Box::pin(async move {
-            Err(RuntimeError::Operation {
-                op_type: node.op_type,
-                message: "turn failed".to_string(),
-            })
-        })
-    }
-
-    fn capturing_terminal<'a>(
-        ctx: &'a ExecutionContext,
-        _node: &'a Node,
-        inputs: Vec<Value>,
-    ) -> BoxFuture<'a, Result<Value>> {
-        Box::pin(async move {
-            *terminal_capture_slot().lock().unwrap() = Some(TerminalCapture {
-                inputs: inputs.clone(),
-                supplement: ctx.pending_turn_prompt_supplement.read().clone(),
-            });
-            Ok(Value::String("answer".to_string()))
-        })
-    }
-
-    fn node_available() -> bool {
-        std::process::Command::new("node")
-            .arg("--version")
-            .output()
-            .is_ok()
-    }
-
-    async fn context_with_typescript_pre_turn_hook(hook_source: &str) -> ExecutionContext {
-        let handler_id = format!("sha256:{}", "a".repeat(64));
-        let registry = TypeScriptHandlerRegistry::from_manifest(HandlerManifest::new(vec![
-            HandlerDescriptor {
-                kind: HandlerKind::Hook,
-                language: HandlerLanguage::TypeScript,
-                handler_id: handler_id.clone(),
-                module: "hook_mod".to_string(),
-                qualname: "capture".to_string(),
-                name: "pre_turn_capture".to_string(),
-                source: HandlerSource {
-                    artifact_path: "handlers/pre_turn_hook.mjs".to_string(),
-                    content: hook_source.to_string(),
-                },
-                description: String::new(),
-                schema: json!({}),
-                read_only: None,
-                requires_approval: None,
-                event: Some("pre_turn".to_string()),
-                r#match: Some("*".to_string()),
-                mode: Some("observe".to_string()),
-            },
-        ]))
-        .expect("typescript hook manifest");
-
-        let hook_registry = Arc::new(HookRegistry::new());
-        hook_registry.register(HookBinding {
-            handler_id,
-            event: HookEvent::PreTurn,
-            match_glob: "*".to_string(),
-            mode: HookMode::Observe,
-        });
-
-        let emitter = Arc::new(BoundaryCapturingEmitter::default());
-        let ledger = Arc::new(SessionLedger::new(None, HashMap::new()));
-        let ctx = test_context(emitter, ledger)
-            .await
-            .with_typescript_handler_bridge(Arc::new(TypeScriptHandlerBridge::new(registry)))
-            .with_hook_registry(hook_registry);
-        ctx
-    }
-
-    #[tokio::test]
-    async fn emits_numbered_request_and_response_boundaries_per_successful_turn() {
-        let emitter = Arc::new(BoundaryCapturingEmitter::default());
-        let ledger = Arc::new(SessionLedger::new(None, HashMap::new()));
-        let ctx = test_context(emitter.clone(), ledger.clone()).await;
-        let middleware = ConversationMemoryMiddleware::new();
-        let node = ask(true);
-
-        for expected_turn in 1..=2 {
-            assert_eq!(ledger.charge_turn().expect("charge turn"), expected_turn);
-            let result = middleware
-                .around(
-                    &ctx,
-                    &node,
-                    Vec::new(),
-                    Next {
-                        chain: &[],
-                        idx: 0,
-                        terminal: success_terminal,
-                    },
-                )
-                .await
-                .expect("turn succeeds");
-            assert_eq!(result, Value::String("answer".to_string()));
-        }
-
-        let boundaries = emitter.boundaries.lock().unwrap().clone();
-        assert_eq!(boundaries.len(), 4);
-        assert_eq!(boundaries[0].turn_number, 1);
-        assert_eq!(boundaries[0].direction, TurnDirection::Request);
-        assert_eq!(boundaries[1].turn_number, 1);
-        assert_eq!(boundaries[1].direction, TurnDirection::Response);
-        assert_eq!(boundaries[2].turn_number, 2);
-        assert_eq!(boundaries[2].direction, TurnDirection::Request);
-        assert_eq!(boundaries[3].turn_number, 2);
-        assert_eq!(boundaries[3].direction, TurnDirection::Response);
-    }
-
-    #[tokio::test]
-    async fn failed_turn_emits_request_boundary_without_false_response() {
-        let emitter = Arc::new(BoundaryCapturingEmitter::default());
-        let ledger = Arc::new(SessionLedger::new(None, HashMap::new()));
-        assert_eq!(ledger.charge_turn().expect("charge turn"), 1);
-        let ctx = test_context(emitter.clone(), ledger).await;
-        let middleware = ConversationMemoryMiddleware::new();
-
-        let result = middleware
-            .around(
-                &ctx,
-                &ask(true),
-                Vec::new(),
-                Next {
-                    chain: &[],
-                    idx: 0,
-                    terminal: failure_terminal,
-                },
-            )
-            .await;
-        assert!(result.is_err());
-
-        let boundaries = emitter.boundaries.lock().unwrap().clone();
-        assert_eq!(boundaries.len(), 1);
-        assert_eq!(boundaries[0].turn_number, 1);
-        assert_eq!(boundaries[0].direction, TurnDirection::Request);
-    }
-
-    #[tokio::test]
-    async fn bare_string_turn_input_is_rejected() {
-        let _guard = TERMINAL_CAPTURE_LOCK.lock().unwrap();
-        clear_terminal_capture();
-
-        let emitter = Arc::new(BoundaryCapturingEmitter::default());
-        let ledger = Arc::new(SessionLedger::new(None, HashMap::new()));
-        let ctx = test_context(emitter, ledger).await;
-        let middleware = ConversationMemoryMiddleware::new();
-        let node = ask_with_input_names(true, &["request", "history"]);
-        let inputs = vec![
-            Value::String("hello".to_string()),
-            Value::String("recalled context".to_string()),
-        ];
-
-        let error = middleware
-            .around(
-                &ctx,
-                &node,
-                inputs,
-                Next {
-                    chain: &[],
-                    idx: 0,
-                    terminal: capturing_terminal,
-                },
-            )
-            .await
-            .expect_err("bare strings must not bypass the typed turn contract");
-
-        assert!(error.to_string().contains("exactly one typed turn input"));
-    }
-
-    #[tokio::test]
-    async fn structured_turn_input_context_reaches_pre_turn_hook_and_message_is_normalized() {
-        if !node_available() {
-            return;
-        }
-
-        let _guard = TERMINAL_CAPTURE_LOCK.lock().unwrap();
-        clear_terminal_capture();
-
-        let ctx = context_with_typescript_pre_turn_hook(
-            r#"
-export function capture(ctx) {
-  return ctx.prependSystem(String(ctx.context?.topic ?? "missing"));
-}
-"#,
-        )
-        .await;
-        let middleware = ConversationMemoryMiddleware::new();
-        let node = ask_with_input_names(true, &["request", "history"]);
-        let turn_input = TurnInput {
-            message: "hello".to_string(),
-            context: Some(JsonMap::from_iter([(
-                "topic".to_string(),
-                json!("priority-sync"),
-            )])),
-        };
-
-        let result = middleware
-            .around(
-                &ctx,
-                &node,
-                vec![
-                    Value::from(turn_input),
-                    Value::String("recalled context".to_string()),
-                ],
-                Next {
-                    chain: &[],
-                    idx: 0,
-                    terminal: capturing_terminal,
-                },
-            )
-            .await
-            .expect("turn succeeds");
-
-        assert_eq!(result, Value::String("answer".to_string()));
-        let capture = take_terminal_capture();
-        assert_eq!(
-            capture.inputs,
-            vec![
-                Value::String("hello".to_string()),
-                Value::String("recalled context".to_string()),
-            ]
-        );
-        assert_eq!(capture.supplement.as_deref(), Some("priority-sync"));
-    }
 }
 
 /// Conversation-window compaction — the four control dials
@@ -764,11 +464,21 @@ mod compaction_tests {
     use super::*;
     use crate::aam::Aam;
     use crate::capability::CapabilitySystem;
+    use crate::context_stack::{ContextPlanningPolicy, ContextStack, ContextTokenizer, ScopeRules};
     use crate::executor::ExecutionContext;
     use crate::memory::{MemoryConfig, MemorySystem};
     use apxm_backends::LLMRegistry;
     use apxm_backends::llm::backends::MockLLMBackend;
-    use std::sync::{Arc, Mutex};
+    use std::{
+        collections::{BTreeMap, HashMap},
+        path::PathBuf,
+        sync::{Arc, Mutex},
+    };
+
+    const FIXTURE_MODEL: &str = "conversation-memory-fixture-model";
+    const FIXTURE_BACKEND: &str = "conversation-memory-fixture-backend";
+    const FIXTURE_OUTPUT_TOKENS: i64 = 128;
+    const FIXTURE_CONTEXT_TOKENS: usize = 1_024;
 
     fn ask(marked: bool) -> Node {
         let mut node = Node::new(1, AISOperationType::Ask);
@@ -818,6 +528,39 @@ mod compaction_tests {
         }
     }
 
+    fn with_test_context_planning(mut ctx: ExecutionContext) -> ExecutionContext {
+        ctx.context_stack = Some(Arc::new(
+            ContextStack::new(
+                PathBuf::from("conversation-memory-test-context"),
+                Arc::new(HashMap::new()),
+                Arc::new(Vec::new()),
+            )
+            .with_planning_policy(ContextPlanningPolicy {
+                tokenizer: ContextTokenizer::Cl100kBase,
+                token_budget: FIXTURE_CONTEXT_TOKENS,
+                profiles: BTreeMap::from([(
+                    "fixture".to_string(),
+                    ScopeRules {
+                        upstream_depth: 0,
+                        upstream_frame_budget: 0,
+                        session_frame_budget: 0,
+                        include_upstream_prompts: false,
+                    },
+                )]),
+            }),
+        ));
+        ctx
+    }
+
+    fn register_fixture_mock_route(llm_registry: &LLMRegistry, backend: MockLLMBackend) {
+        llm_registry
+            .register(FIXTURE_BACKEND, backend)
+            .expect("register fixture mock backend");
+        llm_registry
+            .set_model_route(FIXTURE_MODEL, FIXTURE_BACKEND)
+            .expect("register fixture model route");
+    }
+
     async fn test_ctx(emitter: Arc<CompactionCapturingEmitter>) -> ExecutionContext {
         let memory = Arc::new(
             MemorySystem::new(MemoryConfig::in_memory_ltm())
@@ -827,15 +570,15 @@ mod compaction_tests {
         let aam = Aam::new();
         let capability_system = Arc::new(CapabilitySystem::with_aam(aam.clone()));
         let llm_registry = Arc::new(LLMRegistry::new());
-        llm_registry
-            .register("mock", MockLLMBackend::static_response("ROLLING SUMMARY"))
-            .expect("register mock backend");
-        llm_registry
-            .set_default("mock")
-            .expect("set default backend");
+        register_fixture_mock_route(
+            &llm_registry,
+            MockLLMBackend::static_response("ROLLING SUMMARY"),
+        );
 
-        ExecutionContext::new(memory, llm_registry, capability_system, aam).with_event_emitter(
-            Some(emitter as Arc<dyn crate::executor::events::ExecutionEventEmitter>),
+        with_test_context_planning(
+            ExecutionContext::new(memory, llm_registry, capability_system, aam).with_event_emitter(
+                Some(emitter as Arc<dyn crate::executor::events::ExecutionEventEmitter>),
+            ),
         )
     }
 
@@ -857,6 +600,18 @@ mod compaction_tests {
         node.set_attribute(
             COMPACTION_OVERRIDE_PRESENT_ATTR.to_string(),
             Value::Bool(override_present),
+        );
+        node.set_attribute(
+            apxm_core::constants::graph::attrs::MODEL.to_string(),
+            Value::String(FIXTURE_MODEL.to_string()),
+        );
+        node.set_attribute(
+            apxm_core::constants::graph::attrs::BACKEND.to_string(),
+            Value::String(FIXTURE_BACKEND.to_string()),
+        );
+        node.set_attribute(
+            apxm_core::constants::graph::attrs::TOKEN_BUDGET.to_string(),
+            Value::Number(Number::Integer(FIXTURE_OUTPUT_TOKENS)),
         );
         node
     }
@@ -903,6 +658,59 @@ mod compaction_tests {
                 .unwrap()
                 .is_none(),
             "opt-out must not even start measuring"
+        );
+    }
+
+    #[tokio::test]
+    async fn missing_planning_evidence_prevents_compaction_dispatch() {
+        let emitter = Arc::new(CompactionCapturingEmitter::default());
+        let mut ctx = test_ctx(emitter.clone()).await;
+        ctx.context_stack = None;
+        let node = marked_ask_with_compaction(1, 1, false);
+
+        run_turns(&ctx, &node, "sess-missing-planning", &["answer"]).await;
+
+        assert!(emitter.compacted.lock().unwrap().is_empty());
+        assert!(
+            emitter
+                .warnings
+                .lock()
+                .unwrap()
+                .iter()
+                .any(|(code, _)| code == "compaction_planning_unavailable")
+        );
+    }
+
+    #[tokio::test]
+    async fn missing_output_token_evidence_prevents_compaction_dispatch() {
+        let emitter = Arc::new(CompactionCapturingEmitter::default());
+        let ctx = test_ctx(emitter.clone()).await;
+        let mut node = marked_ask_with_compaction(1, 1, false);
+        node.attributes
+            .remove(apxm_core::constants::graph::attrs::TOKEN_BUDGET);
+
+        run_turns(&ctx, &node, "sess-missing-output-budget", &["answer"]).await;
+
+        assert!(emitter.compacted.lock().unwrap().is_empty());
+        assert!(
+            emitter
+                .warnings
+                .lock()
+                .unwrap()
+                .iter()
+                .any(|(code, _)| code == "compaction_output_budget_unavailable")
+        );
+        assert!(
+            ctx.memory()
+                .read_scoped(
+                    MemorySpace::Stm,
+                    "sess-missing-output-budget",
+                    TOKEN_ESTIMATE_KEY,
+                )
+                .await
+                .unwrap()
+                .is_none(),
+            "without resolved output evidence, compaction must not begin token measurement"
         );
     }
 
@@ -1077,19 +885,15 @@ mod compaction_tests {
         let aam = Aam::new();
         let capability_system = Arc::new(CapabilitySystem::with_aam(aam.clone()));
         let llm_registry = Arc::new(LLMRegistry::new());
-        llm_registry
-            .register(
-                "mock",
-                MockLLMBackend::new().always_fail("simulated backend outage"),
-            )
-            .expect("register failing mock backend");
-        llm_registry
-            .set_default("mock")
-            .expect("set default backend");
-        let ctx = ExecutionContext::new(memory, llm_registry, capability_system, aam)
-            .with_event_emitter(Some(
-                emitter.clone() as Arc<dyn crate::executor::events::ExecutionEventEmitter>
-            ));
+        register_fixture_mock_route(
+            &llm_registry,
+            MockLLMBackend::new().always_fail("simulated backend outage"),
+        );
+        let ctx = with_test_context_planning(
+            ExecutionContext::new(memory, llm_registry, capability_system, aam).with_event_emitter(
+                Some(emitter.clone() as Arc<dyn crate::executor::events::ExecutionEventEmitter>),
+            ),
+        );
 
         let node = marked_ask_with_compaction(300, 2, false);
         let scope = "sess-llm-failure";
@@ -1159,21 +963,21 @@ mod compaction_tests {
         let aam = Aam::new();
         let capability_system = Arc::new(CapabilitySystem::with_aam(aam.clone()));
         let llm_registry = Arc::new(LLMRegistry::new());
-        llm_registry
-            .register("mock", MockLLMBackend::static_response("ROLLING SUMMARY"))
-            .expect("register mock backend");
-        llm_registry
-            .set_default("mock")
-            .expect("set default backend");
+        register_fixture_mock_route(
+            &llm_registry,
+            MockLLMBackend::static_response("ROLLING SUMMARY"),
+        );
         let memory_before = Arc::new(
             MemorySystem::new(MemoryConfig::with_ltm_path(ltm_path.clone()))
                 .await
                 .expect("durable-LTM memory"),
         );
-        let ctx_before = ExecutionContext::new(memory_before, llm_registry, capability_system, aam)
-            .with_event_emitter(Some(
-                emitter.clone() as Arc<dyn crate::executor::events::ExecutionEventEmitter>
-            ));
+        let ctx_before = with_test_context_planning(
+            ExecutionContext::new(memory_before, llm_registry, capability_system, aam)
+                .with_event_emitter(Some(
+                    emitter.clone() as Arc<dyn crate::executor::events::ExecutionEventEmitter>
+                )),
+        );
         let node = marked_ask_with_compaction(300, 2, false);
         let answer = "The quarterly report shows revenue growth across every region and segment. "
             .repeat(20);

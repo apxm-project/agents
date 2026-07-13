@@ -15,15 +15,14 @@
  *        {input_names = ["user_input"], input_roles = ["user"]} : !ais.token
  *
  * Names are taken from the existing `input_names` attribute when present;
- * otherwise the pass falls back to defaults `ctx0`, `ctx1`, ... and stamps
- * a fresh positional contract. When roles are absent, the legacy `__system`
- * name becomes `system` and every other input becomes `user`. Explicit role
- * vectors must be valid and positional; malformed vectors are preserved for
- * frontend/AIR validation rather than guessed.
+ * otherwise the pass falls back to defaults `ctx0`, `ctx1`, ... . Prompt
+ * roles are an explicit positional contract: this pass never infers them
+ * from names. Operations with missing or malformed role vectors remain
+ * unchanged so compiler and artifact boundary validation can reject them.
  *
  * This pass works alongside the InstructionConfig system:
- * - BuildPrompt: Ensures LLM ops with context have a template/input_names/
- *   input_roles contract the runtime can execute
+ * - BuildPrompt: Materializes templates and names only after an explicit
+ *   `input_roles` contract establishes prompt-channel semantics
  * - InstructionConfig: Maps operation types to system prompts at runtime
  */
 
@@ -104,8 +103,19 @@ private:
       return false;
     }
 
-    OpBuilder builder(op);
     const unsigned contextSize = op.getContext().size();
+
+    const bool hasExplicitInputRoles =
+        placeholders::hasInputRoles(op.getOperation());
+    auto inputRoles = placeholders::readInputRoles(op.getOperation());
+    if (!hasExplicitInputRoles ||
+        !placeholders::inputRolesAreValid(inputRoles, contextSize)) {
+      APXM_AIS_DEBUG("  input_roles must be explicit, valid, and positional; "
+                     "skipping prompt synthesis");
+      return false;
+    }
+
+    OpBuilder builder(op);
 
     // Source the names from the existing input_names attribute if present,
     // otherwise synthesize defaults (ctx0..ctxN-1).
@@ -134,24 +144,6 @@ private:
     bool modified = false;
     if (needsInputNamesWrite) {
       placeholders::writeInputNames(op.getOperation(), nameRefs, builder);
-      modified = true;
-    }
-
-    const bool hasExplicitInputRoles =
-        placeholders::hasInputRoles(op.getOperation());
-    auto inputRoles = placeholders::readInputRoles(op.getOperation());
-    if (hasExplicitInputRoles &&
-        !placeholders::inputRolesAreValid(inputRoles, contextSize)) {
-      APXM_AIS_DEBUG("  input_roles mismatch or unsupported value; preserving "
-                     "context and skipping prompt synthesis");
-      return modified;
-    }
-
-    if (!hasExplicitInputRoles) {
-      inputRoles.reserve(contextSize);
-      for (llvm::StringRef inputName : nameRefs)
-        inputRoles.push_back(placeholders::roleForLegacyInputName(inputName));
-      placeholders::writeInputRoles(op.getOperation(), inputRoles, builder);
       modified = true;
     }
 
@@ -191,7 +183,7 @@ private:
                     << op->getName() << " with " << contextSize
                     << " context operands");
     } else {
-      APXM_AIS_DEBUG("  Prompt/input_names contract already materialized");
+      APXM_AIS_DEBUG("  Prompt input contract already materialized");
     }
 
     return modified;

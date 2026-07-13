@@ -13,11 +13,17 @@
 //! deterministic skill-compilation case). When `from_node` is not in the graph,
 //! seed construction returns `None` and the caller falls back to a full re-run.
 
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeSet, HashMap, HashSet};
 use std::fmt;
 
+use apxm_core::constants::graph::attrs;
+use apxm_core::events::payload::CapabilityEffectDispatchPath;
 use apxm_core::types::operations::AISOperationType;
 use apxm_core::types::{ExecutionDag, NodeId, TokenId, Value};
+
+use crate::effect_receipts::{
+    ExpectedCapabilityEffect, lookup_replayable_effect, verify_replayable_effect,
+};
 
 /// A partial replay request cannot preserve the original execution boundary.
 ///
@@ -40,6 +46,16 @@ pub enum ReplayRejection {
         node_id: NodeId,
         operation: AISOperationType,
     },
+    /// A skipped capability node did not carry exact durable replay authority.
+    InvalidCapabilityEffectEvidence { node_id: NodeId, reason: String },
+    /// A declared edge cannot be normalized into an executable replay boundary.
+    InvalidReplayEdge {
+        from_node: NodeId,
+        to_node: NodeId,
+        token_id: TokenId,
+    },
+    /// The replayed portion of the graph is not a DAG after completed nodes are removed.
+    CyclicReplayTopology,
 }
 
 impl fmt::Display for ReplayRejection {
@@ -62,6 +78,21 @@ impl fmt::Display for ReplayRejection {
                 formatter,
                 "partial replay cannot skip completed node {node_id} ({operation:?}) without persisted effect and approval evidence"
             ),
+            Self::InvalidCapabilityEffectEvidence { node_id, reason } => write!(
+                formatter,
+                "partial replay cannot reuse completed capability node {node_id}: {reason}"
+            ),
+            Self::InvalidReplayEdge {
+                from_node,
+                to_node,
+                token_id,
+            } => write!(
+                formatter,
+                "partial replay cannot normalize edge {from_node}->{to_node} carrying token {token_id}"
+            ),
+            Self::CyclicReplayTopology => {
+                formatter.write_str("partial replay has a cyclic active dependency topology")
+            }
         }
     }
 }
@@ -115,29 +146,20 @@ impl ReplaySeed {
             .filter(|id| !replayed_nodes.contains(id))
             .collect();
 
-        // The replay boundary is every token that a completed node produces and a
-        // replayed node consumes. Seed those tokens with their prior values so the
-        // sub-DAG observes identical inputs.
-        let completed_outputs: HashSet<TokenId> = dag
-            .nodes
+        // The replay boundary is every declared typed edge from a completed node
+        // into a replayed node. Using the edge relation rather than matching
+        // node input/output lists preserves effect and control ordering too.
+        let seed_tokens = dag
+            .edges
             .iter()
-            .filter(|node| completed_nodes.contains(&node.id))
-            .flat_map(|node| node.output_tokens.iter().copied())
-            .collect();
-
-        let replayed_inputs: HashSet<TokenId> = dag
-            .nodes
-            .iter()
-            .filter(|node| replayed_nodes.contains(&node.id))
-            .flat_map(|node| node.input_tokens.iter().copied())
-            .collect();
-
-        let seed_tokens = completed_outputs
-            .intersection(&replayed_inputs)
+            .filter(|edge| {
+                completed_nodes.contains(&edge.from) && replayed_nodes.contains(&edge.to)
+            })
+            .map(|edge| edge.token_id)
             .filter_map(|token_id| {
                 prior_token_values
-                    .get(token_id)
-                    .map(|value| (*token_id, value.clone()))
+                    .get(&token_id)
+                    .map(|value| (token_id, value.clone()))
             })
             .collect();
 
@@ -159,18 +181,13 @@ impl ReplaySeed {
     /// Return every token whose prior value is required at the replay boundary
     /// but was not captured by the source execution.
     pub fn missing_boundary_tokens(&self, dag: &ExecutionDag) -> Vec<TokenId> {
-        let completed_outputs: HashSet<TokenId> = dag
-            .nodes
-            .iter()
-            .filter(|node| self.completed_nodes.contains(&node.id))
-            .flat_map(|node| node.output_tokens.iter().copied())
-            .collect();
         let mut missing = dag
-            .nodes
+            .edges
             .iter()
-            .filter(|node| self.replayed_nodes.contains(&node.id))
-            .flat_map(|node| node.input_tokens.iter().copied())
-            .filter(|token_id| completed_outputs.contains(token_id))
+            .filter(|edge| {
+                self.completed_nodes.contains(&edge.from) && self.replayed_nodes.contains(&edge.to)
+            })
+            .map(|edge| edge.token_id)
             .filter(|token_id| !self.seed_tokens.contains_key(token_id))
             .collect::<Vec<_>>();
         missing.sort_unstable();
@@ -186,15 +203,28 @@ impl ReplaySeed {
     /// nondeterministic results yet, so only a strict allow-list of inert
     /// dataflow operations may be skipped. A caller may choose a full run
     /// instead.
-    pub fn validate_partial_replay(&self, dag: &ExecutionDag) -> Result<(), ReplayRejection> {
+    pub fn validate_partial_replay(
+        &self,
+        dag: &ExecutionDag,
+        metadata: &HashMap<String, String>,
+    ) -> Result<(), ReplayRejection> {
         let missing_tokens = self.missing_boundary_tokens(dag);
         if !missing_tokens.is_empty() {
             return Err(ReplayRejection::IncompleteBoundary { missing_tokens });
         }
 
-        if let Some(node) = dag.nodes.iter().find(|node| {
-            self.completed_nodes.contains(&node.id) && !operation_is_safe_to_skip(node.op_type)
-        }) {
+        for node in dag
+            .nodes
+            .iter()
+            .filter(|node| self.completed_nodes.contains(&node.id))
+        {
+            if operation_is_safe_to_skip(node.op_type) {
+                continue;
+            }
+            if node.op_type == AISOperationType::InvCap {
+                validate_replayable_invocation(node, metadata)?;
+                continue;
+            }
             return Err(ReplayRejection::UnsafeCompletedOperation {
                 node_id: node.id,
                 operation: node.op_type,
@@ -202,6 +232,105 @@ impl ReplaySeed {
         }
 
         Ok(())
+    }
+
+    /// Return the declaration-stable topological order for the portion of a
+    /// DAG that must execute during a sequential fallback.
+    ///
+    /// Every declared data, effect, and control edge remains an ordering
+    /// constraint. Edges from replay-completed nodes into active nodes must be
+    /// represented by seeded boundary tokens; an active node may never feed a
+    /// replay-completed node.
+    pub fn normalized_sequential_order(
+        dag: &ExecutionDag,
+        replay: Option<&Self>,
+    ) -> Result<Vec<NodeId>, ReplayRejection> {
+        let declaration_indexes: HashMap<_, _> = dag
+            .nodes
+            .iter()
+            .enumerate()
+            .map(|(index, node)| (node.id, index))
+            .collect();
+        let active_nodes: HashSet<_> = dag
+            .nodes
+            .iter()
+            .map(|node| node.id)
+            .filter(|node_id| replay.is_none_or(|seed| seed.replayed_nodes.contains(node_id)))
+            .collect();
+        let mut indegrees: HashMap<NodeId, usize> = active_nodes
+            .iter()
+            .copied()
+            .map(|node_id| (node_id, 0))
+            .collect();
+        let mut dependents: HashMap<NodeId, Vec<NodeId>> = HashMap::new();
+
+        for edge in &dag.edges {
+            let from_known = declaration_indexes.contains_key(&edge.from);
+            let to_known = declaration_indexes.contains_key(&edge.to);
+            if !from_known || !to_known {
+                return Err(ReplayRejection::InvalidReplayEdge {
+                    from_node: edge.from,
+                    to_node: edge.to,
+                    token_id: edge.token_id,
+                });
+            }
+
+            let from_active = active_nodes.contains(&edge.from);
+            let to_active = active_nodes.contains(&edge.to);
+            match (from_active, to_active) {
+                (true, true) => {
+                    *indegrees
+                        .get_mut(&edge.to)
+                        .expect("active destination has an indegree entry") += 1;
+                    dependents.entry(edge.from).or_default().push(edge.to);
+                }
+                (false, true) => {
+                    if replay.is_none_or(|seed| !seed.seed_tokens.contains_key(&edge.token_id)) {
+                        return Err(ReplayRejection::InvalidReplayEdge {
+                            from_node: edge.from,
+                            to_node: edge.to,
+                            token_id: edge.token_id,
+                        });
+                    }
+                }
+                (true, false) => {
+                    return Err(ReplayRejection::InvalidReplayEdge {
+                        from_node: edge.from,
+                        to_node: edge.to,
+                        token_id: edge.token_id,
+                    });
+                }
+                (false, false) => {}
+            }
+        }
+
+        let mut ready: BTreeSet<(usize, NodeId)> = indegrees
+            .iter()
+            .filter_map(|(&node_id, &indegree)| {
+                (indegree == 0).then_some((declaration_indexes[&node_id], node_id))
+            })
+            .collect();
+        let mut order = Vec::with_capacity(active_nodes.len());
+
+        while let Some(&(declaration_index, node_id)) = ready.iter().next() {
+            ready.remove(&(declaration_index, node_id));
+            order.push(node_id);
+            for dependent in dependents.get(&node_id).into_iter().flatten() {
+                let indegree = indegrees
+                    .get_mut(dependent)
+                    .expect("active dependent has an indegree entry");
+                *indegree = indegree.saturating_sub(1);
+                if *indegree == 0 {
+                    ready.insert((declaration_indexes[dependent], *dependent));
+                }
+            }
+        }
+
+        if order.len() != active_nodes.len() {
+            return Err(ReplayRejection::CyclicReplayTopology);
+        }
+
+        Ok(order)
     }
 
     /// Number of nodes that will actually execute on the replay.
@@ -260,7 +389,7 @@ impl ReplaySeed {
             .collect();
         let seed = Self::compute(dag, from_node, &prior_values)
             .ok_or(ReplayRejection::UnknownRestartNode { node_id: from_node })?;
-        seed.validate_partial_replay(dag)?;
+        seed.validate_partial_replay(dag, metadata)?;
         Ok(Some(seed))
     }
 }
@@ -280,19 +409,64 @@ fn operation_is_safe_to_skip(operation: AISOperationType) -> bool {
     )
 }
 
-/// Collect `root` plus every node reachable from it by following data edges
-/// (token producer -> consumer). Used to decide which nodes a partial replay
+/// Verify source-bound durable evidence before a completed `INV_CAP` is skipped.
+fn validate_replayable_invocation(
+    node: &apxm_core::types::Node,
+    metadata: &HashMap<String, String>,
+) -> Result<(), ReplayRejection> {
+    let source_execution_id = metadata
+        .get(crate::metadata_keys::REPLAY_SOURCE_EXECUTION_ID)
+        .filter(|value| !value.is_empty())
+        .ok_or_else(|| ReplayRejection::InvalidCapabilityEffectEvidence {
+            node_id: node.id,
+            reason: "replay source execution identity is missing".to_string(),
+        })?;
+    let capability_binding = node
+        .attributes
+        .get(attrs::CAPABILITY)
+        .and_then(Value::as_string)
+        .filter(|value| !value.is_empty())
+        .ok_or_else(|| ReplayRejection::InvalidCapabilityEffectEvidence {
+            node_id: node.id,
+            reason: "capability binding is absent from the recompiled node".to_string(),
+        })?;
+    let expected = ExpectedCapabilityEffect {
+        node_id: node.id,
+        capability_binding,
+        dispatch_path: CapabilityEffectDispatchPath::InvCap,
+    };
+    let evidence = lookup_replayable_effect(metadata, &expected)
+        .map_err(|reason| ReplayRejection::InvalidCapabilityEffectEvidence {
+            node_id: node.id,
+            reason,
+        })?
+        .ok_or_else(|| ReplayRejection::InvalidCapabilityEffectEvidence {
+            node_id: node.id,
+            reason: "durable host-effect evidence is missing".to_string(),
+        })?;
+    verify_replayable_effect(&evidence, &expected).map_err(|reason| {
+        ReplayRejection::InvalidCapabilityEffectEvidence {
+            node_id: node.id,
+            reason,
+        }
+    })?;
+    if evidence.receipt.execution_id != *source_execution_id {
+        return Err(ReplayRejection::InvalidCapabilityEffectEvidence {
+            node_id: node.id,
+            reason: "receipt execution identity does not match the replay source".to_string(),
+        });
+    }
+    Ok(())
+}
+
+/// Collect `root` plus every node reachable from it by following declared
+/// data, effect, and control edges. Used to decide which nodes a partial replay
 /// re-executes.
 fn descendants_inclusive(dag: &ExecutionDag, root: NodeId) -> HashSet<NodeId> {
-    // token_id -> consumer node ids
-    let mut consumers: HashMap<TokenId, Vec<NodeId>> = HashMap::new();
-    for node in &dag.nodes {
-        for &token_id in &node.input_tokens {
-            consumers.entry(token_id).or_default().push(node.id);
-        }
+    let mut consumers: HashMap<NodeId, Vec<NodeId>> = HashMap::new();
+    for edge in &dag.edges {
+        consumers.entry(edge.from).or_default().push(edge.to);
     }
-    let node_outputs: HashMap<NodeId, &Vec<TokenId>> =
-        dag.nodes.iter().map(|n| (n.id, &n.output_tokens)).collect();
 
     let mut reachable = HashSet::new();
     let mut stack = vec![root];
@@ -300,14 +474,10 @@ fn descendants_inclusive(dag: &ExecutionDag, root: NodeId) -> HashSet<NodeId> {
         if !reachable.insert(node_id) {
             continue;
         }
-        if let Some(outputs) = node_outputs.get(&node_id) {
-            for token_id in *outputs {
-                if let Some(downstream) = consumers.get(token_id) {
-                    for &consumer in downstream {
-                        if !reachable.contains(&consumer) {
-                            stack.push(consumer);
-                        }
-                    }
+        if let Some(downstream) = consumers.get(&node_id) {
+            for &consumer in downstream {
+                if !reachable.contains(&consumer) {
+                    stack.push(consumer);
                 }
             }
         }
@@ -318,8 +488,19 @@ fn descendants_inclusive(dag: &ExecutionDag, root: NodeId) -> HashSet<NodeId> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use apxm_capability_iface::{
+        CapabilityEffectReplayEvidence, CapabilityEffectReplayEvidenceEnvelope,
+        HostEffectPrepareEvidence, capability_effect_idempotency_key_digest,
+    };
+    use apxm_core::events::payload::{
+        CapabilityEffectAdmissionKind, CapabilityEffectApprovalStatus,
+        CapabilityEffectIdempotencyProof, CapabilityEffectImplementationKind,
+        CapabilityEffectReceiptPayload, CapabilityEffectReceiptStatus,
+    };
+    use apxm_core::types::host::{HostEffectCommit, HostEffectOutcome};
     use apxm_core::types::operations::AISOperationType;
     use apxm_core::types::{DependencyType, Edge, ExecutionDag, Node, NodeMetadata};
+    use ed25519_dalek::{Signer, SigningKey};
     use std::collections::HashMap as Map;
 
     fn node(id: NodeId, inputs: Vec<TokenId>, outputs: Vec<TokenId>) -> Node {
@@ -429,6 +610,36 @@ mod tests {
     }
 
     #[test]
+    fn replay_normalizes_control_and_effect_edges() {
+        let mut dag = ExecutionDag::new();
+        dag.add_node(node(2, vec![], vec![20])).unwrap();
+        dag.add_node(node(1, vec![], vec![10])).unwrap();
+        dag.add_node(node(3, vec![], vec![30])).unwrap();
+        dag.add_edge(Edge::new(1, 2, 10, DependencyType::Control))
+            .unwrap();
+        dag.add_edge(Edge::new(2, 3, 20, DependencyType::Effect))
+            .unwrap();
+
+        let seed = ReplaySeed::compute(
+            &dag,
+            2,
+            &Map::from([(10, Value::String("control-frontier".to_string()))]),
+        )
+        .expect("declared restart node");
+
+        assert_eq!(seed.replayed_nodes, HashSet::from([2, 3]));
+        assert_eq!(
+            seed.seed_tokens.get(&10),
+            Some(&Value::String("control-frontier".to_string()))
+        );
+        assert_eq!(
+            ReplaySeed::normalized_sequential_order(&dag, Some(&seed))
+                .expect("typed replay topology"),
+            vec![2, 3]
+        );
+    }
+
+    #[test]
     fn checked_replay_rejects_an_incomplete_data_boundary() {
         let dag = chain_dag();
         let metadata = HashMap::from([
@@ -454,6 +665,10 @@ mod tests {
     fn checked_replay_rejects_skipping_capability_effects_without_a_receipt() {
         let mut dag = chain_dag();
         dag.nodes[0].op_type = AISOperationType::InvCap;
+        dag.nodes[0].attributes.insert(
+            attrs::CAPABILITY.to_string(),
+            Value::String("calendar.write".to_string()),
+        );
         let metadata = HashMap::from([
             (
                 crate::metadata_keys::REPLAY_FROM_NODE.to_string(),
@@ -463,14 +678,119 @@ mod tests {
                 crate::metadata_keys::REPLAY_TOKEN_VALUES.to_string(),
                 serde_json::json!({"10": "prior-capability-output"}).to_string(),
             ),
+            (
+                crate::metadata_keys::REPLAY_SOURCE_EXECUTION_ID.to_string(),
+                "execution-1".to_string(),
+            ),
         ]);
 
+        let error = ReplaySeed::from_metadata_checked(&metadata, &dag)
+            .expect_err("missing durable evidence must fail closed");
+        assert!(matches!(
+            error,
+            ReplayRejection::InvalidCapabilityEffectEvidence { node_id: 1, .. }
+        ));
+    }
+
+    #[test]
+    fn checked_replay_accepts_verified_host_effect_evidence() {
+        let mut dag = chain_dag();
+        dag.nodes[0].op_type = AISOperationType::InvCap;
+        dag.nodes[0].attributes.insert(
+            attrs::CAPABILITY.to_string(),
+            Value::String("calendar.write".to_string()),
+        );
+        let request_digest = "a".repeat(64);
+        let effect_digest = "b".repeat(64);
+        let idempotency_key = "execution-1:invocation-1".to_string();
+        let prepare = HostEffectPrepareEvidence {
+            execution_id: "execution-1".into(),
+            graph_id: "graph-1".into(),
+            node_id: 1,
+            invocation_id: "invocation-1".into(),
+            call_id: "call-1".into(),
+            capability_id: "calendar.write".into(),
+            host_op: "write".into(),
+            capability_binding: "calendar.write".into(),
+            implementation_ref: "blake3:implementation".into(),
+            request_digest: request_digest.clone(),
+            idempotency_key: idempotency_key.clone(),
+            grant_refs: vec!["grant-1".into()],
+            approval_refs: vec!["approval-1".into()],
+        };
+        let signing_key = SigningKey::from_bytes(&[7; 32]);
+        let signature = signing_key.sign(effect_digest.as_bytes());
+        let encode_hex =
+            |bytes: &[u8]| -> String { bytes.iter().map(|byte| format!("{byte:02x}")).collect() };
+        let commit = HostEffectCommit {
+            execution_id: "execution-1".into(),
+            graph_id: "graph-1".into(),
+            node_id: 1,
+            invocation_id: "invocation-1".into(),
+            call_id: "call-1".into(),
+            request_digest: request_digest.clone(),
+            idempotency_key: idempotency_key.clone(),
+            effect_digest: effect_digest.clone(),
+            effect_outcome: HostEffectOutcome::Committed,
+            host_key_id: "host-key-1".into(),
+            signature: encode_hex(&signature.to_bytes()),
+        };
+        let receipt = CapabilityEffectReceiptPayload {
+            receipt_id: "receipt-1".into(),
+            execution_id: "execution-1".into(),
+            node_id: 1,
+            invocation_id: "invocation-1".into(),
+            capability_binding: "calendar.write".into(),
+            dispatch_path: CapabilityEffectDispatchPath::InvCap,
+            implementation_kind: CapabilityEffectImplementationKind::Host,
+            implementation_ref: "blake3:implementation".into(),
+            request_digest,
+            admission_kind: CapabilityEffectAdmissionKind::Grant,
+            grant_id: Some("grant-1".into()),
+            approval_status: Some(CapabilityEffectApprovalStatus::Approved),
+            approval_id: Some("approval-1".into()),
+            idempotency_proof: CapabilityEffectIdempotencyProof::TransactionVerified,
+            idempotency_key_digest: capability_effect_idempotency_key_digest(&idempotency_key),
+            effect_ref: effect_digest,
+            status: CapabilityEffectReceiptStatus::Committed,
+        };
+        let evidence = CapabilityEffectReplayEvidenceEnvelope {
+            records: vec![CapabilityEffectReplayEvidence {
+                receipt,
+                host_prepare: Some(prepare),
+                host_commit: Some(commit),
+                host_pubkey_hex: Some(encode_hex(signing_key.verifying_key().as_bytes())),
+            }],
+        };
+        let metadata = HashMap::from([
+            (
+                crate::metadata_keys::REPLAY_FROM_NODE.to_string(),
+                "2".to_string(),
+            ),
+            (
+                crate::metadata_keys::REPLAY_TOKEN_VALUES.to_string(),
+                serde_json::json!({"10": "prior-capability-output"}).to_string(),
+            ),
+            (
+                crate::metadata_keys::REPLAY_SOURCE_EXECUTION_ID.to_string(),
+                "execution-1".to_string(),
+            ),
+            (
+                crate::metadata_keys::CAPABILITY_EFFECT_REPLAY_EVIDENCE.to_string(),
+                serde_json::to_string(&evidence).unwrap(),
+            ),
+        ]);
+
+        let seed = ReplaySeed::from_metadata_checked(&metadata, &dag)
+            .expect("verified host effect permits partial replay")
+            .expect("replay seed");
+        // The signed, source-bound receipt authorizes only the completed host
+        // effect. The restart node and its downstream dataflow still replay.
+        assert_eq!(seed.completed_nodes, HashSet::from([1]));
+        assert_eq!(seed.replayed_nodes, HashSet::from([2, 3]));
         assert_eq!(
-            ReplaySeed::from_metadata_checked(&metadata, &dag),
-            Err(ReplayRejection::UnsafeCompletedOperation {
-                node_id: 1,
-                operation: AISOperationType::InvCap,
-            })
+            seed.seed_tokens.get(&10),
+            Some(&Value::String("prior-capability-output".to_string()))
         );
     }
 

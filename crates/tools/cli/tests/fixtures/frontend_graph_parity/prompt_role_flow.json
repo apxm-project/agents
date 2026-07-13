@@ -1,0 +1,22 @@
+{
+  "name": "prompt_role_flow",
+  "nodes": [
+    {"id": 1, "name": "question", "op": "ASK", "attributes": {"template_str": "Question"}},
+    {"id": 2, "name": "policy", "op": "ASK", "attributes": {"template_str": "System instructions"}},
+    {"id": 3, "name": "dependency", "op": "ASK", "attributes": {"template_str": "Dependency state"}},
+    {"id": 4, "name": "tool_result", "op": "ASK", "attributes": {"template_str": "Tool result"}},
+    {"id": 5, "name": "guard", "op": "ASK", "attributes": {"template_str": "Control state"}},
+    {"id": 6, "name": "answer", "op": "ASK", "attributes": {"template_str": "Answer {question}", "input_names": ["question", "policy", "dependency", "tool_result", "guard"], "input_roles": ["user", "system", "dependency_only", "tool_context", "control"]}},
+    {"id": 7, "name": "out", "op": "RETURN", "attributes": {}}
+  ],
+  "edges": [
+    {"from": 1, "to": 6, "dependency": "Data"},
+    {"from": 2, "to": 6, "dependency": "Data"},
+    {"from": 3, "to": 6, "dependency": "Data"},
+    {"from": 4, "to": 6, "dependency": "Data"},
+    {"from": 5, "to": 6, "dependency": "Data"},
+    {"from": 6, "to": 7, "dependency": "Data"}
+  ],
+  "parameters": [],
+  "metadata": {"is_entry": true}
+}

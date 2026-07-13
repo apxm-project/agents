@@ -7,9 +7,10 @@
 use anyhow::{Result, bail};
 use std::cmp::Reverse;
 use std::collections::{BTreeSet, HashMap, VecDeque};
-use std::sync::Arc;
 
-use super::{StepStatus, WorkflowPlan, WorkflowPlanStep, WorkflowStep};
+use super::{
+    StepStatus, WorkflowCriticalPathEvidence, WorkflowPlan, WorkflowPlanStep, WorkflowStep,
+};
 
 /// Workflow scheduling policy.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -21,48 +22,46 @@ pub enum WorkflowSchedulerMode {
     Phased,
 }
 
-/// Optional source of future profile- or artifact-derived workflow priorities.
+/// Critical-path priority derived from compiler legality summaries.
 ///
-/// This boundary imports no compiler or artifact types. Missing weights use
-/// declaration order, preserving deterministic behavior until optimization
-/// summaries become available through a caller-owned adapter.
-pub trait WorkflowPrioritySource: Send + Sync {
-    /// Return the weighted remaining-path estimate for one workflow step.
-    fn weighted_remaining_path(&self, step: &WorkflowPlanStep) -> Option<u64>;
-}
-
-/// Deterministic critical-path priority derived from caller-owned latency data.
-///
-/// The runtime intentionally receives only step identifiers and durations. A
-/// caller may derive these durations from profile observations or artifact
-/// summaries without importing compiler implementation types into the runtime.
+/// The source omits a step when its artifact lacks complete, versioned
+/// reorderability and latency evidence. Such steps remain dependency-ready,
+/// but their selection order stays deterministic rather than claiming an
+/// optimization the runtime cannot prove.
 #[derive(Debug, Clone)]
-pub struct WorkflowLatencyPrioritySource {
+pub struct WorkflowLegalityPrioritySource {
     weighted_remaining_paths: HashMap<String, u64>,
 }
 
-impl WorkflowLatencyPrioritySource {
-    /// Build weighted remaining-path priorities using profile latency when
-    /// supplied and a one-millisecond deterministic fallback otherwise.
-    pub fn from_profile_latency_ms(
+impl WorkflowLegalityPrioritySource {
+    /// Build legal weighted remaining paths for one authored workflow.
+    pub fn from_critical_path_evidence(
         steps: &[WorkflowStep],
-        profile_latency_ms: &HashMap<String, u64>,
+        evidence: &WorkflowCriticalPathEvidence,
     ) -> Result<Self> {
         let plan = WorkflowPlan::build(steps)?;
-        Ok(Self::from_plan(&plan, profile_latency_ms))
+        Ok(Self::from_plan(&plan, evidence))
     }
 
-    fn from_plan(plan: &WorkflowPlan, profile_latency_ms: &HashMap<String, u64>) -> Self {
-        let mut weighted_remaining_paths = HashMap::with_capacity(plan.steps().len());
+    fn from_plan(plan: &WorkflowPlan, evidence: &WorkflowCriticalPathEvidence) -> Self {
+        let direct_weights = plan
+            .steps()
+            .iter()
+            .filter_map(|step| {
+                evidence
+                    .weighted_critical_path_ms(step.id())
+                    .map(|weight| (step.declaration_index(), weight))
+            })
+            .collect::<HashMap<_, _>>();
+        let mut weighted_remaining_paths = HashMap::with_capacity(direct_weights.len());
+
         for phase in plan.phases().iter().rev() {
             for &index in phase.iter().rev() {
-                let step = plan.step(index);
-                let weight = profile_latency_ms
-                    .get(step.id())
-                    .copied()
-                    .unwrap_or(1)
-                    .max(1);
-                let downstream = step
+                let Some(weight) = direct_weights.get(&index).copied() else {
+                    continue;
+                };
+                let downstream = plan
+                    .step(index)
                     .dependents()
                     .iter()
                     .filter_map(|dependent| {
@@ -71,17 +70,20 @@ impl WorkflowLatencyPrioritySource {
                     .copied()
                     .max()
                     .unwrap_or(0);
-                weighted_remaining_paths
-                    .insert(step.id().to_string(), weight.saturating_add(downstream));
+                weighted_remaining_paths.insert(
+                    plan.step(index).id().to_string(),
+                    weight.saturating_add(downstream),
+                );
             }
         }
+
         Self {
             weighted_remaining_paths,
         }
     }
 }
 
-impl WorkflowPrioritySource for WorkflowLatencyPrioritySource {
+impl WorkflowLegalityPrioritySource {
     fn weighted_remaining_path(&self, step: &WorkflowPlanStep) -> Option<u64> {
         self.weighted_remaining_paths.get(step.id()).copied()
     }
@@ -94,11 +96,13 @@ pub struct WorkflowSchedulerOptions {
     pub mode: WorkflowSchedulerMode,
     /// Bound the number of workflow steps that may be in flight.
     pub max_concurrency: Option<usize>,
-    /// Optionally rank ready work through a future external cost provider.
-    pub priority_source: Option<Arc<dyn WorkflowPrioritySource>>,
-    /// Per-step profile latency in milliseconds. The queue converts it to a
-    /// weighted remaining critical path when no richer caller-owned source is
-    /// supplied.
+    /// Versioned compiler evidence used to derive legal critical-path priority.
+    pub critical_path_evidence: Option<WorkflowCriticalPathEvidence>,
+    /// Legacy caller-provided latency observations.
+    ///
+    /// Measurements alone do not prove reordering is legal, so this field does
+    /// not enable critical-path priority. Callers must provide
+    /// `critical_path_evidence`.
     pub profile_latency_ms: Option<HashMap<String, u64>>,
 }
 
@@ -120,7 +124,7 @@ pub struct WorkflowReadyQueue {
     mode: WorkflowSchedulerMode,
     active_phase: usize,
     max_concurrency: usize,
-    priority_source: Option<Arc<dyn WorkflowPrioritySource>>,
+    priority_source: Option<WorkflowLegalityPrioritySource>,
 }
 
 /// Internal lifecycle state for a workflow step.
@@ -163,12 +167,10 @@ impl WorkflowReadyQueue {
             bail!("Workflow max_concurrency must be greater than zero");
         }
 
-        let priority_source = options.priority_source.or_else(|| {
-            options.profile_latency_ms.as_ref().map(|latencies| {
-                Arc::new(WorkflowLatencyPrioritySource::from_plan(&plan, latencies))
-                    as Arc<dyn WorkflowPrioritySource>
-            })
-        });
+        let priority_source = options
+            .critical_path_evidence
+            .as_ref()
+            .map(|evidence| WorkflowLegalityPrioritySource::from_plan(&plan, evidence));
 
         let mut queue = Self {
             states: plan
@@ -216,9 +218,7 @@ impl WorkflowReadyQueue {
     /// Return the next eligible workflow step in deterministic order.
     pub fn take_ready(&mut self) -> Option<ReadyWorkflowStep> {
         let key = self.next_ready_key()?;
-        self.ready.remove(&key);
-        self.states[key.declaration_index] = WorkflowQueueState::Running;
-        Some(self.step_at(key.declaration_index))
+        Some(self.take_key(key))
     }
 
     /// Record a terminal step result and return descendants skipped by it.
@@ -338,6 +338,13 @@ impl WorkflowReadyQueue {
         }
     }
 
+    /// Move one selected ready key into its running state.
+    fn take_key(&mut self, key: ReadyKey) -> ReadyWorkflowStep {
+        self.ready.remove(&key);
+        self.states[key.declaration_index] = WorkflowQueueState::Running;
+        self.step_at(key.declaration_index)
+    }
+
     /// Mark one workflow step ready and add it to the deterministic queue.
     fn enqueue_ready(&mut self, index: usize) {
         self.states[index] = WorkflowQueueState::Ready;
@@ -358,9 +365,13 @@ impl WorkflowReadyQueue {
 mod tests {
     //! Workflow readiness tests cover timing, terminal propagation, and limits.
 
-    use std::collections::HashMap;
+    use std::collections::{BTreeMap, HashMap};
     use std::sync::Arc;
 
+    use apxm_core::types::NodeId;
+    use apxm_core::types::compiler::{
+        DagOptimizationSummaryV1, OperationOptimizationSummaryV1, OptimizationSummaryV1,
+    };
     use futures::stream::{FuturesUnordered, StreamExt};
     use tokio::sync::{Semaphore, mpsc};
 
@@ -392,6 +403,32 @@ mod tests {
                 .collect(),
             params: HashMap::new(),
         }
+    }
+
+    /// Build one compiler summary with a legal or rejected scheduling weight.
+    fn critical_path_summary(
+        weighted_critical_path_ms: u64,
+        may_reorder: bool,
+    ) -> OptimizationSummaryV1 {
+        let mut operation = OperationOptimizationSummaryV1 {
+            node_id: NodeId::default(),
+            operation: "nop".to_string(),
+            effect_authority: Default::default(),
+            prompt: Default::default(),
+            cost: Default::default(),
+            backend: Default::default(),
+            legality: Default::default(),
+            decisions: Vec::new(),
+            data_inputs: Vec::new(),
+            effect_inputs: Vec::new(),
+            control_inputs: Vec::new(),
+        };
+        operation.legality.may_reorder = may_reorder;
+        OptimizationSummaryV1::new(vec![DagOptimizationSummaryV1 {
+            weighted_critical_path_ms,
+            nodes: vec![operation],
+            ..Default::default()
+        }])
     }
 
     /// Build a test-controlled successful workflow step.
@@ -662,7 +699,7 @@ mod tests {
     }
 
     #[test]
-    fn profile_latency_prioritizes_the_longest_remaining_critical_path() {
+    fn compiler_legality_evidence_prioritizes_the_longest_remaining_critical_path() {
         let steps = vec![
             step("short", &[]),
             step("critical", &[]),
@@ -671,11 +708,13 @@ mod tests {
         let mut queue = WorkflowReadyQueue::with_options(
             &steps,
             WorkflowSchedulerOptions {
-                profile_latency_ms: Some(HashMap::from([
-                    ("short".to_string(), 1),
-                    ("critical".to_string(), 20),
-                    ("critical_tail".to_string(), 30),
-                ])),
+                critical_path_evidence: Some(WorkflowCriticalPathEvidence {
+                    artifacts: BTreeMap::from([
+                        ("short".to_string(), critical_path_summary(1, true)),
+                        ("critical".to_string(), critical_path_summary(20, true)),
+                        ("critical_tail".to_string(), critical_path_summary(30, true)),
+                    ]),
+                }),
                 ..Default::default()
             },
         )
@@ -683,5 +722,27 @@ mod tests {
 
         assert_eq!(queue.take_ready().expect("critical root").id, "critical");
         assert_eq!(queue.take_ready().expect("short root").id, "short");
+    }
+
+    #[test]
+    fn unproven_critical_paths_preserve_declaration_order() {
+        let steps = vec![step("first", &[]), step("unproven", &[])];
+        let mut queue = WorkflowReadyQueue::with_options(
+            &steps,
+            WorkflowSchedulerOptions {
+                critical_path_evidence: Some(WorkflowCriticalPathEvidence {
+                    artifacts: BTreeMap::from([
+                        ("first".to_string(), critical_path_summary(1, true)),
+                        ("unproven".to_string(), critical_path_summary(100, false)),
+                    ]),
+                }),
+                profile_latency_ms: Some(HashMap::from([("unproven".to_string(), 100)])),
+                ..Default::default()
+            },
+        )
+        .expect("valid queue");
+
+        assert_eq!(queue.take_ready().expect("first root").id, "first");
+        assert_eq!(queue.take_ready().expect("unproven root").id, "unproven");
     }
 }

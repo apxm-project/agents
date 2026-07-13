@@ -416,19 +416,20 @@ fn validate_llm_operation_attributes(module: &AirModule) -> Result<(), AirError>
     Ok(())
 }
 
-/// Validate the ordered role array attached to LLM prompt inputs.
+/// Validate the explicit ordered role array attached to LLM prompt inputs.
 fn validate_prompt_input_roles(module: &AirModule) -> Result<(), AirError> {
     use apxm_core::types::operations::AISOperationType;
 
     for node in &module.nodes {
-        let Some(role_value) = node.attributes.get(graph_attrs::INPUT_ROLES) else {
-            continue;
-        };
-
-        if !matches!(
+        let is_llm_node = matches!(
             node.op,
             AISOperationType::Ask | AISOperationType::Think | AISOperationType::Reason
-        ) {
+        );
+        let role_value = node.attributes.get(graph_attrs::INPUT_ROLES);
+        if !is_llm_node {
+            if role_value.is_none() {
+                continue;
+            }
             return Err(AirError::Validation(format!(
                 "node '{}' (id={}, op={}) has '{}', but prompt roles are only valid on ASK, THINK, or REASON nodes.",
                 node.name,
@@ -439,6 +440,22 @@ fn validate_prompt_input_roles(module: &AirModule) -> Result<(), AirError> {
         }
 
         let input_names = collect_string_array(node, graph_attrs::INPUT_NAMES)?;
+        let has_prompt_inputs = !input_names.is_empty()
+            || data_input_sources(module, node.id).len()
+                > structural_data_input_count(module, node);
+        let Some(role_value) = role_value else {
+            if has_prompt_inputs {
+                return Err(AirError::Validation(format!(
+                    "node '{}' (id={}, op={}) has prompt inputs but no '{}'; every LLM input must declare an explicit positional role.",
+                    node.name,
+                    node.id,
+                    node.op,
+                    graph_attrs::INPUT_ROLES,
+                )));
+            }
+            continue;
+        };
+
         let input_roles = collect_string_array_value(node, graph_attrs::INPUT_ROLES, role_value)?;
         if input_names.len() != input_roles.len() {
             return Err(AirError::Validation(format!(
@@ -881,6 +898,38 @@ mod tests {
         let error = validate_module(&module).expect_err("mismatched prompt role arrays must fail");
         assert!(error.to_string().contains(graph_attrs::INPUT_ROLES));
         assert!(error.to_string().contains(graph_attrs::INPUT_NAMES));
+    }
+
+    #[test]
+    fn prompt_roles_are_required_for_llm_input_contracts() {
+        let module = AirModule {
+            name: "prompt_roles_required".to_string(),
+            nodes: vec![AirNode {
+                id: 1,
+                name: "ask".to_string(),
+                op: AISOperationType::Ask,
+                attributes: HashMap::from([
+                    (
+                        graph_attrs::TEMPLATE_STR.to_string(),
+                        Value::String("{question}".to_string()),
+                    ),
+                    (
+                        graph_attrs::INPUT_NAMES.to_string(),
+                        Value::Array(vec![Value::String("question".to_string())]),
+                    ),
+                ]),
+            }],
+            edges: Vec::new(),
+            parameters: vec![AirParam {
+                name: "question".to_string(),
+                type_name: "str".to_string(),
+            }],
+            metadata: HashMap::new(),
+        };
+
+        let error = validate_module(&module).expect_err("LLM inputs require explicit prompt roles");
+        assert!(error.to_string().contains(graph_attrs::INPUT_ROLES));
+        assert!(error.to_string().contains("explicit positional role"));
     }
 
     #[test]

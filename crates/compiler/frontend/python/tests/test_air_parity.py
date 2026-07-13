@@ -8,13 +8,14 @@ from typing import Callable
 
 import pytest
 
+from apxm.constants import PromptInputRole
 from apxm.ir import (
     AirEmissionError,
     AirEmitterCommand,
     ApxmGraph,
     emit_multi_flow_module,
 )
-from apxm.proxy import GraphRecorder
+from apxm.proxy import GraphRecorder, prompt_input
 
 _FIXTURES_DIR = (
     Path(__file__).resolve().parents[4] / "tools" / "cli" / "tests" / "fixtures" / "frontend_graph_parity"
@@ -32,6 +33,27 @@ def _ask_flow() -> ApxmGraph:
     recorder = GraphRecorder("ask_flow", metadata={"is_entry": True})
     recorder.param("name", "str")
     answer = recorder.ask(name="ask", prompt="Say hi to {name}")
+    recorder.done(answer, name="out")
+    return recorder.to_graph()
+
+
+def _prompt_role_flow() -> ApxmGraph:
+    recorder = GraphRecorder("prompt_role_flow", metadata={"is_entry": True})
+    question = recorder.ask(name="question", prompt="Question")
+    policy = recorder.ask(name="policy", prompt="System instructions")
+    dependency = recorder.ask(name="dependency", prompt="Dependency state")
+    tool_result = recorder.ask(name="tool_result", prompt="Tool result")
+    guard = recorder.ask(name="guard", prompt="Control state")
+    answer = recorder.ask(
+        name="answer",
+        prompt="Answer {question}",
+        prompt_inputs={
+            "policy": prompt_input(policy, PromptInputRole.SYSTEM),
+            "dependency": prompt_input(dependency, PromptInputRole.DEPENDENCY_ONLY),
+            "tool_result": prompt_input(tool_result, PromptInputRole.TOOL_CONTEXT),
+            "guard": prompt_input(guard, PromptInputRole.CONTROL),
+        },
+    )
     recorder.done(answer, name="out")
     return recorder.to_graph()
 
@@ -149,6 +171,7 @@ def _coordination_flow() -> ApxmGraph:
 
 def test_native_authoring_matches_shared_dto_vectors():
     assert _ask_flow().to_dict() == _load_fixture("ask_flow.json")
+    assert _prompt_role_flow().to_dict() == _load_fixture("prompt_role_flow.json")
     assert _parametrized_flow().to_dict() == _load_fixture("parametrized_flow.json")
     assert _profiled_agent_flow().to_dict() == _load_fixture("profiled_agent_flow.json")
     assert [graph.to_dict() for graph in _multi_flow_conversational()] == _load_fixture(
@@ -164,6 +187,7 @@ def test_native_authoring_matches_shared_dto_vectors():
     ("golden_name", "emit"),
     [
         ("ask_flow.golden.air", lambda: _ask_flow().to_air()),
+        ("prompt_role_flow.golden.air", lambda: _prompt_role_flow().to_air()),
         ("parametrized_flow.golden.air", lambda: _parametrized_flow().to_air()),
         ("profiled_agent_flow.golden.air", lambda: _profiled_agent_flow().to_air()),
         ("multi_flow_conversational.golden.air", _multi_flow_conversational_air),

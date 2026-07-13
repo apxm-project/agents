@@ -28,6 +28,7 @@ fn validate_dag_template_placeholders(dag: &ExecutionDag) -> Result<(), String> 
     for node in &dag.nodes {
         let input_names = collect_input_names(node);
         check_required_llm_prompt_contract(node)?;
+        let input_roles = check_prompt_input_roles(node, &input_names)?;
         if input_names.len() > node.input_tokens.len() {
             return Err(format!(
                 "node {} (op={}): input_names has {} entries but the node has {} input token(s)",
@@ -46,11 +47,98 @@ fn validate_dag_template_placeholders(dag: &ExecutionDag) -> Result<(), String> 
             let Some(template) = attr_value.as_str() else {
                 continue;
             };
-            check_template_placeholders(template, attr_key, node, &input_set, &param_names)?;
+            check_template_placeholders(
+                template,
+                attr_key,
+                node,
+                &input_set,
+                &param_names,
+                &input_names,
+                &input_roles,
+            )?;
         }
     }
 
     Ok(())
+}
+
+fn check_prompt_input_roles(
+    node: &Node,
+    input_names: &[&str],
+) -> Result<Vec<graph_attrs::PromptInputRole>, String> {
+    let is_llm = matches!(
+        node.op_type,
+        AISOperationType::Ask | AISOperationType::Think | AISOperationType::Reason
+    );
+    let Some(role_value) = node.attributes.get(graph_attrs::INPUT_ROLES) else {
+        if is_llm && !node.input_tokens.is_empty() {
+            return Err(format!(
+                "node {} (op={}): LLM node has {} input token(s) but no explicit positional {}; provide one canonical role for each input",
+                node.id,
+                node.op_type,
+                node.input_tokens.len(),
+                graph_attrs::INPUT_ROLES,
+            ));
+        }
+        return Ok(Vec::new());
+    };
+
+    if !is_llm {
+        return Err(format!(
+            "node {} (op={}): {} is only valid on ASK, THINK, or REASON nodes",
+            node.id,
+            node.op_type,
+            graph_attrs::INPUT_ROLES
+        ));
+    }
+
+    let Value::Array(role_values) = role_value else {
+        return Err(format!(
+            "node {} (op={}): {} must be an array of role strings",
+            node.id,
+            node.op_type,
+            graph_attrs::INPUT_ROLES
+        ));
+    };
+    let roles = role_values
+        .iter()
+        .enumerate()
+        .map(|(index, value)| {
+            value.as_str().ok_or_else(|| {
+                format!(
+                    "node {} (op={}): {} entry {} must be a string",
+                    node.id,
+                    node.op_type,
+                    graph_attrs::INPUT_ROLES,
+                    index
+                )
+            })
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+
+    if roles.len() != input_names.len() {
+        return Err(format!(
+            "node {} (op={}): {} has {} entries but {} has {} entries",
+            node.id,
+            node.op_type,
+            graph_attrs::INPUT_ROLES,
+            roles.len(),
+            graph_attrs::INPUT_NAMES,
+            input_names.len()
+        ));
+    }
+
+    graph_attrs::parse_prompt_input_roles(input_names.len(), roles.iter().copied()).map_err(
+        |error| {
+            format!(
+                "node {} (op={}): invalid {}: {}",
+                node.id,
+                node.op_type,
+                graph_attrs::INPUT_ROLES,
+                error
+            )
+        },
+    )
 }
 
 fn check_required_llm_prompt_contract(node: &Node) -> Result<(), String> {
@@ -105,6 +193,8 @@ fn check_template_placeholders(
     node: &Node,
     input_names: &HashSet<&str>,
     param_names: &HashSet<&str>,
+    positional_input_names: &[&str],
+    positional_input_roles: &[graph_attrs::PromptInputRole],
 ) -> Result<(), String> {
     for placeholder in parse_placeholder_names(template) {
         let root = placeholder_root(placeholder);
@@ -114,7 +204,26 @@ fn check_template_placeholders(
                 node.id, node.op_type, attr_key, placeholder
             ));
         }
-        if input_names.contains(root) || param_names.contains(root) {
+        if let Some(index) = positional_input_names
+            .iter()
+            .position(|input_name| *input_name == root)
+        {
+            if let Some(role) = positional_input_roles.get(index) {
+                if !role.is_user() {
+                    return Err(format!(
+                        "node {} (op={}, attr={}): placeholder '{{{}}}' selects {} input '{}'; only user-role inputs may appear in a template",
+                        node.id,
+                        node.op_type,
+                        attr_key,
+                        placeholder,
+                        role.as_str(),
+                        root,
+                    ));
+                }
+            }
+            continue;
+        }
+        if param_names.contains(root) {
             continue;
         }
         return Err(format!(

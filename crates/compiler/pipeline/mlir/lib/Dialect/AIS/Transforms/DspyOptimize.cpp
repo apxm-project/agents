@@ -4,7 +4,9 @@
  *
  * This pass invokes python3 -m apxm_dspy as a subprocess to run DSPy's
  * prompt optimizers (MIPROv2, BootstrapFewShot, COPRO) on template strings.
- * It is a no-op when no training data is available.
+ * The pass requires a complete, typed optimization request. Missing evidence,
+ * unavailable execution, and incomplete responses fail the pass rather than
+ * publishing a partially optimized artifact.
  *
  * Placement: immediately after build-prompt (which establishes named
  * template/input_names contracts).
@@ -16,6 +18,7 @@
 #include "PassStatsHelpers.h"
 #include "ais/Dialect/AIS/IR/AISOps.h"
 #include "ais/Dialect/AIS/Support/AISDebug.h"
+#include "ais/Dialect/AIS/Transforms/Placeholders.h"
 
 #include "mlir/IR/Builders.h"
 #include "llvm/ADT/TypeSwitch.h"
@@ -25,6 +28,9 @@
 #include "llvm/Support/Path.h"
 #include "llvm/Support/Program.h"
 #include "llvm/Support/raw_ostream.h"
+
+#include <cctype>
+#include <optional>
 
 namespace mlir::ais {
 #define GEN_PASS_DEF_DSPYOPTIMIZE
@@ -81,6 +87,63 @@ static std::string dspyBootstrapCode() {
   return code;
 }
 
+/// Reject candidates that would weaken the positional prompt-channel contract.
+static std::optional<std::string>
+validateRoleAwareTemplate(Operation *op, llvm::StringRef templateStr) {
+  const unsigned contextSize = op->getNumOperands();
+  const auto inputNames = placeholders::readInputNames(op);
+  const bool hasInputRoles = placeholders::hasInputRoles(op);
+  const auto inputRoles = placeholders::readInputRoles(op);
+
+  if (contextSize != 0) {
+    if (inputNames.size() != contextSize)
+      return "input_names must be positional with LLM context operands";
+    if (!hasInputRoles ||
+        !placeholders::inputRolesAreValid(inputRoles, contextSize))
+      return "input_roles must be explicit, canonical, and positional";
+  } else {
+    if (!inputNames.empty())
+      return "input_names must be empty when an LLM operation has no context operands";
+    if (hasInputRoles &&
+        !placeholders::inputRolesAreValid(inputRoles, contextSize))
+      return "input_roles must be positional with LLM context operands";
+  }
+
+  const auto nameToIndex = placeholders::nameToIndex(inputNames);
+  for (size_t i = 0, n = templateStr.size(); i < n; ++i) {
+    if (templateStr[i] != '{')
+      continue;
+    if (i + 1 < n && templateStr[i + 1] == '{') {
+      ++i;
+      continue;
+    }
+
+    const size_t start = i + 1;
+    size_t end = start;
+    while (end < n &&
+           (std::isalnum(static_cast<unsigned char>(templateStr[end])) ||
+            templateStr[end] == '_' || templateStr[end] == '.'))
+      ++end;
+    if (end == start || end == n || templateStr[end] != '}')
+      continue;
+
+    const llvm::StringRef name = templateStr.slice(start, end);
+    const size_t dot = name.find('.');
+    const llvm::StringRef root =
+        dot == llvm::StringRef::npos ? name : name.take_front(dot);
+    const auto input = nameToIndex.find(root);
+    if (input == nameToIndex.end())
+      return "placeholder '{" + name.str() +
+             "}' is not a declared input_name";
+    if (!placeholders::isUserRole(inputRoles[input->second]))
+      return "placeholder '{" + name.str() + "}' selects " +
+             placeholders::inputRoleName(inputRoles[input->second]).str() +
+             " context; only user-role inputs may appear in a template";
+    i = end;
+  }
+  return std::nullopt;
+}
+
 struct DspyOptimizePass : impl::DspyOptimizeBase<DspyOptimizePass> {
   using DspyOptimizeBase::DspyOptimizeBase;
 
@@ -108,9 +171,11 @@ struct DspyOptimizePass : impl::DspyOptimizeBase<DspyOptimizePass> {
     // 1. Check for training data path (set by Rust layer as module attribute)
     auto trainingAttr =
         module->getAttrOfType<StringAttr>(apxm::constants::attrs::DSPY_TRAINING_DATA_PATH);
-    if (!trainingAttr) {
-      APXM_AIS_DEBUG("No training data path — dspy-optimize is a no-op");
-      APXM_AIS_DEBUG_FOOTER(DspyOptimize);
+    if (!trainingAttr || trainingAttr.getValue().trim().empty()) {
+      module->emitError(
+          "dspy-optimize: compiler prompt optimization requires a non-empty "
+          "training data path");
+      signalPassFailure();
       return;
     }
 
@@ -128,7 +193,7 @@ struct DspyOptimizePass : impl::DspyOptimizeBase<DspyOptimizePass> {
     auto noCacheAttr =
         module->getAttrOfType<BoolAttr>(apxm::constants::attrs::DSPY_NO_CACHE);
 
-    if (!backendAttr) {
+    if (!backendAttr || backendAttr.getValue().trim().empty()) {
       module->emitError(
           "dspy-optimize: compiler prompt optimization is enabled but no "
           "backend config was provided");
@@ -151,20 +216,36 @@ struct DspyOptimizePass : impl::DspyOptimizeBase<DspyOptimizePass> {
       std::string templateStr;
     };
     llvm::SmallVector<OpInfo> opsToOptimize;
+    bool invalidPromptContract = false;
 
     module.walk([&](Operation *op) {
+      if (invalidPromptContract)
+        return;
       llvm::TypeSwitch<Operation *>(op)
           .Case<AskOp, ThinkOp, ReasonOp>([&](auto llmOp) {
             StringRef tmpl = llmOp.getTemplateStrAttr().getValue();
             if (!tmpl.empty()) {
+              if (const auto error = validateRoleAwareTemplate(op, tmpl)) {
+                op->emitError("dspy-optimize: cannot optimize template: " +
+                              *error);
+                invalidPromptContract = true;
+                return;
+              }
               opsToOptimize.push_back({op, tmpl.str()});
             }
           });
     });
 
+    if (invalidPromptContract) {
+      signalPassFailure();
+      return;
+    }
+
     if (opsToOptimize.empty()) {
-      APXM_AIS_DEBUG("No LLM ops with templates to optimize");
-      APXM_AIS_DEBUG_FOOTER(DspyOptimize);
+      module->emitError(
+          "dspy-optimize: compiler prompt optimization found no non-empty "
+          "LLM templates");
+      signalPassFailure();
       return;
     }
 
@@ -206,15 +287,17 @@ struct DspyOptimizePass : impl::DspyOptimizeBase<DspyOptimizePass> {
     llvm::SmallString<128> requestPath, responsePath;
     if (auto ec = llvm::sys::fs::createTemporaryFile("dspy-req", "json",
                                                       requestPath)) {
-      module->emitWarning("dspy-optimize: failed to create temp file: " +
-                          ec.message());
+      module->emitError("dspy-optimize: failed to create request file: " +
+                        ec.message());
+      signalPassFailure();
       return;
     }
     if (auto ec = llvm::sys::fs::createTemporaryFile("dspy-resp", "json",
                                                       responsePath)) {
       llvm::sys::fs::remove(requestPath);
-      module->emitWarning("dspy-optimize: failed to create temp file: " +
-                          ec.message());
+      module->emitError("dspy-optimize: failed to create response file: " +
+                        ec.message());
+      signalPassFailure();
       return;
     }
 
@@ -222,10 +305,11 @@ struct DspyOptimizePass : impl::DspyOptimizeBase<DspyOptimizePass> {
       std::error_code EC;
       llvm::raw_fd_ostream reqFile(requestPath, EC);
       if (EC) {
-        module->emitWarning("dspy-optimize: failed to write request: " +
-                            EC.message());
+        module->emitError("dspy-optimize: failed to write request: " +
+                          EC.message());
         llvm::sys::fs::remove(requestPath);
         llvm::sys::fs::remove(responsePath);
+        signalPassFailure();
         return;
       }
       reqFile << llvm::json::Value(std::move(requestObj));
@@ -303,44 +387,82 @@ struct DspyOptimizePass : impl::DspyOptimizeBase<DspyOptimizePass> {
       return;
     }
 
-    // 10. Apply optimized templates
-    OpBuilder builder(module.getContext());
+    // 10. Validate the entire response before changing any template.
+    llvm::SmallVector<std::string> optimizedTemplates;
+    const auto optimizedTmpl =
+        respObj->getString(apxm::constants::dspy_json::OPTIMIZED_TEMPLATE);
+    const auto *resultsArr =
+        respObj->getArray(apxm::constants::dspy_json::RESULTS);
+    if (optimizedTmpl && resultsArr) {
+      module->emitError(
+          "dspy-optimize: response must use either single-template or batch "
+          "mode, not both");
+      signalPassFailure();
+      return;
+    }
+    if (optimizedTmpl) {
+      if (opsToOptimize.size() != 1 || optimizedTmpl->trim().empty()) {
+        module->emitError(
+            "dspy-optimize: single-template response must contain one "
+            "non-empty optimized template for exactly one LLM operation");
+        signalPassFailure();
+        return;
+      }
+      optimizedTemplates.push_back(optimizedTmpl->str());
+    } else if (resultsArr) {
+      if (resultsArr->size() != opsToOptimize.size()) {
+        module->emitError(
+            "dspy-optimize: batch response count does not match requested "
+            "LLM templates");
+        signalPassFailure();
+        return;
+      }
+      optimizedTemplates.reserve(resultsArr->size());
+      for (size_t i = 0; i < resultsArr->size(); ++i) {
+        auto *resultObj = (*resultsArr)[i].getAsObject();
+        if (!resultObj) {
+          module->emitError("dspy-optimize: batch response entry " +
+                            std::to_string(i) + " is not an object");
+          signalPassFailure();
+          return;
+        }
+        auto templateValue = resultObj->getString(
+            apxm::constants::dspy_json::OPTIMIZED_TEMPLATE);
+        if (!templateValue || templateValue->trim().empty()) {
+          module->emitError("dspy-optimize: batch response entry " +
+                            std::to_string(i) +
+                            " lacks a non-empty optimized template");
+          signalPassFailure();
+          return;
+        }
+        optimizedTemplates.push_back(templateValue->str());
+      }
+    } else {
+      module->emitError(
+          "dspy-optimize: response lacks an optimized template result");
+      signalPassFailure();
+      return;
+    }
 
-    // Single template mode
-    if (auto optimizedTmpl = respObj->getString(
-            apxm::constants::dspy_json::OPTIMIZED_TEMPLATE)) {
-      if (!opsToOptimize.empty()) {
-        auto &info = opsToOptimize[0];
-        llvm::TypeSwitch<Operation *>(info.op)
-            .Case<AskOp, ThinkOp, ReasonOp>([&](auto llmOp) {
-              llmOp.setTemplateStrAttr(
-                  builder.getStringAttr(*optimizedTmpl));
-              optimized++;
-            });
+    for (size_t i = 0; i < opsToOptimize.size(); ++i) {
+      if (const auto error =
+              validateRoleAwareTemplate(opsToOptimize[i].op, optimizedTemplates[i])) {
+        opsToOptimize[i].op->emitError(
+            "dspy-optimize: optimized template violates the prompt contract: " +
+            *error);
+        signalPassFailure();
+        return;
       }
     }
 
-    // Batch mode
-    if (auto *resultsArr =
-            respObj->getArray(apxm::constants::dspy_json::RESULTS)) {
-      for (size_t i = 0;
-           i < resultsArr->size() && i < opsToOptimize.size(); ++i) {
-        auto *resultObj = (*resultsArr)[i].getAsObject();
-        if (!resultObj)
-          continue;
-
-        auto optTmpl = resultObj->getString(
-            apxm::constants::dspy_json::OPTIMIZED_TEMPLATE);
-        if (!optTmpl)
-          continue;
-
-        auto &info = opsToOptimize[i];
-        llvm::TypeSwitch<Operation *>(info.op)
-            .Case<AskOp, ThinkOp, ReasonOp>([&](auto llmOp) {
-              llmOp.setTemplateStrAttr(builder.getStringAttr(*optTmpl));
-              optimized++;
-            });
-      }
+    OpBuilder builder(module.getContext());
+    for (size_t i = 0; i < opsToOptimize.size(); ++i) {
+      auto &info = opsToOptimize[i];
+      llvm::TypeSwitch<Operation *>(info.op)
+          .Case<AskOp, ThinkOp, ReasonOp>([&](auto llmOp) {
+            llmOp.setTemplateStrAttr(builder.getStringAttr(optimizedTemplates[i]));
+            optimized++;
+          });
     }
 
     // 11. Set module attributes for diagnostics

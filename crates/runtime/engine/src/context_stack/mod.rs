@@ -14,14 +14,16 @@ use serde::{Deserialize, Serialize};
 
 pub use budget::BudgetAllocator;
 pub use frame::{
-    estimate_tokens, load_graph_summary, load_node_output, load_node_prompt, load_node_status,
-    truncate_to_budget,
+    ContextTokenizer, estimate_tokens, estimate_tokens_with, load_graph_summary, load_node_output,
+    load_node_prompt, load_node_status, truncate_to_budget, truncate_to_budget_with,
 };
-pub use policy::ScopeRules;
+pub use policy::{ContextPlanningError, ContextPlanningPolicy, ScopeRules};
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
 pub struct ContextStackConfig {
     pub session_dir: PathBuf,
+    /// Complete policy evidence for context tokenizer, capacity, and profiles.
+    pub planning: ContextPlanningPolicy,
     #[serde(default)]
     pub node_metadata: HashMap<u64, NodeMetadata>,
     #[serde(default)]
@@ -37,13 +39,14 @@ pub struct NodeMetadata {
 #[derive(Clone)]
 pub struct ContextStack {
     session_dir: PathBuf,
+    planning: Option<ContextPlanningPolicy>,
     node_metadata: Arc<HashMap<u64, NodeMetadata>>,
     graph_edges: Arc<Vec<(u64, u64)>>,
     memory: Option<Arc<crate::memory::MemorySystem>>,
     execution_id: Option<String>,
 }
 
-#[derive(Clone, Debug, Default)]
+#[derive(Clone, Debug)]
 pub struct ContextAssembly {
     pub frames: Vec<ContextFrame>,
     pub total_estimated_tokens: usize,
@@ -62,14 +65,20 @@ pub struct ContextFrame {
 }
 
 /// One typed context plan shared by all context consumers.
-#[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
 pub struct ContextPlan {
-    /// Stable tokenizer identity used for every segment estimate.
-    pub tokenizer: String,
-    /// Total caller-approved context capacity.
+    /// Tokenizer used for every segment estimate and truncation decision.
+    pub tokenizer: ContextTokenizer,
+    /// Total context capacity approved by the configured planning policy.
     pub token_budget: usize,
+    /// Requested scope profile, when this plan assembles graph context.
+    pub profile: Option<String>,
     /// Segments considered during deterministic packing, including omissions.
-    #[serde(default)]
+    ///
+    /// Segment provenance and scope are execution-only evidence. They are not
+    /// part of a serializable context plan because serialized plans can leave
+    /// the runtime boundary.
+    #[serde(skip)]
     pub segments: Vec<ContextPlanSegment>,
 }
 
@@ -94,16 +103,116 @@ pub struct ContextPlanMetrics {
     pub omitted_token_budget_segments: usize,
     /// Segments omitted because their source was empty.
     pub omitted_empty_segments: usize,
+    /// Segments retained for graph semantics but excluded from provider input.
+    pub excluded_provider_segments: usize,
 }
 
 impl ContextPlan {
-    /// Construct a plan using the runtime's canonical context tokenizer.
-    pub fn new(token_budget: usize) -> Self {
+    /// Construct a plan using the configured tokenizer and capacity.
+    pub fn new(tokenizer: ContextTokenizer, token_budget: usize, profile: Option<String>) -> Self {
         Self {
-            tokenizer: "o200k_base".to_string(),
+            tokenizer,
             token_budget,
+            profile,
             segments: Vec::new(),
         }
+    }
+
+    /// Construct a plan from configured policy evidence.
+    pub fn from_policy(
+        policy: &ContextPlanningPolicy,
+        profile: Option<&str>,
+    ) -> Result<Self, ContextPlanningError> {
+        if let Some(profile) = profile {
+            policy.rules_for(profile)?;
+        }
+        Ok(Self::new(
+            policy.tokenizer,
+            policy.token_budget,
+            profile.map(str::to_owned),
+        ))
+    }
+
+    /// Stable tokenizer identity emitted with plan evidence.
+    pub const fn tokenizer_identity(&self) -> &'static str {
+        self.tokenizer.identity()
+    }
+
+    /// Count tokens using this plan's configured tokenizer.
+    pub fn estimate(&self, text: &str) -> usize {
+        estimate_tokens_with(self.tokenizer, text)
+    }
+
+    /// Return the unallocated input capacity remaining in the plan.
+    pub fn remaining_tokens(&self) -> usize {
+        self.token_budget.saturating_sub(self.admitted_tokens())
+    }
+
+    /// Admit one typed segment through the plan's shared packing policy.
+    pub fn admit(
+        &mut self,
+        spec: ContextSegmentSpec,
+        content: &str,
+    ) -> Result<ContextAdmission, ContextPlanningError> {
+        let original_token_estimate = self.estimate(content);
+        if original_token_estimate == 0 {
+            self.segments.push(spec.record(
+                original_token_estimate,
+                0,
+                ContextDisposition::OmittedEmpty,
+            ));
+            return Ok(ContextAdmission {
+                content: String::new(),
+                disposition: ContextDisposition::OmittedEmpty,
+            });
+        }
+
+        let available = self.remaining_tokens().min(spec.max_tokens);
+        if available == 0 {
+            self.segments.push(spec.record(
+                original_token_estimate,
+                0,
+                ContextDisposition::OmittedTokenBudget,
+            ));
+            return Ok(ContextAdmission {
+                content: String::new(),
+                disposition: ContextDisposition::OmittedTokenBudget,
+            });
+        }
+        if original_token_estimate > available && spec.protected {
+            return Err(ContextPlanningError::ProtectedSegmentExceedsBudget {
+                provenance: spec.provenance,
+                required_tokens: original_token_estimate,
+                available_tokens: available,
+            });
+        }
+
+        let (content, truncated) = truncate_to_budget_with(self.tokenizer, content, available);
+        let token_estimate = self.estimate(&content);
+        let disposition = if truncated {
+            ContextDisposition::Truncated
+        } else {
+            ContextDisposition::Kept
+        };
+        self.segments.push(spec.record(
+            original_token_estimate,
+            token_estimate,
+            disposition.clone(),
+        ));
+        Ok(ContextAdmission {
+            content,
+            disposition,
+        })
+    }
+
+    /// Record a typed segment that intentionally does not cross the provider boundary.
+    pub fn exclude(&mut self, spec: ContextSegmentSpec, content: &str) {
+        let original_token_estimate = self.estimate(content);
+        self.segments.push(spec.record(
+            original_token_estimate,
+            0,
+            ContextDisposition::ExcludedProviderBoundary,
+        ));
     }
 
     /// Return the token count actually admitted to the rendered context.
@@ -152,6 +261,10 @@ impl ContextPlan {
                     metrics.omitted_empty_segments =
                         metrics.omitted_empty_segments.saturating_add(1);
                 }
+                ContextDisposition::ExcludedProviderBoundary => {
+                    metrics.excluded_provider_segments =
+                        metrics.excluded_provider_segments.saturating_add(1);
+                }
             }
         }
 
@@ -159,12 +272,55 @@ impl ContextPlan {
     }
 }
 
+/// Typed metadata required to admit one context segment.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ContextSegmentSpec {
+    pub scope: ContextScope,
+    pub role: ContextSegmentRole,
+    pub provenance: String,
+    pub permission: ContextPermissionScope,
+    pub sensitivity: ContextSensitivity,
+    pub protected: bool,
+    pub max_tokens: usize,
+}
+
+impl ContextSegmentSpec {
+    fn record(
+        self,
+        original_token_estimate: usize,
+        token_estimate: usize,
+        disposition: ContextDisposition,
+    ) -> ContextPlanSegment {
+        ContextPlanSegment {
+            scope: self.scope,
+            role: self.role,
+            provenance: self.provenance,
+            permission: self.permission,
+            sensitivity: self.sensitivity,
+            protected: self.protected,
+            original_token_estimate,
+            token_estimate,
+            disposition,
+        }
+    }
+}
+
+/// Content admitted by a context plan.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ContextAdmission {
+    pub content: String,
+    pub disposition: ContextDisposition,
+}
+
 /// One source segment considered by a [`ContextPlan`].
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
 pub struct ContextPlanSegment {
     /// Context scope that owns this segment.
     pub scope: ContextScope,
+    /// Provider-facing semantic role carried by the segment.
+    pub role: ContextSegmentRole,
     /// Stable source reference for audit and replay.
+    #[serde(skip_serializing, default)]
     pub provenance: String,
     /// Permission boundary under which the segment was selected.
     pub permission: ContextPermissionScope,
@@ -178,6 +334,18 @@ pub struct ContextPlanSegment {
     pub token_estimate: usize,
     /// Kept, truncated, or omitted outcome with its reason.
     pub disposition: ContextDisposition,
+}
+
+/// Semantic role preserved while context is packed and rendered.
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum ContextSegmentRole {
+    Context,
+    System,
+    User,
+    Tool,
+    Control,
+    Dependency,
 }
 
 /// Permission boundary carried with every context segment.
@@ -216,6 +384,8 @@ pub enum ContextDisposition {
     OmittedTokenBudget,
     /// The source had no content to admit.
     OmittedEmpty,
+    /// The segment remains graph-visible but is excluded from provider input.
+    ExcludedProviderBoundary,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -233,11 +403,26 @@ impl ContextStack {
     ) -> Self {
         Self {
             session_dir,
+            planning: None,
             node_metadata,
             graph_edges,
             memory: None,
             execution_id: None,
         }
+    }
+
+    /// Attach the complete context-planning policy for this stack.
+    pub fn with_planning_policy(mut self, planning: ContextPlanningPolicy) -> Self {
+        self.planning = Some(planning);
+        self
+    }
+
+    /// Return the configured planning evidence required for model-call token
+    /// accounting and bounded context reinjection.
+    pub fn planning_policy(&self) -> Result<&ContextPlanningPolicy, ContextPlanningError> {
+        self.planning
+            .as_ref()
+            .ok_or(ContextPlanningError::PolicyNotConfigured)
     }
 
     pub fn with_memory(
@@ -256,19 +441,23 @@ impl ContextStack {
             Arc::new(config.node_metadata.clone()),
             Arc::new(config.graph_edges.clone()),
         )
+        .with_planning_policy(config.planning.clone())
     }
 
-    pub fn assemble(&self, node_id: u64, profile: &str, token_budget: usize) -> ContextAssembly {
-        let rules = ScopeRules::for_profile(profile);
-        let mut allocator = BudgetAllocator::new(token_budget);
+    pub fn assemble(
+        &self,
+        node_id: u64,
+        profile: &str,
+    ) -> Result<ContextAssembly, ContextPlanningError> {
+        let planning = self.planning_policy()?;
+        let rules = planning.rules_for(profile)?;
         let mut frames = Vec::new();
         let mut truncated = false;
-        let mut plan = ContextPlan::new(token_budget);
+        let mut plan = ContextPlan::from_policy(planning, Some(profile))?;
 
         let session_content = self.session_frame_content();
         self.push_frame(
             &mut frames,
-            &mut allocator,
             ContextScope::Session,
             None,
             None,
@@ -276,13 +465,12 @@ impl ContextStack {
             rules.session_frame_budget,
             &mut truncated,
             &mut plan,
-        );
+        )?;
 
         if let Some(local_content) = self.local_frame_content(node_id, profile) {
-            let local_budget = allocator.remaining().min(estimate_tokens(&local_content));
+            let local_budget = plan.remaining_tokens();
             self.push_frame(
                 &mut frames,
-                &mut allocator,
                 ContextScope::Local,
                 Some(node_id),
                 self.node_metadata
@@ -292,7 +480,7 @@ impl ContextStack {
                 local_budget,
                 &mut truncated,
                 &mut plan,
-            );
+            )?;
         }
 
         let upstream_chain = self.upstream_chain(node_id, rules.upstream_depth);
@@ -300,13 +488,12 @@ impl ContextStack {
             let Some(meta) = self.node_metadata.get(&upstream_id) else {
                 continue;
             };
-            let Some(content) = self.upstream_frame_content(upstream_id, meta, &rules) else {
+            let Some(content) = self.upstream_frame_content(upstream_id, meta, rules) else {
                 continue;
             };
 
             if !self.push_frame(
                 &mut frames,
-                &mut allocator,
                 ContextScope::Upstream(upstream_id),
                 Some(upstream_id),
                 Some(meta.name.clone()),
@@ -314,23 +501,22 @@ impl ContextStack {
                 rules.upstream_frame_budget,
                 &mut truncated,
                 &mut plan,
-            ) {
+            )? {
                 break;
             }
         }
 
-        ContextAssembly {
+        Ok(ContextAssembly {
             total_estimated_tokens: frames.iter().map(|frame| frame.token_estimate).sum(),
             frames,
             truncated,
             plan,
-        }
+        })
     }
 
     fn push_frame(
         &self,
         frames: &mut Vec<ContextFrame>,
-        allocator: &mut BudgetAllocator,
         scope: ContextScope,
         node_id: Option<u64>,
         node_name: Option<String>,
@@ -338,87 +524,40 @@ impl ContextStack {
         max_frame_budget: usize,
         truncated: &mut bool,
         plan: &mut ContextPlan,
-    ) -> bool {
-        let estimated = estimate_tokens(&content);
-        if estimated == 0 || max_frame_budget == 0 {
-            plan.segments.push(self.plan_segment(
-                scope,
-                node_id,
-                node_name.as_deref(),
-                estimated,
-                0,
-                if estimated == 0 {
-                    ContextDisposition::OmittedEmpty
-                } else {
-                    ContextDisposition::OmittedTokenBudget
-                },
-            ));
-            return !allocator.is_exhausted();
+    ) -> Result<bool, ContextPlanningError> {
+        let spec = self.segment_spec(&scope, node_id, node_name.as_deref(), max_frame_budget);
+        let admission = plan.admit(spec, &content)?;
+        *truncated |= admission.disposition == ContextDisposition::Truncated;
+        if admission.content.is_empty() {
+            return Ok(plan.remaining_tokens() > 0);
         }
-
-        let requested = estimated.min(max_frame_budget);
-        let allocated = allocator.allocate(requested);
-        if allocated == 0 {
-            if !content.is_empty() {
-                *truncated = true;
-            }
-            plan.segments.push(self.plan_segment(
-                scope,
-                node_id,
-                node_name.as_deref(),
-                estimated,
-                0,
-                ContextDisposition::OmittedTokenBudget,
-            ));
-            return false;
-        }
-
-        let (content, frame_truncated) = truncate_to_budget(&content, allocated);
-        *truncated |= frame_truncated;
-        let disposition = if frame_truncated {
-            ContextDisposition::Truncated
-        } else {
-            ContextDisposition::Kept
-        };
-        plan.segments.push(self.plan_segment(
-            scope.clone(),
-            node_id,
-            node_name.as_deref(),
-            estimated,
-            estimate_tokens(&content),
-            disposition,
-        ));
         frames.push(ContextFrame {
             scope,
             node_id,
             node_name,
-            token_estimate: estimate_tokens(&content),
-            content,
+            token_estimate: plan.estimate(&admission.content),
+            content: admission.content,
         });
 
-        !allocator.is_exhausted()
+        Ok(plan.remaining_tokens() > 0)
     }
 
-    fn plan_segment(
+    fn segment_spec(
         &self,
-        scope: ContextScope,
+        scope: &ContextScope,
         node_id: Option<u64>,
         node_name: Option<&str>,
-        original_token_estimate: usize,
-        token_estimate: usize,
-        disposition: ContextDisposition,
-    ) -> ContextPlanSegment {
-        let (permission, sensitivity, protected, provenance) = match &scope {
+        max_tokens: usize,
+    ) -> ContextSegmentSpec {
+        let (permission, sensitivity, provenance) = match scope {
             ContextScope::Session => (
                 ContextPermissionScope::Session,
                 ContextSensitivity::Internal,
-                true,
-                format!("session:{}", self.session_dir.display()),
+                "session".to_string(),
             ),
             ContextScope::Local => (
                 ContextPermissionScope::Local,
                 ContextSensitivity::Private,
-                true,
                 format!(
                     "node:{}:{}",
                     node_id.unwrap_or_default(),
@@ -428,7 +567,6 @@ impl ContextStack {
             ContextScope::Upstream(upstream_id) => (
                 ContextPermissionScope::GraphDependency,
                 ContextSensitivity::Private,
-                false,
                 format!(
                     "upstream:{}:{}",
                     upstream_id,
@@ -436,32 +574,21 @@ impl ContextStack {
                 ),
             ),
         };
-        ContextPlanSegment {
-            scope,
+        ContextSegmentSpec {
+            scope: scope.clone(),
+            role: ContextSegmentRole::Context,
             provenance,
             permission,
             sensitivity,
-            protected,
-            original_token_estimate,
-            token_estimate,
-            disposition,
+            protected: matches!(scope, ContextScope::Local),
+            max_tokens,
         }
     }
 
     fn session_frame_content(&self) -> String {
-        let execution_id = self
-            .session_dir
-            .file_name()
-            .and_then(|name| name.to_str())
-            .unwrap_or("unknown");
+        let mut content = "- Workflow context".to_string();
 
-        let mut content = format!(
-            "- Execution: {}\n- Session dir: {}",
-            execution_id,
-            self.session_dir.display()
-        );
-
-        // Include workflow summary if available.
+        // Workflow summaries add provider-relevant graph facts without exposing storage paths.
         if let Some(summary) = load_graph_summary(&self.session_dir) {
             if let Ok(summary_json) = serde_json::from_str::<serde_json::Value>(&summary) {
                 if let Some(name) = summary_json.get("name").and_then(|v| v.as_str()) {
@@ -620,6 +747,23 @@ impl fmt::Display for ContextAssembly {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::collections::BTreeMap;
+
+    fn planning(token_budget: usize) -> ContextPlanningPolicy {
+        ContextPlanningPolicy {
+            tokenizer: ContextTokenizer::O200kBase,
+            token_budget,
+            profiles: BTreeMap::from([(
+                "answering".to_string(),
+                ScopeRules {
+                    upstream_depth: 1,
+                    upstream_frame_budget: 2_000,
+                    session_frame_budget: 200,
+                    include_upstream_prompts: false,
+                },
+            )]),
+        }
+    }
 
     #[test]
     fn assembly_records_protected_provenance_and_budget_omissions() {
@@ -633,15 +777,17 @@ mod tests {
                 },
             )])),
             Arc::new(Vec::new()),
-        );
+        )
+        .with_planning_policy(planning(0));
 
-        let assembly = stack.assemble(7, "default", 0);
-        assert_eq!(assembly.plan.tokenizer, "o200k_base");
+        let assembly = stack.assemble(7, "answering").expect("configured policy");
+        assert_eq!(assembly.plan.tokenizer_identity(), "o200k_base");
         assert_eq!(assembly.plan.token_budget, 0);
+        assert_eq!(assembly.plan.profile.as_deref(), Some("answering"));
         assert_eq!(assembly.plan.admitted_tokens(), 0);
         assert!(assembly.plan.segments.iter().any(|segment| {
             segment.scope == ContextScope::Session
-                && segment.protected
+                && !segment.protected
                 && segment.permission == ContextPermissionScope::Session
                 && segment.disposition == ContextDisposition::OmittedTokenBudget
         }));
@@ -656,11 +802,13 @@ mod tests {
     #[test]
     fn plan_metrics_expose_only_packing_aggregates() {
         let plan = ContextPlan {
-            tokenizer: "o200k_base".to_string(),
+            tokenizer: ContextTokenizer::O200kBase,
             token_budget: 20,
+            profile: Some("answering".to_string()),
             segments: vec![
                 ContextPlanSegment {
                     scope: ContextScope::Session,
+                    role: ContextSegmentRole::Context,
                     provenance: "session:private".to_string(),
                     permission: ContextPermissionScope::Session,
                     sensitivity: ContextSensitivity::Private,
@@ -671,6 +819,7 @@ mod tests {
                 },
                 ContextPlanSegment {
                     scope: ContextScope::Local,
+                    role: ContextSegmentRole::System,
                     provenance: "node:7:secret".to_string(),
                     permission: ContextPermissionScope::Local,
                     sensitivity: ContextSensitivity::Sensitive,
@@ -681,6 +830,7 @@ mod tests {
                 },
                 ContextPlanSegment {
                     scope: ContextScope::Upstream(3),
+                    role: ContextSegmentRole::Dependency,
                     provenance: "node:3:output".to_string(),
                     permission: ContextPermissionScope::GraphDependency,
                     sensitivity: ContextSensitivity::Private,
@@ -691,6 +841,7 @@ mod tests {
                 },
                 ContextPlanSegment {
                     scope: ContextScope::Upstream(4),
+                    role: ContextSegmentRole::Dependency,
                     provenance: "node:4:empty".to_string(),
                     permission: ContextPermissionScope::GraphDependency,
                     sensitivity: ContextSensitivity::Internal,
@@ -712,7 +863,139 @@ mod tests {
                 truncated_segments: 1,
                 omitted_token_budget_segments: 1,
                 omitted_empty_segments: 1,
+                excluded_provider_segments: 0,
             }
         );
+    }
+
+    #[test]
+    fn one_plan_packs_and_records_provider_roles_without_collapsing_them() {
+        let policy = planning(64);
+        let mut plan = ContextPlan::from_policy(&policy, None).expect("configured policy");
+        for (role, provenance, content) in [
+            (
+                ContextSegmentRole::System,
+                "request:system",
+                "system policy",
+            ),
+            (ContextSegmentRole::User, "request:user", "user prompt"),
+            (ContextSegmentRole::Tool, "request:tool", "tool result"),
+        ] {
+            plan.admit(
+                ContextSegmentSpec {
+                    scope: ContextScope::Local,
+                    role,
+                    provenance: provenance.to_string(),
+                    permission: ContextPermissionScope::Local,
+                    sensitivity: ContextSensitivity::Private,
+                    protected: true,
+                    max_tokens: plan.remaining_tokens(),
+                },
+                content,
+            )
+            .expect("protected request role fits");
+        }
+        plan.exclude(
+            ContextSegmentSpec {
+                scope: ContextScope::Upstream(3),
+                role: ContextSegmentRole::Dependency,
+                provenance: "request:dependency".to_string(),
+                permission: ContextPermissionScope::GraphDependency,
+                sensitivity: ContextSensitivity::Private,
+                protected: true,
+                max_tokens: 0,
+            },
+            "dependency-only value",
+        );
+
+        assert_eq!(
+            plan.segments
+                .iter()
+                .map(|segment| segment.role.clone())
+                .collect::<Vec<_>>(),
+            vec![
+                ContextSegmentRole::System,
+                ContextSegmentRole::User,
+                ContextSegmentRole::Tool,
+                ContextSegmentRole::Dependency,
+            ]
+        );
+        assert_eq!(plan.metrics().excluded_provider_segments, 1);
+    }
+
+    #[test]
+    fn assembly_rejects_profiles_absent_from_configured_policy() {
+        let stack = ContextStack::new(
+            PathBuf::from("/tmp/apxm-context-plan"),
+            Arc::new(HashMap::new()),
+            Arc::new(Vec::new()),
+        )
+        .with_planning_policy(planning(256));
+
+        assert_eq!(
+            stack
+                .assemble(7, "unconfigured")
+                .expect_err("unconfigured profile must fail"),
+            ContextPlanningError::ProfileNotConfigured {
+                profile: "unconfigured".to_string(),
+            }
+        );
+    }
+
+    #[test]
+    fn assembly_fails_closed_without_planning_policy() {
+        let stack = ContextStack::new(
+            PathBuf::from("/tmp/apxm-context-plan"),
+            Arc::new(HashMap::new()),
+            Arc::new(Vec::new()),
+        );
+
+        assert_eq!(
+            stack
+                .assemble(7, "answering")
+                .expect_err("planning policy must be configured"),
+            ContextPlanningError::PolicyNotConfigured
+        );
+    }
+
+    #[test]
+    fn session_frame_content_excludes_the_session_storage_path() {
+        let session_dir = PathBuf::from("/private/output-root/run-42");
+        let stack = ContextStack::new(
+            session_dir.clone(),
+            Arc::new(HashMap::new()),
+            Arc::new(Vec::new()),
+        );
+
+        assert!(
+            !stack
+                .session_frame_content()
+                .contains(session_dir.to_string_lossy().as_ref())
+        );
+    }
+
+    #[test]
+    fn serialized_plan_excludes_segment_provenance_and_paths() {
+        let stack = ContextStack::new(
+            PathBuf::from("/private/output-root/run-42"),
+            Arc::new(HashMap::new()),
+            Arc::new(Vec::new()),
+        )
+        .with_planning_policy(planning(256));
+        let plan = stack
+            .assemble(7, "answering")
+            .expect("configured context planning")
+            .plan;
+
+        let serialized = serde_json::to_string(&plan).expect("serialize redacted plan");
+        assert!(!serialized.contains("segments"));
+        assert!(!serialized.contains("provenance"));
+        assert!(!serialized.contains("/private/output-root/run-42"));
+
+        let segment = plan.segments.first().expect("session segment");
+        let serialized_segment =
+            serde_json::to_string(segment).expect("serialize redacted segment");
+        assert!(!serialized_segment.contains("provenance"));
+        assert!(!serialized_segment.contains("/private/output-root/run-42"));
     }
 }

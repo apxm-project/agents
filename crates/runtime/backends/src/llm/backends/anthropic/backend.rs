@@ -1,14 +1,17 @@
 //! Anthropic backend implementation.
 //!
-//! Implements the LLMBackend trait for Anthropic's Claude API.
-//! This file updates the default model and the set of models returned by
-//! `list_models()` to include newer Claude model identifiers.
+//! Implements the LLMBackend trait for Anthropic's Claude API using explicit
+//! registered models and endpoints.
 
 use crate::llm::ProviderProtocol;
 use crate::llm::backends::http::llm_http_client;
+use crate::llm::backends::openai::backend::validate_provider_dispatch;
 use crate::llm::backends::traits::StreamChunk;
+use crate::llm::backends::{
+    ConfiguredModelCapabilities, configured_model_capabilities, configured_model_info,
+    required_config_string, resolve_configured_value,
+};
 use crate::llm::backends::{ContentPart, LLMBackend, LLMRequest, LLMResponse, Role, ToolChoice};
-use crate::llm::catalog::{default_model_for_protocol, models_for_protocol};
 use crate::llm::wire::{
     anthropic_events, api_paths, config_keys, defaults as wire_defaults, headers, message_keys,
     roles, sse, tool_keys,
@@ -21,12 +24,11 @@ use async_trait::async_trait;
 use futures::StreamExt as _;
 use serde::Deserialize;
 use serde_json::json;
+use std::collections::HashMap;
 use std::pin::Pin;
 use tokio_stream::Stream;
 
-const DEFAULT_BASE_URL: &str = "https://api.anthropic.com/v1";
 const PROTOCOL: ProviderProtocol = ProviderProtocol::Anthropic;
-const DEFAULT_MODEL: &str = "claude-sonnet-4-5";
 const ANTHROPIC_VERSION: &str = "2023-06-01";
 
 /// Anthropic LLM backend.
@@ -51,10 +53,21 @@ pub struct AnthropicBackend {
     base_url: String,
     /// Additional HTTP headers injected on every request.
     extra_headers: Vec<(String, String)>,
+    /// Registered per-model capability evidence.
+    model_capabilities: HashMap<String, ConfiguredModelCapabilities>,
+    /// Registered model metadata exposed through backend inspection.
+    registered_models: Vec<ModelInfo>,
     client: reqwest::Client,
 }
 
 impl AnthropicBackend {
+    fn configured_capabilities(&self, model: &str) -> ConfiguredModelCapabilities {
+        self.model_capabilities
+            .get(model)
+            .copied()
+            .unwrap_or_default()
+    }
+
     fn request_model<'a>(&'a self, request: &'a LLMRequest) -> &'a str {
         request.model.as_deref().unwrap_or(&self.model)
     }
@@ -62,25 +75,14 @@ impl AnthropicBackend {
     /// Create a new Anthropic backend.
     ///
     /// The optional `config` value may contain:
-    /// - `model` – override the default model name
-    /// - `base_url` – override the API base URL (enables on-premises endpoints)
+    /// - `model` – registered model name
+    /// - `base_url` – registered API base URL
     /// - `extra_headers` – a JSON object whose keys/values become HTTP headers on every
     ///   request.  Values prefixed with `"env:"` are resolved from environment variables
     ///   at backend-creation time (e.g. `"env:LLM_GATEWAY_KEY"` → current env var).
     pub async fn new(api_key: &str, config: Option<serde_json::Value>) -> Result<Self> {
-        let model = config
-            .as_ref()
-            .and_then(|c| c.get(MODEL))
-            .and_then(|m| m.as_str())
-            .unwrap_or_else(|| default_model_for_protocol(PROTOCOL).unwrap_or(DEFAULT_MODEL))
-            .to_string();
-
-        let base_url = config
-            .as_ref()
-            .and_then(|c| c.get(BASE_URL))
-            .and_then(|u| u.as_str())
-            .unwrap_or(DEFAULT_BASE_URL)
-            .to_string();
+        let model = required_config_string(config.as_ref(), PROTOCOL, MODEL)?;
+        let base_url = required_config_string(config.as_ref(), PROTOCOL, BASE_URL)?;
 
         // Parse optional extra_headers from config.
         // Values prefixed with "env:" are read from environment variables.
@@ -90,25 +92,32 @@ impl AnthropicBackend {
             .and_then(|h| h.as_object())
             .map(|obj| {
                 obj.iter()
-                    .filter_map(|(k, v)| {
-                        let raw = v.as_str()?;
-                        let resolved =
-                            if let Some(var_name) = raw.strip_prefix(config_keys::ENV_PREFIX) {
-                                std::env::var(var_name).unwrap_or_else(|_| raw.to_string())
-                            } else {
-                                raw.to_string()
-                            };
-                        Some((k.clone(), resolved))
+                    .map(|(key, value)| -> Result<(String, String)> {
+                        let field = format!("{}.{}", config_keys::EXTRA_HEADERS, key);
+                        let raw = value.as_str().ok_or_else(|| {
+                            crate::llm::backends::BackendConfigurationError::InvalidOptionalField {
+                                protocol: PROTOCOL,
+                                field: field.clone(),
+                            }
+                        })?;
+                        let resolved = resolve_configured_value(PROTOCOL, field, raw)?;
+                        Ok::<_, anyhow::Error>((key.clone(), resolved))
                     })
-                    .collect()
+                    .collect::<std::result::Result<Vec<_>, _>>()
             })
+            .transpose()?
             .unwrap_or_default();
+
+        let model_capabilities = configured_model_capabilities(config.as_ref());
+        let registered_models = configured_model_info(config.as_ref());
 
         Ok(AnthropicBackend {
             api_key: api_key.to_string(),
             model,
             base_url,
             extra_headers,
+            model_capabilities,
+            registered_models,
             client: llm_http_client(),
         })
     }
@@ -286,7 +295,7 @@ impl AnthropicBackend {
 #[async_trait]
 impl LLMBackend for AnthropicBackend {
     async fn generate(&self, request: LLMRequest) -> Result<LLMResponse> {
-        request.validate()?;
+        validate_provider_dispatch(&request)?;
 
         let model = self.request_model(&request).to_string();
         let body = self.build_request_body(&request);
@@ -339,7 +348,7 @@ impl LLMBackend for AnthropicBackend {
         request: LLMRequest,
     ) -> Pin<Box<dyn Stream<Item = Result<StreamChunk>> + Send + '_>> {
         Box::pin(async_stream::try_stream! {
-            request.validate()?;
+            validate_provider_dispatch(&request)?;
             let model = self.request_model(&request).to_string();
             let mut body = self.build_request_body(&request);
             body[message_keys::STREAM] = json!(true);
@@ -543,6 +552,11 @@ impl LLMBackend for AnthropicBackend {
         &self.model
     }
 
+    fn context_window_for_model(&self, model: &str) -> Option<usize> {
+        let context_window = self.configured_capabilities(model).context_window;
+        (context_window > 0).then_some(context_window)
+    }
+
     async fn health_check(&self) -> Result<()> {
         // Anthropic doesn't have a lightweight public health endpoint for all
         // models; perform a minimal generation request as a check.
@@ -555,26 +569,52 @@ impl LLMBackend for AnthropicBackend {
     }
 
     async fn list_models(&self) -> Result<Vec<ModelInfo>> {
-        Ok(models_for_protocol(PROTOCOL)
-            .map(|m| ModelInfo {
-                id: m.id.to_string(),
-                name: m.id.to_string(),
-                context_window: 200_000,
-                supports_vision: true,
-                supports_functions: true,
-            })
-            .collect())
+        Ok(self.registered_models.clone())
     }
 
     fn capabilities(&self) -> ModelCapabilities {
+        let capabilities = self.configured_capabilities(&self.model);
         ModelCapabilities {
             streaming: true,
-            vision: self.model.starts_with("claude-"),
-            functions: true, // Claude models support tool use
-            structured_outputs: false,
+            vision: capabilities.supports_vision,
+            functions: capabilities.supports_functions,
+            structured_outputs: capabilities.supports_structured_outputs.unwrap_or(false),
             batch: false,
-            fine_tuning: false,
+            fine_tuning: capabilities.supports_fine_tuning,
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn registered_capabilities_override_anthropic_model_name_inference() {
+        let backend = AnthropicBackend::new(
+            "",
+            Some(json!({
+                "model": "claude-compatible-gateway-model",
+                "base_url": "https://llm.example.test/anthropic",
+                "models": [{
+                    "id": "claude-compatible-gateway-model",
+                    "supports_vision": false,
+                    "supports_functions": false
+                }]
+            })),
+        )
+        .await
+        .expect("registered backend config");
+
+        let capabilities = backend.capabilities();
+        assert!(!capabilities.vision);
+        assert!(!capabilities.functions);
+
+        let models = backend.list_models().await.expect("registered models");
+        assert_eq!(models.len(), 1);
+        assert_eq!(models[0].id, "claude-compatible-gateway-model");
+        assert!(!models[0].supports_vision);
+        assert!(!models[0].supports_functions);
     }
 }
 

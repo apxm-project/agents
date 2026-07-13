@@ -1,11 +1,13 @@
 //! Pipeline API for compiling and optimizing modules.
 
 use crate::air_builder::AirModule;
+use crate::analysis::CompilerAnalysisInputs;
 use crate::api::{Context, Module};
 use crate::optimization::CompilerOptimizationContext;
 use crate::passes::{PassManager, PipelineDiagnostics, PipelinePlan, resolve_pipeline_plan};
 use apxm_core::error::compiler::{CompilerError, Result};
 use apxm_core::error::{Error, codes::ErrorCode};
+#[cfg(test)]
 use apxm_core::types::compiler::metadata::DSPY_OPTIMIZE;
 use apxm_core::types::{OptimizationLevel, PipelineConfig};
 
@@ -13,6 +15,7 @@ use apxm_core::types::{OptimizationLevel, PipelineConfig};
 pub struct Pipeline<'ctx> {
     context: &'ctx Context,
     config: PipelineConfig,
+    analysis_inputs: CompilerAnalysisInputs,
 }
 
 impl<'ctx> Pipeline<'ctx> {
@@ -21,12 +24,26 @@ impl<'ctx> Pipeline<'ctx> {
         Self {
             context,
             config: PipelineConfig::default(),
+            analysis_inputs: CompilerAnalysisInputs::default(),
         }
     }
 
     /// Creates a new pipeline with custom configuration.
     pub fn with_config(context: &'ctx Context, config: PipelineConfig) -> Self {
-        Self { context, config }
+        Self::with_config_and_analysis_inputs(context, config, CompilerAnalysisInputs::default())
+    }
+
+    /// Creates a pipeline with explicit evidence for conservative analyses.
+    pub fn with_config_and_analysis_inputs(
+        context: &'ctx Context,
+        config: PipelineConfig,
+        analysis_inputs: CompilerAnalysisInputs,
+    ) -> Self {
+        Self {
+            context,
+            config,
+            analysis_inputs,
+        }
     }
 
     /// Creates a pipeline with one optimization level.
@@ -48,7 +65,7 @@ impl<'ctx> Pipeline<'ctx> {
         config: PipelineConfig,
         _optimization_context: CompilerOptimizationContext,
     ) -> Self {
-        Self { context, config }
+        Self::with_config(context, config)
     }
 
     /// Compile AIR text without collecting diagnostics.
@@ -92,7 +109,7 @@ impl<'ctx> Pipeline<'ctx> {
             profile.apply_to_module(&mut module, self.config.token_budget);
         }
 
-        crate::token_estimate::annotate_token_estimates(&mut module);
+        crate::token_estimate::annotate_token_estimates(&mut module, &self.analysis_inputs);
         let air_text = module.to_air().map_err(|error| {
             CompilerError::Unsupported(Box::new(Error::new_generic(
                 ErrorCode::InternalError,
@@ -102,8 +119,9 @@ impl<'ctx> Pipeline<'ctx> {
         Module::parse(self.context, &air_text)
     }
 
-    fn process_module(&self, module: Module) -> Result<Module> {
+    fn process_module(&self, mut module: Module) -> Result<Module> {
         let plan = self.resolved_plan()?;
+        module.set_analysis_inputs(self.analysis_inputs.clone());
         if self.config.verify {
             module.verify()?;
         }
@@ -126,9 +144,10 @@ impl<'ctx> Pipeline<'ctx> {
 
     fn process_module_with_diagnostics(
         &self,
-        module: Module,
+        mut module: Module,
     ) -> Result<(Module, PipelineDiagnostics)> {
         let plan = self.resolved_plan()?;
+        module.set_analysis_inputs(self.analysis_inputs.clone());
         if self.config.verify {
             module.verify()?;
         }
@@ -187,6 +206,17 @@ module {
         assert!(convergence.iterations > 0);
         assert!(convergence.iterations <= O3_MAX_CLEANUP_ITERATIONS);
         assert_eq!(convergence.status, ConvergenceStatus::Converged);
+        let cleanup_iterations: Vec<_> = diagnostics
+            .passes
+            .iter()
+            .filter_map(|entry| entry.iteration)
+            .collect();
+        assert!(!cleanup_iterations.is_empty());
+        assert!(
+            cleanup_iterations
+                .iter()
+                .all(|iteration| (1..=O3_MAX_CLEANUP_ITERATIONS).contains(iteration))
+        );
 
         let artifact_stages: Vec<_> = diagnostics
             .passes
@@ -246,11 +276,5 @@ module {
 }
 
 fn reject_unavailable_stages(plan: &PipelinePlan) -> Result<()> {
-    if plan.contains_stage(DSPY_OPTIMIZE.name) {
-        return Err(CompilerError::Unsupported(Box::new(Error::new_generic(
-            ErrorCode::InternalError,
-            "dspy-optimize is unavailable in production compilation; run prompt optimization through the offline evaluation workflow".to_string(),
-        ))));
-    }
-    Ok(())
+    PassManager::validate_plan(plan)
 }

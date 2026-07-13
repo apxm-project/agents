@@ -135,6 +135,11 @@ pub struct LLMRequest {
     pub temperature: f64,
     /// Maximum tokens to generate
     pub max_tokens: Option<usize>,
+    /// Exact input-token estimate produced by the runtime context planner.
+    ///
+    /// This remains provider-neutral admission evidence and is never sent as a
+    /// provider request field.
+    pub context_input_tokens: Option<usize>,
     /// Nucleus sampling - keep top p probability mass
     pub top_p: Option<f64>,
     /// Frequency penalty - penalize repeated tokens
@@ -187,6 +192,7 @@ impl LLMRequest {
             system_prompt: None,
             temperature: DEFAULT_TEMPERATURE,
             max_tokens: None,
+            context_input_tokens: None,
             top_p: None,
             frequency_penalty: None,
             presence_penalty: None,
@@ -269,6 +275,12 @@ impl LLMRequest {
     /// Set maximum tokens.
     pub fn with_max_tokens(mut self, max: usize) -> Self {
         self.max_tokens = Some(max);
+        self
+    }
+
+    /// Attach the exact input-token estimate produced by the context planner.
+    pub fn with_context_input_tokens(mut self, input_tokens: usize) -> Self {
+        self.context_input_tokens = Some(input_tokens);
         self
     }
 

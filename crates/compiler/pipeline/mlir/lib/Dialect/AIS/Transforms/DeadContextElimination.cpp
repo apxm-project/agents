@@ -139,15 +139,11 @@ private:
     const bool hasExplicitInputRoles =
         placeholders::hasInputRoles(op.getOperation());
     auto inputRoles = placeholders::readInputRoles(op.getOperation());
-    if (hasExplicitInputRoles &&
+    if (!hasExplicitInputRoles ||
         !placeholders::inputRolesAreValid(inputRoles, contextSize)) {
-      APXM_AIS_DEBUG("  input_roles mismatch or unsupported value; preserving context");
+      APXM_AIS_DEBUG("  input_roles must be explicit, valid, and positional; "
+                     "preserving context");
       return 0;
-    }
-    if (!hasExplicitInputRoles) {
-      inputRoles.reserve(contextSize);
-      for (llvm::StringRef inputName : inputNames)
-        inputRoles.push_back(placeholders::roleForLegacyInputName(inputName));
     }
 
     // Walk operands in order, keeping template-referenced user inputs and

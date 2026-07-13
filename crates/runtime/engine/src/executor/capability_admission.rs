@@ -40,6 +40,36 @@ pub(crate) fn metadata_admits_write(
     )
 }
 
+/// Return the active, matching mutating grants from runtime metadata.
+///
+/// Parsing and eligibility intentionally match `capability_grant_admits_write`
+/// so an effect preparation cannot cite a grant that would not admit the call.
+pub(crate) fn metadata_matching_write_grants(
+    metadata: &std::collections::HashMap<String, String>,
+    capability_binding: &str,
+) -> Vec<String> {
+    let Some(raw) = metadata.get(metadata_keys::CAPABILITY_GRANTS) else {
+        return Vec::new();
+    };
+    let Ok(grants) = serde_json::from_str::<Vec<RuntimeCapabilityGrant>>(raw) else {
+        return Vec::new();
+    };
+    grants
+        .into_iter()
+        .filter(|grant| {
+            grant.status == GrantStatus::Active
+                && grant.capability_binding == capability_binding
+                && grant
+                    .operations
+                    .iter()
+                    .copied()
+                    .any(PermissionOperation::is_mutating)
+                && !capability_grant_expired(grant.expires_at.as_deref())
+        })
+        .map(|grant| grant.grant_id)
+        .collect()
+}
+
 fn capability_grant_expired(expires_at: Option<&str>) -> bool {
     let Some(expires_at) = expires_at else {
         return false;

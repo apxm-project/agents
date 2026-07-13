@@ -83,13 +83,18 @@ pub mod sse {
 
 pub mod config_keys {
     pub const ID: &str = "id";
+    pub const CONTEXT_WINDOW: &str = "context_window";
     pub const EXTRA_HEADERS: &str = "extra_headers";
     pub const ENV_PREFIX: &str = "env:";
     pub const AUTO_TOOL_CHOICE: &str = "auto_tool_choice";
     pub const MODELS: &str = "models";
+    pub const SUPPORTS_VISION: &str = "supports_vision";
+    pub const SUPPORTS_FUNCTIONS: &str = "supports_functions";
+    pub const SUPPORTS_FINE_TUNING: &str = "supports_fine_tuning";
     pub const SUPPORTS_THINKING: &str = "supports_thinking";
     pub const SUPPORTS_CUSTOM_TEMPERATURE: &str = "supports_custom_temperature";
     pub const SUPPORTS_STRUCTURED_OUTPUTS: &str = "supports_structured_outputs";
+    pub const USES_REASONING_TOKEN_FIELDS: &str = "uses_reasoning_token_fields";
     pub const CHAT_TEMPLATE_KWARGS: &str = "chat_template_kwargs";
     pub const ENABLE_THINKING: &str = "enable_thinking";
 }

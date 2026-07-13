@@ -4,6 +4,35 @@ use std::path::Path;
 
 use apxm_core::constants::session;
 use apxm_core::paths::session_node_dir_name;
+use serde::{Deserialize, Serialize};
+
+/// Tokenizer selected by the context-planning policy.
+///
+/// Context assembly records this identity with every plan so token estimates
+/// and truncation can be interpreted against the configured implementation.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ContextTokenizer {
+    Cl100kBase,
+    O200kBase,
+}
+
+impl ContextTokenizer {
+    /// Stable identity emitted with context-planning evidence.
+    pub const fn identity(self) -> &'static str {
+        match self {
+            Self::Cl100kBase => "cl100k_base",
+            Self::O200kBase => "o200k_base",
+        }
+    }
+
+    fn tokenizer(self) -> &'static bpe_openai::Tokenizer {
+        match self {
+            Self::Cl100kBase => bpe_openai::cl100k_base(),
+            Self::O200kBase => bpe_openai::o200k_base(),
+        }
+    }
+}
 
 pub fn load_node_output(session_dir: &Path, node_id: u64, node_name: &str) -> Option<String> {
     let output_path = session_dir
@@ -34,33 +63,49 @@ pub fn load_graph_summary(session_dir: &Path) -> Option<String> {
     std::fs::read_to_string(summary_path).ok()
 }
 
-pub fn estimate_tokens(text: &str) -> usize {
-    bpe_openai::o200k_base().count(text)
+/// Count tokens with the explicitly selected tokenizer.
+pub fn estimate_tokens_with(tokenizer: ContextTokenizer, text: &str) -> usize {
+    tokenizer.tokenizer().count(text)
 }
 
-pub fn truncate_to_budget(text: &str, max_tokens: usize) -> (String, bool) {
-    let tokenizer = bpe_openai::o200k_base();
+/// Estimate tokens with the runtime's canonical default tokenizer.
+pub fn estimate_tokens(text: &str) -> usize {
+    estimate_tokens_with(ContextTokenizer::O200kBase, text)
+}
+
+/// Truncate with the explicitly selected tokenizer.
+pub fn truncate_to_budget_with(
+    tokenizer: ContextTokenizer,
+    text: &str,
+    max_tokens: usize,
+) -> (String, bool) {
+    let tokenizer = tokenizer.tokenizer();
     let tokens = tokenizer.encode(text);
 
     if tokens.len() <= max_tokens {
         return (text.to_string(), false);
     }
 
-    let dropped_tokens = tokens.len().saturating_sub(max_tokens);
     let mut keep = max_tokens.min(tokens.len());
-    let prefix = loop {
+    let content = loop {
         if let Some(decoded) = tokenizer.decode(&tokens[..keep]) {
-            break decoded;
+            let dropped_tokens = tokens.len().saturating_sub(keep);
+            let candidate = format!("{}\n... [truncated {} tokens]", decoded, dropped_tokens);
+            if tokenizer.count(&candidate) <= max_tokens {
+                break candidate;
+            }
         }
         if keep == 0 {
             break String::new();
         }
         keep -= 1;
     };
-    (
-        format!("{}\n... [truncated {} tokens]", prefix, dropped_tokens),
-        true,
-    )
+    (content, true)
+}
+
+/// Truncate with the runtime's canonical default tokenizer.
+pub fn truncate_to_budget(text: &str, max_tokens: usize) -> (String, bool) {
+    truncate_to_budget_with(ContextTokenizer::O200kBase, text, max_tokens)
 }
 
 #[cfg(test)]
@@ -83,11 +128,13 @@ mod tests {
     #[test]
     fn truncate_to_budget_is_byte_identical_across_repeated_runs() {
         let budget = 64;
-        let (first, first_truncated) = truncate_to_budget(TOOL_RESULT_FIXTURE, budget);
+        let (first, first_truncated) =
+            truncate_to_budget_with(ContextTokenizer::O200kBase, TOOL_RESULT_FIXTURE, budget);
         assert!(first_truncated, "fixture must exceed the trim budget");
 
         for _ in 0..50 {
-            let (again, truncated_again) = truncate_to_budget(TOOL_RESULT_FIXTURE, budget);
+            let (again, truncated_again) =
+                truncate_to_budget_with(ContextTokenizer::O200kBase, TOOL_RESULT_FIXTURE, budget);
             assert_eq!(again, first, "trim output must be byte-identical every run");
             assert_eq!(truncated_again, first_truncated);
         }
@@ -100,8 +147,13 @@ mod tests {
     /// prefix-keep" claim.
     #[test]
     fn truncate_to_budget_marker_and_head_boundary_are_stable() {
-        let (trimmed, was_truncated) = truncate_to_budget(TOOL_RESULT_FIXTURE, 64);
+        let (trimmed, was_truncated) =
+            truncate_to_budget_with(ContextTokenizer::O200kBase, TOOL_RESULT_FIXTURE, 64);
         assert!(was_truncated);
+        assert!(
+            estimate_tokens_with(ContextTokenizer::O200kBase, &trimmed) <= 64,
+            "truncation marker must remain inside the requested budget"
+        );
 
         let (head, marker) = trimmed
             .rsplit_once("\n... [truncated ")
@@ -114,7 +166,8 @@ mod tests {
         assert!(!head.is_empty());
 
         // Re-trimming at the same budget reproduces the exact same boundary.
-        let (trimmed_again, _) = truncate_to_budget(TOOL_RESULT_FIXTURE, 64);
+        let (trimmed_again, _) =
+            truncate_to_budget_with(ContextTokenizer::O200kBase, TOOL_RESULT_FIXTURE, 64);
         assert_eq!(trimmed_again, trimmed);
     }
 
@@ -124,8 +177,14 @@ mod tests {
     #[test]
     fn truncate_to_budget_is_a_no_op_under_budget() {
         let small = "short tool result";
-        let (out, truncated) = truncate_to_budget(small, 1_000);
+        let (out, truncated) = truncate_to_budget_with(ContextTokenizer::O200kBase, small, 1_000);
         assert_eq!(out, small);
         assert!(!truncated);
+    }
+
+    #[test]
+    fn tokenizer_identity_is_selected_by_policy() {
+        assert_eq!(ContextTokenizer::Cl100kBase.identity(), "cl100k_base");
+        assert_eq!(ContextTokenizer::O200kBase.identity(), "o200k_base");
     }
 }

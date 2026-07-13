@@ -2,7 +2,7 @@ import { readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
-import { GraphBuilder } from "../src/builder.js";
+import { GraphBuilder, promptInput } from "../src/builder.js";
 import { ApxmGraph, emitMultiFlowModule } from "../src/graph.js";
 
 // Shared fixtures under the `agents`-owned Rust CLI crate: the same vectors
@@ -28,6 +28,28 @@ function askFlow(): ApxmGraph {
   const graph = new GraphBuilder("ask_flow", { metadata: { is_entry: true } });
   graph.param("name", "str");
   const answer = graph.ask({ name: "ask", prompt: "Say hi to {name}" });
+  graph.done(answer, "out");
+  return graph.toGraph();
+}
+
+function promptRoleFlow(): ApxmGraph {
+  const graph = new GraphBuilder("prompt_role_flow", { metadata: { is_entry: true } });
+  const question = graph.ask({ name: "question", prompt: "Question" });
+  const policy = graph.ask({ name: "policy", prompt: "System instructions" });
+  const dependency = graph.ask({ name: "dependency", prompt: "Dependency state" });
+  const toolResult = graph.ask({ name: "tool_result", prompt: "Tool result" });
+  const guard = graph.ask({ name: "guard", prompt: "Control state" });
+  const answer = graph.ask({
+    name: "answer",
+    prompt: "Answer {question}",
+    inputs: { question },
+    promptInputs: {
+      policy: promptInput(policy, "system"),
+      dependency: promptInput(dependency, "dependency_only"),
+      tool_result: promptInput(toolResult, "tool_context"),
+      guard: promptInput(guard, "control"),
+    },
+  });
   graph.done(answer, "out");
   return graph.toGraph();
 }
@@ -143,6 +165,7 @@ function coordinationFlow(): ApxmGraph {
 describe("native authoring DTO parity", () => {
   it("matches every shared authoring vector before AIR emission", () => {
     expectNativeDto("ask_flow.json", askFlow());
+    expectNativeDto("prompt_role_flow.json", promptRoleFlow());
     expectNativeDto("parametrized_flow.json", parametrizedFlow());
     expectNativeDto("profiled_agent_flow.json", profiledAgentFlow());
     expect(multiFlowConversational().map((graph) => graph.toDict())).toEqual(
@@ -158,6 +181,7 @@ describe("native authoring DTO parity", () => {
 describe("AIR emission through the canonical Rust printer", () => {
   it.each([
     ["ask flow", "ask_flow.golden.air", () => askFlow().toAir()],
+    ["prompt-role flow", "prompt_role_flow.golden.air", () => promptRoleFlow().toAir()],
     ["parameterized flow", "parametrized_flow.golden.air", () => parametrizedFlow().toAir()],
     ["profiled-agent flow", "profiled_agent_flow.golden.air", () => profiledAgentFlow().toAir()],
     [

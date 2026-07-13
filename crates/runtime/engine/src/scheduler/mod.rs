@@ -36,8 +36,9 @@ pub use queue::{Priority, PriorityQueue};
 pub use replay::ReplaySeed;
 pub use snapshot::{
     SchedulerSnapshot, SchedulerSnapshotCounters, SchedulerSnapshotDelegatedToken,
-    SchedulerSnapshotExecutionFrame, SchedulerSnapshotNodeOutputs, SchedulerSnapshotOp,
-    SchedulerSnapshotPendingInput, SchedulerSnapshotPromise, SchedulerSnapshotToken,
+    SchedulerSnapshotEdge, SchedulerSnapshotExecutionFrame, SchedulerSnapshotNodeOutputs,
+    SchedulerSnapshotOp, SchedulerSnapshotPendingInput, SchedulerSnapshotPromise,
+    SchedulerSnapshotToken,
 };
 pub use splicing::SpliceConfig;
 

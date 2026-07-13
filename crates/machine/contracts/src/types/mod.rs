@@ -58,7 +58,8 @@ pub use compiler::{
     BackendLegalityRequirements, CodegenOptions, CompilationStage, CompilerAnalysisKind,
     CostProvenance, CostSummary, DagOptimizationSummaryV1, Determinism, EffectAuthoritySummary,
     EmitFormat, OPTIMIZATION_SUMMARY_ARTIFACT_SECTION, OPTIMIZATION_SUMMARY_VERSION,
-    OperationOptimizationSummaryV1, OptimizationLevel, OptimizationSummaryV1, OptimizationTarget,
+    OperationOptimizationSummaryV1, OptimizationDecisionV1, OptimizationDisposition,
+    OptimizationLevel, OptimizationSummaryV1, OptimizationTarget, OptimizationTransformKind,
     PassInfo, PassMetadata, PipelineConfig, PromptContractSummary, ReplaySafety,
     TransformationLegality, find_pass_metadata, list_pass_metadata, stage_rank,
 };

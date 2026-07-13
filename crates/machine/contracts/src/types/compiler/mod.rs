@@ -16,7 +16,8 @@ pub use optimization_summary::{
     BackendLegalityRequirements, CompilerAnalysisKind, CostProvenance, CostSummary,
     DagOptimizationSummaryV1, Determinism, EffectAuthoritySummary,
     OPTIMIZATION_SUMMARY_ARTIFACT_SECTION, OPTIMIZATION_SUMMARY_VERSION,
-    OperationOptimizationSummaryV1, OptimizationSummaryV1, PromptContractSummary, ReplaySafety,
+    OperationOptimizationSummaryV1, OptimizationDecisionV1, OptimizationDisposition,
+    OptimizationSummaryV1, OptimizationTransformKind, PromptContractSummary, ReplaySafety,
     TransformationLegality,
 };
 pub use passes::{PassCategory, PassInfo};

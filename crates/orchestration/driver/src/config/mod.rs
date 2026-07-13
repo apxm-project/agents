@@ -136,6 +136,7 @@ pub struct ApXmConfig {
 
 /// Configuration for the chat/runtime surface.
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[serde(default)]
 pub struct ChatConfig {
     /// Explicit LLM providers to load.
     pub providers: Vec<String>,
@@ -156,6 +157,13 @@ pub struct ChatConfig {
     /// Maximum context tokens for chat sessions.
     #[serde(default = "default_max_context_tokens")]
     pub max_context_tokens: usize,
+
+    /// Complete policy for session-backed prompt context assembly.
+    ///
+    /// Context enrichment remains disabled when this policy is absent; the
+    /// runtime does not infer tokenizer, capacity, or profile scope rules.
+    #[serde(default)]
+    pub context_planning: Option<apxm_runtime::context_stack::ContextPlanningPolicy>,
 
     /// Model to use for planning (defaults to default_model if not specified).
     pub planning_model: Option<String>,
@@ -190,6 +198,9 @@ pub struct ServerConfig {
 
     /// Opt-in, fail-closed bearer auth for mutating routes. Default off.
     pub auth: ServerAuthConfig,
+
+    /// A2A-generated model-call policy.
+    pub a2a: ServerA2aConfig,
 
     /// `/v1/generate-stream` transport controls.
     pub generate_stream: GenerateStreamConfig,
@@ -307,6 +318,14 @@ pub struct ServerAuthConfig {
     pub bearer: Option<String>,
     /// Override path to the apxm-auth per-run bearer file.
     pub bearer_file: Option<String>,
+}
+
+/// Server-owned policy for model calls synthesized by the A2A endpoint.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Default)]
+#[serde(default)]
+pub struct ServerA2aConfig {
+    /// Explicit output-token reservation for each A2A message execution.
+    pub max_output_tokens: Option<usize>,
 }
 
 /// Streaming LLM endpoint transport configuration.
@@ -1024,4 +1043,61 @@ pub enum ConfigError {
 
     #[error("Failed to serialize config: {0}")]
     Serialize(String),
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{ApXmConfig, ServerConfig};
+    use apxm_runtime::context_stack::{ContextTokenizer, ScopeRules};
+
+    #[test]
+    fn context_planning_policy_is_config_driven() {
+        let config: ApXmConfig = toml::from_str(
+            r#"
+                [chat]
+                providers = []
+
+                [chat.context_planning]
+                tokenizer = "cl100k_base"
+                token_budget = 4096
+
+                [chat.context_planning.profiles.analysis]
+                upstream_depth = 2
+                upstream_frame_budget = 1024
+                session_frame_budget = 256
+                include_upstream_prompts = false
+            "#,
+        )
+        .expect("context planning config parses");
+
+        let policy = config
+            .chat
+            .context_planning
+            .expect("context planning policy is configured");
+        assert_eq!(policy.tokenizer, ContextTokenizer::Cl100kBase);
+        assert_eq!(policy.token_budget, 4096);
+        assert_eq!(
+            policy.profiles.get("analysis"),
+            Some(&ScopeRules {
+                upstream_depth: 2,
+                upstream_frame_budget: 1024,
+                session_frame_budget: 256,
+                include_upstream_prompts: false,
+            })
+        );
+    }
+
+    #[test]
+    fn a2a_output_reservation_is_config_driven() {
+        let config: ApXmConfig = toml::from_str(
+            r#"
+                [server.a2a]
+                max_output_tokens = 512
+            "#,
+        )
+        .expect("A2A server policy parses");
+
+        assert_eq!(config.server.a2a.max_output_tokens, Some(512));
+        assert_eq!(ServerConfig::default().a2a.max_output_tokens, None);
+    }
 }

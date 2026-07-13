@@ -2,7 +2,8 @@
 //! and inline-spawned agent fallback.
 
 use super::super::{
-    ExecutionContext, Node, Result, Value, execute_llm_request_for_node, get_string_attribute,
+    ExecutionContext, Node, Result, Value, get_string_attribute,
+    llm::execute_contextual_node_request,
     target_resolution::resolve_target_or_passthrough,
     template::{input_names_from_node, render_named},
 };
@@ -330,7 +331,7 @@ async fn communicate_inline_agent(
         "COMMUNICATE dispatching to inline-spawned agent via LLM"
     );
 
-    let response = execute_llm_request_for_node(ctx, node, "COMMUNICATE", &request).await?;
+    let response = execute_contextual_node_request(ctx, node, "COMMUNICATE", &request).await?;
     Ok(Some(Value::String(response.content)))
 }
 

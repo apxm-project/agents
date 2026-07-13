@@ -4,60 +4,38 @@ use apxm_core::types::{AISOperationType, Number, Value};
 use std::collections::HashMap;
 
 use crate::air_builder::AirModule;
+use crate::analysis::{CompilerAnalysisInputs, TokenizerEvidence};
 
-mod tokenizer_model_patterns {
-    pub const GPT_4_PREFIX: &str = "gpt-4";
-    pub const GPT_4O_PREFIX: &str = "gpt-4o";
-    pub const GPT_35_PREFIX: &str = "gpt-3.5";
-    pub const TEXT_EMBEDDING_ADA: &str = "text-embedding-ada";
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum TokenizerFamily {
-    Cl100kBase,
-    O200kBase,
-}
-
-impl TokenizerFamily {
-    fn for_model(model: Option<&str>) -> Self {
-        match model {
-            Some(model) if is_cl100k_model(model) => Self::Cl100kBase,
-            _ => Self::O200kBase,
-        }
-    }
-
-    fn tokenizer(self) -> &'static bpe_openai::Tokenizer {
-        match self {
-            Self::Cl100kBase => bpe_openai::cl100k_base(),
-            Self::O200kBase => bpe_openai::o200k_base(),
-        }
+/// Return the BPE tokenizer selected by explicit route capability evidence.
+fn tokenizer_for_evidence(evidence: TokenizerEvidence) -> Option<&'static bpe_openai::Tokenizer> {
+    match evidence {
+        TokenizerEvidence::Unknown => None,
+        TokenizerEvidence::Cl100kBase => Some(bpe_openai::cl100k_base()),
+        TokenizerEvidence::O200kBase => Some(bpe_openai::o200k_base()),
     }
 }
 
-/// Select the BPE estimator used for compiler scheduling hints.
+/// Report that model spelling alone cannot select a compiler tokenizer.
 ///
-/// Exact provider billing is collected from runtime responses. These estimates
-/// are compiler-side cost/scheduling hints for MLIR passes and graph-aware
-/// backends, so unknown model families use the project-wide default estimator.
-fn tokenizer_for_model(model: Option<&str>) -> &'static bpe_openai::Tokenizer {
-    TokenizerFamily::for_model(model).tokenizer()
+/// This compatibility helper exists for callers outside the compiler pipeline.
+/// Compiler token accounting requires [`TokenizerEvidence`] from a configured
+/// route and never derives an encoding from a model or provider name.
+pub fn tokenizer_name_for_model(_model: Option<&str>) -> &'static str {
+    "unavailable"
 }
 
-/// Return the compiler tokenizer family selected for a model.
-pub fn tokenizer_name_for_model(model: Option<&str>) -> &'static str {
-    match TokenizerFamily::for_model(model) {
-        TokenizerFamily::Cl100kBase => "cl100k_base",
-        TokenizerFamily::O200kBase => "o200k_base",
-    }
-}
-
-/// Count text tokens with APXM's compiler-side BPE tokenizer.
+/// Return a conservative count when no tokenizer capability was configured.
 ///
-/// Runtime responses remain the source of truth for provider billing. This
-/// helper exposes the same compiler-side estimator used for budgeting,
-/// scheduling, and graph metadata diagnostics.
-pub fn count_text_tokens(model: Option<&str>, text: &str) -> usize {
-    tokenizer_for_model(model).count(text)
+/// New compiler code must use [`count_text_tokens_with_evidence`] and handle
+/// its typed unavailable result. `usize::MAX` keeps legacy numeric-only callers
+/// from treating an unknown count as a permissive token budget.
+pub fn count_text_tokens(_model: Option<&str>, _text: &str) -> usize {
+    usize::MAX
+}
+
+/// Count text tokens with explicitly configured tokenizer evidence.
+pub fn count_text_tokens_with_evidence(evidence: TokenizerEvidence, text: &str) -> Option<usize> {
+    tokenizer_for_evidence(evidence).map(|tokenizer| tokenizer.count(text))
 }
 
 /// Return the static leading segment of a template before its first input placeholder.
@@ -86,59 +64,59 @@ pub fn static_leading_template_prefix(template: &str) -> &str {
     template
 }
 
-/// Estimate the identical static leading prefix of one template for a model.
+/// Estimate the identical static leading prefix of one template with explicit evidence.
 ///
 /// The caller supplies a template message channel that is eligible for prefix
 /// reuse. Empty prefixes have no reusable static leading segment and produce
 /// no estimate.
-pub fn shared_prefix_token_estimate(model: Option<&str>, template: &str) -> Option<u32> {
+pub fn shared_prefix_token_estimate(evidence: TokenizerEvidence, template: &str) -> Option<u32> {
     let prefix = static_leading_template_prefix(template);
     if prefix.is_empty() {
         return None;
     }
 
-    Some(u32::try_from(tokenizer_for_model(model).count(prefix)).unwrap_or(u32::MAX))
-}
-
-/// Returns true for models that use the cl100k_base tokenizer.
-fn is_cl100k_model(model: &str) -> bool {
-    use tokenizer_model_patterns as patterns;
-
-    let m = model.to_ascii_lowercase();
-    (m.starts_with(patterns::GPT_4_PREFIX) && !m.starts_with(patterns::GPT_4O_PREFIX))
-        || m.starts_with(patterns::GPT_35_PREFIX)
-        || m.contains(patterns::TEXT_EMBEDDING_ADA)
+    count_text_tokens_with_evidence(evidence, prefix).and_then(|count| u32::try_from(count).ok())
 }
 
 /// Annotate pre-lowering LLM nodes with BPE token counts.
 ///
 /// Sets whole-template and canonical shared-prefix estimates on each
 /// ASK/THINK/REASON node so MLIR passes can consume tokenizer-backed values.
-pub fn annotate_token_estimates(module: &mut AirModule) {
-    annotate_shared_prefix_token_estimates(module);
+pub fn annotate_token_estimates(module: &mut AirModule, inputs: &CompilerAnalysisInputs) {
+    annotate_shared_prefix_token_estimates(module, inputs);
 
     let mlir_key = mlir_attr_key(graph_attrs::EST_TEMPLATE_TOKENS);
     for node in &mut module.nodes {
         if !is_llm_template_op(node.op) {
             continue;
         }
+        let Some(tokenizer) = inputs.tokenizer_for_attributes(&node.attributes) else {
+            node.attributes.remove(&mlir_key);
+            continue;
+        };
         let template = match node.attributes.get(graph_attrs::TEMPLATE_STR) {
             Some(Value::String(value)) => value.clone(),
-            _ => continue,
+            _ => {
+                node.attributes.remove(&mlir_key);
+                continue;
+            }
         };
         let static_text = strip_placeholders(&template);
         if static_text.is_empty() {
+            node.attributes.remove(&mlir_key);
             continue;
         }
-        let model = node
-            .attributes
-            .get(graph_attrs::MODEL)
-            .and_then(|v| v.as_str());
-        let count = tokenizer_for_model(model).count(&static_text);
-        node.attributes.insert(
-            mlir_key.clone(),
-            Value::Number(Number::Integer(i64::try_from(count).unwrap_or(i64::MAX))),
-        );
+        let estimate = count_text_tokens_with_evidence(tokenizer, &static_text)
+            .and_then(|count| i64::try_from(count).ok());
+        match estimate {
+            Some(count) => {
+                node.attributes
+                    .insert(mlir_key.clone(), Value::Number(Number::Integer(count)));
+            }
+            None => {
+                node.attributes.remove(&mlir_key);
+            }
+        }
     }
 }
 
@@ -147,7 +125,10 @@ pub fn annotate_token_estimates(module: &mut AirModule) {
 /// Raw AIR text bypasses this AirModule lowering hook. Artifact finalization
 /// still materializes its canonical estimate, but does not retroactively
 /// nominate a pre-dispatch warmup candidate.
-pub fn annotate_shared_prefix_token_estimates(module: &mut AirModule) {
+pub fn annotate_shared_prefix_token_estimates(
+    module: &mut AirModule,
+    inputs: &CompilerAnalysisInputs,
+) {
     let mlir_key = mlir_attr_key(graph_attrs::SHARED_PREFIX_EST_TOKENS);
 
     for node in &mut module.nodes {
@@ -160,11 +141,9 @@ pub fn annotate_shared_prefix_token_estimates(module: &mut AirModule) {
             .get(graph_attrs::TEMPLATE_STR)
             .and_then(Value::as_str)
             .and_then(|template| {
-                let model = node
-                    .attributes
-                    .get(graph_attrs::MODEL)
-                    .and_then(Value::as_str);
-                shared_prefix_token_estimate(model, template)
+                inputs
+                    .tokenizer_for_attributes(&node.attributes)
+                    .and_then(|evidence| shared_prefix_token_estimate(evidence, template))
             });
 
         match estimate {
@@ -227,14 +206,16 @@ fn utf8_len(b: u8) -> usize {
 
 /// Materialize canonical shared-prefix estimates in emitted artifacts.
 ///
-/// A reuse group receives an estimate only when every member has the same
-/// declared model and identical static leading template segment. This keeps
-/// the estimate tied to one tokenizer and prevents an invalid group from
-/// producing a warmup hint.
-pub fn refine_token_estimates(dags: &mut [ExecutionDag]) {
+/// A reuse group receives an estimate only when every member resolves to the
+/// same configured route and has an identical static leading template segment.
+/// Missing tokenizer evidence leaves the accounting unavailable.
+pub fn refine_token_estimates(dags: &mut [ExecutionDag], inputs: &CompilerAnalysisInputs) {
     for dag in dags.iter_mut() {
         let mut groups = HashMap::<String, Vec<usize>>::new();
         for (index, node) in dag.nodes.iter_mut().enumerate() {
+            if is_llm_template_op(node.op_type) && inputs.tokenizer_for_node(node).is_none() {
+                clear_token_estimate_hints(node);
+            }
             match node.get_attribute(graph_attrs::REUSE_GROUP) {
                 Some(Value::String(group)) => {
                     groups.entry(group.clone()).or_default().push(index);
@@ -244,7 +225,7 @@ pub fn refine_token_estimates(dags: &mut [ExecutionDag]) {
         }
 
         for members in groups.values() {
-            let estimate = shared_prefix_group_estimate(&dag.nodes, members);
+            let estimate = shared_prefix_group_estimate(&dag.nodes, members, inputs);
             for &index in members {
                 let node = &mut dag.nodes[index];
                 if let Some(count) = estimate {
@@ -260,9 +241,13 @@ pub fn refine_token_estimates(dags: &mut [ExecutionDag]) {
     }
 }
 
-fn shared_prefix_group_estimate(nodes: &[Node], members: &[usize]) -> Option<u32> {
+fn shared_prefix_group_estimate(
+    nodes: &[Node],
+    members: &[usize],
+    inputs: &CompilerAnalysisInputs,
+) -> Option<u32> {
     let first = nodes.get(*members.first()?)?;
-    let model = node_model(first);
+    let tokenizer = inputs.tokenizer_for_node(first)?;
     let prefix = static_leading_template_prefix(node_template(first)?);
     if prefix.is_empty() {
         return None;
@@ -270,14 +255,15 @@ fn shared_prefix_group_estimate(nodes: &[Node], members: &[usize]) -> Option<u32
 
     for &index in members.iter().skip(1) {
         let node = nodes.get(index)?;
-        if node_model(node) != model
+        if !inputs.same_configured_backend(first, node)
+            || inputs.tokenizer_for_node(node) != Some(tokenizer)
             || static_leading_template_prefix(node_template(node)?) != prefix
         {
             return None;
         }
     }
 
-    shared_prefix_token_estimate(model, prefix)
+    shared_prefix_token_estimate(tokenizer, prefix)
 }
 
 fn node_template(node: &Node) -> Option<&str> {
@@ -285,15 +271,16 @@ fn node_template(node: &Node) -> Option<&str> {
         .and_then(Value::as_str)
 }
 
-fn node_model(node: &Node) -> Option<&str> {
-    node.get_attribute(graph_attrs::MODEL)
-        .and_then(Value::as_str)
-}
-
 fn clear_shared_prefix_hints(node: &mut Node) {
     node.attributes
         .remove(graph_attrs::SHARED_PREFIX_EST_TOKENS);
     node.attributes.remove(graph_attrs::WARMUP_CANDIDATE);
+}
+
+/// Remove unproven whole-template and shared-prefix accounting hints.
+fn clear_token_estimate_hints(node: &mut Node) {
+    node.attributes.remove(graph_attrs::EST_TEMPLATE_TOKENS);
+    clear_shared_prefix_hints(node);
 }
 
 fn mlir_attr_key(attr: &str) -> String {
@@ -311,10 +298,11 @@ fn is_llm_template_op(op: AISOperationType) -> bool {
 mod tests {
     use super::*;
     use crate::air_builder::{AirModule, AirNode};
+    use crate::{BackendCapabilityEvidence, ConfiguredBackendEvidence};
     use apxm_core::types::execution::Node;
     use std::collections::HashMap;
 
-    fn llm_air_node(template: &str) -> AirNode {
+    fn llm_air_node(template: &str, model: &str) -> AirNode {
         let mut attributes = HashMap::new();
         attributes.insert(
             graph_attrs::TEMPLATE_STR.to_string(),
@@ -322,13 +310,29 @@ mod tests {
         );
         attributes.insert(
             graph_attrs::MODEL.to_string(),
-            Value::String("gpt-4o-mini".to_string()),
+            Value::String(model.to_string()),
         );
         AirNode {
             id: 1,
             name: "ask".to_string(),
             op: AISOperationType::Ask,
             attributes,
+        }
+    }
+
+    fn configured_inputs(model: &str, tokenizer: TokenizerEvidence) -> CompilerAnalysisInputs {
+        CompilerAnalysisInputs {
+            configured_backends: vec![ConfiguredBackendEvidence {
+                backend: "configured-backend".to_string(),
+                model: model.to_string(),
+                aliases: Default::default(),
+                available: true,
+                capabilities: BackendCapabilityEvidence {
+                    tokenizer,
+                    ..Default::default()
+                },
+            }],
+            ..Default::default()
         }
     }
 
@@ -342,17 +346,19 @@ mod tests {
     }
 
     #[test]
-    fn direct_air_estimator_stamps_the_mlir_prefix_attribute() {
+    fn configured_tokenizer_evidence_stamps_the_mlir_prefix_attribute() {
         let template = "System policy: {question}\nTail: static";
+        let tokenizer = TokenizerEvidence::O200kBase;
+        let inputs = configured_inputs("configured-model", tokenizer);
         let mut module = AirModule {
             name: "prefix".to_string(),
-            nodes: vec![llm_air_node(template)],
+            nodes: vec![llm_air_node(template, "configured-model")],
             edges: Vec::new(),
             parameters: Vec::new(),
             metadata: HashMap::new(),
         };
 
-        annotate_shared_prefix_token_estimates(&mut module);
+        annotate_shared_prefix_token_estimates(&mut module, &inputs);
 
         let estimate = module.nodes[0]
             .attributes
@@ -360,13 +366,45 @@ mod tests {
             .and_then(Value::as_u64);
         assert_eq!(
             estimate,
-            shared_prefix_token_estimate(Some("gpt-4o-mini"), template).map(u64::from)
+            shared_prefix_token_estimate(tokenizer, template).map(u64::from)
         );
+    }
+
+    #[test]
+    fn model_spellings_do_not_select_tokenizers_without_configured_evidence() {
+        let template = "System policy: {question}";
+        for model in ["gpt-4o-mini", "provider/custom-model", "model-v1"] {
+            let mut module = AirModule {
+                name: "unknown-tokenizer".to_string(),
+                nodes: vec![llm_air_node(template, model)],
+                edges: Vec::new(),
+                parameters: Vec::new(),
+                metadata: HashMap::new(),
+            };
+
+            annotate_token_estimates(&mut module, &CompilerAnalysisInputs::default());
+
+            assert_eq!(count_text_tokens(Some(model), template), usize::MAX);
+            assert!(
+                module.nodes[0]
+                    .attributes
+                    .get(&mlir_attr_key(graph_attrs::EST_TEMPLATE_TOKENS))
+                    .is_none()
+            );
+            assert!(
+                module.nodes[0]
+                    .attributes
+                    .get(&mlir_attr_key(graph_attrs::SHARED_PREFIX_EST_TOKENS))
+                    .is_none()
+            );
+        }
     }
 
     #[test]
     fn refinement_repairs_legacy_full_template_static_estimates() {
         let template = "System policy: {question}\nTail: static";
+        let tokenizer = TokenizerEvidence::O200kBase;
+        let inputs = configured_inputs("configured-model", tokenizer);
         let mut node = Node::new(1, AISOperationType::Ask);
         node.set_attribute(
             graph_attrs::REUSE_GROUP.to_string(),
@@ -378,35 +416,37 @@ mod tests {
         );
         node.set_attribute(
             graph_attrs::MODEL.to_string(),
-            Value::String("gpt-4o-mini".to_string()),
+            Value::String("configured-model".to_string()),
         );
         node.set_attribute(
             graph_attrs::SHARED_PREFIX_EST_TOKENS.to_string(),
             Value::Number(Number::Integer(
-                i64::try_from(count_text_tokens(
-                    Some("gpt-4o-mini"),
-                    &strip_placeholders(template),
-                ))
+                i64::try_from(
+                    count_text_tokens_with_evidence(tokenizer, &strip_placeholders(template))
+                        .expect("configured tokenizer"),
+                )
                 .unwrap(),
             )),
         );
 
         let mut dag = ExecutionDag::new();
         dag.nodes.push(node);
-        refine_token_estimates(std::slice::from_mut(&mut dag));
+        refine_token_estimates(std::slice::from_mut(&mut dag), &inputs);
 
         assert_eq!(
             dag.nodes[0]
                 .get_attribute(graph_attrs::SHARED_PREFIX_EST_TOKENS)
                 .and_then(Value::as_u64),
-            shared_prefix_token_estimate(Some("gpt-4o-mini"), template).map(u64::from)
+            shared_prefix_token_estimate(tokenizer, template).map(u64::from)
         );
     }
 
     #[test]
     fn refinement_preserves_a_matching_canonical_estimate() {
         let template = "Static policy: {question}";
-        let expected = shared_prefix_token_estimate(Some("gpt-4o-mini"), template).unwrap();
+        let tokenizer = TokenizerEvidence::O200kBase;
+        let inputs = configured_inputs("configured-model", tokenizer);
+        let expected = shared_prefix_token_estimate(tokenizer, template).unwrap();
         let mut node = Node::new(1, AISOperationType::Ask);
         node.set_attribute(
             graph_attrs::REUSE_GROUP.to_string(),
@@ -418,7 +458,7 @@ mod tests {
         );
         node.set_attribute(
             graph_attrs::MODEL.to_string(),
-            Value::String("gpt-4o-mini".to_string()),
+            Value::String("configured-model".to_string()),
         );
         node.set_attribute(
             graph_attrs::SHARED_PREFIX_EST_TOKENS.to_string(),
@@ -427,7 +467,7 @@ mod tests {
 
         let mut dag = ExecutionDag::new();
         dag.nodes.push(node);
-        refine_token_estimates(std::slice::from_mut(&mut dag));
+        refine_token_estimates(std::slice::from_mut(&mut dag), &inputs);
 
         assert_eq!(
             dag.nodes[0]
@@ -439,11 +479,16 @@ mod tests {
 
     #[test]
     fn refinement_withholds_hints_when_group_members_disagree() {
+        let inputs = configured_inputs("configured-model", TokenizerEvidence::O200kBase);
         let mut first = Node::new(1, AISOperationType::Ask);
         let mut second = Node::new(2, AISOperationType::Ask);
         for (node, template, model) in [
-            (&mut first, "Static policy: {question}", "gpt-4o-mini"),
-            (&mut second, "Different policy: {question}", "gpt-4"),
+            (&mut first, "Static policy: {question}", "configured-model"),
+            (
+                &mut second,
+                "Different policy: {question}",
+                "configured-model",
+            ),
         ] {
             node.set_attribute(
                 graph_attrs::REUSE_GROUP.to_string(),
@@ -466,7 +511,7 @@ mod tests {
 
         let mut dag = ExecutionDag::new();
         dag.nodes = vec![first, second];
-        refine_token_estimates(std::slice::from_mut(&mut dag));
+        refine_token_estimates(std::slice::from_mut(&mut dag), &inputs);
 
         for node in dag.nodes {
             assert!(

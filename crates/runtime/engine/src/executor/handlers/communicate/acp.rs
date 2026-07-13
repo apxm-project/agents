@@ -1,9 +1,12 @@
 //! ACP COMMUNICATE: dispatch to a subprocess agent via the ProcessTable.
 
-use super::super::{ExecutionContext, Node, Result, Value};
+use super::super::{
+    ExecutionContext, Node, Result, Value,
+    llm::{context_planning_runtime_error, context_profile_for_node},
+};
 use crate::aam::TransitionLabel;
 use apxm_core::constants::graph::attrs as graph_attrs;
-use apxm_core::constants::runtime::{belief_keys, context_stack as context_stack_consts};
+use apxm_core::constants::runtime::belief_keys;
 use apxm_core::error::RuntimeError;
 use apxm_core::events::payload::GenerationIdentity;
 use apxm_core::types::{CommunicateProtocol, ProcessPromptMetric};
@@ -103,16 +106,11 @@ pub(super) async fn execute_acp(
     );
 
     let enriched_prompt = if let Some(ref stack) = ctx.context_stack {
-        let profile = node
-            .attributes
-            .get(graph_attrs::PROFILE)
-            .and_then(|value| value.as_str())
-            .unwrap_or(context_stack_consts::DEFAULT_PROFILE);
-        let assembly = stack.assemble(
-            node.id,
-            profile,
-            context_stack_consts::DEFAULT_PROMPT_BUDGET_TOKENS,
-        );
+        let profile = context_profile_for_node(node)
+            .map_err(|error| context_planning_runtime_error(node, error))?;
+        let assembly = stack
+            .assemble(node.id, profile)
+            .map_err(|error| context_planning_runtime_error(node, error))?;
 
         if assembly.frames.is_empty() {
             prompt_text.clone()
