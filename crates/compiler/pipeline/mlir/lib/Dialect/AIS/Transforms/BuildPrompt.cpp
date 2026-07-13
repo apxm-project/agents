@@ -1,7 +1,7 @@
 /**
  * @file  BuildPrompt.cpp
- * @brief Materializes the runtime prompt/input_names contract for LLM
- *        operations whose context array is non-empty.
+ * @brief Materializes positional LLM prompt input contracts for operations
+ *        whose context array is non-empty.
  *
  * For example:
  *
@@ -12,17 +12,18 @@
  * This pass transforms it to:
  *
  *   %r = ais.ask "{user_input}" [%user_input : !ais.token]
- *        {input_names = ["user_input"]} : !ais.token
+ *        {input_names = ["user_input"], input_roles = ["user"]} : !ais.token
  *
  * Names are taken from the existing `input_names` attribute when present;
  * otherwise the pass falls back to defaults `ctx0`, `ctx1`, ... and stamps
- * a fresh `input_names` array. For non-empty templates, the pass still
- * materializes `input_names` when they are missing or malformed so runtime
- * template rendering can validate the context arity deterministically.
+ * a fresh positional contract. When roles are absent, the legacy `__system`
+ * name becomes `system` and every other input becomes `user`. Explicit role
+ * vectors must be valid and positional; malformed vectors are preserved for
+ * frontend/AIR validation rather than guessed.
  *
  * This pass works alongside the InstructionConfig system:
- * - BuildPrompt: Ensures LLM ops with context have a template/input_names
- *   contract the runtime can execute
+ * - BuildPrompt: Ensures LLM ops with context have a template/input_names/
+ *   input_roles contract the runtime can execute
  * - InstructionConfig: Maps operation types to system prompts at runtime
  */
 
@@ -136,6 +137,24 @@ private:
       modified = true;
     }
 
+    const bool hasExplicitInputRoles =
+        placeholders::hasInputRoles(op.getOperation());
+    auto inputRoles = placeholders::readInputRoles(op.getOperation());
+    if (hasExplicitInputRoles &&
+        !placeholders::inputRolesAreValid(inputRoles, contextSize)) {
+      APXM_AIS_DEBUG("  input_roles mismatch or unsupported value; preserving "
+                     "context and skipping prompt synthesis");
+      return modified;
+    }
+
+    if (!hasExplicitInputRoles) {
+      inputRoles.reserve(contextSize);
+      for (llvm::StringRef inputName : nameRefs)
+        inputRoles.push_back(placeholders::roleForLegacyInputName(inputName));
+      placeholders::writeInputRoles(op.getOperation(), inputRoles, builder);
+      modified = true;
+    }
+
     // Only synthesize template text when the authored template is empty.
     if (currentTemplate.empty()) {
       if (!generatePlaceholders) {
@@ -143,12 +162,21 @@ private:
         return modified;
       }
 
-      // Build "{name0}{name1}..." template that references each context input.
+      // Build placeholders only for user-renderable context. Protected roles
+      // remain positional semantic inputs without entering the user channel.
       llvm::SmallString<128> templateBuf;
-      for (llvm::StringRef name : nameRefs) {
+      bool hasUserContext = false;
+      for (unsigned i = 0; i < contextSize; ++i) {
+        if (!placeholders::isUserRole(inputRoles[i]))
+          continue;
+        hasUserContext = true;
         templateBuf.append("{");
-        templateBuf.append(name);
+        templateBuf.append(nameRefs[i]);
         templateBuf.append("}");
+      }
+      if (!hasUserContext) {
+        APXM_AIS_DEBUG("  No user-role context available for placeholder synthesis");
+        return modified;
       }
       op.setTemplateStrAttr(builder.getStringAttr(templateBuf));
       if (!modified)

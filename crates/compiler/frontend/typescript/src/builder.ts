@@ -14,8 +14,8 @@
  */
 import type { GraphEdge, GraphNode, Parameter } from "./graph.js";
 import { installGeneratedGraphBuilderOps } from "./generated/builder-ops.js";
+import { REQUIRED_ATTRS, type OpName } from "./generated/ops.js";
 import { ApxmGraph, makeEdge } from "./graph.js";
-import type { OpName } from "./generated/ops.js";
 import type { DependencyType, ParamType } from "./types.js";
 
 export class NodeRef {
@@ -32,6 +32,28 @@ export class NodeRef {
 
 type Attrs = Record<string, unknown>;
 
+/** Mirror of crates/machine/ais/src/attrs.rs::PromptInputRole. */
+export const PROMPT_INPUT_ROLES = [
+  "user",
+  "system",
+  "dependency_only",
+  "tool_context",
+  "control",
+] as const;
+
+export type PromptInputRole = (typeof PROMPT_INPUT_ROLES)[number];
+
+/** One LLM input value and its explicit rendering role. */
+export interface PromptInputBinding {
+  value: NodeRef;
+  role: PromptInputRole;
+}
+
+/** Create an explicit role-bearing LLM input binding. */
+export function promptInput(value: NodeRef, role: PromptInputRole = "user"): PromptInputBinding {
+  return { value, role };
+}
+
 export interface GenericOpOptions {
   name?: string;
   attributes?: Attrs;
@@ -41,6 +63,7 @@ export interface GenericOpOptions {
 interface TemplateOpOptions {
   name?: string;
   inputs?: Record<string, NodeRef>;
+  promptInputs?: Record<string, PromptInputBinding>;
   [extra: string]: unknown;
 }
 
@@ -129,6 +152,16 @@ export interface AutonomousOptions {
   [extra: string]: unknown;
 }
 
+export interface CheckpointOptions {
+  name?: string;
+  checkpointId: string;
+  scope?: string;
+  storage?: string;
+  ttlSeconds?: number;
+  onFail?: string;
+  inputs?: Record<string, NodeRef>;
+}
+
 function dropUndefined(attrs: Attrs): Attrs {
   const out: Attrs = {};
   for (const [k, v] of Object.entries(attrs)) {
@@ -151,7 +184,7 @@ export class GraphBuilder {
 
   constructor(name: string, options: { metadata?: Record<string, unknown> } = {}) {
     this.name = name;
-    this.metadata = options.metadata ?? { is_entry: true };
+    this.metadata = options.metadata ?? {};
   }
 
   private autoName(opType: OpName): string {
@@ -164,9 +197,15 @@ export class GraphBuilder {
     if (this.nodeIds.has(name)) {
       throw new Error(`workflow node '${name}' already exists`);
     }
+    const normalizedAttributes = dropUndefined(attributes);
+    for (const field of REQUIRED_ATTRS[op]) {
+      if (normalizedAttributes[field] === undefined) {
+        throw new Error(`AIS operation '${op}' requires attribute '${field}'`);
+      }
+    }
     const id = this.nextId;
     this.nextId += 1;
-    this.nodes.push({ id, name, op, attributes: dropUndefined(attributes) });
+    this.nodes.push({ id, name, op, attributes: normalizedAttributes });
     this.nodeIds.add(name);
     return new NodeRef(this, id, name);
   }
@@ -209,37 +248,63 @@ export class GraphBuilder {
     }
   }
 
-  /** Simple Q&A with an LLM, no extended thinking (ASK). */
-  ask(options: AskOptions): NodeRef {
-    const { name, prompt, model, temperature, systemPrompt, inputs, ...rest } = options;
-    const inputNames = inputs ? Object.keys(inputs) : [];
+  private resolvePromptInputs(
+    inputs: Record<string, NodeRef> | undefined,
+    promptInputs: Record<string, PromptInputBinding> | undefined,
+  ): Array<{ name: string; value: NodeRef; role: PromptInputRole }> {
+    const bindings: Array<{ name: string; value: NodeRef; role: PromptInputRole }> = [];
+    const names = new Set<string>();
+    const add = (name: string, value: NodeRef, role: PromptInputRole): void => {
+      if (!name) throw new Error("prompt input names must be non-empty");
+      if (names.has(name)) throw new Error(`prompt input '${name}' is bound more than once`);
+      if (value.builder !== this) throw new Error("prompt input values must belong to this GraphBuilder");
+      names.add(name);
+      bindings.push({ name, value, role });
+    };
+
+    for (const [name, value] of Object.entries(inputs ?? {})) add(name, value, "user");
+    for (const [name, binding] of Object.entries(promptInputs ?? {})) {
+      if (!PROMPT_INPUT_ROLES.includes(binding.role)) {
+        throw new Error(`invalid prompt input role '${String(binding.role)}'`);
+      }
+      add(name, binding.value, binding.role);
+    }
+    return bindings;
+  }
+
+  private recordLlmNode(op: "ASK" | "THINK" | "REASON", options: AskOptions): NodeRef {
+    const { name, prompt, model, temperature, systemPrompt, inputs, promptInputs, ...rest } = options;
+    if ("input_names" in rest || "input_roles" in rest) {
+      throw new Error("LLM input metadata is derived from promptInputs; do not set input_names or input_roles directly");
+    }
+    const bindings = this.resolvePromptInputs(inputs, promptInputs);
     const attrs: Attrs = {
+      ...rest,
       template_str: prompt,
       model,
       temperature,
       system_prompt: systemPrompt,
-      input_names: inputNames.length > 0 ? inputNames : undefined,
-      ...rest,
+      input_names: bindings.length > 0 ? bindings.map((binding) => binding.name) : undefined,
+      input_roles: bindings.length > 0 ? bindings.map((binding) => binding.role) : undefined,
     };
-    const node = this.addNode(name ?? this.autoName("ASK"), "ASK", attrs);
-    this.wireInputs(node, inputs);
+    const node = this.addNode(name ?? this.autoName(op), op, attrs);
+    for (const binding of bindings) this.addEdge(binding.value, node);
     return node;
+  }
+
+  /** Simple Q&A with an LLM, no extended thinking (ASK). */
+  ask(options: AskOptions): NodeRef {
+    return this.recordLlmNode("ASK", options);
   }
 
   /** Extended chain-of-thought reasoning turn (THINK). */
   think(options: AskOptions): NodeRef {
-    const { name, prompt, model, temperature, systemPrompt: _systemPrompt, inputs, ...rest } = options;
-    const inputNames = inputs ? Object.keys(inputs) : [];
-    const attrs: Attrs = {
-      template_str: prompt,
-      model,
-      temperature,
-      input_names: inputNames.length > 0 ? inputNames : undefined,
-      ...rest,
-    };
-    const node = this.addNode(name ?? this.autoName("THINK"), "THINK", attrs);
-    this.wireInputs(node, inputs);
-    return node;
+    return this.recordLlmNode("THINK", options);
+  }
+
+  /** Structured reasoning with the same role-bearing prompt-input contract. */
+  reason(options: AskOptions): NodeRef {
+    return this.recordLlmNode("REASON", options);
   }
 
   /** Send a message to another agent (COMMUNICATE). */
@@ -387,13 +452,19 @@ export class GraphBuilder {
     return node;
   }
 
-  /** Insert a checkpoint barrier (fence with checkpoint semantics). */
-  checkpoint(nameOrOptions?: string | GenericOpOptions, attributes: Attrs = {}): NodeRef {
-    if (typeof nameOrOptions === "object") {
-      return this.op("CHECKPOINT", nameOrOptions);
-    }
-    const attrs: Attrs = { checkpoint: true, ...attributes };
-    return this.addNode(nameOrOptions ?? this.autoName("FENCE"), "FENCE", attrs);
+  /** Persist a durable CHECKPOINT and continue execution. */
+  checkpoint(options: CheckpointOptions): NodeRef {
+    const { name, checkpointId, scope, storage, ttlSeconds, onFail, inputs } = options;
+    const attrs: Attrs = {
+      checkpoint_id: checkpointId,
+      scope,
+      storage,
+      ttl_seconds: ttlSeconds,
+      on_fail: onFail,
+    };
+    const node = this.addNode(name ?? this.autoName("CHECKPOINT"), "CHECKPOINT", attrs);
+    this.wireInputs(node, inputs);
+    return node;
   }
 
   /** Synchronize on every dependency completing (WAIT_ALL). */

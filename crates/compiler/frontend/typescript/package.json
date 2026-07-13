@@ -13,6 +13,17 @@
     "./workflow-draft": {
       "types": "./dist/workflow-draft.d.ts",
       "default": "./dist/workflow-draft.js"
+    },
+    "./compile-handlers": {
+      "types": "./dist/compile-handlers.d.ts",
+      "default": "./dist/compile-handlers.js"
+    },
+    "./runner": {
+      "types": "./dist/runner.d.ts",
+      "default": "./dist/runner.js"
+    },
+    "./tool-worker": {
+      "default": "./scripts/tool-worker.mjs"
     }
   },
   "license": "Apache-2.0",
@@ -26,6 +37,7 @@
   },
   "files": [
     "dist",
+    "scripts",
     "LICENSE"
   ],
   "scripts": {

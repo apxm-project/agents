@@ -31,6 +31,10 @@ def test_dependency_type_normalizes_to_wire_value():
     assert edge.to_dict()["dependency"] == DEPENDENCY_CONTROL
 
 
+def test_graph_recorder_keeps_entry_metadata_explicit():
+    assert GraphRecorder("entry_metadata").to_graph().metadata == {}
+
+
 def test_graph_recorder_accepts_dependency_type():
     g = GraphRecorder("typed_edges")
     first = g.print(name="first", message="first")

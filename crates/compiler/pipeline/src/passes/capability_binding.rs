@@ -16,24 +16,9 @@ use apxm_core::constants::graph::attrs;
 use apxm_core::error::compiler::{CompilerError, Result};
 use apxm_core::error::span::Span;
 use apxm_core::error::{Error, ErrorCode};
-use apxm_core::types::AISOperationType;
 use apxm_core::types::execution::ExecutionDag;
-use serde::Deserialize;
+use apxm_core::types::{AISOperationType, HandlerKind, HandlerManifest};
 use std::collections::{HashMap, HashSet};
-
-/// Lightweight manifest entry for a Python `@tool`-decorated function.
-///
-/// Minimal Python tool manifest fields relevant to compile-time orphan
-/// detection. The compiler crate does not depend on `apxm-runtime`.
-#[derive(Debug, Clone, Deserialize)]
-pub struct PythonCapabilityManifestEntry {
-    /// Unique handler identifier (`sha256:<hash>`).
-    pub handler_id: String,
-    /// Python module path (e.g. `myapp.tools`).
-    pub module: String,
-    /// Qualified name within the module (e.g. `add`).
-    pub qualname: String,
-}
 
 /// Pass name sentinel for pipeline ordering and diagnostics.
 pub const CAPABILITY_BINDING_PASS_NAME: &str = "capability-binding-check";
@@ -69,7 +54,7 @@ pub struct CapabilityBindingDiagnostic {
 /// or `Err(CompilerError)` if hard errors (E712, E713) are found.
 pub fn capability_binding_check(
     module: &AirModule,
-    manifest: Option<&[PythonCapabilityManifestEntry]>,
+    manifest: Option<&HandlerManifest>,
 ) -> Result<Vec<CapabilityBindingDiagnostic>> {
     let mut errors: Vec<CapabilityBindingDiagnostic> = Vec::new();
     let mut warnings: Vec<CapabilityBindingDiagnostic> = Vec::new();
@@ -168,7 +153,7 @@ pub fn capability_binding_check(
 
     // W723: orphan Python tool — manifest entry whose handler_id is not
     // referenced by any REGISTER_CAPABILITY node's python_handler_id attr.
-    if let Some(entries) = manifest {
+    if let Some(manifest) = manifest {
         let referenced_handler_ids: HashSet<&str> = module
             .nodes
             .iter()
@@ -180,7 +165,11 @@ pub fn capability_binding_check(
             })
             .collect();
 
-        for entry in entries {
+        for entry in manifest
+            .handlers
+            .iter()
+            .filter(|entry| entry.kind == HandlerKind::Tool)
+        {
             if !referenced_handler_ids.contains(entry.handler_id.as_str()) {
                 warnings.push(CapabilityBindingDiagnostic {
                     code: ErrorCode::OrphanPythonHandler,
@@ -220,7 +209,7 @@ pub fn capability_binding_check(
 /// hard errors (E712, E713).
 pub fn capability_binding_check_dag(
     dag: &ExecutionDag,
-    manifest: Option<&[PythonCapabilityManifestEntry]>,
+    manifest: Option<&HandlerManifest>,
     known_caps: &HashSet<String>,
 ) -> Result<Vec<CapabilityBindingDiagnostic>> {
     let mut errors: Vec<CapabilityBindingDiagnostic> = Vec::new();
@@ -326,7 +315,7 @@ pub fn capability_binding_check_dag(
 
     // W723: orphan Python tool — manifest entry whose handler_id is not
     // referenced by any REGISTER_CAPABILITY node's python_handler_id attr.
-    if let Some(entries) = manifest {
+    if let Some(manifest) = manifest {
         let referenced_handler_ids: HashSet<&str> = dag
             .nodes
             .iter()
@@ -338,7 +327,11 @@ pub fn capability_binding_check_dag(
             })
             .collect();
 
-        for entry in entries {
+        for entry in manifest
+            .handlers
+            .iter()
+            .filter(|entry| entry.kind == HandlerKind::Tool)
+        {
             if !referenced_handler_ids.contains(entry.handler_id.as_str()) {
                 warnings.push(CapabilityBindingDiagnostic {
                     code: ErrorCode::OrphanPythonHandler,

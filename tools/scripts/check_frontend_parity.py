@@ -27,6 +27,8 @@ from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 TYPESCRIPT_DIR = REPO_ROOT / "crates" / "compiler" / "frontend" / "typescript"
+TYPESCRIPT_DEPENDENCIES_DIR = TYPESCRIPT_DIR / "node_modules"
+TYPESCRIPT_PARITY_TEST = "test/emit-air.test.ts"
 
 
 def _run(description: str, command: list[str], *, cwd: Path | None = None, env: dict[str, str] | None = None) -> bool:
@@ -77,19 +79,20 @@ def main() -> int:
         env=live_env,
     )
 
-    if TYPESCRIPT_DIR.exists() and (TYPESCRIPT_DIR / "node_modules").exists():
+    if TYPESCRIPT_DIR.is_dir() and TYPESCRIPT_DEPENDENCIES_DIR.is_dir():
         ok &= _run(
             "TypeScript frontend AIR parity tests (vitest, APXM_BIN set)",
-            ["npx", "vitest", "run", "test/emit-air.test.ts"],
+            ["npx", "vitest", "run", TYPESCRIPT_PARITY_TEST],
             cwd=TYPESCRIPT_DIR,
             env=live_env,
         )
     else:
         print(
-            "\n==> Skipping TypeScript parity tests: "
-            f"{TYPESCRIPT_DIR / 'node_modules'} not installed (run `npm install` in "
-            "crates/compiler/frontend/typescript first)."
+            "\nerror: TypeScript frontend parity requires installed dependencies: "
+            f"{TYPESCRIPT_DEPENDENCIES_DIR} (run `dekk agents install`).",
+            file=sys.stderr,
         )
+        ok = False
 
     ok &= _run(
         "Hand-authored-AIR regression guard",

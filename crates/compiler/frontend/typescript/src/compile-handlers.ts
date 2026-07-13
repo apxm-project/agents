@@ -11,18 +11,52 @@ import {
 } from "./handlers/index.js";
 import type { FunctionTool, HookFn } from "./handlers/index.js";
 
-/** Manifest entry matching the Python tools manifest shape. */
+/** Version identifier for the portable frontend handler sidecar. */
+export const HANDLER_MANIFEST_VERSION = "apxm.handler-manifest.v1";
+/** Mirror of crates/machine/contracts/src/types/handler_manifest.rs. */
+export const HANDLER_MANIFEST_SOURCE_DIRECTORY = "handlers";
+/** Prefix for content-addressed handler identities. */
+export const HANDLER_MANIFEST_HANDLER_ID_PREFIX = "sha256:";
+
+/** Runtime roles supported by the portable handler-manifest contract. */
+export const HANDLER_KIND = {
+  TOOL: "tool",
+  HOOK: "hook",
+} as const;
+export type HandlerKind = (typeof HANDLER_KIND)[keyof typeof HANDLER_KIND];
+
+/** Authoring languages supported by the portable handler-manifest contract. */
+export const HANDLER_LANGUAGE = {
+  TYPESCRIPT: "typescript",
+} as const;
+export type HandlerLanguage = (typeof HANDLER_LANGUAGE)[keyof typeof HANDLER_LANGUAGE];
+
+/** Artifact-local source transported with a handler descriptor. */
+export interface HandlerSource {
+  artifact_path: string;
+  content: string;
+}
+
+/** One tool or hook descriptor in the portable handler sidecar. */
 export interface HandlerManifestEntry {
+  kind: HandlerKind;
+  language: HandlerLanguage;
   handler_id: string;
   module: string;
   qualname: string;
   name: string;
-  source_file?: string;
-  description?: string;
-  schema?: Record<string, unknown>;
+  source: HandlerSource;
+  description: string;
+  schema: Record<string, unknown>;
   event?: string;
   match?: string;
   mode?: string;
+}
+
+/** The only serialized handler sidecar shape emitted by TypeScript. */
+export interface HandlerManifest {
+  version: typeof HANDLER_MANIFEST_VERSION;
+  handlers: HandlerManifestEntry[];
 }
 
 export interface CompileHandlersOptions {
@@ -53,59 +87,80 @@ function moduleIdFromPath(entryPath: string, rootDir?: string): string {
   return normalizeModulePath(withoutExtension(rel));
 }
 
-function sourceFileFromPath(entryPath: string, rootDir?: string): string {
-  const absPath = path.resolve(entryPath);
-  if (!rootDir) {
-    return normalizeModulePath(absPath);
-  }
-  const root = path.resolve(rootDir);
-  const rel = path.relative(root, absPath);
-  if (rel.startsWith("..") || path.isAbsolute(rel)) {
-    throw new Error(
-      `handler ${entryPath} is outside package root ${rootDir}`,
-    );
-  }
-  return normalizeModulePath(rel);
+function resolveQualname(exportName: string, defaultQualname: string): string {
+  return exportName === "default" ? defaultQualname : exportName;
 }
 
-function resolveQualname(exportName: string, fallback: string): string {
-  return exportName === "default" ? fallback : exportName;
+async function sourceForHandler(
+  absPath: string,
+  handlerId: string,
+): Promise<HandlerSource> {
+  const result = await build({
+    absWorkingDir: path.dirname(absPath),
+    entryPoints: [path.basename(absPath)],
+    bundle: true,
+    platform: "node",
+    format: "esm",
+    packages: "external",
+    write: false,
+    alias: {
+      "@apxm/frontend": FRONTEND_ENTRY,
+    },
+  });
+  const content = result.outputFiles[0]?.text;
+  if (!content) {
+    throw new Error(`failed to bundle handler source ${absPath}`);
+  }
+  return {
+    artifact_path:
+      HANDLER_MANIFEST_SOURCE_DIRECTORY +
+      "/" +
+      handlerId.slice(HANDLER_MANIFEST_HANDLER_ID_PREFIX.length) +
+      ".mjs",
+    content,
+  };
 }
 
-function toolManifest(
+async function toolManifest(
   tool: FunctionTool,
   moduleName: string,
   qualname: string,
-  sourceFile: string,
-): HandlerManifestEntry {
+  sourcePath: string,
+): Promise<HandlerManifestEntry> {
   const handler_id = makeHandlerId(moduleName, qualname);
   return {
+    kind: HANDLER_KIND.TOOL,
+    language: HANDLER_LANGUAGE.TYPESCRIPT,
     handler_id,
     module: moduleName,
     qualname,
     name: tool.name,
+    source: await sourceForHandler(sourcePath, handler_id),
     description: tool.description,
     schema: {},
-    source_file: sourceFile,
   };
 }
 
-function hookManifest(
+async function hookManifest(
   hookFn: HookFn,
   moduleName: string,
   qualname: string,
-  sourceFile: string,
-): HandlerManifestEntry {
+  sourcePath: string,
+): Promise<HandlerManifestEntry> {
   const handler_id = makeHandlerId(moduleName, qualname);
   return {
+    kind: HANDLER_KIND.HOOK,
+    language: HANDLER_LANGUAGE.TYPESCRIPT,
     handler_id,
     module: moduleName,
     qualname,
     name: hookFn.name,
+    source: await sourceForHandler(sourcePath, handler_id),
+    description: "",
+    schema: {},
     event: hookFn.event,
     match: hookFn.match,
     mode: hookFn.mode,
-    source_file: sourceFile,
   };
 }
 
@@ -145,43 +200,42 @@ async function loadTsModule(
 }
 
 /**
- * Dynamically import handler entry modules and emit a tools.json manifest array
- * matching the Python tools manifest format.
+ * Dynamically import handler entry modules and emit the portable handler
+ * manifest consumed by the artifact runtime.
  */
 export async function compileHandlers(
   entryPaths: string[],
   options: CompileHandlersOptions = {},
-): Promise<HandlerManifestEntry[]> {
-  const manifest: HandlerManifestEntry[] = [];
+): Promise<HandlerManifest> {
+  const handlers: HandlerManifestEntry[] = [];
   const seen = new Set<string>();
 
   for (const entryPath of entryPaths) {
     const absPath = path.resolve(entryPath);
     const moduleName = moduleIdFromPath(absPath, options.rootDir);
-    const sourceFile = sourceFileFromPath(absPath, options.rootDir);
     const mod = await loadTsModule(absPath, moduleName);
 
     for (const [exportName, value] of Object.entries(mod)) {
       if (isFunctionTool(value)) {
         const qualname = resolveQualname(exportName, value.qualname);
-        const entry = toolManifest(value, moduleName, qualname, sourceFile);
+        const entry = await toolManifest(value, moduleName, qualname, absPath);
         if (!seen.has(entry.handler_id)) {
           seen.add(entry.handler_id);
-          manifest.push(entry);
+          handlers.push(entry);
         }
         continue;
       }
 
       if (isHookFn(value)) {
         const qualname = resolveQualname(exportName, value.qualname);
-        const entry = hookManifest(value, moduleName, qualname, sourceFile);
+        const entry = await hookManifest(value, moduleName, qualname, absPath);
         if (!seen.has(entry.handler_id)) {
           seen.add(entry.handler_id);
-          manifest.push(entry);
+          handlers.push(entry);
         }
       }
     }
   }
 
-  return manifest;
+  return { version: HANDLER_MANIFEST_VERSION, handlers };
 }

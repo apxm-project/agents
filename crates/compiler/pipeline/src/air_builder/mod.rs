@@ -7,6 +7,7 @@
 //! JSON / TaskDag / programmatic ──→ AirModule ──→ .air text ──→ Pipeline::compile()
 //! ```
 
+use apxm_core::constants::graph::attrs as graph_attrs;
 use apxm_core::types::{AISOperationType, DependencyType, Value};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -32,6 +33,68 @@ pub struct AirNode {
     pub op: AISOperationType,
     #[serde(default)]
     pub attributes: HashMap<String, Value>,
+}
+
+pub use apxm_core::constants::graph::attrs::PromptInputRole;
+
+/// One named LLM input and its rendering role.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct PromptInputBinding {
+    pub name: String,
+    pub role: PromptInputRole,
+}
+
+impl PromptInputBinding {
+    /// Create a named LLM input binding.
+    pub fn new(name: impl Into<String>, role: PromptInputRole) -> Self {
+        Self {
+            name: name.into(),
+            role,
+        }
+    }
+}
+
+/// Apply ordered prompt input bindings to a graph-node attribute map.
+pub fn apply_prompt_input_bindings(
+    attributes: &mut HashMap<String, Value>,
+    bindings: impl IntoIterator<Item = PromptInputBinding>,
+) {
+    let bindings = bindings.into_iter().collect::<Vec<_>>();
+    if bindings.is_empty() {
+        attributes.remove(graph_attrs::INPUT_NAMES);
+        attributes.remove(graph_attrs::INPUT_ROLES);
+        return;
+    }
+
+    attributes.insert(
+        graph_attrs::INPUT_NAMES.to_string(),
+        Value::Array(
+            bindings
+                .iter()
+                .map(|binding| Value::String(binding.name.clone()))
+                .collect(),
+        ),
+    );
+    attributes.insert(
+        graph_attrs::INPUT_ROLES.to_string(),
+        Value::Array(
+            bindings
+                .iter()
+                .map(|binding| Value::String(binding.role.as_str().to_string()))
+                .collect(),
+        ),
+    );
+}
+
+impl AirNode {
+    /// Attach ordered prompt inputs to an ASK, THINK, or REASON node.
+    pub fn with_prompt_inputs(
+        mut self,
+        bindings: impl IntoIterator<Item = PromptInputBinding>,
+    ) -> Self {
+        apply_prompt_input_bindings(&mut self.attributes, bindings);
+        self
+    }
 }
 
 /// An edge connecting two nodes.
@@ -91,6 +154,11 @@ pub struct AirProgram {
 impl AirProgram {
     pub fn new(modules: Vec<AirModule>) -> Self {
         Self { modules }
+    }
+
+    /// Validate executable flow ownership before AIR text is assembled.
+    pub fn validate(&self) -> Result<(), AirError> {
+        validate::validate_program(&self.modules)
     }
 
     /// Emit valid `.air` (MLIR text) for this multi-flow program.
@@ -204,3 +272,107 @@ impl AirModuleBuilder {
 pub use frontend_graph::{
     FrontendEdge, FrontendGraph, FrontendGraphError, FrontendNode, FrontendParameter,
 };
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use apxm_core::constants::graph::{attrs as graph_attrs, metadata};
+    use apxm_core::types::{AISOperationType, Value};
+    use std::collections::HashMap;
+
+    fn flow(name: &str, is_entry: Option<bool>) -> AirModule {
+        let mut flow_metadata = HashMap::new();
+        if let Some(is_entry) = is_entry {
+            flow_metadata.insert(metadata::IS_ENTRY.to_string(), Value::Bool(is_entry));
+        }
+        AirModule {
+            name: name.to_string(),
+            nodes: vec![AirNode {
+                id: 1,
+                name: "done".to_string(),
+                op: AISOperationType::Return,
+                attributes: HashMap::new(),
+            }],
+            edges: Vec::new(),
+            parameters: Vec::new(),
+            metadata: flow_metadata,
+        }
+    }
+
+    #[test]
+    fn program_requires_exactly_one_explicit_entry_flow() {
+        let missing = AirProgram::new(vec![flow("main", None)]);
+        assert!(
+            missing
+                .validate()
+                .expect_err("missing entry metadata must fail")
+                .to_string()
+                .contains(metadata::IS_ENTRY)
+        );
+
+        let multiple = AirProgram::new(vec![flow("main", Some(true)), flow("worker", Some(true))]);
+        assert!(
+            multiple
+                .validate()
+                .expect_err("multiple entry flows must fail")
+                .to_string()
+                .contains("exactly one entry")
+        );
+
+        let valid = AirProgram::new(vec![flow("main", Some(true)), flow("worker", Some(false))]);
+        valid.validate().expect("one explicit entry flow is valid");
+    }
+
+    #[test]
+    fn program_rejects_symbols_that_collide_after_sanitization() {
+        let program = AirProgram::new(vec![
+            flow("main-flow", Some(true)),
+            flow("main flow", Some(false)),
+        ]);
+        assert!(
+            program
+                .validate()
+                .expect_err("sanitized symbol collision must fail")
+                .to_string()
+                .contains("symbol")
+        );
+    }
+
+    #[test]
+    fn direct_air_prompt_bindings_keep_names_and_roles_in_lockstep() {
+        let node = AirNode {
+            id: 1,
+            name: "ask".to_string(),
+            op: AISOperationType::Ask,
+            attributes: HashMap::new(),
+        }
+        .with_prompt_inputs([
+            PromptInputBinding::new("question", PromptInputRole::User),
+            PromptInputBinding::new("policy", PromptInputRole::System),
+            PromptInputBinding::new("dependency", PromptInputRole::DependencyOnly),
+            PromptInputBinding::new("tool_result", PromptInputRole::ToolContext),
+            PromptInputBinding::new("guard", PromptInputRole::Control),
+        ]);
+
+        assert_eq!(
+            node.attributes.get(graph_attrs::INPUT_NAMES),
+            Some(&Value::Array(vec![
+                Value::String("question".to_string()),
+                Value::String("policy".to_string()),
+                Value::String("dependency".to_string()),
+                Value::String("tool_result".to_string()),
+                Value::String("guard".to_string()),
+            ])),
+        );
+        assert_eq!(
+            node.attributes.get(graph_attrs::INPUT_ROLES),
+            Some(&Value::Array(vec![
+                Value::String("user".to_string()),
+                Value::String("system".to_string()),
+                Value::String("dependency_only".to_string()),
+                Value::String("tool_context".to_string()),
+                Value::String("control".to_string()),
+            ])),
+        );
+    }
+}
