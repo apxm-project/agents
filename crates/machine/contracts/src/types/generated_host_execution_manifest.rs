@@ -1,8 +1,8 @@
 // AUTO-GENERATED from apxm.host-execution-manifest.v1; DO NOT EDIT.
 
+use serde::{Deserialize, Serialize};
 use crate::types::host::HostTier;
 use crate::types::principal::HostPrincipal;
-use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct HostExecutionManifest {
