@@ -1192,7 +1192,9 @@ pub fn compile_command(
     let opt = parse_opt_level(opt_level);
     let compiler_config_path = config.clone();
     let opt_target = target;
-    let _apxm_config = load_config(config.clone())?;
+    let apxm_config = load_config(config.clone())?;
+    let analysis_inputs =
+        apxm_compiler::CompilerAnalysisInputs::from_backend_configs(&apxm_config.backends);
     let declared_package_entry = if input.is_dir() && input.join("agent.toml").is_file() {
         declared_agent_package_entry(&input)?
     } else {
@@ -1306,10 +1308,11 @@ pub fn compile_command(
             })
             .transpose()?;
         let (mut artifact, artifact_stage_metrics) = module
-            .generate_artifact_with_manifest_and_caps_with_diagnostics(
+            .generate_artifact_with_manifest_and_caps_with_diagnostics_and_analysis_inputs(
                 None,
                 manifest.as_ref(),
                 &std::collections::HashSet::new(),
+                &analysis_inputs,
             )
             .context("Failed to generate artifact")?;
 

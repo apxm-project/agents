@@ -16,9 +16,11 @@ use apxm_core::types::{
     CompletedNodeInfo, LiveSessionState, NodeInfo, SessionManifest, SessionStatus,
 };
 
-use super::{StepStatus, WorkflowResult, WorkflowStatus};
+use super::{StepStatus, WorkflowCheckpointBarrier, WorkflowResult, WorkflowStatus};
 
 const BACKGROUND_FILE: &str = "background.json";
+const CHECKPOINT_BARRIER_DIR: &str = "workflow-checkpoints";
+const CHECKPOINT_BARRIER_VERSION: u32 = 1;
 
 /// Persist the workflow root session as running.
 ///
@@ -133,6 +135,36 @@ pub fn write_workflow_step_started(
             current_phase: Some(format!("step:{step_id}")),
         },
     )
+}
+
+/// Persist the compiler-owned replay barrier before a workflow step becomes
+/// observable as started or is handed to the runtime.
+///
+/// The record is intentionally content-free. Runtime state and private effect
+/// evidence stay with their owning schedulers and durable receipt stores.
+pub fn write_workflow_checkpoint_barrier(
+    session_dir: &Path,
+    step_index: usize,
+    barrier: &WorkflowCheckpointBarrier,
+) -> Result<()> {
+    if barrier.step_id.trim().is_empty() || barrier.required_before_nodes.is_empty() {
+        anyhow::bail!("workflow checkpoint barrier requires a step id and at least one node");
+    }
+
+    let barrier_dir = session_dir.join(CHECKPOINT_BARRIER_DIR);
+    std::fs::create_dir_all(&barrier_dir)?;
+    let path = barrier_dir.join(format!("{step_index}.json"));
+    let temporary = barrier_dir.join(format!("{step_index}.tmp-{}", uuid::Uuid::now_v7()));
+    let record = serde_json::json!({
+        "schema_version": CHECKPOINT_BARRIER_VERSION,
+        "step_id": barrier.step_id,
+        "step_index": step_index,
+        "required_before_nodes": barrier.required_before_nodes,
+        "placed_at": chrono::Utc::now().to_rfc3339(),
+    });
+    std::fs::write(&temporary, serde_json::to_vec_pretty(&record)?)?;
+    std::fs::rename(temporary, path)?;
+    Ok(())
 }
 
 /// Persist workflow-root progress when a child step finishes or is skipped.
@@ -404,4 +436,31 @@ fn write_json(path: std::path::PathBuf, value: &impl serde::Serialize) -> Result
     let json = serde_json::to_string_pretty(value)?;
     std::fs::write(path, json)?;
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn checkpoint_barrier_is_durable_and_content_free() {
+        let temp = tempfile::tempdir().expect("temporary session directory");
+        let barrier = WorkflowCheckpointBarrier {
+            step_id: "effectful".to_string(),
+            required_before_nodes: vec![7, 11],
+        };
+
+        write_workflow_checkpoint_barrier(temp.path(), 3, &barrier)
+            .expect("checkpoint barrier persists");
+        let record: serde_json::Value = serde_json::from_slice(
+            &std::fs::read(temp.path().join(CHECKPOINT_BARRIER_DIR).join("3.json"))
+                .expect("barrier file"),
+        )
+        .expect("barrier json");
+
+        assert_eq!(record["step_id"], "effectful");
+        assert_eq!(record["required_before_nodes"], serde_json::json!([7, 11]));
+        assert!(record.get("args").is_none());
+        assert!(record.get("effect").is_none());
+    }
 }

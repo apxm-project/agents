@@ -2,12 +2,11 @@
 
 use std::collections::{BTreeSet, HashMap, VecDeque};
 
+use apxm_core::types::compiler::CostSummary;
 use apxm_core::types::execution::ExecutionDag;
 
-use super::token_cost::latency_weight_ms;
-
 /// Compute a deterministic weighted critical path across all typed edges.
-pub(super) fn weighted_critical_path_ms(dag: &ExecutionDag) -> u64 {
+pub(super) fn weighted_critical_path_ms(dag: &ExecutionDag, costs: &[CostSummary]) -> u64 {
     let mut remaining: HashMap<u64, usize> = dag.nodes.iter().map(|node| (node.id, 0)).collect();
     let mut successors: HashMap<u64, Vec<u64>> = HashMap::new();
     let mut predecessors: HashMap<u64, Vec<u64>> = HashMap::new();
@@ -26,7 +25,8 @@ pub(super) fn weighted_critical_path_ms(dag: &ExecutionDag) -> u64 {
     let weights: HashMap<u64, u64> = dag
         .nodes
         .iter()
-        .map(|node| (node.id, latency_weight_ms(node)))
+        .zip(costs)
+        .map(|(node, cost)| (node.id, cost.estimated_latency_ms))
         .collect();
     let mut distance = HashMap::new();
     let mut queue = VecDeque::new();

@@ -120,7 +120,9 @@ fn setup_session(
 fn context_stack_config_from_graph(
     session_dir: &std::path::Path,
     graph: &apxm_compiler::AirModule,
+    planning: Option<&apxm_runtime::context_stack::ContextPlanningPolicy>,
 ) -> Option<apxm_runtime::context_stack::ContextStackConfig> {
+    let planning = planning?.clone();
     let node_metadata = graph
         .nodes
         .iter()
@@ -142,6 +144,7 @@ fn context_stack_config_from_graph(
 
     Some(apxm_runtime::context_stack::ContextStackConfig {
         session_dir: session_dir.to_path_buf(),
+        planning,
         node_metadata,
         graph_edges,
     })
@@ -300,8 +303,9 @@ pub async fn execute_command(
         setup_session(&emit_session, &input, "graph", input_graph.as_ref(), !json)?;
 
     if let (Some(graph), Some(writer)) = (input_graph.as_ref(), writer.as_ref()) {
+        let planning = linker_config.runtime_config.context_planning.clone();
         linker_config.runtime_config.context_stack =
-            context_stack_config_from_graph(writer.session_dir(), graph);
+            context_stack_config_from_graph(writer.session_dir(), graph, planning.as_ref());
     }
 
     let linker = Linker::new(linker_config)
@@ -557,8 +561,9 @@ pub async fn run_command(
     )?;
 
     if let (Some(graph), Some(writer)) = (artifact_graph.as_ref(), writer.as_ref()) {
+        let planning = linker_config.runtime_config.context_planning.clone();
         linker_config.runtime_config.context_stack =
-            context_stack_config_from_graph(writer.session_dir(), graph);
+            context_stack_config_from_graph(writer.session_dir(), graph, planning.as_ref());
     }
 
     let runtime = RuntimeExecutor::new(&linker_config)

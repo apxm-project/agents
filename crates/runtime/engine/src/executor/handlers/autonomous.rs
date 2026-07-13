@@ -8,9 +8,12 @@
 
 use super::{
     ExecutionContext, Node, Result, Value, apply_llm_request_routing_from_node,
-    execute_llm_request_for_node, get_input, get_optional_string_attribute,
+    execute_llm_request_for_node_with_context, get_input, get_optional_string_attribute,
     get_optional_u64_attribute,
-    llm::{attach_graph_hints, resolve_node_tools, run_tool_loop},
+    llm::{
+        ContextualNodeRequest, attach_graph_hints, contextualize_node_request,
+        execute_contextual_node_request, resolve_node_tools, run_tool_loop,
+    },
 };
 use crate::aam::TransitionLabel;
 use apxm_backends::{LLMRequest, ToolChoice, ToolDefinition};
@@ -94,12 +97,13 @@ pub async fn execute(ctx: &ExecutionContext, node: &Node, inputs: Vec<Value>) ->
         let plan_req =
             apply_llm_request_routing_from_node(LLMRequest::new(plan_prompt.clone()), node)?;
 
-        let plan_response = execute_llm_request_for_node(ctx, node, "autonomous_plan", &plan_req)
-            .await
-            .map_err(|e| RuntimeError::Operation {
-                op_type: node.op_type,
-                message: format!("Failed to plan action (iteration {}): {}", iteration, e),
-            })?;
+        let plan_response =
+            execute_contextual_node_request(ctx, node, "autonomous_plan", &plan_req)
+                .await
+                .map_err(|e| RuntimeError::Operation {
+                    op_type: node.op_type,
+                    message: format!("Failed to plan action (iteration {}): {}", iteration, e),
+                })?;
 
         tracing::debug!(
             execution_id = %ctx.execution_id,
@@ -119,8 +123,12 @@ pub async fn execute(ctx: &ExecutionContext, node: &Node, inputs: Vec<Value>) ->
             plan_response.content
         );
 
-        let mut action_req =
-            apply_llm_request_routing_from_node(LLMRequest::new(action_prompt), node)?;
+        let action_req = apply_llm_request_routing_from_node(LLMRequest::new(action_prompt), node)?;
+        let ContextualNodeRequest {
+            request: mut action_req,
+            metrics: action_context_metrics,
+            plan: action_plan,
+        } = contextualize_node_request(ctx, node, action_req)?;
 
         // If the autonomous node exposes tools (capability_groups / tools / tools_enabled),
         // run the real model->tool->model loop so the agent can ACT on its decision
@@ -132,13 +140,19 @@ pub async fn execute(ctx: &ExecutionContext, node: &Node, inputs: Vec<Value>) ->
         // the same check as the ASK handler (llm/mod.rs).
         let tools = resolve_node_tools(ctx, node);
         let action_content = if tools.is_empty() {
-            execute_llm_request_for_node(ctx, node, "autonomous_action", &action_req)
-                .await
-                .map_err(|e| RuntimeError::Operation {
-                    op_type: node.op_type,
-                    message: format!("Failed to execute action (iteration {}): {}", iteration, e),
-                })?
-                .content
+            execute_llm_request_for_node_with_context(
+                ctx,
+                node,
+                "autonomous_action",
+                &action_req,
+                &action_context_metrics,
+            )
+            .await
+            .map_err(|e| RuntimeError::Operation {
+                op_type: node.op_type,
+                message: format!("Failed to execute action (iteration {}): {}", iteration, e),
+            })?
+            .content
         } else {
             let backend_name = ctx.llm_registry.resolve_backend_name(&action_req).ok();
             let supports = backend_name
@@ -151,7 +165,7 @@ pub async fn execute(ctx: &ExecutionContext, node: &Node, inputs: Vec<Value>) ->
                 action_req = action_req
                     .with_tools(tools)
                     .with_tool_choice(ToolChoice::Auto);
-                let value = run_tool_loop(ctx, node, &action_req, None)
+                let value = run_tool_loop(ctx, node, &action_req, action_plan.as_ref())
                     .await
                     .map_err(|e| RuntimeError::Operation {
                         op_type: node.op_type,
@@ -166,16 +180,19 @@ pub async fn execute(ctx: &ExecutionContext, node: &Node, inputs: Vec<Value>) ->
                 }
             } else {
                 // Backend can't accept tool_choice=auto; degrade to text-only.
-                execute_llm_request_for_node(ctx, node, "autonomous_action", &action_req)
-                    .await
-                    .map_err(|e| RuntimeError::Operation {
-                        op_type: node.op_type,
-                        message: format!(
-                            "Failed to execute action (iteration {}): {}",
-                            iteration, e
-                        ),
-                    })?
-                    .content
+                execute_llm_request_for_node_with_context(
+                    ctx,
+                    node,
+                    "autonomous_action",
+                    &action_req,
+                    &action_context_metrics,
+                )
+                .await
+                .map_err(|e| RuntimeError::Operation {
+                    op_type: node.op_type,
+                    message: format!("Failed to execute action (iteration {}): {}", iteration, e),
+                })?
+                .content
             }
         };
 
@@ -191,15 +208,16 @@ pub async fn execute(ctx: &ExecutionContext, node: &Node, inputs: Vec<Value>) ->
 
         let eval_req = apply_llm_request_routing_from_node(LLMRequest::new(eval_prompt), node)?;
 
-        let eval_response = execute_llm_request_for_node(ctx, node, "autonomous_eval", &eval_req)
-            .await
-            .map_err(|e| RuntimeError::Operation {
-                op_type: node.op_type,
-                message: format!(
-                    "Failed to evaluate progress (iteration {}): {}",
-                    iteration, e
-                ),
-            })?;
+        let eval_response =
+            execute_contextual_node_request(ctx, node, "autonomous_eval", &eval_req)
+                .await
+                .map_err(|e| RuntimeError::Operation {
+                    op_type: node.op_type,
+                    message: format!(
+                        "Failed to evaluate progress (iteration {}): {}",
+                        iteration, e
+                    ),
+                })?;
 
         // Check if goal is achieved
         if eval_response
@@ -309,15 +327,26 @@ async fn run_agent_turn(
     prompt: String,
     label: &str,
 ) -> Result<String> {
-    let mut req = apply_llm_request_routing_from_node(LLMRequest::new(prompt), node)?;
+    let req = apply_llm_request_routing_from_node(LLMRequest::new(prompt), node)?;
+    let ContextualNodeRequest {
+        request: mut req,
+        metrics: context_metrics,
+        plan,
+    } = contextualize_node_request(ctx, node, req)?;
     if tools.is_empty() {
-        return Ok(execute_llm_request_for_node(ctx, node, label, &req)
-            .await
-            .map_err(|e| RuntimeError::Operation {
-                op_type: node.op_type,
-                message: format!("{label} failed: {e}"),
-            })?
-            .content);
+        return Ok(execute_llm_request_for_node_with_context(
+            ctx,
+            node,
+            label,
+            &req,
+            &context_metrics,
+        )
+        .await
+        .map_err(|e| RuntimeError::Operation {
+            op_type: node.op_type,
+            message: format!("{label} failed: {e}"),
+        })?
+        .content);
     }
     let supports = ctx
         .llm_registry
@@ -330,25 +359,26 @@ async fn run_agent_turn(
         req = req
             .with_tools(tools.to_vec())
             .with_tool_choice(ToolChoice::Auto);
-        let out =
-            run_tool_loop(ctx, node, &req, None)
-                .await
-                .map_err(|e| RuntimeError::Operation {
-                    op_type: node.op_type,
-                    message: format!("{label} tool turn failed: {e}"),
-                })?;
+        let out = run_tool_loop(ctx, node, &req, plan.as_ref())
+            .await
+            .map_err(|e| RuntimeError::Operation {
+                op_type: node.op_type,
+                message: format!("{label} tool turn failed: {e}"),
+            })?;
         Ok(match out {
             Value::String(s) => s,
             other => format_state(&other),
         })
     } else {
-        Ok(execute_llm_request_for_node(ctx, node, label, &req)
-            .await
-            .map_err(|e| RuntimeError::Operation {
-                op_type: node.op_type,
-                message: format!("{label} failed: {e}"),
-            })?
-            .content)
+        Ok(
+            execute_llm_request_for_node_with_context(ctx, node, label, &req, &context_metrics)
+                .await
+                .map_err(|e| RuntimeError::Operation {
+                    op_type: node.op_type,
+                    message: format!("{label} failed: {e}"),
+                })?
+                .content,
+        )
     }
 }
 

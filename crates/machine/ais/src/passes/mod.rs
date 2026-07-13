@@ -431,18 +431,19 @@ O-level pipelines.",
 pub const DSPY_OPTIMIZE: PassSpec = PassSpec::new(
     "dspy-optimize",
     "DspyOptimize",
-    "Config-gated compiler prompt optimization",
+    "Offline-only compiler prompt optimization",
     r"Invokes DSPy (Stanford NLP) to automatically optimize LLM prompt templates.
 Uses MIPROv2, BootstrapFewShot, or COPRO optimizers to discover better
 instructions from training examples.
 
-The Rust pipeline injects this pass into O1/O2/O3 only when compiler-owned
-prompt tuning configuration and training data are available. Without that
-typed request, default O-levels stay deterministic and side-effect free.
+Offline evaluation invokes this pass only with a complete typed request,
+including training data, backend evidence, and optimizer output. Public Rust
+compiler pipelines and the generic C pass manager reject this pass so default
+O-levels stay deterministic and side-effect free.
 
-Placement: immediately after build-prompt (which synthesizes named placeholders).
-Subsequent passes (template-specialization, dead-context-elimination,
-prompt-canonicalization) then operate on the optimized templates.",
+Placement: immediately after build-prompt, after every context-bearing LLM
+operation has explicit positional prompt roles. The pass validates every
+response template against those roles before mutating any operation.",
     PassCategory::Optimization,
     "mlir::ais::createDspyOptimizePass()",
 );

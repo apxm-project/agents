@@ -36,6 +36,11 @@ pub use air_builder::{
     AirEdge, AirError, AirModule, AirModuleBuilder, AirNode, AirParam, AirProgram, FrontendEdge,
     FrontendGraph, FrontendGraphError, FrontendNode, FrontendParameter,
 };
+pub use analysis::{
+    ActiveGrantEvidence, AnalysisNodeKey, ApprovalEvidence, BackendCapabilityEvidence,
+    CompilerAnalysisInputs, ConfiguredBackendEvidence, ExecutionReadinessEvidence,
+    ProfileCostEvidence, TokenizerEvidence,
+};
 pub use api::{Context, Module, Pipeline};
 pub use passes::{
     ExecutionProfile, NodeProfile, PassManager, PassMetrics, PipelineDiagnostics, ProfileError,

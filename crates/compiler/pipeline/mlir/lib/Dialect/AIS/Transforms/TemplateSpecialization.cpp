@@ -18,9 +18,11 @@
  *   %r = ais.ask "Analyze user_input_here" [] {input_names = []}
  *
  * The pass only fires when EVERY referenced placeholder resolves to a
- * `ConstStrOp`. If any referenced operand is a runtime value, the op is
- * left unchanged. Operands whose names are not referenced in the template
- * are also left untouched here — DeadContextElimination handles those.
+ * `ConstStrOp` with the explicit `user` role. Protected roles retain their
+ * dedicated channels even when their values are compile-time constants. If
+ * any referenced operand is protected or a runtime value, the op is left
+ * unchanged. Operands whose names are not referenced in the template are
+ * also left untouched here — DeadContextElimination handles those.
  */
 
 #include "ais/Dialect/AIS/Transforms/Passes.h"
@@ -111,6 +113,15 @@ private:
       APXM_AIS_DEBUG("  Skipping: input_names length mismatch");
       return false;
     }
+    const bool hasExplicitInputRoles =
+        placeholders::hasInputRoles(op.getOperation());
+    auto inputRoles = placeholders::readInputRoles(op.getOperation());
+    if (!hasExplicitInputRoles ||
+        !placeholders::inputRolesAreValid(inputRoles, op.getContext().size())) {
+      APXM_AIS_DEBUG("  Skipping: input_roles must be explicit, valid, and "
+                     "positional");
+      return false;
+    }
     auto nameToIdx = placeholders::nameToIndex(inputNames);
 
     auto referenced = placeholders::namesIn(templateStr);
@@ -126,6 +137,11 @@ private:
       if (it == nameToIdx.end()) {
         APXM_AIS_DEBUG("  Placeholder '{" << name
                        << "}' not in input_names; skipping");
+        return false;
+      }
+      if (!placeholders::isUserRole(inputRoles[it->second])) {
+        APXM_AIS_DEBUG("  '" << name
+                       << "' has a protected prompt role; skipping");
         return false;
       }
       Value operand = op.getContext()[it->second];
@@ -150,6 +166,7 @@ private:
     // Drop any operand whose name was specialized; keep the rest untouched.
     SmallVector<Value> remaining;
     llvm::SmallVector<llvm::StringRef, 8> remainingNames;
+    llvm::SmallVector<placeholders::PromptInputRole, 8> remainingRoles;
     for (unsigned i = 0, n = op.getContext().size(); i < n; ++i) {
       if (referencedSet.contains(inputNames[i])) {
         APXM_AIS_DEBUG("    Folded '" << inputNames[i] << "' into template");
@@ -157,12 +174,14 @@ private:
       }
       remaining.push_back(op.getContext()[i]);
       remainingNames.push_back(inputNames[i]);
+      remainingRoles.push_back(inputRoles[i]);
     }
 
     OpBuilder builder(op);
     op.setTemplateStrAttr(builder.getStringAttr(newTemplate));
     op->setOperands(remaining);
     placeholders::writeInputNames(op.getOperation(), remainingNames, builder);
+    placeholders::writeInputRoles(op.getOperation(), remainingRoles, builder);
 
     APXM_AIS_INFO("  Specialized \"" << templateStr << "\" -> \""
                   << newTemplate << "\"");

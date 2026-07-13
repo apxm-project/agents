@@ -92,12 +92,9 @@ pub async fn worker_loop(
             continue;
         };
 
-        // Acquire concurrency permit (backpressure). Three pools that never
-        // starve each other: LLM ops (remote-batched fan-out), long-WAITING ops
-        // (PAUSE/RESUME/recv — block on an external event, ~no compute), and
-        // everything else (compute). Routing blocking waits to their own generous
-        // pool is what stops a burst of human-in-the-loop pauses from exhausting
-        // the compute/LLM permits and stalling real work.
+        // Acquire concurrency permits from separate LLM, long-wait, and compute
+        // pools so one category cannot starve another. LLM admission bounds
+        // individual requests; it does not construct a batch.
         let semaphore = if is_blocking_wait_op(&node) {
             &state.blocking_concurrency
         } else if is_pure_llm_op(&node.op_type) {
@@ -535,9 +532,18 @@ async fn execute_with_retries(
             "Executing operation"
         );
 
-        let result = executor
-            .execute_with_context(node, inputs.to_vec(), ctx)
-            .await;
+        let result = if node.op_type == AISOperationType::Checkpoint {
+            let snapshot = state.capture_snapshot();
+            crate::scheduler::snapshot::with_checkpoint_scheduler_snapshot(
+                snapshot,
+                executor.execute_with_context(node, inputs.to_vec(), ctx),
+            )
+            .await
+        } else {
+            executor
+                .execute_with_context(node, inputs.to_vec(), ctx)
+                .await
+        };
 
         #[cfg(feature = "metrics")]
         let exec_duration = exec_start.elapsed();
@@ -669,27 +675,19 @@ async fn handle_success(
     event.state.executed.fetch_add(1, Ordering::Relaxed);
     event.state.record_progress();
 
-    // Publish outputs and propagate readiness (timed when metrics enabled)
+    mark_operation_completed(event.state, event.node_id, event.node, attempts);
+
+    // A dependent becomes ready only after its producer's terminal event is
+    // visible, so execution traces preserve the actual dataflow boundary.
     #[cfg(feature = "metrics")]
     let routing_start = std::time::Instant::now();
-
-    publish_outputs(event.state, event.node_id, event.outputs, value.clone()).await;
-
+    publish_outputs(event.state, event.node_id, event.outputs, value.clone());
     #[cfg(feature = "metrics")]
     local_metrics.record_token_routing(routing_start.elapsed());
 
     if let Some(emitter) = event.ctx.event_emitter() {
         emitter.emit_node_output(event.node_id, &value);
     }
-
-    // Mark operation as completed
-    if let Some(mut op_state) = event.state.op_states.get_mut(&event.node_id) {
-        op_state.status = OpStatus::Completed;
-        op_state.finished_at = Some(Instant::now());
-    }
-    event
-        .state
-        .emit_node_finished(event.node_id, event.node, attempts);
 
     // Record success event
     record_event(
@@ -758,7 +756,7 @@ async fn handle_failure(event: &WorkerEvent<'_>, error: RuntimeError, attempts: 
     if let Some(fallback) = event.node.attributes.get("fallback").cloned() {
         apxm_op!(info, node_id = event.node_id, "Using fallback value");
         // Use fallback value instead of failing
-        publish_outputs(event.state, event.node_id, event.outputs, fallback).await;
+        publish_outputs(event.state, event.node_id, event.outputs, fallback);
         finish_one(event.state);
         false // Don't abort
     } else {
@@ -777,7 +775,7 @@ async fn handle_failure(event: &WorkerEvent<'_>, error: RuntimeError, attempts: 
 ///
 /// If a token is marked as delegated by this node, we skip publishing
 /// (a spliced sub-DAG will produce the actual value).
-async fn publish_outputs(state: &SchedulerState, node_id: u64, outputs: &[TokenId], value: Value) {
+fn publish_outputs(state: &SchedulerState, node_id: u64, outputs: &[TokenId], value: Value) {
     for &token_id in outputs {
         // Fast path: check sparse delegation set (almost always empty)
         if state.delegated_tokens.contains(&(node_id, token_id)) {
@@ -826,6 +824,15 @@ async fn publish_outputs(state: &SchedulerState, node_id: u64, outputs: &[TokenI
             }
         }
     }
+}
+
+/// Mark a node terminal before any dependent can observe its output token.
+fn mark_operation_completed(state: &SchedulerState, node_id: NodeId, node: &Node, attempts: u32) {
+    if let Some(mut op_state) = state.op_states.get_mut(&node_id) {
+        op_state.status = OpStatus::Completed;
+        op_state.finished_at = Some(Instant::now());
+    }
+    state.emit_node_finished(node_id, node, attempts);
 }
 
 /// Decrement remaining count and notify if complete.
@@ -879,4 +886,125 @@ async fn record_event(
             None, // session_dir not available in worker context
         )
         .await;
+}
+
+#[cfg(test)]
+mod tests {
+    //! Worker trace tests cover terminal-to-readiness ordering.
+
+    use std::collections::HashMap;
+    use std::sync::{Arc, Mutex};
+
+    use apxm_core::types::execution::NodeMetadata;
+    use apxm_core::types::{DependencyType, Edge, ExecutionDag};
+
+    use super::*;
+    use crate::executor::hooks::{
+        ExecutionHook, ExecutionHookContext, NodeFinishedEvent, NodeReadyEvent, NodeStartedEvent,
+    };
+    use crate::observability::MetricsCollector;
+    use crate::scheduler::config::SchedulerConfig;
+
+    #[derive(Debug, Clone, PartialEq, Eq)]
+    enum TraceEvent {
+        Ready(NodeId),
+        Started(NodeId),
+        Finished(NodeId),
+    }
+
+    #[derive(Default)]
+    struct TraceHook {
+        events: Mutex<Vec<TraceEvent>>,
+    }
+
+    impl TraceHook {
+        fn clear(&self) {
+            self.events.lock().expect("trace lock").clear();
+        }
+
+        fn events(&self) -> Vec<TraceEvent> {
+            self.events.lock().expect("trace lock").clone()
+        }
+    }
+
+    impl ExecutionHook for TraceHook {
+        fn on_node_ready(&self, event: &NodeReadyEvent) {
+            self.events
+                .lock()
+                .expect("trace lock")
+                .push(TraceEvent::Ready(event.node_id));
+        }
+
+        fn on_node_started(&self, event: &NodeStartedEvent) {
+            self.events
+                .lock()
+                .expect("trace lock")
+                .push(TraceEvent::Started(event.node_id));
+        }
+
+        fn on_node_finished(&self, event: &NodeFinishedEvent) {
+            self.events
+                .lock()
+                .expect("trace lock")
+                .push(TraceEvent::Finished(event.node_id));
+        }
+    }
+
+    fn node(id: NodeId, inputs: Vec<TokenId>, outputs: Vec<TokenId>) -> Node {
+        Node {
+            id,
+            op_type: AISOperationType::Nop,
+            attributes: HashMap::new(),
+            input_tokens: inputs,
+            output_tokens: outputs,
+            metadata: NodeMetadata::default(),
+        }
+    }
+
+    fn two_node_dag() -> ExecutionDag {
+        let mut dag = ExecutionDag::new();
+        dag.add_node(node(1, Vec::new(), vec![10]))
+            .expect("source node");
+        dag.add_node(node(2, vec![10], vec![20]))
+            .expect("dependent node");
+        dag.add_edge(Edge::new(1, 2, 10, DependencyType::Data))
+            .expect("data edge");
+        dag.entry_nodes = dag.find_entry_nodes();
+        dag.exit_nodes = dag.find_exit_nodes();
+        dag
+    }
+
+    #[test]
+    fn trace_finishes_a_producer_before_releasing_its_dependent() {
+        let trace = Arc::new(TraceHook::default());
+        let hook: Arc<dyn ExecutionHook> = trace.clone();
+        let hooks = ExecutionHookContext::new("execution", "graph", vec![hook]);
+        let (state, _workers) = SchedulerState::new_with_hooks(
+            two_node_dag(),
+            SchedulerConfig::new()
+                .with_max_concurrency(1)
+                .with_max_inflight(1)
+                .with_llm_inflight(1),
+            Arc::new(MetricsCollector::new()),
+            Instant::now(),
+            Vec::new(),
+            hooks,
+        )
+        .expect("scheduler state");
+        trace.clear();
+
+        let source = state.nodes.get(&1).expect("source node");
+        op_start(&state, 1, source.value().as_ref(), 0);
+        mark_operation_completed(&state, 1, source.value().as_ref(), 1);
+        publish_outputs(&state, 1, &[10], Value::String("source output".to_string()));
+
+        assert_eq!(
+            trace.events(),
+            vec![
+                TraceEvent::Started(1),
+                TraceEvent::Finished(1),
+                TraceEvent::Ready(2),
+            ]
+        );
+    }
 }

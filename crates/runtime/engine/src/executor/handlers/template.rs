@@ -14,6 +14,38 @@ use apxm_core::types::values::Value;
 use apxm_core::utils::template::parse_placeholder_names;
 use std::collections::HashMap;
 
+/// Provider-bound disposition for one typed prompt input.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum PromptRequestDisposition {
+    /// Render the value through the user template channel.
+    UserTemplate,
+    /// Include the value in the provider system instruction.
+    SystemPrompt,
+    /// Retain the value for graph semantics without sending it to the provider.
+    Excluded,
+}
+
+/// Resolve one typed input role at the provider request boundary.
+///
+/// Control-plane inputs never cross that boundary because providers do not
+/// supply a control channel with APXM's protection semantics.
+pub(crate) fn prompt_request_disposition(
+    input_name: &str,
+    role: PromptInputRole,
+) -> Result<PromptRequestDisposition, RuntimeError> {
+    match role {
+        PromptInputRole::User => Ok(PromptRequestDisposition::UserTemplate),
+        PromptInputRole::System => Ok(PromptRequestDisposition::SystemPrompt),
+        PromptInputRole::DependencyOnly => Ok(PromptRequestDisposition::Excluded),
+        PromptInputRole::ToolContext => Err(RuntimeError::Executor(format!(
+            "tool-context input '{input_name}' cannot cross the provider request boundary without a correlated provider tool call"
+        ))),
+        PromptInputRole::Control => Err(RuntimeError::Executor(format!(
+            "control input '{input_name}' cannot cross the provider request boundary"
+        ))),
+    }
+}
+
 /// Render a template by substituting every `{name}` placeholder with the
 /// corresponding entry from `inputs`, where `name` is looked up in
 /// `input_names` (the parallel name-by-position array attached to the node).
@@ -177,13 +209,16 @@ pub fn input_names_from_node(node: &apxm_core::types::execution::Node) -> Vec<St
 }
 
 /// Resolve the positional LLM prompt contract for a node's incoming inputs.
-/// Explicit role metadata is authoritative; when absent, the legacy
-/// `__system` input name remains system-channel sugar and all other inputs are
-/// user inputs.
+/// Every provider-bound input requires explicit role metadata. The runtime
+/// rejects absent or malformed roles instead of inferring an egress channel
+/// from an input name.
 pub fn llm_input_bindings_from_node(
     node: &apxm_core::types::execution::Node,
     input_count: usize,
 ) -> Result<Vec<(String, PromptInputRole)>, RuntimeError> {
+    if input_count == 0 {
+        return Ok(Vec::new());
+    }
     let input_names = input_names_from_node(node);
     if input_names.len() != input_count {
         return Err(RuntimeError::Executor(format!(
@@ -192,8 +227,12 @@ pub fn llm_input_bindings_from_node(
         )));
     }
 
-    let explicit_roles = node.attributes.get(INPUT_ROLES).map(|value| match value {
-        Value::String(role) => Ok(vec![role.clone()]),
+    let explicit_roles = node.attributes.get(INPUT_ROLES).ok_or_else(|| {
+        RuntimeError::Executor(
+            "LLM provider-bound inputs require explicit input_roles metadata".to_string(),
+        )
+    })?;
+    let roles: Vec<String> = match explicit_roles {
         Value::Array(items) => items
             .iter()
             .map(|item| {
@@ -203,20 +242,15 @@ pub fn llm_input_bindings_from_node(
                         RuntimeError::Executor("input_roles must contain only strings".to_string())
                     })
             })
-            .collect(),
-        _ => Err(RuntimeError::Executor(
-            "input_roles must be a string array".to_string(),
-        )),
-    });
-
-    let roles = match explicit_roles {
-        Some(roles) => parse_prompt_input_roles(input_count, roles?)
-            .map_err(|error| RuntimeError::Executor(error.to_string()))?,
-        None => input_names
-            .iter()
-            .map(|name| PromptInputRole::from_legacy_input_name(name))
-            .collect(),
+            .collect::<Result<Vec<_>, RuntimeError>>()?,
+        _ => {
+            return Err(RuntimeError::Executor(
+                "input_roles must be a positional array of canonical role strings".to_string(),
+            ));
+        }
     };
+    let roles = parse_prompt_input_roles(input_count, roles)
+        .map_err(|error| RuntimeError::Executor(error.to_string()))?;
 
     Ok(input_names.into_iter().zip(roles).collect())
 }
@@ -300,16 +334,72 @@ mod tests {
     }
 
     #[test]
-    fn llm_bindings_normalize_the_legacy_system_name() {
+    fn llm_bindings_reject_missing_role_metadata() {
         let mut node = Node::new(1, AISOperationType::Ask);
         node.attributes = HashMap::from([(
             graph_attrs::INPUT_NAMES.to_string(),
             Value::Array(vec![Value::String("__system".to_string())]),
         )]);
 
-        assert_eq!(
-            llm_input_bindings_from_node(&node, 1).unwrap(),
-            vec![("__system".to_string(), PromptInputRole::System)]
+        assert!(matches!(
+            llm_input_bindings_from_node(&node, 1),
+            Err(RuntimeError::Executor(message))
+                if message.contains("require explicit input_roles metadata")
+        ));
+    }
+
+    #[test]
+    fn llm_bindings_reject_non_array_or_unknown_role_metadata() {
+        let mut node = Node::new(1, AISOperationType::Ask);
+        node.attributes = HashMap::from([
+            (
+                graph_attrs::INPUT_NAMES.to_string(),
+                Value::Array(vec![Value::String("question".to_string())]),
+            ),
+            (
+                graph_attrs::INPUT_ROLES.to_string(),
+                Value::String("user".to_string()),
+            ),
+        ]);
+
+        assert!(matches!(
+            llm_input_bindings_from_node(&node, 1),
+            Err(RuntimeError::Executor(message)) if message.contains("positional array")
+        ));
+
+        node.attributes.insert(
+            graph_attrs::INPUT_ROLES.to_string(),
+            Value::Array(vec![Value::String("assistant".to_string())]),
         );
+        assert!(matches!(
+            llm_input_bindings_from_node(&node, 1),
+            Err(RuntimeError::Executor(message)) if message.contains("unsupported role")
+        ));
+    }
+
+    #[test]
+    fn prompt_roles_have_explicit_provider_boundary_dispositions() {
+        assert!(matches!(
+            prompt_request_disposition("question", PromptInputRole::User),
+            Ok(PromptRequestDisposition::UserTemplate)
+        ));
+        assert!(matches!(
+            prompt_request_disposition("policy", PromptInputRole::System),
+            Ok(PromptRequestDisposition::SystemPrompt)
+        ));
+        assert!(matches!(
+            prompt_request_disposition("upstream", PromptInputRole::DependencyOnly),
+            Ok(PromptRequestDisposition::Excluded)
+        ));
+        assert!(matches!(
+            prompt_request_disposition("tool_result", PromptInputRole::ToolContext),
+            Err(RuntimeError::Executor(message))
+                if message.contains("without a correlated provider tool call")
+        ));
+        assert!(matches!(
+            prompt_request_disposition("authorization", PromptInputRole::Control),
+            Err(RuntimeError::Executor(message))
+                if message.contains("cannot cross the provider request boundary")
+        ));
     }
 }

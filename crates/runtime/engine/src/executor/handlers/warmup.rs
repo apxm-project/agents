@@ -24,11 +24,10 @@ use apxm_capability_iface::events::{ModelContextCallKind, ModelContextPlanStatus
 use apxm_core::constants::{
     graph::attrs as graph_attrs, runtime::llm_request_metadata as request_metadata,
 };
+use apxm_core::error::RuntimeError;
 use apxm_core::types::OptimizationTarget;
 use serde::{Deserialize, Serialize};
 use std::sync::atomic::{AtomicU64, Ordering};
-
-const WARMUP_MAX_TOKENS: usize = 1;
 
 /// Warmup configuration for shared-prefix optimization.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -241,13 +240,16 @@ fn target_backend_supports_graph_extensions(ctx: &ExecutionContext, request: &LL
 ///
 /// The warmup request:
 /// - Uses the same prompt/messages as the original
-/// - Sets max_tokens=1 to generate minimal output
+/// - Preserves the resolved output-token limit used for reservation
 /// - Marks the request as warmup in metadata
-pub fn create_warmup_request(original: &LLMRequest, node_id: u64) -> LLMRequest {
+pub fn create_warmup_request(original: &LLMRequest, node_id: u64) -> Result<LLMRequest> {
+    let output_tokens = original.max_tokens.ok_or_else(|| RuntimeError::LLM {
+        message: "warmup requires an explicit resolved max_tokens value".to_string(),
+        backend: original.backend.clone(),
+    })?;
     let mut warmup_req = original.clone();
 
-    // Generate minimal output (0 or 1 token)
-    warmup_req.max_tokens = Some(WARMUP_MAX_TOKENS);
+    warmup_req.max_tokens = Some(output_tokens);
 
     // Mark as warmup in metadata
     warmup_req.metadata.insert(
@@ -265,7 +267,7 @@ pub fn create_warmup_request(original: &LLMRequest, node_id: u64) -> LLMRequest 
         hints.compiler_hints.warmup_candidate = Some(true);
     }
 
-    warmup_req
+    Ok(warmup_req)
 }
 
 /// Dispatch a warmup request before the main request.
@@ -280,7 +282,7 @@ pub async fn dispatch_warmup(
     _estimated_prefix_tokens: u32,
     context_plan_metrics: Option<&ContextPlanMetrics>,
 ) -> Result<()> {
-    let warmup_req = create_warmup_request(request, node_id);
+    let warmup_req = create_warmup_request(request, node_id)?;
     ctx.warmup_metrics.inc_requests_sent();
 
     // Fire-and-forget warmup request
@@ -288,8 +290,8 @@ pub async fn dispatch_warmup(
     let phase_clone = phase.to_string();
     let context_plan_metrics = context_plan_metrics.cloned();
     tokio::spawn(async move {
-        let reservation = match super::llm::reserve_model_call(&ctx_clone, &warmup_req) {
-            Ok(reservation) => reservation,
+        let admission = match super::llm::admit_model_egress(&ctx_clone, &warmup_req) {
+            Ok(admission) => admission,
             Err(error) => {
                 tracing::debug!(
                     "Warmup request for node {} phase {} was not dispatched because its token reservation was denied: {}",
@@ -309,9 +311,9 @@ pub async fn dispatch_warmup(
         );
         // Execute warmup request (ignore result - this is best-effort)
         let result = if let Some(router) = &ctx_clone.model_router {
-            router.generate(warmup_req).await
+            router.generate(admission.request).await
         } else {
-            ctx_clone.llm_registry.generate(warmup_req).await
+            ctx_clone.llm_registry.generate(admission.request).await
         };
 
         match result {
@@ -324,7 +326,7 @@ pub async fn dispatch_warmup(
                 );
             }
             Ok(response) => {
-                if let Err(error) = reservation.reconcile(response.usage.total_tokens) {
+                if let Err(error) = admission.reservation.reconcile(response.usage.total_tokens) {
                     tracing::debug!(
                         "Warmup request for node {} phase {} exceeded its reserved budget: {}",
                         node_id,
@@ -361,5 +363,20 @@ mod tests {
         assert_eq!(metrics.requests_completed(), 1);
         assert_eq!(metrics.requests_reused(), 0);
         assert_eq!(metrics.tokens_saved(), 0);
+    }
+
+    #[test]
+    fn warmup_requires_and_preserves_the_resolved_output_limit() {
+        let error = create_warmup_request(&LLMRequest::new("prompt"), 7)
+            .expect_err("missing max_tokens must fail closed");
+        assert!(
+            error
+                .to_string()
+                .contains("requires an explicit resolved max_tokens")
+        );
+
+        let request = LLMRequest::new("prompt").with_max_tokens(23);
+        let warmup = create_warmup_request(&request, 7).expect("resolved request evidence");
+        assert_eq!(warmup.max_tokens, Some(23));
     }
 }

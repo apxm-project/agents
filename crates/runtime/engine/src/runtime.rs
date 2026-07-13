@@ -164,6 +164,10 @@ pub struct RuntimeConfig {
     pub scheduler_config: SchedulerConfig,
     /// Optional token budget (total across all LLM requests in one execution).
     pub token_budget: Option<u64>,
+    /// Optional tokenizer and request-capacity evidence for model-call
+    /// reservation when session-backed context enrichment is not configured.
+    #[serde(default)]
+    pub context_planning: Option<crate::context_stack::ContextPlanningPolicy>,
     /// Optional session-backed context stack input for prompt enrichment.
     #[serde(default)]
     pub context_stack: Option<crate::context_stack::ContextStackConfig>,
@@ -201,6 +205,7 @@ impl RuntimeConfig {
             memory_config: MemoryConfig::in_memory_ltm(),
             scheduler_config: SchedulerConfig::default(),
             token_budget: None,
+            context_planning: None,
             context_stack: None,
             warmup_config: crate::executor::WarmupConfig::default(),
             llm_tool_dispatch: LlmToolDispatchConfig::default(),
@@ -382,6 +387,7 @@ impl Runtime {
         ctx.flow_registry = Arc::clone(&self.flow_registry);
         ctx.instruction_config = self.instruction_config.clone();
         ctx.token_budget = self.config.token_budget;
+        ctx.context_planning = self.config.context_planning.clone();
         ctx.warmup_config = self.config.warmup_config.clone();
         ctx.max_parallel_tool_calls = self
             .config

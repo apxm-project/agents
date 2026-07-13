@@ -107,7 +107,9 @@ fn sync_ollama_models(
                 context_window: ctx_window,
                 supports_vision,
                 supports_functions,
+                supports_fine_tuning: false,
                 supports_thinking: false,
+                uses_reasoning_token_fields: false,
                 supports_custom_temperature: None,
                 supports_structured_outputs: None,
                 max_output_tokens: None,
@@ -433,7 +435,9 @@ pub async fn backend_command(action: BackendAction, json_output: bool) -> Result
             context_window,
             supports_vision,
             supports_functions,
+            supports_fine_tuning,
             supports_thinking,
+            uses_reasoning_token_fields,
         } => {
             use apxm_backends::llm::ModelConfig;
 
@@ -443,7 +447,9 @@ pub async fn backend_command(action: BackendAction, json_output: bool) -> Result
                 context_window,
                 supports_vision,
                 supports_functions,
+                supports_fine_tuning,
                 supports_thinking,
+                uses_reasoning_token_fields,
                 supports_custom_temperature: None,
                 supports_structured_outputs: None,
                 max_output_tokens: None,

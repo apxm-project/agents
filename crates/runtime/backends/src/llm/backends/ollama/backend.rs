@@ -2,7 +2,11 @@
 
 use crate::llm::ProviderProtocol;
 use crate::llm::backends::http::llm_http_client;
+use crate::llm::backends::openai::backend::validate_provider_dispatch;
 use crate::llm::backends::traits::StreamChunk;
+use crate::llm::backends::{
+    ConfiguredModelCapabilities, configured_model_capabilities, required_config_string,
+};
 use crate::llm::backends::{LLMBackend, LLMRequest, LLMResponse, Role};
 use crate::llm::wire::{
     api_paths, config_keys, message_keys, ollama as ollama_keys, response_metadata,
@@ -18,9 +22,7 @@ use std::collections::HashMap;
 use std::pin::Pin;
 use tokio_stream::Stream;
 
-const DEFAULT_BASE_URL: &str = "http://localhost:11434";
 const PROTOCOL: ProviderProtocol = ProviderProtocol::Ollama;
-const DEFAULT_MODEL: &str = "gpt-oss:120b-cloud";
 
 const INT_OPTIONS: &[&str] = &[
     "num_ctx",
@@ -52,30 +54,29 @@ pub struct OllamaBackend {
     base_url: String,
     client: reqwest::Client,
     ollama_options: serde_json::Map<String, serde_json::Value>,
+    /// Registered per-model capability evidence.
+    model_capabilities: HashMap<String, ConfiguredModelCapabilities>,
     model_supports_thinking: HashMap<String, bool>,
 }
 
 impl OllamaBackend {
+    fn configured_capabilities(&self, model: &str) -> ConfiguredModelCapabilities {
+        self.model_capabilities
+            .get(model)
+            .copied()
+            .unwrap_or_default()
+    }
+
     fn request_model<'a>(&'a self, request: &'a LLMRequest) -> &'a str {
         request.model.as_deref().unwrap_or(&self.model)
     }
 
     pub async fn new(_api_key: &str, config: Option<serde_json::Value>) -> Result<Self> {
-        let model = config
-            .as_ref()
-            .and_then(|c| c.get(MODEL))
-            .and_then(|m| m.as_str())
-            .unwrap_or(DEFAULT_MODEL)
-            .to_string();
-
-        let base_url = config
-            .as_ref()
-            .and_then(|c| c.get(BASE_URL))
-            .and_then(|u| u.as_str())
-            .unwrap_or(DEFAULT_BASE_URL)
-            .to_string();
+        let model = required_config_string(config.as_ref(), PROTOCOL, MODEL)?;
+        let base_url = required_config_string(config.as_ref(), PROTOCOL, BASE_URL)?;
 
         let mut ollama_options = serde_json::Map::new();
+        let model_capabilities = configured_model_capabilities(config.as_ref());
         let mut model_supports_thinking = HashMap::new();
 
         if let Some(models) = config
@@ -134,6 +135,7 @@ impl OllamaBackend {
             base_url,
             client: llm_http_client(),
             ollama_options,
+            model_capabilities,
             model_supports_thinking,
         })
     }
@@ -234,7 +236,7 @@ impl OllamaBackend {
 #[async_trait]
 impl LLMBackend for OllamaBackend {
     async fn generate(&self, request: LLMRequest) -> Result<LLMResponse> {
-        request.validate()?;
+        validate_provider_dispatch(&request)?;
 
         let model = self.request_model(&request).to_string();
         let body = self.build_request_body(&request);
@@ -263,8 +265,12 @@ impl LLMBackend for OllamaBackend {
             .context("Failed to parse Ollama response")?;
 
         let usage = TokenUsage::new(
-            api_response.prompt_eval_count.unwrap_or(0),
-            api_response.eval_count.unwrap_or(0),
+            api_response
+                .prompt_eval_count
+                .context("Ollama response omitted observed prompt_eval_count")?,
+            api_response
+                .eval_count
+                .context("Ollama response omitted observed eval_count")?,
         );
 
         let content = api_response.message.content.unwrap_or_default();
@@ -314,7 +320,7 @@ impl LLMBackend for OllamaBackend {
         request: LLMRequest,
     ) -> Pin<Box<dyn Stream<Item = Result<StreamChunk>> + Send + '_>> {
         Box::pin(async_stream::try_stream! {
-            request.validate()?;
+            validate_provider_dispatch(&request)?;
             let model = self.request_model(&request).to_string();
             let mut body = self.build_request_body(&request);
             body[message_keys::STREAM] = json!(true);
@@ -334,7 +340,7 @@ impl LLMBackend for OllamaBackend {
             let mut buffer = String::new();
             let mut full_content = String::new();
             let mut full_reasoning = String::new();
-            let mut last_usage = TokenUsage::new(0, 0);
+            let mut last_usage = None;
             let mut tool_calls_map: std::collections::HashMap<usize, (String, serde_json::Value)> =
                 std::collections::HashMap::new();
 
@@ -353,8 +359,9 @@ impl LLMBackend for OllamaBackend {
                     if let Ok(parsed) = serde_json::from_str::<OllamaChatResponse>(&line) {
                         if let Some(prompt_count) = parsed.prompt_eval_count
                             && let Some(eval_count) = parsed.eval_count {
-                                last_usage = TokenUsage::new(prompt_count, eval_count);
-                                yield StreamChunk::Usage(last_usage.clone());
+                                let usage = TokenUsage::new(prompt_count, eval_count);
+                                last_usage = Some(usage.clone());
+                                yield StreamChunk::Usage(usage);
                             }
 
                         if let Some(ref thinking) = parsed.message.thinking
@@ -383,10 +390,11 @@ impl LLMBackend for OllamaBackend {
 
                         if parsed.done {
                             let (tool_calls, finish_reason) = Self::collect_tool_calls(&tool_calls_map);
+                            let usage = last_usage.context("Ollama stream completed without observed usage")?;
                             let mut resp = LLMResponse::new(
                                 full_content.clone(),
                                 &model,
-                                last_usage.clone(),
+                                usage,
                                 finish_reason,
                             ).with_tool_calls(tool_calls);
                             if let Some(reasoning) = (!full_reasoning.is_empty())
@@ -424,6 +432,11 @@ impl LLMBackend for OllamaBackend {
         &self.model
     }
 
+    fn context_window_for_model(&self, model: &str) -> Option<usize> {
+        let context_window = self.configured_capabilities(model).context_window;
+        (context_window > 0).then_some(context_window)
+    }
+
     async fn health_check(&self) -> Result<()> {
         let url = format!("{}{}", self.base_url, api_paths::API_TAGS);
         self.client
@@ -456,18 +469,14 @@ impl LLMBackend for OllamaBackend {
             .models
             .into_iter()
             .map(|m| {
-                let supports_functions = m.name.contains("llama3.1")
-                    || m.name.contains("llama3.2")
-                    || m.name.contains("llama3.3")
-                    || m.name.contains("qwen2.5")
-                    || m.name.contains("mistral");
+                let capabilities = self.configured_capabilities(&m.name);
 
                 ModelInfo {
                     id: m.name.clone(),
                     name: m.name,
-                    context_window: 128_000,
-                    supports_vision: false,
-                    supports_functions,
+                    context_window: capabilities.context_window,
+                    supports_vision: capabilities.supports_vision,
+                    supports_functions: capabilities.supports_functions,
                 }
             })
             .collect();
@@ -476,14 +485,21 @@ impl LLMBackend for OllamaBackend {
     }
 
     fn capabilities(&self) -> ModelCapabilities {
+        let capabilities = self.configured_capabilities(&self.model);
         ModelCapabilities {
             streaming: true,
-            vision: false,
-            functions: true,
-            structured_outputs: false,
+            vision: capabilities.supports_vision,
+            functions: capabilities.supports_functions,
+            structured_outputs: capabilities.supports_structured_outputs.unwrap_or(false),
             batch: false,
-            fine_tuning: false,
+            fine_tuning: capabilities.supports_fine_tuning,
         }
+    }
+
+    fn response_memoization_policy(
+        &self,
+    ) -> crate::llm::backends::traits::ResponseMemoizationPolicy {
+        crate::llm::backends::traits::ResponseMemoizationPolicy::BackendPrefix
     }
 }
 

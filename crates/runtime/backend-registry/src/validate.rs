@@ -1,6 +1,5 @@
 use crate::BackendError;
 use crate::backend::validate_backend_references;
-use apxm_backends::llm::catalog::{default_model_for_protocol, resolve_builtin_provider};
 use apxm_backends::llm::{
     BackendConfig, ProviderProtocol, normalize_anthropic_gateway_endpoint,
     normalize_endpoint_for_protocol,
@@ -9,22 +8,21 @@ use std::collections::HashMap;
 
 /// Validate a backend by making a minimal API call.
 ///
-/// Dispatches on the typed [`ProviderProtocol`] enum. Default base URLs are
-/// resolved from the backend catalog if not specified in the backend config.
+/// Dispatches on the typed [`ProviderProtocol`] enum using only the backend's
+/// explicit endpoint and registered model configuration.
 pub async fn validate_backend(backend: &BackendConfig) -> Result<String, BackendError> {
-    let spec = resolve_builtin_provider(&backend.protocol.to_string()).ok_or_else(|| {
-        BackendError::Io(std::io::Error::new(
-            std::io::ErrorKind::InvalidInput,
-            format!("Unknown protocol '{}' — cannot validate", backend.protocol),
-        ))
-    })?;
     let backend = materialize_validation_backend(backend)?;
+
+    if backend.protocol == ProviderProtocol::Mock {
+        return Ok(format!("Mock backend '{}' is always valid", backend.name));
+    }
 
     let base = backend
         .endpoint
         .as_deref()
-        .or(spec.default_base_url)
-        .unwrap_or("");
+        .ok_or_else(|| BackendError::MissingEndpoint {
+            backend: backend.name.clone(),
+        })?;
     let normalized = normalize_endpoint_for_protocol(backend.protocol, base);
     let base = normalized.trim_end_matches('/');
 
@@ -38,18 +36,30 @@ pub async fn validate_backend(backend: &BackendConfig) -> Result<String, Backend
         ProviderProtocol::Google => validate_google(&client, &backend.name, &backend, base).await,
         ProviderProtocol::Ollama => validate_ollama(&client, &backend.name, &backend, base).await,
         ProviderProtocol::Vllm => validate_vllm(&client, &backend.name, &backend, base).await,
-        // Mock backend doesn't need validation (no real API)
-        ProviderProtocol::Mock => Ok(format!("Mock backend '{}' is always valid", backend.name)),
+        ProviderProtocol::Mock => {
+            unreachable!("mock validation returns before endpoint resolution")
+        }
     }
 }
 
 fn require_api_key<'a>(name: &str, backend: &'a BackendConfig) -> Result<&'a str, BackendError> {
-    backend.api_key.as_deref().ok_or_else(|| {
-        BackendError::Io(std::io::Error::new(
-            std::io::ErrorKind::InvalidInput,
-            format!("Backend '{}': No API key set", name),
-        ))
-    })
+    backend
+        .api_key
+        .as_deref()
+        .ok_or_else(|| BackendError::MissingApiKey {
+            backend: name.to_string(),
+        })
+}
+
+fn require_model<'a>(name: &str, backend: &'a BackendConfig) -> Result<&'a str, BackendError> {
+    backend
+        .models
+        .first()
+        .map(|model| model.id.trim())
+        .filter(|model| !model.is_empty())
+        .ok_or_else(|| BackendError::MissingModel {
+            backend: name.to_string(),
+        })
 }
 
 fn validation_err(name: &str, reason: impl Into<String>) -> BackendError {
@@ -117,11 +127,10 @@ where
     F: Fn(&str) -> Option<String>,
 {
     if let Some(var_name) = value.strip_prefix("env:") {
-        env(var_name).ok_or_else(|| {
-            validation_err(
-                backend_name,
-                format!("Environment variable '{var_name}' not set for {field}"),
-            )
+        env(var_name).ok_or_else(|| BackendError::MissingEnvironmentReference {
+            backend: backend_name.to_string(),
+            field: field.to_string(),
+            variable: var_name.to_string(),
         })
     } else {
         Ok(value.to_string())
@@ -170,12 +179,9 @@ async fn validate_openai(
         return Ok(format!("OK ({})", resp.status()));
     }
 
-    // Fallback: minimal chat completion (for on-premises/custom gateways
+    // Probe a minimal chat completion for explicitly configured gateways
     // that don't expose /v1/models but do serve /chat/completions).
-    let model = backend.models.first().map_or_else(
-        || default_model_for_protocol(ProviderProtocol::OpenAI).unwrap_or("gpt-4o-mini"),
-        |m| m.id.as_str(),
-    );
+    let model = require_model(name, backend)?;
     let chat_url = format!("{base}/chat/completions");
     let mut req = client
         .post(&chat_url)
@@ -210,14 +216,7 @@ async fn validate_anthropic(
     // Convention: `base` already includes the version prefix (e.g. `/v1`).
     let url = format!("{base}/messages");
 
-    // Use first registered model; fall back to a known Anthropic default.
-    let model = backend.models.first().map_or_else(
-        || {
-            default_model_for_protocol(ProviderProtocol::Anthropic)
-                .unwrap_or("claude-3-haiku-20240307")
-        },
-        |m| m.id.as_str(),
-    );
+    let model = require_model(name, backend)?;
 
     let body = format!(
         "{{\"model\":\"{}\",\"max_tokens\":1,\"messages\":[{{\"role\":\"user\",\"content\":\"hi\"}}]}}",
@@ -353,15 +352,7 @@ async fn validate_vllm(
         return Ok(format!("OK ({})", resp.status()));
     }
 
-    let Some(model) = backend.models.first().map(|m| m.id.as_str()) else {
-        return Err(validation_err(
-            name,
-            format!(
-                "HTTP {} from /models and no model is registered. Add one with `dekk agents backend add-model {name} <model-id>`.",
-                resp.status()
-            ),
-        ));
-    };
+    let model = require_model(name, backend)?;
 
     let chat_url = format!("{base}/chat/completions");
     let mut req = client
@@ -409,7 +400,9 @@ mod tests {
                 context_window: 0,
                 supports_vision: false,
                 supports_functions: true,
+                supports_fine_tuning: false,
                 supports_thinking: true,
+                uses_reasoning_token_fields: false,
                 supports_custom_temperature: None,
                 supports_structured_outputs: None,
                 max_output_tokens: None,
@@ -458,5 +451,22 @@ mod tests {
             err,
             BackendError::LiteralSecretReference { field, .. } if field == "api_key"
         ));
+    }
+
+    #[tokio::test]
+    async fn validation_requires_explicit_endpoint_and_model() {
+        let mut backend = anthropic_backend();
+        backend.endpoint = None;
+        let error = validate_backend(&backend)
+            .await
+            .expect_err("missing endpoint must fail closed");
+        assert!(matches!(error, BackendError::MissingEndpoint { .. }));
+
+        let mut backend = anthropic_backend();
+        backend.models.clear();
+        let error = validate_backend(&backend)
+            .await
+            .expect_err("missing model must fail closed");
+        assert!(matches!(error, BackendError::MissingModel { .. }));
     }
 }

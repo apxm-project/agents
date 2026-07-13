@@ -41,6 +41,7 @@ pub use llm::{
     BUILTIN_PROVIDERS,
     // Factory
     BackendConfig,
+    BackendConfigurationError,
     BackendFactory,
     BackendFallback,
     BackendMetricsSource,
@@ -50,7 +51,10 @@ pub use llm::{
     BuiltinProviderSpec,
     // Structured message types
     ContentPart,
-    DEFAULT_VLLM_BASE_URL,
+    CorrelatedBatchRoute,
+    CorrelatedBatchingCapability,
+    CorrelatedLLMOutcome,
+    CorrelatedLLMRequest,
     // Retry logic
     ErrorClass,
     FunctionCall,
@@ -82,6 +86,7 @@ pub use llm::{
     RegisteredProvider,
     RegistryPolicy,
     RequestMetrics,
+    RequestSelectionError,
     RequestTracer,
     RetryConfig,
     RetryStrategy,

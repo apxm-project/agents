@@ -665,9 +665,15 @@ pub enum BackendAction {
         /// Model supports function/tool calling
         #[arg(long)]
         supports_functions: bool,
+        /// Model supports fine-tuning through this backend
+        #[arg(long)]
+        supports_fine_tuning: bool,
         /// Model supports extended thinking
         #[arg(long)]
         supports_thinking: bool,
+        /// OpenAI-compatible requests use reasoning token fields
+        #[arg(long)]
+        uses_reasoning_token_fields: bool,
     },
 }
 

@@ -1,0 +1,43 @@
+{
+  "schema_version": 3,
+  "scenario": "workflow-optimization-contracts",
+  "dataset": {
+    "id": "workflow-optimization-contract-fixture",
+    "revision": "v1"
+  },
+  "split_policy": {
+    "kind": "fixed-disjoint-case-ids"
+  },
+  "splits": {
+    "optimization": {
+      "sha256": "db5d504092521fc3aa2185ab36e7e20c0c98afb93f1660116acdb7700d0110a9",
+      "case_count": 2
+    },
+    "held_out": {
+      "sha256": "6d05fb0ae107f880e8e43791a74768652641cd941b1cebbd68d43db50d477c78",
+      "case_count": 4
+    }
+  },
+  "arms": {
+    "baseline": {"id": "baseline-contract"},
+    "candidate": {"id": "candidate-typed-planner"}
+  },
+  "backend_evidence": {
+    "kind": "deterministic-fixture",
+    "backend": {
+      "id": "precomputed-contract-fixture",
+      "revision": "v1"
+    },
+    "measurement_source": "fixture-values"
+  },
+  "provenance": {
+    "repository": "apxm-project/agents",
+    "revision": "ddbc98836a5acfae46ea33ba2156925d23ae4c86",
+    "bundle_id": "workflow-optimization-contract-fixture-v1"
+  },
+  "metric": "exact_match",
+  "decision_rule": {
+    "minimum_candidate_mean": 1.0,
+    "minimum_delta": 0.5
+  }
+}

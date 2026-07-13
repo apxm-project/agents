@@ -9,6 +9,7 @@ pub mod agent_scope;
 mod cancellation;
 pub(crate) mod capability_admission;
 mod context;
+pub(crate) mod correlated_batch;
 pub mod dag_splicer;
 mod dispatcher;
 pub mod emitter_adapter;
