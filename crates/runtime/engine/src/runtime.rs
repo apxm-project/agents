@@ -2,10 +2,8 @@
 
 use crate::metadata_keys as metadata;
 use crate::model_router::{ModelRouter, ModelRouterConfig, ProfileRegistry};
-use crate::python_tools;
 use crate::python_tools::{PythonHandlerBridge, PythonHandlerRegistry};
 use crate::sandbox::SandboxRegistry;
-use crate::typescript_tools;
 use crate::typescript_tools::{TypeScriptHandlerBridge, TypeScriptHandlerRegistry};
 use crate::{
     aam::Aam,
@@ -32,7 +30,8 @@ use apxm_core::log_info;
 use apxm_core::{
     error::RuntimeError,
     types::{
-        BackendGraphCapabilities, GraphStatusSnapshot, OptimizationTarget,
+        BackendGraphCapabilities, GraphStatusSnapshot, HANDLER_MANIFEST_ARTIFACT_SECTION,
+        HandlerManifest, OptimizationTarget,
         execution::{Agent, AgentFlow, ExecutionDag, ExecutionStats},
         values::Value,
     },
@@ -579,6 +578,7 @@ impl Runtime {
         let context = self
             .build_context(None, event_emitter, None)
             .with_graph_id(graph_id_from_dag(&dag));
+        let replay_seed = replay_seed_from_metadata(&context, &dag)?;
         let dispatch_ir =
             graph_dispatch_ir_from_dag(&context.graph_id, &context.execution_id, &dag);
         context.set_dispatch_ir_v1(dispatch_ir.clone());
@@ -610,11 +610,6 @@ impl Runtime {
             self.execution_hooks.clone(),
         );
 
-        // Partial replay (`rerun-from-node`): when the host stamped a replay seed
-        // into execution metadata, compute it against this (recompiled) DAG so
-        // only `from_node` and its descendants re-execute; the upstream nodes are
-        // pre-completed from the prior run's boundary token values.
-        let replay_seed = replay_seed_from_metadata(&context, &dag);
         let exec_result = self
             .scheduler
             .execute_with_hooks_and_seed(
@@ -676,12 +671,7 @@ impl Runtime {
         &self,
         artifact: Artifact,
     ) -> Result<RuntimeExecutionResult, RuntimeError> {
-        let python_bridge = python_handler_bridge_from_artifact(
-            &artifact,
-            self.python_worker_sandbox(),
-            Self::script_sandbox_required(),
-        )?;
-        let typescript_bridge = typescript_handler_bridge_from_artifact(
+        let (python_bridge, typescript_bridge) = handler_bridges_from_artifact(
             &artifact,
             self.python_worker_sandbox(),
             Self::script_sandbox_required(),
@@ -1009,22 +999,12 @@ impl Runtime {
         tool_credentials: Option<HashMap<String, String>>,
     ) -> Result<RuntimeExecutionResult, RuntimeError> {
         if !crate::script_admission::script_artifacts_trusted()
-            && artifact_has_python_tools_section(&artifact)
+            && artifact_has_handler_manifest(&artifact)
         {
             return Err(RuntimeError::Capability {
-                capability: python_tools::CAPABILITY_NAME.to_string(),
+                capability: HANDLER_MANIFEST_ARTIFACT_SECTION.to_string(),
                 message:
-                    "python tool artifacts require APXM_TRUST_PYTHON_ARTIFACTS and APXM_SANDBOX_PYTHON"
-                        .to_string(),
-            });
-        }
-        if !crate::script_admission::script_artifacts_trusted()
-            && artifact_has_typescript_tools_section(&artifact)
-        {
-            return Err(RuntimeError::Capability {
-                capability: typescript_tools::CAPABILITY_NAME.to_string(),
-                message:
-                    "typescript tool artifacts require APXM_TRUST_PYTHON_ARTIFACTS and APXM_SANDBOX_PYTHON"
+                    "handler artifacts require APXM_TRUST_PYTHON_ARTIFACTS and APXM_SANDBOX_PYTHON"
                         .to_string(),
             });
         }
@@ -1035,12 +1015,7 @@ impl Runtime {
             None
         };
 
-        let python_bridge = python_handler_bridge_from_artifact(
-            &artifact,
-            self.python_worker_sandbox(),
-            Self::script_sandbox_required(),
-        )?;
-        let typescript_bridge = typescript_handler_bridge_from_artifact(
+        let (python_bridge, typescript_bridge) = handler_bridges_from_artifact(
             &artifact,
             self.python_worker_sandbox(),
             Self::script_sandbox_required(),
@@ -1100,6 +1075,7 @@ impl Runtime {
         let graph_emitter = context.event_emitter.as_ref().map(Arc::clone);
         let execution_id = context.execution_id.clone();
         let node_count = entry_dag.nodes.len();
+        let replay_seed = replay_seed_from_metadata(&context, &entry_dag)?;
 
         let dispatch_ir =
             graph_dispatch_ir_from_dag(&context.graph_id, &context.execution_id, &entry_dag);
@@ -1122,11 +1098,6 @@ impl Runtime {
             self.execution_hooks.clone(),
         );
 
-        // Partial replay (`rerun-from-node`): when the host stamped a replay seed
-        // into execution metadata, only `from_node` and its descendants
-        // re-execute; the upstream nodes are pre-completed from the prior run's
-        // boundary token values.
-        let replay_seed = replay_seed_from_metadata(&context, &entry_dag);
         let exec_result = self
             .scheduler
             .execute_with_hooks_and_seed(
@@ -1202,22 +1173,12 @@ impl Runtime {
         extra_metadata: HashMap<String, String>,
     ) -> Result<ExecutionOutcome, RuntimeError> {
         if !crate::script_admission::script_artifacts_trusted()
-            && artifact_has_python_tools_section(&artifact)
+            && artifact_has_handler_manifest(&artifact)
         {
             return Err(RuntimeError::Capability {
-                capability: python_tools::CAPABILITY_NAME.to_string(),
+                capability: HANDLER_MANIFEST_ARTIFACT_SECTION.to_string(),
                 message:
-                    "python tool artifacts require APXM_TRUST_PYTHON_ARTIFACTS and APXM_SANDBOX_PYTHON"
-                        .to_string(),
-            });
-        }
-        if !crate::script_admission::script_artifacts_trusted()
-            && artifact_has_typescript_tools_section(&artifact)
-        {
-            return Err(RuntimeError::Capability {
-                capability: typescript_tools::CAPABILITY_NAME.to_string(),
-                message:
-                    "typescript tool artifacts require APXM_TRUST_PYTHON_ARTIFACTS and APXM_SANDBOX_PYTHON"
+                    "handler artifacts require APXM_TRUST_PYTHON_ARTIFACTS and APXM_SANDBOX_PYTHON"
                         .to_string(),
             });
         }
@@ -1228,12 +1189,7 @@ impl Runtime {
             None
         };
 
-        let python_bridge = python_handler_bridge_from_artifact(
-            &artifact,
-            self.python_worker_sandbox(),
-            Self::script_sandbox_required(),
-        )?;
-        let typescript_bridge = typescript_handler_bridge_from_artifact(
+        let (python_bridge, typescript_bridge) = handler_bridges_from_artifact(
             &artifact,
             self.python_worker_sandbox(),
             Self::script_sandbox_required(),
@@ -1275,6 +1231,7 @@ impl Runtime {
         let graph_emitter = context.event_emitter.as_ref().map(Arc::clone);
         let execution_id = context.execution_id.clone();
         let node_count = entry_dag.nodes.len();
+        let replay_seed = replay_seed_from_metadata(&context, &entry_dag)?;
 
         let dispatch_ir =
             graph_dispatch_ir_from_dag(&context.graph_id, &context.execution_id, &entry_dag);
@@ -1295,7 +1252,6 @@ impl Runtime {
             self.execution_hooks.clone(),
         );
 
-        let replay_seed = replay_seed_from_metadata(&context, &entry_dag);
         let outcome = self
             .scheduler
             .execute_or_park(
@@ -1530,22 +1486,27 @@ async fn release_graph_lifecycles(
 /// Decode a [`crate::scheduler::ReplaySeed`] from execution metadata for a
 /// partial replay (`rerun-from-node`). The host stamps `replay_from_node` +
 /// `replay_token_values` (JSON `{token_id: Value}`); the seed is computed
-/// against the recompiled `dag`. Returns `None` (full run) when the keys are
-/// absent, malformed, or `from_node` is not a node in `dag`.
+/// against the recompiled `dag`. Missing metadata leaves this as a full run;
+/// an explicit but incomplete or unsafe partial replay is rejected.
 fn replay_seed_from_metadata(
     context: &ExecutionContext,
     dag: &ExecutionDag,
-) -> Option<crate::scheduler::ReplaySeed> {
-    let seed = crate::scheduler::ReplaySeed::from_metadata(&context.metadata, dag)?;
-    log_info!(
-        "runtime",
-        execution_id = %context.execution_id,
-        from_node = seed.from_node,
-        replayed = seed.replayed_count(),
-        completed = seed.completed_nodes.len(),
-        "partial replay: re-executing from_node + descendants only"
-    );
-    Some(seed)
+) -> Result<Option<crate::scheduler::ReplaySeed>, RuntimeError> {
+    let seed = crate::scheduler::ReplaySeed::from_metadata_checked(&context.metadata, dag)
+        .map_err(|error| RuntimeError::Scheduler {
+            message: format!("partial replay rejected: {error}"),
+        })?;
+    if let Some(seed) = &seed {
+        log_info!(
+            "runtime",
+            execution_id = %context.execution_id,
+            from_node = seed.from_node,
+            replayed = seed.replayed_count(),
+            completed = seed.completed_nodes.len(),
+            "partial replay: re-executing from_node + descendants only"
+        );
+    }
+    Ok(seed)
 }
 
 fn graph_id_from_dag(dag: &ExecutionDag) -> String {
@@ -1558,104 +1519,72 @@ fn graph_id_from_dag(dag: &ExecutionDag) -> String {
     })
 }
 
-/// Artifact section kind for Python tool manifests.
-const PYTHON_TOOLS_SECTION_KIND: &str = python_tools::CAPABILITY_NAME;
-
-fn artifact_has_python_tools_section(artifact: &Artifact) -> bool {
+fn artifact_has_handler_manifest(artifact: &Artifact) -> bool {
     artifact
         .sections()
         .iter()
-        .any(|section| section.kind == PYTHON_TOOLS_SECTION_KIND)
+        .any(|section| section.kind == HANDLER_MANIFEST_ARTIFACT_SECTION)
 }
 
-/// Mirrors [`artifact_has_python_tools_section`] for the TypeScript sidecar
-/// so both languages get the identical fail-closed section-presence
-/// rejection in [`Runtime::execute_artifact_inner`] /
-/// [`Runtime::execute_artifact_inner_or_park`].
-fn artifact_has_typescript_tools_section(artifact: &Artifact) -> bool {
-    artifact
-        .sections()
-        .iter()
-        .any(|section| section.kind == TYPESCRIPT_TOOLS_SECTION_KIND)
-}
-
-/// Extract a `PythonHandlerBridge` from an artifact's `python_tools` section, if present.
-///
-/// The section's `data` field is the UTF-8 JSON array produced by the Python
-/// frontend (`tools.json` sidecar format). Returns `Ok(None)` when the artifact
-/// has no such section, or `Err` if the section is present but malformed.
-fn python_handler_bridge_from_artifact(
+fn handler_bridges_from_artifact(
     artifact: &Artifact,
     sandbox: Option<Arc<dyn crate::sandbox::SandboxBackend>>,
     sandbox_required: bool,
-) -> Result<Option<Arc<PythonHandlerBridge>>, RuntimeError> {
+) -> Result<
+    (
+        Option<Arc<PythonHandlerBridge>>,
+        Option<Arc<TypeScriptHandlerBridge>>,
+    ),
+    RuntimeError,
+> {
     let section = artifact
         .sections()
         .iter()
-        .find(|s| s.kind == PYTHON_TOOLS_SECTION_KIND);
+        .find(|section| section.kind == HANDLER_MANIFEST_ARTIFACT_SECTION);
 
     let Some(section) = section else {
-        return Ok(None);
+        return Ok((None, None));
     };
 
-    let json = std::str::from_utf8(&section.data).map_err(|e| RuntimeError::Capability {
-        capability: python_tools::CAPABILITY_NAME.into(),
-        message: format!(
-            "{} section is not valid UTF-8: {}",
-            PYTHON_TOOLS_SECTION_KIND, e
-        ),
+    let manifest = HandlerManifest::from_json_slice(&section.data).map_err(|error| {
+        RuntimeError::Capability {
+            capability: HANDLER_MANIFEST_ARTIFACT_SECTION.into(),
+            message: format!("Failed to parse handler manifest: {error}"),
+        }
     })?;
+    manifest
+        .validate()
+        .map_err(|error| RuntimeError::Capability {
+            capability: HANDLER_MANIFEST_ARTIFACT_SECTION.into(),
+            message: format!("Invalid handler manifest: {error}"),
+        })?;
 
-    let registry = PythonHandlerRegistry::from_json(json)?;
-    let tool_count = registry.len();
-    let bridge = PythonHandlerBridge::new(registry).with_sandbox(sandbox, sandbox_required);
+    let python_registry = PythonHandlerRegistry::from_manifest(manifest.clone())?;
+    let typescript_registry = TypeScriptHandlerRegistry::from_manifest(manifest)?;
+    let python_count = python_registry.len();
+    let typescript_count = typescript_registry.len();
+
+    let python_bridge = (!python_registry.is_empty()).then(|| {
+        Arc::new(
+            PythonHandlerBridge::new(python_registry)
+                .with_sandbox(sandbox.clone(), sandbox_required),
+        )
+    });
+    let typescript_bridge = (!typescript_registry.is_empty()).then(|| {
+        Arc::new(
+            TypeScriptHandlerBridge::new(typescript_registry)
+                .with_sandbox(sandbox, sandbox_required),
+        )
+    });
 
     log_info!(
         "runtime",
-        tools = tool_count,
-        "Loaded Python tool bridge from artifact ({} tool(s))",
-        tool_count
+        python_tools = python_count,
+        typescript_tools = typescript_count,
+        "Loaded handler bridges from artifact"
     );
 
-    Ok(Some(Arc::new(bridge)))
-}
-
-const TYPESCRIPT_TOOLS_SECTION_KIND: &str = typescript_tools::CAPABILITY_NAME;
-
-fn typescript_handler_bridge_from_artifact(
-    artifact: &Artifact,
-    sandbox: Option<Arc<dyn crate::sandbox::SandboxBackend>>,
-    sandbox_required: bool,
-) -> Result<Option<Arc<TypeScriptHandlerBridge>>, RuntimeError> {
-    let section = artifact
-        .sections()
-        .iter()
-        .find(|s| s.kind == TYPESCRIPT_TOOLS_SECTION_KIND);
-
-    let Some(section) = section else {
-        return Ok(None);
-    };
-
-    let json = std::str::from_utf8(&section.data).map_err(|e| RuntimeError::Capability {
-        capability: typescript_tools::CAPABILITY_NAME.into(),
-        message: format!(
-            "{} section is not valid UTF-8: {}",
-            TYPESCRIPT_TOOLS_SECTION_KIND, e
-        ),
-    })?;
-
-    let registry = TypeScriptHandlerRegistry::from_json(json)?;
-    let tool_count = registry.len();
-    let bridge = TypeScriptHandlerBridge::new(registry).with_sandbox(sandbox, sandbox_required);
-
-    log_info!(
-        "runtime",
-        tools = tool_count,
-        "Loaded TypeScript tool bridge from artifact ({} tool(s))",
-        tool_count
-    );
-
-    Ok(Some(Arc::new(bridge)))
+    Ok((python_bridge, typescript_bridge))
 }
 
 fn find_entry_dag(artifact: &Artifact) -> Result<ExecutionDag, RuntimeError> {
@@ -1876,21 +1805,23 @@ mod tests {
             .unwrap();
     }
 
-    fn artifact_with_script_section(section_kind: &str) -> Artifact {
+    fn artifact_with_script_section() -> Artifact {
         let mut art = artifact(vec![single_node_dag(
             "main",
             true,
             Node::new(1, AISOperationType::Nop),
         )]);
+        let data = serde_json::to_vec(&HandlerManifest::new(Vec::new()))
+            .expect("empty handler manifest serializes");
         art.add_section(ArtifactSection {
-            kind: section_kind.to_string(),
-            data: b"[]".to_vec(),
+            kind: HANDLER_MANIFEST_ARTIFACT_SECTION.to_string(),
+            data,
         });
         art
     }
 
     #[tokio::test]
-    async fn python_tool_sections_require_sandbox_flag() {
+    async fn handler_manifest_requires_sandbox_flag() {
         let _lock = crate::script_admission::test_support::ENV_LOCK
             .lock()
             .unwrap();
@@ -1898,34 +1829,12 @@ mod tests {
         crate::script_admission::test_support::set_vars(false, false);
 
         let runtime = Runtime::new(RuntimeConfig::in_memory()).await.unwrap();
-        let artifact = artifact_with_script_section(python_tools::CAPABILITY_NAME);
+        let artifact = artifact_with_script_section();
 
         let err = runtime
             .execute_artifact_with_args(artifact, Vec::new())
             .await
-            .expect_err("python section must fail closed without trust+sandbox opt-in");
-
-        assert!(err.to_string().contains("APXM_SANDBOX_PYTHON"));
-    }
-
-    /// Mirrors [`python_tool_sections_require_sandbox_flag`] for the
-    /// TypeScript sidecar — before the script-artifact admission policy there was no equivalent rejection at
-    /// all, so an untrusted TypeScript section ran unsandboxed by default.
-    #[tokio::test]
-    async fn typescript_tool_sections_require_sandbox_flag() {
-        let _lock = crate::script_admission::test_support::ENV_LOCK
-            .lock()
-            .unwrap();
-        let _guard = crate::script_admission::test_support::EnvGuard;
-        crate::script_admission::test_support::set_vars(false, false);
-
-        let runtime = Runtime::new(RuntimeConfig::in_memory()).await.unwrap();
-        let artifact = artifact_with_script_section(typescript_tools::CAPABILITY_NAME);
-
-        let err = runtime
-            .execute_artifact_with_args(artifact, Vec::new())
-            .await
-            .expect_err("typescript section must fail closed without trust+sandbox opt-in");
+            .expect_err("handler manifest must fail closed without trust+sandbox opt-in");
 
         assert!(err.to_string().contains("APXM_SANDBOX_PYTHON"));
     }
@@ -1951,22 +1860,15 @@ mod tests {
             (true, true, true),
         ] {
             crate::script_admission::test_support::set_vars(trust, sandbox);
-            for section_kind in [
-                python_tools::CAPABILITY_NAME,
-                typescript_tools::CAPABILITY_NAME,
-            ] {
-                let runtime = Runtime::new(RuntimeConfig::in_memory()).await.unwrap();
-                let artifact = artifact_with_script_section(section_kind);
-                let result = runtime
-                    .execute_artifact_with_args(artifact, Vec::new())
-                    .await;
-                assert_eq!(
-                    result.is_ok(),
-                    expect_admitted,
-                    "trust={trust} sandbox={sandbox} section={section_kind}: \
-                     expected admitted={expect_admitted}, got {result:?}"
-                );
-            }
+            let runtime = Runtime::new(RuntimeConfig::in_memory()).await.unwrap();
+            let result = runtime
+                .execute_artifact_with_args(artifact_with_script_section(), Vec::new())
+                .await;
+            assert_eq!(
+                result.is_ok(),
+                expect_admitted,
+                "trust={trust} sandbox={sandbox}: expected admitted={expect_admitted}, got {result:?}"
+            );
         }
     }
 
@@ -1984,10 +1886,7 @@ mod tests {
 
         crate::script_admission::test_support::set_vars(false, false);
         let rejected = runtime
-            .execute_artifact_with_args(
-                artifact_with_script_section(typescript_tools::CAPABILITY_NAME),
-                Vec::new(),
-            )
+            .execute_artifact_with_args(artifact_with_script_section(), Vec::new())
             .await;
         assert!(
             rejected.is_err(),
@@ -1996,10 +1895,7 @@ mod tests {
 
         crate::script_admission::test_support::set_vars(true, true);
         let admitted = runtime
-            .execute_artifact_with_args(
-                artifact_with_script_section(typescript_tools::CAPABILITY_NAME),
-                Vec::new(),
-            )
+            .execute_artifact_with_args(artifact_with_script_section(), Vec::new())
             .await;
         assert!(
             admitted.is_ok(),

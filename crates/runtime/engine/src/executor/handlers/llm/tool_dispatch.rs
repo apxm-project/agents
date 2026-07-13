@@ -1,10 +1,11 @@
 //! Function-calling tool registry lookup, parallel dispatch, and ASK tool loop.
 
 use super::{
-    ExecutionContext, attach_graph_hints, charge_tokens, copy_llm_request_routing,
-    resolve_global_token_budget,
+    ExecutionContext, attach_graph_hints, copy_llm_request_routing, model_context_metrics,
 };
+use crate::context_stack::ContextPlanMetrics;
 use apxm_backends::{LLMRequest, ToolChoice, ToolDefinition};
+use apxm_capability_iface::events::{ModelContextCallKind, ModelContextPlanStatus};
 use apxm_core::apxm_llm;
 use apxm_core::constants::capabilities;
 use apxm_core::constants::graph::attrs as graph_attrs;
@@ -16,7 +17,9 @@ use apxm_core::types::values::Value;
 use apxm_core::types::{ToolCall, ToolResult};
 use std::collections::HashMap;
 
-use super::super::{Result, apply_llm_request_routing_from_node, execute_llm_request_for_node};
+use super::super::{
+    Result, apply_llm_request_routing_from_node, execute_llm_request_for_node_with_context,
+};
 
 /// Agent-callable tool that spawns a focused specialist sub-agent. The
 /// converse/autonomous coordinator opts in via the `enable_delegate` node
@@ -29,6 +32,8 @@ pub(crate) const DELEGATE_TOOL: &str = "delegate";
 /// Default maximum number of tool loop iterations to prevent infinite loops.
 /// Can be overridden per-node via the `max_tool_iterations` attribute.
 pub(super) const DEFAULT_MAX_TOOL_ITERATIONS: usize = 10;
+const DEFAULT_TOOL_RESULT_CONTEXT_TOKENS: usize = 2_048;
+const MIN_TOOL_RESULT_CONTEXT_TOKENS: usize = 128;
 
 /// Get tool definitions from the capability system for LLM requests
 fn get_tool_definitions_from_capabilities(ctx: &ExecutionContext) -> Vec<ToolDefinition> {
@@ -290,7 +295,7 @@ async fn execute_delegate(
             .with_tool_choice(ToolChoice::Auto)
     };
 
-    match Box::pin(execute_ask_with_tools(ctx, &synth, &req)).await {
+    match Box::pin(execute_ask_with_tools(ctx, &synth, &req, None)).await {
         Ok(Value::String(s)) => ToolResult::success(&tool_call.id, s),
         Ok(other) => ToolResult::success(&tool_call.id, format!("{other:?}")),
         Err(e) => ToolResult::error(&tool_call.id, format!("delegate sub-agent failed: {e}")),
@@ -441,7 +446,7 @@ async fn dispatch_script_tool_call(
 ) -> ToolResult {
     let timeout =
         std::time::Duration::from_millis(apxm_core::constants::defaults::DEFAULT_TIMEOUT_MS);
-    let edited_args =
+    let mut edited_args =
         match crate::executor::hook_driver::run_pre_cap_hooks(ctx, &tool_call.name, args).await {
             Ok(a) => a,
             Err(e) => {
@@ -451,6 +456,12 @@ async fn dispatch_script_tool_call(
                 return ToolResult::error(&tool_call.id, e.to_string());
             }
         };
+    if let Err(error) = ctx.prepare_capability_invocation(&tool_call.name, &mut edited_args, true) {
+        if let Some(emitter) = &ctx.event_emitter {
+            emitter.emit_tool_end(&tool_call.name, &Value::String(error.to_string()));
+        }
+        return ToolResult::error(&tool_call.id, error.to_string());
+    }
     let json_args = serde_json::to_value(&edited_args).unwrap_or_else(|_| tool_call.args.clone());
     let bridge_call = async {
         if let Some(bridge) = ctx.python_handler_bridge.as_ref() {
@@ -629,6 +640,22 @@ pub(super) fn format_tool_results_message(results: &[ToolResult]) -> String {
         .join("\n\n")
 }
 
+fn bounded_tool_results_message(node: &Node, results: &[ToolResult]) -> (String, bool) {
+    let limit = node
+        .attributes
+        .get(graph_attrs::TOKEN_BUDGET)
+        .and_then(|value| value.as_u64())
+        .and_then(|value| usize::try_from(value).ok())
+        .map(|budget| {
+            budget.saturating_div(4).clamp(
+                MIN_TOOL_RESULT_CONTEXT_TOKENS,
+                DEFAULT_TOOL_RESULT_CONTEXT_TOKENS,
+            )
+        })
+        .unwrap_or(DEFAULT_TOOL_RESULT_CONTEXT_TOKENS);
+    crate::context_stack::truncate_to_budget(&format_tool_results_message(results), limit)
+}
+
 /// Execute Ask operation with tool loop
 ///
 /// This implements the tool use cycle:
@@ -641,6 +668,7 @@ pub(crate) async fn execute_ask_with_tools(
     ctx: &ExecutionContext,
     node: &Node,
     initial_request: &LLMRequest,
+    context_plan_metrics: Option<&ContextPlanMetrics>,
 ) -> Result<Value> {
     let max_iterations = node
         .attributes
@@ -671,8 +699,28 @@ pub(crate) async fn execute_ask_with_tools(
          "Sending ASK request with tools"
         );
 
+        let call_kind = if iteration == 0 {
+            ModelContextCallKind::Node
+        } else {
+            ModelContextCallKind::ToolContinuation
+        };
+        let plan_status = if iteration == 0 {
+            ModelContextPlanStatus::Assembled
+        } else {
+            ModelContextPlanStatus::Inherited
+        };
+        let context_metrics =
+            model_context_metrics(Some(node.id), call_kind, plan_status, context_plan_metrics);
+
         let llm_start = std::time::Instant::now();
-        let response = execute_llm_request_for_node(ctx, node, "ASK", &current_request).await?;
+        let response = execute_llm_request_for_node_with_context(
+            ctx,
+            node,
+            "ASK",
+            &current_request,
+            &context_metrics,
+        )
+        .await?;
         let iter_total_ms = llm_start.elapsed().as_secs_f64() * 1000.0;
         let (iter_prefill, iter_decode) = response
             .timing
@@ -680,12 +728,6 @@ pub(crate) async fn execute_ask_with_tools(
             .unwrap_or((iter_total_ms, 0.0));
         total_prefill_ms += iter_prefill;
         total_decode_ms += iter_decode;
-        charge_tokens(
-            ctx,
-            resolve_global_token_budget(ctx),
-            response.usage.total_tokens,
-        )?;
-
         {
             let flow_name = node
                 .attributes
@@ -780,7 +822,15 @@ pub(crate) async fn execute_ask_with_tools(
 
         tools_invoked_count += tool_results.len();
 
-        let tool_results_message = format_tool_results_message(&tool_results);
+        let (tool_results_message, truncated) = bounded_tool_results_message(node, &tool_results);
+        if truncated {
+            if let Some(emitter) = &ctx.event_emitter {
+                emitter.emit_warning(
+                    "tool_result_context_truncated",
+                    "tool results remain in session evidence; the continuation received a deterministic bounded extract",
+                );
+            }
+        }
         let continuation_prompt = format!(
             "{}\n\n{}\n\nBased on the tool results above, please continue.",
             current_request.prompt, tool_results_message
@@ -878,5 +928,22 @@ mod tests {
         inject_visible_skill_imports("http_get", &mut args, &visible_metadata("support"));
 
         assert!(!args.contains_key("imports"));
+    }
+
+    #[test]
+    fn tool_result_reinjection_is_deterministically_bounded() {
+        let mut node = Node::new(1, AISOperationType::Ask);
+        node.attributes.insert(
+            graph_attrs::TOKEN_BUDGET.to_string(),
+            Value::Number(apxm_core::types::values::Number::Integer(512)),
+        );
+        let results = vec![ToolResult::success("call", "x ".repeat(2_000))];
+
+        let (first, first_truncated) = bounded_tool_results_message(&node, &results);
+        let (second, second_truncated) = bounded_tool_results_message(&node, &results);
+        assert!(first_truncated);
+        assert!(second_truncated);
+        assert_eq!(first, second);
+        assert!(first.contains("[truncated"));
     }
 }

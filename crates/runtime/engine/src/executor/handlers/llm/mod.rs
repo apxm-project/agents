@@ -19,20 +19,26 @@
 
 use super::{
     ExecutionContext, Node, Result, Value, apply_llm_request_routing_from_node,
-    copy_llm_request_routing, execute_llm_request_for_node, get_optional_string_attribute,
-    get_optional_u64_attribute, get_string_attribute,
-    template::{input_names_from_node, render_named},
+    copy_llm_request_routing, execute_llm_request_for_node_with_context,
+    get_optional_string_attribute, get_optional_u64_attribute, get_string_attribute,
+    template::{llm_input_bindings_from_node, render_named},
     warmup::{dispatch_warmup, should_dispatch_warmup},
 };
 use crate::aam::TransitionLabel;
+use crate::context_stack::ContextPlanMetrics;
 use crate::executor::memoization::MemoCache;
+use apxm_backends::llm::backends::request::{Message, Role};
 use apxm_backends::llm::backends::vllm::attrs as vllm_attrs;
 use apxm_backends::{LLMRequest, ToolChoice};
+use apxm_capability_iface::events::{
+    ModelContextCallKind, ModelContextMetrics, ModelContextPlanStatus,
+};
 use apxm_core::apxm_llm;
+use apxm_core::constants::graph::attrs::PromptInputRole;
 use apxm_core::constants::{
     extra_body as extra_body_keys,
     graph::{attrs as graph_attrs, metadata as graph_meta},
-    runtime::belief_keys,
+    runtime::{belief_keys, context_stack as context_stack_consts},
 };
 use apxm_core::error::RuntimeError;
 use apxm_core::types::operations::AISOperationType;
@@ -43,6 +49,7 @@ pub(super) mod pipeline;
 pub(super) mod structured_output;
 pub(super) mod tool_dispatch;
 
+pub(crate) use pipeline::reserve_model_call;
 use pipeline::{
     charge_tokens, default_memoizable_for_backend, effort_token_budget,
     resolve_global_token_budget, resolve_node_output_token_limit,
@@ -91,24 +98,47 @@ impl From<&AISOperationType> for LlmMode {
     }
 }
 
-/// Reserved `input_names` entry that carries the system prompt as a dataflow
-/// value instead of the static `system_prompt` attribute.
-pub(crate) const SYSTEM_PROMPT_INPUT: &str = "__system";
+fn role_input_text(inputs: &[Value], indexes: impl Iterator<Item = usize>) -> Option<String> {
+    let values = indexes
+        .filter_map(|index| inputs.get(index))
+        .map(|value| {
+            value
+                .as_string()
+                .map(|text| text.to_owned())
+                .unwrap_or_else(|| value.to_string())
+        })
+        .collect::<Vec<_>>();
+    (!values.is_empty()).then(|| values.join("\n\n"))
+}
 
-/// Extract a dataflow system-prompt operand, if one is bound to the reserved
-/// `__system` input name. Enables in-program context injection:
-/// a `pre_ask` hook or an upstream node can supply the system prompt as a value
-/// rather than a static attribute.
-fn dataflow_system_prompt(node: &Node, inputs: &[Value]) -> Option<String> {
-    let input_names = input_names_from_node(node);
-    let idx = input_names.iter().position(|n| n == SYSTEM_PROMPT_INPUT)?;
-    let value = inputs.get(idx)?;
-    Some(
-        value
-            .as_string()
-            .map(|s| s.to_string())
-            .unwrap_or_else(|| value.to_string()),
+fn dataflow_system_prompt(
+    bindings: &[(String, PromptInputRole)],
+    inputs: &[Value],
+) -> Option<String> {
+    role_input_text(
+        inputs,
+        bindings
+            .iter()
+            .enumerate()
+            .filter_map(|(index, (_, role))| (*role == PromptInputRole::System).then_some(index)),
     )
+}
+
+fn tool_context_messages(bindings: &[(String, PromptInputRole)], inputs: &[Value]) -> Vec<Message> {
+    bindings
+        .iter()
+        .enumerate()
+        .filter_map(|(index, (name, role))| {
+            (*role == PromptInputRole::ToolContext).then(|| {
+                let value = inputs.get(index)?;
+                let content = value
+                    .as_string()
+                    .map(|text| text.to_owned())
+                    .unwrap_or_else(|| value.to_string());
+                Some(Message::text(Role::Tool, format!("{name}: {content}")))
+            })?
+        })
+        .collect()
 }
 
 fn resolve_system_prompt(
@@ -149,6 +179,99 @@ fn resolve_system_prompt(
         .or_else(|| apxm_backends::render_prompt(template_name, &serde_json::json!({})).ok())
         .unwrap_or_else(|| fallback.to_string());
     Ok(prompt)
+}
+
+struct ContextSystemPrompt {
+    system_prompt: String,
+    metrics: Option<ContextPlanMetrics>,
+}
+
+fn compose_context_stack_system_prompt(
+    ctx: &ExecutionContext,
+    node: &Node,
+    system_prompt: String,
+) -> ContextSystemPrompt {
+    let Some(stack) = &ctx.context_stack else {
+        return ContextSystemPrompt {
+            system_prompt,
+            metrics: None,
+        };
+    };
+    let profile = node
+        .attributes
+        .get(graph_attrs::PROFILE)
+        .and_then(|value| value.as_str())
+        .unwrap_or(context_stack_consts::DEFAULT_PROFILE);
+    let assembly = stack.assemble(
+        node.id,
+        profile,
+        context_stack_consts::DEFAULT_PROMPT_BUDGET_TOKENS,
+    );
+    let metrics = Some(assembly.plan.metrics());
+    if assembly.frames.is_empty() {
+        return ContextSystemPrompt {
+            system_prompt,
+            metrics,
+        };
+    }
+    ContextSystemPrompt {
+        system_prompt: format!("{}\n\n---\n\n{}", assembly, system_prompt),
+        metrics,
+    }
+}
+
+/// Construct context-plan aggregates without exposing content-bearing fields.
+pub(crate) fn model_context_metrics(
+    node_id: Option<u64>,
+    call_kind: ModelContextCallKind,
+    plan_status: ModelContextPlanStatus,
+    plan_metrics: Option<&ContextPlanMetrics>,
+) -> ModelContextMetrics {
+    match plan_metrics {
+        Some(plan) => ModelContextMetrics {
+            node_id,
+            call_kind,
+            plan_status,
+            token_budget: Some(plan.token_budget),
+            original_tokens: Some(plan.original_tokens),
+            admitted_tokens: Some(plan.admitted_tokens),
+            kept_segments: Some(plan.kept_segments),
+            truncated_segments: Some(plan.truncated_segments),
+            omitted_token_budget_segments: Some(plan.omitted_token_budget_segments),
+            omitted_empty_segments: Some(plan.omitted_empty_segments),
+        },
+        None => ModelContextMetrics {
+            node_id,
+            call_kind,
+            plan_status,
+            token_budget: None,
+            original_tokens: None,
+            admitted_tokens: None,
+            kept_segments: None,
+            truncated_segments: None,
+            omitted_token_budget_segments: None,
+            omitted_empty_segments: None,
+        },
+    }
+}
+
+/// Emit context-plan aggregates for model calls that do not use the shared
+/// node-dispatch helper.
+pub(crate) fn emit_model_context_metrics(
+    ctx: &ExecutionContext,
+    node_id: Option<u64>,
+    call_kind: ModelContextCallKind,
+    plan_status: ModelContextPlanStatus,
+    plan_metrics: Option<&ContextPlanMetrics>,
+) {
+    if let Some(emitter) = &ctx.event_emitter {
+        emitter.emit_model_context_metrics(&model_context_metrics(
+            node_id,
+            call_kind,
+            plan_status,
+            plan_metrics,
+        ));
+    }
 }
 
 /// Build APXM graph hints from a node's graph attributes and attach them to
@@ -341,15 +464,19 @@ pub async fn execute(ctx: &ExecutionContext, node: &Node, inputs: Vec<Value>) ->
         .and_then(|v| v.as_bool())
         .unwrap_or(true);
 
-    // Build prompt by named substitution. The compiler validator guarantees
-    // that any non-empty input chain has a matching `input_names` array and
-    // that every `{name}` in the template resolves against it.
-    let prompt = if inputs.is_empty() {
-        base_prompt.clone()
-    } else {
-        let input_names = input_names_from_node(node);
-        render_named(&base_prompt, &inputs, &input_names)?
-    };
+    let bindings = llm_input_bindings_from_node(node, inputs.len())?;
+    let user_inputs = bindings
+        .iter()
+        .enumerate()
+        .filter(|(_, (_, role))| *role == PromptInputRole::User)
+        .map(|(index, _)| inputs[index].clone())
+        .collect::<Vec<_>>();
+    let user_input_names = bindings
+        .iter()
+        .filter(|(_, role)| *role == PromptInputRole::User)
+        .map(|(name, _)| name.clone())
+        .collect::<Vec<_>>();
+    let prompt = render_named(&base_prompt, &user_inputs, &user_input_names)?;
 
     let mut request = apply_llm_request_routing_from_node(
         LLMRequest::new(prompt.clone()).with_operation_type(node.op_type),
@@ -376,7 +503,7 @@ pub async fn execute(ctx: &ExecutionContext, node: &Node, inputs: Vec<Value>) ->
         request = request.with_output_schema(schema.clone());
     }
 
-    let dataflow_prompt = dataflow_system_prompt(node, &inputs);
+    let dataflow_prompt = dataflow_system_prompt(&bindings, &inputs);
     let mut system_prompt = resolve_system_prompt(ctx, node, mode, dataflow_prompt)?;
     // A `pre_turn` hook may have rendered a prompt supplement for the
     // top-level turn currently in flight.
@@ -396,7 +523,14 @@ pub async fn execute(ctx: &ExecutionContext, node: &Node, inputs: Vec<Value>) ->
     {
         system_prompt = overridden;
     }
-    request = request.with_system_prompt(system_prompt);
+    let context_system_prompt = compose_context_stack_system_prompt(ctx, node, system_prompt);
+    request = request.with_system_prompt(context_system_prompt.system_prompt);
+    let tool_context = tool_context_messages(&bindings, &inputs);
+    if !tool_context.is_empty() {
+        let mut messages = request.resolved_messages();
+        messages.extend(tool_context);
+        request = request.with_messages(messages);
+    }
 
     // Tool configuration (Ask mode only). Tools are OPT-IN: a node only
     // attaches tools when it explicitly opts in via TOOLS (named list) or
@@ -454,7 +588,15 @@ pub async fn execute(ctx: &ExecutionContext, node: &Node, inputs: Vec<Value>) ->
     request = attach_graph_hints(ctx, node, request);
 
     if let Some(estimated_prefix_tokens) = should_dispatch_warmup(ctx, node, &request) {
-        dispatch_warmup(ctx, node.id, mode_name, &request, estimated_prefix_tokens).await?;
+        dispatch_warmup(
+            ctx,
+            node.id,
+            mode_name,
+            &request,
+            estimated_prefix_tokens,
+            context_system_prompt.metrics.as_ref(),
+        )
+        .await?;
     }
 
     // Execute with retries
@@ -479,7 +621,17 @@ pub async fn execute(ctx: &ExecutionContext, node: &Node, inputs: Vec<Value>) ->
             tokio::time::sleep(tokio::time::Duration::from_millis(backoff_ms)).await;
         }
 
-        match execute_llm_once(ctx, node, &request, mode, enable_inner_plan, bind_outputs).await {
+        match execute_llm_once(
+            ctx,
+            node,
+            &request,
+            mode,
+            enable_inner_plan,
+            bind_outputs,
+            context_system_prompt.metrics.as_ref(),
+        )
+        .await
+        {
             Ok(value) => {
                 if mode == LlmMode::Ask
                     && let Some(schema) = output_schema.as_ref()
@@ -536,12 +688,13 @@ async fn execute_llm_once(
     mode: LlmMode,
     enable_inner_plan: bool,
     bind_outputs: bool,
+    context_plan_metrics: Option<&ContextPlanMetrics>,
 ) -> Result<Value> {
     let mode_name = mode.name();
 
     // For Ask mode with tools, use the tool loop
     if mode == LlmMode::Ask && request.has_tools() {
-        return execute_ask_with_tools(ctx, node, request).await;
+        return execute_ask_with_tools(ctx, node, request, context_plan_metrics).await;
     }
 
     let resolved_backend = get_optional_string_attribute(node, graph_attrs::BACKEND)?;
@@ -625,7 +778,15 @@ async fn execute_llm_once(
     // is unavailable, since the metadata-bearing response still
     // surfaces token + timing evidence.
     let pre_call_backend = ctx.llm_registry.resolve_backend_name(&request).ok();
-    let response = execute_llm_request_for_node(ctx, node, mode_name, request).await?;
+    let context_metrics = model_context_metrics(
+        Some(node.id),
+        ModelContextCallKind::Node,
+        ModelContextPlanStatus::Assembled,
+        context_plan_metrics,
+    );
+    let response =
+        execute_llm_request_for_node_with_context(ctx, node, mode_name, request, &context_metrics)
+            .await?;
     let total_ms = llm_start.elapsed().as_secs_f64() * 1000.0;
 
     // Fold per-request `x-apxm-fields-honored`
@@ -650,12 +811,6 @@ async fn execute_llm_once(
         .map(|t| (t.prefill_ms, t.decode_ms))
         .unwrap_or((total_ms, 0.0));
     ctx.timing_tracker.record(node.id, prefill_ms, decode_ms);
-
-    charge_tokens(
-        ctx,
-        resolve_global_token_budget(ctx),
-        response.usage.total_tokens,
-    )?;
 
     // Record token usage in accountant
     {

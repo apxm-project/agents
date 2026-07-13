@@ -8,6 +8,7 @@
 //! Dotted paths such as `{data.event.subject}` resolve the first segment against
 //! `input_names` and navigate JSON for the remainder.
 
+use apxm_core::constants::graph::attrs::{INPUT_ROLES, PromptInputRole, parse_prompt_input_roles};
 use apxm_core::error::RuntimeError;
 use apxm_core::types::values::Value;
 use apxm_core::utils::template::parse_placeholder_names;
@@ -175,6 +176,51 @@ pub fn input_names_from_node(node: &apxm_core::types::execution::Node) -> Vec<St
         .unwrap_or_default()
 }
 
+/// Resolve the positional LLM prompt contract for a node's incoming inputs.
+/// Explicit role metadata is authoritative; when absent, the legacy
+/// `__system` input name remains system-channel sugar and all other inputs are
+/// user inputs.
+pub fn llm_input_bindings_from_node(
+    node: &apxm_core::types::execution::Node,
+    input_count: usize,
+) -> Result<Vec<(String, PromptInputRole)>, RuntimeError> {
+    let input_names = input_names_from_node(node);
+    if input_names.len() != input_count {
+        return Err(RuntimeError::Executor(format!(
+            "input_names length ({}) does not match LLM inputs length ({input_count})",
+            input_names.len()
+        )));
+    }
+
+    let explicit_roles = node.attributes.get(INPUT_ROLES).map(|value| match value {
+        Value::String(role) => Ok(vec![role.clone()]),
+        Value::Array(items) => items
+            .iter()
+            .map(|item| {
+                item.as_string()
+                    .map(|value| value.to_owned())
+                    .ok_or_else(|| {
+                        RuntimeError::Executor("input_roles must contain only strings".to_string())
+                    })
+            })
+            .collect(),
+        _ => Err(RuntimeError::Executor(
+            "input_roles must be a string array".to_string(),
+        )),
+    });
+
+    let roles = match explicit_roles {
+        Some(roles) => parse_prompt_input_roles(input_count, roles?)
+            .map_err(|error| RuntimeError::Executor(error.to_string()))?,
+        None => input_names
+            .iter()
+            .map(|name| PromptInputRole::from_legacy_input_name(name))
+            .collect(),
+    };
+
+    Ok(input_names.into_iter().zip(roles).collect())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -222,5 +268,48 @@ mod tests {
         )]);
 
         assert_eq!(input_names_from_node(&node), vec!["message".to_string()]);
+    }
+
+    #[test]
+    fn llm_bindings_keep_explicit_roles_positional() {
+        let mut node = Node::new(1, AISOperationType::Ask);
+        node.attributes = HashMap::from([
+            (
+                graph_attrs::INPUT_NAMES.to_string(),
+                Value::Array(vec![
+                    Value::String("question".to_string()),
+                    Value::String("policy".to_string()),
+                ]),
+            ),
+            (
+                graph_attrs::INPUT_ROLES.to_string(),
+                Value::Array(vec![
+                    Value::String("user".to_string()),
+                    Value::String("system".to_string()),
+                ]),
+            ),
+        ]);
+
+        assert_eq!(
+            llm_input_bindings_from_node(&node, 2).unwrap(),
+            vec![
+                ("question".to_string(), PromptInputRole::User),
+                ("policy".to_string(), PromptInputRole::System),
+            ]
+        );
+    }
+
+    #[test]
+    fn llm_bindings_normalize_the_legacy_system_name() {
+        let mut node = Node::new(1, AISOperationType::Ask);
+        node.attributes = HashMap::from([(
+            graph_attrs::INPUT_NAMES.to_string(),
+            Value::Array(vec![Value::String("__system".to_string())]),
+        )]);
+
+        assert_eq!(
+            llm_input_bindings_from_node(&node, 1).unwrap(),
+            vec![("__system".to_string(), PromptInputRole::System)]
+        );
     }
 }

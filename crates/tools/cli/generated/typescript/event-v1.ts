@@ -23,160 +23,205 @@ export interface SkillEventProvenance {
   flow_name?: string;
 }
 
-export interface EventPayload {
+export interface UnknownEventPayload {
   kind: string;
   [key: string]: unknown;
 }
 
-export interface TokenEventPayload extends EventPayload {
+export interface TokenEventPayload {
   kind: "token";
   text: string;
+  generation?: { "call_id": string; "attempt": number; "step_number": number; };
+  [key: string]: unknown;
 }
 
-export interface ThoughtEventPayload extends EventPayload {
+export interface LlmStepCompletedEventPayload {
+  kind: "llm_step_completed";
+  node_id: number;
+  step_number: number;
+  model: string;
+  finish_reason: { "reason": string; };
+  usage: { "input_tokens": number; "output_tokens": number; "cached_input_tokens": number; "reasoning_output_tokens": number; };
+  performance: { "latency_ms": number; "prefill_ms": number; "decode_ms": number; };
+  tool_call_count: number;
+  [key: string]: unknown;
+}
+
+export interface ThoughtEventPayload {
   kind: "thought";
   text: string;
   summary: string | null;
+  generation?: { "call_id": string; "attempt": number; "step_number": number; };
+  [key: string]: unknown;
 }
 
-export interface ToolCallEventPayload extends EventPayload {
+export interface ToolCallEventPayload {
   kind: "tool_call";
   id: string;
   name: string;
+  tool_call_correlation?: { "generation": { "call_id": string; "attempt": number; "step_number": number; }; "tool_call_id": string; };
+  arguments: unknown;
+  [key: string]: unknown;
 }
 
-export interface LlmDoneEventPayload extends EventPayload {
+export interface LlmDoneEventPayload {
   kind: "llm_done";
   content: string;
   model: string;
-  finish_reason: Record<string, unknown>;
-  usage: Record<string, unknown>;
-  tool_calls: Record<string, unknown>[];
+  finish_reason: { "reason": string; [key: string]: unknown; };
+  usage: { "input_tokens": number; "output_tokens": number; [key: string]: unknown; };
+  tool_calls: { "id": string; "name": string; "tool_call_correlation"?: { "generation": { "call_id": string; "attempt": number; "step_number": number; }; "tool_call_id": string; }; "arguments": unknown; [key: string]: unknown; }[];
   response_id: string | null;
+  generation?: { "call_id": string; "attempt": number; "step_number": number; };
+  [key: string]: unknown;
 }
 
-export interface LlmPromptEventPayload extends EventPayload {
+export interface LlmPromptEventPayload {
   kind: "llm_prompt";
   node_id: number;
   node_name?: string;
-  prompt: Record<string, unknown>;
+  prompt: { "redacted": boolean; "policy": string; "hash": string; "size_bytes": number; "char_count"?: number | null; "content_type": string; "summary": string; [key: string]: unknown; };
+  generation?: { "call_id": string; "attempt": number; "step_number": number; };
+  [key: string]: unknown;
 }
 
-export interface UsageEventPayload extends EventPayload {
+export interface UsageEventPayload {
   kind: "usage";
   input_tokens: number;
   output_tokens: number;
+  generation?: { "call_id": string; "attempt": number; "step_number": number; };
+  [key: string]: unknown;
 }
 
-export interface RetryEventPayload extends EventPayload {
+export interface RetryEventPayload {
   kind: "retry";
   attempt: number;
   reason: string;
   retry_after_secs: number;
   backend: string | null;
+  [key: string]: unknown;
 }
 
-export interface WarningEventPayload extends EventPayload {
+export interface WarningEventPayload {
   kind: "warning";
   code: string;
   message: string;
+  [key: string]: unknown;
 }
 
-export interface CitationEventPayload extends EventPayload {
+export interface CitationEventPayload {
   kind: "citation";
-  citations: Record<string, unknown>[];
+  citations: Array<{ "url": string | null; "title": string | null; "start_index": number | null; "end_index": number | null; [key: string]: unknown; }>;
+  [key: string]: unknown;
 }
 
-export interface ProviderEventEventPayload extends EventPayload {
+export interface ProviderEventEventPayload {
   kind: "provider_event";
   provider: string;
   event_type: string;
+  data: unknown;
+  [key: string]: unknown;
 }
 
-export interface OperationStartEventPayload extends EventPayload {
+export interface OperationStartEventPayload {
   kind: "operation_start";
   node_id: number;
   op_type: string;
+  [key: string]: unknown;
 }
 
-export interface OperationEndEventPayload extends EventPayload {
+export interface OperationEndEventPayload {
   kind: "operation_end";
   node_id: number;
   op_type: string;
   duration_ms: number;
   success: boolean;
+  [key: string]: unknown;
 }
 
-export interface NodeOutputEventPayload extends EventPayload {
+export interface NodeOutputEventPayload {
   kind: "node_output";
   node_id: number;
   node_name?: string;
-  output: Record<string, unknown>;
+  output: { "redacted": boolean; "policy": string; "hash": string; "size_bytes": number; "char_count"?: number | null; "content_type": string; "summary": string; [key: string]: unknown; };
+  [key: string]: unknown;
 }
 
-export interface NodeMetricsEventPayload extends EventPayload {
+export interface NodeMetricsEventPayload {
   kind: "node_metrics";
   node_id: number;
   node_name?: string;
-  metrics: Record<string, unknown>;
+  metrics: { "node_id": number; [key: string]: unknown; };
+  [key: string]: unknown;
 }
 
-export interface ToolStartEventPayload extends EventPayload {
+export interface ToolStartEventPayload {
   kind: "tool_start";
   name: string;
   args: Record<string, unknown>;
+  tool_call_correlation?: { "generation": { "call_id": string; "attempt": number; "step_number": number; }; "tool_call_id": string; };
+  [key: string]: unknown;
 }
 
-export interface ToolEndEventPayload extends EventPayload {
+export interface ToolEndEventPayload {
   kind: "tool_end";
   name: string;
+  tool_call_correlation?: { "generation": { "call_id": string; "attempt": number; "step_number": number; }; "tool_call_id": string; };
+  result: unknown;
+  [key: string]: unknown;
 }
 
-export interface PlanCreatedEventPayload extends EventPayload {
+export interface PlanCreatedEventPayload {
   kind: "plan_created";
   plan_id: string;
   steps: number;
+  [key: string]: unknown;
 }
 
-export interface PlanStepStartedEventPayload extends EventPayload {
+export interface PlanStepStartedEventPayload {
   kind: "plan_step_started";
   plan_id: string;
   step_index: number;
+  [key: string]: unknown;
 }
 
-export interface PlanStepCompletedEventPayload extends EventPayload {
+export interface PlanStepCompletedEventPayload {
   kind: "plan_step_completed";
   plan_id: string;
   step_index: number;
   success: boolean;
+  [key: string]: unknown;
 }
 
-export interface PlanWorkflowEmittedEventPayload extends EventPayload {
+export interface PlanWorkflowEmittedEventPayload {
   kind: "plan_workflow_emitted";
   plan_id: string;
   generating_model: string;
   node_count: number;
   task_ids: number[];
   parallel_fanout_max: number;
+  [key: string]: unknown;
 }
 
-export interface WorkflowStartedEventPayload extends EventPayload {
+export interface WorkflowStartedEventPayload {
   kind: "workflow_started";
   workflow_name: string;
   session_dir: string;
   step_count: number;
+  [key: string]: unknown;
 }
 
-export interface WorkflowStepStartedEventPayload extends EventPayload {
+export interface WorkflowStepStartedEventPayload {
   kind: "workflow_step_started";
   workflow_name: string;
   workflow_session_dir: string;
   step_id: string;
   step_index: number;
   step_count: number;
+  [key: string]: unknown;
 }
 
-export interface WorkflowStepCompletedEventPayload extends EventPayload {
+export interface WorkflowStepCompletedEventPayload {
   kind: "workflow_step_completed";
   workflow_name: string;
   workflow_session_dir: string;
@@ -187,9 +232,10 @@ export interface WorkflowStepCompletedEventPayload extends EventPayload {
   duration_ms: number;
   session_dir?: string;
   error?: string;
+  [key: string]: unknown;
 }
 
-export interface WorkflowFinishedEventPayload extends EventPayload {
+export interface WorkflowFinishedEventPayload {
   kind: "workflow_finished";
   workflow_name: string;
   session_dir: string;
@@ -197,102 +243,119 @@ export interface WorkflowFinishedEventPayload extends EventPayload {
   success: boolean;
   duration_ms: number;
   step_count: number;
+  [key: string]: unknown;
 }
 
-export interface ExecutionStartedEventPayload extends EventPayload {
+export interface ExecutionStartedEventPayload {
   kind: "execution_started";
   execution_id: string;
   args?: string[];
   user_text?: string;
+  [key: string]: unknown;
 }
 
-export interface ExecuteCompleteEventPayload extends EventPayload {
+export interface ExecuteCompleteEventPayload {
   kind: "execute_complete";
+  result: { "execution_id": string; "session_id": string; "outcome": { "status": "success"; } | { "status": "domain_failure"; "error": Record<string, unknown>; } | { "status": "cancellation"; } | { "status": "join_failure"; "failure": { "task": "scheduler_worker" | "scheduler_finalizer" | "runtime_finalizer"; "message": string; "cancelled": boolean; "panicked": boolean; }; }; } | { "execution_id"?: string; "workflow_id"?: string; "run_root"?: string; "trace_id"?: string; "results": Record<string, unknown>; "content": string | null; "session_dir": string | null; "stats": { "executed_nodes": number; "failed_nodes": number; "duration_ms": number; }; "llm_usage": { "input_tokens": number; "output_tokens": number; "total_requests": number; }; "tool_call_counts": Record<string, number>; "parked_session_id"?: string; };
+  [key: string]: unknown;
 }
 
-export interface MemoryReadEventPayload extends EventPayload {
+export interface MemoryReadEventPayload {
   kind: "memory_read";
   scope: string;
   key: string;
+  [key: string]: unknown;
 }
 
-export interface MemoryWriteEventPayload extends EventPayload {
+export interface MemoryWriteEventPayload {
   kind: "memory_write";
   scope: string;
   key: string;
+  [key: string]: unknown;
 }
 
-export interface CheckpointSavedEventPayload extends EventPayload {
+export interface CheckpointSavedEventPayload {
   kind: "checkpoint_saved";
   checkpoint_id: string;
+  [key: string]: unknown;
 }
 
-export interface CheckpointRestoredEventPayload extends EventPayload {
+export interface CheckpointRestoredEventPayload {
   kind: "checkpoint_restored";
   checkpoint_id: string;
+  [key: string]: unknown;
 }
 
-export interface SchedulerDecisionEventPayload extends EventPayload {
+export interface SchedulerDecisionEventPayload {
   kind: "scheduler_decision";
   node_id: number;
   delay_ms: number;
   reason: string;
+  [key: string]: unknown;
 }
 
-export interface ModelRouteDecisionEventPayload extends EventPayload {
+export interface ModelRouteDecisionEventPayload {
   kind: "model_route_decision";
   backend: string;
   model?: string | null;
   was_failover: boolean;
   reason: string;
-  rejected_candidates?: Record<string, unknown>[];
+  rejected_candidates?: { "candidate": string; "backend": string; "reason_kind": string; "reason": string; [key: string]: unknown; }[];
+  [key: string]: unknown;
 }
 
-export interface AgentRouteDecisionEventPayload extends EventPayload {
+export interface AgentRouteDecisionEventPayload {
   kind: "agent_route_decision";
   id: string;
   profile?: string | null;
   source: "explicit" | "selected" | "deterministic";
   reason: string;
   required_capabilities?: string[];
-  rejected_candidates?: Record<string, unknown>[];
+  rejected_candidates?: { "profile": string; "missing_capabilities"?: string[]; "reason": string; [key: string]: unknown; }[];
+  [key: string]: unknown;
 }
 
-export interface HeadOfLineBlockEventPayload extends EventPayload {
+export interface HeadOfLineBlockEventPayload {
   kind: "head_of_line_block";
   blocker_node: number;
   blocked_node: number;
   wait_ms: number;
   reason: string;
+  [key: string]: unknown;
 }
 
-export interface GpuUtilizationEventPayload extends EventPayload {
+export interface GpuUtilizationEventPayload {
   kind: "gpu_utilization";
   gpu_id: number;
   utilization_pct: number;
   memory_pct: number;
+  [key: string]: unknown;
 }
 
-export interface TokenUsageEventPayload extends EventPayload {
+export interface TokenUsageEventPayload {
   kind: "token_usage";
   node_id: number;
   input_tokens: number;
   output_tokens: number;
+  generation?: { "call_id": string; "attempt": number; "step_number": number; };
+  [key: string]: unknown;
 }
 
-export interface MemoizationHitEventPayload extends EventPayload {
+export interface MemoizationHitEventPayload {
   kind: "memoization_hit";
   node_id: number;
+  [key: string]: unknown;
 }
 
-export interface ErrorEventPayload extends EventPayload {
+export interface ErrorEventPayload {
   kind: "error";
   message: string;
   status: string | null;
   recoverable: boolean;
+  [key: string]: unknown;
 }
 
-export interface AgentSpawnedEventPayload extends EventPayload {
+export interface AgentSpawnedEventPayload {
   kind: "agent_spawned";
   node_id: number;
   agent_code: string;
@@ -300,94 +363,144 @@ export interface AgentSpawnedEventPayload extends EventPayload {
   profile?: string;
   process_id?: string;
   scope_policy?: string;
+  [key: string]: unknown;
 }
 
-export interface CommunicateDispatchedEventPayload extends EventPayload {
+export interface CommunicateDispatchedEventPayload {
   kind: "communicate_dispatched";
   node_id: number;
   target_agent: string;
   protocol: "local" | "http" | "https" | "acp" | "broadcast";
   message_excerpt?: string;
+  [key: string]: unknown;
 }
 
-export interface GraphEdgeEventPayload extends EventPayload {
+export interface GraphEdgeEventPayload {
   kind: "graph_edge";
   from_node_id: number;
   to_node_id: number;
   edge_kind: "dispatch" | "tool_invocation" | "synthesis_feed";
+  [key: string]: unknown;
 }
 
-export interface ContextCompactedEventPayload extends EventPayload {
+export interface ContextCompactedEventPayload {
   kind: "context_compacted";
   original_tokens: number;
   new_tokens: number;
+  [key: string]: unknown;
 }
 
-export interface ModelReroutedEventPayload extends EventPayload {
+export interface ModelContextMetricsEventPayload {
+  kind: "model_context_metrics";
+  node_id?: number;
+  call_kind: "node" | "tool_continuation" | "warmup" | "compaction" | "hook";
+  plan_status: "assembled" | "inherited" | "unplanned";
+  token_budget?: number;
+  original_tokens?: number;
+  admitted_tokens?: number;
+  kept_segments?: number;
+  truncated_segments?: number;
+  omitted_token_budget_segments?: number;
+  omitted_empty_segments?: number;
+  [key: string]: unknown;
+}
+
+export interface CapabilityEffectReceiptEventPayload {
+  kind: "capability_effect_receipt";
+  receipt_id: string;
+  execution_id: string;
+  node_id: number;
+  invocation_id: string;
+  capability_binding: string;
+  dispatch_path: "inv_cap" | "ask_tool";
+  implementation_kind: "native" | "python" | "typescript" | "host";
+  implementation_ref: string;
+  request_digest: string;
+  admission_kind: "read_only" | "sandbox" | "grant";
+  grant_id?: string;
+  approval_status?: "not_required" | "approved";
+  approval_id?: string;
+  idempotency_proof: "remote_deduplicated" | "transaction_verified";
+  idempotency_key_digest: string;
+  effect_ref: string;
+  status: "committed";
+}
+
+export interface ModelReroutedEventPayload {
   kind: "model_rerouted";
   original_model: string;
   new_model: string;
   reason: string;
+  [key: string]: unknown;
 }
 
-export interface CancelledEventPayload extends EventPayload {
+export interface CancelledEventPayload {
   kind: "cancelled";
   reason: string | null;
+  [key: string]: unknown;
 }
 
-export interface LoopDetectedEventPayload extends EventPayload {
+export interface LoopDetectedEventPayload {
   kind: "loop_detected";
   pattern: string;
   iterations: number;
+  [key: string]: unknown;
 }
 
-export interface ContextWindowWarningEventPayload extends EventPayload {
+export interface ContextWindowWarningEventPayload {
   kind: "context_window_warning";
   current_tokens: number;
   max_tokens: number;
   utilization_pct: number;
+  [key: string]: unknown;
 }
 
-export interface SessionStartEventPayload extends EventPayload {
+export interface SessionStartEventPayload {
   kind: "session_start";
   session_id: string;
+  [key: string]: unknown;
 }
 
-export interface SessionEndEventPayload extends EventPayload {
+export interface SessionEndEventPayload {
   kind: "session_end";
   session_id: string;
   total_turns: number;
+  [key: string]: unknown;
 }
 
-export interface TurnBoundaryEventPayload extends EventPayload {
+export interface TurnBoundaryEventPayload {
   kind: "turn_boundary";
   turn_number: number;
   direction: "request" | "response";
+  [key: string]: unknown;
 }
 
-export interface TurnStartedEventPayload extends EventPayload {
+export interface TurnStartedEventPayload {
   kind: "turn_started";
   execution_id: string;
   turn_id?: string;
   coordinator_label?: string;
+  [key: string]: unknown;
 }
 
-export interface TurnCompleteEventPayload extends EventPayload {
+export interface TurnCompleteEventPayload {
   kind: "turn_complete";
   execution_id: string;
   duration_ms: number;
   had_answer: boolean;
+  [key: string]: unknown;
 }
 
-export interface TurnAbortedEventPayload extends EventPayload {
+export interface TurnAbortedEventPayload {
   kind: "turn_aborted";
   execution_id: string;
   duration_ms: number;
   reason: string;
   error_message_safe?: string;
+  [key: string]: unknown;
 }
 
-export interface SubagentSpawnBeginEventPayload extends EventPayload {
+export interface SubagentSpawnBeginEventPayload {
   kind: "subagent_spawn_begin";
   agent_code: string;
   agent_name?: string;
@@ -395,84 +508,102 @@ export interface SubagentSpawnBeginEventPayload extends EventPayload {
   module_key?: string;
   autonomy_policy?: string;
   parent_span_id?: string;
+  [key: string]: unknown;
 }
 
-export interface SubagentSpawnEndEventPayload extends EventPayload {
+export interface SubagentSpawnEndEventPayload {
   kind: "subagent_spawn_end";
   agent_code: string;
+  [key: string]: unknown;
 }
 
-export interface SubagentLlmCallBeginEventPayload extends EventPayload {
+export interface SubagentLlmCallBeginEventPayload {
   kind: "subagent_llm_call_begin";
   agent_code: string;
   model: string;
   backend: string;
   tool_manifest_count: number;
+  generation?: { "call_id": string; "attempt": number; "step_number": number; };
+  [key: string]: unknown;
 }
 
-export interface SubagentLlmCallEndEventPayload extends EventPayload {
+export interface SubagentLlmCallEndEventPayload {
   kind: "subagent_llm_call_end";
   agent_code: string;
   finish_reason: string;
-  usage: Record<string, unknown>;
+  usage: { "input_tokens": number; "output_tokens": number; [key: string]: unknown; };
   content_len: number;
+  generation?: { "call_id": string; "attempt": number; "step_number": number; };
+  [key: string]: unknown;
 }
 
-export interface ToolCallBeginEventPayload extends EventPayload {
+export interface ToolCallBeginEventPayload {
   kind: "tool_call_begin";
   agent_code: string;
   tool_name: string;
   argument_keys: string[];
+  tool_call_correlation?: { "generation": { "call_id": string; "attempt": number; "step_number": number; }; "tool_call_id": string; };
+  [key: string]: unknown;
 }
 
-export interface ToolCallEndEventPayload extends EventPayload {
+export interface ToolCallEndEventPayload {
   kind: "tool_call_end";
   agent_code: string;
   tool_name: string;
   result_keys: string[];
   status: "ok" | "error" | "approval_pending";
   latency_ms: number;
+  tool_call_correlation?: { "generation": { "call_id": string; "attempt": number; "step_number": number; }; "tool_call_id": string; };
+  [key: string]: unknown;
 }
 
-export interface SubagentDoneEventPayload extends EventPayload {
+export interface SubagentDoneEventPayload {
   kind: "subagent_done";
   agent_code: string;
   total_tool_calls: number;
-  usage_total: Record<string, unknown>;
+  usage_total: { "input_tokens": number; "output_tokens": number; [key: string]: unknown; };
   evidence_excerpt?: string;
+  [key: string]: unknown;
 }
 
-export interface SubagentFailedEventPayload extends EventPayload {
+export interface SubagentFailedEventPayload {
   kind: "subagent_failed";
   agent_code: string;
   error_class: string;
   error_message_safe: string;
+  [key: string]: unknown;
 }
 
-export interface AgentMessageEventPayload extends EventPayload {
+export interface AgentMessageEventPayload {
   kind: "agent_message";
   text: string;
   item_id?: string;
   response_id?: string;
-  usage?: Record<string, unknown>;
+  usage?: { "input_tokens": number; "output_tokens": number; [key: string]: unknown; };
+  [key: string]: unknown;
 }
 
-export interface ApprovalRequestEventPayload extends EventPayload {
+export interface ApprovalRequestEventPayload {
   kind: "approval_request";
   agent_code: string;
   tool_name: string;
   approval_id: string;
   risk_level: "low" | "medium" | "high";
+  tool_call_correlation?: { "generation": { "call_id": string; "attempt": number; "step_number": number; }; "tool_call_id": string; };
+  [key: string]: unknown;
 }
 
-export interface ApprovalResolvedEventPayload extends EventPayload {
+export interface ApprovalResolvedEventPayload {
   kind: "approval_resolved";
   approval_id: string;
   decision: "approved" | "denied" | "expired";
+  tool_call_correlation?: { "generation": { "call_id": string; "attempt": number; "step_number": number; }; "tool_call_id": string; };
+  [key: string]: unknown;
 }
 
 export type KnownEventPayload =
   | TokenEventPayload
+  | LlmStepCompletedEventPayload
   | ThoughtEventPayload
   | ToolCallEventPayload
   | LlmDoneEventPayload
@@ -514,6 +645,8 @@ export type KnownEventPayload =
   | CommunicateDispatchedEventPayload
   | GraphEdgeEventPayload
   | ContextCompactedEventPayload
+  | ModelContextMetricsEventPayload
+  | CapabilityEffectReceiptEventPayload
   | ModelReroutedEventPayload
   | CancelledEventPayload
   | LoopDetectedEventPayload
@@ -536,7 +669,7 @@ export type KnownEventPayload =
   | ApprovalRequestEventPayload
   | ApprovalResolvedEventPayload;
 
-export type EventPayloadValue = KnownEventPayload | EventPayload;
+export type EventPayloadValue = KnownEventPayload | UnknownEventPayload;
 
 export interface ApxmEvent {
   meta: EventMeta;
@@ -545,7 +678,7 @@ export interface ApxmEvent {
 
 export interface ApxmEventLike {
   meta?: Partial<EventMeta> & Record<string, unknown>;
-  payload?: EventPayload;
+  payload?: EventPayloadValue;
   [key: string]: unknown;
 }
 
@@ -555,7 +688,8 @@ export const EVENT_KIND_REGISTRY: Readonly<Record<CoreEventKindName, EventKindDe
   "token": { name: "token", category: "stream", terminal: false, terminalSense: "n/a" },
   "thought": { name: "thought", category: "stream", terminal: false, terminalSense: "n/a" },
   "tool_call": { name: "tool_call", category: "lifecycle", terminal: false, terminalSense: "n/a" },
-  "llm_done": { name: "llm_done", category: "lifecycle", terminal: true, terminalSense: "run_end" },
+  "llm_done": { name: "llm_done", category: "lifecycle", terminal: false, terminalSense: "atomic_no_delta" },
+  "llm_step_completed": { name: "llm_step_completed", category: "observability", terminal: false, terminalSense: "n/a" },
   "llm_prompt": { name: "llm_prompt", category: "observability", terminal: false, terminalSense: "n/a" },
   "usage": { name: "usage", category: "observability", terminal: false, terminalSense: "n/a" },
   "retry": { name: "retry", category: "error", terminal: false, terminalSense: "n/a" },
@@ -594,8 +728,10 @@ export const EVENT_KIND_REGISTRY: Readonly<Record<CoreEventKindName, EventKindDe
   "communicate_dispatched": { name: "communicate_dispatched", category: "agent", terminal: false, terminalSense: "atomic_no_delta" },
   "graph_edge": { name: "graph_edge", category: "topology", terminal: false, terminalSense: "atomic_no_delta" },
   "context_compacted": { name: "context_compacted", category: "observability", terminal: false, terminalSense: "n/a" },
+  "model_context_metrics": { name: "model_context_metrics", category: "observability", terminal: false, terminalSense: "n/a" },
+  "capability_effect_receipt": { name: "capability_effect_receipt", category: "observability", terminal: false, terminalSense: "n/a" },
   "model_rerouted": { name: "model_rerouted", category: "lifecycle", terminal: false, terminalSense: "n/a" },
-  "cancelled": { name: "cancelled", category: "error", terminal: true, terminalSense: "run_end" },
+  "cancelled": { name: "cancelled", category: "error", terminal: false, terminalSense: "n/a" },
   "loop_detected": { name: "loop_detected", category: "error", terminal: false, terminalSense: "n/a" },
   "context_window_warning": { name: "context_window_warning", category: "error", terminal: false, terminalSense: "n/a" },
   "session_start": { name: "session_start", category: "lifecycle", terminal: false, terminalSense: "n/a" },

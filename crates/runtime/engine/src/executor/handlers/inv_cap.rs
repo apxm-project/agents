@@ -9,91 +9,10 @@ use super::{
     ExecutionContext, Node, Result, Value, get_optional_u64_attribute, get_string_attribute,
     template::{input_names_from_node, render_named},
 };
-use crate::capability::CapabilitySandboxPreflight;
-use crate::executor::capability_admission::metadata_admits_write;
 use apxm_core::constants::graph::attrs as graph_attrs;
 use apxm_core::constants::runtime::belief_keys;
 use apxm_core::error::RuntimeError;
 use apxm_core::types::AISOperationType;
-
-/// Invoke-site capability admission — enforced for EVERY tool call regardless of how
-/// the execution was launched. A direct (write) capability runs only when this
-/// execution's effective capability grants admit its tool binding.
-async fn enforce_write_boundary(
-    ctx: &ExecutionContext,
-    name: &str,
-    args: &HashMap<String, Value>,
-    unregistered_requires_delegation: bool,
-) -> Result<()> {
-    let caps = &ctx.capability_system;
-    if caps.has_capability(name) {
-        if caps.is_read_only(name) {
-            return Ok(());
-        }
-        match caps.sandbox_preflight(name, args) {
-            Ok(CapabilitySandboxPreflight::Sandboxed { .. }) => return Ok(()),
-            Ok(CapabilitySandboxPreflight::Direct) => {}
-            // Pre-flight error -> fail-closed: treat as a write needing admission.
-            Err(_) => {}
-        }
-    } else if !unregistered_requires_delegation {
-        return Ok(());
-    }
-    if metadata_admits_write(&ctx.metadata, name) {
-        if ctx.host_id.is_some() {
-            use apxm_core::types::consent::{
-                ConsentDecision, PermissionPrompt, PromptMode, RiskLevel,
-            };
-            let expires_at = (chrono::Utc::now() + chrono::Duration::seconds(30)).to_rfc3339();
-            let prompt = PermissionPrompt {
-                prompt_id: uuid::Uuid::new_v4().to_string(),
-                call_id: uuid::Uuid::new_v4().to_string(),
-                grant_id: "runtime-grant".to_string(),
-                capability_id: name.to_string(),
-                capability_binding: name.to_string(),
-                host_id: ctx.host_id.clone(),
-                operation: "invoke".to_string(),
-                mode: PromptMode::Confirm,
-                subject: None,
-                args_digest: format!("args-len:{}", args.len()),
-                args_preview: serde_json::json!({ "arg_count": args.len() }),
-                risk_level: RiskLevel::High,
-                expires_at,
-                channel_id: None,
-                description: Some(format!("Host capability '{}' requires consent", name)),
-                target_ref: None,
-                resource: None,
-                diff_ref: None,
-            };
-            match ctx
-                .consent_broker
-                .request_consent(prompt, std::time::Duration::from_secs(30))
-                .await
-            {
-                ConsentDecision::Approved(_) | ConsentDecision::NoBroker => Ok(()),
-                ConsentDecision::Denied { reason } => Err(RuntimeError::Capability {
-                    capability: name.to_string(),
-                    message: reason,
-                }),
-                ConsentDecision::TimedOut => Err(RuntimeError::Capability {
-                    capability: name.to_string(),
-                    message: "consent timed out".to_string(),
-                }),
-            }
-        } else {
-            Ok(())
-        }
-    } else {
-        Err(RuntimeError::Capability {
-            capability: name.to_string(),
-            message: format!(
-                "capability '{}' performs writes and is missing a capability grant; \
- mint a grant for its tool binding and present grant_* ids in capability_grant_ids",
-                name
-            ),
-        })
-    }
-}
 
 /// Execute INV_CAP operation - Invoke a registered capability
 ///
@@ -192,7 +111,7 @@ pub async fn execute(ctx: &ExecutionContext, node: &Node, inputs: Vec<Value>) ->
     // capabilities. A deny / gate failure does NOT
     // fail the node: the turn continues gracefully with a denial message (m4,
     // matching the LLM tool-loop's graceful `ToolResult::error`).
-    let args =
+    let mut args =
         match crate::executor::hook_driver::run_pre_cap_hooks(ctx, &capability_name, args).await {
             Ok(edited) => edited,
             Err(e) => {
@@ -205,14 +124,11 @@ pub async fn execute(ctx: &ExecutionContext, node: &Node, inputs: Vec<Value>) ->
         emitter.emit_tool_start(&capability_name, &args);
     }
 
-    // Invoke-site capability admission for EVERY tool call.
-    // call, including artifact-local Python tools that do not exist in the
-    // process-wide capability registry.
-    enforce_write_boundary(ctx, &capability_name, &args, python_handler_id.is_some()).await?;
-
     // Script-handler branch: stamped by bind-capability-handlers or resolved by bridge.
-    let raw = if python_handler_id.is_some() || script_handler_for_capability(ctx, &capability_name)
-    {
+    let script_handler =
+        python_handler_id.is_some() || script_handler_for_capability(ctx, &capability_name);
+    let raw = if script_handler {
+        ctx.prepare_capability_invocation(&capability_name, &mut args, true)?;
         tokio::select! {
         result = execute_script_handler(ctx, &capability_name, &args, timeout) => result?,
         _ = ctx.cancellation_token.cancelled() => return Err(RuntimeError::SchedulerCancelled),
@@ -514,11 +430,9 @@ mod tests {
     /// **Approved protected-path write denial:** an
     /// operator-set `blocked_paths` entry on `WriteCapability` is a floor a
     /// consent `Approved` decision cannot reach. `enforce_write_boundary`
-    /// (the admission gate above) approves this call via the
-    /// `StubBroker`/`ConsentDecision::Approved` path — proving the eventual
-    /// denial below comes from `WriteCapability::validate_path_and_content`
-    /// running downstream, independent of and never overridden by the
-    /// approval outcome.
+    /// approval and grant admission do not override the capability's own path
+    /// validation. The eventual denial therefore comes from
+    /// `WriteCapability::validate_path_and_content` running downstream.
     #[tokio::test]
     async fn approved_write_to_protected_path_is_still_denied() {
         use crate::aam::Aam;
@@ -568,9 +482,8 @@ mod tests {
             .expect("register write capability");
 
         // Runtime-minted, active, mutating grant admitting a direct write to
-        // the `write` capability binding — the admission gate
-        // (`enforce_write_boundary`) requires this before it even asks the
-        // consent broker.
+        // the `write` capability binding. The shared execution-context
+        // admission helper requires this before the native invocation begins.
         let grants = serde_json::json!([{
             "grant_id": "grant_fixture",
             "capability_binding": "write",

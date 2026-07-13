@@ -9,6 +9,7 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Duration;
 
+use apxm_capability_iface::events::ModelContextMetrics as ExecutionModelContextMetrics;
 use apxm_core::events::payload::*;
 use apxm_core::events::{ApxmEvent, EventEmitter, EventSource, SkillEventProvenance};
 use apxm_core::types::operations::AISOperationType;
@@ -523,6 +524,39 @@ impl ExecutionEventEmitter for EmitterAdapter {
         });
     }
 
+    fn emit_model_context_metrics(&self, metrics: &ExecutionModelContextMetrics) {
+        self.emit(ModelContextMetricsPayload {
+            node_id: metrics.node_id,
+            call_kind: metrics.call_kind,
+            plan_status: metrics.plan_status,
+            token_budget: metrics
+                .token_budget
+                .and_then(|value| u64::try_from(value).ok()),
+            original_tokens: metrics
+                .original_tokens
+                .and_then(|value| u64::try_from(value).ok()),
+            admitted_tokens: metrics
+                .admitted_tokens
+                .and_then(|value| u64::try_from(value).ok()),
+            kept_segments: metrics
+                .kept_segments
+                .and_then(|value| u64::try_from(value).ok()),
+            truncated_segments: metrics
+                .truncated_segments
+                .and_then(|value| u64::try_from(value).ok()),
+            omitted_token_budget_segments: metrics
+                .omitted_token_budget_segments
+                .and_then(|value| u64::try_from(value).ok()),
+            omitted_empty_segments: metrics
+                .omitted_empty_segments
+                .and_then(|value| u64::try_from(value).ok()),
+        });
+    }
+
+    fn emit_capability_effect_receipt(&self, receipt: &CapabilityEffectReceiptPayload) {
+        self.emit(receipt.clone());
+    }
+
     fn emit_approval_request(
         &self,
         agent_code: &str,
@@ -935,5 +969,77 @@ mod tests {
             compacted.original_tokens > compacted.new_tokens,
             "compaction must reduce the token count"
         );
+    }
+
+    #[test]
+    fn model_context_metrics_are_forwarded_as_aggregate_only_payloads() {
+        let (adapter, capture) = adapter_with_capture();
+        adapter.emit_model_context_metrics(&ExecutionModelContextMetrics {
+            node_id: Some(7),
+            call_kind: apxm_capability_iface::events::ModelContextCallKind::Node,
+            plan_status: apxm_capability_iface::events::ModelContextPlanStatus::Assembled,
+            token_budget: Some(1024),
+            original_tokens: Some(1240),
+            admitted_tokens: Some(960),
+            kept_segments: Some(3),
+            truncated_segments: Some(1),
+            omitted_token_budget_segments: Some(2),
+            omitted_empty_segments: Some(1),
+        });
+
+        let events = capture.events.lock();
+        assert_eq!(events.len(), 1);
+        assert_eq!(events[0].kind().name(), "model_context_metrics");
+        let payload = events[0]
+            .payload
+            .downcast_ref::<ModelContextMetricsPayload>()
+            .expect("model_context_metrics payload");
+        assert_eq!(payload.node_id, Some(7));
+        assert_eq!(payload.call_kind, ModelContextCallKind::Node);
+        assert_eq!(payload.plan_status, ModelContextPlanStatus::Assembled);
+        assert_eq!(payload.token_budget, Some(1024));
+        assert_eq!(payload.original_tokens, Some(1240));
+        assert_eq!(payload.admitted_tokens, Some(960));
+        assert_eq!(payload.kept_segments, Some(3));
+        assert_eq!(payload.truncated_segments, Some(1));
+        assert_eq!(payload.omitted_token_budget_segments, Some(2));
+        assert_eq!(payload.omitted_empty_segments, Some(1));
+    }
+
+    #[test]
+    fn capability_effect_receipt_is_forwarded_without_content_fields() {
+        let (adapter, capture) = adapter_with_capture();
+        adapter.emit_capability_effect_receipt(&CapabilityEffectReceiptPayload {
+            receipt_id: "receipt-1".to_string(),
+            execution_id: "execution-1".to_string(),
+            node_id: 7,
+            invocation_id: "invocation-1".to_string(),
+            capability_binding: "calendar.write".to_string(),
+            dispatch_path: CapabilityEffectDispatchPath::InvCap,
+            implementation_kind: CapabilityEffectImplementationKind::Host,
+            implementation_ref: "host/calendar.write@1".to_string(),
+            request_digest: "sha256:request-1".to_string(),
+            admission_kind: CapabilityEffectAdmissionKind::Grant,
+            grant_id: Some("grant-1".to_string()),
+            approval_status: Some(CapabilityEffectApprovalStatus::Approved),
+            approval_id: Some("approval-1".to_string()),
+            idempotency_proof: CapabilityEffectIdempotencyProof::RemoteDeduplicated,
+            idempotency_key_digest: "sha256:idempotency-1".to_string(),
+            effect_ref: "effect-1".to_string(),
+            status: CapabilityEffectReceiptStatus::Committed,
+        });
+
+        let events = capture.events.lock();
+        assert_eq!(events.len(), 1);
+        assert_eq!(events[0].kind().name(), "capability_effect_receipt");
+        let payload = events[0]
+            .payload
+            .downcast_ref::<CapabilityEffectReceiptPayload>()
+            .expect("capability_effect_receipt payload");
+        assert_eq!(payload.receipt_id, "receipt-1");
+        assert_eq!(payload.effect_ref, "effect-1");
+        let json = payload.to_json();
+        assert!(json.get("arguments").is_none());
+        assert!(json.get("result").is_none());
     }
 }

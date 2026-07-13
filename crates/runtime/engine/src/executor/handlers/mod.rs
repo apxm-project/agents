@@ -46,6 +46,7 @@ use crate::model_router::{ProfileRouter, RoutingDecision};
 use anyhow::Error as AnyhowError;
 use apxm_backends::llm::wire::response_metadata;
 use apxm_backends::{LLMRequest, LLMResponse, StreamingBackendError};
+use apxm_capability_iface::events::{ModelContextCallKind, ModelContextMetrics};
 use apxm_core::{
     constants::graph::attrs as graph_attrs,
     error::RuntimeError,
@@ -297,8 +298,33 @@ pub async fn execute_llm_request_for_node(
     phase: &str,
     request: &LLMRequest,
 ) -> Result<LLMResponse> {
-    execute_llm_request_with_node_name(ctx, node.id, node.metadata.name.as_deref(), phase, request)
-        .await
+    execute_llm_request_for_node_with_context(
+        ctx,
+        node,
+        phase,
+        request,
+        &ModelContextMetrics::unplanned(Some(node.id), ModelContextCallKind::Node),
+    )
+    .await
+}
+
+/// Dispatch a model request with aggregate-only context-plan evidence.
+pub async fn execute_llm_request_for_node_with_context(
+    ctx: &ExecutionContext,
+    node: &Node,
+    phase: &str,
+    request: &LLMRequest,
+    context_metrics: &ModelContextMetrics,
+) -> Result<LLMResponse> {
+    execute_llm_request_with_node_name(
+        ctx,
+        node.id,
+        node.metadata.name.as_deref(),
+        phase,
+        request,
+        context_metrics,
+    )
+    .await
 }
 
 async fn execute_llm_request_with_node_name(
@@ -307,6 +333,7 @@ async fn execute_llm_request_with_node_name(
     node_name: Option<&str>,
     phase: &str,
     request: &LLMRequest,
+    context_metrics: &ModelContextMetrics,
 ) -> Result<LLMResponse> {
     if ctx.cancellation_token.is_cancelled() {
         return Err(RuntimeError::SchedulerCancelled);
@@ -317,13 +344,20 @@ async fn execute_llm_request_with_node_name(
     // an explicit backend/model or declares no profile.
     let resolved = resolve_model_profile(ctx, request.clone());
     let request = &resolved;
+    let reservation = llm::reserve_model_call(ctx, request)?;
+
+    if let Some(emitter) = &ctx.event_emitter {
+        emitter.emit_model_context_metrics(context_metrics);
+    }
 
     // Use streaming path when an event emitter is available so we can
     // emit token-by-token events. The default generate_stream() impl
     // wraps generate() into a single Done chunk for non-streaming backends.
     if let Some(emitter) = &ctx.event_emitter {
         emitter.emit_llm_prompt_with_name(node_id, node_name, &request.prompt);
-        return execute_llm_request_streaming(ctx, node_id, phase, request).await;
+        let response = execute_llm_request_streaming(ctx, node_id, phase, request).await?;
+        reservation.reconcile(response.usage.total_tokens)?;
+        return Ok(response);
     }
 
     #[cfg(feature = "metrics")]
@@ -356,6 +390,7 @@ async fn execute_llm_request_with_node_name(
         record_llm_event(ctx, phase, request, &response, latency).await;
     }
 
+    reservation.reconcile(response.usage.total_tokens)?;
     Ok(response)
 }
 
@@ -681,6 +716,9 @@ mod model_profile_routing_tests {
     use super::*;
     use crate::aam::Aam;
     use crate::capability::CapabilitySystem;
+    use crate::executor::events::{
+        ExecutionEventEmitter, ModelContextCallKind, ModelContextMetrics, ModelContextPlanStatus,
+    };
     use crate::memory::{MemoryConfig, MemorySystem};
     use crate::model_router::registry::{ModelEntry, ModelRegistry};
     use crate::model_router::{ModelRouter, ModelRouterConfig, ProfileRegistry, RoutingTarget};
@@ -688,7 +726,26 @@ mod model_profile_routing_tests {
     use apxm_backends::llm::backends::MockLLMBackend;
     use apxm_core::model_profiles::{ModelProfile, ProfileCandidate};
     use apxm_core::types::AISOperationType;
+    use apxm_core::types::execution::Node;
+    use parking_lot::Mutex;
     use std::sync::Arc;
+
+    #[derive(Default)]
+    struct ContextMetricsEmitter {
+        metrics: Mutex<Vec<ModelContextMetrics>>,
+    }
+
+    impl ExecutionEventEmitter for ContextMetricsEmitter {
+        fn emit_llm_token(&self, _content: &str) {}
+
+        fn emit_tool_start(&self, _name: &str, _args: &std::collections::HashMap<String, Value>) {}
+
+        fn emit_tool_end(&self, _name: &str, _result: &Value) {}
+
+        fn emit_model_context_metrics(&self, metrics: &ModelContextMetrics) {
+            self.metrics.lock().push(metrics.clone());
+        }
+    }
 
     /// Two backends ("cheap", "expensive") with sharply different costs, so a
     /// `Cost`-targeted `select` would normally prefer "cheap" — proving that
@@ -756,6 +813,43 @@ mod model_profile_routing_tests {
 
     fn ask_request() -> LLMRequest {
         LLMRequest::new("hello").with_operation_type(AISOperationType::Ask)
+    }
+
+    #[tokio::test]
+    async fn node_dispatch_emits_context_metrics_through_the_dispatch_boundary() {
+        let mut ctx = test_context().await;
+        ctx.llm_registry
+            .register("mock", MockLLMBackend::static_response("ok"))
+            .expect("register backend");
+        let emitter = Arc::new(ContextMetricsEmitter::default());
+        ctx.event_emitter = Some(emitter.clone());
+
+        let node = Node::new(7, AISOperationType::Ask);
+        let metrics = ModelContextMetrics {
+            node_id: Some(node.id),
+            call_kind: ModelContextCallKind::Node,
+            plan_status: ModelContextPlanStatus::Assembled,
+            token_budget: Some(1024),
+            original_tokens: Some(1200),
+            admitted_tokens: Some(960),
+            kept_segments: Some(3),
+            truncated_segments: Some(1),
+            omitted_token_budget_segments: Some(2),
+            omitted_empty_segments: Some(1),
+        };
+
+        let response = execute_llm_request_for_node_with_context(
+            &ctx,
+            &node,
+            "test",
+            &ask_request(),
+            &metrics,
+        )
+        .await
+        .expect("dispatch succeeds");
+
+        assert_eq!(response.content, "ok");
+        assert_eq!(emitter.metrics.lock().as_slice(), &[metrics]);
     }
 
     #[tokio::test]

@@ -19,7 +19,10 @@ use apxm_core::types::values::Value;
 use apxm_core::types::{
     CompletedNodeInfo, LiveSessionState, NodeInfo, SessionManifest, SessionStatus,
 };
-use apxm_runtime::ExecutionEventEmitter;
+use apxm_runtime::{
+    CapabilityEffectReceiptPayload, ExecutionEventEmitter,
+    ModelContextMetrics as ExecutionModelContextMetrics,
+};
 use parking_lot::RwLock;
 
 use crate::context_assembler::{ContextAssembler, WorkspaceNodeMetadata};
@@ -1041,6 +1044,59 @@ impl ExecutionEventEmitter for SessionEventEmitter {
         self.write_trace_event(apxm_core::events::payload::MemoizationHitPayload { node_id });
     }
 
+    fn emit_context_compacted(&self, original_tokens: usize, new_tokens: usize) {
+        self.write_trace_event(apxm_core::events::payload::ContextCompactedPayload {
+            original_tokens,
+            new_tokens,
+        });
+    }
+
+    fn emit_context_window_warning(
+        &self,
+        current_tokens: usize,
+        max_tokens: usize,
+        utilization_pct: f64,
+    ) {
+        self.write_trace_event(apxm_core::events::payload::ContextWindowWarningPayload {
+            current_tokens,
+            max_tokens,
+            utilization_pct,
+        });
+    }
+
+    fn emit_model_context_metrics(&self, metrics: &ExecutionModelContextMetrics) {
+        self.write_trace_event(apxm_core::events::payload::ModelContextMetricsPayload {
+            node_id: metrics.node_id,
+            call_kind: metrics.call_kind,
+            plan_status: metrics.plan_status,
+            token_budget: metrics
+                .token_budget
+                .and_then(|value| u64::try_from(value).ok()),
+            original_tokens: metrics
+                .original_tokens
+                .and_then(|value| u64::try_from(value).ok()),
+            admitted_tokens: metrics
+                .admitted_tokens
+                .and_then(|value| u64::try_from(value).ok()),
+            kept_segments: metrics
+                .kept_segments
+                .and_then(|value| u64::try_from(value).ok()),
+            truncated_segments: metrics
+                .truncated_segments
+                .and_then(|value| u64::try_from(value).ok()),
+            omitted_token_budget_segments: metrics
+                .omitted_token_budget_segments
+                .and_then(|value| u64::try_from(value).ok()),
+            omitted_empty_segments: metrics
+                .omitted_empty_segments
+                .and_then(|value| u64::try_from(value).ok()),
+        });
+    }
+
+    fn emit_capability_effect_receipt(&self, receipt: &CapabilityEffectReceiptPayload) {
+        self.write_trace_event(receipt.clone());
+    }
+
     // ── Layer 2 — agent-layer hooks ────────────────────────────────
     //
     // `SessionEventEmitter` backs the CLI `execute`/`workflow` path
@@ -1221,6 +1277,28 @@ impl ExecutionEventEmitter for SessionEventEmitter {
             usage,
         });
     }
+
+    fn emit_approval_request(
+        &self,
+        agent_code: &str,
+        tool_name: &str,
+        approval_id: &str,
+        risk_level: &str,
+    ) {
+        self.write_trace_event(apxm_core::events::payload::ApprovalRequestPayload {
+            agent_code: agent_code.to_string(),
+            tool_name: tool_name.to_string(),
+            approval_id: approval_id.to_string(),
+            risk_level: risk_level.to_string(),
+        });
+    }
+
+    fn emit_approval_resolved(&self, approval_id: &str, decision: &str) {
+        self.write_trace_event(apxm_core::events::payload::ApprovalResolvedPayload {
+            approval_id: approval_id.to_string(),
+            decision: decision.to_string(),
+        });
+    }
 }
 
 #[cfg(test)]
@@ -1294,6 +1372,20 @@ mod layer2_tests {
             .collect()
     }
 
+    fn trace_payload_for_kind(session_dir: &Path, kind: &str) -> Option<serde_json::Value> {
+        let trace_path = session_dir.join(constants::session::files::TRACE);
+        let contents = fs::read_to_string(trace_path).ok()?;
+        contents.lines().find_map(|line| {
+            let event = serde_json::from_str::<serde_json::Value>(line).ok()?;
+            (event
+                .pointer("/payload/kind")
+                .and_then(|value| value.as_str())
+                == Some(kind))
+            .then(|| event.get("payload").cloned())
+            .flatten()
+        })
+    }
+
     /// Positive: every Layer-2 hook on `SessionEventEmitter` — the emitter
     /// backing `apxm execute`/`apxm workflow` — now writes a real trace
     /// frame instead of silently no-op'ing.
@@ -1317,6 +1409,8 @@ mod layer2_tests {
         emitter.emit_tool_call_begin("agent-1", "web_search", &["q".to_string()]);
         emitter.emit_tool_call_end("agent-1", "web_search", &["r".to_string()], "ok", 12);
         emitter.emit_agent_message("final answer", None, None, Some(1), Some(2));
+        emitter.emit_approval_request("agent-1", "web_search", "approval-1", "high");
+        emitter.emit_approval_resolved("approval-1", "approved");
 
         let kinds = read_trace_kinds(dir.path());
         for expected in [
@@ -1327,10 +1421,130 @@ mod layer2_tests {
             "tool_call_begin",
             "tool_call_end",
             "agent_message",
+            "approval_request",
+            "approval_resolved",
         ] {
             assert!(
                 kinds.iter().any(|k| k == expected),
                 "expected {expected} to be delivered, got {kinds:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn session_event_emitter_persists_approval_lifecycle_payloads() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let emitter =
+            SessionEventEmitter::new(dir.path(), "trace-approval".to_string(), None, None)
+                .expect("emitter");
+
+        emitter.emit_approval_request("agent-1", "write_file", "approval-1", "high");
+        emitter.emit_approval_resolved("approval-1", "approved");
+
+        assert_eq!(
+            trace_payload_for_kind(dir.path(), "approval_request"),
+            Some(serde_json::json!({
+                "kind": "approval_request",
+                "agent_code": "agent-1",
+                "tool_name": "write_file",
+                "approval_id": "approval-1",
+                "risk_level": "high",
+            }))
+        );
+        assert_eq!(
+            trace_payload_for_kind(dir.path(), "approval_resolved"),
+            Some(serde_json::json!({
+                "kind": "approval_resolved",
+                "approval_id": "approval-1",
+                "decision": "approved",
+            }))
+        );
+    }
+
+    #[test]
+    fn session_event_emitter_persists_context_events_without_content_fields() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let emitter = SessionEventEmitter::new(dir.path(), "trace-context".to_string(), None, None)
+            .expect("emitter");
+
+        emitter.emit_context_window_warning(240, 300, 80.0);
+        emitter.emit_context_compacted(320, 90);
+        emitter.emit_model_context_metrics(&apxm_runtime::ModelContextMetrics {
+            node_id: Some(7),
+            call_kind: apxm_runtime::ModelContextCallKind::Node,
+            plan_status: apxm_runtime::ModelContextPlanStatus::Assembled,
+            token_budget: Some(1024),
+            original_tokens: Some(1240),
+            admitted_tokens: Some(960),
+            kept_segments: Some(3),
+            truncated_segments: Some(1),
+            omitted_token_budget_segments: Some(2),
+            omitted_empty_segments: Some(1),
+        });
+        emitter.emit_capability_effect_receipt(&CapabilityEffectReceiptPayload {
+            receipt_id: "receipt-1".to_string(),
+            execution_id: "execution-1".to_string(),
+            node_id: 7,
+            invocation_id: "invocation-1".to_string(),
+            capability_binding: "calendar.write".to_string(),
+            dispatch_path: apxm_core::events::payload::CapabilityEffectDispatchPath::InvCap,
+            implementation_kind: apxm_core::events::payload::CapabilityEffectImplementationKind::Host,
+            implementation_ref: "host/calendar.write@1".to_string(),
+            request_digest: "sha256:request-1".to_string(),
+            admission_kind: apxm_core::events::payload::CapabilityEffectAdmissionKind::Grant,
+            grant_id: Some("grant-1".to_string()),
+            approval_status: Some(
+                apxm_core::events::payload::CapabilityEffectApprovalStatus::Approved,
+            ),
+            approval_id: Some("approval-1".to_string()),
+            idempotency_proof:
+                apxm_core::events::payload::CapabilityEffectIdempotencyProof::RemoteDeduplicated,
+            idempotency_key_digest: "sha256:idempotency-1".to_string(),
+            effect_ref: "effect-1".to_string(),
+            status: apxm_core::events::payload::CapabilityEffectReceiptStatus::Committed,
+        });
+
+        assert_eq!(
+            trace_payload_for_kind(dir.path(), "context_window_warning"),
+            Some(serde_json::json!({
+                "kind": "context_window_warning",
+                "current_tokens": 240,
+                "max_tokens": 300,
+                "utilization_pct": 80.0,
+            }))
+        );
+        assert_eq!(
+            trace_payload_for_kind(dir.path(), "context_compacted"),
+            Some(serde_json::json!({
+                "kind": "context_compacted",
+                "original_tokens": 320,
+                "new_tokens": 90,
+            }))
+        );
+        assert_eq!(
+            trace_payload_for_kind(dir.path(), "model_context_metrics"),
+            Some(serde_json::json!({
+                "kind": "model_context_metrics",
+                "node_id": 7,
+                "call_kind": "node",
+                "plan_status": "assembled",
+                "token_budget": 1024,
+                "original_tokens": 1240,
+                "admitted_tokens": 960,
+                "kept_segments": 3,
+                "truncated_segments": 1,
+                "omitted_token_budget_segments": 2,
+                "omitted_empty_segments": 1,
+            }))
+        );
+        let receipt = trace_payload_for_kind(dir.path(), "capability_effect_receipt")
+            .expect("capability effect receipt trace payload");
+        assert_eq!(receipt["receipt_id"], "receipt-1");
+        assert_eq!(receipt["effect_ref"], "effect-1");
+        for forbidden in ["arguments", "result", "prompt", "credential", "headers", "url"] {
+            assert!(
+                receipt.get(forbidden).is_none(),
+                "session trace receipt must not persist {forbidden}"
             );
         }
     }

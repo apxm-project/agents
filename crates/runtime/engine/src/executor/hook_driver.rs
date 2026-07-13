@@ -183,6 +183,7 @@ async fn host_llm_ask(
     params: JsonValue,
 ) -> std::result::Result<JsonValue, String> {
     use apxm_backends::LLMRequest;
+    use apxm_capability_iface::events::{ModelContextCallKind, ModelContextMetrics};
     use apxm_core::types::operations::AISOperationType;
 
     let prompt = params
@@ -197,12 +198,23 @@ async fn host_llm_ask(
     if let Some(system) = params.get("system").and_then(|v| v.as_str()) {
         request = request.with_system_prompt(system.to_string());
     }
+    let reservation = crate::executor::handlers::llm::reserve_model_call(ctx, &request)
+        .map_err(|error| format!("llm.ask budget reservation failed: {error}"))?;
+    if let Some(emitter) = &ctx.event_emitter {
+        emitter.emit_model_context_metrics(&ModelContextMetrics::unplanned(
+            None,
+            ModelContextCallKind::Hook,
+        ));
+    }
     let response = if let Some(router) = &ctx.model_router {
         router.generate(request).await
     } else {
         ctx.llm_registry.generate(request).await
     }
     .map_err(|e| format!("llm.ask failed: {e}"))?;
+    reservation
+        .reconcile(response.usage.total_tokens)
+        .map_err(|error| format!("llm.ask budget reconciliation failed: {error}"))?;
     Ok(JsonValue::String(response.content))
 }
 
