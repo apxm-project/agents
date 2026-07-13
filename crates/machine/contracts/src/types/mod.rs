@@ -20,6 +20,7 @@ pub mod values;
 // ── Execution ──────────────────────────────────────────────
 pub mod communicate;
 pub mod config;
+pub mod conversation;
 pub mod execution;
 pub mod graph_hints;
 pub mod graph_metrics;
@@ -56,6 +57,7 @@ pub use compiler::{
     CodegenOptions, CompilationStage, EmitFormat, OptimizationLevel, OptimizationTarget, PassInfo,
     PassMetadata, PipelineConfig, find_pass_metadata, list_pass_metadata, stage_rank,
 };
+pub use conversation::{TurnInput, TurnInputError};
 pub use execution::{
     Agent, AgentFlow, AgentId, AgentMetadata, CapabilityDeclaration, DagMetadata, DependencyType,
     Edge, ExecutionDag, ExecutionStats, GraphMetricAggregates, GraphMetricTotals,
