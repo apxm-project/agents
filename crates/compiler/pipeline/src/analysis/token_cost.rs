@@ -5,31 +5,37 @@ use apxm_core::types::Value;
 use apxm_core::types::compiler::{CostProvenance, CostSummary};
 use apxm_core::types::execution::Node;
 
+use super::evidence::ProfileCostEvidence;
+
 /// Derive token and latency estimates without claiming runtime observations.
-pub(super) fn summarize(node: &Node) -> CostSummary {
+pub(super) fn summarize(node: &Node, profile: Option<ProfileCostEvidence>) -> CostSummary {
+    let (estimated_latency_ms, latency_provenance, sample_count) = match profile {
+        Some(profile) => (
+            profile.latency_ms,
+            CostProvenance::Observed,
+            profile.sample_count,
+        ),
+        None => match node.metadata.estimated_latency {
+            Some(latency) => (
+                nanoseconds_to_millis(latency),
+                CostProvenance::BackendTier,
+                0,
+            ),
+            None => (1, CostProvenance::OperationCount, 0),
+        },
+    };
     CostSummary {
         static_prompt_tokens: number(node, graph_attrs::EST_TEMPLATE_TOKENS),
-        estimated_dynamic_tokens: number(node, graph_attrs::ESTIMATED_DYNAMIC_TOKENS),
+        estimated_dynamic_tokens: profile
+            .and_then(|profile| profile.dynamic_tokens)
+            .unwrap_or_else(|| number(node, graph_attrs::ESTIMATED_DYNAMIC_TOKENS)),
         max_output_tokens: node
             .get_attribute(graph_attrs::TOKEN_BUDGET)
             .and_then(Value::as_u64),
-        estimated_latency_ms: node
-            .metadata
-            .estimated_latency
-            .map(nanoseconds_to_millis)
-            .unwrap_or(1),
-        latency_provenance: if node.metadata.estimated_latency.is_some() {
-            CostProvenance::Observed
-        } else {
-            CostProvenance::OperationCount
-        },
-        sample_count: 0,
+        estimated_latency_ms,
+        latency_provenance,
+        sample_count,
     }
-}
-
-/// Return the scheduler weight used when a profile did not provide latency.
-pub(super) fn latency_weight_ms(node: &Node) -> u64 {
-    summarize(node).estimated_latency_ms
 }
 
 fn number(node: &Node, name: &str) -> u64 {

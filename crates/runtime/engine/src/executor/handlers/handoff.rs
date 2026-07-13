@@ -6,7 +6,10 @@
 //! Emits typed handoff lifecycle events with span continuity.
 
 use super::{
-    ExecutionContext, Node, Result, Value, execute_llm_request_for_node, get_string_attribute,
+    ExecutionContext, Node, Result, Value, get_string_attribute,
+    llm::{
+        context_planning_runtime_error, context_profile_for_node, execute_contextual_node_request,
+    },
     read_stm_with_scope_fallback,
 };
 use crate::aam::{ScopeSpec, TransitionLabel};
@@ -167,11 +170,11 @@ pub async fn execute(ctx: &ExecutionContext, node: &Node, inputs: Vec<Value>) ->
     // agent can see the source's conversational history.
     if transfer_state {
         if let Some(ref stack) = ctx.context_stack {
-            let assembly = stack.assemble(
-                node.id,
-                "default",
-                apxm_core::constants::runtime::context_stack::DEFAULT_PROMPT_BUDGET_TOKENS,
-            );
+            let profile = context_profile_for_node(node)
+                .map_err(|error| context_planning_runtime_error(node, error))?;
+            let assembly = stack
+                .assemble(node.id, profile)
+                .map_err(|error| context_planning_runtime_error(node, error))?;
             if !assembly.frames.is_empty() {
                 let context_text = format!("{}", assembly);
                 let _ = child_ctx
@@ -317,6 +320,6 @@ async fn handoff_inline_agent(
         "HANDOFF dispatching to inline-spawned agent via LLM"
     );
 
-    let response = execute_llm_request_for_node(ctx, node, "HANDOFF", &request).await?;
+    let response = execute_contextual_node_request(ctx, node, "HANDOFF", &request).await?;
     Ok(Some(Value::String(response.content)))
 }

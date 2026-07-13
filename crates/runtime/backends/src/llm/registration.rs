@@ -5,6 +5,7 @@
 
 use crate::llm::LLMRegistry;
 use crate::llm::Provider;
+use crate::llm::backends::BackendConfigurationError;
 use crate::llm::wire::config_keys;
 use crate::llm::{
     BackendConfig, BackendType, ProviderProtocol, normalize_anthropic_gateway_endpoint,
@@ -30,12 +31,24 @@ pub struct ModelRegistration {
     /// Optional descriptive metadata for routing and inspection.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub info: Option<ModelInfo>,
+    /// Whether the model supports vision/image inputs.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub supports_vision: Option<bool>,
+    /// Whether the model supports function/tool calling.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub supports_functions: Option<bool>,
+    /// Whether the model supports fine-tuning through the registered backend.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub supports_fine_tuning: Option<bool>,
     /// Whether the model supports extended thinking/reasoning. `None` means
     /// "use backend default". When `Some(false)`, compatible backends may send
     /// an explicit chat-template control to suppress thinking output. Sourced
     /// from `ModelConfig.supports_thinking`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub supports_thinking: Option<bool>,
+    /// Whether the OpenAI-compatible request uses reasoning token fields.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub uses_reasoning_token_fields: Option<bool>,
     /// Whether the model accepts an explicit custom `temperature` field.
     /// `Some(false)` means the OpenAI-compatible adapter must omit
     /// `temperature` and rely on the provider default.
@@ -73,6 +86,48 @@ pub struct BackendRegistration {
 
 impl BackendRegistration {
     pub fn from_backend_config(backend: &BackendConfig) -> Result<Self> {
+        let endpoint = backend
+            .endpoint
+            .as_deref()
+            .map(|value| resolve_env_reference(value, "endpoint", &backend.name))
+            .transpose()?
+            .map(|value| value.trim().to_string())
+            .filter(|value| !value.is_empty());
+        let endpoint = match (backend.protocol, endpoint) {
+            (ProviderProtocol::Mock, endpoint) => endpoint,
+            (_, Some(endpoint)) => {
+                Some(normalize_endpoint_for_protocol(backend.protocol, &endpoint))
+            }
+            (_, None) => {
+                return Err(BackendConfigurationError::MissingRequiredField {
+                    protocol: backend.protocol,
+                    field: "endpoint",
+                }
+                .into());
+            }
+        }
+        .map(|value| {
+            if backend.protocol == ProviderProtocol::Anthropic {
+                normalize_anthropic_gateway_endpoint(&value)
+            } else {
+                value
+            }
+        });
+
+        let default_model = backend
+            .models
+            .first()
+            .map(|model| model.id.trim())
+            .filter(|model| !model.is_empty())
+            .ok_or(BackendConfigurationError::MissingRequiredField {
+                protocol: backend.protocol,
+                field: "model",
+            })?
+            .to_string();
+
+        // Validate the structural registration contract before materializing
+        // secrets so missing model/endpoint errors remain typed and stable
+        // regardless of the caller's current environment.
         let api_key = match backend.api_key.as_deref() {
             Some(key) => resolve_secret_reference(key, "api_key", &backend.name)?,
             None if backend.backend_type == BackendType::Local
@@ -88,20 +143,6 @@ impl BackendRegistration {
                 ));
             }
         };
-
-        let endpoint = backend
-            .endpoint
-            .as_deref()
-            .map(|value| resolve_env_reference(value, "endpoint", &backend.name))
-            .transpose()?
-            .map(|value| normalize_endpoint_for_protocol(backend.protocol, &value))
-            .map(|value| {
-                if backend.protocol == ProviderProtocol::Anthropic {
-                    normalize_anthropic_gateway_endpoint(&value)
-                } else {
-                    value
-                }
-            });
 
         let mut extra_headers: HashMap<String, String> = backend
             .headers
@@ -130,7 +171,11 @@ impl BackendRegistration {
                     supports_vision: model.supports_vision,
                     supports_functions: model.supports_functions,
                 }),
+                supports_vision: Some(model.supports_vision),
+                supports_functions: Some(model.supports_functions),
+                supports_fine_tuning: Some(model.supports_fine_tuning),
                 supports_thinking: Some(model.supports_thinking),
+                uses_reasoning_token_fields: Some(model.uses_reasoning_token_fields),
                 supports_custom_temperature: model.supports_custom_temperature,
                 supports_structured_outputs: model.supports_structured_outputs,
             })
@@ -140,7 +185,7 @@ impl BackendRegistration {
             name: backend.name.clone(),
             protocol: backend.protocol,
             api_key,
-            default_model: None,
+            default_model: Some(default_model),
             models,
             endpoint,
             options: HashMap::new(),
@@ -150,20 +195,32 @@ impl BackendRegistration {
         })
     }
 
-    fn primary_model_id(&self) -> Option<&str> {
-        self.default_model
+    fn backend_config_json(&self) -> Result<JsonValue> {
+        let model = self
+            .default_model
             .as_deref()
-            .or_else(|| self.models.first().map(|model| model.id.as_str()))
-    }
-
-    fn backend_config_json(&self) -> Option<JsonValue> {
+            .map(str::trim)
+            .filter(|model| !model.is_empty())
+            .ok_or(BackendConfigurationError::MissingRequiredField {
+                protocol: self.protocol,
+                field: "model",
+            })?;
         let mut map = Map::new();
 
-        if let Some(model) = self.primary_model_id() {
-            map.insert(MODEL.to_string(), json!(model));
-        }
-        if let Some(endpoint) = &self.endpoint {
+        map.insert(MODEL.to_string(), json!(model));
+        if let Some(endpoint) = self
+            .endpoint
+            .as_deref()
+            .map(str::trim)
+            .filter(|endpoint| !endpoint.is_empty())
+        {
             map.insert(BASE_URL.to_string(), json!(endpoint));
+        } else if self.protocol != ProviderProtocol::Mock {
+            return Err(BackendConfigurationError::MissingRequiredField {
+                protocol: self.protocol,
+                field: "endpoint",
+            }
+            .into());
         }
         for (key, value) in &self.options {
             map.insert(key.clone(), json!(value));
@@ -200,10 +257,40 @@ impl BackendRegistration {
             .filter_map(|m| {
                 let mut entry = Map::new();
                 entry.insert(config_keys::ID.to_string(), json!(m.id));
+                if let Some(info) = &m.info {
+                    entry.insert(
+                        config_keys::CONTEXT_WINDOW.to_string(),
+                        json!(info.context_window),
+                    );
+                }
+                if let Some(supports_vision) = m.supports_vision {
+                    entry.insert(
+                        config_keys::SUPPORTS_VISION.to_string(),
+                        json!(supports_vision),
+                    );
+                }
+                if let Some(supports_functions) = m.supports_functions {
+                    entry.insert(
+                        config_keys::SUPPORTS_FUNCTIONS.to_string(),
+                        json!(supports_functions),
+                    );
+                }
+                if let Some(supports_fine_tuning) = m.supports_fine_tuning {
+                    entry.insert(
+                        config_keys::SUPPORTS_FINE_TUNING.to_string(),
+                        json!(supports_fine_tuning),
+                    );
+                }
                 if let Some(supports_thinking) = m.supports_thinking {
                     entry.insert(
                         config_keys::SUPPORTS_THINKING.to_string(),
                         json!(supports_thinking),
+                    );
+                }
+                if let Some(uses_reasoning_token_fields) = m.uses_reasoning_token_fields {
+                    entry.insert(
+                        config_keys::USES_REASONING_TOKEN_FIELDS.to_string(),
+                        json!(uses_reasoning_token_fields),
                     );
                 }
                 if let Some(supports_custom_temperature) = m.supports_custom_temperature {
@@ -225,20 +312,18 @@ impl BackendRegistration {
             map.insert(config_keys::MODELS.to_string(), json!(model_entries));
         }
 
-        if map.is_empty() {
-            None
-        } else {
-            Some(JsonValue::Object(map))
-        }
+        Ok(JsonValue::Object(map))
     }
 
     /// Register this backend into the supplied registry.
     pub async fn register(&self, registry: &LLMRegistry) -> Result<()> {
-        let provider =
-            Provider::from_protocol(self.protocol, &self.api_key, self.backend_config_json())
-                .await?;
+        let provider = Provider::from_protocol(
+            self.protocol,
+            &self.api_key,
+            Some(self.backend_config_json()?),
+        )
+        .await?;
         registry.register(self.name.clone(), provider)?;
-        registry.register_backend_provider(self.name.clone(), self.protocol);
 
         if let Some(model) = &self.default_model {
             registry.set_model_route(model.clone(), self.name.clone())?;
@@ -364,8 +449,16 @@ impl RegistryPolicy {
         if let Some(default_backend) = &self.default_backend {
             registry.set_default(default_backend.clone())?;
         }
+
+        for alias in &self.model_aliases {
+            registry.register_model_alias(alias.alias.clone(), alias.model.clone());
+            if let Some(backend) = &alias.backend {
+                registry.set_model_route(alias.alias.clone(), backend.clone())?;
+            }
+        }
+
         if let Some(default_model) = &self.default_model {
-            registry.set_default_model(default_model.clone());
+            registry.set_default_model(default_model.clone())?;
         }
 
         for route in &self.operation_routes {
@@ -373,14 +466,7 @@ impl RegistryPolicy {
                 registry.set_operation_default(route.operation, backend.clone())?;
             }
             if let Some(model) = &route.model {
-                registry.set_operation_model(route.operation, model.clone());
-            }
-        }
-
-        for alias in &self.model_aliases {
-            registry.register_model_alias(alias.alias.clone(), alias.model.clone());
-            if let Some(backend) = &alias.backend {
-                registry.set_model_route(alias.alias.clone(), backend.clone())?;
+                registry.set_operation_model(route.operation, model.clone())?;
             }
         }
 
@@ -404,7 +490,19 @@ mod tests {
             endpoint: Some("https://api.openai.com/v1".to_string()),
             api_key: api_key.map(str::to_string),
             headers: extra_headers,
-            models: vec![],
+            models: vec![crate::llm::ModelConfig {
+                id: "fixture-model".to_string(),
+                aliases: vec![],
+                context_window: 0,
+                supports_vision: false,
+                supports_functions: false,
+                supports_fine_tuning: false,
+                supports_thinking: false,
+                uses_reasoning_token_fields: false,
+                supports_custom_temperature: None,
+                supports_structured_outputs: None,
+                max_output_tokens: None,
+            }],
             auto_tool_choice: None,
             supports_structured_outputs: None,
         }
@@ -441,5 +539,66 @@ mod tests {
                 .contains("Environment variable 'OPENAI_API_KEY' not set"),
             "unexpected error: {err}"
         );
+    }
+
+    #[test]
+    fn backend_registration_requires_registered_model_and_endpoint() {
+        let mut configured_backend = backend(Some("env:OPENAI_API_KEY"), HashMap::new());
+        configured_backend.backend_type = BackendType::Local;
+        configured_backend.api_key = None;
+        configured_backend.models.clear();
+        let error = BackendRegistration::from_backend_config(&configured_backend)
+            .expect_err("missing model must fail closed");
+        assert!(matches!(
+            error.downcast_ref::<BackendConfigurationError>(),
+            Some(BackendConfigurationError::MissingRequiredField {
+                protocol: ProviderProtocol::OpenAI,
+                field: "model",
+            })
+        ));
+
+        let mut configured_backend = backend(Some("env:OPENAI_API_KEY"), HashMap::new());
+        configured_backend.backend_type = BackendType::Local;
+        configured_backend.api_key = None;
+        configured_backend.endpoint = None;
+        let error = BackendRegistration::from_backend_config(&configured_backend)
+            .expect_err("missing endpoint must fail closed");
+        assert!(matches!(
+            error.downcast_ref::<BackendConfigurationError>(),
+            Some(BackendConfigurationError::MissingRequiredField {
+                protocol: ProviderProtocol::OpenAI,
+                field: "endpoint",
+            })
+        ));
+    }
+
+    #[test]
+    fn backend_registration_forwards_registered_model_capabilities() {
+        let mut configured_backend = backend(None, HashMap::new());
+        configured_backend.backend_type = BackendType::Local;
+        let model = configured_backend
+            .models
+            .first_mut()
+            .expect("fixture model");
+        model.supports_vision = true;
+        model.supports_functions = true;
+        model.supports_fine_tuning = true;
+        model.uses_reasoning_token_fields = true;
+        model.supports_custom_temperature = Some(false);
+        model.supports_structured_outputs = Some(true);
+
+        let registration = BackendRegistration::from_backend_config(&configured_backend)
+            .expect("registered backend config");
+        let config = registration
+            .backend_config_json()
+            .expect("adapter configuration");
+        let model = &config[config_keys::MODELS][0];
+
+        assert_eq!(model[config_keys::SUPPORTS_VISION], true);
+        assert_eq!(model[config_keys::SUPPORTS_FUNCTIONS], true);
+        assert_eq!(model[config_keys::SUPPORTS_FINE_TUNING], true);
+        assert_eq!(model[config_keys::USES_REASONING_TOKEN_FIELDS], true);
+        assert_eq!(model[config_keys::SUPPORTS_CUSTOM_TEMPERATURE], false);
+        assert_eq!(model[config_keys::SUPPORTS_STRUCTURED_OUTPUTS], true);
     }
 }

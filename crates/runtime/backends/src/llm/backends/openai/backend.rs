@@ -3,14 +3,19 @@
 //! Implements the LLMBackend trait for OpenAI's API, supporting modern OpenAI
 //! model identifiers (gpt-4o, gpt-4o-mini, gpt-4-turbo, gpt-4, gpt-3.5-turbo, etc.).
 //!
-//! This file updates the provider default model and the list of known models
-//! surfaced by `list_models()` to reflect more recent model names.
+//! The adapter exposes the protocol mechanics and discovery catalog for
+//! explicitly registered models.
 
 use crate::llm::ProviderProtocol;
 use crate::llm::backends::http::llm_http_client;
 use crate::llm::backends::traits::StreamChunk;
+use crate::llm::backends::{
+    ConfiguredModelCapabilities, configured_model_capabilities, configured_model_info,
+    required_config_string, resolve_configured_value,
+};
 use crate::llm::backends::{ContentPart, LLMBackend, LLMRequest, LLMResponse, Role, ToolChoice};
-use crate::llm::catalog::{default_model_for_protocol, models_for_protocol};
+#[cfg(test)]
+use crate::llm::backends::{FunctionCall, Message};
 use crate::llm::wire::{
     api_paths, config_keys, headers, message_keys, openai as openai_keys, roles, sse, tool_keys,
 };
@@ -22,9 +27,95 @@ use async_trait::async_trait;
 use futures::StreamExt as _;
 use serde::Deserialize;
 use serde_json::json;
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::pin::Pin;
 use tokio_stream::Stream;
+
+impl LLMRequest {
+    /// Validate the normalized request shape before any provider adapter sends it.
+    ///
+    /// Tool results are valid only when they reference an earlier assistant
+    /// tool call. Provider-bound prompt inputs cannot synthesize that
+    /// correlation, so an uncorrelated tool payload fails closed here.
+    pub fn validate_provider_dispatch(&self) -> Result<()> {
+        self.validate()?;
+
+        let mut prior_tool_calls = HashSet::new();
+        for (index, message) in self.resolved_messages().iter().enumerate() {
+            if message.content.is_empty() {
+                anyhow::bail!("provider message at index {index} has no content");
+            }
+
+            match message.role {
+                Role::Assistant => {
+                    if message.tool_call_id.is_some() {
+                        anyhow::bail!(
+                            "assistant message at index {index} carries an invalid tool_call_id"
+                        );
+                    }
+                    for part in &message.content {
+                        if let ContentPart::ToolCall { id, function } = part {
+                            if id.trim().is_empty() || function.name.trim().is_empty() {
+                                anyhow::bail!(
+                                    "assistant tool call at index {index} has a missing or malformed id or name"
+                                );
+                            }
+                            if !prior_tool_calls.insert(id.clone()) {
+                                anyhow::bail!(
+                                    "assistant tool call at index {index} reuses tool_call_id '{id}'"
+                                );
+                            }
+                        }
+                    }
+                }
+                Role::Tool => {
+                    let tool_call_id = message
+                        .tool_call_id
+                        .as_deref()
+                        .filter(|id| !id.trim().is_empty())
+                        .ok_or_else(|| {
+                            anyhow::anyhow!(
+                                "tool message at index {index} is missing a correlated tool_call_id"
+                            )
+                        })?;
+                    if !prior_tool_calls.contains(tool_call_id) {
+                        anyhow::bail!(
+                            "tool message at index {index} references uncorrelated tool_call_id '{tool_call_id}'"
+                        );
+                    }
+                    if message.text_content().trim().is_empty()
+                        || message
+                            .content
+                            .iter()
+                            .any(|part| matches!(part, ContentPart::ToolCall { .. }))
+                    {
+                        anyhow::bail!("tool message at index {index} has malformed content");
+                    }
+                }
+                Role::System | Role::User => {
+                    if message.tool_call_id.is_some()
+                        || message
+                            .content
+                            .iter()
+                            .any(|part| matches!(part, ContentPart::ToolCall { .. }))
+                    {
+                        anyhow::bail!(
+                            "provider message at index {index} has a malformed {:?} role payload",
+                            message.role
+                        );
+                    }
+                }
+            }
+        }
+
+        Ok(())
+    }
+}
+
+/// Shared final admission guard used by every provider adapter.
+pub(crate) fn validate_provider_dispatch(request: &LLMRequest) -> Result<()> {
+    request.validate_provider_dispatch()
+}
 
 /// Parse the APXM `x-apxm-fields-honored` response header, if present.
 ///
@@ -65,23 +156,9 @@ fn parse_apxm_fields_honored_value(raw: &str) -> Option<Vec<String>> {
     (!fields.is_empty()).then_some(fields)
 }
 
-const DEFAULT_BASE_URL: &str = "https://api.openai.com/v1";
 const PROTOCOL: ProviderProtocol = ProviderProtocol::OpenAI;
-const DEFAULT_MODEL: &str = "gpt-4o-mini";
 /// Output-budget key for reasoning-family models (the classic key is `max_tokens`).
 const MAX_COMPLETION_TOKENS: &str = "max_completion_tokens";
-
-/// Reasoning-family OpenAI/Azure models (gpt-5*, o1/o3/o4*) require
-/// `max_completion_tokens` and reject custom sampling parameters. Matched by id
-/// prefix so new point releases (e.g. `gpt-5.6`, `o5`) are covered without a list.
-fn is_reasoning_model(model: &str) -> bool {
-    let m = model.to_ascii_lowercase();
-    m.starts_with("gpt-5")
-        || m.starts_with("o1")
-        || m.starts_with("o3")
-        || m.starts_with("o4")
-        || m.starts_with("o5")
-}
 
 /// OpenAI LLM backend.
 ///
@@ -107,10 +184,10 @@ pub struct OpenAIBackend {
     base_url: String,
     /// Additional HTTP headers injected on every request.
     extra_headers: Vec<(String, String)>,
-    /// Model IDs declared with `supports_custom_temperature = false` in
-    /// backend registration config. These models reject an explicit custom
-    /// `temperature` field, so the request must rely on the provider default.
-    fixed_temperature_models: HashSet<String>,
+    /// Registered per-model request-shaping and capability evidence.
+    model_capabilities: HashMap<String, ConfiguredModelCapabilities>,
+    /// Registered model metadata exposed through backend inspection.
+    registered_models: Vec<ModelInfo>,
     /// Whether this OpenAI-compatible endpoint accepts structured-output
     /// request fields. Runtime schema validation still applies when disabled.
     structured_outputs_supported: bool,
@@ -118,6 +195,13 @@ pub struct OpenAIBackend {
 }
 
 impl OpenAIBackend {
+    fn configured_capabilities(&self, model: &str) -> ConfiguredModelCapabilities {
+        self.model_capabilities
+            .get(model)
+            .copied()
+            .unwrap_or_default()
+    }
+
     fn apply_auth_header(&self, req_builder: reqwest::RequestBuilder) -> reqwest::RequestBuilder {
         if self.api_key.is_empty() {
             req_builder
@@ -144,25 +228,14 @@ impl OpenAIBackend {
     /// Create a new OpenAI backend.
     ///
     /// The optional `config` value may contain:
-    /// - `model` – override the default model name
-    /// - `base_url` – override the API base URL (enables on-premises / Azure / OpenRouter endpoints)
+    /// - `model` – registered model name
+    /// - `base_url` – registered API base URL
     /// - `extra_headers` – a JSON object whose keys/values become HTTP headers on every
     ///   request.  Values prefixed with `"env:"` are resolved from environment variables
     ///   at backend-creation time (e.g. `"env:USERNAME"` → current OS user).
     pub async fn new(api_key: &str, config: Option<serde_json::Value>) -> Result<Self> {
-        let model = config
-            .as_ref()
-            .and_then(|c| c.get(MODEL))
-            .and_then(|m| m.as_str())
-            .unwrap_or_else(|| default_model_for_protocol(PROTOCOL).unwrap_or(DEFAULT_MODEL))
-            .to_string();
-
-        let base_url = config
-            .as_ref()
-            .and_then(|c| c.get(BASE_URL))
-            .and_then(|u| u.as_str())
-            .unwrap_or(DEFAULT_BASE_URL)
-            .to_string();
+        let model = required_config_string(config.as_ref(), PROTOCOL, MODEL)?;
+        let base_url = required_config_string(config.as_ref(), PROTOCOL, BASE_URL)?;
 
         // Parse optional extra_headers from config.
         // Values prefixed with "env:" are read from environment variables.
@@ -172,40 +245,24 @@ impl OpenAIBackend {
             .and_then(|h| h.as_object())
             .map(|obj| {
                 obj.iter()
-                    .filter_map(|(k, v)| {
-                        let raw = v.as_str()?;
-                        let resolved =
-                            if let Some(var_name) = raw.strip_prefix(config_keys::ENV_PREFIX) {
-                                std::env::var(var_name).unwrap_or_else(|_| raw.to_string())
-                            } else {
-                                raw.to_string()
-                            };
-                        Some((k.clone(), resolved))
+                    .map(|(key, value)| -> Result<(String, String)> {
+                        let field = format!("{}.{}", config_keys::EXTRA_HEADERS, key);
+                        let raw = value.as_str().ok_or_else(|| {
+                            crate::llm::backends::BackendConfigurationError::InvalidOptionalField {
+                                protocol: PROTOCOL,
+                                field: field.clone(),
+                            }
+                        })?;
+                        let resolved = resolve_configured_value(PROTOCOL, field, raw)?;
+                        Ok::<_, anyhow::Error>((key.clone(), resolved))
                     })
-                    .collect()
+                    .collect::<std::result::Result<Vec<_>, _>>()
             })
+            .transpose()?
             .unwrap_or_default();
 
-        // Parse per-model capability entries forwarded by BackendRegistration.
-        // The OpenAI-compatible adapter only consults protocol-level request
-        // shaping flags here; provider-specific body shaping belongs in the
-        // concrete backend specialization.
-        let fixed_temperature_models: HashSet<String> = config
-            .as_ref()
-            .and_then(|c| c.get(config_keys::MODELS))
-            .and_then(|m| m.as_array())
-            .map(|arr| {
-                arr.iter()
-                    .filter_map(|entry| {
-                        let id = entry.get(config_keys::ID).and_then(|v| v.as_str())?;
-                        let supports = entry
-                            .get(config_keys::SUPPORTS_CUSTOM_TEMPERATURE)
-                            .and_then(|v| v.as_bool())?;
-                        if supports { None } else { Some(id.to_string()) }
-                    })
-                    .collect()
-            })
-            .unwrap_or_default();
+        let model_capabilities = configured_model_capabilities(config.as_ref());
+        let registered_models = configured_model_info(config.as_ref());
 
         let structured_outputs_supported = config
             .as_ref()
@@ -218,7 +275,8 @@ impl OpenAIBackend {
             model,
             base_url,
             extra_headers,
-            fixed_temperature_models,
+            model_capabilities,
+            registered_models,
             structured_outputs_supported,
             client: llm_http_client(),
         })
@@ -310,14 +368,10 @@ impl OpenAIBackend {
         body[openai_keys::MODEL] = json!(model);
         body[openai_keys::MESSAGES] = json!(messages);
 
-        // Reasoning-family models (gpt-5*, o1/o3/o4*) on the OpenAI / Azure API use
-        // `max_completion_tokens` instead of `max_tokens` and reject custom
-        // `temperature`, `top_p`, and penalties — only provider defaults are
-        // allowed. Older chat models (gpt-4*, gpt-4o*, and OpenAI-compatible
-        // gateways like Kimi/DeepSeek) keep the classic parameters.
-        let reasoning = is_reasoning_model(model);
+        let capabilities = self.configured_capabilities(model);
+        let reasoning = capabilities.uses_reasoning_token_fields;
 
-        if !reasoning && !self.fixed_temperature_models.contains(model) {
+        if !reasoning && capabilities.supports_custom_temperature != Some(false) {
             body[openai_keys::TEMPERATURE] = json!(request.temperature);
         }
 
@@ -348,7 +402,9 @@ impl OpenAIBackend {
             body[openai_keys::STOP] = json!(request.stop_sequences);
         }
 
-        if self.structured_outputs_supported
+        if capabilities
+            .supports_structured_outputs
+            .unwrap_or(self.structured_outputs_supported)
             && let Some(output_schema) = &request.output_schema
         {
             body[openai_keys::RESPONSE_FORMAT] = json!({});
@@ -450,8 +506,7 @@ impl OpenAIBackend {
             FinishReason::ToolUse
         };
 
-        let input_tokens = response.usage.input_token_count();
-        let output_tokens = response.usage.output_token_count();
+        let (input_tokens, output_tokens) = response.usage.observed_token_counts()?;
         let usage = TokenUsage::new(input_tokens, output_tokens).with_details(
             response.usage.cached_input_tokens(),
             response.usage.reasoning_output_tokens(),
@@ -464,7 +519,7 @@ impl OpenAIBackend {
 #[async_trait]
 impl LLMBackend for OpenAIBackend {
     async fn generate(&self, request: LLMRequest) -> Result<LLMResponse> {
-        request.validate()?;
+        request.validate_provider_dispatch()?;
 
         let model = self.request_model(&request).to_string();
         let body = self.build_request_body(&request);
@@ -519,9 +574,13 @@ impl LLMBackend for OpenAIBackend {
             serde_json::from_value::<OpenAIResponse>(raw).context("Failed to parse OpenAI response")
         } else if let Some(text) = raw.pointer("/response/text").and_then(|v| v.as_str()) {
             // OpenAI-compatible gateway Claude format: {response: {type: text, text: "..."}}
+            let usage = raw
+                .get("usage")
+                .cloned()
+                .context("OpenAI-compatible gateway response omitted observed usage")?;
             let normalized = serde_json::json!({
                 "choices": [{"message": {"content": text}, "finish_reason": "stop"}],
-                "usage": raw.get("usage").cloned().unwrap_or(serde_json::json!({"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0}))
+                "usage": usage
             });
             serde_json::from_value::<OpenAIResponse>(normalized)
                 .context("Failed to normalize OpenAI-compatible gateway response")
@@ -530,9 +589,13 @@ impl LLMBackend for OpenAIBackend {
             .and_then(|v| v.as_str())
         {
             // Already correct but nested differently
+            let usage = raw
+                .get("usage")
+                .cloned()
+                .context("OpenAI-compatible response omitted observed usage")?;
             let normalized = serde_json::json!({
                 "choices": [{"message": {"content": content}, "finish_reason": "stop"}],
-                "usage": raw.get("usage").cloned().unwrap_or(serde_json::json!({"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0}))
+                "usage": usage
             });
             serde_json::from_value::<OpenAIResponse>(normalized)
                 .context("Failed to normalize response")
@@ -561,7 +624,7 @@ impl LLMBackend for OpenAIBackend {
         request: LLMRequest,
     ) -> Pin<Box<dyn Stream<Item = Result<StreamChunk>> + Send + '_>> {
         Box::pin(async_stream::try_stream! {
-            request.validate()?;
+            request.validate_provider_dispatch()?;
             let model = self.request_model(&request).to_string();
             let mut body = self.build_request_body(&request);
             body[message_keys::STREAM] = json!(true);
@@ -592,7 +655,7 @@ impl LLMBackend for OpenAIBackend {
             let mut stream = response.bytes_stream();
             let mut buffer = String::new();
             let mut full_content = String::new();
-            let mut last_usage = TokenUsage::new(0, 0);
+            let mut last_usage = None;
             let mut tool_calls_map: std::collections::HashMap<usize, (String, String, String)> =
                 std::collections::HashMap::new();
 
@@ -627,10 +690,11 @@ impl LLMBackend for OpenAIBackend {
                                 FinishReason::ToolUse
                             };
 
+                            let usage = last_usage.context("OpenAI stream completed without observed usage")?;
                             let resp = LLMResponse::new(
                                 full_content.clone(),
                                 &model,
-                                last_usage.clone(),
+                                usage,
                                 finish_reason,
                             ).with_tool_calls(tool_calls);
 
@@ -641,15 +705,13 @@ impl LLMBackend for OpenAIBackend {
                         if let Ok(parsed) = serde_json::from_str::<StreamChunkPayload>(data) {
                             // Emit usage if present at top level.
                             if let Some(ref usage_obj) = parsed.usage {
-                                let input = usage_obj.input_token_count();
-                                let output = usage_obj.output_token_count();
-                                if input > 0 || output > 0 {
-                                    last_usage = TokenUsage::new(input, output).with_details(
-                                        usage_obj.cached_input_tokens(),
-                                        usage_obj.reasoning_output_tokens(),
-                                    );
-                                    yield StreamChunk::Usage(last_usage.clone());
-                                }
+                                let (input, output) = usage_obj.observed_token_counts()?;
+                                let usage = TokenUsage::new(input, output).with_details(
+                                    usage_obj.cached_input_tokens(),
+                                    usage_obj.reasoning_output_tokens(),
+                                );
+                                last_usage = Some(usage.clone());
+                                yield StreamChunk::Usage(usage);
                             }
 
                             for choice in &parsed.choices {
@@ -717,6 +779,11 @@ impl LLMBackend for OpenAIBackend {
         &self.model
     }
 
+    fn context_window_for_model(&self, model: &str) -> Option<usize> {
+        let context_window = self.configured_capabilities(model).context_window;
+        (context_window > 0).then_some(context_window)
+    }
+
     async fn health_check(&self) -> Result<()> {
         let url = format!("{}{}", self.base_url, api_paths::MODELS);
 
@@ -744,30 +811,120 @@ impl LLMBackend for OpenAIBackend {
     }
 
     async fn list_models(&self) -> Result<Vec<ModelInfo>> {
-        Ok(models_for_protocol(PROTOCOL)
-            .map(|m| ModelInfo {
-                id: m.id.to_string(),
-                name: m.id.to_string(),
-                context_window: 128_000,
-                supports_vision: m.id.contains("4o")
-                    || m.id.contains('5')
-                    || m.id.contains("turbo"),
-                supports_functions: true,
-            })
-            .collect())
+        Ok(self.registered_models.clone())
     }
 
     fn capabilities(&self) -> ModelCapabilities {
+        let capabilities = self.configured_capabilities(&self.model);
         ModelCapabilities {
             streaming: true,
-            vision: self.model.contains("vision")
-                || self.model.contains("turbo")
-                || self.model.contains("gpt-4o"),
-            functions: true,
-            structured_outputs: self.structured_outputs_supported,
+            vision: capabilities.supports_vision,
+            functions: capabilities.supports_functions,
+            structured_outputs: capabilities
+                .supports_structured_outputs
+                .unwrap_or(self.structured_outputs_supported),
             batch: false,
-            fine_tuning: self.model.starts_with("gpt-3.5"),
+            fine_tuning: capabilities.supports_fine_tuning,
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn provider_admission_requires_correlated_tool_messages() {
+        let uncorrelated = LLMRequest::from_messages(vec![
+            Message::text(Role::User, "status"),
+            Message::text(Role::Tool, "untrusted tool context"),
+        ]);
+        assert!(
+            uncorrelated
+                .validate_provider_dispatch()
+                .expect_err("tool context needs a call id")
+                .to_string()
+                .contains("correlated tool_call_id")
+        );
+
+        let correlated = LLMRequest::from_messages(vec![
+            Message {
+                role: Role::Assistant,
+                content: vec![ContentPart::ToolCall {
+                    id: "call_1".to_string(),
+                    function: FunctionCall {
+                        name: "lookup".to_string(),
+                        arguments: json!({"key": "status"}),
+                    },
+                }],
+                tool_call_id: None,
+                name: None,
+            },
+            Message::tool_result("call_1", "available"),
+        ]);
+        correlated
+            .validate_provider_dispatch()
+            .expect("correlated provider tool exchange");
+    }
+
+    #[tokio::test]
+    async fn registered_model_capabilities_control_openai_request_shape() {
+        let backend = OpenAIBackend::new(
+            "",
+            Some(json!({
+                "model": "deployment-model",
+                "base_url": "https://llm.example.test/v1",
+                "models": [{
+                    "id": "deployment-model",
+                    "supports_vision": true,
+                    "supports_functions": false,
+                    "supports_fine_tuning": true,
+                    "supports_custom_temperature": false,
+                    "uses_reasoning_token_fields": true,
+                    "supports_structured_outputs": true
+                }]
+            })),
+        )
+        .await
+        .expect("registered backend config");
+        let mut request = LLMRequest::new("status");
+        request.max_tokens = Some(64);
+
+        let body = backend.build_request_body(&request);
+        assert_eq!(body[MAX_COMPLETION_TOKENS], 64);
+        assert!(body.get(message_keys::MAX_TOKENS).is_none());
+        assert!(body.get(openai_keys::TEMPERATURE).is_none());
+
+        let capabilities = backend.capabilities();
+        assert!(capabilities.vision);
+        assert!(!capabilities.functions);
+        assert!(capabilities.structured_outputs);
+        assert!(capabilities.fine_tuning);
+
+        let models = backend.list_models().await.expect("registered models");
+        assert_eq!(models.len(), 1);
+        assert_eq!(models[0].id, "deployment-model");
+        assert!(models[0].supports_vision);
+        assert!(!models[0].supports_functions);
+    }
+
+    #[test]
+    fn openai_usage_requires_observed_input_and_output_counts() {
+        let usage = Usage {
+            prompt_tokens: Some(4),
+            completion_tokens: None,
+            input_tokens: None,
+            output_tokens: None,
+            prompt_tokens_details: None,
+            input_tokens_details: None,
+            completion_tokens_details: None,
+            output_tokens_details: None,
+        };
+
+        let error = usage
+            .observed_token_counts()
+            .expect_err("missing output count is not observed usage");
+        assert!(error.to_string().contains("omitted output token count"));
     }
 }
 
@@ -808,13 +965,9 @@ struct OpenAIFunction {
 
 #[derive(Debug, Deserialize)]
 struct Usage {
-    #[serde(default)]
-    prompt_tokens: usize,
-    #[serde(default)]
+    prompt_tokens: Option<usize>,
     completion_tokens: Option<usize>,
-    #[serde(default)]
-    input_tokens: usize,
-    #[serde(default)]
+    input_tokens: Option<usize>,
     output_tokens: Option<usize>,
     #[serde(default)]
     prompt_tokens_details: Option<PromptTokensDetails>,
@@ -827,18 +980,16 @@ struct Usage {
 }
 
 impl Usage {
-    fn input_token_count(&self) -> usize {
-        if self.prompt_tokens > 0 {
-            self.prompt_tokens
-        } else {
-            self.input_tokens
-        }
-    }
-
-    fn output_token_count(&self) -> usize {
-        self.completion_tokens
+    fn observed_token_counts(&self) -> Result<(usize, usize)> {
+        let input = self
+            .prompt_tokens
+            .or(self.input_tokens)
+            .context("OpenAI response usage omitted input token count")?;
+        let output = self
+            .completion_tokens
             .or(self.output_tokens)
-            .unwrap_or_default()
+            .context("OpenAI response usage omitted output token count")?;
+        Ok((input, output))
     }
 
     fn cached_input_tokens(&self) -> usize {
@@ -903,13 +1054,9 @@ struct StreamChunkPayload {
 #[allow(dead_code)]
 #[derive(Deserialize)]
 struct StreamUsage {
-    #[serde(default)]
-    prompt_tokens: usize,
-    #[serde(default)]
+    prompt_tokens: Option<usize>,
     completion_tokens: Option<usize>,
-    #[serde(default)]
-    input_tokens: usize,
-    #[serde(default)]
+    input_tokens: Option<usize>,
     output_tokens: Option<usize>,
     #[serde(default)]
     prompt_tokens_details: Option<PromptTokensDetails>,
@@ -922,18 +1069,16 @@ struct StreamUsage {
 }
 
 impl StreamUsage {
-    fn input_token_count(&self) -> usize {
-        if self.prompt_tokens > 0 {
-            self.prompt_tokens
-        } else {
-            self.input_tokens
-        }
-    }
-
-    fn output_token_count(&self) -> usize {
-        self.completion_tokens
+    fn observed_token_counts(&self) -> Result<(usize, usize)> {
+        let input = self
+            .prompt_tokens
+            .or(self.input_tokens)
+            .context("OpenAI stream usage omitted input token count")?;
+        let output = self
+            .completion_tokens
             .or(self.output_tokens)
-            .unwrap_or_default()
+            .context("OpenAI stream usage omitted output token count")?;
+        Ok((input, output))
     }
 
     fn cached_input_tokens(&self) -> usize {

@@ -73,7 +73,8 @@ describe("GraphBuilder", () => {
       },
     });
 
-    const node = g.toGraph().nodes.find((candidate) => candidate.id === ask.nodeId)!;
+    const graph = g.toGraph();
+    const node = graph.nodes.find((candidate) => candidate.id === ask.nodeId)!;
     expect(node.attributes.input_names).toEqual(["question", "policy", "dependency", "tool_result", "guard"]);
     expect(node.attributes.input_roles).toEqual([
       "user",
@@ -81,6 +82,13 @@ describe("GraphBuilder", () => {
       "dependency_only",
       "tool_context",
       "control",
+    ]);
+    expect(graph.edges.filter((edge) => edge.to === ask.nodeId).map((edge) => edge.from)).toEqual([
+      question.nodeId,
+      policy.nodeId,
+      dependency.nodeId,
+      toolResult.nodeId,
+      guard.nodeId,
     ]);
   });
 

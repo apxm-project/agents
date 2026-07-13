@@ -167,9 +167,8 @@ pub struct SchedulerState {
 
     /// Separate concurrency controller for LLM operations (Ask/Think/Reason).
     ///
-    /// Decouples LLM fan-out (request concurrency) from compute fan-out (CPU
-    /// cores) so a continuous-batching backend can be saturated without
-    /// inflating compute parallelism.
+    /// Decouples LLM request concurrency from compute fan-out so remote model
+    /// calls do not inflate compute parallelism.
     pub llm_concurrency: ConcurrencyControl,
 
     /// Concurrency controller for long-WAITING ops (PAUSE/RESUME/recv) that block
@@ -392,8 +391,8 @@ impl SchedulerState {
         let ready_set = ReadySet::new();
 
         // Create concurrency controllers: a general semaphore for compute-bound
-        // ops and a separate one for LLM ops so the two pools don't starve
-        // each other under remote-batched serving.
+        // ops and a separate one for LLM requests so the two pools do not starve
+        // each other.
         let concurrency = ConcurrencyControl::new(cfg.max_inflight);
         let llm_concurrency = ConcurrencyControl::new(cfg.llm_inflight);
         // Generous separate pool for long-waiting ops (PAUSE/RESUME/recv) so they
@@ -1246,16 +1245,19 @@ mod tests {
         queued
     }
 
-    /// THE load-bearing partial-replay invariant: when state is built with a
-    /// replay seed rooted at the middle node, the upstream node is pre-completed
-    /// and NEVER enqueued (so a worker can never re-invoke it), its boundary
-    /// output token is seeded with the prior value, `remaining` counts only the
-    /// replayed nodes, and only `from_node` is initially ready/enqueued.
+    /// A prevalidated replay seed must skip the completed host `INV_CAP` while
+    /// replaying only its downstream dataflow. The scheduler does not enqueue
+    /// the skipped effect, so no worker can re-invoke it.
     #[test]
-    fn replay_seed_precompletes_upstream_and_only_enqueues_from_node() {
+    fn replay_seed_skips_completed_host_inv_cap_and_enqueues_downstream() {
         use crate::scheduler::replay::ReplaySeed;
 
-        let dag = three_node_chain();
+        let mut dag = three_node_chain();
+        dag.nodes[0].op_type = AISOperationType::InvCap;
+        dag.nodes[0].attributes.insert(
+            apxm_core::constants::graph::attrs::CAPABILITY.to_string(),
+            Value::String("calendar.write".into()),
+        );
         let mut prior = HashMap::new();
         // Node 1's prior output (token 10) feeds the replay boundary.
         prior.insert(10u64, Value::String("prior-output-of-node-1".into()));

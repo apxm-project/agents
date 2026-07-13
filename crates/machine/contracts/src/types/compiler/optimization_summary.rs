@@ -33,6 +33,11 @@ pub enum Determinism {
     NonDeterministic,
 }
 
+impl Determinism {
+    /// Every determinism value accepted by the optimization-summary contract.
+    pub const ALL: [Self; 3] = [Self::Proven, Self::Unknown, Self::NonDeterministic];
+}
+
 /// Conservative replay classification for an observable computation.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 #[serde(rename_all = "snake_case")]
@@ -41,6 +46,11 @@ pub enum ReplaySafety {
     RequiresCheckpoint,
     #[default]
     Unknown,
+}
+
+impl ReplaySafety {
+    /// Every replay-safety value accepted by the optimization-summary contract.
+    pub const ALL: [Self; 3] = [Self::Safe, Self::RequiresCheckpoint, Self::Unknown];
 }
 
 /// Whether a profile-derived value is observed or a deterministic fallback.
@@ -52,6 +62,77 @@ pub enum CostProvenance {
     #[default]
     StaticDefault,
     OperationCount,
+}
+
+impl CostProvenance {
+    /// Every cost-provenance value accepted by the optimization-summary contract.
+    pub const ALL: [Self; 4] = [
+        Self::Observed,
+        Self::BackendTier,
+        Self::StaticDefault,
+        Self::OperationCount,
+    ];
+}
+
+/// Stable optimization families reported by compiler artifacts.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum OptimizationTransformKind {
+    SharedPrefixReuse,
+    TemplateSpecialization,
+    DeadContextElimination,
+    SchemaNarrowing,
+    BackendSelection,
+    Scheduling,
+    CheckpointPlacement,
+    Memoization,
+    Batching,
+    AskFusion,
+    MemoryCondensation,
+    SemanticCaching,
+    Speculation,
+}
+
+impl OptimizationTransformKind {
+    /// Every transform family accepted by the optimization-summary contract.
+    pub const ALL: [Self; 13] = [
+        Self::SharedPrefixReuse,
+        Self::TemplateSpecialization,
+        Self::DeadContextElimination,
+        Self::SchemaNarrowing,
+        Self::BackendSelection,
+        Self::Scheduling,
+        Self::CheckpointPlacement,
+        Self::Memoization,
+        Self::Batching,
+        Self::AskFusion,
+        Self::MemoryCondensation,
+        Self::SemanticCaching,
+        Self::Speculation,
+    ];
+}
+
+/// Compiler disposition for one optimization family.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum OptimizationDisposition {
+    Applied,
+    Rejected,
+    Experimental,
+}
+
+impl OptimizationDisposition {
+    /// Every disposition accepted by the optimization-summary contract.
+    pub const ALL: [Self; 3] = [Self::Applied, Self::Rejected, Self::Experimental];
+}
+
+/// Explainable compiler decision attached to one operation.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct OptimizationDecisionV1 {
+    pub transform: OptimizationTransformKind,
+    pub disposition: OptimizationDisposition,
+    #[serde(default)]
+    pub reasons: Vec<String>,
 }
 
 /// One compiler-produced summary for an artifact.
@@ -153,6 +234,8 @@ pub struct OperationOptimizationSummaryV1 {
     pub cost: CostSummary,
     pub backend: BackendLegalityRequirements,
     pub legality: TransformationLegality,
+    #[serde(default)]
+    pub decisions: Vec<OptimizationDecisionV1>,
     #[serde(default)]
     pub data_inputs: Vec<NodeId>,
     #[serde(default)]

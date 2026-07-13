@@ -1,9 +1,10 @@
 //! Dataflow scheduler that executes DAG nodes when all inputs are ready.
 
+use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-use apxm_core::types::{ExecutionDag, ExecutionStats, Value};
+use apxm_core::types::{ExecutionDag, ExecutionStats, NodeId, Value};
 use apxm_core::{apxm_dag, apxm_sched};
 use futures::stream::{FuturesUnordered, StreamExt};
 use tokio::task::{JoinError, JoinHandle};
@@ -144,12 +145,15 @@ impl DataflowScheduler {
             "DAG structure loaded"
         );
 
-        // Apply runtime latency tier overrides before cost enforcement
+        // Every typed graph edge is a scheduler readiness constraint.
+        let dag = Self::materialize_typed_edge_readiness(dag)?;
+        // Apply runtime latency tier overrides before cost enforcement.
         let dag = self.apply_latency_overrides(dag);
 
         // Validate DAG cost budget early
         self.enforce_cost_budget(&dag)?;
         hooks.emit_graph_started(dag.nodes.len());
+        let batch_dag = dag.clone();
 
         // Create a new MetricsCollector for each execution to avoid accumulating
         // metrics across multiple workflow runs (fix for work_stealing timer overflow)
@@ -182,6 +186,7 @@ impl DataflowScheduler {
         ctx.dag_splicer = Arc::new(super::splicing::SchedulerDagSplicer::new(Arc::clone(
             &state,
         )));
+        ctx.configure_correlated_batch_dispatch(&batch_dag, self.config.llm_inflight);
 
         // Register the completion waiter BEFORE spawning workers. A fast DAG
         // can otherwise complete and call `notify_done.notify_waiters()` before
@@ -322,6 +327,7 @@ impl DataflowScheduler {
             "Starting DAG execution (park-observable)"
         );
 
+        let dag = Self::materialize_typed_edge_readiness(dag)?;
         let dag = self.apply_latency_overrides(dag);
         self.enforce_cost_budget(&dag)?;
         hooks.emit_graph_started(dag.nodes.len());
@@ -501,6 +507,47 @@ impl DataflowScheduler {
         dag
     }
 
+    /// Materialize every typed edge as a producer/consumer readiness token.
+    ///
+    /// Data, effect, and control edges all constrain when a node may execute.
+    /// Artifacts may carry edge metadata independently from the node token
+    /// lists, so the scheduler restores that invariant before `ReadySet`
+    /// derives pending-input counts. This preserves effect and control order
+    /// without treating an unrepresented edge as an optional optimization.
+    fn materialize_typed_edge_readiness(mut dag: ExecutionDag) -> RuntimeResult<ExecutionDag> {
+        let node_indexes = dag
+            .nodes
+            .iter()
+            .enumerate()
+            .map(|(index, node)| (node.id, index))
+            .collect::<HashMap<NodeId, usize>>();
+
+        for edge in &dag.edges {
+            let Some(&source_index) = node_indexes.get(&edge.from) else {
+                return Err(RuntimeError::Scheduler {
+                    message: format!("Typed edge source {} does not exist", edge.from),
+                });
+            };
+            let Some(&target_index) = node_indexes.get(&edge.to) else {
+                return Err(RuntimeError::Scheduler {
+                    message: format!("Typed edge target {} does not exist", edge.to),
+                });
+            };
+
+            let source = &mut dag.nodes[source_index];
+            if !source.output_tokens.contains(&edge.token_id) {
+                source.output_tokens.push(edge.token_id);
+            }
+
+            let target = &mut dag.nodes[target_index];
+            if !target.input_tokens.contains(&edge.token_id) {
+                target.input_tokens.push(edge.token_id);
+            }
+        }
+
+        Ok(dag)
+    }
+
     /// Enforce the cost budget for the DAG.
     ///
     /// Returns an error if the total estimated cost exceeds max_cost.
@@ -525,6 +572,44 @@ impl DataflowScheduler {
         }
 
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod readiness_tests {
+    use super::*;
+    use apxm_core::types::operations::AISOperationType;
+    use apxm_core::types::{DependencyType, Edge, Node};
+
+    #[test]
+    fn typed_edges_become_readiness_tokens_for_every_dependency_kind() {
+        let mut dag = ExecutionDag::new();
+        dag.nodes = vec![
+            Node::new(1, AISOperationType::Nop),
+            Node::new(2, AISOperationType::Nop),
+        ];
+        dag.edges = vec![
+            Edge::new(1, 2, 10, DependencyType::Data),
+            Edge::new(1, 2, 11, DependencyType::Effect),
+            Edge::new(1, 2, 12, DependencyType::Control),
+        ];
+
+        let dag = DataflowScheduler::materialize_typed_edge_readiness(dag)
+            .expect("typed edges reference declared nodes");
+        assert_eq!(dag.nodes[0].output_tokens, vec![10, 11, 12]);
+        assert_eq!(dag.nodes[1].input_tokens, vec![10, 11, 12]);
+    }
+
+    #[test]
+    fn rejects_typed_edges_that_reference_missing_nodes() {
+        let mut dag = ExecutionDag::new();
+        dag.nodes = vec![Node::new(1, AISOperationType::Nop)];
+        dag.edges = vec![Edge::new(1, 2, 10, DependencyType::Effect)];
+
+        assert!(matches!(
+            DataflowScheduler::materialize_typed_edge_readiness(dag),
+            Err(RuntimeError::Scheduler { .. })
+        ));
     }
 }
 

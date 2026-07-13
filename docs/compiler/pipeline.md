@@ -5,6 +5,8 @@ deterministic artifact. Rust, Python, and TypeScript author the shared
 `FrontendGraph` DTO; the Rust compiler owns validation and AIR printing. This
 document follows the executable plan resolved by
 `passes::resolve_pipeline_plan()` and `Pipeline::resolved_plan()`.
+The cross-compiler/runtime acceptance gates are defined in
+[`workflow-optimization-roadmap.md`](workflow-optimization-roadmap.md).
 
 ## What the Compiler Does
 

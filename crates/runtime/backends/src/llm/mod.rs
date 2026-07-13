@@ -205,9 +205,8 @@ pub mod schema;
 
 pub use catalog::{
     BUILTIN_MODELS, BUILTIN_PROVIDERS, BuiltinModelSpec, BuiltinProviderSpec,
-    DEFAULT_VLLM_BASE_URL, default_model_for_protocol, default_model_for_provider,
-    models_for_protocol, models_for_provider, resolve_builtin_model, resolve_builtin_provider,
-    resolve_provider_spec,
+    default_model_for_protocol, default_model_for_provider, models_for_protocol,
+    models_for_provider, resolve_builtin_model, resolve_builtin_provider, resolve_provider_spec,
 };
 pub use config::{BackendConfig, BackendType, ModelConfig};
 pub use protocol::{
@@ -217,8 +216,9 @@ pub use protocol::{
 
 pub use assembler::{AssembledEvent, AssembledToolCall, StreamAssembler};
 pub use backends::{
-    BackendFactory, ContentPart, FunctionCall, GenerationConfig, LLMBackend, LLMRequest,
-    LLMResponse, Message, Role, StreamChunk, TokenUsage, ToolChoice, ToolDefinition,
+    BackendConfigurationError, BackendFactory, ContentPart, CorrelatedBatchingCapability,
+    CorrelatedLLMOutcome, CorrelatedLLMRequest, FunctionCall, GenerationConfig, LLMBackend,
+    LLMRequest, LLMResponse, Message, Role, StreamChunk, TokenUsage, ToolChoice, ToolDefinition,
 };
 pub use observability::{
     AggregatedMetrics, BackendMetricsSource, MetricsTracker, RequestMetrics, RequestTracer,
@@ -230,7 +230,8 @@ pub use registration::{
     OperationRoute, RegistryPolicy,
 };
 pub use registry::{
-    HealthMonitor, HealthStatus, LLMRegistry, StreamingBackendError, StreamingFailureKind,
+    CorrelatedBatchRoute, HealthMonitor, HealthStatus, LLMRegistry, RequestSelectionError,
+    StreamingBackendError, StreamingFailureKind,
 };
 pub use retry::{ErrorClass, RetryConfig, RetryStrategy};
 pub use schema::{JsonSchema, OutputParser};

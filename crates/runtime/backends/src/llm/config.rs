@@ -94,9 +94,15 @@ pub struct ModelConfig {
     /// Whether the model supports function/tool calling.
     #[serde(default)]
     pub supports_functions: bool,
+    /// Whether the model supports fine-tuning through its registered backend.
+    #[serde(default)]
+    pub supports_fine_tuning: bool,
     /// Whether the model supports extended thinking/reasoning.
     #[serde(default)]
     pub supports_thinking: bool,
+    /// Whether the OpenAI-compatible request shape uses reasoning token fields.
+    #[serde(default)]
+    pub uses_reasoning_token_fields: bool,
     /// Whether the model accepts an explicit custom `temperature` value.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub supports_custom_temperature: Option<bool>,

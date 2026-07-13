@@ -5,10 +5,11 @@
 //! process-local state such as `Instant`.
 
 use std::collections::{HashMap, HashSet};
+use std::future::Future;
 use std::sync::Arc;
 use std::time::Instant;
 
-use apxm_core::types::{ExecutionDag, NodeId, OpStatus, TokenId, Value};
+use apxm_core::types::{DependencyType, ExecutionDag, NodeId, OpStatus, TokenId, Value};
 use crossbeam_deque::Worker;
 use serde::{Deserialize, Serialize};
 
@@ -21,7 +22,7 @@ use crate::scheduler::state::SchedulerState;
 
 type RuntimeResult<T> = Result<T, apxm_core::error::RuntimeError>;
 
-pub const SCHEDULER_SNAPSHOT_VERSION: u32 = 1;
+pub const SCHEDULER_SNAPSHOT_VERSION: u32 = 2;
 /// Reason string once [`SchedulerState::restore`] is implemented and tested.
 /// Restore rehydrates bookkeeping (tokens/ops/pending-inputs/promises/
 /// execution-stack/delegated-tokens) against a freshly recompiled DAG; it does
@@ -41,6 +42,7 @@ pub struct SchedulerSnapshot {
     pub elapsed_ms: u64,
     pub scheduler_config: SchedulerConfig,
     pub counters: SchedulerSnapshotCounters,
+    pub edges: Vec<SchedulerSnapshotEdge>,
     pub tokens: Vec<SchedulerSnapshotToken>,
     pub ops: Vec<SchedulerSnapshotOp>,
     pub pending_inputs: Vec<SchedulerSnapshotPendingInput>,
@@ -50,6 +52,19 @@ pub struct SchedulerSnapshot {
     pub node_output_map: Vec<SchedulerSnapshotNodeOutputs>,
     pub replay_supported: bool,
     pub replay_notes: Vec<String>,
+}
+
+/// A live token route known to the scheduler at checkpoint capture time.
+///
+/// `dependency_type` is absent only for a runtime-spliced route, whose source
+/// graph did not carry a declared edge type. The persisted route still names
+/// its exact producer, consumer, and token rather than inventing a type.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct SchedulerSnapshotEdge {
+    pub from_node_id: NodeId,
+    pub to_node_id: NodeId,
+    pub token_id: TokenId,
+    pub dependency_type: Option<DependencyType>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -117,6 +132,32 @@ pub struct SchedulerSnapshotNodeOutputs {
     pub output_tokens: Vec<TokenId>,
 }
 
+tokio::task_local! {
+    /// Scheduler-owned replay evidence scoped to one CHECKPOINT dispatch.
+    static CHECKPOINT_SCHEDULER_SNAPSHOT: SchedulerSnapshot;
+}
+
+/// Run one CHECKPOINT dispatch with its scheduler-owned replay frontier.
+///
+/// A task-local scope keeps this live state out of the general execution
+/// context while preserving the executor's normal middleware and dispatcher
+/// path. CHECKPOINT fails explicitly when it is invoked outside this scope.
+pub(crate) async fn with_checkpoint_scheduler_snapshot<T>(
+    snapshot: SchedulerSnapshot,
+    operation: impl Future<Output = T>,
+) -> T {
+    CHECKPOINT_SCHEDULER_SNAPSHOT
+        .scope(snapshot, operation)
+        .await
+}
+
+/// Return the replay frontier for the CHECKPOINT currently running on this task.
+pub(crate) fn current_checkpoint_scheduler_snapshot() -> Option<SchedulerSnapshot> {
+    CHECKPOINT_SCHEDULER_SNAPSHOT
+        .try_with(|snapshot| snapshot.clone())
+        .ok()
+}
+
 impl SchedulerState {
     /// Capture a stable read-only projection of the current scheduler state.
     ///
@@ -125,6 +166,7 @@ impl SchedulerState {
     /// in the snapshot: token state alone never authorizes skipping an effect.
     pub fn capture_snapshot(&self) -> SchedulerSnapshot {
         let start = self.start;
+        let edges = self.snapshot_edges();
         let tokens = self.snapshot_tokens();
         let ops = self.snapshot_ops(start);
         let completed_nodes = ops
@@ -143,7 +185,7 @@ impl SchedulerState {
             completed_nodes,
             seed_tokens,
         };
-        let replay_validation = replay_seed.validate_partial_replay(&self.dag);
+        let replay_validation = replay_seed.validate_partial_replay(&self.dag, &HashMap::new());
         let (replay_supported, replay_notes) = match replay_validation {
             Ok(()) => (true, vec![REPLAY_SUPPORTED_NOTE.to_string()]),
             Err(error) => (false, vec![format!("{REPLAY_REJECTED_NOTE_PREFIX}{error}")]),
@@ -161,6 +203,7 @@ impl SchedulerState {
                 remaining_nodes: self.remaining.load(std::sync::atomic::Ordering::SeqCst),
                 ready_queue_len: self.queue.len(),
             },
+            edges,
             tokens,
             ops,
             pending_inputs: self.snapshot_pending_inputs(),
@@ -206,6 +249,8 @@ impl SchedulerState {
         let start = Instant::now();
         let hooks = crate::executor::hooks::ExecutionHookContext::default();
 
+        validate_snapshot_edges(snapshot, &dag)?;
+
         let completed_nodes: HashSet<NodeId> = snapshot
             .ops
             .iter()
@@ -224,11 +269,10 @@ impl SchedulerState {
             completed_nodes,
             seed_tokens,
         };
-        seed.validate_partial_replay(&dag).map_err(|error| {
-            apxm_core::error::RuntimeError::Scheduler {
+        seed.validate_partial_replay(&dag, &HashMap::new())
+            .map_err(|error| apxm_core::error::RuntimeError::Scheduler {
                 message: format!("scheduler snapshot restore rejected: {error}"),
-            }
-        })?;
+            })?;
 
         let (state, workers) = SchedulerState::new_with_replay(
             (*dag).clone(),
@@ -326,6 +370,46 @@ impl SchedulerState {
             .collect();
         tokens.sort_unstable_by_key(|token| token.token_id);
         tokens
+    }
+
+    fn snapshot_edges(&self) -> Vec<SchedulerSnapshotEdge> {
+        let declared_types: HashMap<(NodeId, NodeId, TokenId), DependencyType> = self
+            .dag
+            .edges
+            .iter()
+            .map(|edge| {
+                (
+                    (edge.from, edge.to, edge.token_id),
+                    edge.dependency_type.clone(),
+                )
+            })
+            .collect();
+        let mut producers = HashMap::new();
+        for node in self.nodes.iter() {
+            for &token_id in &node.output_tokens {
+                producers.insert(token_id, *node.key());
+            }
+        }
+
+        let mut edges = Vec::new();
+        for token in self.tokens.iter() {
+            let token_id = *token.key();
+            let Some(&from_node_id) = producers.get(&token_id) else {
+                continue;
+            };
+            for &to_node_id in &token.consumers {
+                edges.push(SchedulerSnapshotEdge {
+                    from_node_id,
+                    to_node_id,
+                    token_id,
+                    dependency_type: declared_types
+                        .get(&(from_node_id, to_node_id, token_id))
+                        .cloned(),
+                });
+            }
+        }
+        edges.sort_unstable_by_key(|edge| (edge.from_node_id, edge.to_node_id, edge.token_id));
+        edges
     }
 
     fn snapshot_ops(&self, start: Instant) -> Vec<SchedulerSnapshotOp> {
@@ -450,6 +534,31 @@ fn elapsed_ms_since(start: Instant, instant: Instant) -> u64 {
         .min(u64::MAX as u128) as u64
 }
 
+/// Ensure a checkpoint restores against the exact typed dependency frontier it
+/// captured. A newly compiled graph may only resume when its declared data,
+/// effect, and control routes match the persisted snapshot; otherwise replay
+/// would silently normalize a different graph.
+fn validate_snapshot_edges(snapshot: &SchedulerSnapshot, dag: &ExecutionDag) -> RuntimeResult<()> {
+    let mut expected = dag
+        .edges
+        .iter()
+        .map(|edge| SchedulerSnapshotEdge {
+            from_node_id: edge.from,
+            to_node_id: edge.to,
+            token_id: edge.token_id,
+            dependency_type: Some(edge.dependency_type.clone()),
+        })
+        .collect::<Vec<_>>();
+    expected.sort_unstable_by_key(|edge| (edge.from_node_id, edge.to_node_id, edge.token_id));
+
+    if snapshot.edges != expected {
+        return Err(apxm_core::error::RuntimeError::Scheduler {
+            message: "scheduler snapshot restore rejected: typed dependency frontier does not match the recompiled DAG".to_string(),
+        });
+    }
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -542,6 +651,16 @@ mod tests {
             snapshot.replay_supported,
             "restore is implemented and tested; snapshot must not under-claim"
         );
+        assert_eq!(snapshot.edges.len(), 2, "both live DAG edges are captured");
+        assert_eq!(
+            snapshot.edges[0],
+            SchedulerSnapshotEdge {
+                from_node_id: 1,
+                to_node_id: 2,
+                token_id: 10,
+                dependency_type: Some(DependencyType::Data),
+            }
+        );
 
         let metrics2 = Arc::new(MetricsCollector::new());
         let (restored, _workers2) =
@@ -633,7 +752,12 @@ mod tests {
 
         let snapshot = state.capture_snapshot();
         assert!(!snapshot.replay_supported);
-        assert!(snapshot.replay_notes[0].contains("InvCap"));
+        assert_eq!(
+            snapshot.replay_notes,
+            vec![
+                "snapshot restore requires replay-verifiable completed operations: partial replay cannot reuse completed capability node 1: replay source execution identity is missing".to_string()
+            ]
+        );
 
         let result = SchedulerState::restore(
             &snapshot,
@@ -645,11 +769,62 @@ mod tests {
             Ok(_) => panic!("restore must reject an unverified capability effect"),
             Err(error) => error,
         };
+        assert_eq!(
+            error.to_string(),
+            "Scheduler error: scheduler snapshot restore rejected: snapshot restore requires replay-verifiable completed operations: partial replay cannot reuse completed capability node 1: replay source execution identity is missing"
+        );
+    }
+
+    #[test]
+    fn restore_rejects_a_snapshot_with_different_typed_edges() {
+        let dag = three_node_chain();
+        let (state, _workers) = SchedulerState::new(
+            dag.clone(),
+            test_config(),
+            Arc::new(MetricsCollector::new()),
+            Instant::now(),
+            vec![],
+        )
+        .expect("state");
+        let mut snapshot = state.capture_snapshot();
+        snapshot.edges[0].dependency_type = Some(DependencyType::Effect);
+
+        let result = SchedulerState::restore(
+            &snapshot,
+            Arc::new(dag),
+            test_config(),
+            Arc::new(MetricsCollector::new()),
+        );
+        let error = match result {
+            Ok(_) => panic!("typed edge mismatch must reject restore"),
+            Err(error) => error,
+        };
+
         assert!(
             error
                 .to_string()
-                .contains("scheduler snapshot restore rejected"),
-            "unexpected snapshot restore rejection: {error}"
+                .contains("typed dependency frontier does not match")
         );
+    }
+
+    #[tokio::test]
+    async fn checkpoint_scope_exposes_only_the_current_scheduler_frontier() {
+        let (state, _workers) = SchedulerState::new(
+            three_node_chain(),
+            test_config(),
+            Arc::new(MetricsCollector::new()),
+            Instant::now(),
+            vec![],
+        )
+        .expect("state");
+        let snapshot = state.capture_snapshot();
+
+        assert!(current_checkpoint_scheduler_snapshot().is_none());
+        let observed = with_checkpoint_scheduler_snapshot(snapshot.clone(), async {
+            current_checkpoint_scheduler_snapshot().expect("checkpoint frontier is scoped")
+        })
+        .await;
+        assert_eq!(observed, snapshot);
+        assert!(current_checkpoint_scheduler_snapshot().is_none());
     }
 }

@@ -1,13 +1,10 @@
 //! Built-in LLM provider and model catalog.
 //!
 //! This catalog belongs to the backend layer. Core artifacts may carry backend
-//! and model identifiers, but concrete provider ids, model ids, default
-//! endpoints, and provider-specific environment variable names are backend
-//! concerns.
+//! and model identifiers, while endpoint and model selection remain explicit
+//! registration concerns.
 
 use super::{ProviderProtocol, ProviderSpec};
-
-pub const DEFAULT_VLLM_BASE_URL: &str = "http://localhost:8916/v1";
 
 /// Static provider spec (const-friendly, no heap allocations).
 #[derive(Debug, Clone, Copy)]
@@ -43,7 +40,7 @@ pub const BUILTIN_PROVIDERS: &[BuiltinProviderSpec] = &[
     BuiltinProviderSpec {
         id: "ollama",
         api_key_env_var: Some("OLLAMA_API_KEY"),
-        default_base_url: Some("http://localhost:11434"),
+        default_base_url: None,
         requires_api_key: false,
         protocol: ProviderProtocol::Ollama,
         aliases: &[],
@@ -75,7 +72,7 @@ pub const BUILTIN_PROVIDERS: &[BuiltinProviderSpec] = &[
     BuiltinProviderSpec {
         id: "vllm",
         api_key_env_var: None,
-        default_base_url: Some(DEFAULT_VLLM_BASE_URL),
+        default_base_url: None,
         requires_api_key: false,
         protocol: ProviderProtocol::Vllm,
         aliases: &["vllm-graph-aware"],
@@ -83,7 +80,7 @@ pub const BUILTIN_PROVIDERS: &[BuiltinProviderSpec] = &[
     BuiltinProviderSpec {
         id: "openrouter",
         api_key_env_var: Some("OPENROUTER_API_KEY"),
-        default_base_url: Some("https://openrouter.ai/api/v1"),
+        default_base_url: None,
         requires_api_key: true,
         protocol: ProviderProtocol::OpenAI,
         aliases: &[],
@@ -118,7 +115,7 @@ pub struct BuiltinModelSpec {
     pub id: &'static str,
     /// Protocol family this model belongs to.
     pub protocol: ProviderProtocol,
-    /// Whether this is the default model for its provider.
+    /// Whether this model is selected by an explicit registry policy.
     pub is_default: bool,
 }
 
@@ -132,7 +129,7 @@ pub const BUILTIN_MODELS: &[BuiltinModelSpec] = &[
     BuiltinModelSpec {
         id: "claude-sonnet-4-6",
         protocol: ProviderProtocol::Anthropic,
-        is_default: true,
+        is_default: false,
     },
     BuiltinModelSpec {
         id: "claude-haiku-4-5",
@@ -182,7 +179,7 @@ pub const BUILTIN_MODELS: &[BuiltinModelSpec] = &[
     BuiltinModelSpec {
         id: "gpt-4o-mini",
         protocol: ProviderProtocol::OpenAI,
-        is_default: true,
+        is_default: false,
     },
     BuiltinModelSpec {
         id: "gpt-4-turbo",
@@ -252,7 +249,7 @@ pub const BUILTIN_MODELS: &[BuiltinModelSpec] = &[
     BuiltinModelSpec {
         id: "gemini-2.5-flash",
         protocol: ProviderProtocol::Google,
-        is_default: true,
+        is_default: false,
     },
     BuiltinModelSpec {
         id: "gemini-2.0-pro",
@@ -294,18 +291,16 @@ pub fn models_for_protocol(
         .filter(move |model| model.protocol == protocol)
 }
 
-/// The default model for a given provider, if one is marked.
+/// Return no model because deployment policy must select registered models.
 pub fn default_model_for_provider(provider: &str) -> Option<&'static str> {
-    let protocol = protocol_for_provider(provider)?;
-    default_model_for_protocol(protocol)
+    let _ = provider;
+    None
 }
 
-/// The default model for a typed provider protocol, if one is marked.
+/// Return no model because deployment policy must select registered models.
 pub fn default_model_for_protocol(protocol: ProviderProtocol) -> Option<&'static str> {
-    BUILTIN_MODELS
-        .iter()
-        .find(|model| model.protocol == protocol && model.is_default)
-        .map(|model| model.id)
+    let _ = protocol;
+    None
 }
 
 /// Look up a builtin model by exact id.

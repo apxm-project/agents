@@ -55,5 +55,10 @@ pub const REPLAY_FROM_NODE: &str = "replay_from_node";
 /// prior run's captured token values, used to seed the replay boundary. Paired
 /// with [`REPLAY_FROM_NODE`].
 pub const REPLAY_TOKEN_VALUES: &str = "replay_token_values";
+/// Source execution whose durable authority is reused by a partial replay.
+pub const REPLAY_SOURCE_EXECUTION_ID: &str = "replay_source_execution_id";
+/// JSON-serialized `CapabilityEffectReplayEvidenceEnvelope` supplied by the
+/// host authority for replay-verifying skipped durable host effects.
+pub const CAPABILITY_EFFECT_REPLAY_EVIDENCE: &str = "capability_effect_replay_evidence";
 /// End-to-end delivery trace id minted at webhook ingress (apxm-os → apxm-server).
 pub const CORRELATION_ID: &str = "correlation_id";

@@ -1,9 +1,13 @@
 //! Profile-specific ContextStack scope rules.
 
-use apxm_core::agent_profile::AgentProfile;
-use apxm_core::constants::runtime::context_stack as context_stack_consts;
+use std::collections::BTreeMap;
+use std::fmt;
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+use serde::{Deserialize, Serialize};
+
+use super::frame::ContextTokenizer;
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ScopeRules {
     pub upstream_depth: usize,
     pub upstream_frame_budget: usize,
@@ -11,35 +15,66 @@ pub struct ScopeRules {
     pub include_upstream_prompts: bool,
 }
 
-impl ScopeRules {
-    /// Derive scope rules from a resolved AgentProfile.
-    pub fn from_agent_profile(profile: &AgentProfile) -> Self {
-        Self {
-            upstream_depth: profile.upstream_depth,
-            upstream_frame_budget: profile.upstream_frame_budget,
-            session_frame_budget:
-                apxm_core::constants::runtime::context_stack::DEFAULT_SESSION_FRAME_BUDGET_TOKENS,
-            include_upstream_prompts: profile.include_upstream_prompts,
-        }
-    }
+/// Explicit planning inputs for context assembly.
+///
+/// The configured tokenizer, capacity, and profile rules are the complete
+/// authority for context packing. Missing profile evidence does not select a
+/// built-in profile or capacity.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ContextPlanningPolicy {
+    pub tokenizer: ContextTokenizer,
+    pub token_budget: usize,
+    pub profiles: BTreeMap<String, ScopeRules>,
+}
 
-    pub fn for_profile(profile: &str) -> Self {
-        let reg = apxm_core::agent_profile::AgentProfileRegistry::new();
-        if let Some(p) = reg.resolve(profile) {
-            Self::from_agent_profile(p)
-        } else {
-            Self::default()
+impl ContextPlanningPolicy {
+    pub fn rules_for(&self, profile: &str) -> Result<&ScopeRules, ContextPlanningError> {
+        self.profiles
+            .get(profile)
+            .ok_or_else(|| ContextPlanningError::ProfileNotConfigured {
+                profile: profile.to_string(),
+            })
+    }
+}
+
+/// Context assembly cannot proceed when the configured policy does not prove
+/// that the requested profile is available.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub enum ContextPlanningError {
+    PolicyNotConfigured,
+    ProfileNotSpecified,
+    ProfileNotConfigured {
+        profile: String,
+    },
+    ProtectedSegmentExceedsBudget {
+        provenance: String,
+        required_tokens: usize,
+        available_tokens: usize,
+    },
+}
+
+impl fmt::Display for ContextPlanningError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::PolicyNotConfigured => {
+                write!(f, "context planning policy is not configured")
+            }
+            Self::ProfileNotSpecified => {
+                write!(f, "context profile is not specified")
+            }
+            Self::ProfileNotConfigured { profile } => {
+                write!(f, "context profile is not configured: {profile}")
+            }
+            Self::ProtectedSegmentExceedsBudget {
+                provenance,
+                required_tokens,
+                available_tokens,
+            } => write!(
+                f,
+                "protected context segment '{provenance}' requires {required_tokens} tokens but only {available_tokens} are available"
+            ),
         }
     }
 }
 
-impl Default for ScopeRules {
-    fn default() -> Self {
-        Self {
-            upstream_depth: context_stack_consts::DEFAULT_UPSTREAM_DEPTH,
-            upstream_frame_budget: context_stack_consts::DEFAULT_UPSTREAM_FRAME_BUDGET_TOKENS,
-            session_frame_budget: context_stack_consts::DEFAULT_SESSION_FRAME_BUDGET_TOKENS,
-            include_upstream_prompts: false,
-        }
-    }
-}
+impl std::error::Error for ContextPlanningError {}

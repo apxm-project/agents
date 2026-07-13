@@ -28,7 +28,12 @@
 //! runtime.llm_registry().set_default("mock").unwrap();
 //! ```
 
-use super::traits::{LLMBackend, StreamChunk};
+use super::openai::backend::validate_provider_dispatch;
+use super::request::Message;
+use super::traits::{
+    CorrelatedBatchingCapability, CorrelatedLLMOutcome, CorrelatedLLMRequest, LLMBackend,
+    StreamChunk,
+};
 use super::{LLMRequest, LLMResponse};
 use apxm_core::observability::{CallEvent, CallTrace};
 use apxm_core::types::{FinishReason, ModelCapabilities, ModelInfo, TokenUsage, ToolCall};
@@ -36,6 +41,7 @@ use async_trait::async_trait;
 use parking_lot::RwLock;
 use serde_json::json;
 use std::pin::Pin;
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
@@ -51,6 +57,8 @@ pub struct RecordedCall {
     pub prompt: String,
     /// The system prompt (if any)
     pub system: Option<String>,
+    /// Provider-bound messages after the request resolves its prompt channels.
+    pub messages: Vec<Message>,
     /// Model name requested
     pub model: String,
     /// Temperature used
@@ -136,6 +144,8 @@ pub struct MockLLMBackend {
     tokens_per_second: u64,
     /// Optional CallTrace sink. None = recording disabled (default).
     trace: Option<Arc<RwLock<CallTrace>>>,
+    /// Number of correlated batch submissions accepted by this test backend.
+    batch_submissions: Arc<AtomicUsize>,
 }
 
 impl MockLLMBackend {
@@ -151,6 +161,7 @@ impl MockLLMBackend {
             latency_ms: 0,
             tokens_per_second: 0,
             trace: None,
+            batch_submissions: Arc::new(AtomicUsize::new(0)),
         }
     }
 
@@ -298,6 +309,11 @@ impl MockLLMBackend {
         self.calls.lock().unwrap().len()
     }
 
+    /// Return the number of correlated batch submissions.
+    pub fn batch_submission_count(&self) -> usize {
+        self.batch_submissions.load(Ordering::SeqCst)
+    }
+
     /// Clear the recorded call history.
     pub fn reset(&self) {
         self.calls.lock().unwrap().clear();
@@ -407,6 +423,7 @@ impl MockLLMBackend {
         self.calls.lock().unwrap().push(RecordedCall {
             prompt,
             system: request.system_prompt.clone(),
+            messages: request.resolved_messages(),
             model: self.model.clone(),
             temperature: 1.0, // default
             input_tokens: resp.input_tokens,
@@ -441,7 +458,7 @@ impl Default for MockLLMBackend {
 #[async_trait]
 impl LLMBackend for MockLLMBackend {
     async fn generate(&self, request: LLMRequest) -> anyhow::Result<LLMResponse> {
-        request.validate()?;
+        validate_provider_dispatch(&request)?;
 
         if let Some(ref err) = self.fail_with {
             return Err(anyhow::anyhow!("{}", err));
@@ -474,12 +491,50 @@ impl LLMBackend for MockLLMBackend {
         ))
     }
 
+    async fn generate_correlated_batch(
+        &self,
+        requests: Vec<CorrelatedLLMRequest>,
+    ) -> anyhow::Result<Vec<CorrelatedLLMOutcome>> {
+        if requests.is_empty() {
+            anyhow::bail!("correlated batch must contain at least one request");
+        }
+        self.batch_submissions.fetch_add(1, Ordering::SeqCst);
+        let mut outcomes = Vec::with_capacity(requests.len());
+        for CorrelatedLLMRequest {
+            correlation_id,
+            request,
+        } in requests
+        {
+            match self.generate(request).await {
+                Ok(response) => outcomes.push(CorrelatedLLMOutcome::Response {
+                    correlation_id,
+                    response,
+                }),
+                Err(error) => outcomes.push(CorrelatedLLMOutcome::Failure {
+                    correlation_id,
+                    message: error.to_string(),
+                }),
+            }
+        }
+        Ok(outcomes)
+    }
+
     fn name(&self) -> &str {
         &self.name
     }
 
     fn model(&self) -> &str {
         &self.model
+    }
+
+    fn context_window_for_model(&self, model: &str) -> Option<usize> {
+        (model == self.model).then_some(128_000)
+    }
+
+    fn correlated_batching_capability(&self) -> CorrelatedBatchingCapability {
+        CorrelatedBatchingCapability::CorrelatedOutcomes {
+            max_batch_size: usize::MAX,
+        }
     }
 
     async fn health_check(&self) -> anyhow::Result<()> {
@@ -503,6 +558,9 @@ impl LLMBackend for MockLLMBackend {
         &self,
         request: LLMRequest,
     ) -> Pin<Box<dyn Stream<Item = anyhow::Result<StreamChunk>> + Send + '_>> {
+        if let Err(error) = validate_provider_dispatch(&request) {
+            return Box::pin(tokio_stream::iter(vec![Err(error)]));
+        }
         if let Some(ref err) = self.fail_with {
             let err_msg = err.clone();
             return Box::pin(tokio_stream::iter(vec![Err(anyhow::anyhow!(
@@ -569,5 +627,43 @@ impl LLMBackend for MockLLMBackend {
             batch: false,
             fine_tuning: false,
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::super::request::Role;
+    use super::*;
+    use futures::StreamExt as _;
+
+    #[tokio::test]
+    async fn provider_admission_rejects_uncorrelated_tool_messages_before_recording() {
+        let backend = MockLLMBackend::static_response("must not run");
+        let request = LLMRequest::from_messages(vec![
+            Message::text(Role::User, "status"),
+            Message::text(Role::Tool, "untrusted tool context"),
+        ]);
+
+        assert!(
+            backend
+                .generate(request.clone())
+                .await
+                .expect_err("uncorrelated tool message must be rejected")
+                .to_string()
+                .contains("correlated tool_call_id")
+        );
+        assert_eq!(backend.call_count(), 0);
+
+        let mut stream = backend.generate_stream(request);
+        assert!(
+            stream
+                .next()
+                .await
+                .expect("admission returns one error chunk")
+                .expect_err("streaming admission must reject the same request")
+                .to_string()
+                .contains("correlated tool_call_id")
+        );
+        assert_eq!(backend.call_count(), 0);
     }
 }

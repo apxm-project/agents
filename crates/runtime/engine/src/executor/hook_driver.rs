@@ -172,8 +172,8 @@ async fn host_mem_read(
     }
 }
 
-/// One-shot LLM ask for hooks. Calls the backend DIRECTLY (non-streaming, no
-/// event emitter, no nested `pre_ask` hooks). This is deliberate:
+/// One-shot LLM ask for hooks. Uses the shared egress admission path without
+/// streaming, an event emitter, or nested `pre_ask` hooks. This is deliberate:
 /// - no emitter → a hook's own LLM call (e.g. compaction's summarize) never
 /// leaks tokens into the USER's reply stream;
 /// - no nested hooks → no `pre_ask → llm → pre_ask` re-entrancy.
@@ -195,11 +195,14 @@ async fn host_llm_ask(
     if prompt.trim().is_empty() {
         return Err("llm.ask requires a non-empty 'prompt'".to_string());
     }
-    let mut request = LLMRequest::new(prompt).with_operation_type(AISOperationType::Ask);
+    let output_tokens = hook_output_token_limit(&params)?;
+    let mut request = LLMRequest::new(prompt)
+        .with_operation_type(AISOperationType::Ask)
+        .with_max_tokens(output_tokens);
     if let Some(system) = params.get("system").and_then(|v| v.as_str()) {
         request = request.with_system_prompt(system.to_string());
     }
-    let reservation = crate::executor::handlers::llm::reserve_model_call(ctx, &request)
+    let admission = crate::executor::handlers::llm::admit_model_egress(ctx, &request)
         .map_err(|error| format!("llm.ask budget reservation failed: {error}"))?;
     if let Some(emitter) = &ctx.event_emitter {
         emitter.emit_model_context_metrics(&ModelContextMetrics::unplanned(
@@ -208,15 +211,25 @@ async fn host_llm_ask(
         ));
     }
     let response = if let Some(router) = &ctx.model_router {
-        router.generate(request).await
+        router.generate(admission.request).await
     } else {
-        ctx.llm_registry.generate(request).await
+        ctx.llm_registry.generate(admission.request).await
     }
     .map_err(|e| format!("llm.ask failed: {e}"))?;
-    reservation
+    admission
+        .reservation
         .reconcile(response.usage.total_tokens)
         .map_err(|error| format!("llm.ask budget reconciliation failed: {error}"))?;
     Ok(JsonValue::String(response.content))
+}
+
+fn hook_output_token_limit(params: &JsonValue) -> std::result::Result<usize, String> {
+    let raw = params
+        .get("max_tokens")
+        .and_then(JsonValue::as_u64)
+        .ok_or_else(|| "llm.ask requires an explicit non-negative 'max_tokens'".to_string())?;
+    usize::try_from(raw)
+        .map_err(|_| "llm.ask 'max_tokens' exceeds the platform maximum".to_string())
 }
 
 /// Decision returned by a `pre_cap` hook.
@@ -781,6 +794,8 @@ pub async fn run_pre_ask_hooks(
 
 #[cfg(test)]
 mod script_bridge_tests {
+    use super::hook_output_token_limit;
+    use serde_json::json;
     /// Guard used before dispatching lifecycle hooks.
     fn script_handler_bridge_available(python: bool, typescript: bool) -> bool {
         python || typescript
@@ -792,6 +807,15 @@ mod script_bridge_tests {
         assert!(script_handler_bridge_available(true, false));
         assert!(script_handler_bridge_available(false, true));
         assert!(script_handler_bridge_available(true, true));
+    }
+
+    #[test]
+    fn hook_llm_request_requires_explicit_output_reservation() {
+        assert!(hook_output_token_limit(&json!({})).is_err());
+        assert_eq!(
+            hook_output_token_limit(&json!({"max_tokens": 23})).unwrap(),
+            23
+        );
     }
 }
 

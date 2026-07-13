@@ -992,7 +992,7 @@ export const BUILTIN_PROVIDERS: readonly ProviderSpec[] = [
   {
     id: "ollama",
     protocol: "ollama" as ProviderProtocol,
-    defaultBaseUrl: "http://localhost:11434",
+    defaultBaseUrl: null,
     requiresApiKey: false,
     apiKeyEnvVar: "OLLAMA_API_KEY",
     aliases: [],
@@ -1024,7 +1024,7 @@ export const BUILTIN_PROVIDERS: readonly ProviderSpec[] = [
   {
     id: "vllm",
     protocol: "vllm" as ProviderProtocol,
-    defaultBaseUrl: "http://localhost:8916/v1",
+    defaultBaseUrl: null,
     requiresApiKey: false,
     apiKeyEnvVar: null,
     aliases: ["vllm-graph-aware"],
@@ -1032,7 +1032,7 @@ export const BUILTIN_PROVIDERS: readonly ProviderSpec[] = [
   {
     id: "openrouter",
     protocol: "openai" as ProviderProtocol,
-    defaultBaseUrl: "https://openrouter.ai/api/v1",
+    defaultBaseUrl: null,
     requiresApiKey: true,
     apiKeyEnvVar: "OPENROUTER_API_KEY",
     aliases: [],

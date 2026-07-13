@@ -6,12 +6,14 @@ between Rust, Python, and TypeScript fails CI, not just local runs:
 
 1. Rust `frontend_graph`/`frontend_air` unit tests (DTO conversion + CLI
    surface, including the fixture-golden and wire-shape-parity tests).
-2. Builds the `apxm` CLI (debug profile, fast) and points `APXM_BIN` at it
+2. The direct-AIR typed prompt-role integration target, which parses the
+   shared role-bearing golden fixture and validates its artifact contract.
+3. Builds the `apxm` CLI (debug profile, fast) and points `APXM_BIN` at it
    so the Python/TypeScript parity tests actually shell out and compare
    real output instead of skipping.
-3. `test_air_parity.py` (pytest) and `emit-air.test.ts` (vitest) golden
+4. `test_air_parity.py` (pytest) and `emit-air.test.ts` (vitest) golden
    comparisons, now un-skipped.
-4. The hand-authored-AIR regression guard
+5. The hand-authored-AIR regression guard
    (`check_no_frontend_air_authoring.py`).
 
 Exit 0 = clean. Exit 1 = any step failed.
@@ -50,6 +52,18 @@ def main() -> int:
     ok &= _run(
         "Rust frontend-air CLI + parity tests (apxm-cli)",
         [sys.executable, "tools/scripts/cargo.py", "test", "-p", "apxm-cli", "--bin", "apxm", "frontend_air::"],
+    )
+    ok &= _run(
+        "Direct-AIR typed prompt-role integration tests (apxm-compiler)",
+        [
+            sys.executable,
+            "tools/scripts/cargo.py",
+            "test",
+            "-p",
+            "apxm-compiler",
+            "--test",
+            "direct_air_prompt_roles",
+        ],
     )
 
     ok &= _run(

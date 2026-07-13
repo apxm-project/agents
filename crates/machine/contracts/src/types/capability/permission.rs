@@ -23,6 +23,22 @@ pub enum PermissionOperation {
 }
 
 impl PermissionOperation {
+    /// Every permission operation accepted by the capability contract.
+    pub const ALL: [Self; 12] = [
+        Self::Read,
+        Self::List,
+        Self::Search,
+        Self::Create,
+        Self::Write,
+        Self::Append,
+        Self::Update,
+        Self::Delete,
+        Self::Execute,
+        Self::Send,
+        Self::Approve,
+        Self::Publish,
+    ];
+
     pub fn is_mutating(self) -> bool {
         matches!(
             self,

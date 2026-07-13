@@ -17,7 +17,7 @@ use super::dekk_hints;
 #[cfg(feature = "driver")]
 use futures::stream::{FuturesUnordered, StreamExt};
 #[cfg(feature = "driver")]
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 #[cfg(feature = "driver")]
 use std::fs::OpenOptions;
 #[cfg(feature = "driver")]
@@ -454,7 +454,8 @@ fn execute_workflow_file<'a>(
             .parent()
             .ok_or_else(|| anyhow::anyhow!("Failed to get parent directory"))?
             .to_path_buf();
-        let profile_latency_ms = workflow_profile_latency_ms(&def, &base_dir);
+        let optimization_evidence = workflow_optimization_evidence(&def, &base_dir)?;
+        validate_workflow_checkpoint_placement(&optimization_evidence)?;
         let workflow_session_dir = if let Some(session_dir) = explicit_session_dir {
             std::fs::create_dir_all(session_dir)?;
             session_dir.to_path_buf()
@@ -474,7 +475,8 @@ fn execute_workflow_file<'a>(
             &def.steps,
             WorkflowSchedulerOptions {
                 max_concurrency: def.max_concurrency,
-                profile_latency_ms: (!profile_latency_ms.is_empty()).then_some(profile_latency_ms),
+                critical_path_evidence: (!optimization_evidence.artifacts.is_empty())
+                    .then_some(optimization_evidence.clone()),
                 ..Default::default()
             },
         )?;
@@ -504,6 +506,13 @@ fn execute_workflow_file<'a>(
                 let step_path = base_dir.join(&step.path);
                 let step_session_dir = workflow_session_dir.join(&step.id);
                 std::fs::create_dir_all(&step_session_dir)?;
+
+                place_workflow_checkpoint_barrier(
+                    &optimization_evidence,
+                    &workflow_session_dir,
+                    &step_id,
+                    step_index,
+                )?;
 
                 if render_progress {
                     println!(
@@ -671,43 +680,103 @@ fn execute_workflow_file<'a>(
     })
 }
 
-/// Read additive compiler summaries from precompiled workflow artifacts.
+/// Read versioned compiler evidence from precompiled workflow artifacts.
 ///
-/// Missing, malformed, or source-only steps retain declaration-order fallback;
-/// workflow execution must not claim profile evidence that an artifact did not
-/// carry. This keeps compiler-to-runtime composition at the artifact boundary.
+/// Source-only steps remain absent from the evidence map and retain
+/// declaration-order scheduling. Every precompiled artifact supplies a current
+/// optimization summary because execution cannot safely infer a missing replay
+/// boundary.
 #[cfg(feature = "driver")]
-fn workflow_profile_latency_ms(
+fn workflow_optimization_evidence(
     workflow: &apxm_runtime::workflow::WorkflowDef,
     base_dir: &Path,
-) -> HashMap<String, u64> {
-    workflow
-        .steps
-        .iter()
-        .filter_map(|step| {
-            let path = base_dir.join(&step.path);
-            (path.extension().and_then(|extension| extension.to_str()) == Some("apxmobj"))
-                .then_some(path)
-                .and_then(|path| std::fs::read(path).ok())
-                .and_then(|bytes| Artifact::from_bytes(&bytes).ok())
-                .and_then(|artifact| {
-                    artifact
-                        .section_data(OPTIMIZATION_SUMMARY_ARTIFACT_SECTION)
-                        .and_then(|bytes| {
-                            serde_json::from_slice::<OptimizationSummaryV1>(bytes).ok()
-                        })
-                })
-                .and_then(|summary| {
-                    summary
-                        .dags
-                        .iter()
-                        .map(|dag| dag.weighted_critical_path_ms)
-                        .max()
-                })
-                .filter(|latency| *latency > 0)
-                .map(|latency| (step.id.clone(), latency))
-        })
-        .collect()
+) -> Result<apxm_runtime::workflow::WorkflowCriticalPathEvidence> {
+    let mut artifacts = BTreeMap::new();
+    for step in &workflow.steps {
+        let path = base_dir.join(&step.path);
+        if path.extension().and_then(|extension| extension.to_str()) != Some("apxmobj") {
+            continue;
+        }
+
+        let bytes = std::fs::read(&path).with_context(|| {
+            format!(
+                "Workflow step '{}' cannot read precompiled artifact {}",
+                step.id,
+                path.display()
+            )
+        })?;
+        let artifact = Artifact::from_bytes(&bytes).with_context(|| {
+            format!(
+                "Workflow step '{}' has an unreadable precompiled artifact {}",
+                step.id,
+                path.display()
+            )
+        })?;
+        let summary_bytes = artifact
+            .section_data(OPTIMIZATION_SUMMARY_ARTIFACT_SECTION)
+            .ok_or_else(|| {
+                anyhow::anyhow!(
+                    "Workflow step '{}' has no versioned optimization summary; replay boundaries are unknown",
+                    step.id
+                )
+            })?;
+        let summary =
+            serde_json::from_slice::<OptimizationSummaryV1>(summary_bytes).with_context(|| {
+                format!(
+                    "Workflow step '{}' has a malformed versioned optimization summary",
+                    step.id
+                )
+            })?;
+        if summary.schema_version != apxm_core::types::OPTIMIZATION_SUMMARY_VERSION {
+            anyhow::bail!(
+                "Workflow step '{}' has optimization summary version {}; expected {}",
+                step.id,
+                summary.schema_version,
+                apxm_core::types::OPTIMIZATION_SUMMARY_VERSION
+            );
+        }
+        artifacts.insert(step.id.clone(), summary);
+    }
+
+    Ok(apxm_runtime::workflow::WorkflowCriticalPathEvidence { artifacts })
+}
+
+/// Verify that every artifact with replay evidence has a compiler-owned
+/// workflow checkpoint placement. Actual placement happens immediately before
+/// the corresponding step becomes observable as started.
+#[cfg(feature = "driver")]
+fn validate_workflow_checkpoint_placement(
+    evidence: &apxm_runtime::workflow::WorkflowCriticalPathEvidence,
+) -> Result<()> {
+    for step_id in evidence.artifacts.keys() {
+        evidence
+            .checkpoint_barrier(step_id)
+            .map_err(anyhow::Error::msg)?;
+    }
+    Ok(())
+}
+
+/// Persist the exact barrier the compiler requires before this runner exposes
+/// a workflow step to observers or dispatches its artifact.
+#[cfg(feature = "driver")]
+fn place_workflow_checkpoint_barrier(
+    evidence: &apxm_runtime::workflow::WorkflowCriticalPathEvidence,
+    workflow_session_dir: &Path,
+    step_id: &str,
+    step_index: usize,
+) -> Result<()> {
+    let Some(barrier) = evidence
+        .checkpoint_barrier(step_id)
+        .map_err(anyhow::Error::msg)?
+    else {
+        return Ok(());
+    };
+    apxm_runtime::workflow::write_workflow_checkpoint_barrier(
+        workflow_session_dir,
+        step_index,
+        &barrier,
+    )?;
+    Ok(())
 }
 
 #[cfg(feature = "driver")]
@@ -749,9 +818,87 @@ fn parse_workflow_args(
 mod tests {
     #[cfg(unix)]
     use super::background_command_line;
-    use super::parse_workflow_args;
-    #[cfg(unix)]
+    use super::{
+        parse_workflow_args, place_workflow_checkpoint_barrier,
+        validate_workflow_checkpoint_placement, workflow_optimization_evidence,
+    };
+    use apxm_artifact::{Artifact, ArtifactMetadata, ArtifactSection};
+    use apxm_core::types::compiler::{
+        DagOptimizationSummaryV1, Determinism, OperationOptimizationSummaryV1, ReplaySafety,
+    };
+    use apxm_core::types::{OPTIMIZATION_SUMMARY_ARTIFACT_SECTION, OptimizationSummaryV1};
+    use apxm_runtime::workflow::{
+        WorkflowDef, WorkflowReadyQueue, WorkflowSchedulerOptions, WorkflowStep,
+    };
+    use std::collections::HashMap;
     use std::path::Path;
+    use tempfile::tempdir;
+
+    fn workflow(steps: Vec<WorkflowStep>) -> WorkflowDef {
+        WorkflowDef {
+            name: "fixture".to_string(),
+            description: None,
+            parameters: Vec::new(),
+            steps,
+            max_concurrency: None,
+            output: None,
+        }
+    }
+
+    fn workflow_step(id: &str, path: &str) -> WorkflowStep {
+        WorkflowStep {
+            id: id.to_string(),
+            path: path.to_string(),
+            depends_on: Vec::new(),
+            params: HashMap::new(),
+        }
+    }
+
+    fn summary(
+        weighted_critical_path_ms: u64,
+        replay_safety: ReplaySafety,
+    ) -> OptimizationSummaryV1 {
+        let mut operation = OperationOptimizationSummaryV1 {
+            node_id: 7,
+            operation: "fixture".to_string(),
+            effect_authority: Default::default(),
+            prompt: Default::default(),
+            cost: Default::default(),
+            backend: Default::default(),
+            legality: Default::default(),
+            decisions: Vec::new(),
+            data_inputs: Vec::new(),
+            effect_inputs: Vec::new(),
+            control_inputs: Vec::new(),
+        };
+        operation.legality.may_reorder = true;
+        operation.effect_authority.determinism = Determinism::Proven;
+        operation.effect_authority.idempotent = true;
+        operation.effect_authority.replay_safety = replay_safety;
+
+        OptimizationSummaryV1::new(vec![DagOptimizationSummaryV1 {
+            weighted_critical_path_ms,
+            nodes: vec![operation],
+            ..Default::default()
+        }])
+    }
+
+    fn write_summary_artifact(root: &Path, file_name: &str, summary: &OptimizationSummaryV1) {
+        let mut artifact = Artifact::new(
+            ArtifactMetadata::new(Some("fixture".to_string()), "fixture"),
+            Vec::new(),
+        );
+        artifact.set_created_at(0);
+        artifact.add_section(ArtifactSection {
+            kind: OPTIMIZATION_SUMMARY_ARTIFACT_SECTION.to_string(),
+            data: serde_json::to_vec(summary).expect("serialize fixture summary"),
+        });
+        std::fs::write(
+            root.join(file_name),
+            artifact.to_bytes().expect("serialize fixture artifact"),
+        )
+        .expect("write fixture artifact");
+    }
 
     #[test]
     fn parse_workflow_args_accepts_json_object() {
@@ -771,6 +918,94 @@ mod tests {
         let error = parse_workflow_args(None, &[String::from("missing_delimiter")])
             .expect_err("invalid args must fail");
         assert!(error.to_string().contains("Expected name=value"));
+    }
+
+    #[test]
+    fn workflow_artifacts_supply_legal_queue_evidence() {
+        let temp = tempdir().expect("fixture directory");
+        write_summary_artifact(
+            temp.path(),
+            "short.apxmobj",
+            &summary(40, ReplaySafety::Safe),
+        );
+        write_summary_artifact(
+            temp.path(),
+            "critical.apxmobj",
+            &summary(50, ReplaySafety::Safe),
+        );
+        let workflow_def = workflow(vec![
+            workflow_step("short", "short.apxmobj"),
+            workflow_step("critical", "critical.apxmobj"),
+        ]);
+
+        let evidence = workflow_optimization_evidence(&workflow_def, temp.path())
+            .expect("versioned artifact evidence");
+
+        assert_eq!(evidence.weighted_critical_path_ms("critical"), Some(50));
+        validate_workflow_checkpoint_placement(&evidence)
+            .expect("safe artifacts require no injected checkpoint");
+
+        let mut queue = WorkflowReadyQueue::with_options(
+            &workflow_def.steps,
+            WorkflowSchedulerOptions {
+                critical_path_evidence: Some(evidence),
+                ..Default::default()
+            },
+        )
+        .expect("valid workflow queue");
+        assert_eq!(queue.take_ready().expect("critical step").id, "critical");
+    }
+
+    #[test]
+    fn checkpoint_placement_is_persisted_before_the_workflow_step_runs() {
+        let temp = tempdir().expect("fixture directory");
+        write_summary_artifact(
+            temp.path(),
+            "checkpoint.apxmobj",
+            &summary(5, ReplaySafety::RequiresCheckpoint),
+        );
+        let workflow_def = workflow(vec![workflow_step("checkpoint", "checkpoint.apxmobj")]);
+
+        let evidence = workflow_optimization_evidence(&workflow_def, temp.path())
+            .expect("versioned artifact evidence");
+        validate_workflow_checkpoint_placement(&evidence)
+            .expect("the workflow runner owns compiler barrier placement");
+        let session = temp.path().join("session");
+        std::fs::create_dir_all(&session).expect("session directory");
+        place_workflow_checkpoint_barrier(&evidence, &session, "checkpoint", 0)
+            .expect("persist compiler checkpoint barrier");
+        let barrier: serde_json::Value = serde_json::from_slice(
+            &std::fs::read(session.join("workflow-checkpoints").join("0.json"))
+                .expect("barrier file"),
+        )
+        .expect("barrier json");
+        assert_eq!(barrier["step_id"], "checkpoint");
+        assert_eq!(barrier["required_before_nodes"], serde_json::json!([7]));
+    }
+
+    #[test]
+    fn missing_or_stale_precompiled_artifact_summaries_fail_closed() {
+        let temp = tempdir().expect("fixture directory");
+        let mut stale = summary(100, ReplaySafety::Safe);
+        stale.schema_version = 0;
+        write_summary_artifact(temp.path(), "stale.apxmobj", &stale);
+        let workflow_def = workflow(vec![
+            workflow_step("first", "missing.apxmobj"),
+            workflow_step("stale", "stale.apxmobj"),
+        ]);
+
+        let error = workflow_optimization_evidence(&workflow_def, temp.path())
+            .expect_err("unversioned precompiled artifact rejects");
+        assert!(
+            error
+                .to_string()
+                .contains("cannot read precompiled artifact")
+        );
+
+        let stale_workflow = workflow(vec![workflow_step("stale", "stale.apxmobj")]);
+        let error = workflow_optimization_evidence(&stale_workflow, temp.path())
+            .expect_err("stale optimization summary rejects");
+        assert!(error.to_string().contains("optimization summary version"));
     }
 
     #[cfg(unix)]

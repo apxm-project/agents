@@ -4,14 +4,6 @@ use apxm_core::constants::graph::attrs as graph_attrs;
 use apxm_core::types::{AISOperationType, Value};
 use thiserror::Error;
 
-const RUNTIME_RESOLVES_MODEL: &[ProviderProtocol] = &[
-    ProviderProtocol::Anthropic,
-    ProviderProtocol::OpenAI,
-    ProviderProtocol::Google,
-    ProviderProtocol::Ollama,
-    ProviderProtocol::Mock,
-];
-
 #[derive(Debug, Error)]
 pub enum SelectBackendError {
     #[error("failed to parse backend catalog: {0}")]
@@ -47,7 +39,7 @@ pub enum SelectBackendError {
         routes: String,
     },
     #[error(
-        "node `{node}` selected backend `{backend}`, but it has no registered models. Add one or use a runtime-resolving protocol."
+        "node `{node}` selected backend `{backend}`, but it has no configured model capability evidence. Register one model before compiling an explicit backend route."
     )]
     NoModels { node: String, backend: String },
     #[error(
@@ -173,7 +165,7 @@ fn resolve_node_route(
             .expect("filter_backends returns non-empty for explicit backend");
         return Ok(Some(ResolvedRoute {
             backend: selected.name.clone(),
-            model: implicit_model(node, selected, true)?,
+            model: Some(implicit_model(node, selected)?),
         }));
     }
 
@@ -181,7 +173,7 @@ fn resolve_node_route(
         let selected = candidates[0];
         return Ok(Some(ResolvedRoute {
             backend: selected.name.clone(),
-            model: implicit_model(node, selected, false)?,
+            model: Some(implicit_model(node, selected)?),
         }));
     }
 
@@ -221,17 +213,13 @@ fn filter_backends<'a>(
 fn implicit_model(
     node: &crate::air_builder::AirNode,
     backend: &BackendConfig,
-    allow_defer: bool,
-) -> Result<Option<String>, SelectBackendError> {
+) -> Result<String, SelectBackendError> {
     match backend.models.as_slice() {
-        [model] => Ok(Some(model.id.clone())),
-        [] if backend.protocol == ProviderProtocol::Mock => Ok(None),
-        [] if allow_defer && RUNTIME_RESOLVES_MODEL.contains(&backend.protocol) => Ok(None),
+        [model] => Ok(model.id.clone()),
         [] => Err(SelectBackendError::NoModels {
             node: node.name.clone(),
             backend: backend.name.clone(),
         }),
-        _ if allow_defer && RUNTIME_RESOLVES_MODEL.contains(&backend.protocol) => Ok(None),
         _ => Err(SelectBackendError::AmbiguousImplicitModel {
             node: node.name.clone(),
             backend: backend.name.clone(),
@@ -311,7 +299,9 @@ mod tests {
                     context_window: 0,
                     supports_vision: false,
                     supports_functions: false,
+                    supports_fine_tuning: false,
                     supports_thinking: false,
+                    uses_reasoning_token_fields: false,
                     supports_custom_temperature: None,
                     supports_structured_outputs: None,
                     max_output_tokens: None,
@@ -390,21 +380,36 @@ mod tests {
     fn rejects_ambiguous_backend_without_model() {
         let mut module = module(HashMap::from([(
             graph_attrs::BACKEND.to_string(),
-            Value::String("vllm".to_string()),
+            Value::String("primary".to_string()),
         )]));
         let err = select_backend(
             &mut module,
             &[backend(
-                "vllm",
-                ProviderProtocol::Vllm,
+                "primary",
+                ProviderProtocol::Mock,
                 &[("a", &[]), ("b", &[])],
             )],
         )
-        .expect_err("vllm cannot defer model choice");
+        .expect_err("multiple configured models require an explicit selection");
 
         assert!(matches!(
             err,
             SelectBackendError::AmbiguousImplicitModel { .. }
         ));
+    }
+
+    #[test]
+    fn rejects_backend_without_configured_model_evidence() {
+        let mut module = module(HashMap::from([(
+            graph_attrs::BACKEND.to_string(),
+            Value::String("primary".to_string()),
+        )]));
+        let err = select_backend(
+            &mut module,
+            &[backend("primary", ProviderProtocol::Mock, &[])],
+        )
+        .expect_err("an explicit backend route requires configured model evidence");
+
+        assert!(matches!(err, SelectBackendError::NoModels { .. }));
     }
 }

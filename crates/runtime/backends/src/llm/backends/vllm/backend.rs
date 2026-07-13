@@ -6,9 +6,10 @@
 
 use crate::llm::backends::http::llm_http_client;
 use crate::llm::backends::openai::OpenAIBackend;
+use crate::llm::backends::openai::backend::validate_provider_dispatch;
+use crate::llm::backends::required_config_string;
 use crate::llm::backends::traits::StreamChunk;
 use crate::llm::backends::{LLMBackend, LLMRequest, LLMResponse};
-use crate::llm::catalog::DEFAULT_VLLM_BASE_URL;
 use crate::llm::wire::{api_paths, backend_metadata, config_keys, headers};
 use crate::llm::{ProviderProtocol, normalize_endpoint_for_protocol};
 use anyhow::{Context, Result};
@@ -25,9 +26,7 @@ use std::sync::OnceLock;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use tokio_stream::Stream;
 
-const DEFAULT_BASE_URL: &str = DEFAULT_VLLM_BASE_URL;
 const PROTOCOL: ProviderProtocol = ProviderProtocol::Vllm;
-const UNCONFIGURED_MODEL_SENTINEL: &str = "__apxm_vllm_model_required__";
 
 /// Env var that, when set to `"1"`, suppresses APXM-specific request shaping
 /// and graph registration so the backend behaves as a flat-HTTP control arm.
@@ -194,8 +193,6 @@ pub struct GraphAwareVllmBackend {
     execution_counter: AtomicU64,
     /// Whether the server accepts `tool_choice="auto"`. Default `true`.
     auto_tool_choice_supported: AtomicBool,
-    /// Whether the backend config included a concrete default model.
-    default_model_configured: bool,
     /// Whether vLLM should receive native `structured_outputs`.
     structured_outputs_supported: bool,
     /// One-shot guard so the FCFS-policy WARN only fires once per backend.
@@ -216,22 +213,12 @@ impl GraphAwareVllmBackend {
     /// Create a new graph-aware vLLM backend.
     ///
     /// Config keys:
-    /// - `base_url`: vLLM server URL including `/v1` (default: `http://localhost:8916/v1`)
-    /// - `model`: Model name to use
+    /// - `base_url`: registered vLLM server URL including `/v1`
+    /// - `model`: registered model name
     /// - `extra_headers`: Optional HTTP headers
     pub async fn new(api_key: &str, config: Option<serde_json::Value>) -> Result<Self> {
-        let default_model_configured = config
-            .as_ref()
-            .and_then(|c| c.get(MODEL))
-            .and_then(|m| m.as_str())
-            .is_some_and(|value| !value.trim().is_empty());
-
-        let base_url = config
-            .as_ref()
-            .and_then(|c| c.get(BASE_URL))
-            .and_then(|u| u.as_str())
-            .unwrap_or(DEFAULT_BASE_URL)
-            .to_string();
+        let model = required_config_string(config.as_ref(), PROTOCOL, MODEL)?;
+        let base_url = required_config_string(config.as_ref(), PROTOCOL, BASE_URL)?;
         let base_url = normalize_endpoint_for_protocol(PROTOCOL, &base_url);
 
         let auto_tool_choice = config
@@ -247,15 +234,19 @@ impl GraphAwareVllmBackend {
             .unwrap_or(true);
 
         let mut inner_config_map = config
-            .clone()
-            .and_then(|value| value.as_object().cloned())
-            .unwrap_or_default();
-        if !default_model_configured {
-            inner_config_map.insert(
-                MODEL.to_string(),
-                serde_json::Value::String(UNCONFIGURED_MODEL_SENTINEL.to_string()),
-            );
-        }
+            .as_ref()
+            .and_then(serde_json::Value::as_object)
+            .cloned()
+            .ok_or(
+                crate::llm::backends::BackendConfigurationError::MissingConfiguration {
+                    protocol: PROTOCOL,
+                },
+            )?;
+        inner_config_map.insert(MODEL.to_string(), serde_json::Value::String(model));
+        inner_config_map.insert(
+            BASE_URL.to_string(),
+            serde_json::Value::String(base_url.clone()),
+        );
         inner_config_map.insert(
             config_keys::SUPPORTS_STRUCTURED_OUTPUTS.to_string(),
             serde_json::Value::Bool(false),
@@ -272,7 +263,6 @@ impl GraphAwareVllmBackend {
             client,
             execution_counter: AtomicU64::new(0),
             auto_tool_choice_supported: AtomicBool::new(auto_tool_choice),
-            default_model_configured,
             structured_outputs_supported,
             scheduler_policy_warned: AtomicBool::new(false),
             scheduler_policy: parking_lot::RwLock::new(None),
@@ -580,22 +570,12 @@ impl GraphAwareVllmBackend {
         request.extra_body = Some(extra);
         request
     }
-
-    fn ensure_model_selected(&self, request: &LLMRequest) -> Result<()> {
-        if request.model.is_none() && !self.default_model_configured {
-            anyhow::bail!(
-                "No model is configured for this vLLM backend. \
-Register a model on the backend configuration or set an explicit graph/default model before execution."
-            );
-        }
-        Ok(())
-    }
 }
 
 #[async_trait]
 impl LLMBackend for GraphAwareVllmBackend {
     async fn generate(&self, request: LLMRequest) -> Result<LLMResponse> {
-        self.ensure_model_selected(&request)?;
+        validate_provider_dispatch(&request)?;
         let injected_request = self.inject_hints(request);
         self.inner.generate(injected_request).await
     }
@@ -604,8 +584,8 @@ impl LLMBackend for GraphAwareVllmBackend {
         &self,
         request: LLMRequest,
     ) -> Pin<Box<dyn Stream<Item = Result<StreamChunk>> + Send + '_>> {
-        if let Err(error) = self.ensure_model_selected(&request) {
-            return Box::pin(futures::stream::once(async move { Err(error) }));
+        if let Err(error) = validate_provider_dispatch(&request) {
+            return Box::pin(tokio_stream::iter(vec![Err(error)]));
         }
         let request = self.inject_hints(request);
         self.inner.generate_stream(request)
@@ -617,6 +597,10 @@ impl LLMBackend for GraphAwareVllmBackend {
 
     fn model(&self) -> &str {
         self.inner.model()
+    }
+
+    fn context_window_for_model(&self, model: &str) -> Option<usize> {
+        self.inner.context_window_for_model(model)
     }
 
     async fn health_check(&self) -> Result<()> {
@@ -777,6 +761,12 @@ impl LLMBackend for GraphAwareVllmBackend {
             supports_dispatch_ir_v1_internal: dispatch_ir_v1_supported,
             supports_admin_reset_prefix_cache: true,
         }
+    }
+
+    fn response_memoization_policy(
+        &self,
+    ) -> crate::llm::backends::traits::ResponseMemoizationPolicy {
+        crate::llm::backends::traits::ResponseMemoizationPolicy::BackendPrefix
     }
 
     fn supports_graph_extensions(&self) -> bool {

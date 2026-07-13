@@ -1,0 +1,4 @@
+{"id":"typed-system-role","output":"preserved","arm_id":"baseline-contract","token_count":2,"latency_ms":5.0}
+{"id":"dependency-only-input","output":"user","arm_id":"baseline-contract","token_count":3,"latency_ms":5.5}
+{"id":"tool-result-budget","output":"unbounded","arm_id":"baseline-contract","token_count":3,"latency_ms":6.0}
+{"id":"production-dspy","output":"rejected","arm_id":"baseline-contract","token_count":2,"latency_ms":4.5}

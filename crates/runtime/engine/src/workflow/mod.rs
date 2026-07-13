@@ -17,18 +17,18 @@ pub mod topo;
 
 pub use def::{WorkflowDef, WorkflowParam, WorkflowStep};
 pub use optimization::{
-    CheckpointReason, CheckpointRecommendation, WorkflowOptimizationInputs,
-    WorkflowOptimizationPlan, plan_workflow_optimizations,
+    WorkflowCheckpointBarrier, WorkflowCheckpointPlacement, WorkflowCriticalPathEvidence,
 };
 pub use planner::{WorkflowPlan, WorkflowPlanStep};
 pub use ready::{
-    ReadyWorkflowStep, WorkflowLatencyPrioritySource, WorkflowPrioritySource, WorkflowReadyQueue,
-    WorkflowSchedulerMode, WorkflowSchedulerOptions,
+    ReadyWorkflowStep, WorkflowLegalityPrioritySource, WorkflowReadyQueue, WorkflowSchedulerMode,
+    WorkflowSchedulerOptions,
 };
 pub use runner::{StepResult, StepStatus, WorkflowResult, WorkflowStatus};
 pub use session::{
-    write_workflow_background_started, write_workflow_session_finished,
-    write_workflow_session_started, write_workflow_step_finished, write_workflow_step_started,
+    write_workflow_background_started, write_workflow_checkpoint_barrier,
+    write_workflow_session_finished, write_workflow_session_started, write_workflow_step_finished,
+    write_workflow_step_started,
 };
 pub use template::resolve;
 pub use topo::execution_phases;

@@ -88,6 +88,7 @@ pub async fn execute(ctx: &ExecutionContext, node: &Node, inputs: Vec<Value>) ->
 
 fn inherited_authority_metadata(metadata_map: &HashMap<String, String>) -> HashMap<String, String> {
     [
+        metadata::ADMISSION_ID,
         metadata::CAPABILITY_GRANTS,
         metadata::SIDE_EFFECT_POLICY,
         metadata::VISIBLE_SKILLS,
@@ -247,6 +248,10 @@ mod tests {
     fn inherited_authority_metadata_copies_only_execution_authority() {
         let source = HashMap::from([
             (
+                metadata::ADMISSION_ID.to_string(),
+                "shared-admission".to_string(),
+            ),
+            (
                 metadata::CAPABILITY_GRANTS.to_string(),
                 "[{\"grant_id\":\"grant_fixture\"}]".to_string(),
             ),
@@ -263,6 +268,10 @@ mod tests {
 
         let inherited = inherited_authority_metadata(&source);
 
+        assert_eq!(
+            inherited.get(metadata::ADMISSION_ID).map(String::as_str),
+            Some("shared-admission")
+        );
         assert_eq!(
             inherited
                 .get(metadata::CAPABILITY_GRANTS)

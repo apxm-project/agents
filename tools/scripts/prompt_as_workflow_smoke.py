@@ -18,6 +18,8 @@ import sys
 import time
 from typing import Any
 
+from apxm.contract import build_layout
+
 
 class JsonRpcMethod(enum.StrEnum):
     TOOLS_CALL = "tools/call"
@@ -96,8 +98,9 @@ def run_id() -> str:
     return dt.datetime.now(dt.UTC).strftime("%Y%m%dT%H%M%SZ")
 
 
-def default_output_dir(root: pathlib.Path, current_run_id: str) -> pathlib.Path:
-    return root / ".apxm" / "evaluation" / "mcp-server" / "runs" / current_run_id
+def default_output_dir(current_run_id: str) -> pathlib.Path:
+    layout = build_layout(__file__)
+    return layout.evaluation_dir / DEFAULT_SCENARIO / "runs" / current_run_id
 
 
 def build_request(index: int, task: str, trace_prefix: str, execute: bool) -> dict[str, Any]:
@@ -295,7 +298,7 @@ def main(argv: list[str]) -> int:
     output_dir = (
         pathlib.Path(args.output_dir)
         if args.output_dir
-        else default_output_dir(repo, current_run_id)
+        else default_output_dir(current_run_id)
     )
     output_dir.mkdir(parents=True, exist_ok=True)
     trace_prefix = args.trace_prefix or f"dogfood-{current_run_id}"
