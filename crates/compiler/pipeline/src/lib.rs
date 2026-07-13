@@ -22,6 +22,7 @@
 #![allow(unsafe_code)]
 
 pub mod air_builder;
+mod analysis;
 pub mod api;
 mod artifact_validation;
 pub mod codegen;

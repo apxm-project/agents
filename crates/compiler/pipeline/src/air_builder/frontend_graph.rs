@@ -1,5 +1,7 @@
-use crate::air_builder::{AirEdge, AirError, AirModule, AirModuleBuilder};
-use apxm_core::constants::graph::{attrs as graph_attrs, metadata as graph_meta};
+use crate::air_builder::{
+    AirEdge, AirError, AirModule, AirModuleBuilder, PromptInputBinding, apply_prompt_input_bindings,
+};
+use apxm_core::constants::graph::attrs as graph_attrs;
 use apxm_core::types::{AISOperationType, DependencyType, Value};
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
@@ -34,12 +36,21 @@ pub struct FrontendNode {
     pub attributes: HashMap<String, Value>,
 }
 
+impl FrontendNode {
+    /// Attach ordered prompt inputs to an ASK, THINK, or REASON frontend node.
+    pub fn with_prompt_inputs(
+        mut self,
+        bindings: impl IntoIterator<Item = PromptInputBinding>,
+    ) -> Self {
+        apply_prompt_input_bindings(&mut self.attributes, bindings);
+        self
+    }
+}
+
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]
 pub struct FrontendEdge {
-    #[serde(alias = "from_id")]
     pub from: u64,
-    #[serde(alias = "to_id")]
     pub to: u64,
     #[serde(default = "default_dependency")]
     pub dependency: DependencyType,
@@ -49,7 +60,6 @@ pub struct FrontendEdge {
 #[serde(deny_unknown_fields)]
 pub struct FrontendParameter {
     pub name: String,
-    #[serde(alias = "typeName")]
     pub type_name: String,
 }
 
@@ -93,10 +103,6 @@ impl FrontendGraph {
         for (key, value) in &self.metadata {
             builder.meta(key, value.clone());
         }
-        if !self.metadata.contains_key(graph_meta::IS_ENTRY) {
-            builder.meta(graph_meta::IS_ENTRY, Value::Bool(true));
-        }
-
         let node_ids = self
             .nodes
             .iter()
@@ -280,6 +286,7 @@ fn copy_attr(node: &FrontendNode, target: &mut HashMap<String, Value>, attr: &'s
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::air_builder::PromptInputRole;
     use apxm_core::constants::graph::attrs as graph_attrs;
     use apxm_core::types::Number;
 
@@ -318,7 +325,7 @@ mod tests {
                         ),
                     ]),
                 ),
-                node(2, "out", AISOperationType::Yield, HashMap::new()),
+                node(2, "out", AISOperationType::Return, HashMap::new()),
             ],
             edges: vec![FrontendEdge {
                 from: 1,
@@ -521,7 +528,7 @@ mod tests {
             "nodes": [
                 {
                     "id": 1,
-                    "name": "compatibility",
+                    "name": "unsupported_op",
                     "op": "llm",
                     "attributes": {}
                 }
@@ -532,5 +539,37 @@ mod tests {
         }))
         .expect_err("canvas-only op names do not enter compiler graph IR");
         assert!(err.to_string().contains("unknown variant"));
+    }
+
+    #[test]
+    fn frontend_node_prompt_bindings_match_direct_air_payloads() {
+        let node = node(1, "ask", AISOperationType::Ask, HashMap::new()).with_prompt_inputs([
+            PromptInputBinding::new("question", PromptInputRole::User),
+            PromptInputBinding::new("policy", PromptInputRole::System),
+            PromptInputBinding::new("dependency", PromptInputRole::DependencyOnly),
+            PromptInputBinding::new("tool_result", PromptInputRole::ToolContext),
+            PromptInputBinding::new("guard", PromptInputRole::Control),
+        ]);
+
+        assert_eq!(
+            node.attributes.get(graph_attrs::INPUT_NAMES),
+            Some(&Value::Array(vec![
+                Value::String("question".to_string()),
+                Value::String("policy".to_string()),
+                Value::String("dependency".to_string()),
+                Value::String("tool_result".to_string()),
+                Value::String("guard".to_string()),
+            ])),
+        );
+        assert_eq!(
+            node.attributes.get(graph_attrs::INPUT_ROLES),
+            Some(&Value::Array(vec![
+                Value::String("user".to_string()),
+                Value::String("system".to_string()),
+                Value::String("dependency_only".to_string()),
+                Value::String("tool_context".to_string()),
+                Value::String("control".to_string()),
+            ])),
+        );
     }
 }

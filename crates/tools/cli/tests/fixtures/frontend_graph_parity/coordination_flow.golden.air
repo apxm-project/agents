@@ -1,0 +1,8 @@
+module {
+  func.func @coordination_flow() -> !ais.token attributes {ais.entry} {
+    %n1 = ais.spawn_agent "worker" {mode = "collaborative", node_name = "worker"} : !ais.token
+    %n2 = ais.delegate "Review the frontend contract" to "worker" (%n1 : !ais.token) : !ais.token
+    %n3 = ais.handoff "orchestrator" to "worker" (%n2 : !ais.token) {payload = "Begin the assigned review.", transfer_state = true} : !ais.token
+    ais.return %n3 {node_name = "out"} : !ais.token
+  }
+}

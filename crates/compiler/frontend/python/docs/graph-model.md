@@ -110,13 +110,13 @@ identical.
 ```python
 from apxm import GraphRecorder
 
-g = GraphRecorder("my_flow")
+g = GraphRecorder("my_flow", metadata={"is_entry": True})
 greeting = g.ask(name="greet", prompt="Greet {name} warmly.")
 g.done(greeting)
 
 graph = g.to_graph()        # -> ApxmGraph
 air = graph.to_air()        # -> AIR text emitted by the Rust AIR builder
-# or, equivalently and including python-tools metadata:
+# or, equivalently and including a handler manifest when handlers are registered:
 air = g.to_air()
 ```
 

@@ -79,8 +79,8 @@
     },
     {
       "op": "SWITCH",
-      "example_json": "{\"id\": 3, \"op\": \"SWITCH\", \"attributes\": {\"discriminant\": \"topic_kind\", \"cases\": [{\"label\": \"math\", \"node_id\": 4}, {\"label\": \"code\", \"node_id\": 5}], \"default\": \"6\"}}",
-      "bytes": 164
+      "example_json": "{\"id\": 3, \"op\": \"SWITCH\", \"attributes\": {\"discriminant\": \"topic_kind\", \"case_labels\": [\"math\", \"code\"]}}",
+      "bytes": 104
     },
     {
       "op": "FLOW_CALL",

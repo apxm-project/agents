@@ -1,10 +1,13 @@
 # apxm — Python frontend for APXM
 
-The Python frontend for [APXM](https://github.com/apxm-project/agents),
-the graph-aware dispatch + scheduling layer for vLLM.
+The Python authoring frontend for
+[APXM](https://github.com/apxm-project/agents), the typed abstract machine,
+compiler, and runtime for agent programs.
 
-This package lets you author APXM workflows in Python and emit AIR that the
-APXM compiler/runtime executes.
+This package records APXM workflows as the compiler-owned `FrontendGraph` DTO.
+`apxm emit-air` validates that DTO and renders canonical AIR; the compiler then
+lowers AIR through MLIR into a `.apxmobj` artifact. TypeScript and Rust follow
+the same contract.
 
 ## Quick start
 
@@ -38,15 +41,16 @@ print(hello.to_air())
 
 ## Running workflows
 
-The Python package emits AIR. Executing it requires the APXM runtime/compiler
-— install it separately and use the `dekk agents` CLI:
+The Python package emits AIR. Executing it requires the installed APXM
+runtime/compiler CLI:
 
 ```bash
-dekk agents execute path/to/workflow.py
+apxm execute path/to/workflow.py
 ```
 
-See the main [APXM repo](https://github.com/apxm-project/agents) for the
-runtime, the AIS dialect, the dekk CLI, and the operator workflow.
+Set `APXM_BIN` when the CLI is not named `apxm` on `PATH`. See the main
+[APXM repo](https://github.com/apxm-project/agents) for the runtime, AIS
+dialect, and operator workflow.
 
 ## Companion repos
 

@@ -19,3 +19,24 @@ jobs:
       - run: cargo fmt --all --check
       - run: python tools/scripts/cargo.py check --workspace
       - run: python tools/scripts/cargo.py test --workspace --exclude apxm-compiler --exclude apxm-cli
+
+  frontend-contract:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: crates/compiler/frontend/typescript/package-lock.json
+      - name: install TypeScript frontend dependencies
+        run: npm --prefix crates/compiler/frontend/typescript ci
+      - name: check generated frontend metadata
+        run: python tools/scripts/cargo.py run -p apxm-cli -- codegen op-spec --check && python tools/scripts/cargo.py run -p apxm-cli -- codegen frontend --check && python tools/scripts/cargo.py run -p apxm-cli -- codegen typescript --check && python tools/scripts/cargo.py run -p apxm-cli -- codegen typescript-frontend --check && python tools/scripts/cargo.py run -p apxm-cli -- codegen event-kinds --check
+      - name: verify native frontend parity
+        run: python tools/scripts/check_frontend_parity.py

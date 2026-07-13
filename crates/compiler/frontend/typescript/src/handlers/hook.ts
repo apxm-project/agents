@@ -115,19 +115,23 @@ export function hook(options: HookOptions): (fn: HookFnCallable) => HookFn {
   };
 }
 
-/** Build a handler manifest descriptor for a hook. */
-export function hookDescriptor(h: HookFn, sourceFile?: string): Record<string, unknown> {
-  const descriptor: Record<string, unknown> = {
+/** Build a portable handler-manifest descriptor for a hook. */
+export function hookDescriptor(
+  h: HookFn,
+  source: { artifact_path: string; content: string },
+): Record<string, unknown> {
+  return {
+    kind: "hook",
+    language: "typescript",
     handler_id: h.handler_id,
     module: h.module,
     qualname: h.qualname,
     name: h.name,
+    source,
+    description: "",
+    schema: {},
     event: h.event,
     match: h.match,
     mode: h.mode,
   };
-  if (sourceFile) {
-    descriptor.source_file = sourceFile;
-  }
-  return descriptor;
 }

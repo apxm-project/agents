@@ -11,7 +11,7 @@ use super::cli::*;
 pub fn codegen_command(action: CodegenAction, json_output: bool) -> Result<()> {
     match action {
         CodegenAction::Frontend { output_dir, check } => {
-            let output_dir = output_dir.unwrap_or_else(default_frontend_codegen_dir);
+            let output_dir = output_dir.unwrap_or_else(default_python_frontend_codegen_dir);
             let rendered = crate::frontend::render_generated_python();
             let mut files: Vec<String> =
                 rendered.iter().map(|(name, _)| name.to_string()).collect();
@@ -290,7 +290,7 @@ fn check_generated_named_files(
     Ok(())
 }
 
-fn default_frontend_codegen_dir() -> PathBuf {
+fn default_python_frontend_codegen_dir() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join("../../compiler/frontend/python/apxm/_generated")
 }
 

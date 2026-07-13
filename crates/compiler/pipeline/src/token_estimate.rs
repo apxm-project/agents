@@ -1,6 +1,7 @@
 use apxm_core::constants::graph::attrs as graph_attrs;
-use apxm_core::types::execution::ExecutionDag;
+use apxm_core::types::execution::{ExecutionDag, Node};
 use apxm_core::types::{AISOperationType, Number, Value};
+use std::collections::HashMap;
 
 use crate::air_builder::AirModule;
 
@@ -59,6 +60,46 @@ pub fn count_text_tokens(model: Option<&str>, text: &str) -> usize {
     tokenizer_for_model(model).count(text)
 }
 
+/// Return the static leading segment of a template before its first input placeholder.
+///
+/// A shared-prefix estimate represents only text that is identical before any
+/// request-specific interpolation. Braces that do not contain a valid named
+/// placeholder remain literal template text.
+pub fn static_leading_template_prefix(template: &str) -> &str {
+    let bytes = template.as_bytes();
+    let mut index = 0;
+
+    while index < bytes.len() {
+        if bytes[index] == b'{' {
+            let start = index + 1;
+            let mut end = start;
+            while end < bytes.len() && (bytes[end].is_ascii_alphanumeric() || bytes[end] == b'_') {
+                end += 1;
+            }
+            if end > start && end < bytes.len() && bytes[end] == b'}' {
+                return &template[..index];
+            }
+        }
+        index += utf8_len(bytes[index]);
+    }
+
+    template
+}
+
+/// Estimate the identical static leading prefix of one template for a model.
+///
+/// The caller supplies a template message channel that is eligible for prefix
+/// reuse. Empty prefixes have no reusable static leading segment and produce
+/// no estimate.
+pub fn shared_prefix_token_estimate(model: Option<&str>, template: &str) -> Option<u32> {
+    let prefix = static_leading_template_prefix(template);
+    if prefix.is_empty() {
+        return None;
+    }
+
+    Some(u32::try_from(tokenizer_for_model(model).count(prefix)).unwrap_or(u32::MAX))
+}
+
 /// Returns true for models that use the cl100k_base tokenizer.
 fn is_cl100k_model(model: &str) -> bool {
     use tokenizer_model_patterns as patterns;
@@ -69,11 +110,13 @@ fn is_cl100k_model(model: &str) -> bool {
         || m.contains(patterns::TEXT_EMBEDDING_ADA)
 }
 
-/// Annotate LLM nodes with BPE token counts before lowering to MLIR.
+/// Annotate pre-lowering LLM nodes with BPE token counts.
 ///
-/// Sets `ais.est_template_tokens` on each ASK/THINK/REASON node so MLIR passes
-/// can read pre-computed tokenizer values.
+/// Sets whole-template and canonical shared-prefix estimates on each
+/// ASK/THINK/REASON node so MLIR passes can consume tokenizer-backed values.
 pub fn annotate_token_estimates(module: &mut AirModule) {
+    annotate_shared_prefix_token_estimates(module);
+
     let mlir_key = mlir_attr_key(graph_attrs::EST_TEMPLATE_TOKENS);
     for node in &mut module.nodes {
         if !is_llm_template_op(node.op) {
@@ -96,6 +139,45 @@ pub fn annotate_token_estimates(module: &mut AirModule) {
             mlir_key.clone(),
             Value::Number(Number::Integer(i64::try_from(count).unwrap_or(i64::MAX))),
         );
+    }
+}
+
+/// Stamp pre-lowering AirModules with canonical shared-prefix estimates.
+///
+/// Raw AIR text bypasses this AirModule lowering hook. Artifact finalization
+/// still materializes its canonical estimate, but does not retroactively
+/// nominate a pre-dispatch warmup candidate.
+pub fn annotate_shared_prefix_token_estimates(module: &mut AirModule) {
+    let mlir_key = mlir_attr_key(graph_attrs::SHARED_PREFIX_EST_TOKENS);
+
+    for node in &mut module.nodes {
+        if !is_llm_template_op(node.op) {
+            continue;
+        }
+
+        let estimate = node
+            .attributes
+            .get(graph_attrs::TEMPLATE_STR)
+            .and_then(Value::as_str)
+            .and_then(|template| {
+                let model = node
+                    .attributes
+                    .get(graph_attrs::MODEL)
+                    .and_then(Value::as_str);
+                shared_prefix_token_estimate(model, template)
+            });
+
+        match estimate {
+            Some(count) => {
+                node.attributes.insert(
+                    mlir_key.clone(),
+                    Value::Number(Number::Integer(i64::from(count))),
+                );
+            }
+            None => {
+                node.attributes.remove(&mlir_key);
+            }
+        }
     }
 }
 
@@ -143,43 +225,75 @@ fn utf8_len(b: u8) -> usize {
     }
 }
 
-/// Refine shared-prefix token estimates using exact BPE tokenization.
+/// Materialize canonical shared-prefix estimates in emitted artifacts.
 ///
-/// After MLIR compilation, this post-pass replaces shared-prefix estimates
-/// with BPE token counts, selecting the tokenizer based on each node's `model`
-/// attribute.
+/// A reuse group receives an estimate only when every member has the same
+/// declared model and identical static leading template segment. This keeps
+/// the estimate tied to one tokenizer and prevents an invalid group from
+/// producing a warmup hint.
 pub fn refine_token_estimates(dags: &mut [ExecutionDag]) {
     for dag in dags.iter_mut() {
-        for node in &mut dag.nodes {
-            // Only process nodes in a shared prefix group
-            if node.get_attribute(graph_attrs::REUSE_GROUP).is_none() {
-                continue;
+        let mut groups = HashMap::<String, Vec<usize>>::new();
+        for (index, node) in dag.nodes.iter_mut().enumerate() {
+            match node.get_attribute(graph_attrs::REUSE_GROUP) {
+                Some(Value::String(group)) => {
+                    groups.entry(group.clone()).or_default().push(index);
+                }
+                _ => clear_shared_prefix_hints(node),
             }
-            // Get the template string
-            let template = match node.get_attribute(graph_attrs::TEMPLATE_STR) {
-                Some(Value::String(s)) => s.clone(),
-                _ => continue,
-            };
-            let static_text = strip_placeholders(&template);
-            if static_text.is_empty() {
-                continue;
+        }
+
+        for members in groups.values() {
+            let estimate = shared_prefix_group_estimate(&dag.nodes, members);
+            for &index in members {
+                let node = &mut dag.nodes[index];
+                if let Some(count) = estimate {
+                    node.set_attribute(
+                        graph_attrs::SHARED_PREFIX_EST_TOKENS.to_string(),
+                        Value::Number(Number::Integer(i64::from(count))),
+                    );
+                } else {
+                    clear_shared_prefix_hints(node);
+                }
             }
-            // Select tokenizer based on the node's model attribute
-            let model = node
-                .get_attribute(graph_attrs::MODEL)
-                .and_then(|v| match v {
-                    Value::String(s) => Some(s.as_str()),
-                    _ => None,
-                });
-            let count = tokenizer_for_model(model).count(&static_text);
-            node.set_attribute(
-                graph_attrs::SHARED_PREFIX_EST_TOKENS.to_string(),
-                Value::Number(apxm_core::types::Number::Integer(
-                    i64::try_from(count).unwrap_or(i64::MAX),
-                )),
-            );
         }
     }
+}
+
+fn shared_prefix_group_estimate(nodes: &[Node], members: &[usize]) -> Option<u32> {
+    let first = nodes.get(*members.first()?)?;
+    let model = node_model(first);
+    let prefix = static_leading_template_prefix(node_template(first)?);
+    if prefix.is_empty() {
+        return None;
+    }
+
+    for &index in members.iter().skip(1) {
+        let node = nodes.get(index)?;
+        if node_model(node) != model
+            || static_leading_template_prefix(node_template(node)?) != prefix
+        {
+            return None;
+        }
+    }
+
+    shared_prefix_token_estimate(model, prefix)
+}
+
+fn node_template(node: &Node) -> Option<&str> {
+    node.get_attribute(graph_attrs::TEMPLATE_STR)
+        .and_then(Value::as_str)
+}
+
+fn node_model(node: &Node) -> Option<&str> {
+    node.get_attribute(graph_attrs::MODEL)
+        .and_then(Value::as_str)
+}
+
+fn clear_shared_prefix_hints(node: &mut Node) {
+    node.attributes
+        .remove(graph_attrs::SHARED_PREFIX_EST_TOKENS);
+    node.attributes.remove(graph_attrs::WARMUP_CANDIDATE);
 }
 
 fn mlir_attr_key(attr: &str) -> String {
@@ -191,4 +305,175 @@ fn is_llm_template_op(op: AISOperationType) -> bool {
         op,
         AISOperationType::Ask | AISOperationType::Think | AISOperationType::Reason
     )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::air_builder::{AirModule, AirNode};
+    use apxm_core::types::execution::Node;
+    use std::collections::HashMap;
+
+    fn llm_air_node(template: &str) -> AirNode {
+        let mut attributes = HashMap::new();
+        attributes.insert(
+            graph_attrs::TEMPLATE_STR.to_string(),
+            Value::String(template.to_string()),
+        );
+        attributes.insert(
+            graph_attrs::MODEL.to_string(),
+            Value::String("gpt-4o-mini".to_string()),
+        );
+        AirNode {
+            id: 1,
+            name: "ask".to_string(),
+            op: AISOperationType::Ask,
+            attributes,
+        }
+    }
+
+    #[test]
+    fn shared_prefix_stops_at_the_first_dynamic_placeholder() {
+        let template = "System policy:\nAnswer carefully.\nQuestion: {question}\nTail: static";
+        let prefix = static_leading_template_prefix(template);
+
+        assert_eq!(prefix, "System policy:\nAnswer carefully.\nQuestion: ");
+        assert_ne!(prefix, strip_placeholders(template));
+    }
+
+    #[test]
+    fn direct_air_estimator_stamps_the_mlir_prefix_attribute() {
+        let template = "System policy: {question}\nTail: static";
+        let mut module = AirModule {
+            name: "prefix".to_string(),
+            nodes: vec![llm_air_node(template)],
+            edges: Vec::new(),
+            parameters: Vec::new(),
+            metadata: HashMap::new(),
+        };
+
+        annotate_shared_prefix_token_estimates(&mut module);
+
+        let estimate = module.nodes[0]
+            .attributes
+            .get(&mlir_attr_key(graph_attrs::SHARED_PREFIX_EST_TOKENS))
+            .and_then(Value::as_u64);
+        assert_eq!(
+            estimate,
+            shared_prefix_token_estimate(Some("gpt-4o-mini"), template).map(u64::from)
+        );
+    }
+
+    #[test]
+    fn refinement_repairs_legacy_full_template_static_estimates() {
+        let template = "System policy: {question}\nTail: static";
+        let mut node = Node::new(1, AISOperationType::Ask);
+        node.set_attribute(
+            graph_attrs::REUSE_GROUP.to_string(),
+            Value::String("shared".to_string()),
+        );
+        node.set_attribute(
+            graph_attrs::TEMPLATE_STR.to_string(),
+            Value::String(template.to_string()),
+        );
+        node.set_attribute(
+            graph_attrs::MODEL.to_string(),
+            Value::String("gpt-4o-mini".to_string()),
+        );
+        node.set_attribute(
+            graph_attrs::SHARED_PREFIX_EST_TOKENS.to_string(),
+            Value::Number(Number::Integer(
+                i64::try_from(count_text_tokens(
+                    Some("gpt-4o-mini"),
+                    &strip_placeholders(template),
+                ))
+                .unwrap(),
+            )),
+        );
+
+        let mut dag = ExecutionDag::new();
+        dag.nodes.push(node);
+        refine_token_estimates(std::slice::from_mut(&mut dag));
+
+        assert_eq!(
+            dag.nodes[0]
+                .get_attribute(graph_attrs::SHARED_PREFIX_EST_TOKENS)
+                .and_then(Value::as_u64),
+            shared_prefix_token_estimate(Some("gpt-4o-mini"), template).map(u64::from)
+        );
+    }
+
+    #[test]
+    fn refinement_preserves_a_matching_canonical_estimate() {
+        let template = "Static policy: {question}";
+        let expected = shared_prefix_token_estimate(Some("gpt-4o-mini"), template).unwrap();
+        let mut node = Node::new(1, AISOperationType::Ask);
+        node.set_attribute(
+            graph_attrs::REUSE_GROUP.to_string(),
+            Value::String("shared".to_string()),
+        );
+        node.set_attribute(
+            graph_attrs::TEMPLATE_STR.to_string(),
+            Value::String(template.to_string()),
+        );
+        node.set_attribute(
+            graph_attrs::MODEL.to_string(),
+            Value::String("gpt-4o-mini".to_string()),
+        );
+        node.set_attribute(
+            graph_attrs::SHARED_PREFIX_EST_TOKENS.to_string(),
+            Value::Number(Number::Integer(i64::from(expected))),
+        );
+
+        let mut dag = ExecutionDag::new();
+        dag.nodes.push(node);
+        refine_token_estimates(std::slice::from_mut(&mut dag));
+
+        assert_eq!(
+            dag.nodes[0]
+                .get_attribute(graph_attrs::SHARED_PREFIX_EST_TOKENS)
+                .and_then(Value::as_u64),
+            Some(u64::from(expected))
+        );
+    }
+
+    #[test]
+    fn refinement_withholds_hints_when_group_members_disagree() {
+        let mut first = Node::new(1, AISOperationType::Ask);
+        let mut second = Node::new(2, AISOperationType::Ask);
+        for (node, template, model) in [
+            (&mut first, "Static policy: {question}", "gpt-4o-mini"),
+            (&mut second, "Different policy: {question}", "gpt-4"),
+        ] {
+            node.set_attribute(
+                graph_attrs::REUSE_GROUP.to_string(),
+                Value::String("shared".to_string()),
+            );
+            node.set_attribute(
+                graph_attrs::TEMPLATE_STR.to_string(),
+                Value::String(template.to_string()),
+            );
+            node.set_attribute(
+                graph_attrs::MODEL.to_string(),
+                Value::String(model.to_string()),
+            );
+            node.set_attribute(
+                graph_attrs::SHARED_PREFIX_EST_TOKENS.to_string(),
+                Value::Number(Number::Integer(99)),
+            );
+            node.set_attribute(graph_attrs::WARMUP_CANDIDATE.to_string(), Value::Bool(true));
+        }
+
+        let mut dag = ExecutionDag::new();
+        dag.nodes = vec![first, second];
+        refine_token_estimates(std::slice::from_mut(&mut dag));
+
+        for node in dag.nodes {
+            assert!(
+                node.get_attribute(graph_attrs::SHARED_PREFIX_EST_TOKENS)
+                    .is_none()
+            );
+            assert!(node.get_attribute(graph_attrs::WARMUP_CANDIDATE).is_none());
+        }
+    }
 }

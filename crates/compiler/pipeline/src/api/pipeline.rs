@@ -3,18 +3,16 @@
 use crate::air_builder::AirModule;
 use crate::api::{Context, Module};
 use crate::optimization::CompilerOptimizationContext;
-use crate::passes::{PassManager, PipelineDiagnostics, resolve_pass_list};
+use crate::passes::{PassManager, PipelineDiagnostics, PipelinePlan, resolve_pipeline_plan};
 use apxm_core::error::compiler::{CompilerError, Result};
 use apxm_core::error::{Error, codes::ErrorCode};
-use apxm_core::types::compiler::metadata::{BUILD_PROMPT, DEAD_CONTEXT_ELIMINATION, DSPY_OPTIMIZE};
+use apxm_core::types::compiler::metadata::DSPY_OPTIMIZE;
 use apxm_core::types::{OptimizationLevel, PipelineConfig};
-use std::ffi::CString;
 
 /// Pipeline API for compiling and optimizing modules.
 pub struct Pipeline<'ctx> {
     context: &'ctx Context,
     config: PipelineConfig,
-    optimization_context: CompilerOptimizationContext,
 }
 
 impl<'ctx> Pipeline<'ctx> {
@@ -23,20 +21,15 @@ impl<'ctx> Pipeline<'ctx> {
         Self {
             context,
             config: PipelineConfig::default(),
-            optimization_context: CompilerOptimizationContext::default(),
         }
     }
 
     /// Creates a new pipeline with custom configuration.
     pub fn with_config(context: &'ctx Context, config: PipelineConfig) -> Self {
-        let optimization_context = CompilerOptimizationContext::from_pipeline_config(&config);
-        Self {
-            context,
-            config,
-            optimization_context,
-        }
+        Self { context, config }
     }
 
+    /// Creates a pipeline with one optimization level.
     pub fn with_opt_level(context: &'ctx Context, level: OptimizationLevel) -> Self {
         let config = PipelineConfig {
             opt_level: level,
@@ -45,39 +38,38 @@ impl<'ctx> Pipeline<'ctx> {
         Self::with_config(context, config)
     }
 
-    /// Creates a pipeline with a caller-provided compiler optimization context.
+    /// Creates a pipeline with a caller-provided optimization context.
+    ///
+    /// Prompt optimization is intentionally unavailable during production
+    /// compilation, so the context remains accepted for source compatibility
+    /// but does not alter the executable pipeline plan.
     pub fn with_config_and_optimization_context(
         context: &'ctx Context,
         config: PipelineConfig,
-        optimization_context: CompilerOptimizationContext,
+        _optimization_context: CompilerOptimizationContext,
     ) -> Self {
-        Self {
-            context,
-            config,
-            optimization_context,
-        }
+        Self { context, config }
     }
 
+    /// Compile AIR text without collecting diagnostics.
     pub fn compile(&self, source: &str) -> Result<Module> {
         let module = Module::parse(self.context, source)?;
         self.process_module(module)
     }
 
-    /// Compile pre-built AIR text and collect per-pass diagnostics.
-    ///
-    /// Compile variant for callers that need the diagnostics array,
-    /// e.g. the CLI's `--emit-diagnostics` flag and the ablation harness.
+    /// Compile AIR text and collect per-stage diagnostics.
     pub fn compile_with_diagnostics(&self, source: &str) -> Result<(Module, PipelineDiagnostics)> {
         let module = Module::parse(self.context, source)?;
         self.process_module_with_diagnostics(module)
     }
 
+    /// Compile a frontend graph without collecting diagnostics.
     pub fn compile_graph(&self, module: &AirModule) -> Result<Module> {
         let ir_module = self.lower_graph(module)?;
         self.process_module(ir_module)
     }
 
-    /// Compile a graph and collect per-pass diagnostics.
+    /// Compile a frontend graph and collect per-stage diagnostics.
     pub fn compile_graph_with_diagnostics(
         &self,
         module: &AirModule,
@@ -91,53 +83,44 @@ impl<'ctx> Pipeline<'ctx> {
 
         if let Some(ref profile_path) = self.config.profile_path {
             let profile = crate::passes::profile::ExecutionProfile::load_from_file(profile_path)
-                .map_err(|e| {
+                .map_err(|error| {
                     CompilerError::Unsupported(Box::new(Error::new_generic(
                         ErrorCode::InternalError,
-                        format!("Failed to load profile: {e}"),
+                        format!("Failed to load profile: {error}"),
                     )))
                 })?;
             profile.apply_to_module(&mut module, self.config.token_budget);
         }
 
         crate::token_estimate::annotate_token_estimates(&mut module);
-
-        let air_text = module.to_air().map_err(|e| {
+        let air_text = module.to_air().map_err(|error| {
             CompilerError::Unsupported(Box::new(Error::new_generic(
                 ErrorCode::InternalError,
-                format!("AIR emission failed: {e}"),
+                format!("AIR emission failed: {error}"),
             )))
         })?;
         Module::parse(self.context, &air_text)
     }
 
     fn process_module(&self, module: Module) -> Result<Module> {
-        let pass_names = self.resolved_pass_names()?;
-        self.apply_transient_module_config(&module, &pass_names)?;
-
+        let plan = self.resolved_plan()?;
         if self.config.verify {
             module.verify()?;
         }
 
-        let pm = self.pass_manager_from_names(&pass_names)?;
-        pm.run(&module)?;
+        PassManager::from_plan(self.context, plan)?.run(&module)?;
 
-        // Strip per-pass stat attributes (`ais.<pass>_fired_count`,
-        // `ais.<pass>_ir_size_delta`) before verification + serialization so
-        // they don't bake into the artifact and break golden-roundtrip /
-        // idempotency checks. The diagnostics path drains them per-pass via
-        // `drain_pass_stats` instead.
-        // SAFETY: `module.as_ptr()` is a valid `*mut ApxmModule` for the
-        // lifetime of this borrow; the C side only mutates module attrs.
+        // Strip MLIR pass statistics before verification and serialization so
+        // they do not become artifact data.
+        // SAFETY: `module.as_ptr()` remains valid for this borrow and the FFI
+        // only removes transient compiler statistics from module attributes.
         unsafe {
             crate::ffi::apxm_module_strip_all_pass_stats(module.as_ptr());
         }
-        Self::strip_transient_module_config(&module)?;
 
         if self.config.verify {
             module.verify()?;
         }
-
         Ok(module)
     }
 
@@ -145,170 +128,129 @@ impl<'ctx> Pipeline<'ctx> {
         &self,
         module: Module,
     ) -> Result<(Module, PipelineDiagnostics)> {
-        let pass_names = self.resolved_pass_names()?;
-        self.apply_transient_module_config(&module, &pass_names)?;
-
+        let plan = self.resolved_plan()?;
         if self.config.verify {
             module.verify()?;
         }
 
-        let pm = PassManager::new(self.context)?;
-        // resolve_pass_list applies pass_list_override and disable_passes on
-        // top of the level/target/no_cse_llm/warn_unconsumed defaults so the
-        // diagnostics path agrees with PassManager::from_config. Rust-only
-        // passes (capability-binding-check, bind-capability-handlers) are dispatched outside
-        // the MLIR pass manager and must not reach it here.
-        let pass_names: Vec<String> = pass_names
-            .into_iter()
-            .filter(|n| crate::passes::is_mlir_pass(n))
-            .collect();
-        let diagnostics = pm.run_with_metrics(&module, &pass_names)?;
-        Self::strip_transient_module_config(&module)?;
+        let pm = PassManager::from_plan(self.context, plan.clone())?;
+        let diagnostics = pm.run_plan_with_metrics(&module, &plan)?;
 
         if self.config.verify {
             module.verify()?;
         }
-
         Ok((module, diagnostics))
     }
 
+    /// Return the immutable configuration used to derive this pipeline's plan.
     pub fn config(&self) -> &PipelineConfig {
         &self.config
     }
 
-    fn resolved_pass_names(&self) -> Result<Vec<String>> {
-        let mut pass_names = resolve_pass_list(&self.config);
-        let dspy_name = DSPY_OPTIMIZE.name;
-
-        if self.config.pass_list_override.is_none()
-            && self.config.opt_level != OptimizationLevel::O0
-            && !pass_names.iter().any(|name| name == dspy_name)
-            && self.optimization_context.prompt_optimization_configured()?
-        {
-            // Insert dspy-optimize AFTER dead-context-elimination so DCE has
-            // already pruned unconsumed Asks; otherwise DSPy spends API budget
-            // rewriting prompts that DCE is about to remove. Fall back to
-            // (build-prompt + 1) only if DCE is not in the pass list, such as
-            // O0 with a custom override.
-            let insert_at = pass_names
-                .iter()
-                .position(|name| name == DEAD_CONTEXT_ELIMINATION.name)
-                .or_else(|| pass_names.iter().position(|name| name == BUILD_PROMPT.name))
-                .map_or(pass_names.len(), |index| index + 1);
-            pass_names.insert(insert_at, dspy_name.to_string());
-        }
-
-        Ok(pass_names)
-    }
-
-    fn pass_manager_from_names(&self, pass_names: &[String]) -> Result<PassManager<'ctx>> {
-        let mut pm = PassManager::new(self.context)?;
-        for name in pass_names {
-            if crate::passes::is_mlir_pass(name) {
-                pm.add_pass(name)?;
-            }
-        }
-        Ok(pm)
-    }
-
-    fn apply_transient_module_config(&self, module: &Module, pass_names: &[String]) -> Result<()> {
-        use apxm_core::constants::dspy;
-
-        if !pass_names.iter().any(|name| name == DSPY_OPTIMIZE.name) {
-            return Ok(());
-        }
-
-        let Some(prompt_optimization) = self.optimization_context.prompt_optimization()? else {
-            return Ok(());
-        };
-
-        set_module_string_attr(
-            module,
-            dspy::ATTR_TRAINING_DATA_PATH,
-            &prompt_optimization.training_data_path.to_string_lossy(),
-        )?;
-        set_module_string_attr(
-            module,
-            dspy::ATTR_OPTIMIZER,
-            prompt_optimization.optimizer.as_str(),
-        )?;
-        set_module_string_attr(module, dspy::ATTR_AUTO, prompt_optimization.budget.as_str())?;
-        set_module_string_attr(
-            module,
-            dspy::ATTR_METRIC,
-            prompt_optimization.metric.as_str(),
-        )?;
-        set_module_string_attr(
-            module,
-            dspy::ATTR_BACKEND_JSON,
-            &prompt_optimization.backend_json,
-        )?;
-        set_module_string_attr(
-            module,
-            dspy::ATTR_CACHE_DIR,
-            &prompt_optimization.cache_dir.to_string_lossy(),
-        )?;
-        if prompt_optimization.no_cache {
-            set_module_bool_attr(module, dspy::ATTR_NO_CACHE, true)?;
-        }
-        Ok(())
-    }
-
-    fn strip_transient_module_config(module: &Module) -> Result<()> {
-        use apxm_core::constants::dspy;
-
-        for attr in [
-            dspy::ATTR_TRAINING_DATA_PATH,
-            dspy::ATTR_BACKEND_JSON,
-            dspy::ATTR_CACHE_DIR,
-            dspy::ATTR_OPTIMIZER,
-            dspy::ATTR_AUTO,
-            dspy::ATTR_METRIC,
-            dspy::ATTR_NO_CACHE,
-        ] {
-            remove_module_attr(module, attr)?;
-        }
-        Ok(())
+    fn resolved_plan(&self) -> Result<PipelinePlan> {
+        let plan = resolve_pipeline_plan(&self.config);
+        reject_unavailable_stages(&plan)?;
+        Ok(plan)
     }
 }
 
-fn ffi_attr_error(action: &str, name: &str) -> CompilerError {
-    CompilerError::Unsupported(Box::new(Error::new_generic(
-        ErrorCode::InternalError,
-        format!("Failed to {action} transient module attribute {name}"),
-    )))
-}
-
-fn set_module_string_attr(module: &Module, name: &str, value: &str) -> Result<()> {
-    let c_name = CString::new(name).map_err(|_| ffi_attr_error("set", name))?;
-    let c_value = CString::new(value).map_err(|_| ffi_attr_error("set", name))?;
-    let ok = unsafe {
-        crate::ffi::apxm_module_set_string_attr(module.as_ptr(), c_name.as_ptr(), c_value.as_ptr())
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::passes::{
+        ConvergenceStatus, O3_MAX_CLEANUP_ITERATIONS, PipelineStageKind, PipelineStageStatus,
     };
-    if ok {
-        Ok(())
-    } else {
-        Err(ffi_attr_error("set", name))
+
+    const SIMPLE_AIR: &str = r#"
+module {
+  func.func @pipeline_diagnostics() -> !ais.token attributes {ais.entry} {
+    %answer = ais.ask "Answer concisely." : !ais.token
+    func.return %answer : !ais.token
+  }
+}
+"#;
+
+    #[test]
+    fn diagnostics_distinguish_mlir_execution_from_deferred_artifact_stages() {
+        let context = Context::new().expect("compiler context");
+        let pipeline = Pipeline::with_opt_level(&context, OptimizationLevel::O3);
+
+        let (_, diagnostics) = pipeline
+            .compile_with_diagnostics(SIMPLE_AIR)
+            .expect("O3 pipeline compiles");
+
+        let convergence = diagnostics
+            .convergence
+            .iter()
+            .find(|entry| entry.group_name == "o3-cleanup")
+            .expect("O3 convergence diagnostics");
+        assert!(convergence.iterations > 0);
+        assert!(convergence.iterations <= O3_MAX_CLEANUP_ITERATIONS);
+        assert_eq!(convergence.status, ConvergenceStatus::Converged);
+
+        let artifact_stages: Vec<_> = diagnostics
+            .passes
+            .iter()
+            .filter(|entry| {
+                matches!(
+                    entry.stage_kind,
+                    PipelineStageKind::ArtifactValidation | PipelineStageKind::ArtifactFinalization
+                )
+            })
+            .collect();
+        assert_eq!(artifact_stages.len(), 4);
+        assert!(
+            artifact_stages
+                .iter()
+                .all(|entry| { entry.mandatory && entry.status == PipelineStageStatus::Deferred })
+        );
+        assert!(
+            diagnostics
+                .passes
+                .iter()
+                .filter(|entry| entry.status == PipelineStageStatus::Deferred)
+                .all(|entry| !matches!(
+                    entry.stage_kind,
+                    PipelineStageKind::RequiredLowering
+                        | PipelineStageKind::MlirRewrite
+                        | PipelineStageKind::MlirAnalysis
+                        | PipelineStageKind::Diagnostic
+                ))
+        );
+    }
+
+    #[test]
+    fn default_plan_excludes_dspy_and_explicit_dspy_fails_before_execution() {
+        let context = Context::new().expect("compiler context");
+        let default_pipeline = Pipeline::new(&context);
+        assert!(
+            !default_pipeline
+                .resolved_plan()
+                .expect("default plan")
+                .contains_stage(DSPY_OPTIMIZE.name)
+        );
+
+        let pipeline = Pipeline::with_config(
+            &context,
+            PipelineConfig {
+                pass_list_override: Some(vec![DSPY_OPTIMIZE.name.to_string()]),
+                ..PipelineConfig::default()
+            },
+        );
+        let error = match pipeline.compile(SIMPLE_AIR) {
+            Ok(_) => panic!("DSPy must be unavailable in production compilation"),
+            Err(error) => error,
+        };
+        assert!(error.to_string().contains("offline evaluation workflow"));
     }
 }
 
-fn set_module_bool_attr(module: &Module, name: &str, value: bool) -> Result<()> {
-    let c_name = CString::new(name).map_err(|_| ffi_attr_error("set", name))?;
-    let ok =
-        unsafe { crate::ffi::apxm_module_set_bool_attr(module.as_ptr(), c_name.as_ptr(), value) };
-    if ok {
-        Ok(())
-    } else {
-        Err(ffi_attr_error("set", name))
+fn reject_unavailable_stages(plan: &PipelinePlan) -> Result<()> {
+    if plan.contains_stage(DSPY_OPTIMIZE.name) {
+        return Err(CompilerError::Unsupported(Box::new(Error::new_generic(
+            ErrorCode::InternalError,
+            "dspy-optimize is unavailable in production compilation; run prompt optimization through the offline evaluation workflow".to_string(),
+        ))));
     }
-}
-
-fn remove_module_attr(module: &Module, name: &str) -> Result<()> {
-    let c_name = CString::new(name).map_err(|_| ffi_attr_error("remove", name))?;
-    let ok = unsafe { crate::ffi::apxm_module_remove_attr(module.as_ptr(), c_name.as_ptr()) };
-    if ok {
-        Ok(())
-    } else {
-        Err(ffi_attr_error("remove", name))
-    }
+    Ok(())
 }

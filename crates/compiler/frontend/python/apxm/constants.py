@@ -30,6 +30,7 @@ ENV_APXM_EMIT_AIR = "APXM_EMIT_AIR"
 ENV_APXM_CONFIG = "APXM_CONFIG"
 ENV_APXM_HOME = "APXM_HOME"
 ENV_APXM_BIN = "APXM_BIN"
+# Mirror of crates/machine/contracts/src/constants.rs.
 ENV_APXM_PYTHON_TOOLS_OUT = "APXM_PYTHON_TOOLS_OUT"
 ENV_APXM_MOCK_BACKEND = "APXM_MOCK_BACKEND"
 ENV_APXM_SERVER_URL = "APXM_SERVER_URL"
@@ -40,6 +41,15 @@ class DependencyType(str, Enum):
     DATA = "Data"
     CONTROL = "Control"
     EFFECT = "Effect"
+
+
+# Mirror of crates/machine/ais/src/attrs.rs::PromptInputRole.
+class PromptInputRole(str, Enum):
+    USER = "user"
+    SYSTEM = "system"
+    DEPENDENCY_ONLY = "dependency_only"
+    TOOL_CONTEXT = "tool_context"
+    CONTROL = "control"
 
 
 class ToolGroup(str, Enum):
@@ -74,6 +84,15 @@ def normalize_dependency_type(value: DependencyType | str) -> str:
     if isinstance(value, str):
         return value
     raise TypeError("dependency must be a DependencyType or string")
+
+
+def normalize_prompt_input_role(value: PromptInputRole | str) -> str:
+    if isinstance(value, PromptInputRole):
+        return value.value
+    if isinstance(value, str) and value in {role.value for role in PromptInputRole}:
+        return value
+    allowed = ", ".join(role.value for role in PromptInputRole)
+    raise ValueError(f"invalid prompt input role {value!r}; expected one of: {allowed}")
 
 
 def normalize_tool_group(value: ToolGroup | str) -> str:
@@ -126,11 +145,12 @@ PYTHON_TOOL_MANIFEST_QUALNAME = "qualname"
 PYTHON_TOOL_MANIFEST_NAME = "name"
 PYTHON_TOOL_MANIFEST_DESCRIPTION = "description"
 PYTHON_TOOL_MANIFEST_SCHEMA = "schema"
-PYTHON_TOOL_MANIFEST_SOURCE_FILE = "source_file"
 
-# Reserved `input_names` entry carrying the system prompt as a dataflow value.
-# When an ASK operand is bound to this name, the runtime uses it as the system
-# prompt.
+# Mirror of crates/machine/ais/src/attrs.rs.
+INPUT_ROLES = "input_roles"
+
+# Legacy input name for a dynamic system-prompt binding. GraphRecorder emits a
+# matching `input_roles` entry with the `system` role for this binding.
 SYSTEM_PROMPT_INPUT = "__system"
 
 _g = globals()

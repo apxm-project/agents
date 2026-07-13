@@ -211,9 +211,17 @@ def AIS_AskOp : AIS_Op<"ask",
   }];
   let arguments = (ins
     StrAttr:$template_str,
+    OptionalAttr<ArrayAttr>:$input_names,
+    OptionalAttr<ArrayAttr>:$input_roles,
     Variadic<AIS_AnyTokenHandleOrGoal>:$context
   );
   let results = (outs AIS_TokenType:$result);
+  let builders = [
+    OpBuilder<(ins "Type":$result, "StringAttr":$template_str,
+                   "ValueRange":$context), [{
+      build($_builder, $_state, result, template_str, nullptr, nullptr, context);
+    }]>
+  ];
   let assemblyFormat = [{
     $template_str (`[` $context^ `:` type($context) `]`)? attr-dict `:` type($result)
   }];
@@ -242,9 +250,17 @@ def AIS_ThinkOp : AIS_Op<"think",
   }];
   let arguments = (ins
     StrAttr:$template_str,
+    OptionalAttr<ArrayAttr>:$input_names,
+    OptionalAttr<ArrayAttr>:$input_roles,
     Variadic<AIS_AnyTokenHandleOrGoal>:$context
   );
   let results = (outs AIS_TokenType:$result);
+  let builders = [
+    OpBuilder<(ins "Type":$result, "StringAttr":$template_str,
+                   "ValueRange":$context), [{
+      build($_builder, $_state, result, template_str, nullptr, nullptr, context);
+    }]>
+  ];
   let assemblyFormat = [{
     $template_str (`[` $context^ `:` type($context) `]`)? attr-dict `:` type($result)
   }];
@@ -274,9 +290,17 @@ def AIS_ReasonOp : AIS_Op<"reason",
   }];
   let arguments = (ins
     StrAttr:$template_str,
+    OptionalAttr<ArrayAttr>:$input_names,
+    OptionalAttr<ArrayAttr>:$input_roles,
     Variadic<AIS_AnyTokenHandleOrGoal>:$context
   );
   let results = (outs AIS_TokenType:$result);
+  let builders = [
+    OpBuilder<(ins "Type":$result, "StringAttr":$template_str,
+                   "ValueRange":$context), [{
+      build($_builder, $_state, result, template_str, nullptr, nullptr, context);
+    }]>
+  ];
   let assemblyFormat = [{
     $template_str (`[` $context^ `:` type($context) `]`)? attr-dict `:` type($result)
   }];

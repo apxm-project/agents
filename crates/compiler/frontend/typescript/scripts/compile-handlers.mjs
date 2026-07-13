@@ -6,7 +6,8 @@
  *   npm run build && node scripts/compile-handlers.mjs --root /path/to/package --out tools.json handler1.ts handler2.ts
  */
 
-import { writeFileSync } from "node:fs";
+import { readdirSync, statSync, writeFileSync } from "node:fs";
+import { execFileSync } from "node:child_process";
 import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
@@ -14,7 +15,32 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const PKG_ROOT = path.resolve(__dirname, "..");
 const COMPILE_HANDLERS_PATH = path.join(PKG_ROOT, "dist/compile-handlers.js");
 
+function newestSourceMtime(directory) {
+  return readdirSync(directory, { withFileTypes: true }).reduce(
+    (newest, entry) => {
+      const entryPath = path.join(directory, entry.name);
+      if (entry.isDirectory()) {
+        return Math.max(newest, newestSourceMtime(entryPath));
+      }
+      return Math.max(newest, statSync(entryPath).mtimeMs);
+    },
+    0,
+  );
+}
+
+function ensureBuild() {
+  const distMtime = statSync(COMPILE_HANDLERS_PATH, { throwIfNoEntry: false })?.mtimeMs ?? 0;
+  if (distMtime >= newestSourceMtime(path.join(PKG_ROOT, "src"))) {
+    return;
+  }
+  execFileSync(process.platform === "win32" ? "npm.cmd" : "npm", ["run", "build"], {
+    cwd: PKG_ROOT,
+    stdio: "inherit",
+  });
+}
+
 async function loadCompileHandlers() {
+  ensureBuild();
   try {
     return await import(pathToFileURL(COMPILE_HANDLERS_PATH).href);
   } catch {
@@ -73,7 +99,7 @@ async function main() {
     manifestDir: path.dirname(resolvedOut),
   });
   writeFileSync(resolvedOut, `${JSON.stringify(manifest, null, 2)}\n`, "utf8");
-  console.log(`wrote ${manifest.length} handler(s) to ${resolvedOut}`);
+  console.log(`wrote ${manifest.handlers.length} handler(s) to ${resolvedOut}`);
 }
 
 main().catch((err) => {
