@@ -245,19 +245,56 @@ def DeadContextElimination : Pass<"dead-context-elimination", "mlir::ModuleOp"> 
   let constructor = "mlir::ais::createDeadContextEliminationPass()";
 }
 
-def SchemaNarrowing : Pass<"schema-narrowing", "mlir::ModuleOp"> {
-  let summary = "Explicit-only schema narrowing experiment";
+def PureDeadNodeElimination : Pass<"pure-dead-node-elimination", "mlir::ModuleOp"> {
+  let summary = "Remove unused provably inert AIS operations";
   let description = [{
-    Planned optimization: when an output_schema attribute is set on a node,
-    propagate schema constraints to downstream consumers and narrow overly broad
-    schemas based on how the output is actually used.
+    Removes only a closed allow-list of AIS operations whose result has no
+    uses. The allow-list is limited to `ais.const_str`, `ais.merge`, and
+    `ais.wait_all`; every other operation stays intact.
 
-    Example: If a REASON operation specifies it returns {name, age, address}
-    but downstream operations only access 'name' and 'age', the schema can be
-    narrowed to {name, age}, reducing token overhead in the LLM response.
+    The pass applies these checks in order:
+    1. The operation is one of the allow-listed AIS operation kinds.
+    2. The operation retains MLIR's `Pure` trait.
+    3. Its only result has no data, control, or effect use.
 
-    The current implementation is not field-use narrowing, so this pass is not
-    part of the automatic O-level pipelines.
+    Repeated removal eliminates an inert producer chain without treating
+    observability or ordering operations as pure. In particular,
+    `ais.identity`, `ais.fence`, and `ais.nop` are never candidates.
+
+    ```mlir
+    %left = ais.const_str "unused left" : !ais.token
+    %right = ais.const_str "unused right" : !ais.token
+    %joined = ais.merge %left, %right : !ais.token, !ais.token -> !ais.token
+
+    // All three operations are removed because `%joined` has no uses.
+    ```
+  }];
+  let constructor = "mlir::ais::createPureDeadNodeEliminationPass()";
+}
+
+def SchemaNarrowing : Pass<"schema-narrowing", "mlir::ModuleOp"> {
+  let summary = "Explicit-only guarded schema specialization diagnostic";
+  let description = [{
+    This pass currently performs no schema rewrite. It retains every
+    `output_schema` and emits a diagnostic when specialization lacks both of
+    the proofs required to preserve the model request contract:
+
+    1. Typed downstream field-use facts that identify the exact required
+       schema fields.
+    2. Selected-backend evidence that the narrowed schema is supported.
+
+    Generic result-use counts, arbitrary backend strings, and an unused result
+    do not establish either proof. The current IR does not carry both facts to
+    this MLIR pass, so `schema-narrowing` stays explicit-only and is excluded
+    from automatic O-level pipelines.
+
+    ```mlir
+    %result = ais.ask "Extract a summary." {
+      output_schema = {summary = "string", detail = "string"}
+    } : !ais.token
+
+    // The output_schema remains unchanged until both legality proofs exist.
+    ```
   }];
   let constructor = "mlir::ais::createSchemaNarrowingPass()";
 }

@@ -3,7 +3,7 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 import { GraphBuilder } from "../src/builder.js";
-import { ApxmGraph, emitMultiFlowModule, type ApxmGraphData, type GraphEdge, type Parameter } from "../src/graph.js";
+import { ApxmGraph, emitMultiFlowModule } from "../src/graph.js";
 
 // Shared fixtures under the `agents`-owned Rust CLI crate: the same vectors
 // the Rust `frontend_air` unit tests and Python's `test_air_parity.py`
@@ -12,90 +12,164 @@ import { ApxmGraph, emitMultiFlowModule, type ApxmGraphData, type GraphEdge, typ
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const FIXTURES_DIR = join(__dirname, "../../../../tools/cli/tests/fixtures/frontend_graph_parity");
 
-interface WireParameter {
-  name: string;
-  type_name: string;
-}
-
-interface WireGraph {
-  name: string;
-  nodes: ApxmGraphData["nodes"];
-  edges: GraphEdge[];
-  parameters: WireParameter[];
-  metadata: Record<string, unknown>;
-}
-
-function readFixture(name: string): WireGraph {
-  return JSON.parse(readFileSync(join(FIXTURES_DIR, name), "utf8")) as WireGraph;
+function readFixture(name: string): unknown {
+  return JSON.parse(readFileSync(join(FIXTURES_DIR, name), "utf8")) as unknown;
 }
 
 function readGolden(name: string): string {
   return readFileSync(join(FIXTURES_DIR, name), "utf8");
 }
 
-/** Build a live `ApxmGraph` from a shared wire-shape fixture (`type_name` ->
- * the TS `Parameter` interface's `typeName`), the same conversion
- * `ApxmGraph.toDict()` does in reverse. */
-function graphFromFixture(wire: WireGraph): ApxmGraph {
-  const parameters: Parameter[] = wire.parameters.map((p) => ({ name: p.name, typeName: p.type_name }));
-  return new ApxmGraph({
-    name: wire.name,
-    nodes: wire.nodes,
-    edges: wire.edges,
-    parameters,
-    metadata: wire.metadata,
-  });
+function expectNativeDto(name: string, graph: ApxmGraph): void {
+  expect(graph.toDict()).toEqual(readFixture(name));
 }
 
-// AIR text is produced by the single Rust printer (`apxm emit-air`), not by this
-// package — the TypeScript frontend only builds the frontend-graph DTO (covered
-// hermetically in builder.test.ts) and hands it to that printer. These tests
-// exercise the actual TS -> emit-air -> printer wiring end to end, so they need
-// a resolvable `apxm` binary. They run when APXM_BIN points at one and skip
-// otherwise (e.g. the node-only npm-publish CI job), where AIR-text correctness
-// is already covered by the Rust `frontend_air`/`frontend_graph` tests. Set
-// APXM_BIN to the built binary to run them.
-describe.skipIf(!process.env.APXM_BIN)("AIR emission (integration)", () => {
-  it("emits AIR for a simple ask flow", () => {
-    const g = new GraphBuilder("simple_ask");
-    const answer = g.ask({ prompt: "Say hello" });
-    g.done(answer);
+function askFlow(): ApxmGraph {
+  const graph = new GraphBuilder("ask_flow", { metadata: { is_entry: true } });
+  graph.param("name", "str");
+  const answer = graph.ask({ name: "ask", prompt: "Say hi to {name}" });
+  graph.done(answer, "out");
+  return graph.toGraph();
+}
 
-    const air = g.toAir();
-    expect(air).toContain("module {");
-    expect(air).toContain("func.func @simple_ask");
-    expect(air).toContain("attributes {ais.entry}");
-    expect(air).toContain('ais.ask "Say hello"');
-    expect(air).toContain("ais.return");
+function parametrizedFlow(): ApxmGraph {
+  const graph = new GraphBuilder("parametrized_flow", { metadata: { is_entry: true } });
+  graph.param("topic", "str");
+  graph.param("style", "str");
+  const answer = graph.ask({
+    name: "ask",
+    prompt: "Research {topic} in the style of {style}",
+    token_budget: 256,
   });
+  graph.done(answer, "out");
+  return graph.toGraph();
+}
 
-  it("emits AIR with declared parameters", () => {
-    const g = new GraphBuilder("param_air");
-    g.param("topic", "str");
-    const answer = g.ask({ prompt: "Research: {topic}" });
-    g.done(answer);
-
-    const air = g.toAir();
-    expect(air).toContain('ais.param_name = "topic"');
-    expect(air).toContain('ais.ask "Research: {topic}"');
+function profiledAgentFlow(): ApxmGraph {
+  const graph = new GraphBuilder("agent_flow", { metadata: { is_entry: true } });
+  const agent = graph.op("AGENT", {
+    name: "coder",
+    attributes: { profile: "codex", prompt: "Fix it", cwd: "/tmp/work" },
   });
+  graph.done(agent, "out");
+  return graph.toGraph();
+}
 
-  it("matches golden AIR for ask flow", () => {
-    const graph = graphFromFixture(readFixture("ask_flow.json"));
-    const air = graph.toAir();
-    const golden = readGolden("ask_flow.golden.air");
-    expect(air).toBe(golden);
+function multiFlowConversational(): ApxmGraph[] {
+  const main = new GraphBuilder("main", { metadata: { is_entry: true } });
+  const runTurn = main.op("FLOW_CALL", {
+    name: "run_turn",
+    attributes: { agent_name: "conversation", flow_name: "turn" },
   });
+  main.done(runTurn, "return_turn");
 
-  it("matches golden AIR for multi-flow conversational shape", () => {
-    // Cross-plane: TS's `emitMultiFlowModule` must match the same
-    // `AirProgram::to_air()` golden output the Rust `frontend_air` tests
-    // and Python's `emit_multi_flow_module` also match (multi-flow fixture
-    // cross-plane fixture).
-    const wireGraphs = readFixture("multi_flow_conversational.json") as unknown as WireGraph[];
-    const graphs = wireGraphs.map(graphFromFixture);
-    const air = emitMultiFlowModule(graphs);
-    const golden = readGolden("multi_flow_conversational.golden.air");
-    expect(air).toBe(golden);
+  const turn = new GraphBuilder("conversation.turn", { metadata: { is_entry: false } });
+  turn.param("user_message", "str");
+  const answer = turn.ask({ name: "ask", prompt: "Reply to: {user_message}" });
+  turn.done(answer, "out");
+  return [main.toGraph(), turn.toGraph()];
+}
+
+function reasoningFlow(): ApxmGraph {
+  const graph = new GraphBuilder("reasoning_flow", { metadata: { is_entry: true } });
+  graph.plan({ name: "plan", attributes: { goal: "Create a complete implementation plan" } });
+  graph.reflect({ name: "reflect", attributes: { trace_query: "most_recent_execution" } });
+  const verification = graph.verify({
+    name: "verify",
+    attributes: {
+      claim: "The implementation plan is complete.",
+      evidence: "The review lists every required frontend contract.",
+    },
+  });
+  graph.done(verification, "out");
+  return graph.toGraph();
+}
+
+function controlFlow(): ApxmGraph {
+  const graph = new GraphBuilder("control_flow", { metadata: { is_entry: true } });
+  const classified = graph.ask({ name: "classify", prompt: "Classify the request" });
+  const branch = graph.branchOnValue({
+    name: "branch",
+    attributes: {
+      value: "approved",
+      true_label: "approved_path",
+      false_label: "review_path",
+    },
+  });
+  graph.addEdge(classified, branch);
+  const routed = graph.switchNode({
+    name: "route",
+    attributes: { discriminant: "classification", case_labels: ["approved", "review"] },
+  });
+  graph.addEdge(classified, routed);
+  graph.tryCatch({ name: "recover", attributes: { try_label: "route", catch_label: "fallback" } });
+  graph.done(routed, "out");
+  return graph.toGraph();
+}
+
+function synchronizationFlow(): ApxmGraph {
+  const graph = new GraphBuilder("synchronization_flow", { metadata: { is_entry: true } });
+  const answer = graph.ask({ name: "answer", prompt: "Prepare the durable result" });
+  const checkpoint = graph.checkpoint({ name: "checkpoint", checkpointId: "after_answer", inputs: { answer } });
+  const fence = graph.fence({ name: "fence", attributes: { ordering: "serial" } });
+  const merged = graph.merge("merged", checkpoint, fence);
+  graph.done(merged, "out");
+  return graph.toGraph();
+}
+
+function coordinationFlow(): ApxmGraph {
+  const graph = new GraphBuilder("coordination_flow", { metadata: { is_entry: true } });
+  const worker = graph.spawnAgent({ name: "worker", agentName: "worker", mode: "collaborative" });
+  const delegated = graph.delegate({
+    name: "delegate",
+    taskSpec: "Review the frontend contract",
+    targetAgent: "worker",
+  });
+  graph.addEdge(worker, delegated);
+  const transferred = graph.handoff({
+    name: "handoff",
+    attributes: {
+      handoff_from: "orchestrator",
+      handoff_to: "worker",
+      payload: "Begin the assigned review.",
+      transfer_state: true,
+    },
+  });
+  graph.addEdge(delegated, transferred);
+  graph.done(transferred, "out");
+  return graph.toGraph();
+}
+
+describe("native authoring DTO parity", () => {
+  it("matches every shared authoring vector before AIR emission", () => {
+    expectNativeDto("ask_flow.json", askFlow());
+    expectNativeDto("parametrized_flow.json", parametrizedFlow());
+    expectNativeDto("profiled_agent_flow.json", profiledAgentFlow());
+    expect(multiFlowConversational().map((graph) => graph.toDict())).toEqual(
+      readFixture("multi_flow_conversational.json"),
+    );
+    expectNativeDto("reasoning_flow.json", reasoningFlow());
+    expectNativeDto("control_flow.json", controlFlow());
+    expectNativeDto("synchronization_flow.json", synchronizationFlow());
+    expectNativeDto("coordination_flow.json", coordinationFlow());
+  });
+});
+
+describe("AIR emission through the canonical Rust printer", () => {
+  it.each([
+    ["ask flow", "ask_flow.golden.air", () => askFlow().toAir()],
+    ["parameterized flow", "parametrized_flow.golden.air", () => parametrizedFlow().toAir()],
+    ["profiled-agent flow", "profiled_agent_flow.golden.air", () => profiledAgentFlow().toAir()],
+    [
+      "multi-flow conversational shape",
+      "multi_flow_conversational.golden.air",
+      () => emitMultiFlowModule(multiFlowConversational()),
+    ],
+    ["reasoning flow", "reasoning_flow.golden.air", () => reasoningFlow().toAir()],
+    ["control flow", "control_flow.golden.air", () => controlFlow().toAir()],
+    ["synchronization flow", "synchronization_flow.golden.air", () => synchronizationFlow().toAir()],
+    ["coordination flow", "coordination_flow.golden.air", () => coordinationFlow().toAir()],
+  ])("matches the shared golden AIR for %s", (_name, goldenName, emit) => {
+    expect(emit()).toBe(readGolden(goldenName));
   });
 });

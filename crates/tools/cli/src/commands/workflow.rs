@@ -4,6 +4,8 @@ use anyhow::{Context, Result};
 #[cfg(feature = "driver")]
 use apxm_artifact::Artifact;
 #[cfg(feature = "driver")]
+use apxm_core::types::{OPTIMIZATION_SUMMARY_ARTIFACT_SECTION, OptimizationSummaryV1};
+#[cfg(feature = "driver")]
 use apxm_driver::{Linker, LinkerConfig};
 use colored::Colorize;
 
@@ -12,6 +14,8 @@ use super::cli::*;
 use super::compile::air_graph_from_source;
 #[cfg(not(feature = "driver"))]
 use super::dekk_hints;
+#[cfg(feature = "driver")]
+use futures::stream::{FuturesUnordered, StreamExt};
 #[cfg(feature = "driver")]
 use std::collections::HashMap;
 #[cfg(feature = "driver")]
@@ -427,7 +431,7 @@ fn execute_workflow_file<'a>(
     render_progress: bool,
 ) -> WorkflowRunFuture<'a> {
     Box::pin(async move {
-        use apxm_runtime::workflow::{WorkflowDef, execution_phases};
+        use apxm_runtime::workflow::{WorkflowDef, WorkflowReadyQueue, WorkflowSchedulerOptions};
 
         let def = WorkflowDef::from_file(file)
             .with_context(|| format!("Failed to load workflow file {}", file.display()))?;
@@ -450,7 +454,7 @@ fn execute_workflow_file<'a>(
             .parent()
             .ok_or_else(|| anyhow::anyhow!("Failed to get parent directory"))?
             .to_path_buf();
-        let phases = execution_phases(&def.steps)?;
+        let profile_latency_ms = workflow_profile_latency_ms(&def, &base_dir);
         let workflow_session_dir = if let Some(session_dir) = explicit_session_dir {
             std::fs::create_dir_all(session_dir)?;
             session_dir.to_path_buf()
@@ -466,57 +470,27 @@ fn execute_workflow_file<'a>(
         let start = Instant::now();
         let mut step_outputs: HashMap<String, String> = HashMap::new();
         let mut step_results: HashMap<String, apxm_runtime::workflow::StepResult> = HashMap::new();
+        let mut ready = WorkflowReadyQueue::with_options(
+            &def.steps,
+            WorkflowSchedulerOptions {
+                max_concurrency: def.max_concurrency,
+                profile_latency_ms: (!profile_latency_ms.is_empty()).then_some(profile_latency_ms),
+                ..Default::default()
+            },
+        )?;
+        let mut running = FuturesUnordered::new();
 
-        for (phase_idx, phase) in phases.iter().enumerate() {
-            if render_progress {
-                println!("{indent}Phase {phase_idx}: {} step(s)", phase.len());
-            }
-
-            let mut phase_jobs = Vec::new();
-            for step_id in phase {
-                let step_index = def
-                    .steps
-                    .iter()
-                    .position(|s| &s.id == step_id)
-                    .unwrap_or(step_results.len());
+        while !ready.is_complete() {
+            while running.len() < ready.max_concurrency() {
+                let Some(ready_step) = ready.take_ready() else {
+                    break;
+                };
+                let step_id = ready_step.id;
+                let step_index = ready_step.index;
                 let step = def
                     .steps
-                    .iter()
-                    .find(|s| &s.id == step_id)
-                    .ok_or_else(|| anyhow::anyhow!("Unknown step id '{}'", step_id))?;
-
-                let should_skip = step.depends_on.iter().any(|dep| {
-                    step_results.get(dep).map_or(false, |r| {
-                        r.status != apxm_runtime::workflow::StepStatus::Success
-                    })
-                });
-
-                if should_skip {
-                    if render_progress {
-                        println!("{indent}  {step_id} Skipping (failed dependency)");
-                    }
-                    apxm_runtime::workflow::write_workflow_step_finished(
-                        &workflow_session_dir,
-                        &def.name,
-                        step_id,
-                        step_index,
-                        apxm_runtime::workflow::StepStatus::Skipped,
-                        0,
-                        step_results.len() + 1,
-                        def.steps.len(),
-                        start.elapsed().as_millis(),
-                    )?;
-                    step_results.insert(
-                        step_id.clone(),
-                        apxm_runtime::workflow::StepResult {
-                            id: step_id.clone(),
-                            status: apxm_runtime::workflow::StepStatus::Skipped,
-                            ..Default::default()
-                        },
-                    );
-                    continue;
-                }
-
+                    .get(step_index)
+                    .ok_or_else(|| anyhow::anyhow!("Unknown workflow step '{step_id}'"))?;
                 let resolved_params: HashMap<String, String> = step
                     .params
                     .iter()
@@ -542,16 +516,15 @@ fn execute_workflow_file<'a>(
                 apxm_runtime::workflow::write_workflow_step_started(
                     &workflow_session_dir,
                     &def.name,
-                    step_id,
+                    &step_id,
                     step_index,
                     step_results.len(),
                     def.steps.len(),
                     start.elapsed().as_millis(),
                 )?;
 
-                let step_id = step_id.clone();
                 let workflow_session_dir = workflow_session_dir.clone();
-                phase_jobs.push(async move {
+                running.push(async move {
                     let step_start = Instant::now();
                     let result = match step_path.extension().and_then(|ext| ext.to_str()) {
                         Some("apxmw") => {
@@ -603,55 +576,79 @@ fn execute_workflow_file<'a>(
                 });
             }
 
-            let mut phase_outputs = Vec::new();
-            for completed in futures::future::join_all(phase_jobs).await {
-                let completed = completed?;
-                if let Some(ref out) = completed.result.output
-                    && completed.result.status == apxm_runtime::workflow::StepStatus::Success
-                {
-                    phase_outputs.push((completed.step_id.clone(), out.clone()));
-                }
+            let completed = running.next().await.ok_or_else(|| {
+                anyhow::anyhow!(
+                    "Workflow readiness stalled with {} unfinished step(s)",
+                    ready.remaining_count()
+                )
+            })??;
+            if let Some(ref out) = completed.result.output
+                && completed.result.status == apxm_runtime::workflow::StepStatus::Success
+            {
+                step_outputs.insert(completed.step_id.clone(), out.clone());
+            }
 
-                let status_icon = match completed.result.status {
-                    apxm_runtime::workflow::StepStatus::Success => {
-                        apxm_core::constants::ui::icons::SUCCESS
-                    }
-                    apxm_runtime::workflow::StepStatus::Failed => {
-                        apxm_core::constants::ui::icons::FAILED
-                    }
-                    apxm_runtime::workflow::StepStatus::Skipped => {
-                        apxm_core::constants::ui::icons::WARNING
-                    }
-                };
+            let status_icon = match completed.result.status {
+                apxm_runtime::workflow::StepStatus::Success => {
+                    apxm_core::constants::ui::icons::SUCCESS
+                }
+                apxm_runtime::workflow::StepStatus::Failed => {
+                    apxm_core::constants::ui::icons::FAILED
+                }
+                apxm_runtime::workflow::StepStatus::Skipped => {
+                    apxm_core::constants::ui::icons::WARNING
+                }
+            };
+            if render_progress {
+                println!(
+                    "{indent}  {} {} ({:.1}s)",
+                    status_icon,
+                    completed.step_id,
+                    completed.result.duration_ms as f64 / 1000.0
+                );
+            }
+            apxm_runtime::workflow::write_workflow_step_finished(
+                &workflow_session_dir,
+                &def.name,
+                &completed.step_id,
+                completed.step_index,
+                completed.result.status,
+                completed.result.duration_ms,
+                step_results.len() + 1,
+                def.steps.len(),
+                start.elapsed().as_millis(),
+            )?;
+
+            let skipped = ready.complete(&completed.step_id, completed.result.status)?;
+            step_results.insert(completed.step_id, completed.result);
+
+            for skipped_step in skipped {
                 if render_progress {
                     println!(
-                        "{indent}  {} {} ({:.1}s)",
-                        status_icon,
-                        completed.step_id,
-                        completed.result.duration_ms as f64 / 1000.0
+                        "{indent}  {} {} Skipping (failed dependency)",
+                        apxm_core::constants::ui::icons::WARNING,
+                        skipped_step.id
                     );
                 }
                 apxm_runtime::workflow::write_workflow_step_finished(
                     &workflow_session_dir,
                     &def.name,
-                    &completed.step_id,
-                    completed.step_index,
-                    completed.result.status,
-                    completed.result.duration_ms,
+                    &skipped_step.id,
+                    skipped_step.index,
+                    apxm_runtime::workflow::StepStatus::Skipped,
+                    0,
                     step_results.len() + 1,
                     def.steps.len(),
                     start.elapsed().as_millis(),
                 )?;
-
-                step_results.insert(completed.step_id, completed.result);
-            }
-
-            for (step_id, output) in phase_outputs {
-                step_outputs.insert(step_id, output);
-            }
-
-            if render_progress {
-                println!();
+                step_results.insert(
+                    skipped_step.id.clone(),
+                    apxm_runtime::workflow::StepResult {
+                        id: skipped_step.id,
+                        status: apxm_runtime::workflow::StepStatus::Skipped,
+                        ..Default::default()
+                    },
+                );
             }
         }
 
@@ -672,6 +669,45 @@ fn execute_workflow_file<'a>(
 
         Ok((result, workflow_session_dir))
     })
+}
+
+/// Read additive compiler summaries from precompiled workflow artifacts.
+///
+/// Missing, malformed, or source-only steps retain declaration-order fallback;
+/// workflow execution must not claim profile evidence that an artifact did not
+/// carry. This keeps compiler-to-runtime composition at the artifact boundary.
+#[cfg(feature = "driver")]
+fn workflow_profile_latency_ms(
+    workflow: &apxm_runtime::workflow::WorkflowDef,
+    base_dir: &Path,
+) -> HashMap<String, u64> {
+    workflow
+        .steps
+        .iter()
+        .filter_map(|step| {
+            let path = base_dir.join(&step.path);
+            (path.extension().and_then(|extension| extension.to_str()) == Some("apxmobj"))
+                .then_some(path)
+                .and_then(|path| std::fs::read(path).ok())
+                .and_then(|bytes| Artifact::from_bytes(&bytes).ok())
+                .and_then(|artifact| {
+                    artifact
+                        .section_data(OPTIMIZATION_SUMMARY_ARTIFACT_SECTION)
+                        .and_then(|bytes| {
+                            serde_json::from_slice::<OptimizationSummaryV1>(bytes).ok()
+                        })
+                })
+                .and_then(|summary| {
+                    summary
+                        .dags
+                        .iter()
+                        .map(|dag| dag.weighted_critical_path_ms)
+                        .max()
+                })
+                .filter(|latency| *latency > 0)
+                .map(|latency| (step.id.clone(), latency))
+        })
+        .collect()
 }
 
 #[cfg(feature = "driver")]

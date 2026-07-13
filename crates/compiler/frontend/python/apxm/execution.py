@@ -343,8 +343,6 @@ def new_session() -> str:
 
 _client: Any = None  # httpx.AsyncClient | None
 
-_CLI_APXM_WRAPPER_SUBCOMMAND = "apxm"
-_CLI_DEKK_BINARY = "dekk"
 _CLI_APXM_BINARY = "apxm"
 _CLI_CONFIG_FLAG = "--config"
 _CLI_JSON_FLAG = "--json"
@@ -355,7 +353,6 @@ _CLI_EMIT_SESSION_FLAG = "--emit-session"
 _CLI_SESSION_ROOT_FLAG = "--session-root"
 _CLI_ARGS_JSON_FLAG = "--args-json"
 _CLI_BINARY_ENV = ENV_APXM_BIN
-_CARGO_TARGET_DIR = "target"
 _CARGO_RELEASE_PROFILE = "release"
 _CARGO_DEBUG_PROFILE = "debug"
 _DEFAULT_SERVER_URL = "http://localhost:18800"
@@ -368,7 +365,7 @@ def _server_url() -> str:
 
 
 def emit_air_if_requested(flow: Any) -> bool:
-    """Emit a compiled Python graph for `dekk agents compile` and return true."""
+    """Emit a compiled Python graph for `apxm compile` and return true."""
 
     if os.environ.get(ENV_APXM_EMIT_AIR) != ENV_FLAG_ENABLED:
         return False
@@ -391,16 +388,12 @@ def write_python_tools_manifest(python_tools: Any) -> None:
     output_path = os.environ.get(ENV_APXM_PYTHON_TOOLS_OUT)
     if not output_path or not python_tools:
         return
+    from .handler_manifest import manifest
+
     Path(output_path).write_text(
-        json.dumps(list(python_tools), separators=(",", ":")),
+        json.dumps(manifest(list(python_tools)), separators=(",", ":")),
         encoding="utf-8",
     )
-
-
-def _build_cli_base_command(apxm_bin: str) -> list[str]:
-    if Path(apxm_bin).name == _CLI_DEKK_BINARY:
-        return [apxm_bin, _CLI_APXM_WRAPPER_SUBCOMMAND]
-    return [apxm_bin]
 
 
 def _append_session_root_flag(
@@ -539,32 +532,10 @@ def _find_apxm_binary() -> str:
     if apxm_bin is not None:
         return apxm_bin
 
-    checkout_bin = _find_checkout_apxm_binary()
-    if checkout_bin is not None:
-        return str(checkout_bin)
-
-    dekk_bin = shutil.which(_CLI_DEKK_BINARY)
-    if dekk_bin is not None:
-        return dekk_bin
-
     raise RuntimeError(
-        f"No direct 'apxm' binary found. Set {ENV_APXM_BIN}, install 'apxm' on PATH, "
-        "install 'dekk' on PATH, or build the repo-local APXM binary."
+        f"No 'apxm' binary found. Set {ENV_APXM_BIN} to the installed CLI or install "
+        "'apxm' on PATH."
     )
-
-
-def _find_checkout_apxm_binary() -> Path | None:
-    seen: set[Path] = set()
-    for start in (Path.cwd(), Path(__file__).resolve()):
-        for ancestor in (start, *start.parents):
-            if ancestor in seen:
-                continue
-            seen.add(ancestor)
-            for profile in (_CARGO_RELEASE_PROFILE, _CARGO_DEBUG_PROFILE):
-                candidate = ancestor / _CARGO_TARGET_DIR / profile / _CLI_APXM_BINARY
-                if candidate.is_file():
-                    return candidate
-    return None
 
 
 # ---------------------------------------------------------------------------
@@ -785,7 +756,7 @@ class CompiledFlow:
                 config_path = tmp.name
 
         try:
-            cmd = _build_cli_base_command(apxm_bin)
+            cmd = [apxm_bin]
 
             if config_path is not None:
                 cmd.extend([_CLI_CONFIG_FLAG, config_path])
@@ -883,7 +854,7 @@ def run_workflow_file(
     from .errors import ExecutionError
 
     apxm_bin = _find_apxm_binary()
-    cmd = _build_cli_base_command(apxm_bin)
+    cmd = [apxm_bin]
     cmd.extend(
         [_CLI_JSON_FLAG, _CLI_WORKFLOW_SUBCOMMAND, _CLI_RUN_SUBCOMMAND, os.fspath(path)]
     )

@@ -100,10 +100,12 @@ export const ASK: OpSpec = {
   name: "Ask",
   category: "reasoning" as OpCategory,
   description: "Simple Q&A with LLM (no extended thinking)",
-  longDescription: "Sends a prompt to the configured LLM and returns the response. The lightest LLM operation — no chain-of-thought or extended thinking. Use for straightforward questions, classifications, extractions, or reformulations. Template strings support named `{input}` interpolation for dataflow inputs via the node's `input_names` array.",
+  longDescription: "Sends a prompt to the configured LLM and returns the response. The lightest LLM operation — no chain-of-thought or extended thinking. Use for straightforward questions, classifications, extractions, or reformulations. Template strings support named `{input}` interpolation for dataflow inputs via the node's positional `input_names` array. Optional `input_roles` entries align with those names and context operands to distinguish user, system, dependency-only, tool-context, and control inputs.",
   latency: "medium",
   fields: [
     { name: "template_str", description: "Prompt template for the question", required: true, refType: null },
+    { name: "input_names", description: "Positional names for LLM context inputs referenced by template placeholders", required: false, refType: null },
+    { name: "input_roles", description: "Positional LLM context roles: user, system, dependency_only, tool_context, or control", required: false, refType: null },
     { name: "temperature", description: "Sampling temperature (0.0-1.0)", required: false, refType: null },
     { name: "model", description: "LLM model override (uses config default)", required: false, refType: "model" },
   ],
@@ -122,6 +124,8 @@ export const THINK: OpSpec = {
   latency: "high",
   fields: [
     { name: "template_str", description: "Prompt template for deep reasoning", required: true, refType: null },
+    { name: "input_names", description: "Positional names for LLM context inputs referenced by template placeholders", required: false, refType: null },
+    { name: "input_roles", description: "Positional LLM context roles: user, system, dependency_only, tool_context, or control", required: false, refType: null },
     { name: "budget", description: "Token budget for extended thinking", required: false, refType: null },
     { name: "temperature", description: "Sampling temperature (0.0-1.0)", required: false, refType: null },
     { name: "model", description: "LLM model override (uses config default)", required: false, refType: "model" },
@@ -141,6 +145,8 @@ export const REASON: OpSpec = {
   latency: "medium",
   fields: [
     { name: "template_str", description: "Prompt template for structured reasoning", required: true, refType: null },
+    { name: "input_names", description: "Positional names for LLM context inputs referenced by template placeholders", required: false, refType: null },
+    { name: "input_roles", description: "Positional LLM context roles: user, system, dependency_only, tool_context, or control", required: false, refType: null },
     { name: "temperature", description: "Sampling temperature (0.0-1.0)", required: false, refType: null },
     { name: "model", description: "LLM model override (uses config default)", required: false, refType: "model" },
     { name: "structured", description: "Enable structured JSON output", required: false, refType: null },
@@ -310,13 +316,12 @@ export const SWITCH: OpSpec = {
   latency: "none",
   fields: [
     { name: "discriminant", description: "Token to match against case labels", required: true, refType: null },
-    { name: "cases", description: "Array of case label/destination pairs", required: true, refType: null },
-    { name: "default", description: "Default destination if no case matches", required: false, refType: null },
+    { name: "case_labels", description: "Ordered labels for switch case regions", required: true, refType: null },
   ],
   producesOutput: true,
   needsSubmission: false,
   minInputs: 1,
-  exampleJson: "{\"id\": 3, \"op\": \"SWITCH\", \"attributes\": {\"discriminant\": \"topic_kind\", \"cases\": [{\"label\": \"math\", \"node_id\": 4}, {\"label\": \"code\", \"node_id\": 5}], \"default\": \"6\"}}",
+  exampleJson: "{\"id\": 3, \"op\": \"SWITCH\", \"attributes\": {\"discriminant\": \"topic_kind\", \"case_labels\": [\"math\", \"code\"]}}",
 } as const;
 
 export const FLOW_CALL: OpSpec = {
@@ -727,7 +732,7 @@ export const YIELD: OpSpec = {
   longDescription: "Compiler-internal operation that terminates a switch case region and yields a value to the parent SWITCH node. Not available in the public AIS.",
   latency: "none",
   fields: [
-    { name: "value", description: "The value to yield from the region", required: true, refType: null },
+    { name: "value", description: "Optional literal value when the yielded token does not arrive through the region input", required: false, refType: null },
   ],
   producesOutput: true,
   needsSubmission: false,
@@ -824,6 +829,7 @@ export const ATTR = {
   PROMPT: "prompt",
   TEMPLATE: "template",
   INPUT_NAMES: "input_names",
+  INPUT_ROLES: "input_roles",
   QUERY: "query",
   MEMORY_TIER: "memory_tier",
   KEY: "key",

@@ -62,27 +62,29 @@ where
     out
 }
 
-/// Escape a string for safe interpolation into an AIR string literal.
-pub fn escape_air_string(s: &str) -> String {
-    let mut out = String::with_capacity(s.len() + 8);
-    for c in s.chars() {
-        match c {
-            '\\' => out.push_str("\\\\"),
-            '"' => out.push_str("\\\""),
-            '\n' => out.push_str("\\n"),
-            '\r' => out.push_str("\\r"),
-            '\t' => out.push_str("\\t"),
-            _ => out.push(c),
+/// Escape text for safe interpolation into an AIR string literal.
+pub fn escape_air_string(value: &str) -> String {
+    let mut escaped = String::with_capacity(value.len() + 8);
+    for character in value.chars() {
+        match character {
+            '\\' => escaped.push_str("\\\\"),
+            '"' => escaped.push_str("\\\""),
+            '\n' => escaped.push_str("\\n"),
+            '\r' => escaped.push_str("\\r"),
+            '\t' => escaped.push_str("\\t"),
+            _ => escaped.push(character),
         }
     }
-    out
+    escaped
 }
 
-/// Keep a routing identifier to the characters real backend/model ids use, so it
-/// is always a safe MLIR string literal when interpolated into AIR.
-pub fn sanitize_route_id(id: &str) -> String {
-    id.chars()
-        .filter(|c| c.is_ascii_alphanumeric() || matches!(c, '.' | '_' | '-' | ':' | '/'))
+/// Retain only characters valid in an AIR routing string literal.
+pub fn sanitize_route_id(value: &str) -> String {
+    value
+        .chars()
+        .filter(|character| {
+            character.is_ascii_alphanumeric() || matches!(character, '.' | '_' | '-' | ':' | '/')
+        })
         .collect()
 }
 
@@ -125,33 +127,24 @@ fn validate_route_id(
     Ok(())
 }
 
-/// Per-turn routing/tool options for the built-in conversational graph.
+/// Per-turn routing and capability-group options for the conversational graph.
 #[derive(Debug, Default, Clone, Copy)]
 pub struct ChatAirOptions<'a> {
-    /// System prompt for this turn. `None` falls through to the runtime default.
+    /// System prompt for this turn.
     pub system_prompt: Option<&'a str>,
-    /// Pin this turn to a registered backend (the runtime's per-node `backend`
-    /// attr). `GET /v1/models` returns backend names, so a picker value is a
-    /// backend, not a model id.
+    /// Registered backend selected for this turn.
     pub backend: Option<&'a str>,
-    /// Pin this turn to a specific model (the per-node `model` attr).
+    /// Specific model selected for this turn.
     pub model: Option<&'a str>,
-    /// Extended-thinking effort for this turn (`low`/`medium`/`high`); the
-    /// runtime lowers it into a thinking token budget. `None` or `off` = no
-    /// extended thinking.
+    /// Extended-thinking effort requested for this turn.
     pub effort: Option<&'a str>,
-    /// Add the self-enabling `web` tool group, making the reply a tool-using
-    /// turn (the runtime runs independent tool calls in parallel).
+    /// Whether the web capability group is available.
     pub tools: bool,
-    /// Expose the `skills` tool group so the agent can call `search_skills` to
-    /// discover relevant skills by description (scoped to its visible set).
+    /// Whether the skills capability group is available.
     pub skills: bool,
-    /// Expose runtime capability discovery so the agent can inspect
-    /// authoring-time capability templates without receiving authority.
+    /// Whether capability discovery is available.
     pub capability_discovery: bool,
-    /// Expose the `authoring` tool group (`compose_workflow` / `run_workflow`) so
-    /// the agent can create and run workflows. These are write-class but
-    /// capability_grant_ids-gated and staging-confined (workflow-scoped admission).
+    /// Whether authoring capabilities are available.
     pub authoring: bool,
 }
 
@@ -229,93 +222,80 @@ pub struct ChatAcpAirOptions<'a> {
     pub model: Option<&'a str>,
 }
 
-/// Build the built-in single-ASK conversational graph. With default options the
-/// output is the canonical bare chat graph (one ASK over the `conversation`
-/// param); `backend`/`model`/`tools` ride the ASK attr-dict the runtime reads.
-/// `{{{conversation}}}` is the parameter placeholder (single-pass substitution).
-pub fn chat_air(opts: &ChatAirOptions) -> String {
-    let mut attrs: Vec<String> = Vec::new();
-    if let Some(sp) = opts.system_prompt
-        && !sp.is_empty()
-    {
-        attrs.push(format!("system_prompt = \"{}\"", escape_air_string(sp)));
+/// Build the canonical single-ASK conversational graph for one turn.
+pub fn chat_air(options: &ChatAirOptions) -> String {
+    let mut attributes = Vec::new();
+    if let Some(system_prompt) = options.system_prompt.filter(|value| !value.is_empty()) {
+        attributes.push(format!(
+            "system_prompt = \"{}\"",
+            escape_air_string(system_prompt)
+        ));
     }
-    if let Some(b) = opts.backend {
-        let safe = sanitize_route_id(b);
-        if !safe.is_empty() {
-            attrs.push(format!("backend = \"{safe}\""));
+    for (name, value) in [
+        ("backend", options.backend),
+        ("model", options.model),
+        ("effort", options.effort),
+    ] {
+        let Some(value) = value.map(sanitize_route_id).filter(|value| !value.is_empty()) else {
+            continue;
+        };
+        if name != "effort" || value != "off" {
+            attributes.push(format!("{name} = \"{value}\""));
         }
     }
-    if let Some(m) = opts.model {
-        let safe = sanitize_route_id(m);
-        if !safe.is_empty() {
-            attrs.push(format!("model = \"{safe}\""));
-        }
+
+    let mut capability_groups = Vec::new();
+    if options.tools {
+        capability_groups.push(groups::WEB);
     }
-    if let Some(e) = opts.effort {
-        let safe = sanitize_route_id(e);
-        if !safe.is_empty() && safe != "off" {
-            attrs.push(format!("effort = \"{safe}\""));
-        }
+    if options.capability_discovery {
+        capability_groups.push(groups::DISCOVERY);
     }
-    let mut groups: Vec<&str> = Vec::new();
-    if opts.tools {
-        groups.push(groups::WEB);
+    if options.skills {
+        capability_groups.push(groups::SKILLS);
     }
-    if opts.capability_discovery {
-        groups.push(groups::DISCOVERY);
+    if options.authoring {
+        capability_groups.push(groups::AUTHORING);
     }
-    if opts.skills {
-        groups.push(groups::SKILLS);
-    }
-    if opts.authoring {
-        groups.push(groups::AUTHORING);
-    }
-    if !groups.is_empty() {
-        let list = groups
+    if !capability_groups.is_empty() {
+        let groups = capability_groups
             .iter()
-            .map(|g| format!("\"{g}\""))
+            .map(|group| format!("\"{group}\""))
             .collect::<Vec<_>>()
             .join(", ");
-        attrs.push(format!("capability_groups = [{list}]"));
+        attributes.push(format!("capability_groups = [{groups}]"));
     }
-    let attr_dict = if attrs.is_empty() {
-        String::new()
-    } else {
-        format!(" {{{}}}", attrs.join(", "))
-    };
 
-    let mut air = String::new();
-    air.push_str("module {\n");
-    air.push_str("  func.func @apxm_chat(%arg0: !ais.token {ais.param_name = \"conversation\", ais.param_type = \"str\"}) -> !ais.token attributes {ais.entry} {\n");
-    air.push_str("    %reply = ais.ask \"{{{conversation}}}\"");
-    air.push_str(&attr_dict);
-    air.push_str(" : !ais.token\n");
-    air.push_str("    func.return %reply : !ais.token\n");
-    air.push_str("  }\n}\n");
-    air
+    let attribute_dict = (!attributes.is_empty()).then(|| format!(" {{{}}}", attributes.join(", ")));
+    format!(
+        "module {{\n  func.func @apxm_chat(%arg0: !ais.token {{ais.param_name = \"conversation\", ais.param_type = \"str\"}}) -> !ais.token attributes {{ais.entry}} {{\n    %reply = ais.ask \"{{{{{{conversation}}}}}}\"{} : !ais.token\n    func.return %reply : !ais.token\n  }}\n}}\n",
+        attribute_dict.unwrap_or_default(),
+    )
 }
 
 /// Build a conversational graph that spawns one ACP profile and sends the
-/// rendered transcript to it. The CLI still owns the conversation loop; this
-/// graph makes the per-turn assistant a real APXM-managed ACP worker.
-pub fn acp_chat_air(opts: &ChatAcpAirOptions) -> String {
-    let profile = sanitize_route_id(opts.profile);
-    let mut spawn_attrs = vec![format!("profile = \"{profile}\"")];
-    if let Some(mode) = opts.mode {
+/// rendered transcript to it. The CLI owns the conversation loop; this graph
+/// makes the per-turn assistant an APXM-managed ACP worker.
+pub fn acp_chat_air(options: &ChatAcpAirOptions) -> String {
+    let profile = sanitize_route_id(options.profile);
+    let mut spawn_attributes = vec![format!("profile = \"{profile}\"")];
+    if let Some(mode) = options.mode {
         let safe = sanitize_route_id(mode);
         if !safe.is_empty() {
-            spawn_attrs.push(format!("mode = \"{safe}\""));
+            spawn_attributes.push(format!("mode = \"{safe}\""));
         }
     }
-    if let Some(model) = opts.model {
+    if let Some(model) = options.model {
         let safe = sanitize_route_id(model);
         if !safe.is_empty() {
-            spawn_attrs.push(format!("model = \"{safe}\""));
+            spawn_attributes.push(format!("model = \"{safe}\""));
         }
     }
 
-    let message = match opts.system_prompt.filter(|prompt| !prompt.is_empty()) {
+    let message = match options
+        .system_prompt
+        .filter(|system_prompt| !system_prompt.is_empty())
+    {
         Some(system_prompt) => format!(
             "System instructions:\n{}\n\nConversation:\n{{conversation}}",
             system_prompt
@@ -325,7 +305,7 @@ pub fn acp_chat_air(opts: &ChatAcpAirOptions) -> String {
 
     format!(
         "module {{\n  func.func @apxm_chat(%arg0: !ais.token {{ais.param_name = \"conversation\", ais.param_type = \"str\"}}) -> !ais.token attributes {{ais.entry}} {{\n    %spawn = ais.spawn_agent \"apxm_chat_orchestrator\" {{{}}} : !ais.token\n    %reply = ais.communicate \"{}\" to \"apxm_chat_orchestrator\" (%arg0, %spawn : !ais.token, !ais.token) {{protocol = \"acp\", input_names = [\"conversation\"]}} : !ais.token\n    func.return %reply : !ais.token\n  }}\n}}\n",
-        spawn_attrs.join(", "),
+        spawn_attributes.join(", "),
         escape_air_string(&message),
     )
 }
@@ -386,7 +366,15 @@ mod tests {
     }
 
     #[test]
-    fn chat_air_can_expose_capability_discovery_group() {
+    fn escapes_air_string_literal_control_characters() {
+        assert_eq!(
+            escape_air_string("quote: \" slash: \\ newline:\n tab:\t return:\r"),
+            "quote: \\\" slash: \\\\ newline:\\n tab:\\t return:\\r"
+        );
+    }
+
+    #[test]
+    fn chat_air_exposes_requested_capability_groups() {
         let air = chat_air(&ChatAirOptions {
             capability_discovery: true,
             skills: true,

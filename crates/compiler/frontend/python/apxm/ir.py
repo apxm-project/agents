@@ -29,14 +29,12 @@ class AirEmitterCommand:
 
     @classmethod
     def from_environment(cls) -> "AirEmitterCommand":
-        # One resolver for both execution and AIR emission: APXM_BIN, then `apxm`
-        # on PATH, then the repo-local build. The single Rust printer is reached
-        # via `<apxm> emit-air` — no separate dekk subcommand path. Lazy import
-        # breaks the ir <-> execution module cycle.
-        from apxm.execution import _build_cli_base_command, _find_apxm_binary
+        # APXM_BIN names the installed compiler CLI; otherwise it must be
+        # available as `apxm` on PATH. Lazy import breaks the ir <-> execution
+        # module cycle.
+        from apxm.execution import _find_apxm_binary
 
-        base = _build_cli_base_command(_find_apxm_binary())
-        return cls((*base, "emit-air"))
+        return cls((_find_apxm_binary(), "emit-air"))
 
     def emit(self, payload: Any) -> str:
         try:
@@ -160,8 +158,8 @@ class GraphEdge:
     @classmethod
     def from_dict(cls, value: dict[str, Any]) -> "GraphEdge":
         return cls(
-            from_id=int(value.get("from", value.get("from_id"))),
-            to_id=int(value.get("to", value.get("to_id"))),
+            from_id=int(value["from"]),
+            to_id=int(value["to"]),
             dependency=normalize_dependency_type(value.get("dependency", DEPENDENCY_DATA)),
         )
 
@@ -238,9 +236,9 @@ class ApxmGraph:
             Becomes the emitted function's argument list, one `!ais.token`
             per parameter in this order.
         metadata: Free-form graph-level flags. The one field the Rust AIR
-            builder reads is ``is_entry`` (bool or a truthy string —
-            ``"true"``/``"1"``/``"yes"``, case-insensitive): when true (the
-            default), the emitted function carries `attributes {ais.entry}`.
+            builder reads is ``is_entry`` (a Boolean): when true, the emitted
+            function carries `attributes {ais.entry}`. Every emitted program
+            declares exactly one entry flow explicitly.
             Any other key is preserved by :meth:`to_dict`/:meth:`from_dict`
             but not otherwise interpreted by this class.
     """
@@ -282,21 +280,6 @@ class ApxmGraph:
     def to_air(self) -> str:
         """Emit valid MLIR text for this graph through the Rust AIR builder."""
         return AirEmitterCommand.from_environment().emit(self.to_dict())
-
-    def to_func_air(self) -> str:
-        """Emit just the `func.func @<name>(...) { ... }` block (no module wrapper).
-
-        Used by the multi-flow module emitter so several graphs can share one
-        `module { ... }` — a `ConversationalAgent` lowers to one entry loop flow,
-        one turn flow, and one flow per sub-agent, all inside a single module.
-        """
-        air = self.to_air()
-        body = air.split("\n")
-        if body and body[0].strip() == "module {":
-            body = body[1:]
-        if body and body[-1].strip() == "}":
-            body = body[:-1]
-        return "\n".join(body)
 
     @classmethod
     def from_dict(cls, value: dict[str, Any]) -> "ApxmGraph":

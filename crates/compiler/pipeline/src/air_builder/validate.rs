@@ -1,7 +1,7 @@
 use crate::template::{is_numeric_placeholder, parse_placeholder_names, placeholder_root};
 use crate::{AirError, AirModule};
-use apxm_core::constants::graph::attrs as graph_attrs;
-use apxm_core::types::{DependencyType, Value, get_operation_spec};
+use apxm_core::constants::graph::{attrs as graph_attrs, metadata as graph_meta};
+use apxm_core::types::{DependencyType, Value, get_operation_spec, validate_operation};
 use std::collections::{HashMap, HashSet, VecDeque};
 
 pub fn validate_module(module: &AirModule) -> Result<(), AirError> {
@@ -56,8 +56,61 @@ pub fn validate_module(module: &AirModule) -> Result<(), AirError> {
     validate_agent_references(module)?;
     validate_required_attributes(module)?;
     validate_llm_operation_attributes(module)?;
+    validate_prompt_input_roles(module)?;
     validate_template_placeholders(module)?;
     validate_node_refs(module)?;
+
+    Ok(())
+}
+
+/// Validate an executable multi-flow program before its functions are emitted.
+pub fn validate_program(modules: &[AirModule]) -> Result<(), AirError> {
+    if modules.is_empty() {
+        return Err(AirError::Validation(
+            "program must contain at least one flow module".to_string(),
+        ));
+    }
+
+    let mut entry_count = 0usize;
+    let mut symbols = HashMap::with_capacity(modules.len());
+    for module in modules {
+        validate_module(module)?;
+
+        let is_entry = match module.metadata.get(graph_meta::IS_ENTRY) {
+            Some(Value::Bool(value)) => *value,
+            Some(_) => {
+                return Err(AirError::Validation(format!(
+                    "flow '{}' has non-boolean '{}' metadata",
+                    module.name,
+                    graph_meta::IS_ENTRY
+                )));
+            }
+            None => {
+                return Err(AirError::Validation(format!(
+                    "flow '{}' is missing required '{}' metadata",
+                    module.name,
+                    graph_meta::IS_ENTRY
+                )));
+            }
+        };
+        if is_entry {
+            entry_count += 1;
+        }
+
+        let symbol = super::emit::sanitize_symbol_name(&module.name);
+        if let Some(previous) = symbols.insert(symbol.clone(), module.name.as_str()) {
+            return Err(AirError::Validation(format!(
+                "flows '{}' and '{}' both emit the MLIR symbol '@{}' after symbol sanitization",
+                previous, module.name, symbol
+            )));
+        }
+    }
+
+    if entry_count != 1 {
+        return Err(AirError::Validation(format!(
+            "executable program must declare exactly one entry flow, found {entry_count}"
+        )));
+    }
 
     Ok(())
 }
@@ -303,24 +356,13 @@ fn has_data_path(module: &AirModule, from: u64, to: u64) -> bool {
 }
 
 fn validate_required_attributes(module: &AirModule) -> Result<(), AirError> {
-    use apxm_core::types::operations::AISOperationType;
-
     for node in &module.nodes {
-        let required_attr: Option<&'static str> = match node.op {
-            AISOperationType::SpawnAgent => Some(graph_attrs::AGENT_NAME),
-            AISOperationType::Communicate => Some(graph_attrs::RECIPIENT),
-            AISOperationType::ConstStr => Some(graph_attrs::VALUE),
-            AISOperationType::InvCap => Some(graph_attrs::CAPABILITY),
-            _ => None,
-        };
-        let missing = required_attr.filter(|key| !node.attributes.contains_key(*key));
-
-        if let Some(attr) = missing {
-            return Err(AirError::Validation(format!(
-                "node '{}' (id={}, op={}) is missing required attribute '{}'.",
-                node.name, node.id, node.op, attr
-            )));
-        }
+        validate_operation(node.op, &node.attributes).map_err(|error| {
+            AirError::Validation(format!(
+                "node '{}' (id={}, op={}) violates the AIS operation catalog: {error}",
+                node.name, node.id, node.op
+            ))
+        })?;
     }
 
     Ok(())
@@ -369,6 +411,55 @@ fn validate_llm_operation_attributes(module: &AirModule) -> Result<(), AirError>
                 AISOperationType::Reason
             )));
         }
+    }
+
+    Ok(())
+}
+
+/// Validate the ordered role array attached to LLM prompt inputs.
+fn validate_prompt_input_roles(module: &AirModule) -> Result<(), AirError> {
+    use apxm_core::types::operations::AISOperationType;
+
+    for node in &module.nodes {
+        let Some(role_value) = node.attributes.get(graph_attrs::INPUT_ROLES) else {
+            continue;
+        };
+
+        if !matches!(
+            node.op,
+            AISOperationType::Ask | AISOperationType::Think | AISOperationType::Reason
+        ) {
+            return Err(AirError::Validation(format!(
+                "node '{}' (id={}, op={}) has '{}', but prompt roles are only valid on ASK, THINK, or REASON nodes.",
+                node.name,
+                node.id,
+                node.op,
+                graph_attrs::INPUT_ROLES,
+            )));
+        }
+
+        let input_names = collect_string_array(node, graph_attrs::INPUT_NAMES)?;
+        let input_roles = collect_string_array_value(node, graph_attrs::INPUT_ROLES, role_value)?;
+        if input_names.len() != input_roles.len() {
+            return Err(AirError::Validation(format!(
+                "node '{}' (id={}, op={}): {} has {} entries but {} has {} entries.",
+                node.name,
+                node.id,
+                node.op,
+                graph_attrs::INPUT_ROLES,
+                input_roles.len(),
+                graph_attrs::INPUT_NAMES,
+                input_names.len(),
+            )));
+        }
+
+        graph_attrs::parse_prompt_input_roles(input_names.len(), input_roles.iter().copied())
+            .map_err(|error| {
+                AirError::Validation(format!(
+                    "node '{}' (id={}, op={}): {}.",
+                    node.name, node.id, node.op, error,
+                ))
+            })?;
     }
 
     Ok(())
@@ -486,6 +577,42 @@ fn collect_input_names(node: &crate::air_builder::AirNode) -> Vec<&str> {
         Some(Value::String(s)) => vec![s.as_str()],
         _ => Vec::new(),
     }
+}
+
+/// Extract a named string-array attribute or report malformed frontend data.
+fn collect_string_array<'a>(
+    node: &'a crate::air_builder::AirNode,
+    attribute: &'static str,
+) -> Result<Vec<&'a str>, AirError> {
+    let Some(value) = node.attributes.get(attribute) else {
+        return Ok(Vec::new());
+    };
+    collect_string_array_value(node, attribute, value)
+}
+
+/// Extract a string-array value from a graph-node attribute.
+fn collect_string_array_value<'a>(
+    node: &'a crate::air_builder::AirNode,
+    attribute: &'static str,
+    value: &'a Value,
+) -> Result<Vec<&'a str>, AirError> {
+    let Value::Array(values) = value else {
+        return Err(AirError::Validation(format!(
+            "node '{}' (id={}, op={}): {} must be an array of strings.",
+            node.name, node.id, node.op, attribute,
+        )));
+    };
+
+    values
+        .iter()
+        .map(|value| match value {
+            Value::String(value) => Ok(value.as_str()),
+            _ => Err(AirError::Validation(format!(
+                "node '{}' (id={}, op={}): {} must be an array of strings.",
+                node.name, node.id, node.op, attribute,
+            ))),
+        })
+        .collect()
 }
 
 /// Validate every placeholder in `template`, producing a precise diagnostic
@@ -634,7 +761,7 @@ fn find_node_id_placeholder_in_str(text: &str) -> Option<String> {
 mod tests {
     use super::*;
     use crate::air_builder::{AirModule, AirNode, AirParam};
-    use apxm_core::types::AISOperationType;
+    use apxm_core::types::{AIS_OPERATIONS, AISOperationType};
     use std::collections::HashMap;
 
     fn inv_cap_with_params(params_json: &str) -> AirModule {
@@ -675,5 +802,115 @@ mod tests {
         let module = inv_cap_with_params(r#"{"chat_id":"{event.subject}"}"#);
         let err = validate_module(&module).expect_err("unknown dotted root should fail");
         assert!(err.to_string().contains("{event.subject}"));
+    }
+
+    #[test]
+    fn every_catalog_required_field_is_enforced_at_the_air_boundary() {
+        for spec in AIS_OPERATIONS {
+            for field in spec.required_fields() {
+                let mut attributes = spec
+                    .required_fields()
+                    .map(|required| {
+                        let value = if required.name == graph_attrs::PYTHON_HANDLER_ID {
+                            Value::String(format!("sha256:{}", "a".repeat(64)))
+                        } else {
+                            Value::String("required".to_string())
+                        };
+                        (required.name.to_string(), value)
+                    })
+                    .collect::<HashMap<_, _>>();
+                attributes.remove(field.name);
+                let module = AirModule {
+                    name: "required_field_contract".to_string(),
+                    nodes: vec![AirNode {
+                        id: 1,
+                        name: spec.op_type.to_string(),
+                        op: spec.op_type,
+                        attributes,
+                    }],
+                    edges: Vec::new(),
+                    parameters: Vec::new(),
+                    metadata: HashMap::new(),
+                };
+                let error = validate_required_attributes(&module)
+                    .expect_err("every catalog-required field must reject an empty attribute map");
+                assert!(
+                    error.to_string().contains(field.name),
+                    "{} must reject missing required field {}",
+                    spec.op_type,
+                    field.name
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn prompt_role_cardinality_must_match_input_names() {
+        let module = AirModule {
+            name: "prompt_roles".to_string(),
+            nodes: vec![AirNode {
+                id: 1,
+                name: "ask".to_string(),
+                op: AISOperationType::Ask,
+                attributes: HashMap::from([
+                    (
+                        graph_attrs::TEMPLATE_STR.to_string(),
+                        Value::String("{question}".to_string()),
+                    ),
+                    (
+                        graph_attrs::INPUT_NAMES.to_string(),
+                        Value::Array(vec![Value::String("question".to_string())]),
+                    ),
+                    (
+                        graph_attrs::INPUT_ROLES.to_string(),
+                        Value::Array(vec![
+                            Value::String("user".to_string()),
+                            Value::String("system".to_string()),
+                        ]),
+                    ),
+                ]),
+            }],
+            edges: Vec::new(),
+            parameters: vec![AirParam {
+                name: "question".to_string(),
+                type_name: "str".to_string(),
+            }],
+            metadata: HashMap::new(),
+        };
+
+        let error = validate_module(&module).expect_err("mismatched prompt role arrays must fail");
+        assert!(error.to_string().contains(graph_attrs::INPUT_ROLES));
+        assert!(error.to_string().contains(graph_attrs::INPUT_NAMES));
+    }
+
+    #[test]
+    fn prompt_roles_are_only_valid_for_llm_nodes() {
+        let module = AirModule {
+            name: "prompt_roles".to_string(),
+            nodes: vec![AirNode {
+                id: 1,
+                name: "tool".to_string(),
+                op: AISOperationType::Nop,
+                attributes: HashMap::from([
+                    (
+                        graph_attrs::INPUT_NAMES.to_string(),
+                        Value::Array(vec![Value::String("query".to_string())]),
+                    ),
+                    (
+                        graph_attrs::INPUT_ROLES.to_string(),
+                        Value::Array(vec![Value::String("user".to_string())]),
+                    ),
+                ]),
+            }],
+            edges: Vec::new(),
+            parameters: vec![AirParam {
+                name: "query".to_string(),
+                type_name: "str".to_string(),
+            }],
+            metadata: HashMap::new(),
+        };
+
+        let error = validate_module(&module).expect_err("non-LLM prompt roles must fail");
+        assert!(error.to_string().contains("ASK, THINK, or REASON"));
     }
 }

@@ -1,27 +1,10 @@
-"""Frontend-graph DTO parity tests.
-
-Python does not format AIR text itself: `ApxmGraph.to_air()` /
-`emit_multi_flow_module()` subprocess to `<apxm> emit-air`, which
-deserializes the shared `FrontendGraph` DTO and calls the single Rust
-printer (`AirModule::to_air()` / `AirProgram::to_air()`). These tests prove
-that delegation actually produces byte-identical output to the canonical
-printer for the same fixtures the Rust `frontend_air` tests and the
-TypeScript `emit-air.test.ts` vitest suite check
-(`crates/tools/cli/tests/fixtures/frontend_graph_parity/`), not just that
-Python calls *some* subprocess.
-
-`APXM_BIN`-gated, skip-if-absent (matches
-`typescript/test/emit-air.test.ts:6-13`'s pattern): these tests need a real
-built `apxm` binary to shell out to, which is not available in every
-environment (e.g. a node-only or docs-only CI job). Set `APXM_BIN` to the
-built binary to run them.
-"""
+"""Native Python frontend DTO and Rust AIR-emission parity."""
 
 from __future__ import annotations
 
 import json
-import os
 from pathlib import Path
+from typing import Callable
 
 import pytest
 
@@ -31,18 +14,11 @@ from apxm.ir import (
     ApxmGraph,
     emit_multi_flow_module,
 )
+from apxm.proxy import GraphRecorder
 
 _FIXTURES_DIR = (
     Path(__file__).resolve().parents[4] / "tools" / "cli" / "tests" / "fixtures" / "frontend_graph_parity"
 )
-
-_APXM_BIN = os.environ.get("APXM_BIN")
-
-requires_apxm_bin = pytest.mark.skipif(
-    not _APXM_BIN,
-    reason="APXM_BIN not set; skipping live `apxm emit-air` parity test",
-)
-
 
 def _load_fixture(name: str) -> dict:
     return json.loads((_FIXTURES_DIR / name).read_text())
@@ -52,58 +28,156 @@ def _load_golden(name: str) -> str:
     return (_FIXTURES_DIR / name).read_text()
 
 
-def _graph_from_fixture(name: str) -> ApxmGraph:
-    """Build a live `ApxmGraph` from a shared fixture via the real Python API.
-
-    `ApxmGraph.from_dict` is the same entry point the Python frontend uses
-    to round-trip its own `to_dict()` output; sourcing the dict from the
-    on-disk fixture (rather than hand-duplicating node/edge construction)
-    guarantees this test exercises the identical logical graph the Rust
-    `frontend_air` tests and the TypeScript vitest suite compare against.
-    """
-    return ApxmGraph.from_dict(_load_fixture(name))
+def _ask_flow() -> ApxmGraph:
+    recorder = GraphRecorder("ask_flow", metadata={"is_entry": True})
+    recorder.param("name", "str")
+    answer = recorder.ask(name="ask", prompt="Say hi to {name}")
+    recorder.done(answer, name="out")
+    return recorder.to_graph()
 
 
-@requires_apxm_bin
-def test_ask_flow_matches_golden_air():
-    graph = _graph_from_fixture("ask_flow.json")
-    air = graph.to_air()
-    golden = _load_golden("ask_flow.golden.air")
-    assert air == golden
+def _parametrized_flow() -> ApxmGraph:
+    recorder = GraphRecorder("parametrized_flow", metadata={"is_entry": True})
+    recorder.param("topic", "str")
+    recorder.param("style", "str")
+    answer = recorder.ask(
+        name="ask",
+        prompt="Research {topic} in the style of {style}",
+        token_budget=256,
+    )
+    recorder.done(answer, name="out")
+    return recorder.to_graph()
 
 
-@requires_apxm_bin
-def test_parametrized_flow_matches_golden_air():
-    graph = _graph_from_fixture("parametrized_flow.json")
-    air = graph.to_air()
-    golden = _load_golden("parametrized_flow.golden.air")
-    assert air == golden
+def _profiled_agent_flow() -> ApxmGraph:
+    recorder = GraphRecorder("agent_flow", metadata={"is_entry": True})
+    agent = recorder.agent(
+        name="coder",
+        profile="codex",
+        prompt="Fix it",
+        cwd="/tmp/work",
+    )
+    recorder.done(agent, name="out")
+    return recorder.to_graph()
 
 
-@requires_apxm_bin
-def test_profiled_agent_flow_matches_golden_air():
-    graph = _graph_from_fixture("profiled_agent_flow.json")
-    air = graph.to_air()
-    golden = _load_golden("profiled_agent_flow.golden.air")
-    assert air == golden
+def _multi_flow_conversational() -> list[ApxmGraph]:
+    main = GraphRecorder("main", metadata={"is_entry": True})
+    run_turn = main.flow_call(
+        name="run_turn",
+        agent_name="conversation",
+        flow_name="turn",
+    )
+    main.done(run_turn, name="return_turn")
+
+    turn = GraphRecorder("conversation.turn", metadata={"is_entry": False})
+    turn.param("user_message", "str")
+    answer = turn.ask(name="ask", prompt="Reply to: {user_message}")
+    turn.done(answer, name="out")
+    return [main.to_graph(), turn.to_graph()]
 
 
-@requires_apxm_bin
-def test_multi_flow_conversational_matches_golden_air():
-    """Cross-plane: Python's `emit_multi_flow_module` (`ir.py:396-398`) must
-    match the same `AirProgram::to_air()` golden output the Rust
-    `frontend_air` tests and TypeScript's `emitMultiFlowModule` also match
-    (the shared multi-flow fixture)."""
-    graphs = [ApxmGraph.from_dict(g) for g in _load_fixture("multi_flow_conversational.json")]
-    air = emit_multi_flow_module(graphs)
-    golden = _load_golden("multi_flow_conversational.golden.air")
-    assert air == golden
+def _multi_flow_conversational_air() -> str:
+    return emit_multi_flow_module(_multi_flow_conversational())
+
+
+def _reasoning_flow() -> ApxmGraph:
+    recorder = GraphRecorder("reasoning_flow", metadata={"is_entry": True})
+    recorder.plan(name="plan", goal="Create a complete implementation plan")
+    recorder.reflect(name="reflect", trace_query="most_recent_execution")
+    verification = recorder.verify(
+        name="verify",
+        claim="The implementation plan is complete.",
+        evidence="The review lists every required frontend contract.",
+    )
+    recorder.done(verification, name="out")
+    return recorder.to_graph()
+
+
+def _control_flow() -> ApxmGraph:
+    recorder = GraphRecorder("control_flow", metadata={"is_entry": True})
+    classified = recorder.ask(name="classify", prompt="Classify the request")
+    recorder.branch(
+        name="branch",
+        condition_node=classified,
+        value="approved",
+        true_label="approved_path",
+        false_label="review_path",
+    )
+    routed = recorder.switch_(
+        name="route",
+        discriminant="classification",
+        cases=["approved", "review"],
+    )
+    recorder.add_edge(classified, routed)
+    recorder.try_catch(name="recover", try_label="route", catch_label="fallback")
+    recorder.done(routed, name="out")
+    return recorder.to_graph()
+
+
+def _synchronization_flow() -> ApxmGraph:
+    recorder = GraphRecorder("synchronization_flow", metadata={"is_entry": True})
+    answer = recorder.ask(name="answer", prompt="Prepare the durable result")
+    checkpoint = recorder.checkpoint("after_answer", name="checkpoint")
+    recorder.add_edge(answer, checkpoint)
+    fence = recorder.fence(name="fence", ordering="serial")
+    merged = recorder.merge("merged", checkpoint, fence)
+    recorder.done(merged, name="out")
+    return recorder.to_graph()
+
+
+def _coordination_flow() -> ApxmGraph:
+    recorder = GraphRecorder("coordination_flow", metadata={"is_entry": True})
+    worker = recorder.spawn_agent(name="worker", agent_name="worker", mode="collaborative")
+    delegated = recorder.delegate(
+        name="delegate",
+        task_spec="Review the frontend contract",
+        target_agent="worker",
+    )
+    recorder.add_edge(worker, delegated)
+    transferred = recorder.handoff(
+        name="handoff",
+        handoff_from="orchestrator",
+        handoff_to="worker",
+        payload="Begin the assigned review.",
+        transfer_state=True,
+    )
+    recorder.add_edge(delegated, transferred)
+    recorder.done(transferred, name="out")
+    return recorder.to_graph()
+
+
+def test_native_authoring_matches_shared_dto_vectors():
+    assert _ask_flow().to_dict() == _load_fixture("ask_flow.json")
+    assert _parametrized_flow().to_dict() == _load_fixture("parametrized_flow.json")
+    assert _profiled_agent_flow().to_dict() == _load_fixture("profiled_agent_flow.json")
+    assert [graph.to_dict() for graph in _multi_flow_conversational()] == _load_fixture(
+        "multi_flow_conversational.json"
+    )
+    assert _reasoning_flow().to_dict() == _load_fixture("reasoning_flow.json")
+    assert _control_flow().to_dict() == _load_fixture("control_flow.json")
+    assert _synchronization_flow().to_dict() == _load_fixture("synchronization_flow.json")
+    assert _coordination_flow().to_dict() == _load_fixture("coordination_flow.json")
+
+
+@pytest.mark.parametrize(
+    ("golden_name", "emit"),
+    [
+        ("ask_flow.golden.air", lambda: _ask_flow().to_air()),
+        ("parametrized_flow.golden.air", lambda: _parametrized_flow().to_air()),
+        ("profiled_agent_flow.golden.air", lambda: _profiled_agent_flow().to_air()),
+        ("multi_flow_conversational.golden.air", _multi_flow_conversational_air),
+        ("reasoning_flow.golden.air", lambda: _reasoning_flow().to_air()),
+        ("control_flow.golden.air", lambda: _control_flow().to_air()),
+        ("synchronization_flow.golden.air", lambda: _synchronization_flow().to_air()),
+        ("coordination_flow.golden.air", lambda: _coordination_flow().to_air()),
+    ],
+)
+def test_live_air_matches_golden_vectors(golden_name: str, emit: Callable[[], str]):
+    assert emit() == _load_golden(golden_name)
 
 
 def test_air_emitter_command_raises_air_emission_error_when_apxm_cannot_be_resolved():
-    """Recovery: a failing/missing `apxm` binary fails loud with
-    `AirEmissionError` naming the command and stderr/OS error detail — never
-    silently returning empty or partial AIR (`ir.py:20-22,55-59`)."""
     bogus_binary = "/nonexistent/path/apxm-does-not-exist-w3-1"
     command = AirEmitterCommand(argv=(bogus_binary, "emit-air"))
 

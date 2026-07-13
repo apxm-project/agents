@@ -115,7 +115,7 @@
       "name": "Ask",
       "category": "reasoning",
       "description": "Simple Q&A with LLM (no extended thinking)",
-      "long_description": "Sends a prompt to the configured LLM and returns the response. The lightest LLM operation — no chain-of-thought or extended thinking. Use for straightforward questions, classifications, extractions, or reformulations. Template strings support named `{input}` interpolation for dataflow inputs via the node's `input_names` array.",
+      "long_description": "Sends a prompt to the configured LLM and returns the response. The lightest LLM operation — no chain-of-thought or extended thinking. Use for straightforward questions, classifications, extractions, or reformulations. Template strings support named `{input}` interpolation for dataflow inputs via the node's positional `input_names` array. Optional `input_roles` entries align with those names and context operands to distinguish user, system, dependency-only, tool-context, and control inputs.",
       "latency": "medium",
       "wire_index": 1,
       "is_pseudo_op": false,
@@ -127,6 +127,18 @@
           "name": "template_str",
           "required": true,
           "description": "Prompt template for the question",
+          "ref_type": null
+        },
+        {
+          "name": "input_names",
+          "required": false,
+          "description": "Positional names for LLM context inputs referenced by template placeholders",
+          "ref_type": null
+        },
+        {
+          "name": "input_roles",
+          "required": false,
+          "description": "Positional LLM context roles: user, system, dependency_only, tool_context, or control",
           "ref_type": null
         },
         {
@@ -162,6 +174,18 @@
           "name": "template_str",
           "required": true,
           "description": "Prompt template for deep reasoning",
+          "ref_type": null
+        },
+        {
+          "name": "input_names",
+          "required": false,
+          "description": "Positional names for LLM context inputs referenced by template placeholders",
+          "ref_type": null
+        },
+        {
+          "name": "input_roles",
+          "required": false,
+          "description": "Positional LLM context roles: user, system, dependency_only, tool_context, or control",
           "ref_type": null
         },
         {
@@ -203,6 +227,18 @@
           "name": "template_str",
           "required": true,
           "description": "Prompt template for structured reasoning",
+          "ref_type": null
+        },
+        {
+          "name": "input_names",
+          "required": false,
+          "description": "Positional names for LLM context inputs referenced by template placeholders",
+          "ref_type": null
+        },
+        {
+          "name": "input_roles",
+          "required": false,
+          "description": "Positional LLM context roles: user, system, dependency_only, tool_context, or control",
           "ref_type": null
         },
         {
@@ -489,19 +525,13 @@
           "ref_type": null
         },
         {
-          "name": "cases",
+          "name": "case_labels",
           "required": true,
-          "description": "Array of case label/destination pairs",
-          "ref_type": null
-        },
-        {
-          "name": "default",
-          "required": false,
-          "description": "Default destination if no case matches",
+          "description": "Ordered labels for switch case regions",
           "ref_type": null
         }
       ],
-      "example_json": "{\"id\": 3, \"op\": \"SWITCH\", \"attributes\": {\"discriminant\": \"topic_kind\", \"cases\": [{\"label\": \"math\", \"node_id\": 4}, {\"label\": \"code\", \"node_id\": 5}], \"default\": \"6\"}}"
+      "example_json": "{\"id\": 3, \"op\": \"SWITCH\", \"attributes\": {\"discriminant\": \"topic_kind\", \"case_labels\": [\"math\", \"code\"]}}"
     },
     {
       "op": "FLOW_CALL",
@@ -1309,8 +1339,8 @@
       "fields": [
         {
           "name": "value",
-          "required": true,
-          "description": "The value to yield from the region",
+          "required": false,
+          "description": "Optional literal value when the yielded token does not arrive through the region input",
           "ref_type": null
         }
       ],

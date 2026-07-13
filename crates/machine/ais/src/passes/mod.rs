@@ -393,23 +393,37 @@ This reduces token usage and simplifies the graph by eliminating dead data flow.
     "mlir::ais::createDeadContextEliminationPass()",
 );
 
-/// SchemaNarrowing pass - narrows output schemas based on usage.
+/// PureDeadNodeElimination pass - removes unused provably inert operations.
+pub const PURE_DEAD_NODE_ELIMINATION: PassSpec = PassSpec::new(
+    "pure-dead-node-elimination",
+    "PureDeadNodeElimination",
+    "Remove unused provably inert AIS operations",
+    r"Removes only a closed allow-list of operations whose result has no uses:
+ConstStr, Merge, and WaitAll. The pass also requires MLIR's Pure trait, so it
+does not infer purity from operation names or remove authority, replay,
+ordering, or observability boundaries.
+
+Identity, Fence, and Nop are never candidates. Repeated removal only collapses
+an inert producer chain after every result and control dependency is absent.",
+    PassCategory::Optimization,
+    "mlir::ais::createPureDeadNodeEliminationPass()",
+);
+
+/// SchemaNarrowing pass - reports unproven schema specialization requests.
 pub const SCHEMA_NARROWING: PassSpec = PassSpec::new(
     "schema-narrowing",
     "SchemaNarrowing",
-    "Explicit-only schema narrowing experiment",
-    r"Planned optimization: analyze how operation results are consumed and
-tighten output schema constraints to only include fields used downstream.
+    "Explicit-only guarded schema specialization diagnostic",
+    r"Retains every output schema unless the compiler has both typed downstream
+field-use facts and selected-backend structured-output support evidence.
 
-This reduces token usage in structured output scenarios by avoiding
-generation of unnecessary fields.
+Generic result-use counts, arbitrary backend names, and unused values do not
+prove that a narrower schema preserves the model request contract.
 
-Example: If only the 'summary' field of a JSON response is used, the schema
-is narrowed to only request that field.
-
-The current implementation is not field-use narrowing, so this pass is not
-part of the automatic O-level pipelines.",
-    PassCategory::Optimization,
+The current IR does not carry both proofs into MLIR. The pass therefore emits
+a diagnostic, leaves the schema unchanged, and stays outside automatic
+O-level pipelines.",
+    PassCategory::Analysis,
     "mlir::ais::createSchemaNarrowingPass()",
 );
 
@@ -507,6 +521,7 @@ pub const AIS_PASSES: &[&PassSpec] = &[
     &UNCONSUMED_VALUE_WARNING,
     &TEMPLATE_SPECIALIZATION,
     &DEAD_CONTEXT_ELIMINATION,
+    &PURE_DEAD_NODE_ELIMINATION,
     &SCHEMA_NARROWING,
     &PROMPT_CANONICALIZATION,
 ];
@@ -525,6 +540,7 @@ pub const ALL_PASSES: &[&PassSpec] = &[
     &UNCONSUMED_VALUE_WARNING,
     &TEMPLATE_SPECIALIZATION,
     &DEAD_CONTEXT_ELIMINATION,
+    &PURE_DEAD_NODE_ELIMINATION,
     &SCHEMA_NARROWING,
     &PROMPT_CANONICALIZATION,
     // Built-in MLIR

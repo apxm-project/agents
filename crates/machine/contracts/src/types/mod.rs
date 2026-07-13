@@ -24,6 +24,7 @@ pub mod conversation;
 pub mod execution;
 pub mod graph_hints;
 pub mod graph_metrics;
+pub mod handler_manifest;
 pub mod intents;
 pub mod metrics;
 
@@ -54,8 +55,12 @@ pub use capability::{
 };
 pub use communicate::{CommunicateProtocol, UnknownProtocol};
 pub use compiler::{
-    CodegenOptions, CompilationStage, EmitFormat, OptimizationLevel, OptimizationTarget, PassInfo,
-    PassMetadata, PipelineConfig, find_pass_metadata, list_pass_metadata, stage_rank,
+    BackendLegalityRequirements, CodegenOptions, CompilationStage, CompilerAnalysisKind,
+    CostProvenance, CostSummary, DagOptimizationSummaryV1, Determinism, EffectAuthoritySummary,
+    EmitFormat, OPTIMIZATION_SUMMARY_ARTIFACT_SECTION, OPTIMIZATION_SUMMARY_VERSION,
+    OperationOptimizationSummaryV1, OptimizationLevel, OptimizationSummaryV1, OptimizationTarget,
+    PassInfo, PassMetadata, PipelineConfig, PromptContractSummary, ReplaySafety,
+    TransformationLegality, find_pass_metadata, list_pass_metadata, stage_rank,
 };
 pub use conversation::{TurnInput, TurnInputError};
 pub use execution::{
@@ -76,6 +81,12 @@ pub use graph_hints::{
     GraphStatusSnapshot, NodeSpec, PinMode, PinPolicy, PriorityClass,
 };
 pub use graph_metrics::{LatencyClass, NodeGraphMetrics};
+pub use handler_manifest::{
+    HANDLER_MANIFEST_AIR_SIDECAR_PREFIX, HANDLER_MANIFEST_ARTIFACT_SECTION,
+    HANDLER_MANIFEST_HANDLER_ID_HEX_LENGTH, HANDLER_MANIFEST_HANDLER_ID_PREFIX,
+    HANDLER_MANIFEST_SOURCE_DIRECTORY, HANDLER_MANIFEST_VERSION, HandlerDescriptor, HandlerKind,
+    HandlerLanguage, HandlerManifest, HandlerManifestError, HandlerSource,
+};
 pub use identifiers::{
     BackendId, CapabilityName, CheckpointId, ExecutionId, MessageId, ModelId, NodeIdType, OpIdType,
     ProfileId, SessionId, TokenIdType, TraceId,

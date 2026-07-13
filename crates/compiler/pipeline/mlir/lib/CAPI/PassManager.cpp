@@ -121,6 +121,7 @@ bool apxm_pass_manager_has_pass(ApxmPassManager* pm, const char* pass_name) {
   static const char* known_passes[] = {
     "normalize", "build-prompt", "dspy-optimize",
     "template-specialization", "dead-context-elimination",
+    "pure-dead-node-elimination",
     "scheduling", "shared-prefix-analysis", "assign-priority",
     "fuse-ask-ops", "condense-ops", "schema-narrowing",
     "prompt-canonicalization", "canonicalizer", "cse",
