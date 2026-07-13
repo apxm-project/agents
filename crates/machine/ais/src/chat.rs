@@ -136,6 +136,10 @@ pub struct ChatAirOptions<'a> {
     pub backend: Option<&'a str>,
     /// Specific model selected for this turn.
     pub model: Option<&'a str>,
+    /// Context-planning profile selected for this turn.
+    pub context_profile: Option<&'a str>,
+    /// Resolved output-token reservation for this turn.
+    pub max_output_tokens: Option<usize>,
     /// Extended-thinking effort requested for this turn.
     pub effort: Option<&'a str>,
     /// Whether the web capability group is available.
@@ -155,6 +159,13 @@ where
     Option::<String>::deserialize(deserializer)
 }
 
+fn deserialize_required_nullable_usize<'de, D>(deserializer: D) -> Result<Option<usize>, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    Option::<usize>::deserialize(deserializer)
+}
+
 /// Owned, serializable process contract for `apxm compile-service`.
 ///
 /// Nullable routing fields must still be present in JSON so Server and the
@@ -170,6 +181,10 @@ pub struct CompileServiceOptions {
     #[serde(deserialize_with = "deserialize_required_nullable_string")]
     pub model: Option<String>,
     #[serde(deserialize_with = "deserialize_required_nullable_string")]
+    pub context_profile: Option<String>,
+    #[serde(deserialize_with = "deserialize_required_nullable_usize")]
+    pub max_output_tokens: Option<usize>,
+    #[serde(deserialize_with = "deserialize_required_nullable_string")]
     pub effort: Option<String>,
     pub tools: bool,
     pub skills: bool,
@@ -183,6 +198,7 @@ impl CompileServiceOptions {
     pub fn validate(&self) -> Result<(), CompileServiceOptionsError> {
         validate_route_id("backend", self.backend.as_deref())?;
         validate_route_id("model", self.model.as_deref())?;
+        validate_route_id("context_profile", self.context_profile.as_deref())?;
         if let Some(effort) = self.effort.as_deref()
             && !matches!(effort, "off" | "low" | "medium" | "high")
         {
@@ -200,6 +216,8 @@ impl From<&ChatAirOptions<'_>> for CompileServiceOptions {
             system_prompt: options.system_prompt.map(ToOwned::to_owned),
             backend: options.backend.map(ToOwned::to_owned),
             model: options.model.map(ToOwned::to_owned),
+            context_profile: options.context_profile.map(ToOwned::to_owned),
+            max_output_tokens: options.max_output_tokens,
             effort: options.effort.map(ToOwned::to_owned),
             tools: options.tools,
             skills: options.skills,
@@ -234,6 +252,7 @@ pub fn chat_air(options: &ChatAirOptions) -> String {
     for (name, value) in [
         ("backend", options.backend),
         ("model", options.model),
+        ("profile", options.context_profile),
         ("effort", options.effort),
     ] {
         let Some(value) = value
@@ -245,6 +264,9 @@ pub fn chat_air(options: &ChatAirOptions) -> String {
         if name != "effort" || value != "off" {
             attributes.push(format!("{name} = \"{value}\""));
         }
+    }
+    if let Some(max_output_tokens) = options.max_output_tokens {
+        attributes.push(format!("token_budget = {max_output_tokens} : i64"));
     }
 
     let mut capability_groups = Vec::new();
@@ -385,6 +407,22 @@ mod tests {
             ..ChatAirOptions::default()
         });
         assert!(air.contains(r#"capability_groups = ["discovery", "skills"]"#));
+    }
+
+    #[test]
+    fn chat_air_exposes_caller_supplied_routing_and_planning_attributes() {
+        let air = chat_air(&ChatAirOptions {
+            backend: Some("configured-backend"),
+            model: Some("configured-model"),
+            context_profile: Some("configured-profile"),
+            max_output_tokens: Some(256),
+            ..ChatAirOptions::default()
+        });
+
+        assert!(air.contains(r#"backend = "configured-backend""#));
+        assert!(air.contains(r#"model = "configured-model""#));
+        assert!(air.contains(r#"profile = "configured-profile""#));
+        assert!(air.contains("token_budget = 256 : i64"));
     }
 
     #[test]

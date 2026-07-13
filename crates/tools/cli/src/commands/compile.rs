@@ -360,6 +360,22 @@ fn insert_effort_attr(
     );
 }
 
+#[cfg(feature = "driver")]
+fn insert_optional_token_budget_attr(
+    attrs: &mut std::collections::HashMap<String, apxm_core::types::Value>,
+    max_output_tokens: Option<usize>,
+) {
+    let Some(max_output_tokens) = max_output_tokens else {
+        return;
+    };
+    attrs.insert(
+        apxm_ais::attrs::TOKEN_BUDGET.to_string(),
+        apxm_core::types::Value::Number(apxm_core::types::values::Number::Integer(
+            max_output_tokens as i64,
+        )),
+    );
+}
+
 /// Compile a bundled conversational agent into canonical AIR text.
 ///
 /// # Cross-repo I/O contract
@@ -863,6 +879,12 @@ fn emit_air_from_declarative_agent(
         }
         insert_optional_route_attr(&mut attrs, graph_attrs::BACKEND, options.backend.as_deref());
         insert_optional_route_attr(&mut attrs, graph_attrs::MODEL, options.model.as_deref());
+        insert_optional_route_attr(
+            &mut attrs,
+            graph_attrs::PROFILE,
+            options.context_profile.as_deref(),
+        );
+        insert_optional_token_budget_attr(&mut attrs, options.max_output_tokens);
         nodes.push(FrontendNode {
             id: run_node_id,
             name: "turn_loop".to_string(),
@@ -935,7 +957,13 @@ fn emit_air_from_declarative_agent(
         options.backend.as_deref(),
     );
     insert_optional_route_attr(&mut ask_attrs, graph_attrs::MODEL, options.model.as_deref());
+    insert_optional_route_attr(
+        &mut ask_attrs,
+        graph_attrs::PROFILE,
+        options.context_profile.as_deref(),
+    );
     insert_effort_attr(&mut ask_attrs, options.effort.as_deref());
+    insert_optional_token_budget_attr(&mut ask_attrs, options.max_output_tokens);
     if !tool_names.is_empty() {
         ask_attrs.insert(
             graph_attrs::TOOLS.to_string(),
