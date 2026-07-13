@@ -4,7 +4,6 @@
 //! conversation transcript accrues automatically. Keyed by `memory_scope()`
 //! (the session id), so turns are readable by the next turn's `qmem` recall.
 
-use crate::executor::handlers::template::input_names_from_node;
 use crate::executor::{ExecutionContext, Next, OperationMiddleware, Result};
 use crate::memory::MemorySpace;
 use apxm_core::events::payload::{TurnBoundaryPayload, TurnDirection};
@@ -48,10 +47,6 @@ const DEFAULT_SUMMARY_KEY: &str = "conversation:summary";
 /// (constitution #2: program owns cognition); absent the marker, the ask is
 /// not a conversational turn.
 const TURN_MARKER_KEY: &str = "conversational_turn";
-/// The conversational frontends bind the host turn input under this parameter
-/// name on the marked top-level turn ask.
-const TURN_INPUT_PARAM_NAME: &str = "user_message";
-
 /// Records each ASK answer into session memory so conversation history accrues
 /// without the program threading a transcript.
 #[derive(Debug, Clone, Default)]
@@ -163,7 +158,7 @@ impl ConversationMemoryMiddleware {
         node: &Node,
         mut inputs: Vec<Value>,
     ) -> Result<(Vec<Value>, Option<JsonMap<String, JsonValue>>)> {
-        let Some(index) = Self::turn_input_index(node, &inputs) else {
+        let Some(index) = Self::turn_input_index(node, &inputs)? else {
             return Ok((inputs, None));
         };
         let Some(raw_turn_input) = inputs.get(index).cloned() else {
@@ -179,27 +174,30 @@ impl ConversationMemoryMiddleware {
         Ok((inputs, turn_input.context))
     }
 
-    fn turn_input_index(node: &Node, inputs: &[Value]) -> Option<usize> {
-        let input_names = input_names_from_node(node);
-        if let Some(index) = input_names
+    fn turn_input_index(node: &Node, inputs: &[Value]) -> Result<Option<usize>> {
+        if inputs.is_empty() {
+            return Ok(None);
+        }
+
+        let matches = inputs
             .iter()
-            .position(|name| name == TURN_INPUT_PARAM_NAME)
-        {
-            return (index < inputs.len()).then_some(index);
-        }
-        if inputs.len() == 1 || input_names.len() == 1 {
-            return (!inputs.is_empty()).then_some(0);
-        }
+            .enumerate()
+            .filter_map(|(index, value)| TurnInput::try_from(value).ok().map(|_| index))
+            .collect::<Vec<_>>();
 
-        let mut matches = inputs.iter().enumerate().filter_map(|(index, value)| {
-            Self::looks_like_turn_input_envelope(value).then_some(index)
-        });
-        let first = matches.next()?;
-        matches.next().is_none().then_some(first)
-    }
-
-    fn looks_like_turn_input_envelope(value: &Value) -> bool {
-        matches!(value, Value::Object(fields) if fields.contains_key("message"))
+        match matches.as_slice() {
+            [index] => Ok(Some(*index)),
+            [] => Err(apxm_core::error::RuntimeError::Operation {
+                op_type: node.op_type,
+                message: "marked conversational ASK requires exactly one typed turn input"
+                    .to_string(),
+            }),
+            _ => Err(apxm_core::error::RuntimeError::Operation {
+                op_type: node.op_type,
+                message: "marked conversational ASK received multiple typed turn inputs"
+                    .to_string(),
+            }),
+        }
     }
 
     /// Conversation-window compaction — the four control dials
@@ -661,7 +659,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn legacy_string_turn_input_is_unchanged_for_existing_ask_path() {
+    async fn bare_string_turn_input_is_rejected() {
         let _guard = TERMINAL_CAPTURE_LOCK.lock().unwrap();
         clear_terminal_capture();
 
@@ -669,17 +667,17 @@ mod tests {
         let ledger = Arc::new(SessionLedger::new(None, HashMap::new()));
         let ctx = test_context(emitter, ledger).await;
         let middleware = ConversationMemoryMiddleware::new();
-        let node = ask_with_input_names(true, &[TURN_INPUT_PARAM_NAME, "history"]);
-        let original_inputs = vec![
+        let node = ask_with_input_names(true, &["request", "history"]);
+        let inputs = vec![
             Value::String("hello".to_string()),
             Value::String("recalled context".to_string()),
         ];
 
-        let result = middleware
+        let error = middleware
             .around(
                 &ctx,
                 &node,
-                original_inputs.clone(),
+                inputs,
                 Next {
                     chain: &[],
                     idx: 0,
@@ -687,12 +685,9 @@ mod tests {
                 },
             )
             .await
-            .expect("turn succeeds");
+            .expect_err("bare strings must not bypass the typed turn contract");
 
-        assert_eq!(result, Value::String("answer".to_string()));
-        let capture = take_terminal_capture();
-        assert_eq!(capture.inputs, original_inputs);
-        assert_eq!(capture.supplement, None);
+        assert!(error.to_string().contains("exactly one typed turn input"));
     }
 
     #[tokio::test]
@@ -713,7 +708,7 @@ export function capture(ctx) {
         )
         .await;
         let middleware = ConversationMemoryMiddleware::new();
-        let node = ask_with_input_names(true, &[TURN_INPUT_PARAM_NAME, "history"]);
+        let node = ask_with_input_names(true, &["request", "history"]);
         let turn_input = TurnInput {
             message: "hello".to_string(),
             context: Some(JsonMap::from_iter([(
