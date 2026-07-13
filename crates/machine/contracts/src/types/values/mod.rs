@@ -5,5 +5,5 @@
 mod contract;
 mod token;
 
-pub use contract::{Number, TokenId, Value};
+pub use contract::{Number, TokenId, Value, ValueError};
 pub use token::{Token, TokenStatus};
