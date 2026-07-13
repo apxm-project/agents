@@ -10,9 +10,10 @@
 //! normal publish would — no polling, no held worker.
 //!
 //! Lost-wakeup safe: a [`wake`] that arrives before [`register`] stores a
-//! `Resolved` sentinel that the next `register` fires immediately.
+//! FIFO queue of resolved values that subsequent registers consume
+//! one-by-one in arrival order.
 
-use std::collections::{HashMap, HashSet};
+use std::collections::{HashMap, HashSet, VecDeque};
 use std::sync::{Arc, Mutex, OnceLock};
 
 use apxm_core::types::{Node, NodeId, TokenId, Value};
@@ -182,8 +183,9 @@ fn producer_for_outputs(state: &SchedulerState, outputs: &[TokenId]) -> NodeId {
 enum Entry {
     /// Nodes parked on this key, awaiting a wake.
     Waiters(Vec<ParkWaker>),
-    /// A wake arrived before any node registered; the value waits for one.
-    Resolved(Value),
+    /// One or more wakes arrived before any node registered; each subsequent
+    /// register consumes exactly one value in FIFO order.
+    Resolved(VecDeque<Value>),
 }
 
 #[derive(Default)]
@@ -230,11 +232,24 @@ pub(crate) fn register(wait_key: String, waker: ParkWaker) {
 
     guard.closed.remove(&wait_key);
     match guard.entries.remove(&wait_key) {
-        Some(Entry::Resolved(value)) => {
+        Some(Entry::Resolved(mut values)) => {
+            let value = values
+                .pop_front()
+                .expect("resolved queue must contain at least one value");
+            let has_remaining = !values.is_empty();
+            if has_remaining {
+                guard
+                    .entries
+                    .insert(wait_key.clone(), Entry::Resolved(values.clone()));
+            }
             drop(guard);
-            // Delivered: no need to keep the durable resolved-marker around —
-            // a restart with nothing left to redeliver has nothing to lose.
-            durable::clear(&wait_key);
+            if has_remaining {
+                durable::record_resolved(&wait_key, &values);
+            } else {
+                // Delivered: no need to keep the durable resolved-marker around —
+                // a restart with nothing left to redeliver has nothing to lose.
+                durable::clear(&wait_key);
+            }
             waker.fire(&wait_key, value);
         }
         Some(Entry::Waiters(mut ws)) => {
@@ -265,16 +280,27 @@ pub fn wake(wait_key: &str, value: Value) -> usize {
         match guard.entries.remove(wait_key) {
             Some(Entry::Waiters(ws)) => ws,
             // No waiters (or a prior resolution): stash the value for a late
-            // register — durably too, so a value that arrives while nobody is
-            // parked (or while the process is mid-restart) is not lost: a
+            // register — durably too, so values that arrive while nobody is
+            // parked (or while the process is mid-restart) are not lost: a
             // real process restart wipes this in-memory map, but the durable
-            // journal survives and `rebuild_from_durable` reloads it.
-            _ => {
+            // journal survives and `rebuild_from_durable` reloads the queue.
+            Some(Entry::Resolved(mut values)) => {
+                values.push_back(value.clone());
                 guard
                     .entries
-                    .insert(wait_key.to_string(), Entry::Resolved(value.clone()));
+                    .insert(wait_key.to_string(), Entry::Resolved(values.clone()));
                 drop(guard);
-                durable::record_resolved(wait_key, &value);
+                durable::record_resolved(wait_key, &values);
+                return 0;
+            }
+            None => {
+                let mut values = VecDeque::new();
+                values.push_back(value.clone());
+                guard
+                    .entries
+                    .insert(wait_key.to_string(), Entry::Resolved(values.clone()));
+                drop(guard);
+                durable::record_resolved(wait_key, &values);
                 return 0;
             }
         }
@@ -358,12 +384,15 @@ impl apxm_capability_iface::CapabilityHost for ParkRegistryHost {
 ///   logical waits need a freshly-registered waker after the DAG is
 ///   rehydrated (see `the restart-state reconstruction invariant`); the actual [`ParkWaker`]
 ///   can never be durable (it closes over a live `Arc<SchedulerState>`).
-/// - **resolved**: a `wake` arrived with nobody registered yet — durably, not
-///   just in the in-memory `Resolved` stash, so a wake that lands in the
-///   narrow window around a restart is not lost. [`rebuild_from_durable`]
-///   reloads these into the in-memory stash so the next `register` for that
-///   wait_key fires immediately, exactly as it would have pre-restart.
+/// - **resolved**: one or more `wake`s arrived with nobody registered yet —
+///   durably, not just in the in-memory `Resolved` stash, so queued values
+///   that land in the narrow window around a restart are not lost.
+///   [`rebuild_from_durable`] reloads these into the in-memory stash so
+///   subsequent `register`s for that wait_key fire immediately, exactly as
+///   they would have pre-restart.
 pub mod durable {
+    #[cfg(feature = "sqlite")]
+    use std::collections::VecDeque;
     use std::sync::{Mutex, OnceLock};
 
     #[cfg(feature = "sqlite")]
@@ -425,10 +454,10 @@ pub mod durable {
     pub(super) fn record_pending(_wait_key: &str) {}
 
     #[cfg(feature = "sqlite")]
-    pub(super) fn record_resolved(wait_key: &str, value: &Value) {
+    pub(super) fn record_resolved(wait_key: &str, values: &VecDeque<Value>) {
         let guard = slot().lock().expect("park journal slot poisoned");
         let Some(conn) = guard.as_ref() else { return };
-        let Ok(json) = serde_json::to_string(value) else {
+        let Ok(json) = serde_json::to_string(values) else {
             return;
         };
         let _ = conn.execute(
@@ -438,7 +467,11 @@ pub mod durable {
         );
     }
     #[cfg(not(feature = "sqlite"))]
-    pub(super) fn record_resolved(_wait_key: &str, _value: &apxm_core::types::Value) {}
+    pub(super) fn record_resolved(
+        _wait_key: &str,
+        _values: &std::collections::VecDeque<apxm_core::types::Value>,
+    ) {
+    }
 
     #[cfg(feature = "sqlite")]
     pub(super) fn clear(wait_key: &str) {
@@ -452,11 +485,12 @@ pub mod durable {
     #[cfg(not(feature = "sqlite"))]
     pub(super) fn clear(_wait_key: &str) {}
 
-    /// `(wait_key, state, resolved_value)` rows currently in the journal.
-    /// `state` is `"pending"` or `"resolved"`; `resolved_value` is `Some` only
-    /// for `"resolved"` rows whose value parsed.
+    /// `(wait_key, state, resolved_values)` rows currently in the journal.
+    /// `state` is `"pending"` or `"resolved"`; resolved rows return their
+    /// queued values in FIFO order. Legacy single-value rows are decoded as a
+    /// singleton queue for compatibility.
     #[cfg(feature = "sqlite")]
-    pub(super) fn load_all() -> Vec<(String, String, Option<Value>)> {
+    pub(super) fn load_all() -> Vec<(String, String, VecDeque<Value>)> {
         let guard = slot().lock().expect("park journal slot poisoned");
         let Some(conn) = guard.as_ref() else {
             return Vec::new();
@@ -474,14 +508,35 @@ pub mod durable {
         let Ok(rows) = rows else { return Vec::new() };
         rows.flatten()
             .map(|(wait_key, state, value_json)| {
-                let value = value_json.and_then(|json| serde_json::from_str(&json).ok());
-                (wait_key, state, value)
+                let values = value_json
+                    .and_then(|json| parse_resolved_values(&json))
+                    .unwrap_or_default();
+                (wait_key, state, values)
             })
             .collect()
     }
     #[cfg(not(feature = "sqlite"))]
-    pub(super) fn load_all() -> Vec<(String, String, Option<apxm_core::types::Value>)> {
+    pub(super) fn load_all() -> Vec<(
+        String,
+        String,
+        std::collections::VecDeque<apxm_core::types::Value>,
+    )> {
         Vec::new()
+    }
+
+    #[cfg(feature = "sqlite")]
+    fn parse_resolved_values(json: &str) -> Option<VecDeque<Value>> {
+        let parsed = serde_json::from_str::<serde_json::Value>(json).ok()?;
+        match parsed {
+            serde_json::Value::Array(items) => items
+                .into_iter()
+                .map(serde_json::from_value)
+                .collect::<Result<VecDeque<Value>, _>>()
+                .ok(),
+            other => serde_json::from_value(other)
+                .ok()
+                .map(|value| std::iter::once(value).collect()),
+        }
     }
 }
 
@@ -493,28 +548,29 @@ pub mod durable {
 /// what durably survived; every other wait_key (unrelated in-flight work in
 /// the same process — at a real boot there is none yet, since the registry
 /// starts empty) is left untouched. `"resolved"` rows become an in-memory
-/// [`Entry::Resolved`] stash (so the next `register` for that wait_key fires
-/// immediately, exactly as it would have pre-restart); `"pending"` rows have
-/// no waker to attach (that requires live scheduler state, which restart must
-/// rebuild first — see `SchedulerState::restore`) and are dropped from the
-/// in-memory map, but remain visible via [`pending_wait_keys`] so a caller
-/// knows which logical waits still need a fresh `register` after rehydration.
+/// [`Entry::Resolved`] queue (so subsequent `register`s for that wait_key fire
+/// immediately in FIFO order, exactly as they would have pre-restart);
+/// `"pending"` rows have no waker to attach (that requires live scheduler
+/// state, which restart must rebuild first — see `SchedulerState::restore`)
+/// and are dropped from the in-memory map, but remain visible via
+/// [`pending_wait_keys`] so a caller knows which logical waits still need a
+/// fresh `register` after rehydration.
 pub fn rebuild_from_durable(wait_keys: &[String]) {
-    let rows: HashMap<String, (String, Option<Value>)> = durable::load_all()
+    let rows: HashMap<String, (String, VecDeque<Value>)> = durable::load_all()
         .into_iter()
-        .map(|(wait_key, state, value)| (wait_key, (state, value)))
+        .map(|(wait_key, state, values)| (wait_key, (state, values)))
         .collect();
     let mut guard = registry().lock().expect("park registry poisoned");
     for wait_key in wait_keys {
         guard.entries.remove(wait_key);
         guard.closed.remove(wait_key);
-        if let Some((state, value)) = rows.get(wait_key)
+        if let Some((state, values)) = rows.get(wait_key)
             && state == "resolved"
-            && let Some(value) = value.clone()
+            && !values.is_empty()
         {
             guard
                 .entries
-                .insert(wait_key.clone(), Entry::Resolved(value));
+                .insert(wait_key.clone(), Entry::Resolved(values.clone()));
         }
         // "pending" rows are intentionally not restored as `Entry::Waiters`:
         // there is no live `ParkWaker` to attach durably (see module docs).

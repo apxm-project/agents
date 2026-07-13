@@ -19,7 +19,7 @@ use std::time::Duration;
 use apxm_core::error::RuntimeError;
 use apxm_core::events::payload::ToolCallCorrelation;
 use apxm_core::types::values::{Number, Value};
-use serde_json::{Value as JsonValue, json};
+use serde_json::{Map as JsonMap, Value as JsonValue, json};
 
 use super::ExecutionContext;
 use super::hooks::{HookEvent, HookMode};
@@ -552,7 +552,7 @@ async fn fire_lifecycle_hooks(
 /// it up (`ExecutionContext::pending_turn_prompt_supplement`).
 pub async fn run_pre_turn_hooks(
     ctx: &ExecutionContext,
-    turn_context: Option<JsonValue>,
+    turn_context: Option<JsonMap<String, JsonValue>>,
 ) -> Result<Option<String>, RuntimeError> {
     let Some(registry) = ctx.hook_registry() else {
         return Ok(None);
@@ -567,13 +567,7 @@ pub async fn run_pre_turn_hooks(
 
     let mut supplement: Option<String> = None;
     for binding in bindings {
-        let payload = json!({
-        HOOK_PAYLOAD_KEY: {
-        "event": "pre_turn",
-        "remaining_budget": remaining_budget(ctx),
-        "context": turn_context.clone().unwrap_or(JsonValue::Null),
-        }
-        });
+        let payload = pre_turn_payload(ctx, turn_context.clone());
         match call_hook_with_host_bridge(
             ctx,
             &binding.handler_id,
@@ -596,6 +590,19 @@ pub async fn run_pre_turn_hooks(
         }
     }
     Ok(supplement)
+}
+
+fn pre_turn_payload(
+    ctx: &ExecutionContext,
+    turn_context: Option<JsonMap<String, JsonValue>>,
+) -> JsonValue {
+    json!({
+    HOOK_PAYLOAD_KEY: {
+    "event": "pre_turn",
+    "remaining_budget": remaining_budget(ctx),
+    "context": turn_context.map(JsonValue::Object).unwrap_or(JsonValue::Null),
+    }
+    })
 }
 
 /// Fire `post_turn` hooks (after the turn's reply). The payload is enriched with
