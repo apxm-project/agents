@@ -591,9 +591,16 @@ class ModelContextMetricsEventPayload(_ModelContextMetricsEventPayloadOptional):
     plan_status: Literal['assembled', 'inherited', 'unplanned']
 
 class _CapabilityEffectReceiptEventPayloadOptional(TypedDict, total=False):
+    graph_id: str
+    call_id: str
     grant_id: str
     approval_status: Literal['not_required', 'approved']
     approval_id: str
+    effect_digest: str
+    effect_outcome: Literal['committed', 'deduplicated']
+    verified_host_key_id: str
+    prepare_digest: str
+    commit_digest: str
 
 class CapabilityEffectReceiptEventPayload(_CapabilityEffectReceiptEventPayloadOptional):
     kind: Literal['capability_effect_receipt']
