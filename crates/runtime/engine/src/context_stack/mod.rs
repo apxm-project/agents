@@ -14,8 +14,8 @@ use serde::{Deserialize, Serialize};
 
 pub use budget::BudgetAllocator;
 pub use frame::{
-    ContextTokenizer, estimate_tokens_with, load_graph_summary, load_node_output, load_node_prompt,
-    load_node_status, truncate_to_budget_with,
+    ContextTokenizer, estimate_tokens, estimate_tokens_with, load_graph_summary, load_node_output,
+    load_node_prompt, load_node_status, truncate_to_budget, truncate_to_budget_with,
 };
 pub use policy::{ContextPlanningError, ContextPlanningPolicy, ScopeRules};
 

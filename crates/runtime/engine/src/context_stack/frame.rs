@@ -68,6 +68,11 @@ pub fn estimate_tokens_with(tokenizer: ContextTokenizer, text: &str) -> usize {
     tokenizer.tokenizer().count(text)
 }
 
+/// Estimate tokens with the runtime's canonical default tokenizer.
+pub fn estimate_tokens(text: &str) -> usize {
+    estimate_tokens_with(ContextTokenizer::O200kBase, text)
+}
+
 /// Truncate with the explicitly selected tokenizer.
 pub fn truncate_to_budget_with(
     tokenizer: ContextTokenizer,
@@ -96,6 +101,11 @@ pub fn truncate_to_budget_with(
         keep -= 1;
     };
     (content, true)
+}
+
+/// Truncate with the runtime's canonical default tokenizer.
+pub fn truncate_to_budget(text: &str, max_tokens: usize) -> (String, bool) {
+    truncate_to_budget_with(ContextTokenizer::O200kBase, text, max_tokens)
 }
 
 #[cfg(test)]

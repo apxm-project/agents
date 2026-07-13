@@ -40,7 +40,11 @@ mod token_usage;
 pub mod events;
 pub mod sandbox;
 
-pub use facade::{ApprovalContext, CapabilityFacade, CapabilitySandboxPreflight};
+pub use facade::{
+    ApprovalContext, CapabilityEffectReplayEvidence, CapabilityEffectReplayEvidenceEnvelope,
+    CapabilityFacade, CapabilityInvocation, CapabilitySandboxPreflight, HostEffectPrepareEvidence,
+    capability_effect_idempotency_key_digest,
+};
 pub use host::{CapabilityHost, CapabilityHostError};
 pub use metadata::RuntimeCapability;
 pub use token_usage::TokenUsageSummary;
