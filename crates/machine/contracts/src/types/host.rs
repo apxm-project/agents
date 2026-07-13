@@ -213,13 +213,14 @@ pub fn select_tier(
     };
 
     // Validate tier_hint consistency
-    if let Some(hint) = manifest.tier_hint {
-        if hint != tier && !(hint == HostTier::LinkTools && tier == HostTier::LinkRuntime) {
-            return Err(EnrollError::TierMismatch {
-                hint,
-                computed: tier,
-            });
-        }
+    if let Some(hint) = manifest.tier_hint
+        && hint != tier
+        && !(hint == HostTier::LinkTools && tier == HostTier::LinkRuntime)
+    {
+        return Err(EnrollError::TierMismatch {
+            hint,
+            computed: tier,
+        });
     }
 
     // LINK-RUNTIME requires a confinement block

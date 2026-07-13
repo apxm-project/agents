@@ -90,8 +90,8 @@ fn json_to_runtime_value(value: JsonValue) -> Value {
             if let Some(integer) = number.as_i64() {
                 Value::Number(Number::Integer(integer))
             } else if let Some(unsigned) = number.as_u64() {
-                if i64::try_from(unsigned).is_ok() {
-                    Value::Number(Number::Integer(unsigned as i64))
+                if let Ok(integer) = i64::try_from(unsigned) {
+                    Value::Number(Number::Integer(integer))
                 } else {
                     Value::Number(Number::Float(unsigned as f64))
                 }
