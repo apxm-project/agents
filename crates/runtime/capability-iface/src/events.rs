@@ -19,6 +19,44 @@ use apxm_core::types::values::Value;
 
 use crate::token_usage::TokenUsageSummary;
 
+/// Concurrency-safe scope selection state for shared execution emitters.
+///
+/// Flow calls may overlap briefly across re-armed conversational turns. Active
+/// scopes therefore leave by identity rather than restoring a previously read
+/// value, which prevents an older flow from clearing a newer flow's scope.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct EventScopeState {
+    base: Option<String>,
+    active: Vec<String>,
+}
+
+impl EventScopeState {
+    pub fn new(base: Option<String>) -> Self {
+        Self {
+            base,
+            active: Vec::new(),
+        }
+    }
+
+    pub fn set_base(&mut self, scope_id: Option<String>) {
+        self.base = scope_id;
+    }
+
+    pub fn enter(&mut self, scope_id: String) {
+        self.active.push(scope_id);
+    }
+
+    pub fn leave(&mut self, scope_id: &str) {
+        if let Some(index) = self.active.iter().rposition(|active| active == scope_id) {
+            self.active.remove(index);
+        }
+    }
+
+    pub fn current(&self) -> Option<String> {
+        self.active.last().cloned().or_else(|| self.base.clone())
+    }
+}
+
 /// Optional observer for execution events.
 ///
 /// Implementors receive fine-grained lifecycle callbacks during DAG
@@ -41,6 +79,20 @@ pub trait ExecutionEventEmitter: Send + Sync {
     /// Get the current scope ID.
     fn current_scope_id(&self) -> Option<String> {
         None
+    }
+
+    /// Enter an active child scope. Implementors that can be shared by
+    /// concurrent flows should retain all active scopes and leave by identity.
+    fn enter_scope_id(&self, scope_id: String) {
+        self.set_current_scope_id(Some(scope_id));
+    }
+
+    /// Leave one active child scope without disturbing newer overlapping
+    /// scopes. The default preserves compatibility for single-scope emitters.
+    fn leave_scope_id(&self, scope_id: &str) {
+        if self.current_scope_id().as_deref() == Some(scope_id) {
+            self.set_current_scope_id(None);
+        }
     }
 
     // ── Existing ────────────────────────────────────────────────────
@@ -520,5 +572,23 @@ pub trait ExecutionEventEmitter: Send + Sync {
         _correlation: Option<&ToolCallCorrelation>,
     ) {
         self.emit_approval_resolved(approval_id, decision);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::EventScopeState;
+
+    #[test]
+    fn active_scopes_survive_out_of_order_completion() {
+        let mut scopes = EventScopeState::new(Some("root".to_string()));
+        scopes.enter("turn-1".to_string());
+        scopes.enter("turn-2".to_string());
+
+        scopes.leave("turn-1");
+        assert_eq!(scopes.current().as_deref(), Some("turn-2"));
+
+        scopes.leave("turn-2");
+        assert_eq!(scopes.current().as_deref(), Some("root"));
     }
 }

@@ -7,8 +7,8 @@ use std::sync::Arc;
 
 use super::{ExecutionContext, Node, Result, Value, get_string_attribute};
 use crate::aam::{ScopeSpec, TransitionLabel};
-use crate::executor::ExecutorEngine;
 use crate::executor::handlers::template::input_names_from_node;
+use crate::executor::{ExecutionEventEmitter, ExecutorEngine};
 use crate::metadata_keys as metadata;
 use crate::scheduler::{DataflowScheduler, SchedulerConfig};
 use apxm_core::constants::graph::attrs as graph_attrs;
@@ -19,6 +19,24 @@ use apxm_core::types::values::Number;
 
 /// Maximum recursion depth for flow calls to prevent stack overflow
 const MAX_FLOW_CALL_DEPTH: usize = 100;
+
+struct EventScopeGuard {
+    emitter: Arc<dyn ExecutionEventEmitter>,
+    scope_id: String,
+}
+
+impl EventScopeGuard {
+    fn enter(emitter: Arc<dyn ExecutionEventEmitter>, scope_id: String) -> Self {
+        emitter.enter_scope_id(scope_id.clone());
+        Self { emitter, scope_id }
+    }
+}
+
+impl Drop for EventScopeGuard {
+    fn drop(&mut self) {
+        self.emitter.leave_scope_id(&self.scope_id);
+    }
+}
 
 /// Execute a flow call operation
 ///
@@ -188,16 +206,14 @@ async fn execute_impl(ctx: &ExecutionContext, node: &Node, inputs: Vec<Value>) -
             .await;
     }
 
-    // Propagate the child scope_id to the event emitter so emitted events
-    // carry the sub-flow's scope for session isolation.
-    let child_event_emitter = child_ctx.event_emitter.as_ref().map(Arc::clone);
-    let previous_scope_id = if let Some(emitter) = &child_event_emitter {
-        let previous_scope_id = emitter.current_scope_id();
-        emitter.set_current_scope_id(child_ctx.current_scope_id.clone());
-        previous_scope_id
-    } else {
-        None
-    };
+    // Track this child scope by identity. Re-armed turns can overlap while the
+    // previous flow finishes cleanup, so restoring a previously read shared
+    // value can erase the newer turn's scope.
+    let scope_guard = child_ctx
+        .event_emitter
+        .as_ref()
+        .zip(child_ctx.current_scope_id.as_ref())
+        .map(|(emitter, scope_id)| EventScopeGuard::enter(Arc::clone(emitter), scope_id.clone()));
 
     // Execute the sub-flow DAG with real scheduler inputs so compile
     // parameters work for nested flows.
@@ -217,9 +233,7 @@ async fn execute_impl(ctx: &ExecutionContext, node: &Node, inputs: Vec<Value>) -
         )
         .await;
 
-    if let Some(emitter) = &child_event_emitter {
-        emitter.set_current_scope_id(previous_scope_id);
-    }
+    drop(scope_guard);
 
     let (results, stats, _scheduler_metrics, all_outputs, node_output_map) = scheduler_result
         .map_err(|e| {

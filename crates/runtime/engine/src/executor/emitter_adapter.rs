@@ -15,7 +15,7 @@ use apxm_core::types::operations::AISOperationType;
 use apxm_core::types::values::Value;
 use parking_lot::RwLock;
 
-use super::events::ExecutionEventEmitter;
+use super::events::{EventScopeState, ExecutionEventEmitter};
 
 /// Adapter that implements [`ExecutionEventEmitter`] by forwarding each call
 /// to an [`EventEmitter`] sink as a fully-formed [`ApxmEvent`].
@@ -28,9 +28,8 @@ pub struct EmitterAdapter {
     /// Current parent span ID for hierarchical event nesting.
     /// Updated by the executor engine when entering/leaving node scopes.
     current_span_id: RwLock<Option<String>>,
-    /// Current scope ID for session isolation.
-    /// Updated when entering/leaving scoped sub-flows.
-    current_scope_id: RwLock<Option<String>>,
+    /// Base and overlapping active scope IDs for session isolation.
+    scope_state: RwLock<EventScopeState>,
 }
 
 impl EmitterAdapter {
@@ -46,7 +45,7 @@ impl EmitterAdapter {
             skill_provenance: None,
             seq: AtomicU64::new(0),
             current_span_id: RwLock::new(None),
-            current_scope_id: RwLock::new(None),
+            scope_state: RwLock::new(EventScopeState::default()),
         }
     }
 
@@ -68,7 +67,7 @@ impl EmitterAdapter {
 
     fn emit(&self, payload: impl apxm_core::events::payload::EventPayload) {
         let parent = self.current_span_id.read().clone();
-        let scope = self.current_scope_id.read().clone();
+        let scope = self.scope_state.read().current();
         let event = match parent {
             Some(parent_id) => {
                 ApxmEvent::child_of(payload, self.source.clone(), &self.trace_id, parent_id)
@@ -93,11 +92,19 @@ impl ExecutionEventEmitter for EmitterAdapter {
     }
 
     fn set_current_scope_id(&self, scope_id: Option<String>) {
-        *self.current_scope_id.write() = scope_id;
+        self.scope_state.write().set_base(scope_id);
     }
 
     fn current_scope_id(&self) -> Option<String> {
-        self.current_scope_id.read().clone()
+        self.scope_state.read().current()
+    }
+
+    fn enter_scope_id(&self, scope_id: String) {
+        self.scope_state.write().enter(scope_id);
+    }
+
+    fn leave_scope_id(&self, scope_id: &str) {
+        self.scope_state.write().leave(scope_id);
     }
 
     fn emit_llm_token(&self, content: &str) {
@@ -977,6 +984,23 @@ mod tests {
             "trace-rtg11",
         );
         (adapter, capture)
+    }
+
+    #[test]
+    fn out_of_order_scope_exit_preserves_the_newer_flow_scope() {
+        let (adapter, capture) = adapter_with_capture();
+        adapter.set_current_scope_id(Some("root".to_string()));
+        adapter.enter_scope_id("turn-1".to_string());
+        adapter.enter_scope_id("turn-2".to_string());
+
+        adapter.leave_scope_id("turn-1");
+        adapter.emit_llm_token("turn two");
+        adapter.leave_scope_id("turn-2");
+        adapter.emit_llm_token("root");
+
+        let events = capture.events.lock();
+        assert_eq!(events[0].meta.scope_id.as_deref(), Some("turn-2"));
+        assert_eq!(events[1].meta.scope_id.as_deref(), Some("root"));
     }
 
     /// a model-routing decision becomes a `model_route_decision`
