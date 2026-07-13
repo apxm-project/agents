@@ -530,9 +530,9 @@ impl ExecutionContext {
         };
         ledger
             .charge_turn()
-            .map_err(|message| apxm_core::error::RuntimeError::Capability {
+            .map_err(|error| apxm_core::error::RuntimeError::Capability {
                 capability: "session_turn".to_string(),
-                message,
+                message: error.to_string(),
             })
     }
 
@@ -545,12 +545,12 @@ impl ExecutionContext {
     /// per-execution counters are skipped.
     fn charge_tool_call(&self, name: &str) -> Result<(), apxm_core::error::RuntimeError> {
         if let Some(ledger) = &self.session_ledger {
-            if !ledger.charge_tool(name) {
-                return Err(apxm_core::error::RuntimeError::Capability {
+            ledger.charge_tool(name).map_err(|error| {
+                apxm_core::error::RuntimeError::Capability {
                     capability: name.to_string(),
-                    message: format!("session tool budget exhausted for '{name}'"),
-                });
-            }
+                    message: error.to_string(),
+                }
+            })?;
             return Ok(());
         }
         let Some(budgets) = &self.tool_call_budgets else {

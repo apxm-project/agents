@@ -488,7 +488,11 @@ impl SchedulerState {
         self.llm_concurrency.cancel();
         self.blocking_concurrency.cancel();
         self.cancellation_token.cancel();
-        crate::scheduler::park_registry::remove_for_state(self);
+        if let Err(error) = crate::scheduler::park_registry::remove_for_state(self) {
+            self.set_first_error(RuntimeError::Scheduler {
+                message: error.to_string(),
+            });
+        }
         self.clear_parked();
         self.notify_done.notify_waiters();
         self.work_notify.notify_waiters();
@@ -524,7 +528,11 @@ impl SchedulerState {
             "finish_one called"
         );
         if prev == 1 {
-            crate::scheduler::park_registry::remove_for_state(self);
+            if let Err(error) = crate::scheduler::park_registry::remove_for_state(self) {
+                self.set_first_error(RuntimeError::Scheduler {
+                    message: error.to_string(),
+                });
+            }
             self.clear_parked();
             tracing::info!("Remaining hit 0, notifying done");
             self.notify_done.notify_waiters();
@@ -1412,9 +1420,13 @@ mod tests {
         park_registry::register(
             key.to_string(),
             ParkWaker::for_node(Arc::clone(&state), 1, vec![10], 1),
-        );
+        )
+        .unwrap();
 
-        assert_eq!(park_registry::wake(key, Value::String("done".into())), 1);
+        assert_eq!(
+            park_registry::wake(key, Value::String("done".into())),
+            Ok(1)
+        );
         assert_eq!(state.remaining.load(Ordering::SeqCst), 0);
         assert_eq!(state.executed.load(Ordering::Relaxed), 1);
         assert_eq!(state.parked_count(), 0);
@@ -1432,7 +1444,7 @@ mod tests {
 
         assert_eq!(
             park_registry::wake(key, Value::String("late".into())),
-            0,
+            Ok(0),
             "a terminal wait key stays closed"
         );
         assert_eq!(state.executed.load(Ordering::Relaxed), 1);
@@ -1449,7 +1461,8 @@ mod tests {
         park_registry::register(
             key.to_string(),
             ParkWaker::for_node(Arc::clone(&replacement), 1, vec![10], 1),
-        );
+        )
+        .unwrap();
         assert!(
             !replacement.tokens.get(&10).unwrap().ready,
             "the late wake must not become a resolved value for a future waiter"
@@ -1476,35 +1489,38 @@ mod tests {
         park_registry::register(
             keys[0].clone(),
             ParkWaker::for_node(Arc::clone(&state), 1, vec![10], 1),
-        );
+        )
+        .unwrap();
         park_registry::register(
             keys[1].clone(),
             ParkWaker::for_node(Arc::clone(&state), 2, vec![20], 1),
-        );
-        let pending = park_registry::pending_wait_keys();
+        )
+        .unwrap();
+        let pending = park_registry::pending_wait_keys().unwrap();
         assert!(pending.contains(&keys[0]));
         assert!(pending.contains(&keys[1]));
 
         state.mark_done();
 
         assert_eq!(state.parked_count(), 0);
-        let pending = park_registry::pending_wait_keys();
+        let pending = park_registry::pending_wait_keys().unwrap();
         assert!(!pending.contains(&keys[0]));
         assert!(!pending.contains(&keys[1]));
         for key in &keys {
-            assert_eq!(park_registry::wake(key, Value::Null), 0);
+            assert_eq!(park_registry::wake(key, Value::Null), Ok(0));
         }
 
         park_registry::durable::close_for_test();
         park_registry::durable::init(&db_path)
             .expect("reopen durable park journal after cancellation");
-        park_registry::rebuild_from_durable(&keys);
+        park_registry::rebuild_from_durable(&keys).unwrap();
         let replacement = Arc::new(new_state(two_node_dag()));
         replacement.enter_parked();
         park_registry::register(
             keys[0].clone(),
             ParkWaker::for_node(Arc::clone(&replacement), 1, vec![10], 1),
-        );
+        )
+        .unwrap();
         assert!(
             !replacement.tokens.get(&10).unwrap().ready,
             "no pending or resolved registration survives cancellation durably"
@@ -1520,36 +1536,43 @@ mod tests {
         park_registry::register(
             race_key.to_string(),
             ParkWaker::for_node(Arc::clone(&raced), 1, vec![10], 1),
+        )
+        .unwrap();
+        assert_eq!(park_registry::wake(race_key, Value::Null), Ok(0));
+        assert!(
+            !park_registry::pending_wait_keys()
+                .unwrap()
+                .contains(&race_key.to_string())
         );
-        assert_eq!(park_registry::wake(race_key, Value::Null), 0);
-        assert!(!park_registry::pending_wait_keys().contains(&race_key.to_string()));
 
         let resolved_key = "cancelled-pre-resolved-cleanup".to_string();
-        park_registry::wake(&resolved_key, Value::String("stale-1".into()));
-        park_registry::wake(&resolved_key, Value::String("stale-2".into()));
+        park_registry::wake(&resolved_key, Value::String("stale-1".into())).unwrap();
+        park_registry::wake(&resolved_key, Value::String("stale-2".into())).unwrap();
         let cancelled = Arc::new(new_state(two_node_dag()));
         cancelled.enter_parked();
         cancelled.mark_done();
         park_registry::register(
             resolved_key.clone(),
             ParkWaker::for_node(Arc::clone(&cancelled), 1, vec![10], 1),
-        );
+        )
+        .unwrap();
         assert_eq!(
             park_registry::wake(&resolved_key, Value::Null),
-            0,
+            Ok(0),
             "a cancelled registration must close and clear any queued resolved values"
         );
 
         park_registry::durable::close_for_test();
         park_registry::durable::init(&db_path)
             .expect("reopen durable park journal after resolved cleanup");
-        park_registry::rebuild_from_durable(std::slice::from_ref(&resolved_key));
+        park_registry::rebuild_from_durable(std::slice::from_ref(&resolved_key)).unwrap();
         let replacement_resolved = Arc::new(new_state(two_node_dag()));
         replacement_resolved.enter_parked();
         park_registry::register(
             resolved_key.clone(),
             ParkWaker::for_node(Arc::clone(&replacement_resolved), 1, vec![10], 1),
-        );
+        )
+        .unwrap();
         assert!(
             !replacement_resolved.tokens.get(&10).unwrap().ready,
             "queued resolved values must not survive cancellation durably"
@@ -1740,11 +1763,12 @@ mod tests {
         park_registry::register(
             key.to_string(),
             ParkWaker::new_rearming(Arc::clone(&state), vec![10], spec),
-        );
+        )
+        .unwrap();
 
         // Wake with the user message (the turn-input endpoint's action).
         let woken = park_registry::wake(key, Value::String("hello turn".into()));
-        assert_eq!(woken, 1);
+        assert_eq!(woken, Ok(1));
 
         // Message delivered to the recv output token.
         assert_eq!(
@@ -1820,9 +1844,10 @@ mod tests {
         park_registry::register(
             key.to_string(),
             ParkWaker::new_rearming(Arc::clone(&state), vec![10], spec),
-        );
+        )
+        .unwrap();
 
-        park_registry::wake(key, Value::String("hi".into()));
+        park_registry::wake(key, Value::String("hi".into())).unwrap();
 
         // Splice-then-wake never reaches remaining == 0, so notify_done is NOT
         // fired (this assertion fails under wake-then-splice), and the loop lives.
@@ -1846,9 +1871,10 @@ mod tests {
         park_registry::register(
             key.to_string(),
             park_registry::ParkWaker::new(Arc::clone(&state), vec![10]),
-        );
+        )
+        .unwrap();
         let woken = park_registry::wake(key, Value::String("hi".into()));
-        assert_eq!(woken, 1, "one parked node woken");
+        assert_eq!(woken, Ok(1), "one parked node woken");
         assert_eq!(state.remaining.load(Ordering::SeqCst), 1);
         assert!(state.tokens.get(&10).unwrap().ready);
     }
@@ -1858,14 +1884,15 @@ mod tests {
         use crate::scheduler::park_registry;
         let key = "cp-pre-resolved-unique-2";
         // Wake arrives BEFORE any waiter registers (the race).
-        park_registry::wake(key, Value::String("early".into()));
+        park_registry::wake(key, Value::String("early".into())).unwrap();
         let state = Arc::new(new_state(two_node_dag()));
         state.parked.fetch_add(1, Ordering::SeqCst);
         // Registering now must fire immediately from the stored Resolved value.
         park_registry::register(
             key.to_string(),
             park_registry::ParkWaker::new(Arc::clone(&state), vec![10]),
-        );
+        )
+        .unwrap();
         assert!(
             state.tokens.get(&10).unwrap().ready,
             "pre-resolved wake delivered on register (no lost wakeup)"
@@ -1881,7 +1908,7 @@ mod tests {
         for expected in ["first", "second", "third"] {
             assert_eq!(
                 park_registry::wake(key, Value::String(expected.into())),
-                0,
+                Ok(0),
                 "wake-before-register should queue without an active waiter"
             );
         }
@@ -1892,7 +1919,8 @@ mod tests {
             park_registry::register(
                 key.to_string(),
                 park_registry::ParkWaker::new(Arc::clone(&state), vec![10]),
-            );
+            )
+            .unwrap();
             assert_eq!(
                 state.tokens.get(&10).unwrap().value.clone(),
                 Some(Value::String(expected.into())),
@@ -1907,14 +1935,18 @@ mod tests {
         use crate::scheduler::park_registry;
 
         let key = "cp-pre-resolved-fifo-unique-4";
-        assert_eq!(park_registry::wake(key, Value::String("first".into())), 0);
+        assert_eq!(
+            park_registry::wake(key, Value::String("first".into())),
+            Ok(0)
+        );
 
         let state1 = Arc::new(new_state(two_node_dag()));
         state1.parked.fetch_add(1, Ordering::SeqCst);
         park_registry::register(
             key.to_string(),
             park_registry::ParkWaker::new(Arc::clone(&state1), vec![10]),
-        );
+        )
+        .unwrap();
         assert_eq!(
             state1.tokens.get(&10).unwrap().value.clone(),
             Some(Value::String("first".into()))
@@ -1925,7 +1957,8 @@ mod tests {
         park_registry::register(
             key.to_string(),
             park_registry::ParkWaker::new(Arc::clone(&state2), vec![10]),
-        );
+        )
+        .unwrap();
         assert!(
             !state2.tokens.get(&10).unwrap().ready,
             "once the queued value is consumed, the next register must wait live"
@@ -1933,7 +1966,7 @@ mod tests {
 
         assert_eq!(
             park_registry::wake(key, Value::String("second".into())),
-            1,
+            Ok(1),
             "a live waiter still receives the next wake immediately"
         );
         assert_eq!(
@@ -1941,13 +1974,17 @@ mod tests {
             Some(Value::String("second".into()))
         );
 
-        assert_eq!(park_registry::wake(key, Value::String("third".into())), 0);
+        assert_eq!(
+            park_registry::wake(key, Value::String("third".into())),
+            Ok(0)
+        );
         let state3 = Arc::new(new_state(two_node_dag()));
         state3.parked.fetch_add(1, Ordering::SeqCst);
         park_registry::register(
             key.to_string(),
             park_registry::ParkWaker::new(Arc::clone(&state3), vec![10]),
-        );
+        )
+        .unwrap();
         assert_eq!(
             state3.tokens.get(&10).unwrap().value.clone(),
             Some(Value::String("third".into())),
@@ -1987,9 +2024,10 @@ mod tests {
         park_registry::register(
             key_a.clone(),
             park_registry::ParkWaker::new(Arc::clone(&state1), vec![10]),
-        );
+        )
+        .unwrap();
         assert!(
-            park_registry::pending_wait_keys().contains(&key_a),
+            park_registry::pending_wait_keys().unwrap().contains(&key_a),
             "the open park is durably recorded before any restart"
         );
 
@@ -1998,9 +2036,9 @@ mod tests {
         // (a real restart's fresh registry never had it).
         park_registry::durable::close_for_test();
         park_registry::durable::init(&db_path).expect("reopen durable park journal after restart");
-        park_registry::rebuild_from_durable(std::slice::from_ref(&key_a));
+        park_registry::rebuild_from_durable(std::slice::from_ref(&key_a)).unwrap();
         assert!(
-            park_registry::pending_wait_keys().contains(&key_a),
+            park_registry::pending_wait_keys().unwrap().contains(&key_a),
             "the pending park survives the restart in the durable journal"
         );
 
@@ -2011,9 +2049,10 @@ mod tests {
         park_registry::register(
             key_a.clone(),
             park_registry::ParkWaker::new(Arc::clone(&state2), vec![10]),
-        );
+        )
+        .unwrap();
         let woken = park_registry::wake(&key_a, Value::String("post-restart".into()));
-        assert_eq!(woken, 1, "the re-registered waker resolves the wake");
+        assert_eq!(woken, Ok(1), "the re-registered waker resolves the wake");
         assert!(state2.tokens.get(&10).unwrap().ready);
         assert_eq!(
             state2.tokens.get(&10).unwrap().value.clone(),
@@ -2029,20 +2068,21 @@ mod tests {
         // FIFO order — the actual gap this journal closes (an in-memory-only
         // stash does not survive a real process restart).
         let key_b = "restart-repark-b".to_string();
-        park_registry::wake(&key_b, Value::String("arrived-before-restart-1".into()));
-        park_registry::wake(&key_b, Value::String("arrived-before-restart-2".into()));
+        park_registry::wake(&key_b, Value::String("arrived-before-restart-1".into())).unwrap();
+        park_registry::wake(&key_b, Value::String("arrived-before-restart-2".into())).unwrap();
 
         park_registry::durable::close_for_test();
         park_registry::durable::init(&db_path)
             .expect("reopen durable park journal after second restart");
-        park_registry::rebuild_from_durable(std::slice::from_ref(&key_b));
+        park_registry::rebuild_from_durable(std::slice::from_ref(&key_b)).unwrap();
 
         let state3 = Arc::new(new_state(two_node_dag()));
         state3.parked.fetch_add(1, Ordering::SeqCst);
         park_registry::register(
             key_b.clone(),
             park_registry::ParkWaker::new(Arc::clone(&state3), vec![10]),
-        );
+        )
+        .unwrap();
         assert!(
             state3.tokens.get(&10).unwrap().ready,
             "a wake durably stashed before restart is delivered on the first post-restart register"
@@ -2057,7 +2097,8 @@ mod tests {
         park_registry::register(
             key_b.clone(),
             park_registry::ParkWaker::new(Arc::clone(&state4), vec![10]),
-        );
+        )
+        .unwrap();
         assert!(
             state4.tokens.get(&10).unwrap().ready,
             "remaining queued values survive the restart and deliver on later registers"
@@ -2068,6 +2109,103 @@ mod tests {
         );
 
         park_registry::durable::close_for_test();
+    }
+
+    #[test]
+    fn park_durable_failures_and_concurrent_fifo_restart_are_failure_atomic() {
+        use crate::scheduler::park_registry;
+
+        let _durable_guard = PARK_DURABLE_TEST_LOCK.lock();
+        let tmp = tempfile::tempdir().unwrap();
+        let db_path = tmp.path().join("park_failure_atomic.sqlite");
+        park_registry::durable::init(&db_path).unwrap();
+
+        let write_key = "park-write-failure-atomic";
+        park_registry::durable::fail_next_for_test(
+            park_registry::durable::FaultOperation::Write,
+            write_key,
+        );
+        assert!(matches!(
+            park_registry::wake(write_key, Value::String("rejected".into())),
+            Err(park_registry::ParkRegistryError::DurableWrite { .. })
+        ));
+        assert!(!park_registry::contains_in_memory_for_test(write_key));
+
+        park_registry::wake(write_key, Value::String("accepted".into())).unwrap();
+        let accepted = Arc::new(new_state(two_node_dag()));
+        accepted.parked.fetch_add(1, Ordering::SeqCst);
+        park_registry::register(
+            write_key.to_string(),
+            park_registry::ParkWaker::new(Arc::clone(&accepted), vec![10]),
+        )
+        .unwrap();
+        assert_eq!(
+            accepted.tokens.get(&10).unwrap().value.clone(),
+            Some(Value::String("accepted".into()))
+        );
+
+        let read_key = "park-read-failure-atomic".to_string();
+        park_registry::wake(&read_key, Value::String("survives".into())).unwrap();
+        park_registry::clear_in_memory_for_test(&read_key);
+        park_registry::durable::close_for_test();
+        park_registry::durable::init(&db_path).unwrap();
+        park_registry::durable::fail_next_for_test(
+            park_registry::durable::FaultOperation::Read,
+            &read_key,
+        );
+        assert!(matches!(
+            park_registry::rebuild_from_durable(std::slice::from_ref(&read_key)),
+            Err(park_registry::ParkRegistryError::DurableRead { .. })
+        ));
+        assert!(!park_registry::contains_in_memory_for_test(&read_key));
+        park_registry::rebuild_from_durable(std::slice::from_ref(&read_key)).unwrap();
+        assert!(park_registry::contains_in_memory_for_test(&read_key));
+
+        let fifo_key = "park-concurrent-fifo-restart".to_string();
+        let turn = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let barrier = Arc::new(std::sync::Barrier::new(6));
+        let workers: Vec<_> = (0..6)
+            .map(|index| {
+                let wait_key = fifo_key.clone();
+                let turn = Arc::clone(&turn);
+                let barrier = Arc::clone(&barrier);
+                std::thread::spawn(move || {
+                    barrier.wait();
+                    while turn.load(Ordering::Acquire) != index {
+                        std::thread::yield_now();
+                    }
+                    park_registry::wake(&wait_key, Value::String(format!("value-{index}")))
+                        .unwrap();
+                    turn.fetch_add(1, Ordering::Release);
+                })
+            })
+            .collect();
+        for worker in workers {
+            worker.join().unwrap();
+        }
+
+        park_registry::clear_in_memory_for_test(&fifo_key);
+        park_registry::durable::close_for_test();
+        park_registry::durable::init(&db_path).unwrap();
+        park_registry::rebuild_from_durable(std::slice::from_ref(&fifo_key)).unwrap();
+        for index in 0..6 {
+            let state = Arc::new(new_state(two_node_dag()));
+            state.parked.fetch_add(1, Ordering::SeqCst);
+            park_registry::register(
+                fifo_key.clone(),
+                park_registry::ParkWaker::new(Arc::clone(&state), vec![10]),
+            )
+            .unwrap();
+            assert_eq!(
+                state.tokens.get(&10).unwrap().value.clone(),
+                Some(Value::String(format!("value-{index}")))
+            );
+        }
+
+        park_registry::durable::close_for_test();
+        park_registry::clear_in_memory_for_test(write_key);
+        park_registry::clear_in_memory_for_test(&read_key);
+        park_registry::clear_in_memory_for_test(&fifo_key);
     }
 
     // ── loop/park/wake/splice invariants ─────────────────────────────────────
@@ -2085,7 +2223,7 @@ mod tests {
         let key = "wake-before-register-unique";
         // wake() arrives before any register() — the lost-wakeup race.
         let woken = park_registry::wake(key, Value::String("early".into()));
-        assert_eq!(woken, 0, "no waiter is registered yet");
+        assert_eq!(woken, Ok(0), "no waiter is registered yet");
 
         let state = Arc::new(new_state(two_node_dag()));
         state.parked.fetch_add(1, Ordering::SeqCst);
@@ -2095,7 +2233,8 @@ mod tests {
         park_registry::register(
             key.to_string(),
             park_registry::ParkWaker::new(Arc::clone(&state), vec![10]),
-        );
+        )
+        .unwrap();
         assert!(
             state.tokens.get(&10).unwrap().ready,
             "the pre-resolved wake must deliver on register, not be lost"
@@ -2195,8 +2334,9 @@ mod tests {
         park_registry::register(
             key.to_string(),
             ParkWaker::new_rearming(Arc::clone(&state), vec![10], spec(session_id)),
-        );
-        park_registry::wake(key, Value::String("turn one".into()));
+        )
+        .unwrap();
+        park_registry::wake(key, Value::String("turn one".into())).unwrap();
 
         let turn1_flow_calls: Vec<NodeId> = state
             .nodes
@@ -2231,8 +2371,9 @@ mod tests {
                 vec![fresh_recv_output],
                 spec(session_id),
             ),
-        );
-        park_registry::wake(key, Value::String("turn two".into()));
+        )
+        .unwrap();
+        park_registry::wake(key, Value::String("turn two".into())).unwrap();
 
         let all_flow_calls: std::collections::HashSet<NodeId> = state
             .nodes
@@ -2301,8 +2442,9 @@ mod tests {
         park_registry::register(
             key.to_string(),
             ParkWaker::new_rearming(Arc::clone(&state), vec![10], spec()),
-        );
-        park_registry::wake(key, Value::String("turn one".into()));
+        )
+        .unwrap();
+        park_registry::wake(key, Value::String("turn one".into())).unwrap();
         assert_eq!(flow_call_count(&state), 1, "turn 1 re-arms (under the cap)");
 
         // The fresh recv from turn 1 now parks itself, exactly as a real
@@ -2322,9 +2464,14 @@ mod tests {
         park_registry::register(
             key.to_string(),
             ParkWaker::new_rearming(Arc::clone(&state), vec![fresh_recv_output], spec()),
-        );
+        )
+        .unwrap();
         let woken2 = park_registry::wake(key, Value::String("turn two".into()));
-        assert_eq!(woken2, 1, "the recv still completes/delivers at the cap");
+        assert_eq!(
+            woken2,
+            Ok(1),
+            "the recv still completes/delivers at the cap"
+        );
         assert_eq!(
             flow_call_count(&state),
             1,
@@ -2386,8 +2533,9 @@ mod tests {
                         max_turns: MAX_TURNS,
                     },
                 ),
-            );
-            park_registry::wake(key, Value::String("keeps coming".into()));
+            )
+            .unwrap();
+            park_registry::wake(key, Value::String("keeps coming".into())).unwrap();
 
             if let Some(fresh) = state
                 .nodes
@@ -2500,17 +2648,11 @@ mod tests {
         );
     }
 
-    /// Regression pin for the restart/recovery gap this package does NOT
-    /// close: `park_registry`'s backing store is a single process-global
-    /// `OnceLock` with no persistence (`park_registry.rs`'s own docs). There
-    /// is no cross-process store to actually kill/restart against, so this
-    /// constructs the closest in-process analogue — a fresh `SchedulerState`
-    /// (simulating a post-restart process) and a `wait_key` with no live
-    /// registration against it (a real restart wipes the whole in-memory
-    /// map). `wake()` must return 0 resumed wakers and neither panic nor
-    /// silently double-complete a node.
+    /// An unknown wait key must not affect unrelated scheduler state. In
+    /// volatile mode the wake is queued for a future matching registration,
+    /// while the current scheduler remains untouched.
     #[test]
-    fn park_registry_state_lost_on_process_restart_fails_closed_not_silently() {
+    fn park_registry_unknown_wake_does_not_touch_unrelated_state() {
         use crate::scheduler::park_registry;
 
         let state = Arc::new(new_state(two_node_dag()));
@@ -2521,7 +2663,8 @@ mod tests {
         let woken = park_registry::wake(wait_key, Value::String("late arrival".into()));
 
         assert_eq!(
-            woken, 0,
+            woken,
+            Ok(0),
             "a wake for a wait_key with no live registration (the restart \
              gap) must resume zero wakers, not panic or guess"
         );
@@ -2548,7 +2691,7 @@ mod tests {
             "session_recv:post-restart-lost-registration-different-unique",
             Value::String("unrelated".into()),
         );
-        assert_eq!(unrelated_woken, 0);
+        assert_eq!(unrelated_woken, Ok(0));
     }
 
     #[test]
