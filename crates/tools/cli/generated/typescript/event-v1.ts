@@ -409,8 +409,10 @@ export interface CapabilityEffectReceiptEventPayload {
   kind: "capability_effect_receipt";
   receipt_id: string;
   execution_id: string;
+  graph_id?: string;
   node_id: number;
   invocation_id: string;
+  call_id?: string;
   capability_binding: string;
   dispatch_path: "inv_cap" | "ask_tool";
   implementation_kind: "native" | "python" | "typescript" | "host";
@@ -423,6 +425,11 @@ export interface CapabilityEffectReceiptEventPayload {
   idempotency_proof: "remote_deduplicated" | "transaction_verified";
   idempotency_key_digest: string;
   effect_ref: string;
+  effect_digest?: string;
+  effect_outcome?: "committed" | "deduplicated";
+  verified_host_key_id?: string;
+  prepare_digest?: string;
+  commit_digest?: string;
   status: "committed";
 }
 
