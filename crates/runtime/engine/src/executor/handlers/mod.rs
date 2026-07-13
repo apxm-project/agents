@@ -46,10 +46,10 @@ use crate::model_router::{ProfileRouter, RoutingDecision};
 use anyhow::Error as AnyhowError;
 use apxm_backends::llm::wire::response_metadata;
 use apxm_backends::{LLMRequest, LLMResponse, StreamingBackendError};
+use apxm_capability_iface::events::{ModelContextCallKind, ModelContextMetrics};
 use apxm_core::{
     constants::graph::attrs as graph_attrs,
     error::RuntimeError,
-    events::payload::GenerationIdentity,
     types::{execution::Node, values::Value},
 };
 
@@ -298,15 +298,23 @@ pub async fn execute_llm_request_for_node(
     phase: &str,
     request: &LLMRequest,
 ) -> Result<LLMResponse> {
-    execute_llm_request_for_node_with_generation(ctx, node, phase, request, None).await
+    execute_llm_request_for_node_with_context(
+        ctx,
+        node,
+        phase,
+        request,
+        &ModelContextMetrics::unplanned(Some(node.id), ModelContextCallKind::Node),
+    )
+    .await
 }
 
-pub async fn execute_llm_request_for_node_with_generation(
+/// Dispatch a model request with aggregate-only context-plan evidence.
+pub async fn execute_llm_request_for_node_with_context(
     ctx: &ExecutionContext,
     node: &Node,
     phase: &str,
     request: &LLMRequest,
-    generation: Option<&GenerationIdentity>,
+    context_metrics: &ModelContextMetrics,
 ) -> Result<LLMResponse> {
     execute_llm_request_with_node_name(
         ctx,
@@ -314,7 +322,7 @@ pub async fn execute_llm_request_for_node_with_generation(
         node.metadata.name.as_deref(),
         phase,
         request,
-        generation,
+        context_metrics,
     )
     .await
 }
@@ -325,7 +333,7 @@ async fn execute_llm_request_with_node_name(
     node_name: Option<&str>,
     phase: &str,
     request: &LLMRequest,
-    generation: Option<&GenerationIdentity>,
+    context_metrics: &ModelContextMetrics,
 ) -> Result<LLMResponse> {
     if ctx.cancellation_token.is_cancelled() {
         return Err(RuntimeError::SchedulerCancelled);
@@ -336,37 +344,27 @@ async fn execute_llm_request_with_node_name(
     // an explicit backend/model or declares no profile.
     let resolved = resolve_model_profile(ctx, request.clone());
     let request = &resolved;
+    let reservation = llm::reserve_model_call(ctx, request)?;
 
-    let active_agent = ctx
-        .agent_scope_stack
-        .peek()
-        .map(|scope| scope.agent_code.clone())
-        .or_else(|| ctx.current_agent.as_ref().map(|agent| agent.name.clone()));
-
-    if let (Some(emitter), Some(agent_code)) = (&ctx.event_emitter, active_agent.as_deref()) {
-        emitter.emit_subagent_llm_call_begin_with_generation(
-            agent_code,
-            request.model.as_deref().unwrap_or("auto"),
-            request.backend.as_deref().unwrap_or("auto"),
-            request.tools.as_ref().map_or(0, Vec::len),
-            generation,
-        );
+    if let Some(emitter) = &ctx.event_emitter {
+        emitter.emit_model_context_metrics(context_metrics);
     }
 
     // Use streaming path when an event emitter is available so we can
     // emit token-by-token events. The default generate_stream() impl
     // wraps generate() into a single Done chunk for non-streaming backends.
     if let Some(emitter) = &ctx.event_emitter {
-        emitter.emit_llm_prompt_with_generation(node_id, node_name, &request.prompt, generation);
+        emitter.emit_llm_prompt_with_name(node_id, node_name, &request.prompt);
+        let response = execute_llm_request_streaming(ctx, node_id, phase, request).await?;
+        reservation.reconcile(response.usage.total_tokens)?;
+        return Ok(response);
     }
 
     #[cfg(feature = "metrics")]
     let start = std::time::Instant::now();
 
     // Route through ModelRouter when available (circuit breakers + policy routing).
-    let response = if ctx.event_emitter.is_some() {
-        execute_llm_request_streaming(ctx, node_id, phase, request, generation).await?
-    } else if let Some(router) = &ctx.model_router {
+    let response = if let Some(router) = &ctx.model_router {
         tokio::select! {
             result = router.generate(request.clone()) => {
                 result.map_err(|e| llm_error(ctx, phase, request, e))?
@@ -386,23 +384,13 @@ async fn execute_llm_request_with_node_name(
         }
     };
 
-    if let (Some(emitter), Some(agent_code)) = (&ctx.event_emitter, active_agent.as_deref()) {
-        emitter.emit_subagent_llm_call_end_with_generation(
-            agent_code,
-            &response.finish_reason.to_string(),
-            response.usage.input_tokens,
-            response.usage.output_tokens,
-            response.content.chars().count(),
-            generation,
-        );
-    }
-
     #[cfg(feature = "metrics")]
     {
         let latency = start.elapsed();
         record_llm_event(ctx, phase, request, &response, latency).await;
     }
 
+    reservation.reconcile(response.usage.total_tokens)?;
     Ok(response)
 }
 
@@ -452,7 +440,6 @@ async fn execute_llm_request_streaming(
     node_id: u64,
     phase: &str,
     request: &LLMRequest,
-    generation: Option<&GenerationIdentity>,
 ) -> Result<LLMResponse> {
     use apxm_backends::StreamChunk;
     use tokio_stream::StreamExt;
@@ -525,7 +512,7 @@ async fn execute_llm_request_streaming(
                     streamed_tool_calls.push(finalize_pending_tool_call(tc));
                 }
                 if let Some(emitter) = &ctx.event_emitter {
-                    emitter.emit_llm_token_for_generation(node_id, &token, generation);
+                    emitter.emit_llm_token_for_node(node_id, &token);
                     emitted_text = true;
                 }
             }
@@ -562,7 +549,7 @@ async fn execute_llm_request_streaming(
                 // answer text (`emitted_text`): the answer comes from `token`
                 // chunks and the final response content.
                 if let Some(emitter) = &ctx.event_emitter {
-                    emitter.emit_llm_thought_for_generation(node_id, &thought, generation);
+                    emitter.emit_llm_thought_for_node(node_id, &thought);
                 }
             }
             StreamChunk::Usage(_usage) => {
@@ -610,7 +597,7 @@ async fn execute_llm_request_streaming(
 
     if !emitted_text && !response.content.is_empty() {
         if let Some(emitter) = &ctx.event_emitter {
-            emitter.emit_llm_token_for_generation(node_id, &response.content, generation);
+            emitter.emit_llm_token_for_node(node_id, &response.content);
         }
     }
 
@@ -729,6 +716,9 @@ mod model_profile_routing_tests {
     use super::*;
     use crate::aam::Aam;
     use crate::capability::CapabilitySystem;
+    use crate::executor::events::{
+        ExecutionEventEmitter, ModelContextCallKind, ModelContextMetrics, ModelContextPlanStatus,
+    };
     use crate::memory::{MemoryConfig, MemorySystem};
     use crate::model_router::registry::{ModelEntry, ModelRegistry};
     use crate::model_router::{ModelRouter, ModelRouterConfig, ProfileRegistry, RoutingTarget};
@@ -736,7 +726,26 @@ mod model_profile_routing_tests {
     use apxm_backends::llm::backends::MockLLMBackend;
     use apxm_core::model_profiles::{ModelProfile, ProfileCandidate};
     use apxm_core::types::AISOperationType;
+    use apxm_core::types::execution::Node;
+    use parking_lot::Mutex;
     use std::sync::Arc;
+
+    #[derive(Default)]
+    struct ContextMetricsEmitter {
+        metrics: Mutex<Vec<ModelContextMetrics>>,
+    }
+
+    impl ExecutionEventEmitter for ContextMetricsEmitter {
+        fn emit_llm_token(&self, _content: &str) {}
+
+        fn emit_tool_start(&self, _name: &str, _args: &std::collections::HashMap<String, Value>) {}
+
+        fn emit_tool_end(&self, _name: &str, _result: &Value) {}
+
+        fn emit_model_context_metrics(&self, metrics: &ModelContextMetrics) {
+            self.metrics.lock().push(metrics.clone());
+        }
+    }
 
     /// Two backends ("cheap", "expensive") with sharply different costs, so a
     /// `Cost`-targeted `select` would normally prefer "cheap" — proving that
@@ -804,6 +813,43 @@ mod model_profile_routing_tests {
 
     fn ask_request() -> LLMRequest {
         LLMRequest::new("hello").with_operation_type(AISOperationType::Ask)
+    }
+
+    #[tokio::test]
+    async fn node_dispatch_emits_context_metrics_through_the_dispatch_boundary() {
+        let mut ctx = test_context().await;
+        ctx.llm_registry
+            .register("mock", MockLLMBackend::static_response("ok"))
+            .expect("register backend");
+        let emitter = Arc::new(ContextMetricsEmitter::default());
+        ctx.event_emitter = Some(emitter.clone());
+
+        let node = Node::new(7, AISOperationType::Ask);
+        let metrics = ModelContextMetrics {
+            node_id: Some(node.id),
+            call_kind: ModelContextCallKind::Node,
+            plan_status: ModelContextPlanStatus::Assembled,
+            token_budget: Some(1024),
+            original_tokens: Some(1200),
+            admitted_tokens: Some(960),
+            kept_segments: Some(3),
+            truncated_segments: Some(1),
+            omitted_token_budget_segments: Some(2),
+            omitted_empty_segments: Some(1),
+        };
+
+        let response = execute_llm_request_for_node_with_context(
+            &ctx,
+            &node,
+            "test",
+            &ask_request(),
+            &metrics,
+        )
+        .await
+        .expect("dispatch succeeds");
+
+        assert_eq!(response.content, "ok");
+        assert_eq!(emitter.metrics.lock().as_slice(), &[metrics]);
     }
 
     #[tokio::test]

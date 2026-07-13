@@ -19,6 +19,12 @@ pub struct WorkflowDef {
     pub parameters: Vec<WorkflowParam>,
     /// Workflow steps to execute
     pub steps: Vec<WorkflowStep>,
+    /// Maximum number of workflow steps that may execute at once.
+    ///
+    /// An omitted value preserves the historic unlimited workflow-level
+    /// parallelism; each child graph still applies its own runtime limits.
+    #[serde(default)]
+    pub max_concurrency: Option<usize>,
     /// Optional output template (e.g., "{{synthesize.output}}")
     #[serde(default)]
     pub output: Option<String>,
@@ -128,6 +134,10 @@ impl WorkflowDef {
             }
         }
 
+        if self.max_concurrency == Some(0) {
+            errors.push("Workflow max_concurrency must be greater than zero".to_string());
+        }
+
         errors
     }
 
@@ -174,5 +184,38 @@ impl WorkflowDef {
 
         rec_stack.remove(step_id);
         Ok(false)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    //! Workflow-definition tests cover scheduler-facing validation rules.
+
+    use super::*;
+
+    /// Build the minimum valid workflow definition for validation tests.
+    fn workflow(max_concurrency: Option<usize>) -> WorkflowDef {
+        WorkflowDef {
+            name: "test".to_string(),
+            description: None,
+            parameters: Vec::new(),
+            steps: Vec::new(),
+            max_concurrency,
+            output: None,
+        }
+    }
+
+    #[test]
+    fn rejects_zero_workflow_concurrency() {
+        assert_eq!(
+            workflow(Some(0)).validate(),
+            vec!["Workflow max_concurrency must be greater than zero"]
+        );
+    }
+
+    #[test]
+    fn accepts_an_omitted_or_positive_workflow_concurrency_limit() {
+        assert!(workflow(None).validate().is_empty());
+        assert!(workflow(Some(1)).validate().is_empty());
     }
 }

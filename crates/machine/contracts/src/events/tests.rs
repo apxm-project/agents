@@ -403,6 +403,37 @@ fn representative_core_payloads() -> Vec<Box<dyn EventPayload>> {
             original_tokens: 100,
             new_tokens: 50,
         }),
+        Box::new(ModelContextMetricsPayload {
+            node_id: Some(1),
+            call_kind: ModelContextCallKind::Node,
+            plan_status: ModelContextPlanStatus::Assembled,
+            token_budget: Some(1024),
+            original_tokens: Some(1240),
+            admitted_tokens: Some(960),
+            kept_segments: Some(3),
+            truncated_segments: Some(1),
+            omitted_token_budget_segments: Some(2),
+            omitted_empty_segments: Some(1),
+        }),
+        Box::new(CapabilityEffectReceiptPayload {
+            receipt_id: "receipt-1".to_string(),
+            execution_id: "execution-1".to_string(),
+            node_id: 7,
+            invocation_id: "invocation-1".to_string(),
+            capability_binding: "calendar.write".to_string(),
+            dispatch_path: CapabilityEffectDispatchPath::InvCap,
+            implementation_kind: CapabilityEffectImplementationKind::Host,
+            implementation_ref: "host/calendar.write@1".to_string(),
+            request_digest: "sha256:request-1".to_string(),
+            admission_kind: CapabilityEffectAdmissionKind::Grant,
+            grant_id: Some("grant-1".to_string()),
+            approval_status: Some(CapabilityEffectApprovalStatus::Approved),
+            approval_id: Some("approval-1".to_string()),
+            idempotency_proof: CapabilityEffectIdempotencyProof::RemoteDeduplicated,
+            idempotency_key_digest: "sha256:idempotency-1".to_string(),
+            effect_ref: "effect-1".to_string(),
+            status: CapabilityEffectReceiptStatus::Committed,
+        }),
         Box::new(ModelReroutedPayload {
             original_model: "gpt-test".to_string(),
             new_model: "llama-70b".to_string(),
@@ -590,6 +621,162 @@ fn all_core_event_kinds_round_trip() {
     assert_eq!(
         covered, expected,
         "representative_core_payloads must cover every CORE_EVENT_KINDS entry, no more, no less"
+    );
+}
+
+#[test]
+fn model_context_metrics_round_trips_unplanned_shape_and_rejects_unknown_call_kind() {
+    let event = ApxmEvent::root(
+        ModelContextMetricsPayload {
+            node_id: None,
+            call_kind: ModelContextCallKind::Compaction,
+            plan_status: ModelContextPlanStatus::Unplanned,
+            token_budget: None,
+            original_tokens: None,
+            admitted_tokens: None,
+            kept_segments: None,
+            truncated_segments: None,
+            omitted_token_budget_segments: None,
+            omitted_empty_segments: None,
+        },
+        EventSource::Runtime,
+        "trace-context-plan",
+    );
+
+    let value = serde_json::to_value(&event).expect("serialize model_context_metrics event");
+    assert_eq!(
+        value["payload"],
+        serde_json::json!({
+            "kind": "model_context_metrics",
+            "call_kind": "compaction",
+            "plan_status": "unplanned",
+        })
+    );
+
+    let round_tripped: ApxmEvent =
+        serde_json::from_value(value.clone()).expect("deserialize model_context_metrics event");
+    let payload = round_tripped
+        .payload
+        .downcast_ref::<ModelContextMetricsPayload>()
+        .expect("model_context_metrics decodes to its typed payload");
+    assert!(matches!(
+        payload.call_kind,
+        ModelContextCallKind::Compaction
+    ));
+    assert!(matches!(
+        payload.plan_status,
+        ModelContextPlanStatus::Unplanned
+    ));
+    assert!(payload.node_id.is_none());
+    assert!(payload.token_budget.is_none());
+    assert!(payload.original_tokens.is_none());
+    assert!(payload.admitted_tokens.is_none());
+    assert!(payload.kept_segments.is_none());
+    assert!(payload.truncated_segments.is_none());
+    assert!(payload.omitted_token_budget_segments.is_none());
+    assert!(payload.omitted_empty_segments.is_none());
+
+    let mut invalid = value;
+    invalid["payload"]["call_kind"] = serde_json::json!("speculation");
+    let error = serde_json::from_value::<ApxmEvent>(invalid)
+        .expect_err("unknown model_context_metrics call_kind must be rejected");
+    assert!(
+        error.to_string().contains("speculation"),
+        "rejection must identify the invalid call_kind: {error}"
+    );
+}
+
+#[test]
+fn capability_effect_receipt_round_trips_without_content_fields() {
+    let event = ApxmEvent::root(
+        CapabilityEffectReceiptPayload {
+            receipt_id: "receipt-1".to_string(),
+            execution_id: "execution-1".to_string(),
+            node_id: 7,
+            invocation_id: "invocation-1".to_string(),
+            capability_binding: "calendar.write".to_string(),
+            dispatch_path: CapabilityEffectDispatchPath::InvCap,
+            implementation_kind: CapabilityEffectImplementationKind::Host,
+            implementation_ref: "host/calendar.write@1".to_string(),
+            request_digest: "sha256:request-1".to_string(),
+            admission_kind: CapabilityEffectAdmissionKind::Grant,
+            grant_id: Some("grant-1".to_string()),
+            approval_status: Some(CapabilityEffectApprovalStatus::Approved),
+            approval_id: Some("approval-1".to_string()),
+            idempotency_proof: CapabilityEffectIdempotencyProof::RemoteDeduplicated,
+            idempotency_key_digest: "sha256:idempotency-1".to_string(),
+            effect_ref: "effect-1".to_string(),
+            status: CapabilityEffectReceiptStatus::Committed,
+        },
+        EventSource::Runtime,
+        "trace-effect-receipt",
+    );
+
+    let value = serde_json::to_value(&event).expect("serialize capability effect receipt");
+    let payload = &value["payload"];
+    assert_eq!(payload["kind"], "capability_effect_receipt");
+    assert_eq!(payload["dispatch_path"], "inv_cap");
+    assert_eq!(payload["implementation_kind"], "host");
+    assert_eq!(payload["status"], "committed");
+    for forbidden in [
+        "args",
+        "arguments",
+        "result",
+        "prompt",
+        "credential",
+        "headers",
+        "path",
+        "url",
+        "scope",
+        "subject",
+        "signature",
+    ] {
+        assert!(
+            payload.get(forbidden).is_none(),
+            "receipt must never serialize a {forbidden} field"
+        );
+    }
+
+    let round_tripped: ApxmEvent =
+        serde_json::from_value(value.clone()).expect("deserialize capability effect receipt");
+    let receipt = round_tripped
+        .payload
+        .downcast_ref::<CapabilityEffectReceiptPayload>()
+        .expect("receipt decodes to its typed payload");
+    assert_eq!(receipt.receipt_id, "receipt-1");
+    assert!(matches!(
+        receipt.idempotency_proof,
+        CapabilityEffectIdempotencyProof::RemoteDeduplicated
+    ));
+
+    let mut invalid = value;
+    invalid["payload"]["arguments"] = serde_json::json!({"secret": "must not persist"});
+    let error = serde_json::from_value::<ApxmEvent>(invalid)
+        .expect_err("unknown content-bearing receipt fields must fail closed");
+    assert!(
+        error.to_string().contains("arguments"),
+        "rejection must identify the unlisted receipt field: {error}"
+    );
+
+    let mut missing_grant = serde_json::to_value(&event).expect("serialize receipt fixture");
+    missing_grant["payload"].as_object_mut().expect("receipt payload").remove("grant_id");
+    let error = serde_json::from_value::<ApxmEvent>(missing_grant)
+        .expect_err("grant admission must require a selected grant id");
+    assert!(
+        error.to_string().contains("grant_id"),
+        "rejection must identify the missing grant_id: {error}"
+    );
+
+    let mut missing_approval = serde_json::to_value(&event).expect("serialize receipt fixture");
+    missing_approval["payload"]
+        .as_object_mut()
+        .expect("receipt payload")
+        .remove("approval_id");
+    let error = serde_json::from_value::<ApxmEvent>(missing_approval)
+        .expect_err("approved authorization must require an approval id");
+    assert!(
+        error.to_string().contains("approval_id"),
+        "rejection must identify the missing approval_id: {error}"
     );
 }
 

@@ -3,6 +3,7 @@
 use super::{ExecutionContext, ExecutionHookContext, Result, dispatcher::OperationDispatcher};
 use crate::graph_lifecycle::{graph_dispatch_ir_from_dag, graph_metadata_from_dispatch_ir};
 use crate::scheduler::DataflowScheduler;
+use apxm_core::error::RuntimeError;
 use apxm_core::types::{
     GraphStatusSnapshot,
     execution::{ExecutionDag, ExecutionStats, Node, NodeStatus, OpStatus},
@@ -202,12 +203,13 @@ impl ExecutorEngine {
 
         let executor = Arc::new(ExecutorEngine::new(self.context.clone()));
 
-        // Partial replay (`rerun-from-node`): honor the same replay-seed metadata
-        // the server path (`Runtime::execute_artifact_inner`) reads, so this
-        // fallback scheduler entry pre-completes upstream nodes from the prior
-        // run and re-executes only `from_node` and its descendants instead of
-        // re-running the whole graph.
-        let replay_seed = crate::scheduler::ReplaySeed::from_metadata(&self.context.metadata, &dag);
+        // Partial replay is permitted only when complete boundary values are
+        // present and no completed authority/effect operation is being skipped.
+        let replay_seed =
+            crate::scheduler::ReplaySeed::from_metadata_checked(&self.context.metadata, &dag)
+                .map_err(|error| RuntimeError::Scheduler {
+                    message: format!("partial replay rejected: {error}"),
+                })?;
 
         let (results, stats, _scheduler_metrics, _, _) = scheduler
             .execute_with_hooks_and_seed(
@@ -614,6 +616,36 @@ mod tests {
             result.results.get(&30),
             Some(&Value::String("seeded-upstream".to_string())),
             "upstream node must NOT be re-executed; its prior output must flow through"
+        );
+    }
+
+    /// A requested partial replay may not skip a completed capability invocation
+    /// until the runtime can load a persisted effect and approval receipt for it.
+    /// Token values alone prove dataflow continuity, not authority parity.
+    #[tokio::test]
+    async fn fallback_path_rejects_replay_that_skips_a_capability_effect() {
+        let mut dag = nop_chain();
+        dag.nodes[0].op_type = AISOperationType::InvCap;
+
+        let mut ctx = test_context().await;
+        ctx.metadata.insert(
+            crate::metadata_keys::REPLAY_FROM_NODE.to_string(),
+            "2".to_string(),
+        );
+        ctx.metadata.insert(
+            crate::metadata_keys::REPLAY_TOKEN_VALUES.to_string(),
+            serde_json::json!({ "10": "prior-capability-output" }).to_string(),
+        );
+
+        let error = ExecutorEngine::new(ctx)
+            .execute_dag(dag)
+            .await
+            .expect_err("partial replay must reject an unverified capability effect");
+        assert!(
+            error
+                .to_string()
+                .contains("partial replay rejected: partial replay cannot skip completed node 1"),
+            "unexpected replay rejection: {error}"
         );
     }
 

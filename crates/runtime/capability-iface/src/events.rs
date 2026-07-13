@@ -7,53 +7,62 @@
 use std::collections::HashMap;
 use std::time::Duration;
 
-use apxm_core::events::payload::{
-    ApprovalRiskLevel, GenerationIdentity, LlmDonePayload, LlmStepCompletedPayload,
-    ToolCallCorrelation, ToolCallPayload, ToolCallStatus, TurnBoundaryPayload,
-};
 use apxm_core::types::NodeMetrics;
 use apxm_core::types::TimingBreakdown;
-use apxm_core::types::consent::ApprovalResolution;
 use apxm_core::types::operations::AISOperationType;
 use apxm_core::types::values::Value;
 
 use crate::token_usage::TokenUsageSummary;
 
-/// Concurrency-safe scope selection state for shared execution emitters.
+pub use apxm_core::events::payload::{
+    CapabilityEffectReceiptPayload, ModelContextCallKind, ModelContextPlanStatus,
+};
+
+/// Content-free context-packing evidence attached to one model request.
 ///
-/// Flow calls may overlap briefly across re-armed conversational turns. Active
-/// scopes therefore leave by identity rather than restoring a previously read
-/// value, which prevents an older flow from clearing a newer flow's scope.
-#[derive(Debug, Clone, Default, PartialEq, Eq)]
-pub struct EventScopeState {
-    base: Option<String>,
-    active: Vec<String>,
+/// The optional aggregate fields are absent when the request has no typed
+/// context plan. This transport type never carries prompt content, frames,
+/// provenance, scopes, permissions, sensitivities, paths, tool results, or
+/// individual segment data.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ModelContextMetrics {
+    /// Graph node associated with the request when one exists.
+    pub node_id: Option<u64>,
+    /// Dispatch path that issued the request.
+    pub call_kind: ModelContextCallKind,
+    /// Whether the request assembled, inherited, or lacks a context plan.
+    pub plan_status: ModelContextPlanStatus,
+    /// Maximum context tokens available to the plan.
+    pub token_budget: Option<usize>,
+    /// Total tokens considered before plan admission.
+    pub original_tokens: Option<usize>,
+    /// Tokens admitted to the rendered context.
+    pub admitted_tokens: Option<usize>,
+    /// Segments retained without truncation.
+    pub kept_segments: Option<usize>,
+    /// Segments retained in truncated form.
+    pub truncated_segments: Option<usize>,
+    /// Segments omitted because the plan budget was exhausted.
+    pub omitted_token_budget_segments: Option<usize>,
+    /// Segments omitted because their source was empty.
+    pub omitted_empty_segments: Option<usize>,
 }
 
-impl EventScopeState {
-    pub fn new(base: Option<String>) -> Self {
+impl ModelContextMetrics {
+    /// Construct an event with no plan aggregates for an unplanned request.
+    pub const fn unplanned(node_id: Option<u64>, call_kind: ModelContextCallKind) -> Self {
         Self {
-            base,
-            active: Vec::new(),
+            node_id,
+            call_kind,
+            plan_status: ModelContextPlanStatus::Unplanned,
+            token_budget: None,
+            original_tokens: None,
+            admitted_tokens: None,
+            kept_segments: None,
+            truncated_segments: None,
+            omitted_token_budget_segments: None,
+            omitted_empty_segments: None,
         }
-    }
-
-    pub fn set_base(&mut self, scope_id: Option<String>) {
-        self.base = scope_id;
-    }
-
-    pub fn enter(&mut self, scope_id: String) {
-        self.active.push(scope_id);
-    }
-
-    pub fn leave(&mut self, scope_id: &str) {
-        if let Some(index) = self.active.iter().rposition(|active| active == scope_id) {
-            self.active.remove(index);
-        }
-    }
-
-    pub fn current(&self) -> Option<String> {
-        self.active.last().cloned().or_else(|| self.base.clone())
     }
 }
 
@@ -81,51 +90,14 @@ pub trait ExecutionEventEmitter: Send + Sync {
         None
     }
 
-    /// Enter an active child scope. Implementors that can be shared by
-    /// concurrent flows should retain all active scopes and leave by identity.
-    fn enter_scope_id(&self, scope_id: String) {
-        self.set_current_scope_id(Some(scope_id));
-    }
-
-    /// Leave one active child scope without disturbing newer overlapping
-    /// scopes. The default preserves compatibility for single-scope emitters.
-    fn leave_scope_id(&self, scope_id: &str) {
-        if self.current_scope_id().as_deref() == Some(scope_id) {
-            self.set_current_scope_id(None);
-        }
-    }
-
     // ── Existing ────────────────────────────────────────────────────
     fn emit_llm_token(&self, content: &str);
     /// Emit an extended-thinking ("reasoning") delta as a distinct `thought`
     /// event, kept separate from answer `token`s so clients can render it apart
     /// (the CLI dims it; the studio shows a collapsible thinking block).
     fn emit_llm_thought(&self, _content: &str) {}
-    /// One model-call step completed. This is non-terminal for the surrounding
-    /// turn because a tool loop may issue another model call.
-    fn emit_llm_step_completed(&self, _payload: LlmStepCompletedPayload) {}
-    /// The final model response for the current turn completed.
-    fn emit_llm_done(&self, _payload: LlmDonePayload) {}
-    /// One model-requested tool call was accepted for dispatch.
-    fn emit_tool_call(&self, _payload: ToolCallPayload) {}
     fn emit_tool_start(&self, name: &str, args: &HashMap<String, Value>);
     fn emit_tool_end(&self, name: &str, result: &Value);
-    fn emit_tool_start_with_correlation(
-        &self,
-        name: &str,
-        args: &HashMap<String, Value>,
-        _correlation: Option<&ToolCallCorrelation>,
-    ) {
-        self.emit_tool_start(name, args);
-    }
-    fn emit_tool_end_with_correlation(
-        &self,
-        name: &str,
-        result: &Value,
-        _correlation: Option<&ToolCallCorrelation>,
-    ) {
-        self.emit_tool_end(name, result);
-    }
 
     // ── Graph lifecycle ─────────────────────────────────────────────
     fn emit_graph_start(&self, _execution_id: &str, _node_count: usize) {}
@@ -201,36 +173,11 @@ pub trait ExecutionEventEmitter: Send + Sync {
     fn emit_llm_prompt_with_name(&self, node_id: u64, _node_name: Option<&str>, prompt: &str) {
         self.emit_llm_prompt(node_id, prompt);
     }
-    fn emit_llm_prompt_with_generation(
-        &self,
-        node_id: u64,
-        node_name: Option<&str>,
-        prompt: &str,
-        _generation: Option<&GenerationIdentity>,
-    ) {
-        self.emit_llm_prompt_with_name(node_id, node_name, prompt);
-    }
     fn emit_llm_token_for_node(&self, _node_id: u64, content: &str) {
         self.emit_llm_token(content);
     }
-    fn emit_llm_token_for_generation(
-        &self,
-        node_id: u64,
-        content: &str,
-        _generation: Option<&GenerationIdentity>,
-    ) {
-        self.emit_llm_token_for_node(node_id, content);
-    }
     fn emit_llm_thought_for_node(&self, _node_id: u64, content: &str) {
         self.emit_llm_thought(content);
-    }
-    fn emit_llm_thought_for_generation(
-        &self,
-        node_id: u64,
-        content: &str,
-        _generation: Option<&GenerationIdentity>,
-    ) {
-        self.emit_llm_thought_for_node(node_id, content);
     }
 
     // ── Planning ────────────────────────────────────────────────────
@@ -343,20 +290,6 @@ pub trait ExecutionEventEmitter: Send + Sync {
     // ── Token accounting ──────────────────────────────────────────
     fn emit_token_usage(&self, _node_id: u64, _input_tokens: usize, _output_tokens: usize) {}
 
-    /// Emit token usage associated with one physical model generation.
-    ///
-    /// The default preserves compatibility with emitters that only aggregate
-    /// per-node usage and do not expose generation-level observability.
-    fn emit_token_usage_with_generation(
-        &self,
-        node_id: u64,
-        input_tokens: usize,
-        output_tokens: usize,
-        _generation: Option<&GenerationIdentity>,
-    ) {
-        self.emit_token_usage(node_id, input_tokens, output_tokens);
-    }
-
     // ── Memoization ───────────────────────────────────────────────
     fn emit_memoization_hit(&self, _node_id: u64) {}
 
@@ -380,9 +313,11 @@ pub trait ExecutionEventEmitter: Send + Sync {
     ) {
     }
 
-    /// A numbered request or response boundary was reached for the
-    /// user-facing conversational turn.
-    fn emit_turn_boundary(&self, _payload: TurnBoundaryPayload) {}
+    /// Emit aggregate-only context-packing evidence before a model dispatch.
+    fn emit_model_context_metrics(&self, _metrics: &ModelContextMetrics) {}
+
+    /// Emit content-free evidence after a capability effect is durably committed.
+    fn emit_capability_effect_receipt(&self, _receipt: &CapabilityEffectReceiptPayload) {}
 
     // ── Layer 2 — agent-layer hooks ────────────────────────────────
     //
@@ -438,16 +373,6 @@ pub trait ExecutionEventEmitter: Send + Sync {
         _tool_manifest_count: usize,
     ) {
     }
-    fn emit_subagent_llm_call_begin_with_generation(
-        &self,
-        agent_code: &str,
-        model: &str,
-        backend: &str,
-        tool_manifest_count: usize,
-        _generation: Option<&GenerationIdentity>,
-    ) {
-        self.emit_subagent_llm_call_begin(agent_code, model, backend, tool_manifest_count);
-    }
 
     /// An ASK node inside an agent scope returned a response.
     fn emit_subagent_llm_call_end(
@@ -459,35 +384,9 @@ pub trait ExecutionEventEmitter: Send + Sync {
         _content_len: usize,
     ) {
     }
-    fn emit_subagent_llm_call_end_with_generation(
-        &self,
-        agent_code: &str,
-        finish_reason: &str,
-        input_tokens: usize,
-        output_tokens: usize,
-        content_len: usize,
-        _generation: Option<&GenerationIdentity>,
-    ) {
-        self.emit_subagent_llm_call_end(
-            agent_code,
-            finish_reason,
-            input_tokens,
-            output_tokens,
-            content_len,
-        );
-    }
 
     /// An INV_CAP node inside an agent scope began a tool call.
     fn emit_tool_call_begin(&self, _agent_code: &str, _tool_name: &str, _argument_keys: &[String]) {
-    }
-    fn emit_tool_call_begin_with_correlation(
-        &self,
-        agent_code: &str,
-        tool_name: &str,
-        argument_keys: &[String],
-        _correlation: Option<&ToolCallCorrelation>,
-    ) {
-        self.emit_tool_call_begin(agent_code, tool_name, argument_keys);
     }
 
     /// An INV_CAP node inside an agent scope returned a result.
@@ -496,20 +395,9 @@ pub trait ExecutionEventEmitter: Send + Sync {
         _agent_code: &str,
         _tool_name: &str,
         _result_keys: &[String],
-        _status: ToolCallStatus,
+        _status: &str,
         _latency_ms: u64,
     ) {
-    }
-    fn emit_tool_call_end_with_correlation(
-        &self,
-        agent_code: &str,
-        tool_name: &str,
-        result_keys: &[String],
-        status: ToolCallStatus,
-        latency_ms: u64,
-        _correlation: Option<&ToolCallCorrelation>,
-    ) {
-        self.emit_tool_call_end(agent_code, tool_name, result_keys, status, latency_ms);
     }
 
     /// A sub-agent scope exited cleanly.
@@ -549,46 +437,10 @@ pub trait ExecutionEventEmitter: Send + Sync {
         _agent_code: &str,
         _tool_name: &str,
         _approval_id: &str,
-        _risk_level: ApprovalRiskLevel,
+        _risk_level: &str,
     ) {
-    }
-    fn emit_approval_request_with_correlation(
-        &self,
-        agent_code: &str,
-        tool_name: &str,
-        approval_id: &str,
-        risk_level: ApprovalRiskLevel,
-        _correlation: Option<&ToolCallCorrelation>,
-    ) {
-        self.emit_approval_request(agent_code, tool_name, approval_id, risk_level);
     }
 
     /// A previously-requested approval was resolved.
-    fn emit_approval_resolved(&self, _approval_id: &str, _decision: ApprovalResolution) {}
-    fn emit_approval_resolved_with_correlation(
-        &self,
-        approval_id: &str,
-        decision: ApprovalResolution,
-        _correlation: Option<&ToolCallCorrelation>,
-    ) {
-        self.emit_approval_resolved(approval_id, decision);
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::EventScopeState;
-
-    #[test]
-    fn active_scopes_survive_out_of_order_completion() {
-        let mut scopes = EventScopeState::new(Some("root".to_string()));
-        scopes.enter("turn-1".to_string());
-        scopes.enter("turn-2".to_string());
-
-        scopes.leave("turn-1");
-        assert_eq!(scopes.current().as_deref(), Some("turn-2"));
-
-        scopes.leave("turn-2");
-        assert_eq!(scopes.current().as_deref(), Some("root"));
-    }
+    fn emit_approval_resolved(&self, _approval_id: &str, _decision: &str) {}
 }

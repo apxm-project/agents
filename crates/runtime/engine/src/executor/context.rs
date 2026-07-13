@@ -15,7 +15,7 @@ use crate::{
     workspace::ScopeRegistry,
 };
 use apxm_backends::LLMRegistry;
-use apxm_capability_iface::{ApprovalContext, CapabilityFacade};
+use apxm_capability_iface::{ApprovalContext, CapabilityFacade, CapabilitySandboxPreflight};
 use apxm_core::InstructionConfig;
 use apxm_core::constants::cache;
 use apxm_core::paths::ApxmPaths;
@@ -24,6 +24,7 @@ use std::sync::Arc;
 
 use super::agent_scope::AgentScopeStack;
 use super::cancellation::CancellationToken;
+use super::capability_admission::metadata_admits_write;
 use super::dag_splicer::{DagSplicer, NoOpSplicer};
 use super::events::ExecutionEventEmitter;
 use super::fields_honored::FieldsHonoredCollector;
@@ -280,9 +281,7 @@ impl ExecutionContext {
             agent_scope_stack: Arc::new(AgentScopeStack::new()),
             host_id: None,
             host_dispatch: std::sync::Arc::new(crate::host_dispatch::NoOpHostDispatchGateway),
-            consent_broker: std::sync::Arc::new(
-                apxm_core::types::consent::UnavailableConsentBroker,
-            ),
+            consent_broker: std::sync::Arc::new(apxm_core::types::consent::NoOpConsentBroker),
             pending_turn_prompt_supplement: Arc::new(parking_lot::RwLock::new(None)),
         }
     }
@@ -408,71 +407,23 @@ impl ExecutionContext {
         }
     }
 
-    /// Invoke a capability through the per-tool budget and canonical policy and
-    /// consent admission, using the runtime's default tool timeout.
+    /// Invoke a capability through the per-tool call budget, using the
+    /// capability system's default timeout. Both tool-call paths — the graph
+    /// `INV_CAP` handler and the in-`ASK`-node model loop — route through here so
+    /// the budget is the single trusted enforcement seam; the `ASK`-node calls are
+    /// invisible to node-level middleware, which is why this is a ctx helper rather
+    /// than an `OperationMiddleware`.
     pub async fn invoke_capability(
         &self,
         name: &str,
         args: std::collections::HashMap<String, apxm_core::types::values::Value>,
     ) -> Result<apxm_core::types::values::Value, apxm_core::error::RuntimeError> {
-        let call_id = uuid::Uuid::new_v4().to_string();
-        self.invoke_capability_for_call(name, args, &call_id).await
-    }
-
-    pub async fn invoke_capability_for_call(
-        &self,
-        name: &str,
-        args: std::collections::HashMap<String, apxm_core::types::values::Value>,
-        call_id: &str,
-    ) -> Result<apxm_core::types::values::Value, apxm_core::error::RuntimeError> {
-        self.invoke_capability_with_timeout_for_call(
+        self.invoke_capability_prepared(
             name,
             args,
             std::time::Duration::from_millis(apxm_core::constants::defaults::DEFAULT_TIMEOUT_MS),
-            call_id,
-            None,
         )
         .await
-    }
-
-    /// Admit an artifact-scoped capability before its worker executes it.
-    /// Returns interceptor-edited arguments after budget, credential, policy,
-    /// and consent checks have completed.
-    pub async fn admit_capability_call(
-        &self,
-        name: &str,
-        mut args: std::collections::HashMap<String, apxm_core::types::values::Value>,
-        requires_approval: bool,
-        call_id: &str,
-        tool_call_correlation: Option<&apxm_core::events::payload::ToolCallCorrelation>,
-    ) -> Result<
-        std::collections::HashMap<String, apxm_core::types::values::Value>,
-        apxm_core::error::RuntimeError,
-    > {
-        self.charge_tool_call(name)?;
-        self.inject_tool_credential(name, &mut args);
-        let agent_code_owned = self
-            .agent_scope_stack
-            .peek()
-            .map(|s| s.agent_code.clone())
-            .or_else(|| self.current_agent.as_ref().map(|a| a.name.clone()));
-        let approval_ctx = ApprovalContext {
-            call_id,
-            tool_call_correlation,
-            consent_broker: self.consent_broker.as_ref(),
-            event_emitter: self
-                .event_emitter
-                .as_ref()
-                .map(|e| e.as_ref() as &dyn crate::ExecutionEventEmitter),
-            host_id: self.host_id.as_deref(),
-            agent_code: agent_code_owned.as_deref(),
-            grant_id: None,
-            permission_timeout:
-                crate::capability::interceptor::PreInvokeContext::permission_timeout_from_env(),
-        };
-        self.capability_system
-            .admit_with_ctx(name, args, requires_approval, approval_ctx)
-            .await
     }
 
     /// Like [`Self::invoke_capability`] but with an explicit timeout.
@@ -482,29 +433,30 @@ impl ExecutionContext {
         args: std::collections::HashMap<String, apxm_core::types::values::Value>,
         timeout: std::time::Duration,
     ) -> Result<apxm_core::types::values::Value, apxm_core::error::RuntimeError> {
-        let call_id = uuid::Uuid::new_v4().to_string();
-        self.invoke_capability_with_timeout_for_call(name, args, timeout, &call_id, None)
-            .await
+        self.invoke_capability_prepared(name, args, timeout).await
     }
 
-    pub async fn invoke_capability_with_timeout_for_call(
+    /// Apply the shared capability dispatch policy exactly once for every
+    /// native capability path: tool budget, credential injection, timeout, and
+    /// metadata-declared approval all reach the same façade invocation.
+    async fn invoke_capability_prepared(
         &self,
         name: &str,
         mut args: std::collections::HashMap<String, apxm_core::types::values::Value>,
         timeout: std::time::Duration,
-        call_id: &str,
-        tool_call_correlation: Option<&apxm_core::events::payload::ToolCallCorrelation>,
     ) -> Result<apxm_core::types::values::Value, apxm_core::error::RuntimeError> {
-        self.charge_tool_call(name)?;
-        self.inject_tool_credential(name, &mut args);
+        self.prepare_capability_invocation(name, &mut args, false)?;
         let agent_code_owned = self
             .agent_scope_stack
             .peek()
             .map(|s| s.agent_code.clone())
             .or_else(|| self.current_agent.as_ref().map(|a| a.name.clone()));
+        // `ApprovalContext` (apxm-capability-iface) — deliberately has no
+        // `&CapabilityRegistry` field, unlike capability's internal
+        // `PreInvokeContext`: the concrete `CapabilityFacade` impl resolves
+        // the named capability's `requires_approval` metadata from its own
+        // registry, so this caller doesn't need a registry reference at all.
         let approval_ctx = ApprovalContext {
-            call_id,
-            tool_call_correlation,
             consent_broker: self.consent_broker.as_ref(),
             event_emitter: self
                 .event_emitter
@@ -517,8 +469,59 @@ impl ExecutionContext {
                 crate::capability::interceptor::PreInvokeContext::permission_timeout_from_env(),
         };
         self.capability_system
-            .invoke_with_timeout_ctx(name, args, timeout, approval_ctx)
+            .invoke_with_timeout_ctx(name, args, timeout, Some(approval_ctx))
             .await
+    }
+
+    /// Apply the execution-scoped policy shared by native and script-backed
+    /// capability calls before either implementation receives the arguments.
+    pub fn prepare_capability_invocation(
+        &self,
+        name: &str,
+        args: &mut std::collections::HashMap<String, apxm_core::types::values::Value>,
+        unregistered_requires_delegation: bool,
+    ) -> Result<(), apxm_core::error::RuntimeError> {
+        self.charge_tool_call(name)?;
+        self.inject_tool_credential(name, args);
+        self.ensure_capability_admitted(name, args, unregistered_requires_delegation)
+    }
+
+    /// Enforce execution-scoped admission for a capability invocation before it
+    /// reaches a native capability or an artifact-local script handler.
+    ///
+    /// Read-only and demonstrably sandboxed capabilities may proceed. Direct
+    /// mutating capabilities require an active runtime-minted grant for their
+    /// binding; malformed, expired, and non-mutating grants fail closed.
+    pub fn ensure_capability_admitted(
+        &self,
+        name: &str,
+        args: &std::collections::HashMap<String, apxm_core::types::values::Value>,
+        unregistered_requires_delegation: bool,
+    ) -> Result<(), apxm_core::error::RuntimeError> {
+        let capabilities = &self.capability_system;
+        if capabilities.has_capability(name) {
+            if capabilities.is_read_only(name) {
+                return Ok(());
+            }
+            match capabilities.sandbox_preflight(name, args) {
+                Ok(CapabilitySandboxPreflight::Sandboxed { .. }) => return Ok(()),
+                Ok(CapabilitySandboxPreflight::Direct) | Err(_) => {}
+            }
+        } else if !unregistered_requires_delegation {
+            return Ok(());
+        }
+
+        if metadata_admits_write(&self.metadata, name) {
+            return Ok(());
+        }
+
+        Err(apxm_core::error::RuntimeError::Capability {
+            capability: name.to_string(),
+            message: format!(
+                "capability '{name}' performs writes and is missing a capability grant; \
+                 mint a grant for its tool binding and present grant_* ids in capability_grant_ids"
+            ),
+        })
     }
 
     /// Charge one substantive session turn via the attached ledger. Used when
@@ -530,9 +533,9 @@ impl ExecutionContext {
         };
         ledger
             .charge_turn()
-            .map_err(|error| apxm_core::error::RuntimeError::Capability {
+            .map_err(|message| apxm_core::error::RuntimeError::Capability {
                 capability: "session_turn".to_string(),
-                message: error.to_string(),
+                message,
             })
     }
 
@@ -545,12 +548,12 @@ impl ExecutionContext {
     /// per-execution counters are skipped.
     fn charge_tool_call(&self, name: &str) -> Result<(), apxm_core::error::RuntimeError> {
         if let Some(ledger) = &self.session_ledger {
-            ledger.charge_tool(name).map_err(|error| {
-                apxm_core::error::RuntimeError::Capability {
+            if !ledger.charge_tool(name) {
+                return Err(apxm_core::error::RuntimeError::Capability {
                     capability: name.to_string(),
-                    message: error.to_string(),
-                }
-            })?;
+                    message: format!("session tool budget exhausted for '{name}'"),
+                });
+            }
             return Ok(());
         }
         let Some(budgets) = &self.tool_call_budgets else {
@@ -826,14 +829,11 @@ mod tests {
     use super::*;
     use crate::aam::Aam;
     use crate::capability::CapabilitySystem;
-    use crate::capability::executor::{CapabilityExecutor, EchoCapability};
-    use crate::capability::metadata::RuntimeCapability;
+    use crate::capability::executor::EchoCapability;
     use crate::memory::{MemoryConfig, MemorySystem};
     use apxm_backends::LLMRegistry;
-    use apxm_core::types::consent::{ConsentBroker, ConsentDecision, PermissionPrompt};
     use std::collections::HashMap;
     use std::sync::Arc;
-    use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 
     async fn test_ctx_with_ledger(ledger: SessionLedger) -> ExecutionContext {
         let memory = Arc::new(
@@ -881,46 +881,59 @@ mod tests {
     /// `CapabilitySystem` — proves `ExecutionContext.capability_system:
     /// Arc<dyn CapabilityFacade>` is a real trait-object seam, not just a
     /// type alias for the one concrete type.
-    #[derive(Default)]
     struct StubFacade {
-        invoked: AtomicBool,
-        timeout_ms: AtomicU64,
+        registered: bool,
+        read_only: bool,
+        direct_invoke_used: std::sync::atomic::AtomicBool,
+        approval_context_seen: std::sync::atomic::AtomicBool,
+    }
+
+    impl Default for StubFacade {
+        fn default() -> Self {
+            Self {
+                registered: true,
+                read_only: true,
+                direct_invoke_used: std::sync::atomic::AtomicBool::new(false),
+                approval_context_seen: std::sync::atomic::AtomicBool::new(false),
+            }
+        }
     }
 
     #[async_trait::async_trait]
     impl apxm_capability_iface::CapabilityFacade for StubFacade {
-        async fn admit_with_ctx(
+        async fn invoke(
             &self,
-            _name: &str,
-            args: HashMap<String, apxm_core::types::values::Value>,
-            _requires_approval: bool,
-            _approval: ApprovalContext<'_>,
-        ) -> Result<HashMap<String, apxm_core::types::values::Value>, apxm_core::error::RuntimeError>
-        {
-            Ok(args)
+            name: &str,
+            _args: HashMap<String, apxm_core::types::values::Value>,
+        ) -> Result<apxm_core::types::values::Value, apxm_core::error::RuntimeError> {
+            self.direct_invoke_used
+                .store(true, std::sync::atomic::Ordering::SeqCst);
+            Ok(apxm_core::types::values::Value::String(format!(
+                "stub:{name}"
+            )))
         }
 
         async fn invoke_with_timeout_ctx(
             &self,
             name: &str,
-            _args: HashMap<String, apxm_core::types::values::Value>,
-            timeout: std::time::Duration,
-            _approval: ApprovalContext<'_>,
+            args: HashMap<String, apxm_core::types::values::Value>,
+            _timeout: std::time::Duration,
+            approval: Option<ApprovalContext<'_>>,
         ) -> Result<apxm_core::types::values::Value, apxm_core::error::RuntimeError> {
-            self.invoked.store(true, Ordering::Relaxed);
-            self.timeout_ms
-                .store(timeout.as_millis() as u64, Ordering::Relaxed);
+            self.approval_context_seen
+                .store(approval.is_some(), std::sync::atomic::Ordering::SeqCst);
+            let _ = args;
             Ok(apxm_core::types::values::Value::String(format!(
                 "stub:{name}"
             )))
         }
 
         fn has_capability(&self, _name: &str) -> bool {
-            true
+            self.registered
         }
 
         fn is_read_only(&self, _name: &str) -> bool {
-            true
+            self.read_only
         }
 
         fn get_metadata(&self, _name: &str) -> Option<apxm_capability_iface::RuntimeCapability> {
@@ -959,12 +972,7 @@ mod tests {
         );
         let aam = Aam::new();
         let facade = Arc::new(StubFacade::default());
-        let ctx = ExecutionContext::new(
-            memory,
-            Arc::new(LLMRegistry::new()),
-            Arc::clone(&facade) as Arc<dyn apxm_capability_iface::CapabilityFacade>,
-            aam,
-        );
+        let ctx = ExecutionContext::new(memory, Arc::new(LLMRegistry::new()), facade.clone(), aam);
         let result = ctx
             .invoke_capability("anything", HashMap::new())
             .await
@@ -973,120 +981,60 @@ mod tests {
             result,
             apxm_core::types::values::Value::String("stub:anything".to_string())
         );
-        assert!(facade.invoked.load(Ordering::Relaxed));
-        assert_eq!(
-            facade.timeout_ms.load(Ordering::Relaxed),
-            apxm_core::constants::defaults::DEFAULT_TIMEOUT_MS
+        assert!(
+            facade
+                .approval_context_seen
+                .load(std::sync::atomic::Ordering::SeqCst),
+            "default-timeout calls must pass the approval-aware façade context"
+        );
+        assert!(
+            !facade
+                .direct_invoke_used
+                .load(std::sync::atomic::Ordering::SeqCst),
+            "default-timeout calls must not bypass approval through CapabilityFacade::invoke"
         );
     }
 
-    struct SlowCapability {
-        metadata: RuntimeCapability,
-    }
-
-    #[async_trait::async_trait]
-    impl CapabilityExecutor for SlowCapability {
-        async fn execute(
-            &self,
-            _args: HashMap<String, apxm_core::types::values::Value>,
-        ) -> Result<apxm_core::types::values::Value, apxm_core::error::RuntimeError> {
-            tokio::time::sleep(std::time::Duration::from_millis(50)).await;
-            Ok(apxm_core::types::values::Value::Null)
-        }
-
-        fn metadata(&self) -> &RuntimeCapability {
-            &self.metadata
-        }
-    }
-
     #[tokio::test]
-    async fn explicit_capability_timeout_stays_typed() {
+    async fn script_capabilities_require_a_runtime_minted_mutating_grant() {
         let memory = Arc::new(
             MemorySystem::new(MemoryConfig::in_memory_ltm())
                 .await
                 .expect("memory"),
         );
         let aam = Aam::new();
-        let capability_system = Arc::new(CapabilitySystem::with_aam(aam.clone()));
-        capability_system
-            .register(Arc::new(SlowCapability {
-                metadata: RuntimeCapability::new(
-                    "slow",
-                    "slow test capability",
-                    serde_json::json!({"type": "object"}),
-                )
-                .with_read_only(),
-            }))
-            .expect("slow capability");
-        let ctx =
-            ExecutionContext::new(memory, Arc::new(LLMRegistry::new()), capability_system, aam);
-        let timeout = std::time::Duration::from_millis(1);
-
-        let error = ctx
-            .invoke_capability_with_timeout("slow", HashMap::new(), timeout)
-            .await
-            .expect_err("slow capability must time out");
-
-        assert!(matches!(
-            error,
-            apxm_core::error::RuntimeError::Timeout {
-                op_id: 0,
-                timeout: observed,
-            } if observed == timeout
-        ));
-    }
-
-    struct FixedBroker {
-        decision: ConsentDecision,
-    }
-
-    #[async_trait::async_trait]
-    impl ConsentBroker for FixedBroker {
-        async fn request_consent(
-            &self,
-            _prompt: PermissionPrompt,
-            _timeout: std::time::Duration,
-        ) -> ConsentDecision {
-            self.decision.clone()
-        }
-    }
-
-    #[tokio::test]
-    async fn approval_denial_stays_a_typed_capability_error() {
-        let memory = Arc::new(
-            MemorySystem::new(MemoryConfig::in_memory_ltm())
-                .await
-                .expect("memory"),
-        );
-        let aam = Aam::new();
-        let capability_system = Arc::new(CapabilitySystem::with_aam(aam.clone()));
-        capability_system
-            .register(Arc::new(SlowCapability {
-                metadata: RuntimeCapability::new(
-                    "approval-denied",
-                    "approval denial test capability",
-                    serde_json::json!({"type": "object"}),
-                )
-                .with_requires_approval(),
-            }))
-            .expect("approval-denied capability");
-        let mut ctx =
-            ExecutionContext::new(memory, Arc::new(LLMRegistry::new()), capability_system, aam);
-        ctx.consent_broker = Arc::new(FixedBroker {
-            decision: ConsentDecision::Denied {
-                reason: "operator denied this call".to_string(),
-            },
+        let facade = Arc::new(StubFacade {
+            registered: false,
+            read_only: false,
+            ..Default::default()
         });
+        let mut ctx = ExecutionContext::new(memory, Arc::new(LLMRegistry::new()), facade, aam);
+        let mut args = HashMap::new();
+        args.insert(
+            "payload".to_string(),
+            apxm_core::types::values::Value::String("example".to_string()),
+        );
 
         let error = ctx
-            .invoke_capability("approval-denied", HashMap::new())
-            .await
-            .expect_err("denied call must not execute");
+            .prepare_capability_invocation("artifact.script", &mut args, true)
+            .expect_err("unregistered script capability must require a grant");
+        assert!(
+            error.to_string().contains("missing a capability grant"),
+            "unexpected admission error: {error}"
+        );
 
-        assert!(matches!(
-            error,
-            apxm_core::error::RuntimeError::Capability { ref capability, ref message }
-                if capability == "approval-denied" && message == "operator denied this call"
-        ));
+        ctx.metadata.insert(
+            crate::metadata_keys::CAPABILITY_GRANTS.to_string(),
+            serde_json::json!([{
+                "grant_id": "grant_fixture",
+                "capability_binding": "artifact.script",
+                "operations": ["write"],
+                "expires_at": null,
+                "status": "active"
+            }])
+            .to_string(),
+        );
+        ctx.prepare_capability_invocation("artifact.script", &mut args, true)
+            .expect("runtime-minted mutating grant admits script capability");
     }
 }

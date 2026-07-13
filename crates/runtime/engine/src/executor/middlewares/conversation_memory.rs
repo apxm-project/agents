@@ -6,15 +6,13 @@
 
 use crate::executor::{ExecutionContext, Next, OperationMiddleware, Result};
 use crate::memory::MemorySpace;
-use apxm_core::events::payload::{TurnBoundaryPayload, TurnDirection};
+use apxm_capability_iface::events::{ModelContextCallKind, ModelContextMetrics};
 use apxm_core::types::{
-    conversation::TurnInput,
     execution::Node,
     operations::AISOperationType,
     values::{Number, Value},
 };
 use async_trait::async_trait;
-use serde_json::{Map as JsonMap, Value as JsonValue};
 
 /// Session-memory key holding the running turn count.
 const TURN_COUNT_KEY: &str = "conversation:turn_count";
@@ -47,6 +45,7 @@ const DEFAULT_SUMMARY_KEY: &str = "conversation:summary";
 /// (constitution #2: program owns cognition); absent the marker, the ask is
 /// not a conversational turn.
 const TURN_MARKER_KEY: &str = "conversational_turn";
+
 /// Records each ASK answer into session memory so conversation history accrues
 /// without the program threading a transcript.
 #[derive(Debug, Clone, Default)]
@@ -85,32 +84,10 @@ impl OperationMiddleware for ConversationMemoryMiddleware {
         inputs: Vec<Value>,
         next: Next<'_>,
     ) -> Result<Value> {
-        let (inputs, turn_context) = Self::normalize_turn_input(node, inputs)?;
-        let scope = ctx.memory_scope().to_string();
-        let mem = ctx.memory();
-        let next_stored_turn = mem
-            .read_scoped(MemorySpace::Stm, &scope, TURN_COUNT_KEY)
-            .await
-            .ok()
-            .flatten()
-            .and_then(|value| value.as_i64())
-            .unwrap_or(0)
-            + 1;
-        let turn_number = ctx
-            .session_ledger()
-            .map(|ledger| ledger.turns_used())
-            .filter(|turn| *turn > 0)
-            .unwrap_or(next_stored_turn.max(1) as usize);
-        if let Some(emitter) = &ctx.event_emitter {
-            emitter.emit_turn_boundary(TurnBoundaryPayload {
-                turn_number,
-                direction: TurnDirection::Request,
-            });
-        }
-
         // pre_turn hooks fire before the turn's ask (gate-capable → fail-closed).
-        let supplement =
-            crate::executor::hook_driver::run_pre_turn_hooks(ctx, turn_context).await?;
+        // `None` context: this turn did not bind an additional structured
+        // payload for pre-turn hooks.
+        let supplement = crate::executor::hook_driver::run_pre_turn_hooks(ctx, None).await?;
         if let Some(text) = supplement {
             *ctx.pending_turn_prompt_supplement.write() = Some(text);
         }
@@ -119,20 +96,30 @@ impl OperationMiddleware for ConversationMemoryMiddleware {
             // post_ask + post_turn hooks fire with the reply (observe;).
             crate::executor::hook_driver::run_post_ask_hooks(ctx, answer).await;
             crate::executor::hook_driver::run_post_turn_hooks(ctx, answer).await;
+            let scope = ctx.memory_scope().to_string();
+            let mem = ctx.memory();
+            let next_turn = mem
+                .read_scoped(MemorySpace::Stm, &scope, TURN_COUNT_KEY)
+                .await
+                .ok()
+                .flatten()
+                .and_then(|v| v.as_i64())
+                .unwrap_or(0)
+                + 1;
             // Best-effort: a memory write failure must not fail the turn.
             let _ = mem
                 .write_scoped(
                     MemorySpace::Stm,
                     &scope,
                     TURN_COUNT_KEY.to_string(),
-                    Value::Number(Number::Integer(next_stored_turn)),
+                    Value::Number(Number::Integer(next_turn)),
                 )
                 .await;
             let _ = mem
                 .write_scoped(
                     MemorySpace::Stm,
                     &scope,
-                    format!("{TURN_PREFIX}{next_stored_turn}"),
+                    format!("{TURN_PREFIX}{next_turn}"),
                     Value::String(answer.clone()),
                 )
                 .await;
@@ -141,65 +128,13 @@ impl OperationMiddleware for ConversationMemoryMiddleware {
             // choke point measures the budget and, absent an author
             // override, folds older turns into the rolling summary. A
             // no-op when the policy is absent (opt-out dial).
-            Self::maybe_compact(ctx, node, &scope, answer, next_stored_turn).await;
-            if let Some(emitter) = &ctx.event_emitter {
-                emitter.emit_turn_boundary(TurnBoundaryPayload {
-                    turn_number,
-                    direction: TurnDirection::Response,
-                });
-            }
+            Self::maybe_compact(ctx, node, &scope, answer, next_turn).await;
         }
         result
     }
 }
 
 impl ConversationMemoryMiddleware {
-    fn normalize_turn_input(
-        node: &Node,
-        mut inputs: Vec<Value>,
-    ) -> Result<(Vec<Value>, Option<JsonMap<String, JsonValue>>)> {
-        let Some(index) = Self::turn_input_index(node, &inputs)? else {
-            return Ok((inputs, None));
-        };
-        let Some(raw_turn_input) = inputs.get(index).cloned() else {
-            return Ok((inputs, None));
-        };
-        let turn_input = TurnInput::try_from(raw_turn_input).map_err(|error| {
-            apxm_core::error::RuntimeError::Operation {
-                op_type: node.op_type,
-                message: format!("invalid conversational turn input: {error}"),
-            }
-        })?;
-        inputs[index] = Value::String(turn_input.message);
-        Ok((inputs, turn_input.context))
-    }
-
-    fn turn_input_index(node: &Node, inputs: &[Value]) -> Result<Option<usize>> {
-        if inputs.is_empty() {
-            return Ok(None);
-        }
-
-        let matches = inputs
-            .iter()
-            .enumerate()
-            .filter_map(|(index, value)| TurnInput::try_from(value).ok().map(|_| index))
-            .collect::<Vec<_>>();
-
-        match matches.as_slice() {
-            [index] => Ok(Some(*index)),
-            [] => Err(apxm_core::error::RuntimeError::Operation {
-                op_type: node.op_type,
-                message: "marked conversational ASK requires exactly one typed turn input"
-                    .to_string(),
-            }),
-            _ => Err(apxm_core::error::RuntimeError::Operation {
-                op_type: node.op_type,
-                message: "marked conversational ASK received multiple typed turn inputs"
-                    .to_string(),
-            }),
-        }
-    }
-
     /// Conversation-window compaction — the four control dials
     /// (default/configure/override/opt-out), all driven off the SAME
     /// node attributes the frontend stamps on the marked conversational-turn
@@ -328,6 +263,24 @@ impl ConversationMemoryMiddleware {
         );
         let request =
             apxm_backends::LLMRequest::new(prompt).with_operation_type(AISOperationType::Ask);
+        let reservation = match crate::executor::handlers::llm::reserve_model_call(ctx, &request) {
+            Ok(reservation) => reservation,
+            Err(error) => {
+                if let Some(emitter) = &ctx.event_emitter {
+                    emitter.emit_warning(
+                        "compaction_budget_reservation_denied",
+                        &format!("conversation compaction did not dispatch: {error}"),
+                    );
+                }
+                return;
+            }
+        };
+        if let Some(emitter) = &ctx.event_emitter {
+            emitter.emit_model_context_metrics(&ModelContextMetrics::unplanned(
+                Some(node.id),
+                ModelContextCallKind::Compaction,
+            ));
+        }
         let summary_result = if let Some(router) = &ctx.model_router {
             router.generate(request).await
         } else {
@@ -337,7 +290,18 @@ impl ConversationMemoryMiddleware {
         // a summarization failure degrades to a warning, never panics or
         // fails the turn, and never silently no-ops without a trace.
         let summary = match summary_result {
-            Ok(response) => response.content,
+            Ok(response) => {
+                if let Err(error) = reservation.reconcile(response.usage.total_tokens) {
+                    if let Some(emitter) = &ctx.event_emitter {
+                        emitter.emit_warning(
+                            "compaction_budget_reconciliation_failed",
+                            &format!("conversation compaction response was not admitted: {error}"),
+                        );
+                    }
+                    return;
+                }
+                response.content
+            }
             Err(e) => {
                 if let Some(emitter) = &ctx.event_emitter {
                     emitter.emit_warning(
@@ -404,69 +368,13 @@ impl ConversationMemoryMiddleware {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::aam::Aam;
-    use crate::capability::CapabilitySystem;
-    use crate::executor::events::ExecutionEventEmitter;
-    use crate::executor::hooks::{HookBinding, HookEvent, HookMode, HookRegistry};
-    use crate::executor::middleware::{BoxFuture, Next};
-    use crate::executor::session_ledger::SessionLedger;
-    use crate::executor::{ExecutionContext, OperationMiddleware};
-    use crate::memory::{MemoryConfig, MemorySystem};
-    use crate::typescript_tools::{TypeScriptHandlerBridge, TypeScriptHandlerRegistry};
-    use apxm_backends::LLMRegistry;
-    use apxm_core::constants::graph::attrs as graph_attrs;
-    use apxm_core::error::RuntimeError;
-    use apxm_core::types::conversation::TurnInput;
-    use serde_json::json;
-    use std::collections::HashMap;
-    use std::sync::{Arc, Mutex, OnceLock};
 
     fn ask(marked: bool) -> Node {
-        ask_with_input_names(marked, &[])
-    }
-
-    fn ask_with_input_names(marked: bool, input_names: &[&str]) -> Node {
         let mut node = Node::new(1, AISOperationType::Ask);
         if marked {
             node.set_attribute(TURN_MARKER_KEY.to_string(), Value::String("true".into()));
         }
-        if !input_names.is_empty() {
-            node.set_attribute(
-                graph_attrs::INPUT_NAMES.to_string(),
-                Value::Array(
-                    input_names
-                        .iter()
-                        .map(|name| Value::String((*name).to_string()))
-                        .collect(),
-                ),
-            );
-        }
         node
-    }
-
-    static TERMINAL_CAPTURE_LOCK: Mutex<()> = Mutex::new(());
-
-    #[derive(Debug, Clone, PartialEq)]
-    struct TerminalCapture {
-        inputs: Vec<Value>,
-        supplement: Option<String>,
-    }
-
-    fn terminal_capture_slot() -> &'static Mutex<Option<TerminalCapture>> {
-        static SLOT: OnceLock<Mutex<Option<TerminalCapture>>> = OnceLock::new();
-        SLOT.get_or_init(|| Mutex::new(None))
-    }
-
-    fn clear_terminal_capture() {
-        *terminal_capture_slot().lock().unwrap() = None;
-    }
-
-    fn take_terminal_capture() -> TerminalCapture {
-        terminal_capture_slot()
-            .lock()
-            .unwrap()
-            .take()
-            .expect("terminal capture should be populated")
     }
 
     #[test]
@@ -480,270 +388,6 @@ mod tests {
         // Non-ask ops never apply.
         let inv = Node::new(2, AISOperationType::InvCap);
         assert!(!mw.applies_to(&inv));
-    }
-
-    #[derive(Clone, Default)]
-    struct BoundaryCapturingEmitter {
-        boundaries: Arc<Mutex<Vec<TurnBoundaryPayload>>>,
-    }
-
-    impl ExecutionEventEmitter for BoundaryCapturingEmitter {
-        fn emit_llm_token(&self, _content: &str) {}
-        fn emit_tool_start(&self, _name: &str, _args: &HashMap<String, Value>) {}
-        fn emit_tool_end(&self, _name: &str, _result: &Value) {}
-
-        fn emit_turn_boundary(&self, payload: TurnBoundaryPayload) {
-            self.boundaries.lock().unwrap().push(payload);
-        }
-    }
-
-    async fn test_context(
-        emitter: Arc<BoundaryCapturingEmitter>,
-        ledger: Arc<SessionLedger>,
-    ) -> ExecutionContext {
-        let memory = Arc::new(
-            MemorySystem::new(MemoryConfig::in_memory_ltm())
-                .await
-                .expect("memory"),
-        );
-        let aam = Aam::new();
-        let capability_system = Arc::new(CapabilitySystem::with_aam(aam.clone()));
-        ExecutionContext::new(memory, Arc::new(LLMRegistry::new()), capability_system, aam)
-            .with_session_id("boundary-session".to_string())
-            .with_session_ledger(ledger)
-            .with_event_emitter(Some(emitter as Arc<dyn ExecutionEventEmitter>))
-    }
-
-    fn success_terminal<'a>(
-        _ctx: &'a ExecutionContext,
-        _node: &'a Node,
-        _inputs: Vec<Value>,
-    ) -> BoxFuture<'a, Result<Value>> {
-        Box::pin(async { Ok(Value::String("answer".to_string())) })
-    }
-
-    fn failure_terminal<'a>(
-        _ctx: &'a ExecutionContext,
-        node: &'a Node,
-        _inputs: Vec<Value>,
-    ) -> BoxFuture<'a, Result<Value>> {
-        Box::pin(async move {
-            Err(RuntimeError::Operation {
-                op_type: node.op_type,
-                message: "turn failed".to_string(),
-            })
-        })
-    }
-
-    fn capturing_terminal<'a>(
-        ctx: &'a ExecutionContext,
-        _node: &'a Node,
-        inputs: Vec<Value>,
-    ) -> BoxFuture<'a, Result<Value>> {
-        Box::pin(async move {
-            *terminal_capture_slot().lock().unwrap() = Some(TerminalCapture {
-                inputs: inputs.clone(),
-                supplement: ctx.pending_turn_prompt_supplement.read().clone(),
-            });
-            Ok(Value::String("answer".to_string()))
-        })
-    }
-
-    fn node_available() -> bool {
-        std::process::Command::new("node")
-            .arg("--version")
-            .output()
-            .is_ok()
-    }
-
-    async fn context_with_typescript_pre_turn_hook(
-        hook_source: &str,
-    ) -> (tempfile::TempDir, ExecutionContext) {
-        let temp = tempfile::tempdir().expect("tempdir");
-        let hook_path = temp.path().join("pre_turn_hook.mjs");
-        std::fs::write(&hook_path, hook_source).expect("write hook source");
-        let registry = TypeScriptHandlerRegistry::from_json(
-            &json!([{
-                "handler_id": "sha256:pre-turn-hook",
-                "module": "hook_mod",
-                "qualname": "capture",
-                "name": "hook",
-                "schema": {},
-                "source_file": hook_path.to_string_lossy().into_owned(),
-            }])
-            .to_string(),
-        )
-        .expect("typescript hook manifest");
-
-        let hook_registry = Arc::new(HookRegistry::new());
-        hook_registry.register(HookBinding {
-            handler_id: "sha256:pre-turn-hook".to_string(),
-            event: HookEvent::PreTurn,
-            match_glob: "*".to_string(),
-            mode: HookMode::Observe,
-        });
-
-        let emitter = Arc::new(BoundaryCapturingEmitter::default());
-        let ledger = Arc::new(SessionLedger::new(None, HashMap::new()));
-        let ctx = test_context(emitter, ledger)
-            .await
-            .with_typescript_handler_bridge(Arc::new(TypeScriptHandlerBridge::new(registry)))
-            .with_hook_registry(hook_registry);
-        (temp, ctx)
-    }
-
-    #[tokio::test]
-    async fn emits_numbered_request_and_response_boundaries_per_successful_turn() {
-        let emitter = Arc::new(BoundaryCapturingEmitter::default());
-        let ledger = Arc::new(SessionLedger::new(None, HashMap::new()));
-        let ctx = test_context(emitter.clone(), ledger.clone()).await;
-        let middleware = ConversationMemoryMiddleware::new();
-        let node = ask(true);
-
-        for expected_turn in 1..=2 {
-            assert_eq!(ledger.charge_turn().expect("charge turn"), expected_turn);
-            let result = middleware
-                .around(
-                    &ctx,
-                    &node,
-                    Vec::new(),
-                    Next {
-                        chain: &[],
-                        idx: 0,
-                        terminal: success_terminal,
-                    },
-                )
-                .await
-                .expect("turn succeeds");
-            assert_eq!(result, Value::String("answer".to_string()));
-        }
-
-        let boundaries = emitter.boundaries.lock().unwrap().clone();
-        assert_eq!(boundaries.len(), 4);
-        assert_eq!(boundaries[0].turn_number, 1);
-        assert_eq!(boundaries[0].direction, TurnDirection::Request);
-        assert_eq!(boundaries[1].turn_number, 1);
-        assert_eq!(boundaries[1].direction, TurnDirection::Response);
-        assert_eq!(boundaries[2].turn_number, 2);
-        assert_eq!(boundaries[2].direction, TurnDirection::Request);
-        assert_eq!(boundaries[3].turn_number, 2);
-        assert_eq!(boundaries[3].direction, TurnDirection::Response);
-    }
-
-    #[tokio::test]
-    async fn failed_turn_emits_request_boundary_without_false_response() {
-        let emitter = Arc::new(BoundaryCapturingEmitter::default());
-        let ledger = Arc::new(SessionLedger::new(None, HashMap::new()));
-        assert_eq!(ledger.charge_turn().expect("charge turn"), 1);
-        let ctx = test_context(emitter.clone(), ledger).await;
-        let middleware = ConversationMemoryMiddleware::new();
-
-        let result = middleware
-            .around(
-                &ctx,
-                &ask(true),
-                Vec::new(),
-                Next {
-                    chain: &[],
-                    idx: 0,
-                    terminal: failure_terminal,
-                },
-            )
-            .await;
-        assert!(result.is_err());
-
-        let boundaries = emitter.boundaries.lock().unwrap().clone();
-        assert_eq!(boundaries.len(), 1);
-        assert_eq!(boundaries[0].turn_number, 1);
-        assert_eq!(boundaries[0].direction, TurnDirection::Request);
-    }
-
-    #[tokio::test]
-    async fn bare_string_turn_input_is_rejected() {
-        let _guard = TERMINAL_CAPTURE_LOCK.lock().unwrap();
-        clear_terminal_capture();
-
-        let emitter = Arc::new(BoundaryCapturingEmitter::default());
-        let ledger = Arc::new(SessionLedger::new(None, HashMap::new()));
-        let ctx = test_context(emitter, ledger).await;
-        let middleware = ConversationMemoryMiddleware::new();
-        let node = ask_with_input_names(true, &["request", "history"]);
-        let inputs = vec![
-            Value::String("hello".to_string()),
-            Value::String("recalled context".to_string()),
-        ];
-
-        let error = middleware
-            .around(
-                &ctx,
-                &node,
-                inputs,
-                Next {
-                    chain: &[],
-                    idx: 0,
-                    terminal: capturing_terminal,
-                },
-            )
-            .await
-            .expect_err("bare strings must not bypass the typed turn contract");
-
-        assert!(error.to_string().contains("exactly one typed turn input"));
-    }
-
-    #[tokio::test]
-    async fn structured_turn_input_context_reaches_pre_turn_hook_and_message_is_normalized() {
-        if !node_available() {
-            return;
-        }
-
-        let _guard = TERMINAL_CAPTURE_LOCK.lock().unwrap();
-        clear_terminal_capture();
-
-        let (_temp, ctx) = context_with_typescript_pre_turn_hook(
-            r#"
-export function capture(ctx) {
-  return ctx.prependSystem(String(ctx.context?.topic ?? "missing"));
-}
-"#,
-        )
-        .await;
-        let middleware = ConversationMemoryMiddleware::new();
-        let node = ask_with_input_names(true, &["request", "history"]);
-        let turn_input = TurnInput {
-            message: "hello".to_string(),
-            context: Some(JsonMap::from_iter([(
-                "topic".to_string(),
-                json!("priority-sync"),
-            )])),
-        };
-
-        let result = middleware
-            .around(
-                &ctx,
-                &node,
-                vec![
-                    Value::from(turn_input),
-                    Value::String("recalled context".to_string()),
-                ],
-                Next {
-                    chain: &[],
-                    idx: 0,
-                    terminal: capturing_terminal,
-                },
-            )
-            .await
-            .expect("turn succeeds");
-
-        assert_eq!(result, Value::String("answer".to_string()));
-        let capture = take_terminal_capture();
-        assert_eq!(
-            capture.inputs,
-            vec![
-                Value::String("hello".to_string()),
-                Value::String("recalled context".to_string()),
-            ]
-        );
-        assert_eq!(capture.supplement.as_deref(), Some("priority-sync"));
     }
 }
 

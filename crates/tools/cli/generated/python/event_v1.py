@@ -11,6 +11,9 @@ EVENT_KIND_REGISTRY: Final[dict[str, dict[str, object]]] = {'agent_message': {'c
  'approval_request': {'category': 'agent', 'terminal': False, 'terminal_sense': 'n/a'},
  'approval_resolved': {'category': 'agent', 'terminal': False, 'terminal_sense': 'n/a'},
  'cancelled': {'category': 'error', 'terminal': False, 'terminal_sense': 'n/a'},
+ 'capability_effect_receipt': {'category': 'observability',
+                               'terminal': False,
+                               'terminal_sense': 'n/a'},
  'checkpoint_restored': {'category': 'lifecycle', 'terminal': False, 'terminal_sense': 'n/a'},
  'checkpoint_saved': {'category': 'lifecycle', 'terminal': False, 'terminal_sense': 'n/a'},
  'citation': {'category': 'observability', 'terminal': False, 'terminal_sense': 'n/a'},
@@ -587,6 +590,28 @@ class ModelContextMetricsEventPayload(_ModelContextMetricsEventPayloadOptional):
     call_kind: Literal['node', 'tool_continuation', 'warmup', 'compaction', 'hook']
     plan_status: Literal['assembled', 'inherited', 'unplanned']
 
+class _CapabilityEffectReceiptEventPayloadOptional(TypedDict, total=False):
+    grant_id: str
+    approval_status: Literal['not_required', 'approved']
+    approval_id: str
+
+class CapabilityEffectReceiptEventPayload(_CapabilityEffectReceiptEventPayloadOptional):
+    kind: Literal['capability_effect_receipt']
+    receipt_id: str
+    execution_id: str
+    node_id: int
+    invocation_id: str
+    capability_binding: str
+    dispatch_path: Literal['inv_cap', 'ask_tool']
+    implementation_kind: Literal['native', 'python', 'typescript', 'host']
+    implementation_ref: str
+    request_digest: str
+    admission_kind: Literal['read_only', 'sandbox', 'grant']
+    idempotency_proof: Literal['remote_deduplicated', 'transaction_verified']
+    idempotency_key_digest: str
+    effect_ref: str
+    status: Literal['committed']
+
 class ModelReroutedEventPayload(TypedDict):
     kind: Literal['model_rerouted']
     original_model: str
@@ -848,6 +873,7 @@ KnownEventPayload: TypeAlias = (
     GraphEdgeEventPayload |
     ContextCompactedEventPayload |
     ModelContextMetricsEventPayload |
+    CapabilityEffectReceiptEventPayload |
     ModelReroutedEventPayload |
     CancelledEventPayload |
     LoopDetectedEventPayload |
@@ -933,6 +959,7 @@ CORE_EVENT_KINDS: Final[tuple[str, ...]] = (
     'graph_edge',
     'context_compacted',
     'model_context_metrics',
+    'capability_effect_receipt',
     'model_rerouted',
     'cancelled',
     'loop_detected',

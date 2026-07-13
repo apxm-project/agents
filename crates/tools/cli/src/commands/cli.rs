@@ -34,9 +34,9 @@ pub enum Commands {
         /// Project name (creates a directory with this name)
         name: String,
     },
-    /// Compile canonical AIR source to an artifact
+    /// Compile canonical AIR or supported frontend source to an artifact
     Compile {
-        /// Input workflow source (.py frontend, .air, or directory containing one .air)
+        /// Input source (.py, .ts, .air, or an agent package directory)
         input: PathBuf,
         /// Output artifact path
         #[arg(short, long)]
@@ -80,12 +80,9 @@ pub enum Commands {
         #[arg(long = "embed-manifest", value_name = "skill.toml")]
         embed_manifest: Option<PathBuf>,
     },
-    /// Compile an agent declaratively to AIR on stdout. This is the
-    /// cross-repo process contract Server invokes as a subprocess instead of
-    /// reaching into this repo's Python frontend directly — see
-    /// `commands::compile::compile_service_command` for the exact I/O
-    /// contract (stdout carries ONLY the emitted AIR; errors + logs go to
-    /// stderr; nonzero exit on failure).
+    /// Synthesize an entry-less declarative agent package to AIR on stdout.
+    /// Stdout contains only AIR; diagnostics use stderr and failures are
+    /// nonzero so callers can consume the command as a process contract.
     CompileService {
         /// Agent directory (contains agent.toml, integrity.toml, and capabilities/)
         agent_dir: PathBuf,
@@ -101,10 +98,10 @@ pub enum Commands {
         #[arg(short, long)]
         output: Option<PathBuf>,
     },
-    /// Compile and execute AIR source through the runtime
+    /// Compile and execute canonical AIR or supported frontend source
     #[command(trailing_var_arg = true)]
     Execute {
-        /// Input workflow source (.py frontend, .air, or directory containing one .air)
+        /// Input source (.py, .ts, .air, or an agent package directory)
         input: PathBuf,
         /// Arguments to pass to the entry flow
         #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
