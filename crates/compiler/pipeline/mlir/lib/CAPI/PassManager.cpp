@@ -116,10 +116,11 @@ void apxm_pass_manager_add_inline(ApxmPassManager* pm);
 
 bool apxm_pass_manager_has_pass(ApxmPassManager* pm, const char* pass_name) {
   if (!pm || !pass_name) return false;
+  if (llvm::StringRef(pass_name) == "dspy-optimize") return false;
 
   // Simple implementation - in real system would use pass registry
   static const char* known_passes[] = {
-    "normalize", "build-prompt", "dspy-optimize",
+    "normalize", "build-prompt",
     "template-specialization", "dead-context-elimination",
     "pure-dead-node-elimination",
     "scheduling", "shared-prefix-analysis", "assign-priority",
@@ -141,6 +142,7 @@ bool apxm_pass_manager_add_pass_by_name(ApxmPassManager* pm, const char* pass_na
 
   // Use generated dispatch from Rust pass definitions
   llvm::StringRef name(pass_name);
+  if (name == "dspy-optimize") return false;
   #include "ais/CAPI/PassDispatch.inc"
 
   return false;  // Unknown pass

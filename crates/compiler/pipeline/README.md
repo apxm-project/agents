@@ -55,13 +55,13 @@ the production-safe subset; semantic rewrites remain explicit until their typed
 contracts are enforced.
 
 - `normalize` -- canonical form normalization
-- `build-prompt` -- LLM template/input_names contract materialization
-- `template-specialization` -- folds safe constant prompt inputs
-- `dead-context-elimination` -- removes unused context propagation
+- `build-prompt` -- materializes templates only after explicit positional prompt roles establish input channels
+- `template-specialization` -- folds constant `user` prompt inputs without collapsing protected channels
+- `dead-context-elimination` -- removes only unused `user` context and retains protected channels
 - `scheduling` -- emits backend-agnostic scheduling metadata
 - `shared-prefix-analysis` -- annotates existing prefix-reuse opportunities
 - `assign-priority` -- priority annotation for scheduling
-- `dspy-optimize` -- config-gated compiler prompt optimization path
+- `dspy-optimize` -- fail-closed offline evaluation pass; public production compiler paths reject it
 - `unconsumed-value-warning` -- opt-in diagnostic for unused produced values
 - `fuse-ask-ops` -- explicit-only ASK fusion experiment; not a production claim
 - `prompt-canonicalization` -- explicit-only prefix-cache layout experiment
@@ -112,6 +112,21 @@ Optimized MLIR  →  apxm_codegen_emit_artifact() [FFI]  →  ExecutionDag  → 
 ```
 
 `ArtifactEmitter.cpp` walks the MLIR and produces the DAG. `codegen/artifact.rs` handles wire format v3 serialization. `apxm-artifact` defines the binary container format.
+
+## Prompt input roles
+
+Every ASK, THINK, or REASON node with prompt inputs carries an explicit
+`input_roles` array positional with `input_names` and context operands. The
+allowed roles are `user`, `system`, `dependency_only`, `tool_context`, and
+`control`. Compiler transformations do not infer roles from input names;
+they preserve protected roles and only specialize or prune `user` inputs.
+Frontend AIR validation rejects a context-bearing LLM node without this
+contract, and artifact validation rejects malformed role arrays before an
+artifact is published.
+
+DSPy prompt optimization is not available from public production compiler
+entry points. Offline evaluation owns the complete request, backend evidence,
+and optimizer response; missing or incomplete DSPy input fails closed.
 
 ## Key Exports
 

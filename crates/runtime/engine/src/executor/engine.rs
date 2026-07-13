@@ -232,14 +232,36 @@ impl ExecutorEngine {
 
     /// Sequential fallback executor for DAGs.
     ///
-    /// Processes nodes in order, suitable for single-node DAGs, testing, and
-    /// as a fallback when the dataflow scheduler encounters an error.
+    /// Processes a normalized typed-edge order, suitable for single-node DAGs,
+    /// testing, and as a fallback when the dataflow scheduler encounters an
+    /// error. Replay seeds use the same checked boundary contract as the
+    /// parallel scheduler; the fallback must not rerun completed upstream work
+    /// or discard effect/control ordering.
     async fn execute_dag_sequential(&self, dag: ExecutionDag) -> Result<ExecutionResult> {
         let start_time = std::time::Instant::now();
         let node_statuses = Arc::new(RwLock::new(HashMap::<u64, NodeStatus>::new()));
-        let node_results = Arc::new(RwLock::new(HashMap::<u64, Value>::new()));
+        let replay_seed =
+            crate::scheduler::ReplaySeed::from_metadata_checked(&self.context.metadata, &dag)
+                .map_err(|error| RuntimeError::Scheduler {
+                    message: format!("partial replay rejected: {error}"),
+                })?;
+        let execution_order =
+            crate::scheduler::ReplaySeed::normalized_sequential_order(&dag, replay_seed.as_ref())
+                .map_err(|error| RuntimeError::Scheduler {
+                message: format!("sequential fallback replay normalization rejected: {error}"),
+            })?;
+        let seeded_results = replay_seed
+            .as_ref()
+            .map(|seed| seed.seed_tokens.clone())
+            .unwrap_or_default();
+        let node_results = Arc::new(RwLock::new(seeded_results));
+        let nodes_by_id: HashMap<_, _> = dag.nodes.iter().map(|node| (node.id, node)).collect();
 
-        for node in &dag.nodes {
+        for node_id in execution_order {
+            let node = nodes_by_id
+                .get(&node_id)
+                .copied()
+                .expect("normalized execution order only contains declared nodes");
             let node_start = std::time::Instant::now();
             let ready_at_ms = start_time.elapsed().as_millis();
             let priority = sequential_priority_label(node.metadata.priority);
@@ -619,6 +641,31 @@ mod tests {
         );
     }
 
+    #[tokio::test]
+    async fn sequential_fallback_normalizes_replay_edges_before_dispatch() {
+        let dag = nop_chain();
+        let mut ctx = test_context().await;
+        ctx.metadata.insert(
+            crate::metadata_keys::REPLAY_FROM_NODE.to_string(),
+            "2".to_string(),
+        );
+        ctx.metadata.insert(
+            crate::metadata_keys::REPLAY_TOKEN_VALUES.to_string(),
+            serde_json::json!({ "10": "seeded-upstream" }).to_string(),
+        );
+
+        let result = ExecutorEngine::new(ctx)
+            .execute_dag_sequential(dag)
+            .await
+            .expect("normalized sequential replay execution");
+
+        assert_eq!(result.stats.executed_nodes, 2);
+        assert_eq!(
+            result.results.get(&30),
+            Some(&Value::String("seeded-upstream".to_string()))
+        );
+    }
+
     /// A requested partial replay may not skip a completed capability invocation
     /// until the runtime can load a persisted effect and approval receipt for it.
     /// Token values alone prove dataflow continuity, not authority parity.
@@ -626,6 +673,10 @@ mod tests {
     async fn fallback_path_rejects_replay_that_skips_a_capability_effect() {
         let mut dag = nop_chain();
         dag.nodes[0].op_type = AISOperationType::InvCap;
+        dag.nodes[0].attributes.insert(
+            apxm_core::constants::graph::attrs::CAPABILITY.to_string(),
+            Value::String("calendar.write".to_string()),
+        );
 
         let mut ctx = test_context().await;
         ctx.metadata.insert(
@@ -636,16 +687,18 @@ mod tests {
             crate::metadata_keys::REPLAY_TOKEN_VALUES.to_string(),
             serde_json::json!({ "10": "prior-capability-output" }).to_string(),
         );
+        ctx.metadata.insert(
+            crate::metadata_keys::REPLAY_SOURCE_EXECUTION_ID.to_string(),
+            "execution-1".to_string(),
+        );
 
         let error = ExecutorEngine::new(ctx)
             .execute_dag(dag)
             .await
             .expect_err("partial replay must reject an unverified capability effect");
-        assert!(
-            error
-                .to_string()
-                .contains("partial replay rejected: partial replay cannot skip completed node 1"),
-            "unexpected replay rejection: {error}"
+        assert_eq!(
+            error.to_string(),
+            "Scheduler error: partial replay rejected: partial replay cannot reuse completed capability node 1: durable host-effect evidence is missing"
         );
     }
 

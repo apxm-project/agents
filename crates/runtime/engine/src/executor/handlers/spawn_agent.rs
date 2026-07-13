@@ -17,6 +17,7 @@
 
 use super::{
     ExecutionContext, Node, Result, Value, get_optional_string_attribute, get_string_attribute,
+    llm::context_planning_runtime_error,
 };
 use crate::aam::TransitionLabel;
 use crate::agent_router::{
@@ -30,7 +31,6 @@ use crate::process_table::AgentSpawnContext;
 use apxm_core::apxm_op;
 use apxm_core::constants::graph::attrs as graph_attrs;
 use apxm_core::constants::orchestration::admission as orchestration_admission;
-use apxm_core::constants::runtime::context_stack as context_stack_consts;
 use apxm_core::constants::runtime::{belief_keys, response_keys};
 use apxm_core::error::RuntimeError;
 use apxm_core::paths::session_node_dir_name;
@@ -217,7 +217,7 @@ pub async fn execute(ctx: &ExecutionContext, node: &Node, _inputs: Vec<Value>) -
         };
 
         // Project current AAM state into AamContext for the spawned agent
-        let aam_context = project_aam_context(ctx, node.id, profile_name);
+        let aam_context = project_aam_context(ctx, node, profile_name)?;
 
         // Build generic APXM-owned env for the external agent. Adapter-specific
         // environment belongs in the APXM ACP profile, not in runtime.
@@ -786,7 +786,7 @@ fn get_optional_string_list_attribute(node: &Node, key: &str) -> Result<Vec<Stri
 ///
 /// Filters out internal beliefs (prefixed with `_`) and only includes active goals.
 /// Values are converted from the runtime `Value` type to `serde_json::Value`.
-fn project_aam_context(ctx: &ExecutionContext, node_id: u64, profile: &str) -> AamContext {
+fn project_aam_context(ctx: &ExecutionContext, node: &Node, profile: &str) -> Result<AamContext> {
     let beliefs: HashMap<String, serde_json::Value> = ctx
         .aam
         .beliefs()
@@ -816,26 +816,25 @@ fn project_aam_context(ctx: &ExecutionContext, node_id: u64, profile: &str) -> A
         })
         .collect();
 
-    let system_prompt = ctx.context_stack.as_ref().and_then(|stack| {
-        let assembly = stack.assemble(
-            node_id,
-            profile,
-            context_stack_consts::DEFAULT_PROMPT_BUDGET_TOKENS,
-        );
-
+    let system_prompt = if let Some(stack) = ctx.context_stack.as_ref() {
+        let assembly = stack
+            .assemble(node.id, profile)
+            .map_err(|error| context_planning_runtime_error(node, error))?;
         if assembly.frames.is_empty() {
             None
         } else {
             Some(assembly.to_string())
         }
-    });
+    } else {
+        None
+    };
 
-    AamContext {
+    Ok(AamContext {
         beliefs,
         goals,
         capabilities,
         system_prompt,
-    }
+    })
 }
 
 #[cfg(test)]

@@ -9,7 +9,8 @@ use crate::analysis::AnalysisStore;
 use crate::api::{Context, Module, module::invalid_input_error};
 use crate::ffi;
 use crate::ffi::{apxm_module_drain_pass_stats, apxm_module_total_template_tokens};
-use apxm_core::error::compiler::Result;
+use apxm_core::error::compiler::{CompilerError, Result};
+use apxm_core::error::{Error, codes::ErrorCode};
 use apxm_core::types::OptimizationLevel;
 use apxm_core::types::compiler::CompilerAnalysisKind;
 use apxm_core::types::compiler::metadata::{
@@ -50,11 +51,14 @@ impl PipelineAnalysisCache {
         }
 
         if self.store.is_none() {
-            self.store = Some(AnalysisStore::new(module.analysis_dags()?));
+            self.store = Some(AnalysisStore::with_inputs(
+                module.analysis_dags()?,
+                module.analysis_inputs().clone(),
+            ));
             self.snapshot_is_current = true;
         } else if !self.snapshot_is_current {
             let store = self.store.as_mut().expect("analysis store exists");
-            store.rebase(module.analysis_dags()?);
+            store.rebase_with_inputs(module.analysis_dags()?, module.analysis_inputs().clone());
             self.snapshot_is_current = true;
         }
 
@@ -106,6 +110,7 @@ impl<'ctx> PassManager<'ctx> {
 
     /// Create a manager configured to execute a typed plan.
     pub fn from_plan(context: &'ctx Context, plan: PipelinePlan) -> Result<Self> {
+        Self::validate_plan(&plan)?;
         let mut pm = Self::new(context)?;
         pm.set_plan(plan);
         Ok(pm)
@@ -139,6 +144,7 @@ impl<'ctx> PassManager<'ctx> {
 
     /// Add a direct MLIR pass to the raw manager queue.
     pub fn add_pass(&mut self, name: &str) -> Result<&mut Self> {
+        Self::validate_stage_name(name)?;
         self.plan = None;
         let c_name = CString::new(name)
             .map_err(|e| invalid_input_error(format!("Invalid pass name: {}", e)))?;
@@ -161,7 +167,7 @@ impl<'ctx> PassManager<'ctx> {
         self.add_pass(BUILD_PROMPT.name)
     }
 
-    /// Register dspy-optimize on the raw manager queue.
+    /// Reject DSPy optimization in the public compiler pass-manager surface.
     pub fn dspy_optimize(&mut self) -> Result<&mut Self> {
         self.add_pass(DSPY_OPTIMIZE.name)
     }
@@ -257,6 +263,7 @@ impl<'ctx> PassManager<'ctx> {
         module: &Module,
         plan: &PipelinePlan,
     ) -> Result<PipelineDiagnostics> {
+        Self::validate_plan(plan)?;
         let mut diagnostics = PipelineDiagnostics::new();
         let pipeline_start = Instant::now();
         diagnostics.initial_ops = count_module_ops(module)?;
@@ -314,6 +321,7 @@ impl<'ctx> PassManager<'ctx> {
     }
 
     fn run_plan(&self, module: &Module, plan: &PipelinePlan) -> Result<()> {
+        Self::validate_plan(plan)?;
         let mut analyses = PipelineAnalysisCache::default();
         for step in &plan.steps {
             match step {
@@ -423,6 +431,29 @@ impl<'ctx> PassManager<'ctx> {
             "pass manager execution",
         )
     }
+
+    /// Reject stages that require the offline evaluation owner.
+    pub(crate) fn validate_plan(plan: &PipelinePlan) -> Result<()> {
+        if plan.contains_stage(DSPY_OPTIMIZE.name) {
+            return Err(dspy_unavailable_error());
+        }
+        Ok(())
+    }
+
+    fn validate_stage_name(name: &str) -> Result<()> {
+        if name == DSPY_OPTIMIZE.name {
+            return Err(dspy_unavailable_error());
+        }
+        Ok(())
+    }
+}
+
+/// Construct the shared production-boundary error for DSPy execution.
+fn dspy_unavailable_error() -> CompilerError {
+    CompilerError::Unsupported(Box::new(Error::new_generic(
+        ErrorCode::InternalError,
+        "dspy-optimize is unavailable in production compilation; run prompt optimization through the offline evaluation workflow".to_string(),
+    )))
 }
 
 /// Run an iteration body until it reports no change or consumes its bound.
@@ -557,6 +588,7 @@ mod analysis_cache_tests {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::api::Module;
 
     #[test]
     fn convergence_stops_at_the_first_fixed_point() {
@@ -575,5 +607,88 @@ mod tests {
 
         assert_eq!(result.iterations, 3);
         assert_eq!(result.status, ConvergenceStatus::IterationLimitReached);
+    }
+
+    #[test]
+    fn public_dspy_execution_paths_fail_closed() {
+        let context = Context::new().expect("compiler context");
+        let module = Module::parse(
+            &context,
+            r#"
+module {
+  func.func @dspy_boundary() -> !ais.token attributes {ais.entry} {
+    %answer = ais.ask "Answer concisely." : !ais.token
+    func.return %answer : !ais.token
+  }
+}
+"#,
+        )
+        .expect("direct AIR parses");
+        let mut manager = PassManager::new(&context).expect("pass manager");
+
+        let add_error = match manager.add_pass(DSPY_OPTIMIZE.name) {
+            Ok(_) => panic!("raw DSPy registration must fail"),
+            Err(error) => error,
+        };
+        assert!(
+            add_error
+                .to_string()
+                .contains("offline evaluation workflow")
+        );
+
+        let helper_error = match manager.dspy_optimize() {
+            Ok(_) => panic!("DSPy helper registration must fail"),
+            Err(error) => error,
+        };
+        assert!(
+            helper_error
+                .to_string()
+                .contains("offline evaluation workflow")
+        );
+
+        let mut plan = PipelinePlan::new();
+        plan.push_stage(PipelineStage::new(
+            DSPY_OPTIMIZE.name,
+            PipelineStageKind::MlirRewrite,
+            false,
+        ));
+
+        let planned_error = match PassManager::from_plan(&context, plan.clone()) {
+            Ok(_) => panic!("planned DSPy construction must fail"),
+            Err(error) => error,
+        };
+        assert!(
+            planned_error
+                .to_string()
+                .contains("offline evaluation workflow")
+        );
+
+        manager.set_plan(plan.clone());
+        let configured_error = manager
+            .run(&module)
+            .expect_err("configured DSPy execution must fail");
+        assert!(
+            configured_error
+                .to_string()
+                .contains("offline evaluation workflow")
+        );
+
+        let diagnostics_error = manager
+            .run_plan_with_metrics(&module, &plan)
+            .expect_err("diagnostic DSPy execution must fail");
+        assert!(
+            diagnostics_error
+                .to_string()
+                .contains("offline evaluation workflow")
+        );
+
+        let legacy_error = manager
+            .run_with_metrics(&module, &[DSPY_OPTIMIZE.name.to_string()])
+            .expect_err("legacy DSPy execution must fail");
+        assert!(
+            legacy_error
+                .to_string()
+                .contains("offline evaluation workflow")
+        );
     }
 }

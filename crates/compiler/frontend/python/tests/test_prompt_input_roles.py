@@ -39,6 +39,14 @@ def test_ask_serializes_every_prompt_input_role_in_input_order():
         "tool_context",
         "control",
     ]
+    answer_edges = [edge for edge in graph.to_graph().edges if edge.to_id == ask._node_id]
+    assert [edge.from_id for edge in answer_edges] == [
+        question._node_id,
+        policy._node_id,
+        dependency._node_id,
+        tool_result._node_id,
+        guard._node_id,
+    ]
 
 
 @pytest.mark.parametrize("method_name", ["ask", "think", "reason"])
@@ -73,4 +81,3 @@ def test_prompt_input_metadata_cannot_bypass_typed_bindings():
 
     with pytest.raises(ValueError, match="prompt_inputs"):
         graph.ask(prompt="Answer", input_names=["question"])
-

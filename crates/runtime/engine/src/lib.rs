@@ -66,6 +66,7 @@ pub use apxm_capability as capability;
 mod constants;
 pub mod context_stack;
 mod dispatch;
+pub mod effect_receipts;
 pub mod executor;
 pub mod flow_names;
 pub mod graph_lifecycle;
@@ -118,6 +119,7 @@ pub use background::{
     BackgroundExecution, BackgroundExecutionOutcome, BackgroundExecutionTask,
     BackgroundJoinFailure, PersistedBackgroundExecutionOutcome,
 };
+pub use apxm_capability_iface::CapabilityEffectReplayEvidenceEnvelope;
 pub use capability::{
     CapabilitySystem,
     flow_registry::FlowRegistry,
@@ -130,14 +132,18 @@ pub use context_stack::{
     ContextAssembly, ContextDisposition, ContextFrame, ContextPermissionScope, ContextPlan,
     ContextPlanSegment, ContextScope, ContextSensitivity, ContextStack, ContextStackConfig,
 };
+pub use effect_receipts::{
+    ExpectedCapabilityEffect, lookup_replayable_effect, mint_capability_effect_receipt_id,
+    verify_replayable_effect,
+};
 pub use executor::{
     CallSkillRequest, CallSkillResult, CancellationToken, CapabilityEffectReceiptPayload,
     ConversationMemoryMiddleware, EmitterAdapter, EventScopeState, ExecutionContext,
     ExecutionEvent, ExecutionEventEmitter, ExecutionHook, ExecutionHookContext, ExecutorEngine,
-    GraphFinishedEvent, GraphMetricsTracker, GraphStartedEvent, InnerPlanLinker,
-    LoopGuardMiddleware, ModelContextCallKind, ModelContextMetrics, ModelContextPlanStatus, Next,
-    NoOpLinker, NoOpSkillResolver, NoOpWorkflowSpawner, NodeFinishedEvent, NodeReadyEvent,
-    NodeStartedEvent, OperationMiddleware, SkillResolver, TimeoutMiddleware, TokenBudgetMiddleware,
+    GraphFinishedEvent, GraphMetricsTracker, GraphStartedEvent, InnerPlanLinker, LoopGuardMiddleware,
+    ModelContextCallKind, ModelContextMetrics, ModelContextPlanStatus, Next, NoOpLinker,
+    NoOpSkillResolver, NoOpWorkflowSpawner, NodeFinishedEvent, NodeReadyEvent, NodeStartedEvent,
+    OperationMiddleware, SkillResolver, TimeoutMiddleware, TokenBudgetMiddleware,
     TokenUsageSummary, WorkflowSpawnResult, WorkflowSpawner,
 };
 pub use graph_lifecycle::BackendGraphLifecycle;
@@ -170,8 +176,9 @@ pub use typescript_tools::{
 };
 
 pub use host_dispatch::{
-    AgentChannelHandle, HostDispatchError, HostDispatchGateway, HostProxyRequest, HostProxyResult,
-    HostToolCall, HostToolError, HostToolResult, NoOpHostDispatchGateway, SpawnOffer,
+    AgentChannelHandle, HostDispatchError, HostDispatchGateway, HostEffectCommit,
+    HostEffectOutcome, HostEffectPrepare, HostProxyRequest, HostProxyResult, HostToolCall,
+    HostToolError, HostToolResult, NoOpHostDispatchGateway, SpawnOffer,
 };
 
 pub type RuntimeResult<T> = std::result::Result<T, RuntimeError>;

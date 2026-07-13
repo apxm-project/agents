@@ -13,8 +13,9 @@
 //!   lookup below runs; anything else is treated as an exact id, unchanged.
 
 use super::{
-    ExecutionContext, Node, Result, Value, execute_llm_request_for_node, get_string_attribute,
-    read_stm_with_scope_fallback, target_resolution::resolve_target_or_passthrough,
+    ExecutionContext, Node, Result, Value, get_string_attribute,
+    llm::execute_contextual_node_request, read_stm_with_scope_fallback,
+    target_resolution::resolve_target_or_passthrough,
 };
 use crate::aam::{ScopeSpec, TransitionLabel};
 use crate::executor::ExecutorEngine;
@@ -246,7 +247,7 @@ async fn delegate_inline_agent(
         "DELEGATE dispatching to inline-spawned agent via LLM"
     );
 
-    let response = execute_llm_request_for_node(ctx, node, "DELEGATE", &request).await?;
+    let response = execute_contextual_node_request(ctx, node, "DELEGATE", &request).await?;
     Ok(Some(Value::String(response.content)))
 }
 

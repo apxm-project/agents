@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 use std::future::Future;
 use std::path::{Path, PathBuf};
 use std::pin::Pin;
@@ -6,7 +6,10 @@ use std::sync::{Arc, Mutex, Weak};
 
 use apxm_artifact::Artifact;
 use apxm_core::paths::ApxmPaths;
-use apxm_core::types::{SessionStatus, WorkflowInvocation, WorkflowTarget};
+use apxm_core::types::{
+    OPTIMIZATION_SUMMARY_ARTIFACT_SECTION, OptimizationSummaryV1, SessionStatus,
+    WorkflowInvocation, WorkflowTarget,
+};
 use apxm_runtime::{
     CancellationToken, ExecutionEventEmitter, Runtime, RuntimeError, RuntimeExecutionResult,
     WorkflowSpawnResult, WorkflowSpawner,
@@ -130,6 +133,7 @@ impl DriverWorkflowSpawner {
             &provenance,
         )?;
         let session_dir = writer.session_dir().to_path_buf();
+        persist_artifact_checkpoint_barrier(&artifact, &execution_id, &session_dir)?;
         let runtime = self.runtime()?;
         let emitter = create_session_emitter(
             writer.session_dir(),
@@ -208,6 +212,7 @@ impl DriverWorkflowSpawner {
             &provenance,
         )?;
         let session_dir = writer.session_dir().to_path_buf();
+        persist_artifact_checkpoint_barrier(&artifact, &execution_id, &session_dir)?;
         let runtime = self.runtime()?;
         let emitter = create_session_emitter(
             writer.session_dir(),
@@ -779,6 +784,54 @@ fn child_execution_id(prefix: &str, path: &Path) -> String {
     format!(
         "{prefix}-{name}-{}",
         chrono::Utc::now().format("%Y%m%d-%H%M%S-%6f")
+    )
+}
+
+/// Require current compiler replay evidence for every spawned AIR/artifact and
+/// persist its compiler-owned workflow boundary before the child runtime emits
+/// any execution events. This is the same preflight shape used by the CLI
+/// workflow runner; it never guesses a barrier from the target path or host.
+fn persist_artifact_checkpoint_barrier(
+    artifact: &Artifact,
+    execution_id: &str,
+    session_dir: &Path,
+) -> Result<(), RuntimeError> {
+    let summary_bytes = artifact
+        .section_data(OPTIMIZATION_SUMMARY_ARTIFACT_SECTION)
+        .ok_or_else(|| {
+            RuntimeError::State(
+                "spawned artifact has no versioned optimization summary; checkpoint placement is unknown"
+                    .to_string(),
+            )
+        })?;
+    let summary = serde_json::from_slice::<OptimizationSummaryV1>(summary_bytes).map_err(|e| {
+        RuntimeError::State(format!(
+            "spawned artifact has a malformed versioned optimization summary: {e}"
+        ))
+    })?;
+    if summary.schema_version != apxm_core::types::OPTIMIZATION_SUMMARY_VERSION {
+        return Err(RuntimeError::State(format!(
+            "spawned artifact has optimization summary version {}; expected {}",
+            summary.schema_version,
+            apxm_core::types::OPTIMIZATION_SUMMARY_VERSION
+        )));
+    }
+
+    let evidence = apxm_runtime::workflow::WorkflowCriticalPathEvidence {
+        artifacts: BTreeMap::from([(execution_id.to_string(), summary)]),
+    };
+    let Some(barrier) = evidence
+        .checkpoint_barrier(execution_id)
+        .map_err(RuntimeError::State)?
+    else {
+        return Ok(());
+    };
+    apxm_runtime::workflow::write_workflow_checkpoint_barrier(session_dir, 0, &barrier).map_err(
+        |e| {
+            RuntimeError::State(format!(
+                "failed to persist workflow checkpoint barrier: {e}"
+            ))
+        },
     )
 }
 

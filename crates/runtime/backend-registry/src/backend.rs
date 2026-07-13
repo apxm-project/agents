@@ -40,6 +40,30 @@ pub enum BackendError {
     #[error("Model '{model}' already exists in backend '{backend}'")]
     ModelAlreadyExists { backend: String, model: String },
 
+    #[error("Backend '{backend}' requires an explicit endpoint")]
+    MissingEndpoint { backend: String },
+
+    #[error("Backend '{backend}' endpoint must be a non-empty string")]
+    InvalidEndpoint { backend: String },
+
+    #[error("Backend '{backend}' requires at least one explicitly registered model")]
+    MissingModel { backend: String },
+
+    #[error("Backend '{backend}' registered model identifier must be non-empty")]
+    InvalidModel { backend: String },
+
+    #[error("Backend '{backend}' requires an API-key reference")]
+    MissingApiKey { backend: String },
+
+    #[error(
+        "Backend '{backend}' field '{field}' references unset environment variable '{variable}'"
+    )]
+    MissingEnvironmentReference {
+        backend: String,
+        field: String,
+        variable: String,
+    },
+
     #[error("Unable to determine home directory")]
     HomeDirMissing,
 
@@ -263,6 +287,33 @@ fn normalize_endpoint(backend: &mut BackendConfig) {
 /// credential custodian for OAuth/API-key connections; deployment code can
 /// materialize short-lived values into env vars at the process boundary.
 pub fn validate_backend_references(backend: &BackendConfig) -> Result<(), BackendError> {
+    if backend.protocol != apxm_backends::llm::ProviderProtocol::Mock {
+        let endpoint =
+            backend
+                .endpoint
+                .as_deref()
+                .ok_or_else(|| BackendError::MissingEndpoint {
+                    backend: backend.name.clone(),
+                })?;
+        if endpoint.trim().is_empty() {
+            return Err(BackendError::InvalidEndpoint {
+                backend: backend.name.clone(),
+            });
+        }
+    }
+
+    let model = backend
+        .models
+        .first()
+        .ok_or_else(|| BackendError::MissingModel {
+            backend: backend.name.clone(),
+        })?;
+    if model.id.trim().is_empty() {
+        return Err(BackendError::InvalidModel {
+            backend: backend.name.clone(),
+        });
+    }
+
     if let Some(api_key) = backend.api_key.as_deref() {
         require_env_reference(&backend.name, "api_key", api_key)?;
     }
@@ -301,7 +352,7 @@ fn is_sensitive_header(name: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use apxm_backends::llm::{BackendType, ProviderProtocol};
+    use apxm_backends::llm::{BackendType, ModelConfig, ProviderProtocol};
     use std::collections::HashMap;
 
     fn backend_with_secret_fields(
@@ -315,7 +366,19 @@ mod tests {
             endpoint: Some("https://api.openai.com/v1".to_string()),
             api_key: api_key.map(str::to_string),
             headers,
-            models: vec![],
+            models: vec![ModelConfig {
+                id: "fixture-model".to_string(),
+                aliases: vec![],
+                context_window: 0,
+                supports_vision: false,
+                supports_functions: false,
+                supports_fine_tuning: false,
+                supports_thinking: false,
+                uses_reasoning_token_fields: false,
+                supports_custom_temperature: None,
+                supports_structured_outputs: None,
+                max_output_tokens: None,
+            }],
             auto_tool_choice: None,
             supports_structured_outputs: None,
         }
@@ -356,5 +419,20 @@ mod tests {
         headers.insert("X-Trace".to_string(), "trace-id".to_string());
         let backend = backend_with_secret_fields(Some("env:OPENAI_API_KEY"), headers);
         validate_backend_references(&backend).unwrap();
+    }
+
+    #[test]
+    fn requires_explicit_endpoint_and_model() {
+        let mut backend = backend_with_secret_fields(Some("env:OPENAI_API_KEY"), HashMap::new());
+        backend.endpoint = None;
+        let error =
+            validate_backend_references(&backend).expect_err("missing endpoint must fail closed");
+        assert!(matches!(error, BackendError::MissingEndpoint { .. }));
+
+        let mut backend = backend_with_secret_fields(Some("env:OPENAI_API_KEY"), HashMap::new());
+        backend.models.clear();
+        let error =
+            validate_backend_references(&backend).expect_err("missing model must fail closed");
+        assert!(matches!(error, BackendError::MissingModel { .. }));
     }
 }

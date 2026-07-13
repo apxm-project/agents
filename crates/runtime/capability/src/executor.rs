@@ -1,13 +1,45 @@
 //! Capability executor trait and execution infrastructure
 
 use super::metadata::RuntimeCapability;
+use apxm_capability_iface::CapabilityInvocation;
 use apxm_capability_iface::sandbox::{ExecRequest, ExecResult};
+use apxm_core::events::payload::CapabilityEffectReceiptPayload;
 use apxm_core::{error::RuntimeError, types::values::Value};
 use async_trait::async_trait;
 use std::collections::HashMap;
 
 /// Result type for capability operations
 pub type CapabilityResult<T> = Result<T, RuntimeError>;
+
+/// A capability value plus optional evidence for a durably committed effect.
+///
+/// Implementations attach a receipt only after their owning boundary has
+/// persisted verified private evidence. The runtime emits the receipt without
+/// exposing the private preparation, approval, or signature material.
+#[derive(Debug, Clone)]
+pub struct CapabilityExecutionResult {
+    pub value: Value,
+    pub effect_receipt: Option<CapabilityEffectReceiptPayload>,
+}
+
+impl CapabilityExecutionResult {
+    pub fn new(value: Value) -> Self {
+        Self {
+            value,
+            effect_receipt: None,
+        }
+    }
+
+    pub fn with_effect_receipt(
+        value: Value,
+        effect_receipt: CapabilityEffectReceiptPayload,
+    ) -> Self {
+        Self {
+            value,
+            effect_receipt: Some(effect_receipt),
+        }
+    }
+}
 
 /// Trait for capability implementations
 ///
@@ -30,6 +62,31 @@ pub trait CapabilityExecutor: Send + Sync {
     ///
     /// Returns RuntimeError::Capability if execution fails
     async fn execute(&self, args: HashMap<String, Value>) -> CapabilityResult<Value>;
+
+    /// Execute with trusted invocation identity when the caller has it.
+    ///
+    /// Existing native capability implementations retain their `execute`
+    /// contract; only durable external effect executors override this method.
+    async fn execute_with_invocation(
+        &self,
+        args: HashMap<String, Value>,
+        invocation: Option<&CapabilityInvocation>,
+    ) -> CapabilityResult<Value> {
+        let _ = invocation;
+        self.execute(args).await
+    }
+
+    /// Execute with trusted invocation identity and return a receipt when the
+    /// implementation has already committed verified durable evidence.
+    async fn execute_with_effect_receipt(
+        &self,
+        args: HashMap<String, Value>,
+        invocation: Option<&CapabilityInvocation>,
+    ) -> CapabilityResult<CapabilityExecutionResult> {
+        self.execute_with_invocation(args, invocation)
+            .await
+            .map(CapabilityExecutionResult::new)
+    }
 
     /// Get capability metadata
     ///

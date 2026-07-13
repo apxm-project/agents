@@ -9,9 +9,9 @@
 
 use super::{
     ExecutionContext, Node, Result, Value, apply_llm_request_routing_from_node,
-    execute_llm_request_for_node, extract_json_from_markdown, get_optional_string_attribute,
+    extract_json_from_markdown, get_optional_string_attribute,
     inner_plan::{InnerPlanOptions, execute_inner_plan},
-    llm::attach_graph_hints,
+    llm::{attach_graph_hints, execute_contextual_node_request},
 };
 use crate::aam::{Goal as AamGoal, GoalId, GoalStatus, TransitionLabel};
 use apxm_backends::LLMRequest;
@@ -196,7 +196,7 @@ async fn execute_plan_once(
 ) -> Result<Value> {
     let transition_label = TransitionLabel::operation(node.id, node.op_type);
     // Execute LLM request
-    let response = execute_llm_request_for_node(ctx, node, "PLAN", request).await?;
+    let response = execute_contextual_node_request(ctx, node, "PLAN", request).await?;
 
     let content = response.content;
     tracing::info!(
@@ -493,7 +493,7 @@ async fn generate_inner_plan(
     }
     request = attach_graph_hints(ctx, node, request);
 
-    let response = execute_llm_request_for_node(ctx, node, "INNER_PLAN", &request).await?;
+    let response = execute_contextual_node_request(ctx, node, "INNER_PLAN", &request).await?;
 
     let content = response.content;
     tracing::info!(

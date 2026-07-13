@@ -9,8 +9,8 @@
 
 use super::{
     ExecutionContext, Node, Result, Value, apply_llm_request_routing_from_node,
-    execute_llm_request_for_node, extract_json_from_markdown, get_optional_string_attribute,
-    llm::attach_graph_hints,
+    extract_json_from_markdown, get_optional_string_attribute,
+    llm::{attach_graph_hints, execute_contextual_node_request},
 };
 use apxm_backends::LLMRequest;
 use apxm_core::constants::graph::attrs as graph_attrs;
@@ -248,7 +248,7 @@ async fn execute_reflect_once(
     request: &LLMRequest,
 ) -> Result<Value> {
     // Execute LLM request
-    let response = execute_llm_request_for_node(ctx, node, "REFLECT", request).await?;
+    let response = execute_contextual_node_request(ctx, node, "REFLECT", request).await?;
 
     let content = response.content;
 

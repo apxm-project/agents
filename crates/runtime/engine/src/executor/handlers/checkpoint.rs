@@ -1,11 +1,8 @@
-//! CHECKPOINT operation - Durable execution snapshot stub
+//! CHECKPOINT operation - durable execution snapshot persistence.
 //!
-//! Serializes a checkpoint payload for the current execution scope and
-//! continues immediately by emitting a manifest token.
-//!
-//! This stub snapshots AAM state plus the drained input frontier. Full
-//! scheduler frontier and node-status capture will be added once that state is
-//! exposed to handlers.
+//! Serializes the current execution scope and drained input frontier, persists
+//! it through the selected storage contract, and emits a manifest token only
+//! after the selected backend acknowledges the payload.
 
 use super::{
     ExecutionContext, Node, Result, Value, get_input, get_optional_string_attribute,
@@ -13,12 +10,15 @@ use super::{
 };
 use crate::aam::TransitionLabel;
 use crate::memory::MemorySpace;
+use crate::scheduler::SchedulerSnapshot;
+use crate::scheduler::snapshot::current_checkpoint_scheduler_snapshot;
 use apxm_core::constants::graph::attrs as graph_attrs;
 use apxm_core::error::RuntimeError;
-use apxm_core::types::values::Number;
+use apxm_core::types::{OpStatus, values::Number};
 use serde::Serialize;
 use std::collections::HashMap;
-use std::path::PathBuf;
+use std::io::Write;
+use std::path::{Path, PathBuf};
 
 const SCOPE_FULL: &str = "full";
 const SCOPE_LOCAL: &str = "local";
@@ -31,7 +31,6 @@ const ON_FAIL_HALT: &str = "halt";
 const ON_FAIL_CONTINUE: &str = "continue";
 
 const CHECKPOINT_DIR_ENV: &str = "APXM_CHECKPOINT_DIR";
-const DEFAULT_CHECKPOINT_DIR: &str = "apxm-checkpoints";
 const CHECKPOINT_MANIFEST_PREFIX: &str = "_checkpoint_manifest:";
 const CHECKPOINT_PAYLOAD_PREFIX: &str = "_checkpoint_payload:";
 
@@ -45,8 +44,8 @@ struct CheckpointSnapshotEnvelope {
     timestamp: String,
     ttl_seconds: Option<u64>,
     aam: crate::aam::AamCheckpoint,
-    token_map: HashMap<String, Value>,
-    node_status_vector: Vec<String>,
+    input_frontier: HashMap<String, Value>,
+    scheduler: SchedulerSnapshot,
     notes: Vec<String>,
 }
 
@@ -79,33 +78,39 @@ pub async fn execute(ctx: &ExecutionContext, node: &Node, inputs: Vec<Value>) ->
 
     let ttl_seconds = get_optional_u64_attribute(node, graph_attrs::TTL_SECONDS)?;
 
-    // The scheduler only invokes handlers once upstream inputs are available,
-    // so consuming the first input gives this stub barrier semantics.
+    // The scheduler invokes handlers only after upstream inputs are available,
+    // so consuming the first input establishes the checkpoint barrier.
     let _barrier_input = get_input(node, &inputs, 0)?;
+    let scheduler =
+        current_checkpoint_scheduler_snapshot().ok_or_else(|| RuntimeError::Operation {
+            op_type: node.op_type,
+            message: "CHECKPOINT requires scheduler-owned replay frontier evidence".to_string(),
+        })?;
+    let running_nodes = scheduler
+        .ops
+        .iter()
+        .filter(|operation| operation.node_id != node.id && operation.status == OpStatus::Running)
+        .map(|operation| operation.node_id)
+        .collect::<Vec<_>>();
+    validate_replayable_scheduler_frontier(
+        node,
+        scheduler.replay_supported,
+        &scheduler.replay_notes,
+        &running_nodes,
+    )?;
 
     let (captured_scope_id, aam_snapshot, mut notes) = resolve_scope_snapshot(ctx, &scope);
-    notes.push(
-        "Stub captures the drained input frontier only; full live-edge token capture requires scheduler integration."
-            .to_string(),
-    );
-    notes.push(
-        "Scheduler node-status vector is not exposed to handlers yet; the snapshot stores an empty placeholder."
-            .to_string(),
-    );
-
-    let effective_storage = if requested_storage == STORAGE_CUSTOM {
-        notes.push(
-            "storage=\"custom\" is not wired to a host backend yet; falling back to filesystem persistence."
-                .to_string(),
-        );
-        STORAGE_FS.to_string()
-    } else {
-        requested_storage.clone()
-    };
+    notes.push(format!(
+        "Captured scheduler replay frontier at the checkpoint barrier: {} live edges, {} tokens, and {} node statuses.",
+        scheduler.edges.len(),
+        scheduler.tokens.len(),
+        scheduler.ops.len(),
+    ));
+    let effective_storage = requested_storage.clone();
 
     let timestamp = aam_snapshot.timestamp.to_rfc3339();
     let snapshot = CheckpointSnapshotEnvelope {
-        version: 1,
+        version: 2,
         checkpoint_id: checkpoint_id.clone(),
         execution_id: ctx.execution_id.clone(),
         scope: scope.clone(),
@@ -113,8 +118,8 @@ pub async fn execute(ctx: &ExecutionContext, node: &Node, inputs: Vec<Value>) ->
         timestamp: timestamp.clone(),
         ttl_seconds,
         aam: aam_snapshot,
-        token_map: drained_token_map(&inputs),
-        node_status_vector: Vec::new(),
+        input_frontier: drained_input_frontier(&inputs),
+        scheduler,
         notes: notes.clone(),
     };
 
@@ -228,7 +233,7 @@ pub async fn execute(ctx: &ExecutionContext, node: &Node, inputs: Vec<Value>) ->
         effective_storage = %persisted.effective_storage,
         location = %persisted.location,
         byte_size,
-        "CHECKPOINT snapshot persisted (stub)"
+        "CHECKPOINT snapshot persisted"
     );
 
     Ok(Value::Object(manifest))
@@ -412,7 +417,7 @@ fn root_scope_id(ctx: &ExecutionContext) -> String {
     }
 }
 
-fn drained_token_map(inputs: &[Value]) -> HashMap<String, Value> {
+fn drained_input_frontier(inputs: &[Value]) -> HashMap<String, Value> {
     inputs
         .iter()
         .enumerate()
@@ -435,15 +440,23 @@ fn validate_scope(node: &Node, scope: &str) -> Result<()> {
 }
 
 fn validate_storage(node: &Node, storage: &str) -> Result<()> {
-    if matches!(storage, STORAGE_FS | STORAGE_MEMORY | STORAGE_CUSTOM) {
+    if matches!(storage, STORAGE_FS | STORAGE_MEMORY) {
         return Ok(());
+    }
+
+    if storage == STORAGE_CUSTOM {
+        return Err(RuntimeError::Operation {
+            op_type: node.op_type,
+            message: "Checkpoint storage 'custom' is unavailable because no typed persistence backend is registered"
+                .to_string(),
+        });
     }
 
     Err(RuntimeError::Operation {
         op_type: node.op_type,
         message: format!(
-            "Unsupported checkpoint storage '{}'; expected '{}', '{}', or '{}'",
-            storage, STORAGE_FS, STORAGE_MEMORY, STORAGE_CUSTOM
+            "Unsupported checkpoint storage '{}'; expected '{}' or '{}'",
+            storage, STORAGE_FS, STORAGE_MEMORY
         ),
     })
 }
@@ -462,20 +475,100 @@ fn validate_on_fail(node: &Node, on_fail: &str) -> Result<()> {
     })
 }
 
+/// Require the captured frontier to authorize replay with no concurrent operations.
+fn validate_replayable_scheduler_frontier(
+    node: &Node,
+    replay_supported: bool,
+    replay_notes: &[String],
+    running_nodes: &[u64],
+) -> Result<()> {
+    if !replay_supported {
+        let reason = if replay_notes.is_empty() {
+            "the scheduler did not provide replay validation details".to_string()
+        } else {
+            replay_notes.join("; ")
+        };
+        return Err(RuntimeError::Operation {
+            op_type: node.op_type,
+            message: format!("CHECKPOINT rejects a non-replayable scheduler frontier: {reason}"),
+        });
+    }
+
+    if running_nodes.is_empty() {
+        return Ok(());
+    }
+
+    Err(RuntimeError::Operation {
+        op_type: node.op_type,
+        message: format!(
+            "CHECKPOINT requires a quiescent scheduler frontier; node(s) {} are still running",
+            running_nodes
+                .iter()
+                .map(ToString::to_string)
+                .collect::<Vec<_>>()
+                .join(", ")
+        ),
+    })
+}
+
 fn persist_snapshot_to_fs(checkpoint_id: &str, payload: &[u8]) -> std::io::Result<PathBuf> {
-    let checkpoint_dir = checkpoint_root_dir();
-    std::fs::create_dir_all(&checkpoint_dir)?;
+    let checkpoint_dir = checkpoint_root_dir()?;
+    persist_snapshot_to_dir(&checkpoint_dir, checkpoint_id, payload)
+}
+
+/// Persist a snapshot atomically and synchronously within a configured root.
+fn persist_snapshot_to_dir(
+    checkpoint_dir: &Path,
+    checkpoint_id: &str,
+    payload: &[u8],
+) -> std::io::Result<PathBuf> {
+    std::fs::create_dir_all(checkpoint_dir)?;
 
     let file_name = format!("{}.json", sanitize_filename_component(checkpoint_id));
     let path = checkpoint_dir.join(file_name);
-    std::fs::write(&path, payload)?;
+    let temporary_path = checkpoint_dir.join(format!(
+        ".{}.{}.tmp",
+        sanitize_filename_component(checkpoint_id),
+        uuid::Uuid::now_v7()
+    ));
+    let write_result: std::io::Result<()> = (|| {
+        let mut file = std::fs::OpenOptions::new()
+            .create_new(true)
+            .write(true)
+            .open(&temporary_path)?;
+        file.write_all(payload)?;
+        file.sync_all()?;
+        std::fs::rename(&temporary_path, &path)?;
+        std::fs::File::open(checkpoint_dir)?.sync_all()?;
+        Ok(())
+    })();
+    if write_result.is_err() {
+        let _ = std::fs::remove_file(&temporary_path);
+    }
+    write_result?;
     Ok(path)
 }
 
-fn checkpoint_root_dir() -> PathBuf {
-    std::env::var_os(CHECKPOINT_DIR_ENV)
+/// Resolve the explicitly configured filesystem checkpoint root.
+fn checkpoint_root_dir() -> std::io::Result<PathBuf> {
+    checkpoint_root_dir_from(std::env::var_os(CHECKPOINT_DIR_ENV))
+}
+
+fn checkpoint_root_dir_from(
+    configured_root: Option<std::ffi::OsString>,
+) -> std::io::Result<PathBuf> {
+    configured_root
+        .filter(|value| !value.is_empty())
         .map(PathBuf::from)
-        .unwrap_or_else(|| std::env::temp_dir().join(DEFAULT_CHECKPOINT_DIR))
+        .ok_or_else(|| {
+            std::io::Error::new(
+                std::io::ErrorKind::NotFound,
+                format!(
+                    "{} must be configured for filesystem checkpoints",
+                    CHECKPOINT_DIR_ENV
+                ),
+            )
+        })
 }
 
 fn sanitize_filename_component(value: &str) -> String {
@@ -555,7 +648,6 @@ fn checkpoint_manifest(
         Value::String(on_fail.to_string()),
     );
     manifest.insert("saved".to_string(), Value::Bool(saved));
-    manifest.insert("stub".to_string(), Value::Bool(true));
     manifest.insert(
         "location".to_string(),
         location
@@ -583,5 +675,138 @@ fn unsigned_number_value(value: u64) -> Value {
     match i64::try_from(value) {
         Ok(value) => Value::Number(Number::Integer(value)),
         Err(_) => Value::Number(Number::Float(value as f64)),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    //! Checkpoint persistence tests cover explicit storage and durable writes.
+
+    use super::*;
+    use apxm_core::types::operations::AISOperationType;
+
+    #[test]
+    fn rejects_unregistered_custom_storage() {
+        let node = Node::new(1, AISOperationType::Checkpoint);
+        let error = validate_storage(&node, STORAGE_CUSTOM).expect_err("custom storage rejects");
+
+        assert!(
+            error
+                .to_string()
+                .contains("no typed persistence backend is registered")
+        );
+    }
+
+    #[test]
+    fn filesystem_checkpoint_requires_an_explicit_root() {
+        let error = checkpoint_root_dir_from(None).expect_err("missing root rejects");
+
+        assert!(
+            error
+                .to_string()
+                .contains("APXM_CHECKPOINT_DIR must be configured")
+        );
+    }
+
+    #[test]
+    fn filesystem_checkpoint_uses_the_configured_root() {
+        let root = PathBuf::from("fixture-checkpoints");
+
+        assert_eq!(
+            checkpoint_root_dir_from(Some(root.as_os_str().to_os_string()))
+                .expect("configured root"),
+            root
+        );
+    }
+
+    #[test]
+    fn checkpoint_rejects_a_non_replayable_scheduler_frontier() {
+        let node = Node::new(1, AISOperationType::Checkpoint);
+        let error = validate_replayable_scheduler_frontier(
+            &node,
+            false,
+            &["completed capability effect is not replay-verifiable".to_string()],
+            &[],
+        )
+        .expect_err("non-replayable frontiers reject");
+
+        assert!(
+            error
+                .to_string()
+                .contains("completed capability effect is not replay-verifiable")
+        );
+    }
+
+    #[test]
+    fn checkpoint_rejects_an_in_flight_scheduler_frontier() {
+        let node = Node::new(1, AISOperationType::Checkpoint);
+        let error = validate_replayable_scheduler_frontier(&node, true, &[], &[2, 3])
+            .expect_err("in-flight work rejects");
+
+        assert!(
+            error.to_string().contains(
+                "requires a quiescent scheduler frontier; node(s) 2, 3 are still running"
+            )
+        );
+    }
+
+    #[test]
+    fn persists_a_complete_payload_at_the_configured_root() {
+        let root = std::env::temp_dir().join(format!("apxm-checkpoint-{}", uuid::Uuid::now_v7()));
+        let payload = b"checkpoint payload";
+        let path = persist_snapshot_to_dir(&root, "checkpoint", payload)
+            .expect("configured checkpoint write");
+
+        assert_eq!(std::fs::read(path).expect("checkpoint payload"), payload);
+        std::fs::remove_dir_all(root).expect("checkpoint cleanup");
+    }
+
+    #[test]
+    fn persists_scheduler_frontier_payload_at_the_configured_root() {
+        let root = std::env::temp_dir().join(format!("apxm-checkpoint-{}", uuid::Uuid::now_v7()));
+        let payload = serde_json::json!({
+            "version": 2,
+            "scheduler": {
+                "edges": [{
+                    "from_node_id": 1,
+                    "to_node_id": 2,
+                    "token_id": 10,
+                    "dependency_type": "Data"
+                }],
+                "tokens": [{
+                    "token_id": 10,
+                    "ready": true,
+                    "value": "ready-value",
+                    "consumers": [2]
+                }],
+                "ops": [{
+                    "node_id": 2,
+                    "status": "Running"
+                }]
+            }
+        });
+        let path = persist_snapshot_to_dir(
+            &root,
+            "checkpoint-frontier",
+            &serde_json::to_vec(&payload).expect("checkpoint payload encodes"),
+        )
+        .expect("configured checkpoint write");
+
+        let persisted: serde_json::Value =
+            serde_json::from_slice(&std::fs::read(path).expect("checkpoint payload"))
+                .expect("checkpoint payload decodes");
+        assert_eq!(
+            persisted["scheduler"]["edges"][0]["token_id"],
+            serde_json::json!(10)
+        );
+        assert_eq!(
+            persisted["scheduler"]["tokens"][0]["ready"],
+            serde_json::json!(true)
+        );
+        assert_eq!(
+            persisted["scheduler"]["ops"][0]["status"],
+            serde_json::json!("Running")
+        );
+        std::fs::remove_dir_all(root).expect("checkpoint cleanup");
     }
 }

@@ -13,6 +13,7 @@ pub mod response;
 pub mod traits;
 
 pub mod anthropic;
+pub mod configuration;
 pub mod google;
 pub(crate) mod http;
 pub mod mock;
@@ -30,14 +31,21 @@ pub use request::{
     ToolDefinition,
 };
 pub use response::{LLMResponse, TokenUsage};
-pub use traits::{LLMBackend, StreamChunk};
+pub use traits::{
+    CorrelatedBatchingCapability, CorrelatedLLMOutcome, CorrelatedLLMRequest, LLMBackend,
+    StreamChunk,
+};
 pub use vllm::{
     ApxmGraphHints, CompilerHints, GraphAwareVllmBackend, GraphMetadata, NodeSpec, PinMode,
     PinPolicy, PriorityClass,
 };
 
 use crate::llm::ProviderProtocol;
-use crate::llm::catalog::resolve_builtin_provider;
+pub use configuration::BackendConfigurationError;
+pub(crate) use configuration::{
+    ConfiguredModelCapabilities, configured_model_capabilities, configured_model_info,
+    required_config_string, resolve_configured_value,
+};
 use std::sync::Arc;
 
 /// Factory for creating LLM backends from provider configuration.
@@ -53,17 +61,11 @@ impl BackendFactory {
         api_key: &str,
         config: Option<serde_json::Value>,
     ) -> anyhow::Result<Arc<dyn LLMBackend>> {
-        let protocol = resolve_builtin_provider(provider)
-            .map(|spec| spec.protocol)
-            .or_else(|| provider.parse::<ProviderProtocol>().ok())
-            .ok_or_else(|| {
-                let supported = ProviderProtocol::all_variants()
-                    .iter()
-                    .map(ProviderProtocol::as_str)
-                    .collect::<Vec<_>>()
-                    .join(", ");
-                anyhow::anyhow!("Unknown provider: {}. Supported: {}", provider, supported)
-            })?;
+        let protocol = provider.parse::<ProviderProtocol>().map_err(|_| {
+            BackendConfigurationError::UnknownProvider {
+                provider: provider.to_string(),
+            }
+        })?;
         Self::create_from_protocol(protocol, api_key, config).await
     }
 
@@ -102,6 +104,67 @@ impl BackendFactory {
 
     /// List available backend providers.
     pub fn list_providers() -> Vec<&'static str> {
-        vec!["openai", "anthropic", "google", "ollama", "vllm", "mock"]
+        ProviderProtocol::all_variants()
+            .iter()
+            .map(ProviderProtocol::as_str)
+            .collect()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn factory_rejects_unknown_provider_without_catalog_fallback() {
+        let error = match BackendFactory::create("openrouter", "", None).await {
+            Err(error) => error,
+            Ok(_) => panic!("unregistered provider must fail closed"),
+        };
+
+        assert!(matches!(
+            error.downcast_ref::<BackendConfigurationError>(),
+            Some(BackendConfigurationError::UnknownProvider { provider }) if provider == "openrouter"
+        ));
+    }
+
+    #[tokio::test]
+    async fn factory_requires_explicit_model_and_endpoint_configuration() {
+        for protocol in [
+            ProviderProtocol::OpenAI,
+            ProviderProtocol::Anthropic,
+            ProviderProtocol::Google,
+            ProviderProtocol::Ollama,
+            ProviderProtocol::Vllm,
+        ] {
+            let error = match BackendFactory::create_from_protocol(protocol, "", None).await {
+                Err(error) => error,
+                Ok(_) => panic!("missing adapter configuration must fail closed"),
+            };
+
+            assert!(matches!(
+                error.downcast_ref::<BackendConfigurationError>(),
+                Some(BackendConfigurationError::MissingConfiguration { protocol: actual })
+                if *actual == protocol
+            ));
+        }
+
+        let error = match BackendFactory::create_from_protocol(
+            ProviderProtocol::OpenAI,
+            "",
+            Some(serde_json::json!({ "model": "fixture-model" })),
+        )
+        .await
+        {
+            Err(error) => error,
+            Ok(_) => panic!("missing endpoint must fail closed"),
+        };
+        assert!(matches!(
+            error.downcast_ref::<BackendConfigurationError>(),
+            Some(BackendConfigurationError::MissingRequiredField {
+                protocol: ProviderProtocol::OpenAI,
+                field: "base_url",
+            })
+        ));
     }
 }

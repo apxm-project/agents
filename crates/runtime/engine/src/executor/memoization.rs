@@ -5,7 +5,7 @@
 //! - **L2 (SQLite)**: Persistent disk cache that survives restarts
 //!
 //! When an LLM call has `temperature == 0.0`, the response is deterministic
-//! for a given (prompt, model, system_prompt, tools) tuple.
+//! for a given request and configured implementation/authority identity.
 
 use std::collections::HashMap;
 use std::hash::{DefaultHasher, Hash, Hasher};
@@ -36,6 +36,25 @@ struct CacheEntry {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct MemoKey(u64);
+
+/// Runtime evidence that distinguishes memoized implementations and authority.
+///
+/// A key is valid only when both identities come from the configured runtime
+/// implementation and the granted authority selected for the request.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct MemoizationIdentity {
+    pub request_id: String,
+    pub implementation_id: String,
+    pub authority_id: String,
+}
+
+impl MemoizationIdentity {
+    fn is_configured(&self) -> bool {
+        !self.request_id.is_empty()
+            && !self.implementation_id.is_empty()
+            && !self.authority_id.is_empty()
+    }
+}
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct MemoStats {
@@ -249,36 +268,38 @@ impl MemoCache {
         self
     }
 
-    /// Compute a memo key from the deterministic components of an LLM request.
-    /// Returns `None` if the request is non-deterministic (temperature > 0).
+    /// Compute a key only when the caller supplies configured implementation
+    /// and authority identities.
+    ///
+    /// Legacy callers have no evidence that would prevent implementation or
+    /// authority aliasing, so they cannot populate the cache.
     pub fn compute_key(
-        prompt: &str,
-        system_prompt: Option<&str>,
-        model: Option<&str>,
-        temperature: f64,
-        tools: Option<&[String]>,
-        output_schema: Option<&str>,
+        _prompt: &str,
+        _system_prompt: Option<&str>,
+        _model: Option<&str>,
+        _temperature: f64,
+        _tools: Option<&[String]>,
+        _output_schema: Option<&str>,
     ) -> Option<MemoKey> {
-        // Only cache deterministic calls
-        if temperature > 0.0 {
+        None
+    }
+
+    /// Compute a memo key from complete deterministic request, implementation,
+    /// and authority identities.
+    ///
+    /// Returns `None` for incomplete identity evidence so response reuse cannot
+    /// cross semantic, implementation, or authority boundaries. Determinism is
+    /// part of `request_id` and must be established by the compiler/runtime
+    /// before calling this method.
+    pub fn compute_key_with_identity(identity: &MemoizationIdentity) -> Option<MemoKey> {
+        if !identity.is_configured() {
             return None;
         }
         let mut hasher = DefaultHasher::new();
-        prompt.hash(&mut hasher);
-        system_prompt.unwrap_or("").hash(&mut hasher);
-        model.unwrap_or("default").hash(&mut hasher);
-
-        // Hash tools if present
-        if let Some(tools) = tools {
-            for tool in tools {
-                tool.hash(&mut hasher);
-            }
-        }
-
-        // Hash output schema if present
-        if let Some(schema) = output_schema {
-            schema.hash(&mut hasher);
-        }
+        "apxm.memoization.v3".hash(&mut hasher);
+        identity.request_id.hash(&mut hasher);
+        identity.implementation_id.hash(&mut hasher);
+        identity.authority_id.hash(&mut hasher);
 
         Some(MemoKey(hasher.finish()))
     }
@@ -622,5 +643,63 @@ impl MemoCache {
             }),
             overlay: HashMap::new(),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn identity(
+        request_id: &str,
+        implementation_id: &str,
+        authority_id: &str,
+    ) -> MemoizationIdentity {
+        MemoizationIdentity {
+            request_id: request_id.to_string(),
+            implementation_id: implementation_id.to_string(),
+            authority_id: authority_id.to_string(),
+        }
+    }
+
+    #[test]
+    fn memoization_requires_configured_identity_evidence() {
+        assert!(MemoCache::compute_key("prompt", None, None, 0.0, None, None).is_none());
+        assert!(
+            MemoCache::compute_key_with_identity(&identity("request", "", "grant:approved"))
+                .is_none()
+        );
+    }
+
+    #[test]
+    fn memo_keys_separate_implementation_and_authority_identities() {
+        let base = MemoCache::compute_key_with_identity(&identity(
+            "request:v1",
+            "backend:configured-model:rev-1",
+            "grant:read-only",
+        ))
+        .unwrap();
+        let changed_implementation = MemoCache::compute_key_with_identity(&identity(
+            "request:v1",
+            "backend:configured-model:rev-2",
+            "grant:read-only",
+        ))
+        .unwrap();
+        let changed_authority = MemoCache::compute_key_with_identity(&identity(
+            "request:v1",
+            "backend:configured-model:rev-1",
+            "grant:write",
+        ))
+        .unwrap();
+        let changed_request = MemoCache::compute_key_with_identity(&identity(
+            "request:v2",
+            "backend:configured-model:rev-1",
+            "grant:read-only",
+        ))
+        .unwrap();
+
+        assert_ne!(base, changed_implementation);
+        assert_ne!(base, changed_authority);
+        assert_ne!(base, changed_request);
     }
 }

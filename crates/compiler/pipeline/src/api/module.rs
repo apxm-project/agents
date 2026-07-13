@@ -6,7 +6,7 @@
 //! Modules can be imported using the `import` keyword, which allows the functions, variables,
 //! and types defined in the imported module to be used in the current module.
 
-use crate::analysis;
+use crate::analysis::{self, CompilerAnalysisInputs};
 use crate::api::Context;
 use crate::codegen::artifact::parse_wire_dags;
 use crate::ffi;
@@ -31,6 +31,7 @@ pub(crate) fn invalid_input_error(message: impl Into<String>) -> CompilerError {
 
 pub struct Module {
     raw: *mut ffi::ApxmModule,
+    analysis_inputs: CompilerAnalysisInputs,
     _context: PhantomData<Context>,
 }
 
@@ -42,6 +43,7 @@ impl Module {
     pub unsafe fn from_raw(raw: *mut ffi::ApxmModule) -> Self {
         Self {
             raw,
+            analysis_inputs: CompilerAnalysisInputs::default(),
             _context: PhantomData,
         }
     }
@@ -94,8 +96,32 @@ impl Module {
         self.raw
     }
 
+    /// Retain external analysis evidence across compilation and finalization.
+    pub(crate) fn set_analysis_inputs(&mut self, analysis_inputs: CompilerAnalysisInputs) {
+        self.analysis_inputs = analysis_inputs;
+    }
+
+    /// Return the evidence attached by the owning compilation pipeline.
+    pub(crate) fn analysis_inputs(&self) -> &CompilerAnalysisInputs {
+        &self.analysis_inputs
+    }
+
     pub fn generate_artifact(&self) -> Result<Artifact> {
-        self.generate_artifact_with_name(None)
+        self.generate_artifact_with_analysis_inputs(&self.analysis_inputs)
+    }
+
+    /// Generate an artifact with caller-supplied reusable analysis evidence.
+    pub fn generate_artifact_with_analysis_inputs(
+        &self,
+        analysis_inputs: &CompilerAnalysisInputs,
+    ) -> Result<Artifact> {
+        self.generate_artifact_with_manifest_and_caps_with_diagnostics_and_analysis_inputs(
+            None,
+            None,
+            &std::collections::HashSet::new(),
+            analysis_inputs,
+        )
+        .map(|(artifact, _)| artifact)
     }
 
     pub fn generate_artifact_with_name(&self, module_name: Option<&str>) -> Result<Artifact> {
@@ -141,6 +167,22 @@ impl Module {
         manifest: Option<&apxm_core::types::HandlerManifest>,
         known_caps: &std::collections::HashSet<String>,
     ) -> Result<(Artifact, Vec<PassMetrics>)> {
+        self.generate_artifact_with_manifest_and_caps_with_diagnostics_and_analysis_inputs(
+            module_name,
+            manifest,
+            known_caps,
+            &self.analysis_inputs,
+        )
+    }
+
+    /// Generate an artifact with diagnostics and explicit analysis evidence.
+    pub fn generate_artifact_with_manifest_and_caps_with_diagnostics_and_analysis_inputs(
+        &self,
+        module_name: Option<&str>,
+        manifest: Option<&apxm_core::types::HandlerManifest>,
+        known_caps: &std::collections::HashSet<String>,
+        analysis_inputs: &CompilerAnalysisInputs,
+    ) -> Result<(Artifact, Vec<PassMetrics>)> {
         let payload = self.emit_artifact_payload(module_name)?;
         let mut dags = parse_wire_dags(&payload)?;
 
@@ -160,7 +202,7 @@ impl Module {
         ));
 
         let start = Instant::now();
-        crate::token_estimate::refine_token_estimates(&mut dags);
+        crate::token_estimate::refine_token_estimates(&mut dags, analysis_inputs);
 
         metrics.push(artifact_stage_metric(
             &stages[1],
@@ -203,7 +245,7 @@ impl Module {
             .or_else(|| dags.first().and_then(|d| d.metadata.name.clone()));
 
         let metadata = ArtifactMetadata::new(name, crate::VERSION);
-        let summary = analysis::summarize(&dags);
+        let summary = analysis::finalize_artifact_with_inputs(&mut dags, analysis_inputs);
         let summary = serde_json::to_vec(&summary).map_err(|error| {
             invalid_input_error(format!(
                 "optimization summary serialization failed: {error}"
@@ -342,6 +384,9 @@ impl Drop for Module {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::analysis::{
+        BackendCapabilityEvidence, ConfiguredBackendEvidence, TokenizerEvidence,
+    };
     use crate::api::Pipeline;
     use crate::passes::{PipelineStageKind, PipelineStageStatus};
     use apxm_core::types::OptimizationLevel;
@@ -420,5 +465,62 @@ module {
                 .iter()
                 .any(|node| node.operation == "ask")
         );
+    }
+
+    #[test]
+    fn normal_artifact_finalization_reuses_pipeline_analysis_inputs() {
+        let context = Context::new().expect("compiler context");
+        let backend = "configured-backend";
+        let model = "configured-model";
+        let source = format!(
+            r#"
+module {{
+  func.func @retained_analysis_inputs() -> !ais.token attributes {{ais.entry}} {{
+    %answer = ais.ask "Answer concisely." {{backend = "{backend}", model = "{model}", temperature = 0.0 : f64}} : !ais.token
+    func.return %answer : !ais.token
+  }}
+}}
+"#
+        );
+        let inputs = CompilerAnalysisInputs {
+            configured_backends: vec![ConfiguredBackendEvidence {
+                backend: backend.to_string(),
+                model: model.to_string(),
+                aliases: Default::default(),
+                available: true,
+                capabilities: BackendCapabilityEvidence {
+                    custom_temperature: true,
+                    tokenizer: TokenizerEvidence::Cl100kBase,
+                    ..Default::default()
+                },
+            }],
+            ..Default::default()
+        };
+        let module = Pipeline::with_config_and_analysis_inputs(
+            &context,
+            apxm_core::types::PipelineConfig {
+                opt_level: OptimizationLevel::O0,
+                ..Default::default()
+            },
+            inputs,
+        )
+        .compile(&source)
+        .expect("compile module with retained analysis inputs");
+
+        let artifact = module
+            .generate_artifact()
+            .expect("normal artifact API uses retained analysis inputs");
+        let bytes = artifact
+            .section_data(OPTIMIZATION_SUMMARY_ARTIFACT_SECTION)
+            .expect("optimization summary section");
+        let summary: OptimizationSummaryV1 =
+            serde_json::from_slice(bytes).expect("deserialize optimization summary");
+        let ask = summary.dags[0]
+            .nodes
+            .iter()
+            .find(|node| node.operation == "ask")
+            .expect("ASK optimization summary");
+        assert_eq!(ask.prompt.tokenizer.as_deref(), Some("cl100k_base"));
+        assert!(ask.legality.may_memoize);
     }
 }

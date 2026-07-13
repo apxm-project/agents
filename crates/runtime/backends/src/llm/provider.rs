@@ -190,6 +190,10 @@ impl LLMBackend for Provider {
         self.backend_ref().model()
     }
 
+    fn context_window_for_model(&self, model: &str) -> Option<usize> {
+        self.backend_ref().context_window_for_model(model)
+    }
+
     async fn health_check(&self) -> anyhow::Result<()> {
         self.backend_ref().health_check().await
     }
@@ -204,6 +208,12 @@ impl LLMBackend for Provider {
 
     fn graph_capabilities(&self) -> BackendGraphCapabilities {
         self.backend_ref().graph_capabilities()
+    }
+
+    fn response_memoization_policy(
+        &self,
+    ) -> crate::llm::backends::traits::ResponseMemoizationPolicy {
+        self.backend_ref().response_memoization_policy()
     }
 
     async fn register_graph(

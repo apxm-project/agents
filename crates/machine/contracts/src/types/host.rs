@@ -268,6 +268,20 @@ pub trait HostDispatchGateway: Send + Sync {
         call: HostToolCall,
     ) -> Result<HostToolResult, HostDispatchError>;
 
+    /// Execute a negotiated AHI v2 host effect and return its host-signed commit.
+    ///
+    /// This is deliberately separate from `call_tool`: Link v1 tool responses
+    /// never become replay authority.
+    async fn execute_effect(
+        &self,
+        _host_id: &str,
+        _effect: HostEffectPrepare,
+    ) -> Result<HostEffectCommit, HostDispatchError> {
+        Err(HostDispatchError::Transport(
+            "durable host effects are not configured".into(),
+        ))
+    }
+
     async fn request_relay_egress(
         &self,
         host_id: &str,
@@ -323,6 +337,49 @@ pub struct HostToolCall {
     pub timeout_ms: u64,
     pub idempotency_key: Option<String>,
     pub subject: Option<String>,
+}
+
+/// Immutable capability-effect preparation sent only over negotiated AHI v2.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct HostEffectPrepare {
+    pub execution_id: String,
+    pub graph_id: String,
+    pub node_id: u64,
+    pub invocation_id: String,
+    pub call_id: String,
+    pub capability_id: String,
+    pub host_op: String,
+    pub capability_binding: String,
+    pub implementation_ref: String,
+    pub request_digest: String,
+    pub idempotency_key: String,
+    pub grant_refs: Vec<String>,
+    pub approval_refs: Vec<String>,
+    pub args: serde_json::Value,
+    pub timeout_ms: u64,
+}
+
+/// Host-signed evidence that a negotiated AHI v2 effect committed.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct HostEffectCommit {
+    pub execution_id: String,
+    pub graph_id: String,
+    pub node_id: u64,
+    pub invocation_id: String,
+    pub call_id: String,
+    pub request_digest: String,
+    pub idempotency_key: String,
+    pub effect_digest: String,
+    pub effect_outcome: HostEffectOutcome,
+    pub host_key_id: String,
+    pub signature: String,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum HostEffectOutcome {
+    Committed,
+    Deduplicated,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

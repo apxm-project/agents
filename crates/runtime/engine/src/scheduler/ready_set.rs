@@ -6,7 +6,7 @@
 use std::sync::Arc;
 
 use apxm_core::types::{Node, NodeId, OpStatus, TokenId};
-use dashmap::DashMap;
+use dashmap::{DashMap, DashSet};
 
 use crate::scheduler::internal_state::{OpState, TokenState};
 use crate::scheduler::queue::{Priority, PriorityQueue};
@@ -25,6 +25,12 @@ pub(crate) struct ReadySet {
     /// Operations with count = 0 are ready to execute.
     /// Missing entries are treated as ready (0 pending).
     pending_inputs: Arc<DashMap<NodeId, usize>>,
+    /// Tokens whose consumer readiness has already been propagated.
+    ///
+    /// A producer may notify the scheduler only after publishing a ready token.
+    /// Recording delivery makes duplicate notifications harmless instead of
+    /// decrementing a dependent's typed dependency count twice.
+    delivered_tokens: Arc<DashSet<TokenId>>,
 }
 
 impl ReadySet {
@@ -32,6 +38,7 @@ impl ReadySet {
     pub fn new() -> Self {
         Self {
             pending_inputs: Arc::new(DashMap::new()),
+            delivered_tokens: Arc::new(DashSet::new()),
         }
     }
 
@@ -156,9 +163,20 @@ impl ReadySet {
         queue: &PriorityQueue,
     ) -> RuntimeResult<Vec<NodeId>> {
         let Some(token_state) = tokens.get(&token_id) else {
-            // Token doesn't exist - this shouldn't happen but handle gracefully
-            return Ok(Vec::new());
+            return Err(RuntimeError::Scheduler {
+                message: format!("Cannot propagate readiness for unknown token {token_id}"),
+            });
         };
+
+        if !token_state.ready {
+            return Err(RuntimeError::Scheduler {
+                message: format!("Cannot propagate readiness before token {token_id} is ready"),
+            });
+        }
+
+        if !self.delivered_tokens.insert(token_id) {
+            return Ok(Vec::new());
+        }
 
         let mut newly_ready = Vec::new();
 
@@ -197,5 +215,56 @@ impl ReadySet {
 impl Default for ReadySet {
     fn default() -> Self {
         Self::new()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use apxm_core::types::operations::AISOperationType;
+
+    #[test]
+    fn propagates_each_ready_token_once_and_rejects_premature_delivery() {
+        let ready_set = ReadySet::new();
+        let token_id = 7;
+        let node_id = 2;
+        let mut node = Node::new(node_id, AISOperationType::Nop);
+        node.add_input_token(token_id);
+
+        let tokens = DashMap::new();
+        let mut token_state = TokenState::new();
+        token_state.consumers.push(node_id);
+        tokens.insert(token_id, token_state);
+        let priorities = DashMap::new();
+        let op_states = DashMap::new();
+        let queue = PriorityQueue::new();
+
+        assert!(
+            ready_set
+                .initialize_with_skip(&[node], &tokens, &priorities, &op_states, &queue, None)
+                .expect("initial readiness")
+                .is_empty()
+        );
+        assert!(matches!(
+            ready_set.on_token_ready(token_id, &tokens, &priorities, &op_states, &queue),
+            Err(RuntimeError::Scheduler { .. })
+        ));
+        assert_eq!(ready_set.snapshot(), vec![(node_id, 1)]);
+
+        tokens.get_mut(&token_id).expect("registered token").ready = true;
+        assert_eq!(
+            ready_set
+                .on_token_ready(token_id, &tokens, &priorities, &op_states, &queue)
+                .expect("ready token propagates"),
+            vec![node_id]
+        );
+        assert!(
+            ready_set
+                .on_token_ready(token_id, &tokens, &priorities, &op_states, &queue)
+                .expect("duplicate ready notification is harmless")
+                .is_empty()
+        );
+        assert!(ready_set.snapshot().is_empty());
+        assert_eq!(queue.len(), 1);
     }
 }
