@@ -295,6 +295,7 @@ impl Linker {
 mod tests {
     use super::*;
     use apxm_artifact::ArtifactMetadata;
+    use apxm_core::constants::env::{APXM_SANDBOX_SCRIPTS, APXM_TRUST_SCRIPT_ARTIFACTS};
     use std::sync::Mutex;
 
     // Env vars are process-global; serialize tests that touch them.
@@ -304,14 +305,14 @@ mod tests {
         #[allow(unsafe_code)]
         unsafe {
             if trust {
-                std::env::set_var("APXM_TRUST_PYTHON_ARTIFACTS", "1");
+                std::env::set_var(APXM_TRUST_SCRIPT_ARTIFACTS, "1");
             } else {
-                std::env::remove_var("APXM_TRUST_PYTHON_ARTIFACTS");
+                std::env::remove_var(APXM_TRUST_SCRIPT_ARTIFACTS);
             }
             if sandbox {
-                std::env::set_var("APXM_SANDBOX_PYTHON", "1");
+                std::env::set_var(APXM_SANDBOX_SCRIPTS, "1");
             } else {
-                std::env::remove_var("APXM_SANDBOX_PYTHON");
+                std::env::remove_var(APXM_SANDBOX_SCRIPTS);
             }
         }
     }

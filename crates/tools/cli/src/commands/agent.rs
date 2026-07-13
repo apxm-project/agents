@@ -379,7 +379,7 @@ pub(crate) fn example_agent_dir(name: &str) -> PathBuf {
     agent_examples_dir().join(name)
 }
 
-#[cfg(test)]
+#[cfg(all(test, feature = "driver"))]
 pub(crate) fn gao_example_agent_dir() -> PathBuf {
     example_agent_dir("gao")
 }
@@ -722,8 +722,76 @@ fn load_typescript_tools_manifest(root: &Path) -> Result<HandlerManifest> {
 
 fn enrich_typescript_capabilities_from_tools_manifest(
     capabilities: &mut [CapabilityEntry],
-    manifest: &HandlerManifest,
+    permissions: &[PermissionEntry],
+    manifest: &mut HandlerManifest,
 ) -> Result<()> {
+    let capability_by_id: BTreeMap<&str, &CapabilityEntry> = capabilities
+        .iter()
+        .map(|capability| (capability.id.as_str(), capability))
+        .collect();
+    let permission_by_id: BTreeMap<&str, &PermissionEntry> = permissions
+        .iter()
+        .map(|permission| (permission.capability.as_str(), permission))
+        .collect();
+
+    for entry in manifest.handlers.iter_mut().filter(|entry| {
+        entry.kind == HandlerKind::Tool && entry.language == HandlerLanguage::TypeScript
+    }) {
+        let capability = capability_by_id.get(entry.name.as_str()).ok_or_else(|| {
+            anyhow!(
+                "TypeScript handler '{}' has no matching capability folder",
+                entry.name
+            )
+        })?;
+        if capability_kind(capability) != Some("typescript_handler") {
+            bail!(
+                "TypeScript handler '{}' must match a capability with kind = \"typescript_handler\"",
+                entry.name
+            );
+        }
+        let read_only = capability
+            .extra
+            .get("read_only")
+            .and_then(toml::Value::as_bool)
+            .ok_or_else(|| {
+                anyhow!(
+                    "TypeScript capability '{}' must declare boolean read_only metadata",
+                    entry.name
+                )
+            })?;
+        let permission = permission_by_id.get(entry.name.as_str()).ok_or_else(|| {
+            anyhow!(
+                "TypeScript capability '{}' has no matching permission policy",
+                entry.name
+            )
+        })?;
+        let requires_approval = match permission.decision.as_deref() {
+            Some("allow") => false,
+            Some("ask") => true,
+            Some("deny") => {
+                bail!(
+                    "TypeScript capability '{}' is denied and cannot be emitted as an executable handler",
+                    entry.name
+                )
+            }
+            Some(decision) => {
+                bail!(
+                    "TypeScript capability '{}' uses unsupported permission decision '{}'",
+                    entry.name,
+                    decision
+                )
+            }
+            None => {
+                bail!(
+                    "TypeScript capability '{}' must declare permission decision = \"allow\" or \"ask\"",
+                    entry.name
+                )
+            }
+        };
+        entry.read_only = Some(read_only);
+        entry.requires_approval = Some(requires_approval);
+    }
+
     let by_name: BTreeMap<&str, _> = manifest
         .handlers
         .iter()
@@ -757,6 +825,24 @@ fn enrich_typescript_capabilities_from_tools_manifest(
         );
     }
     Ok(())
+}
+
+fn write_typescript_tools_manifest(root: &Path, manifest: &HandlerManifest) -> Result<()> {
+    manifest
+        .validate()
+        .context("Invalid joined handler manifest")?;
+    let path = root.join("capabilities/handlers/tools.json");
+    if manifest.handlers.is_empty() {
+        if path.is_file() {
+            fs::remove_file(&path)
+                .with_context(|| format!("Failed to remove stale {}", path.display()))?;
+        }
+        return Ok(());
+    }
+    let data =
+        serde_json::to_vec_pretty(manifest).context("Failed to serialize handler manifest")?;
+    fs::write(&path, [data.as_slice(), b"\n"].concat())
+        .with_context(|| format!("Failed to write {}", path.display()))
 }
 
 fn scan_skill_ids(root: &Path) -> Result<Vec<String>> {
@@ -882,8 +968,13 @@ pub(crate) fn agent_sync(root: &Path, json_output: bool) -> Result<()> {
 
     let (mut capabilities, permissions) = scan_capability_folders(root, &agent.id)?;
     compile_agent_handlers(root)?;
-    let tools_manifest = load_typescript_tools_manifest(root)?;
-    enrich_typescript_capabilities_from_tools_manifest(&mut capabilities, &tools_manifest)?;
+    let mut tools_manifest = load_typescript_tools_manifest(root)?;
+    enrich_typescript_capabilities_from_tools_manifest(
+        &mut capabilities,
+        &permissions,
+        &mut tools_manifest,
+    )?;
+    write_typescript_tools_manifest(root, &tools_manifest)?;
     let capability_ids: Vec<String> = capabilities.iter().map(|cap| cap.id.clone()).collect();
     let skill_ids = scan_skill_ids(root)?;
 
@@ -1766,7 +1857,7 @@ pub(super) fn verify_agent_integrity(root: &Path) -> Result<()> {
     Ok(())
 }
 
-#[cfg(test)]
+#[cfg(all(test, feature = "driver"))]
 pub(super) fn seal_agent_integrity_for_test(root: &Path) -> Result<()> {
     let integrity = compute_integrity(&digest_recognized_files(root)?);
     write_integrity_toml(&root.join("integrity.toml"), &integrity)
@@ -2014,24 +2105,6 @@ fn collect_typescript_handler_sources(root: &Path) -> Result<Vec<PathBuf>> {
     Ok(sources.into_iter().collect())
 }
 
-fn validate_typescript_handler_toolchain(ts_frontend: &Path) -> Result<()> {
-    let node_modules = ts_frontend.join("node_modules");
-    if !node_modules.join("esbuild").is_dir() {
-        bail!(
-            "TypeScript handler compiler dependencies are missing under {}; run `dekk agents frontend setup`",
-            node_modules.display()
-        );
-    }
-    let compiler = ts_frontend.join("dist/compile-handlers.js");
-    if !compiler.is_file() {
-        bail!(
-            "TypeScript handler compiler is not built at {}; run `dekk agents frontend build`",
-            compiler.display()
-        );
-    }
-    Ok(())
-}
-
 fn compile_agent_handlers(root: &Path) -> Result<()> {
     let root = root.canonicalize().with_context(|| {
         format!(
@@ -2040,11 +2113,15 @@ fn compile_agent_handlers(root: &Path) -> Result<()> {
         )
     })?;
     let sources = collect_typescript_handler_sources(&root)?;
+    let out = root.join("capabilities/handlers/tools.json");
     if sources.is_empty() {
+        if out.is_file() {
+            fs::remove_file(&out)
+                .with_context(|| format!("Failed to remove stale {}", out.display()))?;
+        }
         return Ok(());
     }
 
-    let out = root.join("capabilities/handlers/tools.json");
     fs::create_dir_all(out.parent().expect("tools.json has parent"))
         .with_context(|| format!("Failed to create {}", out.parent().unwrap().display()))?;
 
@@ -2235,6 +2312,7 @@ pub(crate) fn agent_install_to(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use apxm_core::types::{HandlerDescriptor, HandlerSource};
     use tempfile::tempdir;
 
     fn scaffold(dir: &Path, id: &str) {
@@ -2437,18 +2515,28 @@ mod tests {
     }
 
     #[test]
-    fn typescript_manifest_joins_permission_decisions_into_approval_metadata() {
+    fn typescript_manifest_joins_capability_and_permission_policy() {
         let tmp = tempdir().unwrap();
-        let root = tmp.path();
-        fs::create_dir_all(root.join("capabilities/handlers")).unwrap();
-        fs::write(
-            root.join("capabilities/handlers/tools.json"),
-            r#"[
-                {"handler_id":"sha256:read","module":"read","qualname":"run","name":"read_tool","schema":{}},
-                {"handler_id":"sha256:write","module":"write","qualname":"run","name":"write_tool","schema":{}}
-            ]"#,
-        )
-        .unwrap();
+        fs::create_dir_all(tmp.path().join("capabilities/handlers")).unwrap();
+        let descriptor = |name: &str, hash: char| HandlerDescriptor {
+            kind: HandlerKind::Tool,
+            language: HandlerLanguage::TypeScript,
+            handler_id: format!("sha256:{}", hash.to_string().repeat(64)),
+            module: format!("capabilities/{name}/handler"),
+            qualname: "run".to_string(),
+            name: name.to_string(),
+            source: HandlerSource {
+                artifact_path: format!("handlers/{name}.mjs"),
+                content: "export function run() {}\n".to_string(),
+            },
+            description: String::new(),
+            schema: serde_json::json!({}),
+            read_only: None,
+            requires_approval: None,
+            event: None,
+            r#match: None,
+            mode: None,
+        };
         let capability = |id: &str, read_only: bool| CapabilityEntry {
             id: id.to_string(),
             description: None,
@@ -2465,29 +2553,37 @@ mod tests {
             decision: Some(decision.to_string()),
             extra: toml::Table::new(),
         };
+        let mut capabilities = vec![
+            capability("read_tool", true),
+            capability("write_tool", false),
+        ];
+        let permissions = vec![
+            permission("read_tool", "allow"),
+            permission("write_tool", "ask"),
+        ];
+        let mut manifest = HandlerManifest::new(vec![
+            descriptor("read_tool", 'a'),
+            descriptor("write_tool", 'b'),
+        ]);
 
-        annotate_typescript_tools_manifest(
-            root,
-            &[
-                capability("read_tool", true),
-                capability("write_tool", false),
-            ],
-            &[
-                permission("read_tool", "allow"),
-                permission("write_tool", "ask"),
-            ],
+        enrich_typescript_capabilities_from_tools_manifest(
+            &mut capabilities,
+            &permissions,
+            &mut manifest,
         )
-        .expect("manifest annotation");
+        .expect("policy join");
+        write_typescript_tools_manifest(tmp.path(), &manifest).expect("manifest write");
 
-        let manifest = load_typescript_tools_manifest(root).unwrap();
-        let by_name = manifest
+        let loaded = load_typescript_tools_manifest(tmp.path()).expect("manifest reload");
+        let by_name = loaded
+            .handlers
             .iter()
-            .map(|entry| (entry["name"].as_str().unwrap(), entry))
+            .map(|entry| (entry.name.as_str(), entry))
             .collect::<BTreeMap<_, _>>();
-        assert_eq!(by_name["read_tool"]["read_only"], true);
-        assert_eq!(by_name["read_tool"]["requires_approval"], false);
-        assert_eq!(by_name["write_tool"]["read_only"], false);
-        assert_eq!(by_name["write_tool"]["requires_approval"], true);
+        assert_eq!(by_name["read_tool"].read_only, Some(true));
+        assert_eq!(by_name["read_tool"].requires_approval, Some(false));
+        assert_eq!(by_name["write_tool"].read_only, Some(false));
+        assert_eq!(by_name["write_tool"].requires_approval, Some(true));
     }
 
     #[test]
@@ -3021,35 +3117,6 @@ mod tests {
         let err = agent_lint(&root, Some(org_root), true)
             .expect_err("a capability absent from both the agent and org globals must fail lint");
         assert!(err.to_string().contains("lint error"));
-    }
-
-    #[test]
-    fn typescript_handler_toolchain_reports_dekk_prerequisites() {
-        let tmp = tempdir().unwrap();
-        let frontend = tmp.path().join("frontend");
-        fs::create_dir_all(&frontend).unwrap();
-
-        let missing_dependencies = validate_typescript_handler_toolchain(&frontend)
-            .expect_err("missing dependencies must fail");
-        assert!(
-            missing_dependencies
-                .to_string()
-                .contains("dekk agents frontend setup")
-        );
-
-        fs::create_dir_all(frontend.join("node_modules/esbuild")).unwrap();
-        let missing_build = validate_typescript_handler_toolchain(&frontend)
-            .expect_err("missing compiler build must fail");
-        assert!(
-            missing_build
-                .to_string()
-                .contains("dekk agents frontend build")
-        );
-
-        fs::create_dir_all(frontend.join("dist")).unwrap();
-        fs::write(frontend.join("dist/compile-handlers.js"), "export {};").unwrap();
-        validate_typescript_handler_toolchain(&frontend)
-            .expect("complete frontend toolchain must pass");
     }
 
     #[cfg(feature = "driver")]

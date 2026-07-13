@@ -523,9 +523,9 @@ impl Drop for PassManager<'_> {
 #[cfg(test)]
 mod analysis_cache_tests {
     use super::*;
+    use apxm_core::types::AISOperationType;
     use apxm_core::types::compiler::CompilerAnalysisKind;
     use apxm_core::types::execution::{ExecutionDag, Node};
-    use apxm_core::types::AISOperationType;
 
     #[test]
     fn cache_keeps_only_the_stage_contracts_explicitly_preserve() {
@@ -535,14 +535,10 @@ mod analysis_cache_tests {
             store: Some(AnalysisStore::new(vec![dag])),
             snapshot_is_current: true,
         };
-        cache
-            .store
-            .as_mut()
-            .expect("analysis store")
-            .materialize(&[
-                CompilerAnalysisKind::DagUse,
-                CompilerAnalysisKind::EffectAuthority,
-            ]);
+        cache.store.as_mut().expect("analysis store").materialize(&[
+            CompilerAnalysisKind::DagUse,
+            CompilerAnalysisKind::EffectAuthority,
+        ]);
 
         let stage = PipelineStage::new("rewrite", PipelineStageKind::MlirRewrite, false)
             .with_analysis_contract(

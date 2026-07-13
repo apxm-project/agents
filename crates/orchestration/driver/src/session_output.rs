@@ -19,7 +19,10 @@ use apxm_core::types::values::Value;
 use apxm_core::types::{
     CompletedNodeInfo, LiveSessionState, NodeInfo, SessionManifest, SessionStatus,
 };
-use apxm_runtime::{EventScopeState, ExecutionEventEmitter};
+use apxm_runtime::{
+    CapabilityEffectReceiptPayload, EventScopeState, ExecutionEventEmitter,
+    ModelContextMetrics as ExecutionModelContextMetrics,
+};
 use parking_lot::RwLock;
 
 use crate::context_assembler::{ContextAssembler, WorkspaceNodeMetadata};
@@ -1135,6 +1138,39 @@ impl ExecutionEventEmitter for SessionEventEmitter {
             output_tokens,
             generation: generation.cloned(),
         });
+    }
+
+    fn emit_model_context_metrics(&self, metrics: &ExecutionModelContextMetrics) {
+        self.write_trace_event(apxm_core::events::payload::ModelContextMetricsPayload {
+            node_id: metrics.node_id,
+            call_kind: metrics.call_kind,
+            plan_status: metrics.plan_status,
+            token_budget: metrics
+                .token_budget
+                .and_then(|value| u64::try_from(value).ok()),
+            original_tokens: metrics
+                .original_tokens
+                .and_then(|value| u64::try_from(value).ok()),
+            admitted_tokens: metrics
+                .admitted_tokens
+                .and_then(|value| u64::try_from(value).ok()),
+            kept_segments: metrics
+                .kept_segments
+                .and_then(|value| u64::try_from(value).ok()),
+            truncated_segments: metrics
+                .truncated_segments
+                .and_then(|value| u64::try_from(value).ok()),
+            omitted_token_budget_segments: metrics
+                .omitted_token_budget_segments
+                .and_then(|value| u64::try_from(value).ok()),
+            omitted_empty_segments: metrics
+                .omitted_empty_segments
+                .and_then(|value| u64::try_from(value).ok()),
+        });
+    }
+
+    fn emit_capability_effect_receipt(&self, receipt: &CapabilityEffectReceiptPayload) {
+        self.write_trace_event(receipt.clone());
     }
 
     fn emit_memoization_hit(&self, node_id: u64) {

@@ -46,6 +46,8 @@ class HandlerDescriptor(TypedDict):
     source: HandlerSource
     description: str
     schema: dict[str, Any]
+    read_only: NotRequired[bool]
+    requires_approval: NotRequired[bool]
     event: NotRequired[str]
     match: NotRequired[str]
     mode: NotRequired[str]

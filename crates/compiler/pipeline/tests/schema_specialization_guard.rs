@@ -70,11 +70,8 @@ fn schema_specialization_stays_explicit_only_and_diagnostic() {
         OptimizationLevel::O2,
         OptimizationLevel::O3,
     ] {
-        let passes = apxm_compiler::passes::build_pass_list(
-            level,
-            false,
-            OptimizationTarget::Balanced,
-        );
+        let passes =
+            apxm_compiler::passes::build_pass_list(level, false, OptimizationTarget::Balanced);
         assert!(
             !passes.iter().any(|pass| pass == SCHEMA_NARROWING),
             "{level:?} unexpectedly includes {SCHEMA_NARROWING}"

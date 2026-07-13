@@ -48,6 +48,8 @@ export interface HandlerManifestEntry {
   source: HandlerSource;
   description: string;
   schema: JsonSchema;
+  read_only?: boolean;
+  requires_approval?: boolean;
   event?: string;
   match?: string;
   mode?: string;

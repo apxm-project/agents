@@ -180,8 +180,11 @@ pub const CONTEXT_COMPACTED: EventKind =
     EventKind::new("context_compacted", EventCategory::Observability, false);
 pub const MODEL_CONTEXT_METRICS: EventKind =
     EventKind::new("model_context_metrics", EventCategory::Observability, false);
-pub const CAPABILITY_EFFECT_RECEIPT: EventKind =
-    EventKind::new("capability_effect_receipt", EventCategory::Observability, false);
+pub const CAPABILITY_EFFECT_RECEIPT: EventKind = EventKind::new(
+    "capability_effect_receipt",
+    EventCategory::Observability,
+    false,
+);
 pub const MODEL_REROUTED: EventKind =
     EventKind::new("model_rerouted", EventCategory::Lifecycle, false);
 /// Typed cancellation signal. The corresponding `execute_complete` event is

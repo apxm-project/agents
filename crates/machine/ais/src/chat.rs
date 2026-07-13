@@ -236,7 +236,10 @@ pub fn chat_air(options: &ChatAirOptions) -> String {
         ("model", options.model),
         ("effort", options.effort),
     ] {
-        let Some(value) = value.map(sanitize_route_id).filter(|value| !value.is_empty()) else {
+        let Some(value) = value
+            .map(sanitize_route_id)
+            .filter(|value| !value.is_empty())
+        else {
             continue;
         };
         if name != "effort" || value != "off" {
@@ -266,7 +269,8 @@ pub fn chat_air(options: &ChatAirOptions) -> String {
         attributes.push(format!("capability_groups = [{groups}]"));
     }
 
-    let attribute_dict = (!attributes.is_empty()).then(|| format!(" {{{}}}", attributes.join(", ")));
+    let attribute_dict =
+        (!attributes.is_empty()).then(|| format!(" {{{}}}", attributes.join(", ")));
     format!(
         "module {{\n  func.func @apxm_chat(%arg0: !ais.token {{ais.param_name = \"conversation\", ais.param_type = \"str\"}}) -> !ais.token attributes {{ais.entry}} {{\n    %reply = ais.ask \"{{{{{{conversation}}}}}}\"{} : !ais.token\n    func.return %reply : !ais.token\n  }}\n}}\n",
         attribute_dict.unwrap_or_default(),

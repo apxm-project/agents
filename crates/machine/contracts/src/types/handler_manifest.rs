@@ -78,6 +78,12 @@ pub struct HandlerDescriptor {
     /// Tool argument schema. Hooks carry an empty object.
     #[serde(default = "empty_schema")]
     pub schema: Value,
+    /// Whether a tool is guaranteed not to mutate external state.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub read_only: Option<bool>,
+    /// Whether invoking a tool requires an explicit approval decision.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub requires_approval: Option<bool>,
     /// Hook lifecycle event. Absent for tools.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub event: Option<String>,
@@ -264,6 +270,8 @@ mod tests {
             },
             description: "example".to_string(),
             schema: empty_schema(),
+            read_only: (kind == HandlerKind::Tool).then_some(true),
+            requires_approval: (kind == HandlerKind::Tool).then_some(false),
             event: (kind == HandlerKind::Hook).then(|| "pre_turn".to_string()),
             r#match: (kind == HandlerKind::Hook).then(|| "*".to_string()),
             mode: (kind == HandlerKind::Hook).then(|| "observe".to_string()),

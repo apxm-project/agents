@@ -241,6 +241,7 @@ mod tests {
     /// A fully framed HTTP/1.1 response remains readable even when the server
     /// sends headers before the body; the streaming client must not install an
     /// immediate zero-duration read deadline on this request.
+    #[cfg(feature = "driver")]
     #[tokio::test]
     async fn create_agent_session_reads_delayed_framed_http_response() {
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();

@@ -8,7 +8,9 @@ use apxm_core::types::compiler::{
 };
 use apxm_core::types::execution::ExecutionDag;
 
-use super::{backend_legality, dag_use, effect_authority, profile_cost, prompt_contract, token_cost};
+use super::{
+    backend_legality, dag_use, effect_authority, profile_cost, prompt_contract, token_cost,
+};
 
 /// Every analysis kind supported by the compiler-private store.
 pub(crate) const ALL_ANALYSES: &[CompilerAnalysisKind] = &[
@@ -216,7 +218,12 @@ impl AnalysisStore {
                 let requirements = self
                     .dags
                     .iter()
-                    .map(|dag| dag.nodes.iter().map(backend_legality::requirements).collect())
+                    .map(|dag| {
+                        dag.nodes
+                            .iter()
+                            .map(backend_legality::requirements)
+                            .collect()
+                    })
                     .collect();
                 let transformations = effects
                     .iter()
@@ -262,7 +269,8 @@ impl AnalysisStore {
     }
 
     fn token_costs(&self) -> &NodeFacts<CostSummary> {
-        let Some(CachedAnalysis::TokenCost(facts)) = self.cached.get(&CompilerAnalysisKind::TokenCost)
+        let Some(CachedAnalysis::TokenCost(facts)) =
+            self.cached.get(&CompilerAnalysisKind::TokenCost)
         else {
             unreachable!("token-cost analysis is materialized")
         };
@@ -291,8 +299,8 @@ impl AnalysisStore {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use apxm_core::types::{AISOperationType, DependencyType};
     use apxm_core::types::execution::{Edge, Node};
+    use apxm_core::types::{AISOperationType, DependencyType};
 
     #[test]
     fn invalidated_evidence_is_not_reused_for_a_rebased_snapshot() {
@@ -311,9 +319,7 @@ mod tests {
             Node::new(1, AISOperationType::Nop),
             Node::new(2, AISOperationType::Nop),
         ];
-        second
-            .edges
-            .push(Edge::new(1, 2, 1, DependencyType::Data));
+        second.edges.push(Edge::new(1, 2, 1, DependencyType::Data));
         store.retain_only(&[CompilerAnalysisKind::EffectAuthority]);
         store.rebase(vec![second]);
 

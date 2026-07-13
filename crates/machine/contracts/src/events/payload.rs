@@ -1355,11 +1355,16 @@ impl CapabilityEffectReceiptPayload {
             ("capability_binding", self.capability_binding.as_str()),
             ("implementation_ref", self.implementation_ref.as_str()),
             ("request_digest", self.request_digest.as_str()),
-            ("idempotency_key_digest", self.idempotency_key_digest.as_str()),
+            (
+                "idempotency_key_digest",
+                self.idempotency_key_digest.as_str(),
+            ),
             ("effect_ref", self.effect_ref.as_str()),
         ] {
             if value.is_empty() {
-                return Err(format!("capability_effect_receipt.{field} must not be empty"));
+                return Err(format!(
+                    "capability_effect_receipt.{field} must not be empty"
+                ));
             }
         }
 
@@ -1368,14 +1373,18 @@ impl CapabilityEffectReceiptPayload {
             ("approval_id", self.approval_id.as_deref()),
         ] {
             if value.is_some_and(str::is_empty) {
-                return Err(format!("capability_effect_receipt.{field} must not be empty"));
+                return Err(format!(
+                    "capability_effect_receipt.{field} must not be empty"
+                ));
             }
         }
 
         if matches!(self.admission_kind, CapabilityEffectAdmissionKind::Grant)
             && self.grant_id.as_deref().map_or(true, str::is_empty)
         {
-            return Err("capability_effect_receipt.grant_id is required for grant admission".into());
+            return Err(
+                "capability_effect_receipt.grant_id is required for grant admission".into(),
+            );
         }
         if matches!(
             self.approval_status,
@@ -1391,7 +1400,10 @@ impl CapabilityEffectReceiptPayload {
         Ok(())
     }
 }
-impl_event_payload!(CapabilityEffectReceiptPayload, kind::CAPABILITY_EFFECT_RECEIPT);
+impl_event_payload!(
+    CapabilityEffectReceiptPayload,
+    kind::CAPABILITY_EFFECT_RECEIPT
+);
 
 /// The model was rerouted to a different backend.
 #[derive(Debug, Clone, Serialize, Deserialize)]

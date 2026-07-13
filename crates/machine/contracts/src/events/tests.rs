@@ -759,7 +759,10 @@ fn capability_effect_receipt_round_trips_without_content_fields() {
     );
 
     let mut missing_grant = serde_json::to_value(&event).expect("serialize receipt fixture");
-    missing_grant["payload"].as_object_mut().expect("receipt payload").remove("grant_id");
+    missing_grant["payload"]
+        .as_object_mut()
+        .expect("receipt payload")
+        .remove("grant_id");
     let error = serde_json::from_value::<ApxmEvent>(missing_grant)
         .expect_err("grant admission must require a selected grant id");
     assert!(

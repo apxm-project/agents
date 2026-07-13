@@ -21,11 +21,11 @@ use apxm_driver::compiler::Compiler;
 use serde::Deserialize;
 
 #[cfg(feature = "driver")]
-use apxm_ais::chat::CompileServiceOptions;
-#[cfg(feature = "driver")]
 use super::agent::{CompileToml, FrontendLanguage, installed_typescript_frontend_entry};
 #[cfg(feature = "driver")]
 use super::implementations::{load_config, parse_opt_level};
+#[cfg(feature = "driver")]
+use apxm_ais::chat::CompileServiceOptions;
 
 #[cfg(feature = "driver")]
 fn is_python_graph_input(input: &Path) -> bool {
@@ -1479,6 +1479,8 @@ mod tests {
                 },
                 description: String::new(),
                 schema: serde_json::json!({}),
+                read_only: None,
+                requires_approval: None,
                 event: Some(
                     if *qualname == "pre_turn" {
                         "pre_turn"
@@ -1491,8 +1493,7 @@ mod tests {
                 mode: Some("observe".to_string()),
             })
             .collect();
-        serde_json::to_string(&HandlerManifest::new(handlers))
-        .expect("serialize handler manifest")
+        serde_json::to_string(&HandlerManifest::new(handlers)).expect("serialize handler manifest")
     }
 
     fn typescript_hook_manifest(qualname: &str) -> String {

@@ -246,9 +246,7 @@ mod tests {
     #[test]
     fn synchronization_flow_fixture_matches_golden_air() {
         assert_fixture_matches_golden(
-            include_str!(
-                "../../tests/fixtures/frontend_graph_parity/synchronization_flow.json"
-            ),
+            include_str!("../../tests/fixtures/frontend_graph_parity/synchronization_flow.json"),
             include_str!(
                 "../../tests/fixtures/frontend_graph_parity/synchronization_flow.golden.air"
             ),
@@ -259,9 +257,7 @@ mod tests {
     fn coordination_flow_fixture_matches_golden_air() {
         assert_fixture_matches_golden(
             include_str!("../../tests/fixtures/frontend_graph_parity/coordination_flow.json"),
-            include_str!(
-                "../../tests/fixtures/frontend_graph_parity/coordination_flow.golden.air"
-            ),
+            include_str!("../../tests/fixtures/frontend_graph_parity/coordination_flow.golden.air"),
         );
     }
 }

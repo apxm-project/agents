@@ -901,7 +901,8 @@ mod tests {
             invocation_id: "invocation-1".to_string(),
             capability_binding: "calendar.write".to_string(),
             dispatch_path: apxm_core::events::payload::CapabilityEffectDispatchPath::InvCap,
-            implementation_kind: apxm_core::events::payload::CapabilityEffectImplementationKind::Host,
+            implementation_kind:
+                apxm_core::events::payload::CapabilityEffectImplementationKind::Host,
             implementation_ref: "host/calendar.write@1".to_string(),
             request_digest: "sha256:request-1".to_string(),
             admission_kind: apxm_core::events::payload::CapabilityEffectAdmissionKind::Grant,

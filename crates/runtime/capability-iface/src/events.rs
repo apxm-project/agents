@@ -19,6 +19,42 @@ use apxm_core::types::values::Value;
 
 use crate::token_usage::TokenUsageSummary;
 
+pub use apxm_core::events::payload::{
+    CapabilityEffectReceiptPayload, ModelContextCallKind, ModelContextPlanStatus,
+};
+
+/// Content-free context-packing evidence attached to one model request.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ModelContextMetrics {
+    pub node_id: Option<u64>,
+    pub call_kind: ModelContextCallKind,
+    pub plan_status: ModelContextPlanStatus,
+    pub token_budget: Option<usize>,
+    pub original_tokens: Option<usize>,
+    pub admitted_tokens: Option<usize>,
+    pub kept_segments: Option<usize>,
+    pub truncated_segments: Option<usize>,
+    pub omitted_token_budget_segments: Option<usize>,
+    pub omitted_empty_segments: Option<usize>,
+}
+
+impl ModelContextMetrics {
+    pub const fn unplanned(node_id: Option<u64>, call_kind: ModelContextCallKind) -> Self {
+        Self {
+            node_id,
+            call_kind,
+            plan_status: ModelContextPlanStatus::Unplanned,
+            token_budget: None,
+            original_tokens: None,
+            admitted_tokens: None,
+            kept_segments: None,
+            truncated_segments: None,
+            omitted_token_budget_segments: None,
+            omitted_empty_segments: None,
+        }
+    }
+}
+
 /// Concurrency-safe scope selection state for shared execution emitters.
 ///
 /// Flow calls may overlap briefly across re-armed conversational turns. Active
@@ -383,6 +419,12 @@ pub trait ExecutionEventEmitter: Send + Sync {
     /// A numbered request or response boundary was reached for the
     /// user-facing conversational turn.
     fn emit_turn_boundary(&self, _payload: TurnBoundaryPayload) {}
+
+    /// Emit aggregate-only context-packing evidence before a model dispatch.
+    fn emit_model_context_metrics(&self, _metrics: &ModelContextMetrics) {}
+
+    /// Emit content-free evidence after a capability effect is durably committed.
+    fn emit_capability_effect_receipt(&self, _receipt: &CapabilityEffectReceiptPayload) {}
 
     // ── Layer 2 — agent-layer hooks ────────────────────────────────
     //
