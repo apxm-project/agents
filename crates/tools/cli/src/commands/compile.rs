@@ -1,6 +1,5 @@
 //! Compile and decompile commands.
 
-#[cfg(feature = "driver")]
 use std::env;
 #[cfg(feature = "driver")]
 use std::path::Path;
@@ -9,22 +8,24 @@ use std::path::PathBuf;
 #[cfg(feature = "driver")]
 use anyhow::Context;
 use anyhow::Result;
-#[cfg(feature = "driver")]
 use apxm_core::constants::env as apxm_env;
 #[cfg(feature = "driver")]
 use apxm_core::constants::extensions;
 #[cfg(feature = "driver")]
-use apxm_core::types::ApxmPathFormat;
+use apxm_core::types::{
+    ApxmPathFormat, HANDLER_MANIFEST_AIR_SIDECAR_PREFIX, HandlerDescriptor, HandlerManifest,
+};
 #[cfg(feature = "driver")]
 use apxm_driver::compiler::Compiler;
 #[cfg(feature = "driver")]
 use serde::Deserialize;
 
 #[cfg(feature = "driver")]
-use apxm_ais::chat::CompileServiceOptions;
-
+use super::agent::{CompileToml, FrontendLanguage, installed_typescript_frontend_entry};
 #[cfg(feature = "driver")]
 use super::implementations::{load_config, parse_opt_level};
+#[cfg(feature = "driver")]
+use apxm_ais::chat::CompileServiceOptions;
 
 #[cfg(feature = "driver")]
 fn is_python_graph_input(input: &Path) -> bool {
@@ -34,20 +35,6 @@ fn is_python_graph_input(input: &Path) -> bool {
 #[cfg(feature = "driver")]
 fn is_typescript_graph_input(input: &Path) -> bool {
     ApxmPathFormat::from_path(input).is_typescript_frontend()
-}
-
-#[cfg(feature = "driver")]
-const PYTHON_TOOLS_MANIFEST_ENV: &str = "APXM_PYTHON_TOOLS_OUT";
-
-/// Rewrite the `@apxm/frontend` bare import specifier to the built TypeScript
-/// frontend entrypoint so standalone `.ts` source files can run without a local
-/// `node_modules/` install next to each workflow file.
-#[cfg(feature = "driver")]
-fn rewrite_frontend_import(source: &str, frontend_dist_index: &Path) -> String {
-    let dist_url = format!("file://{}", frontend_dist_index.display());
-    source
-        .replace("\"@apxm/frontend\"", &format!("\"{dist_url}\""))
-        .replace("'@apxm/frontend'", &format!("'{dist_url}'"))
 }
 
 #[cfg(feature = "driver")]
@@ -74,13 +61,10 @@ fn current_apxm_exe() -> Option<PathBuf> {
 pub(super) fn emit_air_from_python(
     input: &Path,
     config_path: Option<&Path>,
-) -> Result<(tempfile::NamedTempFile, Option<Vec<u8>>)> {
+) -> Result<(tempfile::NamedTempFile, HandlerManifestBytes)> {
     use std::io::Write;
 
-    let repo_root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../..");
-    let python_frontend = repo_root.join("crates/compiler/frontend/python");
-
-    let mut pythonpath_entries = vec![python_frontend, repo_root];
+    let mut pythonpath_entries = Vec::new();
     if let Some(parent) = input.parent() {
         pythonpath_entries.push(parent.to_path_buf());
     }
@@ -88,7 +72,9 @@ pub(super) fn emit_air_from_python(
         pythonpath_entries.extend(env::split_paths(&existing));
     }
 
-    let pythonpath = env::join_paths(pythonpath_entries)
+    let pythonpath = (!pythonpath_entries.is_empty())
+        .then(|| env::join_paths(pythonpath_entries))
+        .transpose()
         .context("Failed to build PYTHONPATH for APXM Python frontend")?;
     // Route the frontend's AIR emission back to this same binary's single Rust
     // printer (`apxm emit-air`), so compile is self-contained and
@@ -104,9 +90,11 @@ pub(super) fn emit_air_from_python(
         let mut command = std::process::Command::new(candidate);
         command
             .arg(input)
-            .env(apxm_env::PYTHONPATH, &pythonpath)
             .env(apxm_env::APXM_EMIT_AIR, apxm_env::flag_values::ENABLED)
-            .env(PYTHON_TOOLS_MANIFEST_ENV, &manifest_path);
+            .env(apxm_env::APXM_PYTHON_TOOLS_OUT, &manifest_path);
+        if let Some(pythonpath) = pythonpath.as_ref() {
+            command.env(apxm_env::PYTHONPATH, pythonpath);
+        }
         if let Some(exe) = apxm_exe.as_ref() {
             command.env(apxm_env::APXM_BIN, exe);
         }
@@ -180,39 +168,17 @@ pub(super) fn emit_air_from_python(
 /// Run TypeScript frontend source through Node and capture the AIR it emits.
 #[cfg(feature = "driver")]
 pub(super) fn emit_air_from_typescript_text(input: &Path) -> Result<String> {
-    use anyhow::bail;
-
-    let repo_root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../..");
-    let frontend_dist = repo_root.join("crates/compiler/frontend/typescript/dist/index.js");
-    if !frontend_dist.is_file() {
-        bail!(
-            "TypeScript frontend is not built: expected {} (run 'npm run build' in \
-             crates/compiler/frontend/typescript first)",
-            frontend_dist.display()
-        );
-    }
-
-    let source = std::fs::read_to_string(input)
-        .with_context(|| format!("Failed to read {}", input.display()))?;
-    let rewritten = rewrite_frontend_import(&source, &frontend_dist);
-
-    let mut tmp = tempfile::Builder::new()
-        .suffix(".ts")
-        .tempfile()
-        .context("Failed to create temporary TypeScript frontend source")?;
-    {
-        use std::io::Write;
-        tmp.write_all(rewritten.as_bytes())
-            .context("Failed to write rewritten TypeScript frontend source")?;
-        tmp.flush()
-            .context("Failed to flush temporary TypeScript frontend source")?;
-    }
-
-    // Route the frontend's AIR emission back to this same binary's single Rust
-    // printer (`apxm emit-air`).
     let apxm_exe = current_apxm_exe();
+    let runner = installed_typescript_frontend_entry("dist/runner.js")?;
     let mut node_command = std::process::Command::new("node");
-    node_command.arg(tmp.path());
+    node_command
+        .arg("--input-type=module")
+        .arg("--eval")
+        .arg(
+            "import { pathToFileURL } from 'node:url'; import(pathToFileURL(process.argv[1]).href).then(({ runSource }) => runSource(process.argv[2]))",
+        )
+        .arg(runner)
+        .arg(input);
     if let Some(exe) = apxm_exe.as_ref() {
         node_command.env(apxm_env::APXM_BIN, exe);
     }
@@ -259,10 +225,50 @@ pub(super) fn emit_air_from_typescript_text(input: &Path) -> Result<String> {
 }
 
 #[cfg(feature = "driver")]
-fn emit_air_from_typescript(input: &Path) -> Result<(tempfile::NamedTempFile, Option<Vec<u8>>)> {
+pub(super) fn emit_air_from_typescript(
+    input: &Path,
+) -> Result<(tempfile::NamedTempFile, HandlerManifestBytes)> {
     use std::io::Write;
 
     let air = emit_air_from_typescript_text(input)?;
+    let manifest_tmp = tempfile::Builder::new()
+        .suffix(".json")
+        .tempfile()
+        .context("Failed to create temporary TypeScript handler manifest file")?;
+    let manifest_path = manifest_tmp.path().to_path_buf();
+    let root = input.parent().unwrap_or_else(|| Path::new("."));
+    let compiler = installed_typescript_frontend_entry("dist/compile-handlers.js")?;
+    let mut node_command = std::process::Command::new("node");
+    node_command
+        .arg("--input-type=module")
+        .arg("--eval")
+        .arg(
+            "import { pathToFileURL } from 'node:url'; import(pathToFileURL(process.argv[1]).href).then(async ({ compileHandlers }) => { const fs = await import('node:fs/promises'); const manifest = await compileHandlers([process.argv[2]], { rootDir: process.argv[3] }); await fs.writeFile(process.argv[4], JSON.stringify(manifest)); })",
+        )
+        .arg(compiler)
+        .arg(input)
+        .arg(root)
+        .arg(&manifest_path);
+    if let Some(exe) = current_apxm_exe().as_ref() {
+        node_command.env(apxm_env::APXM_BIN, exe);
+    }
+    let output = node_command.output().map_err(|error| {
+        anyhow::anyhow!(
+            "Failed to emit TypeScript handler manifest for {}: {error}",
+            input.display()
+        )
+    })?;
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        return Err(anyhow::anyhow!(
+            "TypeScript handler manifest for {} failed: {}",
+            input.display(),
+            stderr.trim()
+        ));
+    }
+    let manifest = std::fs::read(&manifest_path)
+        .ok()
+        .filter(|data| !data.is_empty());
 
     let mut tmp = tempfile::Builder::new()
         .suffix(".air")
@@ -271,14 +277,12 @@ fn emit_air_from_typescript(input: &Path) -> Result<(tempfile::NamedTempFile, Op
     tmp.write_all(air.as_bytes())
         .context("Failed to write emitted .air to temporary file")?;
     tmp.flush().context("Failed to flush temporary .air file")?;
-    Ok((tmp, None))
+    Ok((tmp, manifest))
 }
 
-/// Python tools manifest data extracted from the frontend subprocess, if any.
+/// Handler-manifest data extracted from a frontend subprocess, if any.
 #[cfg(feature = "driver")]
-type PythonHandlersManifest = Option<Vec<u8>>;
-#[cfg(feature = "driver")]
-type TypeScriptHandlersManifest = Option<Vec<u8>>;
+type HandlerManifestBytes = Option<Vec<u8>>;
 
 // ---------------------------------------------------------------------------
 // `apxm compile-service` — the cross-repo process contract Server (and any
@@ -507,6 +511,77 @@ struct DeclarativeAgentToml {
     prompts: std::collections::BTreeMap<String, String>,
 }
 
+/// The only package-level source declaration accepted by `apxm compile`.
+///
+/// A package that names executable source must declare both the relative entry
+/// path and its frontend under `[compile]`. An entry-less package is compiled
+/// by the declarative runtime-loop synthesizer instead.
+#[cfg(feature = "driver")]
+#[derive(Debug, Deserialize, Default)]
+struct AgentPackageToml {
+    #[serde(default)]
+    compile: Option<CompileToml>,
+}
+
+#[cfg(feature = "driver")]
+fn declared_agent_package_entry(agent_dir: &Path) -> Result<Option<PathBuf>> {
+    let agent_path = agent_dir.join("agent.toml");
+    let source: AgentPackageToml = toml::from_str(
+        &std::fs::read_to_string(&agent_path)
+            .with_context(|| format!("Failed to read {}", agent_path.display()))?,
+    )
+    .with_context(|| format!("Failed to parse {}", agent_path.display()))?;
+    let Some(compile) = source.compile else {
+        return Ok(None);
+    };
+
+    match (compile.entry, compile.frontend) {
+        (None, None) => Ok(None),
+        (Some(_), None) => anyhow::bail!(
+            "{} declares [compile].entry without [compile].frontend",
+            agent_path.display()
+        ),
+        (None, Some(_)) => anyhow::bail!(
+            "{} declares [compile].frontend without [compile].entry; remove [compile] for an entry-less declarative package",
+            agent_path.display()
+        ),
+        (Some(entry), Some(frontend)) => {
+            let entry_path = Path::new(&entry);
+            if entry_path.is_absolute()
+                || entry_path
+                    .components()
+                    .any(|component| matches!(component, std::path::Component::ParentDir))
+            {
+                anyhow::bail!(
+                    "{} has an invalid [compile].entry {:?}; entries must be workspace-relative package paths",
+                    agent_path.display(),
+                    entry
+                );
+            }
+            let resolved = agent_dir.join(entry_path);
+            if !resolved.is_file() {
+                anyhow::bail!(
+                    "{} declares [compile].entry {:?}, but {} does not exist",
+                    agent_path.display(),
+                    entry,
+                    resolved.display()
+                );
+            }
+            let is_expected_frontend = match frontend {
+                FrontendLanguage::Python => is_python_graph_input(&resolved),
+                FrontendLanguage::TypeScript => is_typescript_graph_input(&resolved),
+            };
+            if !is_expected_frontend {
+                anyhow::bail!(
+                    "{} declares [compile].frontend = {frontend}, but entry {entry:?} has the wrong source extension",
+                    agent_path.display(),
+                );
+            }
+            Ok(Some(resolved))
+        }
+    }
+}
+
 #[cfg(feature = "driver")]
 #[derive(Debug, Deserialize, Default)]
 struct DeclarativeCapabilitiesToml {
@@ -559,19 +634,14 @@ fn declarative_loop_rearms(agent: &DeclarativeAgentToml) -> bool {
 }
 
 #[cfg(feature = "driver")]
-fn manifest_entry_matches_handler(entry: &serde_json::Value, handler: &str) -> bool {
-    let entry_qual = entry.get("qualname").and_then(|v| v.as_str()).unwrap_or("");
-    let entry_source = entry
-        .get("source_file")
-        .and_then(|v| v.as_str())
-        .unwrap_or("")
-        .replace('\\', "/");
+fn manifest_entry_matches_handler(entry: &HandlerDescriptor, handler: &str) -> bool {
+    let entry_module = entry.module.replace('\\', "/").replace('.', "/");
+    let entry_qual = &entry.qualname;
 
     if let Some((path_part, qualname)) = handler.split_once(':') {
         let path_part = path_part.trim_start_matches("./").replace('\\', "/");
         return entry_qual == qualname
-            && (entry_source.ends_with(&path_part)
-                || entry_source.ends_with(&format!("{path_part}.ts")));
+            && (entry_module == path_part || entry_module.ends_with(&format!("/{path_part}")));
     }
 
     let normalized = handler.replace('.', "/").replace('\\', "/");
@@ -579,22 +649,14 @@ fn manifest_entry_matches_handler(entry: &serde_json::Value, handler: &str) -> b
         return entry_qual == handler;
     };
     entry_qual == qualname
-        && (entry_source.ends_with(path_part)
-            || entry_source.ends_with(&format!("{path_part}.ts"))
-            || entry_source.contains(&format!("/{path_part}.ts")))
+        && (entry_module == path_part || entry_module.ends_with(&format!("/{path_part}")))
 }
 
 #[cfg(feature = "driver")]
-fn resolve_declarative_handler_id(handler: &str, manifest: &[serde_json::Value]) -> Result<String> {
-    for entry in manifest {
+fn resolve_declarative_handler_id(handler: &str, manifest: &HandlerManifest) -> Result<String> {
+    for entry in &manifest.handlers {
         if manifest_entry_matches_handler(entry, handler) {
-            return entry
-                .get("handler_id")
-                .and_then(|v| v.as_str())
-                .map(str::to_string)
-                .ok_or_else(|| {
-                    anyhow::anyhow!("manifest entry for '{handler}' missing handler_id")
-                });
+            return Ok(entry.handler_id.clone());
         }
     }
     Err(anyhow::anyhow!(
@@ -650,51 +712,18 @@ fn declarative_tool_surface(
 }
 
 #[cfg(feature = "driver")]
-fn append_typescript_tools_sidecar(
-    mut air: String,
-    manifest: &[serde_json::Value],
-) -> Result<String> {
-    if manifest.is_empty() {
+fn append_handler_manifest_sidecar(mut air: String, manifest: &HandlerManifest) -> Result<String> {
+    if manifest.handlers.is_empty() {
         return Ok(air);
     }
     let sidecar =
-        serde_json::to_string(manifest).context("Failed to serialize TypeScript tools sidecar")?;
+        serde_json::to_string(manifest).context("Failed to serialize handler manifest sidecar")?;
     if !air.ends_with('\n') {
         air.push('\n');
     }
-    air.push_str("; __apxm_typescript_tools__ ");
+    air.push_str(HANDLER_MANIFEST_AIR_SIDECAR_PREFIX);
     air.push_str(&sidecar);
     Ok(air)
-}
-
-#[cfg(feature = "driver")]
-fn absolutize_typescript_tool_sources(
-    manifest: Vec<serde_json::Value>,
-    agent_dir: &Path,
-) -> Result<Vec<serde_json::Value>> {
-    let agent_dir = agent_dir
-        .canonicalize()
-        .with_context(|| format!("Failed to resolve {}", agent_dir.display()))?;
-    Ok(manifest
-        .into_iter()
-        .map(|mut entry| {
-            if let Some(source_file) = entry
-                .get("source_file")
-                .and_then(|value| value.as_str())
-                .map(str::to_string)
-                && !Path::new(&source_file).is_absolute()
-                && let Some(object) = entry.as_object_mut()
-            {
-                object.insert(
-                    "source_file".to_string(),
-                    serde_json::Value::String(
-                        agent_dir.join(source_file).to_string_lossy().into_owned(),
-                    ),
-                );
-            }
-            entry
-        })
-        .collect())
 }
 
 #[cfg(feature = "driver")]
@@ -716,16 +745,18 @@ fn emit_air_from_declarative_agent(
         .with_context(|| format!("Failed to parse {}", agent_path.display()))?;
 
     let tools_path = agent_dir.join("capabilities/handlers/tools.json");
-    let manifest: Vec<serde_json::Value> = if tools_path.is_file() {
-        serde_json::from_str(
-            &std::fs::read_to_string(&tools_path)
-                .with_context(|| format!("Failed to read {}", tools_path.display()))?,
-        )
-        .with_context(|| format!("Failed to parse {}", tools_path.display()))?
+    let manifest = if tools_path.is_file() {
+        let data = std::fs::read(&tools_path)
+            .with_context(|| format!("Failed to read {}", tools_path.display()))?;
+        let manifest = HandlerManifest::from_json_slice(&data)
+            .with_context(|| format!("Failed to parse {}", tools_path.display()))?;
+        manifest
+            .validate()
+            .with_context(|| format!("Invalid {}", tools_path.display()))?;
+        manifest
     } else {
-        Vec::new()
+        HandlerManifest::new(Vec::new())
     };
-    let manifest = absolutize_typescript_tool_sources(manifest, agent_dir)?;
     let capabilities_path = agent_dir.join("capabilities/capabilities.toml");
     let capabilities: DeclarativeCapabilitiesToml = if capabilities_path.is_file() {
         toml::from_str(
@@ -974,27 +1005,24 @@ fn emit_air_from_declarative_agent(
         .iter()
         .map(FrontendGraph::to_air_module)
         .collect::<std::result::Result<Vec<AirModule>, _>>()?;
-    append_typescript_tools_sidecar(AirProgram::new(modules).to_air()?, &manifest)
+    append_handler_manifest_sidecar(AirProgram::new(modules).to_air()?, &manifest)
 }
 
-/// `; __apxm_typescript_tools__ <json>` — the trailing sidecar comment line
-/// `append_typescript_tools_sidecar` appends to declarative-agent AIR.
+/// The trailing handler-manifest comment appended to declarative-agent AIR.
 /// Consumed by Server directly; `apxm compile` (below) strips it before
 /// handing the AIR to the MLIR parser and re-attaches it as an embedded
 /// artifact section instead.
 #[cfg(feature = "driver")]
-const TYPESCRIPT_TOOLS_SIDECAR_PREFIX: &str = "; __apxm_typescript_tools__ ";
-
 /// Split a declarative agent's emitted AIR (as `compile-service` writes it:
-/// canonical AIR text plus a trailing typescript-tools sidecar comment) into
+/// canonical AIR text plus a trailing handler-manifest comment) into
 /// sidecar-free AIR text (safe for the MLIR parser) and the raw sidecar JSON
 /// bytes, if present.
 #[cfg(feature = "driver")]
-fn split_typescript_tools_sidecar(air: &str) -> (String, Option<Vec<u8>>) {
+fn split_handler_manifest_sidecar(air: &str) -> (String, HandlerManifestBytes) {
     let mut clean_lines = Vec::new();
     let mut sidecar = None;
     for line in air.lines() {
-        if let Some(json) = line.strip_prefix(TYPESCRIPT_TOOLS_SIDECAR_PREFIX) {
+        if let Some(json) = line.strip_prefix(HANDLER_MANIFEST_AIR_SIDECAR_PREFIX) {
             sidecar = Some(json.as_bytes().to_vec());
         } else {
             clean_lines.push(line);
@@ -1007,23 +1035,20 @@ fn split_typescript_tools_sidecar(air: &str) -> (String, Option<Vec<u8>>) {
 /// Python/TypeScript entry file) for `apxm compile`, the same way
 /// [`prepare_graph_input`] prepares a `.py`/`.ts` frontend entry: emit AIR
 /// via [`emit_air_from_agent`] (the exact `compile-service` code path),
-/// strip the trailing typescript-tools sidecar comment into a temp `.air`
-/// file, and thread the sidecar through as the `typescript_tools_manifest`
-/// so `compile_command` embeds it into the artifact exactly like a `.ts`
-/// frontend entry's tool manifest.
+/// strip the trailing handler-manifest comment into a temp `.air` file, and
+/// pass the manifest to `compile_command` for artifact embedding.
 #[cfg(feature = "driver")]
 fn prepare_graph_input_from_declarative_agent(
     agent_dir: &Path,
 ) -> Result<(
     PathBuf,
     Option<tempfile::NamedTempFile>,
-    PythonHandlersManifest,
-    TypeScriptHandlersManifest,
+    HandlerManifestBytes,
 )> {
     use std::io::Write;
 
     let air_with_sidecar = emit_air_from_agent(agent_dir, &CompileServiceOptions::default())?;
-    let (clean_air, ts_manifest) = split_typescript_tools_sidecar(&air_with_sidecar);
+    let (clean_air, handler_manifest) = split_handler_manifest_sidecar(&air_with_sidecar);
 
     let mut tmp = tempfile::Builder::new()
         .suffix(".air")
@@ -1033,7 +1058,7 @@ fn prepare_graph_input_from_declarative_agent(
         .context("Failed to write emitted declarative-agent AIR to temporary file")?;
     tmp.flush().context("Failed to flush temporary .air file")?;
 
-    Ok((tmp.path().to_path_buf(), Some(tmp), None, ts_manifest))
+    Ok((tmp.path().to_path_buf(), Some(tmp), handler_manifest))
 }
 
 #[cfg(feature = "driver")]
@@ -1056,17 +1081,16 @@ pub(super) fn prepare_graph_input(
 ) -> Result<(
     PathBuf,
     Option<tempfile::NamedTempFile>,
-    PythonHandlersManifest,
-    TypeScriptHandlersManifest,
+    HandlerManifestBytes,
 )> {
     if is_python_graph_input(input) {
         let (tmp, manifest) = emit_air_from_python(input, config_path)?;
-        return Ok((tmp.path().to_path_buf(), Some(tmp), manifest, None));
+        return Ok((tmp.path().to_path_buf(), Some(tmp), manifest));
     }
 
     if is_typescript_graph_input(input) {
         let (tmp, manifest) = emit_air_from_typescript(input)?;
-        return Ok((tmp.path().to_path_buf(), Some(tmp), None, manifest));
+        return Ok((tmp.path().to_path_buf(), Some(tmp), manifest));
     }
 
     let input_format = ApxmPathFormat::from_path(input);
@@ -1084,7 +1108,7 @@ pub(super) fn prepare_graph_input(
         ));
     }
 
-    Ok((input.to_path_buf(), None, None, None))
+    Ok((input.to_path_buf(), None, None))
 }
 
 #[cfg(feature = "driver")]
@@ -1169,18 +1193,17 @@ pub fn compile_command(
     let compiler_config_path = config.clone();
     let opt_target = target;
     let _apxm_config = load_config(config.clone())?;
-    // A directory containing `agent.toml` (no Python/TypeScript entry file)
-    // is a declarative agent package — the same `compile-service` compiles
-    // to AIR-with-trailing-typescript-tools-sidecar. Route it through
-    // `prepare_graph_input_from_declarative_agent` instead of
-    // `resolve_directory_air_source` (which only ever looks for a
-    // pre-lowered `.air` file) so `apxm compile examples/agents/<id> -o
-    // out.apxmobj` + `apxm run out.apxmobj` works for a hooks-only package,
-    // the same way it already does for `.py`/`.ts` frontend entries
-    // (the declarative-agent compile contract).
-    let is_declarative_agent_dir = input.is_dir() && input.join("agent.toml").is_file();
+    let declared_package_entry = if input.is_dir() && input.join("agent.toml").is_file() {
+        declared_agent_package_entry(&input)?
+    } else {
+        None
+    };
+    let is_declarative_agent_dir =
+        input.is_dir() && input.join("agent.toml").is_file() && declared_package_entry.is_none();
     let input_source = if input.is_dir() {
-        if is_declarative_agent_dir {
+        if let Some(entry) = declared_package_entry {
+            entry
+        } else if is_declarative_agent_dir {
             input.clone()
         } else {
             resolve_directory_air_source(&input)?
@@ -1188,16 +1211,13 @@ pub fn compile_command(
     } else {
         input.clone()
     };
-    let (graph_input, _frontend_air, python_tools_manifest, typescript_tools_manifest) =
-        if is_declarative_agent_dir {
-            prepare_graph_input_from_declarative_agent(&input_source)?
-        } else if input_source.is_dir() {
-            unreachable!(
-                "directory inputs are resolved to a canonical .air source before compilation"
-            )
-        } else {
-            prepare_graph_input(&input_source, compiler_config_path.as_deref())?
-        };
+    let (graph_input, _frontend_air, handler_manifest_data) = if is_declarative_agent_dir {
+        prepare_graph_input_from_declarative_agent(&input_source)?
+    } else if input_source.is_dir() {
+        unreachable!("directory inputs are resolved to a canonical .air source before compilation")
+    } else {
+        prepare_graph_input(&input_source, compiler_config_path.as_deref())?
+    };
 
     let compile_start = std::time::Instant::now();
     let compiler = Compiler::with_opt_level(opt).context("Failed to initialize compiler")?;
@@ -1231,7 +1251,7 @@ pub fn compile_command(
             || pass_list_override.is_some();
 
         let needs_diagnostics = emit_diagnostics.is_some() || emit_metrics.is_some();
-        let (module, air_pass_diagnostics) = if needs_diagnostics {
+        let (module, mut air_pass_diagnostics) = if needs_diagnostics {
             let config = PipelineConfig {
                 opt_level: opt,
                 target: opt_target,
@@ -1274,32 +1294,33 @@ pub fn compile_command(
         let compile_time = compile_start.elapsed();
 
         let artifact_start = std::time::Instant::now();
-        // Parse the frontend subprocess manifest to detect orphan @tool entries.
-        let manifest: Option<Vec<apxm_compiler::passes::PythonCapabilityManifestEntry>> =
-            python_tools_manifest.as_ref().and_then(|data| {
-                serde_json::from_slice(data)
-                    .map_err(|e| {
-                        eprintln!("warning: failed to parse python_tools manifest: {e}");
-                        e
-                    })
-                    .ok()
-            });
-        let mut artifact = module
-            .generate_artifact_with_manifest(None, manifest.as_deref())
+        let manifest = handler_manifest_data
+            .as_deref()
+            .map(|data| {
+                let manifest = HandlerManifest::from_json_slice(data)
+                    .context("Failed to parse frontend handler manifest")?;
+                manifest
+                    .validate()
+                    .context("Invalid frontend handler manifest")?;
+                Ok::<_, anyhow::Error>(manifest)
+            })
+            .transpose()?;
+        let (mut artifact, artifact_stage_metrics) = module
+            .generate_artifact_with_manifest_and_caps_with_diagnostics(
+                None,
+                manifest.as_ref(),
+                &std::collections::HashSet::new(),
+            )
             .context("Failed to generate artifact")?;
 
-        // Embed Python handler manifest section when the frontend supplied one.
-        if let Some(manifest_data) = &python_tools_manifest {
-            artifact.add_section(apxm_artifact::ArtifactSection {
-                kind: apxm_runtime::python_tools::CAPABILITY_NAME.into(),
-                data: manifest_data.clone(),
-            });
+        if let Some(diagnostics) = air_pass_diagnostics.as_mut() {
+            diagnostics.record_artifact_stage_metrics(artifact_stage_metrics);
         }
 
-        if let Some(manifest_data) = &typescript_tools_manifest {
+        if let Some(manifest_data) = handler_manifest_data {
             artifact.add_section(apxm_artifact::ArtifactSection {
-                kind: apxm_runtime::typescript_tools::CAPABILITY_NAME.into(),
-                data: manifest_data.clone(),
+                kind: apxm_core::types::HANDLER_MANIFEST_ARTIFACT_SECTION.into(),
+                data: manifest_data,
             });
         }
 
@@ -1433,12 +1454,50 @@ mod tests {
     use super::*;
     use apxm_compiler::{Context, Module, Pipeline};
     use apxm_core::constants::mlir::syntax as mlir_syntax;
-    use apxm_core::types::OptimizationLevel;
+    use apxm_core::types::{HandlerKind, HandlerLanguage, HandlerSource, OptimizationLevel};
     use std::fs;
     use tempfile::tempdir;
 
     fn seal_agent(root: &Path) {
         super::super::agent::seal_agent_integrity_for_test(root).expect("seal test agent");
+    }
+
+    fn typescript_hook_manifests(qualnames: &[&str]) -> String {
+        let handlers = qualnames
+            .iter()
+            .enumerate()
+            .map(|(index, qualname)| HandlerDescriptor {
+                kind: HandlerKind::Hook,
+                language: HandlerLanguage::TypeScript,
+                handler_id: format!("sha256:{:064x}", index + 1),
+                module: "hooks".to_string(),
+                qualname: (*qualname).to_string(),
+                name: (*qualname).to_string(),
+                source: HandlerSource {
+                    artifact_path: format!("handlers/{qualname}.mjs"),
+                    content: format!("export function {qualname}() {{}}\n"),
+                },
+                description: String::new(),
+                schema: serde_json::json!({}),
+                read_only: None,
+                requires_approval: None,
+                event: Some(
+                    if *qualname == "pre_turn" {
+                        "pre_turn"
+                    } else {
+                        "post_turn"
+                    }
+                    .to_string(),
+                ),
+                r#match: Some("*".to_string()),
+                mode: Some("observe".to_string()),
+            })
+            .collect();
+        serde_json::to_string(&HandlerManifest::new(handlers)).expect("serialize handler manifest")
+    }
+
+    fn typescript_hook_manifest(qualname: &str) -> String {
+        typescript_hook_manifests(&[qualname])
     }
 
     fn write_declarative_agent(mode: &str) -> tempfile::TempDir {
@@ -1472,11 +1531,61 @@ handler = "hooks.pre_turn"
         .expect("agent toml");
         fs::write(
             root.join("capabilities/handlers/tools.json"),
-            r#"[{"source_file":"hooks.ts","qualname":"pre_turn","handler_id":"sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}]"#,
+            typescript_hook_manifest("pre_turn"),
         )
         .expect("tools manifest");
         seal_agent(root);
         tmp
+    }
+
+    fn write_source_agent(entry: &str, frontend: FrontendLanguage) -> tempfile::TempDir {
+        let tmp = tempdir().expect("temp source agent");
+        let root = tmp.path();
+        let source = root.join(entry);
+        fs::create_dir_all(source.parent().expect("entry has parent")).expect("source dir");
+        fs::write(
+            &source,
+            if frontend == FrontendLanguage::Python {
+                "from apxm import compile\n"
+            } else {
+                "console.log('frontend source');\n"
+            },
+        )
+        .expect("source");
+        fs::write(
+            root.join("agent.toml"),
+            format!("[compile]\nentry = {entry:?}\nfrontend = \"{frontend}\"\n"),
+        )
+        .expect("agent toml");
+        tmp
+    }
+
+    #[test]
+    fn source_bearing_agent_package_routes_through_its_declared_entry() {
+        let agent = write_source_agent("python/main.py", FrontendLanguage::Python);
+        let expected = agent.path().join("python/main.py");
+        assert_eq!(
+            declared_agent_package_entry(agent.path())
+                .expect("source package resolves")
+                .as_deref(),
+            Some(expected.as_path())
+        );
+    }
+
+    #[test]
+    fn entryless_package_cannot_retain_a_frontend_without_source() {
+        let agent = tempdir().expect("temp declarative agent");
+        fs::write(
+            agent.path().join("agent.toml"),
+            format!(
+                "[compile]\nfrontend = \"{}\"\n",
+                FrontendLanguage::TypeScript
+            ),
+        )
+        .expect("agent toml");
+        let error = declared_agent_package_entry(agent.path())
+            .expect_err("entry-less package with frontend must fail");
+        assert!(error.to_string().contains("without [compile].entry"));
     }
 
     fn assert_cli_air_round_trips(air: &str) {
@@ -1499,12 +1608,12 @@ handler = "hooks.pre_turn"
             .expect("O0 compile accepts CLI AIR");
     }
 
-    fn typescript_tools_sidecar(air: &str) -> Vec<serde_json::Value> {
+    fn handler_manifest_sidecar(air: &str) -> HandlerManifest {
         let raw = air
             .lines()
-            .find_map(|line| line.strip_prefix("; __apxm_typescript_tools__ "))
-            .expect("typescript sidecar");
-        serde_json::from_str(raw).expect("typescript sidecar json")
+            .find_map(|line| line.strip_prefix(HANDLER_MANIFEST_AIR_SIDECAR_PREFIX))
+            .expect("handler manifest sidecar");
+        serde_json::from_str(raw).expect("handler manifest sidecar JSON")
     }
 
     #[test]
@@ -1656,7 +1765,7 @@ handler = "hooks.pre_turn"
         assert!(air.contains("ais.flow_call \"conversation\" \"turn\""));
         assert!(air.contains("args = {user_message = \"{user_message}\"}"));
         assert!(air.contains("capability_groups = [\"web\"]"));
-        assert!(air.contains("__apxm_typescript_tools__"));
+        assert!(air.contains(HANDLER_MANIFEST_AIR_SIDECAR_PREFIX));
         assert_cli_air_round_trips(&air);
     }
 
@@ -1670,7 +1779,7 @@ handler = "hooks.pre_turn"
         assert!(air.contains("mode = \"recv\""));
         assert!(air.contains("recv_once = \"false\""));
         assert!(!air.contains("capability_groups = ["));
-        assert!(air.contains("__apxm_typescript_tools__"));
+        assert!(air.contains(HANDLER_MANIFEST_AIR_SIDECAR_PREFIX));
         assert_cli_air_round_trips(&air);
     }
 
@@ -1688,10 +1797,7 @@ handler = "hooks.pre_turn"
         .expect("second hook");
         fs::write(
             agent_dir.path().join("capabilities/handlers/tools.json"),
-            r#"[
-                {"source_file":"hooks.ts","qualname":"pre_turn","handler_id":"sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"},
-                {"source_file":"hooks.ts","qualname":"post_turn","handler_id":"sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"}
-            ]"#,
+            typescript_hook_manifests(&["pre_turn", "post_turn"]),
         )
         .expect("tools manifest");
         seal_agent(agent_dir.path());
@@ -1826,25 +1932,23 @@ builtin_group = "authoring"
     }
 
     #[test]
-    fn declarative_air_sidecar_resolves_typescript_sources_for_server_worker() {
+    fn declarative_air_sidecar_embeds_artifact_local_typescript_source() {
         let agent_dir = write_declarative_agent("recv");
         let air = emit_air_from_agent(agent_dir.path(), &CompileServiceOptions::default())
             .expect("declarative AIR");
-        let sidecar = typescript_tools_sidecar(&air);
-        let source_file = sidecar[0]
-            .get("source_file")
-            .and_then(|value| value.as_str())
-            .expect("source_file");
-
-        assert!(Path::new(source_file).is_absolute(), "{source_file}");
-        assert_eq!(
-            source_file,
-            agent_dir.path().join("hooks.ts").to_string_lossy()
+        let sidecar = handler_manifest_sidecar(&air);
+        let source = &sidecar.handlers[0].source;
+        assert_eq!(source.artifact_path, "handlers/pre_turn.mjs");
+        assert!(source.content.contains("export function pre_turn"));
+        assert!(
+            !source
+                .content
+                .contains(agent_dir.path().to_string_lossy().as_ref())
         );
     }
 
     #[test]
-    fn declarative_air_sidecar_resolves_relative_agent_dir_sources_for_server_worker() {
+    fn declarative_air_sidecar_is_independent_of_the_agent_directory() {
         let root = PathBuf::from("target/apxm-relative-agent-fixture");
         let _ = fs::remove_dir_all(&root);
         fs::create_dir_all(root.join("capabilities/handlers")).expect("fixture dirs");
@@ -1873,20 +1977,24 @@ handler = "hooks.pre_turn"
         .expect("agent toml");
         fs::write(
             root.join("capabilities/handlers/tools.json"),
-            r#"[{"source_file":"hooks.ts","qualname":"pre_turn","handler_id":"sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}]"#,
+            typescript_hook_manifest("pre_turn"),
         )
         .expect("tools manifest");
         seal_agent(&root);
 
         let air =
             emit_air_from_agent(&root, &CompileServiceOptions::default()).expect("declarative AIR");
-        let sidecar = typescript_tools_sidecar(&air);
-        let source_file = sidecar[0]
-            .get("source_file")
-            .and_then(|value| value.as_str())
-            .expect("source_file");
-
-        assert!(Path::new(source_file).is_absolute(), "{source_file}");
+        let sidecar = handler_manifest_sidecar(&air);
+        assert_eq!(
+            sidecar.handlers[0].source.artifact_path,
+            "handlers/pre_turn.mjs"
+        );
+        assert!(
+            !sidecar.handlers[0]
+                .source
+                .content
+                .contains(root.to_string_lossy().as_ref())
+        );
         let _ = fs::remove_dir_all(&root);
     }
 
@@ -2069,7 +2177,7 @@ handler = "hooks.pre_turn"
         .expect("agent toml");
         fs::write(
             root.join("capabilities/handlers/tools.json"),
-            r#"[{"source_file":"hooks.ts","qualname":"pre_turn","handler_id":"sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}]"#,
+            typescript_hook_manifest("pre_turn"),
         )
         .expect("tools manifest");
         seal_agent(root);
@@ -2151,7 +2259,7 @@ handler = "hooks.author_compaction"
         .expect("agent toml");
         fs::write(
             root.join("capabilities/handlers/tools.json"),
-            r#"[{"source_file":"hooks.ts","qualname":"author_compaction","handler_id":"sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}]"#,
+            typescript_hook_manifest("author_compaction"),
         )
         .expect("tools manifest");
         seal_agent(root);
@@ -2171,18 +2279,20 @@ handler = "hooks.author_compaction"
     // -----------------------------------------------------------------
 
     #[test]
-    fn split_typescript_tools_sidecar_extracts_trailing_comment() {
-        let air = "module {\n}\n; __apxm_typescript_tools__ [{\"a\":1}]";
-        let (clean, sidecar) = split_typescript_tools_sidecar(air);
-        assert!(!clean.contains("__apxm_typescript_tools__"));
+    fn split_handler_manifest_sidecar_extracts_trailing_comment() {
+        let manifest = serde_json::to_string(&HandlerManifest::new(Vec::new()))
+            .expect("serialize handler manifest");
+        let air = format!("module {{\n}}\n{HANDLER_MANIFEST_AIR_SIDECAR_PREFIX}{manifest}");
+        let (clean, sidecar) = split_handler_manifest_sidecar(&air);
+        assert!(!clean.contains(HANDLER_MANIFEST_AIR_SIDECAR_PREFIX));
         assert!(clean.contains("module {"));
-        assert_eq!(sidecar.as_deref(), Some(&b"[{\"a\":1}]"[..]));
+        assert_eq!(sidecar.as_deref(), Some(manifest.as_bytes()));
     }
 
     #[test]
-    fn split_typescript_tools_sidecar_is_none_when_absent() {
+    fn split_handler_manifest_sidecar_is_none_when_absent() {
         let air = "module {\n}\n";
-        let (clean, sidecar) = split_typescript_tools_sidecar(air);
+        let (clean, sidecar) = split_handler_manifest_sidecar(air);
         assert_eq!(clean.trim_end(), "module {\n}".trim_end());
         assert!(sidecar.is_none());
     }
@@ -2190,16 +2300,15 @@ handler = "hooks.author_compaction"
     #[test]
     fn prepare_graph_input_from_declarative_agent_yields_clean_air_and_manifest() {
         let agent_dir = write_declarative_agent("host");
-        let (air_path, _tmp, python_manifest, ts_manifest) =
+        let (air_path, _tmp, handler_manifest) =
             prepare_graph_input_from_declarative_agent(agent_dir.path())
                 .expect("prepare declarative agent graph input");
 
         let air_text = fs::read_to_string(&air_path).expect("read temp air");
-        assert!(!air_text.contains("__apxm_typescript_tools__"));
-        assert!(python_manifest.is_none());
+        assert!(!air_text.contains(HANDLER_MANIFEST_AIR_SIDECAR_PREFIX));
         assert!(
-            ts_manifest.is_some(),
-            "declarative TS handlers must round-trip a manifest"
+            handler_manifest.is_some(),
+            "declarative handlers must round-trip a manifest"
         );
 
         // The clean AIR must still parse and verify through the real MLIR

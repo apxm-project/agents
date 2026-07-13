@@ -107,7 +107,7 @@ export const OP_SPECS: Readonly<Record<OpName, OpSpec>> = {
     name: "Ask",
     category: "reasoning",
     description: "Simple Q&A with LLM (no extended thinking)",
-    longDescription: "Sends a prompt to the configured LLM and returns the response. The lightest LLM operation — no chain-of-thought or extended thinking. Use for straightforward questions, classifications, extractions, or reformulations. Template strings support named `{input}` interpolation for dataflow inputs via the node's `input_names` array.",
+    longDescription: "Sends a prompt to the configured LLM and returns the response. The lightest LLM operation — no chain-of-thought or extended thinking. Use for straightforward questions, classifications, extractions, or reformulations. Template strings support named `{input}` interpolation for dataflow inputs via the node's positional `input_names` array. Optional `input_roles` entries align with those names and context operands to distinguish user, system, dependency-only, tool-context, and control inputs.",
     latency: "medium",
     wireIndex: 1,
     isPseudoOp: false,
@@ -116,6 +116,8 @@ export const OP_SPECS: Readonly<Record<OpName, OpSpec>> = {
     needsSubmission: true,
     fields: [
       { name: "template_str", required: true, description: "Prompt template for the question", refType: null },
+      { name: "input_names", required: false, description: "Positional names for LLM context inputs referenced by template placeholders", refType: null },
+      { name: "input_roles", required: false, description: "Positional LLM context roles: user, system, dependency_only, tool_context, or control", refType: null },
       { name: "temperature", required: false, description: "Sampling temperature (0.0-1.0)", refType: null },
       { name: "model", required: false, description: "LLM model override (uses config default)", refType: "model" },
     ],
@@ -136,6 +138,8 @@ export const OP_SPECS: Readonly<Record<OpName, OpSpec>> = {
     needsSubmission: true,
     fields: [
       { name: "template_str", required: true, description: "Prompt template for deep reasoning", refType: null },
+      { name: "input_names", required: false, description: "Positional names for LLM context inputs referenced by template placeholders", refType: null },
+      { name: "input_roles", required: false, description: "Positional LLM context roles: user, system, dependency_only, tool_context, or control", refType: null },
       { name: "budget", required: false, description: "Token budget for extended thinking", refType: null },
       { name: "temperature", required: false, description: "Sampling temperature (0.0-1.0)", refType: null },
       { name: "model", required: false, description: "LLM model override (uses config default)", refType: "model" },
@@ -157,6 +161,8 @@ export const OP_SPECS: Readonly<Record<OpName, OpSpec>> = {
     needsSubmission: true,
     fields: [
       { name: "template_str", required: true, description: "Prompt template for structured reasoning", refType: null },
+      { name: "input_names", required: false, description: "Positional names for LLM context inputs referenced by template placeholders", refType: null },
+      { name: "input_roles", required: false, description: "Positional LLM context roles: user, system, dependency_only, tool_context, or control", refType: null },
       { name: "temperature", required: false, description: "Sampling temperature (0.0-1.0)", refType: null },
       { name: "model", required: false, description: "LLM model override (uses config default)", refType: "model" },
       { name: "structured", required: false, description: "Enable structured JSON output", refType: null },
@@ -346,10 +352,9 @@ export const OP_SPECS: Readonly<Record<OpName, OpSpec>> = {
     needsSubmission: false,
     fields: [
       { name: "discriminant", required: true, description: "Token to match against case labels", refType: null },
-      { name: "cases", required: true, description: "Array of case label/destination pairs", refType: null },
-      { name: "default", required: false, description: "Default destination if no case matches", refType: null },
+      { name: "case_labels", required: true, description: "Ordered labels for switch case regions", refType: null },
     ],
-    exampleJson: "{\"id\": 3, \"op\": \"SWITCH\", \"attributes\": {\"discriminant\": \"topic_kind\", \"cases\": [{\"label\": \"math\", \"node_id\": 4}, {\"label\": \"code\", \"node_id\": 5}], \"default\": \"6\"}}",
+    exampleJson: "{\"id\": 3, \"op\": \"SWITCH\", \"attributes\": {\"discriminant\": \"topic_kind\", \"case_labels\": [\"math\", \"code\"]}}",
   },
   "FLOW_CALL": {
     op: "FLOW_CALL",
@@ -809,7 +814,7 @@ export const OP_SPECS: Readonly<Record<OpName, OpSpec>> = {
     producesOutput: true,
     needsSubmission: false,
     fields: [
-      { name: "value", required: true, description: "The value to yield from the region", refType: null },
+      { name: "value", required: false, description: "Optional literal value when the yielded token does not arrive through the region input", refType: null },
     ],
     exampleJson: null,
   },

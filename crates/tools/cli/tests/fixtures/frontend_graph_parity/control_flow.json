@@ -1,0 +1,17 @@
+{
+  "name": "control_flow",
+  "nodes": [
+    {"id": 1, "name": "classify", "op": "ASK", "attributes": {"template_str": "Classify the request"}},
+    {"id": 2, "name": "branch", "op": "BRANCH_ON_VALUE", "attributes": {"value": "approved", "true_label": "approved_path", "false_label": "review_path"}},
+    {"id": 3, "name": "route", "op": "SWITCH", "attributes": {"discriminant": "classification", "case_labels": ["approved", "review"]}},
+    {"id": 4, "name": "recover", "op": "TRY_CATCH", "attributes": {"try_label": "route", "catch_label": "fallback"}},
+    {"id": 5, "name": "out", "op": "RETURN", "attributes": {}}
+  ],
+  "edges": [
+    {"from": 1, "to": 2, "dependency": "Data"},
+    {"from": 1, "to": 3, "dependency": "Data"},
+    {"from": 3, "to": 5, "dependency": "Data"}
+  ],
+  "parameters": [],
+  "metadata": {"is_entry": true}
+}

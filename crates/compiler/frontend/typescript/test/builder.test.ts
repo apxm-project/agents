@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { GraphBuilder } from "../src/builder.js";
+import { GraphBuilder, promptInput } from "../src/builder.js";
 import { GENERATED_GRAPH_BUILDER_OP_METHODS } from "../src/generated/builder-ops.js";
 import { ALL_OPERATIONS } from "../src/generated/ops.js";
 
@@ -35,6 +35,7 @@ describe("GraphBuilder", () => {
     expect(edgePairs).toContainEqual([spawnNode.id, delegateNode.id, "Data"]);
     expect(edgePairs).toContainEqual([delegateNode.id, communicateNode.id, "Data"]);
     expect(edgePairs).toContainEqual([spawnNode.id, communicateNode.id, "Data"]);
+    expect(graph.metadata).toEqual({});
   });
 
   it("wires ask() inputs into input_names and Data edges", () => {
@@ -53,6 +54,57 @@ describe("GraphBuilder", () => {
     });
   });
 
+  it("serializes every prompt input role in input order", () => {
+    const g = new GraphBuilder("prompt_roles");
+    const question = g.op("CONST_STR", { name: "question", attributes: { value: "question" } });
+    const policy = g.op("CONST_STR", { name: "policy", attributes: { value: "policy" } });
+    const dependency = g.op("CONST_STR", { name: "dependency", attributes: { value: "dependency" } });
+    const toolResult = g.op("CONST_STR", { name: "tool_result", attributes: { value: "tool result" } });
+    const guard = g.op("CONST_STR", { name: "guard", attributes: { value: "guard" } });
+
+    const ask = g.ask({
+      prompt: "Answer {question}",
+      inputs: { question },
+      promptInputs: {
+        policy: promptInput(policy, "system"),
+        dependency: promptInput(dependency, "dependency_only"),
+        tool_result: promptInput(toolResult, "tool_context"),
+        guard: promptInput(guard, "control"),
+      },
+    });
+
+    const node = g.toGraph().nodes.find((candidate) => candidate.id === ask.nodeId)!;
+    expect(node.attributes.input_names).toEqual(["question", "policy", "dependency", "tool_result", "guard"]);
+    expect(node.attributes.input_roles).toEqual([
+      "user",
+      "system",
+      "dependency_only",
+      "tool_context",
+      "control",
+    ]);
+  });
+
+  it.each(["ask", "think", "reason"] as const)("uses promptInputs for %s", (methodName) => {
+    const g = new GraphBuilder(`${methodName}_roles`);
+    const question = g.op("CONST_STR", { name: "question", attributes: { value: "question" } });
+    const policy = g.op("CONST_STR", { name: "policy", attributes: { value: "policy" } });
+
+    const node = g[methodName]({
+      prompt: "Answer {question}",
+      inputs: { question },
+      promptInputs: { policy: promptInput(policy, "system") },
+    });
+
+    const attrs = g.toGraph().nodes.find((candidate) => candidate.id === node.nodeId)!.attributes;
+    expect(attrs.input_names).toEqual(["question", "policy"]);
+    expect(attrs.input_roles).toEqual(["user", "system"]);
+  });
+
+  it("rejects manually supplied LLM input metadata", () => {
+    const g = new GraphBuilder("typed_roles");
+    expect(() => g.ask({ prompt: "Answer", input_names: ["question"] })).toThrow(/promptInputs/);
+  });
+
   it("records a capability invocation (INV_CAP)", () => {
     const g = new GraphBuilder("capability_flow");
     const invoked = g.invokeCapability({
@@ -67,15 +119,15 @@ describe("GraphBuilder", () => {
     expect(node.attributes.params_json).toBe(JSON.stringify({ query: "apxm" }));
   });
 
-  it("records a checkpoint as a FENCE node with checkpoint=true", () => {
+  it("records a checkpoint as a durable CHECKPOINT node", () => {
     const g = new GraphBuilder("checkpoint_flow");
-    const cp = g.checkpoint();
+    const cp = g.checkpoint({ checkpointId: "before-write" });
     g.done(cp);
 
     const graph = g.toGraph();
-    const node = graph.nodes.find((n) => n.name === "fence")!;
-    expect(node.op).toBe("FENCE");
-    expect(node.attributes.checkpoint).toBe(true);
+    const node = graph.nodes.find((n) => n.name === "checkpoint")!;
+    expect(node.op).toBe("CHECKPOINT");
+    expect(node.attributes.checkpoint_id).toBe("before-write");
   });
 
   it("records generic catalog ops with attributes and input edges", () => {
@@ -113,7 +165,7 @@ describe("GraphBuilder", () => {
   });
 
   it("serializes the compiler FrontendGraph DTO shape", () => {
-    const g = new GraphBuilder("dto_flow", { is_entry: true });
+    const g = new GraphBuilder("dto_flow", { metadata: { is_entry: true } });
     g.param("topic", "str");
     const answer = g.ask({ name: "answer", prompt: "Research: {topic}" });
     const invoked = g.invokeCapability({

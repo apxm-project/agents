@@ -19,10 +19,13 @@
 //! the agent schema, not a port of that server check.
 
 use std::collections::{BTreeMap, BTreeSet};
+use std::fmt;
 use std::fs;
 use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result, anyhow, bail};
+use apxm_core::constants::env as apxm_env;
+use apxm_core::types::{HandlerKind, HandlerLanguage, HandlerManifest};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
@@ -54,6 +57,7 @@ pub struct ChainLinkToml {
 
 /// Projection of `agent.toml` (`apxm.agent.v1#/properties/agent`).
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct AgentToml {
     pub id: String,
     pub version: String,
@@ -64,20 +68,15 @@ pub struct AgentToml {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub source: Option<toml::Value>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub compile: Option<toml::Value>,
+    pub compile: Option<CompileToml>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub display_name: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub description: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub kind: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub domain: Option<String>,
-    /// Path relative to `python/` to the Python-frontend entry. Optional:
-    /// a agent with no entry (and no custom code) is loaded as a
-    /// pure-declarative `ConversationalAgent` built straight from `[runtime]`
-    /// + `[[hooks]]` by the server-side loader — no Python
-    /// file required.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub entry: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub runtime: Option<RuntimeToml>,
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
@@ -212,13 +211,72 @@ pub struct PermissionEntry {
     pub extra: toml::Table,
 }
 
-/// recognized skill frontend source languages. Python and TypeScript
-/// sources emit AIR from their frontend agents.
-pub const FRONTEND_PYTHON: &str = "python";
-pub const FRONTEND_TYPESCRIPT: &str = "typescript";
+/// Source language accepted by the supported compiler frontends.
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "lowercase")]
+pub enum FrontendLanguage {
+    /// Python frontend source.
+    Python,
+    /// TypeScript frontend source.
+    TypeScript,
+}
 
-fn default_frontend() -> String {
-    FRONTEND_PYTHON.to_string()
+impl FrontendLanguage {
+    /// File extension required for an authored package entry.
+    pub const fn source_extension(self) -> &'static str {
+        match self {
+            Self::Python => ".py",
+            Self::TypeScript => ".ts",
+        }
+    }
+
+    /// Required source filename for a compiled skill.
+    pub const fn skill_source_filename(self) -> &'static str {
+        match self {
+            Self::Python => "skill.py",
+            Self::TypeScript => "skill.ts",
+        }
+    }
+}
+
+impl fmt::Display for FrontendLanguage {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str(match self {
+            Self::Python => "python",
+            Self::TypeScript => "typescript",
+        })
+    }
+}
+
+/// Resolve an entry from the installed TypeScript frontend package.
+pub(super) fn installed_typescript_frontend_entry(relative: &str) -> Result<PathBuf> {
+    let package =
+        std::env::var_os(apxm_env::APXM_TYPESCRIPT_FRONTEND_PACKAGE).ok_or_else(|| {
+            anyhow!(
+                "{} must point to the installed @apxm/frontend package",
+                apxm_env::APXM_TYPESCRIPT_FRONTEND_PACKAGE,
+            )
+        })?;
+    let entry = PathBuf::from(package).join(relative);
+    if !entry.is_file() {
+        bail!(
+            "installed @apxm/frontend entry is missing: {}",
+            entry.display()
+        );
+    }
+    Ok(entry)
+}
+
+/// Source-bearing package declaration.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct CompileToml {
+    /// Package-relative frontend entry path.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub entry: Option<String>,
+    /// Frontend that owns the entry source syntax.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub frontend: Option<FrontendLanguage>,
 }
 
 /// `skills/<id>/skill.toml` — always present per skill.
@@ -234,13 +292,10 @@ pub struct SkillToml {
     /// joined capability set.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub capabilities: Vec<String>,
-    /// which frontend authored this skill's compiled source
-    /// (`skills/<id>/skill.py` for `"python"`, `skills/<id>/skill.ts` for
-    /// `"typescript"`). Only meaningful when `compiled = true`; defaults to
-    /// `"python"` so skill.toml files written before this field existed keep
-    /// parsing unchanged.
-    #[serde(default = "default_frontend")]
-    pub frontend: String,
+    /// Frontend that authored the compiled source. Required when `compiled`
+    /// is true and absent for prompt-only skills.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub frontend: Option<FrontendLanguage>,
     /// sha256 hex of the frontend source file's bytes as of the last
     /// successful `agent build` compile of this skill. `None` before the
     /// first successful compiled build (or for prompt-only skills).
@@ -324,7 +379,7 @@ pub(crate) fn example_agent_dir(name: &str) -> PathBuf {
     agent_examples_dir().join(name)
 }
 
-#[cfg(test)]
+#[cfg(all(test, feature = "driver"))]
 pub(crate) fn gao_example_agent_dir() -> PathBuf {
     example_agent_dir("gao")
 }
@@ -418,9 +473,7 @@ fn agent_new_looped_agent(
              [chat]\n\
              capability_discovery = true\n\n\
              [source]\n\
-             type = \"local\"\n\n\
-             [compile]\n\
-             frontend = \"typescript\"\n"
+             type = \"local\"\n"
         ),
     )?;
 
@@ -568,14 +621,6 @@ fn capability_kind(entry: &CapabilityEntry) -> Option<&str> {
     entry.extra.get("kind").and_then(|value| value.as_str())
 }
 
-fn capability_read_only(entry: &CapabilityEntry) -> bool {
-    entry
-        .extra
-        .get("read_only")
-        .and_then(toml::Value::as_bool)
-        .unwrap_or(false)
-}
-
 fn validate_flat_capability_id(id: &str, cap_id: &str, folder: &str) -> Result<()> {
     if cap_id != folder {
         bail!(
@@ -659,30 +704,101 @@ fn scan_capability_folders(
     Ok((capabilities, permissions))
 }
 
-fn load_typescript_tools_manifest(root: &Path) -> Result<Vec<serde_json::Value>> {
+fn load_typescript_tools_manifest(root: &Path) -> Result<HandlerManifest> {
     let tools_path = root.join("capabilities/handlers/tools.json");
     if !tools_path.is_file() {
-        return Ok(Vec::new());
+        return Ok(HandlerManifest::new(Vec::new()));
     }
-    serde_json::from_str(
-        &fs::read_to_string(&tools_path)
+    let manifest = HandlerManifest::from_json_slice(
+        &fs::read(&tools_path)
             .with_context(|| format!("Failed to read {}", tools_path.display()))?,
     )
-    .with_context(|| format!("Failed to parse {}", tools_path.display()))
+    .with_context(|| format!("Failed to parse {}", tools_path.display()))?;
+    manifest
+        .validate()
+        .with_context(|| format!("Invalid {}", tools_path.display()))?;
+    Ok(manifest)
 }
 
 fn enrich_typescript_capabilities_from_tools_manifest(
     capabilities: &mut [CapabilityEntry],
-    manifest: &[serde_json::Value],
+    permissions: &[PermissionEntry],
+    manifest: &mut HandlerManifest,
 ) -> Result<()> {
-    let by_name: BTreeMap<&str, &serde_json::Value> = manifest
+    let capability_by_id: BTreeMap<&str, &CapabilityEntry> = capabilities
         .iter()
-        .filter_map(|entry| {
-            entry
-                .get("name")
-                .and_then(serde_json::Value::as_str)
-                .map(|name| (name, entry))
+        .map(|capability| (capability.id.as_str(), capability))
+        .collect();
+    let permission_by_id: BTreeMap<&str, &PermissionEntry> = permissions
+        .iter()
+        .map(|permission| (permission.capability.as_str(), permission))
+        .collect();
+
+    for entry in manifest.handlers.iter_mut().filter(|entry| {
+        entry.kind == HandlerKind::Tool && entry.language == HandlerLanguage::TypeScript
+    }) {
+        let capability = capability_by_id.get(entry.name.as_str()).ok_or_else(|| {
+            anyhow!(
+                "TypeScript handler '{}' has no matching capability folder",
+                entry.name
+            )
+        })?;
+        if capability_kind(capability) != Some("typescript_handler") {
+            bail!(
+                "TypeScript handler '{}' must match a capability with kind = \"typescript_handler\"",
+                entry.name
+            );
+        }
+        let read_only = capability
+            .extra
+            .get("read_only")
+            .and_then(toml::Value::as_bool)
+            .ok_or_else(|| {
+                anyhow!(
+                    "TypeScript capability '{}' must declare boolean read_only metadata",
+                    entry.name
+                )
+            })?;
+        let permission = permission_by_id.get(entry.name.as_str()).ok_or_else(|| {
+            anyhow!(
+                "TypeScript capability '{}' has no matching permission policy",
+                entry.name
+            )
+        })?;
+        let requires_approval = match permission.decision.as_deref() {
+            Some("allow") => false,
+            Some("ask") => true,
+            Some("deny") => {
+                bail!(
+                    "TypeScript capability '{}' is denied and cannot be emitted as an executable handler",
+                    entry.name
+                )
+            }
+            Some(decision) => {
+                bail!(
+                    "TypeScript capability '{}' uses unsupported permission decision '{}'",
+                    entry.name,
+                    decision
+                )
+            }
+            None => {
+                bail!(
+                    "TypeScript capability '{}' must declare permission decision = \"allow\" or \"ask\"",
+                    entry.name
+                )
+            }
+        };
+        entry.read_only = Some(read_only);
+        entry.requires_approval = Some(requires_approval);
+    }
+
+    let by_name: BTreeMap<&str, _> = manifest
+        .handlers
+        .iter()
+        .filter(|entry| {
+            entry.kind == HandlerKind::Tool && entry.language == HandlerLanguage::TypeScript
         })
+        .map(|entry| (entry.name.as_str(), entry))
         .collect();
 
     for cap in capabilities {
@@ -697,16 +813,8 @@ fn enrich_typescript_capabilities_from_tools_manifest(
                 cap.id
             );
         };
-        let module = entry
-            .get("module")
-            .and_then(serde_json::Value::as_str)
-            .filter(|value| !value.is_empty())
-            .ok_or_else(|| anyhow!("tools.json entry '{}' is missing module", cap.id))?;
-        let qualname = entry
-            .get("qualname")
-            .and_then(serde_json::Value::as_str)
-            .filter(|value| !value.is_empty())
-            .ok_or_else(|| anyhow!("tools.json entry '{}' is missing qualname", cap.id))?;
+        let module = &entry.module;
+        let qualname = &entry.qualname;
         cap.extra.insert(
             "handler_module".to_string(),
             toml::Value::String(module.to_string()),
@@ -719,65 +827,22 @@ fn enrich_typescript_capabilities_from_tools_manifest(
     Ok(())
 }
 
-fn permission_requires_approval(permission: &PermissionEntry) -> bool {
-    permission.decision.as_deref() == Some("ask")
-}
-
-fn annotate_typescript_tools_manifest(
-    root: &Path,
-    capabilities: &[CapabilityEntry],
-    permissions: &[PermissionEntry],
-) -> Result<()> {
-    let tools_path = root.join("capabilities/handlers/tools.json");
-    if !tools_path.is_file() {
+fn write_typescript_tools_manifest(root: &Path, manifest: &HandlerManifest) -> Result<()> {
+    manifest
+        .validate()
+        .context("Invalid joined handler manifest")?;
+    let path = root.join("capabilities/handlers/tools.json");
+    if manifest.handlers.is_empty() {
+        if path.is_file() {
+            fs::remove_file(&path)
+                .with_context(|| format!("Failed to remove stale {}", path.display()))?;
+        }
         return Ok(());
     }
-    let read_only_by_name: BTreeMap<&str, bool> = capabilities
-        .iter()
-        .filter(|cap| capability_kind(cap) == Some("typescript_handler"))
-        .map(|cap| (cap.id.as_str(), capability_read_only(cap)))
-        .collect();
-    let requires_approval_by_name: BTreeMap<&str, bool> = permissions
-        .iter()
-        .map(|permission| {
-            (
-                permission.capability.as_str(),
-                permission_requires_approval(permission),
-            )
-        })
-        .collect();
-    let mut manifest = load_typescript_tools_manifest(root)?;
-    let mut changed = false;
-    for entry in &mut manifest {
-        let Some(name) = entry.get("name").and_then(serde_json::Value::as_str) else {
-            continue;
-        };
-        let Some(read_only) = read_only_by_name.get(name).copied() else {
-            continue;
-        };
-        let requires_approval = requires_approval_by_name
-            .get(name)
-            .copied()
-            .ok_or_else(|| {
-                anyhow!("typescript capability '{name}' is missing its joined permission policy")
-            })?;
-        if let Some(obj) = entry.as_object_mut() {
-            obj.insert("read_only".to_string(), serde_json::Value::Bool(read_only));
-            obj.insert(
-                "requires_approval".to_string(),
-                serde_json::Value::Bool(requires_approval),
-            );
-            changed = true;
-        }
-    }
-    if changed {
-        fs::write(
-            &tools_path,
-            format!("{}\n", serde_json::to_string_pretty(&manifest)?),
-        )
-        .with_context(|| format!("Failed to write {}", tools_path.display()))?;
-    }
-    Ok(())
+    let data =
+        serde_json::to_vec_pretty(manifest).context("Failed to serialize handler manifest")?;
+    fs::write(&path, [data.as_slice(), b"\n"].concat())
+        .with_context(|| format!("Failed to write {}", path.display()))
 }
 
 fn scan_skill_ids(root: &Path) -> Result<Vec<String>> {
@@ -903,9 +968,13 @@ pub(crate) fn agent_sync(root: &Path, json_output: bool) -> Result<()> {
 
     let (mut capabilities, permissions) = scan_capability_folders(root, &agent.id)?;
     compile_agent_handlers(root)?;
-    annotate_typescript_tools_manifest(root, &capabilities, &permissions)?;
-    let tools_manifest = load_typescript_tools_manifest(root)?;
-    enrich_typescript_capabilities_from_tools_manifest(&mut capabilities, &tools_manifest)?;
+    let mut tools_manifest = load_typescript_tools_manifest(root)?;
+    enrich_typescript_capabilities_from_tools_manifest(
+        &mut capabilities,
+        &permissions,
+        &mut tools_manifest,
+    )?;
+    write_typescript_tools_manifest(root, &tools_manifest)?;
     let capability_ids: Vec<String> = capabilities.iter().map(|cap| cap.id.clone()).collect();
     let skill_ids = scan_skill_ids(root)?;
 
@@ -1264,8 +1333,8 @@ fn check_capability_drift(pkg: &LoadedAgent, org_globals: &BTreeSet<String>) -> 
     errors
 }
 
-/// Structural + required-field checks for `agent.v1`: id/version, optional
-/// entry, runtime loop, hierarchy, skills, and hook vocabulary.
+/// Structural + required-field checks for `agent.v1`: id/version, source
+/// declaration, runtime loop, hierarchy, skills, and hook vocabulary.
 fn check_schema_shape(pkg: &LoadedAgent) -> Vec<String> {
     let mut errors = Vec::new();
 
@@ -1287,10 +1356,8 @@ fn check_schema_shape(pkg: &LoadedAgent) -> Vec<String> {
             "agent.toml: schema_version is required and must be '{AGENT_SCHEMA_V1}'"
         )),
     }
-    match &pkg.agent.entry {
-        None => {
-            // No entry ⇒ pure-declarative agent: the loader builds it straight from
-            // [runtime] + [[hooks]], so [runtime].loop must be present.
+    match declared_compile_source(&pkg.agent) {
+        Ok(None) => {
             if pkg
                 .agent
                 .runtime
@@ -1298,27 +1365,38 @@ fn check_schema_shape(pkg: &LoadedAgent) -> Vec<String> {
                 .is_none_or(|runtime| !runtime_has_loop(runtime))
             {
                 errors.push(
-                    "agent.toml: no entry declared, so [runtime] loop is required to build a \
-                     pure-declarative agent"
+                    "agent.toml: an entry-less declarative package requires [runtime] loop"
                         .to_string(),
                 );
             }
         }
-        Some(entry) => {
-            if !entry.ends_with(".py") {
+        Ok(Some((entry, frontend))) => {
+            let entry_path = Path::new(entry);
+            if entry_path.is_absolute()
+                || entry_path
+                    .components()
+                    .any(|component| matches!(component, std::path::Component::ParentDir))
+            {
                 errors.push(format!(
-                    "agent.toml: entry '{entry}' must be a .py path (entries are Python only)"
+                    "agent.toml: [compile].entry '{entry}' must be a package-relative path"
                 ));
             } else {
-                let entry_path = pkg.root.join("python").join(entry);
-                if !entry_path.is_file() {
+                let resolved = pkg.root.join(entry_path);
+                let expected_extension = frontend.source_extension();
+                if !entry.ends_with(expected_extension) {
                     errors.push(format!(
-                        "agent.toml: entry '{entry}' does not exist at {}",
-                        entry_path.display()
+                        "agent.toml: [compile].entry '{entry}' must end in {expected_extension} for frontend '{frontend}'"
+                    ));
+                }
+                if !resolved.is_file() {
+                    errors.push(format!(
+                        "agent.toml: [compile].entry '{entry}' does not exist at {}",
+                        resolved.display()
                     ));
                 }
             }
         }
+        Err(error) => errors.push(error),
     }
     if let Some(runtime) = &pkg.agent.runtime {
         if let Some(message) = validate_runtime_loop(runtime) {
@@ -1378,6 +1456,24 @@ fn check_schema_shape(pkg: &LoadedAgent) -> Vec<String> {
     }
 
     errors
+}
+
+/// Read the canonical package source declaration from `[compile]`.
+fn declared_compile_source(agent: &AgentToml) -> Result<Option<(&str, FrontendLanguage)>, String> {
+    let Some(compile) = agent.compile.as_ref() else {
+        return Ok(None);
+    };
+    match (compile.entry.as_deref(), compile.frontend) {
+        (None, None) => Ok(None),
+        (Some(_), None) => Err(
+            "agent.toml: [compile].entry requires [compile].frontend".to_string(),
+        ),
+        (None, Some(_)) => Err(
+            "agent.toml: [compile].frontend requires [compile].entry; remove [compile] for an entry-less declarative package"
+                .to_string(),
+        ),
+        (Some(entry), Some(frontend)) => Ok(Some((entry, frontend))),
+    }
 }
 
 /// A `@hook(...)` call site found by statically scanning the agent's
@@ -1527,8 +1623,8 @@ fn semver_like(version: &str) -> bool {
 }
 
 /// Validate capability implementation metadata against the canonical server
-/// loader contract. There is no legacy `runtime` kind and no `binding` field:
-/// builtin dispatch is by `id`, while grouped builtins carry `builtin_group`.
+/// loader contract. Builtin dispatch uses `id`; grouped builtins use
+/// `builtin_group`; `runtime` and `binding` are rejected.
 fn check_capability_bindings(pkg: &LoadedAgent) -> Vec<String> {
     use apxm_ais::capabilities::{BUILTIN_GROUPS, BUILTINS};
     let mut errors = Vec::new();
@@ -1761,7 +1857,7 @@ pub(super) fn verify_agent_integrity(root: &Path) -> Result<()> {
     Ok(())
 }
 
-#[cfg(test)]
+#[cfg(all(test, feature = "driver"))]
 pub(super) fn seal_agent_integrity_for_test(root: &Path) -> Result<()> {
     let integrity = compute_integrity(&digest_recognized_files(root)?);
     write_integrity_toml(&root.join("integrity.toml"), &integrity)
@@ -1773,20 +1869,18 @@ pub(super) fn seal_agent_integrity_for_test(root: &Path) -> Result<()> {
 /// source file rather than silently falling back.
 fn skill_source_path(root: &Path, skill: &SkillToml) -> Result<PathBuf> {
     let dir = root.join("skills").join(&skill.id);
-    let filename = match skill.frontend.as_str() {
-        FRONTEND_PYTHON => "skill.py",
-        FRONTEND_TYPESCRIPT => "skill.ts",
-        other => bail!(
-            "skill '{}': unknown frontend '{other}' (expected \"python\" or \"typescript\")",
+    let frontend = skill.frontend.ok_or_else(|| {
+        anyhow!(
+            "skill '{}' declares compiled = true but does not declare frontend",
             skill.id
-        ),
-    };
-    let source_path = dir.join(filename);
+        )
+    })?;
+    let source_path = dir.join(frontend.skill_source_filename());
     if !source_path.is_file() {
         bail!(
             "skill '{}' declares compiled = true with frontend = \"{}\" but is missing {}",
             skill.id,
-            skill.frontend,
+            frontend,
             source_path.display()
         );
     }
@@ -1865,27 +1959,41 @@ fn compile_skill(root: &Path, skill: &SkillToml) -> Result<(String, String)> {
     let source_path = skill_source_path(root, skill)?;
     let source_hash = sha256_hex_file(&source_path)?;
 
-    let air_text = match skill.frontend.as_str() {
-        FRONTEND_PYTHON => {
-            let (tmp, _python_tools_sidecar) =
-                super::compile::emit_air_from_python(&source_path, None).with_context(|| {
+    let frontend = skill.frontend.ok_or_else(|| {
+        anyhow!(
+            "skill '{}' declares compiled = true but does not declare frontend",
+            skill.id
+        )
+    })?;
+    let (air_text, handler_manifest_data) = match frontend {
+        FrontendLanguage::Python => {
+            let (tmp, handler_manifest) = super::compile::emit_air_from_python(&source_path, None)
+                .with_context(|| {
                     format!(
                         "Failed to compile skill '{}' from {}",
                         skill.id,
                         source_path.display()
                     )
                 })?;
-            fs::read_to_string(tmp.path()).context("Failed to read emitted AIR")?
+            (
+                fs::read_to_string(tmp.path()).context("Failed to read emitted AIR")?,
+                handler_manifest,
+            )
         }
-        FRONTEND_TYPESCRIPT => super::compile::emit_air_from_typescript_text(&source_path)
-            .with_context(|| {
-                format!(
-                    "Failed to compile skill '{}' from {}",
-                    skill.id,
-                    source_path.display()
-                )
-            })?,
-        other => bail!("skill '{}': unknown frontend '{other}'", skill.id),
+        FrontendLanguage::TypeScript => {
+            let (tmp, handler_manifest) = super::compile::emit_air_from_typescript(&source_path)
+                .with_context(|| {
+                    format!(
+                        "Failed to compile skill '{}' from {}",
+                        skill.id,
+                        source_path.display()
+                    )
+                })?;
+            (
+                fs::read_to_string(tmp.path()).context("Failed to read emitted AIR")?,
+                handler_manifest,
+            )
+        }
     };
 
     let dir = root.join("skills").join(&skill.id);
@@ -1899,9 +2007,26 @@ fn compile_skill(root: &Path, skill: &SkillToml) -> Result<(String, String)> {
     let module = compiler
         .compile(&air_path)
         .map_err(|err| anyhow!("Failed to compile skill '{}' AIR: {err}", skill.id))?;
+    let handler_manifest = handler_manifest_data
+        .as_deref()
+        .map(|data| {
+            let manifest = HandlerManifest::from_json_slice(data)
+                .context("Failed to parse compiled skill handler manifest")?;
+            manifest
+                .validate()
+                .context("Invalid compiled skill handler manifest")?;
+            Ok::<_, anyhow::Error>(manifest)
+        })
+        .transpose()?;
     let mut artifact = module
-        .generate_artifact_with_manifest(None, None)
+        .generate_artifact_with_manifest(None, handler_manifest.as_ref())
         .with_context(|| format!("Failed to generate artifact for skill '{}'", skill.id))?;
+    if let Some(data) = handler_manifest_data {
+        artifact.add_section(apxm_artifact::ArtifactSection {
+            kind: apxm_core::types::HANDLER_MANIFEST_ARTIFACT_SECTION.into(),
+            data,
+        });
+    }
     // Pin created_at so the wire bytes (and this build's air_hash-paired
     // apxmobj) are stable across rebuilds of unchanged source, same as
     // `compile.rs::compile_command`'s `--embed-manifest` path.
@@ -1980,36 +2105,7 @@ fn collect_typescript_handler_sources(root: &Path) -> Result<Vec<PathBuf>> {
     Ok(sources.into_iter().collect())
 }
 
-fn validate_typescript_handler_toolchain(ts_frontend: &Path) -> Result<()> {
-    let node_modules = ts_frontend.join("node_modules");
-    if !node_modules.join("esbuild").is_dir() {
-        bail!(
-            "TypeScript handler compiler dependencies are missing under {}; run `dekk agents frontend setup`",
-            node_modules.display()
-        );
-    }
-    let compiler = ts_frontend.join("dist/compile-handlers.js");
-    if !compiler.is_file() {
-        bail!(
-            "TypeScript handler compiler is not built at {}; run `dekk agents frontend build`",
-            compiler.display()
-        );
-    }
-    Ok(())
-}
-
 fn compile_agent_handlers(root: &Path) -> Result<()> {
-    let pack: AgentToml = read_toml(&root.join("agent.toml"))?;
-    let frontend = pack
-        .compile
-        .as_ref()
-        .and_then(|value| value.get("frontend"))
-        .and_then(|value| value.as_str())
-        .unwrap_or(FRONTEND_PYTHON);
-    if frontend != FRONTEND_TYPESCRIPT {
-        return Ok(());
-    }
-
     let root = root.canonicalize().with_context(|| {
         format!(
             "Failed to resolve absolute path for agent root {}",
@@ -2017,14 +2113,15 @@ fn compile_agent_handlers(root: &Path) -> Result<()> {
         )
     })?;
     let sources = collect_typescript_handler_sources(&root)?;
+    let out = root.join("capabilities/handlers/tools.json");
     if sources.is_empty() {
+        if out.is_file() {
+            fs::remove_file(&out)
+                .with_context(|| format!("Failed to remove stale {}", out.display()))?;
+        }
         return Ok(());
     }
 
-    let repo_root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../..");
-    let ts_frontend = repo_root.join("crates/compiler/frontend/typescript");
-    validate_typescript_handler_toolchain(&ts_frontend)?;
-    let out = root.join("capabilities/handlers/tools.json");
     fs::create_dir_all(out.parent().expect("tools.json has parent"))
         .with_context(|| format!("Failed to create {}", out.parent().unwrap().display()))?;
 
@@ -2033,28 +2130,27 @@ fn compile_agent_handlers(root: &Path) -> Result<()> {
         .map(|source| source.to_string_lossy().into_owned())
         .collect();
 
-    let node_path = ts_frontend.join("node_modules");
-    let root_abs = root.canonicalize().unwrap_or_else(|_| root.to_path_buf());
-    let status = std::process::Command::new("npm")
-        .current_dir(&ts_frontend)
-        .env("NODE_PATH", &node_path)
-        .arg("run")
-        .arg("compile-handlers")
-        .arg("--")
-        .arg("--root")
-        .arg(root_abs.to_string_lossy().as_ref())
-        .arg("--out")
-        .arg(out.to_string_lossy().as_ref())
+    let compiler = installed_typescript_frontend_entry("dist/compile-handlers.js")?;
+    let status = std::process::Command::new("node")
+        .arg("--input-type=module")
+        .arg("--eval")
+        .arg(
+            "import { pathToFileURL } from 'node:url'; import(pathToFileURL(process.argv[1]).href).then(async ({ compileHandlers }) => { const fs = await import('node:fs/promises'); const [out, root, ...sources] = process.argv.slice(2); const manifest = await compileHandlers(sources, { rootDir: root }); await fs.writeFile(out, `${JSON.stringify(manifest, null, 2)}\\n`); })",
+        )
+        .arg(&compiler)
+        .arg(&out)
+        .arg(&root)
         .args(&source_args)
         .status()
         .with_context(|| {
             format!(
-                "Failed to run npm run compile-handlers in {}",
-                ts_frontend.display()
+                "Failed to run installed @apxm/frontend handler compiler {} (set {} to its package root)",
+                compiler.display(),
+                apxm_env::APXM_TYPESCRIPT_FRONTEND_PACKAGE,
             )
         })?;
     if !status.success() {
-        bail!("npm run compile-handlers failed for agent handlers");
+        bail!("installed @apxm/frontend handler compiler failed for agent handlers");
     }
     Ok(())
 }
@@ -2081,11 +2177,6 @@ pub(crate) fn agent_build(path: &Path, json_output: bool) -> Result<()> {
     }
 
     compile_agent_handlers(path)?;
-    annotate_typescript_tools_manifest(
-        path,
-        &pkg.capabilities.capability,
-        &pkg.permissions.permission,
-    )?;
     // i.e. the FINAL post-compilation artifacts (freshly written
     // skill.air/skill.apxmobj and the skill.toml files just updated with
     // source_hash/air_hash), not the pre-compilation source tree. agent.toml
@@ -2221,6 +2312,7 @@ pub(crate) fn agent_install_to(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use apxm_core::types::{HandlerDescriptor, HandlerSource};
     use tempfile::tempdir;
 
     fn scaffold(dir: &Path, id: &str) {
@@ -2257,17 +2349,8 @@ mod tests {
         assert_eq!(agent.id, "demo");
         assert_eq!(agent.version, "0.1.0");
         assert_eq!(agent.schema_version.as_deref(), Some(AGENT_SCHEMA_V1));
-        assert_eq!(
-            agent
-                .compile
-                .as_ref()
-                .and_then(|value| value.get("frontend"))
-                .and_then(|value| value.as_str()),
-            Some("typescript")
-        );
+        assert!(agent.compile.is_none());
 
-        assert_eq!(agent.id, "demo");
-        assert!(agent.entry.is_none());
         assert_eq!(agent.kind.as_deref(), Some("agent"));
         assert_eq!(agent.capabilities, vec!["read", "write"]);
         assert_eq!(agent.skills, vec!["demo-skill".to_string()]);
@@ -2315,6 +2398,15 @@ mod tests {
             "{errors:?}"
         );
         agent_lint(&root, None, true).expect_err("missing schema_version must fail");
+    }
+
+    #[test]
+    fn agent_toml_rejects_unsupported_top_level_entry() {
+        let error = toml::from_str::<AgentToml>(
+            "id = \"demo\"\nversion = \"0.1.0\"\nentry = \"python/main.py\"\n",
+        )
+        .expect_err("top-level entry is not part of the agent manifest");
+        assert!(error.to_string().contains("unknown field `entry`"));
     }
 
     #[test]
@@ -2423,18 +2515,28 @@ mod tests {
     }
 
     #[test]
-    fn typescript_manifest_joins_permission_decisions_into_approval_metadata() {
+    fn typescript_manifest_joins_capability_and_permission_policy() {
         let tmp = tempdir().unwrap();
-        let root = tmp.path();
-        fs::create_dir_all(root.join("capabilities/handlers")).unwrap();
-        fs::write(
-            root.join("capabilities/handlers/tools.json"),
-            r#"[
-                {"handler_id":"sha256:read","module":"read","qualname":"run","name":"read_tool","schema":{}},
-                {"handler_id":"sha256:write","module":"write","qualname":"run","name":"write_tool","schema":{}}
-            ]"#,
-        )
-        .unwrap();
+        fs::create_dir_all(tmp.path().join("capabilities/handlers")).unwrap();
+        let descriptor = |name: &str, hash: char| HandlerDescriptor {
+            kind: HandlerKind::Tool,
+            language: HandlerLanguage::TypeScript,
+            handler_id: format!("sha256:{}", hash.to_string().repeat(64)),
+            module: format!("capabilities/{name}/handler"),
+            qualname: "run".to_string(),
+            name: name.to_string(),
+            source: HandlerSource {
+                artifact_path: format!("handlers/{name}.mjs"),
+                content: "export function run() {}\n".to_string(),
+            },
+            description: String::new(),
+            schema: serde_json::json!({}),
+            read_only: None,
+            requires_approval: None,
+            event: None,
+            r#match: None,
+            mode: None,
+        };
         let capability = |id: &str, read_only: bool| CapabilityEntry {
             id: id.to_string(),
             description: None,
@@ -2451,29 +2553,37 @@ mod tests {
             decision: Some(decision.to_string()),
             extra: toml::Table::new(),
         };
+        let mut capabilities = vec![
+            capability("read_tool", true),
+            capability("write_tool", false),
+        ];
+        let permissions = vec![
+            permission("read_tool", "allow"),
+            permission("write_tool", "ask"),
+        ];
+        let mut manifest = HandlerManifest::new(vec![
+            descriptor("read_tool", 'a'),
+            descriptor("write_tool", 'b'),
+        ]);
 
-        annotate_typescript_tools_manifest(
-            root,
-            &[
-                capability("read_tool", true),
-                capability("write_tool", false),
-            ],
-            &[
-                permission("read_tool", "allow"),
-                permission("write_tool", "ask"),
-            ],
+        enrich_typescript_capabilities_from_tools_manifest(
+            &mut capabilities,
+            &permissions,
+            &mut manifest,
         )
-        .expect("manifest annotation");
+        .expect("policy join");
+        write_typescript_tools_manifest(tmp.path(), &manifest).expect("manifest write");
 
-        let manifest = load_typescript_tools_manifest(root).unwrap();
-        let by_name = manifest
+        let loaded = load_typescript_tools_manifest(tmp.path()).expect("manifest reload");
+        let by_name = loaded
+            .handlers
             .iter()
-            .map(|entry| (entry["name"].as_str().unwrap(), entry))
+            .map(|entry| (entry.name.as_str(), entry))
             .collect::<BTreeMap<_, _>>();
-        assert_eq!(by_name["read_tool"]["read_only"], true);
-        assert_eq!(by_name["read_tool"]["requires_approval"], false);
-        assert_eq!(by_name["write_tool"]["read_only"], false);
-        assert_eq!(by_name["write_tool"]["requires_approval"], true);
+        assert_eq!(by_name["read_tool"].read_only, Some(true));
+        assert_eq!(by_name["read_tool"].requires_approval, Some(false));
+        assert_eq!(by_name["write_tool"].read_only, Some(false));
+        assert_eq!(by_name["write_tool"].requires_approval, Some(true));
     }
 
     #[test]
@@ -2700,7 +2810,7 @@ mod tests {
 
     /// Scaffold a `compiled = true` skill directory with the given frontend
     /// source, alongside the agent `scaffold()` already created.
-    fn add_compiled_skill(root: &Path, id: &str, frontend: &str, source: &str) {
+    fn add_compiled_skill(root: &Path, id: &str, frontend: FrontendLanguage, source: &str) {
         let dir = root.join("skills").join(id);
         fs::create_dir_all(&dir).unwrap();
         fs::write(
@@ -2712,12 +2822,7 @@ mod tests {
         .unwrap();
         fs::write(dir.join("SKILL.md"), format!("# {id}\n")).unwrap();
         fs::write(dir.join("prompt.md"), "Prompt body.\n").unwrap();
-        let filename = if frontend == FRONTEND_TYPESCRIPT {
-            "skill.ts"
-        } else {
-            "skill.py"
-        };
-        fs::write(dir.join(filename), source).unwrap();
+        fs::write(dir.join(frontend.skill_source_filename()), source).unwrap();
     }
 
     const PYTHON_SKILL_SOURCE: &str = "from apxm import GraphRecorder, compile, emit_air_if_requested\n\n\n\
@@ -2731,6 +2836,7 @@ mod tests {
     /// Same graph shape as [`PYTHON_SKILL_SOURCE`] (one `ask` -> `done`, same
     /// name/prompt), authored through `@apxm/frontend`'s `GraphBuilder`.
     /// TypeScript emits AIR directly from the generated op catalog.
+    #[cfg(feature = "driver")]
     fn typescript_skill_source() -> String {
         String::from(
             "import { GraphBuilder } from \"@apxm/frontend\";\n\n\
@@ -2741,6 +2847,7 @@ mod tests {
         )
     }
 
+    #[cfg(feature = "driver")]
     fn node_available() -> bool {
         std::process::Command::new("node")
             .arg("--version")
@@ -2757,7 +2864,7 @@ mod tests {
         add_compiled_skill(
             &root,
             "py-skill-skill",
-            FRONTEND_PYTHON,
+            FrontendLanguage::Python,
             PYTHON_SKILL_SOURCE,
         );
         // Replace the scaffolded prompt-only skill.toml with the compiled one
@@ -2785,17 +2892,20 @@ mod tests {
     #[cfg(feature = "driver")]
     #[test]
     fn build_compiles_typescript_skill_to_air_and_apxmobj() {
-        if !node_available() {
-            eprintln!(
-                "skipping build_compiles_typescript_skill_to_air_and_apxmobj: `node` not found on PATH"
-            );
-            return;
-        }
+        assert!(
+            node_available(),
+            "Node.js is required to validate the supported TypeScript frontend"
+        );
         let tmp = tempdir().unwrap();
         let root = tmp.path().join("ts-skill");
         scaffold(&root, "ts-skill");
         let ts_source = typescript_skill_source();
-        add_compiled_skill(&root, "ts-skill-skill", FRONTEND_TYPESCRIPT, &ts_source);
+        add_compiled_skill(
+            &root,
+            "ts-skill-skill",
+            FrontendLanguage::TypeScript,
+            &ts_source,
+        );
 
         agent_build(&root, true).expect("build must compile the typescript skill");
 
@@ -2804,38 +2914,6 @@ mod tests {
         assert!(skill_dir.join("skill.apxmobj").is_file());
         let air = fs::read_to_string(skill_dir.join("skill.air")).unwrap();
         assert!(air.contains("ais.ask \"Describe the weather today.\""));
-    }
-
-    ///  frontend guardrail, exercised end-to-end through `agent build`:
-    /// a TypeScript-authored skill emits AIR and the agent builder compiles
-    /// it. Skipped (not faked) if either toolchain isn't invokable in this
-    /// sandbox: the MLIR toolchain (`driver` feature) or `node` on PATH.
-    #[cfg(feature = "driver")]
-    #[test]
-    fn typescript_skill_emits_air() {
-        if !node_available() {
-            eprintln!(
-                "skipping typescript_skill_uses_rust_printer_from_graph_dto: `node` not found on PATH"
-            );
-            return;
-        }
-        let tmp = tempdir().unwrap();
-        let ts_root = tmp.path().join("ts-one-printer");
-        scaffold(&ts_root, "ts-one-printer");
-        let ts_source = typescript_skill_source();
-        add_compiled_skill(
-            &ts_root,
-            "ts-one-printer-skill",
-            FRONTEND_TYPESCRIPT,
-            &ts_source,
-        );
-        agent_build(&ts_root, true).expect("typescript build ok");
-        let ts_air =
-            fs::read_to_string(ts_root.join("skills/ts-one-printer-skill/skill.air")).unwrap();
-
-        assert!(ts_air.contains("module {"));
-        assert!(ts_air.contains("func.func @my_skill"));
-        assert!(ts_air.contains("ais.ask \"Describe the weather today.\""));
     }
 
     #[cfg(not(feature = "driver"))]
@@ -2847,7 +2925,7 @@ mod tests {
         add_compiled_skill(
             &root,
             "nodriver-skill",
-            FRONTEND_PYTHON,
+            FrontendLanguage::Python,
             PYTHON_SKILL_SOURCE,
         );
 
@@ -2868,7 +2946,7 @@ mod tests {
         add_compiled_skill(
             &root,
             "handedit-skill",
-            FRONTEND_PYTHON,
+            FrontendLanguage::Python,
             PYTHON_SKILL_SOURCE,
         );
 
@@ -2880,8 +2958,9 @@ mod tests {
         fs::write(
             dir.join("skill.toml"),
             format!(
-                "id = \"handedit-skill\"\ncompiled = true\nfrontend = \"python\"\ncapabilities = []\n\
-                 source_hash = \"{source_hash}\"\nair_hash = \"{air_hash}\"\n"
+                "id = \"handedit-skill\"\ncompiled = true\nfrontend = \"{}\"\ncapabilities = []\n\
+                 source_hash = \"{source_hash}\"\nair_hash = \"{air_hash}\"\n",
+                FrontendLanguage::Python,
             ),
         )
         .unwrap();
@@ -2913,7 +2992,7 @@ mod tests {
         add_compiled_skill(
             &root,
             "handedit-build-skill",
-            FRONTEND_PYTHON,
+            FrontendLanguage::Python,
             PYTHON_SKILL_SOURCE,
         );
 
@@ -2925,8 +3004,9 @@ mod tests {
         fs::write(
             dir.join("skill.toml"),
             format!(
-                "id = \"handedit-build-skill\"\ncompiled = true\nfrontend = \"python\"\ncapabilities = []\n\
-                 source_hash = \"{source_hash}\"\nair_hash = \"{air_hash}\"\n"
+                "id = \"handedit-build-skill\"\ncompiled = true\nfrontend = \"{}\"\ncapabilities = []\n\
+                 source_hash = \"{source_hash}\"\nair_hash = \"{air_hash}\"\n",
+                FrontendLanguage::Python,
             ),
         )
         .unwrap();
@@ -2959,7 +3039,7 @@ mod tests {
         add_compiled_skill(
             &root,
             "firstbuild-skill",
-            FRONTEND_PYTHON,
+            FrontendLanguage::Python,
             PYTHON_SKILL_SOURCE,
         );
 
@@ -3037,35 +3117,6 @@ mod tests {
         let err = agent_lint(&root, Some(org_root), true)
             .expect_err("a capability absent from both the agent and org globals must fail lint");
         assert!(err.to_string().contains("lint error"));
-    }
-
-    #[test]
-    fn typescript_handler_toolchain_reports_dekk_prerequisites() {
-        let tmp = tempdir().unwrap();
-        let frontend = tmp.path().join("frontend");
-        fs::create_dir_all(&frontend).unwrap();
-
-        let missing_dependencies = validate_typescript_handler_toolchain(&frontend)
-            .expect_err("missing dependencies must fail");
-        assert!(
-            missing_dependencies
-                .to_string()
-                .contains("dekk agents frontend setup")
-        );
-
-        fs::create_dir_all(frontend.join("node_modules/esbuild")).unwrap();
-        let missing_build = validate_typescript_handler_toolchain(&frontend)
-            .expect_err("missing compiler build must fail");
-        assert!(
-            missing_build
-                .to_string()
-                .contains("dekk agents frontend build")
-        );
-
-        fs::create_dir_all(frontend.join("dist")).unwrap();
-        fs::write(frontend.join("dist/compile-handlers.js"), "export {};").unwrap();
-        validate_typescript_handler_toolchain(&frontend)
-            .expect("complete frontend toolchain must pass");
     }
 
     #[cfg(feature = "driver")]

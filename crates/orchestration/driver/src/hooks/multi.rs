@@ -10,7 +10,9 @@ use apxm_core::events::payload::{
 use apxm_core::types::TimingBreakdown;
 use apxm_core::types::operations::AISOperationType;
 use apxm_core::types::values::Value;
-use apxm_runtime::{ExecutionEventEmitter, TokenUsageSummary};
+use apxm_runtime::{
+    CapabilityEffectReceiptPayload, ExecutionEventEmitter, ModelContextMetrics, TokenUsageSummary,
+};
 
 pub struct MultiEmitter {
     children: Vec<Arc<dyn ExecutionEventEmitter>>,
@@ -385,6 +387,35 @@ impl ExecutionEventEmitter for MultiEmitter {
     fn emit_memoization_hit(&self, node_id: u64) {
         self.for_each("emit_memoization_hit", |child| {
             child.emit_memoization_hit(node_id);
+        });
+    }
+
+    fn emit_context_compacted(&self, original_tokens: usize, new_tokens: usize) {
+        self.for_each("emit_context_compacted", |child| {
+            child.emit_context_compacted(original_tokens, new_tokens);
+        });
+    }
+
+    fn emit_context_window_warning(
+        &self,
+        current_tokens: usize,
+        max_tokens: usize,
+        utilization_pct: f64,
+    ) {
+        self.for_each("emit_context_window_warning", |child| {
+            child.emit_context_window_warning(current_tokens, max_tokens, utilization_pct);
+        });
+    }
+
+    fn emit_model_context_metrics(&self, metrics: &ModelContextMetrics) {
+        self.for_each("emit_model_context_metrics", |child| {
+            child.emit_model_context_metrics(metrics);
+        });
+    }
+
+    fn emit_capability_effect_receipt(&self, receipt: &CapabilityEffectReceiptPayload) {
+        self.for_each("emit_capability_effect_receipt", |child| {
+            child.emit_capability_effect_receipt(receipt);
         });
     }
 
@@ -805,6 +836,27 @@ mod tests {
         ) {
             self.record("approval_resolved");
         }
+
+        fn emit_context_compacted(&self, _original_tokens: usize, _new_tokens: usize) {
+            self.record("context_compacted");
+        }
+
+        fn emit_context_window_warning(
+            &self,
+            _current_tokens: usize,
+            _max_tokens: usize,
+            _utilization_pct: f64,
+        ) {
+            self.record("context_window_warning");
+        }
+
+        fn emit_model_context_metrics(&self, _metrics: &ModelContextMetrics) {
+            self.record("model_context_metrics");
+        }
+
+        fn emit_capability_effect_receipt(&self, _receipt: &CapabilityEffectReceiptPayload) {
+            self.record("capability_effect_receipt");
+        }
     }
 
     /// Fan-out regression pin: two recording children behind
@@ -836,6 +888,35 @@ mod tests {
             12,
         );
         multi.emit_agent_message("final answer", None, None, Some(1), Some(2));
+        multi.emit_context_window_warning(240, 300, 80.0);
+        multi.emit_context_compacted(320, 90);
+        multi.emit_model_context_metrics(&ModelContextMetrics::unplanned(
+            Some(7),
+            apxm_runtime::ModelContextCallKind::Compaction,
+        ));
+        multi.emit_capability_effect_receipt(&CapabilityEffectReceiptPayload {
+            receipt_id: "receipt-1".to_string(),
+            execution_id: "execution-1".to_string(),
+            node_id: 7,
+            invocation_id: "invocation-1".to_string(),
+            capability_binding: "calendar.write".to_string(),
+            dispatch_path: apxm_core::events::payload::CapabilityEffectDispatchPath::InvCap,
+            implementation_kind:
+                apxm_core::events::payload::CapabilityEffectImplementationKind::Host,
+            implementation_ref: "host/calendar.write@1".to_string(),
+            request_digest: "sha256:request-1".to_string(),
+            admission_kind: apxm_core::events::payload::CapabilityEffectAdmissionKind::Grant,
+            grant_id: Some("grant-1".to_string()),
+            approval_status: Some(
+                apxm_core::events::payload::CapabilityEffectApprovalStatus::Approved,
+            ),
+            approval_id: Some("approval-1".to_string()),
+            idempotency_proof:
+                apxm_core::events::payload::CapabilityEffectIdempotencyProof::RemoteDeduplicated,
+            idempotency_key_digest: "sha256:idempotency-1".to_string(),
+            effect_ref: "effect-1".to_string(),
+            status: apxm_core::events::payload::CapabilityEffectReceiptStatus::Committed,
+        });
 
         let expected = vec![
             "turn_started",
@@ -845,6 +926,10 @@ mod tests {
             "tool_call_begin",
             "tool_call_end",
             "agent_message",
+            "context_window_warning",
+            "context_compacted",
+            "model_context_metrics",
+            "capability_effect_receipt",
         ];
         assert_eq!(
             child_a.calls(),

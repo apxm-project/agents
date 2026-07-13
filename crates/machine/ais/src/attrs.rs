@@ -55,6 +55,164 @@ pub const TEMPLATE: &str = "template";
 /// incoming Data edge. Templates reference inputs by these names via
 /// `{name}` placeholders; the runtime substitutes by index lookup.
 pub const INPUT_NAMES: &str = "input_names";
+/// Parallel string array classifying each LLM context input. Every entry is
+/// positional: it aligns with the corresponding [`INPUT_NAMES`] entry and
+/// context operand.
+pub const INPUT_ROLES: &str = "input_roles";
+/// Legacy input name whose role is safely normalized to [`PromptInputRole::System`]
+/// when no explicit [`INPUT_ROLES`] vector is present.
+pub const LEGACY_SYSTEM_PROMPT_INPUT_NAME: &str = "__system";
+
+/// Semantic channel assigned to an LLM context input.
+///
+/// The serialized spelling is part of the AIS contract. `input_roles` keeps
+/// these values positional with `input_names` and the LLM operation's context
+/// operands.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum PromptInputRole {
+    /// User-authored prompt content eligible for template interpolation.
+    User,
+    /// Protected system instruction content.
+    System,
+    /// Data required by graph semantics but not rendered into a prompt channel.
+    DependencyOnly,
+    /// Tool result or tool-provided context.
+    ToolContext,
+    /// Protected control-plane context.
+    Control,
+}
+
+impl PromptInputRole {
+    /// Every serialized prompt-input role accepted by the AIS contract.
+    pub const ALL: [Self; 5] = [
+        Self::User,
+        Self::System,
+        Self::DependencyOnly,
+        Self::ToolContext,
+        Self::Control,
+    ];
+
+    /// Return the stable serialized spelling for this role.
+    #[must_use]
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::User => "user",
+            Self::System => "system",
+            Self::DependencyOnly => "dependency_only",
+            Self::ToolContext => "tool_context",
+            Self::Control => "control",
+        }
+    }
+
+    /// Parse one exact serialized AIS role value.
+    #[must_use]
+    pub fn parse(value: &str) -> Option<Self> {
+        match value {
+            "user" => Some(Self::User),
+            "system" => Some(Self::System),
+            "dependency_only" => Some(Self::DependencyOnly),
+            "tool_context" => Some(Self::ToolContext),
+            "control" => Some(Self::Control),
+            _ => None,
+        }
+    }
+
+    /// Return whether this role may be synthesized as a user-template placeholder.
+    #[must_use]
+    pub const fn is_user(self) -> bool {
+        matches!(self, Self::User)
+    }
+
+    /// Return whether this role must survive template-only dead-context pruning.
+    #[must_use]
+    pub const fn is_protected(self) -> bool {
+        !self.is_user()
+    }
+
+    /// Normalize the legacy system input name when an explicit role is absent.
+    #[must_use]
+    pub fn from_legacy_input_name(input_name: &str) -> Self {
+        if input_name == LEGACY_SYSTEM_PROMPT_INPUT_NAME {
+            Self::System
+        } else {
+            Self::User
+        }
+    }
+}
+
+/// Exact serialized values accepted in an [`INPUT_ROLES`] vector.
+pub const PROMPT_INPUT_ROLE_VALUES: &[&str] = &[
+    "user",
+    "system",
+    "dependency_only",
+    "tool_context",
+    "control",
+];
+
+/// Why an `input_roles` vector cannot be consumed as the LLM context contract.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum PromptInputRolesValidationError {
+    /// The roles vector is not positional with the LLM context inputs.
+    Arity { expected: usize, actual: usize },
+    /// A role uses a spelling outside the AIS contract.
+    UnknownRole { index: usize, value: String },
+}
+
+impl std::fmt::Display for PromptInputRolesValidationError {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Arity { expected, actual } => write!(
+                formatter,
+                "input_roles has {actual} entries but the LLM context has {expected} inputs"
+            ),
+            Self::UnknownRole { index, value } => {
+                write!(
+                    formatter,
+                    "input_roles[{index}] has unsupported role {value:?}"
+                )
+            }
+        }
+    }
+}
+
+impl std::error::Error for PromptInputRolesValidationError {}
+
+/// Parse and validate an `input_roles` vector against the LLM context arity.
+///
+/// Frontend and AIR validation layers use this helper before emitting a typed
+/// LLM context contract. The caller owns the corresponding `input_names`
+/// vector, which must have the same context arity.
+pub fn parse_prompt_input_roles<I, S>(
+    input_count: usize,
+    input_roles: I,
+) -> Result<Vec<PromptInputRole>, PromptInputRolesValidationError>
+where
+    I: IntoIterator<Item = S>,
+    S: AsRef<str>,
+{
+    let input_roles: Vec<S> = input_roles.into_iter().collect();
+    if input_roles.len() != input_count {
+        return Err(PromptInputRolesValidationError::Arity {
+            expected: input_count,
+            actual: input_roles.len(),
+        });
+    }
+
+    input_roles
+        .into_iter()
+        .enumerate()
+        .map(|(index, role)| {
+            let value = role.as_ref();
+            PromptInputRole::parse(value).ok_or_else(|| {
+                PromptInputRolesValidationError::UnknownRole {
+                    index,
+                    value: value.to_owned(),
+                }
+            })
+        })
+        .collect()
+}
 
 // -- Memory --
 pub const QUERY: &str = "query";
@@ -327,6 +485,7 @@ pub const ALL_ATTR_NAMES: &[&str] = &[
     PROMPT,
     TEMPLATE,
     INPUT_NAMES,
+    INPUT_ROLES,
     QUERY,
     MEMORY_TIER,
     KEY,
@@ -458,3 +617,69 @@ pub const ALL_ATTR_NAMES: &[&str] = &[
     NAME,
     SID,
 ];
+
+#[cfg(test)]
+mod tests {
+    use super::{
+        INPUT_ROLES, LEGACY_SYSTEM_PROMPT_INPUT_NAME, PROMPT_INPUT_ROLE_VALUES, PromptInputRole,
+        PromptInputRolesValidationError, parse_prompt_input_roles,
+    };
+
+    #[test]
+    fn prompt_input_roles_have_one_canonical_serialization() {
+        assert_eq!(INPUT_ROLES, "input_roles");
+        assert_eq!(
+            PROMPT_INPUT_ROLE_VALUES,
+            [
+                "user",
+                "system",
+                "dependency_only",
+                "tool_context",
+                "control"
+            ]
+        );
+        assert_eq!(
+            PromptInputRole::ALL
+                .iter()
+                .map(|role| role.as_str())
+                .collect::<Vec<_>>(),
+            PROMPT_INPUT_ROLE_VALUES
+        );
+    }
+
+    #[test]
+    fn prompt_input_roles_require_positional_canonical_values() {
+        assert_eq!(
+            parse_prompt_input_roles(2, ["user", "system"]),
+            Ok(vec![PromptInputRole::User, PromptInputRole::System])
+        );
+        assert_eq!(
+            parse_prompt_input_roles(2, ["user"]),
+            Err(PromptInputRolesValidationError::Arity {
+                expected: 2,
+                actual: 1,
+            })
+        );
+        assert_eq!(
+            parse_prompt_input_roles(1, ["assistant"]),
+            Err(PromptInputRolesValidationError::UnknownRole {
+                index: 0,
+                value: "assistant".to_owned(),
+            })
+        );
+    }
+
+    #[test]
+    fn legacy_system_name_normalizes_only_when_roles_are_absent() {
+        assert_eq!(
+            PromptInputRole::from_legacy_input_name(LEGACY_SYSTEM_PROMPT_INPUT_NAME),
+            PromptInputRole::System
+        );
+        assert_eq!(
+            PromptInputRole::from_legacy_input_name("question"),
+            PromptInputRole::User
+        );
+        assert!(PromptInputRole::System.is_protected());
+        assert!(!PromptInputRole::User.is_protected());
+    }
+}

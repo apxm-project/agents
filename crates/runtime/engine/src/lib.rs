@@ -127,16 +127,18 @@ pub use capability::{
     },
 };
 pub use context_stack::{
-    ContextAssembly, ContextFrame, ContextScope, ContextStack, ContextStackConfig,
+    ContextAssembly, ContextDisposition, ContextFrame, ContextPermissionScope, ContextPlan,
+    ContextPlanSegment, ContextScope, ContextSensitivity, ContextStack, ContextStackConfig,
 };
 pub use executor::{
-    CallSkillRequest, CallSkillResult, CancellationToken, ConversationMemoryMiddleware,
-    EmitterAdapter, EventScopeState, ExecutionContext, ExecutionEvent, ExecutionEventEmitter,
-    ExecutionHook, ExecutionHookContext, ExecutorEngine, GraphFinishedEvent, GraphMetricsTracker,
-    GraphStartedEvent, InnerPlanLinker, LoopGuardMiddleware, Next, NoOpLinker, NoOpSkillResolver,
-    NoOpWorkflowSpawner, NodeFinishedEvent, NodeReadyEvent, NodeStartedEvent, OperationMiddleware,
-    SkillResolver, TimeoutMiddleware, TokenBudgetMiddleware, TokenUsageSummary,
-    WorkflowSpawnResult, WorkflowSpawner,
+    CallSkillRequest, CallSkillResult, CancellationToken, CapabilityEffectReceiptPayload,
+    ConversationMemoryMiddleware, EmitterAdapter, EventScopeState, ExecutionContext,
+    ExecutionEvent, ExecutionEventEmitter, ExecutionHook, ExecutionHookContext, ExecutorEngine,
+    GraphFinishedEvent, GraphMetricsTracker, GraphStartedEvent, InnerPlanLinker,
+    LoopGuardMiddleware, ModelContextCallKind, ModelContextMetrics, ModelContextPlanStatus, Next,
+    NoOpLinker, NoOpSkillResolver, NoOpWorkflowSpawner, NodeFinishedEvent, NodeReadyEvent,
+    NodeStartedEvent, OperationMiddleware, SkillResolver, TimeoutMiddleware, TokenBudgetMiddleware,
+    TokenUsageSummary, WorkflowSpawnResult, WorkflowSpawner,
 };
 pub use graph_lifecycle::BackendGraphLifecycle;
 pub use memory::{MemoryConfig, MemorySpace, MemorySystem, parse_memory_space};

@@ -1,14 +1,16 @@
-export { GraphBuilder, NodeRef } from "./builder.js";
+export { GraphBuilder, NodeRef, promptInput, PROMPT_INPUT_ROLES } from "./builder.js";
 export type {
   AskOptions,
   CommunicateOptions,
   DelegateOptions,
   GenericOpOptions,
+  PromptInputBinding,
+  PromptInputRole,
   SpawnAgentOptions,
   InvokeCapabilityOptions,
 } from "./builder.js";
 
-export { ApxmGraph, makeEdge, sanitizeFlowName, emitMultiFlowModule } from "./graph.js";
+export { ApxmGraph, makeEdge, emitMultiFlowModule } from "./graph.js";
 export type { GraphNode, GraphEdge, Parameter, ApxmGraphData } from "./graph.js";
 
 export { validateWorkflowDraft } from "./validate.js";

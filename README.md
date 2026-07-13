@@ -13,10 +13,11 @@ backend path, not as the repo identity.
 
 ## What is in this repo
 
-- **AIS dialect** (`crates/machine/`) — the public IR contract. TableGen-defined
-  ops; `apxm-core` is the compatibility crate that carries the shared machine types.
-- **Compiler** (`crates/compiler/`) — MLIR pass pipeline + Python frontend
-  (decorator DSL → canonical AIR).
+- **AIS dialect** (`crates/machine/`) — the Rust-owned operation contract and
+  generated metadata consumed by every frontend.
+- **Compiler** (`crates/compiler/`) — compiler-owned `FrontendGraph`, the
+  canonical Rust AIR validator/printer, MLIR pipeline, and the Python and
+  TypeScript authoring packages that lower through it.
 - **Runtime** (`crates/runtime/`) — executor, handlers, backend adapters
   (LLM, local, tool); `apxm-backends` holds the vLLM-fork glue.
 - **Tools** (`crates/tools/`) — `apxm-cli` and developer clients. The HTTP server
@@ -117,6 +118,8 @@ passthroughs).
   hard rule: agent hierarchy and reachability are policy outside the runtime.
 - [`docs/compiler/pipeline.md`](docs/compiler/pipeline.md) — compiler pass
   pipeline.
+- [`crates/compiler/frontend/README.md`](crates/compiler/frontend/README.md) —
+  Rust, Python, and TypeScript frontend contract.
 - [`docs/backends/vllm.md`](docs/backends/vllm.md) — APXM/vLLM contract.
 - [`docs/backends/storage-layout.md`](docs/backends/storage-layout.md) —
   where APXM puts large files (HF cache, image store, artifacts).

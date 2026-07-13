@@ -46,6 +46,7 @@ use crate::model_router::{ProfileRouter, RoutingDecision};
 use anyhow::Error as AnyhowError;
 use apxm_backends::llm::wire::response_metadata;
 use apxm_backends::{LLMRequest, LLMResponse, StreamingBackendError};
+use apxm_capability_iface::events::{ModelContextCallKind, ModelContextMetrics};
 use apxm_core::{
     constants::graph::attrs as graph_attrs,
     error::RuntimeError,
@@ -298,14 +299,43 @@ pub async fn execute_llm_request_for_node(
     phase: &str,
     request: &LLMRequest,
 ) -> Result<LLMResponse> {
-    execute_llm_request_for_node_with_generation(ctx, node, phase, request, None).await
+    execute_llm_request_for_node_with_context(
+        ctx,
+        node,
+        phase,
+        request,
+        &ModelContextMetrics::unplanned(Some(node.id), ModelContextCallKind::Node),
+    )
+    .await
 }
 
-pub async fn execute_llm_request_for_node_with_generation(
+/// Dispatch a model request with aggregate-only context-plan evidence.
+pub async fn execute_llm_request_for_node_with_context(
     ctx: &ExecutionContext,
     node: &Node,
     phase: &str,
     request: &LLMRequest,
+    context_metrics: &ModelContextMetrics,
+) -> Result<LLMResponse> {
+    execute_llm_request_for_node_with_context_and_generation(
+        ctx,
+        node,
+        phase,
+        request,
+        context_metrics,
+        None,
+    )
+    .await
+}
+
+/// Dispatch a model request while preserving generation correlation and
+/// content-free context-plan evidence.
+pub async fn execute_llm_request_for_node_with_context_and_generation(
+    ctx: &ExecutionContext,
+    node: &Node,
+    phase: &str,
+    request: &LLMRequest,
+    context_metrics: &ModelContextMetrics,
     generation: Option<&GenerationIdentity>,
 ) -> Result<LLMResponse> {
     execute_llm_request_with_node_name(
@@ -314,6 +344,7 @@ pub async fn execute_llm_request_for_node_with_generation(
         node.metadata.name.as_deref(),
         phase,
         request,
+        context_metrics,
         generation,
     )
     .await
@@ -325,6 +356,7 @@ async fn execute_llm_request_with_node_name(
     node_name: Option<&str>,
     phase: &str,
     request: &LLMRequest,
+    context_metrics: &ModelContextMetrics,
     generation: Option<&GenerationIdentity>,
 ) -> Result<LLMResponse> {
     if ctx.cancellation_token.is_cancelled() {
@@ -336,6 +368,11 @@ async fn execute_llm_request_with_node_name(
     // an explicit backend/model or declares no profile.
     let resolved = resolve_model_profile(ctx, request.clone());
     let request = &resolved;
+    let reservation = llm::reserve_model_call(ctx, request)?;
+
+    if let Some(emitter) = &ctx.event_emitter {
+        emitter.emit_model_context_metrics(context_metrics);
+    }
 
     let active_agent = ctx
         .agent_scope_stack
@@ -385,6 +422,7 @@ async fn execute_llm_request_with_node_name(
             }
         }
     };
+    reservation.reconcile(response.usage.total_tokens)?;
 
     if let (Some(emitter), Some(agent_code)) = (&ctx.event_emitter, active_agent.as_deref()) {
         emitter.emit_subagent_llm_call_end_with_generation(

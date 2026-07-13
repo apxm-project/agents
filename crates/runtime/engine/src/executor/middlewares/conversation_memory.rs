@@ -417,6 +417,9 @@ mod tests {
     use apxm_core::constants::graph::attrs as graph_attrs;
     use apxm_core::error::RuntimeError;
     use apxm_core::types::conversation::TurnInput;
+    use apxm_core::types::{
+        HandlerDescriptor, HandlerKind, HandlerLanguage, HandlerManifest, HandlerSource,
+    };
     use serde_json::json;
     use std::collections::HashMap;
     use std::sync::{Arc, Mutex, OnceLock};
@@ -556,28 +559,34 @@ mod tests {
             .is_ok()
     }
 
-    async fn context_with_typescript_pre_turn_hook(
-        hook_source: &str,
-    ) -> (tempfile::TempDir, ExecutionContext) {
-        let temp = tempfile::tempdir().expect("tempdir");
-        let hook_path = temp.path().join("pre_turn_hook.mjs");
-        std::fs::write(&hook_path, hook_source).expect("write hook source");
-        let registry = TypeScriptHandlerRegistry::from_json(
-            &json!([{
-                "handler_id": "sha256:pre-turn-hook",
-                "module": "hook_mod",
-                "qualname": "capture",
-                "name": "hook",
-                "schema": {},
-                "source_file": hook_path.to_string_lossy().into_owned(),
-            }])
-            .to_string(),
-        )
+    async fn context_with_typescript_pre_turn_hook(hook_source: &str) -> ExecutionContext {
+        let handler_id = format!("sha256:{}", "a".repeat(64));
+        let registry = TypeScriptHandlerRegistry::from_manifest(HandlerManifest::new(vec![
+            HandlerDescriptor {
+                kind: HandlerKind::Hook,
+                language: HandlerLanguage::TypeScript,
+                handler_id: handler_id.clone(),
+                module: "hook_mod".to_string(),
+                qualname: "capture".to_string(),
+                name: "pre_turn_capture".to_string(),
+                source: HandlerSource {
+                    artifact_path: "handlers/pre_turn_hook.mjs".to_string(),
+                    content: hook_source.to_string(),
+                },
+                description: String::new(),
+                schema: json!({}),
+                read_only: None,
+                requires_approval: None,
+                event: Some("pre_turn".to_string()),
+                r#match: Some("*".to_string()),
+                mode: Some("observe".to_string()),
+            },
+        ]))
         .expect("typescript hook manifest");
 
         let hook_registry = Arc::new(HookRegistry::new());
         hook_registry.register(HookBinding {
-            handler_id: "sha256:pre-turn-hook".to_string(),
+            handler_id,
             event: HookEvent::PreTurn,
             match_glob: "*".to_string(),
             mode: HookMode::Observe,
@@ -589,7 +598,7 @@ mod tests {
             .await
             .with_typescript_handler_bridge(Arc::new(TypeScriptHandlerBridge::new(registry)))
             .with_hook_registry(hook_registry);
-        (temp, ctx)
+        ctx
     }
 
     #[tokio::test]
@@ -699,7 +708,7 @@ mod tests {
         let _guard = TERMINAL_CAPTURE_LOCK.lock().unwrap();
         clear_terminal_capture();
 
-        let (_temp, ctx) = context_with_typescript_pre_turn_hook(
+        let ctx = context_with_typescript_pre_turn_hook(
             r#"
 export function capture(ctx) {
   return ctx.prependSystem(String(ctx.context?.topic ?? "missing"));

@@ -1,47 +1,46 @@
-# Vision — graph-aware dispatch for vLLM
+# Vision — APXM abstract machine, compiler, and runtime
 
-APXM is the core runtime and compiler substrate for graph-aware dispatch on
-vLLM. It gives higher-level systems a typed graph IR, a deterministic compiler
-pipeline, and a Rust executor that can preserve scheduling intent all the way
-to a vLLM fork that understands APXM dispatch hints.
+APXM is the abstract-machine substrate for typed agent programs. Rust, Python,
+and TypeScript author the same compiler-owned `FrontendGraph`; the Rust
+compiler validates and prints canonical AIR, lowers it through MLIR, and emits
+portable `.apxmobj` artifacts for the runtime.
 
 The project is grounded in PXM theory: make agentic work explicit as programs,
-then give those programs real compiler, runtime, scheduling, and evidence
-surfaces. In this repo, that theory becomes the AIS MLIR dialect, the APXM
-runtime, the CLI/server, and the contract with the graph-aware vLLM fork.
+then give those programs compiler, runtime, scheduling, and evidence surfaces.
+The AIS dialect, compiler, runtime, CLI, and capability contracts live here.
+`apxm-server`, `apxm-os`, `apxm-auth`, and Studio remain separate workspace
+owners; vLLM is one backend integration.
 
 ## Lineage
 
-PXM theory led to APXM core: a dispatch and scheduling layer for vLLM, with
-an AMD-aligned CPU/GPU split where planning, validation, compilation, and
-analysis stay on CPU while inference runs on GPU. The IR, compiler, runtime,
-backend contracts, and the PXM origin story all live here.
+PXM theory led to APXM: an abstract machine where planning, validation,
+compilation, and analysis stay in the typed program layer while inference is a
+runtime backend concern. The IR, compiler, runtime, backend contracts, and PXM
+origin story all live here.
 
-The graph-aware vLLM fork is vendored as `external/vllm` (branch
-`apxm-rebase-v0.21.0`); the runtime depends on it to honor dispatch hints
-end to end.
+The graph-aware vLLM fork is vendored as `external/vllm`; it is an optional
+backend that can honor APXM dispatch hints end to end.
 
 ## What APXM Core Provides
 
-1. **Typed graph IR.** AIS is the public contract. Ops and attributes are
-   defined in `apxm-core`; compiler passes, the Python frontend, runtime
-   handlers, and the vLLM fork consume that contract.
-2. **Compiler passes.** AIR lowers through the MLIR-backed APXM compiler, where
-   graph cleanup, scheduling metadata, backend hints, diagnostics, and artifact
-   generation happen deterministically.
+1. **Typed authoring contract.** Rust, Python, and TypeScript converge on the
+   compiler-owned `FrontendGraph`. Rust-owned AIS definitions generate the
+   operation metadata and bindings each frontend consumes.
+2. **Canonical compiler.** The Rust compiler is the sole AIR printer and
+   validation boundary. AIR lowers through MLIR, where graph cleanup, scheduling
+   metadata, diagnostics, and artifact generation happen deterministically.
 3. **Runtime execution.** The Rust runtime executes compiled artifacts,
    dispatches node handlers, records metrics, and keeps generated artifacts
    under `.apxm/`.
-4. **vLLM dispatch contract.** Backend adapters and the `external/vllm`
-   submodule preserve APXM hints until they reach a vLLM server that can act on
-   graph-aware scheduling metadata.
+4. **Backend contracts.** Backend adapters, including `external/vllm`, consume
+   compiler-produced execution metadata without redefining graph semantics.
 5. **Operational tooling.** `dekk agents` is the supported entry point for build,
    test, compile, execute, backend, vLLM, MCP, server, and process operations.
 
 ## Boundaries
 
-APXM core is not an agent framework, an LLM orchestrator, or a multi-agent
-runtime. It sits below those systems. Its job is to make graph execution,
+APXM is not the workspace coordinator, HTTP server, OS host plane, Studio UI,
+or secret store. Its job is to make graph execution, capability authority,
 dispatch metadata, backend behavior, and evidence explicit enough that callers
 can build reliable products on top.
 

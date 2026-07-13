@@ -1,0 +1,14 @@
+{
+  "name": "reasoning_flow",
+  "nodes": [
+    {"id": 1, "name": "plan", "op": "PLAN", "attributes": {"goal": "Create a complete implementation plan"}},
+    {"id": 2, "name": "reflect", "op": "REFLECT", "attributes": {"trace_query": "most_recent_execution"}},
+    {"id": 3, "name": "verify", "op": "VERIFY", "attributes": {"claim": "The implementation plan is complete.", "evidence": "The review lists every required frontend contract."}},
+    {"id": 4, "name": "out", "op": "RETURN", "attributes": {}}
+  ],
+  "edges": [
+    {"from": 3, "to": 4, "dependency": "Data"}
+  ],
+  "parameters": [],
+  "metadata": {"is_entry": true}
+}

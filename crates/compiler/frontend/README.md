@@ -1,12 +1,17 @@
-# Compiler Frontend
-
-Python frontend for authoring APXM graphs.
+# APXM Compiler Frontends
 
 ## Overview
 
-The compiler frontend is a pure-Python package that lets users define APXM graphs using a `@compile()` decorator and `GraphRecorder` proxy. The recorder captures operation calls, builds an in-memory graph, and hands it to the APXM compiler's single Rust printer (`apxm emit-air`) to render `.air` (MLIR text in the AIS dialect) for the compiler pipeline.
+APXM supports three authoring frontends: Rust `AirModuleBuilder`/
+`FrontendGraph`, Python `GraphRecorder`/`ApxmGraph`, and TypeScript
+`GraphBuilder`/`ApxmGraph`. Each records the compiler-owned `FrontendGraph`
+shape, and only the Rust compiler validates and prints canonical AIR through
+`apxm emit-air`.
 
-`GraphRecorder.to_graph()` produces `ApxmGraph` — the shared frontend-internal graph model used by TypeScript's `@apxm/frontend` package (`typescript/`). See [`python/docs/graph-model.md`](python/docs/graph-model.md) for the formal field-by-field contract.
+Python lives in [`python/`](python/); the public TypeScript package lives in
+[`typescript/`](typescript/) with its own [README](typescript/README.md).
+Neither language frontend contains an MLIR string printer or an independent
+operation vocabulary.
 
 ## Package Structure
 

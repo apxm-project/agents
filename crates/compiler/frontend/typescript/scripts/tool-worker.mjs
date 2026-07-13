@@ -8,10 +8,16 @@
  */
 
 import { createInterface } from "node:readline";
-import { existsSync, readFileSync } from "node:fs";
+import {
+  existsSync,
+  mkdirSync,
+  readFileSync,
+  writeFileSync,
+} from "node:fs";
 import * as nodeModule from "node:module";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import path from "node:path";
+import { HANDLER_MANIFEST_VERSION } from "../dist/compile-handlers.js";
 
 const WIRE_VERSION = 1;
 const HOOK_PAYLOAD_KEY = "__apxm_hook__";
@@ -20,6 +26,7 @@ const HOST_METHOD_LLM_ASK = "llm.ask";
 const HOST_METHOD_TOOL_CALL = "tool.call";
 const HOST_METHOD_MEM_READ = "mem.read";
 const HOST_METHOD_MEM_RECENT = "mem.recent";
+const MATERIALIZED_SOURCES_DIRECTORY = "sources";
 
 /** @type {Map<string, Function>} */
 const registry = new Map();
@@ -71,16 +78,44 @@ function logWorker(level, message) {
 }
 
 async function loadManifest(manifestPath) {
-  const entries = JSON.parse(readFileSync(manifestPath, "utf8"));
+  const manifest = JSON.parse(readFileSync(manifestPath, "utf8"));
+  if (
+    !manifest ||
+    manifest.version !== HANDLER_MANIFEST_VERSION ||
+    !Array.isArray(manifest.handlers)
+  ) {
+    throw new Error(
+      `handler manifest must be a ${HANDLER_MANIFEST_VERSION} object with a handlers array`,
+    );
+  }
+  const sourceRoot = path.join(
+    path.dirname(manifestPath),
+    MATERIALIZED_SOURCES_DIRECTORY,
+  );
+  mkdirSync(sourceRoot, { recursive: true });
   await Promise.all(
-    entries.map(async (entry) => {
-      const sourceFile = entry.source_file;
-      if (!sourceFile) {
-        logWorker("error", `manifest entry ${entry.handler_id} missing source_file`);
+    manifest.handlers.map(async (entry) => {
+      const source = entry.source;
+      if (
+        !source ||
+        typeof source.artifact_path !== "string" ||
+        typeof source.content !== "string" ||
+        !source.content
+      ) {
+        logWorker("error", `manifest entry ${entry.handler_id} has no artifact-local source`);
         return;
       }
-      const absPath = path.resolve(sourceFile);
+      const absPath = path.resolve(sourceRoot, source.artifact_path);
+      if (!absPath.startsWith(`${sourceRoot}${path.sep}`)) {
+        logWorker(
+          "error",
+          `manifest entry ${entry.handler_id} has an unsafe artifact source path`,
+        );
+        return;
+      }
       try {
+        mkdirSync(path.dirname(absPath), { recursive: true });
+        writeFileSync(absPath, source.content, "utf8");
         const moduleUrl = pathToFileURL(absPath);
         moduleUrl.searchParams.set("t", String(Date.now()));
         const mod = await import(moduleUrl.href);
@@ -104,7 +139,7 @@ async function loadManifest(manifestPath) {
       } catch (err) {
         logWorker(
           "error",
-          `failed to import ${sourceFile}: ${err instanceof Error ? err.message : err}`,
+          `failed to import artifact source for ${entry.handler_id}: ${err instanceof Error ? err.message : err}`,
         );
       }
     }),

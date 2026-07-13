@@ -2,8 +2,8 @@
 //!
 //! Before dispatching a fan-out group of LLM calls that share a prefix, this module
 //! sends a lightweight "warmup" request that prefills the shared prefix and generates
-//! zero or one token. Prefix-cache-aware backends can retain that prefix before
-//! the actual requests arrive, reducing downstream recomputation.
+//! zero or one token. Prefix-cache-aware backends may retain that prefix for later
+//! requests, but a successful warmup does not establish later cache reuse.
 //!
 //! ## Warmup Strategy
 //!
@@ -18,7 +18,9 @@
 //! - Request target is explicitly latency-oriented
 
 use super::{ExecutionContext, Result};
+use crate::context_stack::ContextPlanMetrics;
 use apxm_backends::LLMRequest;
+use apxm_capability_iface::events::{ModelContextCallKind, ModelContextPlanStatus};
 use apxm_core::constants::{
     graph::attrs as graph_attrs, runtime::llm_request_metadata as request_metadata,
 };
@@ -69,9 +71,17 @@ impl Default for WarmupConfig {
 pub struct WarmupMetrics {
     /// Number of warmup requests sent.
     pub warmup_requests_sent: AtomicU64,
+    /// Number of warmup requests that completed successfully.
+    pub warmup_requests_completed: AtomicU64,
     /// Number of warmup requests that were later reused by downstream nodes.
+    ///
+    /// This legacy counter is not incremented by warmup completion. Reuse is
+    /// established only by provider-reported cache-hit usage.
     pub warmup_requests_reused: AtomicU64,
     /// Estimated tokens saved via warmup (shared prefix tokens * reuse count).
+    ///
+    /// This legacy counter is not incremented by warmup completion. Saved
+    /// tokens require provider-reported cache-hit usage.
     pub warmup_tokens_saved: AtomicU64,
 }
 
@@ -84,6 +94,12 @@ impl WarmupMetrics {
     /// Increment warmup requests sent counter.
     pub fn inc_requests_sent(&self) {
         self.warmup_requests_sent.fetch_add(1, Ordering::Relaxed);
+    }
+
+    /// Increment the successfully completed warmup counter.
+    pub fn inc_requests_completed(&self) {
+        self.warmup_requests_completed
+            .fetch_add(1, Ordering::Relaxed);
     }
 
     /// Increment warmup requests reused counter.
@@ -100,6 +116,11 @@ impl WarmupMetrics {
     /// Get current warmup requests sent count.
     pub fn requests_sent(&self) -> u64 {
         self.warmup_requests_sent.load(Ordering::Relaxed)
+    }
+
+    /// Get current successfully completed warmup count.
+    pub fn requests_completed(&self) -> u64 {
+        self.warmup_requests_completed.load(Ordering::Relaxed)
     }
 
     /// Get current warmup requests reused count.
@@ -256,7 +277,8 @@ pub async fn dispatch_warmup(
     node_id: u64,
     phase: &str,
     request: &LLMRequest,
-    estimated_prefix_tokens: u32,
+    _estimated_prefix_tokens: u32,
+    context_plan_metrics: Option<&ContextPlanMetrics>,
 ) -> Result<()> {
     let warmup_req = create_warmup_request(request, node_id);
     ctx.warmup_metrics.inc_requests_sent();
@@ -264,9 +286,27 @@ pub async fn dispatch_warmup(
     // Fire-and-forget warmup request
     let ctx_clone = ctx.clone();
     let phase_clone = phase.to_string();
-    let estimated_tokens = estimated_prefix_tokens as u64;
-
+    let context_plan_metrics = context_plan_metrics.cloned();
     tokio::spawn(async move {
+        let reservation = match super::llm::reserve_model_call(&ctx_clone, &warmup_req) {
+            Ok(reservation) => reservation,
+            Err(error) => {
+                tracing::debug!(
+                    "Warmup request for node {} phase {} was not dispatched because its token reservation was denied: {}",
+                    node_id,
+                    phase_clone,
+                    error
+                );
+                return;
+            }
+        };
+        super::llm::emit_model_context_metrics(
+            &ctx_clone,
+            Some(node_id),
+            ModelContextCallKind::Warmup,
+            ModelContextPlanStatus::Inherited,
+            context_plan_metrics.as_ref(),
+        );
         // Execute warmup request (ignore result - this is best-effort)
         let result = if let Some(router) = &ctx_clone.model_router {
             router.generate(warmup_req).await
@@ -274,25 +314,52 @@ pub async fn dispatch_warmup(
             ctx_clone.llm_registry.generate(warmup_req).await
         };
 
-        if let Err(e) = result {
-            // Log warmup failure but don't propagate - warmup is best-effort
-            tracing::debug!(
-                "Warmup request for node {} phase {} failed (non-fatal): {}",
-                node_id,
-                phase_clone,
-                e
-            );
-        } else {
-            ctx_clone.warmup_metrics.inc_requests_reused();
-            ctx_clone.warmup_metrics.add_tokens_saved(estimated_tokens);
-            tracing::debug!(
-                "Warmup request for node {} phase {} succeeded, estimated {} tokens saved",
-                node_id,
-                phase_clone,
-                estimated_tokens
-            );
+        match result {
+            Err(error) => {
+                tracing::debug!(
+                    "Warmup request for node {} phase {} failed (non-fatal): {}",
+                    node_id,
+                    phase_clone,
+                    error
+                );
+            }
+            Ok(response) => {
+                if let Err(error) = reservation.reconcile(response.usage.total_tokens) {
+                    tracing::debug!(
+                        "Warmup request for node {} phase {} exceeded its reserved budget: {}",
+                        node_id,
+                        phase_clone,
+                        error
+                    );
+                    return;
+                }
+                ctx_clone.warmup_metrics.inc_requests_completed();
+                tracing::debug!(
+                    "Warmup request for node {} phase {} completed; cache reuse requires provider usage evidence",
+                    node_id,
+                    phase_clone
+                );
+            }
         }
     });
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn warmup_completion_does_not_claim_cache_reuse_or_saved_tokens() {
+        let metrics = WarmupMetrics::new();
+
+        metrics.inc_requests_sent();
+        metrics.inc_requests_completed();
+
+        assert_eq!(metrics.requests_sent(), 1);
+        assert_eq!(metrics.requests_completed(), 1);
+        assert_eq!(metrics.requests_reused(), 0);
+        assert_eq!(metrics.tokens_saved(), 0);
+    }
 }
