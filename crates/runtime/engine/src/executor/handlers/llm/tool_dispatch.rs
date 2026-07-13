@@ -1,10 +1,13 @@
 //! Function-calling tool registry lookup, parallel dispatch, and ASK tool loop.
 
 use super::{
-    ExecutionContext, LlmAttemptOutput, attach_graph_hints, copy_llm_request_routing,
-    emit_llm_done, model_context_metrics,
+    ExecutionContext, attach_graph_hints, copy_llm_request_routing, model_context_metrics,
 };
-use crate::context_stack::ContextPlanMetrics;
+use crate::context_stack::{
+    ContextDisposition, ContextPermissionScope, ContextPlan, ContextScope, ContextSegmentRole,
+    ContextSegmentSpec, ContextSensitivity,
+};
+use apxm_backends::llm::backends::request::{ContentPart, FunctionCall, Message, Role};
 use apxm_backends::{LLMRequest, ToolChoice, ToolDefinition};
 use apxm_capability_iface::events::{ModelContextCallKind, ModelContextPlanStatus};
 use apxm_core::apxm_llm;
@@ -12,16 +15,16 @@ use apxm_core::constants::capabilities;
 use apxm_core::constants::graph::attrs as graph_attrs;
 use apxm_core::constants::runtime::belief_keys;
 use apxm_core::error::RuntimeError;
-use apxm_core::events::payload::{
-    GenerationIdentity, ToolCallCorrelation, ToolCallPayload, ToolCallStatus,
-};
 use apxm_core::types::execution::Node;
 use apxm_core::types::operations::AISOperationType;
 use apxm_core::types::values::Value;
 use apxm_core::types::{ToolCall, ToolResult};
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 
-use super::super::{Result, apply_llm_request_routing_from_node};
+use super::super::{
+    Result, apply_llm_request_routing_from_node, execute_llm_request_for_node_with_context,
+};
+use super::contextualize_node_request;
 
 /// Agent-callable tool that spawns a focused specialist sub-agent. The
 /// converse/autonomous coordinator opts in via the `enable_delegate` node
@@ -294,39 +297,34 @@ async fn execute_delegate(
             .with_tools(tools)
             .with_tool_choice(ToolChoice::Auto)
     };
+    let contextual = match contextualize_node_request(ctx, parent_node, req) {
+        Ok(contextual) => contextual,
+        Err(error) => {
+            return ToolResult::error(
+                &tool_call.id,
+                format!("delegate context planning failed: {error}"),
+            );
+        }
+    };
 
-    match Box::pin(execute_ask_with_tools(ctx, &synth, &req, None)).await {
+    match Box::pin(execute_ask_with_tools(
+        ctx,
+        &synth,
+        &contextual.request,
+        contextual.plan.as_ref(),
+    ))
+    .await
+    {
         Ok(Value::String(s)) => ToolResult::success(&tool_call.id, s),
         Ok(other) => ToolResult::success(&tool_call.id, format!("{other:?}")),
         Err(e) => ToolResult::error(&tool_call.id, format!("delegate sub-agent failed: {e}")),
     }
 }
 
-fn tool_call_args(ctx: &ExecutionContext, tool_call: &ToolCall) -> HashMap<String, Value> {
-    let mut args = match &tool_call.args {
-        serde_json::Value::Object(obj) => obj
-            .iter()
-            .map(|(key, value)| (key.clone(), json_to_value(value)))
-            .collect(),
-        _ => HashMap::new(),
-    };
-    inject_visible_skill_imports(&tool_call.name, &mut args, &ctx.metadata);
-    args
-}
-
-fn active_agent_code(ctx: &ExecutionContext) -> String {
-    ctx.agent_scope_stack
-        .peek()
-        .map(|scope| scope.agent_code.clone())
-        .or_else(|| ctx.current_agent.as_ref().map(|agent| agent.name.clone()))
-        .unwrap_or_else(|| "runtime".to_string())
-}
-
 async fn execute_tool_call(
     ctx: &ExecutionContext,
     node: &Node,
     tool_call: &ToolCall,
-    correlation: &ToolCallCorrelation,
 ) -> ToolResult {
     apxm_llm!(debug,
      execution_id = %ctx.execution_id,
@@ -335,124 +333,78 @@ async fn execute_tool_call(
      "Executing tool call"
     );
 
-    let args = tool_call_args(ctx, tool_call);
-    let argument_keys = args.keys().cloned().collect::<Vec<_>>();
-    let agent_code = active_agent_code(ctx);
-    let started_at = std::time::Instant::now();
+    let mut args: HashMap<String, Value> = match &tool_call.args {
+        serde_json::Value::Object(obj) => obj
+            .iter()
+            .map(|(k, v)| (k.clone(), json_to_value(v)))
+            .collect(),
+        _ => HashMap::new(),
+    };
+    inject_visible_skill_imports(&tool_call.name, &mut args, &ctx.metadata);
 
     if let Some(emitter) = &ctx.event_emitter {
-        emitter.emit_tool_call_begin_with_correlation(
-            &agent_code,
-            &tool_call.name,
-            &argument_keys,
-            Some(correlation),
-        );
-        emitter.emit_tool_start_with_correlation(&tool_call.name, &args, Some(correlation));
+        emitter.emit_tool_start(&tool_call.name, &args);
     }
 
-    let result = execute_tool_call_inner(ctx, node, tool_call, args, correlation).await;
-    if let Some(emitter) = &ctx.event_emitter {
-        emitter.emit_tool_end_with_correlation(
-            &tool_call.name,
-            &Value::String(result.content.clone()),
-            Some(correlation),
-        );
-        emitter.emit_tool_call_end_with_correlation(
-            &agent_code,
-            &tool_call.name,
-            &[],
-            if result.success {
-                ToolCallStatus::Ok
-            } else {
-                ToolCallStatus::Error
-            },
-            started_at.elapsed().as_millis() as u64,
-            Some(correlation),
-        );
-    }
-    result
-}
-
-async fn execute_tool_call_inner(
-    ctx: &ExecutionContext,
-    node: &Node,
-    tool_call: &ToolCall,
-    args: HashMap<String, Value>,
-    correlation: &ToolCallCorrelation,
-) -> ToolResult {
     // Native sub-agent fan-out: `delegate` is not a capability — it re-enters
     // the ASK tool loop as a focused specialist over the requested tool groups.
     if tool_call.name == DELEGATE_TOOL {
-        return execute_delegate(ctx, node, tool_call, &args).await;
+        let result = execute_delegate(ctx, node, tool_call, &args).await;
+        if let Some(emitter) = &ctx.event_emitter {
+            emitter.emit_tool_end(&tool_call.name, &Value::String(result.content.clone()));
+        }
+        return result;
     }
 
     if let Some(bridge) = ctx.python_handler_bridge.as_ref() {
         if bridge.has_tool(&tool_call.name) {
-            return dispatch_script_tool_call(ctx, node, tool_call, args, correlation, "Python")
-                .await;
+            return dispatch_script_tool_call(ctx, node, tool_call, args, "Python").await;
         }
     }
     if let Some(bridge) = ctx.typescript_handler_bridge.as_ref() {
         if bridge.has_tool(&tool_call.name) {
-            return dispatch_script_tool_call(
-                ctx,
-                node,
-                tool_call,
-                args,
-                correlation,
-                "TypeScript",
-            )
-            .await;
+            return dispatch_script_tool_call(ctx, node, tool_call, args, "TypeScript").await;
         }
     }
 
     // Native/builtin tool path also runs pre/post_cap hooks. A pre_cap deny continues the turn gracefully (m4).
-    let args = match crate::executor::hook_driver::run_pre_cap_hooks(
-        ctx,
-        &tool_call.name,
-        args,
-        Some(correlation),
-    )
-    .await
-    {
-        Ok(edited) => edited,
-        Err(e) => return ToolResult::error(&tool_call.id, e.to_string()),
-    };
-    if let Err(error) = super::super::inv_cap::enforce_write_boundary(
-        ctx,
-        &tool_call.name,
-        &args,
-        false,
-        &tool_call.id,
-    )
-    .await
-    {
-        return ToolResult::error(&tool_call.id, error.to_string());
-    }
-    let timeout =
-        std::time::Duration::from_millis(apxm_core::constants::defaults::DEFAULT_TIMEOUT_MS);
+    let args =
+        match crate::executor::hook_driver::run_pre_cap_hooks(ctx, &tool_call.name, args, None)
+            .await
+        {
+            Ok(edited) => edited,
+            Err(e) => {
+                if let Some(emitter) = &ctx.event_emitter {
+                    emitter.emit_tool_end(&tool_call.name, &Value::String(e.to_string()));
+                }
+                return ToolResult::error(&tool_call.id, e.to_string());
+            }
+        };
     match ctx
-        .invoke_capability_with_timeout_for_call(
+        .invoke_capability_for_node(
+            node,
             &tool_call.name,
             args,
-            timeout,
-            &tool_call.id,
-            Some(correlation),
+            std::time::Duration::from_millis(apxm_core::constants::defaults::DEFAULT_TIMEOUT_MS),
         )
         .await
     {
         Ok(result) => {
-            let result = crate::executor::hook_driver::run_post_cap_hooks(
-                ctx,
-                &tool_call.name,
-                result,
-                Some(correlation),
-            )
-            .await;
+            let result =
+                crate::executor::hook_driver::run_post_cap_hooks(
+                    ctx,
+                    &tool_call.name,
+                    result,
+                    None,
+                )
+                .await;
             let content = match result {
                 Value::String(s) => s,
                 other => other.to_string(),
             };
+            if let Some(emitter) = &ctx.event_emitter {
+                emitter.emit_tool_end(&tool_call.name, &Value::String(content.clone()));
+            }
             apxm_llm!(info,
              execution_id = %ctx.execution_id,
              tool_name = %tool_call.name,
@@ -461,6 +413,9 @@ async fn execute_tool_call_inner(
             ToolResult::success(&tool_call.id, content)
         }
         Err(e) => {
+            if let Some(emitter) = &ctx.event_emitter {
+                emitter.emit_tool_end(&tool_call.name, &Value::String(e.to_string()));
+            }
             apxm_llm!(warn,
              execution_id = %ctx.execution_id,
              tool_name = %tool_call.name,
@@ -488,6 +443,7 @@ enum ToolAccess {
     Write,
 }
 
+/// Policy declared by a script capability's joined handler manifest.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) struct ScriptToolPolicy {
     pub read_only: bool,
@@ -498,13 +454,12 @@ fn checked_script_tool_policy(
     name: &str,
     read_only: Option<bool>,
     requires_approval: Option<bool>,
-) -> std::result::Result<ScriptToolPolicy, RuntimeError> {
+) -> Result<ScriptToolPolicy> {
     let (Some(read_only), Some(requires_approval)) = (read_only, requires_approval) else {
         return Err(RuntimeError::Capability {
             capability: name.to_string(),
             message: format!(
-                "script capability '{name}' is missing joined read_only/requires_approval policy \
-                 metadata; rebuild the agent package"
+                "script capability '{name}' is missing joined read_only/requires_approval policy metadata; rebuild the agent package"
             ),
         });
     };
@@ -514,10 +469,11 @@ fn checked_script_tool_policy(
     })
 }
 
+/// Resolve the policy carried by a registered Python or TypeScript handler.
 pub(crate) fn script_tool_policy(
     ctx: &ExecutionContext,
     name: &str,
-) -> std::result::Result<ScriptToolPolicy, RuntimeError> {
+) -> Result<ScriptToolPolicy> {
     if let Some(descriptor) = ctx
         .python_handler_bridge
         .as_ref()
@@ -560,10 +516,7 @@ fn resolve_tool_access(ctx: &ExecutionContext, name: &str) -> Option<ToolAccess>
         .as_ref()
         .is_some_and(|bridge| bridge.has_tool(name))
     {
-        return Some(match script_tool_policy(ctx, name) {
-            Ok(policy) if policy.read_only => ToolAccess::ReadOnly,
-            _ => ToolAccess::Write,
-        });
+        return Some(ToolAccess::Write);
     }
 
     if ctx
@@ -571,10 +524,7 @@ fn resolve_tool_access(ctx: &ExecutionContext, name: &str) -> Option<ToolAccess>
         .as_ref()
         .is_some_and(|bridge| bridge.has_tool(name))
     {
-        return Some(match script_tool_policy(ctx, name) {
-            Ok(policy) if policy.read_only => ToolAccess::ReadOnly,
-            _ => ToolAccess::Write,
-        });
+        return Some(ToolAccess::Write);
     }
 
     None
@@ -585,61 +535,34 @@ async fn dispatch_script_tool_call(
     _node: &Node,
     tool_call: &ToolCall,
     args: HashMap<String, Value>,
-    correlation: &ToolCallCorrelation,
     label: &str,
 ) -> ToolResult {
     let timeout =
         std::time::Duration::from_millis(apxm_core::constants::defaults::DEFAULT_TIMEOUT_MS);
-    let edited_args = match crate::executor::hook_driver::run_pre_cap_hooks(
-        ctx,
-        &tool_call.name,
-        args,
-        Some(correlation),
-    )
-    .await
-    {
-        Ok(a) => a,
-        Err(e) => return ToolResult::error(&tool_call.id, e.to_string()),
-    };
-    let policy = match script_tool_policy(ctx, &tool_call.name) {
-        Ok(policy) => policy,
-        Err(error) => return ToolResult::error(&tool_call.id, error.to_string()),
-    };
-    if let Err(error) = super::super::inv_cap::enforce_write_boundary(
-        ctx,
-        &tool_call.name,
-        &edited_args,
-        !policy.read_only,
-        &tool_call.id,
-    )
-    .await
-    {
+    let mut edited_args =
+        match crate::executor::hook_driver::run_pre_cap_hooks(ctx, &tool_call.name, args, None)
+            .await
+        {
+            Ok(a) => a,
+            Err(e) => {
+                if let Some(emitter) = &ctx.event_emitter {
+                    emitter.emit_tool_end(&tool_call.name, &Value::String(e.to_string()));
+                }
+                return ToolResult::error(&tool_call.id, e.to_string());
+            }
+        };
+    if let Err(error) = ctx.prepare_capability_invocation(&tool_call.name, &mut edited_args, true) {
+        if let Some(emitter) = &ctx.event_emitter {
+            emitter.emit_tool_end(&tool_call.name, &Value::String(error.to_string()));
+        }
         return ToolResult::error(&tool_call.id, error.to_string());
     }
-    let admitted_args = match ctx
-        .admit_capability_call(
-            &tool_call.name,
-            edited_args,
-            policy.requires_approval,
-            &tool_call.id,
-            Some(correlation),
-        )
-        .await
-    {
-        Ok(args) => args,
-        Err(error) => return ToolResult::error(&tool_call.id, error.to_string()),
-    };
-    let json_args = serde_json::to_value(&admitted_args).unwrap_or_else(|_| tool_call.args.clone());
+    let json_args = serde_json::to_value(&edited_args).unwrap_or_else(|_| tool_call.args.clone());
     let bridge_call = async {
         if let Some(bridge) = ctx.python_handler_bridge.as_ref() {
             if bridge.has_tool(&tool_call.name) {
                 return bridge
-                    .call_with_call_id(
-                        &tool_call.name,
-                        json_args.clone(),
-                        timeout,
-                        Some(&tool_call.id),
-                    )
+                    .call(&tool_call.name, json_args.clone(), timeout)
                     .await;
             }
         }
@@ -649,25 +572,27 @@ async fn dispatch_script_tool_call(
                 message: format!("no {label} handler bridge configured"),
             }
         })?;
-        bridge
-            .call_with_call_id(&tool_call.name, json_args, timeout, Some(&tool_call.id))
-            .await
+        bridge.call(&tool_call.name, json_args, timeout).await
     };
 
     match bridge_call.await {
         Ok(json_result) => {
             let raw = Value::try_from(json_result).unwrap_or(Value::Null);
-            let transformed = crate::executor::hook_driver::run_post_cap_hooks(
-                ctx,
-                &tool_call.name,
-                raw,
-                Some(correlation),
-            )
-            .await;
+            let transformed =
+                crate::executor::hook_driver::run_post_cap_hooks(
+                    ctx,
+                    &tool_call.name,
+                    raw,
+                    None,
+                )
+                .await;
             let content = match transformed {
                 Value::String(s) => s,
                 other => other.to_string(),
             };
+            if let Some(emitter) = &ctx.event_emitter {
+                emitter.emit_tool_end(&tool_call.name, &Value::String(content.clone()));
+            }
             apxm_llm!(info,
              execution_id = %ctx.execution_id,
              tool_name = %tool_call.name,
@@ -677,6 +602,9 @@ async fn dispatch_script_tool_call(
             ToolResult::success(&tool_call.id, content)
         }
         Err(e) => {
+            if let Some(emitter) = &ctx.event_emitter {
+                emitter.emit_tool_end(&tool_call.name, &Value::String(e.to_string()));
+            }
             apxm_llm!(warn,
              execution_id = %ctx.execution_id,
              tool_name = %tool_call.name,
@@ -700,11 +628,9 @@ async fn execute_tool_calls_parallel(
     ctx: &ExecutionContext,
     node: &Node,
     tool_calls: &[ToolCall],
-    generation: &GenerationIdentity,
 ) -> Vec<ToolResult> {
     if tool_calls.len() == 1 {
-        let correlation = ToolCallCorrelation::new(generation.clone(), tool_calls[0].id.clone());
-        return vec![execute_tool_call(ctx, node, &tool_calls[0], &correlation).await];
+        return vec![execute_tool_call(ctx, node, &tool_calls[0]).await];
     }
 
     let max_parallel = max_parallel_tool_calls(ctx, tool_calls.len());
@@ -719,7 +645,7 @@ async fn execute_tool_calls_parallel(
 
     let mut results = Vec::with_capacity(tool_calls.len());
     for batch in tool_calls.chunks(max_parallel) {
-        results.extend(execute_tool_call_batch(ctx, node, batch, generation).await);
+        results.extend(execute_tool_call_batch(ctx, node, batch).await);
     }
     results
 }
@@ -728,23 +654,19 @@ async fn execute_tool_call_batch(
     ctx: &ExecutionContext,
     node: &Node,
     tool_calls: &[ToolCall],
-    generation: &GenerationIdentity,
 ) -> Vec<ToolResult> {
     let futures: Vec<_> = tool_calls
         .iter()
         .map(|tc| {
             let access = resolve_tool_access(ctx, &tc.name);
-            let correlation = ToolCallCorrelation::new(generation.clone(), tc.id.clone());
             async move {
                 match access {
-                    Some(ToolAccess::ReadOnly) | None => {
-                        execute_tool_call(ctx, node, tc, &correlation).await
-                    }
+                    Some(ToolAccess::ReadOnly) | None => execute_tool_call(ctx, node, tc).await,
                     Some(ToolAccess::Write) => {
                         let lock = write_lock_for_tool(&tc.name);
                         let result = {
                             let _guard = lock.write().await;
-                            execute_tool_call(ctx, node, tc, &correlation).await
+                            execute_tool_call(ctx, node, tc).await
                         };
                         release_write_lock_if_idle(&tc.name, &lock);
                         result
@@ -798,44 +720,65 @@ pub(super) fn json_to_value(json: &serde_json::Value) -> Value {
     }
 }
 
-/// Format tool results as a message for the LLM
-pub(super) fn format_tool_results_message(results: &[ToolResult]) -> String {
-    results
-        .iter()
-        .map(|r| {
-            if r.success {
-                format!(
-                    "<tool_result id=\"{}\">\n{}\n</tool_result>",
-                    r.tool_call_id, r.content
-                )
-            } else {
-                format!(
-                    "<tool_error id=\"{}\">\n{}\n</tool_error>",
-                    r.tool_call_id, r.content
-                )
-            }
-        })
-        .collect::<Vec<_>>()
-        .join("\n\n")
+fn bounded_tool_result_messages(
+    plan: &mut ContextPlan,
+    results: &[ToolResult],
+) -> Result<(Vec<Message>, bool)> {
+    let mut messages = Vec::with_capacity(results.len());
+    let mut truncated = false;
+    for result in results {
+        let max_tokens = plan.remaining_tokens();
+        let admission = plan
+            .admit(
+                ContextSegmentSpec {
+                    scope: ContextScope::Local,
+                    role: ContextSegmentRole::Tool,
+                    provenance: format!("tool_result:{}", result.tool_call_id),
+                    permission: ContextPermissionScope::Local,
+                    sensitivity: ContextSensitivity::Private,
+                    protected: false,
+                    max_tokens,
+                },
+                &result.content,
+            )
+            .map_err(|error| RuntimeError::LLM {
+                message: format!("tool result context planning failed: {error}"),
+                backend: None,
+            })?;
+        if admission.content.is_empty() {
+            return Err(RuntimeError::LLM {
+                message: format!(
+                    "tool result '{}' cannot fit in the configured context plan",
+                    result.tool_call_id
+                ),
+                backend: None,
+            });
+        }
+        truncated |= admission.disposition == ContextDisposition::Truncated;
+        messages.push(Message::tool_result(
+            result.tool_call_id.clone(),
+            admission.content,
+        ));
+    }
+    Ok((messages, truncated))
 }
 
-fn validate_model_tool_call_ids(tool_calls: &[ToolCall]) -> Result<()> {
-    let mut seen = HashSet::with_capacity(tool_calls.len());
-    for tool_call in tool_calls {
-        if tool_call.id.trim().is_empty() {
-            return Err(RuntimeError::LLM {
-                message: "model returned an empty tool-call id".to_string(),
-                backend: None,
-            });
-        }
-        if !seen.insert(tool_call.id.as_str()) {
-            return Err(RuntimeError::LLM {
-                message: format!("model returned duplicate tool-call id '{}'", tool_call.id),
-                backend: None,
-            });
-        }
+fn assistant_tool_call_message(tool_calls: &[ToolCall]) -> Message {
+    Message {
+        role: Role::Assistant,
+        content: tool_calls
+            .iter()
+            .map(|tool_call| ContentPart::ToolCall {
+                id: tool_call.id.clone(),
+                function: FunctionCall {
+                    name: tool_call.name.clone(),
+                    arguments: tool_call.args.clone(),
+                },
+            })
+            .collect(),
+        tool_call_id: None,
+        name: None,
     }
-    Ok(())
 }
 
 /// Execute Ask operation with tool loop
@@ -850,30 +793,8 @@ pub(crate) async fn execute_ask_with_tools(
     ctx: &ExecutionContext,
     node: &Node,
     initial_request: &LLMRequest,
-    context_plan_metrics: Option<&ContextPlanMetrics>,
+    context_plan: Option<&ContextPlan>,
 ) -> Result<Value> {
-    let mut generations = super::LlmGenerationSequence::new();
-    let output = execute_ask_with_tools_attempt(
-        ctx,
-        node,
-        initial_request,
-        1,
-        &mut generations,
-        context_plan_metrics,
-    )
-    .await?;
-    emit_llm_done(ctx, &output.final_response, &output.final_generation);
-    Ok(output.value)
-}
-
-pub(super) async fn execute_ask_with_tools_attempt(
-    ctx: &ExecutionContext,
-    node: &Node,
-    initial_request: &LLMRequest,
-    attempt: usize,
-    generations: &mut super::LlmGenerationSequence,
-    context_plan_metrics: Option<&ContextPlanMetrics>,
-) -> Result<LlmAttemptOutput> {
     let max_iterations = node
         .attributes
         .get(graph_attrs::MAX_TOOL_ITERATIONS)
@@ -882,6 +803,14 @@ pub(super) async fn execute_ask_with_tools_attempt(
         .unwrap_or(DEFAULT_MAX_TOOL_ITERATIONS);
 
     let mut current_request = initial_request.clone();
+    let mut current_plan = match context_plan.cloned() {
+        Some(plan) => plan,
+        None => ContextPlan::from_policy(super::pipeline::context_planning_policy(ctx)?, None)
+            .map_err(|error| RuntimeError::LLM {
+                message: format!("tool request context planning failed: {error}"),
+                backend: initial_request.backend.clone(),
+            })?,
+    };
     // Only the running count of invoked tools is ever read (for logging below);
     // keep a counter rather than accumulating and cloning the results each round.
     let mut tools_invoked_count: usize = 0;
@@ -913,17 +842,17 @@ pub(super) async fn execute_ask_with_tools_attempt(
         } else {
             ModelContextPlanStatus::Inherited
         };
+        let plan_metrics = current_plan.metrics();
         let context_metrics =
-            model_context_metrics(Some(node.id), call_kind, plan_status, context_plan_metrics);
-        let generation = generations.next(attempt);
+            model_context_metrics(Some(node.id), call_kind, plan_status, Some(&plan_metrics));
+
         let llm_start = std::time::Instant::now();
-        let response = super::super::execute_llm_request_for_node_with_context_and_generation(
+        let response = execute_llm_request_for_node_with_context(
             ctx,
             node,
             "ASK",
             &current_request,
             &context_metrics,
-            Some(&generation),
         )
         .await?;
         let iter_total_ms = llm_start.elapsed().as_secs_f64() * 1000.0;
@@ -955,24 +884,13 @@ pub(super) async fn execute_ask_with_tools_attempt(
                 agent_name,
             );
             if let Some(emitter) = &ctx.event_emitter {
-                emitter.emit_token_usage_with_generation(
+                emitter.emit_token_usage(
                     node.id,
                     response.usage.input_tokens,
                     response.usage.output_tokens,
-                    Some(&generation),
                 );
             }
         }
-
-        super::emit_model_step(
-            ctx,
-            node.id,
-            &generation,
-            &response,
-            iter_total_ms,
-            iter_prefill,
-            iter_decode,
-        );
 
         total_input_tokens += response.usage.input_tokens;
         total_output_tokens += response.usage.output_tokens;
@@ -998,29 +916,10 @@ pub(super) async fn execute_ask_with_tools_attempt(
             );
             ctx.timing_tracker
                 .record(node.id, total_prefill_ms, total_decode_ms);
-            return Ok(LlmAttemptOutput {
-                value: Value::String(response.content.clone()),
-                final_response: response,
-                final_generation: generation,
-            });
+            return Ok(Value::String(response.content));
         }
 
-        validate_model_tool_call_ids(&response.tool_calls)?;
-        if let Some(emitter) = &ctx.event_emitter {
-            for tool_call in &response.tool_calls {
-                emitter.emit_tool_call(ToolCallPayload {
-                    id: tool_call.id.clone(),
-                    name: tool_call.name.clone(),
-                    arguments: tool_call.args.clone(),
-                    tool_call_correlation: Some(ToolCallCorrelation::new(
-                        generation.clone(),
-                        tool_call.id.clone(),
-                    )),
-                });
-            }
-        }
-        let tool_results =
-            execute_tool_calls_parallel(ctx, node, &response.tool_calls, &generation).await;
+        let tool_results = execute_tool_calls_parallel(ctx, node, &response.tool_calls).await;
 
         if !tool_results.is_empty() {
             let results_value = Value::Array(
@@ -1057,16 +956,54 @@ pub(super) async fn execute_ask_with_tools_attempt(
 
         tools_invoked_count += tool_results.len();
 
-        let tool_results_message = format_tool_results_message(&tool_results);
-        let continuation_prompt = format!(
-            "{}\n\n{}\n\nBased on the tool results above, please continue.",
-            current_request.prompt, tool_results_message
-        );
+        let tool_calls_text =
+            serde_json::to_string(&response.tool_calls).map_err(|error| RuntimeError::LLM {
+                message: format!("tool call context serialization failed: {error}"),
+                backend: current_request.backend.clone(),
+            })?;
+        let max_tokens = current_plan.remaining_tokens();
+        current_plan
+            .admit(
+                ContextSegmentSpec {
+                    scope: ContextScope::Local,
+                    role: ContextSegmentRole::Tool,
+                    provenance: format!("tool_calls:{iteration}"),
+                    permission: ContextPermissionScope::Local,
+                    sensitivity: ContextSensitivity::Private,
+                    protected: true,
+                    max_tokens,
+                },
+                &tool_calls_text,
+            )
+            .map_err(|error| RuntimeError::LLM {
+                message: format!("tool call context planning failed: {error}"),
+                backend: current_request.backend.clone(),
+            })?;
+        let (tool_result_messages, truncated) =
+            bounded_tool_result_messages(&mut current_plan, &tool_results)?;
+        if truncated {
+            if let Some(emitter) = &ctx.event_emitter {
+                emitter.emit_warning(
+                    "tool_result_context_truncated",
+                    "tool results remain in session evidence; the continuation received a deterministic bounded extract",
+                );
+            }
+        }
+        let output_tokens = current_request
+            .max_tokens
+            .ok_or_else(|| RuntimeError::LLM {
+                message: "tool continuation requires an explicit resolved max_tokens value"
+                    .to_string(),
+                backend: current_request.backend.clone(),
+            })?;
 
+        let mut messages = current_request.resolved_messages();
+        messages.push(assistant_tool_call_message(&response.tool_calls));
+        messages.extend(tool_result_messages);
         current_request = copy_llm_request_routing(
-            LLMRequest::new(continuation_prompt)
-                .with_system_prompt(current_request.system_prompt.clone().unwrap_or_default())
-                .with_temperature(current_request.temperature),
+            LLMRequest::from_messages(messages)
+                .with_temperature(current_request.temperature)
+                .with_max_tokens(output_tokens),
             initial_request,
         );
 
@@ -1101,125 +1038,23 @@ pub(super) async fn execute_ask_with_tools_attempt(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::aam::Aam;
-    use crate::capability::CapabilitySystem;
-    use crate::capability::executor::CapabilityExecutor;
-    use crate::capability::interceptor::{CapabilityInterceptor, InterceptDecision};
-    use crate::capability::metadata::RuntimeCapability;
-    use crate::memory::{MemoryConfig, MemorySystem};
-    use apxm_backends::LLMRegistry;
-    use apxm_core::types::consent::{
-        ApprovalEvidence, ConsentBroker, ConsentDecision, InteractiveApproval, PermissionPrompt,
-    };
-    use std::sync::Arc;
-    use std::sync::atomic::{AtomicUsize, Ordering};
+    use crate::context_stack::{ContextPlanningPolicy, ContextTokenizer, ScopeRules};
+    use std::collections::BTreeMap;
 
-    struct RecordingCapability {
-        metadata: RuntimeCapability,
-        calls: Arc<AtomicUsize>,
-    }
-
-    #[async_trait::async_trait]
-    impl CapabilityExecutor for RecordingCapability {
-        async fn execute(
-            &self,
-            _args: HashMap<String, Value>,
-        ) -> std::result::Result<Value, apxm_core::error::RuntimeError> {
-            self.calls.fetch_add(1, Ordering::Relaxed);
-            Ok(Value::String("executed".to_string()))
+    fn planning(tokenizer: ContextTokenizer, token_budget: usize) -> ContextPlanningPolicy {
+        ContextPlanningPolicy {
+            tokenizer,
+            token_budget,
+            profiles: BTreeMap::from([(
+                "fixture".to_string(),
+                ScopeRules {
+                    upstream_depth: 0,
+                    upstream_frame_budget: 0,
+                    session_frame_budget: 0,
+                    include_upstream_prompts: false,
+                },
+            )]),
         }
-
-        fn metadata(&self) -> &RuntimeCapability {
-            &self.metadata
-        }
-    }
-
-    struct StubBroker {
-        decision: ConsentDecision,
-        calls: Arc<AtomicUsize>,
-    }
-
-    #[async_trait::async_trait]
-    impl ConsentBroker for StubBroker {
-        async fn request_consent(
-            &self,
-            _prompt: PermissionPrompt,
-            _timeout: std::time::Duration,
-        ) -> ConsentDecision {
-            self.calls.fetch_add(1, Ordering::Relaxed);
-            self.decision.clone()
-        }
-    }
-
-    struct CountingInterceptor {
-        calls: Arc<AtomicUsize>,
-    }
-
-    #[async_trait::async_trait]
-    impl CapabilityInterceptor for CountingInterceptor {
-        fn name(&self) -> &str {
-            "counting-test"
-        }
-
-        async fn pre_invoke(
-            &self,
-            _name: &str,
-            _args: &HashMap<String, Value>,
-        ) -> InterceptDecision {
-            self.calls.fetch_add(1, Ordering::Relaxed);
-            InterceptDecision::Allow
-        }
-    }
-
-    async fn model_tool_context(
-        name: &str,
-        read_only: bool,
-        requires_approval: bool,
-    ) -> (ExecutionContext, Arc<CapabilitySystem>, Arc<AtomicUsize>) {
-        let memory = Arc::new(
-            MemorySystem::new(MemoryConfig::in_memory_ltm())
-                .await
-                .expect("memory"),
-        );
-        let aam = Aam::new();
-        let capability_system = Arc::new(CapabilitySystem::with_aam(aam.clone()));
-        let calls = Arc::new(AtomicUsize::new(0));
-        let mut metadata = RuntimeCapability::new(
-            name,
-            "record model tool admission",
-            serde_json::json!({"type": "object"}),
-        );
-        if read_only {
-            metadata = metadata.with_read_only();
-        }
-        if requires_approval {
-            metadata = metadata.with_requires_approval();
-        }
-        capability_system
-            .register(Arc::new(RecordingCapability {
-                metadata,
-                calls: Arc::clone(&calls),
-            }))
-            .expect("recording capability");
-        let facade: Arc<dyn apxm_capability_iface::CapabilityFacade> = capability_system.clone();
-        let ctx = ExecutionContext::new(memory, Arc::new(LLMRegistry::new()), facade, aam);
-        (ctx, capability_system, calls)
-    }
-
-    fn approved() -> ConsentDecision {
-        ConsentDecision::Approved {
-            evidence: ApprovalEvidence::Interactive(InteractiveApproval {
-                decided_at: "2026-07-11T00:00:00Z".into(),
-                responder_subject: Some("operator".into()),
-            }),
-        }
-    }
-
-    fn correlation_for(tool_call: &ToolCall) -> ToolCallCorrelation {
-        ToolCallCorrelation::new(
-            GenerationIdentity::new("generation-test", 1, 1),
-            tool_call.id.clone(),
-        )
     }
 
     fn visible_metadata(value: &str) -> HashMap<String, String> {
@@ -1277,108 +1112,22 @@ mod tests {
         assert!(!args.contains_key("imports"));
     }
 
-    #[tokio::test]
-    async fn model_tool_call_requires_consent_and_runs_interceptors() {
-        let (mut ctx, capability_system, capability_calls) =
-            model_tool_context("approval-tool", true, true).await;
-        let interceptor_calls = Arc::new(AtomicUsize::new(0));
-        capability_system.register_interceptor(Arc::new(CountingInterceptor {
-            calls: Arc::clone(&interceptor_calls),
-        }));
-        let node = Node::new(1, AISOperationType::Ask);
-        let tool_call = ToolCall::new("call-1", "approval-tool", serde_json::json!({}));
-
-        let correlation = correlation_for(&tool_call);
-        let without_broker = execute_tool_call(&ctx, &node, &tool_call, &correlation).await;
-
-        assert!(!without_broker.success);
-        assert!(
-            without_broker
-                .content
-                .contains(apxm_core::types::consent::APPROVAL_BROKER_UNAVAILABLE_REASON)
-        );
-        assert_eq!(capability_calls.load(Ordering::Relaxed), 0);
-        assert_eq!(interceptor_calls.load(Ordering::Relaxed), 0);
-
-        let broker_calls = Arc::new(AtomicUsize::new(0));
-        ctx.consent_broker = Arc::new(StubBroker {
-            decision: approved(),
-            calls: Arc::clone(&broker_calls),
-        });
-
-        let approved_result = execute_tool_call(&ctx, &node, &tool_call, &correlation).await;
-
-        assert!(approved_result.success, "{}", approved_result.content);
-        assert_eq!(approved_result.content, "executed");
-        assert_eq!(broker_calls.load(Ordering::Relaxed), 1);
-        assert_eq!(interceptor_calls.load(Ordering::Relaxed), 1);
-        assert_eq!(capability_calls.load(Ordering::Relaxed), 1);
-    }
-
-    #[tokio::test]
-    async fn open_read_only_model_tool_skips_consent_but_runs_interceptors() {
-        let (mut ctx, capability_system, capability_calls) =
-            model_tool_context("read-only-tool", true, false).await;
-        let broker_calls = Arc::new(AtomicUsize::new(0));
-        ctx.consent_broker = Arc::new(StubBroker {
-            decision: ConsentDecision::Denied {
-                reason: "broker must not be called".into(),
-            },
-            calls: Arc::clone(&broker_calls),
-        });
-        let interceptor_calls = Arc::new(AtomicUsize::new(0));
-        capability_system.register_interceptor(Arc::new(CountingInterceptor {
-            calls: Arc::clone(&interceptor_calls),
-        }));
-        let node = Node::new(1, AISOperationType::Ask);
-        let tool_call = ToolCall::new("call-1", "read-only-tool", serde_json::json!({}));
-
-        let correlation = correlation_for(&tool_call);
-        let result = execute_tool_call(&ctx, &node, &tool_call, &correlation).await;
-
-        assert!(result.success, "{}", result.content);
-        assert_eq!(result.content, "executed");
-        assert_eq!(broker_calls.load(Ordering::Relaxed), 0);
-        assert_eq!(interceptor_calls.load(Ordering::Relaxed), 1);
-        assert_eq!(capability_calls.load(Ordering::Relaxed), 1);
-    }
-
-    #[tokio::test]
-    async fn model_write_tool_without_grant_is_denied_before_execution() {
-        let (ctx, _capability_system, capability_calls) =
-            model_tool_context("write-tool", false, false).await;
-        let node = Node::new(1, AISOperationType::Ask);
-        let tool_call = ToolCall::new("call-1", "write-tool", serde_json::json!({}));
-
-        let correlation = correlation_for(&tool_call);
-        let result = execute_tool_call(&ctx, &node, &tool_call, &correlation).await;
-
-        assert!(!result.success);
-        assert!(result.content.contains("missing a capability grant"));
-        assert_eq!(capability_calls.load(Ordering::Relaxed), 0);
-    }
-
     #[test]
-    fn script_tool_policy_requires_joined_metadata() {
-        let error = checked_script_tool_policy("script-tool", None, Some(false))
-            .expect_err("missing read_only metadata must fail closed");
+    fn tool_result_reinjection_is_deterministically_bounded() {
+        let policy = planning(ContextTokenizer::Cl100kBase, 128);
+        let results = vec![ToolResult::success("call", "x ".repeat(2_000))];
+        let mut first_plan = ContextPlan::from_policy(&policy, None).expect("plan");
+        let mut second_plan = ContextPlan::from_policy(&policy, None).expect("plan");
 
-        assert!(matches!(
-            error,
-            RuntimeError::Capability { ref capability, ref message }
-                if capability == "script-tool" && message.contains("missing joined")
-        ));
-    }
-
-    #[test]
-    fn script_tool_policy_preserves_open_read_only_metadata() {
-        assert_eq!(
-            checked_script_tool_policy("script-tool", Some(true), Some(false))
-                .expect("complete policy metadata"),
-            ScriptToolPolicy {
-                read_only: true,
-                requires_approval: false,
-            }
-        );
+        let (first, first_truncated) =
+            bounded_tool_result_messages(&mut first_plan, &results).expect("first packing");
+        let (second, second_truncated) =
+            bounded_tool_result_messages(&mut second_plan, &results).expect("second packing");
+        assert!(first_truncated);
+        assert!(second_truncated);
+        assert_eq!(first[0].text_content(), second[0].text_content());
+        assert_eq!(first[0].role, Role::Tool);
+        assert_eq!(first[0].tool_call_id.as_deref(), Some("call"));
+        assert!(first[0].text_content().contains("[truncated"));
     }
 }

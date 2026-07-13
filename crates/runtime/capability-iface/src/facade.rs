@@ -16,10 +16,14 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use apxm_core::error::RuntimeError;
-use apxm_core::events::payload::ToolCallCorrelation;
+use apxm_core::events::payload::{
+    CapabilityEffectDispatchPath, CapabilityEffectReceiptPayload, ToolCallCorrelation,
+};
 use apxm_core::types::consent::ConsentBroker;
+use apxm_core::types::host::{HostEffectCommit, HostEffectPrepare};
 use apxm_core::types::values::Value;
 use async_trait::async_trait;
+use serde::{Deserialize, Serialize};
 
 use crate::events::ExecutionEventEmitter;
 use crate::metadata::RuntimeCapability;
@@ -62,6 +66,79 @@ pub struct ApprovalContext<'a> {
     pub permission_timeout: Duration,
 }
 
+/// Immutable identity for one capability dispatch performed by an execution.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CapabilityInvocation {
+    pub execution_id: String,
+    pub graph_id: String,
+    pub node_id: u64,
+    pub invocation_id: String,
+    pub dispatch_path: CapabilityEffectDispatchPath,
+    pub grant_refs: Vec<String>,
+}
+
+/// Shared digest helper for committed capability-effect idempotency keys.
+pub fn capability_effect_idempotency_key_digest(idempotency_key: &str) -> String {
+    format!(
+        "blake3:{}",
+        blake3::hash(idempotency_key.as_bytes()).to_hex()
+    )
+}
+
+/// Content-free preparation evidence made available to the replayer.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct HostEffectPrepareEvidence {
+    pub execution_id: String,
+    pub graph_id: String,
+    pub node_id: u64,
+    pub invocation_id: String,
+    pub call_id: String,
+    pub capability_id: String,
+    pub host_op: String,
+    pub capability_binding: String,
+    pub implementation_ref: String,
+    pub request_digest: String,
+    pub idempotency_key: String,
+    pub grant_refs: Vec<String>,
+    pub approval_refs: Vec<String>,
+}
+
+impl From<&HostEffectPrepare> for HostEffectPrepareEvidence {
+    fn from(prepare: &HostEffectPrepare) -> Self {
+        Self {
+            execution_id: prepare.execution_id.clone(),
+            graph_id: prepare.graph_id.clone(),
+            node_id: prepare.node_id,
+            invocation_id: prepare.invocation_id.clone(),
+            call_id: prepare.call_id.clone(),
+            capability_id: prepare.capability_id.clone(),
+            host_op: prepare.host_op.clone(),
+            capability_binding: prepare.capability_binding.clone(),
+            implementation_ref: prepare.implementation_ref.clone(),
+            request_digest: prepare.request_digest.clone(),
+            idempotency_key: prepare.idempotency_key.clone(),
+            grant_refs: prepare.grant_refs.clone(),
+            approval_refs: prepare.approval_refs.clone(),
+        }
+    }
+}
+
+/// Durable replay evidence for one committed capability effect.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CapabilityEffectReplayEvidence {
+    pub receipt: CapabilityEffectReceiptPayload,
+    pub host_prepare: Option<HostEffectPrepareEvidence>,
+    pub host_commit: Option<HostEffectCommit>,
+    pub host_pubkey_hex: Option<String>,
+}
+
+/// Inline evidence envelope supplied by the durable receipt authority for a
+/// partial replay attempt.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CapabilityEffectReplayEvidenceEnvelope {
+    pub records: Vec<CapabilityEffectReplayEvidence>,
+}
+
 /// Executor-facing capability dispatch surface.
 ///
 /// `ExecutionContext.capability_system` is `Arc<dyn CapabilityFacade>`;
@@ -90,6 +167,23 @@ pub trait CapabilityFacade: Send + Sync {
         timeout: Duration,
         approval: ApprovalContext<'_>,
     ) -> Result<Value, RuntimeError>;
+
+    /// Invoke a capability with the durable identity assigned by the executor.
+    ///
+    /// Implementors that do not produce durable capability-effect receipts can
+    /// use the mandatory approval path unchanged. The concrete runtime facade
+    /// overrides this to bind receipts to the supplied invocation.
+    async fn invoke_with_timeout_ctx_and_invocation(
+        &self,
+        name: &str,
+        args: HashMap<String, Value>,
+        timeout: Duration,
+        approval: ApprovalContext<'_>,
+        invocation: Option<&CapabilityInvocation>,
+    ) -> Result<Value, RuntimeError> {
+        let _ = invocation;
+        self.invoke_with_timeout_ctx(name, args, timeout, approval).await
+    }
 
     /// Whether a capability with this name is registered.
     fn has_capability(&self, name: &str) -> bool;

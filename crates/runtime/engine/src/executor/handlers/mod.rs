@@ -46,13 +46,13 @@ use crate::model_router::{ProfileRouter, RoutingDecision};
 use anyhow::Error as AnyhowError;
 use apxm_backends::llm::wire::response_metadata;
 use apxm_backends::{LLMRequest, LLMResponse, StreamingBackendError};
-use apxm_capability_iface::events::{ModelContextCallKind, ModelContextMetrics};
+use apxm_capability_iface::events::ModelContextMetrics;
 use apxm_core::{
     constants::graph::attrs as graph_attrs,
     error::RuntimeError,
-    events::payload::GenerationIdentity,
     types::{execution::Node, values::Value},
 };
+use thiserror::Error;
 
 /// Helper to extract attribute from node
 pub fn get_attribute(node: &Node, key: &str) -> Result<Value> {
@@ -123,6 +123,17 @@ pub fn apply_llm_request_routing_from_node(
     Ok(request)
 }
 
+/// Typed failure to resolve a configured model profile.
+#[derive(Debug, Clone, PartialEq, Eq, Error)]
+pub enum ModelProfileResolutionError {
+    #[error("model profile '{profile}' is not configured")]
+    ProfileNotConfigured { profile: String },
+    #[error("model profile '{profile}' requires an unavailable model router")]
+    RouterNotConfigured { profile: String },
+    #[error("model profile '{profile}' has no healthy configured candidate: {reason}")]
+    NoEligibleCandidate { profile: String, reason: String },
+}
+
 /// Resolve a node's `model_profile` (or, absent that, the execution's
 /// package-level default profile) into a concrete `model` on the request,
 /// narrowing the candidate the normal `ModelRouter::select` ranks over.
@@ -132,63 +143,63 @@ pub fn apply_llm_request_routing_from_node(
 /// `ModelRouter::select` ranks them.
 ///
 /// Precedence (explicit wins, platform.md rule 1):
-/// 1. Request already carries an explicit `backend` or `model` (from a
-///    node-level `BACKEND`/`MODEL` attribute, or a prior resolution) — no
-///    profile lookup, unchanged.
-/// 2. Node-level `model_profile` attribute.
-/// 3. `ExecutionContext::default_model_profile` — the owning package's
+/// 1. Node-level `model_profile` attribute.
+/// 2. `ExecutionContext::default_model_profile` — the owning package's
 ///    `agent.toml [runtime].default_model_profile`, when threaded in by the
 ///    host loading the package.
-/// 4. Neither router nor registry attached, or profile has no healthy
-///    candidate — falls through unchanged so `ModelRouter::select` still
-///    runs its normal full-candidate-set routing rather than failing the
-///    request outright.
-pub fn resolve_model_profile(ctx: &ExecutionContext, mut request: LLMRequest) -> LLMRequest {
-    if request.backend.is_some() || request.model.is_some() {
-        return request;
-    }
-
+/// 3. When a profile is present, its configured existence is always checked.
+///    Explicit backend/model fields remain authoritative after that check.
+pub fn resolve_model_profile(
+    ctx: &ExecutionContext,
+    mut request: LLMRequest,
+) -> std::result::Result<LLMRequest, ModelProfileResolutionError> {
     let Some(profile_name) = request
         .model_profile
         .clone()
         .or_else(|| ctx.default_model_profile.clone())
     else {
-        return request;
+        return Ok(request);
     };
 
-    let (Some(model_router), Some(profile_registry)) = (&ctx.model_router, &ctx.profile_registry)
-    else {
-        tracing::debug!(
-            profile = %profile_name,
-            "model_profile set but ModelRouter/ProfileRegistry unavailable; \
-             falling back to normal routing"
-        );
-        return request;
-    };
+    let profile_registry = ctx.profile_registry.as_ref().ok_or_else(|| {
+        ModelProfileResolutionError::ProfileNotConfigured {
+            profile: profile_name.clone(),
+        }
+    })?;
+    if profile_registry.get(&profile_name).is_none() {
+        return Err(ModelProfileResolutionError::ProfileNotConfigured {
+            profile: profile_name,
+        });
+    }
+    request = request.with_model_profile(profile_name.clone());
+
+    if request.backend.is_some() || request.model.is_some() {
+        return Ok(request);
+    }
+
+    let model_router = ctx.model_router.as_ref().ok_or_else(|| {
+        ModelProfileResolutionError::RouterNotConfigured {
+            profile: profile_name.clone(),
+        }
+    })?;
 
     let profile_router = ProfileRouter::new(
         profile_registry,
         model_router,
         model_router.model_registry(),
     );
-    match profile_router.select_from_profile(&profile_name) {
-        Ok(model) => {
-            tracing::debug!(
-                profile = %profile_name,
-                model = %model,
-                "Resolved model_profile to candidate model before ModelRouter::select"
-            );
-            request = request.with_model(model);
-        }
-        Err(e) => {
-            tracing::warn!(
-                profile = %profile_name,
-                error = %e,
-                "model_profile resolution failed; falling back to full candidate set"
-            );
-        }
-    }
-    request
+    let model = profile_router
+        .select_from_profile(&profile_name)
+        .map_err(|error| ModelProfileResolutionError::NoEligibleCandidate {
+            profile: profile_name.clone(),
+            reason: error.to_string(),
+        })?;
+    tracing::debug!(
+        profile = %profile_name,
+        model = %model,
+        "Resolved model_profile to candidate model before ModelRouter::select"
+    );
+    Ok(request.with_model(model))
 }
 
 /// Preserve the routing identity of an LLM request across retries or continuations.
@@ -293,22 +304,6 @@ pub fn llm_error(
     }
 }
 
-pub async fn execute_llm_request_for_node(
-    ctx: &ExecutionContext,
-    node: &Node,
-    phase: &str,
-    request: &LLMRequest,
-) -> Result<LLMResponse> {
-    execute_llm_request_for_node_with_context(
-        ctx,
-        node,
-        phase,
-        request,
-        &ModelContextMetrics::unplanned(Some(node.id), ModelContextCallKind::Node),
-    )
-    .await
-}
-
 /// Dispatch a model request with aggregate-only context-plan evidence.
 pub async fn execute_llm_request_for_node_with_context(
     ctx: &ExecutionContext,
@@ -317,27 +312,6 @@ pub async fn execute_llm_request_for_node_with_context(
     request: &LLMRequest,
     context_metrics: &ModelContextMetrics,
 ) -> Result<LLMResponse> {
-    execute_llm_request_for_node_with_context_and_generation(
-        ctx,
-        node,
-        phase,
-        request,
-        context_metrics,
-        None,
-    )
-    .await
-}
-
-/// Dispatch a model request while preserving generation correlation and
-/// content-free context-plan evidence.
-pub async fn execute_llm_request_for_node_with_context_and_generation(
-    ctx: &ExecutionContext,
-    node: &Node,
-    phase: &str,
-    request: &LLMRequest,
-    context_metrics: &ModelContextMetrics,
-    generation: Option<&GenerationIdentity>,
-) -> Result<LLMResponse> {
     execute_llm_request_with_node_name(
         ctx,
         node.id,
@@ -345,7 +319,6 @@ pub async fn execute_llm_request_for_node_with_context_and_generation(
         phase,
         request,
         context_metrics,
-        generation,
     )
     .await
 }
@@ -357,7 +330,6 @@ async fn execute_llm_request_with_node_name(
     phase: &str,
     request: &LLMRequest,
     context_metrics: &ModelContextMetrics,
-    generation: Option<&GenerationIdentity>,
 ) -> Result<LLMResponse> {
     if ctx.cancellation_token.is_cancelled() {
         return Err(RuntimeError::SchedulerCancelled);
@@ -366,44 +338,62 @@ async fn execute_llm_request_with_node_name(
     // Resolve model_profile -> candidate model before either dispatch
     // path runs ModelRouter::select. No-op when the request already carries
     // an explicit backend/model or declares no profile.
-    let resolved = resolve_model_profile(ctx, request.clone());
-    let request = &resolved;
-    let reservation = llm::reserve_model_call(ctx, request)?;
+    let resolved =
+        resolve_model_profile(ctx, request.clone()).map_err(|error| RuntimeError::LLM {
+            message: error.to_string(),
+            backend: request.backend.clone(),
+        })?;
+    let admission = llm::admit_model_egress(ctx, &resolved)?;
+    let request = &admission.request;
+    let reservation = admission.reservation;
 
     if let Some(emitter) = &ctx.event_emitter {
         emitter.emit_model_context_metrics(context_metrics);
     }
 
-    let active_agent = ctx
-        .agent_scope_stack
-        .peek()
-        .map(|scope| scope.agent_code.clone())
-        .or_else(|| ctx.current_agent.as_ref().map(|agent| agent.name.clone()));
-
-    if let (Some(emitter), Some(agent_code)) = (&ctx.event_emitter, active_agent.as_deref()) {
-        emitter.emit_subagent_llm_call_begin_with_generation(
-            agent_code,
-            request.model.as_deref().unwrap_or("auto"),
-            request.backend.as_deref().unwrap_or("auto"),
-            request.tools.as_ref().map_or(0, Vec::len),
-            generation,
-        );
+    // Consume only scheduler-configured compiler groups. Dynamic ModelRouter
+    // selection stays on its normal per-node path because a batch must retain
+    // one configured backend/model route for every correlated request.
+    if ctx.model_router.is_none()
+        && let Some(dispatcher) = ctx.correlated_batch_dispatch()
+    {
+        match dispatcher
+            .dispatch(node_id, request.clone())
+            .await
+            .map_err(|message| RuntimeError::LLM {
+                message: format!("correlated batch dispatch failed during {phase}: {message}"),
+                backend: request.backend.clone(),
+            })? {
+            crate::executor::correlated_batch::CorrelatedBatchDispatch::Response(response) => {
+                if let Some(emitter) = &ctx.event_emitter {
+                    emitter.emit_llm_prompt_with_name(node_id, node_name, &request.prompt);
+                    if !response.content.is_empty() {
+                        emitter.emit_llm_token_for_node(node_id, &response.content);
+                    }
+                }
+                reservation.reconcile(response.usage.total_tokens)?;
+                return Ok(response);
+            }
+            crate::executor::correlated_batch::CorrelatedBatchDispatch::NotMember
+            | crate::executor::correlated_batch::CorrelatedBatchDispatch::Fallback => {}
+        }
     }
 
     // Use streaming path when an event emitter is available so we can
     // emit token-by-token events. The default generate_stream() impl
     // wraps generate() into a single Done chunk for non-streaming backends.
     if let Some(emitter) = &ctx.event_emitter {
-        emitter.emit_llm_prompt_with_generation(node_id, node_name, &request.prompt, generation);
+        emitter.emit_llm_prompt_with_name(node_id, node_name, &request.prompt);
+        let response = execute_llm_request_streaming(ctx, node_id, phase, request).await?;
+        reservation.reconcile(response.usage.total_tokens)?;
+        return Ok(response);
     }
 
     #[cfg(feature = "metrics")]
     let start = std::time::Instant::now();
 
     // Route through ModelRouter when available (circuit breakers + policy routing).
-    let response = if ctx.event_emitter.is_some() {
-        execute_llm_request_streaming(ctx, node_id, phase, request, generation).await?
-    } else if let Some(router) = &ctx.model_router {
+    let response = if let Some(router) = &ctx.model_router {
         tokio::select! {
             result = router.generate(request.clone()) => {
                 result.map_err(|e| llm_error(ctx, phase, request, e))?
@@ -422,18 +412,6 @@ async fn execute_llm_request_with_node_name(
             }
         }
     };
-    reservation.reconcile(response.usage.total_tokens)?;
-
-    if let (Some(emitter), Some(agent_code)) = (&ctx.event_emitter, active_agent.as_deref()) {
-        emitter.emit_subagent_llm_call_end_with_generation(
-            agent_code,
-            &response.finish_reason.to_string(),
-            response.usage.input_tokens,
-            response.usage.output_tokens,
-            response.content.chars().count(),
-            generation,
-        );
-    }
 
     #[cfg(feature = "metrics")]
     {
@@ -441,6 +419,7 @@ async fn execute_llm_request_with_node_name(
         record_llm_event(ctx, phase, request, &response, latency).await;
     }
 
+    reservation.reconcile(response.usage.total_tokens)?;
     Ok(response)
 }
 
@@ -490,7 +469,6 @@ async fn execute_llm_request_streaming(
     node_id: u64,
     phase: &str,
     request: &LLMRequest,
-    generation: Option<&GenerationIdentity>,
 ) -> Result<LLMResponse> {
     use apxm_backends::StreamChunk;
     use tokio_stream::StreamExt;
@@ -563,7 +541,7 @@ async fn execute_llm_request_streaming(
                     streamed_tool_calls.push(finalize_pending_tool_call(tc));
                 }
                 if let Some(emitter) = &ctx.event_emitter {
-                    emitter.emit_llm_token_for_generation(node_id, &token, generation);
+                    emitter.emit_llm_token_for_node(node_id, &token);
                     emitted_text = true;
                 }
             }
@@ -600,7 +578,7 @@ async fn execute_llm_request_streaming(
                 // answer text (`emitted_text`): the answer comes from `token`
                 // chunks and the final response content.
                 if let Some(emitter) = &ctx.event_emitter {
-                    emitter.emit_llm_thought_for_generation(node_id, &thought, generation);
+                    emitter.emit_llm_thought_for_node(node_id, &thought);
                 }
             }
             StreamChunk::Usage(_usage) => {
@@ -648,7 +626,7 @@ async fn execute_llm_request_streaming(
 
     if !emitted_text && !response.content.is_empty() {
         if let Some(emitter) = &ctx.event_emitter {
-            emitter.emit_llm_token_for_generation(node_id, &response.content, generation);
+            emitter.emit_llm_token_for_node(node_id, &response.content);
         }
     }
 
@@ -767,6 +745,10 @@ mod model_profile_routing_tests {
     use super::*;
     use crate::aam::Aam;
     use crate::capability::CapabilitySystem;
+    use crate::context_stack::{ContextPlanningPolicy, ContextStack, ContextTokenizer};
+    use crate::executor::events::{
+        ExecutionEventEmitter, ModelContextCallKind, ModelContextMetrics, ModelContextPlanStatus,
+    };
     use crate::memory::{MemoryConfig, MemorySystem};
     use crate::model_router::registry::{ModelEntry, ModelRegistry};
     use crate::model_router::{ModelRouter, ModelRouterConfig, ProfileRegistry, RoutingTarget};
@@ -774,7 +756,27 @@ mod model_profile_routing_tests {
     use apxm_backends::llm::backends::MockLLMBackend;
     use apxm_core::model_profiles::{ModelProfile, ProfileCandidate};
     use apxm_core::types::AISOperationType;
+    use apxm_core::types::execution::Node;
+    use parking_lot::Mutex;
+    use std::collections::{BTreeMap, HashMap};
     use std::sync::Arc;
+
+    #[derive(Default)]
+    struct ContextMetricsEmitter {
+        metrics: Mutex<Vec<ModelContextMetrics>>,
+    }
+
+    impl ExecutionEventEmitter for ContextMetricsEmitter {
+        fn emit_llm_token(&self, _content: &str) {}
+
+        fn emit_tool_start(&self, _name: &str, _args: &std::collections::HashMap<String, Value>) {}
+
+        fn emit_tool_end(&self, _name: &str, _result: &Value) {}
+
+        fn emit_model_context_metrics(&self, metrics: &ModelContextMetrics) {
+            self.metrics.lock().push(metrics.clone());
+        }
+    }
 
     /// Two backends ("cheap", "expensive") with sharply different costs, so a
     /// `Cost`-targeted `select` would normally prefer "cheap" — proving that
@@ -837,11 +839,78 @@ mod model_profile_routing_tests {
         );
         let aam = Aam::new();
         let capability_system = Arc::new(CapabilitySystem::with_aam(aam.clone()));
-        ExecutionContext::new(memory, Arc::new(LLMRegistry::new()), capability_system, aam)
+        let mut ctx =
+            ExecutionContext::new(memory, Arc::new(LLMRegistry::new()), capability_system, aam);
+        let context_root = tempfile::tempdir().expect("context root").keep();
+        ctx.context_stack = Some(Arc::new(
+            ContextStack::new(context_root, Arc::new(HashMap::new()), Arc::new(Vec::new()))
+                .with_planning_policy(ContextPlanningPolicy {
+                    tokenizer: ContextTokenizer::O200kBase,
+                    token_budget: 1_024,
+                    profiles: BTreeMap::from([(
+                        "fixture".to_string(),
+                        crate::context_stack::ScopeRules {
+                            upstream_depth: 0,
+                            upstream_frame_budget: 0,
+                            session_frame_budget: 0,
+                            include_upstream_prompts: false,
+                        },
+                    )]),
+                }),
+        ));
+        ctx
     }
 
     fn ask_request() -> LLMRequest {
         LLMRequest::new("hello").with_operation_type(AISOperationType::Ask)
+    }
+
+    #[tokio::test]
+    async fn node_dispatch_emits_context_metrics_through_the_dispatch_boundary() {
+        let mut ctx = test_context().await;
+        let backend = "context-metrics-mock";
+        let model = "context-metrics-mock-model";
+        ctx.llm_registry
+            .register(
+                backend,
+                MockLLMBackend::static_response("ok").model_name(model),
+            )
+            .expect("register context metrics mock backend");
+        ctx.llm_registry
+            .set_model_route(model, backend)
+            .expect("register context metrics mock model route");
+        let emitter = Arc::new(ContextMetricsEmitter::default());
+        ctx.event_emitter = Some(emitter.clone());
+
+        let mut node = Node::new(7, AISOperationType::Ask);
+        node.set_attribute(
+            graph_attrs::PROFILE.to_string(),
+            Value::String("fixture".to_string()),
+        );
+        let request = ask_request()
+            .with_backend(backend)
+            .with_model(model)
+            .with_max_tokens(256);
+        let metrics = ModelContextMetrics {
+            node_id: Some(node.id),
+            call_kind: ModelContextCallKind::Node,
+            plan_status: ModelContextPlanStatus::Assembled,
+            token_budget: Some(1024),
+            original_tokens: Some(1200),
+            admitted_tokens: Some(960),
+            kept_segments: Some(3),
+            truncated_segments: Some(1),
+            omitted_token_budget_segments: Some(2),
+            omitted_empty_segments: Some(1),
+        };
+
+        let response =
+            execute_llm_request_for_node_with_context(&ctx, &node, "test", &request, &metrics)
+                .await
+                .expect("dispatch succeeds");
+
+        assert_eq!(response.content, "ok");
+        assert_eq!(emitter.metrics.lock().as_slice(), &[metrics]);
     }
 
     #[tokio::test]
@@ -853,7 +922,7 @@ mod model_profile_routing_tests {
         ctx.profile_registry = Some(profiles);
 
         let request = ask_request();
-        let resolved = resolve_model_profile(&ctx, request.clone());
+        let resolved = resolve_model_profile(&ctx, request.clone()).expect("no profile is allowed");
         assert!(
             resolved.model.is_none(),
             "no model_profile set: request must be unchanged"
@@ -873,7 +942,7 @@ mod model_profile_routing_tests {
         ctx.profile_registry = Some(profiles);
 
         let request = ask_request().with_model_profile("single-tier");
-        let resolved = resolve_model_profile(&ctx, request);
+        let resolved = resolve_model_profile(&ctx, request).expect("configured profile");
         assert_eq!(resolved.model.as_deref(), Some("expensive-model"));
 
         // Even though Cost target would otherwise pick "cheap", the profile
@@ -894,7 +963,7 @@ mod model_profile_routing_tests {
 
         // Node/request declares no model_profile of its own.
         let request = ask_request();
-        let resolved = resolve_model_profile(&ctx, request);
+        let resolved = resolve_model_profile(&ctx, request).expect("configured default profile");
         assert_eq!(resolved.model.as_deref(), Some("expensive-model"));
 
         let decision = router.select(&resolved).expect("selection succeeds");
@@ -933,7 +1002,7 @@ mod model_profile_routing_tests {
 
         // ...but the node explicitly declares "single-tier", which must win.
         let request = ask_request().with_model_profile("single-tier");
-        let resolved = resolve_model_profile(&ctx, request);
+        let resolved = resolve_model_profile(&ctx, request).expect("configured explicit profile");
         assert_eq!(resolved.model.as_deref(), Some("expensive-model"));
     }
 
@@ -949,11 +1018,25 @@ mod model_profile_routing_tests {
         let request = ask_request()
             .with_model("cheap-model")
             .with_model_profile("single-tier");
-        let resolved = resolve_model_profile(&ctx, request);
+        let resolved = resolve_model_profile(&ctx, request).expect("profile remains validated");
         assert_eq!(
             resolved.model.as_deref(),
             Some("cheap-model"),
             "explicit request.model must not be overridden by model_profile"
+        );
+    }
+
+    #[tokio::test]
+    async fn unknown_model_profile_is_rejected_without_falling_back() {
+        let ctx = test_context().await;
+        let error = resolve_model_profile(&ctx, ask_request().with_model_profile("missing-tier"))
+            .expect_err("unknown profile must fail closed");
+
+        assert_eq!(
+            error,
+            ModelProfileResolutionError::ProfileNotConfigured {
+                profile: "missing-tier".to_string(),
+            }
         );
     }
 

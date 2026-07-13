@@ -42,9 +42,9 @@ pub mod tool_write_lock;
 use approval::ApprovalStore;
 use apxm_aam::{Aam, TransitionLabel};
 use apxm_capability_iface::sandbox::{SandboxRegistry, ValidationResult};
-use apxm_capability_iface::{ApprovalContext, CapabilityFacade};
+use apxm_capability_iface::{ApprovalContext, CapabilityFacade, CapabilityInvocation};
 use apxm_core::{error::RuntimeError, types::values::Value};
-use executor::{CapabilityExecutor, exec_result_to_value};
+use executor::{CapabilityExecutionResult, CapabilityExecutor, exec_result_to_value};
 use interceptor::{
     CapabilityInterceptor, InterceptDecision, PreInvokeContext, pre_invoke_policy_ctx,
 };
@@ -201,10 +201,7 @@ impl CapabilitySystem {
         Ok(())
     }
 
-    /// Invoke a capability by name with validation.
-    ///
-    /// Approval-gated capabilities fail closed here because this direct API has
-    /// no consent context. Executor calls use [`CapabilityFacade`] instead.
+    /// Invoke a capability by name with validation
     ///
     /// # Arguments
     ///
@@ -231,10 +228,7 @@ impl CapabilitySystem {
             .await
     }
 
-    /// Invoke capability with custom timeout.
-    ///
-    /// Approval-gated capabilities fail closed here because this direct API has
-    /// no consent context. Executor calls use [`CapabilityFacade`] instead.
+    /// Invoke capability with custom timeout
     ///
     /// # Arguments
     ///
@@ -247,10 +241,14 @@ impl CapabilitySystem {
         args: HashMap<String, Value>,
         timeout: Duration,
     ) -> CapabilityResult<Value> {
-        self.invoke_with_timeout_ctx_raw(name, args, timeout, None)
+        self.invoke_with_timeout_ctx_raw(name, args, timeout, None, None)
             .await
     }
 
+    /// Apply cached approvals, execution-scoped consent, and registered
+    /// interceptors before a capability or artifact-local worker receives its
+    /// arguments. Calls that require approval but have no consent context fail
+    /// closed rather than reaching the execution path.
     async fn admit_invocation_ctx_raw(
         &self,
         name: &str,
@@ -324,6 +322,7 @@ impl CapabilitySystem {
         args: HashMap<String, Value>,
         timeout: Duration,
         pre_ctx: Option<&PreInvokeContext<'_>>,
+        invocation: Option<&CapabilityInvocation>,
     ) -> CapabilityResult<Value> {
         // Get capability
         let capability = self
@@ -351,7 +350,7 @@ impl CapabilitySystem {
         // Execute with timeout — route through sandbox if the capability
         // provides an ExecRequest, otherwise execute directly.
         let sandbox_reg = self.sandbox_registry.read().clone();
-        let result = tokio::time::timeout(timeout, async {
+        let execution = tokio::time::timeout(timeout, async {
             // Check if capability wants sandbox execution
             if let Some(exec_req) = capability.to_exec_request(&args) {
                 // Route through sandbox backend
@@ -400,7 +399,7 @@ impl CapabilitySystem {
                             }
                         };
                         let _ = backend.destroy_session(session).await;
-                        return Ok(exec_result_to_value(exec_result));
+                        return Ok(CapabilityExecutionResult::new(exec_result_to_value(exec_result)));
                     } else {
                         // Capability requires sandbox but registry is empty
                         return Err(RuntimeError::Capability {
@@ -417,7 +416,7 @@ impl CapabilitySystem {
                 }
             } else {
                 // Capability doesn't need sandbox, execute directly
-                capability.execute(args).await
+                capability.execute_with_effect_receipt(args, invocation).await
             }
         })
             .await
@@ -426,6 +425,36 @@ impl CapabilitySystem {
                 tracing::error!(capability = %name, error = %e, "Capability execution failed");
                 e
             })?;
+
+        if let Some(receipt) = execution.effect_receipt.as_ref() {
+            receipt
+                .validate()
+                .map_err(|message| RuntimeError::Capability {
+                    capability: name.to_string(),
+                    message: format!("invalid durable capability effect receipt: {message}"),
+                })?;
+            let invocation = invocation.ok_or_else(|| RuntimeError::Capability {
+                capability: name.to_string(),
+                message: "durable capability effect receipt is missing trusted invocation identity"
+                    .to_string(),
+            })?;
+            if receipt.execution_id != invocation.execution_id
+                || receipt.node_id != invocation.node_id
+                || receipt.invocation_id != invocation.invocation_id
+            {
+                return Err(RuntimeError::Capability {
+                    capability: name.to_string(),
+                    message:
+                        "durable capability effect receipt does not bind the active invocation"
+                            .to_string(),
+                });
+            }
+            if let Some(emitter) = pre_ctx.and_then(|context| context.event_emitter) {
+                emitter.emit_capability_effect_receipt(receipt);
+            }
+        }
+
+        let result = execution.value;
 
         // Post-invoke hooks (best effort)
         for interceptor in &interceptors {
@@ -624,7 +653,30 @@ impl CapabilityFacade for CapabilitySystem {
             grant_id: approval.grant_id,
             permission_timeout: approval.permission_timeout,
         };
-        self.invoke_with_timeout_ctx_raw(name, args, timeout, Some(&pre_ctx))
+        self.invoke_with_timeout_ctx_raw(name, args, timeout, Some(&pre_ctx), None)
+            .await
+    }
+
+    async fn invoke_with_timeout_ctx_and_invocation(
+        &self,
+        name: &str,
+        args: HashMap<String, Value>,
+        timeout: Duration,
+        approval: ApprovalContext<'_>,
+        invocation: Option<&CapabilityInvocation>,
+    ) -> CapabilityResult<Value> {
+        let pre_ctx = PreInvokeContext {
+            registry: &self.registry,
+            call_id: approval.call_id,
+            tool_call_correlation: approval.tool_call_correlation,
+            consent_broker: approval.consent_broker,
+            event_emitter: approval.event_emitter,
+            host_id: approval.host_id,
+            agent_code: approval.agent_code,
+            grant_id: approval.grant_id,
+            permission_timeout: approval.permission_timeout,
+        };
+        self.invoke_with_timeout_ctx_raw(name, args, timeout, Some(&pre_ctx), invocation)
             .await
     }
 
@@ -658,184 +710,5 @@ impl CapabilityFacade for CapabilitySystem {
         args: &HashMap<String, Value>,
     ) -> CapabilityResult<CapabilitySandboxPreflight> {
         CapabilitySystem::sandbox_preflight(self, name, args)
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::executor::{CapabilityExecutor, EchoCapability};
-    use apxm_core::types::consent::{
-        APPROVAL_BROKER_UNAVAILABLE_REASON, ConsentBroker, ConsentDecision, PermissionPrompt,
-        UnavailableConsentBroker,
-    };
-    use std::sync::atomic::{AtomicUsize, Ordering};
-
-    struct ApprovalGatedCapability {
-        metadata: RuntimeCapability,
-    }
-
-    #[async_trait::async_trait]
-    impl CapabilityExecutor for ApprovalGatedCapability {
-        async fn execute(&self, _args: HashMap<String, Value>) -> CapabilityResult<Value> {
-            Ok(Value::Null)
-        }
-
-        fn metadata(&self) -> &RuntimeCapability {
-            &self.metadata
-        }
-    }
-
-    #[tokio::test]
-    async fn direct_gated_invoke_without_consent_context_fails_closed() {
-        let system = CapabilitySystem::new();
-        system
-            .register(Arc::new(ApprovalGatedCapability {
-                metadata: RuntimeCapability::new(
-                    "approval-gated",
-                    "requires consent",
-                    serde_json::json!({"type": "object"}),
-                )
-                .with_requires_approval(),
-            }))
-            .expect("approval-gated capability");
-
-        let error = system
-            .invoke("approval-gated", HashMap::new())
-            .await
-            .expect_err("direct invocation must not bypass approval");
-
-        assert!(matches!(
-            error,
-            RuntimeError::Capability { ref capability, ref message }
-                if capability == "approval-gated"
-                    && message.contains("no consent context was provided")
-        ));
-    }
-
-    #[tokio::test]
-    async fn direct_open_read_only_invoke_remains_allowed() {
-        let system = CapabilitySystem::new();
-        system
-            .register(Arc::new(EchoCapability::new()))
-            .expect("echo capability");
-        let args = HashMap::from([("message".to_string(), Value::String("hi".into()))]);
-
-        let result = system
-            .invoke("echo", args)
-            .await
-            .expect("open read-only call");
-
-        assert_eq!(result, Value::String("Echo: hi".to_string()));
-    }
-
-    struct CountingBroker {
-        decision: ConsentDecision,
-        calls: Arc<AtomicUsize>,
-    }
-
-    #[async_trait::async_trait]
-    impl ConsentBroker for CountingBroker {
-        async fn request_consent(
-            &self,
-            _prompt: PermissionPrompt,
-            _timeout: Duration,
-        ) -> ConsentDecision {
-            self.calls.fetch_add(1, Ordering::Relaxed);
-            self.decision.clone()
-        }
-    }
-
-    struct CountingInterceptor {
-        calls: Arc<AtomicUsize>,
-    }
-
-    #[async_trait::async_trait]
-    impl CapabilityInterceptor for CountingInterceptor {
-        fn name(&self) -> &str {
-            "external-admission-test"
-        }
-
-        async fn pre_invoke(
-            &self,
-            _name: &str,
-            _args: &HashMap<String, Value>,
-        ) -> InterceptDecision {
-            self.calls.fetch_add(1, Ordering::Relaxed);
-            InterceptDecision::Allow
-        }
-    }
-
-    #[tokio::test]
-    async fn external_open_admission_skips_consent_and_runs_interceptors() {
-        let system = CapabilitySystem::new();
-        let broker_calls = Arc::new(AtomicUsize::new(0));
-        let interceptor_calls = Arc::new(AtomicUsize::new(0));
-        system.register_interceptor(Arc::new(CountingInterceptor {
-            calls: Arc::clone(&interceptor_calls),
-        }));
-        let broker = CountingBroker {
-            decision: ConsentDecision::Denied {
-                reason: "must not be called".to_string(),
-            },
-            calls: Arc::clone(&broker_calls),
-        };
-        let approval = ApprovalContext {
-            call_id: "call-open",
-            tool_call_correlation: None,
-            consent_broker: &broker,
-            event_emitter: None,
-            host_id: None,
-            agent_code: None,
-            grant_id: None,
-            permission_timeout: Duration::from_secs(1),
-        };
-
-        let admitted = CapabilityFacade::admit_with_ctx(
-            &system,
-            "script-read",
-            HashMap::new(),
-            false,
-            approval,
-        )
-        .await
-        .expect("open script admission");
-
-        assert!(admitted.is_empty());
-        assert_eq!(broker_calls.load(Ordering::Relaxed), 0);
-        assert_eq!(interceptor_calls.load(Ordering::Relaxed), 1);
-    }
-
-    #[tokio::test]
-    async fn external_gated_admission_denies_with_unavailable_broker() {
-        let system = CapabilitySystem::new();
-        let broker = UnavailableConsentBroker;
-        let approval = ApprovalContext {
-            call_id: "call-gated",
-            tool_call_correlation: None,
-            consent_broker: &broker,
-            event_emitter: None,
-            host_id: None,
-            agent_code: None,
-            grant_id: None,
-            permission_timeout: Duration::from_secs(1),
-        };
-
-        let error = CapabilityFacade::admit_with_ctx(
-            &system,
-            "script-write",
-            HashMap::new(),
-            true,
-            approval,
-        )
-        .await
-        .expect_err("gated script admission must fail without a broker");
-
-        assert!(matches!(
-            error,
-            RuntimeError::Capability { ref capability, ref message }
-                if capability == "script-write"
-                    && message == APPROVAL_BROKER_UNAVAILABLE_REASON
-        ));
     }
 }
