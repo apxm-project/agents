@@ -13,6 +13,7 @@ skills = []
 type = "local"
 
 [compile]
+entry = "gao_profile.py"
 frontend = "python"
 
 [runtime]

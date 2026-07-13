@@ -1,16 +1,18 @@
 # Compiler Optimization Pipeline
 
-How the APXM compiler turns an authored agent graph into a runnable, deterministic
-artifact. This document is conceptual — the live ordering and per-target tuning is in
-`crates/compiler/pipeline/src/passes/pipeline.rs::build_pass_list()`.
+How the APXM compiler turns an authored agent graph into a runnable,
+deterministic artifact. Rust, Python, and TypeScript author the shared
+`FrontendGraph` DTO; the Rust compiler owns validation and AIR printing. This
+document follows the executable plan resolved by
+`passes::resolve_pipeline_plan()` and `Pipeline::resolved_plan()`.
 
 ## What the Compiler Does
 
-The compiler accepts AIR (the human-readable text IR), parses it into MLIR using the
-`ais` dialect, runs an optimization pipeline composed of MLIR-level transforms and a
-small set of Rust-side checks, and emits a `.apxmobj` artifact. The artifact is an
-execution-ready DAG with stamped metadata that the runtime can dispatch without
-re-deriving any decisions the compiler made.
+The compiler accepts canonical AIR (the human-readable text IR), parses it into
+MLIR using the `ais` dialect, runs an optimization pipeline composed of
+MLIR-level transforms and Rust-side checks, and emits a `.apxmobj` artifact.
+Python and TypeScript never format AIR themselves: they send `FrontendGraph` to
+`apxm emit-air`, which invokes the Rust validator and printer.
 
 There are two kinds of passes:
 
@@ -21,15 +23,21 @@ There are two kinds of passes:
   state or artifact-level data, such as tool registry checks and driver-level
   model allowlist validation.
 
-The O-level pass list controls the MLIR transform sequence. Artifact finalization
+The typed `PipelinePlan` controls the MLIR transform sequence and records each
+stage's required, preserved, and invalidated analyses. Artifact finalization
 then runs invariant checks for every optimization level so O0 and O2 artifacts
 share the same executable runtime contract.
 
 ## Pipeline Diagram
 
 ```
-   AIR text  ──────►  parse + lower  ──────►  MLIR module (ais.* ops)
-   (.air)                                          │
+Rust builder ─┐
+Python DSL ──┼──► FrontendGraph ─► Rust AIR printer ─► AIR text
+TypeScript ──┘                                      │
+Direct .air ────────────────────────────────────────┘
+                                                     ▼
+                                             MLIR module (ais.* ops)
+                                                     │
                                                    ▼
                                   ┌─────────────────────────────────┐
                                   │       Required lowering         │
@@ -39,7 +47,6 @@ share the same executable runtime contract.
                                                    ▼
                                   ┌─────────────────────────────────┐
                                   │       Optimization phase        │
-                                  │   dspy-optimize (config-gated) │
                                   │   template-specialization       │
                                   │   dead-context-elimination      │
                                   │   canonicalizer                 │
@@ -58,6 +65,7 @@ share the same executable runtime contract.
                                   │       Artifact finalization     │
                                   │   template contract validation  │
                                   │   tool checks + handler links   │
+                                  │   optimization-summary.v1       │
                                   └────────────────┬────────────────┘
                                                    ▼
                                        ArtifactEmitter
@@ -67,9 +75,12 @@ share the same executable runtime contract.
                                           (loaded by the runtime)
 ```
 
-The phases are conceptual groupings — the compiler does not declare them as
-boundaries internally. Pass ordering inside a phase, and which passes are present at
-which optimization level, is decided in `build_pass_list()`.
+The phases are real typed boundaries. `PipelinePlan` distinguishes required
+lowering, MLIR rewrite and analysis stages, artifact validation, artifact
+finalization, and diagnostics. `build_pass_list()` remains a compatibility view
+of MLIR-only stages; `resolve_pipeline_plan()` is the executable source of
+truth. Mandatory artifact stages cannot be removed by explicit pass lists or
+ordinary pass-disable flags.
 `unconsumed-value-warning` is opt-in through `--warn` and is shown only to mark
 where the diagnostic pass runs when requested.
 
@@ -81,7 +92,7 @@ where the diagnostic pass runs when requested.
 |-------------------------------|--------------------------------------------------------------------------------|
 | `normalize`                   | Canonical form: lowercase selected attrs and dedup unnamed context operands    |
 | `build-prompt`                | Materialize LLM `template_str` / `input_names` runtime contracts               |
-| `dspy-optimize`               | Config-gated compiler prompt tuning; no-op without training data              |
+| `dspy-optimize`               | Explicit offline-evaluation-only prompt search; production compilation rejects it |
 | `unconsumed-value-warning`    | Diagnostic: warn on values produced but never read by a downstream node        |
 | `scheduling`                  | Annotate nodes with tier, cost, and latency labels for the runtime scheduler   |
 | `shared-prefix-analysis`      | Emit backend-agnostic prefix reuse and warmup eligibility metadata             |
@@ -131,31 +142,22 @@ The actual sequence each `(level, target)` produces is defined by
 - **O2** — standard. Keeps the O1 cleanup path, then adds scheduling metadata
   and analysis-only shared-prefix hints. This is the default safe optimization
   level for production artifacts.
-- **O3** — aggressive but still contract-safe. Repeats template-specialization,
-  dead-context-elimination, scheduling metadata, canonicalization, tool checks,
-  and symbol DCE with a bounded cleanup budget. It is not a dynamic fixed-point
-  loop; the pass list is materialized before execution. Use it for diagnostics
-  or measured production workloads that benefit from repeated cleanup.
+- **O3** — aggressive but still contract-safe. Runs a bounded cleanup
+  convergence group of template specialization, typed context cleanup,
+  scheduling metadata, canonicalization, and symbol DCE. The group stops at a
+  fixed point or reports its iteration limit; artifact finalization still runs
+  once after MLIR lowering.
 
 Generic MLIR CSE is available through explicit pass lists, but it is not part of
 the default O-levels until LLM purity/determinism is represented as a typed IR
 contract.
 
-## Config-Gated Prompt Tuning
+## Unsupported Prompt Tuning
 
-`dspy-optimize` is injected into O1/O2/O3 immediately after `build-prompt` only
-when compiler-owned prompt tuning config and training data are available. The
-base O-level pass lists stay deterministic and side-effect free; the pipeline
-adds DSPy after it sees an explicit prompt-tuning request. The compiler reads
-that config from the APXM config file, normalizes training data into
-`.apxm/cache/compiler/training`, writes optimizer cache artifacts under
-`.apxm/cache/compiler/dspy`, and strips transient optimizer metadata before
-artifact serialization.
-
-The compiler-owned configuration is isolated under
-`[compiler.optimization.prompt_tuning]`. The LLM used for prompt tuning is
-declared in `[compiler.optimization.prompt_tuning.backend]`; the compiler does
-not inspect runtime `[chat]` routing or `[[backends]]` registrations.
+`dspy-optimize` is unavailable in production compilation. Prompt search is
+quality-changing and model-dependent, so the compiler rejects it instead of
+silently changing prompts. Compilation does not make model calls, read
+prompt-tuning credentials, or mutate prompts through DSPy.
 
 ## Explicit-Only Passes
 
