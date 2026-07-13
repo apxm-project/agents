@@ -131,8 +131,8 @@ pub use context_stack::{
 };
 pub use executor::{
     CallSkillRequest, CallSkillResult, CancellationToken, ConversationMemoryMiddleware,
-    EmitterAdapter, ExecutionContext, ExecutionEvent, ExecutionEventEmitter, ExecutionHook,
-    ExecutionHookContext, ExecutorEngine, GraphFinishedEvent, GraphMetricsTracker,
+    EmitterAdapter, EventScopeState, ExecutionContext, ExecutionEvent, ExecutionEventEmitter,
+    ExecutionHook, ExecutionHookContext, ExecutorEngine, GraphFinishedEvent, GraphMetricsTracker,
     GraphStartedEvent, InnerPlanLinker, LoopGuardMiddleware, Next, NoOpLinker, NoOpSkillResolver,
     NoOpWorkflowSpawner, NodeFinishedEvent, NodeReadyEvent, NodeStartedEvent, OperationMiddleware,
     SkillResolver, TimeoutMiddleware, TokenBudgetMiddleware, TokenUsageSummary,

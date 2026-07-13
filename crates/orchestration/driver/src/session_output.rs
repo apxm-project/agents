@@ -19,7 +19,7 @@ use apxm_core::types::values::Value;
 use apxm_core::types::{
     CompletedNodeInfo, LiveSessionState, NodeInfo, SessionManifest, SessionStatus,
 };
-use apxm_runtime::ExecutionEventEmitter;
+use apxm_runtime::{EventScopeState, ExecutionEventEmitter};
 use parking_lot::RwLock;
 
 use crate::context_assembler::{ContextAssembler, WorkspaceNodeMetadata};
@@ -427,7 +427,7 @@ pub struct SessionEventEmitter {
     total: AtomicU64,
     seq: AtomicU64,
     current_node_id: AtomicI64,
-    current_scope_id: RwLock<Option<String>>,
+    scope_state: RwLock<EventScopeState>,
     node_metadata: Arc<HashMap<u64, WorkspaceNodeMetadata>>,
     node_traces: Mutex<HashMap<u64, FileEventSink>>,
     node_llm_tokens: Mutex<HashMap<u64, Vec<String>>>,
@@ -508,7 +508,7 @@ impl SessionEventEmitter {
             total: AtomicU64::new(0),
             seq: AtomicU64::new(0),
             current_node_id: AtomicI64::new(-1),
-            current_scope_id: RwLock::new(provenance.scope_id.clone()),
+            scope_state: RwLock::new(EventScopeState::new(provenance.scope_id.clone())),
             node_metadata,
             node_traces: Mutex::new(HashMap::new()),
             node_llm_tokens: Mutex::new(HashMap::new()),
@@ -796,11 +796,19 @@ impl SessionEventEmitter {
 
 impl ExecutionEventEmitter for SessionEventEmitter {
     fn set_current_scope_id(&self, scope_id: Option<String>) {
-        *self.current_scope_id.write() = scope_id;
+        self.scope_state.write().set_base(scope_id);
     }
 
     fn current_scope_id(&self) -> Option<String> {
-        self.current_scope_id.read().clone()
+        self.scope_state.read().current()
+    }
+
+    fn enter_scope_id(&self, scope_id: String) {
+        self.scope_state.write().enter(scope_id);
+    }
+
+    fn leave_scope_id(&self, scope_id: &str) {
+        self.scope_state.write().leave(scope_id);
     }
 
     fn emit_llm_token(&self, content: &str) {

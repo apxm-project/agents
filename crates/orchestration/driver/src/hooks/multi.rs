@@ -74,6 +74,16 @@ impl ExecutionEventEmitter for MultiEmitter {
         self.first_some("current_scope_id", |child| child.current_scope_id())
     }
 
+    fn enter_scope_id(&self, scope_id: String) {
+        self.for_each("enter_scope_id", |child| {
+            child.enter_scope_id(scope_id.clone());
+        });
+    }
+
+    fn leave_scope_id(&self, scope_id: &str) {
+        self.for_each("leave_scope_id", |child| child.leave_scope_id(scope_id));
+    }
+
     fn emit_llm_token(&self, content: &str) {
         self.for_each("emit_llm_token", |child| child.emit_llm_token(content));
     }
