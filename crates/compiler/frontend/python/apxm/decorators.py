@@ -8,6 +8,7 @@ from .constants import (
     ENV_APXM_EMIT_AIR,
     ENV_FLAG_ENABLED,
 )
+from . import constants as graph_keys
 from .execution import (
     CompiledFlow,
     ExecutionMode,
@@ -157,7 +158,11 @@ class _CompiledFunction:
         if not params:
             raise ValueError("decorated function must accept a GraphRecorder as the first argument")
 
-        recorder = GraphRecorder(self._fn.__name__, policy=self._default_policy)
+        recorder = GraphRecorder(
+            self._fn.__name__,
+            metadata={graph_keys.IS_ENTRY: True},
+            policy=self._default_policy,
+        )
 
         # Add parameters to the graph based on function signature
         for param_name, (idx, type_name) in self._param_mapping.items():

@@ -12,12 +12,13 @@
  *   2. build-prompt               – materialize LLM template/input_names contracts
  *   3. template-specialization    – fold known constants into templates
  *   4. dead-context-elimination   – remove context operands unused by templates
- *   5. scheduling                 – annotate with tier/cost/parallel-safe flags
- *   6. shared-prefix-analysis     – annotate existing prefix-reuse opportunities
- *   7. assign-priority            – stamp critical-path priority metadata
- *   8. dspy-optimize              – config-gated prompt-template tuning
- *   9. unconsumed-value-warning   – warn about unused results
- *  10. explicit-only experiments  – fuse, condense, schema, prompt canonicalization
+ *   5. pure-dead-node-elimination – erase unused provably inert nodes
+ *   6. scheduling                 – annotate with tier/cost/parallel-safe flags
+ *   7. shared-prefix-analysis     – annotate existing prefix-reuse opportunities
+ *   8. assign-priority            – stamp critical-path priority metadata
+ *   9. dspy-optimize              – config-gated prompt-template tuning
+ *  10. unconsumed-value-warning   – warn about unused results
+ *  11. explicit-only experiments  – fuse, condense, schema, prompt canonicalization
  */
 
 #ifndef APXM_AIS_PASSES_H
@@ -64,7 +65,10 @@ std::unique_ptr<Pass> createTemplateSpecializationPass();
 /// Create DeadContextElimination pass - remove unused context inputs
 std::unique_ptr<Pass> createDeadContextEliminationPass();
 
-/// Create SchemaNarrowing pass - narrow output schemas based on usage
+/// Create PureDeadNodeElimination pass - remove unused inert operations
+std::unique_ptr<Pass> createPureDeadNodeEliminationPass();
+
+/// Create SchemaNarrowing pass - diagnose unproven schema specialization
 std::unique_ptr<Pass> createSchemaNarrowingPass();
 
 /// Create PromptCanonicalization pass - reorder prompts for shared-prefix reuse

@@ -12,9 +12,6 @@ schema_version = "apxm.agent.v1"
 skills = []
 version = "0.1.0"
 
-[compile]
-frontend = "typescript"
-
 [[hooks]]
 event = "pre_turn"
 handler = "capabilities.handlers.hooks.inject_context"

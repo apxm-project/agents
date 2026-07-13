@@ -4,14 +4,17 @@ MLIR-based compiler for the APXM graph contract and AIS MLIR dialect.
 
 ## Overview
 
-`apxm-compiler` compiles APXM workflows through an MLIR-based pipeline. It parses canonical AIR (MLIR text), builds an intermediate `AirModule` representation where needed, lowers to the AIS MLIR dialect, applies optimization passes, and generates executable `.apxmobj` artifacts. Python frontend sources are compiled by first emitting AIR.
+`apxm-compiler` compiles APXM workflows through an MLIR-based pipeline. Rust,
+Python, and TypeScript frontends converge on `FrontendGraph`; this crate
+validates that DTO and owns the sole AIR printer. Canonical AIR then lowers to
+the AIS MLIR dialect, runs the resolved pass pipeline, and produces executable
+`.apxmobj` artifacts.
 
 ```
-Python (@compile)
-     ↓ captures graph
-ApxmGraph (Python IR)
-     ↓ AirModule.to_air()
-.air text (MLIR)
+Rust / Python / TypeScript authoring
+     ↓ FrontendGraph
+Rust AirModule / AirProgram validator + printer
+     ↓ canonical .air text
      ↓ Module::parse()
 MLIR in memory
      ↓ PassManager::run() [configured pass list via FFI]

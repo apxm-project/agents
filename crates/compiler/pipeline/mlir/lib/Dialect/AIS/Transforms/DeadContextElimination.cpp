@@ -1,25 +1,26 @@
 /**
  * @file  DeadContextElimination.cpp
- * @brief Removes context inputs whose names are not referenced in the
- *        template string.
+ * @brief Removes user-role context inputs whose names are not referenced in
+ *        the template string.
  *
  * Templates carry named placeholders such as `{question}` or `{evidence}`.
  * The parallel `input_names` attribute enumerates the human-readable name
  * of each Data operand in operand order. This pass walks the template,
- * collects every `{name}` placeholder, and drops any operand whose name
- * does not appear — keeping the operand list and `input_names` array in
- * lock-step.
+ * collects every `{name}` placeholder, and drops only user-role operands whose
+ * names do not appear. System, dependency-only, tool-context, and control
+ * inputs stay in the graph even without textual placeholders. The operand
+ * list, `input_names`, and explicit `input_roles` array remain in lock-step.
  *
  * No template renumbering is needed: placeholders reference by name, so
  * removing operands does not change template text.
  *
  * Example transformation:
  *   %r = ais.ask "Use {a} and {c}" [%a, %b, %c : !ais.token]
- *        {input_names = ["a", "b", "c"]}
+ *        {input_names = ["a", "b", "c"], input_roles = ["user", "user", "system"]}
  *
  * Becomes:
  *   %r = ais.ask "Use {a} and {c}" [%a, %c : !ais.token]
- *        {input_names = ["a", "c"]}
+ *        {input_names = ["a", "c"], input_roles = ["user", "system"]}
  */
 
 #include "ais/Dialect/AIS/Transforms/Passes.h"
@@ -102,7 +103,7 @@ struct DeadContextEliminationPass : impl::DeadContextEliminationBase<DeadContext
 
 private:
   /// Eliminate dead context from an LLM operation.
-/// Returns the number of context values deleted.
+  /// Returns the number of context values deleted.
   template <typename LlmOpT>
   unsigned eliminateDeadContext(LlmOpT op) {
     StringRef templateStr = op.getTemplateStrAttr().getValue();
@@ -135,15 +136,35 @@ private:
       return 0;
     }
 
-    // Walk operands in order, keeping those whose name is referenced.
+    const bool hasExplicitInputRoles =
+        placeholders::hasInputRoles(op.getOperation());
+    auto inputRoles = placeholders::readInputRoles(op.getOperation());
+    if (hasExplicitInputRoles &&
+        !placeholders::inputRolesAreValid(inputRoles, contextSize)) {
+      APXM_AIS_DEBUG("  input_roles mismatch or unsupported value; preserving context");
+      return 0;
+    }
+    if (!hasExplicitInputRoles) {
+      inputRoles.reserve(contextSize);
+      for (llvm::StringRef inputName : inputNames)
+        inputRoles.push_back(placeholders::roleForLegacyInputName(inputName));
+    }
+
+    // Walk operands in order, keeping template-referenced user inputs and
+    // every protected semantic role.
     SmallVector<Value> newContext;
     llvm::SmallVector<llvm::StringRef, 8> newNames;
+    llvm::SmallVector<placeholders::PromptInputRole, 8> newRoles;
     newContext.reserve(contextSize);
     newNames.reserve(contextSize);
+    newRoles.reserve(contextSize);
     for (unsigned i = 0; i < contextSize; ++i) {
-      if (usedSet.contains(inputNames[i])) {
+      const bool keep = !placeholders::isUserRole(inputRoles[i]) ||
+                        usedSet.contains(inputNames[i]);
+      if (keep) {
         newContext.push_back(op.getContext()[i]);
         newNames.push_back(inputNames[i]);
+        newRoles.push_back(inputRoles[i]);
         APXM_AIS_DEBUG("    Keep '" << inputNames[i] << "'");
       } else {
         APXM_AIS_DEBUG("    Remove '" << inputNames[i] << "' (unused)");
@@ -159,6 +180,7 @@ private:
     OpBuilder builder(op);
     op->setOperands(newContext);
     placeholders::writeInputNames(op.getOperation(), newNames, builder);
+    placeholders::writeInputRoles(op.getOperation(), newRoles, builder);
 
     APXM_AIS_INFO("  Eliminated " << removed << " dead context values "
                   "from template \"" << templateStr << "\"");

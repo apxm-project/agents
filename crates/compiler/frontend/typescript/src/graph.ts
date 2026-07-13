@@ -123,23 +123,6 @@ export class ApxmGraph implements ApxmGraphData {
     return emitAirFromFrontendGraph(this.toDict());
   }
 
-  /** Emit just the `func.func @name(...) { ... }` block, no module wrapper. */
-  toFuncAir(): string {
-    const air = this.toAir();
-    let lines = air.split("\n");
-    if (lines.length > 0 && lines[0].trim() === "module {") lines = lines.slice(1);
-    if (lines.length > 0 && lines[lines.length - 1].trim() === "}") lines = lines.slice(0, -1);
-    return lines.join("\n");
-  }
-}
-
-/** Sanitize a graph name for use as an MLIR function symbol (keeps dots). */
-export function sanitizeFlowName(name: string): string {
-  let sanitized = name.replace(/[^a-zA-Z0-9_.]/g, "_");
-  if (sanitized.length > 0 && (/[0-9]/.test(sanitized[0]) || sanitized[0] === ".")) {
-    sanitized = `flow_${sanitized}`;
-  }
-  return sanitized || "unnamed_flow";
 }
 
 /** Serialize multiple captured graphs into one AIR module. */

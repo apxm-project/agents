@@ -14,9 +14,9 @@ mod generated {
 pub use generated::{
     AIS_PASSES, ALL_PASSES, ASSIGN_PRIORITY, BUILD_PROMPT, CANONICALIZER, CONDENSE_OPS, CSE,
     DEAD_CONTEXT_ELIMINATION, DSPY_OPTIMIZE, FUSE_ASK_OPS, NORMALIZE, PROMPT_CANONICALIZATION,
-    PassCategory, PassOption, PassSpec, SCHEDULING, SCHEMA_NARROWING, SHARED_PREFIX_ANALYSIS,
-    SYMBOL_DCE, TEMPLATE_SPECIALIZATION, UNCONSUMED_VALUE_WARNING, find_pass_by_name,
-    get_ais_passes, get_all_passes,
+    PURE_DEAD_NODE_ELIMINATION, PassCategory, PassOption, PassSpec, SCHEDULING, SCHEMA_NARROWING,
+    SHARED_PREFIX_ANALYSIS, SYMBOL_DCE, TEMPLATE_SPECIALIZATION, UNCONSUMED_VALUE_WARNING,
+    find_pass_by_name, get_ais_passes, get_all_passes,
 };
 
 /// Stable read-only compiler pass metadata for downstream tools.

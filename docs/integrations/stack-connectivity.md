@@ -12,8 +12,9 @@ makes the sandbox intent honest.
 ```
 browser SPA → studio Rust backend (proxy, :18802) → apxm-server (:18800)
 ```
-- Canvas is lowered to AIR **in studio** (Rust `lower` → Python frontend → `.air`
-  MLIR), then `POST /v1/execute/stream` (fallback `/v1/execute`).
+- Canvas is lowered in Studio through TypeScript frontend source/DTO into
+  canonical `.air` MLIR, then `POST /v1/execute/stream` (fallback
+  `/v1/execute`).
 - Write-boundary consent is wired through runtime-minted capability
   grants: a canvas requests templates, APXM mints opaque `grant_*` ids, and
   studio sends those ids as `capability_grant_ids`.

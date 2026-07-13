@@ -4,6 +4,7 @@ import inspect
 import json
 import os
 import re
+from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Iterable, Mapping
 
 if TYPE_CHECKING:
@@ -43,6 +44,27 @@ class NodeRef:
         return f"NodeRef(name={self.name!r}, id={self._node_id})"
 
 
+@dataclass(frozen=True)
+class PromptInputBinding:
+    """Bind one LLM input value to an explicit rendering role."""
+
+    value: NodeRef
+    role: str
+
+
+def prompt_input(
+    value: NodeRef,
+    role: graph_keys.PromptInputRole | str = graph_keys.PromptInputRole.USER,
+) -> PromptInputBinding:
+    """Create an explicit role-bearing LLM input binding."""
+    if not isinstance(value, NodeRef):
+        raise TypeError("prompt_input() value must be a NodeRef")
+    return PromptInputBinding(
+        value=value,
+        role=graph_keys.normalize_prompt_input_role(role),
+    )
+
+
 class GraphRecorder:
     def __init__(
         self,
@@ -61,7 +83,7 @@ class GraphRecorder:
         self._metadata = (
             dict(metadata)
             if metadata is not None
-            else {graph_keys.IS_ENTRY: True}
+            else {}
         )
         # Track parameter names for auto-wiring resolution
         self._param_names: set[str] = set()
@@ -155,6 +177,103 @@ class GraphRecorder:
             # Otherwise leave as-is — validator will diagnose if unresolved.
 
         return template, pairs
+
+    @staticmethod
+    def prompt_input(
+        value: NodeRef,
+        role: graph_keys.PromptInputRole | str = graph_keys.PromptInputRole.USER,
+    ) -> PromptInputBinding:
+        """Create an explicit role-bearing LLM input binding."""
+        return prompt_input(value, role)
+
+    def _resolve_prompt_inputs(
+        self,
+        auto_pairs: list[tuple[str, NodeRef]],
+        prompt_inputs: Mapping[str, PromptInputBinding] | None,
+        system_prompt_input: NodeRef | None,
+    ) -> list[tuple[str, NodeRef, str]]:
+        bindings = [
+            (name, value, graph_keys.PromptInputRole.USER.value)
+            for name, value in auto_pairs
+        ]
+        seen = {name for name, _value, _role in bindings}
+
+        if prompt_inputs is not None:
+            for name, binding in prompt_inputs.items():
+                if not name:
+                    raise ValueError("prompt_inputs names must be non-empty")
+                if name in seen:
+                    raise ValueError(f"prompt input '{name}' is bound more than once")
+                if not isinstance(binding, PromptInputBinding):
+                    raise TypeError(
+                        "prompt_inputs values must be PromptInputBinding instances; "
+                        "use GraphRecorder.prompt_input(value, role)"
+                    )
+                if binding.value._recorder is not self:
+                    raise ValueError("prompt input values must belong to this GraphRecorder")
+                bindings.append(
+                    (
+                        name,
+                        binding.value,
+                        graph_keys.normalize_prompt_input_role(binding.role),
+                    )
+                )
+                seen.add(name)
+
+        if system_prompt_input is not None:
+            if graph_keys.SYSTEM_PROMPT_INPUT in seen:
+                raise ValueError(
+                    f"prompt input '{graph_keys.SYSTEM_PROMPT_INPUT}' is bound more than once"
+                )
+            if system_prompt_input._recorder is not self:
+                raise ValueError("system_prompt_input must belong to this GraphRecorder")
+            bindings.append(
+                (
+                    graph_keys.SYSTEM_PROMPT_INPUT,
+                    system_prompt_input,
+                    graph_keys.PromptInputRole.SYSTEM.value,
+                )
+            )
+
+        return bindings
+
+    def _record_llm_node(
+        self,
+        *,
+        op: str,
+        name: str | None,
+        prompt: str | None,
+        agent: AgentConfig | None,
+        model: ModelId | None,
+        provider: ProviderSpec | None,
+        route: BackendRoute | None,
+        backend: str | None,
+        prompt_inputs: Mapping[str, PromptInputBinding] | None,
+        system_prompt_input: NodeRef | None,
+        attributes: dict[str, Any],
+    ) -> NodeRef:
+        if name is None:
+            name = self._auto_name(op)
+        if prompt is None:
+            raise ValueError(f"{op.lower()}() missing required argument: prompt")
+        if graph_keys.INPUT_NAMES in attributes or graph_keys.INPUT_ROLES in attributes:
+            raise ValueError(
+                "LLM input metadata is derived from prompt_inputs; do not set input_names or input_roles directly"
+            )
+
+        resolved, auto_pairs = self._resolve_template_refs(prompt)
+        bindings = self._resolve_prompt_inputs(auto_pairs, prompt_inputs, system_prompt_input)
+        attrs: dict[str, Any] = {graph_keys.TEMPLATE_STR: resolved}
+        if bindings:
+            attrs[graph_keys.INPUT_NAMES] = [name for name, _value, _role in bindings]
+            attrs[graph_keys.INPUT_ROLES] = [role for _name, _value, role in bindings]
+        _apply_routing_attrs(attrs, route=route, model=model, provider=provider, backend=backend)
+        attrs.update(_compose_system_prompt(agent, op))
+        attrs = self._apply_policy(attrs, attributes)
+        node = self._add_node(name, op, attrs)
+        for _input_name, value, _role in bindings:
+            self.add_edge(value, node)
+        return node
 
     @staticmethod
     def _template_scope_chain() -> tuple[Mapping[str, Any], ...]:
@@ -260,39 +379,23 @@ class GraphRecorder:
         provider: ProviderSpec | None = None,
         route: BackendRoute | None = None,
         backend: str | None = None,
+        prompt_inputs: Mapping[str, PromptInputBinding] | None = None,
         system_prompt_input: NodeRef | None = None,
         **attributes: Any,
     ) -> NodeRef:
-        if name is None:
-            name = self._auto_name(graph_keys.OP_ASK)
-        if prompt is None:
-            raise ValueError("ask() missing required argument: prompt")
-
-        # Auto-wire: resolve {var_name} to NodeRef
-        resolved, auto_pairs = self._resolve_template_refs(prompt)
-
-        # A NodeRef bound to `system_prompt_input` becomes a dataflow operand
-        # under the reserved `__system` input name; the runtime then uses its
-        # value as the system prompt instead of the static attribute.
-        input_names = [n for n, _ in auto_pairs]
-        if system_prompt_input is not None:
-            input_names.append(graph_keys.SYSTEM_PROMPT_INPUT)
-
-        attrs: dict[str, Any] = {graph_keys.TEMPLATE_STR: resolved}
-        if input_names:
-            attrs[graph_keys.INPUT_NAMES] = input_names
-        _apply_routing_attrs(attrs, route=route, model=model, provider=provider, backend=backend)
-        attrs.update(_compose_system_prompt(agent, graph_keys.OP_ASK))
-        attrs = self._apply_policy(attrs, attributes)
-        node = self._add_node(name, graph_keys.OP_ASK, attrs)
-
-        # Create auto-wire edges (in input_names order)
-        for _name, ref in auto_pairs:
-            self.add_edge(ref, node)
-        if system_prompt_input is not None:
-            self.add_edge(system_prompt_input, node)
-
-        return node
+        return self._record_llm_node(
+            op=graph_keys.OP_ASK,
+            name=name,
+            prompt=prompt,
+            agent=agent,
+            model=model,
+            provider=provider,
+            route=route,
+            backend=backend,
+            prompt_inputs=prompt_inputs,
+            system_prompt_input=system_prompt_input,
+            attributes=attributes,
+        )
 
     def think(
         self,
@@ -304,29 +407,23 @@ class GraphRecorder:
         provider: ProviderSpec | None = None,
         route: BackendRoute | None = None,
         backend: str | None = None,
+        prompt_inputs: Mapping[str, PromptInputBinding] | None = None,
+        system_prompt_input: NodeRef | None = None,
         **attributes: Any,
     ) -> NodeRef:
-        if name is None:
-            name = self._auto_name(graph_keys.OP_THINK)
-        if prompt is None:
-            raise ValueError("think() missing required argument: prompt")
-
-        # Auto-wire: resolve {var_name} to NodeRef
-        resolved, auto_pairs = self._resolve_template_refs(prompt)
-
-        attrs: dict[str, Any] = {graph_keys.TEMPLATE_STR: resolved}
-        if auto_pairs:
-            attrs[graph_keys.INPUT_NAMES] = [n for n, _ in auto_pairs]
-        _apply_routing_attrs(attrs, route=route, model=model, provider=provider, backend=backend)
-        attrs.update(_compose_system_prompt(agent, graph_keys.OP_THINK))
-        attrs = self._apply_policy(attrs, attributes)
-        node = self._add_node(name, graph_keys.OP_THINK, attrs)
-
-        # Create auto-wire edges (in input_names order)
-        for _name, ref in auto_pairs:
-            self.add_edge(ref, node)
-
-        return node
+        return self._record_llm_node(
+            op=graph_keys.OP_THINK,
+            name=name,
+            prompt=prompt,
+            agent=agent,
+            model=model,
+            provider=provider,
+            route=route,
+            backend=backend,
+            prompt_inputs=prompt_inputs,
+            system_prompt_input=system_prompt_input,
+            attributes=attributes,
+        )
 
     def reason(
         self,
@@ -338,29 +435,23 @@ class GraphRecorder:
         provider: ProviderSpec | None = None,
         route: BackendRoute | None = None,
         backend: str | None = None,
+        prompt_inputs: Mapping[str, PromptInputBinding] | None = None,
+        system_prompt_input: NodeRef | None = None,
         **attributes: Any,
     ) -> NodeRef:
-        if name is None:
-            name = self._auto_name(graph_keys.OP_REASON)
-        if prompt is None:
-            raise ValueError("reason() missing required argument: prompt")
-
-        # Auto-wire: resolve {var_name} to NodeRef
-        resolved, auto_pairs = self._resolve_template_refs(prompt)
-
-        attrs: dict[str, Any] = {graph_keys.TEMPLATE_STR: resolved}
-        if auto_pairs:
-            attrs[graph_keys.INPUT_NAMES] = [n for n, _ in auto_pairs]
-        _apply_routing_attrs(attrs, route=route, model=model, provider=provider, backend=backend)
-        attrs.update(_compose_system_prompt(agent, graph_keys.OP_REASON))
-        attrs = self._apply_policy(attrs, attributes)
-        node = self._add_node(name, graph_keys.OP_REASON, attrs)
-
-        # Create auto-wire edges (in input_names order)
-        for _name, ref in auto_pairs:
-            self.add_edge(ref, node)
-
-        return node
+        return self._record_llm_node(
+            op=graph_keys.OP_REASON,
+            name=name,
+            prompt=prompt,
+            agent=agent,
+            model=model,
+            provider=provider,
+            route=route,
+            backend=backend,
+            prompt_inputs=prompt_inputs,
+            system_prompt_input=system_prompt_input,
+            attributes=attributes,
+        )
 
     def query_memory(
         self,
@@ -481,7 +572,14 @@ class GraphRecorder:
             raw = getattr(fn, "fn", fn)
             if handler_id is None:
                 handler_id = getattr(fn, "handler_id", None)
-            self._register_hook_handler_manifest(handler_id, raw, getattr(fn, "name", None))
+            self._register_hook_handler_manifest(
+                handler_id,
+                raw,
+                getattr(fn, "name", None),
+                event_value,
+                match,
+                mode_value,
+            )
         if handler_id is None:
             raise ValueError(
                 "register_hook() needs 'handler_id' or a 'fn' that carries one"
@@ -498,27 +596,31 @@ class GraphRecorder:
         return self._add_node(name, graph_keys.OP_REGISTER_HOOK, attrs)
 
     def _register_hook_handler_manifest(
-        self, handler_id: str | None, raw_fn: Any, hook_name: str | None
+        self,
+        handler_id: str | None,
+        raw_fn: Any,
+        hook_name: str | None,
+        event: str,
+        hook_match: str,
+        mode: str,
     ) -> None:
         """Add a hook handler to the Python tools manifest so the bridge resolves
         it (hooks share the @tool dispatch path — constitution #4)."""
         if handler_id is None or handler_id in self._python_tool_ids:
             return
         self._python_tool_ids.add(handler_id)
-        module = getattr(raw_fn, "__module__", "__unknown__") or "__unknown__"
-        qualname = getattr(raw_fn, "__qualname__", getattr(raw_fn, "__name__", "hook"))
-        descriptor: dict[str, Any] = {
-            graph_keys.PYTHON_TOOL_MANIFEST_HANDLER_ID: handler_id,
-            graph_keys.PYTHON_TOOL_MANIFEST_MODULE: module,
-            graph_keys.PYTHON_TOOL_MANIFEST_QUALNAME: qualname,
-            graph_keys.PYTHON_TOOL_MANIFEST_NAME: hook_name or qualname,
-            graph_keys.PYTHON_TOOL_MANIFEST_DESCRIPTION: "lifecycle hook",
-            graph_keys.PYTHON_TOOL_MANIFEST_SCHEMA: {},
-        }
-        source_file = inspect.getsourcefile(raw_fn)
-        if source_file:
-            descriptor[graph_keys.PYTHON_TOOL_MANIFEST_SOURCE_FILE] = source_file
-        self._python_tools.append(descriptor)
+        from .handler_manifest import hook_descriptor
+
+        self._python_tools.append(
+            hook_descriptor(
+                handler_id=handler_id,
+                fn=raw_fn,
+                name=hook_name or getattr(raw_fn, "__name__", "hook"),
+                event=event,
+                match=hook_match,
+                mode=mode,
+            )
+        )
 
     def skill_search(
         self,
@@ -692,13 +794,13 @@ class GraphRecorder:
             self.add_edge(ref, node)
         return node
 
-    def reflect(self, name: str | None = None, *, trace_id: str | None = None, agent: AgentConfig | None = None, model: ModelId | None = None, provider: ProviderSpec | None = None, route: BackendRoute | None = None, backend: str | None = None, **attributes: Any) -> NodeRef:
+    def reflect(self, name: str | None = None, *, trace_query: str | None = None, agent: AgentConfig | None = None, model: ModelId | None = None, provider: ProviderSpec | None = None, route: BackendRoute | None = None, backend: str | None = None, **attributes: Any) -> NodeRef:
         if name is None:
             name = self._auto_name(graph_keys.OP_REFLECT)
-        if trace_id is None:
-            raise ValueError("reflect() missing required keyword argument: 'trace_id'")
-        resolved_trace_id, auto_pairs = self._resolve_template_refs(trace_id)
-        attrs: dict[str, Any] = {graph_keys.TRACE_ID: resolved_trace_id}
+        if trace_query is None:
+            raise ValueError("reflect() missing required keyword argument: 'trace_query'")
+        resolved_trace_query, auto_pairs = self._resolve_template_refs(trace_query)
+        attrs: dict[str, Any] = {graph_keys.TRACE_QUERY: resolved_trace_query}
         if auto_pairs:
             attrs[graph_keys.INPUT_NAMES] = [n for n, _ in auto_pairs]
         _apply_routing_attrs(attrs, route=route, model=model, provider=provider, backend=backend)
@@ -737,11 +839,11 @@ class GraphRecorder:
                     all_pairs.append((n, r))
                     seen_names.add(n)
             attrs: dict[str, Any] = {
-                graph_keys.CLAIM_TEXT: resolved_claim,
+                graph_keys.CLAIM: resolved_claim,
                 graph_keys.EVIDENCE: resolved_evidence,
             }
         else:
-            attrs = {graph_keys.CLAIM_TEXT: resolved_claim}
+            attrs = {graph_keys.CLAIM: resolved_claim}
         if all_pairs:
             attrs[graph_keys.INPUT_NAMES] = [n for n, _ in all_pairs]
         _apply_routing_attrs(attrs, route=route, model=model, provider=provider, backend=backend)
@@ -792,17 +894,17 @@ class GraphRecorder:
         attrs = self._apply_policy(attrs, attributes)
         return self._add_node(name, graph_keys.OP_VERIFY, attrs)
 
-    def checkpoint(self, name: str | None = None, **attributes: Any) -> NodeRef:
-        """Insert a checkpoint barrier (fence with checkpoint semantics).
-
-        When the workflow hits this node during ``run_until_fence()``, execution
-        pauses and a serialisable ``WorkflowCheckpoint`` is returned.
-        """
+    def checkpoint(
+        self, checkpoint_id: str, name: str | None = None, **attributes: Any
+    ) -> NodeRef:
+        """Persist a durable CHECKPOINT and continue execution."""
+        if not checkpoint_id:
+            raise ValueError("checkpoint() requires a non-empty checkpoint_id")
         if name is None:
             name = self._auto_name(graph_keys.OP_CHECKPOINT)
-        attrs: dict[str, Any] = {graph_keys.CHECKPOINT: True}
+        attrs: dict[str, Any] = {graph_keys.CHECKPOINT_ID: checkpoint_id}
         attrs = self._apply_policy(attrs, attributes)
-        return self._add_node(name, graph_keys.OP_FENCE, attrs)
+        return self._add_node(name, graph_keys.OP_CHECKPOINT, attrs)
 
     def execute(
         self,
@@ -1222,6 +1324,34 @@ class GraphRecorder:
 
         return node
 
+    def handoff(
+        self,
+        name: str | None = None,
+        *,
+        handoff_from: str | None = None,
+        handoff_to: str | None = None,
+        payload: str | None = None,
+        transfer_state: bool | None = None,
+        **attributes: Any,
+    ) -> NodeRef:
+        """Transfer execution from one agent to another (HANDOFF)."""
+        if name is None:
+            name = self._auto_name(graph_keys.OP_HANDOFF)
+        if handoff_from is None:
+            raise ValueError("handoff() missing required keyword argument: 'handoff_from'")
+        if handoff_to is None:
+            raise ValueError("handoff() missing required keyword argument: 'handoff_to'")
+        attrs: dict[str, Any] = {
+            graph_keys.HANDOFF_FROM: handoff_from,
+            graph_keys.HANDOFF_TO: handoff_to,
+        }
+        if payload is not None:
+            attrs[graph_keys.PAYLOAD] = payload
+        if transfer_state is not None:
+            attrs[graph_keys.TRANSFER_STATE] = transfer_state
+        attrs = self._apply_policy(attrs, attributes)
+        return self._add_node(name, graph_keys.OP_HANDOFF, attrs)
+
     def update_goal(
         self,
         name: str | None = None,
@@ -1560,26 +1690,25 @@ class GraphRecorder:
         if hid in self._python_tool_ids:
             return
         self._python_tool_ids.add(hid)
-        module = getattr(tool.fn, "__module__", "__unknown__") or "__unknown__"
-        qualname = getattr(tool.fn, "__qualname__", tool.fn.__name__)
-        descriptor = {
-            graph_keys.PYTHON_TOOL_MANIFEST_HANDLER_ID: hid,
-            graph_keys.PYTHON_TOOL_MANIFEST_MODULE: module,
-            graph_keys.PYTHON_TOOL_MANIFEST_QUALNAME: qualname,
-            graph_keys.PYTHON_TOOL_MANIFEST_NAME: tool.name,
-            graph_keys.PYTHON_TOOL_MANIFEST_DESCRIPTION: tool.description,
-            graph_keys.PYTHON_TOOL_MANIFEST_SCHEMA: json.loads(tool.schema_json) if tool.schema_json else {},
-        }
-        source_file = inspect.getsourcefile(tool.fn)
-        if source_file:
-            descriptor[graph_keys.PYTHON_TOOL_MANIFEST_SOURCE_FILE] = source_file
-        self._python_tools.append(descriptor)
+        from .handler_manifest import tool_descriptor
+
+        self._python_tools.append(
+            tool_descriptor(
+                handler_id=hid,
+                fn=tool.fn,
+                name=tool.name,
+                description=tool.description,
+                schema=json.loads(tool.schema_json) if tool.schema_json else {},
+            )
+        )
 
     def python_tools_manifest_json(self) -> str | None:
         """Return the compact handler manifest JSON for artifact embedding."""
         if not self._python_tools:
             return None
-        return json.dumps(self._python_tools, separators=(",", ":"))
+        from .handler_manifest import manifest
+
+        return json.dumps(manifest(self._python_tools), separators=(",", ":"))
 
     def to_air(self) -> str:
         """Emit canonical .air text IR for this graph.

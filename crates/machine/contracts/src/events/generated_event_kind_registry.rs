@@ -91,6 +91,12 @@ pub const SCHEMA_EVENT_KIND_REGISTRY: &[SchemaEventKindEntry] = &[
         terminal_sense: SchemaTerminalSense::NA,
     },
     SchemaEventKindEntry {
+        name: "capability_effect_receipt",
+        category: SchemaEventCategory::Observability,
+        terminal: false,
+        terminal_sense: SchemaTerminalSense::NA,
+    },
+    SchemaEventKindEntry {
         name: "checkpoint_restored",
         category: SchemaEventCategory::Lifecycle,
         terminal: false,

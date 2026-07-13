@@ -110,62 +110,26 @@ mod tests {
         assert!(air.contains("func.func @second"));
     }
 
-    /// Proves the `FrontendEdge`/`FrontendParameter` serde `alias` fields
-    /// (`frontend_graph.rs:40-53`) converge, not just parse: the same
-    /// logical graph, wire-shaped once the way Python's historical
-    /// `from_id`/`to_id` field names would produce it and once the way
-    /// TypeScript's `from`/`to`/`typeName` shape produces it, must emit
-    /// byte-identical AIR through the single printer. A silent field-name
-    /// drift between frontends would otherwise parse into two structurally
-    /// different `FrontendGraph` values without either side erroring.
     #[test]
-    fn python_and_typescript_wire_shapes_emit_identical_air() {
-        let python_wire: FrontendAirInput = serde_json::from_value(json!({
-            "name": "wire_shape_parity",
-            "nodes": [
-                {
-                    "id": 1,
-                    "name": "coder",
-                    "op": "AGENT",
-                    "attributes": {"profile": "codex", "prompt": "Fix it"}
-                },
-                {"id": 2, "name": "out", "op": "RETURN", "attributes": {}}
-            ],
-            "edges": [
-                {"from_id": 1, "to_id": 2, "dependency": "Data"}
-            ],
-            "parameters": [{"name": "topic", "type_name": "str"}],
-            "metadata": {"is_entry": true}
-        }))
-        .expect("python wire-shape json parses");
-
-        let typescript_wire: FrontendAirInput = serde_json::from_value(json!({
-            "name": "wire_shape_parity",
-            "nodes": [
-                {
-                    "id": 1,
-                    "name": "coder",
-                    "op": "AGENT",
-                    "attributes": {"profile": "codex", "prompt": "Fix it"}
-                },
-                {"id": 2, "name": "out", "op": "RETURN", "attributes": {}}
-            ],
-            "edges": [
-                {"from": 1, "to": 2, "dependency": "Data"}
-            ],
-            "parameters": [{"name": "topic", "typeName": "str"}],
-            "metadata": {"is_entry": true}
-        }))
-        .expect("typescript wire-shape json parses");
-
-        let python_air = emit_air_from_input(python_wire).expect("python wire-shape graph emits");
-        let typescript_air =
-            emit_air_from_input(typescript_wire).expect("typescript wire-shape graph emits");
-        assert_eq!(
-            python_air, typescript_air,
-            "Python (`from_id`/`to_id`, `type_name`) and TypeScript (`from`/`to`, \
-             `typeName`) wire shapes for the same logical graph must emit byte-identical AIR"
-        );
+    fn rejects_noncanonical_frontend_graph_field_names() {
+        for input in [
+            json!({
+                "name": "noncanonical-edge",
+                "nodes": [{"id": 1, "name": "done", "op": "RETURN", "attributes": {}}],
+                "edges": [{"from_id": 1, "to_id": 1, "dependency": "Data"}],
+                "parameters": [],
+                "metadata": {"is_entry": true}
+            }),
+            json!({
+                "name": "noncanonical-parameter",
+                "nodes": [{"id": 1, "name": "done", "op": "RETURN", "attributes": {}}],
+                "edges": [],
+                "parameters": [{"name": "topic", "typeName": "str"}],
+                "metadata": {"is_entry": true}
+            }),
+        ] {
+            assert!(serde_json::from_value::<FrontendGraph>(input).is_err());
+        }
     }
 
     /// Drift detector: an unrecognized top-level field must be rejected via
@@ -260,6 +224,40 @@ mod tests {
             include_str!(
                 "../../tests/fixtures/frontend_graph_parity/multi_flow_conversational.golden.air"
             ),
+        );
+    }
+
+    #[test]
+    fn reasoning_flow_fixture_matches_golden_air() {
+        assert_fixture_matches_golden(
+            include_str!("../../tests/fixtures/frontend_graph_parity/reasoning_flow.json"),
+            include_str!("../../tests/fixtures/frontend_graph_parity/reasoning_flow.golden.air"),
+        );
+    }
+
+    #[test]
+    fn control_flow_fixture_matches_golden_air() {
+        assert_fixture_matches_golden(
+            include_str!("../../tests/fixtures/frontend_graph_parity/control_flow.json"),
+            include_str!("../../tests/fixtures/frontend_graph_parity/control_flow.golden.air"),
+        );
+    }
+
+    #[test]
+    fn synchronization_flow_fixture_matches_golden_air() {
+        assert_fixture_matches_golden(
+            include_str!("../../tests/fixtures/frontend_graph_parity/synchronization_flow.json"),
+            include_str!(
+                "../../tests/fixtures/frontend_graph_parity/synchronization_flow.golden.air"
+            ),
+        );
+    }
+
+    #[test]
+    fn coordination_flow_fixture_matches_golden_air() {
+        assert_fixture_matches_golden(
+            include_str!("../../tests/fixtures/frontend_graph_parity/coordination_flow.json"),
+            include_str!("../../tests/fixtures/frontend_graph_parity/coordination_flow.golden.air"),
         );
     }
 }

@@ -1,10 +1,12 @@
 //! Function-calling tool registry lookup, parallel dispatch, and ASK tool loop.
 
 use super::{
-    ExecutionContext, LlmAttemptOutput, attach_graph_hints, charge_tokens,
-    copy_llm_request_routing, emit_llm_done, resolve_global_token_budget,
+    ExecutionContext, LlmAttemptOutput, attach_graph_hints, copy_llm_request_routing,
+    emit_llm_done, model_context_metrics,
 };
+use crate::context_stack::ContextPlanMetrics;
 use apxm_backends::{LLMRequest, ToolChoice, ToolDefinition};
+use apxm_capability_iface::events::{ModelContextCallKind, ModelContextPlanStatus};
 use apxm_core::apxm_llm;
 use apxm_core::constants::capabilities;
 use apxm_core::constants::graph::attrs as graph_attrs;
@@ -293,7 +295,7 @@ async fn execute_delegate(
             .with_tool_choice(ToolChoice::Auto)
     };
 
-    match Box::pin(execute_ask_with_tools(ctx, &synth, &req)).await {
+    match Box::pin(execute_ask_with_tools(ctx, &synth, &req, None)).await {
         Ok(Value::String(s)) => ToolResult::success(&tool_call.id, s),
         Ok(other) => ToolResult::success(&tool_call.id, format!("{other:?}")),
         Err(e) => ToolResult::error(&tool_call.id, format!("delegate sub-agent failed: {e}")),
@@ -848,10 +850,18 @@ pub(crate) async fn execute_ask_with_tools(
     ctx: &ExecutionContext,
     node: &Node,
     initial_request: &LLMRequest,
+    context_plan_metrics: Option<&ContextPlanMetrics>,
 ) -> Result<Value> {
     let mut generations = super::LlmGenerationSequence::new();
-    let output =
-        execute_ask_with_tools_attempt(ctx, node, initial_request, 1, &mut generations).await?;
+    let output = execute_ask_with_tools_attempt(
+        ctx,
+        node,
+        initial_request,
+        1,
+        &mut generations,
+        context_plan_metrics,
+    )
+    .await?;
     emit_llm_done(ctx, &output.final_response, &output.final_generation);
     Ok(output.value)
 }
@@ -862,6 +872,7 @@ pub(super) async fn execute_ask_with_tools_attempt(
     initial_request: &LLMRequest,
     attempt: usize,
     generations: &mut super::LlmGenerationSequence,
+    context_plan_metrics: Option<&ContextPlanMetrics>,
 ) -> Result<LlmAttemptOutput> {
     let max_iterations = node
         .attributes
@@ -892,13 +903,26 @@ pub(super) async fn execute_ask_with_tools_attempt(
          "Sending ASK request with tools"
         );
 
+        let call_kind = if iteration == 0 {
+            ModelContextCallKind::Node
+        } else {
+            ModelContextCallKind::ToolContinuation
+        };
+        let plan_status = if iteration == 0 {
+            ModelContextPlanStatus::Assembled
+        } else {
+            ModelContextPlanStatus::Inherited
+        };
+        let context_metrics =
+            model_context_metrics(Some(node.id), call_kind, plan_status, context_plan_metrics);
         let generation = generations.next(attempt);
         let llm_start = std::time::Instant::now();
-        let response = super::super::execute_llm_request_for_node_with_generation(
+        let response = super::super::execute_llm_request_for_node_with_context_and_generation(
             ctx,
             node,
             "ASK",
             &current_request,
+            &context_metrics,
             Some(&generation),
         )
         .await?;
@@ -909,12 +933,6 @@ pub(super) async fn execute_ask_with_tools_attempt(
             .unwrap_or((iter_total_ms, 0.0));
         total_prefill_ms += iter_prefill;
         total_decode_ms += iter_decode;
-        charge_tokens(
-            ctx,
-            resolve_global_token_budget(ctx),
-            response.usage.total_tokens,
-        )?;
-
         {
             let flow_name = node
                 .attributes

@@ -151,15 +151,15 @@ pub async fn execute(ctx: &ExecutionContext, node: &Node, inputs: Vec<Value>) ->
                 action_req = action_req
                     .with_tools(tools)
                     .with_tool_choice(ToolChoice::Auto);
-                let value = run_tool_loop(ctx, node, &action_req).await.map_err(|e| {
-                    RuntimeError::Operation {
+                let value = run_tool_loop(ctx, node, &action_req, None)
+                    .await
+                    .map_err(|e| RuntimeError::Operation {
                         op_type: node.op_type,
                         message: format!(
                             "Failed tool-loop action (iteration {}): {}",
                             iteration, e
                         ),
-                    }
-                })?;
+                    })?;
                 match value {
                     Value::String(s) => s,
                     other => format_state(&other),
@@ -330,12 +330,13 @@ async fn run_agent_turn(
         req = req
             .with_tools(tools.to_vec())
             .with_tool_choice(ToolChoice::Auto);
-        let out = run_tool_loop(ctx, node, &req)
-            .await
-            .map_err(|e| RuntimeError::Operation {
-                op_type: node.op_type,
-                message: format!("{label} tool turn failed: {e}"),
-            })?;
+        let out =
+            run_tool_loop(ctx, node, &req, None)
+                .await
+                .map_err(|e| RuntimeError::Operation {
+                    op_type: node.op_type,
+                    message: format!("{label} tool turn failed: {e}"),
+                })?;
         Ok(match out {
             Value::String(s) => s,
             other => format_state(&other),

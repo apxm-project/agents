@@ -8,9 +8,11 @@
 
 APXM (**A**gent **P**rogram e**X**ecution **M**odel) treats an agent workflow the
 way a programming language treats a function: the author describes *what*, and the
-system decides *how* to run it. You write agent operations in Python or AIR; APXM
-lowers them to MLIR, optimizes them, and executes the result deterministically across LLM
-backends, Python tools, and sub-agents.
+system decides *how* to run it. You author agent operations in Rust, Python,
+or TypeScript; each frontend records the compiler-owned `FrontendGraph` and
+delegates canonical AIR printing to Rust. Direct `.air` is also a supported
+source format. APXM then lowers AIR to MLIR, optimizes it, and executes the
+artifact across backends, tools, and sub-agents.
 
 This documentation is the conceptual entry point. For installable, runnable code,
 see [`examples/python/`](../examples/python/). For the live API surface, run
@@ -21,22 +23,21 @@ document the implementation details and stay close to the code.
 
 ```
         ┌──────────────────────────────────────────────────────┐
-        │                Author (Python frontend)              │
-        │   @compile, Agent(), @tool, GraphRecorder            │
+        │             Authors: Rust, Python, TypeScript        │
+        │ AirModuleBuilder | GraphRecorder | GraphBuilder       │
         └──────────────────────────┬───────────────────────────┘
-                                   │  to_air()
+                                   │  FrontendGraph DTO
                                    ▼
                      ┌──────────────────────────┐
-                     │   AIR text  (.air)       │  human-readable
-                     └─────────────┬────────────┘  workflow IR
-                                   │  parse + lower
+                     │ Rust AIR validator/printer │  canonical owner
+                     └─────────────┬────────────┘
+                                   │  AIR text (.air)
                                    ▼
                      ┌──────────────────────────┐
                      │   MLIR module            │  ais.* dialect ops
-                     │   (apxm-compiler)        │
                      └─────────────┬────────────┘
-                                   │  optimization pipeline
-                                   ▼   (~12 MLIR passes + 4 Rust)
+                                   │  resolved optimization pipeline
+                                   ▼
                      ┌──────────────────────────┐
                      │   .apxmobj artifact      │  serialized DAG +
                      │   (apxm-artifact)        │  metadata
@@ -67,7 +68,8 @@ APXM is organized in tiers — each layer depends only on layers above it.
 
 ```
 machine →  apxm-core, apxm-ais          (contracts in apxm-core; authoring/codegen specs in apxm-ais)
-compiler→  apxm-compiler, Python frontend (AIR → MLIR → .apxmobj)
+compiler→  apxm-compiler, Python frontend, TypeScript frontend
+           (FrontendGraph → AIR → MLIR → .apxmobj)
 runtime →  apxm-runtime, apxm-backends, (execution, LLM I/O,
            apxm-backend-registry         backend registry; refs only)
 orchestr→  apxm-driver, apxm-acp,       (driver/library glue, ACP protocol,

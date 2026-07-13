@@ -4,9 +4,9 @@ Invoked as::
 
     python -m apxm.tool_worker <manifest.json>
 
-The manifest is a JSON array of ``{"handler_id", "module", "qualname"}``
-entries.  On startup each module is imported so that ``@tool``-decorated
-functions register themselves in ``_TOOL_REGISTRY``.
+The manifest is a versioned object containing artifact-local handler source.
+On startup the worker materializes and imports each source module so that
+``@tool``-decorated functions register themselves in ``_TOOL_REGISTRY``.
 
 Wire protocol (NDJSON over stdin/stdout, multiplexed via ``req_id``):
 
@@ -32,7 +32,6 @@ Wire protocol (NDJSON over stdin/stdout, multiplexed via ``req_id``):
 from __future__ import annotations
 
 import asyncio
-import importlib
 import importlib.util
 import inspect
 import itertools
@@ -46,9 +45,11 @@ from typing import Any, Final
 
 from apxm.constants import (
     PYTHON_TOOL_MANIFEST_HANDLER_ID,
-    PYTHON_TOOL_MANIFEST_MODULE,
     PYTHON_TOOL_MANIFEST_QUALNAME,
-    PYTHON_TOOL_MANIFEST_SOURCE_FILE,
+)
+from apxm.handler_manifest import (
+    HANDLER_MANIFEST_HANDLER_ID_PREFIX,
+    HANDLER_MANIFEST_VERSION,
 )
 from apxm.hooks import LifecycleEvent
 
@@ -99,8 +100,8 @@ WIRE_ERROR_CANCELLED: Final[str] = "cancelled"
 # only needs ``_TOOL_REGISTRY`` (dict[str, FunctionTool]) where each value
 # has ``.fn`` (callable) and ``.validate_args(args)`` (optional).
 _registry: dict[str, Any] | None = None
-MODULE_MAIN = "__main__"
 SCRIPT_MODULE_PREFIX = "_apxm_tool_script_"
+MATERIALIZED_SOURCES_DIRECTORY: Final[str] = "sources"
 
 
 def _get_registry() -> dict[str, Any]:
@@ -128,61 +129,59 @@ def _set_registry(reg: dict[str, Any]) -> None:
 
 
 def _load_manifest(path: str) -> None:
-    """Import every module listed in *path* so decorators populate the registry."""
+    """Materialize and import every artifact-local source in *path*."""
     with open(path) as fh:
-        entries = json.load(fh)
-
-    _prepend_manifest_source_dirs(entries)
+        manifest = json.load(fh)
+    if not isinstance(manifest, dict):
+        raise ValueError("handler manifest must be an object")
+    if manifest.get("version") != HANDLER_MANIFEST_VERSION:
+        raise ValueError("handler manifest version is unsupported")
+    entries = manifest.get("handlers")
+    if not isinstance(entries, list):
+        raise ValueError("handler manifest handlers must be an array")
 
     for entry in entries:
-        module_name = entry[PYTHON_TOOL_MANIFEST_MODULE]
-        try:
-            module = _import_tool_module(entry)
-            _ensure_manifest_handler(module, entry)
-        except Exception as exc:
-            _write_line(
-                {
-                    WIRE_FIELD_VERSION: WIRE_VERSION,
-                    WIRE_FIELD_TYPE: WIRE_TYPE_LOG,
-                    WIRE_FIELD_LEVEL: WIRE_LEVEL_ERROR,
-                    WIRE_FIELD_MESSAGE: f"failed to import {module_name}: {exc}",
-                }
-            )
+        if not isinstance(entry, dict):
+            raise ValueError("handler manifest entries must be objects")
+        module = _import_tool_module(entry, Path(path).parent)
+        _ensure_manifest_handler(module, entry)
 
 
-def _prepend_manifest_source_dirs(entries: list[dict[str, Any]]) -> None:
-    """Make source-file-backed modules importable for artifact-only runs."""
-    source_dirs: list[str] = []
-    seen: set[str] = set()
-    for entry in entries:
-        source_file = entry.get(PYTHON_TOOL_MANIFEST_SOURCE_FILE)
-        if not source_file:
-            continue
-        source_dir = str(Path(source_file).resolve().parent)
-        if source_dir in seen or source_dir in sys.path:
-            continue
-        seen.add(source_dir)
-        source_dirs.append(source_dir)
+def _import_tool_module(entry: dict[str, Any], manifest_dir: Path) -> Any:
+    """Write one embedded source file below the manifest directory and import it."""
+    source = entry.get("source")
+    if not isinstance(source, dict):
+        raise ValueError("handler manifest entry is missing source")
+    artifact_path = source.get("artifact_path")
+    content = source.get("content")
+    if not isinstance(artifact_path, str) or not artifact_path:
+        raise ValueError("handler manifest source is missing artifact_path")
+    if not isinstance(content, str) or not content:
+        raise ValueError("handler manifest source is missing content")
 
-    for source_dir in reversed(source_dirs):
-        sys.path.insert(0, source_dir)
+    source_root = (manifest_dir / MATERIALIZED_SOURCES_DIRECTORY).resolve()
+    source_path = (source_root / artifact_path).resolve()
+    try:
+        source_path.relative_to(source_root)
+    except ValueError as exc:
+        raise ValueError("handler manifest source path escapes the artifact") from exc
+    source_path.parent.mkdir(parents=True, exist_ok=True)
+    source_path.write_text(content, encoding="utf-8")
 
-
-def _import_tool_module(entry: dict[str, Any]) -> Any:
-    module_name = entry[PYTHON_TOOL_MANIFEST_MODULE]
-    source_file = entry.get(PYTHON_TOOL_MANIFEST_SOURCE_FILE)
-    if module_name != MODULE_MAIN or not source_file:
-        return importlib.import_module(module_name)
-
-    source_path = Path(source_file).resolve()
-    synthetic_name = f"{SCRIPT_MODULE_PREFIX}{source_path.stem}"
+    handler_id = entry.get(PYTHON_TOOL_MANIFEST_HANDLER_ID)
+    if not isinstance(handler_id, str) or not handler_id:
+        raise ValueError("handler manifest entry is missing handler_id")
+    synthetic_name = (
+        f"{SCRIPT_MODULE_PREFIX}"
+        f"{handler_id.removeprefix(HANDLER_MANIFEST_HANDLER_ID_PREFIX)}"
+    )
     loaded = sys.modules.get(synthetic_name)
     if loaded is not None:
         return loaded
 
     spec = importlib.util.spec_from_file_location(synthetic_name, source_path)
     if spec is None or spec.loader is None:
-        raise ImportError(f"cannot load tool source file {source_path}")
+        raise ImportError(f"cannot load artifact handler source {source_path}")
 
     module = importlib.util.module_from_spec(spec)
     sys.modules[synthetic_name] = module

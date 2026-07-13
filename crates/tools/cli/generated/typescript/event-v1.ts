@@ -405,6 +405,27 @@ export interface ModelContextMetricsEventPayload {
   [key: string]: unknown;
 }
 
+export interface CapabilityEffectReceiptEventPayload {
+  kind: "capability_effect_receipt";
+  receipt_id: string;
+  execution_id: string;
+  node_id: number;
+  invocation_id: string;
+  capability_binding: string;
+  dispatch_path: "inv_cap" | "ask_tool";
+  implementation_kind: "native" | "python" | "typescript" | "host";
+  implementation_ref: string;
+  request_digest: string;
+  admission_kind: "read_only" | "sandbox" | "grant";
+  grant_id?: string;
+  approval_status?: "not_required" | "approved";
+  approval_id?: string;
+  idempotency_proof: "remote_deduplicated" | "transaction_verified";
+  idempotency_key_digest: string;
+  effect_ref: string;
+  status: "committed";
+}
+
 export interface ModelReroutedEventPayload {
   kind: "model_rerouted";
   original_model: string;
@@ -625,6 +646,7 @@ export type KnownEventPayload =
   | GraphEdgeEventPayload
   | ContextCompactedEventPayload
   | ModelContextMetricsEventPayload
+  | CapabilityEffectReceiptEventPayload
   | ModelReroutedEventPayload
   | CancelledEventPayload
   | LoopDetectedEventPayload
@@ -707,6 +729,7 @@ export const EVENT_KIND_REGISTRY: Readonly<Record<CoreEventKindName, EventKindDe
   "graph_edge": { name: "graph_edge", category: "topology", terminal: false, terminalSense: "atomic_no_delta" },
   "context_compacted": { name: "context_compacted", category: "observability", terminal: false, terminalSense: "n/a" },
   "model_context_metrics": { name: "model_context_metrics", category: "observability", terminal: false, terminalSense: "n/a" },
+  "capability_effect_receipt": { name: "capability_effect_receipt", category: "observability", terminal: false, terminalSense: "n/a" },
   "model_rerouted": { name: "model_rerouted", category: "lifecycle", terminal: false, terminalSense: "n/a" },
   "cancelled": { name: "cancelled", category: "error", terminal: false, terminalSense: "n/a" },
   "loop_detected": { name: "loop_detected", category: "error", terminal: false, terminalSense: "n/a" },

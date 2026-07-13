@@ -1,20 +1,18 @@
-//! Pipeline builder for the passes.
+//! Typed pipeline construction.
 //!
-//! Optimization levels:
-//!   O0 - Required normalization and executable lowering only; no optimization
-//!   O1 - Basic safe cleanup plus priority metadata
-//!   O2 - Standard: O1 + scheduling metadata and shared-prefix analysis
-//!   O3 - Aggressive: O2-safe passes repeated with a bounded cleanup budget
+//! The [`PipelinePlan`] is the sole composition source for compiler work. It
+//! separates MLIR stages from artifact validation and finalization, so a pass
+//! name never implies execution at a boundary that cannot run it.
 
 use super::PassManager;
-use super::bind_capability_handlers::BIND_CAPABILITY_HANDLERS_PASS_NAME;
-use super::capability_binding::CAPABILITY_BINDING_PASS_NAME;
+use super::plan::{
+    O3_MAX_CLEANUP_ITERATIONS, PipelineConvergenceGroup, PipelinePlan, PipelineStage,
+    PipelineStageKind,
+};
 use apxm_core::error::compiler::Result;
+use apxm_core::types::compiler::CompilerAnalysisKind;
 use apxm_core::types::compiler::metadata as passes;
-use apxm_core::types::{OptimizationLevel, OptimizationTarget};
-
-/// Number of bounded O3 cleanup repetitions materialized in the pass list.
-const O3_CLEANUP_ITERATIONS: usize = 10;
+use apxm_core::types::{OptimizationLevel, OptimizationTarget, PipelineConfig};
 
 // Short aliases for pass names — downstream compiler consumers read these
 // through apxm_core::types::compiler::metadata, which re-exports the canonical
@@ -27,32 +25,84 @@ const SHARED_PREFIX_ANALYSIS: &str = passes::SHARED_PREFIX_ANALYSIS.name;
 const UNCONSUMED_VALUE_WARNING: &str = passes::UNCONSUMED_VALUE_WARNING.name;
 const TEMPLATE_SPECIALIZATION: &str = passes::TEMPLATE_SPECIALIZATION.name;
 const DEAD_CONTEXT_ELIMINATION: &str = passes::DEAD_CONTEXT_ELIMINATION.name;
+const PURE_DEAD_NODE_ELIMINATION: &str = passes::PURE_DEAD_NODE_ELIMINATION.name;
+const SCHEMA_NARROWING: &str = passes::SCHEMA_NARROWING.name;
 const CANONICALIZER: &str = passes::CANONICALIZER.name;
 const CSE: &str = passes::CSE.name;
 const SYMBOL_DCE: &str = passes::SYMBOL_DCE.name;
 
-/// Rust-only validation pass that checks capability bindings.
-/// Runs after the canonicalizer to validate INV_CAP/REGISTER_CAPABILITY
-/// consistency.
-const CAPABILITY_BINDING: &str = CAPABILITY_BINDING_PASS_NAME;
+// These stages are performed after MLIR artifact emission in api/module.rs.
+// They remain in the typed plan so diagnostics can describe their real owner
+// without pretending that the MLIR pass manager executes Rust artifact work.
+const TEMPLATE_PLACEHOLDER_VALIDATION: &str = "validate-template-placeholders";
+const TOKEN_ESTIMATE_REFINEMENT: &str = "refine-token-estimates";
+const CAPABILITY_BINDING: &str = "capability-binding-check";
+const BIND_CAPABILITY_HANDLERS: &str = "bind-capability-handlers";
+const O3_CLEANUP_GROUP: &str = "o3-cleanup";
 
-/// Rust-only pass that copies `python_handler_id` from REGISTER_CAPABILITY
-/// onto matching INV_CAP nodes. Runs after capability-binding-check.
-const BIND_CAPABILITY_HANDLERS: &str = BIND_CAPABILITY_HANDLERS_PASS_NAME;
+const ALL_ANALYSES: &[CompilerAnalysisKind] = &[
+    CompilerAnalysisKind::PromptContract,
+    CompilerAnalysisKind::EffectAuthority,
+    CompilerAnalysisKind::DagUse,
+    CompilerAnalysisKind::TokenCost,
+    CompilerAnalysisKind::ProfileCost,
+    CompilerAnalysisKind::BackendLegality,
+];
+const PROMPT_AND_COST: &[CompilerAnalysisKind] = &[
+    CompilerAnalysisKind::PromptContract,
+    CompilerAnalysisKind::TokenCost,
+    CompilerAnalysisKind::BackendLegality,
+];
+const EFFECT_DAG_AND_PROFILE: &[CompilerAnalysisKind] = &[
+    CompilerAnalysisKind::EffectAuthority,
+    CompilerAnalysisKind::DagUse,
+    CompilerAnalysisKind::ProfileCost,
+];
+const EFFECT_DAG_TOKEN_AND_PROFILE: &[CompilerAnalysisKind] = &[
+    CompilerAnalysisKind::EffectAuthority,
+    CompilerAnalysisKind::DagUse,
+    CompilerAnalysisKind::TokenCost,
+    CompilerAnalysisKind::ProfileCost,
+];
+const ALL_PRESERVED: &[CompilerAnalysisKind] = ALL_ANALYSES;
 
-/// Names that are tracked in the pipeline list but are *not* dispatched
-/// through the MLIR PassManager — they run as Rust-side transforms on the
-/// `AirModule` instead.
-const RUST_ONLY_PASSES: &[&str] = &[CAPABILITY_BINDING, BIND_CAPABILITY_HANDLERS];
-
-pub fn is_mlir_pass(name: &str) -> bool {
-    !RUST_ONLY_PASSES.contains(&name)
+/// Return the execution boundary for a stage named in an explicit pass list.
+pub fn stage_kind_for_name(name: &str) -> PipelineStageKind {
+    match name {
+        NORMALIZE | BUILD_PROMPT => PipelineStageKind::RequiredLowering,
+        SCHEDULING | SHARED_PREFIX_ANALYSIS | ASSIGN_PRIORITY => PipelineStageKind::MlirAnalysis,
+        UNCONSUMED_VALUE_WARNING | SCHEMA_NARROWING => PipelineStageKind::Diagnostic,
+        TEMPLATE_PLACEHOLDER_VALIDATION | CAPABILITY_BINDING => {
+            PipelineStageKind::ArtifactValidation
+        }
+        TOKEN_ESTIMATE_REFINEMENT | BIND_CAPABILITY_HANDLERS => {
+            PipelineStageKind::ArtifactFinalization
+        }
+        _ => PipelineStageKind::MlirRewrite,
+    }
 }
 
+/// Whether a named pass is dispatched through MLIR.
+///
+/// This compatibility helper recognizes the two artifact-owned names that
+/// historically appeared in pass lists. New execution should use
+/// [`PipelineStageKind::executes_in_mlir`] from the typed plan instead.
+pub fn is_mlir_pass(name: &str) -> bool {
+    !matches!(
+        name,
+        TEMPLATE_PLACEHOLDER_VALIDATION
+            | TOKEN_ESTIMATE_REFINEMENT
+            | CAPABILITY_BINDING
+            | BIND_CAPABILITY_HANDLERS
+    )
+}
+
+/// Configure a manager with the default typed plan for an optimization level.
 pub fn build_pipeline(pm: &mut PassManager, level: OptimizationLevel) -> Result<()> {
     build_pipeline_with_config(pm, level, false, OptimizationTarget::Balanced, false)
 }
 
+/// Configure a manager with the typed plan derived from legacy pipeline inputs.
 pub fn build_pipeline_with_config(
     pm: &mut PassManager,
     level: OptimizationLevel,
@@ -60,250 +110,372 @@ pub fn build_pipeline_with_config(
     target: OptimizationTarget,
     warn: bool,
 ) -> Result<()> {
-    for name in build_pass_list_with_warn(level, no_cse_llm, target, warn) {
-        if is_mlir_pass(&name) {
-            pm.add_pass(&name)?;
-        }
-    }
+    pm.set_plan(build_pipeline_plan_with_warn(
+        level, no_cse_llm, target, warn,
+    ));
     Ok(())
 }
 
-/// Return the ordered list of pass names for a given optimization level, config, and target.
-///
-/// This is the single source of truth for pipeline composition. Both
-/// [`build_pipeline_with_config`] (which feeds passes to the MLIR pass manager) and
-/// [`PassManager::run_with_metrics`] (which runs passes individually for diagnostics)
-/// derive their pass sequence from this function.
-///
-/// The `target` parameter controls safe pass ordering only. Heuristic-free
-/// semantic rewrites stay out of the automatic O-levels until their contracts
-/// are typed and enforced by the compiler.
-///
-/// Passes intentionally excluded from default O1/O2/O3 pipelines:
-/// - `fuse-ask-ops`: mutates ASK chains without semantic-quality heuristics.
-/// - `condense-ops`: changes memory-query/write grouping without a typed
-///   memory batching capability contract.
-/// - `schema-narrowing`: current implementation is not real field-use
-///   narrowing and can affect output validation.
-/// - `prompt-canonicalization`: rewrites prompt layout for backend cache
-///   behavior and needs an explicit backend/graph-hint contract.
-/// - `cse`: generic MLIR CSE is not LLM-safe until deterministic/memoizable
-///   contracts are typed. Use explicit pass lists for ablation only.
-///
-/// `dspy-optimize` is injected by the pipeline only when compiler prompt
-/// tuning is explicitly configured. It is not part of this pure base list
-/// because discovering that config must not make pass-list construction touch
-/// backend credentials, training data, or compiler cache state.
-///
-pub fn build_pass_list(
+/// Build the typed default plan for one optimization level.
+pub fn build_pipeline_plan(
     level: OptimizationLevel,
     _no_cse_llm: bool,
     target: OptimizationTarget,
-) -> Vec<String> {
-    let mut passes = Vec::new();
+) -> PipelinePlan {
+    let mut plan = PipelinePlan::new();
 
     match level {
         OptimizationLevel::O0 => {
-            // O0 is the no-optimization baseline, not a "skip executable
-            // lowering" mode. Normalize establishes canonical attribute
-            // spelling, and BuildPrompt establishes the runtime
-            // template/input_names contract for LLM ops with context.
-            passes.push(NORMALIZE.to_string());
-            passes.push(BUILD_PROMPT.to_string());
+            plan.push_stage(required_lowering(NORMALIZE));
+            plan.push_stage(required_lowering(BUILD_PROMPT));
         }
         OptimizationLevel::O1 => {
-            passes.extend(
+            append_required_lowering(&mut plan);
+            append_stages(
+                &mut plan,
                 [
-                    NORMALIZE,
-                    BUILD_PROMPT,
-                    TEMPLATE_SPECIALIZATION,
-                    DEAD_CONTEXT_ELIMINATION,
-                    CANONICALIZER,
-                    CAPABILITY_BINDING,
-                    BIND_CAPABILITY_HANDLERS,
-                ]
-                .iter()
-                .map(|s| s.to_string()),
+                    rewrite(TEMPLATE_SPECIALIZATION),
+                    rewrite(DEAD_CONTEXT_ELIMINATION),
+                    rewrite(CANONICALIZER),
+                    rewrite(PURE_DEAD_NODE_ELIMINATION),
+                    rewrite(SYMBOL_DCE),
+                    analysis(ASSIGN_PRIORITY),
+                ],
             );
-
-            passes.push(SYMBOL_DCE.to_string());
-            passes.push(ASSIGN_PRIORITY.to_string());
         }
         OptimizationLevel::O2 => {
-            passes.extend(
+            append_required_lowering(&mut plan);
+            append_stages(
+                &mut plan,
                 [
-                    NORMALIZE,
-                    BUILD_PROMPT,
-                    TEMPLATE_SPECIALIZATION,
-                    DEAD_CONTEXT_ELIMINATION,
-                ]
-                .iter()
-                .map(|s| s.to_string()),
+                    rewrite(TEMPLATE_SPECIALIZATION),
+                    rewrite(DEAD_CONTEXT_ELIMINATION),
+                ],
             );
-
-            // Target-specific pass ordering for O2
-            match target {
-                OptimizationTarget::Tokens => {
-                    // Prioritize context reduction
-                    passes.extend(
-                        [CANONICALIZER, CAPABILITY_BINDING, BIND_CAPABILITY_HANDLERS]
-                            .iter()
-                            .map(|s| s.to_string()),
-                    );
-                }
-                OptimizationTarget::Cost => {
-                    // Prioritize safe dead-code cleanup.
-                    passes.extend(
-                        [CANONICALIZER, CAPABILITY_BINDING, BIND_CAPABILITY_HANDLERS]
-                            .iter()
-                            .map(|s| s.to_string()),
-                    );
-                }
-                OptimizationTarget::Latency | OptimizationTarget::Parallelism => {
-                    // Prioritize backend-agnostic graph scheduling. Shared-prefix
-                    // analysis only emits metadata for prompts that are already
-                    // prefix-compatible.
-                    passes.extend(
-                        [
-                            SCHEDULING,
-                            CANONICALIZER,
-                            CAPABILITY_BINDING,
-                            BIND_CAPABILITY_HANDLERS,
-                        ]
-                        .iter()
-                        .map(|s| s.to_string()),
-                    );
-                }
-                OptimizationTarget::Balanced => {
-                    // Default ordering
-                    passes.extend(
-                        [CANONICALIZER, CAPABILITY_BINDING, BIND_CAPABILITY_HANDLERS]
-                            .iter()
-                            .map(|s| s.to_string()),
-                    );
-                }
-            }
-
-            passes.push(SYMBOL_DCE.to_string());
-            if !passes.iter().any(|pass| pass == SCHEDULING) {
-                passes.push(SCHEDULING.to_string());
-            }
-            passes.push(SHARED_PREFIX_ANALYSIS.to_string());
-            passes.push(ASSIGN_PRIORITY.to_string());
+            append_o2_target_stages(&mut plan, target);
+            append_stages(
+                &mut plan,
+                [
+                    rewrite(PURE_DEAD_NODE_ELIMINATION),
+                    rewrite(SYMBOL_DCE),
+                    analysis(SHARED_PREFIX_ANALYSIS),
+                    analysis(ASSIGN_PRIORITY),
+                ],
+            );
         }
         OptimizationLevel::O3 => {
-            passes.extend(
+            append_required_lowering(&mut plan);
+            append_stages(
+                &mut plan,
                 [
-                    NORMALIZE,
-                    BUILD_PROMPT,
-                    TEMPLATE_SPECIALIZATION,
-                    DEAD_CONTEXT_ELIMINATION,
-                ]
-                .iter()
-                .map(|s| s.to_string()),
+                    rewrite(TEMPLATE_SPECIALIZATION),
+                    rewrite(DEAD_CONTEXT_ELIMINATION),
+                ],
             );
-
-            let repeated_cleanup_passes: Vec<String> = match target {
-                OptimizationTarget::Tokens => [
-                    TEMPLATE_SPECIALIZATION,
-                    DEAD_CONTEXT_ELIMINATION,
-                    SCHEDULING,
-                    CANONICALIZER,
-                    CAPABILITY_BINDING,
-                    BIND_CAPABILITY_HANDLERS,
-                ]
-                .iter()
-                .map(|s| s.to_string())
-                .collect(),
-                OptimizationTarget::Latency | OptimizationTarget::Parallelism => [
-                    SCHEDULING,
-                    TEMPLATE_SPECIALIZATION,
-                    DEAD_CONTEXT_ELIMINATION,
-                    CANONICALIZER,
-                    CAPABILITY_BINDING,
-                    BIND_CAPABILITY_HANDLERS,
-                ]
-                .iter()
-                .map(|s| s.to_string())
-                .collect(),
-                _ => [
-                    TEMPLATE_SPECIALIZATION,
-                    DEAD_CONTEXT_ELIMINATION,
-                    SCHEDULING,
-                    CANONICALIZER,
-                    CAPABILITY_BINDING,
-                    BIND_CAPABILITY_HANDLERS,
-                ]
-                .iter()
-                .map(|s| s.to_string())
-                .collect(),
-            };
-
-            for _ in 0..O3_CLEANUP_ITERATIONS {
-                passes.extend(repeated_cleanup_passes.clone());
-                passes.push(SYMBOL_DCE.to_string());
-            }
-            if !passes.iter().any(|pass| pass == SCHEDULING) {
-                passes.push(SCHEDULING.to_string());
-            }
-            passes.push(SHARED_PREFIX_ANALYSIS.to_string());
-            passes.push(ASSIGN_PRIORITY.to_string());
+            plan.push_convergence_group(PipelineConvergenceGroup::new(
+                O3_CLEANUP_GROUP,
+                o3_cleanup_stages(target),
+                O3_MAX_CLEANUP_ITERATIONS,
+            ));
+            append_stages(
+                &mut plan,
+                [analysis(SHARED_PREFIX_ANALYSIS), analysis(ASSIGN_PRIORITY)],
+            );
         }
     }
 
-    passes
+    append_artifact_stages(&mut plan);
+    plan
 }
 
-/// Like [`build_pass_list`] but appends `unconsumed-value-warning` when `warn` is true.
+/// Build a typed plan and append the opt-in diagnostic stage when requested.
+pub fn build_pipeline_plan_with_warn(
+    level: OptimizationLevel,
+    no_cse_llm: bool,
+    target: OptimizationTarget,
+    warn: bool,
+) -> PipelinePlan {
+    let mut plan = build_pipeline_plan(level, no_cse_llm, target);
+    if warn {
+        insert_before_artifact_stages(&mut plan, diagnostic(UNCONSUMED_VALUE_WARNING));
+    }
+    plan
+}
+
+/// Return MLIR pass names for callers that still consume the legacy list API.
 ///
-/// The warning pass is purely diagnostic — it produces no IR mutation — so it is
-/// always inserted at the very end of the pipeline regardless of opt level.
-/// It is opt-in via the CLI `--warn` flag and never appears in the default O1/O2/O3
-/// pipelines.
+/// O3 exposes one cleanup iteration here; the manager executes that group until
+/// convergence instead of materializing ten copies of its pass names.
+pub fn build_pass_list(
+    level: OptimizationLevel,
+    no_cse_llm: bool,
+    target: OptimizationTarget,
+) -> Vec<String> {
+    build_pipeline_plan(level, no_cse_llm, target).mlir_pass_names()
+}
+
+/// Like [`build_pass_list`] but appends `unconsumed-value-warning` when requested.
 pub fn build_pass_list_with_warn(
     level: OptimizationLevel,
     no_cse_llm: bool,
     target: OptimizationTarget,
     warn: bool,
 ) -> Vec<String> {
-    let mut passes = build_pass_list(level, no_cse_llm, target);
-    if warn {
-        passes.push(UNCONSUMED_VALUE_WARNING.to_string());
-    }
-    passes
+    build_pipeline_plan_with_warn(level, no_cse_llm, target, warn).mlir_pass_names()
 }
 
-/// Materialize the final pass list for a [`PipelineConfig`].
+/// Materialize the executable plan for a [`PipelineConfig`].
 ///
-/// Order of operations:
-/// 1. If `pass_list_override` is `Some`, that vector becomes the base list
-///    (opt-level / target / warn-unconsumed are ignored).
-/// 2. Otherwise, the base list comes from [`build_pass_list_with_warn`].
-/// 3. `no_cse_llm` and `disable_passes` filter the resulting list.
-///
-/// Single source of truth for the MLIR-pass-manager build path
-/// ([`build_pipeline_with_config`]) and the diagnostics path
-/// (`process_module_with_diagnostics` in `api/pipeline.rs`).
-pub fn resolve_pass_list(config: &apxm_core::types::PipelineConfig) -> Vec<String> {
-    let mut passes = if let Some(override_list) = config.pass_list_override.as_ref() {
-        override_list.clone()
+/// Explicit pass lists replace only configurable MLIR stages. Required lowering
+/// and artifact stages remain mandatory, and artifact stages never enter MLIR
+/// dispatch. Disabling a mandatory stage is ignored so ablation flags cannot
+/// bypass executable lowering or artifact validation/finalization.
+pub fn resolve_pipeline_plan(config: &PipelineConfig) -> PipelinePlan {
+    let mut plan = if let Some(override_list) = config.pass_list_override.as_ref() {
+        plan_from_override(override_list)
     } else {
-        build_pass_list_with_warn(
+        build_pipeline_plan_with_warn(
             config.opt_level,
             config.no_cse_llm,
             config.target,
             config.warn_unconsumed,
         )
     };
+
+    let mut disabled: std::collections::HashSet<&str> =
+        config.disable_passes.iter().map(String::as_str).collect();
     if config.no_cse_llm {
-        passes.retain(|p| p != CSE);
+        disabled.insert(CSE);
     }
-    if !config.disable_passes.is_empty() {
-        let drop: std::collections::HashSet<&str> =
-            config.disable_passes.iter().map(String::as_str).collect();
-        passes.retain(|p| !drop.contains(p.as_str()));
+    plan.retain_unless_disabled(&disabled);
+    plan
+}
+
+/// Return the MLIR stage list for callers retaining the legacy list API.
+pub fn resolve_pass_list(config: &PipelineConfig) -> Vec<String> {
+    resolve_pipeline_plan(config).mlir_pass_names()
+}
+
+fn append_required_lowering(plan: &mut PipelinePlan) {
+    append_stages(
+        plan,
+        [
+            required_lowering(NORMALIZE),
+            required_lowering(BUILD_PROMPT),
+        ],
+    );
+}
+
+fn append_o2_target_stages(plan: &mut PipelinePlan, target: OptimizationTarget) {
+    match target {
+        OptimizationTarget::Tokens | OptimizationTarget::Cost | OptimizationTarget::Balanced => {
+            plan.push_stage(rewrite(CANONICALIZER));
+        }
+        OptimizationTarget::Latency | OptimizationTarget::Parallelism => {
+            append_stages(plan, [rewrite(SCHEDULING), rewrite(CANONICALIZER)]);
+        }
     }
-    passes
+
+    if !plan.contains_stage(SCHEDULING) {
+        plan.push_stage(analysis(SCHEDULING));
+    }
+}
+
+fn o3_cleanup_stages(target: OptimizationTarget) -> Vec<PipelineStage> {
+    let mut stages = match target {
+        OptimizationTarget::Latency | OptimizationTarget::Parallelism => vec![
+            analysis(SCHEDULING),
+            rewrite(TEMPLATE_SPECIALIZATION),
+            rewrite(DEAD_CONTEXT_ELIMINATION),
+            rewrite(CANONICALIZER),
+        ],
+        OptimizationTarget::Tokens | OptimizationTarget::Cost | OptimizationTarget::Balanced => {
+            vec![
+                rewrite(TEMPLATE_SPECIALIZATION),
+                rewrite(DEAD_CONTEXT_ELIMINATION),
+                analysis(SCHEDULING),
+                rewrite(CANONICALIZER),
+            ]
+        }
+    };
+    // This transform erases only a closed pure allow-list, so it must run
+    // before symbol cleanup sees the reduced operation graph.
+    stages.push(rewrite(PURE_DEAD_NODE_ELIMINATION));
+    stages.push(rewrite(SYMBOL_DCE));
+    stages
+}
+
+fn append_artifact_stages(plan: &mut PipelinePlan) {
+    for stage in mandatory_artifact_stages() {
+        plan.push_stage(stage);
+    }
+}
+
+/// Mandatory artifact-owned stages, in the only order that may finalize a
+/// compiled execution DAG. Artifact emission consumes this same sequence so
+/// diagnostics describe the stages that actually ran.
+pub(crate) fn mandatory_artifact_stages() -> [PipelineStage; 4] {
+    [
+        artifact_validation(TEMPLATE_PLACEHOLDER_VALIDATION),
+        artifact_finalization(TOKEN_ESTIMATE_REFINEMENT),
+        artifact_validation(CAPABILITY_BINDING),
+        artifact_finalization(BIND_CAPABILITY_HANDLERS),
+    ]
+}
+
+fn plan_from_override(override_list: &[String]) -> PipelinePlan {
+    let mut plan = PipelinePlan::new();
+    append_required_lowering(&mut plan);
+    for name in override_list {
+        if matches!(
+            name.as_str(),
+            NORMALIZE
+                | BUILD_PROMPT
+                | TEMPLATE_PLACEHOLDER_VALIDATION
+                | TOKEN_ESTIMATE_REFINEMENT
+                | CAPABILITY_BINDING
+                | BIND_CAPABILITY_HANDLERS
+        ) {
+            continue;
+        }
+        plan.push_stage(explicit_stage(name));
+    }
+    append_artifact_stages(&mut plan);
+    plan
+}
+
+fn insert_before_artifact_stages(plan: &mut PipelinePlan, stage: PipelineStage) {
+    let artifact_index = plan
+        .steps
+        .iter()
+        .position(|step| match step {
+            super::plan::PipelinePlanStep::Stage(stage) => !stage.kind.executes_in_mlir(),
+            super::plan::PipelinePlanStep::Convergence(_) => false,
+        })
+        .unwrap_or(plan.steps.len());
+    plan.steps
+        .insert(artifact_index, super::plan::PipelinePlanStep::Stage(stage));
+}
+
+fn append_stages<const N: usize>(plan: &mut PipelinePlan, stages: [PipelineStage; N]) {
+    for stage in stages {
+        plan.push_stage(stage);
+    }
+}
+
+fn required_lowering(name: &str) -> PipelineStage {
+    stage(name, PipelineStageKind::RequiredLowering, true)
+}
+
+fn rewrite(name: &str) -> PipelineStage {
+    stage(name, PipelineStageKind::MlirRewrite, false)
+}
+
+fn analysis(name: &str) -> PipelineStage {
+    stage(name, PipelineStageKind::MlirAnalysis, false)
+}
+
+fn diagnostic(name: &str) -> PipelineStage {
+    stage(name, PipelineStageKind::Diagnostic, false)
+}
+
+fn artifact_validation(name: &str) -> PipelineStage {
+    stage(name, PipelineStageKind::ArtifactValidation, true)
+}
+
+fn artifact_finalization(name: &str) -> PipelineStage {
+    stage(name, PipelineStageKind::ArtifactFinalization, true)
+}
+
+fn explicit_stage(name: &str) -> PipelineStage {
+    stage(name, stage_kind_for_name(name), false)
+}
+
+fn stage(name: &str, kind: PipelineStageKind, mandatory: bool) -> PipelineStage {
+    let (required, preserved, invalidated): (
+        &[CompilerAnalysisKind],
+        &[CompilerAnalysisKind],
+        &[CompilerAnalysisKind],
+    ) = match name {
+        NORMALIZE | CANONICALIZER => (&[][..], &[][..], ALL_ANALYSES),
+        BUILD_PROMPT | TEMPLATE_SPECIALIZATION => {
+            (&[][..], EFFECT_DAG_AND_PROFILE, PROMPT_AND_COST)
+        }
+        DEAD_CONTEXT_ELIMINATION => (
+            &[
+                CompilerAnalysisKind::PromptContract,
+                CompilerAnalysisKind::DagUse,
+            ],
+            &[],
+            ALL_ANALYSES,
+        ),
+        PURE_DEAD_NODE_ELIMINATION | SYMBOL_DCE => (
+            &[
+                CompilerAnalysisKind::DagUse,
+                CompilerAnalysisKind::EffectAuthority,
+            ],
+            &[],
+            ALL_ANALYSES,
+        ),
+        SHARED_PREFIX_ANALYSIS => (
+            &[
+                CompilerAnalysisKind::PromptContract,
+                CompilerAnalysisKind::TokenCost,
+            ],
+            EFFECT_DAG_TOKEN_AND_PROFILE,
+            &[
+                CompilerAnalysisKind::PromptContract,
+                CompilerAnalysisKind::BackendLegality,
+            ],
+        ),
+        ASSIGN_PRIORITY => (
+            &[
+                CompilerAnalysisKind::DagUse,
+                CompilerAnalysisKind::EffectAuthority,
+                CompilerAnalysisKind::TokenCost,
+                CompilerAnalysisKind::ProfileCost,
+            ],
+            ALL_PRESERVED,
+            &[],
+        ),
+        SCHEDULING => (
+            &[
+                CompilerAnalysisKind::DagUse,
+                CompilerAnalysisKind::EffectAuthority,
+                CompilerAnalysisKind::TokenCost,
+                CompilerAnalysisKind::ProfileCost,
+            ],
+            &[],
+            ALL_ANALYSES,
+        ),
+        UNCONSUMED_VALUE_WARNING => (&[CompilerAnalysisKind::DagUse], ALL_PRESERVED, &[]),
+        TEMPLATE_PLACEHOLDER_VALIDATION => {
+            (&[CompilerAnalysisKind::PromptContract], ALL_PRESERVED, &[])
+        }
+        TOKEN_ESTIMATE_REFINEMENT => (
+            &[
+                CompilerAnalysisKind::PromptContract,
+                CompilerAnalysisKind::TokenCost,
+            ],
+            ALL_PRESERVED,
+            &[],
+        ),
+        CAPABILITY_BINDING | BIND_CAPABILITY_HANDLERS => (
+            &[
+                CompilerAnalysisKind::EffectAuthority,
+                CompilerAnalysisKind::DagUse,
+                CompilerAnalysisKind::BackendLegality,
+            ],
+            ALL_PRESERVED,
+            &[],
+        ),
+        _ => (&[][..], &[][..], ALL_ANALYSES),
+    };
+    PipelineStage::new(name, kind, mandatory).with_analysis_contract(
+        required,
+        preserved,
+        invalidated,
+    )
 }
 
 #[cfg(test)]
@@ -337,14 +509,142 @@ mod tests {
     }
 
     #[test]
-    fn o3_uses_bounded_repeated_cleanup_not_dynamic_fixed_point() {
-        let passes = build_pass_list(OptimizationLevel::O3, false, OptimizationTarget::Balanced);
+    fn o3_uses_one_bounded_convergence_group() {
+        let plan = build_pipeline_plan(OptimizationLevel::O3, false, OptimizationTarget::Balanced);
+        let groups: Vec<_> = plan
+            .steps
+            .iter()
+            .filter_map(|step| match step {
+                super::super::plan::PipelinePlanStep::Convergence(group) => Some(group),
+                super::super::plan::PipelinePlanStep::Stage(_) => None,
+            })
+            .collect();
+
+        assert_eq!(groups.len(), 1);
+        assert_eq!(groups[0].name, O3_CLEANUP_GROUP);
+        assert_eq!(groups[0].max_iterations, O3_MAX_CLEANUP_ITERATIONS);
         assert_eq!(
-            passes
+            build_pass_list(OptimizationLevel::O3, false, OptimizationTarget::Balanced)
                 .iter()
                 .filter(|pass| pass.as_str() == SYMBOL_DCE)
                 .count(),
-            O3_CLEANUP_ITERATIONS
+            1
         );
+    }
+
+    #[test]
+    fn artifact_stages_are_mandatory_and_never_reach_mlir_dispatch() {
+        let config = PipelineConfig {
+            disable_passes: vec![
+                CAPABILITY_BINDING.to_string(),
+                BIND_CAPABILITY_HANDLERS.to_string(),
+            ],
+            ..PipelineConfig::default()
+        };
+        let plan = resolve_pipeline_plan(&config);
+        let artifact_stages = plan.artifact_stages();
+
+        assert!(artifact_stages.iter().all(|stage| stage.mandatory));
+        assert_eq!(
+            artifact_stages
+                .iter()
+                .filter(|stage| stage.name == CAPABILITY_BINDING)
+                .count(),
+            1
+        );
+        assert_eq!(
+            artifact_stages
+                .iter()
+                .filter(|stage| stage.name == BIND_CAPABILITY_HANDLERS)
+                .count(),
+            1
+        );
+        assert!(plan.contains_stage(CAPABILITY_BINDING));
+        assert!(plan.contains_stage(BIND_CAPABILITY_HANDLERS));
+        assert!(
+            !plan
+                .mlir_pass_names()
+                .contains(&CAPABILITY_BINDING.to_string())
+        );
+        assert!(
+            !plan
+                .mlir_pass_names()
+                .contains(&BIND_CAPABILITY_HANDLERS.to_string())
+        );
+    }
+
+    #[test]
+    fn explicit_pass_lists_retain_required_lowering_and_artifact_work() {
+        let config = PipelineConfig {
+            pass_list_override: Some(vec![CANONICALIZER.to_string()]),
+            disable_passes: vec![NORMALIZE.to_string(), BUILD_PROMPT.to_string()],
+            ..PipelineConfig::default()
+        };
+        let plan = resolve_pipeline_plan(&config);
+
+        assert!(plan.contains_stage(NORMALIZE));
+        assert!(plan.contains_stage(BUILD_PROMPT));
+        assert!(plan.contains_stage(TEMPLATE_PLACEHOLDER_VALIDATION));
+        assert!(plan.contains_stage(BIND_CAPABILITY_HANDLERS));
+        assert_eq!(
+            plan.mlir_pass_names(),
+            vec![
+                NORMALIZE.to_string(),
+                BUILD_PROMPT.to_string(),
+                CANONICALIZER.to_string(),
+            ]
+        );
+    }
+
+    #[test]
+    fn stages_declare_non_overlapping_analysis_invalidation() {
+        for level in [
+            OptimizationLevel::O0,
+            OptimizationLevel::O1,
+            OptimizationLevel::O2,
+            OptimizationLevel::O3,
+        ] {
+            for stage in build_pipeline_plan(level, false, OptimizationTarget::Balanced).stages() {
+                assert!(
+                    stage
+                        .preserved_analyses
+                        .iter()
+                        .all(|analysis| !stage.invalidated_analyses.contains(analysis)),
+                    "{} both preserves and invalidates {stage:?}",
+                    stage.name
+                );
+                assert_eq!(
+                    stage.preserved_analyses.len() + stage.invalidated_analyses.len(),
+                    ALL_ANALYSES.len(),
+                    "{} leaves analysis freshness unspecified",
+                    stage.name
+                );
+            }
+        }
+
+        let plan = build_pipeline_plan(OptimizationLevel::O2, false, OptimizationTarget::Balanced);
+        let dead_context = plan
+            .stages()
+            .into_iter()
+            .find(|stage| stage.name == DEAD_CONTEXT_ELIMINATION)
+            .expect("dead-context stage");
+        assert!(
+            dead_context
+                .required_analyses
+                .contains(&CompilerAnalysisKind::PromptContract)
+        );
+        assert!(
+            dead_context
+                .invalidated_analyses
+                .contains(&CompilerAnalysisKind::DagUse)
+        );
+    }
+
+    #[test]
+    fn unknown_explicit_stages_invalidate_all_cached_analyses() {
+        let stage = explicit_stage("third-party-rewrite");
+        assert!(stage.required_analyses.is_empty());
+        assert!(stage.preserved_analyses.is_empty());
+        assert_eq!(stage.invalidated_analyses, ALL_ANALYSES);
     }
 }

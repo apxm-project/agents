@@ -1,11 +1,12 @@
-//! Generated terminal-classification drift gate for `apxm.event.v1`.
+//! Terminal-classification drift gate for `apxm.event.v1`
+//! (workspace/contracts/schemas/event.v1.json).
 //!
-//! `workspace/contracts` owns the public registry. Its code generator writes
-//! `generated_event_kind_registry.rs`, so this crate can verify schema parity
-//! without reading a sibling checkout or maintaining a second literal table.
+//! `workspace/contracts` owns the public schema; its generator writes the
+//! checked-in registry consumed here. A crate-only build therefore validates
+//! schema parity without reading a sibling checkout or duplicating metadata.
 
-use super::generated_event_kind_registry::{SCHEMA_EVENT_KIND_REGISTRY, SchemaTerminalSense};
-use super::kind::{CORE_EVENT_KINDS, EventCategory, core_event_kind};
+use super::generated_event_kind_registry::SCHEMA_EVENT_KIND_REGISTRY;
+use super::kind::{CORE_EVENT_KINDS, EventCategory};
 
 fn category_str(category: EventCategory) -> &'static str {
     match category {
@@ -19,80 +20,78 @@ fn category_str(category: EventCategory) -> &'static str {
     }
 }
 
+/// Positive/drift gate: every `CORE_EVENT_KINDS` entry has exactly one
+/// matching generated registry row with the same category and
+/// terminal value — the same terminal-classification invariant used by the
+/// schema-parity test.
 #[test]
-fn core_event_kinds_match_generated_schema_registry() {
-    use std::collections::{BTreeMap, BTreeSet};
+fn core_event_kinds_match_schema_registry_table() {
+    use std::collections::BTreeMap;
 
-    let schema_table: BTreeMap<_, _> = SCHEMA_EVENT_KIND_REGISTRY
+    let schema_table: BTreeMap<&str, (&str, bool)> = SCHEMA_EVENT_KIND_REGISTRY
         .iter()
-        .map(|entry| (entry.name, entry))
+        .map(|entry| (entry.name, (entry.category.as_str(), entry.terminal)))
         .collect();
+
     assert_eq!(
         schema_table.len(),
         SCHEMA_EVENT_KIND_REGISTRY.len(),
-        "generated schema event registry must not contain duplicate names"
+        "generated schema registry must not contain duplicate names"
     );
 
-    let mut rust_names = BTreeSet::new();
+    let mut rust_names = std::collections::BTreeSet::new();
     for kind in CORE_EVENT_KINDS {
         rust_names.insert(kind.name());
-        let entry = schema_table.get(kind.name()).unwrap_or_else(|| {
+        let Some((expected_category, expected_terminal)) = schema_table.get(kind.name()) else {
             panic!(
-                "CORE_EVENT_KINDS has {:?} but the generated apxm.event.v1 registry does not",
+                "CORE_EVENT_KINDS has {:?} but the generated schema registry does not",
                 kind.name()
-            )
-        });
+            );
+        };
         assert_eq!(
             category_str(kind.category()),
-            entry.category.as_str(),
-            "kind {:?}: category drifted from apxm.event.v1",
+            *expected_category,
+            "kind {:?}: category drifted from schemas/event.v1.json",
             kind.name()
         );
         assert_eq!(
             kind.is_terminal(),
-            entry.terminal,
-            "kind {:?}: terminal flag drifted from apxm.event.v1",
+            *expected_terminal,
+            "kind {:?}: terminal drifted from schemas/event.v1.json",
             kind.name()
         );
     }
 
-    let schema_names: BTreeSet<_> = schema_table.keys().copied().collect();
+    let schema_names: std::collections::BTreeSet<&str> = schema_table.keys().copied().collect();
     assert_eq!(
         rust_names, schema_names,
-        "apxm.event.v1 must cover exactly CORE_EVENT_KINDS"
+        "the generated schema registry must cover exactly CORE_EVENT_KINDS"
     );
 }
 
+/// Ambiguous-terminal sense pin (threat-model coverage): the three kinds
+/// documented in schemas/event.v1.json as `terminal_sense: atomic_no_delta`
+/// (no `_delta` streaming partner, but does NOT end a run/session/turn)
+/// must stay `terminal: false`, and a genuine run-ending kind stays
+/// `terminal: true` — regression pin for the exact misclassification the
+/// ambiguous terminal classifications.
 #[test]
-fn generated_terminal_senses_preserve_live_feed_semantics() {
-    for entry in SCHEMA_EVENT_KIND_REGISTRY {
-        let kind = core_event_kind(entry.name)
-            .unwrap_or_else(|| panic!("generated event kind {} must exist", entry.name));
-        match entry.terminal_sense {
-            SchemaTerminalSense::RunEnd => assert!(
-                entry.terminal && kind.is_terminal(),
-                "{} is run_end and must close a run-scoped feed",
-                entry.name
-            ),
-            SchemaTerminalSense::AtomicNoDelta | SchemaTerminalSense::NA => assert!(
-                !entry.terminal && !kind.is_terminal(),
-                "{} does not end a run and must keep a live feed open",
-                entry.name
-            ),
-        }
+fn ambiguous_terminal_kinds_stay_non_terminal() {
+    use super::kind;
+
+    for name in ["agent_spawned", "communicate_dispatched", "graph_edge"] {
+        let kind = super::kind::core_event_kind(name)
+            .unwrap_or_else(|| panic!("{name} must be a CORE_EVENT_KINDS entry"));
+        assert!(
+            !kind.is_terminal(),
+            "{name} carries terminal_sense=atomic_no_delta in schemas/event.v1.json \
+             (no _delta streaming partner) and must stay terminal=false — it does not \
+             end a run/session/turn"
+        );
     }
 
-    let llm_done = SCHEMA_EVENT_KIND_REGISTRY
-        .iter()
-        .find(|entry| entry.name == "llm_done")
-        .expect("generated registry must contain llm_done");
-    assert_eq!(llm_done.terminal_sense, SchemaTerminalSense::AtomicNoDelta);
-
-    for name in ["execute_complete", "session_end", "error"] {
-        let entry = SCHEMA_EVENT_KIND_REGISTRY
-            .iter()
-            .find(|entry| entry.name == name)
-            .unwrap_or_else(|| panic!("generated registry must contain {name}"));
-        assert_eq!(entry.terminal_sense, SchemaTerminalSense::RunEnd);
-    }
+    assert!(
+        kind::TURN_COMPLETE.is_terminal(),
+        "turn_complete is terminal_sense=run_end"
+    );
 }

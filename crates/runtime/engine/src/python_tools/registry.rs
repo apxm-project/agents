@@ -1,125 +1,112 @@
-//! Python tool registry — resolves capability names to handler IDs.
-//!
-//! Built from the `tools.json` sidecar embedded in a compiled `.apxmobj` artifact.
+//! Python handler registry backed by the portable artifact sidecar.
 
 use super::constants::CAPABILITY_NAME;
 use apxm_core::error::RuntimeError;
-use serde::{Deserialize, Serialize};
+use apxm_core::types::{HandlerDescriptor, HandlerKind, HandlerLanguage, HandlerManifest};
 use std::collections::HashMap;
 use std::path::Path;
 
-/// A single tool descriptor from the `tools.json` manifest.
-#[derive(Debug, Clone, Deserialize, Serialize)]
-pub struct ToolDescriptor {
-    /// Unique handler identifier (`sha256:<hash>`).
-    pub handler_id: String,
-    /// Python module path (e.g. `myapp.tools`).
-    pub module: String,
-    /// Qualified name within the module (e.g. `add`).
-    pub qualname: String,
-    /// Human-friendly tool name (used as capability name).
-    pub name: String,
-    /// Human-friendly tool description.
-    #[serde(default)]
-    pub description: String,
-    /// JSON Schema for the tool's parameters.
-    pub schema: serde_json::Value,
-    /// Whether the joined capability policy declares this tool read-only.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub read_only: Option<bool>,
-    /// Whether the joined capability policy requires per-call approval.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub requires_approval: Option<bool>,
-    /// Source file for tools defined in executable scripts.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub source_file: Option<String>,
-}
+/// One portable handler descriptor.
+pub type ToolDescriptor = HandlerDescriptor;
 
-/// Registry of Python-backed tools, keyed by capability name.
+/// Registry of Python handlers, keyed by capability name and handler ID.
 pub struct PythonHandlerRegistry {
-    /// name -> descriptor
     tools: HashMap<String, ToolDescriptor>,
+    handlers: HashMap<String, ToolDescriptor>,
 }
 
 impl PythonHandlerRegistry {
-    /// Build a registry from a list of tool descriptors.
-    pub fn from_descriptors(descriptors: Vec<ToolDescriptor>) -> Self {
-        let tools = descriptors
-            .into_iter()
-            .map(|d| (d.name.clone(), d))
-            .collect();
-        Self { tools }
-    }
-
-    /// Load from a `tools.json` file path.
-    pub fn from_file(path: &Path) -> Result<Self, RuntimeError> {
-        let content = std::fs::read_to_string(path).map_err(|e| RuntimeError::Capability {
-            capability: CAPABILITY_NAME.into(),
-            message: format!("Failed to read tools.json at {}: {}", path.display(), e),
-        })?;
-        Self::from_json(&content)
-    }
-
-    /// Parse from a JSON string.
-    pub fn from_json(json: &str) -> Result<Self, RuntimeError> {
-        let descriptors: Vec<ToolDescriptor> =
-            serde_json::from_str(json).map_err(|e| RuntimeError::Capability {
+    /// Build a Python registry from the shared cross-language manifest.
+    pub fn from_manifest(manifest: HandlerManifest) -> Result<Self, RuntimeError> {
+        manifest
+            .validate()
+            .map_err(|error| RuntimeError::Capability {
                 capability: CAPABILITY_NAME.into(),
-                message: format!("Failed to parse tools.json: {}", e),
+                message: format!("Invalid handler manifest: {error}"),
             })?;
-        Ok(Self::from_descriptors(descriptors))
+
+        let mut tools = HashMap::new();
+        let mut handlers = HashMap::new();
+        for descriptor in manifest
+            .handlers
+            .into_iter()
+            .filter(|descriptor| descriptor.language == HandlerLanguage::Python)
+        {
+            if descriptor.kind == HandlerKind::Tool {
+                tools.insert(descriptor.name.clone(), descriptor.clone());
+            }
+            handlers.insert(descriptor.handler_id.clone(), descriptor);
+        }
+        Ok(Self { tools, handlers })
     }
 
-    /// Look up a tool by capability name, returning its handler_id.
+    /// Load a shared manifest from disk.
+    pub fn from_file(path: &Path) -> Result<Self, RuntimeError> {
+        let content = std::fs::read(path).map_err(|error| RuntimeError::Capability {
+            capability: CAPABILITY_NAME.into(),
+            message: format!(
+                "Failed to read handler manifest at {}: {error}",
+                path.display()
+            ),
+        })?;
+        Self::from_json_bytes(&content)
+    }
+
+    /// Parse a shared manifest from JSON.
+    pub fn from_json(json: &str) -> Result<Self, RuntimeError> {
+        Self::from_json_bytes(json.as_bytes())
+    }
+
+    /// Parse a shared manifest from UTF-8 JSON bytes.
+    pub fn from_json_bytes(json: &[u8]) -> Result<Self, RuntimeError> {
+        let manifest =
+            HandlerManifest::from_json_slice(json).map_err(|error| RuntimeError::Capability {
+                capability: CAPABILITY_NAME.into(),
+                message: format!("Failed to parse handler manifest: {error}"),
+            })?;
+        Self::from_manifest(manifest)
+    }
+
+    /// Look up a Python tool by capability name.
     pub fn resolve(&self, capability_name: &str) -> Option<&ToolDescriptor> {
         self.tools.get(capability_name)
     }
 
-    /// Iterate over registered tool descriptors.
+    /// Look up a Python tool or hook by stable handler ID.
+    pub fn resolve_handler_id(&self, handler_id: &str) -> Option<&ToolDescriptor> {
+        self.handlers.get(handler_id)
+    }
+
+    /// Iterate over Python-backed tools.
     pub fn descriptors(&self) -> impl Iterator<Item = &ToolDescriptor> {
         self.tools.values()
     }
 
-    /// Check if a capability name refers to a Python tool.
+    /// Check whether a capability name refers to a Python tool.
     pub fn contains(&self, capability_name: &str) -> bool {
         self.tools.contains_key(capability_name)
     }
 
-    /// All registered tool names.
+    /// All registered Python tool names.
     pub fn names(&self) -> Vec<&str> {
-        self.tools.keys().map(|s| s.as_str()).collect()
+        self.tools.keys().map(String::as_str).collect()
     }
 
-    /// Produce the manifest JSON array that gets passed to the worker on spawn.
+    /// Serialize the Python subset for the worker subprocess.
     pub fn manifest_json(&self) -> Result<String, RuntimeError> {
-        let descriptors: Vec<&ToolDescriptor> = self.tools.values().collect();
-        serde_json::to_string(&descriptors).map_err(|e| RuntimeError::Serialization(e.to_string()))
+        serde_json::to_string(&HandlerManifest::new(
+            self.handlers.values().cloned().collect(),
+        ))
+        .map_err(|error| RuntimeError::Serialization(error.to_string()))
     }
 
-    /// Number of registered tools.
+    /// Number of Python-backed tools.
     pub fn len(&self) -> usize {
         self.tools.len()
     }
 
-    /// Whether the registry is empty.
+    /// Whether no Python-backed tools are registered.
     pub fn is_empty(&self) -> bool {
         self.tools.is_empty()
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn registry_parses_joined_capability_policy() {
-        let registry = PythonHandlerRegistry::from_json(
-            r#"[{"handler_id":"sha256:abc","module":"mod","qualname":"fn","name":"echo","schema":{},"read_only":true,"requires_approval":false}]"#,
-        )
-        .unwrap();
-
-        let descriptor = registry.resolve("echo").unwrap();
-        assert_eq!(descriptor.read_only, Some(true));
-        assert_eq!(descriptor.requires_approval, Some(false));
     }
 }

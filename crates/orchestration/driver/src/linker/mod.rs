@@ -7,7 +7,9 @@ use apxm_artifact::{Artifact, ArtifactSection};
 use apxm_core::constants::extensions;
 use apxm_core::error::runtime::RuntimeError;
 use apxm_core::log_info;
-use apxm_core::types::{OptimizationLevel, PipelineConfig};
+use apxm_core::types::{
+    HANDLER_MANIFEST_ARTIFACT_SECTION, HandlerManifest, OptimizationLevel, PipelineConfig,
+};
 use apxm_runtime::{ExecutionEventEmitter, RuntimeConfig, RuntimeExecutionResult};
 
 use crate::{compiler::Compiler, config::ApXmConfig, error::DriverError, runtime::RuntimeExecutor};
@@ -84,86 +86,42 @@ pub struct LinkMetrics {
 }
 
 #[derive(Debug, Clone, Copy, Default)]
-struct FrontendHandlerSidecars<'a> {
-    python_tools: Option<&'a [u8]>,
-    typescript_tools: Option<&'a [u8]>,
-}
+struct FrontendHandlerManifest<'a>(Option<&'a [u8]>);
 
-impl<'a> FrontendHandlerSidecars<'a> {
-    const fn new(python_tools: Option<&'a [u8]>, typescript_tools: Option<&'a [u8]>) -> Self {
-        Self {
-            python_tools,
-            typescript_tools,
-        }
+impl<'a> FrontendHandlerManifest<'a> {
+    const fn new(data: Option<&'a [u8]>) -> Self {
+        Self(data)
     }
 
-    fn python_manifest(
-        self,
-    ) -> Result<Option<Vec<apxm_compiler::passes::PythonCapabilityManifestEntry>>, DriverError>
-    {
-        self.python_tools
-            .map(|data| serde_json::from_slice(data).map_err(|e| state_err(e.to_string())))
+    fn manifest_data(self) -> Option<&'a [u8]> {
+        self.0
+    }
+
+    fn manifest(self) -> Result<Option<HandlerManifest>, DriverError> {
+        self.manifest_data()
+            .map(|data| {
+                let manifest = HandlerManifest::from_json_slice(data)
+                    .map_err(|error| state_err(format!("invalid handler manifest: {error}")))?;
+                manifest
+                    .validate()
+                    .map_err(|error| state_err(format!("invalid handler manifest: {error}")))?;
+                Ok(manifest)
+            })
             .transpose()
     }
 
-    /// Attach captured Python and TypeScript sidecars only after the shared
-    /// script trust and sandbox policy admits them.
-    fn append_to_artifact(self, artifact: &mut Artifact) {
+    fn append_to_artifact(self, artifact: &mut Artifact) -> Result<(), DriverError> {
         if !apxm_runtime::script_admission::script_artifacts_trusted() {
-            return;
+            return Ok(());
         }
-        let sidecars = [
-            HandlerSidecar::new(
-                apxm_runtime::python_tools::CAPABILITY_NAME,
-                self.python_tools,
-            ),
-            HandlerSidecar::new(
-                apxm_runtime::typescript_tools::CAPABILITY_NAME,
-                self.typescript_tools,
-            ),
-        ];
-        add_artifact_sidecars(
-            artifact,
-            sidecars
-                .iter()
-                .map(|sidecar| sidecar as &dyn ArtifactSidecar),
-        );
-    }
-}
-
-trait ArtifactSidecar {
-    fn section_kind(&self) -> &'static str;
-    fn data(&self) -> Option<&[u8]>;
-
-    fn append_to(&self, artifact: &mut Artifact) {
-        if let Some(data) = self.data() {
+        if let Some(data) = self.manifest_data() {
+            self.manifest()?;
             artifact.add_section(ArtifactSection {
-                kind: self.section_kind().into(),
+                kind: HANDLER_MANIFEST_ARTIFACT_SECTION.into(),
                 data: data.to_vec(),
             });
         }
-    }
-}
-
-#[derive(Debug, Clone, Copy)]
-struct HandlerSidecar<'a> {
-    section_kind: &'static str,
-    data: Option<&'a [u8]>,
-}
-
-impl<'a> HandlerSidecar<'a> {
-    const fn new(section_kind: &'static str, data: Option<&'a [u8]>) -> Self {
-        Self { section_kind, data }
-    }
-}
-
-impl ArtifactSidecar for HandlerSidecar<'_> {
-    fn section_kind(&self) -> &'static str {
-        self.section_kind
-    }
-
-    fn data(&self) -> Option<&[u8]> {
-        self.data
+        Ok(())
     }
 }
 
@@ -203,7 +161,7 @@ impl Linker {
 
     /// Compile canonical AIR graph source into an executable artifact.
     pub fn compile_graph(&self, input: &Path) -> Result<Artifact, DriverError> {
-        self.compile_graph_inner(input, FrontendHandlerSidecars::default())
+        self.compile_graph_inner(input, FrontendHandlerManifest::default())
             .map(|(artifact, _)| artifact)
     }
 
@@ -215,13 +173,13 @@ impl Linker {
         &self,
         input: &Path,
     ) -> Result<(Artifact, Option<serde_json::Value>), DriverError> {
-        self.compile_graph_inner(input, FrontendHandlerSidecars::default())
+        self.compile_graph_inner(input, FrontendHandlerManifest::default())
     }
 
     fn compile_graph_inner(
         &self,
         input: &Path,
-        handler_sidecars: FrontendHandlerSidecars<'_>,
+        handler_manifest: FrontendHandlerManifest<'_>,
     ) -> Result<(Artifact, Option<serde_json::Value>), DriverError> {
         let Some(ref compiler) = self.compiler else {
             return Err(DriverError::Driver(
@@ -242,9 +200,9 @@ impl Linker {
             let (module, diagnostics) =
                 compiler.compile_air_with_config_and_diagnostics(&air_text, config)?;
             let diagnostics_json = Some(diagnostics.to_json());
-            let manifest = handler_sidecars.python_manifest()?;
-            let mut artifact = module.generate_artifact_with_manifest(None, manifest.as_deref())?;
-            handler_sidecars.append_to_artifact(&mut artifact);
+            let manifest = handler_manifest.manifest()?;
+            let mut artifact = module.generate_artifact_with_manifest(None, manifest.as_ref())?;
+            handler_manifest.append_to_artifact(&mut artifact)?;
 
             let dag = artifact
                 .entry_dag()
@@ -271,36 +229,24 @@ impl Linker {
         event_emitter: Option<Arc<dyn ExecutionEventEmitter>>,
         session_dir: Option<&Path>,
     ) -> Result<LinkResult, DriverError> {
-        self.run_graph_with_python_tools_sidecar(
-            input,
-            args,
-            event_emitter,
-            session_dir,
-            None,
-            None,
-        )
-        .await
+        self.run_graph_with_handler_manifest(input, args, event_emitter, session_dir, None)
+            .await
     }
 
-    /// Compile graph input and execute with an optional Python tools sidecar
-    /// extracted by the CLI's Python frontend bridge.
-    pub async fn run_graph_with_python_tools_sidecar(
+    /// Compile graph input and execute with an optional frontend handler manifest.
+    pub async fn run_graph_with_handler_manifest(
         &self,
         input: &Path,
         args: Vec<String>,
         event_emitter: Option<Arc<dyn ExecutionEventEmitter>>,
         session_dir: Option<&Path>,
-        python_tools_sidecar: Option<Vec<u8>>,
-        typescript_tools_sidecar: Option<Vec<u8>>,
+        handler_manifest: Option<Vec<u8>>,
     ) -> Result<LinkResult, DriverError> {
         log_info!("driver", "Compiling graph {}", input.display());
         #[cfg(feature = "metrics")]
         let compile_start = std::time::Instant::now();
-        let handler_sidecars = FrontendHandlerSidecars::new(
-            python_tools_sidecar.as_deref(),
-            typescript_tools_sidecar.as_deref(),
-        );
-        let (artifact, compiler_diagnostics) = self.compile_graph_inner(input, handler_sidecars)?;
+        let handler_manifest = FrontendHandlerManifest::new(handler_manifest.as_deref());
+        let (artifact, compiler_diagnostics) = self.compile_graph_inner(input, handler_manifest)?;
         #[cfg(feature = "metrics")]
         let compile_time = compile_start.elapsed();
 
@@ -342,15 +288,6 @@ impl Linker {
     /// processes may leak.
     pub fn shutdown(&self) {
         self.runtime.shutdown();
-    }
-}
-
-fn add_artifact_sidecars<'a>(
-    artifact: &mut Artifact,
-    sidecars: impl IntoIterator<Item = &'a dyn ArtifactSidecar>,
-) {
-    for sidecar in sidecars {
-        sidecar.append_to(artifact);
     }
 }
 
@@ -399,10 +336,15 @@ mod tests {
         artifact.sections().iter().any(|s| s.kind == kind)
     }
 
+    fn empty_handler_manifest() -> Vec<u8> {
+        serde_json::to_vec(&HandlerManifest::new(Vec::new()))
+            .expect("serialize empty handler manifest")
+    }
+
     /// Environment matrix for script-artifact admission: the
-    /// driver's `append_to_artifact` must not attach EITHER sidecar unless
+    /// driver's `append_to_artifact` must not attach a handler manifest unless
     /// the operator has asserted BOTH trust and sandbox — before this gate
-    /// the driver attached both sidecars unconditionally regardless of any
+    /// the driver attached handler metadata unconditionally regardless of any
     /// env var, so the CLI admitted and ran both languages with no policy at
     /// all. Trust-only and sandbox-only must fail closed identically to no
     /// vars.
@@ -418,26 +360,21 @@ mod tests {
             (true, true, true),
         ] {
             set_vars(trust, sandbox);
-            let sidecars =
-                FrontendHandlerSidecars::new(Some(b"[]".as_slice()), Some(b"[]".as_slice()));
+            let manifest = empty_handler_manifest();
+            let handler_manifest = FrontendHandlerManifest::new(Some(&manifest));
             let mut artifact = empty_artifact();
-            sidecars.append_to_artifact(&mut artifact);
+            handler_manifest.append_to_artifact(&mut artifact).unwrap();
 
             assert_eq!(
-                has_section(&artifact, apxm_runtime::python_tools::CAPABILITY_NAME),
+                has_section(&artifact, HANDLER_MANIFEST_ARTIFACT_SECTION),
                 expect_attached,
-                "trust={trust} sandbox={sandbox}: python_tools section attach mismatch"
-            );
-            assert_eq!(
-                has_section(&artifact, apxm_runtime::typescript_tools::CAPABILITY_NAME),
-                expect_attached,
-                "trust={trust} sandbox={sandbox}: typescript_tools section attach mismatch"
+                "trust={trust} sandbox={sandbox}: handler manifest section attach mismatch"
             );
         }
     }
 
     /// Recovery: attaching under no vars is not sticky — the identical
-    /// sidecar pair attaches once both vars are set, proving the driver's
+    /// handler manifest attaches once both vars are set, proving the driver's
     /// gate is a pure function of env state.
     #[test]
     fn append_to_artifact_recovers_after_trust_and_sandbox_are_set() {
@@ -445,10 +382,13 @@ mod tests {
         let _guard = EnvGuard;
 
         set_vars(false, false);
-        let sidecars = FrontendHandlerSidecars::new(Some(b"[]".as_slice()), Some(b"[]".as_slice()));
+        let manifest = empty_handler_manifest();
+        let handler_manifest = FrontendHandlerManifest::new(Some(&manifest));
 
         let mut untrusted_artifact = empty_artifact();
-        sidecars.append_to_artifact(&mut untrusted_artifact);
+        handler_manifest
+            .append_to_artifact(&mut untrusted_artifact)
+            .unwrap();
         assert!(
             untrusted_artifact.sections().is_empty(),
             "no sidecar should attach without trust+sandbox"
@@ -456,11 +396,13 @@ mod tests {
 
         set_vars(true, true);
         let mut trusted_artifact = empty_artifact();
-        sidecars.append_to_artifact(&mut trusted_artifact);
+        handler_manifest
+            .append_to_artifact(&mut trusted_artifact)
+            .unwrap();
         assert_eq!(
             trusted_artifact.sections().len(),
-            2,
-            "both sidecars should attach for the identical pair once trusted+sandboxed"
+            1,
+            "the handler manifest attaches once trusted and sandboxed"
         );
     }
 }

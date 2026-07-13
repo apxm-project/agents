@@ -103,6 +103,7 @@ pub fn emit_air(module: &AirModule) -> Result<String, AirError> {
 }
 
 pub fn emit_program(modules: &[AirModule]) -> Result<String, AirError> {
+    super::validate::validate_program(modules)?;
     let mut mlir = String::from("module {\n");
     for module in modules {
         mlir.push_str(&emit_function(module)?);
@@ -1347,7 +1348,7 @@ fn quote_string(value: &str) -> String {
     escaped
 }
 
-fn sanitize_symbol_name(name: &str) -> String {
+pub(crate) fn sanitize_symbol_name(name: &str) -> String {
     let mut symbol = String::with_capacity(name.len().max(8));
     for ch in name.chars() {
         if ch.is_ascii_alphanumeric() || ch == '_' || ch == '.' {

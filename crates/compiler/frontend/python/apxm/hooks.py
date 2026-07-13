@@ -142,23 +142,16 @@ def hook(
 
 def hook_descriptor(h: HookFn) -> dict[str, Any]:
     """Build a handler manifest descriptor for a hook."""
-    import inspect
+    from .handler_manifest import hook_descriptor as build_hook_descriptor
 
-    module = getattr(h.fn, "__module__", "__unknown__") or "__unknown__"
-    qualname = getattr(h.fn, "__qualname__", h.fn.__name__)
-    descriptor: dict[str, Any] = {
-        "handler_id": h.handler_id,
-        "module": module,
-        "qualname": qualname,
-        "name": h.name,
-        "event": h.event,
-        "match": h.match,
-        "mode": h.mode,
-    }
-    source_file = inspect.getsourcefile(h.fn)
-    if source_file:
-        descriptor["source_file"] = source_file
-    return descriptor
+    return build_hook_descriptor(
+        handler_id=h.handler_id,
+        fn=h.fn,
+        name=h.name,
+        event=h.event,
+        match=h.match,
+        mode=h.mode,
+    )
 
 
 __all__ = [

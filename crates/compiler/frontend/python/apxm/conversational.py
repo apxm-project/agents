@@ -176,25 +176,21 @@ class ConversationalAgent:
         # Hooks share the @tool invocation path: add a tool-bridge manifest entry
         # for each hook handler so the runtime `PythonHandlerBridge` can resolve and
         # dispatch it by handler_id (constitution #4 — one Python-handler path).
-        import inspect as _inspect
+        from .handler_manifest import hook_descriptor
 
         for h in self.hooks:
             if h.handler_id in seen_ids:
                 continue
-            module = getattr(h.fn, "__module__", "__unknown__") or "__unknown__"
-            qualname = getattr(h.fn, "__qualname__", h.name)
-            desc = {
-                graph_keys.PYTHON_TOOL_MANIFEST_HANDLER_ID: h.handler_id,
-                graph_keys.PYTHON_TOOL_MANIFEST_MODULE: module,
-                graph_keys.PYTHON_TOOL_MANIFEST_QUALNAME: qualname,
-                graph_keys.PYTHON_TOOL_MANIFEST_NAME: h.name,
-                graph_keys.PYTHON_TOOL_MANIFEST_DESCRIPTION: f"lifecycle hook ({h.event})",
-                graph_keys.PYTHON_TOOL_MANIFEST_SCHEMA: {},
-            }
-            src = _inspect.getsourcefile(h.fn)
-            if src:
-                desc[graph_keys.PYTHON_TOOL_MANIFEST_SOURCE_FILE] = src
-            python_tools.append(desc)
+            python_tools.append(
+                hook_descriptor(
+                    handler_id=h.handler_id,
+                    fn=h.fn,
+                    name=h.name,
+                    event=h.event,
+                    match=h.match,
+                    mode=h.mode,
+                )
+            )
             seen_ids.add(h.handler_id)
 
         metadata = {
@@ -215,12 +211,8 @@ class ConversationalAgent:
 
     def _build_turn_flow(self) -> GraphRecorder:
         """The author turn body: recall → ask(tools) → remember → done."""
-        # Stamp the policy into this graph's metadata so the emitted AIR carries
-        # the compaction policy into THIS graph's own `metadata`, the only
-        # metadata path `to_air()`/`emit_multi_flow_module` actually reads
-        # (`ir.py` — `ApxmGraph.to_dict()`). The old code stuffed it into
-        # `MultiFlowArtifact.metadata`, which `to_air()` never consults, so
-        # `compact_at_tokens`/`strategy` never reached the AIR text.
+        # The turn graph owns this metadata because `to_air()` serializes each
+        # graph's metadata into the compiler DTO.
         graph_metadata: dict[str, Any] = {graph_keys.IS_ENTRY: False}
         has_post_turn_hook = any(h.event == "post_turn" for h in self.hooks)
         if self.compaction is not None:

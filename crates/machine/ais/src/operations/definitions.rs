@@ -806,13 +806,23 @@ pub static AIS_OPERATIONS: &[OperationSpec] = &[
             The lightest LLM operation — no chain-of-thought or extended thinking. Use for \
             straightforward questions, classifications, extractions, or reformulations. \
             Template strings support named `{input}` interpolation for dataflow inputs via \
-            the node's `input_names` array.",
+            the node's positional `input_names` array. Optional `input_roles` entries align \
+            with those names and context operands to distinguish user, system, dependency-only, \
+            tool-context, and control inputs.",
         latency: OperationLatency::Medium,
         example_json: Some(
             r#"{"id": 1, "op": "ASK", "attributes": {"template_str": "Summarize: {source}", "input_names": ["source"]}}"#,
         ),
         fields: &[
             OperationField::required(attrs::TEMPLATE_STR, "Prompt template for the question"),
+            OperationField::optional(
+                attrs::INPUT_NAMES,
+                "Positional names for LLM context inputs referenced by template placeholders",
+            ),
+            OperationField::optional(
+                attrs::INPUT_ROLES,
+                "Positional LLM context roles: user, system, dependency_only, tool_context, or control",
+            ),
             OperationField::optional(attrs::TEMPERATURE, "Sampling temperature (0.0-1.0)"),
             OperationField::optional_ref(
                 attrs::MODEL,
@@ -853,6 +863,14 @@ pub static AIS_OPERATIONS: &[OperationSpec] = &[
         ),
         fields: &[
             OperationField::required(attrs::TEMPLATE_STR, "Prompt template for deep reasoning"),
+            OperationField::optional(
+                attrs::INPUT_NAMES,
+                "Positional names for LLM context inputs referenced by template placeholders",
+            ),
+            OperationField::optional(
+                attrs::INPUT_ROLES,
+                "Positional LLM context roles: user, system, dependency_only, tool_context, or control",
+            ),
             OperationField::optional(attrs::BUDGET, "Token budget for extended thinking"),
             OperationField::optional(attrs::TEMPERATURE, "Sampling temperature (0.0-1.0)"),
             OperationField::optional_ref(
@@ -897,6 +915,14 @@ pub static AIS_OPERATIONS: &[OperationSpec] = &[
             OperationField::required(
                 attrs::TEMPLATE_STR,
                 "Prompt template for structured reasoning",
+            ),
+            OperationField::optional(
+                attrs::INPUT_NAMES,
+                "Positional names for LLM context inputs referenced by template placeholders",
+            ),
+            OperationField::optional(
+                attrs::INPUT_ROLES,
+                "Positional LLM context roles: user, system, dependency_only, tool_context, or control",
             ),
             OperationField::optional(attrs::TEMPERATURE, "Sampling temperature (0.0-1.0)"),
             OperationField::optional_ref(
@@ -1162,13 +1188,12 @@ pub static AIS_OPERATIONS: &[OperationSpec] = &[
             The matched branch's result becomes the output token.",
         latency: OperationLatency::None,
         example_json: Some(
-            r#"{"id": 3, "op": "SWITCH", "attributes": {"discriminant": "topic_kind", "cases": [{"label": "math", "node_id": 4}, {"label": "code", "node_id": 5}], "default": "6"}}"#,
+            r#"{"id": 3, "op": "SWITCH", "attributes": {"discriminant": "topic_kind", "case_labels": ["math", "code"]}}"#,
         ),
         fields: &[
             OperationField::required(attrs::DISCRIMINANT, "Token to match against case labels"),
-            OperationField::required("cases", "Array of case label/destination pairs"),
-            OperationField::optional("default", "Default destination if no case matches"),
-        ], // cases/default are structural array fields, not attrs
+            OperationField::required(attrs::CASE_LABELS, "Ordered labels for switch case regions"),
+        ],
         needs_submission: false,
         min_inputs: 1,
         produces_output: true,
@@ -1950,9 +1975,9 @@ pub static AIS_OPERATIONS: &[OperationSpec] = &[
             and yields a value to the parent SWITCH node. Not available in the public AIS.",
         latency: OperationLatency::None,
         example_json: None,
-        fields: &[OperationField::required(
+        fields: &[OperationField::optional(
             attrs::VALUE,
-            "The value to yield from the region",
+            "Optional literal value when the yielded token does not arrive through the region input",
         )],
         needs_submission: false,
         min_inputs: 1,
@@ -2253,6 +2278,62 @@ mod tests {
             "AISOps.td declares attributes absent from attrs::ALL_ATTR_NAMES \
              (add the const or fix the drift): {unknown:?}"
         );
+    }
+
+    #[test]
+    fn llm_ops_declare_the_positional_prompt_role_contract() {
+        let source = ais_ops_td_source();
+        for (tablegen_name, operation_type) in [
+            ("Ask", AISOperationType::Ask),
+            ("Think", AISOperationType::Think),
+            ("Reason", AISOperationType::Reason),
+        ] {
+            let definition_start = format!("def AIS_{tablegen_name}Op");
+            let after_definition = source
+                .split_once(&definition_start)
+                .unwrap_or_else(|| panic!("missing {definition_start} declaration"))
+                .1;
+            let operation_source = after_definition
+                .split_once("\ndef AIS_")
+                .map_or(after_definition, |(operation_source, _)| operation_source);
+            assert!(
+                operation_source.contains("OptionalAttr<ArrayAttr>:$input_names"),
+                "{tablegen_name} must preserve the positional input_names contract"
+            );
+            assert!(
+                operation_source.contains("OptionalAttr<ArrayAttr>:$input_roles"),
+                "{tablegen_name} must expose typed positional input roles"
+            );
+
+            let spec = get_operation_spec(operation_type);
+            assert!(
+                spec.get_field(attrs::INPUT_NAMES).is_some(),
+                "{} must describe input_names in the operation catalog",
+                spec.name
+            );
+            assert!(
+                spec.get_field(attrs::INPUT_ROLES).is_some(),
+                "{} must describe input_roles in the operation catalog",
+                spec.name
+            );
+        }
+    }
+
+    #[test]
+    fn llm_specs_declare_positional_prompt_input_metadata() {
+        for operation in [
+            AISOperationType::Ask,
+            AISOperationType::Think,
+            AISOperationType::Reason,
+        ] {
+            let spec = get_operation_spec(operation);
+            for name in [attrs::INPUT_NAMES, attrs::INPUT_ROLES] {
+                let field = spec
+                    .get_field(name)
+                    .unwrap_or_else(|| panic!("{} must declare {name}", spec.name));
+                assert!(!field.required, "{} must remain optional", field.name);
+            }
+        }
     }
 
     #[test]
