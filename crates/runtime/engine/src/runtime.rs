@@ -1943,10 +1943,10 @@ mod tests {
         let key = crate::scheduler::park_registry::session_recv_key(session_id);
         assert_eq!(
             crate::scheduler::park_registry::wake(&key, Value::String("first".to_string())),
-            1,
+            Ok(1),
             "the initial recv must be parked before the runtime returns"
         );
-        let _ = crate::scheduler::park_registry::wake(&key, Value::String("finish".to_string()));
+        crate::scheduler::park_registry::wake(&key, Value::String("finish".to_string())).unwrap();
     }
 
     #[test]
@@ -2493,7 +2493,8 @@ mod tests {
             crate::scheduler::park_registry::wake(
                 "some_other_checkpoint",
                 Value::String("resumed".to_string()),
-            );
+            )
+            .unwrap();
         };
 
         let (outcome, _) = tokio::join!(

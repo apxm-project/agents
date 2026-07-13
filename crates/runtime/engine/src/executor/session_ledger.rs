@@ -9,8 +9,38 @@
 //! threaded onto `ExecutionContext` (inherited by child contexts).
 
 use std::collections::HashMap;
-use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex, OnceLock};
+
+use thiserror::Error;
+
+/// Typed session-ledger failures surfaced to runtime and Server callers.
+#[derive(Debug, Clone, PartialEq, Eq, Error)]
+pub enum SessionLedgerError {
+    /// The next turn would exceed the configured session cap.
+    #[error("session turn cap reached ({cap})")]
+    TurnCapReached { cap: usize },
+    /// The next tool call would exceed the configured session budget.
+    #[error("session tool budget exhausted for '{tool}' ({budget})")]
+    ToolBudgetExhausted { tool: String, budget: usize },
+    /// The durable store could not be initialized.
+    #[error("failed to initialize session ledger at {path}: {message}")]
+    DurableInitialization { path: String, message: String },
+    /// A durable session row could not be read.
+    #[error("failed to read durable session ledger for '{session_id}': {message}")]
+    DurableRead { session_id: String, message: String },
+    /// A durable session row could not be written.
+    #[error("failed to write durable session ledger for '{session_id}': {message}")]
+    DurableWrite { session_id: String, message: String },
+    /// A durable session row exists but is not valid for the current typed schema.
+    #[error("invalid durable session ledger for '{session_id}': {message}")]
+    CorruptRecord { session_id: String, message: String },
+}
+
+#[derive(Debug, Default)]
+struct LedgerState {
+    turns_used: usize,
+    tool_consumed: HashMap<String, usize>,
+}
 
 /// Per-session caps/budgets.
 #[derive(Debug)]
@@ -22,16 +52,11 @@ pub struct SessionLedger {
     session_id: OnceLock<String>,
     /// Max substantive turns for the session (`None` = unbounded).
     turn_cap: Option<usize>,
-    turns_used: AtomicUsize,
     /// Per-tool call budget for the whole session (`None` entry = unbounded).
     tool_budgets: HashMap<String, usize>,
-    tool_consumed: Mutex<HashMap<String, usize>>,
-    /// Fail-closed flag: set when a durable rehydration found a persisted row
-    /// for this session that could not be parsed with confidence. A poisoned
-    /// ledger denies every further turn/tool charge rather than silently
-    /// resuming from zero (constitution: a restart must never be a free
-    /// cap refill — see the restart-state reconstruction invariant).
-    poisoned: AtomicBool,
+    /// Serializes each proposed charge with its durable write. The in-memory
+    /// counters move only after SQLite accepts the corresponding next state.
+    state: Mutex<LedgerState>,
 }
 
 impl SessionLedger {
@@ -39,87 +64,75 @@ impl SessionLedger {
         Self {
             session_id: OnceLock::new(),
             turn_cap,
-            turns_used: AtomicUsize::new(0),
             tool_budgets,
-            tool_consumed: Mutex::new(HashMap::new()),
-            poisoned: AtomicBool::new(false),
+            state: Mutex::new(LedgerState::default()),
         }
     }
 
     /// Charge one turn; returns the new turn count, or `Err` if it would exceed
     /// the cap (the turn must be refused — fail-closed, constitution #9 keeps the
     /// runtime from serving unbounded turns).
-    pub fn charge_turn(&self) -> Result<usize, String> {
-        if self.poisoned.load(Ordering::SeqCst) {
-            return Err(
-                "session ledger could not be durably reconstructed after restart; denying turn (fail-closed)"
-                    .to_string(),
-            );
-        }
-        let next = self.turns_used.fetch_add(1, Ordering::SeqCst) + 1;
+    pub fn charge_turn(&self) -> Result<usize, SessionLedgerError> {
+        let mut state = self.state.lock().expect("session ledger poisoned");
+        let next = state.turns_used + 1;
         if let Some(cap) = self.turn_cap
             && next > cap
         {
-            self.turns_used.fetch_sub(1, Ordering::SeqCst);
-            return Err(format!("session turn cap reached ({cap})"));
+            return Err(SessionLedgerError::TurnCapReached { cap });
         }
-        self.persist_if_durable();
+        self.persist_if_durable(next, &state.tool_consumed)?;
+        state.turns_used = next;
         Ok(next)
     }
 
     pub fn turns_used(&self) -> usize {
-        self.turns_used.load(Ordering::SeqCst)
+        self.state
+            .lock()
+            .expect("session ledger poisoned")
+            .turns_used
     }
 
-    /// Whether this ledger's durable state could not be reconstructed with
-    /// confidence (fail-closed: every further turn/tool charge is denied).
-    pub fn is_poisoned(&self) -> bool {
-        self.poisoned.load(Ordering::SeqCst)
-    }
-
-    /// Charge one call against a tool's session budget. Returns `false` (without
-    /// charging) when the budget is exhausted or the ledger is poisoned;
-    /// `true` (and charges) otherwise.
-    pub fn charge_tool(&self, tool: &str) -> bool {
-        if self.poisoned.load(Ordering::SeqCst) {
-            return false;
+    /// Charge one call against a tool's session budget and return its new count.
+    pub fn charge_tool(&self, tool: &str) -> Result<usize, SessionLedgerError> {
+        let mut state = self.state.lock().expect("session ledger poisoned");
+        let used = state.tool_consumed.get(tool).copied().unwrap_or(0);
+        if let Some(&budget) = self.tool_budgets.get(tool)
+            && used >= budget
+        {
+            return Err(SessionLedgerError::ToolBudgetExhausted {
+                tool: tool.to_string(),
+                budget,
+            });
         }
-        let charged = {
-            let mut consumed = self.tool_consumed.lock().expect("ledger poisoned");
-            let used = consumed.entry(tool.to_string()).or_insert(0);
-            if let Some(budget) = self.tool_budgets.get(tool)
-                && *used >= *budget
-            {
-                false
-            } else {
-                *used += 1;
-                true
-            }
-        };
-        if charged {
-            self.persist_if_durable();
-        }
-        charged
+        let next = used + 1;
+        let mut next_consumed = state.tool_consumed.clone();
+        next_consumed.insert(tool.to_string(), next);
+        self.persist_if_durable(state.turns_used, &next_consumed)?;
+        state.tool_consumed = next_consumed;
+        Ok(next)
     }
 
     /// Persist current `turns_used`/`tool_consumed` durably, if both this
     /// ledger has been seeded with a `session_id` and a durable store is
     /// configured (`durable::init`). No-op otherwise (volatile mode).
-    fn persist_if_durable(&self) {
+    fn persist_if_durable(
+        &self,
+        turns_used: usize,
+        tool_consumed: &HashMap<String, usize>,
+    ) -> Result<(), SessionLedgerError> {
         let Some(session_id) = self.session_id.get() else {
-            return;
+            return Ok(());
         };
-        let consumed = self.tool_consumed.lock().expect("ledger poisoned").clone();
-        durable::persist(session_id, self.turns_used(), &consumed);
+        durable::persist(session_id, turns_used, tool_consumed)
     }
 
     /// Remaining per-tool call budget for the session (`None` entry omitted).
     pub fn tool_budgets_remaining(&self) -> HashMap<String, usize> {
-        let consumed = self.tool_consumed.lock().expect("ledger poisoned");
+        let state = self.state.lock().expect("session ledger poisoned");
         self.tool_budgets
             .iter()
             .map(|(tool, budget)| {
-                let used = consumed.get(tool).copied().unwrap_or(0);
+                let used = state.tool_consumed.get(tool).copied().unwrap_or(0);
                 (tool.clone(), budget.saturating_sub(used))
             })
             .collect()
@@ -148,20 +161,15 @@ pub enum TurnChargeOutcome {
     NoLedger,
     /// Turn charged; returns the new running turn count.
     Charged(usize),
-    /// Session turn cap would be exceeded — the turn must not proceed (fail-closed).
-    CapExceeded(String),
 }
 
 /// Charge one substantive turn when a session recv wakes, before re-arm delivers
 /// the user message. The recv re-arm path calls this so turn caps are enforced
 /// server-side without any host-side counting.
-pub fn charge_turn_for_wake(session_id: &str) -> TurnChargeOutcome {
+pub fn charge_turn_for_wake(session_id: &str) -> Result<TurnChargeOutcome, SessionLedgerError> {
     match get(session_id) {
-        None => TurnChargeOutcome::NoLedger,
-        Some(ledger) => match ledger.charge_turn() {
-            Ok(n) => TurnChargeOutcome::Charged(n),
-            Err(msg) => TurnChargeOutcome::CapExceeded(msg),
-        },
+        None => Ok(TurnChargeOutcome::NoLedger),
+        Some(ledger) => ledger.charge_turn().map(TurnChargeOutcome::Charged),
     }
 }
 
@@ -177,34 +185,24 @@ fn registry() -> &'static Mutex<HashMap<String, Arc<SessionLedger>>> {
 /// process restart, since the registry is a fresh, empty process-global map),
 /// rehydrates `turns_used`/`tool_consumed` from the durable store if one is
 /// configured ([`durable::init`]) and a row exists for `session_id`. A
-/// persisted row that fails to parse poisons the ledger (fail-closed) instead
-/// of silently starting the count over at zero.
-pub fn seed(session_id: &str, ledger: SessionLedger) -> Arc<SessionLedger> {
+/// durable read or typed decode failure is returned without inserting a fresh
+/// in-memory ledger, so restart cannot silently reset counters to zero.
+pub fn seed(
+    session_id: &str,
+    ledger: SessionLedger,
+) -> Result<Arc<SessionLedger>, SessionLedgerError> {
     let mut guard = registry().lock().expect("session ledger registry poisoned");
-    guard
-        .entry(session_id.to_string())
-        .or_insert_with(|| {
-            let _ = ledger.session_id.set(session_id.to_string());
-            match durable::load(session_id) {
-                durable::LoadOutcome::None => {}
-                durable::LoadOutcome::Found {
-                    turns_used,
-                    tool_consumed,
-                } => {
-                    ledger.turns_used.store(turns_used, Ordering::SeqCst);
-                    *ledger.tool_consumed.lock().expect("ledger poisoned") = tool_consumed;
-                }
-                durable::LoadOutcome::Corrupt => {
-                    tracing::error!(
-                        session_id,
-                        "durable session-ledger row could not be parsed; denying further turns/tools for this session (fail-closed)"
-                    );
-                    ledger.poisoned.store(true, Ordering::SeqCst);
-                }
-            }
-            Arc::new(ledger)
-        })
-        .clone()
+    if let Some(existing) = guard.get(session_id) {
+        return Ok(Arc::clone(existing));
+    }
+
+    let _ = ledger.session_id.set(session_id.to_string());
+    if let Some(loaded) = durable::load(session_id)? {
+        *ledger.state.lock().expect("session ledger poisoned") = loaded;
+    }
+    let ledger = Arc::new(ledger);
+    guard.insert(session_id.to_string(), Arc::clone(&ledger));
+    Ok(ledger)
 }
 
 /// Look up the ledger for `session_id`, if any.
@@ -235,7 +233,9 @@ pub mod durable {
     use std::sync::{Mutex, OnceLock};
 
     #[cfg(feature = "sqlite")]
-    use rusqlite::{Connection, params};
+    use rusqlite::{Connection, OptionalExtension, params};
+
+    use super::{LedgerState, SessionLedgerError};
 
     #[cfg(feature = "sqlite")]
     fn slot() -> &'static Mutex<Option<Connection>> {
@@ -243,17 +243,34 @@ pub mod durable {
         SLOT.get_or_init(|| Mutex::new(None))
     }
 
-    /// Outcome of a durable lookup for one session.
-    pub(super) enum LoadOutcome {
-        /// No durable store configured, or no row for this session (a
-        /// genuinely new session — not an ambiguous restart case).
-        None,
-        Found {
-            turns_used: usize,
-            tool_consumed: HashMap<String, usize>,
-        },
-        /// A row exists but could not be parsed with confidence.
-        Corrupt,
+    #[cfg(test)]
+    #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+    pub(super) enum FaultOperation {
+        Read,
+        Write,
+    }
+
+    #[cfg(test)]
+    fn faults() -> &'static Mutex<std::collections::HashSet<(FaultOperation, String)>> {
+        static FAULTS: OnceLock<Mutex<std::collections::HashSet<(FaultOperation, String)>>> =
+            OnceLock::new();
+        FAULTS.get_or_init(|| Mutex::new(std::collections::HashSet::new()))
+    }
+
+    #[cfg(test)]
+    pub(super) fn fail_next_for_test(operation: FaultOperation, session_id: &str) {
+        faults()
+            .lock()
+            .expect("session ledger fault injector poisoned")
+            .insert((operation, session_id.to_string()));
+    }
+
+    #[cfg(test)]
+    fn inject_failure(operation: FaultOperation, session_id: &str) -> bool {
+        faults()
+            .lock()
+            .expect("session ledger fault injector poisoned")
+            .remove(&(operation, session_id.to_string()))
     }
 
     /// Open (creating if needed) the durable session-ledger store at `path`.
@@ -261,12 +278,25 @@ pub mod durable {
     /// the same on-disk file (tests use this to model "the process died and
     /// came back").
     #[cfg(feature = "sqlite")]
-    pub fn init(path: &Path) -> Result<(), String> {
+    pub fn init(path: &Path) -> Result<(), SessionLedgerError> {
         if let Some(parent) = path.parent() {
-            std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
+            std::fs::create_dir_all(parent).map_err(|error| {
+                SessionLedgerError::DurableInitialization {
+                    path: path.display().to_string(),
+                    message: error.to_string(),
+                }
+            })?;
         }
-        let conn = Connection::open(path).map_err(|e| e.to_string())?;
-        conn.pragma_update(None, "journal_mode", "WAL").ok();
+        let conn =
+            Connection::open(path).map_err(|error| SessionLedgerError::DurableInitialization {
+                path: path.display().to_string(),
+                message: error.to_string(),
+            })?;
+        conn.pragma_update(None, "journal_mode", "WAL")
+            .map_err(|error| SessionLedgerError::DurableInitialization {
+                path: path.display().to_string(),
+                message: error.to_string(),
+            })?;
         conn.execute_batch(
             "CREATE TABLE IF NOT EXISTS session_ledger (
                 session_id TEXT PRIMARY KEY,
@@ -274,14 +304,20 @@ pub mod durable {
                 tool_consumed_json TEXT NOT NULL
             );",
         )
-        .map_err(|e| e.to_string())?;
+        .map_err(|error| SessionLedgerError::DurableInitialization {
+            path: path.display().to_string(),
+            message: error.to_string(),
+        })?;
         *slot().lock().expect("session ledger durable slot poisoned") = Some(conn);
         Ok(())
     }
 
     #[cfg(not(feature = "sqlite"))]
-    pub fn init(_path: &Path) -> Result<(), String> {
-        Err("durable session-ledger persistence requires the 'sqlite' feature".to_string())
+    pub fn init(path: &Path) -> Result<(), SessionLedgerError> {
+        Err(SessionLedgerError::DurableInitialization {
+            path: path.display().to_string(),
+            message: "durable session-ledger persistence requires the 'sqlite' feature".to_string(),
+        })
     }
 
     /// Drop the durable connection (test-only: simulates the process dying —
@@ -303,17 +339,34 @@ pub mod durable {
         session_id: &str,
         turns_used: usize,
         tool_consumed: &HashMap<String, usize>,
-    ) {
+    ) -> Result<(), SessionLedgerError> {
         let guard = slot().lock().expect("session ledger durable slot poisoned");
-        let Some(conn) = guard.as_ref() else { return };
-        let Ok(json) = serde_json::to_string(tool_consumed) else {
-            return;
+        let Some(conn) = guard.as_ref() else {
+            return Ok(());
         };
-        let _ = conn.execute(
+        #[cfg(test)]
+        if inject_failure(FaultOperation::Write, session_id) {
+            return Err(SessionLedgerError::DurableWrite {
+                session_id: session_id.to_string(),
+                message: "injected write failure".to_string(),
+            });
+        }
+        let json = serde_json::to_string(tool_consumed).map_err(|error| {
+            SessionLedgerError::DurableWrite {
+                session_id: session_id.to_string(),
+                message: error.to_string(),
+            }
+        })?;
+        conn.execute(
             "INSERT INTO session_ledger (session_id, turns_used, tool_consumed_json) VALUES (?1, ?2, ?3)
              ON CONFLICT(session_id) DO UPDATE SET turns_used = excluded.turns_used, tool_consumed_json = excluded.tool_consumed_json",
             params![session_id, turns_used.min(i64::MAX as usize) as i64, json],
-        );
+        )
+        .map_err(|error| SessionLedgerError::DurableWrite {
+            session_id: session_id.to_string(),
+            message: error.to_string(),
+        })?;
+        Ok(())
     }
 
     #[cfg(not(feature = "sqlite"))]
@@ -321,37 +374,56 @@ pub mod durable {
         _session_id: &str,
         _turns_used: usize,
         _tool_consumed: &HashMap<String, usize>,
-    ) {
+    ) -> Result<(), SessionLedgerError> {
+        Ok(())
     }
 
     #[cfg(feature = "sqlite")]
-    pub(super) fn load(session_id: &str) -> LoadOutcome {
+    pub(super) fn load(session_id: &str) -> Result<Option<LedgerState>, SessionLedgerError> {
         let guard = slot().lock().expect("session ledger durable slot poisoned");
         let Some(conn) = guard.as_ref() else {
-            return LoadOutcome::None;
+            return Ok(None);
         };
-        let row: Option<(i64, String)> = conn
+        #[cfg(test)]
+        if inject_failure(FaultOperation::Read, session_id) {
+            return Err(SessionLedgerError::DurableRead {
+                session_id: session_id.to_string(),
+                message: "injected read failure".to_string(),
+            });
+        }
+        let row = conn
             .query_row(
                 "SELECT turns_used, tool_consumed_json FROM session_ledger WHERE session_id = ?1",
                 params![session_id],
-                |row| Ok((row.get(0)?, row.get(1)?)),
+                |row| Ok((row.get::<_, i64>(0)?, row.get::<_, String>(1)?)),
             )
-            .ok();
+            .optional()
+            .map_err(|error| SessionLedgerError::DurableRead {
+                session_id: session_id.to_string(),
+                message: error.to_string(),
+            })?;
         let Some((turns_used, tool_consumed_json)) = row else {
-            return LoadOutcome::None;
+            return Ok(None);
         };
-        match serde_json::from_str::<HashMap<String, usize>>(&tool_consumed_json) {
-            Ok(tool_consumed) => LoadOutcome::Found {
-                turns_used: usize::try_from(turns_used).unwrap_or(0),
-                tool_consumed,
-            },
-            Err(_) => LoadOutcome::Corrupt,
-        }
+        let turns_used =
+            usize::try_from(turns_used).map_err(|_| SessionLedgerError::CorruptRecord {
+                session_id: session_id.to_string(),
+                message: "turns_used is negative or out of range".to_string(),
+            })?;
+        let tool_consumed = serde_json::from_str::<HashMap<String, usize>>(&tool_consumed_json)
+            .map_err(|error| SessionLedgerError::CorruptRecord {
+                session_id: session_id.to_string(),
+                message: error.to_string(),
+            })?;
+        Ok(Some(LedgerState {
+            turns_used,
+            tool_consumed,
+        }))
     }
 
     #[cfg(not(feature = "sqlite"))]
-    pub(super) fn load(_session_id: &str) -> LoadOutcome {
-        LoadOutcome::None
+    pub(super) fn load(_session_id: &str) -> Result<Option<LedgerState>, SessionLedgerError> {
+        Ok(None)
     }
 }
 
@@ -381,18 +453,23 @@ mod tests {
         let mut budgets = HashMap::new();
         budgets.insert("lookup".to_string(), 2);
         let l = SessionLedger::new(None, budgets);
-        assert!(l.charge_tool("lookup"));
-        assert!(l.charge_tool("lookup"));
-        assert!(!l.charge_tool("lookup"), "third lookup exceeds budget of 2");
-        assert!(l.charge_tool("other"), "untracked tool is unbounded");
+        assert_eq!(l.charge_tool("lookup").unwrap(), 1);
+        assert_eq!(l.charge_tool("lookup").unwrap(), 2);
+        assert_eq!(
+            l.charge_tool("lookup"),
+            Err(SessionLedgerError::ToolBudgetExhausted {
+                tool: "lookup".to_string(),
+                budget: 2,
+            })
+        );
+        assert_eq!(l.charge_tool("other").unwrap(), 1);
     }
 
     #[test]
     fn registry_seed_is_idempotent() {
         let id = "sess-ledger-test-unique";
-        let first = seed(id, SessionLedger::new(Some(5), HashMap::new()));
-        let second = seed(id, SessionLedger::new(Some(99), HashMap::new()));
-        // Idempotent: the second seed returns the first ledger (cap stays 5).
+        let first = seed(id, SessionLedger::new(Some(5), HashMap::new())).unwrap();
+        let second = seed(id, SessionLedger::new(Some(99), HashMap::new())).unwrap();
         assert!(Arc::ptr_eq(&first, &second));
         assert!(get(id).is_some());
         remove(id);
@@ -402,15 +479,15 @@ mod tests {
     #[test]
     fn charge_turn_for_wake_enforces_cap_via_registry() {
         let id = "sess-charge-wake-cap";
-        seed(id, SessionLedger::new(Some(1), HashMap::new()));
+        seed(id, SessionLedger::new(Some(1), HashMap::new())).unwrap();
         assert_eq!(
             charge_turn_for_wake(id),
-            TurnChargeOutcome::Charged(1),
+            Ok(TurnChargeOutcome::Charged(1)),
             "first wake charges turn 1"
         );
-        assert!(
-            matches!(charge_turn_for_wake(id), TurnChargeOutcome::CapExceeded(_)),
-            "second wake exceeds cap of 1"
+        assert_eq!(
+            charge_turn_for_wake(id),
+            Err(SessionLedgerError::TurnCapReached { cap: 1 })
         );
         remove(id);
     }
@@ -419,7 +496,7 @@ mod tests {
     fn charge_turn_for_wake_without_ledger() {
         assert_eq!(
             charge_turn_for_wake("sess-no-ledger-xyz"),
-            TurnChargeOutcome::NoLedger
+            Ok(TurnChargeOutcome::NoLedger)
         );
     }
 
@@ -431,100 +508,84 @@ mod tests {
         assert_eq!(l.turns_remaining(), Some(2));
     }
 
-    /// Positive + negative/regression: charge N of M turns, simulate a
-    /// process restart (drop the durable connection and the in-memory
-    /// registry, then reopen the same on-disk file), rehydrate via `seed`,
-    /// and assert `turns_used() == N` with the cap still enforced — not
-    /// reset. Also proves the negative: a naive from-scratch `SessionLedger`
-    /// for the same session (ignoring durable state) would incorrectly
-    /// report 0 and let the cap be exceeded — the exact fail-open regression
-    /// this durability layer exists to prevent.
-    ///
-    /// Single test (not split across several `#[test]` fns) because the
-    /// durable backing is one process-global slot; `cargo test` runs test
-    /// functions concurrently by default; splitting this across tests would
-    /// race on that shared slot.
     #[test]
-    fn restart_preserves_turn_cap() {
+    fn durable_failures_and_concurrent_restart_are_failure_atomic() {
         let tmp = tempfile::tempdir().unwrap();
         let db_path = tmp.path().join("session_ledger.sqlite");
-        let session_id = "sess-restart-preserves-cap";
+        let session_id = "sess-durable-failure-atomic";
 
         durable::init(&db_path).expect("open durable session-ledger store");
-        let ledger = seed(session_id, SessionLedger::new(Some(3), HashMap::new()));
-        assert_eq!(ledger.charge_turn().unwrap(), 1);
-        assert_eq!(ledger.charge_turn().unwrap(), 2);
-        assert_eq!(ledger.turns_used(), 2);
+        let ledger = seed(session_id, SessionLedger::new(Some(16), HashMap::new())).unwrap();
 
-        // Simulate a process restart: drop the durable connection AND the
-        // in-memory registry entry (a fresh process has neither), then
-        // reopen the same on-disk file as boot would.
+        durable::fail_next_for_test(durable::FaultOperation::Write, session_id);
+        assert!(matches!(
+            ledger.charge_turn(),
+            Err(SessionLedgerError::DurableWrite { .. })
+        ));
+        assert_eq!(ledger.turns_used(), 0);
+
+        let tool_session_id = "sess-tool-write-failure-atomic";
+        let mut budgets = HashMap::new();
+        budgets.insert("lookup".to_string(), 1);
+        let tool_ledger = seed(tool_session_id, SessionLedger::new(None, budgets)).unwrap();
+        durable::fail_next_for_test(durable::FaultOperation::Write, tool_session_id);
+        assert!(matches!(
+            tool_ledger.charge_tool("lookup"),
+            Err(SessionLedgerError::DurableWrite { .. })
+        ));
+        assert_eq!(tool_ledger.tool_budgets_remaining()["lookup"], 1);
+        assert_eq!(tool_ledger.charge_tool("lookup").unwrap(), 1);
+
+        let workers: Vec<_> = (0..8)
+            .map(|_| {
+                let ledger = Arc::clone(&ledger);
+                std::thread::spawn(move || ledger.charge_turn().unwrap())
+            })
+            .collect();
+        let mut charged: Vec<_> = workers
+            .into_iter()
+            .map(|worker| worker.join().unwrap())
+            .collect();
+        charged.sort_unstable();
+        assert_eq!(charged, (1..=8).collect::<Vec<_>>());
+        assert_eq!(ledger.turns_used(), 8);
+
         durable::close_for_test();
         remove(session_id);
         durable::init(&db_path).expect("reopen durable session-ledger store after restart");
+        let rehydrated = seed(session_id, SessionLedger::new(Some(16), HashMap::new())).unwrap();
+        assert_eq!(rehydrated.turns_used(), 8);
 
-        // Regression guard: a naive rebuild (constructing a fresh ledger and
-        // reading it back WITHOUT going through `seed`'s rehydration) would
-        // report 0 turns used, not 2 — prove that's what "naive" looks like
-        // so the contrast with the real rehydration path below is explicit.
-        let naive = SessionLedger::new(Some(3), HashMap::new());
-        assert_eq!(
-            naive.turns_used(),
-            0,
-            "sanity: an unrehydrated fresh ledger must NOT already show 2 turns used"
-        );
+        remove(session_id);
+        durable::fail_next_for_test(durable::FaultOperation::Read, session_id);
+        assert!(matches!(
+            seed(session_id, SessionLedger::new(Some(16), HashMap::new())),
+            Err(SessionLedgerError::DurableRead { .. })
+        ));
+        assert!(get(session_id).is_none());
 
-        // Real rehydration path: `seed` seeing no in-memory entry for this
-        // session pulls the persisted row before handing back the ledger.
-        let rehydrated = seed(session_id, SessionLedger::new(Some(3), HashMap::new()));
-        assert_eq!(
-            rehydrated.turns_used(),
-            2,
-            "turn count survives restart via durable rehydration, not reset to 0"
-        );
-        assert!(!rehydrated.is_poisoned());
-
-        // Cap is still enforced against the RESTORED count, not a fresh cap:
-        // only one more turn (3rd of 3) should be allowed before it denies.
-        assert_eq!(rehydrated.charge_turn().unwrap(), 3);
-        assert!(
-            rehydrated.charge_turn().is_err(),
-            "4th turn must be denied: restart is not a free cap refill"
-        );
-
-        // Negative: a persisted row that fails to parse poisons the ledger
-        // (fail-closed) instead of silently starting the count over at zero.
-        // Kept in this same test (not a separate `#[test]` fn) because the
-        // durable backing is one process-global slot and `cargo test` runs
-        // test fns concurrently by default; a second fn would race on it.
-        let session_id = "sess-restart-corrupt-row";
-        // Write a row with an unparseable `tool_consumed_json` directly,
-        // simulating a truncated/corrupt durable write.
+        let corrupt_session_id = "sess-durable-corrupt-row";
         {
             let guard = durable::slot_for_test();
             let conn = guard.as_ref().unwrap();
             conn.execute(
                 "INSERT INTO session_ledger (session_id, turns_used, tool_consumed_json) VALUES (?1, ?2, ?3)",
-                rusqlite::params![session_id, 1i64, "{not valid json"],
+                rusqlite::params![corrupt_session_id, 1i64, "{not valid json"],
             )
             .unwrap();
         }
-
-        let rehydrated = seed(session_id, SessionLedger::new(Some(5), HashMap::new()));
-        assert!(
-            rehydrated.is_poisoned(),
-            "corrupt durable row must poison the ledger, not silently reset to 0"
-        );
-        assert!(
-            rehydrated.charge_turn().is_err(),
-            "poisoned ledger denies every further turn (fail-closed)"
-        );
-        assert!(
-            !rehydrated.charge_tool("any-tool"),
-            "poisoned ledger denies every further tool charge (fail-closed)"
-        );
+        assert!(matches!(
+            seed(
+                corrupt_session_id,
+                SessionLedger::new(Some(5), HashMap::new())
+            ),
+            Err(SessionLedgerError::CorruptRecord { .. })
+        ));
+        assert!(get(corrupt_session_id).is_none());
 
         durable::close_for_test();
         remove(session_id);
+        remove(tool_session_id);
+        remove(corrupt_session_id);
     }
 }
