@@ -176,6 +176,10 @@ pub const GRAPH_EDGE: EventKind = EventKind::new("graph_edge", EventCategory::To
 // Session event kinds
 pub const CONTEXT_COMPACTED: EventKind =
     EventKind::new("context_compacted", EventCategory::Observability, false);
+pub const MODEL_CONTEXT_METRICS: EventKind =
+    EventKind::new("model_context_metrics", EventCategory::Observability, false);
+pub const CAPABILITY_EFFECT_RECEIPT: EventKind =
+    EventKind::new("capability_effect_receipt", EventCategory::Observability, false);
 pub const MODEL_REROUTED: EventKind =
     EventKind::new("model_rerouted", EventCategory::Lifecycle, false);
 pub const CANCELLED: EventKind = EventKind::new("cancelled", EventCategory::Error, true);
@@ -266,6 +270,8 @@ pub const CORE_EVENT_KINDS: &[EventKind] = &[
     COMMUNICATE_DISPATCHED,
     GRAPH_EDGE,
     CONTEXT_COMPACTED,
+    MODEL_CONTEXT_METRICS,
+    CAPABILITY_EFFECT_RECEIPT,
     MODEL_REROUTED,
     CANCELLED,
     LOOP_DETECTED,

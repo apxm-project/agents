@@ -6,6 +6,7 @@
 
 use crate::executor::{ExecutionContext, Next, OperationMiddleware, Result};
 use crate::memory::MemorySpace;
+use apxm_capability_iface::events::{ModelContextCallKind, ModelContextMetrics};
 use apxm_core::types::{
     execution::Node,
     operations::AISOperationType,
@@ -262,6 +263,24 @@ impl ConversationMemoryMiddleware {
         );
         let request =
             apxm_backends::LLMRequest::new(prompt).with_operation_type(AISOperationType::Ask);
+        let reservation = match crate::executor::handlers::llm::reserve_model_call(ctx, &request) {
+            Ok(reservation) => reservation,
+            Err(error) => {
+                if let Some(emitter) = &ctx.event_emitter {
+                    emitter.emit_warning(
+                        "compaction_budget_reservation_denied",
+                        &format!("conversation compaction did not dispatch: {error}"),
+                    );
+                }
+                return;
+            }
+        };
+        if let Some(emitter) = &ctx.event_emitter {
+            emitter.emit_model_context_metrics(&ModelContextMetrics::unplanned(
+                Some(node.id),
+                ModelContextCallKind::Compaction,
+            ));
+        }
         let summary_result = if let Some(router) = &ctx.model_router {
             router.generate(request).await
         } else {
@@ -271,7 +290,18 @@ impl ConversationMemoryMiddleware {
         // a summarization failure degrades to a warning, never panics or
         // fails the turn, and never silently no-ops without a trace.
         let summary = match summary_result {
-            Ok(response) => response.content,
+            Ok(response) => {
+                if let Err(error) = reservation.reconcile(response.usage.total_tokens) {
+                    if let Some(emitter) = &ctx.event_emitter {
+                        emitter.emit_warning(
+                            "compaction_budget_reconciliation_failed",
+                            &format!("conversation compaction response was not admitted: {error}"),
+                        );
+                    }
+                    return;
+                }
+                response.content
+            }
             Err(e) => {
                 if let Some(emitter) = &ctx.event_emitter {
                     emitter.emit_warning(

@@ -15,7 +15,7 @@ use crate::{
     workspace::ScopeRegistry,
 };
 use apxm_backends::LLMRegistry;
-use apxm_capability_iface::{ApprovalContext, CapabilityFacade};
+use apxm_capability_iface::{ApprovalContext, CapabilityFacade, CapabilitySandboxPreflight};
 use apxm_core::InstructionConfig;
 use apxm_core::constants::cache;
 use apxm_core::paths::ApxmPaths;
@@ -24,6 +24,7 @@ use std::sync::Arc;
 
 use super::agent_scope::AgentScopeStack;
 use super::cancellation::CancellationToken;
+use super::capability_admission::metadata_admits_write;
 use super::dag_splicer::{DagSplicer, NoOpSplicer};
 use super::events::ExecutionEventEmitter;
 use super::fields_honored::FieldsHonoredCollector;
@@ -415,22 +416,36 @@ impl ExecutionContext {
     pub async fn invoke_capability(
         &self,
         name: &str,
-        mut args: std::collections::HashMap<String, apxm_core::types::values::Value>,
+        args: std::collections::HashMap<String, apxm_core::types::values::Value>,
     ) -> Result<apxm_core::types::values::Value, apxm_core::error::RuntimeError> {
-        self.charge_tool_call(name)?;
-        self.inject_tool_credential(name, &mut args);
-        self.capability_system.invoke(name, args).await
+        self.invoke_capability_prepared(
+            name,
+            args,
+            std::time::Duration::from_millis(apxm_core::constants::defaults::DEFAULT_TIMEOUT_MS),
+        )
+        .await
     }
 
     /// Like [`Self::invoke_capability`] but with an explicit timeout.
     pub async fn invoke_capability_with_timeout(
         &self,
         name: &str,
+        args: std::collections::HashMap<String, apxm_core::types::values::Value>,
+        timeout: std::time::Duration,
+    ) -> Result<apxm_core::types::values::Value, apxm_core::error::RuntimeError> {
+        self.invoke_capability_prepared(name, args, timeout).await
+    }
+
+    /// Apply the shared capability dispatch policy exactly once for every
+    /// native capability path: tool budget, credential injection, timeout, and
+    /// metadata-declared approval all reach the same façade invocation.
+    async fn invoke_capability_prepared(
+        &self,
+        name: &str,
         mut args: std::collections::HashMap<String, apxm_core::types::values::Value>,
         timeout: std::time::Duration,
     ) -> Result<apxm_core::types::values::Value, apxm_core::error::RuntimeError> {
-        self.charge_tool_call(name)?;
-        self.inject_tool_credential(name, &mut args);
+        self.prepare_capability_invocation(name, &mut args, false)?;
         let agent_code_owned = self
             .agent_scope_stack
             .peek()
@@ -456,6 +471,57 @@ impl ExecutionContext {
         self.capability_system
             .invoke_with_timeout_ctx(name, args, timeout, Some(approval_ctx))
             .await
+    }
+
+    /// Apply the execution-scoped policy shared by native and script-backed
+    /// capability calls before either implementation receives the arguments.
+    pub fn prepare_capability_invocation(
+        &self,
+        name: &str,
+        args: &mut std::collections::HashMap<String, apxm_core::types::values::Value>,
+        unregistered_requires_delegation: bool,
+    ) -> Result<(), apxm_core::error::RuntimeError> {
+        self.charge_tool_call(name)?;
+        self.inject_tool_credential(name, args);
+        self.ensure_capability_admitted(name, args, unregistered_requires_delegation)
+    }
+
+    /// Enforce execution-scoped admission for a capability invocation before it
+    /// reaches a native capability or an artifact-local script handler.
+    ///
+    /// Read-only and demonstrably sandboxed capabilities may proceed. Direct
+    /// mutating capabilities require an active runtime-minted grant for their
+    /// binding; malformed, expired, and non-mutating grants fail closed.
+    pub fn ensure_capability_admitted(
+        &self,
+        name: &str,
+        args: &std::collections::HashMap<String, apxm_core::types::values::Value>,
+        unregistered_requires_delegation: bool,
+    ) -> Result<(), apxm_core::error::RuntimeError> {
+        let capabilities = &self.capability_system;
+        if capabilities.has_capability(name) {
+            if capabilities.is_read_only(name) {
+                return Ok(());
+            }
+            match capabilities.sandbox_preflight(name, args) {
+                Ok(CapabilitySandboxPreflight::Sandboxed { .. }) => return Ok(()),
+                Ok(CapabilitySandboxPreflight::Direct) | Err(_) => {}
+            }
+        } else if !unregistered_requires_delegation {
+            return Ok(());
+        }
+
+        if metadata_admits_write(&self.metadata, name) {
+            return Ok(());
+        }
+
+        Err(apxm_core::error::RuntimeError::Capability {
+            capability: name.to_string(),
+            message: format!(
+                "capability '{name}' performs writes and is missing a capability grant; \
+                 mint a grant for its tool binding and present grant_* ids in capability_grant_ids"
+            ),
+        })
     }
 
     /// Charge one substantive session turn via the attached ledger. Used when
@@ -815,7 +881,23 @@ mod tests {
     /// `CapabilitySystem` — proves `ExecutionContext.capability_system:
     /// Arc<dyn CapabilityFacade>` is a real trait-object seam, not just a
     /// type alias for the one concrete type.
-    struct StubFacade;
+    struct StubFacade {
+        registered: bool,
+        read_only: bool,
+        direct_invoke_used: std::sync::atomic::AtomicBool,
+        approval_context_seen: std::sync::atomic::AtomicBool,
+    }
+
+    impl Default for StubFacade {
+        fn default() -> Self {
+            Self {
+                registered: true,
+                read_only: true,
+                direct_invoke_used: std::sync::atomic::AtomicBool::new(false),
+                approval_context_seen: std::sync::atomic::AtomicBool::new(false),
+            }
+        }
+    }
 
     #[async_trait::async_trait]
     impl apxm_capability_iface::CapabilityFacade for StubFacade {
@@ -824,6 +906,8 @@ mod tests {
             name: &str,
             _args: HashMap<String, apxm_core::types::values::Value>,
         ) -> Result<apxm_core::types::values::Value, apxm_core::error::RuntimeError> {
+            self.direct_invoke_used
+                .store(true, std::sync::atomic::Ordering::SeqCst);
             Ok(apxm_core::types::values::Value::String(format!(
                 "stub:{name}"
             )))
@@ -834,17 +918,22 @@ mod tests {
             name: &str,
             args: HashMap<String, apxm_core::types::values::Value>,
             _timeout: std::time::Duration,
-            _approval: Option<ApprovalContext<'_>>,
+            approval: Option<ApprovalContext<'_>>,
         ) -> Result<apxm_core::types::values::Value, apxm_core::error::RuntimeError> {
-            self.invoke(name, args).await
+            self.approval_context_seen
+                .store(approval.is_some(), std::sync::atomic::Ordering::SeqCst);
+            let _ = args;
+            Ok(apxm_core::types::values::Value::String(format!(
+                "stub:{name}"
+            )))
         }
 
         fn has_capability(&self, _name: &str) -> bool {
-            true
+            self.registered
         }
 
         fn is_read_only(&self, _name: &str) -> bool {
-            true
+            self.read_only
         }
 
         fn get_metadata(&self, _name: &str) -> Option<apxm_capability_iface::RuntimeCapability> {
@@ -882,12 +971,8 @@ mod tests {
                 .expect("memory"),
         );
         let aam = Aam::new();
-        let ctx = ExecutionContext::new(
-            memory,
-            Arc::new(LLMRegistry::new()),
-            Arc::new(StubFacade),
-            aam,
-        );
+        let facade = Arc::new(StubFacade::default());
+        let ctx = ExecutionContext::new(memory, Arc::new(LLMRegistry::new()), facade.clone(), aam);
         let result = ctx
             .invoke_capability("anything", HashMap::new())
             .await
@@ -896,5 +981,60 @@ mod tests {
             result,
             apxm_core::types::values::Value::String("stub:anything".to_string())
         );
+        assert!(
+            facade
+                .approval_context_seen
+                .load(std::sync::atomic::Ordering::SeqCst),
+            "default-timeout calls must pass the approval-aware façade context"
+        );
+        assert!(
+            !facade
+                .direct_invoke_used
+                .load(std::sync::atomic::Ordering::SeqCst),
+            "default-timeout calls must not bypass approval through CapabilityFacade::invoke"
+        );
+    }
+
+    #[tokio::test]
+    async fn script_capabilities_require_a_runtime_minted_mutating_grant() {
+        let memory = Arc::new(
+            MemorySystem::new(MemoryConfig::in_memory_ltm())
+                .await
+                .expect("memory"),
+        );
+        let aam = Aam::new();
+        let facade = Arc::new(StubFacade {
+            registered: false,
+            read_only: false,
+            ..Default::default()
+        });
+        let mut ctx = ExecutionContext::new(memory, Arc::new(LLMRegistry::new()), facade, aam);
+        let mut args = HashMap::new();
+        args.insert(
+            "payload".to_string(),
+            apxm_core::types::values::Value::String("example".to_string()),
+        );
+
+        let error = ctx
+            .prepare_capability_invocation("artifact.script", &mut args, true)
+            .expect_err("unregistered script capability must require a grant");
+        assert!(
+            error.to_string().contains("missing a capability grant"),
+            "unexpected admission error: {error}"
+        );
+
+        ctx.metadata.insert(
+            crate::metadata_keys::CAPABILITY_GRANTS.to_string(),
+            serde_json::json!([{
+                "grant_id": "grant_fixture",
+                "capability_binding": "artifact.script",
+                "operations": ["write"],
+                "expires_at": null,
+                "status": "active"
+            }])
+            .to_string(),
+        );
+        ctx.prepare_capability_invocation("artifact.script", &mut args, true)
+            .expect("runtime-minted mutating grant admits script capability");
     }
 }

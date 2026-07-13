@@ -5,8 +5,8 @@
 //! responses to the correct `oneshot::Sender`.
 
 use super::constants::{
-    CAPABILITY_NAME, MANIFEST_TEMPFILE_PREFIX, PYTHON_BIN, PYTHON_FRONTEND_PATH,
-    PYTHON_MODULE_FLAG, PYTHONUNBUFFERED, REPO_MARKER, TRACE_TARGET, WORKER_MODULE,
+    CAPABILITY_NAME, MANIFEST_TEMPFILE_PREFIX, PYTHON_BIN, PYTHON_MODULE_FLAG, PYTHONUNBUFFERED,
+    TRACE_TARGET, WORKER_MODULE,
 };
 use super::protocol::{
     CallRequest, CancelRequest, ErrorEnvelope, HostResultResponse, PROTOCOL_VERSION, WorkerRequest,
@@ -16,7 +16,6 @@ use apxm_core::error::RuntimeError;
 use parking_lot::RwLock;
 use std::collections::HashMap;
 use std::future::Future;
-use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
@@ -30,36 +29,6 @@ fn cap_err(message: impl Into<String>) -> RuntimeError {
         capability: CAPABILITY_NAME.into(),
         message: message.into(),
     }
-}
-
-fn python_frontend_from_repo_root(repo_root: PathBuf) -> Option<PathBuf> {
-    let mut path = repo_root;
-    for segment in PYTHON_FRONTEND_PATH {
-        path.push(segment);
-    }
-    path.is_dir().then_some(path)
-}
-
-fn find_python_frontend_from_ancestors(start: &Path) -> Option<PathBuf> {
-    for candidate in start.ancestors() {
-        if candidate.join(REPO_MARKER).is_file()
-            && let Some(path) = python_frontend_from_repo_root(candidate.to_path_buf())
-        {
-            return Some(path);
-        }
-    }
-    None
-}
-
-fn source_python_frontend_path() -> Option<PathBuf> {
-    if let Ok(cwd) = std::env::current_dir()
-        && let Some(path) = find_python_frontend_from_ancestors(&cwd)
-    {
-        return Some(path);
-    }
-
-    let manifest_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
-    find_python_frontend_from_ancestors(manifest_dir)
 }
 
 /// Resolve the python interpreter to spawn. Modern distros ship only `python3`
@@ -79,15 +48,6 @@ fn resolve_python_bin() -> &'static str {
         }
     }
     PYTHON_BIN
-}
-
-fn pythonpath_with_source_frontend() -> Option<std::ffi::OsString> {
-    let frontend = source_python_frontend_path()?;
-    let mut entries = vec![frontend];
-    if let Some(existing) = std::env::var_os(apxm_core::constants::env::PYTHONPATH) {
-        entries.extend(std::env::split_paths(&existing));
-    }
-    std::env::join_paths(entries).ok()
 }
 
 /// Handle to the Python tool worker subprocess.
@@ -126,8 +86,8 @@ impl PythonHandlerWorker {
 
     /// Spawn with additional environment variables overlaid on the inherited env.
     ///
-    /// Used to inject things like `PYTHONPATH` (for non-installed user modules),
-    /// `PYTHONUNBUFFERED=1`, or thread-pool caps (`OPENBLAS_NUM_THREADS=1`).
+    /// Used to inject explicit runtime configuration such as
+    /// `PYTHONUNBUFFERED=1` or thread-pool caps (`OPENBLAS_NUM_THREADS=1`).
     ///
     /// When `sandbox` is `Some` and the backend is available + isolates, the
     /// worker is launched inside that OS sandbox (e.g. bubblewrap): read-only
@@ -221,9 +181,6 @@ impl PythonHandlerWorker {
             PYTHONUNBUFFERED,
             apxm_core::constants::env::flag_values::ENABLED,
         );
-        if let Some(pythonpath) = pythonpath_with_source_frontend() {
-            cmd.env(apxm_core::constants::env::PYTHONPATH, pythonpath);
-        }
         // Explicit caller-supplied env is trusted (set by the runtime, not the
         // handler) and is applied after the allowlist.
         for (k, v) in extra_env {

@@ -38,7 +38,10 @@ pub use dag_splicer::{DagSplicer, NoOpSplicer};
 pub use dispatcher::OperationDispatcher;
 pub use emitter_adapter::EmitterAdapter;
 pub use engine::{ExecutionResult, ExecutorEngine};
-pub use events::{ExecutionEvent, ExecutionEventEmitter};
+pub use events::{
+    CapabilityEffectReceiptPayload, ExecutionEvent, ExecutionEventEmitter, ModelContextCallKind,
+    ModelContextMetrics, ModelContextPlanStatus,
+};
 pub use graph_metrics::GraphMetricsTracker;
 pub use handlers::warmup::{WarmupConfig, WarmupMetrics};
 pub use hooks::{

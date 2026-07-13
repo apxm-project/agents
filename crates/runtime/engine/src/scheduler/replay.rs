@@ -14,8 +14,59 @@
 //! seed construction returns `None` and the caller falls back to a full re-run.
 
 use std::collections::{HashMap, HashSet};
+use std::fmt;
 
+use apxm_core::types::operations::AISOperationType;
 use apxm_core::types::{ExecutionDag, NodeId, TokenId, Value};
+
+/// A partial replay request cannot preserve the original execution boundary.
+///
+/// Token values prove dataflow parity only. They are not evidence that a
+/// skipped operation's authority, approval, or durable effect remains valid in
+/// the new execution. Until the runtime persists and verifies that evidence,
+/// partial replay is limited to data-only completed subgraphs.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ReplayRejection {
+    /// The replay metadata was incomplete or could not be decoded.
+    InvalidMetadata { reason: &'static str },
+    /// The metadata named a node that is absent from the recompiled DAG.
+    UnknownRestartNode { node_id: NodeId },
+    /// A token crossing from the completed subgraph into the replayed subgraph
+    /// was not captured by the prior run.
+    IncompleteBoundary { missing_tokens: Vec<TokenId> },
+    /// Skipping this operation could bypass an approval, authority check, or
+    /// durable effect whose prior evidence is not available to the replayer.
+    UnsafeCompletedOperation {
+        node_id: NodeId,
+        operation: AISOperationType,
+    },
+}
+
+impl fmt::Display for ReplayRejection {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::InvalidMetadata { reason } => {
+                write!(formatter, "invalid partial replay metadata: {reason}")
+            }
+            Self::UnknownRestartNode { node_id } => {
+                write!(
+                    formatter,
+                    "partial replay restart node {node_id} is absent from the recompiled DAG"
+                )
+            }
+            Self::IncompleteBoundary { missing_tokens } => write!(
+                formatter,
+                "partial replay is missing captured values for boundary tokens {missing_tokens:?}"
+            ),
+            Self::UnsafeCompletedOperation { node_id, operation } => write!(
+                formatter,
+                "partial replay cannot skip completed node {node_id} ({operation:?}) without persisted effect and approval evidence"
+            ),
+        }
+    }
+}
+
+impl std::error::Error for ReplayRejection {}
 
 /// A computed plan for partially replaying a prior run from a chosen node.
 ///
@@ -102,18 +153,55 @@ impl ReplaySeed {
     /// upstream value was not captured and the sub-DAG would observe `Null` for
     /// it; the caller may prefer a full re-run in that case.
     pub fn is_complete(&self, dag: &ExecutionDag) -> bool {
+        self.missing_boundary_tokens(dag).is_empty()
+    }
+
+    /// Return every token whose prior value is required at the replay boundary
+    /// but was not captured by the source execution.
+    pub fn missing_boundary_tokens(&self, dag: &ExecutionDag) -> Vec<TokenId> {
         let completed_outputs: HashSet<TokenId> = dag
             .nodes
             .iter()
             .filter(|node| self.completed_nodes.contains(&node.id))
             .flat_map(|node| node.output_tokens.iter().copied())
             .collect();
-        dag.nodes
+        let mut missing = dag
+            .nodes
             .iter()
             .filter(|node| self.replayed_nodes.contains(&node.id))
             .flat_map(|node| node.input_tokens.iter().copied())
             .filter(|token_id| completed_outputs.contains(token_id))
-            .all(|token_id| self.seed_tokens.contains_key(&token_id))
+            .filter(|token_id| !self.seed_tokens.contains_key(token_id))
+            .collect::<Vec<_>>();
+        missing.sort_unstable();
+        missing.dedup();
+        missing
+    }
+
+    /// Validate that a seed can be used for partial replay without silently
+    /// bypassing an unrecorded authority or effect boundary.
+    ///
+    /// This is deliberately conservative. The runtime has no durable,
+    /// replay-verifiable record for completed approvals, effects, or
+    /// nondeterministic results yet, so only a strict allow-list of inert
+    /// dataflow operations may be skipped. A caller may choose a full run
+    /// instead.
+    pub fn validate_partial_replay(&self, dag: &ExecutionDag) -> Result<(), ReplayRejection> {
+        let missing_tokens = self.missing_boundary_tokens(dag);
+        if !missing_tokens.is_empty() {
+            return Err(ReplayRejection::IncompleteBoundary { missing_tokens });
+        }
+
+        if let Some(node) = dag.nodes.iter().find(|node| {
+            self.completed_nodes.contains(&node.id) && !operation_is_safe_to_skip(node.op_type)
+        }) {
+            return Err(ReplayRejection::UnsafeCompletedOperation {
+                node_id: node.id,
+                operation: node.op_type,
+            });
+        }
+
+        Ok(())
     }
 
     /// Number of nodes that will actually execute on the replay.
@@ -130,24 +218,66 @@ impl ReplaySeed {
     /// values) into the execution metadata. This decodes those keys and computes
     /// the seed against the recompiled `dag`.
     ///
-    /// Returns `None` (i.e. a full re-run) when the keys are absent, malformed,
-    /// or `from_node` is not a node in `dag`. Both scheduler entry paths — the
-    /// server path in [`Runtime::execute_artifact_inner`](crate::runtime::Runtime)
-    /// and the [`ExecutorEngine`](crate::executor::ExecutorEngine) fallback path —
-    /// route through this so they honor partial replay identically.
+    /// This compatibility helper returns `None` when the request cannot be
+    /// decoded or validated. Production scheduler entry points use
+    /// [`Self::from_metadata_checked`] so an explicit invalid or unsafe request
+    /// is returned to the caller rather than being downgraded silently.
     pub fn from_metadata(metadata: &HashMap<String, String>, dag: &ExecutionDag) -> Option<Self> {
-        let from_node: NodeId = metadata
-            .get(crate::metadata_keys::REPLAY_FROM_NODE)?
-            .parse()
-            .ok()?;
-        let values_json = metadata.get(crate::metadata_keys::REPLAY_TOKEN_VALUES)?;
-        let raw: HashMap<String, Value> = serde_json::from_str(values_json).ok()?;
+        Self::from_metadata_checked(metadata, dag).ok().flatten()
+    }
+
+    /// Decode and validate a partial replay request from execution metadata.
+    ///
+    /// Missing replay metadata means a normal full run. A malformed request,
+    /// incomplete boundary, or skipped authority/effect operation is an explicit
+    /// rejection instead of silently turning a requested partial replay into an
+    /// unsafe execution.
+    pub fn from_metadata_checked(
+        metadata: &HashMap<String, String>,
+        dag: &ExecutionDag,
+    ) -> Result<Option<Self>, ReplayRejection> {
+        let Some(from_node_raw) = metadata.get(crate::metadata_keys::REPLAY_FROM_NODE) else {
+            return Ok(None);
+        };
+        let from_node: NodeId =
+            from_node_raw
+                .parse()
+                .map_err(|_| ReplayRejection::InvalidMetadata {
+                    reason: "replay_from_node must be a node id",
+                })?;
+        let values_json = metadata
+            .get(crate::metadata_keys::REPLAY_TOKEN_VALUES)
+            .ok_or(ReplayRejection::InvalidMetadata {
+                reason: "replay_token_values is required with replay_from_node",
+            })?;
+        let raw: HashMap<String, Value> =
+            serde_json::from_str(values_json).map_err(|_| ReplayRejection::InvalidMetadata {
+                reason: "replay_token_values must be a JSON object",
+            })?;
         let prior_values: HashMap<TokenId, Value> = raw
             .into_iter()
             .filter_map(|(key, value)| key.parse::<TokenId>().ok().map(|id| (id, value)))
             .collect();
-        Self::compute(dag, from_node, &prior_values)
+        let seed = Self::compute(dag, from_node, &prior_values)
+            .ok_or(ReplayRejection::UnknownRestartNode { node_id: from_node })?;
+        seed.validate_partial_replay(dag)?;
+        Ok(Some(seed))
     }
+}
+
+/// Operations whose skipped execution is data-only and deterministic under the
+/// scheduler's existing token model. Every other operation requires a
+/// persisted, replay-verifiable receipt before a partial replay may skip it.
+fn operation_is_safe_to_skip(operation: AISOperationType) -> bool {
+    matches!(
+        operation,
+        AISOperationType::ConstStr
+            | AISOperationType::Nop
+            | AISOperationType::Identity
+            | AISOperationType::Merge
+            | AISOperationType::WaitAll
+            | AISOperationType::Fence
+    )
 }
 
 /// Collect `root` plus every node reachable from it by following data edges
@@ -296,5 +426,76 @@ mod tests {
         // Token 20 has no prior value -> not seeded, seed incomplete.
         assert!(!seed.seed_tokens.contains_key(&20));
         assert!(!seed.is_complete(&dag));
+    }
+
+    #[test]
+    fn checked_replay_rejects_an_incomplete_data_boundary() {
+        let dag = chain_dag();
+        let metadata = HashMap::from([
+            (
+                crate::metadata_keys::REPLAY_FROM_NODE.to_string(),
+                "2".to_string(),
+            ),
+            (
+                crate::metadata_keys::REPLAY_TOKEN_VALUES.to_string(),
+                "{}".to_string(),
+            ),
+        ]);
+
+        assert_eq!(
+            ReplaySeed::from_metadata_checked(&metadata, &dag),
+            Err(ReplayRejection::IncompleteBoundary {
+                missing_tokens: vec![10]
+            })
+        );
+    }
+
+    #[test]
+    fn checked_replay_rejects_skipping_capability_effects_without_a_receipt() {
+        let mut dag = chain_dag();
+        dag.nodes[0].op_type = AISOperationType::InvCap;
+        let metadata = HashMap::from([
+            (
+                crate::metadata_keys::REPLAY_FROM_NODE.to_string(),
+                "2".to_string(),
+            ),
+            (
+                crate::metadata_keys::REPLAY_TOKEN_VALUES.to_string(),
+                serde_json::json!({"10": "prior-capability-output"}).to_string(),
+            ),
+        ]);
+
+        assert_eq!(
+            ReplaySeed::from_metadata_checked(&metadata, &dag),
+            Err(ReplayRejection::UnsafeCompletedOperation {
+                node_id: 1,
+                operation: AISOperationType::InvCap,
+            })
+        );
+    }
+
+    #[test]
+    fn checked_replay_keeps_data_only_boundary_and_expected_node_set() {
+        let dag = chain_dag();
+        let metadata = HashMap::from([
+            (
+                crate::metadata_keys::REPLAY_FROM_NODE.to_string(),
+                "2".to_string(),
+            ),
+            (
+                crate::metadata_keys::REPLAY_TOKEN_VALUES.to_string(),
+                serde_json::json!({"10": "prior-data-output"}).to_string(),
+            ),
+        ]);
+
+        let seed = ReplaySeed::from_metadata_checked(&metadata, &dag)
+            .expect("safe data-only replay")
+            .expect("replay metadata is present");
+        assert_eq!(seed.completed_nodes, HashSet::from([1]));
+        assert_eq!(seed.replayed_nodes, HashSet::from([2, 3]));
+        assert_eq!(
+            seed.seed_tokens.get(&10),
+            Some(&Value::String("prior-data-output".to_string()))
+        );
     }
 }

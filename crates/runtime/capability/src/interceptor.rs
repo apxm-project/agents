@@ -117,19 +117,27 @@ pub async fn pre_invoke_ctx(
         ConsentDecision::Approved(_) => "approved",
         ConsentDecision::Denied { .. } => "denied",
         ConsentDecision::TimedOut => "expired",
-        ConsentDecision::NoBroker => "no_broker",
+        // Approval-required calls without an approval surface are denied. This
+        // preserves the closed approval event contract and prevents a missing
+        // broker from becoming an implicit authorization path.
+        ConsentDecision::NoBroker => "denied",
     };
     if let Some(emitter) = ctx.event_emitter {
         emitter.emit_approval_resolved(&prompt_id, resolution);
     }
 
     match decision {
-        ConsentDecision::Approved(_) | ConsentDecision::NoBroker => InterceptDecision::Allow,
+        ConsentDecision::Approved(_) => InterceptDecision::Allow,
         ConsentDecision::Denied { reason } => InterceptDecision::Deny { reason },
         ConsentDecision::TimedOut => InterceptDecision::Deny {
             reason: format!(
                 "approval for capability '{name}' timed out after {}s",
                 ctx.permission_timeout.as_secs()
+            ),
+        },
+        ConsentDecision::NoBroker => InterceptDecision::Deny {
+            reason: format!(
+                "capability '{name}' requires approval but no consent broker is configured"
             ),
         },
     }
@@ -382,6 +390,30 @@ mod tests {
         };
         let decision = pre_invoke_ctx(&ctx, "gated-echo", &HashMap::new()).await;
         assert!(matches!(decision, InterceptDecision::Deny { .. }));
+    }
+
+    #[tokio::test]
+    async fn pre_invoke_ctx_denies_when_no_broker_is_configured() {
+        let registry = CapabilityRegistry::new();
+        registry.register(gated_echo()).unwrap();
+        let broker = StubBroker {
+            decision: ConsentDecision::NoBroker,
+        };
+        let emitter = RecordingEmitter::new();
+        let ctx = PreInvokeContext {
+            registry: &registry,
+            consent_broker: &broker,
+            event_emitter: Some(&emitter),
+            host_id: None,
+            agent_code: Some("agent-a"),
+            grant_id: None,
+            permission_timeout: Duration::from_secs(1),
+        };
+
+        let decision = pre_invoke_ctx(&ctx, "gated-echo", &HashMap::new()).await;
+        assert!(matches!(decision, InterceptDecision::Deny { .. }));
+        assert_eq!(emitter.requests.lock().len(), 1);
+        assert_eq!(emitter.resolutions.lock()[0].1, "denied");
     }
 
     #[tokio::test]

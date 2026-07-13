@@ -277,7 +277,7 @@ pub async fn execute_command(
     let mut linker_config =
         LinkerConfig::from_apxm_config(apxm_config).with_pipeline_config(pipeline_config);
     linker_config.runtime_config.metrics_level = emit_metrics_level;
-    let (graph_input, _frontend_air, python_tools_sidecar, typescript_tools_sidecar) =
+    let (graph_input, _frontend_air, handler_manifest) =
         prepare_graph_input(&input, config.as_deref())?;
 
     // Enable all-outputs collection when session output is requested
@@ -331,13 +331,12 @@ pub async fn execute_command(
     });
 
     let result = match linker
-        .run_graph_with_python_tools_sidecar(
+        .run_graph_with_handler_manifest(
             &graph_input,
             args,
             emitter_dyn,
             writer.as_ref().map(|w| w.session_dir()),
-            python_tools_sidecar,
-            typescript_tools_sidecar,
+            handler_manifest,
         )
         .await
     {

@@ -14,6 +14,58 @@ use apxm_core::types::values::Value;
 
 use crate::token_usage::TokenUsageSummary;
 
+pub use apxm_core::events::payload::{
+    CapabilityEffectReceiptPayload, ModelContextCallKind, ModelContextPlanStatus,
+};
+
+/// Content-free context-packing evidence attached to one model request.
+///
+/// The optional aggregate fields are absent when the request has no typed
+/// context plan. This transport type never carries prompt content, frames,
+/// provenance, scopes, permissions, sensitivities, paths, tool results, or
+/// individual segment data.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ModelContextMetrics {
+    /// Graph node associated with the request when one exists.
+    pub node_id: Option<u64>,
+    /// Dispatch path that issued the request.
+    pub call_kind: ModelContextCallKind,
+    /// Whether the request assembled, inherited, or lacks a context plan.
+    pub plan_status: ModelContextPlanStatus,
+    /// Maximum context tokens available to the plan.
+    pub token_budget: Option<usize>,
+    /// Total tokens considered before plan admission.
+    pub original_tokens: Option<usize>,
+    /// Tokens admitted to the rendered context.
+    pub admitted_tokens: Option<usize>,
+    /// Segments retained without truncation.
+    pub kept_segments: Option<usize>,
+    /// Segments retained in truncated form.
+    pub truncated_segments: Option<usize>,
+    /// Segments omitted because the plan budget was exhausted.
+    pub omitted_token_budget_segments: Option<usize>,
+    /// Segments omitted because their source was empty.
+    pub omitted_empty_segments: Option<usize>,
+}
+
+impl ModelContextMetrics {
+    /// Construct an event with no plan aggregates for an unplanned request.
+    pub const fn unplanned(node_id: Option<u64>, call_kind: ModelContextCallKind) -> Self {
+        Self {
+            node_id,
+            call_kind,
+            plan_status: ModelContextPlanStatus::Unplanned,
+            token_budget: None,
+            original_tokens: None,
+            admitted_tokens: None,
+            kept_segments: None,
+            truncated_segments: None,
+            omitted_token_budget_segments: None,
+            omitted_empty_segments: None,
+        }
+    }
+}
+
 /// Optional observer for execution events.
 ///
 /// Implementors receive fine-grained lifecycle callbacks during DAG
@@ -260,6 +312,12 @@ pub trait ExecutionEventEmitter: Send + Sync {
         _utilization_pct: f64,
     ) {
     }
+
+    /// Emit aggregate-only context-packing evidence before a model dispatch.
+    fn emit_model_context_metrics(&self, _metrics: &ModelContextMetrics) {}
+
+    /// Emit content-free evidence after a capability effect is durably committed.
+    fn emit_capability_effect_receipt(&self, _receipt: &CapabilityEffectReceiptPayload) {}
 
     // ── Layer 2 — agent-layer hooks ────────────────────────────────
     //

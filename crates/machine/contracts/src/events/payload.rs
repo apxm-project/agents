@@ -206,6 +206,14 @@ fn boxed_core_payload_from_json(
         boxed!(ErrorPayload)
     } else if kind_name == kind::CONTEXT_COMPACTED.name() {
         boxed!(ContextCompactedPayload)
+    } else if kind_name == kind::MODEL_CONTEXT_METRICS.name() {
+        boxed!(ModelContextMetricsPayload)
+    } else if kind_name == kind::CAPABILITY_EFFECT_RECEIPT.name() {
+        let receipt = serde_json::from_value::<CapabilityEffectReceiptPayload>(payload_json)?;
+        receipt
+            .validate()
+            .map_err(<serde_json::Error as serde::de::Error>::custom)?;
+        Ok(Some(Box::new(receipt)))
     } else if kind_name == kind::MODEL_REROUTED.name() {
         boxed!(ModelReroutedPayload)
     } else if kind_name == kind::CANCELLED.name() {
@@ -1008,6 +1016,228 @@ pub struct ContextCompactedPayload {
     pub new_tokens: usize,
 }
 impl_event_payload!(ContextCompactedPayload, kind::CONTEXT_COMPACTED);
+
+/// Invocation category for aggregate model-context metrics.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ModelContextCallKind {
+    /// A regular graph-node model invocation.
+    Node,
+    /// A model invocation that continues a tool interaction.
+    ToolContinuation,
+    /// A warmup model invocation.
+    Warmup,
+    /// A model invocation used to compact context.
+    Compaction,
+    /// A model invocation made by a hook.
+    Hook,
+}
+
+/// Whether model-context aggregate metrics derive from a context plan.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ModelContextPlanStatus {
+    /// Metrics were derived from a newly assembled context plan.
+    Assembled,
+    /// The invocation inherits an existing context plan.
+    Inherited,
+    /// The invocation has no context plan to aggregate.
+    Unplanned,
+}
+
+/// Aggregate-only context packing metrics for a model invocation.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ModelContextMetricsPayload {
+    /// Graph node associated with the invocation, when one exists.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub node_id: Option<u64>,
+    /// Invocation category.
+    pub call_kind: ModelContextCallKind,
+    /// Whether the optional aggregates derive from a context plan.
+    pub plan_status: ModelContextPlanStatus,
+    /// Maximum tokens available to the context plan.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub token_budget: Option<u64>,
+    /// Tokens considered before context-plan admission.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub original_tokens: Option<u64>,
+    /// Tokens admitted to the rendered context.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub admitted_tokens: Option<u64>,
+    /// Segments retained without truncation.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub kept_segments: Option<u64>,
+    /// Segments retained in truncated form.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub truncated_segments: Option<u64>,
+    /// Segments omitted because they exceeded the token budget.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub omitted_token_budget_segments: Option<u64>,
+    /// Empty segments omitted from the assembled context.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub omitted_empty_segments: Option<u64>,
+}
+impl_event_payload!(ModelContextMetricsPayload, kind::MODEL_CONTEXT_METRICS);
+
+/// Capability dispatch surface that committed an effect.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum CapabilityEffectDispatchPath {
+    /// A graph `INV_CAP` operation dispatched the capability.
+    InvCap,
+    /// An `ASK` model tool loop dispatched the capability.
+    AskTool,
+}
+
+/// Capability implementation family that produced the effect evidence.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum CapabilityEffectImplementationKind {
+    /// A runtime-native capability implementation.
+    Native,
+    /// A Python artifact handler.
+    Python,
+    /// A TypeScript artifact handler.
+    Typescript,
+    /// An authenticated host-dispatched implementation.
+    Host,
+}
+
+/// Authority path that admitted the capability invocation.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum CapabilityEffectAdmissionKind {
+    /// The capability is declared read-only.
+    ReadOnly,
+    /// The capability ran in a compatible sandbox.
+    Sandbox,
+    /// A runtime-minted capability grant admitted the invocation.
+    Grant,
+}
+
+/// Trusted proof that an effect can be replay-checked without its content.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum CapabilityEffectIdempotencyProof {
+    /// The remote owner deduplicated this idempotency key.
+    RemoteDeduplicated,
+    /// A transaction boundary verified the committed effect.
+    TransactionVerified,
+}
+
+/// Approval evidence recorded for an effect receipt.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum CapabilityEffectApprovalStatus {
+    /// The capability did not require approval.
+    NotRequired,
+    /// A durable approval record admitted the invocation.
+    Approved,
+}
+
+/// Immutable receipt status for a verified capability effect.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum CapabilityEffectReceiptStatus {
+    /// The effect and its trusted evidence are durably committed.
+    Committed,
+}
+
+/// Content-free evidence for a durably committed capability effect.
+///
+/// The receipt deliberately carries identifiers, digests, and opaque
+/// references only. It never serializes arguments, results, prompts,
+/// credentials, request headers, paths, URLs, scopes, subjects, signatures,
+/// or other raw content.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct CapabilityEffectReceiptPayload {
+    /// Runtime-generated durable receipt identifier.
+    pub receipt_id: String,
+    /// Runtime execution that owns the receipt.
+    pub execution_id: String,
+    /// Graph node that dispatched the capability.
+    pub node_id: u64,
+    /// Runtime invocation identifier unique within the execution.
+    pub invocation_id: String,
+    /// Capability binding admitted for execution.
+    pub capability_binding: String,
+    /// Dispatch surface that invoked the capability.
+    pub dispatch_path: CapabilityEffectDispatchPath,
+    /// Implementation family that supplied verified evidence.
+    pub implementation_kind: CapabilityEffectImplementationKind,
+    /// Immutable implementation reference or fingerprint.
+    pub implementation_ref: String,
+    /// Digest of the canonical capability request.
+    pub request_digest: String,
+    /// Authority path that admitted this invocation.
+    pub admission_kind: CapabilityEffectAdmissionKind,
+    /// Selected runtime grant when admission used one.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub grant_id: Option<String>,
+    /// Approval evidence when the capability required explicit approval.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub approval_status: Option<CapabilityEffectApprovalStatus>,
+    /// Durable approval record identifier for an approved invocation.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub approval_id: Option<String>,
+    /// Trusted idempotency proof returned by the implementation owner.
+    pub idempotency_proof: CapabilityEffectIdempotencyProof,
+    /// Digest of the idempotency key used for the effect.
+    pub idempotency_key_digest: String,
+    /// Opaque external or transactional reference to the committed effect.
+    pub effect_ref: String,
+    /// The receipt is emitted only after durable commitment.
+    pub status: CapabilityEffectReceiptStatus,
+}
+
+impl CapabilityEffectReceiptPayload {
+    /// Validate the public receipt constraints after typed JSON decoding.
+    pub fn validate(&self) -> Result<(), String> {
+        for (field, value) in [
+            ("receipt_id", self.receipt_id.as_str()),
+            ("execution_id", self.execution_id.as_str()),
+            ("invocation_id", self.invocation_id.as_str()),
+            ("capability_binding", self.capability_binding.as_str()),
+            ("implementation_ref", self.implementation_ref.as_str()),
+            ("request_digest", self.request_digest.as_str()),
+            ("idempotency_key_digest", self.idempotency_key_digest.as_str()),
+            ("effect_ref", self.effect_ref.as_str()),
+        ] {
+            if value.is_empty() {
+                return Err(format!("capability_effect_receipt.{field} must not be empty"));
+            }
+        }
+
+        for (field, value) in [
+            ("grant_id", self.grant_id.as_deref()),
+            ("approval_id", self.approval_id.as_deref()),
+        ] {
+            if value.is_some_and(str::is_empty) {
+                return Err(format!("capability_effect_receipt.{field} must not be empty"));
+            }
+        }
+
+        if matches!(self.admission_kind, CapabilityEffectAdmissionKind::Grant)
+            && self.grant_id.as_deref().map_or(true, str::is_empty)
+        {
+            return Err("capability_effect_receipt.grant_id is required for grant admission".into());
+        }
+        if matches!(
+            self.approval_status,
+            Some(CapabilityEffectApprovalStatus::Approved)
+        ) && self.approval_id.as_deref().map_or(true, str::is_empty)
+        {
+            return Err(
+                "capability_effect_receipt.approval_id is required for approved authorization"
+                    .into(),
+            );
+        }
+
+        Ok(())
+    }
+}
+impl_event_payload!(CapabilityEffectReceiptPayload, kind::CAPABILITY_EFFECT_RECEIPT);
 
 /// The model was rerouted to a different backend.
 #[derive(Debug, Clone, Serialize, Deserialize)]

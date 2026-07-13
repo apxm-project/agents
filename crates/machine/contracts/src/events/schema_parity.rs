@@ -1,16 +1,15 @@
 //! Terminal-classification drift gate for `apxm.event.v1`
 //! (workspace/contracts/schemas/event.v1.json).
 //!
-//! `workspace/contracts` owns the public schema; this crate owns the Rust
-//! model it describes. The two are kept in sync by discipline, not by a
-//! generator: this table is a literal copy of the schema's
-//! `$defs.EventKindRegistryTable.const` (63 entries at the time this test
-//! was written). If `CORE_EVENT_KINDS` changes — a kind added, removed, or
-//! given a different `category`/`terminal` — this test fails until both
-//! this table and `schemas/event.v1.json` are updated together. That
-//! failure *is* the drift gate; there is deliberately no filesystem read of
-//! the sibling `contracts` repo here, since a consumer building only this
-//! crate must not need that repo checked out.
+//! `workspace/contracts` owns the public schema; this crate owns the typed
+//! Rust subset it supports. This table mirrors the matching entries from the
+//! schema's `$defs.EventKindRegistryTable.const` (64 entries at the time this
+//! test was written). Other registered kinds retain the event system's
+//! unknown-event fallback. If `CORE_EVENT_KINDS` changes — a kind added,
+//! removed, or given a different `category`/`terminal` — this test fails until
+//! this table and the public schema agree. There is deliberately no filesystem
+//! read of the sibling `contracts` repo here, since a consumer building only
+//! this crate must not need that repo checked out.
 
 use super::kind::{CORE_EVENT_KINDS, EventCategory};
 
@@ -22,6 +21,7 @@ const SCHEMA_EVENT_KIND_TABLE: &[(&str, &str, bool)] = &[
     ("agent_spawned", "agent", false),
     ("approval_request", "agent", false),
     ("approval_resolved", "agent", false),
+    ("capability_effect_receipt", "observability", false),
     ("cancelled", "error", true),
     ("checkpoint_restored", "lifecycle", false),
     ("checkpoint_saved", "lifecycle", false),
@@ -41,6 +41,7 @@ const SCHEMA_EVENT_KIND_TABLE: &[(&str, &str, bool)] = &[
     ("memoization_hit", "observability", false),
     ("memory_read", "observability", false),
     ("memory_write", "observability", false),
+    ("model_context_metrics", "observability", false),
     ("model_rerouted", "lifecycle", false),
     ("model_route_decision", "observability", false),
     ("node_metrics", "observability", false),
@@ -118,9 +119,9 @@ fn core_event_kinds_match_schema_registry_table() {
         rust_names.insert(kind.name());
         let Some((expected_category, expected_terminal)) = schema_table.get(kind.name()) else {
             panic!(
-                "CORE_EVENT_KINDS has {:?} but schemas/event.v1.json's \
-                 EventKindRegistryTable does not — update the schema \
-                 (and this table) alongside kind.rs",
+                "CORE_EVENT_KINDS has {:?} but SCHEMA_EVENT_KIND_TABLE does \
+                 not — update the public schema and this table alongside \
+                 kind.rs",
                 kind.name()
             );
         };
@@ -141,8 +142,8 @@ fn core_event_kinds_match_schema_registry_table() {
     let schema_names: std::collections::BTreeSet<&str> = schema_table.keys().copied().collect();
     assert_eq!(
         rust_names, schema_names,
-        "schemas/event.v1.json's EventKindRegistryTable must cover exactly \
-         CORE_EVENT_KINDS, no more, no less"
+        "SCHEMA_EVENT_KIND_TABLE must cover exactly CORE_EVENT_KINDS, no more, \
+         no less"
     );
 }
 

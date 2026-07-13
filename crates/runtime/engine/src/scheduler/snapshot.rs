@@ -30,6 +30,8 @@ pub const SCHEDULER_SNAPSHOT_VERSION: u32 = 1;
 /// `Ready` for an idempotent re-execution rather than falsely reported as
 /// still `Running` with nothing driving it forward.
 const REPLAY_SUPPORTED_NOTE: &str = "restore rehydrates tokens/ops/pending-inputs/promises/execution-stack/delegated-tokens against a recompiled DAG; nodes captured Running are restored Ready (re-executed, not resumed mid-handler) since no in-flight worker state survives a process restart";
+const REPLAY_REJECTED_NOTE_PREFIX: &str =
+    "snapshot restore requires replay-verifiable completed operations: ";
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct SchedulerSnapshot {
@@ -118,11 +120,34 @@ pub struct SchedulerSnapshotNodeOutputs {
 impl SchedulerState {
     /// Capture a stable read-only projection of the current scheduler state.
     ///
-    /// The returned structure is suitable for persistence and observability, but
-    /// it is intentionally marked as non-replayable until a restore path can
-    /// rehydrate queues, backend state, and side-effect safety.
+    /// The returned structure is suitable for persistence and observability.
+    /// Its replay capability is derived from the completed operations captured
+    /// in the snapshot: token state alone never authorizes skipping an effect.
     pub fn capture_snapshot(&self) -> SchedulerSnapshot {
         let start = self.start;
+        let tokens = self.snapshot_tokens();
+        let ops = self.snapshot_ops(start);
+        let completed_nodes = ops
+            .iter()
+            .filter(|op| op.status == OpStatus::Completed)
+            .map(|op| op.node_id)
+            .collect();
+        let seed_tokens = tokens
+            .iter()
+            .filter(|token| token.ready)
+            .filter_map(|token| token.value.clone().map(|value| (token.token_id, value)))
+            .collect();
+        let replay_seed = ReplaySeed {
+            from_node: 0,
+            replayed_nodes: HashSet::new(),
+            completed_nodes,
+            seed_tokens,
+        };
+        let replay_validation = replay_seed.validate_partial_replay(&self.dag);
+        let (replay_supported, replay_notes) = match replay_validation {
+            Ok(()) => (true, vec![REPLAY_SUPPORTED_NOTE.to_string()]),
+            Err(error) => (false, vec![format!("{REPLAY_REJECTED_NOTE_PREFIX}{error}")]),
+        };
 
         SchedulerSnapshot {
             version: SCHEDULER_SNAPSHOT_VERSION,
@@ -136,15 +161,15 @@ impl SchedulerState {
                 remaining_nodes: self.remaining.load(std::sync::atomic::Ordering::SeqCst),
                 ready_queue_len: self.queue.len(),
             },
-            tokens: self.snapshot_tokens(),
-            ops: self.snapshot_ops(start),
+            tokens,
+            ops,
             pending_inputs: self.snapshot_pending_inputs(),
             promises: self.snapshot_promises(start),
             execution_stack: self.snapshot_execution_stack(),
             delegated_tokens: self.snapshot_delegated_tokens(),
             node_output_map: self.snapshot_node_output_map(),
-            replay_supported: true,
-            replay_notes: vec![REPLAY_SUPPORTED_NOTE.to_string()],
+            replay_supported,
+            replay_notes,
         }
     }
 
@@ -170,6 +195,14 @@ impl SchedulerState {
         cfg: SchedulerConfig,
         metrics: Arc<MetricsCollector>,
     ) -> RuntimeResult<(Arc<SchedulerState>, Vec<Worker<NodeId>>)> {
+        if !snapshot.replay_supported {
+            return Err(apxm_core::error::RuntimeError::Scheduler {
+                message: format!(
+                    "scheduler snapshot restore rejected: {}",
+                    snapshot.replay_notes.join("; ")
+                ),
+            });
+        }
         let start = Instant::now();
         let hooks = crate::executor::hooks::ExecutionHookContext::default();
 
@@ -191,6 +224,11 @@ impl SchedulerState {
             completed_nodes,
             seed_tokens,
         };
+        seed.validate_partial_replay(&dag).map_err(|error| {
+            apxm_core::error::RuntimeError::Scheduler {
+                message: format!("scheduler snapshot restore rejected: {error}"),
+            }
+        })?;
 
         let (state, workers) = SchedulerState::new_with_replay(
             (*dag).clone(),
@@ -572,5 +610,46 @@ mod tests {
             "sanity: an unrestored fresh state must NOT already show node 1 completed"
         );
         assert!(!naive.tokens.get(&10).unwrap().ready);
+    }
+
+    #[test]
+    fn snapshot_replay_refuses_completed_capability_effect() {
+        let mut dag = three_node_chain();
+        dag.nodes[0].op_type = AISOperationType::InvCap;
+        let (state, _workers) = SchedulerState::new(
+            dag.clone(),
+            test_config(),
+            Arc::new(MetricsCollector::new()),
+            Instant::now(),
+            vec![],
+        )
+        .expect("state");
+        state.op_states.get_mut(&1).unwrap().status = OpStatus::Completed;
+        {
+            let mut token = state.tokens.get_mut(&10).unwrap();
+            token.ready = true;
+            token.value = Some(Value::String("prior-capability-output".to_string()));
+        }
+
+        let snapshot = state.capture_snapshot();
+        assert!(!snapshot.replay_supported);
+        assert!(snapshot.replay_notes[0].contains("InvCap"));
+
+        let result = SchedulerState::restore(
+            &snapshot,
+            Arc::new(dag),
+            test_config(),
+            Arc::new(MetricsCollector::new()),
+        );
+        let error = match result {
+            Ok(_) => panic!("restore must reject an unverified capability effect"),
+            Err(error) => error,
+        };
+        assert!(
+            error
+                .to_string()
+                .contains("scheduler snapshot restore rejected"),
+            "unexpected snapshot restore rejection: {error}"
+        );
     }
 }
