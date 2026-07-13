@@ -1,9 +1,7 @@
 //! Canonical conversation turn-input types.
 //!
 //! The host-facing conversations route accepts a typed turn envelope with a
-//! stable `message` field and optional structured `context`. The runtime still
-//! accepts legacy bare strings as message-only turns when converting from the
-//! runtime [`Value`] contract.
+//! stable `message` field and optional structured `context`.
 
 use std::collections::HashMap;
 
@@ -13,12 +11,15 @@ use thiserror::Error;
 
 use crate::types::values::{Number, Value, ValueError};
 
+/// Structured context attached to one conversation turn.
+pub type TurnContext = JsonMap<String, JsonValue>;
+
 /// Canonical host turn-input envelope.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct TurnInput {
     pub message: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub context: Option<JsonMap<String, JsonValue>>,
+    pub context: Option<TurnContext>,
 }
 
 impl TurnInput {
@@ -36,7 +37,7 @@ pub enum TurnInputError {
     #[error("turn input is not representable as JSON: {0}")]
     ValueContract(#[from] ValueError),
     #[error(
-        "turn input must be a legacy string or an object with string field 'message' and optional object field 'context': {0}"
+        "turn input must be an object with string field 'message' and optional object field 'context': {0}"
     )]
     Envelope(#[from] serde_json::Error),
 }
@@ -45,10 +46,7 @@ impl TryFrom<Value> for TurnInput {
     type Error = TurnInputError;
 
     fn try_from(value: Value) -> Result<Self, Self::Error> {
-        match value {
-            Value::String(message) => Ok(Self::message_only(message)),
-            other => serde_json::from_value(other.to_json()?).map_err(Self::Error::from),
-        }
+        serde_json::from_value(value.to_json()?).map_err(Self::Error::from)
     }
 }
 
@@ -120,15 +118,10 @@ mod tests {
     use serde_json::json;
 
     #[test]
-    fn legacy_string_turn_is_message_only() {
-        let parsed = TurnInput::try_from(Value::String("hello".to_string())).expect("legacy turn");
-        assert_eq!(
-            parsed,
-            TurnInput {
-                message: "hello".to_string(),
-                context: None,
-            }
-        );
+    fn bare_string_turn_is_rejected() {
+        let error = TurnInput::try_from(Value::String("hello".to_string()))
+            .expect_err("turn input requires the typed envelope");
+        assert!(error.to_string().contains("turn input must be an object"));
     }
 
     #[test]

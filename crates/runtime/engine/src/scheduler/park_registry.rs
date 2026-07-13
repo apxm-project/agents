@@ -222,10 +222,10 @@ pub(crate) fn register(wait_key: String, waker: ParkWaker) {
             guard.entries.remove(&wait_key);
             guard.closed.insert(wait_key.clone());
         }
-        drop(guard);
         if key_is_idle {
             durable::clear(&wait_key);
         }
+        drop(guard);
         waker.abandon();
         return;
     }
@@ -241,29 +241,27 @@ pub(crate) fn register(wait_key: String, waker: ParkWaker) {
                 guard
                     .entries
                     .insert(wait_key.clone(), Entry::Resolved(values.clone()));
-            }
-            drop(guard);
-            if has_remaining {
                 durable::record_resolved(&wait_key, &values);
             } else {
                 // Delivered: no need to keep the durable resolved-marker around —
                 // a restart with nothing left to redeliver has nothing to lose.
                 durable::clear(&wait_key);
             }
+            drop(guard);
             waker.fire(&wait_key, value);
         }
         Some(Entry::Waiters(mut ws)) => {
             ws.push(waker);
             guard.entries.insert(wait_key.clone(), Entry::Waiters(ws));
-            drop(guard);
             durable::record_pending(&wait_key);
+            drop(guard);
         }
         None => {
             guard
                 .entries
                 .insert(wait_key.clone(), Entry::Waiters(vec![waker]));
-            drop(guard);
             durable::record_pending(&wait_key);
+            drop(guard);
         }
     }
 }
@@ -278,7 +276,10 @@ pub fn wake(wait_key: &str, value: Value) -> usize {
             return 0;
         }
         match guard.entries.remove(wait_key) {
-            Some(Entry::Waiters(ws)) => ws,
+            Some(Entry::Waiters(ws)) => {
+                durable::clear(wait_key);
+                ws
+            }
             // No waiters (or a prior resolution): stash the value for a late
             // register — durably too, so values that arrive while nobody is
             // parked (or while the process is mid-restart) are not lost: a
@@ -289,8 +290,8 @@ pub fn wake(wait_key: &str, value: Value) -> usize {
                 guard
                     .entries
                     .insert(wait_key.to_string(), Entry::Resolved(values.clone()));
-                drop(guard);
                 durable::record_resolved(wait_key, &values);
+                drop(guard);
                 return 0;
             }
             None => {
@@ -299,13 +300,12 @@ pub fn wake(wait_key: &str, value: Value) -> usize {
                 guard
                     .entries
                     .insert(wait_key.to_string(), Entry::Resolved(values.clone()));
-                drop(guard);
                 durable::record_resolved(wait_key, &values);
+                drop(guard);
                 return 0;
             }
         }
     }; // lock dropped before firing
-    durable::clear(wait_key);
     let n = wakers.len();
     for w in wakers {
         w.fire(wait_key, value.clone());
@@ -336,11 +336,10 @@ pub(crate) fn remove_for_state(state: &SchedulerState) -> usize {
             cleared.push(wait_key);
         }
     }
-    drop(guard);
-
     for wait_key in cleared {
         durable::clear(&wait_key);
     }
+    drop(guard);
     removed
 }
 
@@ -351,8 +350,8 @@ fn close(wait_key: &str) {
     }
     guard.entries.remove(wait_key);
     guard.closed.insert(wait_key.to_string());
-    drop(guard);
     durable::clear(wait_key);
+    drop(guard);
 }
 
 /// [`apxm_capability_iface::CapabilityHost`] implementation over this
@@ -487,8 +486,7 @@ pub mod durable {
 
     /// `(wait_key, state, resolved_values)` rows currently in the journal.
     /// `state` is `"pending"` or `"resolved"`; resolved rows return their
-    /// queued values in FIFO order. Legacy single-value rows are decoded as a
-    /// singleton queue for compatibility.
+    /// queued values in FIFO order.
     #[cfg(feature = "sqlite")]
     pub(super) fn load_all() -> Vec<(String, String, VecDeque<Value>)> {
         let guard = slot().lock().expect("park journal slot poisoned");
@@ -526,17 +524,7 @@ pub mod durable {
 
     #[cfg(feature = "sqlite")]
     fn parse_resolved_values(json: &str) -> Option<VecDeque<Value>> {
-        let parsed = serde_json::from_str::<serde_json::Value>(json).ok()?;
-        match parsed {
-            serde_json::Value::Array(items) => items
-                .into_iter()
-                .map(serde_json::from_value)
-                .collect::<Result<VecDeque<Value>, _>>()
-                .ok(),
-            other => serde_json::from_value(other)
-                .ok()
-                .map(|value| std::iter::once(value).collect()),
-        }
+        serde_json::from_str(json).ok()
     }
 }
 
