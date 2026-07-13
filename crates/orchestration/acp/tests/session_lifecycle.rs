@@ -34,7 +34,7 @@ async fn spawn_establishes_session_and_agent_session_id() {
 }
 
 #[tokio::test]
-async fn prompt_round_trip_collects_streamed_text_and_increments_turn_count() {
+async fn prompt_round_trip_collects_streamed_text_usage_and_increments_turn_count() {
     let dir = tempfile::tempdir().unwrap();
     let script = support::write_fixture(dir.path(), "agent.py", support::COOPERATIVE_AGENT);
     let profile = support::fixture_profile(&script);
@@ -53,7 +53,11 @@ async fn prompt_round_trip_collects_streamed_text_and_increments_turn_count() {
         .expect("prompt should round-trip through the fixture");
 
     assert_eq!(result.text, "hello from fixture");
+    assert_eq!(result.model.as_deref(), Some("fixture-model"));
     assert_eq!(result.stop_reason, "end_turn");
+    let token_usage = result.token_usage.as_ref().expect("token usage");
+    assert_eq!(token_usage.input_tokens, Some(7));
+    assert_eq!(token_usage.output_tokens, Some(4));
     assert_eq!(session.turn_count(), 1);
 
     session.close().await;
