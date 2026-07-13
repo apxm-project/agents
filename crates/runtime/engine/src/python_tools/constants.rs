@@ -31,5 +31,11 @@ pub const MANIFEST_TEMPFILE_PREFIX: &str = "apxm-tools-";
 /// `file(1)` recognize the JSON content).
 pub const MANIFEST_TEMPFILE_SUFFIX: &str = ".json";
 
+/// Repository marker used when discovering the source checkout.
+pub const REPO_MARKER: &str = "Cargo.toml";
+
+/// Path segments from repo root to the Python frontend package.
+pub const PYTHON_FRONTEND_PATH: &[&str] = &["crates", "compiler", "frontend", "python"];
+
 /// Unbuffered Python env var so worker stderr/stdout arrives promptly.
 pub const PYTHONUNBUFFERED: &str = "PYTHONUNBUFFERED";

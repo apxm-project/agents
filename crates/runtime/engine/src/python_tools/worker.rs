@@ -5,8 +5,8 @@
 //! responses to the correct `oneshot::Sender`.
 
 use super::constants::{
-    CAPABILITY_NAME, MANIFEST_TEMPFILE_PREFIX, PYTHON_BIN, PYTHON_MODULE_FLAG, PYTHONUNBUFFERED,
-    TRACE_TARGET, WORKER_MODULE,
+    CAPABILITY_NAME, MANIFEST_TEMPFILE_PREFIX, PYTHON_BIN, PYTHON_FRONTEND_PATH,
+    PYTHON_MODULE_FLAG, PYTHONUNBUFFERED, REPO_MARKER, TRACE_TARGET, WORKER_MODULE,
 };
 use super::protocol::{
     CallRequest, CancelRequest, ErrorEnvelope, HostResultResponse, PROTOCOL_VERSION, WorkerRequest,
@@ -16,10 +16,10 @@ use apxm_core::error::RuntimeError;
 use parking_lot::RwLock;
 use std::collections::HashMap;
 use std::future::Future;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
-use tokio::process::{Child, Command};
 use tokio::sync::mpsc;
 
 /// Build a `RuntimeError::Capability` tagged with this module's capability
@@ -29,6 +29,36 @@ fn cap_err(message: impl Into<String>) -> RuntimeError {
         capability: CAPABILITY_NAME.into(),
         message: message.into(),
     }
+}
+
+fn python_frontend_from_repo_root(repo_root: PathBuf) -> Option<PathBuf> {
+    let mut path = repo_root;
+    for segment in PYTHON_FRONTEND_PATH {
+        path.push(segment);
+    }
+    path.is_dir().then_some(path)
+}
+
+fn find_python_frontend_from_ancestors(start: &Path) -> Option<PathBuf> {
+    for candidate in start.ancestors() {
+        if candidate.join(REPO_MARKER).is_file()
+            && let Some(path) = python_frontend_from_repo_root(candidate.to_path_buf())
+        {
+            return Some(path);
+        }
+    }
+    None
+}
+
+fn source_python_frontend_path() -> Option<PathBuf> {
+    if let Ok(cwd) = std::env::current_dir()
+        && let Some(path) = find_python_frontend_from_ancestors(&cwd)
+    {
+        return Some(path);
+    }
+
+    let manifest_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
+    find_python_frontend_from_ancestors(manifest_dir)
 }
 
 /// Resolve the python interpreter to spawn. Modern distros ship only `python3`
@@ -50,6 +80,34 @@ fn resolve_python_bin() -> &'static str {
     PYTHON_BIN
 }
 
+fn pythonpath_with_source_frontend() -> Option<std::ffi::OsString> {
+    let frontend = source_python_frontend_path()?;
+    let mut entries = vec![frontend];
+    if let Some(existing) = std::env::var_os(apxm_core::constants::env::PYTHONPATH) {
+        entries.extend(std::env::split_paths(&existing));
+    }
+    std::env::join_paths(entries).ok()
+}
+
+fn worker_environment(extra_env: &[(&str, &str)]) -> Vec<(String, String)> {
+    let mut overrides = vec![(
+        PYTHONUNBUFFERED.to_string(),
+        apxm_core::constants::env::flag_values::ENABLED.to_string(),
+    )];
+    if let Some(pythonpath) = pythonpath_with_source_frontend() {
+        overrides.push((
+            apxm_core::constants::env::PYTHONPATH.to_string(),
+            pythonpath.to_string_lossy().into_owned(),
+        ));
+    }
+    for (key, value) in extra_env {
+        overrides.push(((*key).to_string(), (*value).to_string()));
+    }
+    crate::sandbox::constants::env::child_environment(
+        overrides.iter().map(|(key, value)| (key, value)),
+    )
+}
+
 /// Handle to the Python tool worker subprocess.
 ///
 /// Manages a single child process that serves tool invocations over NDJSON.
@@ -65,10 +123,9 @@ pub struct PythonHandlerWorker {
     /// Handle to the background demuxer task.
     _demuxer: tokio::task::JoinHandle<()>,
     /// Child process handle (held for Drop cleanup).
-    _child: Arc<tokio::sync::Mutex<Child>>,
-    /// Manifest working dir — kept alive for the worker's lifetime so the
-    /// manifest path stays valid (and, under sandbox, stays bound as the
-    /// worker's writable cwd) even if the worker rereads it.
+    _child: Arc<tokio::sync::Mutex<crate::sandbox::WrappedChild>>,
+    /// Manifest working dir kept alive for the worker's lifetime so the path
+    /// remains valid even if the worker rereads it.
     _workdir: tempfile::TempDir,
     /// Monotonic request counter for generating unique req_ids.
     next_id: std::sync::atomic::AtomicU64,
@@ -86,23 +143,21 @@ impl PythonHandlerWorker {
 
     /// Spawn with additional environment variables overlaid on the inherited env.
     ///
-    /// Used to inject explicit runtime configuration such as
-    /// `PYTHONUNBUFFERED=1` or thread-pool caps (`OPENBLAS_NUM_THREADS=1`).
+    /// Used to inject things like `PYTHONPATH` (for non-installed user modules),
+    /// `PYTHONUNBUFFERED=1`, or thread-pool caps (`OPENBLAS_NUM_THREADS=1`).
     ///
-    /// When `sandbox` is `Some` and the backend is available + isolates, the
-    /// worker is launched inside that OS sandbox (e.g. bubblewrap): read-only
-    /// root, ephemeral `/tmp`, network unshared, with the manifest working dir
-    /// bound writable as the worker's cwd. Author @tool/@hook handlers then run
-    /// confined. `None` (or an unavailable backend) runs the worker directly.
+    /// When `sandbox` is available, the worker is launched through its typed
+    /// command wrapper with network access disabled. Backend-specific filesystem
+    /// guarantees are reported separately and are not assumed here. `None` runs
+    /// the worker directly.
     pub async fn spawn_with_env(
         manifest_json: &str,
         extra_env: &[(&str, &str)],
         sandbox: Option<&Arc<dyn crate::sandbox::SandboxBackend>>,
         sandbox_required: bool,
     ) -> Result<Self, RuntimeError> {
-        // Write the manifest into a temp DIRECTORY (not a bare file): under a
-        // sandbox the dir is bound writable as the worker's cwd so the manifest
-        // is reachable through the otherwise read-only/ tmpfs filesystem view.
+        // Write the manifest into a temp directory so the worker can use that
+        // directory as its cwd and reread the manifest throughout its lifetime.
         let workdir = tempfile::Builder::new()
             .prefix(MANIFEST_TEMPFILE_PREFIX)
             .tempdir()
@@ -114,15 +169,16 @@ impl PythonHandlerWorker {
             .to_str()
             .ok_or_else(|| cap_err("manifest path is not valid UTF-8"))?;
 
-        // Base argv: `python -m apxm.tool_worker <manifest>`. Optionally wrapped
-        // by the sandbox backend (bwrap) which forwards stdio transparently.
+        // Base argv: `python -m apxm.tool_worker <manifest>`. An optional
+        // backend wrapper must preserve the stdio worker protocol.
         let py = resolve_python_bin().to_string();
         let base_args: Vec<String> = vec![
             PYTHON_MODULE_FLAG.to_string(),
             WORKER_MODULE.to_string(),
             manifest_path_str.to_string(),
         ];
-        let (program, args) = match sandbox.filter(|b| b.is_available()) {
+        let worker_env = worker_environment(extra_env);
+        let sandbox_command = match sandbox.filter(|b| b.is_available()) {
             Some(backend) => {
                 tracing::info!(
                     target: TRACE_TARGET,
@@ -131,7 +187,9 @@ impl PythonHandlerWorker {
                 );
                 // No network for handlers (they must use capabilities for I/O);
                 // workdir bound writable as cwd.
-                backend.wrap_command(&py, &base_args, workdir.path(), false)
+                backend
+                    .wrap_command(&py, &base_args, workdir.path(), false, &worker_env)
+                    .map_err(|error| cap_err(format!("Failed to wrap Python worker: {error}")))?
             }
             // Fail CLOSED: when sandboxing was required (the trusted server-python
             // path sets it) but no OS-isolating backend is available, refuse to
@@ -139,55 +197,23 @@ impl PythonHandlerWorker {
             // trust gate's guarantee must hold (security: no fail-open).
             None if sandbox_required => {
                 return Err(cap_err(
-                    "python worker sandbox required (APXM_SANDBOX_PYTHON) but no \
-                     OS-isolating backend (e.g. bubblewrap) is available; refusing \
+                    "python worker sandbox required (APXM_SANDBOX_SCRIPTS) but no \
+                     OS-isolating backend is available; refusing \
                      to run author python unsandboxed",
                 ));
             }
-            None => (py, base_args),
+            None => crate::sandbox::WrappedCommand::direct(py, base_args, worker_env.clone())
+                .map_err(|error| cap_err(format!("Invalid Python worker environment: {error}")))?,
         };
 
-        let mut cmd = Command::new(&program);
-        cmd.args(&args)
-            .stdin(std::process::Stdio::piped())
-            .stdout(std::process::Stdio::piped())
-            .stderr(std::process::Stdio::piped())
-            .kill_on_drop(true);
-        // Security (constitution-aligned hardening): scrub secret-looking env
-        // vars so an author @tool/@hook handler cannot read the host's
-        // credentials (KEK, LLM gateway keys, auth bearer, AWS/DB creds). We use
-        // a denylist rather than env_clear so the worker keeps the vars python
-        // genuinely needs to run (PATH, venv/loader vars) across environments;
-        // handlers that need credentials must go through the capability/
-        // credential system, not raw env inheritance.
-        const SECRET_MARKERS: &[&str] = &[
-            "KEY",
-            "TOKEN",
-            "SECRET",
-            "PASSWORD",
-            "PASSWD",
-            "CREDENTIAL",
-            "BEARER",
-            "KEK",
-            "PRIVATE",
-        ];
-        for (key, _) in std::env::vars() {
-            let upper = key.to_ascii_uppercase();
-            if SECRET_MARKERS.iter().any(|m| upper.contains(m)) {
-                cmd.env_remove(&key);
-            }
-        }
-        cmd.env(
-            PYTHONUNBUFFERED,
-            apxm_core::constants::env::flag_values::ENABLED,
-        );
-        // Explicit caller-supplied env is trusted (set by the runtime, not the
-        // handler) and is applied after the allowlist.
-        for (k, v) in extra_env {
-            cmd.env(k, v);
-        }
-        let mut child = cmd
-            .spawn()
+        let mut child = sandbox_command
+            .spawn(|command| {
+                command
+                    .stdin(std::process::Stdio::piped())
+                    .stdout(std::process::Stdio::piped())
+                    .stderr(std::process::Stdio::piped())
+                    .kill_on_drop(true);
+            })
             .map_err(|e| cap_err(format!("Failed to spawn Python tool worker: {}", e)))?;
 
         let stdin = child
@@ -281,12 +307,29 @@ impl PythonHandlerWorker {
         args: serde_json::Value,
         deadline: Duration,
     ) -> Result<serde_json::Value, RuntimeError> {
-        self.dispatch(handler_id, args, deadline, |method, _params| async move {
-            Err(format!(
-                "host call '{}' is not available on the tool path",
-                method
-            ))
-        })
+        self.call_with_call_id(handler_id, args, deadline, None)
+            .await
+    }
+
+    pub async fn call_with_call_id(
+        &self,
+        handler_id: &str,
+        args: serde_json::Value,
+        deadline: Duration,
+        call_id: Option<&str>,
+    ) -> Result<serde_json::Value, RuntimeError> {
+        self.dispatch(
+            handler_id,
+            args,
+            deadline,
+            call_id,
+            |method, _params| async move {
+                Err(format!(
+                    "host call '{}' is not available on the tool path",
+                    method
+                ))
+            },
+        )
         .await
     }
 
@@ -305,7 +348,7 @@ impl PythonHandlerWorker {
         F: Fn(String, serde_json::Value) -> Fut,
         Fut: Future<Output = Result<serde_json::Value, String>>,
     {
-        self.dispatch(handler_id, args, deadline, host).await
+        self.dispatch(handler_id, args, deadline, None, host).await
     }
 
     /// Core request loop: send a `call`, then consume frames until the final
@@ -316,6 +359,7 @@ impl PythonHandlerWorker {
         handler_id: &str,
         args: serde_json::Value,
         deadline: Duration,
+        call_id: Option<&str>,
         host: F,
     ) -> Result<serde_json::Value, RuntimeError>
     where
@@ -334,6 +378,7 @@ impl PythonHandlerWorker {
         let request = WorkerRequest::Call(CallRequest {
             v: PROTOCOL_VERSION,
             req_id: req_id.clone(),
+            call_id: call_id.map(str::to_string),
             tool_id: handler_id.to_string(),
             args,
             deadline_ms: deadline.as_millis() as u64,

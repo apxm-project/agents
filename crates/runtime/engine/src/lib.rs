@@ -58,6 +58,7 @@ pub use apxm_aam as aam;
 pub mod agent_pool;
 pub mod agent_router;
 pub mod agent_scoring;
+mod background;
 /// Capability system — re-exported from the standalone `apxm-capability`
 /// crate so existing `apxm_runtime::capability::...` import paths keep
 /// working after the  sub-crate extraction.
@@ -113,6 +114,10 @@ pub use agent_router::{
     AgentRouteDecision, AgentRouteRejection, AgentRouteRequest, AgentRouteScore, AgentRouteSource,
     AgentRouter, AgentRoutingError,
 };
+pub use background::{
+    BackgroundExecution, BackgroundExecutionOutcome, BackgroundExecutionTask,
+    BackgroundJoinFailure, PersistedBackgroundExecutionOutcome,
+};
 pub use capability::{
     CapabilitySystem,
     flow_registry::FlowRegistry,
@@ -122,18 +127,16 @@ pub use capability::{
     },
 };
 pub use context_stack::{
-    ContextAssembly, ContextDisposition, ContextFrame, ContextPermissionScope, ContextPlan,
-    ContextPlanSegment, ContextScope, ContextSensitivity, ContextStack, ContextStackConfig,
+    ContextAssembly, ContextFrame, ContextScope, ContextStack, ContextStackConfig,
 };
 pub use executor::{
-    CallSkillRequest, CallSkillResult, CancellationToken, CapabilityEffectReceiptPayload,
-    ConversationMemoryMiddleware, EmitterAdapter, ExecutionContext, ExecutionEvent,
-    ExecutionEventEmitter, ExecutionHook, ExecutionHookContext, ExecutorEngine,
-    GraphFinishedEvent, GraphMetricsTracker, GraphStartedEvent, InnerPlanLinker,
-    LoopGuardMiddleware, ModelContextCallKind, ModelContextMetrics, ModelContextPlanStatus, Next,
-    NoOpLinker, NoOpSkillResolver, NoOpWorkflowSpawner, NodeFinishedEvent, NodeReadyEvent,
-    NodeStartedEvent, OperationMiddleware, SkillResolver, TimeoutMiddleware,
-    TokenBudgetMiddleware, TokenUsageSummary, WorkflowSpawnResult, WorkflowSpawner,
+    CallSkillRequest, CallSkillResult, CancellationToken, ConversationMemoryMiddleware,
+    EmitterAdapter, EventScopeState, ExecutionContext, ExecutionEvent, ExecutionEventEmitter,
+    ExecutionHook, ExecutionHookContext, ExecutorEngine, GraphFinishedEvent, GraphMetricsTracker,
+    GraphStartedEvent, InnerPlanLinker, LoopGuardMiddleware, Next, NoOpLinker, NoOpSkillResolver,
+    NoOpWorkflowSpawner, NodeFinishedEvent, NodeReadyEvent, NodeStartedEvent, OperationMiddleware,
+    SkillResolver, TimeoutMiddleware, TokenBudgetMiddleware, TokenUsageSummary,
+    WorkflowSpawnResult, WorkflowSpawner,
 };
 pub use graph_lifecycle::BackendGraphLifecycle;
 pub use memory::{MemoryConfig, MemorySpace, MemorySystem, parse_memory_space};

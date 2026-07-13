@@ -41,14 +41,14 @@ use super::implementations::{Status, print_section_header, print_status_line};
 const AGENT_SCHEMA_V1: &str = "apxm.agent.v1";
 
 /// Projection of generated-only `integrity.toml`.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct IntegrityToml {
     pub algorithm: String,
     pub hash: String,
     pub chain: Vec<ChainLinkToml>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ChainLinkToml {
     pub path: String,
     pub prev_hash: String,
@@ -363,31 +363,65 @@ pub(crate) fn agent_new(
         );
     }
 
-    match template {
-        "looped-agent" => agent_new_looped_agent(id, &root, display_name, json_output),
-        "gao" => agent_new_from_gao_example(id, &root, display_name, json_output),
-        other => bail!("unknown agent template '{other}' (expected 'looped-agent' or 'gao')"),
+    if template == "looped-agent" {
+        return agent_new_looped_agent(id, &root, display_name, json_output);
     }
+
+    let template_dir = resolve_agent_template_dir(template)?;
+    agent_new_from_template_dir(id, &root, display_name, &template_dir, json_output)
 }
 
+fn agent_examples_dir() -> PathBuf {
+    Path::new(env!("CARGO_MANIFEST_DIR")).join("../../../examples/agents")
+}
+
+pub(crate) fn example_agent_dir(name: &str) -> PathBuf {
+    agent_examples_dir().join(name)
+}
+
+#[cfg(test)]
 pub(crate) fn gao_example_agent_dir() -> PathBuf {
-    Path::new(env!("CARGO_MANIFEST_DIR")).join("../../../examples/agents/gao")
+    example_agent_dir("gao")
 }
 
-fn agent_new_from_gao_example(
+fn resolve_agent_template_dir(template: &str) -> Result<PathBuf> {
+    let requested = PathBuf::from(template);
+    if requested.is_dir() {
+        return Ok(requested);
+    }
+
+    if requested.components().count() == 1 {
+        let example = example_agent_dir(template);
+        if example.is_dir() {
+            return Ok(example);
+        }
+    }
+
+    bail!(
+        "unknown agent template '{template}': expected 'looped-agent', an example name under {}, or a directory path",
+        agent_examples_dir().display()
+    )
+}
+
+fn agent_new_from_template_dir(
     id: &str,
     root: &Path,
     display_name: Option<String>,
+    template_dir: &Path,
     json_output: bool,
 ) -> Result<()> {
-    let example = gao_example_agent_dir();
-    if !example.is_dir() {
+    if !template_dir.join("agent.toml").is_file() {
         bail!(
-            "gao template requires {} (examples/agents/gao); run with --template looped-agent instead",
-            example.display()
+            "agent template '{}' is missing required agent.toml",
+            template_dir.display()
         );
     }
-    copy_dir_recursive(&example, root)?;
+    copy_dir_recursive(template_dir, root)?;
+    let copied_integrity = root.join("integrity.toml");
+    if copied_integrity.is_file() {
+        fs::remove_file(&copied_integrity)
+            .with_context(|| format!("Failed to remove {}", copied_integrity.display()))?;
+    }
     rewrite_scaffolded_identity(root, id, display_name)?;
     agent_sync(root, json_output)?;
     print_agent_scaffolded(id, root, json_output)
@@ -1690,6 +1724,54 @@ fn write_integrity_toml(path: &Path, integrity: &IntegrityToml) -> Result<()> {
     .with_context(|| format!("Failed to write {}", path.display()))
 }
 
+/// Verify a built agent package against its generated integrity chain.
+#[cfg(feature = "driver")]
+pub(super) fn verify_agent_integrity(root: &Path) -> Result<()> {
+    let integrity_path = root.join("integrity.toml");
+    if !integrity_path.is_file() {
+        bail!(
+            "agent package '{}' is missing integrity.toml; run 'apxm agent build {}' before compiling it",
+            root.display(),
+            root.display()
+        );
+    }
+
+    let recorded: IntegrityToml = read_toml(&integrity_path)?;
+    if recorded.algorithm != "sha256" {
+        bail!(
+            "agent package '{}' uses unsupported integrity algorithm '{}'; expected 'sha256'",
+            root.display(),
+            recorded.algorithm
+        );
+    }
+
+    let unrecognized = find_unrecognized_files(root)?;
+    if !unrecognized.is_empty() {
+        bail!(
+            "agent package '{}' contains files outside the integrity schema: {}; move them into the declared package layout and run 'apxm agent build {}' again",
+            root.display(),
+            unrecognized.join(", "),
+            root.display()
+        );
+    }
+
+    let expected = compute_integrity(&digest_recognized_files(root)?);
+    if recorded != expected {
+        bail!(
+            "agent package '{}' failed integrity verification; package contents changed after the last build, so run 'apxm agent build {}' again",
+            root.display(),
+            root.display()
+        );
+    }
+    Ok(())
+}
+
+#[cfg(test)]
+pub(super) fn seal_agent_integrity_for_test(root: &Path) -> Result<()> {
+    let integrity = compute_integrity(&digest_recognized_files(root)?);
+    write_integrity_toml(&root.join("integrity.toml"), &integrity)
+}
+
 /// Resolve a compiled skill's single frontend source file
 /// (`skills/<id>/skill.py` or `skills/<id>/skill.ts`) from its declared
 /// `frontend`. Errors clearly for an unknown `frontend` value or a missing
@@ -1930,6 +2012,24 @@ fn collect_typescript_handler_sources(root: &Path) -> Result<Vec<PathBuf>> {
     }
 
     Ok(sources.into_iter().collect())
+}
+
+fn validate_typescript_handler_toolchain(ts_frontend: &Path) -> Result<()> {
+    let node_modules = ts_frontend.join("node_modules");
+    if !node_modules.join("esbuild").is_dir() {
+        bail!(
+            "TypeScript handler compiler dependencies are missing under {}; run `dekk agents frontend setup`",
+            node_modules.display()
+        );
+    }
+    let compiler = ts_frontend.join("dist/compile-handlers.js");
+    if !compiler.is_file() {
+        bail!(
+            "TypeScript handler compiler is not built at {}; run `dekk agents frontend build`",
+            compiler.display()
+        );
+    }
+    Ok(())
 }
 
 fn compile_agent_handlers(root: &Path) -> Result<()> {
@@ -2298,6 +2398,96 @@ mod tests {
             err.to_string().contains("lint error"),
             "expected a lint error, got: {err}"
         );
+    }
+
+    #[test]
+    fn new_resolves_example_names_and_template_paths_generically() {
+        let gao = resolve_agent_template_dir("gao").expect("named example resolves");
+        assert_eq!(gao, example_agent_dir("gao"));
+
+        let tmp = tempdir().unwrap();
+        let template = tmp.path().join("custom-template");
+        fs::create_dir_all(&template).unwrap();
+        fs::write(
+            template.join("agent.toml"),
+            "id = \"template\"\nversion = \"0.1.0\"\n\n[runtime]\nsession_prefix = \"template\"\n",
+        )
+        .unwrap();
+        let destination = tmp.path().join("generated");
+        agent_new(
+            "generated",
+            Some(destination.clone()),
+            Some("Generated Agent".to_string()),
+            template.to_str().expect("UTF-8 path"),
+            true,
+        )
+        .expect("path template scaffolds");
+
+        let agent: AgentToml = read_toml(&destination.join("agent.toml")).unwrap();
+        assert_eq!(agent.id, "generated");
+        assert_eq!(agent.display_name.as_deref(), Some("Generated Agent"));
+        assert_eq!(
+            agent
+                .runtime
+                .as_ref()
+                .and_then(|runtime| runtime.session_prefix.as_deref()),
+            Some("generated")
+        );
+        assert!(!destination.join("integrity.toml").exists());
+    }
+
+    #[test]
+    fn typescript_manifest_joins_permission_decisions_into_approval_metadata() {
+        let tmp = tempdir().unwrap();
+        let root = tmp.path();
+        fs::create_dir_all(root.join("capabilities/handlers")).unwrap();
+        fs::write(
+            root.join("capabilities/handlers/tools.json"),
+            r#"[
+                {"handler_id":"sha256:read","module":"read","qualname":"run","name":"read_tool","schema":{}},
+                {"handler_id":"sha256:write","module":"write","qualname":"run","name":"write_tool","schema":{}}
+            ]"#,
+        )
+        .unwrap();
+        let capability = |id: &str, read_only: bool| CapabilityEntry {
+            id: id.to_string(),
+            description: None,
+            extra: toml::Table::from_iter([
+                (
+                    "kind".to_string(),
+                    toml::Value::String("typescript_handler".to_string()),
+                ),
+                ("read_only".to_string(), toml::Value::Boolean(read_only)),
+            ]),
+        };
+        let permission = |id: &str, decision: &str| PermissionEntry {
+            capability: id.to_string(),
+            decision: Some(decision.to_string()),
+            extra: toml::Table::new(),
+        };
+
+        annotate_typescript_tools_manifest(
+            root,
+            &[
+                capability("read_tool", true),
+                capability("write_tool", false),
+            ],
+            &[
+                permission("read_tool", "allow"),
+                permission("write_tool", "ask"),
+            ],
+        )
+        .expect("manifest annotation");
+
+        let manifest = load_typescript_tools_manifest(root).unwrap();
+        let by_name = manifest
+            .iter()
+            .map(|entry| (entry["name"].as_str().unwrap(), entry))
+            .collect::<BTreeMap<_, _>>();
+        assert_eq!(by_name["read_tool"]["read_only"], true);
+        assert_eq!(by_name["read_tool"]["requires_approval"], false);
+        assert_eq!(by_name["write_tool"]["read_only"], false);
+        assert_eq!(by_name["write_tool"]["requires_approval"], true);
     }
 
     #[test]
@@ -2831,6 +3021,35 @@ mod tests {
         let err = agent_lint(&root, Some(org_root), true)
             .expect_err("a capability absent from both the agent and org globals must fail lint");
         assert!(err.to_string().contains("lint error"));
+    }
+
+    #[test]
+    fn typescript_handler_toolchain_reports_dekk_prerequisites() {
+        let tmp = tempdir().unwrap();
+        let frontend = tmp.path().join("frontend");
+        fs::create_dir_all(&frontend).unwrap();
+
+        let missing_dependencies = validate_typescript_handler_toolchain(&frontend)
+            .expect_err("missing dependencies must fail");
+        assert!(
+            missing_dependencies
+                .to_string()
+                .contains("dekk agents frontend setup")
+        );
+
+        fs::create_dir_all(frontend.join("node_modules/esbuild")).unwrap();
+        let missing_build = validate_typescript_handler_toolchain(&frontend)
+            .expect_err("missing compiler build must fail");
+        assert!(
+            missing_build
+                .to_string()
+                .contains("dekk agents frontend build")
+        );
+
+        fs::create_dir_all(frontend.join("dist")).unwrap();
+        fs::write(frontend.join("dist/compile-handlers.js"), "export {};").unwrap();
+        validate_typescript_handler_toolchain(&frontend)
+            .expect("complete frontend toolchain must pass");
     }
 
     #[cfg(feature = "driver")]

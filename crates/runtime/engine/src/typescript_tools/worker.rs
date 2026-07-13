@@ -1,8 +1,8 @@
 //! TypeScript tool worker — Node subprocess bridge over NDJSON stdin/stdout.
 
 use super::constants::{
-    CAPABILITY_NAME, FRONTEND_PACKAGE_ENV, MANIFEST_TEMPFILE_PREFIX, NODE_BIN, TRACE_TARGET,
-    WORKER_SCRIPT,
+    CAPABILITY_NAME, MANIFEST_TEMPFILE_PREFIX, NODE_BIN, REPO_MARKER, TRACE_TARGET,
+    TYPESCRIPT_FRONTEND_PATH, WORKER_SCRIPT,
 };
 use super::protocol::{
     CallRequest, CancelRequest, ErrorEnvelope, HostResultResponse, PROTOCOL_VERSION, WorkerRequest,
@@ -12,7 +12,7 @@ use apxm_core::error::RuntimeError;
 use parking_lot::RwLock;
 use std::collections::HashMap;
 use std::future::Future;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
@@ -25,20 +25,36 @@ fn cap_err(message: impl Into<String>) -> RuntimeError {
     }
 }
 
-fn worker_script_path() -> Result<PathBuf, RuntimeError> {
-    let package = std::env::var_os(FRONTEND_PACKAGE_ENV).ok_or_else(|| {
-        cap_err(format!(
-            "{FRONTEND_PACKAGE_ENV} must point to the installed @apxm/frontend package"
-        ))
-    })?;
-    let path = PathBuf::from(package).join("scripts").join(WORKER_SCRIPT);
-    if !path.is_file() {
-        return Err(cap_err(format!(
-            "Installed TypeScript worker path does not exist: {}",
-            path.display()
-        )));
+fn worker_script_from_repo_root(repo_root: PathBuf) -> Option<PathBuf> {
+    let mut path = repo_root;
+    for segment in TYPESCRIPT_FRONTEND_PATH {
+        path.push(segment);
     }
-    Ok(path)
+    path.push("scripts");
+    path.push(WORKER_SCRIPT);
+    path.is_file().then_some(path)
+}
+
+fn find_worker_script_from_ancestors(start: &Path) -> Option<PathBuf> {
+    for candidate in start.ancestors() {
+        if candidate.join(REPO_MARKER).is_file()
+            && let Some(path) = worker_script_from_repo_root(candidate.to_path_buf())
+        {
+            return Some(path);
+        }
+    }
+    None
+}
+
+fn worker_script_path() -> Option<PathBuf> {
+    if let Ok(cwd) = std::env::current_dir()
+        && let Some(path) = find_worker_script_from_ancestors(&cwd)
+    {
+        return Some(path);
+    }
+
+    let manifest_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
+    find_worker_script_from_ancestors(manifest_dir)
 }
 
 fn resolve_node_bin() -> &'static str {
@@ -80,7 +96,11 @@ impl TypeScriptHandlerWorker {
         sandbox: Option<&Arc<dyn crate::sandbox::SandboxBackend>>,
         sandbox_required: bool,
     ) -> Result<Self, RuntimeError> {
-        let worker_script = worker_script_path()?;
+        let worker_script = worker_script_path().ok_or_else(|| {
+            cap_err(format!(
+                "TypeScript tool worker script not found (expected frontend path ending in scripts/{WORKER_SCRIPT})"
+            ))
+        })?;
 
         let workdir = tempfile::Builder::new()
             .prefix(MANIFEST_TEMPFILE_PREFIX)

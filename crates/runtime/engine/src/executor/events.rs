@@ -124,7 +124,4 @@ mod duration_millis {
 // trait, so both capability and executor now depend on the trait's home crate
 // instead of on each other. Re-exported here so `crate::executor::events::*`
 // and `crate::ExecutionEventEmitter` keep working unchanged.
-pub use apxm_capability_iface::events::{
-    CapabilityEffectReceiptPayload, ExecutionEventEmitter, ModelContextCallKind,
-    ModelContextMetrics, ModelContextPlanStatus,
-};
+pub use apxm_capability_iface::events::{EventScopeState, ExecutionEventEmitter};

@@ -1,25 +1,25 @@
 //! Function-calling tool registry lookup, parallel dispatch, and ASK tool loop.
 
 use super::{
-    ExecutionContext, attach_graph_hints, copy_llm_request_routing, model_context_metrics,
+    ExecutionContext, LlmAttemptOutput, attach_graph_hints, charge_tokens,
+    copy_llm_request_routing, emit_llm_done, resolve_global_token_budget,
 };
-use crate::context_stack::ContextPlanMetrics;
 use apxm_backends::{LLMRequest, ToolChoice, ToolDefinition};
-use apxm_capability_iface::events::{ModelContextCallKind, ModelContextPlanStatus};
 use apxm_core::apxm_llm;
 use apxm_core::constants::capabilities;
 use apxm_core::constants::graph::attrs as graph_attrs;
 use apxm_core::constants::runtime::belief_keys;
 use apxm_core::error::RuntimeError;
+use apxm_core::events::payload::{
+    GenerationIdentity, ToolCallCorrelation, ToolCallPayload, ToolCallStatus,
+};
 use apxm_core::types::execution::Node;
 use apxm_core::types::operations::AISOperationType;
 use apxm_core::types::values::Value;
 use apxm_core::types::{ToolCall, ToolResult};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
-use super::super::{
-    Result, apply_llm_request_routing_from_node, execute_llm_request_for_node_with_context,
-};
+use super::super::{Result, apply_llm_request_routing_from_node};
 
 /// Agent-callable tool that spawns a focused specialist sub-agent. The
 /// converse/autonomous coordinator opts in via the `enable_delegate` node
@@ -32,8 +32,6 @@ pub(crate) const DELEGATE_TOOL: &str = "delegate";
 /// Default maximum number of tool loop iterations to prevent infinite loops.
 /// Can be overridden per-node via the `max_tool_iterations` attribute.
 pub(super) const DEFAULT_MAX_TOOL_ITERATIONS: usize = 10;
-const DEFAULT_TOOL_RESULT_CONTEXT_TOKENS: usize = 2_048;
-const MIN_TOOL_RESULT_CONTEXT_TOKENS: usize = 128;
 
 /// Get tool definitions from the capability system for LLM requests
 fn get_tool_definitions_from_capabilities(ctx: &ExecutionContext) -> Vec<ToolDefinition> {
@@ -295,17 +293,38 @@ async fn execute_delegate(
             .with_tool_choice(ToolChoice::Auto)
     };
 
-    match Box::pin(execute_ask_with_tools(ctx, &synth, &req, None)).await {
+    match Box::pin(execute_ask_with_tools(ctx, &synth, &req)).await {
         Ok(Value::String(s)) => ToolResult::success(&tool_call.id, s),
         Ok(other) => ToolResult::success(&tool_call.id, format!("{other:?}")),
         Err(e) => ToolResult::error(&tool_call.id, format!("delegate sub-agent failed: {e}")),
     }
 }
 
+fn tool_call_args(ctx: &ExecutionContext, tool_call: &ToolCall) -> HashMap<String, Value> {
+    let mut args = match &tool_call.args {
+        serde_json::Value::Object(obj) => obj
+            .iter()
+            .map(|(key, value)| (key.clone(), json_to_value(value)))
+            .collect(),
+        _ => HashMap::new(),
+    };
+    inject_visible_skill_imports(&tool_call.name, &mut args, &ctx.metadata);
+    args
+}
+
+fn active_agent_code(ctx: &ExecutionContext) -> String {
+    ctx.agent_scope_stack
+        .peek()
+        .map(|scope| scope.agent_code.clone())
+        .or_else(|| ctx.current_agent.as_ref().map(|agent| agent.name.clone()))
+        .unwrap_or_else(|| "runtime".to_string())
+}
+
 async fn execute_tool_call(
     ctx: &ExecutionContext,
     node: &Node,
     tool_call: &ToolCall,
+    correlation: &ToolCallCorrelation,
 ) -> ToolResult {
     apxm_llm!(debug,
      execution_id = %ctx.execution_id,
@@ -314,63 +333,124 @@ async fn execute_tool_call(
      "Executing tool call"
     );
 
-    let mut args: HashMap<String, Value> = match &tool_call.args {
-        serde_json::Value::Object(obj) => obj
-            .iter()
-            .map(|(k, v)| (k.clone(), json_to_value(v)))
-            .collect(),
-        _ => HashMap::new(),
-    };
-    inject_visible_skill_imports(&tool_call.name, &mut args, &ctx.metadata);
+    let args = tool_call_args(ctx, tool_call);
+    let argument_keys = args.keys().cloned().collect::<Vec<_>>();
+    let agent_code = active_agent_code(ctx);
+    let started_at = std::time::Instant::now();
 
     if let Some(emitter) = &ctx.event_emitter {
-        emitter.emit_tool_start(&tool_call.name, &args);
+        emitter.emit_tool_call_begin_with_correlation(
+            &agent_code,
+            &tool_call.name,
+            &argument_keys,
+            Some(correlation),
+        );
+        emitter.emit_tool_start_with_correlation(&tool_call.name, &args, Some(correlation));
     }
 
+    let result = execute_tool_call_inner(ctx, node, tool_call, args, correlation).await;
+    if let Some(emitter) = &ctx.event_emitter {
+        emitter.emit_tool_end_with_correlation(
+            &tool_call.name,
+            &Value::String(result.content.clone()),
+            Some(correlation),
+        );
+        emitter.emit_tool_call_end_with_correlation(
+            &agent_code,
+            &tool_call.name,
+            &[],
+            if result.success {
+                ToolCallStatus::Ok
+            } else {
+                ToolCallStatus::Error
+            },
+            started_at.elapsed().as_millis() as u64,
+            Some(correlation),
+        );
+    }
+    result
+}
+
+async fn execute_tool_call_inner(
+    ctx: &ExecutionContext,
+    node: &Node,
+    tool_call: &ToolCall,
+    args: HashMap<String, Value>,
+    correlation: &ToolCallCorrelation,
+) -> ToolResult {
     // Native sub-agent fan-out: `delegate` is not a capability — it re-enters
     // the ASK tool loop as a focused specialist over the requested tool groups.
     if tool_call.name == DELEGATE_TOOL {
-        let result = execute_delegate(ctx, node, tool_call, &args).await;
-        if let Some(emitter) = &ctx.event_emitter {
-            emitter.emit_tool_end(&tool_call.name, &Value::String(result.content.clone()));
-        }
-        return result;
+        return execute_delegate(ctx, node, tool_call, &args).await;
     }
 
     if let Some(bridge) = ctx.python_handler_bridge.as_ref() {
         if bridge.has_tool(&tool_call.name) {
-            return dispatch_script_tool_call(ctx, node, tool_call, args, "Python").await;
+            return dispatch_script_tool_call(ctx, node, tool_call, args, correlation, "Python")
+                .await;
         }
     }
     if let Some(bridge) = ctx.typescript_handler_bridge.as_ref() {
         if bridge.has_tool(&tool_call.name) {
-            return dispatch_script_tool_call(ctx, node, tool_call, args, "TypeScript").await;
+            return dispatch_script_tool_call(
+                ctx,
+                node,
+                tool_call,
+                args,
+                correlation,
+                "TypeScript",
+            )
+            .await;
         }
     }
 
     // Native/builtin tool path also runs pre/post_cap hooks. A pre_cap deny continues the turn gracefully (m4).
-    let args =
-        match crate::executor::hook_driver::run_pre_cap_hooks(ctx, &tool_call.name, args).await {
-            Ok(edited) => edited,
-            Err(e) => {
-                if let Some(emitter) = &ctx.event_emitter {
-                    emitter.emit_tool_end(&tool_call.name, &Value::String(e.to_string()));
-                }
-                return ToolResult::error(&tool_call.id, e.to_string());
-            }
-        };
-    match ctx.invoke_capability(&tool_call.name, args).await {
+    let args = match crate::executor::hook_driver::run_pre_cap_hooks(
+        ctx,
+        &tool_call.name,
+        args,
+        Some(correlation),
+    )
+    .await
+    {
+        Ok(edited) => edited,
+        Err(e) => return ToolResult::error(&tool_call.id, e.to_string()),
+    };
+    if let Err(error) = super::super::inv_cap::enforce_write_boundary(
+        ctx,
+        &tool_call.name,
+        &args,
+        false,
+        &tool_call.id,
+    )
+    .await
+    {
+        return ToolResult::error(&tool_call.id, error.to_string());
+    }
+    let timeout =
+        std::time::Duration::from_millis(apxm_core::constants::defaults::DEFAULT_TIMEOUT_MS);
+    match ctx
+        .invoke_capability_with_timeout_for_call(
+            &tool_call.name,
+            args,
+            timeout,
+            &tool_call.id,
+            Some(correlation),
+        )
+        .await
+    {
         Ok(result) => {
-            let result =
-                crate::executor::hook_driver::run_post_cap_hooks(ctx, &tool_call.name, result)
-                    .await;
+            let result = crate::executor::hook_driver::run_post_cap_hooks(
+                ctx,
+                &tool_call.name,
+                result,
+                Some(correlation),
+            )
+            .await;
             let content = match result {
                 Value::String(s) => s,
                 other => other.to_string(),
             };
-            if let Some(emitter) = &ctx.event_emitter {
-                emitter.emit_tool_end(&tool_call.name, &Value::String(content.clone()));
-            }
             apxm_llm!(info,
              execution_id = %ctx.execution_id,
              tool_name = %tool_call.name,
@@ -379,9 +459,6 @@ async fn execute_tool_call(
             ToolResult::success(&tool_call.id, content)
         }
         Err(e) => {
-            if let Some(emitter) = &ctx.event_emitter {
-                emitter.emit_tool_end(&tool_call.name, &Value::String(e.to_string()));
-            }
             apxm_llm!(warn,
              execution_id = %ctx.execution_id,
              tool_name = %tool_call.name,
@@ -409,6 +486,64 @@ enum ToolAccess {
     Write,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct ScriptToolPolicy {
+    pub read_only: bool,
+    pub requires_approval: bool,
+}
+
+fn checked_script_tool_policy(
+    name: &str,
+    read_only: Option<bool>,
+    requires_approval: Option<bool>,
+) -> std::result::Result<ScriptToolPolicy, RuntimeError> {
+    let (Some(read_only), Some(requires_approval)) = (read_only, requires_approval) else {
+        return Err(RuntimeError::Capability {
+            capability: name.to_string(),
+            message: format!(
+                "script capability '{name}' is missing joined read_only/requires_approval policy \
+                 metadata; rebuild the agent package"
+            ),
+        });
+    };
+    Ok(ScriptToolPolicy {
+        read_only,
+        requires_approval,
+    })
+}
+
+pub(crate) fn script_tool_policy(
+    ctx: &ExecutionContext,
+    name: &str,
+) -> std::result::Result<ScriptToolPolicy, RuntimeError> {
+    if let Some(descriptor) = ctx
+        .python_handler_bridge
+        .as_ref()
+        .and_then(|bridge| bridge.registry().resolve(name))
+    {
+        return checked_script_tool_policy(
+            name,
+            descriptor.read_only,
+            descriptor.requires_approval,
+        );
+    }
+    if let Some(descriptor) = ctx
+        .typescript_handler_bridge
+        .as_ref()
+        .and_then(|bridge| bridge.registry().resolve(name))
+    {
+        return checked_script_tool_policy(
+            name,
+            descriptor.read_only,
+            descriptor.requires_approval,
+        );
+    }
+    Err(RuntimeError::Capability {
+        capability: name.to_string(),
+        message: format!("script capability '{name}' is not registered in an artifact worker"),
+    })
+}
+
 fn resolve_tool_access(ctx: &ExecutionContext, name: &str) -> Option<ToolAccess> {
     if let Some(metadata) = ctx.capability_system.get_metadata(name) {
         return Some(if metadata.read_only {
@@ -423,7 +558,10 @@ fn resolve_tool_access(ctx: &ExecutionContext, name: &str) -> Option<ToolAccess>
         .as_ref()
         .is_some_and(|bridge| bridge.has_tool(name))
     {
-        return Some(ToolAccess::Write);
+        return Some(match script_tool_policy(ctx, name) {
+            Ok(policy) if policy.read_only => ToolAccess::ReadOnly,
+            _ => ToolAccess::Write,
+        });
     }
 
     if ctx
@@ -431,7 +569,10 @@ fn resolve_tool_access(ctx: &ExecutionContext, name: &str) -> Option<ToolAccess>
         .as_ref()
         .is_some_and(|bridge| bridge.has_tool(name))
     {
-        return Some(ToolAccess::Write);
+        return Some(match script_tool_policy(ctx, name) {
+            Ok(policy) if policy.read_only => ToolAccess::ReadOnly,
+            _ => ToolAccess::Write,
+        });
     }
 
     None
@@ -442,32 +583,61 @@ async fn dispatch_script_tool_call(
     _node: &Node,
     tool_call: &ToolCall,
     args: HashMap<String, Value>,
+    correlation: &ToolCallCorrelation,
     label: &str,
 ) -> ToolResult {
     let timeout =
         std::time::Duration::from_millis(apxm_core::constants::defaults::DEFAULT_TIMEOUT_MS);
-    let mut edited_args =
-        match crate::executor::hook_driver::run_pre_cap_hooks(ctx, &tool_call.name, args).await {
-            Ok(a) => a,
-            Err(e) => {
-                if let Some(emitter) = &ctx.event_emitter {
-                    emitter.emit_tool_end(&tool_call.name, &Value::String(e.to_string()));
-                }
-                return ToolResult::error(&tool_call.id, e.to_string());
-            }
-        };
-    if let Err(error) = ctx.prepare_capability_invocation(&tool_call.name, &mut edited_args, true) {
-        if let Some(emitter) = &ctx.event_emitter {
-            emitter.emit_tool_end(&tool_call.name, &Value::String(error.to_string()));
-        }
+    let edited_args = match crate::executor::hook_driver::run_pre_cap_hooks(
+        ctx,
+        &tool_call.name,
+        args,
+        Some(correlation),
+    )
+    .await
+    {
+        Ok(a) => a,
+        Err(e) => return ToolResult::error(&tool_call.id, e.to_string()),
+    };
+    let policy = match script_tool_policy(ctx, &tool_call.name) {
+        Ok(policy) => policy,
+        Err(error) => return ToolResult::error(&tool_call.id, error.to_string()),
+    };
+    if let Err(error) = super::super::inv_cap::enforce_write_boundary(
+        ctx,
+        &tool_call.name,
+        &edited_args,
+        !policy.read_only,
+        &tool_call.id,
+    )
+    .await
+    {
         return ToolResult::error(&tool_call.id, error.to_string());
     }
-    let json_args = serde_json::to_value(&edited_args).unwrap_or_else(|_| tool_call.args.clone());
+    let admitted_args = match ctx
+        .admit_capability_call(
+            &tool_call.name,
+            edited_args,
+            policy.requires_approval,
+            &tool_call.id,
+            Some(correlation),
+        )
+        .await
+    {
+        Ok(args) => args,
+        Err(error) => return ToolResult::error(&tool_call.id, error.to_string()),
+    };
+    let json_args = serde_json::to_value(&admitted_args).unwrap_or_else(|_| tool_call.args.clone());
     let bridge_call = async {
         if let Some(bridge) = ctx.python_handler_bridge.as_ref() {
             if bridge.has_tool(&tool_call.name) {
                 return bridge
-                    .call(&tool_call.name, json_args.clone(), timeout)
+                    .call_with_call_id(
+                        &tool_call.name,
+                        json_args.clone(),
+                        timeout,
+                        Some(&tool_call.id),
+                    )
                     .await;
             }
         }
@@ -477,21 +647,25 @@ async fn dispatch_script_tool_call(
                 message: format!("no {label} handler bridge configured"),
             }
         })?;
-        bridge.call(&tool_call.name, json_args, timeout).await
+        bridge
+            .call_with_call_id(&tool_call.name, json_args, timeout, Some(&tool_call.id))
+            .await
     };
 
     match bridge_call.await {
         Ok(json_result) => {
             let raw = Value::try_from(json_result).unwrap_or(Value::Null);
-            let transformed =
-                crate::executor::hook_driver::run_post_cap_hooks(ctx, &tool_call.name, raw).await;
+            let transformed = crate::executor::hook_driver::run_post_cap_hooks(
+                ctx,
+                &tool_call.name,
+                raw,
+                Some(correlation),
+            )
+            .await;
             let content = match transformed {
                 Value::String(s) => s,
                 other => other.to_string(),
             };
-            if let Some(emitter) = &ctx.event_emitter {
-                emitter.emit_tool_end(&tool_call.name, &Value::String(content.clone()));
-            }
             apxm_llm!(info,
              execution_id = %ctx.execution_id,
              tool_name = %tool_call.name,
@@ -501,9 +675,6 @@ async fn dispatch_script_tool_call(
             ToolResult::success(&tool_call.id, content)
         }
         Err(e) => {
-            if let Some(emitter) = &ctx.event_emitter {
-                emitter.emit_tool_end(&tool_call.name, &Value::String(e.to_string()));
-            }
             apxm_llm!(warn,
              execution_id = %ctx.execution_id,
              tool_name = %tool_call.name,
@@ -527,9 +698,11 @@ async fn execute_tool_calls_parallel(
     ctx: &ExecutionContext,
     node: &Node,
     tool_calls: &[ToolCall],
+    generation: &GenerationIdentity,
 ) -> Vec<ToolResult> {
     if tool_calls.len() == 1 {
-        return vec![execute_tool_call(ctx, node, &tool_calls[0]).await];
+        let correlation = ToolCallCorrelation::new(generation.clone(), tool_calls[0].id.clone());
+        return vec![execute_tool_call(ctx, node, &tool_calls[0], &correlation).await];
     }
 
     let max_parallel = max_parallel_tool_calls(ctx, tool_calls.len());
@@ -544,7 +717,7 @@ async fn execute_tool_calls_parallel(
 
     let mut results = Vec::with_capacity(tool_calls.len());
     for batch in tool_calls.chunks(max_parallel) {
-        results.extend(execute_tool_call_batch(ctx, node, batch).await);
+        results.extend(execute_tool_call_batch(ctx, node, batch, generation).await);
     }
     results
 }
@@ -553,19 +726,23 @@ async fn execute_tool_call_batch(
     ctx: &ExecutionContext,
     node: &Node,
     tool_calls: &[ToolCall],
+    generation: &GenerationIdentity,
 ) -> Vec<ToolResult> {
     let futures: Vec<_> = tool_calls
         .iter()
         .map(|tc| {
             let access = resolve_tool_access(ctx, &tc.name);
+            let correlation = ToolCallCorrelation::new(generation.clone(), tc.id.clone());
             async move {
                 match access {
-                    Some(ToolAccess::ReadOnly) | None => execute_tool_call(ctx, node, tc).await,
+                    Some(ToolAccess::ReadOnly) | None => {
+                        execute_tool_call(ctx, node, tc, &correlation).await
+                    }
                     Some(ToolAccess::Write) => {
                         let lock = write_lock_for_tool(&tc.name);
                         let result = {
                             let _guard = lock.write().await;
-                            execute_tool_call(ctx, node, tc).await
+                            execute_tool_call(ctx, node, tc, &correlation).await
                         };
                         release_write_lock_if_idle(&tc.name, &lock);
                         result
@@ -640,20 +817,23 @@ pub(super) fn format_tool_results_message(results: &[ToolResult]) -> String {
         .join("\n\n")
 }
 
-fn bounded_tool_results_message(node: &Node, results: &[ToolResult]) -> (String, bool) {
-    let limit = node
-        .attributes
-        .get(graph_attrs::TOKEN_BUDGET)
-        .and_then(|value| value.as_u64())
-        .and_then(|value| usize::try_from(value).ok())
-        .map(|budget| {
-            budget.saturating_div(4).clamp(
-                MIN_TOOL_RESULT_CONTEXT_TOKENS,
-                DEFAULT_TOOL_RESULT_CONTEXT_TOKENS,
-            )
-        })
-        .unwrap_or(DEFAULT_TOOL_RESULT_CONTEXT_TOKENS);
-    crate::context_stack::truncate_to_budget(&format_tool_results_message(results), limit)
+fn validate_model_tool_call_ids(tool_calls: &[ToolCall]) -> Result<()> {
+    let mut seen = HashSet::with_capacity(tool_calls.len());
+    for tool_call in tool_calls {
+        if tool_call.id.trim().is_empty() {
+            return Err(RuntimeError::LLM {
+                message: "model returned an empty tool-call id".to_string(),
+                backend: None,
+            });
+        }
+        if !seen.insert(tool_call.id.as_str()) {
+            return Err(RuntimeError::LLM {
+                message: format!("model returned duplicate tool-call id '{}'", tool_call.id),
+                backend: None,
+            });
+        }
+    }
+    Ok(())
 }
 
 /// Execute Ask operation with tool loop
@@ -668,8 +848,21 @@ pub(crate) async fn execute_ask_with_tools(
     ctx: &ExecutionContext,
     node: &Node,
     initial_request: &LLMRequest,
-    context_plan_metrics: Option<&ContextPlanMetrics>,
 ) -> Result<Value> {
+    let mut generations = super::LlmGenerationSequence::new();
+    let output =
+        execute_ask_with_tools_attempt(ctx, node, initial_request, 1, &mut generations).await?;
+    emit_llm_done(ctx, &output.final_response, &output.final_generation);
+    Ok(output.value)
+}
+
+pub(super) async fn execute_ask_with_tools_attempt(
+    ctx: &ExecutionContext,
+    node: &Node,
+    initial_request: &LLMRequest,
+    attempt: usize,
+    generations: &mut super::LlmGenerationSequence,
+) -> Result<LlmAttemptOutput> {
     let max_iterations = node
         .attributes
         .get(graph_attrs::MAX_TOOL_ITERATIONS)
@@ -699,26 +892,14 @@ pub(crate) async fn execute_ask_with_tools(
          "Sending ASK request with tools"
         );
 
-        let call_kind = if iteration == 0 {
-            ModelContextCallKind::Node
-        } else {
-            ModelContextCallKind::ToolContinuation
-        };
-        let plan_status = if iteration == 0 {
-            ModelContextPlanStatus::Assembled
-        } else {
-            ModelContextPlanStatus::Inherited
-        };
-        let context_metrics =
-            model_context_metrics(Some(node.id), call_kind, plan_status, context_plan_metrics);
-
+        let generation = generations.next(attempt);
         let llm_start = std::time::Instant::now();
-        let response = execute_llm_request_for_node_with_context(
+        let response = super::super::execute_llm_request_for_node_with_generation(
             ctx,
             node,
             "ASK",
             &current_request,
-            &context_metrics,
+            Some(&generation),
         )
         .await?;
         let iter_total_ms = llm_start.elapsed().as_secs_f64() * 1000.0;
@@ -728,6 +909,12 @@ pub(crate) async fn execute_ask_with_tools(
             .unwrap_or((iter_total_ms, 0.0));
         total_prefill_ms += iter_prefill;
         total_decode_ms += iter_decode;
+        charge_tokens(
+            ctx,
+            resolve_global_token_budget(ctx),
+            response.usage.total_tokens,
+        )?;
+
         {
             let flow_name = node
                 .attributes
@@ -750,13 +937,24 @@ pub(crate) async fn execute_ask_with_tools(
                 agent_name,
             );
             if let Some(emitter) = &ctx.event_emitter {
-                emitter.emit_token_usage(
+                emitter.emit_token_usage_with_generation(
                     node.id,
                     response.usage.input_tokens,
                     response.usage.output_tokens,
+                    Some(&generation),
                 );
             }
         }
+
+        super::emit_model_step(
+            ctx,
+            node.id,
+            &generation,
+            &response,
+            iter_total_ms,
+            iter_prefill,
+            iter_decode,
+        );
 
         total_input_tokens += response.usage.input_tokens;
         total_output_tokens += response.usage.output_tokens;
@@ -782,10 +980,29 @@ pub(crate) async fn execute_ask_with_tools(
             );
             ctx.timing_tracker
                 .record(node.id, total_prefill_ms, total_decode_ms);
-            return Ok(Value::String(response.content));
+            return Ok(LlmAttemptOutput {
+                value: Value::String(response.content.clone()),
+                final_response: response,
+                final_generation: generation,
+            });
         }
 
-        let tool_results = execute_tool_calls_parallel(ctx, node, &response.tool_calls).await;
+        validate_model_tool_call_ids(&response.tool_calls)?;
+        if let Some(emitter) = &ctx.event_emitter {
+            for tool_call in &response.tool_calls {
+                emitter.emit_tool_call(ToolCallPayload {
+                    id: tool_call.id.clone(),
+                    name: tool_call.name.clone(),
+                    arguments: tool_call.args.clone(),
+                    tool_call_correlation: Some(ToolCallCorrelation::new(
+                        generation.clone(),
+                        tool_call.id.clone(),
+                    )),
+                });
+            }
+        }
+        let tool_results =
+            execute_tool_calls_parallel(ctx, node, &response.tool_calls, &generation).await;
 
         if !tool_results.is_empty() {
             let results_value = Value::Array(
@@ -822,15 +1039,7 @@ pub(crate) async fn execute_ask_with_tools(
 
         tools_invoked_count += tool_results.len();
 
-        let (tool_results_message, truncated) = bounded_tool_results_message(node, &tool_results);
-        if truncated {
-            if let Some(emitter) = &ctx.event_emitter {
-                emitter.emit_warning(
-                    "tool_result_context_truncated",
-                    "tool results remain in session evidence; the continuation received a deterministic bounded extract",
-                );
-            }
-        }
+        let tool_results_message = format_tool_results_message(&tool_results);
         let continuation_prompt = format!(
             "{}\n\n{}\n\nBased on the tool results above, please continue.",
             current_request.prompt, tool_results_message
@@ -874,6 +1083,126 @@ pub(crate) async fn execute_ask_with_tools(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::aam::Aam;
+    use crate::capability::CapabilitySystem;
+    use crate::capability::executor::CapabilityExecutor;
+    use crate::capability::interceptor::{CapabilityInterceptor, InterceptDecision};
+    use crate::capability::metadata::RuntimeCapability;
+    use crate::memory::{MemoryConfig, MemorySystem};
+    use apxm_backends::LLMRegistry;
+    use apxm_core::types::consent::{
+        ApprovalEvidence, ConsentBroker, ConsentDecision, InteractiveApproval, PermissionPrompt,
+    };
+    use std::sync::Arc;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
+    struct RecordingCapability {
+        metadata: RuntimeCapability,
+        calls: Arc<AtomicUsize>,
+    }
+
+    #[async_trait::async_trait]
+    impl CapabilityExecutor for RecordingCapability {
+        async fn execute(
+            &self,
+            _args: HashMap<String, Value>,
+        ) -> std::result::Result<Value, apxm_core::error::RuntimeError> {
+            self.calls.fetch_add(1, Ordering::Relaxed);
+            Ok(Value::String("executed".to_string()))
+        }
+
+        fn metadata(&self) -> &RuntimeCapability {
+            &self.metadata
+        }
+    }
+
+    struct StubBroker {
+        decision: ConsentDecision,
+        calls: Arc<AtomicUsize>,
+    }
+
+    #[async_trait::async_trait]
+    impl ConsentBroker for StubBroker {
+        async fn request_consent(
+            &self,
+            _prompt: PermissionPrompt,
+            _timeout: std::time::Duration,
+        ) -> ConsentDecision {
+            self.calls.fetch_add(1, Ordering::Relaxed);
+            self.decision.clone()
+        }
+    }
+
+    struct CountingInterceptor {
+        calls: Arc<AtomicUsize>,
+    }
+
+    #[async_trait::async_trait]
+    impl CapabilityInterceptor for CountingInterceptor {
+        fn name(&self) -> &str {
+            "counting-test"
+        }
+
+        async fn pre_invoke(
+            &self,
+            _name: &str,
+            _args: &HashMap<String, Value>,
+        ) -> InterceptDecision {
+            self.calls.fetch_add(1, Ordering::Relaxed);
+            InterceptDecision::Allow
+        }
+    }
+
+    async fn model_tool_context(
+        name: &str,
+        read_only: bool,
+        requires_approval: bool,
+    ) -> (ExecutionContext, Arc<CapabilitySystem>, Arc<AtomicUsize>) {
+        let memory = Arc::new(
+            MemorySystem::new(MemoryConfig::in_memory_ltm())
+                .await
+                .expect("memory"),
+        );
+        let aam = Aam::new();
+        let capability_system = Arc::new(CapabilitySystem::with_aam(aam.clone()));
+        let calls = Arc::new(AtomicUsize::new(0));
+        let mut metadata = RuntimeCapability::new(
+            name,
+            "record model tool admission",
+            serde_json::json!({"type": "object"}),
+        );
+        if read_only {
+            metadata = metadata.with_read_only();
+        }
+        if requires_approval {
+            metadata = metadata.with_requires_approval();
+        }
+        capability_system
+            .register(Arc::new(RecordingCapability {
+                metadata,
+                calls: Arc::clone(&calls),
+            }))
+            .expect("recording capability");
+        let facade: Arc<dyn apxm_capability_iface::CapabilityFacade> = capability_system.clone();
+        let ctx = ExecutionContext::new(memory, Arc::new(LLMRegistry::new()), facade, aam);
+        (ctx, capability_system, calls)
+    }
+
+    fn approved() -> ConsentDecision {
+        ConsentDecision::Approved {
+            evidence: ApprovalEvidence::Interactive(InteractiveApproval {
+                decided_at: "2026-07-11T00:00:00Z".into(),
+                responder_subject: Some("operator".into()),
+            }),
+        }
+    }
+
+    fn correlation_for(tool_call: &ToolCall) -> ToolCallCorrelation {
+        ToolCallCorrelation::new(
+            GenerationIdentity::new("generation-test", 1, 1),
+            tool_call.id.clone(),
+        )
+    }
 
     fn visible_metadata(value: &str) -> HashMap<String, String> {
         HashMap::from([(
@@ -930,20 +1259,108 @@ mod tests {
         assert!(!args.contains_key("imports"));
     }
 
-    #[test]
-    fn tool_result_reinjection_is_deterministically_bounded() {
-        let mut node = Node::new(1, AISOperationType::Ask);
-        node.attributes.insert(
-            graph_attrs::TOKEN_BUDGET.to_string(),
-            Value::Number(apxm_core::types::values::Number::Integer(512)),
-        );
-        let results = vec![ToolResult::success("call", "x ".repeat(2_000))];
+    #[tokio::test]
+    async fn model_tool_call_requires_consent_and_runs_interceptors() {
+        let (mut ctx, capability_system, capability_calls) =
+            model_tool_context("approval-tool", true, true).await;
+        let interceptor_calls = Arc::new(AtomicUsize::new(0));
+        capability_system.register_interceptor(Arc::new(CountingInterceptor {
+            calls: Arc::clone(&interceptor_calls),
+        }));
+        let node = Node::new(1, AISOperationType::Ask);
+        let tool_call = ToolCall::new("call-1", "approval-tool", serde_json::json!({}));
 
-        let (first, first_truncated) = bounded_tool_results_message(&node, &results);
-        let (second, second_truncated) = bounded_tool_results_message(&node, &results);
-        assert!(first_truncated);
-        assert!(second_truncated);
-        assert_eq!(first, second);
-        assert!(first.contains("[truncated"));
+        let correlation = correlation_for(&tool_call);
+        let without_broker = execute_tool_call(&ctx, &node, &tool_call, &correlation).await;
+
+        assert!(!without_broker.success);
+        assert!(
+            without_broker
+                .content
+                .contains(apxm_core::types::consent::APPROVAL_BROKER_UNAVAILABLE_REASON)
+        );
+        assert_eq!(capability_calls.load(Ordering::Relaxed), 0);
+        assert_eq!(interceptor_calls.load(Ordering::Relaxed), 0);
+
+        let broker_calls = Arc::new(AtomicUsize::new(0));
+        ctx.consent_broker = Arc::new(StubBroker {
+            decision: approved(),
+            calls: Arc::clone(&broker_calls),
+        });
+
+        let approved_result = execute_tool_call(&ctx, &node, &tool_call, &correlation).await;
+
+        assert!(approved_result.success, "{}", approved_result.content);
+        assert_eq!(approved_result.content, "executed");
+        assert_eq!(broker_calls.load(Ordering::Relaxed), 1);
+        assert_eq!(interceptor_calls.load(Ordering::Relaxed), 1);
+        assert_eq!(capability_calls.load(Ordering::Relaxed), 1);
+    }
+
+    #[tokio::test]
+    async fn open_read_only_model_tool_skips_consent_but_runs_interceptors() {
+        let (mut ctx, capability_system, capability_calls) =
+            model_tool_context("read-only-tool", true, false).await;
+        let broker_calls = Arc::new(AtomicUsize::new(0));
+        ctx.consent_broker = Arc::new(StubBroker {
+            decision: ConsentDecision::Denied {
+                reason: "broker must not be called".into(),
+            },
+            calls: Arc::clone(&broker_calls),
+        });
+        let interceptor_calls = Arc::new(AtomicUsize::new(0));
+        capability_system.register_interceptor(Arc::new(CountingInterceptor {
+            calls: Arc::clone(&interceptor_calls),
+        }));
+        let node = Node::new(1, AISOperationType::Ask);
+        let tool_call = ToolCall::new("call-1", "read-only-tool", serde_json::json!({}));
+
+        let correlation = correlation_for(&tool_call);
+        let result = execute_tool_call(&ctx, &node, &tool_call, &correlation).await;
+
+        assert!(result.success, "{}", result.content);
+        assert_eq!(result.content, "executed");
+        assert_eq!(broker_calls.load(Ordering::Relaxed), 0);
+        assert_eq!(interceptor_calls.load(Ordering::Relaxed), 1);
+        assert_eq!(capability_calls.load(Ordering::Relaxed), 1);
+    }
+
+    #[tokio::test]
+    async fn model_write_tool_without_grant_is_denied_before_execution() {
+        let (ctx, _capability_system, capability_calls) =
+            model_tool_context("write-tool", false, false).await;
+        let node = Node::new(1, AISOperationType::Ask);
+        let tool_call = ToolCall::new("call-1", "write-tool", serde_json::json!({}));
+
+        let correlation = correlation_for(&tool_call);
+        let result = execute_tool_call(&ctx, &node, &tool_call, &correlation).await;
+
+        assert!(!result.success);
+        assert!(result.content.contains("missing a capability grant"));
+        assert_eq!(capability_calls.load(Ordering::Relaxed), 0);
+    }
+
+    #[test]
+    fn script_tool_policy_requires_joined_metadata() {
+        let error = checked_script_tool_policy("script-tool", None, Some(false))
+            .expect_err("missing read_only metadata must fail closed");
+
+        assert!(matches!(
+            error,
+            RuntimeError::Capability { ref capability, ref message }
+                if capability == "script-tool" && message.contains("missing joined")
+        ));
+    }
+
+    #[test]
+    fn script_tool_policy_preserves_open_read_only_metadata() {
+        assert_eq!(
+            checked_script_tool_policy("script-tool", Some(true), Some(false))
+                .expect("complete policy metadata"),
+            ScriptToolPolicy {
+                read_only: true,
+                requires_approval: false,
+            }
+        );
     }
 }
