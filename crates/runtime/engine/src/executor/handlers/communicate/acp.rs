@@ -5,6 +5,7 @@ use crate::aam::TransitionLabel;
 use apxm_core::constants::graph::attrs as graph_attrs;
 use apxm_core::constants::runtime::{belief_keys, context_stack as context_stack_consts};
 use apxm_core::error::RuntimeError;
+use apxm_core::events::payload::GenerationIdentity;
 use apxm_core::types::{CommunicateProtocol, ProcessPromptMetric};
 
 /// Dispatch COMMUNICATE to an ACP agent subprocess via the ProcessTable.
@@ -169,6 +170,7 @@ pub(super) async fn execute_acp(
         error: None,
     });
 
+    let generation = prompt_generation_identity(&prompt_response);
     if let (Some(input_tokens), Some(output_tokens)) = (
         prompt_response.token_usage.input_tokens,
         prompt_response.token_usage.output_tokens,
@@ -181,7 +183,12 @@ pub(super) async fn execute_acp(
             Some(&process.name),
         );
         if let Some(emitter) = &ctx.event_emitter {
-            emitter.emit_token_usage(node.id, input_tokens, output_tokens);
+            emitter.emit_token_usage_with_generation(
+                node.id,
+                input_tokens,
+                output_tokens,
+                generation.as_ref(),
+            );
         }
     }
 
@@ -212,4 +219,142 @@ pub(super) async fn execute_acp(
     );
 
     Ok(text_output)
+}
+
+fn prompt_generation_identity(
+    prompt_response: &crate::process_table::AgentPromptResponse,
+) -> Option<GenerationIdentity> {
+    let session_id = prompt_response
+        .session_id
+        .as_deref()
+        .filter(|session_id| !session_id.is_empty())
+        .or_else(|| {
+            prompt_response
+                .agent_session_id
+                .as_deref()
+                .filter(|session_id| !session_id.is_empty())
+        })?;
+    let turn = prompt_response.turn.filter(|turn| *turn > 0)?;
+
+    // ACP reports one aggregated `session/prompt` completion per turn. Treat
+    // that observed turn as one canonical generation so retry/step semantics
+    // stay aligned with the normal LLM path: one attempt, one physical step.
+    Some(GenerationIdentity::new(
+        format!("{session_id}/turn/{turn}"),
+        1,
+        1,
+    ))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::aam::Aam;
+    use crate::capability::CapabilitySystem;
+    use crate::executor::{EmitterAdapter, ExecutionEventEmitter};
+    use crate::memory::{MemoryConfig, MemorySystem};
+    use crate::testing::{
+        MOCK_AGENT_NAME, MOCK_AGENT_PROFILE, MOCK_SESSION_ID, MockUsageAgentPrompter,
+    };
+    use apxm_backends::LLMRegistry;
+    use apxm_core::events::payload::TokenUsagePayload;
+    use apxm_core::events::{ApxmEvent, EventEmitter, EventSource};
+    use apxm_core::types::operations::AISOperationType;
+    use parking_lot::Mutex as PlMutex;
+    use std::sync::Arc;
+
+    #[derive(Default)]
+    struct CapturingEmitter {
+        events: PlMutex<Vec<ApxmEvent>>,
+    }
+
+    impl EventEmitter for CapturingEmitter {
+        fn emit(&self, event: ApxmEvent) {
+            self.events.lock().push(event);
+        }
+    }
+
+    fn adapter_with_capture() -> (Arc<dyn ExecutionEventEmitter>, Arc<CapturingEmitter>) {
+        let capture = Arc::new(CapturingEmitter::default());
+        let adapter: Arc<dyn ExecutionEventEmitter> = Arc::new(EmitterAdapter::new(
+            capture.clone() as Arc<dyn EventEmitter>,
+            EventSource::Runtime,
+            "trace-acp-communicate",
+        ));
+        (adapter, capture)
+    }
+
+    async fn test_context(emitter: Option<Arc<dyn ExecutionEventEmitter>>) -> ExecutionContext {
+        let memory = Arc::new(
+            MemorySystem::new(MemoryConfig::in_memory_ltm())
+                .await
+                .expect("memory"),
+        );
+        let aam = Aam::new();
+        let capability_system = Arc::new(CapabilitySystem::with_aam(aam.clone()));
+        ExecutionContext::new(memory, Arc::new(LLMRegistry::new()), capability_system, aam)
+            .with_event_emitter(emitter)
+    }
+
+    fn node_with(recipient: &str) -> Node {
+        let mut node = Node::new(2, AISOperationType::Communicate);
+        node.set_attribute(
+            graph_attrs::RECIPIENT.to_string(),
+            Value::String(recipient.to_string()),
+        );
+        node
+    }
+
+    fn external_session() -> Arc<tokio::sync::Mutex<dyn std::any::Any + Send + Sync>> {
+        Arc::new(tokio::sync::Mutex::new(()))
+    }
+
+    #[tokio::test]
+    async fn communicate_acp_token_usage_carries_generation_identity() {
+        let (emitter, capture) = adapter_with_capture();
+        let ctx = test_context(Some(emitter)).await;
+
+        ctx.process_table
+            .set_agent_prompter(Arc::new(
+                MockUsageAgentPrompter::new("reply:")
+                    .with_session_id(MOCK_SESSION_ID)
+                    .with_turn(3)
+                    .with_token_usage(Some(11), Some(13)),
+            ))
+            .await;
+        ctx.process_table
+            .register_external(
+                MOCK_AGENT_NAME.to_string(),
+                None,
+                external_session(),
+                MOCK_AGENT_PROFILE.to_string(),
+            )
+            .expect("register external ACP process");
+
+        let node = node_with(MOCK_AGENT_NAME);
+        let result = execute_acp(
+            &ctx,
+            &node,
+            MOCK_AGENT_NAME,
+            Value::String("hello ACP".to_string()),
+        )
+        .await
+        .expect("ACP communicate should succeed");
+
+        assert_eq!(result, Value::String("reply:hello ACP".to_string()));
+
+        let events = capture.events.lock();
+        let token_usage = events
+            .iter()
+            .find_map(|event| event.payload.downcast_ref::<TokenUsagePayload>())
+            .expect("token_usage event");
+        let generation = token_usage.generation.as_ref().expect("generation");
+
+        assert_eq!(token_usage.node_id, 2);
+        assert_eq!(token_usage.input_tokens, 11);
+        assert_eq!(token_usage.output_tokens, 13);
+        assert_eq!(generation.call_id, format!("{MOCK_SESSION_ID}/turn/3"));
+        assert_eq!(generation.attempt, 1);
+        assert_eq!(generation.step_number, 1);
+    }
 }

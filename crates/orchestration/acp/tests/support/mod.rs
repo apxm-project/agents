@@ -13,8 +13,8 @@ use std::time::Duration;
 use apxm_acp::{AcpAgentProfile, PermissionMode};
 
 /// A minimal ACP agent fixture: handshakes (`initialize`, `session/new`),
-/// answers `session/prompt` with a streamed chunk + final response, and
-/// exits cleanly on EOF (stdin closed).
+/// answers `session/prompt` with a streamed chunk, usage update, and final
+/// response, then exits cleanly on EOF (stdin closed).
 pub const COOPERATIVE_AGENT: &str = r#"
 import sys, json
 
@@ -47,7 +47,26 @@ for line in sys.stdin:
                 },
             },
         })
-        send({"jsonrpc": "2.0", "id": mid, "result": {"stopReason": "end_turn"}})
+        send({
+            "jsonrpc": "2.0",
+            "method": "session/update",
+            "params": {
+                "sessionId": SESSION_ID,
+                "update": {
+                    "sessionUpdate": "usage_update",
+                    "inputTokens": 7,
+                    "outputTokens": 4,
+                },
+            },
+        })
+        send({
+            "jsonrpc": "2.0",
+            "id": mid,
+            "result": {
+                "stopReason": "end_turn",
+                "model": "fixture-model",
+            },
+        })
     else:
         send({"jsonrpc": "2.0", "id": mid, "result": {}})
 # EOF on stdin (session close) falls out of the loop -> clean process exit.
