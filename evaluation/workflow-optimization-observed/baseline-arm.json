@@ -1,0 +1,7 @@
+{
+  "arm_id": "baseline-brief-classifier",
+  "max_tokens": 96,
+  "system_prompt": "Classify the APXM workflow optimization situation. Respond briefly with your classification and reasoning.",
+  "temperature": 0.0,
+  "user_template": "{input}"
+}

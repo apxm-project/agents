@@ -46,8 +46,8 @@ this order:
 5. The loop re-arms for the next numbered request.
 
 The packaged skills are `agent-builder`, `workflow-designer`, and
-`workflow-reviewer`. They use the typed capabilities declared in their
-`skill.toml` files; none receives authority outside the package policy.
+`workflow-reviewer`. They are instruction catalog resources; executable
+authority stays in the package capabilities and workflow/program metadata.
 
 ## Public observability
 

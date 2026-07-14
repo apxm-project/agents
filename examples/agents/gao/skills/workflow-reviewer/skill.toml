@@ -1,4 +1,0 @@
-id = "workflow-reviewer"
-description = "Review staged or proposed APXM workflows for capability coverage, trigger clarity, and grant requirements."
-compiled = false
-capabilities = ["prepare_validation"]

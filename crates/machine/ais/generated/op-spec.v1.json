@@ -1,7 +1,7 @@
 {
   "schema_version": "apxm.op-spec.v1",
   "generated_from": "crates/machine/ais/src/operations/definitions.rs",
-  "total_operations": 39,
+  "total_operations": 38,
   "pseudo_op_count": 2,
   "operations": [
     {
@@ -614,41 +614,6 @@
         }
       ],
       "example_json": "{\"id\": 5, \"op\": \"WORKFLOW_SPAWN\", \"attributes\": {\"target_kind\": \"workflow_path\", \"target\": \"workflows/review.apxmw\", \"args\": {\"topic\": \"{topic}\"}, \"input_names\": [\"topic\"], \"await_result\": true}}"
-    },
-    {
-      "op": "CALL_SKILL",
-      "rust_variant": "CallSkill",
-      "name": "CallSkill",
-      "category": "control_flow",
-      "description": "Call another skill by manifest identity (id or id@version)",
-      "long_description": "Invokes another skill resolved by manifest identity through the live SkillLibrary, rather than by raw artifact path. Resolution is lazy: the runtime parses `<skill_id>[@<version>]`, looks up the matching .apxmobj, admits the child's required capabilities against the parent's grant, dispatches the child entry DAG, and records the resolved (skill_id, version, artifact_hash) triple in the parent's provenance. Failure modes are typed: InvalidSkillId, SkillNotFound, SkillVersionNotFound, CapabilityWiden, CallSkillDepthExceeded, ChildExecutionFailed.",
-      "latency": "high",
-      "wire_index": 42,
-      "is_pseudo_op": false,
-      "min_inputs": 0,
-      "produces_output": true,
-      "needs_submission": true,
-      "fields": [
-        {
-          "name": "skill_id",
-          "required": true,
-          "description": "Skill identifier: \"id\" (latest) or \"id@version\" (pinned)",
-          "ref_type": null
-        },
-        {
-          "name": "args",
-          "required": false,
-          "description": "Positional arguments forwarded to the child's entry-flow input vector",
-          "ref_type": null
-        },
-        {
-          "name": "input_names",
-          "required": false,
-          "description": "Optional name vector mapping parent outputs onto the child's positional args",
-          "ref_type": null
-        }
-      ],
-      "example_json": "{\"id\": 6, \"op\": \"CALL_SKILL\", \"attributes\": {\"skill_id\": \"apxm-orient@0.2.0\", \"args\": [\"context\"], \"input_names\": [\"context\"]}}"
     },
     {
       "op": "MERGE",

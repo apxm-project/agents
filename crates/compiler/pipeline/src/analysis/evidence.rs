@@ -394,7 +394,6 @@ pub(super) fn requires_confinement(node: &Node) -> bool {
         node.op_type,
         AISOperationType::Exc
             | AISOperationType::WorkflowSpawn
-            | AISOperationType::CallSkill
             | AISOperationType::SpawnAgent
             | AISOperationType::Autonomous
     )

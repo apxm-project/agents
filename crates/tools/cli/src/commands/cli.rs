@@ -72,13 +72,6 @@ pub enum Commands {
         /// selection. --no-cse-llm and --disable-pass still filter the list.
         #[arg(long = "pass-list", value_name = "A,B,C", value_delimiter = ',')]
         pass_list_override: Option<Vec<String>>,
-        /// Embed the given `skill.toml` as an `apxm.skill_manifest.v1` section
-        /// in the output artifact. The embedded copy has `artifact_hash`
-        /// stripped (it cannot be inside the artifact it hashes); all other
-        /// fields are preserved verbatim so the server's
-        /// `validate_embedded_manifest_field` round-trip succeeds.
-        #[arg(long = "embed-manifest", value_name = "skill.toml")]
-        embed_manifest: Option<PathBuf>,
     },
     /// Synthesize an entry-less declarative agent package to AIR on stdout.
     /// Stdout contains only AIR; diagnostics use stderr and failures are
@@ -325,9 +318,8 @@ pub enum Commands {
         /// Runtime-minted capability grant id for write-tool turns (repeatable).
         #[arg(long = "capability-grant-id", value_name = "GRANT_ID")]
         capability_grant_ids: Vec<String>,
-        /// Skill library / id to import into the agent's visible set (repeatable:
-        /// `lib`, `lib::skill`, or `skill`). Activates server-side CALL_SKILL
-        /// scoping; shared-tier skills are always visible. Empty = unrestricted.
+        /// Skill library / id to import into the agent's visible catalogue
+        /// (repeatable: `lib`, `lib::skill`, or `skill`). Empty = unrestricted.
         #[arg(long = "import", value_name = "LIB")]
         import: Vec<String>,
         /// Pin agent chat to a registered backend by name (as listed by
@@ -373,8 +365,7 @@ pub enum RolloutAction {
         /// Output path (default `./apxm-rollout-<thread>.tar.gz`).
         #[arg(short, long)]
         output: Option<PathBuf>,
-        /// Optional directory holding the source skill files
-        /// (skill.toml, SKILL.md, skill.air, skill.apxmobj).
+        /// Optional directory holding source instruction files.
         #[arg(long = "skill-dir")]
         skill_dir: Option<PathBuf>,
     },
@@ -774,7 +765,7 @@ pub enum AgentAction {
         #[arg(long)]
         org: Option<PathBuf>,
     },
-    /// Compile the agent's skills and generate integrity.toml.
+    /// Regenerate package metadata and integrity.toml.
     Build {
         /// Agent directory to build (default: current directory).
         #[arg(default_value = ".")]

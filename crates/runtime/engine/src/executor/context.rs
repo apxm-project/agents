@@ -41,7 +41,6 @@ use super::inner_plan_linker::{InnerPlanLinker, NoOpLinker};
 use super::memoization::MemoCache;
 use super::middleware::OperationMiddleware;
 use super::session_ledger::SessionLedger;
-use super::skill_resolver::{NoOpSkillResolver, SkillResolver};
 use super::timing_tracker::TimingTracker;
 use super::token_accounting::TokenAccountant;
 use super::workflow_spawner::{NoOpWorkflowSpawner, WorkflowSpawner};
@@ -70,12 +69,6 @@ pub struct ExecutionContext {
     pub scope_registry: Arc<ScopeRegistry>,
     pub inner_plan_linker: Arc<dyn InnerPlanLinker>,
     pub workflow_spawner: Arc<dyn WorkflowSpawner>,
-    /// Host-supplied resolver for binding `CALL_SKILL` `skill_id` values (or
-    /// `skill_id@version`) to a concrete artifact at
-    /// execution time. Defaults to [`NoOpSkillResolver`], which fails
-    /// `CALL_SKILL` cleanly with a `call_skill_no_resolver` capability
-    /// error.
-    pub skill_resolver: Arc<dyn SkillResolver>,
     pub dag_splicer: Arc<dyn DagSplicer>,
     pub flow_registry: Arc<FlowRegistry>,
     pub current_agent: Option<Arc<Agent>>,
@@ -102,8 +95,8 @@ pub struct ExecutionContext {
     /// program/request; enforced by [`Self::charge_tool_call`] at the trusted
     /// invoke seam — never by the AIR program itself.
     pub tool_call_budgets: Option<Arc<std::collections::HashMap<String, usize>>>,
-    /// Consumed per-tool call counts. Shared (`Arc`) into child contexts so a
-    /// spawned-agent / called-skill fan-out cannot multiply the budget.
+    /// Consumed per-tool call counts. Shared (`Arc`) into child contexts so
+    /// child executions cannot multiply the budget.
     pub tool_call_counts: Arc<std::sync::Mutex<std::collections::HashMap<String, usize>>>,
     /// Per-tool credential headers: capability name → an
     /// `Authorization` header value (e.g. `"Bearer …"`), pre-resolved by the
@@ -156,9 +149,8 @@ pub struct ExecutionContext {
     pub typescript_handler_bridge: Option<Arc<TypeScriptHandlerBridge>>,
     /// Per-artifact registry of program-authored lifecycle hooks (`@hook`),
     /// resolved at load from the hooks sidecar / `REGISTER_HOOK` nodes. Shares
-    /// the python tool bridge's lifetime and is inherited by child contexts so
-    /// spawned-agent / called-skill turns see the same author hooks. `None`
-    /// when the artifact declares no hooks.
+    /// the python tool bridge's lifetime and is inherited by child contexts.
+    /// `None` when the artifact declares no hooks.
     pub hook_registry: Option<Arc<HookRegistry>>,
     /// Per-session ledger (turn caps / per-tool budgets) keyed by
     /// `session_id`, owned by the runtime rather than the host (constitution #2).
@@ -183,13 +175,8 @@ pub struct ExecutionContext {
     pub host_dispatch: std::sync::Arc<dyn apxm_core::types::host::HostDispatchGateway>,
     /// Consent broker for per-call host capability approval.
     pub consent_broker: std::sync::Arc<dyn apxm_core::types::consent::ConsentBroker>,
-    /// Prompt-supplement text a `pre_turn` hook rendered for the turn currently
-    /// in flight (`set_system`/`prepend_system` decision; ). `pre_turn` fires
-    /// before the top-level ask, in an outer middleware
-    /// (`ConversationMemoryMiddleware`), so this is how its decision reaches the
-    /// ask handler's system-prompt composition deeper in the call stack.
-    /// `pre_ask`
-    /// hooks still run afterward and may further override/prepend on top.
+    /// Prompt-supplement text a host-authorized hook rendered for the request
+    /// currently in flight. `pre_ask` hooks may further override/prepend on top.
     pub pending_turn_prompt_supplement: Arc<parking_lot::RwLock<Option<String>>>,
 }
 
@@ -252,7 +239,6 @@ impl ExecutionContext {
             scope_registry,
             inner_plan_linker: Arc::new(NoOpLinker),
             workflow_spawner: Arc::new(NoOpWorkflowSpawner),
-            skill_resolver: Arc::new(NoOpSkillResolver),
             dag_splicer: Arc::new(NoOpSplicer),
             flow_registry: Arc::new(FlowRegistry::new()),
             current_agent: None,
@@ -764,12 +750,6 @@ impl ExecutionContext {
         self
     }
 
-    /// Replace the skill resolver for the `CALL_SKILL` op.
-    pub fn with_skill_resolver(mut self, resolver: Arc<dyn SkillResolver>) -> Self {
-        self.skill_resolver = resolver;
-        self
-    }
-
     /// Set a cancellation token (replaces the default root token).
     pub fn with_cancellation_token(mut self, token: CancellationToken) -> Self {
         self.cancellation_token = token;
@@ -837,7 +817,6 @@ impl ExecutionContext {
             scope_registry: Arc::clone(&self.scope_registry),
             inner_plan_linker: Arc::clone(&self.inner_plan_linker),
             workflow_spawner: Arc::clone(&self.workflow_spawner),
-            skill_resolver: Arc::clone(&self.skill_resolver),
             dag_splicer: Arc::clone(&self.dag_splicer),
             flow_registry: Arc::clone(&self.flow_registry),
             current_agent: self.current_agent.as_ref().map(Arc::clone),

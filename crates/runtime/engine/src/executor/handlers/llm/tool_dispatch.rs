@@ -390,14 +390,13 @@ async fn execute_tool_call(
         .await
     {
         Ok(result) => {
-            let result =
-                crate::executor::hook_driver::run_post_cap_hooks(
-                    ctx,
-                    &tool_call.name,
-                    result,
-                    None,
-                )
-                .await;
+            let result = crate::executor::hook_driver::run_post_cap_hooks(
+                ctx,
+                &tool_call.name,
+                result,
+                None,
+            )
+            .await;
             let content = match result {
                 Value::String(s) => s,
                 other => other.to_string(),
@@ -470,10 +469,7 @@ fn checked_script_tool_policy(
 }
 
 /// Resolve the policy carried by a registered Python or TypeScript handler.
-pub(crate) fn script_tool_policy(
-    ctx: &ExecutionContext,
-    name: &str,
-) -> Result<ScriptToolPolicy> {
+pub(crate) fn script_tool_policy(ctx: &ExecutionContext, name: &str) -> Result<ScriptToolPolicy> {
     if let Some(descriptor) = ctx
         .python_handler_bridge
         .as_ref()
@@ -579,13 +575,8 @@ async fn dispatch_script_tool_call(
         Ok(json_result) => {
             let raw = Value::try_from(json_result).unwrap_or(Value::Null);
             let transformed =
-                crate::executor::hook_driver::run_post_cap_hooks(
-                    ctx,
-                    &tool_call.name,
-                    raw,
-                    None,
-                )
-                .await;
+                crate::executor::hook_driver::run_post_cap_hooks(ctx, &tool_call.name, raw, None)
+                    .await;
             let content = match transformed {
                 Value::String(s) => s,
                 other => other.to_string(),

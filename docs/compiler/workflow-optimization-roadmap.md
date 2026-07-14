@@ -98,6 +98,15 @@ Status: the local contract validator is implemented in
 [`tools/scripts/offline_prompt_evaluation.py`](../../tools/scripts/offline_prompt_evaluation.py).
 It validates bundle integrity and evidence binding; it is not a completion
 claim for a backend, runtime, or cross-repository optimization rollout.
+The observed execution surface is implemented in
+[`tools/scripts/observed_prompt_evaluation.py`](../../tools/scripts/observed_prompt_evaluation.py).
+It executes fixed prompt arms through an explicitly registered backend, records
+portable request and provider-response files, binds them through execution
+records and receipts, and then invokes the offline validator. Its focused tests
+are in
+[`tools/tests/test_observed_prompt_evaluation.py`](../../tools/tests/test_observed_prompt_evaluation.py),
+and the preregistered live bundle is under
+[`evaluation/workflow-optimization-observed/`](../../evaluation/workflow-optimization-observed/).
 
 Prompt optimization runs offline against held-out, preregistered evaluation
 bundles. Production execution does not self-modify prompts from live outcomes.
@@ -132,10 +141,11 @@ cost, or performance claims. An observed backend run can declare
 `measurement_source=backend-telemetry` only when every arm/case output carries
 a portable SHA-256 evidence reference. The referenced receipt must bind the
 preregistered backend id/revision, arm id, case id, output digest, token count,
-and latency value. Receipt binding makes the emitted fields auditable within a
-portable bundle; it does not independently attest backend execution. A
-claim-bearing observed run additionally requires the owning backend's recorded
-or signed execution evidence and current owner gates.
+and latency value. Each receipt also binds a request digest and a recorded
+backend-execution document. That document references the exact portable request
+and provider response, records the provider response identity and model, and
+binds the preregistered backend capability evidence. A claim-bearing observed
+run additionally requires current owner gates.
 The focused evidence tests
 [`tools/tests/test_offline_prompt_evaluation.py`](../../tools/tests/test_offline_prompt_evaluation.py)
 pin the canonical repository fixture, closed output schemas, receipt-binding

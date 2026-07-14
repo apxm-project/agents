@@ -34,7 +34,7 @@ pub struct RolloutArchiveOptions {
     pub thread_id: String,
     pub output: Option<PathBuf>,
     pub home: Option<PathBuf>,
-    /// Optional explicit skill source directory (skill.toml/SKILL.md/skill.air).
+    /// Optional explicit instruction skill directory.
     /// When unset, the archive includes only the rollout JSONL + spilled blobs.
     pub skill_dir: Option<PathBuf>,
 }
@@ -163,7 +163,7 @@ async fn lookup_thread(paths: &RolloutPaths, thread_id: &str) -> Result<ThreadIn
 }
 
 /// `apxm rollout archive <thread_id>` — bundle the rollout JSONL +
-/// referenced blobs + (optionally) the source skill into a `.tar.gz`.
+/// referenced blobs + (optionally) instruction skill markdown into a `.tar.gz`.
 /// The output is an air-gapped reproducibility envelope.
 pub async fn rollout_archive_command(opts: RolloutArchiveOptions) -> Result<PathBuf> {
     let paths = resolve_paths(opts.home);
@@ -208,10 +208,10 @@ pub async fn rollout_archive_command(opts: RolloutArchiveOptions) -> Result<Path
             }
         }
     }
-    // 3) Optional skill source (skill.toml / SKILL.md / skill.air) +
-    //    any .apxmobj alongside. Required for byte-identical replay.
+    // 3) Optional instruction skill markdown. Executable program content is
+    //    captured by package/workflow metadata, not skill artifacts.
     if let Some(skill_dir) = opts.skill_dir {
-        for filename in ["skill.toml", "SKILL.md", "skill.air", "skill.apxmobj"] {
+        for filename in ["SKILL.md", "prompt.md"] {
             let path = skill_dir.join(filename);
             if path.is_file() {
                 append_file(&mut builder, &path, &format!("skill/{filename}"))?;

@@ -34,10 +34,6 @@ const OFFSET_PAYLOAD_LEN: usize = OFFSET_VERSION + SIZE_VERSION;
 const OFFSET_HASH: usize = OFFSET_PAYLOAD_LEN + SIZE_PAYLOAD_LEN;
 const OFFSET_FLAGS: usize = OFFSET_HASH + SIZE_HASH;
 
-pub mod section_kinds {
-    pub const SKILL_MANIFEST_V1: &str = "apxm.skill_manifest.v1";
-}
-
 #[derive(Debug, Error)]
 pub enum ArtifactError {
     #[error("I/O error: {0}")]

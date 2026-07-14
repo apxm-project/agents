@@ -4,7 +4,7 @@
 //! Both the compiler and runtime depend on this crate to ensure consistent operation
 //! semantics across the entire system.
 //!
-//! ## Operations (39 total)
+//! ## Operations (38 total)
 //!
 //! The table below reflects each operation's actual `OperationCategory` (see
 //! `operations::category`), not an informal grouping — it is kept honest by
@@ -16,7 +16,7 @@
 //! | Memory | QMEM, UMEM, UPDATE_GOAL |
 //! | Reasoning | ASK, THINK, REASON, PLAN, REFLECT, VERIFY |
 //! | Tools | INV_CAP, EXC, PRINT |
-//! | Control Flow | JUMP, BRANCH_ON_VALUE, RETURN, SWITCH, FLOW_CALL, WORKFLOW_SPAWN, CALL_SKILL, RESUME |
+//! | Control Flow | JUMP, BRANCH_ON_VALUE, RETURN, SWITCH, FLOW_CALL, WORKFLOW_SPAWN, RESUME |
 //! | Synchronization | MERGE, FENCE, WAIT_ALL, CHECKPOINT |
 //! | Error Handling | TRY_CATCH, ERR |
 //! | Communication | COMMUNICATE, HANDOFF, PAUSE |

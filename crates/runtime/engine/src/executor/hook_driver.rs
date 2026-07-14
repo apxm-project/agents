@@ -829,6 +829,35 @@ mod gate_narrowing_tests {
     use apxm_backends::LLMRegistry;
     use std::sync::Arc;
 
+    fn python_tool_manifest(entries: &[(&str, Option<bool>, Option<bool>)]) -> String {
+        let handlers = entries
+            .iter()
+            .enumerate()
+            .map(|(index, (name, read_only, requires_approval))| {
+                json!({
+                    "kind": "tool",
+                    "language": "python",
+                    "handler_id": format!("sha256:{index:064x}"),
+                    "module": "policy_fixture",
+                    "qualname": name,
+                    "name": name,
+                    "source": {
+                        "artifact_path": format!("handlers/{name}.py"),
+                        "content": "def handler(args, ctx):\n    return {}\n"
+                    },
+                    "schema": {},
+                    "read_only": read_only,
+                    "requires_approval": requires_approval
+                })
+            })
+            .collect::<Vec<_>>();
+        json!({
+            "version": "apxm.handler-manifest.v1",
+            "handlers": handlers
+        })
+        .to_string()
+    }
+
     async fn context_with_python_policy(policy: &str) -> ExecutionContext {
         let memory = Arc::new(
             MemorySystem::new(MemoryConfig::in_memory_ltm())
@@ -900,10 +929,11 @@ mod gate_narrowing_tests {
 
     #[tokio::test]
     async fn script_policy_participates_in_gate_narrowing() {
-        let ctx = context_with_python_policy(
-            r#"[{"handler_id":"sha256:abc","module":"mod","qualname":"open","name":"script-open","schema":{},"read_only":true,"requires_approval":false},{"handler_id":"sha256:def","module":"mod","qualname":"ask","name":"script-ask","schema":{},"read_only":true,"requires_approval":true}]"#,
-        )
-        .await;
+        let manifest = python_tool_manifest(&[
+            ("script-open", Some(true), Some(false)),
+            ("script-ask", Some(true), Some(true)),
+        ]);
+        let ctx = context_with_python_policy(&manifest).await;
 
         assert_eq!(
             canonical_requires_approval(&ctx, "script-open"),
@@ -914,10 +944,8 @@ mod gate_narrowing_tests {
 
     #[tokio::test]
     async fn incomplete_script_policy_is_not_treated_as_open() {
-        let ctx = context_with_python_policy(
-            r#"[{"handler_id":"sha256:abc","module":"mod","qualname":"open","name":"script-open","schema":{},"requires_approval":false}]"#,
-        )
-        .await;
+        let manifest = python_tool_manifest(&[("script-open", None, Some(false))]);
+        let ctx = context_with_python_policy(&manifest).await;
 
         assert_eq!(canonical_requires_approval(&ctx, "script-open"), None);
     }

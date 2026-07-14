@@ -1,0 +1,4 @@
+{"id":"optimization-system-role","input":"A compiler cleanup sees a system-role prompt segment that is still required by the model request.","expected":"preserved"}
+{"id":"optimization-authority-wait","input":"A node has all data values but its selected capability grant has not become active.","expected":"deferred"}
+{"id":"optimization-budget-tool","input":"A tool result exceeds its assigned context segment allowance and is truncated before request assembly.","expected":"bounded"}
+{"id":"optimization-replay-proof","input":"A host effect has a persisted AHI v2 prepare and commit, enrolled public key, valid signature, and matching public receipt.","expected":"replayable"}

@@ -264,10 +264,10 @@ pub async fn worker_loop(
     }
 }
 
-/// If `node` is a session conversation-loop recv (AUTONOMOUS `mode=recv`,
-/// `recv_once=false`, with the turn-flow attrs the `ConversationalAgent` builder
-/// stamps) and the execution has a session id, return the re-arm spec so its
-/// wake splices a fresh turn + recv. Otherwise `None` (a plain one-shot park).
+/// If `node` is a session input-loop recv (AUTONOMOUS `mode=recv`,
+/// `recv_once=false`, with explicit turn-flow attrs) and the execution has a
+/// session id, return the re-arm spec so its wake splices a fresh turn + recv.
+/// Otherwise `None` (a plain one-shot park).
 fn session_loop_rearm_spec(
     node: &std::sync::Arc<apxm_core::types::Node>,
     ctx: &dyn SchedulerCtx,

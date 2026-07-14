@@ -575,9 +575,9 @@ impl LLMRegistry {
                     error = ?e,
                     "LLM backend request failed"
                 );
+                let detail = e.to_string();
                 Err(e).context(format!(
-                    "Request failed on '{}' with no successful fallback",
-                    backend_name
+                    "Request failed on '{backend_name}' with no successful fallback: {detail}"
                 ))
             }
         }
@@ -621,18 +621,18 @@ impl LLMRegistry {
             request.backend = Some(backend_name.clone());
 
             match (&resolved_backend, &resolved_model) {
-                (Some(expected_backend), Some(expected_model))
-                    if expected_backend != &backend_name || expected_model != &model =>
-                {
-                    anyhow::bail!(
-                        "correlated batch requests must resolve to one configured backend/model route"
-                    );
+                (Some(expected_backend), Some(expected_model)) => {
+                    if expected_backend != &backend_name || expected_model != &model {
+                        anyhow::bail!(
+                            "correlated batch requests must resolve to one configured backend/model route"
+                        );
+                    }
                 }
                 (None, None) => {
                     resolved_backend = Some(backend_name);
                     resolved_model = Some(model);
                 }
-                _ => unreachable!("batch backend/model route is initialized together"),
+                _ => anyhow::bail!("correlated batch route state is incomplete"),
             }
 
             prepared.push(CorrelatedLLMRequest {

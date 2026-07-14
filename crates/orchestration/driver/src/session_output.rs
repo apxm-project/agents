@@ -26,7 +26,7 @@ use apxm_runtime::{
 use parking_lot::RwLock;
 
 use crate::context_assembler::{ContextAssembler, WorkspaceNodeMetadata};
-use crate::skill_resolver::SkillResolver;
+use crate::workspace_skills::WorkspaceSkillCatalog;
 
 const CLAUDE_PROFILE: &str = "claude";
 const CODEX_PROFILE: &str = "codex";
@@ -435,7 +435,7 @@ pub struct SessionEventEmitter {
     node_traces: Mutex<HashMap<u64, FileEventSink>>,
     node_llm_tokens: Mutex<HashMap<u64, Vec<String>>>,
     provenance: SessionProvenance,
-    skill_resolver: Option<SkillResolver>,
+    workspace_skills: Option<WorkspaceSkillCatalog>,
     context_assembler: parking_lot::Mutex<Option<ContextAssembler>>,
     running_nodes: Mutex<Vec<NodeInfo>>,
     completed_nodes: Mutex<Vec<CompletedNodeInfo>>,
@@ -491,7 +491,7 @@ impl SessionEventEmitter {
 
         let node_metadata = Arc::new(node_metadata);
         let graph_edges = Arc::new(graph_edges);
-        let skill_resolver = project_root.and_then(|root| SkillResolver::new(root).ok());
+        let workspace_skills = project_root.and_then(|root| WorkspaceSkillCatalog::new(root).ok());
         let context_assembler = project_root.map(|root| {
             ContextAssembler::new(
                 session_dir.to_path_buf(),
@@ -516,7 +516,7 @@ impl SessionEventEmitter {
             node_traces: Mutex::new(HashMap::new()),
             node_llm_tokens: Mutex::new(HashMap::new()),
             provenance,
-            skill_resolver,
+            workspace_skills,
             context_assembler: parking_lot::Mutex::new(context_assembler),
             running_nodes: Mutex::new(Vec::new()),
             completed_nodes: Mutex::new(Vec::new()),
@@ -636,14 +636,14 @@ impl SessionEventEmitter {
         }
 
         let mut skill_names = Vec::new();
-        if let Some(resolver) = &self.skill_resolver {
-            let resolved = resolver.resolve(meta.op_type, &meta.attributes);
+        if let Some(catalog) = &self.workspace_skills {
+            let resolved = catalog.resolve(meta.op_type, &meta.attributes);
             if !resolved.is_empty() {
                 let skills_dir = node_dir.join(constants::session::node::SKILLS_DIR);
                 let _ = fs::create_dir_all(&skills_dir);
                 for skill_path in resolved {
-                    let skill_name = resolver.skill_name(&skill_path);
-                    let _ = resolver.copy_skill_to(&skill_path, &skills_dir);
+                    let skill_name = catalog.skill_name(&skill_path);
+                    let _ = catalog.copy_skill_to(&skill_path, &skills_dir);
                     skill_names.push(skill_name);
                 }
             }

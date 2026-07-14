@@ -818,4 +818,47 @@ mod tests {
             Some(&Value::String("prior-data-output".to_string()))
         );
     }
+
+    #[test]
+    fn program_package_rerun_reconciles_recompiled_dag_by_stable_ids() {
+        let mut recompiled_program_package = chain_dag();
+        recompiled_program_package.metadata.name =
+            Some("program-package:sha256-immutable-test-fixture".to_string());
+        let metadata = HashMap::from([
+            (
+                crate::metadata_keys::REPLAY_FROM_NODE.to_string(),
+                "2".to_string(),
+            ),
+            (
+                crate::metadata_keys::REPLAY_TOKEN_VALUES.to_string(),
+                serde_json::json!({"10": "prior-program-package-output"}).to_string(),
+            ),
+        ]);
+
+        let seed = ReplaySeed::from_metadata_checked(&metadata, &recompiled_program_package)
+            .expect("stable ProgramPackage ids permit partial rerun")
+            .expect("rerun metadata is present");
+
+        assert_eq!(
+            seed.completed_nodes,
+            HashSet::from([1]),
+            "upstream ProgramPackage node is reconciled from prior output, not re-run"
+        );
+        assert_eq!(
+            seed.replayed_nodes,
+            HashSet::from([2, 3]),
+            "rerun restarts at from_node and includes only descendants"
+        );
+        assert_eq!(
+            seed.seed_tokens.get(&10),
+            Some(&Value::String("prior-program-package-output".to_string())),
+            "prior boundary token is reused across the recompiled package"
+        );
+        assert_eq!(
+            ReplaySeed::normalized_sequential_order(&recompiled_program_package, Some(&seed))
+                .expect("reconciled active topology"),
+            vec![2, 3],
+            "reconciliation leaves a schedulable active subgraph"
+        );
+    }
 }

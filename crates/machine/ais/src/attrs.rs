@@ -357,9 +357,6 @@ pub const NAME: &str = "name";
 /// Optional session id scoping a memory query (QMEM).
 pub const SID: &str = "sid";
 
-// -- Skill linkage (CALL_SKILL) --
-/// Canonical skill identifier on a `CALL_SKILL` op (`"id"` or `"id@version"`).
-pub const SKILL_ID: &str = "skill_id";
 pub const HANDOFF: &str = "handoff";
 pub const HANDOFF_FROM: &str = "handoff_from";
 pub const HANDOFF_TO: &str = "handoff_to";
@@ -561,7 +558,6 @@ pub const ALL_ATTR_NAMES: &[&str] = &[
     TASK_SPEC,
     TARGET_AGENT,
     ARGS,
-    SKILL_ID,
     SESSION_ROOT,
     HANDOFF,
     HANDOFF_FROM,

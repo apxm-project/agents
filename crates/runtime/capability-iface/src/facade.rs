@@ -182,7 +182,8 @@ pub trait CapabilityFacade: Send + Sync {
         invocation: Option<&CapabilityInvocation>,
     ) -> Result<Value, RuntimeError> {
         let _ = invocation;
-        self.invoke_with_timeout_ctx(name, args, timeout, approval).await
+        self.invoke_with_timeout_ctx(name, args, timeout, approval)
+            .await
     }
 
     /// Whether a capability with this name is registered.

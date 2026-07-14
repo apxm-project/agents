@@ -50,7 +50,7 @@ lib = ["{project}/target/release/lib", "{environment}/lib"]
 [commands]
 build = { run = "python tools/scripts/cargo.py build -p apxm-cli --features driver,metrics --release", description = "Build APXM", skill = true, group = "Build & Test" }
 build-dialect = { run = "python tools/scripts/cargo.py build-dialect", description = "Rebuild MLIR dialect (TableGen + C++ + Rust) after editing .td or .cpp files", skill = true, group = "Build & Test" }
-test = { run = "python -m unittest discover -s tools/tests -p test_offline_prompt_evaluation.py && python tools/scripts/check_frontend_parity.py && python tools/scripts/cargo.py test --workspace --exclude apxm-compiler --exclude apxm-cli", description = "Run evaluator evidence validation, frontend parity checks, and workspace tests", skill = true, group = "Build & Test" }
+test = { run = "python -m unittest discover -s tools/tests -p test_offline_prompt_evaluation.py && python -m unittest discover -s tools/tests -p test_observed_prompt_evaluation.py && python tools/scripts/check_frontend_parity.py && python tools/scripts/cargo.py test --workspace --exclude apxm-compiler --exclude apxm-cli", description = "Run evaluator evidence validation, frontend parity checks, and workspace tests", skill = true, group = "Build & Test" }
 test-compiler = { run = "python tools/scripts/cargo.py test -p apxm-compiler", description = "Run compiler AIR builder and pipeline tests", group = "Build & Test" }
 test-all = { run = "python tools/scripts/cargo.py test --workspace", description = "All tests (requires MLIR)", group = "Build & Test" }
 test-cli = { run = "python tools/scripts/cargo.py test -p apxm-cli --features driver,metrics --release", description = "Run CLI tests with driver (preserves MLIR-linked binary)", group = "Build & Test" }
@@ -94,7 +94,9 @@ explain = { run = "python tools/scripts/apxm_cli.py explain", description = "Hum
 goal = { run = "python tools/scripts/apxm_cli.py goal", description = "Start, follow, inspect, or cancel a bounded APXM goal run", group = "Goals & Workflows" }
 workflow = { run = "python tools/scripts/apxm_cli.py workflow", description = "Run, validate, analyze, and follow APXM workflow files", group = "Goals & Workflows" }
 offline-prompt-evaluation = { run = "python tools/scripts/offline_prompt_evaluation.py", description = "Validate preregistered prompt-output bundles with classified backend evidence", group = "Evaluation" }
+observed-prompt-evaluation = { run = "python tools/scripts/observed_prompt_evaluation.py", description = "Execute preregistered prompt arms and record portable backend evidence", group = "Evaluation" }
 test-offline-prompt-evaluation = { run = "python -m unittest discover -s tools/tests -p test_offline_prompt_evaluation.py", description = "Test offline prompt-evaluation evidence validation", group = "Evaluation" }
+test-observed-prompt-evaluation = { run = "python -m unittest discover -s tools/tests -p test_observed_prompt_evaluation.py", description = "Test observed backend execution evidence", group = "Evaluation" }
 
 [commands.session]
 description = "Inspect APXM execution session outputs"

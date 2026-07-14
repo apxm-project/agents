@@ -1,4 +1,4 @@
-//! Skill resolver for assembling node workspaces.
+//! Workspace skill catalog for assembling node workspaces.
 
 use std::collections::HashMap;
 use std::fs;
@@ -8,12 +8,12 @@ use std::path::{Path, PathBuf};
 use apxm_core::constants::graph::attrs as graph_attrs;
 use apxm_core::types::{AISOperationType, Value};
 
-pub struct SkillResolver {
+pub struct WorkspaceSkillCatalog {
     skills_dir: PathBuf,
     skills: HashMap<String, PathBuf>,
 }
 
-impl SkillResolver {
+impl WorkspaceSkillCatalog {
     pub fn new(project_root: &Path) -> io::Result<Self> {
         let skills_dir = project_root.join(".agents/skills");
         if !skills_dir.is_dir() {

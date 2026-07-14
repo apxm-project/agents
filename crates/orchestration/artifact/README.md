@@ -31,8 +31,6 @@ An artifact can contain multiple DAGs for multi-flow agent definitions:
 Artifacts may also carry opaque extension sections. `apxm-artifact` only stores
 and retrieves the raw bytes; higher-level crates own any schema or parsing.
 
-- `section_kinds::SKILL_MANIFEST_V1` names the `apxm.skill_manifest.v1`
-  section used by skill-aware tooling to embed a manifest copy.
 - `section_data(kind)` returns the first section payload for a kind without
   decoding it.
 - `replace_section(kind, data)` inserts or updates a section while preserving

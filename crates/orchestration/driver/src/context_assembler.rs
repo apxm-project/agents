@@ -92,7 +92,7 @@ impl ContextAssembler {
             .map(|p| p.constraints.clone())
             .unwrap_or_default();
         let skills_to_show: &[String] = agent_profile
-            .map(|p| p.allowed_skills.as_slice())
+            .map(|p| p.suggested_skills.as_slice())
             .filter(|s| !s.is_empty())
             .unwrap_or(skill_names);
         let task = self.extract_task(meta, &upstream);

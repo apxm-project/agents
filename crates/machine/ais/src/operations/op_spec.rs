@@ -132,7 +132,6 @@ fn rust_variant_name(op: AISOperationType) -> &'static str {
         AISOperationType::Switch => "Switch",
         AISOperationType::FlowCall => "FlowCall",
         AISOperationType::WorkflowSpawn => "WorkflowSpawn",
-        AISOperationType::CallSkill => "CallSkill",
         AISOperationType::Merge => "Merge",
         AISOperationType::Fence => "Fence",
         AISOperationType::WaitAll => "WaitAll",

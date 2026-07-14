@@ -16,8 +16,8 @@ use crate::{
     },
     executor::{
         CancellationToken, ExecutionContext, ExecutionEventEmitter, ExecutionHook,
-        ExecutionHookContext, ExecutorEngine, InnerPlanLinker, NoOpLinker, NoOpSkillResolver,
-        NoOpWorkflowSpawner, OperationMiddleware, SkillResolver, WorkflowSpawner,
+        ExecutionHookContext, ExecutorEngine, InnerPlanLinker, NoOpLinker, NoOpWorkflowSpawner,
+        OperationMiddleware, WorkflowSpawner,
     },
     graph_lifecycle::{BackendGraphLifecycle, graph_dispatch_ir_from_dag},
     memory::{MemoryConfig, MemorySystem},
@@ -274,7 +274,6 @@ pub struct Runtime {
     session_lane_guard: SessionLaneGuard,
     inner_plan_linker: Arc<dyn InnerPlanLinker>,
     workflow_spawner: Arc<dyn WorkflowSpawner>,
-    skill_resolver: Arc<dyn SkillResolver>,
     instruction_config: apxm_core::InstructionConfig,
     sandbox_registry: Arc<SandboxRegistry>,
     process_table: Arc<ProcessTable>,
@@ -336,7 +335,6 @@ impl Runtime {
             session_lane_guard: SessionLaneGuard::new(),
             inner_plan_linker: Arc::new(NoOpLinker),
             workflow_spawner: Arc::new(NoOpWorkflowSpawner),
-            skill_resolver: Arc::new(NoOpSkillResolver),
             instruction_config: apxm_core::InstructionConfig::default(),
             sandbox_registry: Arc::new(SandboxRegistry::new()),
             process_table: Arc::new(ProcessTable::new()),
@@ -382,7 +380,6 @@ impl Runtime {
         ctx.session_id = session_id;
         ctx.inner_plan_linker = Arc::clone(&self.inner_plan_linker);
         ctx.workflow_spawner = Arc::clone(&self.workflow_spawner);
-        ctx.skill_resolver = Arc::clone(&self.skill_resolver);
         ctx.dag_splicer = Arc::new(crate::executor::NoOpSplicer);
         ctx.flow_registry = Arc::clone(&self.flow_registry);
         ctx.instruction_config = self.instruction_config.clone();
@@ -452,17 +449,6 @@ impl Runtime {
     /// Attach a workflow-spawn bridge implementation to the runtime.
     pub fn set_workflow_spawner(&mut self, spawner: Arc<dyn WorkflowSpawner>) {
         self.workflow_spawner = spawner;
-    }
-
-    /// Attach a skill-resolution bridge for the `CALL_SKILL` op.
-    ///
-    /// The runtime defaults to [`NoOpSkillResolver`], which fails every
-    /// `CALL_SKILL` invocation with a `call_skill:<id>` capability error.
-    /// Hosts that ship a `SkillLibrary` (or an equivalent manifest catalog)
-    /// install their resolver implementation here so the runtime can link
-    /// child skills by manifest identity.
-    pub fn set_skill_resolver(&mut self, resolver: Arc<dyn SkillResolver>) {
-        self.skill_resolver = resolver;
     }
 
     /// Set the instruction configuration for system prompts.
@@ -881,11 +867,8 @@ impl Runtime {
     /// Execute a top-level artifact, seeding extra execution metadata.
     ///
     /// Identical to [`Self::execute_artifact_with_session_and_emitter`] but
-    /// layers `extra_metadata` (e.g. the launching skill's `side_effect_policy`)
-    /// onto the root context so CALL_SKILL admission can compare a child against
-    /// the real top-level grant rather than the conservative `read_only`
-    /// default. This stays a *top-level* entry (no `parent_execution_id`), so
-    /// metrics still reset.
+    /// layers host-supplied `extra_metadata` onto the root context. This stays
+    /// a *top-level* entry (no `parent_execution_id`), so metrics still reset.
     pub async fn execute_artifact_with_session_emitter_and_metadata(
         &self,
         artifact: Artifact,
@@ -919,8 +902,8 @@ impl Runtime {
     /// or any other existing `execute*` method — those still block until full
     /// completion exactly as before.
     ///
-    /// Intended caller: a host (e.g. `POST /v1/skills/{id}/execute`) that wants
-    /// to know "this execution just started waiting for the next turn's
+    /// Intended caller: a host that wants to know "this execution just started
+    /// waiting for the next turn's
     /// message" without blocking for the lifetime of the conversation session,
     /// while also retaining explicit ownership of cancellation.
     #[allow(clippy::too_many_arguments)]
@@ -1032,10 +1015,9 @@ impl Runtime {
     /// Execute an artifact as the child of a parent execution.
     ///
     /// `parent_metadata` is layered onto the child context's metadata map so
-    /// the child handler sees `call_skill_depth`, `parent_execution_id`, and
-    /// `parent_scope_id` from the parent. `CALL_SKILL` uses this entry point
-    /// via the [`SkillResolver`] bridge to dispatch child entry DAGs while
-    /// preserving the no-widen / depth-limit invariants.
+    /// generic child-workflow execution can preserve parent execution and scope
+    /// lineage without inheriting prompt, memory, grants, or credentials unless
+    /// the typed child envelope delegates them.
     pub async fn execute_artifact_as_child(
         &self,
         artifact: Artifact,

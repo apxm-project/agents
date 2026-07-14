@@ -26,11 +26,9 @@ read of that schema. `agent.toml` is the only authored manifest; generated
   prompts/*.md                  # persona, terminology, safety, style, …
   package.json                  # TypeScript frontend dependency declaration
   tsconfig.json                 # TypeScript handler type-check configuration
-  skills/<skill-id>/            # optional — one shape, compiled or prompt-only
-    skill.toml                  #   always present once a skill exists
+  skills/<skill-id>/            # optional instruction catalog resources
     SKILL.md, prompt.md         #   author prose / prompt body
-    examples/*.air               #   optional worked examples
-    skill.air, skill.apxmobj     #   optional compiled artifact; absent = CompileStatus::NotCompiled
+    examples/*.md               #   optional worked examples
   examples/*.md                 # optional agent-level worked examples
   tests/                        # optional agent tests
   shared/                       # optional shared resources

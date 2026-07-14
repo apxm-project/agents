@@ -306,7 +306,6 @@ dependencies = [
  "apxm-driver",
  "apxm-rollout",
  "apxm-runtime",
- "apxm-skill",
  "chrono",
  "clap",
  "colored",
@@ -497,16 +496,6 @@ dependencies = [
  "tracing",
  "uuid",
  "wiremock",
-]
-
-[[package]]
-name = "apxm-skill"
-version = "0.1.0"
-dependencies = [
- "apxm-artifact",
- "blake3",
- "serde",
- "toml",
 ]
 
 [[package]]

@@ -41,7 +41,7 @@ pub mod hooks;
 pub mod linker;
 pub mod runtime;
 pub mod session_output;
-pub mod skill_resolver;
+pub mod workspace_skills;
 
 // --- Config ---
 pub use config::{

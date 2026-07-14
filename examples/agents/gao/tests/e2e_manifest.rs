@@ -47,8 +47,62 @@ fn copy_gao_example() -> TempDir {
 
 fn read_tools_manifest(root: &Path) -> Vec<serde_json::Value> {
     let path = root.join("capabilities/handlers/tools.json");
-    serde_json::from_str(&fs::read_to_string(&path).expect("read tools.json"))
-        .expect("parse tools.json")
+    let value: serde_json::Value =
+        serde_json::from_str(&fs::read_to_string(&path).expect("read tools.json"))
+            .expect("parse tools.json");
+    value
+        .get("handlers")
+        .and_then(serde_json::Value::as_array)
+        .cloned()
+        .unwrap_or_else(|| value.as_array().cloned().expect("tools.json handlers array"))
+}
+
+fn read_compile_service_manifest(root: &Path) -> Vec<serde_json::Value> {
+    let air = emit_air_from_agent(root, &CompileServiceOptions::default())
+        .expect("compile-service AIR");
+    let sidecar = air
+        .lines()
+        .find_map(|line| line.strip_prefix("; __apxm_handler_manifest__ "))
+        .expect("compile-service handler sidecar");
+    let value: serde_json::Value = serde_json::from_str(sidecar).expect("parse handler sidecar");
+    value
+        .get("handlers")
+        .and_then(serde_json::Value::as_array)
+        .cloned()
+        .expect("handler sidecar array")
+}
+
+fn compile_source_manifest(root: &Path, source_file: &str) -> Vec<serde_json::Value> {
+    let compiler = repo_root().join("crates/compiler/frontend/typescript/dist/compile-handlers.js");
+    assert!(
+        compiler.is_file(),
+        "TypeScript frontend compile-handlers entry missing at {}",
+        compiler.display()
+    );
+    let source = root.join(source_file);
+    let output = Command::new("node")
+        .arg("--input-type=module")
+        .arg("--eval")
+        .arg(
+            "import { pathToFileURL } from 'node:url'; import(pathToFileURL(process.argv[1]).href).then(async ({ compileHandlers }) => { const manifest = await compileHandlers([process.argv[2]], { rootDir: process.argv[3] }); console.log(JSON.stringify(manifest)); })",
+        )
+        .arg(&compiler)
+        .arg(&source)
+        .arg(root)
+        .output()
+        .expect("run compile-handlers");
+    assert!(
+        output.status.success(),
+        "compile-handlers failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let value: serde_json::Value =
+        serde_json::from_slice(&output.stdout).expect("parse compile-handlers output");
+    value
+        .get("handlers")
+        .and_then(serde_json::Value::as_array)
+        .cloned()
+        .expect("compiled handler array")
 }
 
 fn repo_root() -> std::path::PathBuf {
@@ -56,25 +110,50 @@ fn repo_root() -> std::path::PathBuf {
 }
 
 fn worker_manifest_entry(root: &Path, selector: &str) -> serde_json::Value {
-    let mut entry = read_tools_manifest(root)
+    let sidecar_entry = read_compile_service_manifest(root)
+        .into_iter()
+        .find(|entry| {
+            entry.get("name").and_then(serde_json::Value::as_str) == Some(selector)
+                || entry.get("qualname").and_then(serde_json::Value::as_str) == Some(selector)
+        });
+    if let Some(entry) = sidecar_entry {
+        return entry;
+    }
+
+    let manifest_entry = read_tools_manifest(root)
         .into_iter()
         .find(|entry| {
             entry.get("name").and_then(serde_json::Value::as_str) == Some(selector)
                 || entry.get("qualname").and_then(serde_json::Value::as_str) == Some(selector)
         })
         .unwrap_or_else(|| panic!("missing Gao worker entry {selector}"));
-    let source = entry
+    if manifest_entry.get("source").is_some() {
+        return manifest_entry;
+    }
+    let source_file = manifest_entry
         .get("source_file")
         .and_then(serde_json::Value::as_str)
-        .expect("worker entry source_file")
-        .to_string();
-    entry
-        .as_object_mut()
-        .expect("worker manifest object")
-        .insert(
-            "source_file".to_string(),
-            serde_json::Value::String(root.join(&source).to_string_lossy().into_owned()),
-        );
+        .unwrap_or_else(|| panic!("Gao worker entry {selector} has no source_file"));
+    let mut entry = compile_source_manifest(root, source_file)
+        .into_iter()
+        .find(|entry| {
+            entry.get("name").and_then(serde_json::Value::as_str) == Some(selector)
+                || entry.get("qualname").and_then(serde_json::Value::as_str) == Some(selector)
+        })
+        .unwrap_or_else(|| panic!("compiled Gao worker entry {selector} missing"));
+    if let Some(source_file) = entry
+        .get("source_file")
+        .and_then(serde_json::Value::as_str)
+        .map(str::to_string)
+    {
+        entry
+            .as_object_mut()
+            .expect("worker manifest object")
+            .insert(
+                "source_file".to_string(),
+                serde_json::Value::String(root.join(source_file).to_string_lossy().into_owned()),
+            );
+    }
     entry
 }
 
@@ -84,9 +163,13 @@ fn run_typescript_worker(
     frames: &[serde_json::Value],
 ) -> Vec<serde_json::Value> {
     let manifest_path = tmp.path().join("focused-tools.json");
+    let manifest = serde_json::json!({
+        "version": "apxm.handler-manifest.v1",
+        "handlers": entries,
+    });
     fs::write(
         &manifest_path,
-        serde_json::to_vec(&entries).expect("serialize focused worker manifest"),
+        serde_json::to_vec(&manifest).expect("serialize focused worker manifest"),
     )
     .expect("write focused worker manifest");
 
@@ -128,6 +211,18 @@ fn worker_result<'a>(results: &'a [serde_json::Value], req_id: &str) -> &'a serd
         .iter()
         .find(|value| value.get("req_id").and_then(serde_json::Value::as_str) == Some(req_id))
         .unwrap_or_else(|| panic!("missing TypeScript worker result for {req_id}"))
+}
+
+fn worker_value<'a>(results: &'a [serde_json::Value], req_id: &str) -> &'a serde_json::Value {
+    let result = worker_result(results, req_id);
+    assert_eq!(
+        result.get("ok").and_then(serde_json::Value::as_bool),
+        Some(true),
+        "TypeScript worker returned error for {req_id}: {result}"
+    );
+    result
+        .get("value")
+        .unwrap_or_else(|| panic!("TypeScript worker result for {req_id} has no value: {result}"))
 }
 
 #[test]
@@ -379,9 +474,7 @@ fn gao_semantic_tools_derive_typed_outputs_from_inputs() {
         }),
     ];
     let results = run_typescript_worker(&tmp, vec![plan, validation, permission], &frames);
-    let plan_value = worker_result(&results, "gao-plan-test")
-        .get("value")
-        .expect("typed plan value");
+    let plan_value = worker_value(&results, "gao-plan-test");
     assert_eq!(
         plan_value
             .get("request")
@@ -486,7 +579,7 @@ fn gao_compose_gate_defers_valid_input_and_denies_missing_input_in_real_worker()
         ),
     ];
     let results = run_typescript_worker(&tmp, vec![gate], &frames);
-    let valid = worker_result(&results, "valid").get("value").unwrap();
+    let valid = worker_value(&results, "valid");
     assert_eq!(
         valid.get("decision").and_then(serde_json::Value::as_str),
         Some("defer")
@@ -539,8 +632,8 @@ fn gao_post_cap_hook_recursively_scrubs_nested_results_without_losing_types() {
         "deadline_ms": 5_000
     });
     let results = run_typescript_worker(&tmp, vec![redactor], &[frame]);
-    let scrubbed = worker_result(&results, "nested-redaction")
-        .pointer("/value/result")
+    let scrubbed = worker_value(&results, "nested-redaction")
+        .get("result")
         .unwrap();
     assert_eq!(
         scrubbed.get("count").and_then(serde_json::Value::as_i64),
@@ -605,8 +698,8 @@ fn gao_compile_service_declarative_emits_recv_loop_air() {
         "declarative gao AIR must lower to ais.autonomous recv anchor"
     );
     assert!(
-        air.contains("__apxm_typescript_tools__"),
-        "declarative gao AIR must carry the TypeScript handler manifest sidecar"
+        air.contains("__apxm_handler_manifest__"),
+        "gao AIR must carry the TypeScript handler manifest sidecar"
     );
 }
 
